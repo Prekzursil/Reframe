@@ -76,6 +76,18 @@ def transcribe_whisper_timestamped(path: str | Path, config: TranscriptionConfig
         data = json.loads(media_path.read_text())
         return normalize_whisper_timestamped(data, model=config.model, language=config.language)
 
+    # If whisper_timestamped is installed, attempt a real transcription.
+    try:  # pragma: no cover - optional dependency
+        import whisper_timestamped as wts  # type: ignore
+
+        audio = wts.load_audio(str(media_path))
+        model_name = config.model or "base"
+        model = wts.load_model(model_name)
+        result = wts.transcribe(model, audio, language=config.language)
+        return normalize_whisper_timestamped(result, model=model_name, language=config.language)
+    except Exception as exc:
+        logger.warning("whisper_timestamped unavailable or failed (%s); returning stub result", exc)
+
     # Fallback stub when no structured payload is available.
     return TranscriptionResult.from_iterable(
         [Word(text=media_path.name, start=0.0, end=1.0)], model=config.model, language=config.language

@@ -151,3 +151,71 @@ class StyledSubtitleRenderer:
             "word_layers": word_layers,
             "meta": {"size": size, "orientation": orientation, "style": self.style},
         }
+
+    def render_video(
+        self,
+        lines: Iterable[SubtitleLine],
+        *,
+        size: Tuple[int, int] = (1080, 1920),
+        background_color: Color = (0, 0, 0),
+    ):
+        """Render subtitles with MoviePy text/highlight layers.
+
+        Falls back to render_preview when MoviePy or ImageMagick is unavailable.
+        """
+        try:  # pragma: no cover - optional dependency
+            from moviepy.editor import ColorClip, CompositeVideoClip, TextClip  # type: ignore
+        except Exception as exc:  # pragma: no cover
+            logger.warning("MoviePy not available (%s); falling back to preview-only clip", exc)
+            return self.render_preview(lines, size=size, background_color=background_color)
+
+        plan = self.build_plan(lines, size=size)
+        base_layers = plan["base_layers"]
+        word_layers = plan["word_layers"]
+
+        duration = max((layer["end"] for layer in base_layers), default=0.1)
+        base_clip = ColorClip(size, color=background_color).set_duration(duration)
+
+        clips = [base_clip]
+        for layer in base_layers:
+            try:
+                clip = (
+                    TextClip(
+                        layer["text"],
+                        font=self.style.font,
+                        fontsize=int(self.style.font_size),
+                        color=_rgb_to_hex(layer["color"]),
+                        stroke_color=_rgb_to_hex(layer["stroke_color"]),
+                        stroke_width=int(self.style.stroke_width),
+                    )
+                    .set_position((layer["x"], layer["y"]))
+                    .set_start(layer["start"])
+                    .set_end(layer["end"])
+                )
+                clips.append(clip)
+            except Exception as exc:
+                logger.debug("Skipping base layer due to render error: %s", exc)
+
+        for layer in word_layers:
+            try:
+                clip = (
+                    TextClip(
+                        layer["text"],
+                        font=self.style.font,
+                        fontsize=int(self.style.font_size),
+                        color=_rgb_to_hex(layer["color"]),
+                    )
+                    .set_position((layer["x"], layer["y"]))
+                    .set_start(layer["start"])
+                    .set_end(layer["end"])
+                )
+                clips.append(clip)
+            except Exception as exc:
+                logger.debug("Skipping word layer due to render error: %s", exc)
+
+        return CompositeVideoClip(clips)
+
+
+def _rgb_to_hex(color: Color) -> str:
+    r, g, b = color
+    return "#{:02x}{:02x}{:02x}".format(r, g, b)
