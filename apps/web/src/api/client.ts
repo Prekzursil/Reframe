@@ -30,12 +30,16 @@ export interface StyledSubtitleJobRequest {
 
 export interface ShortsJobRequest {
   video_asset_id: string;
+  max_clips?: number;
+  min_duration?: number;
+  max_duration?: number;
+  aspect_ratio?: string;
   options?: Record<string, unknown>;
 }
 
 export interface SubtitleToolsRequest {
   subtitle_asset_id: string;
-  target_language?: string;
+  target_language: string;
   bilingual?: boolean;
 }
 
@@ -104,7 +108,6 @@ export class ApiClient {
   }
 
   createStyledSubtitleJob(payload: StyledSubtitleJobRequest) {
-    // Placeholder until API endpoint exists; align with expected schema.
     return this.request<Job>("/subtitles/style", { method: "POST", body: JSON.stringify(payload) });
   }
 

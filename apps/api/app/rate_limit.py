@@ -4,9 +4,10 @@ import time
 from collections import deque
 from typing import Deque, Dict
 
-from fastapi import HTTPException, Request, status
+from fastapi import Request
 
 from app.config import get_settings
+from app.errors import rate_limited
 
 
 class RateLimiter:
@@ -37,12 +38,10 @@ rate_limiter = RateLimiter(limit=settings.rate_limit_requests, window_seconds=se
 async def enforce_rate_limit(request: Request) -> None:
     client_ip = request.client.host if request.client else "anonymous"
     if not rate_limiter.allow(client_ip):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail={
-                "code": "RATE_LIMITED",
-                "message": "Rate limit exceeded",
+        raise rate_limited(
+            details={
                 "limit": rate_limiter.limit,
                 "window_seconds": rate_limiter.window_seconds,
-            },
+                "client": client_ip,
+            }
         )
