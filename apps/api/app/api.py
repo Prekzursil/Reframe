@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, List, Optional
 from uuid import uuid4
 
+from celery import Celery
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from uuid import UUID
 
@@ -11,7 +13,7 @@ from sqlmodel import Session, SQLModel, select
 
 from app.database import get_session
 from app.config import get_settings
-from app.errors import ErrorResponse, conflict, not_found
+from app.errors import ErrorResponse, conflict, not_found, server_error
 from app.models import Job, JobStatus, MediaAsset, SubtitleStylePreset
 from app.rate_limit import enforce_rate_limit
 
@@ -20,6 +22,32 @@ router = APIRouter(prefix="/api/v1")
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
+
+
+@lru_cache(maxsize=1)
+def get_celery_app() -> Celery:
+    settings = get_settings()
+    return Celery("reframe_api", broker=settings.broker.broker_url, backend=settings.broker.result_backend)
+
+
+def enqueue_job(job: Job, task_name: str, *args) -> str:
+    try:
+        result = get_celery_app().send_task(task_name, args=args)
+        return result.id
+    except Exception as exc:  # pragma: no cover - defensive
+        raise server_error("Failed to enqueue job", details={"job_id": str(job.id), "task": task_name, "error": str(exc)})
+
+
+def save_and_dispatch(job: Job, session: Session, task_name: str, *args) -> Job:
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    task_id = enqueue_job(job, task_name, *args)
+    job.task_id = task_id
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    return job
 
 
 class CaptionJobRequest(SQLModel):
@@ -141,17 +169,8 @@ class StyledSubtitleJobRequest(SQLModel):
     dependencies=[Depends(enforce_rate_limit)],
 )
 def create_caption_job(payload: CaptionJobRequest, session: SessionDep) -> Job:
-    job = Job(
-        job_type="captions",
-        status=JobStatus.queued,
-        progress=0.0,
-        input_asset_id=payload.video_asset_id,
-        payload=payload.options or {},
-    )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    return job
+    job = Job(job_type="captions", status=JobStatus.queued, progress=0.0, input_asset_id=payload.video_asset_id, payload=payload.options or {})
+    return save_and_dispatch(job, session, "tasks.generate_captions", str(job.id), str(payload.video_asset_id), payload.options or {})
 
 
 @router.post(
@@ -163,17 +182,15 @@ def create_caption_job(payload: CaptionJobRequest, session: SessionDep) -> Job:
     dependencies=[Depends(enforce_rate_limit)],
 )
 def create_translate_job(payload: TranslateJobRequest, session: SessionDep) -> Job:
-    job = Job(
-        job_type="translate_subtitles",
-        status=JobStatus.queued,
-        progress=0.0,
-        input_asset_id=payload.subtitle_asset_id,
-        payload={"target_language": payload.target_language, **(payload.options or {})},
+    job = Job(job_type="translate_subtitles", status=JobStatus.queued, progress=0.0, input_asset_id=payload.subtitle_asset_id, payload={"target_language": payload.target_language, **(payload.options or {})})
+    return save_and_dispatch(
+        job,
+        session,
+        "tasks.translate_subtitles",
+        str(job.id),
+        str(payload.subtitle_asset_id),
+        {"target_language": payload.target_language, **(payload.options or {})},
     )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    return job
 
 
 @router.get(
@@ -241,10 +258,14 @@ def create_shorts_job(payload: ShortsJobRequest, session: SessionDep) -> Job:
             **(payload.options or {}),
         },
     )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    return job
+    return save_and_dispatch(
+        job,
+        session,
+        "tasks.generate_shorts",
+        str(job.id),
+        str(payload.video_asset_id),
+        job.payload,
+    )
 
 
 @router.post(
@@ -266,10 +287,16 @@ def create_style_job(payload: StyledSubtitleJobRequest, session: SessionDep) -> 
             "preview_seconds": payload.preview_seconds,
         },
     )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    return job
+    return save_and_dispatch(
+        job,
+        session,
+        "tasks.render_styled_subtitles",
+        str(job.id),
+        str(payload.video_asset_id),
+        str(payload.subtitle_asset_id),
+        payload.style,
+        {"preview_seconds": payload.preview_seconds},
+    )
 
 
 @router.post(
@@ -293,10 +320,15 @@ def create_merge_job(payload: MergeAVRequest, session: SessionDep) -> Job:
             **(payload.options or {}),
         },
     )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    return job
+    return save_and_dispatch(
+        job,
+        session,
+        "tasks.merge_video_audio",
+        str(job.id),
+        str(payload.video_asset_id),
+        str(payload.audio_asset_id),
+        job.payload,
+    )
 
 
 @router.post(
@@ -318,10 +350,14 @@ def translate_subtitle_tool(payload: TranslateSubtitleToolRequest, session: Sess
             **(payload.options or {}),
         },
     )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    return job
+    return save_and_dispatch(
+        job,
+        session,
+        "tasks.translate_subtitles",
+        str(job.id),
+        str(payload.subtitle_asset_id),
+        job.payload,
+    )
 
 
 @router.post(
