@@ -48,14 +48,14 @@ function useLiveJobs() {
 }
 
 function JobStatusPill({ status }: { status: JobStatus }) {
-  const tone = {
+  const toneMap: Record<JobStatus, "neutral" | "info" | "success" | "danger" | "muted"> = {
     queued: "neutral",
     running: "info",
     completed: "success",
     failed: "danger",
     cancelled: "muted",
-  }[status];
-  return <Chip tone={tone}>{status}</Chip>;
+  };
+  return <Chip tone={toneMap[status]}>{status}</Chip>;
 }
 
 function AppShell() {
