@@ -234,14 +234,14 @@
 
 ## 15. Frontend – Utilities (SRT & Merge)
 
-- [ ] Page: **Subtitle Tools**.
-  - [ ] SRT upload → translation options → result download.
-  - [ ] Bilingual SRT option.
-- [ ] Page: **Video / Audio Merge**.
-  - [ ] Upload/choose video.
-  - [ ] Upload/choose audio.
-  - [ ] Controls: offset, ducking, normalize.
-  - [ ] Submit → job → result download.
+- [x] Page: **Subtitle Tools**.
+  - [x] SRT upload → translation options → result download. *(UI present; download pending backend output)*
+  - [x] Bilingual SRT option.
+- [x] Page: **Video / Audio Merge**.
+  - [x] Upload/choose video.
+  - [x] Upload/choose audio.
+  - [x] Controls: offset, ducking, normalize.
+  - [x] Submit → job → result download. *(UI present; download pending backend output)*
 
 ---
 
