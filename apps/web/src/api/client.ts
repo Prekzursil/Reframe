@@ -21,6 +21,13 @@ export interface TranslateJobRequest {
   options?: Record<string, unknown>;
 }
 
+export interface StyledSubtitleJobRequest {
+  video_asset_id: string;
+  subtitle_asset_id: string;
+  style: Record<string, unknown>;
+  preview_seconds?: number;
+}
+
 export interface MediaAsset {
   id: string;
   kind: string;
@@ -75,6 +82,11 @@ export class ApiClient {
 
   createTranslateJob(payload: TranslateJobRequest) {
     return this.request<Job>("/subtitles/translate", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  createStyledSubtitleJob(payload: StyledSubtitleJobRequest) {
+    // Placeholder until API endpoint exists; align with expected schema.
+    return this.request<Job>("/subtitles/style", { method: "POST", body: JSON.stringify(payload) });
   }
 }
 
