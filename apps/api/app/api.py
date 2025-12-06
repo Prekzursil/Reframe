@@ -260,7 +260,7 @@ async def upload_asset(
     data = await file.read()
     target_path.write_bytes(data)
 
-    asset = MediaAsset(kind=kind, uri=f\"/media/{filename}\", mime_type=file.content_type)
+    asset = MediaAsset(kind=kind, uri=f"/media/{filename}", mime_type=file.content_type)
     session.add(asset)
     session.commit()
     session.refresh(asset)
