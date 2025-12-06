@@ -566,8 +566,8 @@ function AppShell() {
               <StyleEditor
                 videoId={uploadedVideoId}
                 subtitleId={subtitleAssetId}
-                onPreview={(payload) => apiClient.createStyledSubtitleJob(payload)}
-                onRender={(payload) => apiClient.createStyledSubtitleJob(payload)}
+                onPreview={(payload) => apiClient.createStyledSubtitleJob(payload).then(() => {})}
+                onRender={(payload) => apiClient.createStyledSubtitleJob(payload).then(() => {})}
               />
             </Card>
           </section>
