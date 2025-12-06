@@ -29,7 +29,7 @@ def probe_media(path: str | Path, runner=None) -> dict:
         "-v",
         "error",
         "-show_entries",
-        "format=duration",
+        "format=duration:bit_rate",
         "-show_entries",
         "stream=index,codec_name,width,height,codec_type",
         "-of",
@@ -38,20 +38,20 @@ def probe_media(path: str | Path, runner=None) -> dict:
     ]
     completed = _run(cmd, runner=runner)
     info = json.loads(completed.stdout.decode() if completed.stdout else "{}")
-    format_info = info.get("format", {}) or {}
+    fmt = info.get("format", {}) or {}
     streams = info.get("streams", []) or []
-    video_streams = [s for s in streams if s.get("codec_type") == "video"]
+    video_stream = next((s for s in streams if s.get("codec_type") == "video"), {})
     audio_streams = [s for s in streams if s.get("codec_type") == "audio"]
-    first_video = video_streams[0] if video_streams else {}
     return {
         "path": str(media_path),
-        "duration": float(format_info.get("duration")) if format_info.get("duration") else None,
+        "duration": float(fmt.get("duration")) if fmt.get("duration") else None,
+        "bitrate": int(fmt.get("bit_rate")) if fmt.get("bit_rate") else None,
         "video": {
-            "codec": first_video.get("codec_name"),
-            "width": first_video.get("width"),
-            "height": first_video.get("height"),
+            "codec": video_stream.get("codec_name"),
+            "width": video_stream.get("width"),
+            "height": video_stream.get("height"),
         },
-        "audio_codecs": [s.get("codec_name") for s in audio_streams if s.get("codec_name")],
+        "audio_codecs": [a.get("codec_name") for a in audio_streams if a.get("codec_name")],
     }
 
 

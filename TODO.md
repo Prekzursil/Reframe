@@ -101,7 +101,7 @@
 - [x] Function: `merge_video_audio(video_path, audio_path, output_path, offset, ducking, normalize)`.
 - [x] Function: `burn_subtitles(video_path, srt_or_ass_path, output_path, extra_filters=None)`.
 - [x] Tests: basic FFmpeg invocation works and outputs exist.
-- [x] Return ffprobe metadata (duration/resolution/codec) from `probe_media` instead of path-only.
+- [x] Return ffprobe metadata (duration/resolution/codec) from `probe_media`.
 - [x] Add `blur_bg` strategy to `reframe` for blurred letterboxing.
 
 ---

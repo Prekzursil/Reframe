@@ -23,7 +23,7 @@ def dummy_run(expected_cmds):
 
     def _runner(cmd, check=True, capture_output=True):
         calls.append(cmd)
-        sample = b'{"format": {"duration": "1.5"}, "streams": [{"codec_type": "video", "codec_name": "h264", "width": 1920, "height": 1080}, {"codec_type": "audio", "codec_name": "aac"}]}'
+        sample = b'{"format": {"duration": "1.5", "bit_rate": "64000"}, "streams": [{"codec_type": "video", "codec_name": "h264", "width": 1920, "height": 1080}, {"codec_type": "audio", "codec_name": "aac"}]}'
         return DummyCompleted(stdout=sample)
 
     return _runner, calls
@@ -37,6 +37,8 @@ def test_probe_media_builds_ffprobe_cmd(monkeypatch, tmp_path):
     out = probe_media(media, runner=runner)
     assert calls and "ffprobe" in calls[0][0]
     assert out["path"].endswith("sample.mp4")
+    assert out["duration"] == 1.5
+    assert out["video"]["width"] == 1920
 
 
 def test_extract_audio_invokes_ffmpeg(monkeypatch, tmp_path):
