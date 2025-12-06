@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, SQLModel, select
 
 from app.database import get_session
-from app.models import Job
+from app.models import Job, MediaAsset, SubtitleStylePreset
 
 router = APIRouter(prefix="/api/v1")
 
@@ -19,14 +19,77 @@ class CaptionJobRequest(SQLModel):
     video_asset_id: UUID
     options: Optional[dict] = None
 
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "video_asset_id": "00000000-0000-0000-0000-000000000001",
+                "options": {"language": "en", "backend": "whisper"},
+            }
+        }
+    }
+
 
 class TranslateJobRequest(SQLModel):
     subtitle_asset_id: UUID
     target_language: str
     options: Optional[dict] = None
 
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "subtitle_asset_id": "00000000-0000-0000-0000-000000000002",
+                "target_language": "es",
+                "options": {"formality": "informal"},
+            }
+        }
+    }
 
-@router.post("/captions/jobs", response_model=Job, status_code=status.HTTP_201_CREATED)
+
+class ShortsJobRequest(SQLModel):
+    video_asset_id: UUID
+    max_clips: int = 3
+    min_duration: float = 10.0
+    max_duration: float = 60.0
+    aspect_ratio: str = "9:16"
+    options: Optional[dict] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "video_asset_id": "00000000-0000-0000-0000-000000000003",
+                "max_clips": 3,
+                "min_duration": 10,
+                "max_duration": 45,
+                "aspect_ratio": "9:16",
+                "options": {"prompt": "Highlight the key moments"},
+            }
+        }
+    }
+
+
+class MergeAVRequest(SQLModel):
+    video_asset_id: UUID
+    audio_asset_id: UUID
+    offset: float = 0.0
+    ducking: bool = False
+    normalize: bool = True
+    options: Optional[dict] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "video_asset_id": "00000000-0000-0000-0000-000000000004",
+                "audio_asset_id": "00000000-0000-0000-0000-000000000005",
+                "offset": 0.5,
+                "ducking": True,
+                "normalize": True,
+                "options": {"target_lufs": -14},
+            }
+        }
+    }
+
+
+@router.post("/captions/jobs", response_model=Job, status_code=status.HTTP_201_CREATED, tags=["Captions"])
 def create_caption_job(payload: CaptionJobRequest, session: SessionDep) -> Job:
     job = Job(
         job_type="captions",
@@ -41,7 +104,7 @@ def create_caption_job(payload: CaptionJobRequest, session: SessionDep) -> Job:
     return job
 
 
-@router.post("/subtitles/translate", response_model=Job, status_code=status.HTTP_201_CREATED)
+@router.post("/subtitles/translate", response_model=Job, status_code=status.HTTP_201_CREATED, tags=["Translate"])
 def create_translate_job(payload: TranslateJobRequest, session: SessionDep) -> Job:
     job = Job(
         job_type="translate_subtitles",
@@ -56,7 +119,7 @@ def create_translate_job(payload: TranslateJobRequest, session: SessionDep) -> J
     return job
 
 
-@router.get("/jobs/{job_id}", response_model=Job)
+@router.get("/jobs/{job_id}", response_model=Job, tags=["Jobs"])
 def get_job(job_id: UUID, session: SessionDep) -> Job:
     job = session.get(Job, job_id)
     if not job:
@@ -64,10 +127,71 @@ def get_job(job_id: UUID, session: SessionDep) -> Job:
     return job
 
 
-@router.get("/jobs", response_model=List[Job])
+@router.get("/jobs", response_model=List[Job], tags=["Jobs"])
 def list_jobs(status_filter: Optional[str] = None, session: SessionDep = Depends(get_session)) -> List[Job]:
     query = select(Job)
     if status_filter:
         query = query.where(Job.status == status_filter)
     results = session.exec(query).all()
     return results
+
+
+@router.post("/shorts/jobs", response_model=Job, status_code=status.HTTP_201_CREATED, tags=["Shorts"])
+def create_shorts_job(payload: ShortsJobRequest, session: SessionDep) -> Job:
+    job = Job(
+        job_type="shorts",
+        status="queued",
+        progress=0.0,
+        input_asset_id=payload.video_asset_id,
+        payload={
+            "max_clips": payload.max_clips,
+            "min_duration": payload.min_duration,
+            "max_duration": payload.max_duration,
+            "aspect_ratio": payload.aspect_ratio,
+            **(payload.options or {}),
+        },
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    return job
+
+
+@router.post(
+    "/utilities/merge-av",
+    response_model=Job,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Utilities"],
+)
+def create_merge_job(payload: MergeAVRequest, session: SessionDep) -> Job:
+    job = Job(
+        job_type="merge_av",
+        status="queued",
+        progress=0.0,
+        input_asset_id=payload.video_asset_id,
+        payload={
+            "audio_asset_id": str(payload.audio_asset_id),
+            "offset": payload.offset,
+            "ducking": payload.ducking,
+            "normalize": payload.normalize,
+            **(payload.options or {}),
+        },
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    return job
+
+
+@router.get("/assets/{asset_id}", response_model=MediaAsset, tags=["Assets"])
+def get_asset(asset_id: UUID, session: SessionDep) -> MediaAsset:
+    asset = session.get(MediaAsset, asset_id)
+    if not asset:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+    return asset
+
+
+@router.get("/presets/styles", response_model=List[SubtitleStylePreset], tags=["Presets"])
+def list_style_presets(session: SessionDep) -> List[SubtitleStylePreset]:
+    presets = session.exec(select(SubtitleStylePreset)).all()
+    return presets

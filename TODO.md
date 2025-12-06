@@ -138,13 +138,13 @@
 - [x] Add migration tooling (Alembic) if using SQLAlchemy.
 - [x] Endpoint: `POST /api/v1/captions/jobs`.
 - [x] Endpoint: `POST /api/v1/subtitles/translate`.
-- [ ] Endpoint: `POST /api/v1/shorts/jobs`.
-- [ ] Endpoint: `POST /api/v1/utilities/merge-av`.
-- [ ] Endpoint: `GET /api/v1/jobs/{job_id}`.
-- [ ] Endpoint: `GET /api/v1/jobs` (listing/filtering).
-- [ ] Endpoint: `GET /api/v1/assets/{asset_id}` (download).
-- [ ] Endpoint: `GET /api/v1/presets/styles`.
-- [ ] Add OpenAPI docs with tags & examples.
+- [x] Endpoint: `POST /api/v1/shorts/jobs`.
+- [x] Endpoint: `POST /api/v1/utilities/merge-av`.
+- [x] Endpoint: `GET /api/v1/jobs/{job_id}`.
+- [x] Endpoint: `GET /api/v1/jobs` (listing/filtering).
+- [x] Endpoint: `GET /api/v1/assets/{asset_id}` (download).
+- [x] Endpoint: `GET /api/v1/presets/styles`.
+- [x] Add OpenAPI docs with tags & examples.
 
 ---
 
