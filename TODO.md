@@ -72,17 +72,17 @@
 
 ## 5. Media Core – Translation
 
-- [ ] Create `packages/media-core/translate/__init__.py`.
-- [ ] Define `Translator` interface:
-  - [ ] `translate_batch(texts: list[str], src: str, tgt: str) -> list[str]`.
+- [x] Create `packages/media-core/translate/__init__.py`.
+- [x] Define `Translator` interface:
+  - [x] `translate_batch(texts: list[str], src: str, tgt: str) -> list[str]`.
 - [ ] Implement simple cloud translation backend (if you already use one).
-- [ ] Implement local/offline backend (e.g., Argos Translate / HF model) where feasible.
-- [ ] Implement SRT translator:
-  - [ ] Parse SRT → list of `SubtitleLine`.
-  - [ ] Batch lines for translation.
-  - [ ] Rebuild SRT while preserving timings.
-- [ ] Implement bilingual SRT builder (original + translated lines).
-- [ ] Unit tests: translation preserves count/order, handles empty lines.
+- [x] Implement local/offline backend (e.g., Argos Translate / HF model) where feasible.
+- [x] Implement SRT translator:
+  - [x] Parse SRT → list of `SubtitleLine`.
+  - [x] Batch lines for translation.
+  - [x] Rebuild SRT while preserving timings.
+- [x] Implement bilingual SRT builder (original + translated lines).
+- [x] Unit tests: translation preserves count/order, handles empty lines.
 
 ---
 
