@@ -96,6 +96,24 @@ class MergeAVRequest(SQLModel):
     }
 
 
+class StyledSubtitleJobRequest(SQLModel):
+    video_asset_id: UUID
+    subtitle_asset_id: UUID
+    style: dict
+    preview_seconds: Optional[int] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "video_asset_id": "00000000-0000-0000-0000-000000000001",
+                "subtitle_asset_id": "00000000-0000-0000-0000-000000000002",
+                "style": {"font": "Inter", "text_color": "#ffffff"},
+                "preview_seconds": 5,
+            }
+        }
+    }
+
+
 @router.post(
     "/captions/jobs",
     response_model=Job,
@@ -203,6 +221,31 @@ def create_shorts_job(payload: ShortsJobRequest, session: SessionDep) -> Job:
             "max_duration": payload.max_duration,
             "aspect_ratio": payload.aspect_ratio,
             **(payload.options or {}),
+        },
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    return job
+
+
+@router.post(
+    "/subtitles/style",
+    response_model=Job,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Subtitles"],
+    dependencies=[Depends(enforce_rate_limit)],
+)
+def create_style_job(payload: StyledSubtitleJobRequest, session: SessionDep) -> Job:
+    job = Job(
+        job_type="style_subtitles",
+        status=JobStatus.queued,
+        progress=0.0,
+        input_asset_id=payload.video_asset_id,
+        payload={
+            "subtitle_asset_id": str(payload.subtitle_asset_id),
+            "style": payload.style,
+            "preview_seconds": payload.preview_seconds,
         },
     )
     session.add(job)
