@@ -174,7 +174,7 @@
 ## 12. Frontend – Captions & Translate
 
 - [x] Page: **Captions & Translate**.
-- [ ] Section: Upload video / dropzone wired to backend (current uploader generates pseudo asset IDs only).
+- [x] Section: Upload video / dropzone wired to backend.
 - [x] Form controls:
   - [x] Source language (auto / manual).
   - [x] Whisper backend & model selection.

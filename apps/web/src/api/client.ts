@@ -119,6 +119,21 @@ export class ApiClient {
   mergeAv(payload: MergeAvRequest) {
     return this.request<Job>("/utilities/merge-av", { method: "POST", body: JSON.stringify(payload) });
   }
+
+  async uploadAsset(file: File, kind = "video"): Promise<MediaAsset> {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("kind", kind);
+    const resp = await this.fetcher(`${this.baseUrl}/assets/upload`, {
+      method: "POST",
+      body: form,
+    });
+    if (!resp.ok) {
+      const msg = await resp.text().catch(() => resp.statusText);
+      throw new Error(msg || "Upload failed");
+    }
+    return (await resp.json()) as MediaAsset;
+  }
 }
 
 export const apiClient = new ApiClient();
