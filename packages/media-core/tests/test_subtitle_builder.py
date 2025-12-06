@@ -3,6 +3,7 @@ from media_core.subtitles.builder import (
     SubtitleLine,
     group_words,
     to_srt,
+    to_ass,
     to_vtt,
 )
 from media_core.transcribe.models import Word
@@ -35,3 +36,50 @@ def test_to_srt_and_vtt_render_simple_lines():
     assert "00:00:01,000 --> 00:00:02,500" in srt
     assert "00:00:01.000 --> 00:00:02.500" in vtt
     assert "sample text" in srt and "sample text" in vtt
+
+
+def test_to_ass_renders_dialogue_lines():
+    line = SubtitleLine(
+        start=1.0,
+        end=2.0,
+        words=[Word(text="hello", start=1.0, end=1.4), Word(text="world", start=1.5, end=1.9)],
+    )
+    ass = to_ass([line])
+    assert "[Script Info]" in ass
+    assert "Dialogue:" in ass
+    assert "hello world" in ass
+
+
+def test_group_words_handles_fast_and_slow_speech():
+    # Fast speech with small gaps should stay together.
+    fast_words = [
+        Word(text="quick", start=0.0, end=0.2),
+        Word(text="brown", start=0.25, end=0.4),
+        Word(text="fox", start=0.45, end=0.6),
+    ]
+    cfg_fast = GroupingConfig(max_gap=0.5, max_duration=2.0, max_words_per_line=5, max_chars_per_line=30)
+    fast_lines = group_words(fast_words, cfg_fast)
+    assert len(fast_lines) == 1
+
+    # Slow speech with a large pause should split.
+    slow_words = [
+        Word(text="hello", start=0.0, end=0.5),
+        Word(text="again", start=5.0, end=5.5),
+    ]
+    cfg_slow = GroupingConfig(max_gap=1.0, max_duration=4.0, max_words_per_line=5, max_chars_per_line=30)
+    slow_lines = group_words(slow_words, cfg_slow)
+    assert len(slow_lines) == 2
+
+
+def test_grouping_handles_multilingual_tokens():
+    words = [
+        Word(text="hola", start=0.0, end=0.4),
+        Word(text="bonjour", start=0.5, end=1.0),
+        Word(text="hello", start=1.6, end=2.0),
+    ]
+    cfg = GroupingConfig(max_gap=0.6, max_duration=3.0, max_words_per_line=4, max_chars_per_line=20)
+    lines = group_words(words, cfg)
+    # First two are close and short; third is separated by gap
+    assert len(lines) == 2
+    assert lines[0].text() == "hola bonjour"
+    assert lines[1].text() == "hello"

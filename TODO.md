@@ -29,7 +29,7 @@
 - [x] Backend: `openai_whisper` (simple baseline).
 - [x] Backend: `faster_whisper` (GPU‑friendly).
 - [x] Backend: `whisper_cpp` integration (via `pywhispercpp` or subprocess).
-- [ ] Optional: support `whisper-timestamped` or `whisperX` for more accurate word timings.
+- [x] Optional: support `whisper-timestamped` or `whisperX` for more accurate word timings.
 - [x] Normalize outputs to `List[Word]` regardless of backend.
 - [x] Add CLI entrypoint (`python -m media_core.transcribe`) for quick testing.
 - [x] Unit tests: transcription result normalization (words sorted, no overlaps, correct lengths).
@@ -47,9 +47,9 @@
   - [x] `max_gap`.
 - [x] Export to SRT writer.
 - [x] Export to VTT writer.
-- [ ] Export to ASS writer (basic).
-- [ ] Use `pysubs2` for ASS styling where helpful.
-- [ ] Unit tests: grouping for different languages & fast/slow speech.
+- [x] Export to ASS writer (basic).
+- [x] Use `pysubs2` for ASS styling where helpful.
+- [x] Unit tests: grouping for different languages & fast/slow speech.
 
 ---
 

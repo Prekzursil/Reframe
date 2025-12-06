@@ -4,6 +4,7 @@ from media_core.transcribe import TranscriptionResult, Word
 from media_core.transcribe.backends.openai_whisper import normalize_verbose_json
 from media_core.transcribe.backends.faster_whisper import normalize_faster_whisper
 from media_core.transcribe.backends.whisper_cpp import normalize_whisper_cpp
+from media_core.transcribe.backends.whisper_timestamped import normalize_whisper_timestamped
 from pydantic import ValidationError
 
 
@@ -90,4 +91,26 @@ def test_normalize_whisper_cpp_fallback_on_segments():
     result = normalize_whisper_cpp(segments, model="ggml-base.en", language="en")
     assert [w.text for w in result.words] == ["hello", "world"]
     assert result.model == "ggml-base.en"
+    assert result.language == "en"
+
+
+def test_normalize_whisper_timestamped():
+    response = {
+        "text": "hello world",
+        "segments": [
+            {
+                "text": "hello world",
+                "start": 0.0,
+                "end": 1.0,
+                "words": [
+                    {"word": "hello", "start": 0.0, "end": 0.4, "probability": 0.9},
+                    {"word": "world", "start": 0.6, "end": 1.0, "probability": 0.8},
+                ],
+            }
+        ],
+    }
+    result = normalize_whisper_timestamped(response, model="whisperx", language="en")
+    assert result.text == "hello world"
+    assert [w.text for w in result.words] == ["hello", "world"]
+    assert result.model == "whisperx"
     assert result.language == "en"
