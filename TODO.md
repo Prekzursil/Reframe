@@ -228,7 +228,7 @@
     - [x] Duration.
     - [x] Score.
     - [x] Download buttons (video + subtitles).
-  - [ ] Ability to delete/ignore clips.
+  - [x] Ability to delete/ignore clips.
 
 ---
 
