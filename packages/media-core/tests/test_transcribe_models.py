@@ -3,6 +3,7 @@ import pytest
 from media_core.transcribe import TranscriptionResult, Word
 from media_core.transcribe.backends.openai_whisper import normalize_verbose_json
 from media_core.transcribe.backends.faster_whisper import normalize_faster_whisper
+from media_core.transcribe.backends.whisper_cpp import normalize_whisper_cpp
 from pydantic import ValidationError
 
 
@@ -64,4 +65,29 @@ def test_normalize_faster_whisper_accepts_segment_like_objects():
     assert result.text == "hello world"
     assert [w.text for w in result.words] == ["hello", "world"]
     assert result.model == "faster-whisper-large-v3"
+    assert result.language == "en"
+
+
+def test_normalize_whisper_cpp_fallback_on_segments():
+    segments = [
+        {
+            "text": "hello",
+            "t_start": 0.0,
+            "t_end": 0.5,
+            "tokens": [
+                {"text": "hello", "t_start": 0.0, "t_end": 0.5},
+            ],
+        },
+        {
+            "text": "world",
+            "t_start": 0.6,
+            "t_end": 1.0,
+            "tokens": [
+                {"text": "world", "t_start": 0.6, "t_end": 1.0},
+            ],
+        },
+    ]
+    result = normalize_whisper_cpp(segments, model="ggml-base.en", language="en")
+    assert [w.text for w in result.words] == ["hello", "world"]
+    assert result.model == "ggml-base.en"
     assert result.language == "en"

@@ -28,7 +28,7 @@
 - [x] Implement `Word` and `TranscriptionResult` models.
 - [x] Backend: `openai_whisper` (simple baseline).
 - [x] Backend: `faster_whisper` (GPU‑friendly).
-- [ ] Backend: `whisper_cpp` integration (via `pywhispercpp` or subprocess).
+- [x] Backend: `whisper_cpp` integration (via `pywhispercpp` or subprocess).
 - [ ] Optional: support `whisper-timestamped` or `whisperX` for more accurate word timings.
 - [x] Normalize outputs to `List[Word]` regardless of backend.
 - [x] Add CLI entrypoint (`python -m media_core.transcribe`) for quick testing.
