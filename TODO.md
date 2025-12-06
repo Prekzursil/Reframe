@@ -174,7 +174,7 @@
 ## 12. Frontend – Captions & Translate
 
 - [x] Page: **Captions & Translate**.
-- [x] Section: Upload video / dropzone.
+- [ ] Section: Upload video / dropzone wired to backend (current uploader generates pseudo asset IDs only).
 - [x] Form controls:
   - [x] Source language (auto / manual).
   - [x] Whisper backend & model selection.
@@ -191,57 +191,57 @@
 
 ## 13. Frontend – TikTok‑Style Subtitles
 
-- [x] Page: **Subtitle Styling**.
-- [x] UI:
-  - [x] Upload video OR select an existing `MediaAsset`.
-  - [x] Select subtitles (existing SRT) OR generate from scratch (reusing captions pipeline).
-  - [x] Style editor:
-    - [x] Font family (dropdown).
-    - [x] Font size slider.
-    - [x] Text color picker.
-    - [x] Highlight color picker.
-    - [x] Stroke width slider.
-    - [x] Outline toggle + width slider + color picker.
-    - [x] Shadow toggle + offset slider.
-    - [x] Position & alignment controls.
-  - [x] “Preview 5 seconds” button to render a short preview.
-- [x] “Render full video” button -> creates a styled subtitle job.
+- [ ] Page: **Subtitle Styling** (UI exists but flow incomplete).
+- [ ] Upload video OR select an existing `MediaAsset` with real asset IDs (current upload uses pseudo IDs).
+- [ ] Select subtitles (existing SRT) OR generate from captions pipeline when absent.
+- [ ] Style editor:
+  - [x] Font family (dropdown).
+  - [x] Font size slider.
+  - [x] Text color picker.
+  - [x] Highlight color picker.
+  - [x] Stroke width slider.
+  - [x] Outline toggle + width slider + color picker.
+  - [x] Shadow toggle + offset slider.
+  - [x] Position & alignment controls.
+  - [ ] “Preview 5 seconds” button to trigger job and surface preview asset.
+- [ ] “Render full video” button -> create styled subtitle job and display/poll result asset.
+- [ ] Show progress/status for styling jobs (polling, errors).
 
 ---
 
 ## 14. Frontend – AI Shorts Maker
 
-- [x] Page: **Shorts Maker**.
-- [x] Input:
-  - [x] Video upload or URL input.
+- [ ] Page: **Shorts Maker** (core UI present; backend integration incomplete).
+- [ ] Input:
+  - [ ] Video upload wired to backend (current uploader generates pseudo IDs).
   - [x] Number of clips desired.
   - [x] Min/max clip duration.
   - [x] Aspect ratio selection.
   - [x] “Use subtitles” toggle with style selector.
   - [x] “Prompt to guide selection” textarea.
-- [x] Submit:
+- [ ] Submit:
   - [x] Create shorts job.
-  - [x] Show a progress view with steps (transcribe → segment → render).
-- [x] Result view:
-  - [x] Grid of generated clips with:
-    - [x] Thumbnail / GIF.
-    - [x] Duration.
-    - [x] Score.
-    - [x] Download buttons (video + subtitles).
+  - [ ] Show a progress view with step-level feedback (beyond static steps list).
+- [ ] Result view:
+  - [ ] Render real clip assets from backend (thumbnail/GIF, duration, score).
+  - [ ] Enable per-clip download buttons (video + subtitles) when backend provides URIs.
   - [x] Ability to delete/ignore clips.
+  - [ ] Handle empty/failed clip outputs gracefully.
 
 ---
 
 ## 15. Frontend – Utilities (SRT & Merge)
 
-- [x] Page: **Subtitle Tools**.
-  - [x] SRT upload → translation options → result download.
+- [ ] Page: **Subtitle Tools**.
+  - [ ] SRT upload wired to backend (current uploader uses pseudo asset IDs).
+  - [x] Translation options form.
+  - [ ] Result download confirmed with real asset.
   - [x] Bilingual SRT option.
-- [x] Page: **Video / Audio Merge**.
-  - [x] Upload/choose video.
-  - [x] Upload/choose audio.
+- [ ] Page: **Video / Audio Merge**.
+  - [ ] Upload/choose video with backend asset creation.
+  - [ ] Upload/choose audio with backend asset creation.
   - [x] Controls: offset, ducking, normalize.
-  - [x] Submit → job → result download.
+  - [x] Submit → job → result download (polling present; relies on real assets).
 
 ---
 
