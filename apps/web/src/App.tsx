@@ -238,7 +238,7 @@ function UploadPanel({
         onChange={(e) => void handleFiles(e.target.files)}
       />
       <p className="metric-value">Upload a video</p>
-      <p className="muted">Drop a file here or click to select. Generates a local asset id for forms.</p>
+      <p className="muted">Drop a file here or click to select. Uploads to the backend and returns an asset id.</p>
       {uploading && <p className="muted">Uploading...</p>}
       {error && <div className="error-inline">{error}</div>}
     </div>
@@ -282,7 +282,7 @@ function AudioUploadPanel({
         onChange={(e) => handleFiles(e.target.files)}
       />
       <p className="metric-value">Upload audio</p>
-      <p className="muted">Drop a file or click to select. Generates a local asset id for forms.</p>
+      <p className="muted">Drop a file or click to select. Uploads to the backend and returns an asset id.</p>
       <Button variant="ghost" type="button" onClick={() => document.getElementById("audio-upload-input")?.click()}>
         Browse audio
       </Button>
@@ -301,13 +301,24 @@ function SubtitleUpload({
   onPreview: (url: string | null, name?: string | null) => void;
   label?: string;
 }) {
-  const handleFiles = (files: FileList | null) => {
-    if (!files || files.length === 0) return;
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0 || uploading) return;
     const file = files[0];
     const objectUrl = URL.createObjectURL(file);
-    const pseudoId = `subtitle-${file.name}-${Date.now()}`;
-    onAssetId(pseudoId);
-    onPreview(objectUrl, file.name);
+    setUploading(true);
+    setError(null);
+    try {
+      const asset = await apiClient.uploadAsset(file, "subtitle");
+      onAssetId(asset.id);
+      onPreview(objectUrl, file.name);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -317,8 +328,10 @@ function SubtitleUpload({
         type="file"
         accept=".srt,.vtt,text/plain"
         style={{ display: "none" }}
-        onChange={(e) => handleFiles(e.target.files)}
+        onChange={(e) => void handleFiles(e.target.files)}
       />
+      {uploading && <span className="muted">Uploading...</span>}
+      {error && <div className="error-inline">{error}</div>}
     </label>
   );
 }
@@ -357,7 +370,7 @@ function SubtitleToolsForm({ onCreated }: { onCreated: (job: Job, bilingual: boo
         <Input value={subtitleId} onChange={(e) => setSubtitleId(e.target.value)} required />
       </label>
       <SubtitleUpload
-        label="Upload SRT/VTT (generates local asset id)"
+        label="Upload SRT/VTT (uploads to backend)"
         onAssetId={(id) => setSubtitleId(id)}
         onPreview={(url, name) => {
           setUploadPreview(url);
@@ -719,6 +732,8 @@ function AppShell() {
   const [subtitleAssetId, setSubtitleAssetId] = useState<string>("");
   const [subtitlePreview, setSubtitlePreview] = useState<string | null>(null);
   const [subtitleFileName, setSubtitleFileName] = useState<string | null>(null);
+  const [captionJob, setCaptionJob] = useState<Job | null>(null);
+  const [captionOutput, setCaptionOutput] = useState<MediaAsset | null>(null);
   const [shortsClips, setShortsClips] = useState<
     { id: string; duration: number; score: number; uri?: string | null; subtitle_uri?: string | null; thumbnail_uri?: string | null }[]
   >([]);
@@ -794,6 +809,23 @@ function AppShell() {
       if (id) clearInterval(id);
     };
   }, [mergeJob]);
+
+  useEffect(() => {
+    const id = pollJob(captionJob, setCaptionJob, setCaptionOutput);
+    return () => {
+      if (id) clearInterval(id);
+    };
+  }, [captionJob]);
+
+  useEffect(() => {
+    if (captionOutput?.id) {
+      setSubtitleAssetId(captionOutput.id);
+      if (captionOutput.uri && captionOutput.mime_type?.includes("text")) {
+        setSubtitlePreview(captionOutput.uri);
+        setSubtitleFileName("captions.srt");
+      }
+    }
+  }, [captionOutput]);
 
   const recentStatuses = useMemo(
     () => ({
@@ -1057,6 +1089,27 @@ function AppShell() {
                   setSubtitleFileName(name || null);
                 }}
               />
+              <div className="actions-row">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={!uploadedVideoId || (captionJob && !["failed", "cancelled", "completed"].includes(captionJob.status))}
+                  onClick={async () => {
+                    setCaptionOutput(null);
+                    setCaptionJob(null);
+                    if (!uploadedVideoId) return;
+                    try {
+                      const job = await apiClient.createCaptionJob({ video_asset_id: uploadedVideoId, options: {} });
+                      setCaptionJob(job);
+                    } catch (err) {
+                      setAssetError(err instanceof Error ? err.message : "Failed to request captions");
+                    }
+                  }}
+                >
+                  {captionJob && ["running", "queued"].includes(captionJob.status) ? "Generating captions..." : "Generate captions from video"}
+                </Button>
+                {captionJob && <JobStatusPill status={captionJob.status} />}
+              </div>
               <UploadPanel onAssetId={(id) => setUploadedVideoId(id)} onPreview={(url) => setUploadedPreview(url)} />
               {uploadedPreview && <video className="preview" controls src={uploadedPreview} />}
               {subtitlePreview && (
