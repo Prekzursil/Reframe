@@ -27,7 +27,7 @@
 - [x] Implement `TranscriptionConfig` (model, language, device, backend).
 - [x] Implement `Word` and `TranscriptionResult` models.
 - [x] Backend: `openai_whisper` (simple baseline).
-- [ ] Backend: `faster_whisper` (GPU‑friendly).
+- [x] Backend: `faster_whisper` (GPU‑friendly).
 - [ ] Backend: `whisper_cpp` integration (via `pywhispercpp` or subprocess).
 - [ ] Optional: support `whisper-timestamped` or `whisperX` for more accurate word timings.
 - [x] Normalize outputs to `List[Word]` regardless of backend.

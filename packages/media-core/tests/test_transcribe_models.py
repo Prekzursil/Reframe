@@ -2,6 +2,7 @@ import pytest
 
 from media_core.transcribe import TranscriptionResult, Word
 from media_core.transcribe.backends.openai_whisper import normalize_verbose_json
+from media_core.transcribe.backends.faster_whisper import normalize_faster_whisper
 from pydantic import ValidationError
 
 
@@ -37,4 +38,30 @@ def test_normalize_verbose_json_maps_words_and_text():
     assert result.text == "hello world"
     assert [w.text for w in result.words] == ["hello", "world"]
     assert result.model == "whisper-1"
+    assert result.language == "en"
+
+
+def test_normalize_faster_whisper_accepts_segment_like_objects():
+    class DummyWord:
+        def __init__(self, word, start, end, probability):
+            self.word = word
+            self.start = start
+            self.end = end
+            self.probability = probability
+
+    class DummySeg:
+        def __init__(self, text, words):
+            self.text = text
+            self.words = words
+
+    segs = [
+        DummySeg(
+            text="hello world",
+            words=[DummyWord("hello", 0.0, 0.5, 0.9), DummyWord("world", 0.5, 1.0, 0.8)],
+        )
+    ]
+    result = normalize_faster_whisper(segs, model="faster-whisper-large-v3", language="en")
+    assert result.text == "hello world"
+    assert [w.text for w in result.words] == ["hello", "world"]
+    assert result.model == "faster-whisper-large-v3"
     assert result.language == "en"
