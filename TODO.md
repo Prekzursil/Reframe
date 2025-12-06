@@ -184,8 +184,8 @@
   - [x] Create caption job via API.
   - [x] Show job in “Recent jobs” panel with status & progress.
 - [ ] When job completes:
-  - [ ] Show download buttons for each generated asset.
-  - [ ] Preview subtitles in a simple video player if possible.
+  - [x] Show download buttons for each generated asset.
+  - [x] Preview subtitles in a simple video player if possible.
 
 ---
 
