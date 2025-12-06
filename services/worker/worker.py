@@ -2,7 +2,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlmodel import Session, create_engine
 
@@ -13,7 +13,7 @@ if str(API_PATH) not in sys.path:
     sys.path.append(str(API_PATH))
 
 from app.config import get_settings
-from app.models import Job, JobStatus
+from app.models import Job, JobStatus, MediaAsset
 from celery import Celery
 
 BROKER_URL = os.getenv("BROKER_URL", "redis://redis:6379/0")
@@ -25,6 +25,7 @@ celery_app.conf.task_default_queue = "default"
 logger = logging.getLogger(__name__)
 
 _engine = None
+_media_tmp: Path | None = None
 
 
 def get_engine():
@@ -33,6 +34,31 @@ def get_engine():
         settings = get_settings()
         _engine = create_engine(settings.database.url, echo=False)
     return _engine
+
+
+def get_media_tmp() -> Path:
+    global _media_tmp
+    if _media_tmp is None:
+        settings = get_settings()
+        root = Path(settings.media_root)
+        tmp = root / "tmp"
+        tmp.mkdir(parents=True, exist_ok=True)
+        _media_tmp = tmp
+    return _media_tmp
+
+
+def create_asset(kind: str, mime_type: str, suffix: str, contents: bytes | str = b"") -> MediaAsset:
+    tmp = get_media_tmp()
+    filename = f"{uuid4()}{suffix}"
+    target = tmp / filename
+    data = contents.encode() if isinstance(contents, str) else contents
+    target.write_bytes(data)
+    asset = MediaAsset(kind=kind, uri=f"/media/tmp/{filename}", mime_type=mime_type)
+    with Session(get_engine()) as session:
+        session.add(asset)
+        session.commit()
+        session.refresh(asset)
+        return asset
 
 
 def update_job(job_id: str, *, status: JobStatus | None = None, progress: float | None = None, error: str | None = None, payload: dict | None = None, output_asset_id: str | None = None) -> None:
@@ -84,8 +110,10 @@ def echo(self, message: str) -> str:
 def transcribe_video(self, job_id: str, video_asset_id: str, config: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id)
-    result = {"video_asset_id": video_asset_id, "status": "transcribed", "config": config or {}}
-    update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result)
+    transcript_text = f"Transcription for asset {video_asset_id}"
+    asset = create_asset(kind="transcription", mime_type="text/plain", suffix=".txt", contents=transcript_text)
+    result = {"video_asset_id": video_asset_id, "status": "transcribed", "config": config or {}, "output_asset_id": str(asset.id)}
+    update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(asset.id))
     _progress(self, "completed", 1.0, video_asset_id=video_asset_id)
     return result
 
@@ -94,8 +122,10 @@ def transcribe_video(self, job_id: str, video_asset_id: str, config: dict | None
 def generate_captions(self, job_id: str, video_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id)
-    result = {"video_asset_id": video_asset_id, "status": "captions_generated", "options": options or {}}
-    update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result)
+    captions = "1\n00:00:00,000 --> 00:00:02,000\nCaption placeholder\n"
+    asset = create_asset(kind="subtitle", mime_type="text/vtt", suffix=".vtt", contents=captions)
+    result = {"video_asset_id": video_asset_id, "status": "captions_generated", "options": options or {}, "output_asset_id": str(asset.id)}
+    update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(asset.id))
     _progress(self, "completed", 1.0, video_asset_id=video_asset_id)
     return result
 
@@ -104,8 +134,10 @@ def generate_captions(self, job_id: str, video_asset_id: str, options: dict | No
 def translate_subtitles(self, job_id: str, subtitle_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, subtitle_asset_id=subtitle_asset_id)
-    result = {"subtitle_asset_id": subtitle_asset_id, "status": "translated", "options": options or {}}
-    update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result)
+    translated = "1\n00:00:00,000 --> 00:00:02,000\nTranslated placeholder\n"
+    asset = create_asset(kind="subtitle", mime_type="text/vtt", suffix=".vtt", contents=translated)
+    result = {"subtitle_asset_id": subtitle_asset_id, "status": "translated", "options": options or {}, "output_asset_id": str(asset.id)}
+    update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(asset.id))
     _progress(self, "completed", 1.0, subtitle_asset_id=subtitle_asset_id)
     return result
 
@@ -114,14 +146,17 @@ def translate_subtitles(self, job_id: str, subtitle_asset_id: str, options: dict
 def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_asset_id: str, style: dict | None = None, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
+    rendered_marker = "styled-render-placeholder"
+    asset = create_asset(kind="video", mime_type="text/plain", suffix=".txt", contents=rendered_marker)
     result = {
         "video_asset_id": video_asset_id,
         "subtitle_asset_id": subtitle_asset_id,
         "style": style or {},
         "options": options or {},
         "status": "styled_render",
+        "output_asset_id": str(asset.id),
     }
-    update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result)
+    update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(asset.id))
     _progress(self, "completed", 1.0, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
     return result
 
@@ -132,19 +167,29 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
     _progress(self, "started", 0.0, video_asset_id=video_asset_id)
     clips = []
     max_clips = int(options.get("max_clips") or 3) if options else 3
+    min_dur = options.get("min_duration") if options else None
     for idx in range(max_clips):
+        clip_asset = create_asset(kind="video", mime_type="text/plain", suffix=".txt", contents=f"clip {idx+1} for {video_asset_id}")
         clips.append(
             {
                 "id": f"{job_id}-clip-{idx+1}",
-                "duration": options.get("min_duration") if options else None,
+                "asset_id": str(clip_asset.id),
+                "duration": min_dur,
                 "score": 0.5 + idx * 0.1,
-                "uri": None,
+                "uri": clip_asset.uri,
                 "subtitle_uri": None,
                 "thumbnail_uri": None,
             }
         )
-    result = {"video_asset_id": video_asset_id, "status": "shorts_generated", "options": options or {}, "clip_assets": clips}
-    update_job(job_id, status=JobStatus.completed, progress=1.0, payload={"clip_assets": clips, **(options or {})})
+    summary_asset = create_asset(kind="video", mime_type="text/plain", suffix=".txt", contents="shorts package placeholder")
+    result = {
+        "video_asset_id": video_asset_id,
+        "status": "shorts_generated",
+        "options": options or {},
+        "clip_assets": clips,
+        "output_asset_id": str(summary_asset.id),
+    }
+    update_job(job_id, status=JobStatus.completed, progress=1.0, payload={"clip_assets": clips, **(options or {})}, output_asset_id=str(summary_asset.id))
     _progress(self, "completed", 1.0, video_asset_id=video_asset_id)
     return result
 
@@ -153,13 +198,15 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
 def merge_video_audio(self, job_id: str, video_asset_id: str, audio_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id, audio_asset_id=audio_asset_id)
+    merged_asset = create_asset(kind="video", mime_type="text/plain", suffix=".txt", contents="merged av placeholder")
     result = {
         "video_asset_id": video_asset_id,
         "audio_asset_id": audio_asset_id,
         "options": options or {},
         "status": "merged",
+        "output_asset_id": str(merged_asset.id),
     }
-    update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result)
+    update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(merged_asset.id))
     _progress(self, "completed", 1.0, video_asset_id=video_asset_id, audio_asset_id=audio_asset_id)
     return result
 

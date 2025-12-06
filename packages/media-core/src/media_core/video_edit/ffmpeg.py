@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -28,13 +29,30 @@ def probe_media(path: str | Path, runner=None) -> dict:
         "-v",
         "error",
         "-show_entries",
-        "format=duration:stream=width,height,codec_name",
+        "format=duration:bit_rate",
+        "-show_entries",
+        "stream=index,codec_name,width,height,codec_type",
         "-of",
-        "default=noprint_wrappers=1",
+        "json",
         str(media_path),
     ]
-    _run(cmd, runner=runner)
-    return {"path": str(media_path)}
+    completed = _run(cmd, runner=runner)
+    info = json.loads(completed.stdout.decode() if completed.stdout else "{}")
+    fmt = info.get("format", {}) or {}
+    streams = info.get("streams", []) or []
+    video_stream = next((s for s in streams if s.get("codec_type") == "video"), {})
+    audio_streams = [s for s in streams if s.get("codec_type") == "audio"]
+    return {
+        "path": str(media_path),
+        "duration": float(fmt.get("duration")) if fmt.get("duration") else None,
+        "bitrate": int(fmt.get("bit_rate")) if fmt.get("bit_rate") else None,
+        "video": {
+            "codec": video_stream.get("codec_name"),
+            "width": video_stream.get("width"),
+            "height": video_stream.get("height"),
+        },
+        "audio_codecs": [a.get("codec_name") for a in audio_streams if a.get("codec_name")],
+    }
 
 
 def extract_audio(video_path: str | Path, audio_path: str | Path, runner=None) -> None:
@@ -66,6 +84,14 @@ def reframe(video_path: str | Path, output_path: str | Path, aspect_ratio: str, 
     ffmpeg = _ensure_binary("ffmpeg")
     if strategy == "crop":
         filter_chain = f"scale=-1:ih, crop=iw:iw/{aspect_ratio.replace(':', '/')}"
+    elif strategy == "blur_bg":
+        ratio = aspect_ratio.replace(":", "/")
+        filter_chain = (
+            f"split=2[main][bg];"
+            f"[bg]scale=-1:ih,boxblur=20:1[bgblur];"
+            f"[main]scale='if(gt(a,{ratio}),iw/{ratio},{ratio}*ih)':'if(gt(a,{ratio}),ih,iw/{ratio})':force_original_aspect_ratio=decrease[fg];"
+            f"[bgblur][fg]overlay=(W-w)/2:(H-h)/2"
+        )
     else:
         filter_chain = (
             f"scale=-1:ih, pad=ceil(iw*{aspect_ratio.replace(':', '/')}/2)*2:"
