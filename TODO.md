@@ -240,14 +240,12 @@
   - [x] “Prompt to guide selection” textarea.
 - [ ] Submit:
   - [x] Create shorts job.
-- [ ] Show a progress view with step-level feedback (beyond static steps list).
 - [x] Show a progress view with dynamic step feedback (progress bar).
 - [ ] Result view:
   - [ ] Render real clip assets from backend (thumbnail/GIF, duration, score).
-  - [ ] Enable per-clip download buttons (video + subtitles) when backend provides URIs.
+  - [x] Enable per-clip download buttons (video + subtitles) when backend provides URIs; disable when absent.
   - [x] Ability to delete/ignore clips.
-  - [ ] Handle empty/failed clip outputs gracefully.
-- [ ] Show a progress view with dynamic step feedback (beyond static list).
+  - [x] Handle empty/failed clip outputs gracefully.
 
 ---
 
