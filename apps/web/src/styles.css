@@ -295,6 +295,25 @@ h2, h3 { margin: 0; }
   justify-content: flex-end;
 }
 
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.checkbox-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+
 .spinner {
   display: inline-flex;
   align-items: center;

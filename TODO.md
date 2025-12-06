@@ -173,16 +173,16 @@
 
 ## 12. Frontend – Captions & Translate
 
-- [ ] Page: **Captions & Translate**.
+- [x] Page: **Captions & Translate**.
 - [ ] Section: Upload video / dropzone.
-- [ ] Form controls:
-  - [ ] Source language (auto / manual).
-  - [ ] Whisper backend & model selection.
-  - [ ] Output formats (SRT/VTT/ASS).
-  - [ ] Target language(s) for translation (optional).
-- [ ] On submit:
-  - [ ] Create caption job via API.
-  - [ ] Show job in “Recent jobs” panel with status & progress.
+- [x] Form controls:
+  - [x] Source language (auto / manual).
+  - [x] Whisper backend & model selection.
+  - [x] Output formats (SRT/VTT/ASS).
+  - [x] Target language(s) for translation (optional).
+- [x] On submit:
+  - [x] Create caption job via API.
+  - [x] Show job in “Recent jobs” panel with status & progress.
 - [ ] When job completes:
   - [ ] Show download buttons for each generated asset.
   - [ ] Preview subtitles in a simple video player if possible.

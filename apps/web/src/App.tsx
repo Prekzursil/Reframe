@@ -20,31 +20,31 @@ const PRESETS = [
   { name: "Night Runner", accent: "var(--accent-blue)", desc: "Dark base with electric cyan highlight" },
 ];
 
+const OUTPUT_FORMATS = ["srt", "vtt", "ass"];
+const BACKENDS = ["whisper", "faster_whisper", "whisper_cpp"];
+
 function useLiveJobs() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      const data = await apiClient.listJobs();
+      setJobs(data.slice(0, 5));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load jobs");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      setLoading(true);
-      try {
-        const data = await apiClient.listJobs();
-        if (!cancelled) setJobs(data.slice(0, 5));
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load jobs");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    load();
-    return () => {
-      cancelled = true;
-    };
+    void refresh();
   }, []);
 
-  return { jobs, loading, error };
+  return { jobs, loading, error, refresh };
 }
 
 function JobStatusPill({ status }: { status: JobStatus }) {
@@ -58,11 +58,135 @@ function JobStatusPill({ status }: { status: JobStatus }) {
   return <Chip tone={toneMap[status]}>{status}</Chip>;
 }
 
+function CaptionsForm({ onCreated }: { onCreated: (job: Job) => void }) {
+  const [videoId, setVideoId] = useState("");
+  const [sourceLang, setSourceLang] = useState("auto");
+  const [backend, setBackend] = useState(BACKENDS[0]);
+  const [model, setModel] = useState("whisper-large-v3");
+  const [formats, setFormats] = useState<string[]>(["srt"]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const toggleFormat = (fmt: string) => {
+    setFormats((prev) => (prev.includes(fmt) ? prev.filter((f) => f !== fmt) : [...prev, fmt]));
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const job = await apiClient.createCaptionJob({
+        video_asset_id: videoId.trim(),
+        options: { source_language: sourceLang || "auto", backend, model, formats },
+      });
+      onCreated(job);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create caption job");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form className="form-grid" onSubmit={submit}>
+      <label className="field">
+        <span>Video asset ID</span>
+        <Input value={videoId} onChange={(e) => setVideoId(e.target.value)} required />
+      </label>
+      <label className="field">
+        <span>Source language</span>
+        <Input value={sourceLang} onChange={(e) => setSourceLang(e.target.value)} placeholder="auto" />
+      </label>
+      <label className="field">
+        <span>Backend</span>
+        <select className="input" value={backend} onChange={(e) => setBackend(e.target.value)}>
+          {BACKENDS.map((b) => (
+            <option key={b} value={b}>
+              {b}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>Model</span>
+        <Input value={model} onChange={(e) => setModel(e.target.value)} />
+      </label>
+      <div className="field checkbox-group">
+        <span>Output formats</span>
+        <div className="checkbox-row">
+          {OUTPUT_FORMATS.map((fmt) => (
+            <label key={fmt} className="checkbox">
+              <input type="checkbox" checked={formats.includes(fmt)} onChange={() => toggleFormat(fmt)} />
+              <span>{fmt.toUpperCase()}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+      {error && <div className="error-inline">{error}</div>}
+      <div className="actions-row">
+        <Button type="submit" disabled={busy}>
+          {busy ? "Submitting..." : "Create caption job"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function TranslateForm({ onCreated }: { onCreated: (job: Job) => void }) {
+  const [subtitleId, setSubtitleId] = useState("");
+  const [targetLang, setTargetLang] = useState("es");
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const job = await apiClient.createTranslateJob({
+        subtitle_asset_id: subtitleId.trim(),
+        target_language: targetLang.trim(),
+        options: notes ? { notes } : {},
+      });
+      onCreated(job);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create translation job");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form className="form-grid" onSubmit={submit}>
+      <label className="field">
+        <span>Subtitle asset ID</span>
+        <Input value={subtitleId} onChange={(e) => setSubtitleId(e.target.value)} required />
+      </label>
+      <label className="field">
+        <span>Target language</span>
+        <Input value={targetLang} onChange={(e) => setTargetLang(e.target.value)} required />
+      </label>
+      <label className="field">
+        <span>Notes / instructions</span>
+        <TextArea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </label>
+      {error && <div className="error-inline">{error}</div>}
+      <div className="actions-row">
+        <Button type="submit" disabled={busy} variant="secondary">
+          {busy ? "Submitting..." : "Request translation"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 function AppShell() {
-  const [active, setActive] = useState(NAV_ITEMS[0].id);
+  const [active, setActive] = useState(NAV_ITEMS[1].id);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [showSettings, setShowSettings] = useState(false);
-  const { jobs, loading, error } = useLiveJobs();
+  const { jobs, loading, error, refresh } = useLiveJobs();
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -173,30 +297,45 @@ function AppShell() {
           </Card>
         </section>
 
-        <section className="grid two-col">
-          <Card title="Preset styles">
-            <ul className="preset-list">
-              {PRESETS.map((preset) => (
-                <li key={preset.name}>
-                  <span className="preset-accent" style={{ background: preset.accent }} />
-                  <div>
-                    <p className="metric-value">{preset.name}</p>
-                    <p className="muted">{preset.desc}</p>
-                  </div>
-                  <Button variant="ghost">Preview</Button>
-                </li>
-              ))}
-            </ul>
-          </Card>
+        {active === "captions" && (
+          <section className="grid two-col">
+            <Card title="Captions & Translate">
+              <p className="muted">Create caption jobs with backend/model and format options.</p>
+              <CaptionsForm onCreated={() => refresh()} />
+            </Card>
+            <Card title="Translate subtitles">
+              <p className="muted">Submit translation jobs for existing subtitle assets.</p>
+              <TranslateForm onCreated={() => refresh()} />
+            </Card>
+          </section>
+        )}
 
-          <Card title="Notes / prompts">
-            <TextArea rows={6} placeholder="Describe what to prioritize when generating shorts..." />
-            <div className="actions-row">
-              <Button variant="secondary">Save draft</Button>
-              <Button variant="primary">Share with team</Button>
-            </div>
-          </Card>
-        </section>
+        {active !== "captions" && (
+          <section className="grid two-col">
+            <Card title="Preset styles">
+              <ul className="preset-list">
+                {PRESETS.map((preset) => (
+                  <li key={preset.name}>
+                    <span className="preset-accent" style={{ background: preset.accent }} />
+                    <div>
+                      <p className="metric-value">{preset.name}</p>
+                      <p className="muted">{preset.desc}</p>
+                    </div>
+                    <Button variant="ghost">Preview</Button>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+
+            <Card title="Notes / prompts">
+              <TextArea rows={6} placeholder="Describe what to prioritize when generating shorts..." />
+              <div className="actions-row">
+                <Button variant="secondary">Save draft</Button>
+                <Button variant="primary">Share with team</Button>
+              </div>
+            </Card>
+          </section>
+        )}
       </main>
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
