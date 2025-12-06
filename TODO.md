@@ -16,7 +16,7 @@
   - [x] API: `DATABASE_URL`, `MEDIA_ROOT`, `BROKER_URL`, `RESULT_BACKEND`, `OPENAI_API_KEY`, `GROQ_API_KEY`, `TRANSLATOR_*`.
   - [x] Web: `VITE_API_BASE_URL`.
 - [x] Add basic `Makefile` or task runner (`justfile`) for common commands.
-- [ ] Add pre‑commit config (ruff/black/isort, eslint/prettier).
+- [x] Add pre‑commit config (ruff/black/isort, eslint/prettier).
 - [x] Add GitHub Actions CI for API/worker checks and web build.
 
 ---

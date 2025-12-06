@@ -1,0 +1,54 @@
+minimum_pre_commit_version: '3.0.0'
+
+default_language_version:
+  python: python3
+
+exclude: |-
+  (^Inspirations & Former Attempts/|
+   ^node_modules/|
+   ^apps/web/node_modules/)
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.4
+    hooks:
+      - id: ruff
+        name: ruff (lint)
+        args: ["--fix"]
+        files: "^(apps|services|packages)/.*\\.py$"
+      - id: ruff-format
+        name: ruff (format)
+        files: "^(apps|services|packages)/.*\\.py$"
+
+  - repo: https://github.com/psf/black
+    rev: 24.8.0
+    hooks:
+      - id: black
+        files: "^(apps|services|packages)/.*\\.py$"
+
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        files: "^(apps|services|packages)/.*\\.py$"
+
+  - repo: https://github.com/pre-commit/mirrors-eslint
+    rev: v9.12.0
+    hooks:
+      - id: eslint
+        name: eslint (web)
+        files: "^apps/web/src/.*\\.(ts|tsx|js|jsx)$"
+        args: ["--config", "apps/web/.eslintrc.cjs"]
+        additional_dependencies:
+          - eslint@9.12.0
+          - "@typescript-eslint/parser@7.18.0"
+          - "@typescript-eslint/eslint-plugin@7.18.0"
+          - eslint-plugin-react@7.34.3
+          - eslint-plugin-react-hooks@4.6.2
+
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.3.3
+    hooks:
+      - id: prettier
+        name: prettier (web)
+        files: "^apps/web/.*\\.(ts|tsx|js|jsx|css|json|md)$"
