@@ -30,6 +30,7 @@ class JobStatus(str, Enum):
 class Job(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     job_type: str = Field(description="Pipeline type, e.g., transcribe, translate, shorts")
+    task_id: Optional[str] = Field(default=None, index=True, description="Celery task id for execution tracking")
     status: JobStatus = Field(default=JobStatus.queued, index=True)
     progress: float = Field(default=0.0, description="0-1.0 progress fraction")
     error: Optional[str] = Field(default=None, description="Error message if failed")

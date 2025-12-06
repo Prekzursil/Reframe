@@ -158,7 +158,7 @@
 - [x] Return rate limit errors via `ApiError` payloads.
 - [x] Add `/utilities/translate-subtitle` endpoint for subtitle tools.
 - [x] Store uploads under `/media/tmp` to align with cleanup loop.
-- [ ] Wire job creation to Celery tasks and persist status/progress updates.
+ - [x] Wire job creation to Celery tasks and persist status/progress updates.
 
 ---
 
@@ -174,7 +174,7 @@
 - [x] Add simple settings modal (default model, language, output paths, etc.).
 - [x] Align shorts job payload with API and fix upload input collisions.
 - [x] Point subtitle tools to real `/utilities/translate-subtitle` endpoint.
-- [ ] Replace shorts mock clip placeholders with backend-driven results.
+- [x] Replace shorts mock clip placeholders with backend-driven results.
 
 ---
 

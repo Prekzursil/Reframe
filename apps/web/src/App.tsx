@@ -491,7 +491,7 @@ function MergeAvForm({ onCreated, initialVideoId, initialAudioId }: { onCreated:
   );
 }
 
-function ShortsForm({ onCreated }: { onCreated: (job: Job, clips: any[]) => void }) {
+function ShortsForm({ onCreated }: { onCreated: (job: Job) => void }) {
   const [videoId, setVideoId] = useState("");
   const [numClips, setNumClips] = useState(3);
   const [minDuration, setMinDuration] = useState(10);
@@ -520,12 +520,7 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job, clips: any[]) => void
           prompt: prompt || undefined,
         },
       });
-      const mockClips = Array.from({ length: numClips }, (_, i) => ({
-        id: `${job.id}-clip-${i + 1}`,
-        duration: Math.round(minDuration + (maxDuration - minDuration) * 0.5),
-        score: Math.round(Math.random() * 100) / 10,
-      }));
-      onCreated(job, mockClips);
+      onCreated(job);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create shorts job");
     } finally {
@@ -1005,9 +1000,9 @@ function AppShell() {
             </Card>
             <Card title="Shorts maker">
               <ShortsForm
-                onCreated={(job, clips) => {
+                onCreated={(job) => {
                   setShortsJob(job);
-                  setShortsClips(clips);
+                  setShortsClips([]);
                   setShortsOutput(null);
                   refresh();
                 }}
