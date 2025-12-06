@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
@@ -22,6 +23,8 @@ def create_app() -> FastAPI:
     ]
 
     app = FastAPI(title=settings.api_title, version=settings.api_version, openapi_tags=tags_metadata)
+
+    app.mount("/media", StaticFiles(directory=settings.media_root), name="media")
 
     @app.on_event("startup")
     def startup() -> None:

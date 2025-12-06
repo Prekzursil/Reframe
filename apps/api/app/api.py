@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated, List, Optional
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
 from sqlmodel import Session, SQLModel, select
 
 from app.database import get_session
+from app.config import get_settings
 from app.errors import ErrorResponse, conflict, not_found
 from app.models import Job, JobStatus, MediaAsset, SubtitleStylePreset
 from app.rate_limit import enforce_rate_limit
@@ -232,6 +236,35 @@ def create_merge_job(payload: MergeAVRequest, session: SessionDep) -> Job:
     session.commit()
     session.refresh(job)
     return job
+
+
+@router.post(
+    "/assets/upload",
+    response_model=MediaAsset,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Assets"],
+    dependencies=[Depends(enforce_rate_limit)],
+)
+async def upload_asset(
+    file: UploadFile = File(...),
+    kind: str = Form("video"),
+    session: SessionDep = Depends(get_session),
+) -> MediaAsset:
+    settings = get_settings()
+    media_root = Path(settings.media_root)
+    media_root.mkdir(parents=True, exist_ok=True)
+
+    suffix = Path(file.filename or "").suffix
+    filename = f"{uuid4()}{suffix}"
+    target_path = media_root / filename
+    data = await file.read()
+    target_path.write_bytes(data)
+
+    asset = MediaAsset(kind=kind, uri=f\"/media/{filename}\", mime_type=file.content_type)
+    session.add(asset)
+    session.commit()
+    session.refresh(asset)
+    return asset
 
 
 @router.get(

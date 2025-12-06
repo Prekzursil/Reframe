@@ -191,9 +191,9 @@
 
 ## 13. Frontend – TikTok‑Style Subtitles
 
-- [ ] Page: **Subtitle Styling** (UI exists but flow incomplete).
-- [ ] Upload video OR select an existing `MediaAsset` with real asset IDs (current upload uses pseudo IDs).
-- [ ] Select subtitles (existing SRT) OR generate from captions pipeline when absent.
+- [ ] Page: **Subtitle Styling** (UI exists; flow still incomplete).
+- [ ] Upload video OR select an existing `MediaAsset` using real asset IDs (uploads now backend-wired).
+- [ ] Select subtitles (existing SRT) OR generate from captions pipeline when absent (caption job trigger present; still needs reliable output/polling).
 - [ ] Style editor:
   - [x] Font family (dropdown).
   - [x] Font size slider.
@@ -213,7 +213,7 @@
 
 - [ ] Page: **Shorts Maker** (core UI present; backend integration incomplete).
 - [ ] Input:
-  - [ ] Video upload wired to backend (current uploader generates pseudo IDs).
+  - [x] Video upload or URL input (uploads now backend-wired).
   - [x] Number of clips desired.
   - [x] Min/max clip duration.
   - [x] Aspect ratio selection.
@@ -233,15 +233,14 @@
 ## 15. Frontend – Utilities (SRT & Merge)
 
 - [ ] Page: **Subtitle Tools**.
-  - [ ] SRT upload wired to backend (current uploader uses pseudo asset IDs).
-  - [x] Translation options form.
-  - [ ] Result download confirmed with real asset.
+  - [x] SRT upload → translation options (backend upload wired).
   - [x] Bilingual SRT option.
+  - [ ] Result download confirmed with real asset (depends on backend job output wiring).
 - [ ] Page: **Video / Audio Merge**.
-  - [ ] Upload/choose video with backend asset creation.
-  - [ ] Upload/choose audio with backend asset creation.
+  - [x] Upload/choose video (backend upload wired).
+  - [x] Upload/choose audio (backend upload wired).
   - [x] Controls: offset, ducking, normalize.
-  - [x] Submit → job → result download (polling present; relies on real assets).
+  - [x] Submit → job → result download (polling present; relies on real assets being produced).
 
 ---
 
