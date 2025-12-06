@@ -1,12 +1,15 @@
 from fastapi import FastAPI
 
+from app.config import get_settings
+
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Reframe API", version="0.1.0")
+    settings = get_settings()
+    app = FastAPI(title=settings.api_title, version=settings.api_version)
 
     @app.get("/health", tags=["health"])
     def health() -> dict[str, str]:
-        return {"status": "ok"}
+        return {"status": "ok", "version": settings.api_version}
 
     return app
 
