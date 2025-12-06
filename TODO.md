@@ -138,7 +138,7 @@
 
 ## 9. API – Core
 
-- [ ] Implement settings management using `pydantic-settings`.
+- [x] Implement settings management using `pydantic-settings`.
 - [ ] Add DB models (SQLModel or SQLAlchemy) for:
   - [ ] `Job`,
   - [ ] `MediaAsset`,
