@@ -160,14 +160,14 @@
 
 ## 11. Frontend – Shell & Shared
 
-- [ ] Scaffold layout:
-  - [ ] Sidebar or top nav with sections: Shorts, Captions, Subtitles, Utilities, Jobs.
-  - [ ] Shared header/footer.
-- [ ] Add base UI kit (buttons, inputs, selects, modals, toasts).
-- [ ] Add global loading spinner and error boundary.
-- [ ] Implement typed API client (axios/fetch with TS types).
-- [ ] Configure theme (dark/light) with CSS variables or Tailwind.
-- [ ] Add simple settings modal (default model, language, output paths, etc.).
+- [x] Scaffold layout:
+  - [x] Sidebar or top nav with sections: Shorts, Captions, Subtitles, Utilities, Jobs.
+  - [x] Shared header/footer.
+- [x] Add base UI kit (buttons, inputs, selects, modals, toasts).
+- [x] Add global loading spinner and error boundary.
+- [x] Implement typed API client (axios/fetch with TS types).
+- [x] Configure theme (dark/light) with CSS variables or Tailwind.
+- [x] Add simple settings modal (default model, language, output paths, etc.).
 
 ---
 
