@@ -371,7 +371,6 @@ h2, h3 { margin: 0; }
   background: linear-gradient(135deg, var(--accent-blue), var(--accent-coral));
   opacity: 0.5;
 }
-
 .output-card {
   border: 1px solid var(--border);
   border-radius: 12px;

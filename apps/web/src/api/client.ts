@@ -90,7 +90,7 @@ export class ApiClient {
   }
 
   createStyledSubtitleJob(payload: StyledSubtitleJobRequest) {
-    // Placeholder endpoint; adjust to backend path once available.
+    // Placeholder until API endpoint exists; align with expected schema.
     return this.request<Job>("/subtitles/style", { method: "POST", body: JSON.stringify(payload) });
   }
 
