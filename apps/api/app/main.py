@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from app.config import get_settings
 from app.database import create_db_and_tables
+from app.api import router as api_router
 
 
 def create_app() -> FastAPI:
@@ -11,6 +12,8 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     def startup() -> None:
         create_db_and_tables()
+
+    app.include_router(api_router)
 
     @app.get("/health", tags=["health"])
     def health() -> dict[str, str]:

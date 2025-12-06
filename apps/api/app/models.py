@@ -24,6 +24,7 @@ class Job(SQLModel, table=True):
     status: str = Field(default="pending", index=True)
     progress: float = Field(default=0.0, description="0-1.0 progress fraction")
     error: Optional[str] = Field(default=None, description="Error message if failed")
+    payload: dict = Field(default_factory=dict, sa_column=Column(JSON), description="Options or parameters for the job")
 
     input_asset_id: Optional[UUID] = Field(default=None, foreign_key="mediaasset.id")
     output_asset_id: Optional[UUID] = Field(default=None, foreign_key="mediaasset.id")

@@ -136,8 +136,8 @@
   - [x] `MediaAsset`,
   - [x] (Optional) `SubtitleStylePreset`.
 - [x] Add migration tooling (Alembic) if using SQLAlchemy.
-- [ ] Endpoint: `POST /api/v1/captions/jobs`.
-- [ ] Endpoint: `POST /api/v1/subtitles/translate`.
+- [x] Endpoint: `POST /api/v1/captions/jobs`.
+- [x] Endpoint: `POST /api/v1/subtitles/translate`.
 - [ ] Endpoint: `POST /api/v1/shorts/jobs`.
 - [ ] Endpoint: `POST /api/v1/utilities/merge-av`.
 - [ ] Endpoint: `GET /api/v1/jobs/{job_id}`.
