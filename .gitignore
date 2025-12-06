@@ -1,1 +1,24 @@
 .env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+
+# Node / frontend
+node_modules/
+dist/
+*.tsbuildinfo
+
+# IDE / tooling
+.DS_Store
+.vscode/
+.idea/
+
+# Logs & coverage
+*.log
+coverage/
+.coverage

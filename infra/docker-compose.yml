@@ -1,0 +1,49 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile.api
+    env_file:
+      - ../.env
+    environment:
+      BROKER_URL: ${BROKER_URL:-redis://redis:6379/0}
+      RESULT_BACKEND: ${RESULT_BACKEND:-redis://redis:6379/0}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile.worker
+    env_file:
+      - ../.env
+    environment:
+      BROKER_URL: ${BROKER_URL:-redis://redis:6379/0}
+      RESULT_BACKEND: ${RESULT_BACKEND:-redis://redis:6379/0}
+    depends_on:
+      - redis
+
+  web:
+    build:
+      context: ..
+      dockerfile: Dockerfile.web
+    env_file:
+      - ../.env
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data: {}

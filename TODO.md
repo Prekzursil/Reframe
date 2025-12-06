@@ -7,16 +7,17 @@
 - [x] Create monorepo layout: `apps/`, `services/`, `packages/`, `infra/`.
 - [x] Add `pyproject.toml` for `packages/media-core` (Poetry or plain pip).
 - [x] Add `apps/api/` with FastAPI skeleton + `main.py`.
-- [ ] Add `apps/web/` with React + Vite + TypeScript.
-- [ ] Add `services/worker/` with Celery app.
-- [ ] Add `infra/docker-compose.yml` for API, worker, Redis, web.
-- [ ] Add Dockerfiles: `Dockerfile.api`, `Dockerfile.worker`, `Dockerfile.web`.
-- [ ] Add root `.gitignore` for Python, Node, env, media, build artifacts.
+- [x] Add `apps/web/` with React + Vite + TypeScript.
+- [x] Add `services/worker/` with Celery app.
+- [x] Add `infra/docker-compose.yml` for API, worker, Redis, web.
+- [x] Add Dockerfiles: `Dockerfile.api`, `Dockerfile.worker`, `Dockerfile.web`.
+- [x] Add root `.gitignore` for Python, Node, env, media, build artifacts.
 - [ ] Add `.env.example`:
   - [ ] API: `DATABASE_URL`, `MEDIA_ROOT`, `BROKER_URL`, `RESULT_BACKEND`, `OPENAI_API_KEY`, `GROQ_API_KEY`, `TRANSLATOR_*`.
   - [ ] Web: `VITE_API_BASE_URL`.
 - [ ] Add basic `Makefile` or task runner (`justfile`) for common commands.
 - [ ] Add pre‑commit config (ruff/black/isort, eslint/prettier).
+- [ ] Add GitHub Actions CI for API/worker checks and web build.
 
 ---
 
