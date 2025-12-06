@@ -262,7 +262,6 @@ function SubtitleUpload({
     </label>
   );
 }
-
 function SubtitleToolsForm({ onCreated }: { onCreated: (job: Job, bilingual: boolean) => void }) {
   const [subtitleId, setSubtitleId] = useState("");
   const [targetLang, setTargetLang] = useState("es");
