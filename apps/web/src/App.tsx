@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import { apiClient, type Job, type JobStatus, type MediaAsset } from "./api/client";
 import { Button, Card, Chip, Input, TextArea } from "./components/ui";
@@ -200,6 +200,7 @@ function UploadPanel({
 }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0 || uploading) return;
@@ -228,13 +229,13 @@ function UploadPanel({
       className="dropzone"
       onDragOver={(e) => e.preventDefault()}
       onDrop={onDrop}
-      onClick={() => document.getElementById("video-upload-input")?.click()}
+      onClick={() => inputRef.current?.click()}
     >
       <input
-        id="video-upload-input"
         type="file"
         accept="video/*"
         style={{ display: "none" }}
+        ref={inputRef}
         onChange={(e) => void handleFiles(e.target.files)}
       />
       <p className="metric-value">Upload a video</p>
@@ -254,6 +255,7 @@ function AudioUploadPanel({
 }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0 || uploading) return;
@@ -273,17 +275,17 @@ function AudioUploadPanel({
   };
 
   return (
-    <div className="dropzone" onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleFiles(e.dataTransfer.files)}>
+    <div className="dropzone" onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleFiles(e.dataTransfer.files)} onClick={() => inputRef.current?.click()}>
       <input
-        id="audio-upload-input"
         type="file"
         accept="audio/*"
         style={{ display: "none" }}
+        ref={inputRef}
         onChange={(e) => handleFiles(e.target.files)}
       />
       <p className="metric-value">Upload audio</p>
       <p className="muted">Drop a file or click to select. Uploads to the backend and returns an asset id.</p>
-      <Button variant="ghost" type="button" onClick={() => document.getElementById("audio-upload-input")?.click()}>
+      <Button variant="ghost" type="button">
         Browse audio
       </Button>
       {uploading && <p className="muted">Uploading...</p>}
@@ -508,11 +510,11 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job, clips: any[]) => void
     try {
       const job = await apiClient.createShortsJob({
         video_asset_id: videoId.trim(),
+        max_clips: numClips,
+        min_duration: minDuration,
+        max_duration: maxDuration,
+        aspect_ratio: aspect,
         options: {
-          num_clips: numClips,
-          min_duration: minDuration,
-          max_duration: maxDuration,
-          aspect_ratio: aspect,
           use_subtitles: useSubtitles,
           style_preset: stylePreset,
           prompt: prompt || undefined,

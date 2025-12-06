@@ -39,3 +39,7 @@ def conflict(message: str = "Conflict", details: Optional[Any] = None) -> ApiErr
 
 def server_error(message: str = "Server error", details: Optional[Any] = None) -> ApiError:
     return ApiError(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, code=ErrorCode.SERVER_ERROR, message=message, details=details)
+
+
+def rate_limited(message: str = "Rate limit exceeded", details: Optional[Any] = None) -> ApiError:
+    return ApiError(status_code=status.HTTP_429_TOO_MANY_REQUESTS, code=ErrorCode.RATE_LIMITED, message=message, details=details)

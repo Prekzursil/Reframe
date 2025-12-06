@@ -52,6 +52,24 @@ class TranslateJobRequest(SQLModel):
     }
 
 
+class TranslateSubtitleToolRequest(SQLModel):
+    subtitle_asset_id: UUID
+    target_language: str
+    bilingual: bool = False
+    options: Optional[dict] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "subtitle_asset_id": "00000000-0000-0000-0000-000000000002",
+                "target_language": "es",
+                "bilingual": True,
+                "options": {"preserve_timing": True},
+            }
+        }
+    }
+
+
 class ShortsJobRequest(SQLModel):
     video_asset_id: UUID
     max_clips: int = 3
@@ -282,6 +300,31 @@ def create_merge_job(payload: MergeAVRequest, session: SessionDep) -> Job:
 
 
 @router.post(
+    "/utilities/translate-subtitle",
+    response_model=Job,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Utilities"],
+    dependencies=[Depends(enforce_rate_limit)],
+)
+def translate_subtitle_tool(payload: TranslateSubtitleToolRequest, session: SessionDep) -> Job:
+    job = Job(
+        job_type="translate_subtitles",
+        status=JobStatus.queued,
+        progress=0.0,
+        input_asset_id=payload.subtitle_asset_id,
+        payload={
+            "target_language": payload.target_language,
+            "bilingual": payload.bilingual,
+            **(payload.options or {}),
+        },
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    return job
+
+
+@router.post(
     "/assets/upload",
     response_model=MediaAsset,
     status_code=status.HTTP_201_CREATED,
@@ -299,11 +342,13 @@ async def upload_asset(
 
     suffix = Path(file.filename or "").suffix
     filename = f"{uuid4()}{suffix}"
-    target_path = media_root / filename
+    target_dir = media_root / "tmp"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / filename
     data = await file.read()
     target_path.write_bytes(data)
 
-    asset = MediaAsset(kind=kind, uri=f"/media/{filename}", mime_type=file.content_type)
+    asset = MediaAsset(kind=kind, uri=f"/media/tmp/{filename}", mime_type=file.content_type)
     session.add(asset)
     session.commit()
     session.refresh(asset)

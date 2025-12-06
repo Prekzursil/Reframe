@@ -155,6 +155,10 @@
 - [x] Add background cleanup for orphaned temp files.
 - [x] Add endpoint to cancel a running job (best effort).
 - [x] Add rate limiting for heavy endpoints (optional, later).
+- [x] Return rate limit errors via `ApiError` payloads.
+- [x] Add `/utilities/translate-subtitle` endpoint for subtitle tools.
+- [x] Store uploads under `/media/tmp` to align with cleanup loop.
+- [ ] Wire job creation to Celery tasks and persist status/progress updates.
 
 ---
 
@@ -168,6 +172,9 @@
 - [x] Implement typed API client (axios/fetch with TS types).
 - [x] Configure theme (dark/light) with CSS variables or Tailwind.
 - [x] Add simple settings modal (default model, language, output paths, etc.).
+- [x] Align shorts job payload with API and fix upload input collisions.
+- [x] Point subtitle tools to real `/utilities/translate-subtitle` endpoint.
+- [ ] Replace shorts mock clip placeholders with backend-driven results.
 
 ---
 
