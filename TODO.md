@@ -203,9 +203,9 @@
   - [x] Outline toggle + width slider + color picker.
   - [x] Shadow toggle + offset slider.
   - [x] Position & alignment controls.
-  - [ ] “Preview 5 seconds” button to trigger job and surface preview asset.
-- [ ] “Render full video” button -> create styled subtitle job and display/poll result asset.
-- [ ] Show progress/status for styling jobs (polling, errors).
+  - [x] “Preview 5 seconds” button to trigger job and surface preview asset (depends on backend producing preview).
+- [x] “Render full video” button -> create styled subtitle job and display/poll result asset (depends on backend producing asset).
+- [x] Show progress/status for styling jobs (polling, errors).
 
 ---
 
