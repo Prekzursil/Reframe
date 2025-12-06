@@ -38,15 +38,15 @@
 
 ## 3. Media Core – Subtitle Building
 
-- [ ] Create `packages/media-core/subtitles/builder.py`.
-- [ ] Implement `SubtitleLine` model (with `words: list[Word]`).
-- [ ] Implement grouping logic:
-  - [ ] `max_chars_per_line`,
-  - [ ] `max_words_per_line`,
-  - [ ] `max_duration`,
-  - [ ] `max_gap`.
-- [ ] Export to SRT writer.
-- [ ] Export to VTT writer.
+- [x] Create `packages/media-core/subtitles/builder.py`.
+- [x] Implement `SubtitleLine` model (with `words: list[Word]`).
+- [x] Implement grouping logic:
+  - [x] `max_chars_per_line`,
+  - [x] `max_words_per_line`,
+  - [x] `max_duration`,
+  - [x] `max_gap`.
+- [x] Export to SRT writer.
+- [x] Export to VTT writer.
 - [ ] Export to ASS writer (basic).
 - [ ] Use `pysubs2` for ASS styling where helpful.
 - [ ] Unit tests: grouping for different languages & fast/slow speech.
