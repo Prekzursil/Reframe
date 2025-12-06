@@ -1,0 +1,6 @@
+ffmpeg-python==0.2.0
+openai-whisper>=20231117
+moviepy==1.0.3
+imageio>=2.25.1
+imageio-ffmpeg>=0.4.8
+Pillow>=10.0.0

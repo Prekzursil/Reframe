@@ -1,0 +1,28 @@
+version: "3.8"
+services:
+  web:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./storage:/storage
+    env_file:
+      - .env
+    depends_on:
+      - redis
+
+  worker:
+    build: ./backend
+    command: celery -A app.tasks worker --loglevel=info
+    volumes:
+      - ./backend:/app
+      - ./storage:/storage
+    env_file:
+      - .env
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:6-alpine

@@ -1,0 +1,13 @@
+# Whisper-WebUI dependencies
+-r ../requirements.txt
+
+# Backend dependencies
+python-dotenv
+uvicorn
+SQLAlchemy
+sqlmodel
+pydantic
+
+# Test dependencies
+# pytest
+# pytest-asyncio

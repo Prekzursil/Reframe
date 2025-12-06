@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Long→Shorts</title></head>
+<body>
+  <h1>Long → Shorts</h1>
+  <form action="/upload" enctype="multipart/form-data" method="post">
+    <input type="file" name="file" accept="video/*" required><br>
+    Clips: <input type="number" name="clips" value="4" min="1" max="20"><br>
+    Min clip duration (s): <input type="number" name="min_duration" step="0.1"><br>
+    Max clip duration (s): <input type="number" name="max_duration" step="0.1"><br>
+    Whisper model:
+    <select name="model">
+      <option value="whisper-large-v3">whisper-large-v3 (best)</option>
+      <option value="whisper-large-v3-turbo">whisper-large-v3-turbo</option>
+      <option value="distil-whisper-large-v3-en">distil-whisper-large-v3-en</option>
+    </select><br>
+    Target language (e.g. 'ro'), empty = original:<br>
+    <input type="text" name="target_lang" size="4"><br>
+    <label><input type="checkbox" name="burn"> Hardcode subtitles with word highlighting</label><br>
+    <button type="submit">Generate</button>
+  </form>
+</body>
+</html>

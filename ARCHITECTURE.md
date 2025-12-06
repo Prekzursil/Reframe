@@ -1,0 +1,92 @@
+# Reframe Architecture
+
+## 1. High‑Level Overview
+
+Reframe is a **local‑first media processing stack**:
+
+- **Frontend** (`apps/web`)
+  - React SPA/MPA with routes for:
+    - Shorts Maker
+    - Caption & Translate
+    - Subtitle Tools (SRT translator, style presets)
+    - Utilities (video/audio merge)
+    - Jobs / History
+  - Can run:
+    - in browser for local web UI, and
+    - inside a Tauri/Electron shell for a desktop app.
+
+- **API Service** (`apps/api`)
+  - Python FastAPI app exposing a stable REST/JSON API.
+  - Handles:
+    - job creation & status polling,
+    - file upload/download,
+    - preset management (subtitle templates, model choices),
+    - health checks.
+
+- **Worker(s)** (`services/worker`)
+  - Celery worker processes that run CPU/GPU‑heavy tasks:
+    - transcribing audio/video,
+    - cutting clips,
+    - rendering subtitled videos,
+    - translating transcripts/SRT,
+    - merging audio+video.
+
+- **Media Core Library** (`packages/media-core`)
+  - Pure‑Python library with no FastAPI/React coupling.
+  - Provides functions & classes for each step in the pipeline:
+    - `Transcriber`
+    - `Segmenter`
+    - `SubtitleBuilder` (plain + TikTok highlight)
+    - `Translator`
+    - `VideoEditor`
+  - Can be used standalone from CLI or notebooks.
+
+- **Storage**
+  - Local filesystem for:
+    - uploaded media (`/data/media`),
+    - intermediate audio (`/data/audio`),
+    - transcripts & subtitles (`/data/subtitles`),
+    - rendered outputs (`/data/outputs`).
+  - SQLite DB (dev) for metadata & jobs; Postgres optional later.
+
+---
+
+## 2. Directory Layout (Proposed)
+
+```text
+.
+├─ apps/
+│  ├─ api/
+│  │  ├─ main.py            # FastAPI entrypoint
+│  │  ├─ routes/            # /shorts, /captions, /subtitles, /jobs
+│  │  ├─ schemas/           # Pydantic request/response models
+│  │  └─ deps/              # DI, settings, DB session, etc.
+│  └─ web/
+│     ├─ src/
+│     │  ├─ pages/          # React routes (Shorts, Captions, etc.)
+│     │  ├─ components/     # Forms, previews, job list, etc.
+│     │  └─ api/            # Typed API client
+│     └─ ...
+├─ services/
+│  └─ worker/
+│     ├─ worker.py          # Celery app
+│     └─ tasks/             # Celery tasks using media-core
+├─ packages/
+│  └─ media-core/
+│     ├─ transcribe/
+│     ├─ segment/
+│     ├─ subtitles/
+│     ├─ translate/
+│     ├─ video_edit/
+│     ├─ models/            # Pydantic models (Job, MediaAsset, SubtitleStyle, etc.)
+│     └─ config.py
+├─ infra/
+│  ├─ docker-compose.yml
+│  ├─ Dockerfile.api
+│  ├─ Dockerfile.worker
+│  └─ nginx.conf (optional)
+└─ docs/
+   ├─ ARCHITECTURE.md
+   ├─ README.md
+   ├─ goal.md
+   └─ todo.md

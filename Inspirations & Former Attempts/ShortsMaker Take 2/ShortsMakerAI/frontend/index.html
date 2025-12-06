@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ShortsMakerAI</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>ShortsMakerAI</h1>
+    </header>
+    <main>
+        <section id="upload-section">
+            <h2>Upload Your Video</h2>
+            <label for="videoFile">Select Video:</label><br>
+            <input type="file" id="videoFile" accept="video/*" style="margin-bottom: 10px;"><br>
+            
+            <label for="userKeywords">Keywords (optional, comma-separated):</label><br>
+            <input type="text" id="userKeywords" placeholder="e.g., important, tutorial, conclusion" style="width: 80%; margin-bottom: 10px;"><br>
+
+            <label for="aiPrompt">AI Prompt (Describe what you're looking for):</label><br>
+            <textarea id="aiPrompt" placeholder="e.g., find funny moments, summarize key arguments, extract tutorial sections" style="width: 80%; height: 60px; margin-bottom: 10px;"></textarea><br>
+
+            <div class="form-row" style="display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 15px; align-items: flex-end;">
+                <div style="flex: 1; min-width: 150px;">
+                    <label for="whisperModel">Whisper Model:</label><br>
+                    <select id="whisperModel" style="width: 100%;">
+                        <option value="tiny">Tiny</option>
+                        <option value="tiny.en">Tiny (English-only)</option>
+                <option value="base" selected>Base</option>
+                <option value="base.en">Base (English-only)</option>
+                <option value="small">Small</option>
+                <option value="small.en">Small (English-only)</option>
+                <option value="medium">Medium</option>
+                <option value="medium.en">Medium (English-only)</option>
+                <option value="large-v1">Large-v1</option>
+                <option value="large-v2">Large-v2</option>
+                <option value="large-v3" selected>Large-v3 (Best Quality)</option>
+            </select>
+                </div>
+                <div style="flex: 1; min-width: 150px;">
+                    <label for="whisperLanguage">Language:</label><br>
+                    <select id="whisperLanguage" style="width: 100%;">
+                        <option value="auto" selected>Auto Detect</option>
+                        <option value="en">English</option>
+                        <option value="es">Spanish</option>
+                        <option value="fr">French</option>
+                        <option value="de">German</option>
+                        <option value="it">Italian</option>
+                        <option value="pt">Portuguese</option>
+                        <option value="ru">Russian</option>
+                        <option value="zh">Chinese</option>
+                        <option value="ja">Japanese</option>
+                        <option value="ko">Korean</option>
+                        <option value="ar">Arabic</option>
+                        <option value="hi">Hindi</option>
+                        {/* Add more common languages as needed */}
+                    </select>
+                </div>
+                <div style="flex: 1; min-width: 150px;">
+                    <label for="whisperTask">Task:</label><br>
+                    <select id="whisperTask" style="width: 100%;">
+                        <option value="transcribe" selected>Transcribe</option>
+                        <option value="translate">Translate to English</option>
+                    </select>
+                </div>
+            </div>
+
+            <label for="computeType">Compute Type:</label><br>
+            <select id="computeType" style="margin-bottom: 15px;">
+                <option value="auto" selected>Auto (Recommended) - Quality: Optimal Balance; Speed: Optimal Balance. System selects the best type for your hardware (e.g., int8_float16 or float16 on modern GPUs; int8 on CPU). Ideal for most users.</option>
+                <option value="float32">Float32 (Max Precision) - Quality: Highest Numerical Precision. Speed: Slowest on GPU, standard on CPU. Highest VRAM. Use for reference or if other types cause issues.</option>
+                <option value="float16">Float16 (GPU: High Quality & Speed) - Quality: Very High (near Float32 for Whisper). Speed: Very Fast on most NVIDIA GPUs. Good VRAM efficiency.</option>
+                <option value="int8_float16">INT8+Float16 (GPU: High Quality & Fastest) - Quality: Very High (near Float16). Speed: Often the fastest on modern NVIDIA GPUs (RTX 30-series & newer). Efficient VRAM.</option>
+                <option value="int8">INT8 (Good Quality & Max Speed) - Quality: Good (slight potential trade-off vs Float16). Speed: Fastest on CPU; often fastest on GPUs. Lowest VRAM usage.</option>
+            </select><br>
+
+            <details style="margin-bottom: 15px;">
+                <summary>Advanced Whisper Parameters <button id="whisper-params-help-btn" style="font-size: 0.8em; padding: 2px 5px; margin-left: 10px; cursor: pointer;">?</button></summary>
+                <div style="padding-left: 20px; margin-top: 10px;" id="advancedWhisperParamsContainer">
+
+                    <div id="whisperPresetControls" style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #eee;">
+                        <h5>Parameter Presets</h5>
+                        <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px;">
+                            <select id="whisperPresetSelect" style="flex-grow: 1;">
+                                <option value="">-- Select a Preset --</option>
+                            </select>
+                            <button id="loadWhisperPresetBtn">Load Preset</button>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <input type="text" id="savePresetNameInput" placeholder="New Preset Name" style="flex-grow: 1;">
+                            <button id="saveWhisperPresetBtn">Save Current as Preset</button>
+                        </div>
+                        {/* Optional: <button id="deleteWhisperPresetBtn" style="margin-top: 5px;">Delete Selected Preset</button> */}
+                    </div>
+                    
+                    <h4>Beam Search & Decoding Strategy</h4>
+                    <div>
+                        <label for="beamSizeSlider">Beam Size: <span id="beamSizeValue">5</span> <span class="tooltip-trigger" data-tooltip-key="beamSize">(i)</span></label> <small>(Rec: 5, Higher can be better but slower)</small><br>
+                        <input type="range" id="beamSizeSlider" name="beam_size_slider" min="1" max="30" value="5" step="1" style="width: 80%;">
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <label for="bestOfSlider">Best Of (Beam Search): <span id="bestOfValue">5</span> <span class="tooltip-trigger" data-tooltip-key="bestOf">(i)</span></label> <small>(Rec: 5, Higher increases compute)</small><br>
+                        <input type="range" id="bestOfSlider" name="best_of_slider" min="1" max="30" value="5" step="1" style="width: 80%;">
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <label for="patienceSlider">Patience (Beam Search): <span id="patienceValue">1.0</span> <span class="tooltip-trigger" data-tooltip-key="patience">(i)</span></label> <small>(Rec: 1.0, Higher can improve for some audio)</small><br>
+                        <input type="range" id="patienceSlider" name="patience_slider" min="0.5" max="2.5" value="1.0" step="0.1" style="width: 80%;">
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <label for="temperatureSlider">Temperature: <span id="temperatureValue">0.0</span> <span class="tooltip-trigger" data-tooltip-key="temperature">(i)</span></label> <small>(Rec: 0.0 for deterministic, 0.0-1.0 for more variance)</small><br>
+                        <input type="range" id="temperatureSlider" name="temperature_slider" min="0.0" max="1.0" value="0.0" step="0.05" style="width: 80%;">
+                    </div>
+                     <div style="margin-top: 10px;">
+                        <label for="promptResetOnTemperatureSlider">Prompt Reset on Temperature: <span id="promptResetOnTemperatureValue">0.5</span> <span class="tooltip-trigger" data-tooltip-key="promptResetOnTemperature">(i)</span></label> <small>(Rec: 0.5)</small><br>
+                        <input type="range" id="promptResetOnTemperatureSlider" name="prompt_reset_on_temperature_slider" min="0.0" max="1.0" value="0.5" step="0.05" style="width: 80%;">
+                    </div>
+
+                    <h4>Output Control & Filtering</h4>
+                    <div style="margin-top: 10px;">
+                        <label for="lengthPenaltySlider">Length Penalty: <span id="lengthPenaltyValue">1.0</span> <span class="tooltip-trigger" data-tooltip-key="lengthPenalty">(i)</span></label> <small>(Rec: 1.0, >1 favors longer, <1 favors shorter)</small><br>
+                        <input type="range" id="lengthPenaltySlider" name="length_penalty_slider" min="0.5" max="2.0" value="1.0" step="0.1" style="width: 80%;">
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <label for="repetitionPenaltySlider">Repetition Penalty: <span id="repetitionPenaltyValue">1.0</span> <span class="tooltip-trigger" data-tooltip-key="repetitionPenalty">(i)</span></label> <small>(Rec: 1.0, >1 penalizes repetition)</small><br>
+                        <input type="range" id="repetitionPenaltySlider" name="repetition_penalty_slider" min="1.0" max="2.0" value="1.0" step="0.05" style="width: 80%;">
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <label for="noRepeatNgramSizeSlider">No Repeat N-gram Size: <span id="noRepeatNgramSizeValue">0</span> <span class="tooltip-trigger" data-tooltip-key="noRepeatNgramSize">(i)</span></label> <small>(Rec: 0 (disabled), 1-10 to prevent n-gram repeats)</small><br>
+                        <input type="range" id="noRepeatNgramSizeSlider" name="no_repeat_ngram_size_slider" min="0" max="10" value="0" step="1" style="width: 80%;">
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <input type="checkbox" id="conditionOnPreviousTextCheckbox" name="condition_on_previous_text_checkbox" checked>
+                        <label for="conditionOnPreviousTextCheckbox">Condition on Previous Text <span class="tooltip-trigger" data-tooltip-key="conditionOnPreviousText">(i)</span></label> <small>(Rec: Checked)</small>
+                    </div>
+                    <div style="margin-top: 5px;">
+                        <input type="checkbox" id="suppressBlankCheckbox" name="suppress_blank_checkbox" checked>
+                        <label for="suppressBlankCheckbox">Suppress Blank Outputs <span class="tooltip-trigger" data-tooltip-key="suppressBlank">(i)</span></label> <small>(Rec: Checked)</small>
+                    </div>
+                     <div style="margin-top: 10px;">
+                        <label for="suppressTokensInput">Suppress Tokens: <span class="tooltip-trigger" data-tooltip-key="suppressTokens">(i)</span></label> <small>(Advanced: comma-sep token IDs, e.g., -1 to suppress all special)</small><br>
+                        <input type="text" id="suppressTokensInput" name="suppress_tokens_input" value="-1" style="width: 80%;">
+                    </div>
+
+                    <h4>Junk / Silence Filtering</h4>
+                    <div style="margin-top: 10px;">
+                        <label for="logProbThresholdSlider">Log-Prob Threshold: <span id="logProbThresholdValue">-1.00</span> <span class="tooltip-trigger" data-tooltip-key="logProbThreshold">(i)</span></label> <small>(Rec: -1.0, Higher filters more)</small><br>
+                        <input type="range" id="logProbThresholdSlider" name="log_prob_threshold_slider" min="-20.0" max="0.0" value="-1.0" step="0.1" style="width: 80%;">
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <label for="compressionRatioThresholdSlider">Compression Ratio Threshold: <span id="compressionRatioThresholdValue">2.4</span> <span class="tooltip-trigger" data-tooltip-key="compressionRatioThreshold">(i)</span></label> <small>(Rec: 2.4, Higher filters less)</small><br>
+                        <input type="range" id="compressionRatioThresholdSlider" name="compression_ratio_threshold_slider" min="1.0" max="5.0" value="2.4" step="0.1" style="width: 80%;">
+                    </div>
+                     <div style="margin-top: 10px;">
+                        <label for="noSpeechThresholdSlider">No Speech Threshold (Whisper): <span id="noSpeechThresholdValue">0.50</span> <span class="tooltip-trigger" data-tooltip-key="noSpeechThreshold">(i)</span></label> <small>(Rec: 0.5-0.6, Higher = less sensitive to silence)</small><br>
+                        <input type="range" id="noSpeechThresholdSlider" name="no_speech_threshold_slider" min="0.0" max="1.0" value="0.5" step="0.01" style="width: 80%;">
+                    </div>
+
+                    <h4>VAD (Voice Activity Detection) Parameters</h4>
+                     <div style="margin-top: 5px;">
+                        <input type="checkbox" id="vadFilterCheckbox" name="vad_filter_checkbox" checked disabled> 
+                        <label for="vadFilterCheckbox">VAD Filter <span class="tooltip-trigger" data-tooltip-key="vadFilter">(i)</span></label> <small>(Recommended, Always Enabled)</small>
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <label for="vadThresholdSlider">VAD Confidence Threshold: <span id="vadThresholdValue">0.38</span> <span class="tooltip-trigger" data-tooltip-key="vadThreshold">(i)</span></label> <small>(Rec: ~0.38 for Silero VAD, Higher = stricter speech detection)</small><br>
+                        <input type="range" id="vadThresholdSlider" name="vad_threshold_slider" min="0.0" max="1.0" value="0.38" step="0.01" style="width: 80%;">
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <label for="minSilenceDurationMsSlider">Min Silence Duration (ms, VAD): <span id="minSilenceDurationMsValue">250</span> <span class="tooltip-trigger" data-tooltip-key="minSilenceDurationMs">(i)</span></label> <small>(Rec: 250-1000)</small><br>
+                        <input type="range" id="minSilenceDurationMsSlider" name="min_silence_duration_ms_slider" min="50" max="5000" value="250" step="50" style="width: 80%;">
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <label for="minSpeechDurationMsInput">Min Speech Duration (ms, VAD): <span class="tooltip-trigger" data-tooltip-key="minSpeechDurationMs">(i)</span></label> <small>(Rec: 250)</small><br>
+                        <input type="number" id="minSpeechDurationMsInput" name="min_speech_duration_ms_input" min="50" max="5000" value="250" step="50" style="width: 100px;">
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <label for="maxSpeechDurationSInput">Max Speech Duration (s, VAD): <span class="tooltip-trigger" data-tooltip-key="maxSpeechDurationS">(i)</span></label> <small>(Rec: 15, faster-whisper default: inf)</small><br>
+                        <input type="number" id="maxSpeechDurationSInput" name="max_speech_duration_s_input" min="1" max="60" value="15" step="1" style="width: 100px;">
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <label for="speechPadMsInput">Speech Pad (ms, VAD): <span class="tooltip-trigger" data-tooltip-key="speechPadMs">(i)</span></label> <small>(Rec: 200)</small><br>
+                        <input type="number" id="speechPadMsInput" name="speech_pad_ms_input" min="0" max="2000" value="200" step="50" style="width: 100px;">
+                    </div>
+
+                    <h4>Prompting & Formatting</h4>
+                    <div style="margin-top: 10px;">
+                        <label for="whisperInitialPromptInput">Whisper Initial Prompt: <span class="tooltip-trigger" data-tooltip-key="whisperInitialPrompt">(i)</span></label> <small>(Optional, guides transcription start)</small><br>
+                        <input type="text" id="whisperInitialPromptInput" name="whisper_initial_prompt_input" placeholder="e.g., The speaker is discussing AI." style="width: 80%;">
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <label for="whisperPrefixInput">Whisper Segment Prefix: <span class="tooltip-trigger" data-tooltip-key="whisperPrefix">(i)</span></label> <small>(Optional, prepended to each segment)</small><br>
+                        <input type="text" id="whisperPrefixInput" name="whisper_prefix_input" placeholder="e.g., SPEAKER:" style="width: 80%;">
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <label for="prependPunctuationsInput">Prepend Punctuations: <span class="tooltip-trigger" data-tooltip-key="prependPunctuations">(i)</span></label> <small>(Default: \"'\“¿([{- )</small><br>
+                        <input type="text" id="prependPunctuationsInput" name="prepend_punctuations_input" value=""'\“¿([{-" style="width: 80%;">
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <label for="appendPunctuationsInput">Append Punctuations: <span class="tooltip-trigger" data-tooltip-key="appendPunctuations">(i)</span></label> <small>(Default: \"'.。,，!！?？:：”)]}、 )</small><br>
+                        <input type="text" id="appendPunctuationsInput" name="append_punctuations_input" value=""'.。,，!！?？:：”)]}、" style="width: 80%;">
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <label for="maxInitialTimestampSlider">Max Initial Timestamp: <span id="maxInitialTimestampValue">1.0</span> <span class="tooltip-trigger" data-tooltip-key="maxInitialTimestamp">(i)</span></label> <small>(Rec: 1.0)</small><br>
+                        <input type="range" id="maxInitialTimestampSlider" name="max_initial_timestamp_slider" min="0.0" max="30.0" value="1.0" step="0.5" style="width: 80%;">
+                    </div>
+                    <div style="margin-top: 5px;">
+                        <input type="checkbox" id="wordTimestampsCheckbox" name="word_timestamps_checkbox" checked disabled> 
+                        <label for="wordTimestampsCheckbox">Word Timestamps <span class="tooltip-trigger" data-tooltip-key="wordTimestamps">(i)</span></label> <small>(Required, Always Enabled)</small>
+                    </div>
+                    <div style="margin-top: 15px;">
+                        <button id="resetAdvancedWhisperParamsBtn">Reset Advanced to Defaults</button>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Tooltip Container (add once, outside the modal or at the end of body) -->
+            <div id="paramTooltip" class="param-tooltip" style="display: none; position: absolute; background-color: #333; color: white; padding: 5px 10px; border-radius: 4px; font-size: 0.85em; z-index: 1001;"></div>
+
+            <!-- Help Modal Structure (Initially Hidden) -->
+            <div id="whisper-params-help-modal" style="display:none; position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 80%; max-width: 600px; max-height: 80vh; background-color: #f9f9f9; border: 1px solid #ccc; border-radius: 8px; padding: 20px; z-index: 1000; overflow-y: auto; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h3 style="margin:0;">Advanced Whisper Parameters - Help</h3>
+                    <button id="whisper-params-help-modal-close-btn" style="font-size: 1.2em; background: none; border: none; cursor: pointer;">&times;</button>
+                </div>
+                <div id="whisperParamsHelpContent">
+                    <input type="text" id="helpModalSearchInput" placeholder="Search parameters..." style="width: 98%; margin-bottom: 15px; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                    <div id="helpModalTocContainer" style="margin-bottom:15px; padding-bottom:10px; border-bottom: 1px solid #eee;">
+                        <strong>Quick Jump:</strong> <ul id="helpModalToc" style="list-style: none; padding: 0; margin: 5px 0 0 0; display: inline;"></ul>
+                    </div>
+
+                    <div class="help-group" id="help-group-beam-search">
+                        <h5 class="help-group-title">How Whisper "Thinks" (Beam Search & Decoding)</h5>
+                        <div class="help-parameter-entry" data-param-name="Beam Size">
+                            <h6>Beam Size <span class="copy-icon" title="Copy explanation">📋</span> <a href="#" target="_blank" class="external-link" title="More technical details" style="display:none;">(i)</a></h6>
+                            <p class="eli5-desc">Imagine Whisper trying out a few different ways to write down what it hears, all at once. This number is how many ways it tries.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> 5 <span class="impact-cue speed-medium acc-medium"></span></p>
+                                <p><strong>Effect of Lower (e.g., 1):</strong> Faster, but might not pick the very best words.</p>
+                                <p><strong>Effect of Higher:</strong> Might find better words, but it's slower (like thinking harder).</p>
+                                <p><strong>Simple Tip:</strong> 5 is usually a good spot. Try a bit higher (like 7) if words seem a little off, or lower (like 3) if you need it super fast.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="Best Of">
+                            <h6>Best Of (Beam Search) <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">When Whisper thinks of different words, this is how many "best guesses" it considers before picking. Should be same or bigger than Beam Size.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> 5 <span class="impact-cue speed-medium"></span></p>
+                                <p><strong>Effect of Higher:</strong> More careful guessing, might help with noisy sound, but takes more computer brainpower.</p>
+                                <p><strong>Simple Tip:</strong> Keep this the same as Beam Size, or a little bigger.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="Patience">
+                            <h6>Patience (Beam Search) <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">How long Whisper keeps trying if it's not finding "better" words.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> 1.0 <span class="impact-cue speed-medium"></span></p>
+                                <p><strong>Effect of Lower (like 0.8):</strong> Gives up sooner if it's stuck. Faster.</p>
+                                <p><strong>Effect of Higher (like 1.5):</strong> More patient, keeps trying longer. Might help if talking is unclear.</p>
+                                <p><strong>Simple Tip:</strong> 1.0 is often fine. If words seem cut off or strange, a little more patience might help.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="Temperature">
+                            <h6>Temperature <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">Makes Whisper's guesses more or less "surprising."</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> 0.0 <span class="impact-cue acc-high"></span></p>
+                                <p><strong>0.0:</strong> Whisper picks the most obvious, safest words. Best for getting it right!</p>
+                                <p><strong>Higher (0.2-0.8):</strong> Whisper might try more unusual words. Not usually needed for just writing down what's said.</p>
+                                <p><strong>Simple Tip:</strong> Keep this at 0.0 for accurate transcription.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="Prompt Reset on Temperature">
+                            <h6>Prompt Reset on Temperature <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">If Temperature is not 0.0, this tells Whisper when to "forget" what it was thinking about and start fresh with its hints.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> 0.5</p>
+                                <p><strong>Simple Tip:</strong> If Temperature is 0.0, this doesn't do much. Default is fine.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="help-group" id="help-group-output-control">
+                        <h5 class="help-group-title">What Words Whisper Writes Down (Output Control)</h5>
+                        <div class="help-parameter-entry" data-param-name="Length Penalty">
+                            <h6>Length Penalty <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">Tells Whisper if it should prefer shorter or longer sentences.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> 1.0</p>
+                                <p><strong>Less than 1.0:</strong> Whisper might write shorter sentences.</p>
+                                <p><strong>More than 1.0:</strong> Whisper might write longer sentences.</p>
+                                <p><strong>Simple Tip:</strong> 1.0 is usually good and balanced.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="Repetition Penalty">
+                            <h6>Repetition Penalty <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">Stops Whisper from saying the same thing over and over and over.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> 1.0</p>
+                                <p><strong>More than 1.0 (like 1.1):</strong> Makes it less likely to repeat words.</p>
+                                <p><strong>Warning:</strong> Too high, and the words might sound weird or forced!</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="No Repeat N-gram Size">
+                            <h6>No Repeat N-gram Size <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">If you set this to 3, Whisper won't repeat any three-word phrases. 0 means this feature is off.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> 0 (Off)</p>
+                                <p><strong>Simple Tip:</strong> Usually keep at 0. Only use if you hear lots of exact short phrases repeated.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="Suppress Tokens">
+                            <h6>Suppress Tokens <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">Tells Whisper not to write down certain things, like music notes (♪) or sounds it doesn't understand as words.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> -1 (blocks common "non-word" sounds)</p>
+                                <p><strong>Simple Tip:</strong> The default -1 is generally good.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="Suppress Blank Outputs">
+                            <h6>Suppress Blank Outputs <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">If Whisper hears a period of silence, this stops it from writing an empty line or "blank" segment.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> On (Checked)</p>
+                                <p><strong>Simple Tip:</strong> Keep this On. It makes the transcript cleaner.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="Condition on Previous Text">
+                            <h6>Condition on Previous Text <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">Whisper remembers what was said just before, to help it guess the next words better and make more sense.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> On (Checked)</p>
+                                <p><strong>Simple Tip:</strong> Keep this On. It helps the words flow together nicely.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="help-group" id="help-group-junk-filtering">
+                        <h5 class="help-group-title">Ignoring "Junk" Sounds & Silence (Whisper's Own Filters)</h5>
+                        <div class="help-parameter-entry" data-param-name="Log-Prob Threshold">
+                            <h6>Log-Prob Threshold <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">This is about how "sure" Whisper needs to be about the words it thinks it heard. Think of it like a confidence score.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> -1.0</p>
+                                <p><strong>Higher (closer to 0, e.g., -0.5):</strong> Whisper needs to be very sure. Might miss some words if they're unclear or mumbled.</p>
+                                <p><strong>Lower (e.g., -2.0):</strong> Whisper will guess more, even if it's not very sure. Might write down more "junk" or misheard words.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="Compression Ratio Threshold">
+                            <h6>Compression Ratio Threshold <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">Another clever way Whisper tries to guess if a sound is just "junk" (like random noise) or actual words.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> 2.4</p>
+                                <p><strong>Simple Tip:</strong> The default setting is usually fine for this one.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="No Speech Threshold (Whisper)">
+                            <h6>No Speech Threshold (Whisper) <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">How sure Whisper is that there's *no speech* in a little bit of sound it's listening to.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> 0.5 (UI) / 0.6 (faster-whisper)</p>
+                                <p><strong>Higher:</strong> Whisper is more likely to think quiet sounds might be speech.</p>
+                                <p><strong>Lower:</strong> Whisper is more likely to call quiet sounds "silence."</p>
+                                <p><strong>Simple Tip:</strong> 0.5 or 0.6 is a good starting point. If Whisper is missing very quiet speech, try making this a bit higher.</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="help-group" id="help-group-vad">
+                        <h5 class="help-group-title">How Whisper Finds Speech (VAD - Voice Activity Detection)</h5>
+                        <div class="help-parameter-entry" data-param-name="VAD Filter">
+                            <h6>VAD Filter <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">This uses a special helper (VAD) to find the parts of your video that have talking *before* Whisper even starts listening closely. It's like a pre-screener.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> On (Always Enabled for us)</p>
+                                <p><strong>Simple Tip:</strong> We keep this on for you because it makes things faster and often more accurate by ignoring long silences.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="VAD Confidence Threshold">
+                            <h6>VAD Confidence Threshold <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">How sure the VAD helper needs to be that it actually found speech, not just background noise.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> ~0.38 (for Silero VAD)</p>
+                                <p><strong>Higher:</strong> VAD only picks out really clear speech. Might miss very quiet talking.</p>
+                                <p><strong>Lower:</strong> VAD will pick up more sounds, maybe even some noise it thinks is speech.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="Min Silence Duration (ms, VAD)">
+                            <h6>Min Silence Duration (ms, VAD) <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">The shortest quiet pause (in tiny bits of a second, milliseconds) that the VAD helper pays attention to. It uses these pauses to help decide where one sentence or thought ends and another begins.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> 250ms (UI) / 1000ms (faster-whisper internal)</p>
+                                <p><strong>Higher (e.g., 1000ms = 1 second):</strong> Sentences might seem longer because short pauses are ignored.</p>
+                                <p><strong>Lower (e.g., 250ms = quarter of a second):</strong> More sensitive to pauses, might make more, shorter sentences.</p>
+                                <p><strong>Simple Tip:</strong> Try 250ms for people who talk fast, or 700-1000ms for people who talk slower with more pauses.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="Min Speech Duration (ms, VAD)">
+                            <h6>Min Speech Duration (ms, VAD) <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">The shortest sound (in milliseconds) that the VAD helper will consider to be "speech." Helps ignore tiny blips of noise.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> 250ms</p>
+                                <p><strong>Simple Tip:</strong> The default is usually fine.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="Max Speech Duration (s, VAD)">
+                            <h6>Max Speech Duration (s, VAD) <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">The longest a single "speech bubble" or segment can be (in seconds) before the VAD helper decides to cut it, even if the person is still talking.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> 15s (UI) / No limit (faster-whisper internal)</p>
+                                <p><strong>Simple Tip:</strong> 15-30 seconds is a good range. It helps Whisper process long talks in manageable chunks.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="Speech Pad (ms, VAD)">
+                            <h6>Speech Pad (ms, VAD) <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">Adds a tiny bit of "empty sound" (padding, in milliseconds) at the very start and very end of each speech bubble found by VAD. This helps make sure no words get accidentally cut off.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> 200ms</p>
+                                <p><strong>Simple Tip:</strong> 100-500ms is common. Helps catch the beginning or end of words.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="help-group" id="help-group-prompting">
+                        <h5 class="help-group-title">Giving Whisper Hints (Prompting & Formatting)</h5>
+                        <div class="help-parameter-entry" data-param-name="Whisper Initial Prompt">
+                            <h6>Whisper Initial Prompt <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">You can type some words here to give Whisper a hint about what the video is about, or special names, or the style of talking. It helps Whisper get started on the right track.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> None (Empty)</p>
+                                <p><strong>Example:</strong> "The speaker is discussing U.S. politics, mentioning figures like Donald Trump and Joe Biden." Or, "This is a technical tutorial about Python programming."</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="Whisper Segment Prefix">
+                            <h6>Whisper Segment Prefix <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">If you type something here, it will be added to the very beginning of *every* sentence or segment Whisper writes down.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> None (Empty)</p>
+                                <p><strong>Example:</strong> If you type "SPEAKER A: ", all lines will start with that. Useful if you plan to manually mark who is talking later.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="Prepend Punctuations">
+                            <h6>Prepend Punctuations <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">A list of punctuation marks that Whisper expects to see at the *start* of sentences or phrases.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> `"'“¿([{-`</p>
+                                <p><strong>Simple Tip:</strong> The default list is usually good for most languages.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="Append Punctuations">
+                            <h6>Append Punctuations <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">A list of punctuation marks that Whisper expects to see at the *end* of sentences or phrases.</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> `"'.,?!:)]}、`</p>
+                                <p><strong>Simple Tip:</strong> The default list is usually good.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="Max Initial Timestamp">
+                            <h6>Max Initial Timestamp <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">This tells Whisper not to look for the very first words of the transcript beyond this many seconds into the audio. It's a bit technical!</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> 1.0 second</p>
+                                <p><strong>Simple Tip:</strong> The default is usually fine. You probably don't need to change this.</p>
+                            </div>
+                        </div>
+                        <div class="help-parameter-entry" data-param-name="Word Timestamps">
+                            <h6>Word Timestamps <span class="copy-icon" title="Copy explanation">📋</span></h6>
+                            <p class="eli5-desc">This makes sure Whisper tells us exactly when each word is said in the video. Super important for making subtitles line up correctly!</p>
+                            <div class="details">
+                                <p><strong>Default:</strong> On (Always Enabled for us)</p>
+                                <p><strong>Simple Tip:</strong> We keep this on for you because it's super useful for subtitles!</p>
+                            </div>
+                        </div>
+                    </div>
+                    <p style="margin-top:20px; padding-top:15px; border-top: 1px solid #eee; font-size:0.9em;"><em>Remember: The "Auto" settings for Model and Compute Type are often the best place to start! Adjust these advanced settings if you're trying to fix a specific problem or get a special result. Experimentation is key!</em></p>
+                </div>
+            </div>
+
+
+            <label for="minShortDuration">Min Short Duration (s):</label><br>
+            <input type="number" id="minShortDuration" value="30" step="1" min="5" style="width: 80px; margin-bottom: 10px;"><br>
+
+            <label for="maxShortDuration">Max Short Duration (s):</label><br>
+            <input type="number" id="maxShortDuration" value="90" step="1" min="10" style="width: 80px; margin-bottom: 15px;"><br>
+
+            <button id="uploadButton">Upload & Process</button>
+            <button id="cancelProcessingButton" style="display: none; margin-left: 10px; background-color: #ff6b6b;">Cancel Processing</button>
+            <progress id="uploadProgressBar" value="0" max="100" style="width: 80%; margin-top: 10px; display: none;"></progress>
+            <p id="uploadStatus" style="margin-top: 5px;"></p>
+            
+            <!-- New elements for backend processing progress -->
+            <p id="backendProcessStatus" style="margin-top: 5px; font-style: italic;"></p>
+            <div id="whisperProgressContainer" style="margin-top: 5px; display: none;">
+                <p id="whisperProgressText" style="color: #0056b3; margin-bottom: 2px;"></p>
+                <p id="whisperEtaText" style="color: #0056b3; margin-top: 2px;"></p>
+            </div>
+            <progress id="backendProcessingProgressBar" value="0" max="100" style="width: 80%; margin-top: 5px; display: none;"></progress>
+        </section>
+
+        <section id="processing-output-section" style="display: none;">
+            <h2>Processing Output</h2>
+            
+            <h3>Full Transcript:</h3>
+            <div id="fullTranscriptDisplay" class="transcript-box"></div>
+
+            <h3>Suggested Clips:</h3>
+            <div id="suggestedClipsContainer">
+                <!-- Suggested clips will be dynamically added here -->
+            </div>
+            <div id="clipAdjustmentControls" style="display:none; margin-top: 15px; padding: 10px; border: 1px dashed #ccc;">
+                <h4>Adjust Selected Clip Time:</h4>
+                <label for="clipStartTime">Start (s):</label>
+                <input type="number" id="clipStartTime" step="0.1" min="0">
+                <label for="clipEndTime">End (s):</label>
+                <input type="number" id="clipEndTime" step="0.1" min="0">
+            </div>
+            <button id="createSelectedClipButton" style="display:none; margin-top: 10px;">Create Selected Clip</button>
+            <p id="clipCreationStatus"></p>
+        </section>
+
+        <!-- Removed editor-section for now, will be integrated differently or later -->
+        <!-- 
+        <section id="editor-section" style="display: none;">
+            <h2>Clip Editor</h2>
+            <div id="transcriptDisplay"></div>
+            <button id="finalizeClipButton">Finalize Clip</button>
+        </section> 
+        -->
+
+        <section id="output-section" style="display: none;">
+            <h2>Your Short Clip</h2>
+            <div id="playerContainer">
+                <!-- Video player for the generated clip -->
+            </div>
+            <button id="downloadWithSubsButton">Download with Subtitles</button>
+            <button id="downloadWithoutSubsButton">Download without Subtitles</button>
+            <button id="downloadSrtButton">Download Subtitles (SRT)</button>
+        </section>
+    </main>
+    <footer>
+        <p>&copy; 2025 ShortsMakerAI</p>
+    </footer>
+    <!-- Socket.IO Client Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script> 
+    <!-- Make sure this version is compatible with your Flask-SocketIO server version -->
+    <!-- For Flask-SocketIO 5.x, Socket.IO client v3.x or v4.x is generally fine. -->
+    <script type="module" src="js/main.js"></script> 
+    <!-- Old script.js is replaced by js/main.js as a module -->
+</body>
+</html>

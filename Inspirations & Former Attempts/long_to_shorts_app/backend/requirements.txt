@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+jinja2
+aiofiles
+python-multipart
+celery[redis]
+redis
+requests
+googletrans==4.0.0-rc1
+pysubs2

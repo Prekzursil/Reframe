@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Job {{ job_id }} – Error</title></head>
+<body>
+  <h1>Job {{ job_id }} – FAILED</h1>
+  <h2 style="color:red;">{{ error_msg }}</h2>
+  <pre style="background:#f8f8f8; padding:1em; border:1px solid #ddd;">{{ traceback }}</pre>
+  <p><a href="/">← Back to upload</a></p>
+</body>
+</html>

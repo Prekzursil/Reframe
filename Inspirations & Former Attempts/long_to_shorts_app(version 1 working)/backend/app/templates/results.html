@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Results</title></head>
+<body>
+  <h1>Generated Shorts</h1>
+  <ul>
+  {% for it in results %}
+    <li style="margin-bottom:20px;">
+      <video width="240" controls>
+        <source src="/clip/{{ it.clip }}" type="video/mp4">
+      </video>
+      <p>Interest Score: {{ it.score }}%</p>
+      <a href="/download/{{ it.clip }}">Download Clip</a> |
+      <a href="/download/{{ it.srt }}">Download Subtitles</a>
+    </li>
+  {% endfor %}
+  </ul>
+  <form action="/download-zip" method="post">
+    {% for it in results %}
+      <input type="hidden" name="files" value="{{ it.clip }}">
+      <input type="hidden" name="files" value="{{ it.srt }}">
+    {% endfor %}
+    <button type="submit">Download All as ZIP</button>
+  </form>
+  <p><a href="/">← New Video</a></p>
+</body>
+</html>

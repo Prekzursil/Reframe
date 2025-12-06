@@ -1,0 +1,22 @@
+{
+  "subtitle_settings": {
+    "max_chars": 80,
+    "max_duration": 3.0,
+    "max_gap": 1.5
+  },
+  "video_settings": {
+    "bg_width": 1080,
+    "bg_height": 1920,
+    "bg_color": [28, 163, 236],
+    "fps": 24
+  },
+  "text_settings": {
+    "font": "Helvetica-Bold",
+    "fontsize": 80,
+    "color": "white",
+    "highlight_color": "blue"
+  },
+  "whisper_settings": {
+    "model": "medium"
+  }
+}

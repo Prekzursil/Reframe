@@ -1,0 +1,37 @@
+Flask>=2.0
+Flask-CORS>=3.0
+Flask-SocketIO>=5.0 # Added
+eventlet>=0.30 # Added
+python-dotenv>=0.20.0 # For loading .env files
+# Flask-SSE>=0.3.0 # Removed
+# redis>=4.0.0 # Removed
+ffmpeg-python
+faster-whisper>=0.10.0 # Specify version for progress_callback compatibility
+# openai-whisper # Replaced with faster-whisper
+nltk
+moviepy
+# sentence-transformers>=2.2.0 # Replaced by Groq/Llama for AI prompt
+groq>=0.5.0 # For Llama integration via Groq API
+tiktoken>=0.5.0 # For token counting to prevent exceeding LLM context limits
+pytest>=7.0.0 # For running unit and integration tests
+pytest-mock>=3.10.0 # For mocking in tests
+
+# PyTorch (CUDA enabled)
+# IMPORTANT: PyTorch with CUDA support needs to be installed manually, carefully following
+# instructions from the official PyTorch website (https://pytorch.org/get-started/locally/).
+# The specific command depends on your OS, package manager (pip/conda), and desired CUDA version
+# compatible with your NVIDIA drivers and GPU.
+#
+# The user confirmed the following command worked for their setup (Windows, pip, RTX 4050)
+# after uninstalling any previous torch versions from the venv:
+# pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+#
+# Listing base torch versions here is for informational purposes if other packages depend on them,
+# but the CUDA-specific build must be installed via the command above for GPU support.
+# torch>=2.1.0 # Example, actual version will be from the command above
+# torchvision>=0.16.0 # Example
+# torchaudio>=2.1.0 # Example
+
+# spacy
+# celery
+# redis / kombu (for celery broker)

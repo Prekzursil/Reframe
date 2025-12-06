@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "subsai"
+version = "1.6.2"
+authors = [
+    {name = "absadiki"},
+]
+description = "Subtitles generation tool powered by OpenAI's Whisper and its variants"
+readme = "README.md"
+requires-python = ">=3.8"
+keywords = ["subtitles", "openai", "whisper"]
+license = {text = "LICENSE"}
+
+
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[project.urls]
+"Homepage" = "https://github.com/absadiki/subsai"
+"Bug Tracker" = "https://github.com/absadiki/subsai/issues"
+
+
+[project.scripts]
+subsai = 'subsai.cli:main'
+subsai-webui = 'subsai.webui:run'

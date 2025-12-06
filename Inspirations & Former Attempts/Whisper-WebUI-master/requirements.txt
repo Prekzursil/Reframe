@@ -1,0 +1,24 @@
+--extra-index-url https://download.pytorch.org/whl/cu126
+
+# Update above --extra-index-url according to your device.
+
+## Nvidia GPU
+# CUDA 12.6 : https://download.pytorch.org/whl/cu126
+# CUDA 12.8 : https://download.pytorch.org/whl/cu128
+
+## Intel GPU
+# https://download.pytorch.org/whl/xpu
+
+
+torch
+torchaudio
+git+https://github.com/jhj0517/jhj0517-whisper.git
+faster-whisper==1.1.1
+transformers==4.47.1
+gradio
+gradio-i18n==0.3.0
+pytubefix
+ruamel.yaml==0.18.6
+pyannote.audio==3.3.2
+git+https://github.com/jhj0517/ultimatevocalremover_api.git
+git+https://github.com/jhj0517/pyrubberband.git

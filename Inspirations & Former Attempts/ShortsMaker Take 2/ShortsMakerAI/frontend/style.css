@@ -1,0 +1,338 @@
+body {
+    font-family: sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f4f4f4;
+    color: #333;
+    line-height: 1.6;
+}
+
+header {
+    background: #333;
+    color: #fff;
+    padding: 1rem 0;
+    text-align: center;
+}
+
+header h1 {
+    margin: 0;
+}
+
+main {
+    padding: 1rem;
+    max-width: 900px;
+    margin: 20px auto;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+}
+
+section {
+    margin-bottom: 20px;
+    padding: 20px;
+    border-bottom: 1px solid #eee;
+}
+
+section:last-child {
+    border-bottom: none;
+}
+
+h2 {
+    color: #333;
+    margin-top: 0;
+}
+
+input[type="file"] {
+    margin-bottom: 10px;
+    display: block;
+}
+
+button {
+    background: #333;
+    color: #fff;
+    border: none;
+    padding: 10px 15px;
+    cursor: pointer;
+    border-radius: 5px;
+    margin-right: 10px;
+}
+
+button:hover {
+    background: #555;
+}
+
+#uploadStatus {
+    margin-top: 10px;
+    font-style: italic;
+}
+
+/* Suggested Clip Item Styling */
+#suggestedClipsContainer .clip-item {
+    background-color: #fff;
+    border: 1px solid #ddd;
+    padding: 15px;
+    margin-bottom: 15px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: box-shadow 0.2s ease-in-out, transform 0.2s ease-in-out;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+#suggestedClipsContainer .clip-item:hover {
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    transform: translateY(-2px);
+}
+
+#suggestedClipsContainer .clip-item.selected {
+    background-color: #e6e6fa; /* Light lavender */
+    border-color: #9370db; /* Medium purple */
+    box-shadow: 0 4px 8px rgba(147,112,219,0.3);
+}
+
+#suggestedClipsContainer .clip-item h4 {
+    margin-top: 0;
+    margin-bottom: 8px;
+    color: #333;
+    font-size: 1.1em;
+}
+#suggestedClipsContainer .clip-item p {
+    margin: 4px 0;
+    font-size: 0.95em;
+    color: #555;
+}
+#suggestedClipsContainer .clip-item p strong {
+    color: #333;
+}
+#suggestedClipsContainer .clip-item em {
+    font-size: 0.85em;
+    color: #777;
+}
+
+
+/* Updated ID from #transcriptDisplay to #fullTranscriptDisplay and added class */
+#fullTranscriptDisplay.transcript-box {
+    border: 1px solid #ccc;
+    padding: 10px;
+    min-height: 100px;
+    max-height: 300px; /* Added max-height for scrollability */
+    overflow-y: auto; /* Added scroll for long transcripts */
+    margin-bottom: 10px;
+    background-color: #f9f9f9;
+    line-height: 1.8; /* Improve readability of transcript words */
+}
+
+.transcript-word {
+    cursor: pointer;
+    padding: 0 1px; /* Small padding for better clickability */
+    border-radius: 2px;
+}
+
+.transcript-word:hover {
+    background-color: #e0e0e0;
+}
+
+/* Removed .selected-transcript rule */
+
+.transcript-word.highlighted-range {
+    background-color: #ffff99; /* Yellow highlight for time range */
+    /* font-weight: bold; */ /* Optional: make highlighted words bold */
+}
+
+
+#playerContainer video {
+    max-width: 100%;
+    border-radius: 5px;
+}
+
+footer {
+    text-align: center;
+    padding: 1rem 0;
+    background: #333;
+    color: #fff;
+    position: relative;
+    bottom: 0;
+    width: 100%;
+}
+
+/* Styles for AI suggested segments on the transcript - passive indication */
+.transcript-word.ai-suggested-segment {
+    background-color: rgba(100, 100, 255, 0.1); /* Very light blue/lavender background */
+    border-bottom: 2px dotted rgba(100, 100, 255, 0.4);
+    /* cursor: pointer; is already on .transcript-word general class */
+}
+
+.transcript-word.ai-suggested-segment:hover {
+    background-color: rgba(100, 100, 255, 0.2); /* Slightly darker on hover */
+}
+
+/* Active user selection (manual drag, input change, or clicked AI suggestion) */
+.transcript-word.highlighted-range {
+    background-color: #ffe066; /* A richer yellow for active selection */
+    border-bottom: 2px solid #ffd700; /* Solid border for active selection */
+}
+
+/* If a word is part of an AI suggestion AND the active selection */
+.transcript-word.ai-suggested-segment.highlighted-range {
+    background-color: #ffe066; /* Active selection yellow takes precedence */
+    /* The dotted border from .ai-suggested-segment might be overridden by solid from .highlighted-range, or combine.
+       If specific combined style is needed, define it here. For now, .highlighted-range style will dominate. */
+    border-bottom: 2px solid #ffc107; /* Make border even more prominent for this combo */
+}
+
+/* Help Modal Styles */
+#whisperParamsHelpModal {
+    /* Inline styles in HTML provide base positioning, can be enhanced here */
+    background-color: #ffffff; /* Brighter white for modal */
+    border: 1px solid #bbb; /* Slightly softer border */
+    font-size: 0.9em;
+}
+
+#whisper-params-help-modal-close-btn {
+    font-size: 1.5em; /* Make X larger */
+    font-weight: bold;
+    color: #777;
+    padding: 0 5px; /* Ensure it's clickable */
+}
+#whisper-params-help-modal-close-btn:hover {
+    color: #333;
+    background-color: transparent; /* Ensure no button bg on hover */
+}
+
+#helpModalSearchInput {
+    width: calc(100% - 20px); /* Adjust for padding */
+    padding: 8px 10px;
+    margin-bottom: 15px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-sizing: border-box;
+}
+
+#helpModalTocContainer {
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #eee;
+}
+#helpModalTocContainer strong {
+    font-weight: bold;
+}
+#helpModalToc {
+    list-style: none;
+    padding: 0;
+    margin: 5px 0 0 0;
+}
+#helpModalToc li {
+    display: inline;
+    margin-right: 10px;
+}
+#helpModalToc li a {
+    text-decoration: none;
+    color: #007bff;
+}
+#helpModalToc li a:hover {
+    text-decoration: underline;
+}
+
+.help-group {
+    margin-bottom: 20px;
+}
+
+.help-group-title { /* Corresponds to h5 */
+    font-size: 1.1em;
+    color: #333;
+    margin-top: 0;
+    margin-bottom: 10px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #eaeaea;
+}
+
+.help-parameter-entry {
+    margin-bottom: 15px;
+    padding: 10px;
+    background-color: #f9f9f9;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+}
+
+.help-parameter-entry h6 { /* Parameter Name */
+    font-size: 1em;
+    color: #111;
+    margin: 0 0 5px 0;
+    font-weight: bold;
+}
+
+.help-parameter-entry .eli5-desc {
+    margin: 0 0 8px 0;
+    font-style: italic;
+    color: #444;
+}
+
+.help-parameter-entry .details {
+    font-size: 0.9em;
+    padding-left: 15px;
+    border-left: 3px solid #007bff;
+    background-color: #fff;
+    padding: 8px;
+    border-radius: 3px;
+}
+
+.help-parameter-entry .details p {
+    margin: 3px 0;
+    color: #555;
+}
+.help-parameter-entry .details p strong {
+    color: #333;
+}
+
+.copy-icon, .external-link, .impact-cue {
+    font-size: 0.8em;
+    margin-left: 5px;
+    color: #007bff;
+    cursor: pointer;
+}
+.copy-icon:hover, .external-link:hover {
+    text-decoration: underline;
+}
+.external-link {
+    text-decoration: none;
+}
+.impact-cue {
+    font-style: normal; /* Override italics if any */
+    cursor: default;
+    /* Specific styles for speed-low, acc-high etc. can be added later */
+}
+
+/* Contextual Tooltip Styles */
+.tooltip-trigger {
+    cursor: help;
+    color: #007bff;
+    font-weight: bold;
+    margin-left: 4px;
+    font-size: 0.9em;
+    display: inline-block; /* Allows for better positioning if needed */
+    border: 1px solid #007bff;
+    border-radius: 50%;
+    width: 16px; /* Fixed width */
+    height: 16px; /* Fixed height */
+    line-height: 16px; /* Vertically center text */
+    text-align: center; /* Horizontally center text */
+}
+
+.tooltip-trigger:hover {
+    background-color: #007bff;
+    color: white;
+}
+
+#paramTooltip {
+    /* Positioned by JS, base styles here */
+    display: none; /* Initially hidden */
+    position: absolute; /* Will be controlled by JS */
+    background-color: #333;
+    color: white;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 0.85em;
+    z-index: 1001; /* Ensure it's above other elements */
+    max-width: 250px; /* Prevent very wide tooltips */
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    pointer-events: none; /* Tooltip itself should not be interactive */
+}
