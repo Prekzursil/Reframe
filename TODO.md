@@ -116,8 +116,8 @@
 
 ## 8. Worker Service (Celery)
 
-- [ ] Set up `services/worker/worker.py` with Celery app initialization.
-- [ ] Configure broker/result backend via env (Redis by default).
+- [x] Set up `services/worker/worker.py` with Celery app initialization.
+- [x] Configure broker/result backend via env (Redis by default).
 - [ ] Task: `transcribe_video(video_asset_id, config) -> transcription_asset_id`.
 - [ ] Task: `generate_captions(video_asset_id, options) -> srt_asset_id`.
 - [ ] Task: `translate_subtitles(subtitle_asset_id, options) -> new_subtitle_asset_id`.

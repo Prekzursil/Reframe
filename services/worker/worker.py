@@ -1,16 +1,10 @@
 import os
 from celery import Celery
 
-
 BROKER_URL = os.getenv("BROKER_URL", "redis://redis:6379/0")
 RESULT_BACKEND = os.getenv("RESULT_BACKEND", BROKER_URL)
 
-celery_app = Celery(
-    "reframe_worker",
-    broker=BROKER_URL,
-    backend=RESULT_BACKEND,
-)
-
+celery_app = Celery("reframe_worker", broker=BROKER_URL, backend=RESULT_BACKEND)
 celery_app.conf.task_default_queue = "default"
 
 
