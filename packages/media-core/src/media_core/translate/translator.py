@@ -71,3 +71,23 @@ class CloudTranslator(Translator):
                 # Fallback to original text if the provider fails
                 results.append(text)
         return results
+
+
+class LocalTranslator(Translator):
+    """Offline translator using argostranslate if available."""
+
+    def __init__(self, src: str, tgt: str):
+        try:
+            from argostranslate import translate  # type: ignore
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError("argostranslate is not installed; install extras 'translate-local'") from exc
+
+        languages = translate.get_installed_languages()
+        self._src_lang = next((l for l in languages if l.code == src), None)
+        self._tgt_lang = next((l for l in languages if l.code == tgt), None)
+        if not self._src_lang or not self._tgt_lang:
+            raise RuntimeError(f"argostranslate missing language pack for {src}->{tgt}")
+        self._translator = self._src_lang.get_translation(self._tgt_lang)
+
+    def translate_batch(self, texts: List[str], src: str, tgt: str) -> List[str]:
+        return [self._translator.translate(text) for text in texts]
