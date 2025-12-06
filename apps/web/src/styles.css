@@ -197,6 +197,19 @@ h2, h3 { margin: 0; }
   border-color: var(--accent-blue);
 }
 
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 14px;
+  padding: 16px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+}
+
+.dropzone:hover {
+  border-color: var(--accent-blue);
+}
+
 .metric-value {
   margin: 0;
   font-weight: 700;

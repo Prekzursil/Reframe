@@ -58,14 +58,20 @@ function JobStatusPill({ status }: { status: JobStatus }) {
   return <Chip tone={toneMap[status]}>{status}</Chip>;
 }
 
-function CaptionsForm({ onCreated }: { onCreated: (job: Job) => void }) {
-  const [videoId, setVideoId] = useState("");
+function CaptionsForm({ onCreated, initialVideoId }: { onCreated: (job: Job) => void; initialVideoId?: string }) {
+  const [videoId, setVideoId] = useState(initialVideoId || "");
   const [sourceLang, setSourceLang] = useState("auto");
   const [backend, setBackend] = useState(BACKENDS[0]);
   const [model, setModel] = useState("whisper-large-v3");
   const [formats, setFormats] = useState<string[]>(["srt"]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialVideoId) {
+      setVideoId(initialVideoId);
+    }
+  }, [initialVideoId]);
 
   const toggleFormat = (fmt: string) => {
     setFormats((prev) => (prev.includes(fmt) ? prev.filter((f) => f !== fmt) : [...prev, fmt]));
@@ -182,6 +188,47 @@ function TranslateForm({ onCreated }: { onCreated: (job: Job) => void }) {
   );
 }
 
+function UploadPanel({
+  onAssetId,
+  onPreview,
+}: {
+  onAssetId: (id: string) => void;
+  onPreview: (url: string | null) => void;
+}) {
+  const handleFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    const objectUrl = URL.createObjectURL(file);
+    const pseudoId = `local-${file.name}-${Date.now()}`;
+    onPreview(objectUrl);
+    onAssetId(pseudoId);
+  };
+
+  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    handleFiles(e.dataTransfer.files);
+  };
+
+  return (
+    <div
+      className="dropzone"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={onDrop}
+      onClick={() => document.getElementById("video-upload-input")?.click()}
+    >
+      <input
+        id="video-upload-input"
+        type="file"
+        accept="video/*"
+        style={{ display: "none" }}
+        onChange={(e) => handleFiles(e.target.files)}
+      />
+      <p className="metric-value">Upload a video</p>
+      <p className="muted">Drop a file here or click to select. Generates a local asset id for forms.</p>
+    </div>
+  );
+}
+
 function AppShell() {
   const [active, setActive] = useState(NAV_ITEMS[1].id);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
@@ -191,6 +238,8 @@ function AppShell() {
   const [outputAsset, setOutputAsset] = useState<MediaAsset | null>(null);
   const [assetError, setAssetError] = useState<string | null>(null);
   const [assetLoading, setAssetLoading] = useState(false);
+  const [uploadedVideoId, setUploadedVideoId] = useState<string>("");
+  const [uploadedPreview, setUploadedPreview] = useState<string | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -351,9 +400,13 @@ function AppShell() {
 
         {active === "captions" && (
           <section className="grid two-col">
+            <Card title="Upload video">
+              <UploadPanel onAssetId={(id) => setUploadedVideoId(id)} onPreview={(url) => setUploadedPreview(url)} />
+              {uploadedPreview && <video className="preview" controls src={uploadedPreview} />}
+            </Card>
             <Card title="Captions & Translate">
               <p className="muted">Create caption jobs with backend/model and format options.</p>
-              <CaptionsForm onCreated={() => refresh()} />
+              <CaptionsForm onCreated={() => refresh()} initialVideoId={uploadedVideoId} />
             </Card>
             <Card title="Translate subtitles">
               <p className="muted">Submit translation jobs for existing subtitle assets.</p>
