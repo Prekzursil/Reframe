@@ -6,6 +6,8 @@ export interface Job {
   status: JobStatus;
   progress: number;
   payload?: Record<string, unknown>;
+  input_asset_id?: string | null;
+  output_asset_id?: string | null;
 }
 
 export interface CaptionJobRequest {
@@ -17,6 +19,14 @@ export interface TranslateJobRequest {
   subtitle_asset_id: string;
   target_language: string;
   options?: Record<string, unknown>;
+}
+
+export interface MediaAsset {
+  id: string;
+  kind: string;
+  uri?: string | null;
+  mime_type?: string | null;
+  duration?: number | null;
 }
 
 interface ApiClientOptions {
@@ -49,6 +59,14 @@ export class ApiClient {
 
   listJobs() {
     return this.request<Job[]>("/jobs");
+  }
+
+  getJob(jobId: string) {
+    return this.request<Job>(`/jobs/${jobId}`);
+  }
+
+  getAsset(assetId: string) {
+    return this.request<MediaAsset>(`/assets/${assetId}`);
   }
 
   createCaptionJob(payload: CaptionJobRequest) {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import "./styles.css";
-import { apiClient, type Job, type JobStatus } from "./api/client";
+import { apiClient, type Job, type JobStatus, type MediaAsset } from "./api/client";
 import { Button, Card, Chip, Input, TextArea } from "./components/ui";
 import { Spinner } from "./components/Spinner";
 import { SettingsModal } from "./components/SettingsModal";
@@ -187,6 +187,10 @@ function AppShell() {
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [showSettings, setShowSettings] = useState(false);
   const { jobs, loading, error, refresh } = useLiveJobs();
+  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const [outputAsset, setOutputAsset] = useState<MediaAsset | null>(null);
+  const [assetError, setAssetError] = useState<string | null>(null);
+  const [assetLoading, setAssetLoading] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -269,13 +273,28 @@ function AppShell() {
             {!loading && !error && jobs.length === 0 && <p className="muted">No jobs yet.</p>}
             {!loading &&
               jobs.map((job) => (
-                <div key={job.id} className="job-row">
+                <button key={job.id} className="job-row selectable" onClick={async () => {
+                  setSelectedJob(job);
+                  setOutputAsset(null);
+                  setAssetError(null);
+                  if (job.output_asset_id) {
+                    setAssetLoading(true);
+                    try {
+                      const asset = await apiClient.getAsset(job.output_asset_id);
+                      setOutputAsset(asset);
+                    } catch (err) {
+                      setAssetError(err instanceof Error ? err.message : "Failed to fetch asset");
+                    } finally {
+                      setAssetLoading(false);
+                    }
+                  }
+                }}>
                   <div>
                     <p className="metric-label">{job.job_type}</p>
                     <p className="metric-value">{job.id}</p>
                   </div>
                   <JobStatusPill status={job.status} />
-                </div>
+                </button>
               ))}
           </Card>
 
@@ -294,6 +313,39 @@ function AppShell() {
                 <p className="metric-value">{recentStatuses.completed}</p>
               </div>
             </div>
+          </Card>
+
+          <Card title="Outputs & preview">
+            {!selectedJob && <p className="muted">Select a completed job to view outputs.</p>}
+            {selectedJob && (
+              <>
+                <p className="metric-label">Job</p>
+                <p className="metric-value">{selectedJob.id}</p>
+                {!selectedJob.output_asset_id && <p className="muted">No output asset yet.</p>}
+                {assetLoading && <Spinner label="Loading asset..." />}
+                {assetError && <div className="error-inline">{assetError}</div>}
+                {outputAsset && (
+                  <div className="output-card">
+                    <p className="metric-label">Asset</p>
+                    <p className="metric-value">{outputAsset.id}</p>
+                    <p className="muted">{outputAsset.mime_type || outputAsset.kind}</p>
+                    {outputAsset.uri && (
+                      <div className="actions-row">
+                        <a className="btn btn-primary" href={outputAsset.uri} download>
+                          Download
+                        </a>
+                      </div>
+                    )}
+                    {outputAsset.uri && outputAsset.mime_type?.includes("video") && (
+                      <video className="preview" controls src={outputAsset.uri} />
+                    )}
+                    {outputAsset.uri && outputAsset.mime_type?.includes("text") && (
+                      <iframe className="preview-text" src={outputAsset.uri} title="subtitle-preview" />
+                    )}
+                  </div>
+                )}
+              </>
+            )}
           </Card>
         </section>
 
