@@ -232,6 +232,40 @@ function UploadPanel({
   );
 }
 
+function AudioUploadPanel({
+  onAssetId,
+  onPreview,
+}: {
+  onAssetId: (id: string) => void;
+  onPreview: (url: string | null) => void;
+}) {
+  const handleFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    const objectUrl = URL.createObjectURL(file);
+    const pseudoId = `audio-${file.name}-${Date.now()}`;
+    onPreview(objectUrl);
+    onAssetId(pseudoId);
+  };
+
+  return (
+    <div className="dropzone" onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleFiles(e.dataTransfer.files)}>
+      <input
+        id="audio-upload-input"
+        type="file"
+        accept="audio/*"
+        style={{ display: "none" }}
+        onChange={(e) => handleFiles(e.target.files)}
+      />
+      <p className="metric-value">Upload audio</p>
+      <p className="muted">Drop a file or click to select. Generates a local asset id for forms.</p>
+      <Button variant="ghost" type="button" onClick={() => document.getElementById("audio-upload-input")?.click()}>
+        Browse audio
+      </Button>
+    </div>
+  );
+}
+
 function SubtitleUpload({
   onAssetId,
   onPreview,
@@ -268,17 +302,9 @@ function SubtitleToolsForm({ onCreated }: { onCreated: (job: Job, bilingual: boo
   const [targetLang, setTargetLang] = useState("es");
   const [bilingual, setBilingual] = useState(false);
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
+  const [uploadName, setUploadName] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const handleUpload = (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    const file = files[0];
-    const objectUrl = URL.createObjectURL(file);
-    const pseudoId = `subtitle-${file.name}-${Date.now()}`;
-    setSubtitleId(pseudoId);
-    setUploadPreview(objectUrl);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -304,10 +330,14 @@ function SubtitleToolsForm({ onCreated }: { onCreated: (job: Job, bilingual: boo
         <span>Subtitle asset ID</span>
         <Input value={subtitleId} onChange={(e) => setSubtitleId(e.target.value)} required />
       </label>
-      <label className="field">
-        <span>Upload SRT/VTT</span>
-        <input type="file" accept=".srt,.vtt,text/plain" onChange={(e) => handleUpload(e.target.files)} />
-      </label>
+      <SubtitleUpload
+        label="Upload SRT/VTT (generates local asset id)"
+        onAssetId={(id) => setSubtitleId(id)}
+        onPreview={(url, name) => {
+          setUploadPreview(url);
+          setUploadName(name || null);
+        }}
+      />
       <label className="field">
         <span>Target language</span>
         <select className="input" value={targetLang} onChange={(e) => setTargetLang(e.target.value)}>
@@ -327,7 +357,7 @@ function SubtitleToolsForm({ onCreated }: { onCreated: (job: Job, bilingual: boo
       </label>
       {uploadPreview && (
         <div className="output-card">
-          <p className="metric-label">Uploaded subtitle preview</p>
+          <p className="metric-label">Uploaded subtitle preview {uploadName ? `(${uploadName})` : ""}</p>
           <iframe className="preview-text" src={uploadPreview} title="subtitle-tools-preview" />
         </div>
       )}
@@ -341,14 +371,22 @@ function SubtitleToolsForm({ onCreated }: { onCreated: (job: Job, bilingual: boo
   );
 }
 
-function MergeAvForm({ onCreated }: { onCreated: (job: Job) => void }) {
-  const [videoId, setVideoId] = useState("");
-  const [audioId, setAudioId] = useState("");
+function MergeAvForm({ onCreated, initialVideoId, initialAudioId }: { onCreated: (job: Job) => void; initialVideoId?: string; initialAudioId?: string }) {
+  const [videoId, setVideoId] = useState(initialVideoId || "");
+  const [audioId, setAudioId] = useState(initialAudioId || "");
   const [offset, setOffset] = useState(0);
   const [ducking, setDucking] = useState(false);
   const [normalize, setNormalize] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialVideoId) setVideoId(initialVideoId);
+  }, [initialVideoId]);
+
+  useEffect(() => {
+    if (initialAudioId) setAudioId(initialAudioId);
+  }, [initialAudioId]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -655,7 +693,9 @@ function AppShell() {
   const [subtitleAssetId, setSubtitleAssetId] = useState<string>("");
   const [subtitlePreview, setSubtitlePreview] = useState<string | null>(null);
   const [subtitleFileName, setSubtitleFileName] = useState<string | null>(null);
-  const [shortsClips, setShortsClips] = useState<{ id: string; duration: number; score: number }[]>([]);
+  const [shortsClips, setShortsClips] = useState<
+    { id: string; duration: number; score: number; uri?: string | null; subtitle_uri?: string | null; thumbnail_uri?: string | null }[]
+  >([]);
   const [shortsJob, setShortsJob] = useState<Job | null>(null);
   const [shortsStatusPolling, setShortsStatusPolling] = useState(false);
   const [subtitleToolsJob, setSubtitleToolsJob] = useState<Job | null>(null);
@@ -663,6 +703,10 @@ function AppShell() {
   const [shortsOutput, setShortsOutput] = useState<MediaAsset | null>(null);
   const [subtitleToolsOutput, setSubtitleToolsOutput] = useState<MediaAsset | null>(null);
   const [mergeOutput, setMergeOutput] = useState<MediaAsset | null>(null);
+  const [mergeVideoPreview, setMergeVideoPreview] = useState<string | null>(null);
+  const [mergeAudioPreview, setMergeAudioPreview] = useState<string | null>(null);
+  const [mergeVideoId, setMergeVideoId] = useState<string>("");
+  const [mergeAudioId, setMergeAudioId] = useState<string>("");
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -674,6 +718,17 @@ function AppShell() {
       try {
         const refreshed = await apiClient.getJob(job.id);
         onUpdate(refreshed);
+        if (job.job_type === "shorts" && refreshed.payload && "clip_assets" in (refreshed.payload as any)) {
+          const clips = ((refreshed.payload as any).clip_assets as any[]).map((c, i) => ({
+            id: c.id || `${refreshed.id}-clip-${i + 1}`,
+            duration: c.duration ?? null,
+            score: c.score ?? null,
+            uri: c.uri ?? c.url ?? null,
+            subtitle_uri: c.subtitle_uri ?? null,
+            thumbnail_uri: c.thumbnail_uri ?? null,
+          }));
+          setShortsClips(clips.filter(Boolean));
+        }
         if (onAsset && refreshed.output_asset_id) {
           try {
             const asset = await apiClient.getAsset(refreshed.output_asset_id);
@@ -918,12 +973,18 @@ function AppShell() {
               <div className="clip-grid">
                 {shortsClips.map((clip) => (
                   <div key={clip.id} className="clip-card">
-                    <div className="clip-thumb" />
-                    <p className="metric-value">{clip.duration}s</p>
-                    <p className="muted">Score: {clip.score}</p>
+                    <div className="clip-thumb">
+                      {clip.thumbnail_uri ? <img src={clip.thumbnail_uri} alt="Clip thumbnail" /> : <div className="placeholder-thumb" />}
+                    </div>
+                    <p className="metric-value">{clip.duration ? `${clip.duration}s` : "?"}</p>
+                    <p className="muted">Score: {clip.score ?? "?"}</p>
                     <div className="actions-row">
-                      <Button variant="secondary">Download video</Button>
-                      <Button variant="ghost">Download subs</Button>
+                      <Button variant="secondary" disabled={!clip.uri} onClick={() => clip.uri && window.open(clip.uri, "_blank")}>
+                        Download video
+                      </Button>
+                      <Button variant="ghost" disabled={!clip.subtitle_uri} onClick={() => clip.subtitle_uri && window.open(clip.subtitle_uri, "_blank")}>
+                        Download subs
+                      </Button>
                       <Button variant="ghost" onClick={() => setShortsClips((prev) => prev.filter((c) => c.id !== clip.id))}>
                         Remove
                       </Button>
@@ -1022,11 +1083,17 @@ function AppShell() {
 
             <Card title="Video / Audio merge">
               <p className="muted">Merge audio into a video with optional offset, ducking, and normalization.</p>
+              <UploadPanel onAssetId={(id) => setMergeVideoId(id)} onPreview={(url) => setMergeVideoPreview(url)} />
+              {mergeVideoPreview && <video className="preview" controls src={mergeVideoPreview} />}
+              <AudioUploadPanel onAssetId={(id) => setMergeAudioId(id)} onPreview={(url) => setMergeAudioPreview(url)} />
+              {mergeAudioPreview && <audio controls src={mergeAudioPreview} />}
               <MergeAvForm
                 onCreated={(job) => {
                   setMergeJob(job);
                   setMergeOutput(null);
                 }}
+                initialVideoId={mergeVideoId}
+                initialAudioId={mergeAudioId}
               />
               {mergeJob && (
                 <div className="output-card">
