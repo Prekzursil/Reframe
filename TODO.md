@@ -4,9 +4,9 @@
 
 ## 1. Project & Infra
 
-- [ ] Create monorepo layout: `apps/`, `services/`, `packages/`, `infra/`.
-- [ ] Add `pyproject.toml` for `packages/media-core` (Poetry or plain pip).
-- [ ] Add `apps/api/` with FastAPI skeleton + `main.py`.
+- [x] Create monorepo layout: `apps/`, `services/`, `packages/`, `infra/`.
+- [x] Add `pyproject.toml` for `packages/media-core` (Poetry or plain pip).
+- [x] Add `apps/api/` with FastAPI skeleton + `main.py`.
 - [ ] Add `apps/web/` with React + Vite + TypeScript.
 - [ ] Add `services/worker/` with Celery app.
 - [ ] Add `infra/docker-compose.yml` for API, worker, Redis, web.
