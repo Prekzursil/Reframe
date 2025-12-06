@@ -101,16 +101,16 @@
 
 ## 7. Media Core – Shorts Segmentation
 
-- [ ] Create `packages/media-core/segment/shorts.py`.
-- [ ] Define `SegmentCandidate` model (start, end, score, reason, snippet).
-- [ ] Implement naive equal‑splits strategy (baseline, from `long_to_shorts_app`).
-- [ ] Implement sliding window candidate generator (configurable window size & stride).
+- [x] Create `packages/media-core/segment/shorts.py`.
+- [x] Define `SegmentCandidate` model (start, end, score, reason, snippet).
+- [x] Implement naive equal‑splits strategy (baseline, from `long_to_shorts_app`).
+- [x] Implement sliding window candidate generator (configurable window size & stride).
 - [ ] Implement scoring using simple heuristics (density of keywords, sentence boundaries).
 - [ ] Implement LLM scoring backend:
   - [ ] Interface: `score_segments(transcript, candidates, prompt, model)`.
   - [ ] Provider: Groq or OpenAI (whichever you prefer).
 - [ ] Implement selector: pick top N segments under min/max duration & non‑overlap rules.
-- [ ] Unit tests: segments non‑overlapping, durations within bounds.
+- [x] Unit tests: segments non‑overlapping, durations within bounds.
 
 ---
 
