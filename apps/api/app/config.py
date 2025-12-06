@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     media_root: str = Field(default="./media")
     api_title: str = Field(default="Reframe API")
     api_version: str = Field(default="0.1.0")
+    rate_limit_requests: int = Field(default=60)
+    rate_limit_window_seconds: int = Field(default=60)
 
 
 @lru_cache(maxsize=1)

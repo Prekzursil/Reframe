@@ -154,7 +154,7 @@
 - [ ] Add structured error responses (code, message, details).
 - [ ] Add background cleanup for orphaned temp files.
 - [ ] Add endpoint to cancel a running job (best effort).
-- [ ] Add rate limiting for heavy endpoints (optional, later).
+- [x] Add rate limiting for heavy endpoints (optional, later).
 
 ---
 

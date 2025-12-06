@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, SQLModel, select
 
 from app.database import get_session
-from app.models import Job, MediaAsset, SubtitleStylePreset
+from app.models import Job, JobStatus, MediaAsset, SubtitleStylePreset
+from app.rate_limit import enforce_rate_limit
 
 router = APIRouter(prefix="/api/v1")
 
@@ -89,11 +90,17 @@ class MergeAVRequest(SQLModel):
     }
 
 
-@router.post("/captions/jobs", response_model=Job, status_code=status.HTTP_201_CREATED, tags=["Captions"])
+@router.post(
+    "/captions/jobs",
+    response_model=Job,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Captions"],
+    dependencies=[Depends(enforce_rate_limit)],
+)
 def create_caption_job(payload: CaptionJobRequest, session: SessionDep) -> Job:
     job = Job(
         job_type="captions",
-        status="queued",
+        status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.video_asset_id,
         payload=payload.options or {},
@@ -104,11 +111,17 @@ def create_caption_job(payload: CaptionJobRequest, session: SessionDep) -> Job:
     return job
 
 
-@router.post("/subtitles/translate", response_model=Job, status_code=status.HTTP_201_CREATED, tags=["Translate"])
+@router.post(
+    "/subtitles/translate",
+    response_model=Job,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Translate"],
+    dependencies=[Depends(enforce_rate_limit)],
+)
 def create_translate_job(payload: TranslateJobRequest, session: SessionDep) -> Job:
     job = Job(
         job_type="translate_subtitles",
-        status="queued",
+        status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.subtitle_asset_id,
         payload={"target_language": payload.target_language, **(payload.options or {})},
@@ -128,7 +141,7 @@ def get_job(job_id: UUID, session: SessionDep) -> Job:
 
 
 @router.get("/jobs", response_model=List[Job], tags=["Jobs"])
-def list_jobs(status_filter: Optional[str] = None, session: SessionDep = Depends(get_session)) -> List[Job]:
+def list_jobs(status_filter: Optional[JobStatus] = None, session: SessionDep = Depends(get_session)) -> List[Job]:
     query = select(Job)
     if status_filter:
         query = query.where(Job.status == status_filter)
@@ -136,11 +149,17 @@ def list_jobs(status_filter: Optional[str] = None, session: SessionDep = Depends
     return results
 
 
-@router.post("/shorts/jobs", response_model=Job, status_code=status.HTTP_201_CREATED, tags=["Shorts"])
+@router.post(
+    "/shorts/jobs",
+    response_model=Job,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Shorts"],
+    dependencies=[Depends(enforce_rate_limit)],
+)
 def create_shorts_job(payload: ShortsJobRequest, session: SessionDep) -> Job:
     job = Job(
         job_type="shorts",
-        status="queued",
+        status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.video_asset_id,
         payload={
@@ -162,11 +181,12 @@ def create_shorts_job(payload: ShortsJobRequest, session: SessionDep) -> Job:
     response_model=Job,
     status_code=status.HTTP_201_CREATED,
     tags=["Utilities"],
+    dependencies=[Depends(enforce_rate_limit)],
 )
 def create_merge_job(payload: MergeAVRequest, session: SessionDep) -> Job:
     job = Job(
         job_type="merge_av",
-        status="queued",
+        status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.video_asset_id,
         payload={
