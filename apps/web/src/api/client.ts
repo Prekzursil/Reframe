@@ -33,6 +33,20 @@ export interface ShortsJobRequest {
   options?: Record<string, unknown>;
 }
 
+export interface SubtitleToolsRequest {
+  subtitle_asset_id: string;
+  target_language?: string;
+  bilingual?: boolean;
+}
+
+export interface MergeAvRequest {
+  video_asset_id: string;
+  audio_asset_id: string;
+  offset?: number;
+  ducking?: boolean;
+  normalize?: boolean;
+}
+
 export interface MediaAsset {
   id: string;
   kind: string;
@@ -96,6 +110,14 @@ export class ApiClient {
 
   createShortsJob(payload: ShortsJobRequest) {
     return this.request<Job>("/shorts/jobs", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  translateSubtitleAsset(payload: SubtitleToolsRequest) {
+    return this.request<Job>("/utilities/translate-subtitle", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  mergeAv(payload: MergeAvRequest) {
+    return this.request<Job>("/utilities/merge-av", { method: "POST", body: JSON.stringify(payload) });
   }
 }
 

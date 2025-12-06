@@ -24,6 +24,7 @@ const OUTPUT_FORMATS = ["srt", "vtt", "ass"];
 const BACKENDS = ["whisper", "faster_whisper", "whisper_cpp"];
 const FONTS = ["Inter", "Space Grotesk", "Montserrat", "Open Sans"];
 const ASPECTS = ["9:16", "16:9", "1:1"];
+const LANGS = ["en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh"];
 
 function useLiveJobs() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -234,7 +235,7 @@ function UploadPanel({
 function SubtitleUpload({
   onAssetId,
   onPreview,
-  label = "Load subtitles (SRT/VTT)",
+  label = "Upload subtitles (SRT/VTT)",
 }: {
   onAssetId: (id: string) => void;
   onPreview: (url: string | null, name?: string | null) => void;
@@ -259,6 +260,155 @@ function SubtitleUpload({
         onChange={(e) => handleFiles(e.target.files)}
       />
     </label>
+  );
+}
+
+function SubtitleToolsForm({ onCreated }: { onCreated: (job: Job, bilingual: boolean) => void }) {
+  const [subtitleId, setSubtitleId] = useState("");
+  const [targetLang, setTargetLang] = useState("es");
+  const [bilingual, setBilingual] = useState(false);
+  const [uploadPreview, setUploadPreview] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleUpload = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    const objectUrl = URL.createObjectURL(file);
+    const pseudoId = `subtitle-${file.name}-${Date.now()}`;
+    setSubtitleId(pseudoId);
+    setUploadPreview(objectUrl);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const job = await apiClient.translateSubtitleAsset({
+        subtitle_asset_id: subtitleId.trim(),
+        target_language: targetLang.trim(),
+        bilingual,
+      });
+      onCreated(job, bilingual);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to submit translation");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form className="form-grid" onSubmit={handleSubmit}>
+      <label className="field">
+        <span>Subtitle asset ID</span>
+        <Input value={subtitleId} onChange={(e) => setSubtitleId(e.target.value)} required />
+      </label>
+      <label className="field">
+        <span>Upload SRT/VTT</span>
+        <input type="file" accept=".srt,.vtt,text/plain" onChange={(e) => handleUpload(e.target.files)} />
+      </label>
+      <label className="field">
+        <span>Target language</span>
+        <select className="input" value={targetLang} onChange={(e) => setTargetLang(e.target.value)}>
+          {LANGS.map((l) => (
+            <option key={l}>{l}</option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>Bilingual output</span>
+        <div className="checkbox-row">
+          <label className="checkbox">
+            <input type="checkbox" checked={bilingual} onChange={(e) => setBilingual(e.target.checked)} />
+            <span>Include original + translated</span>
+          </label>
+        </div>
+      </label>
+      {uploadPreview && (
+        <div className="output-card">
+          <p className="metric-label">Uploaded subtitle preview</p>
+          <iframe className="preview-text" src={uploadPreview} title="subtitle-tools-preview" />
+        </div>
+      )}
+      {error && <div className="error-inline">{error}</div>}
+      <div className="actions-row">
+        <Button type="submit" disabled={busy}>
+          {busy ? "Submitting..." : "Translate subtitles"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function MergeAvForm({ onCreated }: { onCreated: (job: Job) => void }) {
+  const [videoId, setVideoId] = useState("");
+  const [audioId, setAudioId] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [ducking, setDucking] = useState(false);
+  const [normalize, setNormalize] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const job = await apiClient.mergeAv({
+        video_asset_id: videoId.trim(),
+        audio_asset_id: audioId.trim(),
+        offset,
+        ducking,
+        normalize,
+      });
+      onCreated(job);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to submit merge job");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form className="form-grid" onSubmit={submit}>
+      <label className="field">
+        <span>Video asset ID</span>
+        <Input value={videoId} onChange={(e) => setVideoId(e.target.value)} required />
+      </label>
+      <label className="field">
+        <span>Audio asset ID</span>
+        <Input value={audioId} onChange={(e) => setAudioId(e.target.value)} required />
+      </label>
+      <label className="field">
+        <span>Offset (seconds)</span>
+        <Input type="number" step="0.1" value={offset} onChange={(e) => setOffset(Number(e.target.value))} />
+      </label>
+      <label className="field">
+        <span>Ducking</span>
+        <div className="checkbox-row">
+          <label className="checkbox">
+            <input type="checkbox" checked={ducking} onChange={(e) => setDucking(e.target.checked)} />
+            <span>Lower background audio under narration</span>
+          </label>
+        </div>
+      </label>
+      <label className="field">
+        <span>Normalize</span>
+        <div className="checkbox-row">
+          <label className="checkbox">
+            <input type="checkbox" checked={normalize} onChange={(e) => setNormalize(e.target.checked)} />
+            <span>Normalize output loudness</span>
+          </label>
+        </div>
+      </label>
+      {error && <div className="error-inline">{error}</div>}
+      <div className="actions-row">
+        <Button type="submit" disabled={busy}>
+          {busy ? "Submitting..." : "Merge audio/video"}
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -508,10 +658,35 @@ function AppShell() {
   const [shortsClips, setShortsClips] = useState<{ id: string; duration: number; score: number }[]>([]);
   const [shortsJob, setShortsJob] = useState<Job | null>(null);
   const [shortsStatusPolling, setShortsStatusPolling] = useState(false);
+  const [subtitleToolsJob, setSubtitleToolsJob] = useState<Job | null>(null);
+  const [mergeJob, setMergeJob] = useState<Job | null>(null);
+  const [shortsOutput, setShortsOutput] = useState<MediaAsset | null>(null);
+  const [subtitleToolsOutput, setSubtitleToolsOutput] = useState<MediaAsset | null>(null);
+  const [mergeOutput, setMergeOutput] = useState<MediaAsset | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
+
+  const pollJob = (job: Job | null, onUpdate: (j: Job) => void, onAsset?: (a: MediaAsset | null) => void) => {
+    if (!job || ["completed", "failed", "cancelled"].includes(job.status)) return null;
+    return setInterval(async () => {
+      try {
+        const refreshed = await apiClient.getJob(job.id);
+        onUpdate(refreshed);
+        if (onAsset && refreshed.output_asset_id) {
+          try {
+            const asset = await apiClient.getAsset(refreshed.output_asset_id);
+            onAsset(asset);
+          } catch {
+            onAsset(null);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }, 5000);
+  };
 
   useEffect(() => {
     if (!shortsJob || ["completed", "failed", "cancelled"].includes(shortsJob.status)) {
@@ -519,16 +694,25 @@ function AppShell() {
       return;
     }
     setShortsStatusPolling(true);
-    const id = setInterval(async () => {
-      try {
-        const refreshed = await apiClient.getJob(shortsJob.id);
-        setShortsJob(refreshed);
-      } catch {
-        // ignore polling errors
-      }
-    }, 5000);
-    return () => clearInterval(id);
+    const id = pollJob(shortsJob, setShortsJob, setShortsOutput);
+    return () => {
+      if (id) clearInterval(id);
+    };
   }, [shortsJob]);
+
+  useEffect(() => {
+    const id = pollJob(subtitleToolsJob, setSubtitleToolsJob, setSubtitleToolsOutput);
+    return () => {
+      if (id) clearInterval(id);
+    };
+  }, [subtitleToolsJob]);
+
+  useEffect(() => {
+    const id = pollJob(mergeJob, setMergeJob, setMergeOutput);
+    return () => {
+      if (id) clearInterval(id);
+    };
+  }, [mergeJob]);
 
   const recentStatuses = useMemo(
     () => ({
@@ -694,6 +878,7 @@ function AppShell() {
                 onCreated={(job, clips) => {
                   setShortsJob(job);
                   setShortsClips(clips);
+                  setShortsOutput(null);
                   refresh();
                 }}
               />
@@ -716,6 +901,13 @@ function AppShell() {
                     </ul>
                   </div>
                   {shortsStatusPolling && <Spinner label="Polling job status..." />}
+                  {shortsOutput && shortsOutput.uri && (
+                    <div className="actions-row">
+                      <a className="btn btn-primary" href={shortsOutput.uri} download>
+                        Download compiled shorts
+                      </a>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <p className="muted">Create a shorts job to view progress.</p>
@@ -795,6 +987,64 @@ function AppShell() {
                 onPreview={(payload) => apiClient.createStyledSubtitleJob(payload).then(() => {})}
                 onRender={(payload) => apiClient.createStyledSubtitleJob(payload).then(() => {})}
               />
+            </Card>
+          </section>
+        )}
+
+        {active === "utilities" && (
+          <section className="grid two-col">
+            <Card title="Subtitle tools">
+              <p className="muted">Upload or specify subtitle asset to translate; bilingual option available.</p>
+              <SubtitleToolsForm
+                onCreated={(job) => {
+                  setSubtitleToolsJob(job);
+                  setSubtitleToolsOutput(null);
+                }}
+              />
+              {subtitleToolsJob && (
+                <div className="output-card">
+                  <p className="metric-label">Job {subtitleToolsJob.id}</p>
+                  <p className="muted">Status: {subtitleToolsJob.status}</p>
+                  <div className="actions-row">
+                    {subtitleToolsOutput?.uri ? (
+                      <a className="btn btn-primary" href={subtitleToolsOutput.uri} download>
+                        Download translated subtitles
+                      </a>
+                    ) : (
+                      <Button variant="secondary" disabled>
+                        Download when ready
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </Card>
+
+            <Card title="Video / Audio merge">
+              <p className="muted">Merge audio into a video with optional offset, ducking, and normalization.</p>
+              <MergeAvForm
+                onCreated={(job) => {
+                  setMergeJob(job);
+                  setMergeOutput(null);
+                }}
+              />
+              {mergeJob && (
+                <div className="output-card">
+                  <p className="metric-label">Job {mergeJob.id}</p>
+                  <p className="muted">Status: {mergeJob.status}</p>
+                  <div className="actions-row">
+                    {mergeOutput?.uri ? (
+                      <a className="btn btn-primary" href={mergeOutput.uri} download>
+                        Download merged output
+                      </a>
+                    ) : (
+                      <Button variant="secondary" disabled>
+                        Download merged output when ready
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
             </Card>
           </section>
         )}
