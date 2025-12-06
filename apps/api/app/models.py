@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 from uuid import UUID, uuid4
 
@@ -18,10 +19,18 @@ class MediaAsset(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class JobStatus(str, Enum):
+    queued = "queued"
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+    cancelled = "cancelled"
+
+
 class Job(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     job_type: str = Field(description="Pipeline type, e.g., transcribe, translate, shorts")
-    status: str = Field(default="pending", index=True)
+    status: JobStatus = Field(default=JobStatus.queued, index=True)
     progress: float = Field(default=0.0, description="0-1.0 progress fraction")
     error: Optional[str] = Field(default=None, description="Error message if failed")
     payload: dict = Field(default_factory=dict, sa_column=Column(JSON), description="Options or parameters for the job")

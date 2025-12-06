@@ -150,10 +150,10 @@
 
 ## 10. API – Job Lifecycle & Errors
 
-- [ ] Standardize job statuses & error codes.
-- [ ] Add structured error responses (code, message, details).
-- [ ] Add background cleanup for orphaned temp files.
-- [ ] Add endpoint to cancel a running job (best effort).
+- [x] Standardize job statuses & error codes.
+- [x] Add structured error responses (code, message, details).
+- [x] Add background cleanup for orphaned temp files.
+- [x] Add endpoint to cancel a running job (best effort).
 - [x] Add rate limiting for heavy endpoints (optional, later).
 
 ---
