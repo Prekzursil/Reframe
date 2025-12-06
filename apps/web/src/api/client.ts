@@ -8,6 +8,17 @@ export interface Job {
   payload?: Record<string, unknown>;
 }
 
+export interface CaptionJobRequest {
+  video_asset_id: string;
+  options?: Record<string, unknown>;
+}
+
+export interface TranslateJobRequest {
+  subtitle_asset_id: string;
+  target_language: string;
+  options?: Record<string, unknown>;
+}
+
 interface ApiClientOptions {
   baseUrl?: string;
   fetcher?: typeof fetch;
@@ -38,6 +49,14 @@ export class ApiClient {
 
   listJobs() {
     return this.request<Job[]>("/jobs");
+  }
+
+  createCaptionJob(payload: CaptionJobRequest) {
+    return this.request<Job>("/captions/jobs", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  createTranslateJob(payload: TranslateJobRequest) {
+    return this.request<Job>("/subtitles/translate", { method: "POST", body: JSON.stringify(payload) });
   }
 }
 
