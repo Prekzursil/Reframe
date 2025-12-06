@@ -45,7 +45,9 @@ def main() -> int:
             result = transcribe_openai_file(str(input_path), config)
         elif backend == TranscriptionBackend.FASTER_WHISPER:
             result = transcribe_faster_whisper(str(input_path), config)
-        elif backend in (TranscriptionBackend.WHISPER_CPP, TranscriptionBackend.WHISPERX, TranscriptionBackend.WHISPER_TIMESTAMPED):
+        elif backend == TranscriptionBackend.WHISPER_CPP:
+            result = transcribe_whisper_cpp(str(input_path), config)
+        elif backend in (TranscriptionBackend.WHISPER_TIMESTAMPED, TranscriptionBackend.WHISPERX):
             result = transcribe_whisper_timestamped(str(input_path), config)
         else:
             result = transcribe_noop(str(input_path), config)

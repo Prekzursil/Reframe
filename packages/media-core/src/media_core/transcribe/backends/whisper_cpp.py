@@ -73,20 +73,20 @@ def normalize_whisper_cpp(
 
 
 def transcribe_whisper_cpp(path: str | Path, config: TranscriptionConfig) -> TranscriptionResult:
-    """Transcribe using whisper.cpp (pywhispercpp) when available, else fallback."""
+    """Transcribe using whisper.cpp (pywhispercpp) when available, else graceful fallback."""
     media_path = Path(path)
     if not media_path.is_file():
         raise FileNotFoundError(media_path)
 
     try:
-        _ensure_whispercpp()
-    except Exception as exc:  # pragma: no cover - optional dependency
-        logger.warning("whispercpp not installed, falling back to stub: %s", exc)
+        whispercpp = _ensure_whispercpp()
+        # Whisper constructor accepts a model name or path. Default to config.model.
+        model_name = config.model or "ggml-base.en"
+        model = whispercpp.Whisper(model_name)
+        segments = list(model.transcribe(media_path))
+        return normalize_whisper_cpp(segments, model=model_name, language=config.language)
+    except Exception as exc:  # pragma: no cover - optional dependency or runtime failure
+        logger.warning("whispercpp unavailable or failed (%s); returning stub result", exc)
         return TranscriptionResult.from_iterable(
             [Word(text=media_path.name, start=0.0, end=1.0)], model="whisper_cpp_stub", language=config.language
         )
-
-    # Minimal stub until full whisper.cpp pipeline is wired: return placeholder word.
-    return TranscriptionResult.from_iterable(
-        [Word(text=media_path.name, start=0.0, end=1.0)], model=config.model, language=config.language
-    )
