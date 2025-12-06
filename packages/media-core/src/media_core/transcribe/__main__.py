@@ -1,7 +1,8 @@
 """CLI entrypoint for quick transcription checks.
 
-Note: Backend execution is not yet wired. This serves as a placeholder to show
-the expected interface and to verify that the package imports cleanly.
+Note: Backend execution is not yet wired to actual inference here. This serves
+as a placeholder to verify that the package imports cleanly and to echo
+configuration for manual testing.
 """
 
 from __future__ import annotations
