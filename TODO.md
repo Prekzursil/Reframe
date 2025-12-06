@@ -132,7 +132,7 @@
 - [x] Task: `render_styled_subtitles(video_asset_id, subtitle_asset_id, style, options) -> video_asset_id`.
 - [x] Task: `generate_shorts(video_asset_id, options) -> list[clip_asset_id]`.
 - [x] Task: `merge_video_audio(video_asset_id, audio_asset_id, options) -> video_asset_id`.
-- [ ] Implement job status updates & progress reporting.
+- [x] Implement job status updates & progress reporting.
 
 ---
 
