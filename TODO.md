@@ -88,14 +88,14 @@
 
 ## 6. Media Core – Video Editing
 
-- [ ] Create `packages/media-core/video_edit/ffmpeg.py`.
-- [ ] Function: `probe_media(path) -> dict` (duration, resolution, codecs).
-- [ ] Function: `extract_audio(video_path, audio_path)`.
-- [ ] Function: `cut_clip(video_path, start, end, output_path)`.
-- [ ] Function: `reframe(video_path, output_path, aspect_ratio, strategy="crop|blur_bg")`.
-- [ ] Function: `merge_video_audio(video_path, audio_path, output_path, offset, ducking, normalize)`.
-- [ ] Function: `burn_subtitles(video_path, srt_or_ass_path, output_path, extra_filters=None)`.
-- [ ] Tests: basic FFmpeg invocation works and outputs exist.
+- [x] Create `packages/media-core/video_edit/ffmpeg.py`.
+- [x] Function: `probe_media(path) -> dict` (duration, resolution, codecs).
+- [x] Function: `extract_audio(video_path, audio_path)`.
+- [x] Function: `cut_clip(video_path, start, end, output_path)`.
+- [x] Function: `reframe(video_path, output_path, aspect_ratio, strategy="crop|blur_bg")`.
+- [x] Function: `merge_video_audio(video_path, audio_path, output_path, offset, ducking, normalize)`.
+- [x] Function: `burn_subtitles(video_path, srt_or_ass_path, output_path, extra_filters=None)`.
+- [x] Tests: basic FFmpeg invocation works and outputs exist.
 
 ---
 
