@@ -139,10 +139,10 @@
 ## 9. API – Core
 
 - [x] Implement settings management using `pydantic-settings`.
-- [ ] Add DB models (SQLModel or SQLAlchemy) for:
-  - [ ] `Job`,
-  - [ ] `MediaAsset`,
-  - [ ] (Optional) `SubtitleStylePreset`.
+- [x] Add DB models (SQLModel or SQLAlchemy) for:
+  - [x] `Job`,
+  - [x] `MediaAsset`,
+  - [x] (Optional) `SubtitleStylePreset`.
 - [ ] Add migration tooling (Alembic) if using SQLAlchemy.
 - [ ] Endpoint: `POST /api/v1/captions/jobs`.
 - [ ] Endpoint: `POST /api/v1/subtitles/translate`.
