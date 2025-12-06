@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, SQLModel, select
 
 from app.database import get_session
-from app.models import Job, MediaAsset, SubtitleStylePreset
+from app.errors import ErrorResponse, ApiError, conflict, not_found
+from app.models import Job, JobStatus, MediaAsset, SubtitleStylePreset
 
 router = APIRouter(prefix="/api/v1")
 
@@ -89,11 +90,17 @@ class MergeAVRequest(SQLModel):
     }
 
 
-@router.post("/captions/jobs", response_model=Job, status_code=status.HTTP_201_CREATED, tags=["Captions"])
+@router.post(
+    "/captions/jobs",
+    response_model=Job,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Captions"],
+    responses={404: {"model": ErrorResponse}},
+)
 def create_caption_job(payload: CaptionJobRequest, session: SessionDep) -> Job:
     job = Job(
         job_type="captions",
-        status="queued",
+        status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.video_asset_id,
         payload=payload.options or {},
@@ -104,11 +111,17 @@ def create_caption_job(payload: CaptionJobRequest, session: SessionDep) -> Job:
     return job
 
 
-@router.post("/subtitles/translate", response_model=Job, status_code=status.HTTP_201_CREATED, tags=["Translate"])
+@router.post(
+    "/subtitles/translate",
+    response_model=Job,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Translate"],
+    responses={404: {"model": ErrorResponse}},
+)
 def create_translate_job(payload: TranslateJobRequest, session: SessionDep) -> Job:
     job = Job(
         job_type="translate_subtitles",
-        status="queued",
+        status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.subtitle_asset_id,
         payload={"target_language": payload.target_language, **(payload.options or {})},
@@ -119,16 +132,21 @@ def create_translate_job(payload: TranslateJobRequest, session: SessionDep) -> J
     return job
 
 
-@router.get("/jobs/{job_id}", response_model=Job, tags=["Jobs"])
+@router.get(
+    "/jobs/{job_id}",
+    response_model=Job,
+    tags=["Jobs"],
+    responses={404: {"model": ErrorResponse}},
+)
 def get_job(job_id: UUID, session: SessionDep) -> Job:
     job = session.get(Job, job_id)
     if not job:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+        raise not_found("Job not found", details={"job_id": str(job_id)})
     return job
 
 
 @router.get("/jobs", response_model=List[Job], tags=["Jobs"])
-def list_jobs(status_filter: Optional[str] = None, session: SessionDep = Depends(get_session)) -> List[Job]:
+def list_jobs(status_filter: Optional[JobStatus] = None, session: SessionDep = Depends(get_session)) -> List[Job]:
     query = select(Job)
     if status_filter:
         query = query.where(Job.status == status_filter)
@@ -136,11 +154,33 @@ def list_jobs(status_filter: Optional[str] = None, session: SessionDep = Depends
     return results
 
 
+@router.post(
+    "/jobs/{job_id}/cancel",
+    response_model=Job,
+    tags=["Jobs"],
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+def cancel_job(job_id: UUID, session: SessionDep) -> Job:
+    job = session.get(Job, job_id)
+    if not job:
+        raise not_found("Job not found", details={"job_id": str(job_id)})
+
+    if job.status in {JobStatus.completed, JobStatus.failed, JobStatus.cancelled}:
+        raise conflict("Job already finished", details={"status": job.status})
+
+    job.status = JobStatus.cancelled
+    job.progress = 0.0
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    return job
+
+
 @router.post("/shorts/jobs", response_model=Job, status_code=status.HTTP_201_CREATED, tags=["Shorts"])
 def create_shorts_job(payload: ShortsJobRequest, session: SessionDep) -> Job:
     job = Job(
         job_type="shorts",
-        status="queued",
+        status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.video_asset_id,
         payload={
@@ -166,7 +206,7 @@ def create_shorts_job(payload: ShortsJobRequest, session: SessionDep) -> Job:
 def create_merge_job(payload: MergeAVRequest, session: SessionDep) -> Job:
     job = Job(
         job_type="merge_av",
-        status="queued",
+        status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.video_asset_id,
         payload={
@@ -183,11 +223,16 @@ def create_merge_job(payload: MergeAVRequest, session: SessionDep) -> Job:
     return job
 
 
-@router.get("/assets/{asset_id}", response_model=MediaAsset, tags=["Assets"])
+@router.get(
+    "/assets/{asset_id}",
+    response_model=MediaAsset,
+    tags=["Assets"],
+    responses={404: {"model": ErrorResponse}},
+)
 def get_asset(asset_id: UUID, session: SessionDep) -> MediaAsset:
     asset = session.get(MediaAsset, asset_id)
     if not asset:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+        raise not_found("Asset not found", details={"asset_id": str(asset_id)})
     return asset
 
 

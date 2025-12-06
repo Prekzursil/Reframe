@@ -1,8 +1,11 @@
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.database import create_db_and_tables
 from app.api import router as api_router
+from app.errors import ApiError, ErrorResponse
+from app.cleanup import start_cleanup_loop
 
 
 def create_app() -> FastAPI:
@@ -23,6 +26,12 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     def startup() -> None:
         create_db_and_tables()
+        start_cleanup_loop(settings.media_root)
+
+    @app.exception_handler(ApiError)
+    async def api_error_handler(_, exc: ApiError):
+        payload = ErrorResponse(code=exc.code, message=exc.message, details=exc.details)
+        return JSONResponse(status_code=exc.status_code, content=payload.model_dump())
 
     app.include_router(api_router)
 
