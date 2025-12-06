@@ -591,11 +591,13 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job, clips: any[]) => void
 function StyleEditor({
   onPreview,
   onRender,
+  onJobCreated,
   videoId,
   subtitleId,
 }: {
   onPreview: (payload: any) => Promise<void> | void;
   onRender: (payload: any) => Promise<void> | void;
+  onJobCreated?: (job: Job) => void;
   videoId: string;
   subtitleId: string;
 }) {
@@ -625,16 +627,20 @@ function StyleEditor({
     position,
   };
 
-  const act = async (cb: (payload: any) => Promise<void> | void, preview: boolean) => {
+  const act = async (cb: (payload: any) => Promise<Job | void> | void, preview: boolean) => {
     setBusy(true);
     setMessage(null);
     try {
-      await cb({
+      const payload = {
         video_asset_id: videoId,
         subtitle_asset_id: subtitleId,
         style: stylePayload,
         ...(preview ? { preview_seconds: 5 } : {}),
-      });
+      };
+      const result = await cb(payload);
+      if (result && onJobCreated) {
+        onJobCreated(result as Job);
+      }
       setMessage(preview ? "Preview requested" : "Render requested");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Action failed");
@@ -741,9 +747,11 @@ function AppShell() {
   const [shortsStatusPolling, setShortsStatusPolling] = useState(false);
   const [subtitleToolsJob, setSubtitleToolsJob] = useState<Job | null>(null);
   const [mergeJob, setMergeJob] = useState<Job | null>(null);
+  const [styleJob, setStyleJob] = useState<Job | null>(null);
   const [shortsOutput, setShortsOutput] = useState<MediaAsset | null>(null);
   const [subtitleToolsOutput, setSubtitleToolsOutput] = useState<MediaAsset | null>(null);
   const [mergeOutput, setMergeOutput] = useState<MediaAsset | null>(null);
+  const [styleOutput, setStyleOutput] = useState<MediaAsset | null>(null);
   const [mergeVideoPreview, setMergeVideoPreview] = useState<string | null>(null);
   const [mergeAudioPreview, setMergeAudioPreview] = useState<string | null>(null);
   const [mergeVideoId, setMergeVideoId] = useState<string>("");
@@ -809,6 +817,13 @@ function AppShell() {
       if (id) clearInterval(id);
     };
   }, [mergeJob]);
+
+  useEffect(() => {
+    const id = pollJob(styleJob, setStyleJob, setStyleOutput);
+    return () => {
+      if (id) clearInterval(id);
+    };
+  }, [styleJob]);
 
   useEffect(() => {
     const id = pollJob(captionJob, setCaptionJob, setCaptionOutput);
@@ -1124,9 +1139,26 @@ function AppShell() {
               <StyleEditor
                 videoId={uploadedVideoId}
                 subtitleId={subtitleAssetId}
-                onPreview={(payload) => apiClient.createStyledSubtitleJob(payload).then(() => {})}
-                onRender={(payload) => apiClient.createStyledSubtitleJob(payload).then(() => {})}
+                onPreview={(payload) => apiClient.createStyledSubtitleJob({ ...payload, preview_seconds: 5 })}
+                onRender={(payload) => apiClient.createStyledSubtitleJob(payload)}
+                onJobCreated={(job) => {
+                  setStyleJob(job);
+                  setStyleOutput(null);
+                }}
               />
+              {styleJob && (
+                <div className="output-card">
+                  <p className="metric-label">Styling job {styleJob.id}</p>
+                  <p className="muted">Status: {styleJob.status}</p>
+                  {styleOutput?.uri && (
+                    <div className="actions-row">
+                      <a className="btn btn-primary" href={styleOutput.uri} download>
+                        Download preview
+                      </a>
+                    </div>
+                  )}
+                </div>
+              )}
             </Card>
           </section>
         )}
