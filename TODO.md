@@ -118,12 +118,12 @@
 
 - [x] Set up `services/worker/worker.py` with Celery app initialization.
 - [x] Configure broker/result backend via env (Redis by default).
-- [ ] Task: `transcribe_video(video_asset_id, config) -> transcription_asset_id`.
-- [ ] Task: `generate_captions(video_asset_id, options) -> srt_asset_id`.
-- [ ] Task: `translate_subtitles(subtitle_asset_id, options) -> new_subtitle_asset_id`.
-- [ ] Task: `render_styled_subtitles(video_asset_id, subtitle_asset_id, style, options) -> video_asset_id`.
-- [ ] Task: `generate_shorts(video_asset_id, options) -> list[clip_asset_id]`.
-- [ ] Task: `merge_video_audio(video_asset_id, audio_asset_id, options) -> video_asset_id`.
+- [x] Task: `transcribe_video(video_asset_id, config) -> transcription_asset_id`.
+- [x] Task: `generate_captions(video_asset_id, options) -> srt_asset_id`.
+- [x] Task: `translate_subtitles(subtitle_asset_id, options) -> new_subtitle_asset_id`.
+- [x] Task: `render_styled_subtitles(video_asset_id, subtitle_asset_id, style, options) -> video_asset_id`.
+- [x] Task: `generate_shorts(video_asset_id, options) -> list[clip_asset_id]`.
+- [x] Task: `merge_video_audio(video_asset_id, audio_asset_id, options) -> video_asset_id`.
 - [ ] Implement job status updates & progress reporting.
 
 ---
