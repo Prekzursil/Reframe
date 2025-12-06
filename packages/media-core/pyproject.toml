@@ -13,6 +13,13 @@ dependencies = [
     "pydantic>=2.7",
 ]
 
+[project.optional-dependencies]
+transcribe-openai = ["openai>=1.25.0"]
+transcribe-faster-whisper = ["faster-whisper>=1.0.0"]
+transcribe-whispercpp = ["whispercpp>=0.0.9"]
+render = ["moviepy>=1.0.3", "pysubs2>=1.6.1"]
+translate-local = ["argostranslate>=1.9.0"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

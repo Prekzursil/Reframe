@@ -33,6 +33,9 @@
 - [x] Normalize outputs to `List[Word]` regardless of backend.
 - [x] Add CLI entrypoint (`python -m media_core.transcribe`) for quick testing.
 - [x] Unit tests: transcription result normalization (words sorted, no overlaps, correct lengths).
+- [x] Make transcribe CLI execute chosen backend (with safe fallback) instead of placeholder.
+- [ ] Flesh out whisper.cpp / whisper-timestamped execution paths with graceful fallback if deps missing.
+- [x] Add optional dependency groups for transcription backends (openai, faster-whisper, whispercpp).
 
 ---
 
@@ -67,6 +70,7 @@
 - [x] Add a simple “solid background + subtitles only” mode for preview.
 - [x] Provide a few preset styles (e.g. “TikTok default”, “Yellow highlight”, “Clean white”).
 - [x] Integration test: render a 5–10 second sample with 3 lines and verify no crashes.
+- [ ] Build actual MoviePy text/highlight rendering; remove plan-only scaffold.
 
 ---
 
@@ -83,6 +87,7 @@
   - [x] Rebuild SRT while preserving timings.
 - [x] Implement bilingual SRT builder (original + translated lines).
 - [x] Unit tests: translation preserves count/order, handles empty lines.
+- [x] Add local/offline translator backend (e.g., Argos/HF) and wire into SRT translator.
 
 ---
 

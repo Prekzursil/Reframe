@@ -10,6 +10,7 @@ class TranscriptionBackend(str, Enum):
     WHISPER_CPP = "whisper_cpp"
     WHISPER_TIMESTAMPED = "whisper_timestamped"
     WHISPERX = "whisperx"
+    NOOP = "noop"
 
 
 class TranscriptionConfig(BaseModel):
