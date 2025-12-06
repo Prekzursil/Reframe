@@ -183,7 +183,7 @@
 - [x] On submit:
   - [x] Create caption job via API.
   - [x] Show job in “Recent jobs” panel with status & progress.
-- [ ] When job completes:
+- [x] When job completes:
   - [x] Show download buttons for each generated asset.
   - [x] Preview subtitles in a simple video player if possible.
 
@@ -306,4 +306,5 @@
 - [ ] Support for timelines / EDL export.
 - [ ] Optional cloud integrations (S3, remote GPU workers).
 - [ ] Optional “export upload package” for YouTube/TikTok (title, description, tags).
+
 
