@@ -191,21 +191,21 @@
 
 ## 13. Frontend – TikTok‑Style Subtitles
 
-- [ ] Page: **Subtitle Styling**.
-- [ ] UI:
-  - [ ] Upload video OR select an existing `MediaAsset`.
-  - [ ] Select subtitles (existing SRT) OR generate from scratch (reusing captions pipeline).
-  - [ ] Style editor:
-    - [ ] Font family (dropdown).
-    - [ ] Font size slider.
-    - [ ] Text color picker.
-    - [ ] Highlight color picker.
-    - [ ] Stroke width slider.
-    - [ ] Outline toggle + width slider + color picker.
-    - [ ] Shadow toggle + offset slider.
-    - [ ] Position & alignment controls.
-  - [ ] “Preview 5 seconds” button to render a short preview.
-- [ ] “Render full video” button -> creates a styled subtitle job.
+- [x] Page: **Subtitle Styling**.
+- [x] UI:
+  - [x] Upload video OR select an existing `MediaAsset`.
+  - [x] Select subtitles (existing SRT) OR generate from scratch (reusing captions pipeline).
+  - [x] Style editor:
+    - [x] Font family (dropdown).
+    - [x] Font size slider.
+    - [x] Text color picker.
+    - [x] Highlight color picker.
+    - [x] Stroke width slider.
+    - [x] Outline toggle + width slider + color picker.
+    - [x] Shadow toggle + offset slider.
+    - [x] Position & alignment controls.
+  - [x] “Preview 5 seconds” button to render a short preview.
+- [x] “Render full video” button -> creates a styled subtitle job.
 
 ---
 
