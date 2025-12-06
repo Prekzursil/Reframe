@@ -55,8 +55,8 @@
 
 ## 4. Media Core – TikTok‑Style Renderer
 
-- [ ] Create `packages/media-core/subtitles/styled.py`.
-- [ ] Implement `SubtitleStyle` model (font, colors, stroke, shadow, outline, position).
+- [x] Create `packages/media-core/subtitles/styled.py`.
+- [x] Implement `SubtitleStyle` model (font, colors, stroke, shadow, outline, position).
 - [ ] Implement `StyledSubtitleRenderer` using MoviePy:
   - [ ] Function to compute word sizes/positions given frame size.
   - [ ] Base text layer (full line duration).
@@ -64,8 +64,8 @@
   - [ ] Per‑word highlight `TextClip`s with word‑specific `start/end`.
 - [ ] Support variable video resolutions & aspect ratios (auto center).
 - [ ] Support vertical (9:16) & horizontal (16:9) layouts.
-- [ ] Add a simple “solid background + subtitles only” mode for preview.
-- [ ] Provide a few preset styles (e.g. “TikTok default”, “Yellow highlight”, “Clean white”).
+- [x] Add a simple “solid background + subtitles only” mode for preview.
+- [x] Provide a few preset styles (e.g. “TikTok default”, “Yellow highlight”, “Clean white”).
 - [ ] Integration test: render a 5–10 second sample with 3 lines and verify no crashes.
 
 ---
