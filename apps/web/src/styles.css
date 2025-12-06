@@ -348,6 +348,29 @@ h2, h3 { margin: 0; }
   gap: 12px;
 }
 
+.clip-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.clip-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--panel-alt);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.clip-thumb {
+  width: 100%;
+  height: 120px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--accent-blue), var(--accent-coral));
+  opacity: 0.5;
+}
 .output-card {
   border: 1px solid var(--border);
   border-radius: 12px;

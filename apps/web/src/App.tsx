@@ -23,6 +23,7 @@ const PRESETS = [
 const OUTPUT_FORMATS = ["srt", "vtt", "ass"];
 const BACKENDS = ["whisper", "faster_whisper", "whisper_cpp"];
 const FONTS = ["Inter", "Space Grotesk", "Montserrat", "Open Sans"];
+const ASPECTS = ["9:16", "16:9", "1:1"];
 
 function useLiveJobs() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -230,6 +231,105 @@ function UploadPanel({
   );
 }
 
+function ShortsForm({ onCreated }: { onCreated: (job: Job, clips: any[]) => void }) {
+  const [videoId, setVideoId] = useState("");
+  const [numClips, setNumClips] = useState(3);
+  const [minDuration, setMinDuration] = useState(10);
+  const [maxDuration, setMaxDuration] = useState(45);
+  const [aspect, setAspect] = useState(ASPECTS[0]);
+  const [useSubtitles, setUseSubtitles] = useState(false);
+  const [stylePreset, setStylePreset] = useState("TikTok Bold");
+  const [prompt, setPrompt] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const job = await apiClient.createShortsJob({
+        video_asset_id: videoId.trim(),
+        options: {
+          num_clips: numClips,
+          min_duration: minDuration,
+          max_duration: maxDuration,
+          aspect_ratio: aspect,
+          use_subtitles: useSubtitles,
+          style_preset: stylePreset,
+          prompt: prompt || undefined,
+        },
+      });
+      const mockClips = Array.from({ length: numClips }, (_, i) => ({
+        id: `${job.id}-clip-${i + 1}`,
+        duration: Math.round(minDuration + (maxDuration - minDuration) * 0.5),
+        score: Math.round(Math.random() * 100) / 10,
+      }));
+      onCreated(job, mockClips);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create shorts job");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form className="form-grid" onSubmit={submit}>
+      <label className="field">
+        <span>Video asset ID or URL</span>
+        <Input value={videoId} onChange={(e) => setVideoId(e.target.value)} required />
+      </label>
+      <label className="field">
+        <span>Number of clips</span>
+        <Input type="number" min={1} max={10} value={numClips} onChange={(e) => setNumClips(Number(e.target.value))} />
+      </label>
+      <label className="field">
+        <span>Min duration (s)</span>
+        <Input type="number" min={5} value={minDuration} onChange={(e) => setMinDuration(Number(e.target.value))} />
+      </label>
+      <label className="field">
+        <span>Max duration (s)</span>
+        <Input type="number" min={5} value={maxDuration} onChange={(e) => setMaxDuration(Number(e.target.value))} />
+      </label>
+      <label className="field">
+        <span>Aspect ratio</span>
+        <select className="input" value={aspect} onChange={(e) => setAspect(e.target.value)}>
+          {ASPECTS.map((a) => (
+            <option key={a}>{a}</option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>Use subtitles</span>
+        <div className="checkbox-row">
+          <label className="checkbox">
+            <input type="checkbox" checked={useSubtitles} onChange={(e) => setUseSubtitles(e.target.checked)} />
+            <span>Attach styled subtitles</span>
+          </label>
+        </div>
+      </label>
+      <label className="field">
+        <span>Style preset</span>
+        <select className="input" value={stylePreset} onChange={(e) => setStylePreset(e.target.value)}>
+          {PRESETS.map((p) => (
+            <option key={p.name}>{p.name}</option>
+          ))}
+        </select>
+      </label>
+      <label className="field full">
+        <span>Prompt to guide selection</span>
+        <TextArea rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Highlight the funniest moments..." />
+      </label>
+      {error && <div className="error-inline">{error}</div>}
+      <div className="actions-row">
+        <Button type="submit" disabled={busy}>
+          {busy ? "Submitting..." : "Create shorts job"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 function StyleEditor({
   onPreview,
   onRender,
@@ -361,7 +461,7 @@ function StyleEditor({
 }
 
 function AppShell() {
-  const [active, setActive] = useState(NAV_ITEMS[1].id);
+  const [active, setActive] = useState(NAV_ITEMS[0].id);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [showSettings, setShowSettings] = useState(false);
   const { jobs, loading, error, refresh } = useLiveJobs();
@@ -372,6 +472,8 @@ function AppShell() {
   const [uploadedVideoId, setUploadedVideoId] = useState<string>("");
   const [uploadedPreview, setUploadedPreview] = useState<string | null>(null);
   const [subtitleAssetId, setSubtitleAssetId] = useState<string>("");
+  const [shortsClips, setShortsClips] = useState<{ id: string; duration: number; score: number }[]>([]);
+  const [shortsJob, setShortsJob] = useState<Job | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -529,6 +631,62 @@ function AppShell() {
             )}
           </Card>
         </section>
+
+        {active === "shorts" && (
+          <section className="grid two-col">
+            <Card title="Upload or link video">
+              <UploadPanel onAssetId={(id) => setUploadedVideoId(id)} onPreview={(url) => setUploadedPreview(url)} />
+              {uploadedPreview && <video className="preview" controls src={uploadedPreview} />}
+            </Card>
+            <Card title="Shorts maker">
+              <ShortsForm
+                onCreated={(job, clips) => {
+                  setShortsJob(job);
+                  setShortsClips(clips);
+                  refresh();
+                }}
+              />
+            </Card>
+            <Card title="Progress">
+              {shortsJob ? (
+                <div className="snapshot">
+                  <div>
+                    <p className="metric-label">Job</p>
+                    <p className="metric-value">{shortsJob.id}</p>
+                  </div>
+                  <div>
+                    <p className="metric-label">Status</p>
+                    <JobStatusPill status={shortsJob.status} />
+                  </div>
+                  <div>
+                    <p className="metric-label">Steps</p>
+                    <ul className="muted">
+                      <li>transcribe → segment → render</li>
+                    </ul>
+                  </div>
+                </div>
+              ) : (
+                <p className="muted">Create a shorts job to view progress.</p>
+              )}
+            </Card>
+            <Card title="Results">
+              {shortsClips.length === 0 && <p className="muted">No clips yet.</p>}
+              <div className="clip-grid">
+                {shortsClips.map((clip) => (
+                  <div key={clip.id} className="clip-card">
+                    <div className="clip-thumb" />
+                    <p className="metric-value">{clip.duration}s</p>
+                    <p className="muted">Score: {clip.score}</p>
+                    <div className="actions-row">
+                      <Button variant="secondary">Download video</Button>
+                      <Button variant="ghost">Download subs</Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </section>
+        )}
 
         {active === "captions" && (
           <section className="grid two-col">
