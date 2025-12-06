@@ -23,16 +23,17 @@
 
 ## 2. Media Core – Transcription
 
-- [ ] Create `packages/media-core/transcribe/__init__.py`.
-- [ ] Implement `TranscriptionConfig` (model, language, device, backend).
-- [ ] Implement `Word` and `TranscriptionResult` models.
+- [x] Create `packages/media-core/transcribe/__init__.py`.
+- [x] Implement `TranscriptionConfig` (model, language, device, backend).
+- [x] Implement `Word` and `TranscriptionResult` models.
 - [ ] Backend: `openai_whisper` (simple baseline).
 - [ ] Backend: `faster_whisper` (GPU‑friendly).
 - [ ] Backend: `whisper_cpp` integration (via `pywhispercpp` or subprocess).
 - [ ] Optional: support `whisper-timestamped` or `whisperX` for more accurate word timings.
 - [ ] Normalize outputs to `List[Word]` regardless of backend.
 - [ ] Add CLI entrypoint (`python -m media_core.transcribe`) for quick testing.
-- [ ] Unit tests: transcription result normalization (words sorted, no overlaps, correct lengths).
+- [x] Add CLI entrypoint (`python -m media_core.transcribe`) for quick testing.
+- [x] Unit tests: transcription result normalization (words sorted, no overlaps, correct lengths).
 
 ---
 
