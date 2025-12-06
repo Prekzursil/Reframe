@@ -198,13 +198,24 @@ function UploadPanel({
   onAssetId: (id: string) => void;
   onPreview: (url: string | null) => void;
 }) {
-  const handleFiles = (files: FileList | null) => {
-    if (!files || files.length === 0) return;
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0 || uploading) return;
     const file = files[0];
     const objectUrl = URL.createObjectURL(file);
-    const pseudoId = `local-${file.name}-${Date.now()}`;
-    onPreview(objectUrl);
-    onAssetId(pseudoId);
+    setUploading(true);
+    setError(null);
+    try {
+      const asset = await apiClient.uploadAsset(file, "video");
+      onPreview(objectUrl);
+      onAssetId(asset.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
   };
 
   const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -224,10 +235,12 @@ function UploadPanel({
         type="file"
         accept="video/*"
         style={{ display: "none" }}
-        onChange={(e) => handleFiles(e.target.files)}
+        onChange={(e) => void handleFiles(e.target.files)}
       />
       <p className="metric-value">Upload a video</p>
       <p className="muted">Drop a file here or click to select. Generates a local asset id for forms.</p>
+      {uploading && <p className="muted">Uploading...</p>}
+      {error && <div className="error-inline">{error}</div>}
     </div>
   );
 }
@@ -239,13 +252,24 @@ function AudioUploadPanel({
   onAssetId: (id: string) => void;
   onPreview: (url: string | null) => void;
 }) {
-  const handleFiles = (files: FileList | null) => {
-    if (!files || files.length === 0) return;
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0 || uploading) return;
     const file = files[0];
     const objectUrl = URL.createObjectURL(file);
-    const pseudoId = `audio-${file.name}-${Date.now()}`;
-    onPreview(objectUrl);
-    onAssetId(pseudoId);
+    setUploading(true);
+    setError(null);
+    try {
+      const asset = await apiClient.uploadAsset(file, "audio");
+      onPreview(objectUrl);
+      onAssetId(asset.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -262,6 +286,8 @@ function AudioUploadPanel({
       <Button variant="ghost" type="button" onClick={() => document.getElementById("audio-upload-input")?.click()}>
         Browse audio
       </Button>
+      {uploading && <p className="muted">Uploading...</p>}
+      {error && <div className="error-inline">{error}</div>}
     </div>
   );
 }
