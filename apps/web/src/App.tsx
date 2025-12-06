@@ -710,10 +710,10 @@ function StyleEditor({
       </label>
       {message && <div className="muted">{message}</div>}
       <div className="actions-row">
-        <Button variant="secondary" type="button" onClick={() => act(onPreview, true)} disabled={busy || !videoId || !subtitleId}>
+        <Button variant="secondary" type="button" onClick={() => act(onPreview, true)} disabled={busy || !videoId}>
           {busy ? "Working..." : "Preview 5s"}
         </Button>
-        <Button variant="primary" type="button" onClick={() => act(onRender, false)} disabled={busy || !videoId || !subtitleId}>
+        <Button variant="primary" type="button" onClick={() => act(onRender, false)} disabled={busy || !videoId}>
           {busy ? "Working..." : "Render full video"}
         </Button>
       </div>
@@ -857,6 +857,44 @@ function AppShell() {
       }
     }
   }, [translateOutput]);
+
+  const waitForJobAsset = async (jobId: string, timeoutMs = 60000) => {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const refreshed = await apiClient.getJob(jobId);
+      if (["completed", "failed", "cancelled"].includes(refreshed.status)) {
+        if (refreshed.output_asset_id) {
+          try {
+            const asset = await apiClient.getAsset(refreshed.output_asset_id);
+            return { job: refreshed, asset };
+          } catch {
+            return { job: refreshed, asset: null };
+          }
+        }
+        return { job: refreshed, asset: null };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    throw new Error("Timed out waiting for job output");
+  };
+
+  const ensureSubtitleAssetForStyling = async (): Promise<string> => {
+    if (subtitleAssetId) return subtitleAssetId;
+    if (captionOutput?.id) return captionOutput.id;
+    if (!uploadedVideoId) throw new Error("Upload a video or provide a subtitle asset id first.");
+    setCaptionOutput(null);
+    setCaptionJob(null);
+    const job = await apiClient.createCaptionJob({ video_asset_id: uploadedVideoId, options: {} });
+    setCaptionJob(job);
+    const { job: finished, asset } = await waitForJobAsset(job.id);
+    setCaptionJob(finished);
+    if (asset?.id) {
+      setCaptionOutput(asset);
+      setSubtitleAssetId(asset.id);
+      return asset.id;
+    }
+    throw new Error("Captions did not produce an output asset.");
+  };
 
   const recentStatuses = useMemo(
     () => ({
@@ -1027,28 +1065,29 @@ function AppShell() {
                 }}
               />
             </Card>
-            <Card title="Progress">
-              {shortsJob ? (
-                <div className="snapshot">
-                  <div>
-                    <p className="metric-label">Job</p>
-                    <p className="metric-value">{shortsJob.id}</p>
+          <Card title="Progress">
+            {shortsJob ? (
+              <div className="snapshot">
+                <div>
+                  <p className="metric-label">Job</p>
+                  <p className="metric-value">{shortsJob.id}</p>
+                </div>
+                <div>
+                  <p className="metric-label">Status</p>
+                  <JobStatusPill status={shortsJob.status} />
+                </div>
+                <div className="progress-bar">
+                  <div className="progress-track">
+                    <div className="progress-fill" style={{ width: `${Math.round((shortsJob.progress || 0) * 100)}%` }} />
                   </div>
-                  <div>
-                    <p className="metric-label">Status</p>
-                    <JobStatusPill status={shortsJob.status} />
-                  </div>
-                  <div>
-                    <p className="metric-label">Steps</p>
-                    <ul className="muted">
-                      <li>transcribe → segment → render</li>
-                    </ul>
-                  </div>
-                  {shortsStatusPolling && <Spinner label="Polling job status..." />}
-                  {shortsOutput && shortsOutput.uri && (
-                    <div className="actions-row">
-                      <a className="btn btn-primary" href={shortsOutput.uri} download>
-                        Download compiled shorts
+                  <p className="muted">{Math.round((shortsJob.progress || 0) * 100)}% complete</p>
+                </div>
+                <p className="muted">Steps: transcribe → segment → render</p>
+                {shortsStatusPolling && <Spinner label="Polling job status..." />}
+                {shortsOutput && shortsOutput.uri && (
+                  <div className="actions-row">
+                    <a className="btn btn-primary" href={shortsOutput.uri} download>
+                      Download compiled shorts
                       </a>
                     </div>
                   )}
@@ -1096,43 +1135,43 @@ function AppShell() {
               <CaptionsForm onCreated={() => refresh()} initialVideoId={uploadedVideoId} />
             </Card>
             <Card title="Translate subtitles">
-              <p className="muted">Submit translation jobs for existing subtitle assets.</p>
-              <TranslateForm
-                onCreated={(job) => {
-                  setTranslateJob(job);
-                  setTranslateOutput(null);
-                  refresh();
-                }}
-              />
-              {translateJob && (
-                <div className="output-card">
-                  <p className="metric-label">Translation job {translateJob.id}</p>
-                  <div className="snapshot">
-                    <div>
-                      <p className="metric-label">Status</p>
-                      <JobStatusPill status={translateJob.status} />
-                    </div>
-                    <div>
-                      <p className="metric-label">Target language</p>
-                      <p className="metric-value">{(translateJob.payload as any)?.target_language ?? "n/a"}</p>
-                    </div>
-                  </div>
-                  {translateOutput?.uri ? (
-                    <div className="actions-row">
-                      <a className="btn btn-primary" href={translateOutput.uri} download>
-                        Download translated subtitles
-                      </a>
-                      <Button variant="ghost" onClick={() => setSubtitlePreview(translateOutput.uri || null)}>
-                        Preview
-                      </Button>
-                    </div>
-                  ) : (
-                    <p className="muted">Waiting for translated subtitles...</p>
-                  )}
+          <p className="muted">Submit translation jobs for existing subtitle assets.</p>
+          <TranslateForm
+            onCreated={(job) => {
+              setTranslateJob(job);
+              setTranslateOutput(null);
+              refresh();
+            }}
+          />
+          {translateJob && (
+            <div className="output-card">
+              <p className="metric-label">Translation job {translateJob.id}</p>
+              <div className="snapshot">
+                <div>
+                  <p className="metric-label">Status</p>
+                  <JobStatusPill status={translateJob.status} />
                 </div>
+                <div>
+                  <p className="metric-label">Target language</p>
+                  <p className="metric-value">{(translateJob.payload as any)?.target_language ?? "n/a"}</p>
+                </div>
+              </div>
+              {translateOutput?.uri ? (
+                <div className="actions-row">
+                  <a className="btn btn-primary" href={translateOutput.uri} download>
+                    Download translated subtitles
+                  </a>
+                  <Button variant="ghost" onClick={() => setSubtitlePreview(translateOutput.uri || null)}>
+                    Preview
+                  </Button>
+                </div>
+              ) : (
+                <p className="muted">Waiting for translated subtitles...</p>
               )}
-            </Card>
-          </section>
+            </div>
+          )}
+        </Card>
+      </section>
         )}
 
         {active === "subtitles" && (
@@ -1184,12 +1223,26 @@ function AppShell() {
               )}
             </Card>
             <Card title="Style editor">
-              <p className="muted">Tune subtitle styling before rendering or previewing a short segment.</p>
+              <p className="muted">Tune subtitle styling; if no subtitles are set, we will auto-generate captions first.</p>
               <StyleEditor
                 videoId={uploadedVideoId}
                 subtitleId={subtitleAssetId}
-                onPreview={(payload) => apiClient.createStyledSubtitleJob({ ...payload, preview_seconds: 5 })}
-                onRender={(payload) => apiClient.createStyledSubtitleJob(payload)}
+                onPreview={async (payload) => {
+                  const sid = await ensureSubtitleAssetForStyling();
+                  const job = await apiClient.createStyledSubtitleJob({ ...payload, subtitle_asset_id: sid, preview_seconds: 5 });
+                  setStyleJob(job);
+                  setStyleOutput(null);
+                  refresh();
+                  return job;
+                }}
+                onRender={async (payload) => {
+                  const sid = await ensureSubtitleAssetForStyling();
+                  const job = await apiClient.createStyledSubtitleJob({ ...payload, subtitle_asset_id: sid });
+                  setStyleJob(job);
+                  setStyleOutput(null);
+                  refresh();
+                  return job;
+                }}
                 onJobCreated={(job) => {
                   setStyleJob(job);
                   setStyleOutput(null);
