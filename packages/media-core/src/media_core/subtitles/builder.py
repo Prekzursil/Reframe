@@ -95,3 +95,57 @@ def to_vtt(lines: Iterable[SubtitleLine]) -> str:
         output.append(line.text())
         output.append("")
     return "\n".join(output)
+
+
+def _format_ass_timestamp(seconds: float) -> str:
+    centis = int(round(seconds * 100))
+    hours, rem = divmod(centis, 360_000)
+    minutes, rem = divmod(rem, 6_000)
+    secs, cs = divmod(rem, 100)
+    return f"{hours:d}:{minutes:02d}:{secs:02d}.{cs:02d}"
+
+
+def to_ass(lines: Iterable[SubtitleLine]) -> str:
+    """Render subtitles to a basic ASS string. Uses pysubs2 if available; falls back to manual formatting."""
+    try:
+        import pysubs2  # type: ignore
+    except ImportError:
+        pysubs2 = None  # type: ignore
+
+    if pysubs2:
+        subs = pysubs2.SSAFile()
+        style = pysubs2.SSAStyle()
+        style.name = "Default"
+        subs.styles["Default"] = style
+        for line in lines:
+            event = pysubs2.SSAEvent(
+                start=int(line.start * 1000),
+                end=int(line.end * 1000),
+                style="Default",
+                text=line.text(),
+            )
+            subs.events.append(event)
+        return subs.to_string("ass")
+
+    header = [
+        "[Script Info]",
+        "ScriptType: v4.00+",
+        "PlayResX: 384",
+        "PlayResY: 288",
+        "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
+        "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding",
+        "Style: Default,Arial,36,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1",
+        "",
+        "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ]
+    body = []
+    for line in lines:
+        body.append(
+            f"Dialogue: 0,{_format_ass_timestamp(line.start)},{_format_ass_timestamp(line.end)},"
+            f"Default,,0,0,0,,{line.text()}"
+        )
+    return "\n".join(header + body)

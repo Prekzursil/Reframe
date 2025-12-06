@@ -8,6 +8,8 @@ class TranscriptionBackend(str, Enum):
     OPENAI_WHISPER = "openai_whisper"
     FASTER_WHISPER = "faster_whisper"
     WHISPER_CPP = "whisper_cpp"
+    WHISPER_TIMESTAMPED = "whisper_timestamped"
+    WHISPERX = "whisperx"
 
 
 class TranscriptionConfig(BaseModel):
