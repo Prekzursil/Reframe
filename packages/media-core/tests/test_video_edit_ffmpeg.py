@@ -13,8 +13,9 @@ from media_core.video_edit.ffmpeg import (
 
 
 class DummyCompleted:
-    def __init__(self):
+    def __init__(self, stdout=b""):
         self.returncode = 0
+        self.stdout = stdout
 
 
 def dummy_run(expected_cmds):
@@ -22,7 +23,8 @@ def dummy_run(expected_cmds):
 
     def _runner(cmd, check=True, capture_output=True):
         calls.append(cmd)
-        return DummyCompleted()
+        sample = b'{"format": {"duration": "1.5"}, "streams": [{"codec_type": "video", "codec_name": "h264", "width": 1920, "height": 1080}, {"codec_type": "audio", "codec_name": "aac"}]}'
+        return DummyCompleted(stdout=sample)
 
     return _runner, calls
 

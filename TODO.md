@@ -101,6 +101,8 @@
 - [x] Function: `merge_video_audio(video_path, audio_path, output_path, offset, ducking, normalize)`.
 - [x] Function: `burn_subtitles(video_path, srt_or_ass_path, output_path, extra_filters=None)`.
 - [x] Tests: basic FFmpeg invocation works and outputs exist.
+- [x] Return ffprobe metadata (duration/resolution/codec) from `probe_media` instead of path-only.
+- [x] Add `blur_bg` strategy to `reframe` for blurred letterboxing.
 
 ---
 
@@ -130,6 +132,7 @@
 - [x] Task: `generate_shorts(video_asset_id, options) -> list[clip_asset_id]`.
 - [x] Task: `merge_video_audio(video_asset_id, audio_asset_id, options) -> video_asset_id`.
 - [x] Implement job status updates & progress reporting.
+- [x] Create real `MediaAsset` rows (and stub files) for worker outputs and attach to jobs/clip payloads.
 
 ---
 
@@ -150,6 +153,7 @@
 - [x] Endpoint: `GET /api/v1/assets/{asset_id}` (download).
 - [x] Endpoint: `GET /api/v1/presets/styles`.
 - [x] Add OpenAPI docs with tags & examples.
+- [x] Add asset download endpoint that streams the underlying file (not just metadata).
 
 ---
 
