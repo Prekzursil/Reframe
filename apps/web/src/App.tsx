@@ -22,6 +22,7 @@ const PRESETS = [
 
 const OUTPUT_FORMATS = ["srt", "vtt", "ass"];
 const BACKENDS = ["whisper", "faster_whisper", "whisper_cpp"];
+const FONTS = ["Inter", "Space Grotesk", "Montserrat", "Open Sans"];
 
 function useLiveJobs() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -229,6 +230,136 @@ function UploadPanel({
   );
 }
 
+function StyleEditor({
+  onPreview,
+  onRender,
+  videoId,
+  subtitleId,
+}: {
+  onPreview: (payload: any) => Promise<void> | void;
+  onRender: (payload: any) => Promise<void> | void;
+  videoId: string;
+  subtitleId: string;
+}) {
+  const [font, setFont] = useState(FONTS[0]);
+  const [fontSize, setFontSize] = useState(42);
+  const [textColor, setTextColor] = useState("#ffffff");
+  const [highlightColor, setHighlightColor] = useState("#facc15");
+  const [strokeWidth, setStrokeWidth] = useState(3);
+  const [outlineEnabled, setOutlineEnabled] = useState(true);
+  const [outlineColor, setOutlineColor] = useState("#000000");
+  const [shadowEnabled, setShadowEnabled] = useState(true);
+  const [shadowOffset, setShadowOffset] = useState(4);
+  const [position, setPosition] = useState("bottom");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const stylePayload = {
+    font,
+    font_size: fontSize,
+    text_color: textColor,
+    highlight_color: highlightColor,
+    stroke_width: strokeWidth,
+    outline_enabled: outlineEnabled,
+    outline_color: outlineColor,
+    shadow_enabled: shadowEnabled,
+    shadow_offset: shadowOffset,
+    position,
+  };
+
+  const act = async (cb: (payload: any) => Promise<void> | void, preview: boolean) => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      await cb({
+        video_asset_id: videoId,
+        subtitle_asset_id: subtitleId,
+        style: stylePayload,
+        ...(preview ? { preview_seconds: 5 } : {}),
+      });
+      setMessage(preview ? "Preview requested" : "Render requested");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Action failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="style-grid">
+      <label className="field">
+        <span>Font family</span>
+        <select className="input" value={font} onChange={(e) => setFont(e.target.value)}>
+          {FONTS.map((f) => (
+            <option key={f}>{f}</option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>Font size</span>
+        <input type="range" min={24} max={72} value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))} />
+        <p className="muted">{fontSize}px</p>
+      </label>
+      <label className="field">
+        <span>Text color</span>
+        <input type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} />
+      </label>
+      <label className="field">
+        <span>Highlight color</span>
+        <input type="color" value={highlightColor} onChange={(e) => setHighlightColor(e.target.value)} />
+      </label>
+      <label className="field">
+        <span>Stroke width</span>
+        <input type="range" min={0} max={8} value={strokeWidth} onChange={(e) => setStrokeWidth(Number(e.target.value))} />
+      </label>
+      <label className="field">
+        <span>Outline</span>
+        <div className="checkbox-row">
+          <label className="checkbox">
+            <input type="checkbox" checked={outlineEnabled} onChange={(e) => setOutlineEnabled(e.target.checked)} />
+            <span>Enabled</span>
+          </label>
+          <input type="color" value={outlineColor} disabled={!outlineEnabled} onChange={(e) => setOutlineColor(e.target.value)} />
+        </div>
+      </label>
+      <label className="field">
+        <span>Shadow</span>
+        <div className="checkbox-row">
+          <label className="checkbox">
+            <input type="checkbox" checked={shadowEnabled} onChange={(e) => setShadowEnabled(e.target.checked)} />
+            <span>Enabled</span>
+          </label>
+          <input
+            type="range"
+            min={0}
+            max={16}
+            value={shadowOffset}
+            disabled={!shadowEnabled}
+            onChange={(e) => setShadowOffset(Number(e.target.value))}
+          />
+        </div>
+      </label>
+      <label className="field">
+        <span>Position</span>
+        <select className="input" value={position} onChange={(e) => setPosition(e.target.value)}>
+          <option value="bottom">Bottom</option>
+          <option value="center">Center</option>
+          <option value="top">Top</option>
+        </select>
+      </label>
+      {message && <div className="muted">{message}</div>}
+      <div className="actions-row">
+        <Button variant="secondary" type="button" onClick={() => act(onPreview, true)} disabled={busy || !videoId || !subtitleId}>
+          {busy ? "Working..." : "Preview 5s"}
+        </Button>
+        <Button variant="primary" type="button" onClick={() => act(onRender, false)} disabled={busy || !videoId || !subtitleId}>
+          {busy ? "Working..." : "Render full video"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function AppShell() {
   const [active, setActive] = useState(NAV_ITEMS[1].id);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
@@ -240,6 +371,7 @@ function AppShell() {
   const [assetLoading, setAssetLoading] = useState(false);
   const [uploadedVideoId, setUploadedVideoId] = useState<string>("");
   const [uploadedPreview, setUploadedPreview] = useState<string | null>(null);
+  const [subtitleAssetId, setSubtitleAssetId] = useState<string>("");
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -411,6 +543,32 @@ function AppShell() {
             <Card title="Translate subtitles">
               <p className="muted">Submit translation jobs for existing subtitle assets.</p>
               <TranslateForm onCreated={() => refresh()} />
+            </Card>
+          </section>
+        )}
+
+        {active === "subtitles" && (
+          <section className="grid two-col">
+            <Card title="Select assets">
+              <label className="field">
+                <span>Video asset ID</span>
+                <Input value={uploadedVideoId} onChange={(e) => setUploadedVideoId(e.target.value)} />
+              </label>
+              <label className="field">
+                <span>Subtitle asset ID</span>
+                <Input value={subtitleAssetId} onChange={(e) => setSubtitleAssetId(e.target.value)} />
+              </label>
+              <UploadPanel onAssetId={(id) => setUploadedVideoId(id)} onPreview={(url) => setUploadedPreview(url)} />
+              {uploadedPreview && <video className="preview" controls src={uploadedPreview} />}
+            </Card>
+            <Card title="Style editor">
+              <p className="muted">Adjust subtitle styling before previewing or rendering.</p>
+              <StyleEditor
+                videoId={uploadedVideoId}
+                subtitleId={subtitleAssetId}
+                onPreview={(payload) => apiClient.createStyledSubtitleJob(payload)}
+                onRender={(payload) => apiClient.createStyledSubtitleJob(payload)}
+              />
             </Card>
           </section>
         )}

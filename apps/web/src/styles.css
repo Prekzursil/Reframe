@@ -342,6 +342,12 @@ h2, h3 { margin: 0; }
   color: var(--text);
 }
 
+.style-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
 .output-card {
   border: 1px solid var(--border);
   border-radius: 12px;
