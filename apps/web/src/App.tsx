@@ -1096,28 +1096,34 @@ function AppShell() {
                 <p className="muted">Create a shorts job to view progress.</p>
               )}
             </Card>
-            <Card title="Results">
-              {shortsClips.length === 0 && <p className="muted">No clips yet.</p>}
-              <div className="clip-grid">
-                {shortsClips.map((clip) => (
-                  <div key={clip.id} className="clip-card">
-                    <div className="clip-thumb">
-                      {clip.thumbnail_uri ? <img src={clip.thumbnail_uri} alt="Clip thumbnail" /> : <div className="placeholder-thumb" />}
-                    </div>
-                    <p className="metric-value">{clip.duration ? `${clip.duration}s` : "?"}</p>
-                    <p className="muted">Score: {clip.score ?? "?"}</p>
-                    <div className="actions-row">
-                      <Button variant="secondary" disabled={!clip.uri} onClick={() => clip.uri && window.open(clip.uri, "_blank")}>
-                        Download video
-                      </Button>
-                      <Button variant="ghost" disabled={!clip.subtitle_uri} onClick={() => clip.subtitle_uri && window.open(clip.subtitle_uri, "_blank")}>
-                        Download subs
-                      </Button>
-                      <Button variant="ghost" onClick={() => setShortsClips((prev) => prev.filter((c) => c.id !== clip.id))}>
-                        Remove
-                      </Button>
-                    </div>
+          <Card title="Results">
+            {shortsClips.length === 0 && (
+              <p className="muted">
+                {shortsJob && ["running", "queued"].includes(shortsJob.status)
+                  ? "Waiting for clips from backend..."
+                  : "No clips yet."}
+              </p>
+            )}
+            <div className="clip-grid">
+              {shortsClips.map((clip) => (
+                <div key={clip.id} className="clip-card">
+                  <div className="clip-thumb">
+                    {clip.thumbnail_uri ? <img src={clip.thumbnail_uri} alt="Clip thumbnail" /> : <div className="placeholder-thumb" />}
                   </div>
+                  <p className="metric-value">{clip.duration ? `${clip.duration}s` : "?"}</p>
+                  <p className="muted">Score: {clip.score ?? "?"}</p>
+                  <div className="actions-row">
+                    <Button variant="secondary" disabled={!clip.uri} onClick={() => clip.uri && window.open(clip.uri, "_blank")}>
+                      {clip.uri ? "Download video" : "Video not ready"}
+                    </Button>
+                    <Button variant="ghost" disabled={!clip.subtitle_uri} onClick={() => clip.subtitle_uri && window.open(clip.subtitle_uri, "_blank")}>
+                      {clip.subtitle_uri ? "Download subs" : "Subs not ready"}
+                    </Button>
+                    <Button variant="ghost" onClick={() => setShortsClips((prev) => prev.filter((c) => c.id !== clip.id))}>
+                      Remove
+                    </Button>
+                  </div>
+                </div>
                 ))}
               </div>
             </Card>
@@ -1279,15 +1285,14 @@ function AppShell() {
                 <div className="output-card">
                   <p className="metric-label">Job {subtitleToolsJob.id}</p>
                   <p className="muted">Status: {subtitleToolsJob.status}</p>
+                  {["running", "queued"].includes(subtitleToolsJob.status) && <Spinner label="Polling job status..." />}
                   <div className="actions-row">
                     {subtitleToolsOutput?.uri ? (
                       <a className="btn btn-primary" href={subtitleToolsOutput.uri} download>
                         Download translated subtitles
                       </a>
                     ) : (
-                      <Button variant="secondary" disabled>
-                        Download when ready
-                      </Button>
+                      <div className="muted">Waiting for translated subtitles...</div>
                     )}
                   </div>
                 </div>
@@ -1312,15 +1317,14 @@ function AppShell() {
                 <div className="output-card">
                   <p className="metric-label">Job {mergeJob.id}</p>
                   <p className="muted">Status: {mergeJob.status}</p>
+                  {["running", "queued"].includes(mergeJob.status) && <Spinner label="Polling job status..." />}
                   <div className="actions-row">
                     {mergeOutput?.uri ? (
                       <a className="btn btn-primary" href={mergeOutput.uri} download>
                         Download merged output
                       </a>
                     ) : (
-                      <Button variant="secondary" disabled>
-                        Download merged output when ready
-                      </Button>
+                      <div className="muted">Waiting for merged output...</div>
                     )}
                   </div>
                 </div>
