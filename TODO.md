@@ -66,7 +66,7 @@
 - [x] Support vertical (9:16) & horizontal (16:9) layouts.
 - [x] Add a simple “solid background + subtitles only” mode for preview.
 - [x] Provide a few preset styles (e.g. “TikTok default”, “Yellow highlight”, “Clean white”).
-- [ ] Integration test: render a 5–10 second sample with 3 lines and verify no crashes.
+- [x] Integration test: render a 5–10 second sample with 3 lines and verify no crashes.
 
 ---
 
@@ -105,10 +105,10 @@
 - [x] Define `SegmentCandidate` model (start, end, score, reason, snippet).
 - [x] Implement naive equal‑splits strategy (baseline, from `long_to_shorts_app`).
 - [x] Implement sliding window candidate generator (configurable window size & stride).
-- [ ] Implement scoring using simple heuristics (density of keywords, sentence boundaries).
-- [ ] Implement LLM scoring backend:
-  - [ ] Interface: `score_segments(transcript, candidates, prompt, model)`.
-  - [ ] Provider: Groq or OpenAI (whichever you prefer).
+- [x] Implement scoring using simple heuristics (density of keywords, sentence boundaries).
+- [x] Implement LLM scoring backend:
+  - [x] Interface: `score_segments(transcript, candidates, prompt, model)`.
+  - [x] Provider: Groq or OpenAI (whichever you prefer).
 - [ ] Implement selector: pick top N segments under min/max duration & non‑overlap rules.
 - [x] Unit tests: segments non‑overlapping, durations within bounds.
 
