@@ -16,7 +16,6 @@ from app.config import get_settings
 from app.errors import ErrorResponse, conflict, not_found, server_error
 from app.models import Job, JobStatus, MediaAsset, SubtitleStylePreset
 from app.rate_limit import enforce_rate_limit
-from fastapi.responses import FileResponse
 
 
 router = APIRouter(prefix="/api/v1")
@@ -403,26 +402,6 @@ def get_asset(asset_id: UUID, session: SessionDep) -> MediaAsset:
     if not asset:
         raise not_found("Asset not found", details={"asset_id": str(asset_id)})
     return asset
-
-
-@router.get(
-    "/assets/{asset_id}/download",
-    response_class=FileResponse,
-    tags=["Assets"],
-    responses={404: {"model": ErrorResponse}},
-)
-def download_asset(asset_id: UUID, session: SessionDep) -> FileResponse:
-    asset = session.get(MediaAsset, asset_id)
-    if not asset:
-        raise not_found("Asset not found", details={"asset_id": str(asset_id)})
-    settings = get_settings()
-    uri_path = Path(asset.uri.lstrip("/"))
-    if uri_path.parts and uri_path.parts[0] == "media":
-        uri_path = Path(*uri_path.parts[1:])
-    file_path = Path(settings.media_root) / uri_path
-    if not file_path.exists():
-        raise not_found("Asset file missing", details={"asset_id": str(asset_id), "path": str(file_path)})
-    return FileResponse(path=file_path, media_type=asset.mime_type or "application/octet-stream", filename=file_path.name)
 
 
 @router.get("/presets/styles", response_model=List[SubtitleStylePreset], tags=["Presets"])
