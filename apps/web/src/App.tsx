@@ -231,6 +231,37 @@ function UploadPanel({
   );
 }
 
+function SubtitleUpload({
+  onAssetId,
+  onPreview,
+  label = "Load subtitles (SRT/VTT)",
+}: {
+  onAssetId: (id: string) => void;
+  onPreview: (url: string | null, name?: string | null) => void;
+  label?: string;
+}) {
+  const handleFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    const objectUrl = URL.createObjectURL(file);
+    const pseudoId = `subtitle-${file.name}-${Date.now()}`;
+    onAssetId(pseudoId);
+    onPreview(objectUrl, file.name);
+  };
+
+  return (
+    <label className="button-like">
+      {label}
+      <input
+        type="file"
+        accept=".srt,.vtt,text/plain"
+        style={{ display: "none" }}
+        onChange={(e) => handleFiles(e.target.files)}
+      />
+    </label>
+  );
+}
+
 function ShortsForm({ onCreated }: { onCreated: (job: Job, clips: any[]) => void }) {
   const [videoId, setVideoId] = useState("");
   const [numClips, setNumClips] = useState(3);
@@ -472,12 +503,32 @@ function AppShell() {
   const [uploadedVideoId, setUploadedVideoId] = useState<string>("");
   const [uploadedPreview, setUploadedPreview] = useState<string | null>(null);
   const [subtitleAssetId, setSubtitleAssetId] = useState<string>("");
+  const [subtitlePreview, setSubtitlePreview] = useState<string | null>(null);
+  const [subtitleFileName, setSubtitleFileName] = useState<string | null>(null);
   const [shortsClips, setShortsClips] = useState<{ id: string; duration: number; score: number }[]>([]);
   const [shortsJob, setShortsJob] = useState<Job | null>(null);
+  const [shortsStatusPolling, setShortsStatusPolling] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (!shortsJob || ["completed", "failed", "cancelled"].includes(shortsJob.status)) {
+      setShortsStatusPolling(false);
+      return;
+    }
+    setShortsStatusPolling(true);
+    const id = setInterval(async () => {
+      try {
+        const refreshed = await apiClient.getJob(shortsJob.id);
+        setShortsJob(refreshed);
+      } catch {
+        // ignore polling errors
+      }
+    }, 5000);
+    return () => clearInterval(id);
+  }, [shortsJob]);
 
   const recentStatuses = useMemo(
     () => ({
@@ -664,6 +715,7 @@ function AppShell() {
                       <li>transcribe → segment → render</li>
                     </ul>
                   </div>
+                  {shortsStatusPolling && <Spinner label="Polling job status..." />}
                 </div>
               ) : (
                 <p className="muted">Create a shorts job to view progress.</p>
@@ -680,6 +732,9 @@ function AppShell() {
                     <div className="actions-row">
                       <Button variant="secondary">Download video</Button>
                       <Button variant="ghost">Download subs</Button>
+                      <Button variant="ghost" onClick={() => setShortsClips((prev) => prev.filter((c) => c.id !== clip.id))}>
+                        Remove
+                      </Button>
                     </div>
                   </div>
                 ))}
@@ -716,8 +771,21 @@ function AppShell() {
                 <span>Subtitle asset ID</span>
                 <Input value={subtitleAssetId} onChange={(e) => setSubtitleAssetId(e.target.value)} />
               </label>
+              <SubtitleUpload
+                onAssetId={(id) => setSubtitleAssetId(id)}
+                onPreview={(url, name) => {
+                  setSubtitlePreview(url);
+                  setSubtitleFileName(name || null);
+                }}
+              />
               <UploadPanel onAssetId={(id) => setUploadedVideoId(id)} onPreview={(url) => setUploadedPreview(url)} />
               {uploadedPreview && <video className="preview" controls src={uploadedPreview} />}
+              {subtitlePreview && (
+                <div className="output-card">
+                  <p className="metric-label">Subtitle preview {subtitleFileName ? `(${subtitleFileName})` : ""}</p>
+                  <iframe className="preview-text" src={subtitlePreview} title="subtitle-upload-preview" />
+                </div>
+              )}
             </Card>
             <Card title="Style editor">
               <p className="muted">Tune subtitle styling before rendering or previewing a short segment.</p>
