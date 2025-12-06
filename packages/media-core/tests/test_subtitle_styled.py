@@ -25,3 +25,21 @@ def test_renderer_raises_without_moviepy(monkeypatch):
     renderer = StyledSubtitleRenderer()
     with pytest.raises(RuntimeError):
         renderer.render_preview([line], size=(320, 240))
+
+
+def test_build_plan_produces_layers():
+    lines = [
+        SubtitleLine(
+            start=0.0,
+            end=2.0,
+            words=[Word(text="hello", start=0.0, end=0.5), Word(text="world", start=0.6, end=1.2)],
+        )
+    ]
+    renderer = StyledSubtitleRenderer()
+    plan = renderer.build_plan(lines, size=(720, 1280), orientation="vertical")
+    assert plan["base_layers"] and plan["word_layers"]
+    assert plan["meta"]["size"] == (720, 1280)
+    assert plan["meta"]["orientation"] == "vertical"
+    # word timing retained
+    assert plan["word_layers"][0]["start"] == 0.0
+    assert plan["word_layers"][1]["end"] == 1.2

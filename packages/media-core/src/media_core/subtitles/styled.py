@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from media_core.subtitles.builder import SubtitleLine
 
 logger = logging.getLogger(__name__)
-
 
 Color = Tuple[int, int, int]  # RGB 0-255
 
@@ -28,7 +27,7 @@ class SubtitleStyle:
 
 def preset_styles() -> List[SubtitleStyle]:
     return [
-        SubtitleStyle(),  # default
+        SubtitleStyle(),
         SubtitleStyle(
             font="Arial",
             font_size=52,
@@ -53,10 +52,16 @@ def preset_styles() -> List[SubtitleStyle]:
 
 
 class StyledSubtitleRenderer:
-    """Renderer for TikTok-style word highlights.
+    """Renderer scaffold for TikTok-style subtitles.
 
-    This is a scaffold; actual MoviePy rendering is not executed in tests. Import
-    of moviepy is deferred to runtime to avoid heavy deps for now.
+    This provides a lightweight render plan and a solid-color preview. MoviePy import
+    is deferred to runtime to avoid heavy dependencies during tests.
+    """
+
+    """Renderer scaffold for TikTok-style subtitles.
+
+    This provides a lightweight render plan and a solid-color preview. MoviePy import
+    is deferred to runtime to avoid heavy dependencies during tests.
     """
 
     def __init__(self, style: Optional[SubtitleStyle] = None):
@@ -76,7 +81,73 @@ class StyledSubtitleRenderer:
                 "moviepy is required for rendering. Install with `pip install moviepy`."
             ) from exc
 
-        # Placeholder: create a blank clip to show wiring. Real text layers to be added later.
         duration = max((line.end for line in lines), default=0.0)
         clip = ColorClip(size, color=background_color).set_duration(duration)
         return clip
+
+    def build_plan(
+        self,
+        lines: Iterable[SubtitleLine],
+        *,
+        size: Tuple[int, int] = (1080, 1920),
+        orientation: str = "vertical",  # vertical 9:16 or horizontal 16:9
+    ) -> Dict[str, object]:
+        """Build a render plan with approximate positions and timings."""
+        width, height = size
+        padding_x = width * 0.1
+        padding_y = height * 0.08
+        line_height = self.style.font_size * 1.2
+        y_base = height - padding_y if self.style.position == "bottom" else padding_y
+        align = self.style.align
+
+        base_layers: List[Dict[str, object]] = []
+        word_layers: List[Dict[str, object]] = []
+
+        def compute_x(text: str) -> float:
+            approx_char_w = self.style.font_size * 0.6
+            text_w = max(approx_char_w, len(text) * approx_char_w)
+            if align == "center":
+                return (width - text_w) / 2
+            if align == "left":
+                return padding_x
+            return width - padding_x - text_w
+
+        for idx, line in enumerate(lines):
+            text = line.text()
+            y = y_base - idx * line_height if self.style.position == "bottom" else y_base + idx * line_height
+            x = compute_x(text)
+            base_layers.append(
+                {
+                    "text": text,
+                    "start": line.start,
+                    "end": line.end,
+                    "x": x,
+                    "y": y,
+                    "font": self.style.font,
+                    "font_size": self.style.font_size,
+                    "color": self.style.text_color,
+                    "stroke_color": self.style.stroke_color,
+                    "stroke_width": self.style.stroke_width,
+                    "shadow": self.style.shadow,
+                    "shadow_offset": self.style.shadow_offset,
+                }
+            )
+            for word in line.words:
+                wx = compute_x(word.text)
+                wy = y
+                word_layers.append(
+                    {
+                        "text": word.text,
+                        "start": word.start,
+                        "end": word.end,
+                        "x": wx,
+                        "y": wy,
+                        "color": self.style.highlight_color,
+                    }
+                )
+
+        return {
+            "base_layers": base_layers,
+            "word_layers": word_layers,
+            "meta": {"size": size, "orientation": orientation, "style": self.style},
+        }
