@@ -740,6 +740,8 @@ function AppShell() {
   const [subtitleFileName, setSubtitleFileName] = useState<string | null>(null);
   const [captionJob, setCaptionJob] = useState<Job | null>(null);
   const [captionOutput, setCaptionOutput] = useState<MediaAsset | null>(null);
+  const [videoAsset, setVideoAsset] = useState<MediaAsset | null>(null);
+  const [subtitleAssetMeta, setSubtitleAssetMeta] = useState<MediaAsset | null>(null);
   const [shortsClips, setShortsClips] = useState<
     { id: string; duration: number; score: number; uri?: string | null; subtitle_uri?: string | null; thumbnail_uri?: string | null }[]
   >([]);
@@ -756,6 +758,7 @@ function AppShell() {
   const [mergeAudioPreview, setMergeAudioPreview] = useState<string | null>(null);
   const [mergeVideoId, setMergeVideoId] = useState<string>("");
   const [mergeAudioId, setMergeAudioId] = useState<string>("");
+  const [assetLookupMessage, setAssetLookupMessage] = useState<string | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -838,6 +841,7 @@ function AppShell() {
       if (captionOutput.uri && captionOutput.mime_type?.includes("text")) {
         setSubtitlePreview(captionOutput.uri);
         setSubtitleFileName("captions.srt");
+        setSubtitleAssetMeta(captionOutput);
       }
     }
   }, [captionOutput]);
@@ -1092,10 +1096,55 @@ function AppShell() {
               <label className="field">
                 <span>Video asset ID</span>
                 <Input value={uploadedVideoId} onChange={(e) => setUploadedVideoId(e.target.value)} />
+                <div className="actions-row">
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    onClick={async () => {
+                      if (!uploadedVideoId) return;
+                      setAssetLookupMessage("Loading video asset...");
+                      try {
+                        const asset = await apiClient.getAsset(uploadedVideoId);
+                        setVideoAsset(asset);
+                        if (asset.uri && asset.mime_type?.includes("video")) {
+                          setUploadedPreview(asset.uri);
+                        }
+                        setAssetLookupMessage("Video asset loaded");
+                      } catch (err) {
+                        setAssetLookupMessage(err instanceof Error ? err.message : "Failed to load video asset");
+                      }
+                    }}
+                  >
+                    Load video asset
+                  </Button>
+                </div>
               </label>
               <label className="field">
                 <span>Subtitle asset ID</span>
                 <Input value={subtitleAssetId} onChange={(e) => setSubtitleAssetId(e.target.value)} />
+                <div className="actions-row">
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    onClick={async () => {
+                      if (!subtitleAssetId) return;
+                      setAssetLookupMessage("Loading subtitle asset...");
+                      try {
+                        const asset = await apiClient.getAsset(subtitleAssetId);
+                        setSubtitleAssetMeta(asset);
+                        if (asset.uri && asset.mime_type?.includes("text")) {
+                          setSubtitlePreview(asset.uri);
+                          setSubtitleFileName(asset.uri.split("/").pop() || "subtitles");
+                        }
+                        setAssetLookupMessage("Subtitle asset loaded");
+                      } catch (err) {
+                        setAssetLookupMessage(err instanceof Error ? err.message : "Failed to load subtitle asset");
+                      }
+                    }}
+                  >
+                    Load subtitle asset
+                  </Button>
+                </div>
               </label>
               <SubtitleUpload
                 onAssetId={(id) => setSubtitleAssetId(id)}
@@ -1127,12 +1176,16 @@ function AppShell() {
               </div>
               <UploadPanel onAssetId={(id) => setUploadedVideoId(id)} onPreview={(url) => setUploadedPreview(url)} />
               {uploadedPreview && <video className="preview" controls src={uploadedPreview} />}
+              {videoAsset && videoAsset.uri && videoAsset.mime_type?.includes("video") && !uploadedPreview && (
+                <video className="preview" controls src={videoAsset.uri} />
+              )}
               {subtitlePreview && (
                 <div className="output-card">
                   <p className="metric-label">Subtitle preview {subtitleFileName ? `(${subtitleFileName})` : ""}</p>
                   <iframe className="preview-text" src={subtitlePreview} title="subtitle-upload-preview" />
                 </div>
               )}
+              {assetLookupMessage && <p className="muted">{assetLookupMessage}</p>}
             </Card>
             <Card title="Style editor">
               <p className="muted">Tune subtitle styling before rendering or previewing a short segment.</p>
