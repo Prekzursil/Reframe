@@ -224,6 +224,7 @@
 - [x] “Render full video” button -> create styled subtitle job and display/poll result asset (depends on backend producing asset).
 - [x] Show progress/status for styling jobs (polling, errors).
 - [ ] Auto-generate captions when absent and chain into styling; fetch/present preview/render assets reliably.
+- [x] Auto-generate captions when absent and chain into styling; fetch/present preview/render assets reliably.
 
 ---
 
@@ -239,7 +240,8 @@
   - [x] “Prompt to guide selection” textarea.
 - [ ] Submit:
   - [x] Create shorts job.
-  - [ ] Show a progress view with step-level feedback (beyond static steps list).
+- [ ] Show a progress view with step-level feedback (beyond static steps list).
+- [x] Show a progress view with dynamic step feedback (progress bar).
 - [ ] Result view:
   - [ ] Render real clip assets from backend (thumbnail/GIF, duration, score).
   - [ ] Enable per-clip download buttons (video + subtitles) when backend provides URIs.
