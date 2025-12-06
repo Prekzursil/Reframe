@@ -1,7 +1,9 @@
 import logging
 import os
+import shutil
 import sys
 from pathlib import Path
+from typing import Optional, Tuple
 from uuid import UUID, uuid4
 
 from sqlmodel import Session, create_engine
@@ -47,18 +49,38 @@ def get_media_tmp() -> Path:
     return _media_tmp
 
 
-def create_asset(kind: str, mime_type: str, suffix: str, contents: bytes | str = b"") -> MediaAsset:
+def create_asset(kind: str, mime_type: str, suffix: str, contents: bytes | str = b"", source_path: Path | None = None) -> MediaAsset:
     tmp = get_media_tmp()
     filename = f"{uuid4()}{suffix}"
     target = tmp / filename
-    data = contents.encode() if isinstance(contents, str) else contents
-    target.write_bytes(data)
+    if source_path and source_path.exists():
+        shutil.copy2(source_path, target)
+    else:
+        data = contents.encode() if isinstance(contents, str) else contents
+        target.write_bytes(data)
     asset = MediaAsset(kind=kind, uri=f"/media/tmp/{filename}", mime_type=mime_type)
     with Session(get_engine()) as session:
         session.add(asset)
         session.commit()
         session.refresh(asset)
         return asset
+
+
+def fetch_asset(asset_id: str) -> Tuple[Optional[MediaAsset], Optional[Path]]:
+    try:
+        uuid = UUID(asset_id)
+    except Exception:
+        return None, None
+    settings = get_settings()
+    with Session(get_engine()) as session:
+        asset = session.get(MediaAsset, uuid)
+        if not asset:
+            return None, None
+        uri_path = Path(asset.uri.lstrip("/"))
+        if uri_path.parts and uri_path.parts[0] == "media":
+            uri_path = Path(*uri_path.parts[1:])
+        file_path = Path(settings.media_root) / uri_path
+        return asset, file_path
 
 
 def update_job(job_id: str, *, status: JobStatus | None = None, progress: float | None = None, error: str | None = None, payload: dict | None = None, output_asset_id: str | None = None) -> None:
@@ -146,8 +168,9 @@ def translate_subtitles(self, job_id: str, subtitle_asset_id: str, options: dict
 def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_asset_id: str, style: dict | None = None, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
-    rendered_marker = "styled-render-placeholder"
-    asset = create_asset(kind="video", mime_type="text/plain", suffix=".txt", contents=rendered_marker)
+    src_asset, src_path = fetch_asset(video_asset_id)
+    rendered_marker = src_path if src_path and src_path.exists() else None
+    asset = create_asset(kind="video", mime_type=src_asset.mime_type if src_asset and src_asset.mime_type else "application/octet-stream", suffix=src_path.suffix if src_path else ".txt", contents="styled-render" if rendered_marker is None else b"", source_path=rendered_marker)
     result = {
         "video_asset_id": video_asset_id,
         "subtitle_asset_id": subtitle_asset_id,
@@ -169,7 +192,14 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
     max_clips = int(options.get("max_clips") or 3) if options else 3
     min_dur = options.get("min_duration") if options else None
     for idx in range(max_clips):
-        clip_asset = create_asset(kind="video", mime_type="text/plain", suffix=".txt", contents=f"clip {idx+1} for {video_asset_id}")
+        src_asset, src_path = fetch_asset(video_asset_id)
+        clip_asset = create_asset(
+            kind="video",
+            mime_type=src_asset.mime_type if src_asset and src_asset.mime_type else "application/octet-stream",
+            suffix=src_path.suffix if src_path else ".txt",
+            contents=f"clip {idx+1} for {video_asset_id}",
+            source_path=src_path if src_path and src_path.exists() else None,
+        )
         clips.append(
             {
                 "id": f"{job_id}-clip-{idx+1}",
@@ -181,7 +211,14 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
                 "thumbnail_uri": None,
             }
         )
-    summary_asset = create_asset(kind="video", mime_type="text/plain", suffix=".txt", contents="shorts package placeholder")
+    src_asset, src_path = fetch_asset(video_asset_id)
+    summary_asset = create_asset(
+        kind="video",
+        mime_type=src_asset.mime_type if src_asset and src_asset.mime_type else "application/octet-stream",
+        suffix=src_path.suffix if src_path else ".txt",
+        contents="shorts package placeholder",
+        source_path=src_path if src_path and src_path.exists() else None,
+    )
     result = {
         "video_asset_id": video_asset_id,
         "status": "shorts_generated",
@@ -198,7 +235,14 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
 def merge_video_audio(self, job_id: str, video_asset_id: str, audio_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id, audio_asset_id=audio_asset_id)
-    merged_asset = create_asset(kind="video", mime_type="text/plain", suffix=".txt", contents="merged av placeholder")
+    video_asset, video_path = fetch_asset(video_asset_id)
+    merged_asset = create_asset(
+        kind="video",
+        mime_type=video_asset.mime_type if video_asset and video_asset.mime_type else "application/octet-stream",
+        suffix=video_path.suffix if video_path else ".txt",
+        contents="merged av placeholder",
+        source_path=video_path if video_path and video_path.exists() else None,
+    )
     result = {
         "video_asset_id": video_asset_id,
         "audio_asset_id": audio_asset_id,
