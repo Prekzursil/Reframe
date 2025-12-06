@@ -211,23 +211,23 @@
 
 ## 14. Frontend – AI Shorts Maker
 
-- [ ] Page: **Shorts Maker**.
-- [ ] Input:
-  - [ ] Video upload or URL input.
-  - [ ] Number of clips desired.
-  - [ ] Min/max clip duration.
-  - [ ] Aspect ratio selection.
-  - [ ] “Use subtitles” toggle with style selector.
-  - [ ] “Prompt to guide selection” textarea.
-- [ ] Submit:
-  - [ ] Create shorts job.
-  - [ ] Show a progress view with steps (transcribe → segment → render).
-- [ ] Result view:
-  - [ ] Grid of generated clips with:
-    - [ ] Thumbnail / GIF.
-    - [ ] Duration.
-    - [ ] Score.
-    - [ ] Download buttons (video + subtitles).
+- [x] Page: **Shorts Maker**.
+- [x] Input:
+  - [x] Video upload or URL input.
+  - [x] Number of clips desired.
+  - [x] Min/max clip duration.
+  - [x] Aspect ratio selection.
+  - [x] “Use subtitles” toggle with style selector.
+  - [x] “Prompt to guide selection” textarea.
+- [x] Submit:
+  - [x] Create shorts job.
+  - [x] Show a progress view with steps (transcribe → segment → render).
+- [x] Result view:
+  - [x] Grid of generated clips with:
+    - [x] Thumbnail / GIF.
+    - [x] Duration.
+    - [x] Score.
+    - [x] Download buttons (video + subtitles).
   - [ ] Ability to delete/ignore clips.
 
 ---

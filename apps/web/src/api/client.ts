@@ -21,6 +21,18 @@ export interface TranslateJobRequest {
   options?: Record<string, unknown>;
 }
 
+export interface StyledSubtitleJobRequest {
+  video_asset_id: string;
+  subtitle_asset_id: string;
+  style: Record<string, unknown>;
+  preview_seconds?: number;
+}
+
+export interface ShortsJobRequest {
+  video_asset_id: string;
+  options?: Record<string, unknown>;
+}
+
 export interface MediaAsset {
   id: string;
   kind: string;
@@ -75,6 +87,15 @@ export class ApiClient {
 
   createTranslateJob(payload: TranslateJobRequest) {
     return this.request<Job>("/subtitles/translate", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  createStyledSubtitleJob(payload: StyledSubtitleJobRequest) {
+    // Placeholder endpoint; adjust to backend path once available.
+    return this.request<Job>("/subtitles/style", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  createShortsJob(payload: ShortsJobRequest) {
+    return this.request<Job>("/shorts/jobs", { method: "POST", body: JSON.stringify(payload) });
   }
 }
 
