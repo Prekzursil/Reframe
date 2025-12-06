@@ -202,7 +202,7 @@
 - [x] When job completes:
   - [x] Show download buttons for each generated asset.
   - [x] Preview subtitles in a simple video player if possible.
-- [ ] Auto-poll caption/translate jobs and surface download/preview when `output_asset_id` becomes available.
+- [x] Auto-poll caption/translate jobs and surface download/preview when `output_asset_id` becomes available.
 
 ---
 

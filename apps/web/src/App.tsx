@@ -737,6 +737,8 @@ function AppShell() {
   const [subtitleFileName, setSubtitleFileName] = useState<string | null>(null);
   const [captionJob, setCaptionJob] = useState<Job | null>(null);
   const [captionOutput, setCaptionOutput] = useState<MediaAsset | null>(null);
+  const [translateJob, setTranslateJob] = useState<Job | null>(null);
+  const [translateOutput, setTranslateOutput] = useState<MediaAsset | null>(null);
   const [shortsClips, setShortsClips] = useState<
     { id: string; duration: number; score: number; uri?: string | null; subtitle_uri?: string | null; thumbnail_uri?: string | null }[]
   >([]);
@@ -830,6 +832,13 @@ function AppShell() {
   }, [captionJob]);
 
   useEffect(() => {
+    const id = pollJob(translateJob, setTranslateJob, setTranslateOutput);
+    return () => {
+      if (id) clearInterval(id);
+    };
+  }, [translateJob]);
+
+  useEffect(() => {
     if (captionOutput?.id) {
       setSubtitleAssetId(captionOutput.id);
       if (captionOutput.uri && captionOutput.mime_type?.includes("text")) {
@@ -838,6 +847,16 @@ function AppShell() {
       }
     }
   }, [captionOutput]);
+
+  useEffect(() => {
+    if (translateOutput?.id) {
+      setSubtitleAssetId(translateOutput.id);
+      if (translateOutput.uri && translateOutput.mime_type?.includes("text")) {
+        setSubtitlePreview(translateOutput.uri);
+        setSubtitleFileName("translated.srt");
+      }
+    }
+  }, [translateOutput]);
 
   const recentStatuses = useMemo(
     () => ({
@@ -1078,7 +1097,40 @@ function AppShell() {
             </Card>
             <Card title="Translate subtitles">
               <p className="muted">Submit translation jobs for existing subtitle assets.</p>
-              <TranslateForm onCreated={() => refresh()} />
+              <TranslateForm
+                onCreated={(job) => {
+                  setTranslateJob(job);
+                  setTranslateOutput(null);
+                  refresh();
+                }}
+              />
+              {translateJob && (
+                <div className="output-card">
+                  <p className="metric-label">Translation job {translateJob.id}</p>
+                  <div className="snapshot">
+                    <div>
+                      <p className="metric-label">Status</p>
+                      <JobStatusPill status={translateJob.status} />
+                    </div>
+                    <div>
+                      <p className="metric-label">Target language</p>
+                      <p className="metric-value">{(translateJob.payload as any)?.target_language ?? "n/a"}</p>
+                    </div>
+                  </div>
+                  {translateOutput?.uri ? (
+                    <div className="actions-row">
+                      <a className="btn btn-primary" href={translateOutput.uri} download>
+                        Download translated subtitles
+                      </a>
+                      <Button variant="ghost" onClick={() => setSubtitlePreview(translateOutput.uri || null)}>
+                        Preview
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="muted">Waiting for translated subtitles...</p>
+                  )}
+                </div>
+              )}
             </Card>
           </section>
         )}
