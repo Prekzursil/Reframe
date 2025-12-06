@@ -49,8 +49,12 @@ def select_top(
     max_segments: int,
     min_duration: float,
     max_duration: float,
+    min_gap: float = 0.0,
 ) -> List[SegmentCandidate]:
-    """Select top non-overlapping segments by score within duration bounds."""
+    """Select top non-overlapping segments by score within duration bounds.
+
+    If min_gap > 0, enforces a gap between selected segments.
+    """
     filtered = [
         c
         for c in candidates
@@ -61,7 +65,10 @@ def select_top(
     for cand in filtered:
         if len(selected) >= max_segments:
             break
-        if any(not (cand.end <= s.start or cand.start >= s.end) for s in selected):
+        overlaps = any(
+            not (cand.end + min_gap <= s.start or cand.start >= s.end + min_gap) for s in selected
+        )
+        if overlaps:
             continue
         selected.append(cand)
     selected.sort(key=lambda c: c.start)
