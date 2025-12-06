@@ -595,8 +595,8 @@ function StyleEditor({
   videoId,
   subtitleId,
 }: {
-  onPreview: (payload: any) => Promise<void> | void;
-  onRender: (payload: any) => Promise<void> | void;
+  onPreview: (payload: any) => Promise<Job | void> | void;
+  onRender: (payload: any) => Promise<Job | void> | void;
   onJobCreated?: (job: Job) => void;
   videoId: string;
   subtitleId: string;
