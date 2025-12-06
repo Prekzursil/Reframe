@@ -3,12 +3,14 @@ from __future__ import annotations
 from typing import Annotated, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlmodel import Session, SQLModel, select
 
 from app.database import get_session
-from app.errors import ErrorResponse, ApiError, conflict, not_found
+from app.errors import ErrorResponse, conflict, not_found
 from app.models import Job, JobStatus, MediaAsset, SubtitleStylePreset
+from app.rate_limit import enforce_rate_limit
+
 
 router = APIRouter(prefix="/api/v1")
 
@@ -96,6 +98,7 @@ class MergeAVRequest(SQLModel):
     status_code=status.HTTP_201_CREATED,
     tags=["Captions"],
     responses={404: {"model": ErrorResponse}},
+    dependencies=[Depends(enforce_rate_limit)],
 )
 def create_caption_job(payload: CaptionJobRequest, session: SessionDep) -> Job:
     job = Job(
@@ -117,6 +120,7 @@ def create_caption_job(payload: CaptionJobRequest, session: SessionDep) -> Job:
     status_code=status.HTTP_201_CREATED,
     tags=["Translate"],
     responses={404: {"model": ErrorResponse}},
+    dependencies=[Depends(enforce_rate_limit)],
 )
 def create_translate_job(payload: TranslateJobRequest, session: SessionDep) -> Job:
     job = Job(
@@ -176,7 +180,13 @@ def cancel_job(job_id: UUID, session: SessionDep) -> Job:
     return job
 
 
-@router.post("/shorts/jobs", response_model=Job, status_code=status.HTTP_201_CREATED, tags=["Shorts"])
+@router.post(
+    "/shorts/jobs",
+    response_model=Job,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Shorts"],
+    dependencies=[Depends(enforce_rate_limit)],
+)
 def create_shorts_job(payload: ShortsJobRequest, session: SessionDep) -> Job:
     job = Job(
         job_type="shorts",
@@ -202,6 +212,7 @@ def create_shorts_job(payload: ShortsJobRequest, session: SessionDep) -> Job:
     response_model=Job,
     status_code=status.HTTP_201_CREATED,
     tags=["Utilities"],
+    dependencies=[Depends(enforce_rate_limit)],
 )
 def create_merge_job(payload: MergeAVRequest, session: SessionDep) -> Job:
     job = Job(
