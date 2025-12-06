@@ -202,6 +202,7 @@
 - [x] When job completes:
   - [x] Show download buttons for each generated asset.
   - [x] Preview subtitles in a simple video player if possible.
+- [ ] Auto-poll caption/translate jobs and surface download/preview when `output_asset_id` becomes available.
 
 ---
 
@@ -222,6 +223,7 @@
   - [x] “Preview 5 seconds” button to trigger job and surface preview asset (depends on backend producing preview).
 - [x] “Render full video” button -> create styled subtitle job and display/poll result asset (depends on backend producing asset).
 - [x] Show progress/status for styling jobs (polling, errors).
+- [ ] Auto-generate captions when absent and chain into styling; fetch/present preview/render assets reliably.
 
 ---
 
@@ -243,6 +245,7 @@
   - [ ] Enable per-clip download buttons (video + subtitles) when backend provides URIs.
   - [x] Ability to delete/ignore clips.
   - [ ] Handle empty/failed clip outputs gracefully.
+- [ ] Show a progress view with dynamic step feedback (beyond static list).
 
 ---
 
@@ -257,6 +260,7 @@
   - [x] Upload/choose audio (backend upload wired).
   - [x] Controls: offset, ducking, normalize.
   - [x] Submit → job → result download (polling present; relies on real assets being produced).
+- [ ] Poll utilities jobs and fetch output assets for download/preview when ready.
 
 ---
 
