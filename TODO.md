@@ -174,7 +174,7 @@
 ## 12. Frontend – Captions & Translate
 
 - [x] Page: **Captions & Translate**.
-- [ ] Section: Upload video / dropzone.
+- [x] Section: Upload video / dropzone.
 - [x] Form controls:
   - [x] Source language (auto / manual).
   - [x] Whisper backend & model selection.
