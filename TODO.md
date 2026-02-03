@@ -289,8 +289,8 @@
 - [x] Frontend tests:
   - [x] Component tests for forms and job list.
   - [x] Minimal e2e flow (upload → job complete → download).
-- [ ] Address `npm audit` moderate vulnerabilities in `apps/web` dependencies.
-  - [ ] Currently: `esbuild <=0.24.2` via Vite; fixing likely requires a Vite major bump (`npm audit fix --force`) or a safe override if available.
+- [x] Address `npm audit` moderate vulnerabilities in `apps/web` dependencies.
+  - [x] Was: `esbuild <=0.24.2` via Vite; fixed by bumping Vite to v7 (esbuild upgraded).
 
 ---
 
