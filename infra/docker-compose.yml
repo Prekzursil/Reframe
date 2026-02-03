@@ -10,10 +10,13 @@ services:
     environment:
       BROKER_URL: ${BROKER_URL:-redis://redis:6379/0}
       RESULT_BACKEND: ${RESULT_BACKEND:-redis://redis:6379/0}
+      REFRAME_MEDIA_ROOT: /data/media
     ports:
       - "8000:8000"
     depends_on:
       - redis
+    volumes:
+      - media-data:/data/media
 
   worker:
     build:
@@ -24,8 +27,11 @@ services:
     environment:
       BROKER_URL: ${BROKER_URL:-redis://redis:6379/0}
       RESULT_BACKEND: ${RESULT_BACKEND:-redis://redis:6379/0}
+      REFRAME_MEDIA_ROOT: /data/media
     depends_on:
       - redis
+    volumes:
+      - media-data:/data/media
 
   web:
     build:
@@ -47,3 +53,4 @@ services:
 
 volumes:
   redis-data: {}
+  media-data: {}
