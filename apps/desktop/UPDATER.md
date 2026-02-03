@@ -95,3 +95,22 @@ The simplest test loop is:
 1) Build and publish a `0.x.y` release and `latest.json`.
 2) Run an older installed desktop build.
 3) Click “Check updates” in the desktop UI to download/install and restart.
+
+### End-to-end verification checklist
+
+1) Publish two releases:
+   - Old: `desktop-v0.x.y` (install this first)
+   - New: `desktop-v0.x.(y+1)` (this should be the update you receive)
+2) Confirm the updater JSON is reachable and valid:
+   - `python3 scripts/verify_desktop_updater_release.py`
+3) Launch the **old** desktop build and click **Check updates**:
+   - Expected: a prompt like `Update available: 0.x.y → 0.x.(y+1)`
+4) Accept the update and watch the log panel:
+   - Expected: `Downloading update…` → progress logs → `Download finished.` → `Update installed; restarting…`
+5) After restart:
+   - Click **Check updates** again
+   - Expected: `No updates available.`
+
+Common failure modes:
+- “Signature verification failed” typically means `latest.json` points at the wrong asset or signature contents are incorrect.
+- “Update check failed” can be missing/invalid `latest.json` at the configured endpoint.

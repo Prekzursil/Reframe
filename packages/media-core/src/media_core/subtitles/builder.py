@@ -199,9 +199,10 @@ def to_ass_karaoke(lines: Iterable[SubtitleLine]) -> str:
     body: List[str] = []
     for line in lines:
         name = (line.speaker or "").replace(",", " ")
+        speaker_prefix = f"{_escape_ass_text(line.speaker)}: " if line.speaker else ""
         body.append(
             f"Dialogue: 0,{_format_ass_timestamp(line.start)},{_format_ass_timestamp(line.end)},"
-            f"Default,{name},0,0,0,,{_karaoke_text_for_line(line)}"
+            f"Default,{name},0,0,0,,{speaker_prefix}{_karaoke_text_for_line(line)}"
         )
     return "\n".join(header + body)
 
@@ -246,8 +247,9 @@ def to_ass(lines: Iterable[SubtitleLine]) -> str:
     body = []
     for line in lines:
         name = (line.speaker or "").replace(",", " ")
+        speaker_prefix = f"{line.speaker}: " if line.speaker else ""
         body.append(
             f"Dialogue: 0,{_format_ass_timestamp(line.start)},{_format_ass_timestamp(line.end)},"
-            f"Default,{name},0,0,0,,{line.text()}"
+            f"Default,{name},0,0,0,,{speaker_prefix}{line.text()}"
         )
     return "\n".join(header + body)

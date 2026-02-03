@@ -33,6 +33,7 @@ from app.models import Job, JobStatus, MediaAsset
 from celery import Celery
 
 from media_core.segment.shorts import equal_splits, select_top
+from media_core.diarize import DiarizationBackend, DiarizationConfig, assign_speakers_to_lines, diarize_audio
 from media_core.subtitles.builder import GroupingConfig, group_words, to_ass, to_ass_karaoke, to_srt, to_vtt
 from media_core.subtitles.vtt import parse_vtt
 from media_core.transcribe import (
@@ -182,6 +183,30 @@ def _transcribe_media(path: Path, config: TranscriptionConfig, *, warnings: list
     except Exception as exc:
         warnings.append(f"Transcription backend {config.backend.value} failed; falling back to noop ({exc}).")
         return transcribe_noop(str(path), config)
+
+
+def _extract_audio_wav_for_diarization(video_path: Path, output_path: Path, runner=None) -> None:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise FileNotFoundError("ffmpeg not found in PATH")
+    runner = runner or subprocess.run
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-v",
+        "error",
+        "-i",
+        str(video_path),
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "pcm_s16le",
+        str(output_path),
+    ]
+    runner(cmd, check=True, capture_output=True)
 
 
 def create_thumbnail_asset(video_path: Path | None, runner=None) -> MediaAsset:
@@ -357,6 +382,42 @@ def generate_captions(self, job_id: str, video_asset_id: str, options: dict | No
     )
     subtitle_lines = group_words(words, grouping)
 
+    speaker_labels = _coerce_bool(opts.get("speaker_labels") or opts.get("enable_speaker_labels") or opts.get("diarize"))
+    diarization_backend_raw = str(
+        opts.get("diarization_backend") or opts.get("speaker_diarization_backend") or DiarizationBackend.NOOP.value
+    ).strip().lower()
+    try:
+        diarization_backend = DiarizationBackend(diarization_backend_raw)
+    except ValueError:
+        warnings.append(f"Unknown diarization backend '{diarization_backend_raw}'; using noop.")
+        diarization_backend = DiarizationBackend.NOOP
+
+    diarization_config = DiarizationConfig(
+        backend=diarization_backend,
+        model=str(opts.get("diarization_model") or "pyannote/speaker-diarization-3.1"),
+        huggingface_token=str(opts.get("huggingface_token") or opts.get("hf_token") or "") or None,
+        min_segment_duration=float(opts.get("min_segment_duration") or 0.0),
+    )
+
+    if speaker_labels and diarization_config.backend != DiarizationBackend.NOOP:
+        if diarization_config.backend == DiarizationBackend.PYANNOTE and offline_mode_enabled():
+            warnings.append("Offline mode enabled; refusing pyannote diarization and continuing without speaker labels.")
+        else:
+            audio_wav = new_tmp_file(".wav")
+            try:
+                _extract_audio_wav_for_diarization(src_path, audio_wav)
+                segments = diarize_audio(audio_wav, diarization_config)
+                subtitle_lines = assign_speakers_to_lines(subtitle_lines, segments)
+            except Exception as exc:
+                warnings.append(f"Speaker diarization failed; continuing without speaker labels ({exc}).")
+            finally:
+                try:
+                    audio_wav.unlink()
+                except FileNotFoundError:
+                    pass
+                except Exception:  # pragma: no cover - best effort
+                    logger.debug("Failed to remove diarization audio tmp: %s", audio_wav)
+
     if output_format == "ass":
         payload = to_ass(subtitle_lines)
         mime = "text/ass"
@@ -376,6 +437,9 @@ def generate_captions(self, job_id: str, video_asset_id: str, options: dict | No
         "status": "captions_generated",
         "options": opts,
         "transcription_backend": backend.value,
+        "speaker_labels": speaker_labels,
+        "diarization_backend": diarization_config.backend.value,
+        "diarization_model": diarization_config.model,
         "model": config.model,
         "language": config.language,
         "warnings": warnings,
