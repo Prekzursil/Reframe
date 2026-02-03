@@ -1,3 +1,4 @@
+import base64
 import logging
 import os
 import shutil
@@ -28,6 +29,10 @@ logger = logging.getLogger(__name__)
 
 _engine = None
 _media_tmp: Path | None = None
+
+_THUMBNAIL_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
+)
 
 
 def get_engine():
@@ -191,8 +196,10 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
     clips = []
     max_clips = int(options.get("max_clips") or 3) if options else 3
     min_dur = options.get("min_duration") if options else None
+    max_dur = options.get("max_duration") if options else None
     for idx in range(max_clips):
         src_asset, src_path = fetch_asset(video_asset_id)
+        thumb_asset = create_asset(kind="image", mime_type="image/png", suffix=".png", contents=_THUMBNAIL_PNG)
         clip_asset = create_asset(
             kind="video",
             mime_type=src_asset.mime_type if src_asset and src_asset.mime_type else "application/octet-stream",
@@ -200,15 +207,16 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
             contents=f"clip {idx+1} for {video_asset_id}",
             source_path=src_path if src_path and src_path.exists() else None,
         )
+        duration = min_dur if min_dur is not None else max_dur
         clips.append(
             {
                 "id": f"{job_id}-clip-{idx+1}",
                 "asset_id": str(clip_asset.id),
-                "duration": min_dur,
+                "duration": duration,
                 "score": 0.5 + idx * 0.1,
                 "uri": clip_asset.uri,
                 "subtitle_uri": None,
-                "thumbnail_uri": None,
+                "thumbnail_uri": thumb_asset.uri,
             }
         )
     src_asset, src_path = fetch_asset(video_asset_id)
