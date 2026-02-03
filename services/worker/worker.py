@@ -47,7 +47,7 @@ from media_core.transcribe import (
 )
 from media_core.translate.srt import parse_srt, translate_srt, translate_srt_bilingual
 from media_core.translate.translator import LocalTranslator, NoOpTranslator
-from media_core.video_edit.ffmpeg import cut_clip, merge_video_audio as ffmpeg_merge_video_audio, probe_media
+from media_core.video_edit.ffmpeg import cut_clip, detect_silence, merge_video_audio as ffmpeg_merge_video_audio, probe_media
 
 BROKER_URL = os.getenv("BROKER_URL", "redis://redis:6379/0")
 RESULT_BACKEND = os.getenv("RESULT_BACKEND", BROKER_URL)
@@ -699,6 +699,7 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
     min_duration = float(opts.get("min_duration") or 10.0)
     max_duration = float(opts.get("max_duration") or 60.0)
     use_subtitles = bool(opts.get("use_subtitles"))
+    trim_silence = _coerce_bool(opts.get("trim_silence"))
 
     src_asset, src_path = fetch_asset(video_asset_id)
     if not src_path or not src_path.exists():
@@ -717,9 +718,35 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
         return {"video_asset_id": video_asset_id, "status": "failed", "error": error}
 
     candidates = equal_splits(duration, clip_length=max_duration)
-    # Assign simple deterministic scores for now (heuristics/LLM scoring comes later).
-    for idx, cand in enumerate(candidates):
-        cand.score = 1.0 - (idx * 0.01)
+    if trim_silence:
+        try:
+            silent = detect_silence(
+                src_path,
+                noise_db=float(opts.get("silence_noise_db") or -35.0),
+                min_silence_duration=float(opts.get("silence_min_duration") or 0.4),
+            )
+
+            def _overlap_seconds(start: float, end: float) -> float:
+                total = 0.0
+                for s, e in silent:
+                    total += max(0.0, min(end, e) - max(start, s))
+                return total
+
+            for idx, cand in enumerate(candidates):
+                if cand.duration <= 0:
+                    cand.score = 0.0
+                    continue
+                ratio = _overlap_seconds(cand.start, cand.end) / cand.duration
+                cand.score = max(0.0, 1.0 - ratio) - (idx * 0.001)
+                cand.reason = f"silence_ratio={ratio:.3f}"
+        except Exception as exc:
+            logger.debug("Silence trimming skipped: %s", exc)
+            for idx, cand in enumerate(candidates):
+                cand.score = 1.0 - (idx * 0.01)
+    else:
+        # Assign simple deterministic scores for now (heuristics/LLM scoring comes later).
+        for idx, cand in enumerate(candidates):
+            cand.score = 1.0 - (idx * 0.01)
 
     selected = select_top(candidates, max_segments=max_clips, min_duration=min_duration, max_duration=max_duration)
     if not selected:

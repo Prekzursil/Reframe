@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -9,6 +10,9 @@ from typing import Iterable, List, Optional
 
 
 logger = logging.getLogger(__name__)
+
+_SILENCE_START_RE = re.compile(r"silence_start:\s*(?P<value>\d+(\.\d+)?)")
+_SILENCE_END_RE = re.compile(r"silence_end:\s*(?P<value>\d+(\.\d+)?)")
 
 
 def _ensure_binary(name: str) -> str:
@@ -197,3 +201,75 @@ def burn_subtitles(
         str(output_path),
     ]
     _run(cmd, runner=runner)
+
+
+def detect_silence(
+    media_path: str | Path,
+    *,
+    noise_db: float = -35.0,
+    min_silence_duration: float = 0.4,
+    runner=None,
+) -> list[tuple[float, float]]:
+    """Detect silent intervals using ffmpeg's `silencedetect` filter.
+
+    Returns a list of (start, end) intervals in seconds.
+
+    Notes:
+    - This is a best-effort heuristic. It depends on ffmpeg's logging output.
+    - If a silence interval starts but does not end (e.g., silence to EOF), it is closed at the probed duration when available.
+    """
+    ffmpeg = _ensure_binary("ffmpeg")
+    path = Path(media_path)
+    if not path.is_file():
+        raise FileNotFoundError(path)
+
+    cmd = [
+        ffmpeg,
+        "-hide_banner",
+        "-nostats",
+        "-i",
+        str(path),
+        "-vn",
+        "-sn",
+        "-dn",
+        "-af",
+        f"silencedetect=noise={noise_db}dB:d={min_silence_duration}",
+        "-f",
+        "null",
+        "-",
+    ]
+
+    completed = _run(cmd, runner=runner)
+    stderr = completed.stderr.decode(errors="replace") if completed.stderr else ""
+
+    intervals: list[tuple[float, float]] = []
+    current_start: float | None = None
+
+    for line in stderr.splitlines():
+        m = _SILENCE_START_RE.search(line)
+        if m:
+            try:
+                current_start = float(m.group("value"))
+            except ValueError:
+                current_start = None
+            continue
+
+        m = _SILENCE_END_RE.search(line)
+        if m and current_start is not None:
+            try:
+                end = float(m.group("value"))
+            except ValueError:
+                continue
+            if end >= current_start:
+                intervals.append((current_start, end))
+            current_start = None
+
+    if current_start is not None:
+        try:
+            duration = probe_media(path, runner=runner).get("duration")
+        except Exception:
+            duration = None
+        if isinstance(duration, (int, float)) and duration >= current_start:
+            intervals.append((current_start, float(duration)))
+
+    return intervals

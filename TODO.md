@@ -337,6 +337,10 @@
   - [x] Docs: explain diarization dependencies (torch/pyannote) + offline-mode behavior.
   - [x] Add UI option to enable speaker labels (optional; advanced).
 - [ ] Smart silence trimming (cut dead air before generating shorts).
+  - [x] media-core: add ffmpeg `silencedetect` helper (`detect_silence`).
+  - [x] Worker: optional `trim_silence` scoring for `tasks.generate_shorts`.
+  - [ ] Web: expose `trim_silence` toggle + thresholds in Shorts form.
+  - [ ] Add an integration test with a silent-padding fixture and assert fewer silent segments chosen.
 - [ ] Basic subtitle editor (inline text edit + shift timings).
 - [ ] Support for timelines / EDL export.
 - [ ] Optional cloud integrations (S3, remote GPU workers).
