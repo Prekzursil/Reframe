@@ -295,6 +295,7 @@
 ## 18. Packaging & Distribution
 
 - [ ] Add `Dockerfile` for an “all‑in‑one” image (API + worker) for simple servers.
+- [ ] Align `.env.example` env var names with `REFRAME_*` settings (or support unprefixed `DATABASE_URL`/`MEDIA_ROOT` env vars).
 - [ ] Docker-compose: share/mount `MEDIA_ROOT` volume between API + worker so generated assets are downloadable.
 - [ ] Tauri/Electron:
   - [ ] Decide wrapper (Tauri recommended for performance).
