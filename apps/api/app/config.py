@@ -1,25 +1,44 @@
 from functools import lru_cache
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, AliasChoices
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class DatabaseSettings(BaseModel):
-    url: str = Field(default="sqlite:///./reframe.db")
+    url: str = Field(
+        default="sqlite:///./reframe.db",
+        validation_alias=AliasChoices("DATABASE_URL", "REFRAME_DATABASE__URL", "DATABASE__URL"),
+    )
 
 
 class BrokerSettings(BaseModel):
-    broker_url: str = Field(default="redis://redis:6379/0")
-    result_backend: str = Field(default="redis://redis:6379/0")
+    broker_url: str = Field(
+        default="redis://redis:6379/0",
+        validation_alias=AliasChoices("BROKER_URL", "REFRAME_BROKER__BROKER_URL", "BROKER__BROKER_URL"),
+    )
+    result_backend: str = Field(
+        default="redis://redis:6379/0",
+        validation_alias=AliasChoices("RESULT_BACKEND", "REFRAME_BROKER__RESULT_BACKEND", "BROKER__RESULT_BACKEND"),
+    )
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", env_prefix="REFRAME_")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_prefix="REFRAME_",
+        env_nested_delimiter="__",
+    )
 
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     broker: BrokerSettings = Field(default_factory=BrokerSettings)
-    media_root: str = Field(default="./media")
+    media_root: str = Field(
+        default="./media",
+        validation_alias=AliasChoices("MEDIA_ROOT", "REFRAME_MEDIA_ROOT"),
+    )
     api_title: str = Field(default="Reframe API")
     api_version: str = Field(default="0.1.0")
+    log_format: str = Field(default="json", description="Logging format: json|plain")
+    log_level: str = Field(default="INFO", description="Logging level, e.g. DEBUG|INFO|WARNING")
     rate_limit_requests: int = Field(default=60)
     rate_limit_window_seconds: int = Field(default=60)
 

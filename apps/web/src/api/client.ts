@@ -5,9 +5,12 @@ export interface Job {
   job_type: string;
   status: JobStatus;
   progress: number;
+  error?: string | null;
   payload?: Record<string, unknown>;
   input_asset_id?: string | null;
   output_asset_id?: string | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface CaptionJobRequest {
@@ -57,6 +60,8 @@ export interface MediaAsset {
   uri?: string | null;
   mime_type?: string | null;
   duration?: number | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 interface ApiClientOptions {
@@ -99,6 +104,14 @@ export class ApiClient {
     return this.request<MediaAsset>(`/assets/${assetId}`);
   }
 
+  listAssets(params?: { kind?: string; limit?: number }) {
+    const search = new URLSearchParams();
+    if (params?.kind) search.set("kind", params.kind);
+    if (params?.limit) search.set("limit", String(params.limit));
+    const query = search.toString();
+    return this.request<MediaAsset[]>(`/assets${query ? `?${query}` : ""}`);
+  }
+
   createCaptionJob(payload: CaptionJobRequest) {
     return this.request<Job>("/captions/jobs", { method: "POST", body: JSON.stringify(payload) });
   }
@@ -136,6 +149,18 @@ export class ApiClient {
       throw new Error(msg || "Upload failed");
     }
     return (await resp.json()) as MediaAsset;
+  }
+
+  mediaUrl(uri: string): string {
+    if (/^https?:\/\//i.test(uri)) return uri;
+    const base = (() => {
+      try {
+        return new URL(this.baseUrl);
+      } catch {
+        return new URL(this.baseUrl, window.location.origin);
+      }
+    })();
+    return new URL(uri, base.origin).toString();
   }
 }
 

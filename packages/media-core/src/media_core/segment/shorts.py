@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bisect import bisect_right
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
@@ -60,17 +61,46 @@ def select_top(
         for c in candidates
         if c.duration >= min_duration and c.duration <= max_duration and c.start < c.end
     ]
-    filtered.sort(key=lambda c: c.score, reverse=True)
-    selected: List[SegmentCandidate] = []
-    for cand in filtered:
-        if len(selected) >= max_segments:
-            break
-        overlaps = any(
-            not (cand.end + min_gap <= s.start or cand.start >= s.end + min_gap) for s in selected
-        )
-        if overlaps:
-            continue
-        selected.append(cand)
+    if max_segments <= 0 or not filtered:
+        return []
+
+    # Weighted interval scheduling with a max_segments constraint:
+    # maximize total score under non-overlap (+ optional min_gap).
+    intervals = sorted(filtered, key=lambda c: (c.end, c.start))
+    ends = [c.end for c in intervals]
+
+    # p[i] = predecessor index (1-based) of interval i (1..n), 0 means none.
+    p: list[int] = []
+    for i, cand in enumerate(intervals):
+        cutoff = cand.start - min_gap
+        j = bisect_right(ends, cutoff, 0, i) - 1
+        p.append(j + 1)
+
+    n = len(intervals)
+    k_max = min(max_segments, n)
+    dp: list[list[float]] = [[0.0] * (k_max + 1) for _ in range(n + 1)]
+
+    for i in range(1, n + 1):
+        score_i = float(intervals[i - 1].score)
+        pred = p[i - 1]
+        for k in range(1, k_max + 1):
+            skip = dp[i - 1][k]
+            take = score_i + dp[pred][k - 1]
+            dp[i][k] = take if take > skip else skip
+
+    selected: list[SegmentCandidate] = []
+    i = n
+    k = k_max
+    while i > 0 and k > 0:
+        score_i = float(intervals[i - 1].score)
+        pred = p[i - 1]
+        if score_i + dp[pred][k - 1] > dp[i - 1][k]:
+            selected.append(intervals[i - 1])
+            i = pred
+            k -= 1
+        else:
+            i -= 1
+
     selected.sort(key=lambda c: c.start)
     return selected
 

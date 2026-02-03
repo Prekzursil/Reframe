@@ -42,31 +42,41 @@ def normalize_faster_whisper(
 ) -> TranscriptionResult:
     """Normalize faster-whisper segments into TranscriptionResult."""
     words: list[Word] = []
+    segment_texts: list[str] = []
     for seg in segments:
-        seg_words = getattr(seg, "words", None) or getattr(seg, "get", lambda k, d=None: d)("words", None)
-        if seg_words is None:
+        if isinstance(seg, dict):
+            seg_text = str(seg.get("text", "")).strip()
+            seg_words = seg.get("words")
+        else:
+            seg_text = str(getattr(seg, "text", "")).strip()
+            seg_words = getattr(seg, "words", None)
+
+        if seg_text:
+            segment_texts.append(seg_text)
+        if not seg_words:
             continue
         for w in seg_words:
             try:
-                start = float(getattr(w, "start", w.get("start")))
-                end = float(getattr(w, "end", w.get("end")))
-                text = str(getattr(w, "word", w.get("word"))).strip()
+                if isinstance(w, dict):
+                    start = float(w.get("start"))
+                    end = float(w.get("end"))
+                    text = str(w.get("word", "")).strip()
+                    prob = w.get("probability")
+                else:
+                    start = float(getattr(w, "start"))
+                    end = float(getattr(w, "end"))
+                    text = str(getattr(w, "word", "")).strip()
+                    prob = getattr(w, "probability", None)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("Skipping malformed word payload: %s (%s)", w, exc)
                 continue
-            prob = getattr(w, "probability", None)
             try:
                 prob_val = float(prob) if prob is not None else None
             except (TypeError, ValueError):
                 prob_val = None
             words.append(Word(text=text, start=start, end=end, probability=prob_val))
 
-    text_field = None
-    try:
-        # If the segments iterable has a first element with text, join them.
-        text_field = " ".join(getattr(s, "text", s.get("text", "")).strip() for s in segments) or None
-    except Exception:
-        text_field = None
+    text_field = " ".join(segment_texts) or None
 
     return TranscriptionResult(words=words, text=text_field, model=model, language=language)
 

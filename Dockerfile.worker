@@ -5,9 +5,14 @@ WORKDIR /worker
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY services/worker/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+COPY apps/api /worker/apps/api
 COPY services/worker /worker
 
 CMD ["celery", "-A", "worker.celery_app", "worker", "--loglevel=info"]

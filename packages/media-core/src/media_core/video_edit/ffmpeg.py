@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Iterable, List, Optional
+
+
+logger = logging.getLogger(__name__)
 
 
 def _ensure_binary(name: str) -> str:
@@ -16,7 +20,21 @@ def _ensure_binary(name: str) -> str:
 
 def _run(cmd: List[str], runner=None) -> subprocess.CompletedProcess:
     runner = runner or subprocess.run
-    return runner(cmd, check=True, capture_output=True)
+    try:
+        return runner(cmd, check=True, capture_output=True)
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, (bytes, bytearray)) else str(exc.stderr or "")
+        stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, (bytes, bytearray)) else str(exc.stdout or "")
+        logger.error(
+            "ffmpeg command failed",
+            extra={
+                "cmd": cmd,
+                "returncode": exc.returncode,
+                "stderr": stderr[-4000:],
+                "stdout": stdout[-4000:],
+            },
+        )
+        raise
 
 
 def probe_media(path: str | Path, runner=None) -> dict:
