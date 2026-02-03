@@ -245,6 +245,7 @@
   - [x] Enable per-clip download buttons (video + subtitles) when backend provides URIs; disable when absent.
   - [x] Ability to delete/ignore clips.
   - [x] Handle empty/failed clip outputs gracefully.
+- [ ] Generate real GIF/thumbnail previews from clips via FFmpeg (replace placeholder thumbnail asset).
 
 ---
 
