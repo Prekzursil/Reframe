@@ -313,12 +313,12 @@
 
 ## 19. UX & Polish
 
-- [ ] Add onboarding “wizard” or quick start card on home page.
-- [ ] Provide a few sample videos for testing.
-- [ ] Add warnings for long jobs (e.g., “this may take ~N minutes on CPU”).
-- [ ] Expose only the most important knobs in v1; hide advanced settings in collapsible sections.
-- [ ] Add tooltips explaining Whisper backends, models, and trade‑offs.
-- [ ] Add “copy command” buttons that show the equivalent CLI for advanced users.
+- [x] Add onboarding “wizard” or quick start card on home page.
+- [x] Provide a few sample videos for testing.
+- [x] Add warnings for long jobs (e.g., “this may take ~N minutes on CPU”).
+- [x] Expose only the most important knobs in v1; hide advanced settings in collapsible sections.
+- [x] Add tooltips explaining Whisper backends, models, and trade‑offs.
+- [x] Add “copy command” buttons that show the equivalent CLI for advanced users.
 
 ---
 
