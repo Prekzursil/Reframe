@@ -1,2 +1,4 @@
 celery>=5.4.0
 redis>=5.0.0
+sqlmodel>=0.0.22
+pydantic-settings>=2.2.1

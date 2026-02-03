@@ -1,6 +1,8 @@
+import base64
 import logging
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional, Tuple
@@ -9,9 +11,16 @@ from uuid import UUID, uuid4
 from sqlmodel import Session, create_engine
 
 # Ensure app package is importable for shared models/config when running from services/.
-ROOT = Path(__file__).resolve().parents[2]
-API_PATH = ROOT / "apps" / "api"
-if str(API_PATH) not in sys.path:
+def _find_repo_root(start: Path) -> Path:
+    for candidate in [start.parent, *start.parents]:
+        if (candidate / "apps" / "api").is_dir():
+            return candidate
+    return start.parent
+
+
+REPO_ROOT = _find_repo_root(Path(__file__).resolve())
+API_PATH = REPO_ROOT / "apps" / "api"
+if API_PATH.is_dir() and str(API_PATH) not in sys.path:
     sys.path.append(str(API_PATH))
 
 from app.config import get_settings
@@ -28,6 +37,10 @@ logger = logging.getLogger(__name__)
 
 _engine = None
 _media_tmp: Path | None = None
+
+_FALLBACK_THUMBNAIL_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
+)
 
 
 def get_engine():
@@ -64,6 +77,48 @@ def create_asset(kind: str, mime_type: str, suffix: str, contents: bytes | str =
         session.commit()
         session.refresh(asset)
         return asset
+
+
+def create_thumbnail_asset(video_path: Path | None, runner=None) -> MediaAsset:
+    if not video_path or not video_path.exists():
+        return create_asset(kind="image", mime_type="image/png", suffix=".png", contents=_FALLBACK_THUMBNAIL_PNG)
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return create_asset(kind="image", mime_type="image/png", suffix=".png", contents=_FALLBACK_THUMBNAIL_PNG)
+
+    thumb_tmp = get_media_tmp() / f"thumb-{uuid4()}.png"
+    runner = runner or subprocess.run
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-v",
+        "error",
+        "-ss",
+        "0.5",
+        "-i",
+        str(video_path),
+        "-frames:v",
+        "1",
+        "-vf",
+        "scale=320:-1",
+        str(thumb_tmp),
+    ]
+    try:
+        runner(cmd, check=True, capture_output=True)
+        if thumb_tmp.exists() and thumb_tmp.stat().st_size > 0:
+            return create_asset(kind="image", mime_type="image/png", suffix=".png", source_path=thumb_tmp)
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.debug("Thumbnail generation failed: %s", exc)
+    finally:
+        try:
+            thumb_tmp.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception:  # pragma: no cover - best effort
+            logger.debug("Failed to remove temporary thumbnail: %s", thumb_tmp)
+
+    return create_asset(kind="image", mime_type="image/png", suffix=".png", contents=_FALLBACK_THUMBNAIL_PNG)
 
 
 def fetch_asset(asset_id: str) -> Tuple[Optional[MediaAsset], Optional[Path]]:
@@ -144,7 +199,7 @@ def transcribe_video(self, job_id: str, video_asset_id: str, config: dict | None
 def generate_captions(self, job_id: str, video_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id)
-    captions = "1\n00:00:00,000 --> 00:00:02,000\nCaption placeholder\n"
+    captions = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nCaption placeholder\n"
     asset = create_asset(kind="subtitle", mime_type="text/vtt", suffix=".vtt", contents=captions)
     result = {"video_asset_id": video_asset_id, "status": "captions_generated", "options": options or {}, "output_asset_id": str(asset.id)}
     update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(asset.id))
@@ -156,7 +211,7 @@ def generate_captions(self, job_id: str, video_asset_id: str, options: dict | No
 def translate_subtitles(self, job_id: str, subtitle_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, subtitle_asset_id=subtitle_asset_id)
-    translated = "1\n00:00:00,000 --> 00:00:02,000\nTranslated placeholder\n"
+    translated = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nTranslated placeholder\n"
     asset = create_asset(kind="subtitle", mime_type="text/vtt", suffix=".vtt", contents=translated)
     result = {"subtitle_asset_id": subtitle_asset_id, "status": "translated", "options": options or {}, "output_asset_id": str(asset.id)}
     update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(asset.id))
@@ -193,6 +248,7 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
     min_dur = options.get("min_duration") if options else None
     for idx in range(max_clips):
         src_asset, src_path = fetch_asset(video_asset_id)
+        thumb_asset = create_thumbnail_asset(src_path)
         clip_asset = create_asset(
             kind="video",
             mime_type=src_asset.mime_type if src_asset and src_asset.mime_type else "application/octet-stream",
@@ -208,7 +264,7 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
                 "score": 0.5 + idx * 0.1,
                 "uri": clip_asset.uri,
                 "subtitle_uri": None,
-                "thumbnail_uri": None,
+                "thumbnail_uri": thumb_asset.uri,
             }
         )
     src_asset, src_path = fetch_asset(video_asset_id)

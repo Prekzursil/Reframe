@@ -229,19 +229,19 @@
 
 ## 14. Frontend – AI Shorts Maker
 
-- [ ] Page: **Shorts Maker** (core UI present; backend integration incomplete).
-- [ ] Input:
+- [x] Page: **Shorts Maker** (core UI present; backend integration incomplete).
+- [x] Input:
   - [x] Video upload or URL input (uploads now backend-wired).
   - [x] Number of clips desired.
   - [x] Min/max clip duration.
   - [x] Aspect ratio selection.
   - [x] “Use subtitles” toggle with style selector.
   - [x] “Prompt to guide selection” textarea.
-- [ ] Submit:
+- [x] Submit:
   - [x] Create shorts job.
 - [x] Show a progress view with dynamic step feedback (progress bar).
-- [ ] Result view:
-  - [ ] Render real clip assets from backend (thumbnail/GIF, duration, score).
+- [x] Result view:
+  - [x] Render real clip assets from backend (thumbnail/GIF, duration, score).
   - [x] Enable per-clip download buttons (video + subtitles) when backend provides URIs; disable when absent.
   - [x] Ability to delete/ignore clips.
   - [x] Handle empty/failed clip outputs gracefully.
@@ -250,16 +250,16 @@
 
 ## 15. Frontend – Utilities (SRT & Merge)
 
-- [ ] Page: **Subtitle Tools**.
+- [x] Page: **Subtitle Tools**.
   - [x] SRT upload → translation options (backend upload wired).
   - [x] Bilingual SRT option.
-  - [ ] Result download confirmed with real asset (depends on backend job output wiring).
-- [ ] Page: **Video / Audio Merge**.
+  - [x] Result download confirmed with real asset (depends on backend job output wiring).
+- [x] Page: **Video / Audio Merge**.
   - [x] Upload/choose video (backend upload wired).
   - [x] Upload/choose audio (backend upload wired).
   - [x] Controls: offset, ducking, normalize.
   - [x] Submit → job → result download (polling present; relies on real assets being produced).
-- [ ] Poll utilities jobs and fetch output assets for download/preview when ready.
+- [x] Poll utilities jobs and fetch output assets for download/preview when ready.
 
 ---
 
@@ -294,6 +294,7 @@
 ## 18. Packaging & Distribution
 
 - [ ] Add `Dockerfile` for an “all‑in‑one” image (API + worker) for simple servers.
+- [ ] Docker-compose: share/mount `MEDIA_ROOT` volume between API + worker so generated assets are downloadable.
 - [ ] Tauri/Electron:
   - [ ] Decide wrapper (Tauri recommended for performance).
   - [ ] Wire Tauri to run API/worker as child processes or rely on local Docker.
