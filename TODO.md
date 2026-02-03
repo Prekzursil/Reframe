@@ -289,14 +289,15 @@
 - [x] Frontend tests:
   - [x] Component tests for forms and job list.
   - [x] Minimal e2e flow (upload → job complete → download).
+- [ ] Address `npm audit` moderate vulnerabilities in `apps/web` dependencies.
 
 ---
 
 ## 18. Packaging & Distribution
 
-- [ ] Add `Dockerfile` for an “all‑in‑one” image (API + worker) for simple servers.
-- [ ] Align `.env.example` env var names with `REFRAME_*` settings (or support unprefixed `DATABASE_URL`/`MEDIA_ROOT` env vars).
-- [ ] Docker-compose: share/mount `MEDIA_ROOT` volume between API + worker so generated assets are downloadable.
+- [x] Add `Dockerfile` for an “all‑in‑one” image (API + worker) for simple servers.
+- [x] Align `.env.example` env var names with `REFRAME_*` settings (or support unprefixed `DATABASE_URL`/`MEDIA_ROOT` env vars).
+- [x] Docker-compose: share/mount `MEDIA_ROOT` volume between API + worker so generated assets are downloadable.
 - [ ] Tauri/Electron:
   - [ ] Decide wrapper (Tauri recommended for performance).
   - [ ] Wire Tauri to run API/worker as child processes or rely on local Docker.
