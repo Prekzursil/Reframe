@@ -298,6 +298,7 @@
 - [x] Add `Dockerfile` for an “all‑in‑one” image (API + worker) for simple servers.
 - [x] Align `.env.example` env var names with `REFRAME_*` settings (or support unprefixed `DATABASE_URL`/`MEDIA_ROOT` env vars).
 - [x] Docker-compose: share/mount `MEDIA_ROOT` volume between API + worker so generated assets are downloadable.
+- [ ] Document `Dockerfile.allinone` usage + required env vars in README.
 - [ ] Tauri/Electron:
   - [ ] Decide wrapper (Tauri recommended for performance).
   - [ ] Wire Tauri to run API/worker as child processes or rely on local Docker.
