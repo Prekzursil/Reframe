@@ -47,7 +47,7 @@ def probe_media(path: str | Path, runner=None) -> dict:
         "-v",
         "error",
         "-show_entries",
-        "format=duration:bit_rate",
+        "format=duration,bit_rate",
         "-show_entries",
         "stream=index,codec_name,width,height,codec_type",
         "-of",

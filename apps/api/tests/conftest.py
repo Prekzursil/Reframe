@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+_tools_bin = REPO_ROOT / ".tools" / "bin"
+if _tools_bin.is_dir():
+    os.environ["PATH"] = f"{_tools_bin}{os.pathsep}{os.environ.get('PATH', '')}"
 
 API_ROOT = Path(__file__).resolve().parents[1]
 if str(API_ROOT) not in sys.path:
@@ -52,4 +58,3 @@ def test_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
     with TestClient(app) as client:
         yield client, enqueued, worker, media_root
-

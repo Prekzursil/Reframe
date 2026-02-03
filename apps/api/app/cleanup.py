@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import os
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -11,11 +10,11 @@ from typing import Optional
 def _remove_old_files(directory: Path, older_than: timedelta) -> None:
     if not directory.exists() or not directory.is_dir():
         return
-    cutoff = datetime.utcnow() - older_than
+    cutoff = datetime.now(timezone.utc) - older_than
     for entry in directory.iterdir():
         try:
             if entry.is_file():
-                mtime = datetime.utcfromtimestamp(entry.stat().st_mtime)
+                mtime = datetime.fromtimestamp(entry.stat().st_mtime, tz=timezone.utc)
                 if mtime < cutoff:
                     entry.unlink(missing_ok=True)
         except Exception:

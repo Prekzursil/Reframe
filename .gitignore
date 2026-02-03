@@ -17,6 +17,7 @@ dist/
 .DS_Store
 .vscode/
 .idea/
+.tools/
 
 # Logs & coverage
 *.log
