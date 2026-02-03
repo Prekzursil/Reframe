@@ -208,10 +208,10 @@
 
 ## 13. Frontend – TikTok‑Style Subtitles
 
-- [ ] Page: **Subtitle Styling** (UI exists; flow still incomplete).
-- [ ] Upload video OR select an existing `MediaAsset` using real asset IDs (uploads now backend-wired).
-- [ ] Select subtitles (existing SRT) OR generate from captions pipeline when absent (caption job trigger present; still needs reliable output/polling).
-- [ ] Style editor:
+- [x] Page: **Subtitle Styling** (UI exists; flow still incomplete).
+- [x] Upload video OR select an existing `MediaAsset` using real asset IDs (uploads now backend-wired).
+- [x] Select subtitles (existing SRT) OR generate from captions pipeline when absent (caption job trigger present; still needs reliable output/polling).
+- [x] Style editor:
   - [x] Font family (dropdown).
   - [x] Font size slider.
   - [x] Text color picker.
@@ -223,7 +223,6 @@
   - [x] “Preview 5 seconds” button to trigger job and surface preview asset (depends on backend producing preview).
 - [x] “Render full video” button -> create styled subtitle job and display/poll result asset (depends on backend producing asset).
 - [x] Show progress/status for styling jobs (polling, errors).
-- [ ] Auto-generate captions when absent and chain into styling; fetch/present preview/render assets reliably.
 - [x] Auto-generate captions when absent and chain into styling; fetch/present preview/render assets reliably.
 
 ---

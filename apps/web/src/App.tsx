@@ -755,10 +755,37 @@ function AppShell() {
   const [mergeAudioPreview, setMergeAudioPreview] = useState<string | null>(null);
   const [mergeVideoId, setMergeVideoId] = useState<string>("");
   const [mergeAudioId, setMergeAudioId] = useState<string>("");
+  const [recentVideoAssets, setRecentVideoAssets] = useState<MediaAsset[]>([]);
+  const [recentSubtitleAssets, setRecentSubtitleAssets] = useState<MediaAsset[]>([]);
+  const [recentAssetsLoading, setRecentAssetsLoading] = useState(false);
+  const [recentAssetsError, setRecentAssetsError] = useState<string | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
+
+  const refreshRecentAssets = async () => {
+    setRecentAssetsLoading(true);
+    setRecentAssetsError(null);
+    try {
+      const [videos, subtitles] = await Promise.all([
+        apiClient.listAssets({ kind: "video", limit: 25 }),
+        apiClient.listAssets({ kind: "subtitle", limit: 25 }),
+      ]);
+      setRecentVideoAssets(videos);
+      setRecentSubtitleAssets(subtitles);
+    } catch (err) {
+      setRecentAssetsError(err instanceof Error ? err.message : "Failed to load assets");
+    } finally {
+      setRecentAssetsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (active === "subtitles") {
+      void refreshRecentAssets();
+    }
+  }, [active]);
 
   const pollJob = (job: Job | null, onUpdate: (j: Job) => void, onAsset?: (a: MediaAsset | null) => void) => {
     if (!job || ["completed", "failed", "cancelled"].includes(job.status)) return null;
@@ -767,13 +794,17 @@ function AppShell() {
         const refreshed = await apiClient.getJob(job.id);
         onUpdate(refreshed);
         if (job.job_type === "shorts" && refreshed.payload && "clip_assets" in (refreshed.payload as any)) {
+          const resolveUri = (value: unknown): string | null => {
+            if (!value || typeof value !== "string") return null;
+            return apiClient.mediaUrl(value);
+          };
           const clips = ((refreshed.payload as any).clip_assets as any[]).map((c, i) => ({
             id: c.id || `${refreshed.id}-clip-${i + 1}`,
             duration: c.duration ?? null,
             score: c.score ?? null,
-            uri: c.uri ?? c.url ?? null,
-            subtitle_uri: c.subtitle_uri ?? null,
-            thumbnail_uri: c.thumbnail_uri ?? null,
+            uri: resolveUri(c.uri ?? c.url),
+            subtitle_uri: resolveUri(c.subtitle_uri),
+            thumbnail_uri: resolveUri(c.thumbnail_uri),
           }));
           setShortsClips(clips.filter(Boolean));
         }
@@ -842,8 +873,9 @@ function AppShell() {
     if (captionOutput?.id) {
       setSubtitleAssetId(captionOutput.id);
       if (captionOutput.uri && captionOutput.mime_type?.includes("text")) {
-        setSubtitlePreview(captionOutput.uri);
-        setSubtitleFileName("captions.srt");
+        setSubtitlePreview(apiClient.mediaUrl(captionOutput.uri));
+        const ext = captionOutput.uri.split(".").pop();
+        setSubtitleFileName(ext ? `captions.${ext}` : "captions");
       }
     }
   }, [captionOutput]);
@@ -852,13 +884,15 @@ function AppShell() {
     if (translateOutput?.id) {
       setSubtitleAssetId(translateOutput.id);
       if (translateOutput.uri && translateOutput.mime_type?.includes("text")) {
-        setSubtitlePreview(translateOutput.uri);
-        setSubtitleFileName("translated.srt");
+        setSubtitlePreview(apiClient.mediaUrl(translateOutput.uri));
+        const ext = translateOutput.uri.split(".").pop();
+        setSubtitleFileName(ext ? `translated.${ext}` : "translated");
       }
     }
   }, [translateOutput]);
 
-  const waitForJobAsset = async (jobId: string, timeoutMs = 60000) => {
+
+  const waitForJobAsset = async (jobId: string, timeoutMs = 10 * 60_000) => {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       const refreshed = await apiClient.getJob(jobId);
@@ -1031,16 +1065,16 @@ function AppShell() {
                     <p className="muted">{outputAsset.mime_type || outputAsset.kind}</p>
                     {outputAsset.uri && (
                       <div className="actions-row">
-                        <a className="btn btn-primary" href={outputAsset.uri} download>
+                        <a className="btn btn-primary" href={apiClient.mediaUrl(outputAsset.uri)} download>
                           Download
                         </a>
                       </div>
                     )}
                     {outputAsset.uri && outputAsset.mime_type?.includes("video") && (
-                      <video className="preview" controls src={outputAsset.uri} />
+                      <video className="preview" controls src={apiClient.mediaUrl(outputAsset.uri)} />
                     )}
                     {outputAsset.uri && outputAsset.mime_type?.includes("text") && (
-                      <iframe className="preview-text" src={outputAsset.uri} title="subtitle-preview" />
+                      <iframe className="preview-text" src={apiClient.mediaUrl(outputAsset.uri)} title="subtitle-preview" />
                     )}
                   </div>
                 )}
@@ -1086,7 +1120,7 @@ function AppShell() {
                 {shortsStatusPolling && <Spinner label="Polling job status..." />}
                 {shortsOutput && shortsOutput.uri && (
                   <div className="actions-row">
-                    <a className="btn btn-primary" href={shortsOutput.uri} download>
+                    <a className="btn btn-primary" href={apiClient.mediaUrl(shortsOutput.uri)} download>
                       Download compiled shorts
                       </a>
                     </div>
@@ -1108,15 +1142,15 @@ function AppShell() {
               {shortsClips.map((clip) => (
                 <div key={clip.id} className="clip-card">
                   <div className="clip-thumb">
-                    {clip.thumbnail_uri ? <img src={clip.thumbnail_uri} alt="Clip thumbnail" /> : <div className="placeholder-thumb" />}
+                    {clip.thumbnail_uri ? <img src={apiClient.mediaUrl(clip.thumbnail_uri)} alt="Clip thumbnail" /> : <div className="placeholder-thumb" />}
                   </div>
                   <p className="metric-value">{clip.duration ? `${clip.duration}s` : "?"}</p>
                   <p className="muted">Score: {clip.score ?? "?"}</p>
                   <div className="actions-row">
-                    <Button variant="secondary" disabled={!clip.uri} onClick={() => clip.uri && window.open(clip.uri, "_blank")}>
+                    <Button variant="secondary" disabled={!clip.uri} onClick={() => clip.uri && window.open(apiClient.mediaUrl(clip.uri), "_blank")}>
                       {clip.uri ? "Download video" : "Video not ready"}
                     </Button>
-                    <Button variant="ghost" disabled={!clip.subtitle_uri} onClick={() => clip.subtitle_uri && window.open(clip.subtitle_uri, "_blank")}>
+                    <Button variant="ghost" disabled={!clip.subtitle_uri} onClick={() => clip.subtitle_uri && window.open(apiClient.mediaUrl(clip.subtitle_uri), "_blank")}>
                       {clip.subtitle_uri ? "Download subs" : "Subs not ready"}
                     </Button>
                     <Button variant="ghost" onClick={() => setShortsClips((prev) => prev.filter((c) => c.id !== clip.id))}>
@@ -1164,10 +1198,10 @@ function AppShell() {
               </div>
               {translateOutput?.uri ? (
                 <div className="actions-row">
-                  <a className="btn btn-primary" href={translateOutput.uri} download>
+                  <a className="btn btn-primary" href={apiClient.mediaUrl(translateOutput.uri)} download>
                     Download translated subtitles
                   </a>
-                  <Button variant="ghost" onClick={() => setSubtitlePreview(translateOutput.uri || null)}>
+                  <Button variant="ghost" onClick={() => setSubtitlePreview(translateOutput.uri ? apiClient.mediaUrl(translateOutput.uri) : null)}>
                     Preview
                   </Button>
                 </div>
@@ -1180,21 +1214,82 @@ function AppShell() {
       </section>
         )}
 
-        {active === "subtitles" && (
-          <section className="grid two-col">
-            <Card title="Select assets">
-              <label className="field">
-                <span>Video asset ID</span>
-                <Input value={uploadedVideoId} onChange={(e) => setUploadedVideoId(e.target.value)} />
-              </label>
-              <label className="field">
-                <span>Subtitle asset ID</span>
-                <Input value={subtitleAssetId} onChange={(e) => setSubtitleAssetId(e.target.value)} />
-              </label>
-              <SubtitleUpload
-                onAssetId={(id) => setSubtitleAssetId(id)}
-                onPreview={(url, name) => {
-                  setSubtitlePreview(url);
+	        {active === "subtitles" && (
+	          <section className="grid two-col">
+	            <Card title="Select assets">
+	              <label className="field">
+	                <span>Video asset ID</span>
+	                <Input value={uploadedVideoId} onChange={(e) => setUploadedVideoId(e.target.value)} />
+	              </label>
+	              <label className="field">
+	                <span>Or pick a recent video asset</span>
+	                <div className="actions-row">
+	                  <select
+	                    className="input"
+	                    value=""
+	                    onChange={(e) => {
+	                      const id = e.target.value;
+	                      if (!id) return;
+	                      const asset = recentVideoAssets.find((a) => a.id === id);
+	                      setUploadedVideoId(id);
+	                      setUploadedPreview(asset?.uri ? apiClient.mediaUrl(asset.uri) : null);
+	                    }}
+	                  >
+	                    <option value="">Select a video asset…</option>
+	                    {recentVideoAssets.map((asset) => (
+	                      <option key={asset.id} value={asset.id}>
+	                        {asset.id}
+	                      </option>
+	                    ))}
+	                  </select>
+	                  <Button type="button" variant="ghost" onClick={() => void refreshRecentAssets()} disabled={recentAssetsLoading}>
+	                    {recentAssetsLoading ? "Refreshing..." : "Refresh"}
+	                  </Button>
+	                </div>
+	                {recentAssetsError && <div className="error-inline">{recentAssetsError}</div>}
+	              </label>
+	              <label className="field">
+	                <span>Subtitle asset ID</span>
+	                <Input value={subtitleAssetId} onChange={(e) => setSubtitleAssetId(e.target.value)} />
+	              </label>
+	              <label className="field">
+	                <span>Or pick a recent subtitle asset</span>
+	                <div className="actions-row">
+	                  <select
+	                    className="input"
+	                    value=""
+	                    onChange={(e) => {
+	                      const id = e.target.value;
+	                      if (!id) return;
+	                      const asset = recentSubtitleAssets.find((a) => a.id === id);
+	                      setSubtitleAssetId(id);
+	                      if (asset?.uri) {
+	                        setSubtitlePreview(apiClient.mediaUrl(asset.uri));
+	                        const ext = asset.uri.split(".").pop();
+	                        setSubtitleFileName(ext ? `subtitles.${ext}` : "subtitles");
+	                      } else {
+	                        setSubtitlePreview(null);
+	                        setSubtitleFileName(null);
+	                      }
+	                    }}
+	                  >
+	                    <option value="">Select a subtitle asset…</option>
+	                    {recentSubtitleAssets.map((asset) => (
+	                      <option key={asset.id} value={asset.id}>
+	                        {asset.id}
+	                      </option>
+	                    ))}
+	                  </select>
+	                  <Button type="button" variant="ghost" onClick={() => void refreshRecentAssets()} disabled={recentAssetsLoading}>
+	                    {recentAssetsLoading ? "Refreshing..." : "Refresh"}
+	                  </Button>
+	                </div>
+	                {recentAssetsError && <div className="error-inline">{recentAssetsError}</div>}
+	              </label>
+	              <SubtitleUpload
+	                onAssetId={(id) => setSubtitleAssetId(id)}
+	                onPreview={(url, name) => {
+	                  setSubtitlePreview(url);
                   setSubtitleFileName(name || null);
                 }}
               />
@@ -1254,22 +1349,25 @@ function AppShell() {
                   setStyleOutput(null);
                 }}
               />
-              {styleJob && (
-                <div className="output-card">
-                  <p className="metric-label">Styling job {styleJob.id}</p>
-                  <p className="muted">Status: {styleJob.status}</p>
+	              {styleJob && (
+	                <div className="output-card">
+	                  <p className="metric-label">Styling job {styleJob.id}</p>
+	                  <p className="muted">Status: {styleJob.status}</p>
                   {styleOutput?.uri && (
                     <div className="actions-row">
-                      <a className="btn btn-primary" href={styleOutput.uri} download>
-                        Download preview
+                      <a className="btn btn-primary" href={apiClient.mediaUrl(styleOutput.uri)} download>
+                        {styleJob.payload && (styleJob.payload as any).preview_seconds ? "Download preview" : "Download render"}
                       </a>
                     </div>
                   )}
-                </div>
-              )}
-            </Card>
-          </section>
-        )}
+	                  {styleOutput?.uri && styleOutput.mime_type?.includes("video") && (
+	                    <video className="preview" controls src={apiClient.mediaUrl(styleOutput.uri)} />
+	                  )}
+	                </div>
+	              )}
+	            </Card>
+	          </section>
+	        )}
 
         {active === "utilities" && (
           <section className="grid two-col">
@@ -1288,7 +1386,7 @@ function AppShell() {
                   {["running", "queued"].includes(subtitleToolsJob.status) && <Spinner label="Polling job status..." />}
                   <div className="actions-row">
                     {subtitleToolsOutput?.uri ? (
-                      <a className="btn btn-primary" href={subtitleToolsOutput.uri} download>
+                      <a className="btn btn-primary" href={apiClient.mediaUrl(subtitleToolsOutput.uri)} download>
                         Download translated subtitles
                       </a>
                     ) : (
@@ -1320,7 +1418,7 @@ function AppShell() {
                   {["running", "queued"].includes(mergeJob.status) && <Spinner label="Polling job status..." />}
                   <div className="actions-row">
                     {mergeOutput?.uri ? (
-                      <a className="btn btn-primary" href={mergeOutput.uri} download>
+                      <a className="btn btn-primary" href={apiClient.mediaUrl(mergeOutput.uri)} download>
                         Download merged output
                       </a>
                     ) : (

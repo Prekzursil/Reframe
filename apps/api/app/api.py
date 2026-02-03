@@ -393,6 +393,20 @@ async def upload_asset(
 
 
 @router.get(
+    "/assets",
+    response_model=List[MediaAsset],
+    tags=["Assets"],
+)
+def list_assets(kind: Optional[str] = None, limit: int = 25, session: SessionDep = Depends(get_session)) -> List[MediaAsset]:
+    limit = max(1, min(limit, 200))
+    query = select(MediaAsset)
+    if kind:
+        query = query.where(MediaAsset.kind == kind)
+    query = query.order_by(MediaAsset.created_at.desc()).limit(limit)
+    return session.exec(query).all()
+
+
+@router.get(
     "/assets/{asset_id}",
     response_model=MediaAsset,
     tags=["Assets"],
