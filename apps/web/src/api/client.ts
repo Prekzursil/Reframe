@@ -5,9 +5,12 @@ export interface Job {
   job_type: string;
   status: JobStatus;
   progress: number;
+  error?: string | null;
   payload?: Record<string, unknown>;
   input_asset_id?: string | null;
   output_asset_id?: string | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface CaptionJobRequest {

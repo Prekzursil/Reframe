@@ -721,15 +721,16 @@ function StyleEditor({
   );
 }
 
-function AppShell() {
-  const [active, setActive] = useState(NAV_ITEMS[0].id);
-  const [theme, setTheme] = useState<"light" | "dark">("dark");
-  const [showSettings, setShowSettings] = useState(false);
-  const { jobs, loading, error, refresh } = useLiveJobs();
-  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
-  const [outputAsset, setOutputAsset] = useState<MediaAsset | null>(null);
-  const [assetError, setAssetError] = useState<string | null>(null);
-  const [assetLoading, setAssetLoading] = useState(false);
+	function AppShell() {
+	  const [active, setActive] = useState(NAV_ITEMS[0].id);
+	  const [theme, setTheme] = useState<"light" | "dark">("dark");
+	  const [showSettings, setShowSettings] = useState(false);
+	  const { jobs, loading, error, refresh } = useLiveJobs();
+	  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+	  const [inputAsset, setInputAsset] = useState<MediaAsset | null>(null);
+	  const [outputAsset, setOutputAsset] = useState<MediaAsset | null>(null);
+	  const [assetError, setAssetError] = useState<string | null>(null);
+	  const [assetLoading, setAssetLoading] = useState(false);
   const [uploadedVideoId, setUploadedVideoId] = useState<string>("");
   const [uploadedPreview, setUploadedPreview] = useState<string | null>(null);
   const [subtitleAssetId, setSubtitleAssetId] = useState<string>("");
@@ -756,9 +757,16 @@ function AppShell() {
   const [mergeVideoId, setMergeVideoId] = useState<string>("");
   const [mergeAudioId, setMergeAudioId] = useState<string>("");
   const [recentVideoAssets, setRecentVideoAssets] = useState<MediaAsset[]>([]);
-  const [recentSubtitleAssets, setRecentSubtitleAssets] = useState<MediaAsset[]>([]);
-  const [recentAssetsLoading, setRecentAssetsLoading] = useState(false);
-  const [recentAssetsError, setRecentAssetsError] = useState<string | null>(null);
+	  const [recentSubtitleAssets, setRecentSubtitleAssets] = useState<MediaAsset[]>([]);
+	  const [recentAssetsLoading, setRecentAssetsLoading] = useState(false);
+	  const [recentAssetsError, setRecentAssetsError] = useState<string | null>(null);
+	  const [jobsPageJobs, setJobsPageJobs] = useState<Job[]>([]);
+	  const [jobsPageLoading, setJobsPageLoading] = useState(false);
+	  const [jobsPageError, setJobsPageError] = useState<string | null>(null);
+	  const [jobsStatusFilter, setJobsStatusFilter] = useState<JobStatus | "">("");
+	  const [jobsTypeFilter, setJobsTypeFilter] = useState("");
+	  const [jobsDateFrom, setJobsDateFrom] = useState("");
+	  const [jobsDateTo, setJobsDateTo] = useState("");
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -781,11 +789,64 @@ function AppShell() {
     }
   };
 
-  useEffect(() => {
-    if (active === "subtitles") {
-      void refreshRecentAssets();
-    }
-  }, [active]);
+	  useEffect(() => {
+	    if (active === "subtitles") {
+	      void refreshRecentAssets();
+	    }
+	  }, [active]);
+
+	  const loadJobsPage = async () => {
+	    setJobsPageLoading(true);
+	    setJobsPageError(null);
+	    try {
+	      const data = await apiClient.listJobs();
+	      setJobsPageJobs(data);
+	    } catch (err) {
+	      setJobsPageError(err instanceof Error ? err.message : "Failed to load jobs");
+	    } finally {
+	      setJobsPageLoading(false);
+	    }
+	  };
+
+	  useEffect(() => {
+	    if (active === "jobs") {
+	      void loadJobsPage();
+	    }
+	  }, [active]);
+
+	  const formatTimestamp = (value?: string | null) => {
+	    if (!value) return "n/a";
+	    const date = new Date(value);
+	    if (Number.isNaN(date.getTime())) return value;
+	    return date.toLocaleString();
+	  };
+
+	  const jobTypeOptions = useMemo(() => {
+	    const types = new Set(jobsPageJobs.map((job) => job.job_type).filter(Boolean));
+	    return Array.from(types).sort();
+	  }, [jobsPageJobs]);
+
+	  const filteredJobs = useMemo(() => {
+	    const from = jobsDateFrom ? new Date(`${jobsDateFrom}T00:00:00`) : null;
+	    const to = jobsDateTo ? new Date(`${jobsDateTo}T23:59:59`) : null;
+	    return jobsPageJobs
+	      .filter((job) => (jobsStatusFilter ? job.status === jobsStatusFilter : true))
+	      .filter((job) => (jobsTypeFilter ? job.job_type === jobsTypeFilter : true))
+	      .filter((job) => {
+	        if (!from && !to) return true;
+	        if (!job.created_at) return false;
+	        const created = new Date(job.created_at);
+	        if (Number.isNaN(created.getTime())) return false;
+	        if (from && created < from) return false;
+	        if (to && created > to) return false;
+	        return true;
+	      })
+	      .sort((a, b) => {
+	        const aDate = a.created_at ? new Date(a.created_at).getTime() : 0;
+	        const bDate = b.created_at ? new Date(b.created_at).getTime() : 0;
+	        return bDate - aDate;
+	      });
+	  }, [jobsPageJobs, jobsDateFrom, jobsDateTo, jobsStatusFilter, jobsTypeFilter]);
 
   const pollJob = (job: Job | null, onUpdate: (j: Job) => void, onAsset?: (a: MediaAsset | null) => void) => {
     if (!job || ["completed", "failed", "cancelled"].includes(job.status)) return null;
@@ -912,23 +973,48 @@ function AppShell() {
     throw new Error("Timed out waiting for job output");
   };
 
-  const ensureSubtitleAssetForStyling = async (): Promise<string> => {
-    if (subtitleAssetId) return subtitleAssetId;
-    if (captionOutput?.id) return captionOutput.id;
-    if (!uploadedVideoId) throw new Error("Upload a video or provide a subtitle asset id first.");
-    setCaptionOutput(null);
-    setCaptionJob(null);
-    const job = await apiClient.createCaptionJob({ video_asset_id: uploadedVideoId, options: {} });
-    setCaptionJob(job);
-    const { job: finished, asset } = await waitForJobAsset(job.id);
-    setCaptionJob(finished);
-    if (asset?.id) {
-      setCaptionOutput(asset);
-      setSubtitleAssetId(asset.id);
-      return asset.id;
-    }
-    throw new Error("Captions did not produce an output asset.");
-  };
+	  const ensureSubtitleAssetForStyling = async (): Promise<string> => {
+	    if (subtitleAssetId) return subtitleAssetId;
+	    if (captionOutput?.id) return captionOutput.id;
+	    if (!uploadedVideoId) throw new Error("Upload a video or provide a subtitle asset id first.");
+	    setCaptionOutput(null);
+	    setCaptionJob(null);
+	    const job = await apiClient.createCaptionJob({ video_asset_id: uploadedVideoId, options: {} });
+	    setCaptionJob(job);
+	    const { job: finished, asset } = await waitForJobAsset(job.id);
+	    setCaptionJob(finished);
+	    if (asset?.id) {
+	      setCaptionOutput(asset);
+	      setSubtitleAssetId(asset.id);
+	      return asset.id;
+	    }
+	    throw new Error("Captions did not produce an output asset.");
+	  };
+
+	  const selectJobAndAssets = async (job: Job) => {
+	    setSelectedJob(job);
+	    setInputAsset(null);
+	    setOutputAsset(null);
+	    setAssetError(null);
+	    setAssetLoading(true);
+	    try {
+	      const refreshed = await apiClient.getJob(job.id);
+	      setSelectedJob(refreshed);
+
+	      const inputId = refreshed.input_asset_id;
+	      const outputId = refreshed.output_asset_id;
+	      const [input, output] = await Promise.all([
+	        inputId ? apiClient.getAsset(inputId).catch(() => null) : Promise.resolve(null),
+	        outputId ? apiClient.getAsset(outputId).catch(() => null) : Promise.resolve(null),
+	      ]);
+	      setInputAsset(input);
+	      setOutputAsset(output);
+	    } catch (err) {
+	      setAssetError(err instanceof Error ? err.message : "Failed to fetch job details");
+	    } finally {
+	      setAssetLoading(false);
+	    }
+	  };
 
   const recentStatuses = useMemo(
     () => ({
@@ -1006,30 +1092,15 @@ function AppShell() {
             {error && <div className="error-inline">{error}</div>}
             {!loading && !error && jobs.length === 0 && <p className="muted">No jobs yet.</p>}
             {!loading &&
-              jobs.map((job) => (
-                <button key={job.id} className="job-row selectable" onClick={async () => {
-                  setSelectedJob(job);
-                  setOutputAsset(null);
-                  setAssetError(null);
-                  if (job.output_asset_id) {
-                    setAssetLoading(true);
-                    try {
-                      const asset = await apiClient.getAsset(job.output_asset_id);
-                      setOutputAsset(asset);
-                    } catch (err) {
-                      setAssetError(err instanceof Error ? err.message : "Failed to fetch asset");
-                    } finally {
-                      setAssetLoading(false);
-                    }
-                  }
-                }}>
-                  <div>
-                    <p className="metric-label">{job.job_type}</p>
-                    <p className="metric-value">{job.id}</p>
-                  </div>
-                  <JobStatusPill status={job.status} />
-                </button>
-              ))}
+	              jobs.map((job) => (
+	                <button key={job.id} className="job-row selectable" onClick={() => void selectJobAndAssets(job)}>
+	                  <div>
+	                    <p className="metric-label">{job.job_type}</p>
+	                    <p className="metric-value">{job.id}</p>
+	                  </div>
+	                  <JobStatusPill status={job.status} />
+	                </button>
+	              ))}
           </Card>
 
           <Card title="Status snapshot">
@@ -1369,8 +1440,8 @@ function AppShell() {
 	          </section>
 	        )}
 
-        {active === "utilities" && (
-          <section className="grid two-col">
+	        {active === "utilities" && (
+	          <section className="grid two-col">
             <Card title="Subtitle tools">
               <p className="muted">Upload or specify subtitle asset to translate; bilingual option available.</p>
               <SubtitleToolsForm
@@ -1428,11 +1499,247 @@ function AppShell() {
                 </div>
               )}
             </Card>
-          </section>
-        )}
+	          </section>
+	        )}
 
-        {active !== "captions" && (
-          <section className="grid two-col">
+		        {active === "jobs" && (
+		          <section className="grid two-col">
+		            <Card title="Jobs">
+		              <div className="form-grid">
+		                <label className="field">
+		                  <span>Status</span>
+		                  <select className="input" value={jobsStatusFilter} onChange={(e) => setJobsStatusFilter(e.target.value as JobStatus | "")}>
+		                    <option value="">All</option>
+		                    <option value="queued">Queued</option>
+		                    <option value="running">Running</option>
+		                    <option value="completed">Completed</option>
+		                    <option value="failed">Failed</option>
+		                    <option value="cancelled">Cancelled</option>
+		                  </select>
+		                </label>
+		                <label className="field">
+		                  <span>Type</span>
+		                  <select className="input" value={jobsTypeFilter} onChange={(e) => setJobsTypeFilter(e.target.value)}>
+		                    <option value="">All</option>
+		                    {jobTypeOptions.map((t) => (
+		                      <option key={t} value={t}>
+		                        {t}
+		                      </option>
+		                    ))}
+		                  </select>
+		                </label>
+		                <label className="field">
+		                  <span>From</span>
+		                  <Input type="date" value={jobsDateFrom} onChange={(e) => setJobsDateFrom(e.target.value)} />
+		                </label>
+		                <label className="field">
+		                  <span>To</span>
+		                  <Input type="date" value={jobsDateTo} onChange={(e) => setJobsDateTo(e.target.value)} />
+		                </label>
+		              </div>
+		              <div className="actions-row">
+		                <Button type="button" variant="ghost" onClick={() => void loadJobsPage()} disabled={jobsPageLoading}>
+		                  {jobsPageLoading ? "Refreshing..." : "Refresh"}
+		                </Button>
+		                <Button
+		                  type="button"
+		                  variant="ghost"
+		                  onClick={() => {
+		                    setJobsStatusFilter("");
+		                    setJobsTypeFilter("");
+		                    setJobsDateFrom("");
+		                    setJobsDateTo("");
+		                  }}
+		                >
+		                  Clear filters
+		                </Button>
+		              </div>
+	              {jobsPageError && <div className="error-inline">{jobsPageError}</div>}
+	              {jobsPageLoading && <Spinner label="Loading jobs..." />}
+	              {!jobsPageLoading && filteredJobs.length === 0 && <p className="muted">No jobs match the current filters.</p>}
+	              {!jobsPageLoading && filteredJobs.length > 0 && (
+	                <div className="table-scroll">
+	                  <table className="table">
+	                    <thead>
+	                      <tr>
+	                        <th>Type</th>
+	                        <th>Status</th>
+	                        <th>Progress</th>
+	                        <th>Created</th>
+	                        <th></th>
+	                      </tr>
+	                    </thead>
+	                    <tbody>
+	                      {filteredJobs.map((job) => (
+	                        <tr
+	                          key={job.id}
+	                          className={selectedJob?.id === job.id ? "row-selected" : undefined}
+	                          onClick={() => void selectJobAndAssets(job)}
+	                        >
+	                          <td>
+	                            <div className="metric-value">{job.job_type}</div>
+	                            <div className="muted mono">{job.id}</div>
+	                          </td>
+	                          <td>
+	                            <JobStatusPill status={job.status} />
+	                          </td>
+	                          <td>
+	                            <div className="progress-track">
+	                              <div className="progress-fill" style={{ width: `${Math.round((job.progress || 0) * 100)}%` }} />
+	                            </div>
+	                            <div className="muted">{Math.round((job.progress || 0) * 100)}%</div>
+	                          </td>
+	                          <td className="muted">{formatTimestamp(job.created_at)}</td>
+	                          <td>
+	                            <Button
+	                              type="button"
+	                              variant="ghost"
+	                              onClick={(e) => {
+	                                e.stopPropagation();
+	                                void selectJobAndAssets(job);
+	                              }}
+	                            >
+	                              View
+	                            </Button>
+	                          </td>
+	                        </tr>
+	                      ))}
+	                    </tbody>
+	                  </table>
+	                </div>
+	              )}
+	            </Card>
+
+	            <Card title="Job detail">
+	              {!selectedJob && <p className="muted">Select a job to view details.</p>}
+	              {selectedJob && (
+	                <>
+	                  <div className="snapshot">
+	                    <div>
+	                      <p className="metric-label">Type</p>
+	                      <p className="metric-value">{selectedJob.job_type}</p>
+	                    </div>
+	                    <div>
+	                      <p className="metric-label">Status</p>
+	                      <JobStatusPill status={selectedJob.status} />
+	                    </div>
+	                    <div>
+	                      <p className="metric-label">Progress</p>
+	                      <p className="metric-value">{Math.round((selectedJob.progress || 0) * 100)}%</p>
+	                    </div>
+	                  </div>
+	                  <div className="output-card">
+	                    <p className="metric-label">IDs</p>
+	                    <p className="muted mono">Job: {selectedJob.id}</p>
+	                    {selectedJob.input_asset_id && <p className="muted mono">Input: {selectedJob.input_asset_id}</p>}
+	                    {selectedJob.output_asset_id && <p className="muted mono">Output: {selectedJob.output_asset_id}</p>}
+	                    <p className="muted">Created: {formatTimestamp(selectedJob.created_at)}</p>
+	                    <p className="muted">Updated: {formatTimestamp(selectedJob.updated_at)}</p>
+	                  </div>
+	                  {assetLoading && <Spinner label="Loading assets..." />}
+	                  {assetError && <div className="error-inline">{assetError}</div>}
+
+		                  <div className="actions-row">
+		                    <Button
+		                      type="button"
+		                      variant="ghost"
+		                      onClick={async () => {
+		                        try {
+		                          await navigator.clipboard.writeText(JSON.stringify(selectedJob, null, 2));
+		                        } catch {
+		                          /* ignore */
+		                        }
+		                      }}
+		                    >
+		                      Copy job JSON
+		                    </Button>
+		                    <a className="btn btn-secondary" href={`${apiClient.baseUrl}/jobs/${selectedJob.id}/bundle`}>
+		                      Download bundle
+		                    </a>
+		                    {outputAsset?.uri && (
+		                      <a className="btn btn-secondary" href={apiClient.mediaUrl(outputAsset.uri)} target="_blank" rel="noreferrer">
+		                        Open output
+		                      </a>
+		                    )}
+		                  </div>
+
+	                  {selectedJob.error && (
+	                    <div className="output-card">
+	                      <p className="metric-label">Logs / error</p>
+	                      <pre className="code-block">{selectedJob.error}</pre>
+	                    </div>
+	                  )}
+
+	                  {(selectedJob.payload || inputAsset || outputAsset) && (
+	                    <div className="output-card">
+	                      <p className="metric-label">Inputs / outputs</p>
+	                      {inputAsset && (
+	                        <div className="output-card">
+	                          <p className="metric-label">Input asset</p>
+	                          <p className="muted mono">{inputAsset.id}</p>
+	                          {inputAsset.uri && (
+	                            <div className="actions-row">
+	                              <a className="btn btn-ghost" href={apiClient.mediaUrl(inputAsset.uri)} target="_blank" rel="noreferrer">
+	                                Open
+	                              </a>
+	                            </div>
+	                          )}
+	                        </div>
+	                      )}
+	                      {outputAsset && (
+	                        <div className="output-card">
+	                          <p className="metric-label">Output asset</p>
+	                          <p className="muted mono">{outputAsset.id}</p>
+	                          <p className="muted">{outputAsset.mime_type || outputAsset.kind}</p>
+	                          {outputAsset.uri && (
+	                            <div className="actions-row">
+	                              <a className="btn btn-primary" href={apiClient.mediaUrl(outputAsset.uri)} download>
+	                                Download
+	                              </a>
+	                              {outputAsset.mime_type?.includes("text") && (
+	                                <Button
+	                                  type="button"
+	                                  variant="ghost"
+	                                  onClick={async () => {
+	                                    if (!outputAsset.uri) return;
+	                                    try {
+	                                      const resp = await fetch(apiClient.mediaUrl(outputAsset.uri));
+	                                      const text = await resp.text();
+	                                      await navigator.clipboard.writeText(text);
+	                                    } catch {
+	                                      /* ignore */
+	                                    }
+	                                  }}
+	                                >
+	                                  Copy output text
+	                                </Button>
+	                              )}
+	                            </div>
+	                          )}
+	                          {outputAsset.uri && outputAsset.mime_type?.includes("video") && (
+	                            <video className="preview" controls src={apiClient.mediaUrl(outputAsset.uri)} />
+	                          )}
+	                          {outputAsset.uri && outputAsset.mime_type?.includes("text") && (
+	                            <iframe className="preview-text" src={apiClient.mediaUrl(outputAsset.uri)} title="job-output-preview" />
+	                          )}
+	                        </div>
+	                      )}
+	                      {selectedJob.payload && (
+	                        <div className="output-card">
+	                          <p className="metric-label">Payload</p>
+	                          <pre className="code-block">{JSON.stringify(selectedJob.payload, null, 2)}</pre>
+	                        </div>
+	                      )}
+	                    </div>
+	                  )}
+	                </>
+	              )}
+	            </Card>
+	          </section>
+	        )}
+
+	        {(active === "shorts" || active === "subtitles") && (
+	          <section className="grid two-col">
             <Card title="Preset styles">
               <ul className="preset-list">
                 {PRESETS.map((preset) => (

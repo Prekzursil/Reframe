@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import io
+import json
+import zipfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, List, Optional
@@ -16,7 +19,7 @@ from app.config import get_settings
 from app.errors import ErrorResponse, conflict, not_found, server_error
 from app.models import Job, JobStatus, MediaAsset, SubtitleStylePreset
 from app.rate_limit import enforce_rate_limit
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 
 router = APIRouter(prefix="/api/v1")
@@ -236,6 +239,54 @@ def cancel_job(job_id: UUID, session: SessionDep) -> Job:
     session.commit()
     session.refresh(job)
     return job
+
+
+@router.get(
+    "/jobs/{job_id}/bundle",
+    response_class=StreamingResponse,
+    tags=["Jobs"],
+    responses={404: {"model": ErrorResponse}},
+)
+def download_job_bundle(job_id: UUID, session: SessionDep) -> StreamingResponse:
+    job = session.get(Job, job_id)
+    if not job:
+        raise not_found("Job not found", details={"job_id": str(job_id)})
+
+    settings = get_settings()
+    media_root = Path(settings.media_root)
+
+    def resolve_asset_path(asset: MediaAsset) -> Path:
+        uri_path = Path((asset.uri or "").lstrip("/"))
+        if uri_path.parts and uri_path.parts[0] == "media":
+            uri_path = Path(*uri_path.parts[1:])
+        return media_root / uri_path
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("job.json", json.dumps(job.model_dump(), default=str, indent=2))
+        if job.error:
+            zf.writestr("error.txt", job.error)
+
+        for label, asset_id in (("input", job.input_asset_id), ("output", job.output_asset_id)):
+            if not asset_id:
+                continue
+            asset = session.get(MediaAsset, asset_id)
+            if not asset:
+                zf.writestr(f"{label}_asset_missing.txt", f"{label} asset {asset_id} missing from database")
+                continue
+            zf.writestr(f"{label}_asset.json", json.dumps(asset.model_dump(), default=str, indent=2))
+            if not asset.uri:
+                continue
+            path = resolve_asset_path(asset)
+            if path.is_file():
+                suffix = path.suffix or ""
+                zf.write(path, arcname=f"{label}_asset{suffix}")
+            else:
+                zf.writestr(f"{label}_asset_file_missing.txt", f"{label} asset file missing at {path}")
+
+    buffer.seek(0)
+    headers = {"Content-Disposition": f'attachment; filename=\"job_{job_id}.zip\"'}
+    return StreamingResponse(buffer, media_type="application/zip", headers=headers)
 
 
 @router.post(

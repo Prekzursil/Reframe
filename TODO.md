@@ -245,6 +245,7 @@
   - [x] Enable per-clip download buttons (video + subtitles) when backend provides URIs; disable when absent.
   - [x] Ability to delete/ignore clips.
   - [x] Handle empty/failed clip outputs gracefully.
+- [x] Generate real GIF/thumbnail previews from clips via FFmpeg (replace placeholder thumbnail asset).
 
 ---
 
@@ -265,12 +266,12 @@
 
 ## 16. Frontend – Jobs & History
 
-- [ ] Page: **Jobs**.
-  - [ ] Table listing with filters (status, type, date).
-  - [ ] Each row shows progress bar and link to result view.
-- [ ] Job detail:
-  - [ ] Show inputs, outputs, logs.
-  - [ ] Actions: download all as zip, copy transcript, etc.
+- [x] Page: **Jobs**.
+  - [x] Table listing with filters (status, type, date).
+  - [x] Each row shows progress bar and link to result view.
+- [x] Job detail:
+  - [x] Show inputs, outputs, logs.
+  - [x] Actions: download all as zip, copy transcript, etc.
 
 ---
 
