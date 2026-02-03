@@ -1,4 +1,5 @@
 import base64
+import json
 import logging
 import os
 import shutil
@@ -23,9 +24,16 @@ API_PATH = REPO_ROOT / "apps" / "api"
 if API_PATH.is_dir() and str(API_PATH) not in sys.path:
     sys.path.append(str(API_PATH))
 
+MEDIA_CORE_SRC = REPO_ROOT / "packages" / "media-core" / "src"
+if MEDIA_CORE_SRC.is_dir() and str(MEDIA_CORE_SRC) not in sys.path:
+    sys.path.append(str(MEDIA_CORE_SRC))
+
 from app.config import get_settings
 from app.models import Job, JobStatus, MediaAsset
 from celery import Celery
+
+from media_core.segment.shorts import equal_splits, select_top
+from media_core.video_edit.ffmpeg import cut_clip, merge_video_audio as ffmpeg_merge_video_audio, probe_media
 
 BROKER_URL = os.getenv("BROKER_URL", "redis://redis:6379/0")
 RESULT_BACKEND = os.getenv("RESULT_BACKEND", BROKER_URL)
@@ -79,6 +87,29 @@ def create_asset(kind: str, mime_type: str, suffix: str, contents: bytes | str =
         session.commit()
         session.refresh(asset)
         return asset
+
+
+def create_asset_for_existing_file(*, kind: str, mime_type: str, file_path: Path) -> MediaAsset:
+    tmp = get_media_tmp()
+    resolved = file_path.resolve()
+    try:
+        resolved.relative_to(tmp.resolve())
+    except Exception:
+        raise ValueError(f"file_path must be under {tmp}, got {file_path}")
+    uri = f"/media/tmp/{file_path.name}"
+    asset = MediaAsset(kind=kind, uri=uri, mime_type=mime_type)
+    with Session(get_engine()) as session:
+        session.add(asset)
+        session.commit()
+        session.refresh(asset)
+        return asset
+
+
+def new_tmp_file(suffix: str) -> Path:
+    tmp = get_media_tmp()
+    if suffix and not suffix.startswith("."):
+        suffix = f".{suffix}"
+    return tmp / f"{uuid4()}{suffix}"
 
 
 def create_thumbnail_asset(video_path: Path | None, runner=None) -> MediaAsset:
@@ -271,51 +302,93 @@ def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_ass
 def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id)
-    clips = []
-    max_clips = int(options.get("max_clips") or 3) if options else 3
-    min_dur = options.get("min_duration") if options else None
-    use_subtitles = bool(options.get("use_subtitles")) if isinstance(options, dict) else False
-    for idx in range(max_clips):
-        src_asset, src_path = fetch_asset(video_asset_id)
-        thumb_asset = create_thumbnail_asset(src_path)
+    opts = options or {}
+    max_clips = int(opts.get("max_clips") or 3)
+    min_duration = float(opts.get("min_duration") or 10.0)
+    max_duration = float(opts.get("max_duration") or 60.0)
+    use_subtitles = bool(opts.get("use_subtitles"))
+
+    src_asset, src_path = fetch_asset(video_asset_id)
+    if not src_path or not src_path.exists():
+        error = f"Video asset file missing for {video_asset_id}"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id)
+        return {"video_asset_id": video_asset_id, "status": "failed", "error": error}
+
+    try:
+        meta = probe_media(src_path)
+        duration = float(meta.get("duration") or 0.0)
+    except Exception as exc:
+        error = f"Failed to probe media: {exc}"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id)
+        return {"video_asset_id": video_asset_id, "status": "failed", "error": error}
+
+    candidates = equal_splits(duration, clip_length=max_duration)
+    # Assign simple deterministic scores for now (heuristics/LLM scoring comes later).
+    for idx, cand in enumerate(candidates):
+        cand.score = 1.0 - (idx * 0.01)
+
+    selected = select_top(candidates, max_segments=max_clips, min_duration=min_duration, max_duration=max_duration)
+    if not selected:
+        selected = candidates[:max_clips]
+
+    clips: list[dict] = []
+    for idx, seg in enumerate(selected):
+        update_job(job_id, progress=0.1 + (idx / max(1, len(selected))) * 0.8)
+        _progress(self, "processing", idx / max(1, len(selected)), clip_index=idx + 1)
+
+        clip_path = new_tmp_file(".mp4")
+        try:
+            cut_clip(src_path, seg.start, seg.end, clip_path)
+        except Exception as exc:
+            error = f"Failed to cut clip {idx + 1}: {exc}"
+            update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+            _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id)
+            return {"video_asset_id": video_asset_id, "status": "failed", "error": error}
+
+        mime_type = src_asset.mime_type if src_asset and src_asset.mime_type else "video/mp4"
+        clip_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=clip_path)
+
+        thumb_asset = create_thumbnail_asset(clip_path)
+
         subtitle_asset = None
         if use_subtitles:
-            subtitle_contents = f"WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nClip {idx+1} subtitle placeholder\n"
+            subtitle_contents = (
+                "WEBVTT\n\n"
+                "00:00:00.000 --> 00:00:02.000\n"
+                f"Clip {idx + 1} subtitle placeholder\n"
+            )
             subtitle_asset = create_asset(kind="subtitle", mime_type="text/vtt", suffix=".vtt", contents=subtitle_contents)
-        clip_asset = create_asset(
-            kind="video",
-            mime_type=src_asset.mime_type if src_asset and src_asset.mime_type else "application/octet-stream",
-            suffix=src_path.suffix if src_path else ".txt",
-            contents=f"clip {idx+1} for {video_asset_id}",
-            source_path=src_path if src_path and src_path.exists() else None,
-        )
+
         clips.append(
             {
-                "id": f"{job_id}-clip-{idx+1}",
+                "id": f"{job_id}-clip-{idx + 1}",
                 "asset_id": str(clip_asset.id),
-                "duration": min_dur,
-                "score": 0.5 + idx * 0.1,
+                "start": seg.start,
+                "end": seg.end,
+                "duration": round(seg.duration, 3),
+                "score": seg.score,
                 "uri": clip_asset.uri,
                 "subtitle_uri": subtitle_asset.uri if subtitle_asset else None,
                 "thumbnail_uri": thumb_asset.uri,
             }
         )
-    src_asset, src_path = fetch_asset(video_asset_id)
-    summary_asset = create_asset(
-        kind="video",
-        mime_type=src_asset.mime_type if src_asset and src_asset.mime_type else "application/octet-stream",
-        suffix=src_path.suffix if src_path else ".txt",
-        contents="shorts package placeholder",
-        source_path=src_path if src_path and src_path.exists() else None,
-    )
-    result = {
+
+    manifest = {
         "video_asset_id": video_asset_id,
-        "status": "shorts_generated",
-        "options": options or {},
+        "options": opts,
         "clip_assets": clips,
-        "output_asset_id": str(summary_asset.id),
     }
-    update_job(job_id, status=JobStatus.completed, progress=1.0, payload={"clip_assets": clips, **(options or {})}, output_asset_id=str(summary_asset.id))
+    manifest_asset = create_asset(
+        kind="shorts_manifest",
+        mime_type="application/json",
+        suffix=".json",
+        contents=json.dumps(manifest, indent=2),
+    )
+
+    result = {"video_asset_id": video_asset_id, "status": "shorts_generated", "clip_assets": clips, "output_asset_id": str(manifest_asset.id)}
+    update_job(job_id, status=JobStatus.completed, progress=1.0, payload={"clip_assets": clips, **opts}, output_asset_id=str(manifest_asset.id))
     _progress(self, "completed", 1.0, video_asset_id=video_asset_id)
     return result
 
@@ -324,18 +397,45 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
 def merge_video_audio(self, job_id: str, video_asset_id: str, audio_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id, audio_asset_id=audio_asset_id)
+    opts = options or {}
     video_asset, video_path = fetch_asset(video_asset_id)
-    merged_asset = create_asset(
-        kind="video",
-        mime_type=video_asset.mime_type if video_asset and video_asset.mime_type else "application/octet-stream",
-        suffix=video_path.suffix if video_path else ".txt",
-        contents="merged av placeholder",
-        source_path=video_path if video_path and video_path.exists() else None,
-    )
+    audio_asset, audio_path = fetch_asset(audio_asset_id)
+
+    if not video_path or not video_path.exists():
+        error = f"Video asset file missing for {video_asset_id}"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id)
+        return {"video_asset_id": video_asset_id, "audio_asset_id": audio_asset_id, "status": "failed", "error": error}
+
+    if not audio_path or not audio_path.exists():
+        error = f"Audio asset file missing for {audio_asset_id}"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, audio_asset_id=audio_asset_id)
+        return {"video_asset_id": video_asset_id, "audio_asset_id": audio_asset_id, "status": "failed", "error": error}
+
+    output_path = new_tmp_file(".mp4")
+    try:
+        ffmpeg_merge_video_audio(
+            video_path,
+            audio_path,
+            output_path,
+            offset=float(opts.get("offset") or 0.0),
+            ducking=opts.get("ducking"),
+            normalize=bool(opts.get("normalize", True)),
+        )
+    except Exception as exc:
+        error = f"Merge failed: {exc}"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, audio_asset_id=audio_asset_id)
+        return {"video_asset_id": video_asset_id, "audio_asset_id": audio_asset_id, "status": "failed", "error": error}
+
+    mime_type = video_asset.mime_type if video_asset and video_asset.mime_type else "video/mp4"
+    merged_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=output_path)
+
     result = {
         "video_asset_id": video_asset_id,
         "audio_asset_id": audio_asset_id,
-        "options": options or {},
+        "options": opts,
         "status": "merged",
         "output_asset_id": str(merged_asset.id),
     }

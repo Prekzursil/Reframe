@@ -17,7 +17,7 @@ class TranscriptionConfig(BaseModel):
     """Config describing how audio should be transcribed."""
 
     backend: TranscriptionBackend = Field(
-        default=TranscriptionBackend.OPENAI_WHISPER,
+        default=TranscriptionBackend.NOOP,
         description="Which backend to use for transcription.",
     )
     model: str = Field(

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 
 def _upload_fake_video(client, *, content: bytes = b"fake-video", filename: str = "sample.mp4") -> dict:
@@ -11,6 +15,73 @@ def _upload_fake_video(client, *, content: bytes = b"fake-video", filename: str 
     )
     assert resp.status_code == 201, resp.text
     return resp.json()
+
+
+def _upload_fake_audio(client, *, content: bytes = b"fake-audio", filename: str = "sample.aac") -> dict:
+    resp = client.post(
+        "/api/v1/assets/upload",
+        data={"kind": "audio"},
+        files={"file": (filename, content, "audio/aac")},
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def _require_ffmpeg() -> str:
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    if not ffmpeg or not ffprobe:
+        pytest.skip("ffmpeg/ffprobe not available")
+    return ffmpeg
+
+
+def _generate_test_video_bytes(tmp_path: Path, *, duration_seconds: float = 3.0) -> bytes:
+    ffmpeg = _require_ffmpeg()
+    out = tmp_path / "fixture.mp4"
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c=black:s=320x240:d={duration_seconds}",
+        "-f",
+        "lavfi",
+        "-i",
+        f"sine=frequency=1000:duration={duration_seconds}",
+        "-shortest",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        str(out),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return out.read_bytes()
+
+
+def _generate_test_audio_bytes(tmp_path: Path, *, duration_seconds: float = 3.0) -> bytes:
+    ffmpeg = _require_ffmpeg()
+    out = tmp_path / "fixture.aac"
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        f"sine=frequency=440:duration={duration_seconds}",
+        "-c:a",
+        "aac",
+        str(out),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return out.read_bytes()
 
 
 def test_end_to_end_video_to_srt_job(test_client):
@@ -83,10 +154,11 @@ def test_end_to_end_video_to_tiktok_style_rendered_job(test_client):
     assert download.content == original_bytes
 
 
-def test_end_to_end_video_to_shorts_with_subtitles_job(test_client):
+def test_end_to_end_video_to_shorts_with_subtitles_job(test_client, tmp_path: Path):
     client, _enqueued, worker, media_root = test_client
 
-    video = _upload_fake_video(client, content=b"fake-shorts-video", filename="shorts.mp4")
+    video_bytes = _generate_test_video_bytes(tmp_path, duration_seconds=4.0)
+    video = _upload_fake_video(client, content=video_bytes, filename="shorts.mp4")
 
     payload = {
         "video_asset_id": video["id"],
@@ -100,7 +172,11 @@ def test_end_to_end_video_to_shorts_with_subtitles_job(test_client):
     assert resp.status_code == 201, resp.text
     job = resp.json()
 
-    worker.generate_shorts(job["id"], video["id"], {**payload["options"], "max_clips": 2, "min_duration": 1})
+    worker.generate_shorts(
+        job["id"],
+        video["id"],
+        {"max_clips": 2, "min_duration": 1, "max_duration": 2, "aspect_ratio": "9:16", **payload["options"]},
+    )
 
     refreshed = client.get(f"/api/v1/jobs/{job['id']}")
     assert refreshed.status_code == 200, refreshed.text
@@ -118,3 +194,40 @@ def test_end_to_end_video_to_shorts_with_subtitles_job(test_client):
         assert uri.startswith("/media/")
         path = media_root / Path(uri).relative_to("/media")
         assert path.exists()
+
+
+def test_end_to_end_video_audio_merge_job(test_client, tmp_path: Path):
+    client, _enqueued, worker, media_root = test_client
+
+    video_bytes = _generate_test_video_bytes(tmp_path, duration_seconds=3.0)
+    audio_bytes = _generate_test_audio_bytes(tmp_path, duration_seconds=3.0)
+    video = _upload_fake_video(client, content=video_bytes, filename="merge.mp4")
+    audio = _upload_fake_audio(client, content=audio_bytes, filename="merge.aac")
+
+    resp = client.post(
+        "/api/v1/utilities/merge-av",
+        json={"video_asset_id": video["id"], "audio_asset_id": audio["id"], "offset": 0.0, "ducking": True, "normalize": True},
+    )
+    assert resp.status_code == 201, resp.text
+    job = resp.json()
+
+    worker.merge_video_audio(job["id"], video["id"], audio["id"], job["payload"])
+
+    refreshed = client.get(f"/api/v1/jobs/{job['id']}")
+    assert refreshed.status_code == 200, refreshed.text
+    done = refreshed.json()
+    assert done["status"] == "completed"
+    assert done["output_asset_id"]
+
+    merged_asset = client.get(f"/api/v1/assets/{done['output_asset_id']}").json()
+    assert merged_asset["kind"] == "video"
+    assert merged_asset["uri"].endswith(".mp4")
+
+    merged_path = media_root / Path(merged_asset["uri"]).relative_to("/media")
+    assert merged_path.exists()
+    assert merged_path.stat().st_size > 0
+
+    from media_core.video_edit.ffmpeg import probe_media
+
+    info = probe_media(merged_path)
+    assert info["audio_codecs"], "expected an audio track in merged output"

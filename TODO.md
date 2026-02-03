@@ -290,6 +290,7 @@
   - [x] Component tests for forms and job list.
   - [x] Minimal e2e flow (upload → job complete → download).
 - [ ] Address `npm audit` moderate vulnerabilities in `apps/web` dependencies.
+  - [ ] Currently: `esbuild <=0.24.2` via Vite; fixing likely requires a Vite major bump (`npm audit fix --force`) or a safe override if available.
 
 ---
 
@@ -329,5 +330,33 @@
 - [ ] Support for timelines / EDL export.
 - [ ] Optional cloud integrations (S3, remote GPU workers).
 - [ ] Optional “export upload package” for YouTube/TikTok (title, description, tags).
+
+---
+
+## 21. Offline‑First + Real Worker Pipelines (Next)
+
+### Worker: replace placeholders with real processing
+- [x] Worker: make `packages/media-core` importable in all runtimes (local dev, Docker worker, all-in-one image).
+- [x] Worker: implement `tasks.merge_video_audio` using `media_core.video_edit.ffmpeg.merge_video_audio` (no placeholders).
+- [x] Worker: implement `tasks.generate_shorts` using `probe_media` + candidate generation + `cut_clip` (no LLM scoring required initially).
+- [ ] Worker: implement `tasks.generate_captions` using media-core transcription + subtitle builder; support SRT/VTT/ASS output.
+- [ ] Worker: implement `tasks.translate_subtitles` using media-core SRT translator (default local/Argos or no-op; optional Groq).
+- [ ] Worker: implement `tasks.render_styled_subtitles` using media-core MoviePy renderer; support `preview_seconds`.
+
+### Offline + Groq free-tier (optional)
+- [ ] Add Groq chat client integration (OpenAI-compatible) for:
+  - [ ] shorts segment scoring (optional),
+  - [ ] CloudTranslator (optional),
+  - [ ] only when `GROQ_API_KEY` is set; otherwise fallback to heuristics/offline.
+- [ ] Add `REFRAME_OFFLINE_MODE=true` to hard-disable any network-backed providers (including OpenAI API transcription).
+
+### Config + docs correctness
+- [x] Fix `.env.example` so `VITE_API_BASE_URL` matches the API client expectation (`/api/v1`) OR make the web client auto-append.
+- [x] Make `TranscriptionConfig` default backend offline/cost-safe (no OpenAI API calls by default).
+- [ ] Clean docs: remove stray `:contentReference[oaicite:*]` markers from `README.md` (and `RAW_PROMPT.md` if still needed).
+
+### CI + fixtures
+- [x] CI: install `ffmpeg` in GitHub Actions (Python job) so worker integration tests can exercise real processing paths.
+- [x] Add a tiny generated sample video/audio fixture (generated at test time or via script; avoid large binaries).
 
 

@@ -132,23 +132,45 @@ def merge_video_audio(
     audio_path: str | Path,
     output_path: str | Path,
     offset: float = 0.0,
-    ducking: Optional[float] = None,
+    ducking: float | bool | None = None,
     normalize: bool = False,
     runner=None,
 ) -> None:
     ffmpeg = _ensure_binary("ffmpeg")
-    filter_complex: List[str] = []
-    if ducking:
-        filter_complex.append(f"[1:a]volume={ducking}[ducked]")
-        amix_inputs = "[0:a][ducked]"
+    duck_factor: float | None
+    if ducking is True:
+        duck_factor = 0.25
+    elif ducking in (None, False):
+        duck_factor = None
     else:
-        amix_inputs = "[0:a][1:a]"
-    if normalize:
-        filter_complex.append("loudnorm")
-    filter_str = ",".join(filter_complex) if filter_complex else None
+        duck_factor = float(ducking)
+
+    has_video_audio = True
+    try:
+        info = probe_media(video_path, runner=runner)
+        has_video_audio = bool(info.get("audio_codecs"))
+    except Exception:
+        # Best-effort: assume an audio track exists and let ffmpeg error if it doesn't.
+        has_video_audio = True
+
     cmd = [ffmpeg, "-y", "-i", str(video_path), "-itsoffset", str(offset), "-i", str(audio_path)]
-    if filter_str:
-        cmd += ["-filter_complex", filter_str]
+
+    if has_video_audio:
+        a0 = "[0:a]anull[a0]"
+        if duck_factor is not None:
+            a0 = f"[0:a]volume={duck_factor}[a0]"
+        a1 = "[1:a]anull[a1]"
+        amix = "[a0][a1]amix=inputs=2:duration=shortest:dropout_transition=2[aout]"
+        filters = [a0, a1, amix]
+        if normalize:
+            filters.append("[aout]loudnorm[aout]")
+        filter_complex = ";".join(filters)
+        cmd += ["-filter_complex", filter_complex, "-map", "0:v:0", "-map", "[aout]"]
+    elif normalize:
+        cmd += ["-filter_complex", "[1:a]loudnorm[aout]", "-map", "0:v:0", "-map", "[aout]"]
+    else:
+        cmd += ["-map", "0:v:0", "-map", "1:a:0"]
+
     cmd += ["-c:v", "copy", "-c:a", "aac", "-shortest", str(output_path)]
     _run(cmd, runner=runner)
 
