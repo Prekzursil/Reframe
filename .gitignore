@@ -22,3 +22,6 @@ dist/
 *.log
 coverage/
 .coverage
+
+# Local dev SQLite DB
+reframe*.db

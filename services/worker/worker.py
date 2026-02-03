@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 from uuid import UUID, uuid4
 
 from sqlmodel import Session, create_engine
@@ -33,6 +33,18 @@ from app.models import Job, JobStatus, MediaAsset
 from celery import Celery
 
 from media_core.segment.shorts import equal_splits, select_top
+from media_core.subtitles.builder import GroupingConfig, group_words, to_ass, to_srt, to_vtt
+from media_core.transcribe import (
+    TranscriptionBackend,
+    TranscriptionConfig,
+    transcribe_faster_whisper,
+    transcribe_noop,
+    transcribe_openai_file,
+    transcribe_whisper_cpp,
+    transcribe_whisper_timestamped,
+)
+from media_core.translate.srt import translate_srt, translate_srt_bilingual
+from media_core.translate.translator import LocalTranslator, NoOpTranslator
 from media_core.video_edit.ffmpeg import cut_clip, merge_video_audio as ffmpeg_merge_video_audio, probe_media
 
 BROKER_URL = os.getenv("BROKER_URL", "redis://redis:6379/0")
@@ -110,6 +122,44 @@ def new_tmp_file(suffix: str) -> Path:
     if suffix and not suffix.startswith("."):
         suffix = f".{suffix}"
     return tmp / f"{uuid4()}{suffix}"
+
+
+def _truthy_env(name: str) -> bool:
+    value = os.getenv(name, "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def offline_mode_enabled() -> bool:
+    return _truthy_env("REFRAME_OFFLINE_MODE")
+
+
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return False
+
+
+def _transcribe_media(path: Path, config: TranscriptionConfig, *, warnings: list[str]):
+    try:
+        if config.backend == TranscriptionBackend.OPENAI_WHISPER:
+            if offline_mode_enabled():
+                warnings.append("Offline mode enabled; refusing openai_whisper and falling back to noop.")
+                return transcribe_noop(str(path), config)
+            return transcribe_openai_file(str(path), config)
+        if config.backend == TranscriptionBackend.FASTER_WHISPER:
+            return transcribe_faster_whisper(str(path), config)
+        if config.backend == TranscriptionBackend.WHISPER_CPP:
+            return transcribe_whisper_cpp(str(path), config)
+        if config.backend in {TranscriptionBackend.WHISPER_TIMESTAMPED, TranscriptionBackend.WHISPERX}:
+            return transcribe_whisper_timestamped(str(path), config)
+        return transcribe_noop(str(path), config)
+    except Exception as exc:
+        warnings.append(f"Transcription backend {config.backend.value} failed; falling back to noop ({exc}).")
+        return transcribe_noop(str(path), config)
 
 
 def create_thumbnail_asset(video_path: Path | None, runner=None) -> MediaAsset:
@@ -232,35 +282,83 @@ def transcribe_video(self, job_id: str, video_asset_id: str, config: dict | None
 def generate_captions(self, job_id: str, video_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id)
-    formats = options.get("formats") if isinstance(options, dict) else None
-    requested = [f.lower() for f in formats if isinstance(f, str)] if isinstance(formats, list) else []
-    output_format = "vtt"
-    if "srt" in requested:
-        output_format = "srt"
-    elif "ass" in requested:
-        output_format = "ass"
+    opts = options or {}
+    warnings: list[str] = []
 
-    if output_format == "srt":
-        captions = "1\n00:00:00,000 --> 00:00:02,000\nCaption placeholder\n"
-        asset = create_asset(kind="subtitle", mime_type="text/srt", suffix=".srt", contents=captions)
-    elif output_format == "ass":
-        captions = (
-            "[Script Info]\n"
-            "ScriptType: v4.00+\n"
-            "\n"
-            "[V4+ Styles]\n"
-            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-            "Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1\n"
-            "\n"
-            "[Events]\n"
-            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
-            "Dialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,Caption placeholder\n"
-        )
-        asset = create_asset(kind="subtitle", mime_type="text/ass", suffix=".ass", contents=captions)
+    src_asset, src_path = fetch_asset(video_asset_id)
+    if not src_path or not src_path.exists():
+        error = f"Video asset file missing for {video_asset_id}"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id)
+        return {"video_asset_id": video_asset_id, "status": "failed", "error": error}
+
+    formats = opts.get("formats") if isinstance(opts, dict) else None
+    requested = [str(f).lower() for f in formats] if isinstance(formats, list) else []
+    output_format = next((fmt for fmt in requested if fmt in {"srt", "vtt", "ass"}), "srt")
+
+    backend_raw = str(opts.get("backend") or "noop").strip().lower()
+    if backend_raw == "whisper":
+        warnings.append("backend 'whisper' is ambiguous; using noop (offline-safe). Use 'faster_whisper' or 'whisper_cpp'.")
+        backend = TranscriptionBackend.NOOP
     else:
-        captions = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nCaption placeholder\n"
-        asset = create_asset(kind="subtitle", mime_type="text/vtt", suffix=".vtt", contents=captions)
-    result = {"video_asset_id": video_asset_id, "status": "captions_generated", "options": options or {}, "output_asset_id": str(asset.id)}
+        try:
+            backend = TranscriptionBackend(backend_raw)
+        except ValueError:
+            warnings.append(f"Unknown backend '{backend_raw}'; using noop.")
+            backend = TranscriptionBackend.NOOP
+
+    if backend == TranscriptionBackend.OPENAI_WHISPER and offline_mode_enabled():
+        warnings.append("Offline mode enabled; refusing openai_whisper and using noop.")
+        backend = TranscriptionBackend.NOOP
+
+    language_raw = opts.get("language") or opts.get("source_language") or None
+    language = None if not language_raw or str(language_raw).strip().lower() == "auto" else str(language_raw).strip()
+
+    config = TranscriptionConfig(
+        backend=backend,
+        model=str(opts.get("model") or "whisper-1"),
+        language=language,
+        device=str(opts.get("device")) if opts.get("device") else None,
+    )
+    transcription = _transcribe_media(src_path, config, warnings=warnings)
+    words = sorted(getattr(transcription, "words", []) or [], key=lambda w: (w.start, w.end))  # type: ignore[attr-defined]
+    if not words:
+        warnings.append("Transcription returned no words; falling back to noop output.")
+        transcription = transcribe_noop(str(src_path), config)
+        words = sorted(transcription.words or [], key=lambda w: (w.start, w.end))
+
+    grouping = GroupingConfig(
+        max_chars_per_line=int(opts.get("max_chars_per_line") or GroupingConfig.max_chars_per_line),
+        max_words_per_line=int(opts.get("max_words_per_line") or GroupingConfig.max_words_per_line),
+        max_duration=float(opts.get("max_duration") or GroupingConfig.max_duration),
+        max_gap=float(opts.get("max_gap") or GroupingConfig.max_gap),
+    )
+    subtitle_lines = group_words(words, grouping)
+
+    if output_format == "ass":
+        payload = to_ass(subtitle_lines)
+        mime = "text/ass"
+        suffix = ".ass"
+    elif output_format == "vtt":
+        payload = to_vtt(subtitle_lines)
+        mime = "text/vtt"
+        suffix = ".vtt"
+    else:
+        payload = to_srt(subtitle_lines)
+        mime = "text/srt"
+        suffix = ".srt"
+
+    asset = create_asset(kind="subtitle", mime_type=mime, suffix=suffix, contents=payload)
+    result = {
+        "video_asset_id": video_asset_id,
+        "status": "captions_generated",
+        "options": opts,
+        "transcription_backend": backend.value,
+        "model": config.model,
+        "language": config.language,
+        "warnings": warnings,
+        "output_asset_id": str(asset.id),
+    }
     update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(asset.id))
     _progress(self, "completed", 1.0, video_asset_id=video_asset_id)
     return result
@@ -270,9 +368,62 @@ def generate_captions(self, job_id: str, video_asset_id: str, options: dict | No
 def translate_subtitles(self, job_id: str, subtitle_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, subtitle_asset_id=subtitle_asset_id)
-    translated = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nTranslated placeholder\n"
-    asset = create_asset(kind="subtitle", mime_type="text/vtt", suffix=".vtt", contents=translated)
-    result = {"subtitle_asset_id": subtitle_asset_id, "status": "translated", "options": options or {}, "output_asset_id": str(asset.id)}
+    opts = options or {}
+    warnings: list[str] = []
+
+    src_asset, src_path = fetch_asset(subtitle_asset_id)
+    if not src_path or not src_path.exists():
+        error = f"Subtitle asset file missing for {subtitle_asset_id}"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
+        return {"subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+
+    target_language = str(opts.get("target_language") or "").strip()
+    if not target_language:
+        error = "Missing target_language"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
+        return {"subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+
+    bilingual = _coerce_bool(opts.get("bilingual"))
+    src_language = str(opts.get("source_language") or opts.get("src") or "en").strip()
+    if not src_language or src_language.lower() == "auto":
+        src_language = "en"
+
+    try:
+        translator = LocalTranslator(src_language, target_language)
+    except Exception as exc:
+        warnings.append(str(exc))
+        translator = NoOpTranslator()
+
+    text = src_path.read_text(encoding="utf-8", errors="replace")
+    if src_path.suffix.lower() != ".srt":
+        error = f"Only .srt subtitles are supported for translation currently (got {src_path.suffix or 'no extension'})."
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
+        return {"subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+
+    try:
+        if bilingual:
+            translated = translate_srt_bilingual(text, translator, src_language, target_language)
+        else:
+            translated = translate_srt(text, translator, src_language, target_language)
+    except Exception as exc:
+        error = f"Subtitle translation failed: {exc}"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
+        return {"subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+
+    asset = create_asset(kind="subtitle", mime_type=src_asset.mime_type or "text/srt", suffix=".srt", contents=translated)
+    result = {
+        "subtitle_asset_id": subtitle_asset_id,
+        "status": "translated",
+        "options": opts,
+        "target_language": target_language,
+        "bilingual": bilingual,
+        "warnings": warnings,
+        "output_asset_id": str(asset.id),
+    }
     update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(asset.id))
     _progress(self, "completed", 1.0, subtitle_asset_id=subtitle_asset_id)
     return result

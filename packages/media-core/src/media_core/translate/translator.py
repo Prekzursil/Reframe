@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from typing import Callable, List, Optional
 
@@ -46,6 +47,8 @@ class CloudTranslator(Translator):
         self.postprocess = postprocess
 
     def translate_batch(self, texts: List[str], src: str, tgt: str) -> List[str]:
+        if os.getenv("REFRAME_OFFLINE_MODE", "").strip().lower() in {"1", "true", "yes", "on"}:
+            raise RuntimeError("REFRAME_OFFLINE_MODE is enabled; refusing to use cloud translator.")
         results: List[str] = []
         for text in texts:
             messages = [

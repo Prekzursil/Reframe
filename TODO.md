@@ -299,7 +299,7 @@
 - [x] Add `Dockerfile` for an “all‑in‑one” image (API + worker) for simple servers.
 - [x] Align `.env.example` env var names with `REFRAME_*` settings (or support unprefixed `DATABASE_URL`/`MEDIA_ROOT` env vars).
 - [x] Docker-compose: share/mount `MEDIA_ROOT` volume between API + worker so generated assets are downloadable.
-- [ ] Document `Dockerfile.allinone` usage + required env vars in README.
+- [x] Document `Dockerfile.allinone` usage + required env vars in README.
 - [ ] Tauri/Electron:
   - [ ] Decide wrapper (Tauri recommended for performance).
   - [ ] Wire Tauri to run API/worker as child processes or rely on local Docker.
@@ -339,8 +339,8 @@
 - [x] Worker: make `packages/media-core` importable in all runtimes (local dev, Docker worker, all-in-one image).
 - [x] Worker: implement `tasks.merge_video_audio` using `media_core.video_edit.ffmpeg.merge_video_audio` (no placeholders).
 - [x] Worker: implement `tasks.generate_shorts` using `probe_media` + candidate generation + `cut_clip` (no LLM scoring required initially).
-- [ ] Worker: implement `tasks.generate_captions` using media-core transcription + subtitle builder; support SRT/VTT/ASS output.
-- [ ] Worker: implement `tasks.translate_subtitles` using media-core SRT translator (default local/Argos or no-op; optional Groq).
+- [x] Worker: implement `tasks.generate_captions` using media-core transcription + subtitle builder; support SRT/VTT/ASS output.
+- [x] Worker: implement `tasks.translate_subtitles` using media-core SRT translator (default local/Argos or no-op; optional Groq).
 - [ ] Worker: implement `tasks.render_styled_subtitles` using media-core MoviePy renderer; support `preview_seconds`.
 
 ### Offline + Groq free-tier (optional)
@@ -348,12 +348,12 @@
   - [ ] shorts segment scoring (optional),
   - [ ] CloudTranslator (optional),
   - [ ] only when `GROQ_API_KEY` is set; otherwise fallback to heuristics/offline.
-- [ ] Add `REFRAME_OFFLINE_MODE=true` to hard-disable any network-backed providers (including OpenAI API transcription).
+- [x] Add `REFRAME_OFFLINE_MODE=true` to hard-disable any network-backed providers (including OpenAI API transcription).
 
 ### Config + docs correctness
 - [x] Fix `.env.example` so `VITE_API_BASE_URL` matches the API client expectation (`/api/v1`) OR make the web client auto-append.
 - [x] Make `TranscriptionConfig` default backend offline/cost-safe (no OpenAI API calls by default).
-- [ ] Clean docs: remove stray `:contentReference[oaicite:*]` markers from `README.md` (and `RAW_PROMPT.md` if still needed).
+- [x] Clean docs: remove stray `:contentReference[oaicite:*]` markers from `README.md` (and `RAW_PROMPT.md` if still needed).
 
 ### CI + fixtures
 - [x] CI: install `ffmpeg` in GitHub Actions (Python job) so worker integration tests can exercise real processing paths.

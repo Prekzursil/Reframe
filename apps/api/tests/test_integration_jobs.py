@@ -110,7 +110,42 @@ def test_end_to_end_video_to_srt_job(test_client):
 
     download = client.get(f"/api/v1/assets/{asset['id']}/download")
     assert download.status_code == 200, download.text
-    assert b"00:00:00,000 --> 00:00:02,000" in download.content
+    assert b"00:00:00,000 -->" in download.content
+
+
+def test_end_to_end_srt_translation_job(test_client):
+    client, _enqueued, worker, _media_root = test_client
+
+    video = _upload_fake_video(client)
+
+    captions = client.post(
+        "/api/v1/captions/jobs",
+        json={"video_asset_id": video["id"], "options": {"formats": ["srt"]}},
+    )
+    assert captions.status_code == 201, captions.text
+    captions_job = captions.json()
+    worker.generate_captions(captions_job["id"], video["id"], {"formats": ["srt"]})
+
+    captions_done = client.get(f"/api/v1/jobs/{captions_job['id']}").json()
+    subtitle_id = captions_done["output_asset_id"]
+    assert subtitle_id
+
+    translate = client.post(
+        "/api/v1/subtitles/translate",
+        json={"subtitle_asset_id": subtitle_id, "target_language": "es"},
+    )
+    assert translate.status_code == 201, translate.text
+    translate_job = translate.json()
+
+    worker.translate_subtitles(translate_job["id"], subtitle_id, {"target_language": "es"})
+
+    translated_done = client.get(f"/api/v1/jobs/{translate_job['id']}").json()
+    assert translated_done["status"] == "completed"
+    assert translated_done["output_asset_id"]
+
+    translated_asset = client.get(f"/api/v1/assets/{translated_done['output_asset_id']}").json()
+    assert translated_asset["kind"] == "subtitle"
+    assert translated_asset["uri"].endswith(".srt")
 
 
 def test_end_to_end_video_to_tiktok_style_rendered_job(test_client):

@@ -26,7 +26,7 @@ The goal is **one** desktop‑friendly GUI that:
 - translates SRTs,
 - and burns *either* plain or TikTok‑style word‑highlight subtitles.
 
-It’s inspired by tools like Clipify (AI shorts from long videos), Subs AI (multi‑backend Whisper UI), and pyVideoTrans (translation + dubbing pipeline). :contentReference[oaicite:0]{index=0}  
+It’s inspired by tools like Clipify (AI shorts from long videos), Subs AI (multi‑backend Whisper UI), and pyVideoTrans (translation + dubbing pipeline).
 
 ---
 
@@ -37,13 +37,13 @@ It’s inspired by tools like Clipify (AI shorts from long videos), Subs AI (mul
 - **AI Shorts Maker**
   - Input: local file or URL (YouTube / generic, via `yt-dlp`).
   - Modes:
-    - *Auto interesting segments*: LLM ranks transcript chunks and picks top N moments. :contentReference[oaicite:1]{index=1}  
+    - *Auto interesting segments*: LLM ranks transcript chunks and picks top N moments.
     - *Prompt‑guided*: “Find all moments where I talk about pricing” etc.
   - Control: min/max clip length, number of clips, aspect ratio (9:16, 1:1, 16:9).
   - Output: rendered shorts (with or without burnt subtitles) + .srt/.ass + JSON metadata.
 
 - **Caption & Translation**
-  - Long‑form captioning with **word‑level timestamps** (via whisper‑timestamped / faster‑whisper / whisper.cpp). :contentReference[oaicite:2]{index=2}  
+  - Long‑form captioning with **word‑level timestamps** (via whisper‑timestamped / faster‑whisper / whisper.cpp).
   - Export: `.srt`, `.vtt`, `.ass`, TXT.
   - Translate to target language(s) using pluggable translation backends.
   - Optional title/description translation for YouTube/TikTok upload workflows.
@@ -52,7 +52,7 @@ It’s inspired by tools like Clipify (AI shorts from long videos), Subs AI (mul
   - Plain captions (classic SRT).
   - **Word‑by‑word highlight** style similar to Descript / CapCut:
     - Bold white text with stroke & outline.
-    - Per‑word highlight color that appears exactly while the word is spoken. :contentReference[oaicite:3]{index=3}  
+    - Per‑word highlight color that appears exactly while the word is spoken.
   - Styling presets: font, color, highlight color, outline, shadow, positioning.
 
 - **SRT / Subtitle Translator**
@@ -67,7 +67,7 @@ It’s inspired by tools like Clipify (AI shorts from long videos), Subs AI (mul
 - **“Utilities” (future)**
   - Batch subtitling.
   - Silence trimming & pacing.
-  - Speaker diarization for multi‑speaker content (leveraging patterns from Whisper-WebUI & pyannote). :contentReference[oaicite:4]{index=4}  
+  - Speaker diarization for multi‑speaker content (leveraging patterns from Whisper-WebUI & pyannote).
 
 ---
 
@@ -88,7 +88,7 @@ Reframe is designed as a **local‑first monorepo**:
   - `video_edit/` – clipping, scaling, merge, burn‑in via FFmpeg/MoviePy.
   - `models/` – pydantic models for jobs, media assets, subtitle styles.
 
-Existing tools like Clipify, pyVideoTrans, and Subs AI are monolithic or semi‑modular; Reframe explicitly separates **media core** from **API/UI**, so you can reuse the core from CLI tools or notebooks. :contentReference[oaicite:5]{index=5}  
+Existing tools like Clipify, pyVideoTrans, and Subs AI are monolithic or semi‑modular; Reframe explicitly separates **media core** from **API/UI**, so you can reuse the core from CLI tools or notebooks.
 
 See `ARCHITECTURE.md` for details.
 
@@ -137,11 +137,11 @@ From the projects in `AI Media Toolkit/`:
   - ➜ Adopt this strategy inside `media-core/subtitles/highlighted.py` and expose style presets via the GUI.
 
 - **`subsai`, `Whisper-WebUI`**
-  - Demonstrate how to support multiple Whisper backends, VAD, and diarization in one UI. :contentReference[oaicite:6]{index=6}  
+  - Demonstrate how to support multiple Whisper backends, VAD, and diarization in one UI.
   - ➜ Borrow config ideas (backend selection, model cache directory, device selection).
 
 - **`pyvideotrans`**
-  - Mature translation + dubbing pipeline, including SRT translation and audio re‑synthesis. :contentReference[oaicite:7]{index=7}  
+  - Mature translation + dubbing pipeline, including SRT translation and audio re‑synthesis.
   - ➜ Use as reference for future “full translation + dubbing” mode.
 
 The point of Reframe is to **merge** these ideas into one consistent, testable architecture instead of having many one‑off experiments.
