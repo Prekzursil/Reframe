@@ -21,10 +21,49 @@ const PRESETS = [
 ];
 
 const OUTPUT_FORMATS = ["srt", "vtt", "ass"];
-const BACKENDS = ["whisper", "faster_whisper", "whisper_cpp"];
+const BACKENDS = ["noop", "faster_whisper", "whisper_cpp"];
 const FONTS = ["Inter", "Space Grotesk", "Montserrat", "Open Sans"];
 const ASPECTS = ["9:16", "16:9", "1:1"];
 const LANGS = ["en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh"];
+
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const el = document.createElement("textarea");
+      el.value = text;
+      el.style.position = "fixed";
+      el.style.left = "-9999px";
+      el.style.top = "0";
+      document.body.appendChild(el);
+      el.focus();
+      el.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(el);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function CopyCommandButton({ command, label = "Copy curl" }: { command: string; label?: string }) {
+  const [status, setStatus] = useState<string | null>(null);
+
+  const onCopy = async () => {
+    const ok = await copyToClipboard(command);
+    setStatus(ok ? "Copied" : "Copy failed");
+    window.setTimeout(() => setStatus(null), 1500);
+  };
+
+  return (
+    <Button type="button" variant="ghost" onClick={onCopy}>
+      {status || label}
+    </Button>
+  );
+}
 
 function useLiveJobs() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -97,29 +136,26 @@ function CaptionsForm({ onCreated, initialVideoId }: { onCreated: (job: Job) => 
     }
   };
 
+  const backendHelp =
+    backend === "noop"
+      ? "No transcription runs; generates placeholder captions (offline-safe)."
+      : backend === "faster_whisper"
+      ? "Runs locally via faster-whisper. Long videos can take minutes on CPU; GPU recommended."
+      : "Runs locally via whisper.cpp (offline). Model download/setup required.";
+
+  const curlCommand = useMemo(() => {
+    const payload = {
+      video_asset_id: videoId.trim() || "<VIDEO_ASSET_ID>",
+      options: { source_language: sourceLang || "auto", backend, model, formats },
+    };
+    return `curl -sS -X POST \"${apiClient.baseUrl}/captions/jobs\" -H \"Content-Type: application/json\" -d '${JSON.stringify(payload)}'`;
+  }, [videoId, sourceLang, backend, model, formats]);
+
   return (
     <form className="form-grid" onSubmit={submit}>
       <label className="field">
         <span>Video asset ID</span>
         <Input value={videoId} onChange={(e) => setVideoId(e.target.value)} required />
-      </label>
-      <label className="field">
-        <span>Source language</span>
-        <Input value={sourceLang} onChange={(e) => setSourceLang(e.target.value)} placeholder="auto" />
-      </label>
-      <label className="field">
-        <span>Backend</span>
-        <select className="input" value={backend} onChange={(e) => setBackend(e.target.value)}>
-          {BACKENDS.map((b) => (
-            <option key={b} value={b}>
-              {b}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="field">
-        <span>Model</span>
-        <Input value={model} onChange={(e) => setModel(e.target.value)} />
       </label>
       <div className="field checkbox-group">
         <span>Output formats</span>
@@ -132,8 +168,43 @@ function CaptionsForm({ onCreated, initialVideoId }: { onCreated: (job: Job) => 
           ))}
         </div>
       </div>
+      <details className="field full">
+        <summary>Advanced settings</summary>
+        <div className="form-grid" style={{ marginTop: 12 }}>
+          <label className="field" title="ISO language code. Use 'auto' to let the backend decide.">
+            <span>Source language</span>
+            <Input value={sourceLang} onChange={(e) => setSourceLang(e.target.value)} placeholder="auto" />
+          </label>
+          <label
+            className="field"
+            title="Transcription backend. Use 'noop' for offline-safe placeholder output. Local backends require extra installs."
+          >
+            <span>Backend</span>
+            <select className="input" value={backend} onChange={(e) => setBackend(e.target.value)}>
+              {BACKENDS.map((b) => (
+                <option key={b} value={b}>
+                  {b}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field" title="Model name used by the selected backend. Ignored for 'noop'.">
+            <span>Model</span>
+            <Input value={model} onChange={(e) => setModel(e.target.value)} />
+          </label>
+          <div className="field full">
+            <p className="muted">{backendHelp}</p>
+          </div>
+        </div>
+      </details>
+      {backend !== "noop" && (
+        <div className="field full">
+          <p className="muted">Heads-up: transcription can take a while on CPU for long videos.</p>
+        </div>
+      )}
       {error && <div className="error-inline">{error}</div>}
       <div className="actions-row">
+        <CopyCommandButton command={curlCommand} />
         <Button type="submit" disabled={busy}>
           {busy ? "Submitting..." : "Create caption job"}
         </Button>
@@ -148,6 +219,15 @@ function TranslateForm({ onCreated }: { onCreated: (job: Job) => void }) {
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const curlCommand = useMemo(() => {
+    const payload = {
+      subtitle_asset_id: subtitleId.trim() || "<SUBTITLE_ASSET_ID>",
+      target_language: targetLang.trim() || "es",
+      options: notes ? { notes } : {},
+    };
+    return `curl -sS -X POST \"${apiClient.baseUrl}/subtitles/translate\" -H \"Content-Type: application/json\" -d '${JSON.stringify(payload)}'`;
+  }, [subtitleId, targetLang, notes]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -183,6 +263,7 @@ function TranslateForm({ onCreated }: { onCreated: (job: Job) => void }) {
       </label>
       {error && <div className="error-inline">{error}</div>}
       <div className="actions-row">
+        <CopyCommandButton command={curlCommand} />
         <Button type="submit" disabled={busy} variant="secondary">
           {busy ? "Submitting..." : "Request translation"}
         </Button>
@@ -421,6 +502,17 @@ function MergeAvForm({ onCreated, initialVideoId, initialAudioId }: { onCreated:
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const curlCommand = useMemo(() => {
+    const payload = {
+      video_asset_id: videoId.trim() || "<VIDEO_ASSET_ID>",
+      audio_asset_id: audioId.trim() || "<AUDIO_ASSET_ID>",
+      offset,
+      ducking,
+      normalize,
+    };
+    return `curl -sS -X POST \"${apiClient.baseUrl}/utilities/merge-av\" -H \"Content-Type: application/json\" -d '${JSON.stringify(payload)}'`;
+  }, [videoId, audioId, offset, ducking, normalize]);
+
   useEffect(() => {
     if (initialVideoId) setVideoId(initialVideoId);
   }, [initialVideoId]);
@@ -483,6 +575,7 @@ function MergeAvForm({ onCreated, initialVideoId, initialAudioId }: { onCreated:
       </label>
       {error && <div className="error-inline">{error}</div>}
       <div className="actions-row">
+        <CopyCommandButton command={curlCommand} />
         <Button type="submit" disabled={busy}>
           {busy ? "Submitting..." : "Merge audio/video"}
         </Button>
@@ -502,6 +595,22 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job) => void }) {
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const curlCommand = useMemo(() => {
+    const payload = {
+      video_asset_id: videoId.trim() || "<VIDEO_ASSET_ID>",
+      max_clips: numClips,
+      min_duration: minDuration,
+      max_duration: maxDuration,
+      aspect_ratio: aspect,
+      options: {
+        use_subtitles: useSubtitles,
+        style_preset: stylePreset,
+        prompt: prompt || undefined,
+      },
+    };
+    return `curl -sS -X POST \"${apiClient.baseUrl}/shorts/jobs\" -H \"Content-Type: application/json\" -d '${JSON.stringify(payload)}'`;
+  }, [videoId, numClips, minDuration, maxDuration, aspect, useSubtitles, stylePreset, prompt]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -574,9 +683,18 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job) => void }) {
       <label className="field full">
         <span>Prompt to guide selection</span>
         <TextArea rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Highlight the funniest moments..." />
+        {prompt.trim() && <p className="muted">Note: prompt scoring is not implemented yet; clips are selected by simple heuristics.</p>}
       </label>
+      {(useSubtitles || numClips > 6 || maxDuration > 60) && (
+        <div className="field full">
+          <p className="muted">
+            Heads-up: generating many/long clips can take a while. Subtitles for clips are currently placeholders (real per-clip captions are a follow-up).
+          </p>
+        </div>
+      )}
       {error && <div className="error-inline">{error}</div>}
       <div className="actions-row">
+        <CopyCommandButton command={curlCommand} />
         <Button type="submit" disabled={busy}>
           {busy ? "Submitting..." : "Create shorts job"}
         </Button>
@@ -767,6 +885,23 @@ function StyleEditor({
 	  const [jobsTypeFilter, setJobsTypeFilter] = useState("");
 	  const [jobsDateFrom, setJobsDateFrom] = useState("");
 	  const [jobsDateTo, setJobsDateTo] = useState("");
+
+  const [showQuickStart, setShowQuickStart] = useState(() => {
+    try {
+      return localStorage.getItem("reframe_quickstart_dismissed") !== "1";
+    } catch {
+      return true;
+    }
+  });
+
+  const dismissQuickStart = () => {
+    setShowQuickStart(false);
+    try {
+      localStorage.setItem("reframe_quickstart_dismissed", "1");
+    } catch {
+      // ignore
+    }
+  };
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -1072,6 +1207,29 @@ function StyleEditor({
             </Button>
           </div>
         </header>
+
+        {showQuickStart && (
+          <section className="grid">
+            <Card title="Quick start">
+              <ol className="muted">
+                <li>
+                  Start the stack: <code>docker compose -f infra/docker-compose.yml up --build</code>
+                </li>
+                <li>
+                  (Optional) Generate sample media: <code>make tools-ffmpeg &amp;&amp; make sample-media</code>
+                </li>
+                <li>Upload a video, then create a captions/shorts job.</li>
+              </ol>
+              <div className="actions-row">
+                <CopyCommandButton command={`docker compose -f infra/docker-compose.yml up --build`} label="Copy compose command" />
+                <CopyCommandButton command={`make tools-ffmpeg && make sample-media`} label="Copy sample media command" />
+                <Button type="button" variant="ghost" onClick={dismissQuickStart}>
+                  Dismiss
+                </Button>
+              </div>
+            </Card>
+          </section>
+        )}
 
         <section className="grid">
           <Card title="System health">

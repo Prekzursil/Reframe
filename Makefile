@@ -1,4 +1,4 @@
-.PHONY: help api-install worker-install web-install api-dev worker-dev web-dev web-build compose-up compose-down tools-ffmpeg
+.PHONY: help api-install worker-install web-install api-dev worker-dev web-dev web-build compose-up compose-down tools-ffmpeg sample-media
 
 help:
 	@echo "Targets: api-install, worker-install, web-install, api-dev, worker-dev, web-dev, web-build, compose-up, compose-down"
@@ -32,3 +32,6 @@ compose-down:
 
 tools-ffmpeg:
 	bash scripts/install_ffmpeg_local.sh
+
+sample-media:
+	bash scripts/generate_sample_media.sh

@@ -55,11 +55,10 @@ describe("frontend forms", () => {
       video_asset_id: "video-123",
       options: {
         source_language: "auto",
-        backend: "whisper",
+        backend: "noop",
         model: "whisper-large-v3",
         formats: ["srt", "vtt", "ass"],
       },
     });
   });
 });
-

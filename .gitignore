@@ -26,3 +26,6 @@ coverage/
 
 # Local dev SQLite DB
 reframe*.db
+
+# Local sample media
+samples/
