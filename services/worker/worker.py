@@ -395,7 +395,14 @@ def generate_captions(self, job_id: str, video_asset_id: str, options: dict | No
     diarization_config = DiarizationConfig(
         backend=diarization_backend,
         model=str(opts.get("diarization_model") or "pyannote/speaker-diarization-3.1"),
-        huggingface_token=str(opts.get("huggingface_token") or opts.get("hf_token") or "") or None,
+        huggingface_token=str(
+            opts.get("huggingface_token")
+            or opts.get("hf_token")
+            or os.getenv("HUGGINGFACE_TOKEN")
+            or os.getenv("HF_TOKEN")
+            or ""
+        ).strip()
+        or None,
         min_segment_duration=float(opts.get("min_segment_duration") or 0.0),
     )
 

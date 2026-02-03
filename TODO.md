@@ -334,8 +334,8 @@
 - [ ] Speaker diarization integration (pyannote) for speaker‑labeled subtitles.
   - [x] Add media-core diarization config + speaker segment model (offline-default noop).
   - [x] Implement optional pyannote backend wiring in worker captions pipeline (extract audio → diarize → label lines).
-  - [ ] Docs: explain diarization dependencies (torch/pyannote) + offline-mode behavior.
-  - [ ] Add UI option to enable speaker labels (optional; advanced).
+  - [x] Docs: explain diarization dependencies (torch/pyannote) + offline-mode behavior.
+  - [x] Add UI option to enable speaker labels (optional; advanced).
 - [ ] Smart silence trimming (cut dead air before generating shorts).
 - [ ] Basic subtitle editor (inline text edit + shift timings).
 - [ ] Support for timelines / EDL export.

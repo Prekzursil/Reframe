@@ -106,6 +106,7 @@ function CaptionsForm({ onCreated, initialVideoId }: { onCreated: (job: Job) => 
   const [backend, setBackend] = useState(BACKENDS[0]);
   const [model, setModel] = useState("whisper-large-v3");
   const [formats, setFormats] = useState<string[]>(["srt"]);
+  const [speakerLabels, setSpeakerLabels] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -126,7 +127,14 @@ function CaptionsForm({ onCreated, initialVideoId }: { onCreated: (job: Job) => 
     try {
       const job = await apiClient.createCaptionJob({
         video_asset_id: videoId.trim(),
-        options: { source_language: sourceLang || "auto", backend, model, formats },
+        options: {
+          source_language: sourceLang || "auto",
+          backend,
+          model,
+          formats,
+          speaker_labels: speakerLabels,
+          diarization_backend: speakerLabels ? "pyannote" : "noop",
+        },
       });
       onCreated(job);
     } catch (err) {
@@ -146,10 +154,17 @@ function CaptionsForm({ onCreated, initialVideoId }: { onCreated: (job: Job) => 
   const curlCommand = useMemo(() => {
     const payload = {
       video_asset_id: videoId.trim() || "<VIDEO_ASSET_ID>",
-      options: { source_language: sourceLang || "auto", backend, model, formats },
+      options: {
+        source_language: sourceLang || "auto",
+        backend,
+        model,
+        formats,
+        speaker_labels: speakerLabels,
+        diarization_backend: speakerLabels ? "pyannote" : "noop",
+      },
     };
     return `curl -sS -X POST \"${apiClient.baseUrl}/captions/jobs\" -H \"Content-Type: application/json\" -d '${JSON.stringify(payload)}'`;
-  }, [videoId, sourceLang, backend, model, formats]);
+  }, [videoId, sourceLang, backend, model, formats, speakerLabels]);
 
   return (
     <form className="form-grid" onSubmit={submit}>
@@ -192,8 +207,24 @@ function CaptionsForm({ onCreated, initialVideoId }: { onCreated: (job: Job) => 
             <span>Model</span>
             <Input value={model} onChange={(e) => setModel(e.target.value)} />
           </label>
+          <label
+            className="field"
+            title="Adds speaker labels (e.g. SPEAKER_01) using optional diarization. Requires extra worker deps; offline mode disables model downloads."
+          >
+            <span>Speaker labels</span>
+            <select className="input" value={speakerLabels ? "on" : "off"} onChange={(e) => setSpeakerLabels(e.target.value === "on")}>
+              <option value="off">Off</option>
+              <option value="on">On (pyannote)</option>
+            </select>
+          </label>
           <div className="field full">
             <p className="muted">{backendHelp}</p>
+            {speakerLabels && (
+              <p className="muted">
+                Speaker labels are experimental and require a worker build that includes diarization deps (pyannote + torch). If
+                the worker can’t diarize, it will fall back without failing the job.
+              </p>
+            )}
           </div>
         </div>
       </details>

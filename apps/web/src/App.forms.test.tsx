@@ -58,6 +58,8 @@ describe("frontend forms", () => {
         backend: "noop",
         model: "whisper-large-v3",
         formats: ["srt", "vtt", "ass"],
+        speaker_labels: false,
+        diarization_backend: "noop",
       },
     });
   });
