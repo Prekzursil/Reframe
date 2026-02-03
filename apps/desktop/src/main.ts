@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-opener";
 
 const UI_URL = "http://localhost:5173";
+const RELEASES_URL = "https://github.com/Prekzursil/Reframe/releases";
 
 function byId<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -76,6 +77,7 @@ window.addEventListener("DOMContentLoaded", () => {
   byId<HTMLButtonElement>("btn-down").addEventListener("click", () => stop());
   byId<HTMLButtonElement>("btn-refresh").addEventListener("click", () => refresh());
   byId<HTMLButtonElement>("btn-open-ui").addEventListener("click", () => open(UI_URL));
+  byId<HTMLButtonElement>("btn-updates").addEventListener("click", () => open(RELEASES_URL));
 
   void refresh();
 });
