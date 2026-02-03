@@ -286,9 +286,9 @@
   - [x] End‑to‑end “video → SRT” job.
   - [x] End‑to‑end “video → TikTok‑style rendered” sample.
   - [x] End‑to‑end “video → shorts with subtitles” with small test video.
-- [ ] Frontend tests:
-  - [ ] Component tests for forms and job list.
-  - [ ] Minimal e2e flow (upload → job complete → download).
+- [x] Frontend tests:
+  - [x] Component tests for forms and job list.
+  - [x] Minimal e2e flow (upload → job complete → download).
 
 ---
 

@@ -56,6 +56,10 @@ jobs:
         if: hashFiles('apps/web/package-lock.json') != ''
         working-directory: apps/web
         run: npm ci
+      - name: Test
+        if: hashFiles('apps/web/package-lock.json') != ''
+        working-directory: apps/web
+        run: npm test
       - name: Build
         if: hashFiles('apps/web/package-lock.json') != ''
         working-directory: apps/web
