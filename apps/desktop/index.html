@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Reframe Desktop</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <main class="container">
+      <header class="header">
+        <h1>Reframe Desktop</h1>
+        <p class="muted">
+          Runs the Reframe stack via Docker Compose and opens the local UI.
+        </p>
+      </header>
+
+      <section class="card">
+        <h2>Stack</h2>
+        <div class="row">
+          <button id="btn-up">Start stack (build)</button>
+          <button id="btn-up-nobuild" class="secondary">
+            Start stack (no build)
+          </button>
+          <button id="btn-down" class="danger">Stop stack</button>
+        </div>
+        <div class="row">
+          <button id="btn-refresh" class="secondary">Refresh status</button>
+          <button id="btn-open-ui" class="secondary">Open UI</button>
+        </div>
+
+        <div class="grid">
+          <div class="field">
+            <div class="label">Compose file</div>
+            <code id="compose-path" class="mono">detecting…</code>
+          </div>
+          <div class="field">
+            <div class="label">Docker</div>
+            <code id="docker-version" class="mono">checking…</code>
+          </div>
+        </div>
+
+        <pre id="status" class="status">Loading…</pre>
+      </section>
+
+      <section class="card">
+        <h2>Output</h2>
+        <pre id="log" class="log muted">Ready.</pre>
+      </section>
+
+      <footer class="footer muted">
+        Tip: if you don’t have a `.env` yet, copy `.env.example` in the repo
+        root and set `REFRAME_OFFLINE_MODE=true` for offline-only behavior.
+      </footer>
+    </main>
+  </body>
+</html>
