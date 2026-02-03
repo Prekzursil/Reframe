@@ -1,4 +1,9 @@
+import logging
+import time
+from uuid import uuid4
+
 from fastapi import FastAPI
+from fastapi import Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 
@@ -7,10 +12,13 @@ from app.database import create_db_and_tables
 from app.api import router as api_router
 from app.errors import ApiError, ErrorResponse
 from app.cleanup import start_cleanup_loop
+from app.logging_config import setup_logging
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    setup_logging(log_format=settings.log_format, log_level=settings.log_level)
+    request_logger = logging.getLogger("reframe.request")
     tags_metadata = [
         {"name": "Health", "description": "Health and readiness checks."},
         {"name": "Captions", "description": "Create captioning jobs."},
@@ -26,6 +34,42 @@ def create_app() -> FastAPI:
 
     app.mount("/media", StaticFiles(directory=settings.media_root), name="media")
 
+    @app.middleware("http")
+    async def log_requests(request: Request, call_next):
+        start = time.perf_counter()
+        request_id = request.headers.get("x-request-id") or str(uuid4())
+        try:
+            response = await call_next(request)
+        except Exception:
+            duration_ms = (time.perf_counter() - start) * 1000.0
+            request_logger.exception(
+                "request_failed",
+                extra={
+                    "request_id": request_id,
+                    "method": request.method,
+                    "path": request.url.path,
+                    "query": request.url.query,
+                    "duration_ms": round(duration_ms, 2),
+                    "client": request.client.host if request.client else None,
+                },
+            )
+            raise
+        duration_ms = (time.perf_counter() - start) * 1000.0
+        request_logger.info(
+            "request",
+            extra={
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "query": request.url.query,
+                "status": response.status_code,
+                "duration_ms": round(duration_ms, 2),
+                "client": request.client.host if request.client else None,
+            },
+        )
+        response.headers["x-request-id"] = request_id
+        return response
+
     @app.on_event("startup")
     def startup() -> None:
         create_db_and_tables()
@@ -38,7 +82,8 @@ def create_app() -> FastAPI:
 
     app.include_router(api_router)
 
-    @app.get("/health", tags=["health"])
+    @app.get("/health", tags=["Health"])
+    @app.get("/healthz", tags=["Health"])
     def health() -> dict[str, str]:
         return {"status": "ok", "version": settings.api_version}
 

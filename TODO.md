@@ -277,9 +277,9 @@
 
 ## 17. Observability & Testing
 
-- [ ] Integrate structured logging on the backend (JSON logs).
-- [ ] Log FFmpeg commands and exit codes when processing fails.
-- [ ] Add health check endpoint (`/healthz`).
+- [x] Integrate structured logging on the backend (JSON logs).
+- [x] Log FFmpeg commands and exit codes when processing fails.
+- [x] Add health check endpoint (`/healthz`).
 - [ ] Unit tests for media-core modules:
   - [ ] transcribe, subtitles, translate, video_edit, segment.
 - [ ] Integration tests:

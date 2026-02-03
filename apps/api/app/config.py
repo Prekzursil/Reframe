@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     media_root: str = Field(default="./media")
     api_title: str = Field(default="Reframe API")
     api_version: str = Field(default="0.1.0")
+    log_format: str = Field(default="json", description="Logging format: json|plain")
+    log_level: str = Field(default="INFO", description="Logging level, e.g. DEBUG|INFO|WARNING")
     rate_limit_requests: int = Field(default=60)
     rate_limit_window_seconds: int = Field(default=60)
 
