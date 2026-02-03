@@ -331,11 +331,12 @@
 
 ## 20. Future / Nice‑to‑Have
 
-- [ ] Speaker diarization integration (pyannote) for speaker‑labeled subtitles.
+- [x] Speaker diarization integration (pyannote) for speaker‑labeled subtitles.
   - [x] Add media-core diarization config + speaker segment model (offline-default noop).
   - [x] Implement optional pyannote backend wiring in worker captions pipeline (extract audio → diarize → label lines).
   - [x] Docs: explain diarization dependencies (torch/pyannote) + offline-mode behavior.
   - [x] Add UI option to enable speaker labels (optional; advanced).
+  - [ ] Validate with a real pyannote run and document expected memory/CPU impact.
 - [ ] Smart silence trimming (cut dead air before generating shorts).
   - [x] media-core: add ffmpeg `silencedetect` helper (`detect_silence`).
   - [x] Worker: optional `trim_silence` scoring for `tasks.generate_shorts`.
