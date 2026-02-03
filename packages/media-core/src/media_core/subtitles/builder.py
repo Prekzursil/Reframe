@@ -12,6 +12,7 @@ class SubtitleLine:
     start: float
     end: float
     words: List[Word] = field(default_factory=list)
+    speaker: str | None = None
 
     def text(self) -> str:
         return " ".join(w.text for w in self.words).strip()
@@ -84,7 +85,10 @@ def to_srt(lines: Iterable[SubtitleLine]) -> str:
     for idx, line in enumerate(lines, start=1):
         output.append(str(idx))
         output.append(f"{_format_timestamp(line.start)} --> {_format_timestamp(line.end)}")
-        output.append(line.text())
+        text = line.text()
+        if line.speaker:
+            text = f"{line.speaker}: {text}" if text else line.speaker
+        output.append(text)
         output.append("")  # blank line separator
     return "\n".join(output)
 
@@ -93,7 +97,10 @@ def to_vtt(lines: Iterable[SubtitleLine]) -> str:
     output = ["WEBVTT", ""]
     for line in lines:
         output.append(f"{_format_timestamp(line.start).replace(',', '.')} --> {_format_timestamp(line.end).replace(',', '.')}")
-        output.append(line.text())
+        text = line.text()
+        if line.speaker:
+            text = f"{line.speaker}: {text}" if text else line.speaker
+        output.append(text)
         output.append("")
     return "\n".join(output)
 
@@ -191,9 +198,10 @@ def to_ass_karaoke(lines: Iterable[SubtitleLine]) -> str:
 
     body: List[str] = []
     for line in lines:
+        name = (line.speaker or "").replace(",", " ")
         body.append(
             f"Dialogue: 0,{_format_ass_timestamp(line.start)},{_format_ass_timestamp(line.end)},"
-            f"Default,,0,0,0,,{_karaoke_text_for_line(line)}"
+            f"Default,{name},0,0,0,,{_karaoke_text_for_line(line)}"
         )
     return "\n".join(header + body)
 
@@ -237,8 +245,9 @@ def to_ass(lines: Iterable[SubtitleLine]) -> str:
     ]
     body = []
     for line in lines:
+        name = (line.speaker or "").replace(",", " ")
         body.append(
             f"Dialogue: 0,{_format_ass_timestamp(line.start)},{_format_ass_timestamp(line.end)},"
-            f"Default,,0,0,0,,{line.text()}"
+            f"Default,{name},0,0,0,,{line.text()}"
         )
     return "\n".join(header + body)

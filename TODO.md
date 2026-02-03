@@ -308,6 +308,8 @@
   - [x] Desktop: implement signed auto-updater via GitHub releases (Tauri updater plugin).
   - [x] Desktop: automate release publishing (updater artifacts + `latest.json`) via GitHub Actions.
   - [ ] Desktop: verify updater end-to-end (install old version → update → relaunch).
+    - [x] Script: validate published `latest.json` + release asset URLs.
+    - [ ] Manual: install an older build and confirm update + relaunch (Windows/macOS/Linux).
 - [x] Provide example configs for:
   - [x] Local dev (no GPU),
   - [x] Local GPU workstation,
@@ -329,6 +331,9 @@
 ## 20. Future / Nice‑to‑Have
 
 - [ ] Speaker diarization integration (pyannote) for speaker‑labeled subtitles.
+  - [x] Add media-core diarization config + speaker segment model (offline-default noop).
+  - [ ] Implement optional pyannote backend wiring in worker captions pipeline (extract audio → diarize → label lines).
+  - [ ] Add UI option to enable speaker labels (optional; advanced).
 - [ ] Smart silence trimming (cut dead air before generating shorts).
 - [ ] Basic subtitle editor (inline text edit + shift timings).
 - [ ] Support for timelines / EDL export.

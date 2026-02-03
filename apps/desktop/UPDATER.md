@@ -28,6 +28,8 @@ Release flow:
 3) Wait for **Desktop Release** workflow to finish. A GitHub Release is created with:
    - updater bundles + `.sig`
    - `latest.json` asset used by the desktop app
+4) Optional: validate the published updater JSON:
+   - `python3 scripts/verify_desktop_updater_release.py`
 
 ## Signing keys
 

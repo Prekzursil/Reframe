@@ -19,6 +19,7 @@ transcribe-faster-whisper = ["faster-whisper>=1.0.0"]
 transcribe-whispercpp = ["whispercpp>=0.0.9"]
 render = ["moviepy>=1.0.3", "pysubs2>=1.6.1"]
 translate-local = ["argostranslate>=1.9.0"]
+diarize-pyannote = ["pyannote.audio>=3.1.1"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
