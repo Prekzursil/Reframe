@@ -47,7 +47,9 @@ def get_engine():
     global _engine
     if _engine is None:
         settings = get_settings()
-        _engine = create_engine(settings.database.url, echo=False)
+        url = settings.database.url
+        connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+        _engine = create_engine(url, echo=False, connect_args=connect_args)
     return _engine
 
 
@@ -199,8 +201,34 @@ def transcribe_video(self, job_id: str, video_asset_id: str, config: dict | None
 def generate_captions(self, job_id: str, video_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id)
-    captions = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nCaption placeholder\n"
-    asset = create_asset(kind="subtitle", mime_type="text/vtt", suffix=".vtt", contents=captions)
+    formats = options.get("formats") if isinstance(options, dict) else None
+    requested = [f.lower() for f in formats if isinstance(f, str)] if isinstance(formats, list) else []
+    output_format = "vtt"
+    if "srt" in requested:
+        output_format = "srt"
+    elif "ass" in requested:
+        output_format = "ass"
+
+    if output_format == "srt":
+        captions = "1\n00:00:00,000 --> 00:00:02,000\nCaption placeholder\n"
+        asset = create_asset(kind="subtitle", mime_type="text/srt", suffix=".srt", contents=captions)
+    elif output_format == "ass":
+        captions = (
+            "[Script Info]\n"
+            "ScriptType: v4.00+\n"
+            "\n"
+            "[V4+ Styles]\n"
+            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+            "Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1\n"
+            "\n"
+            "[Events]\n"
+            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+            "Dialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,Caption placeholder\n"
+        )
+        asset = create_asset(kind="subtitle", mime_type="text/ass", suffix=".ass", contents=captions)
+    else:
+        captions = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nCaption placeholder\n"
+        asset = create_asset(kind="subtitle", mime_type="text/vtt", suffix=".vtt", contents=captions)
     result = {"video_asset_id": video_asset_id, "status": "captions_generated", "options": options or {}, "output_asset_id": str(asset.id)}
     update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(asset.id))
     _progress(self, "completed", 1.0, video_asset_id=video_asset_id)
@@ -246,9 +274,14 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
     clips = []
     max_clips = int(options.get("max_clips") or 3) if options else 3
     min_dur = options.get("min_duration") if options else None
+    use_subtitles = bool(options.get("use_subtitles")) if isinstance(options, dict) else False
     for idx in range(max_clips):
         src_asset, src_path = fetch_asset(video_asset_id)
         thumb_asset = create_thumbnail_asset(src_path)
+        subtitle_asset = None
+        if use_subtitles:
+            subtitle_contents = f"WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nClip {idx+1} subtitle placeholder\n"
+            subtitle_asset = create_asset(kind="subtitle", mime_type="text/vtt", suffix=".vtt", contents=subtitle_contents)
         clip_asset = create_asset(
             kind="video",
             mime_type=src_asset.mime_type if src_asset and src_asset.mime_type else "application/octet-stream",
@@ -263,7 +296,7 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
                 "duration": min_dur,
                 "score": 0.5 + idx * 0.1,
                 "uri": clip_asset.uri,
-                "subtitle_uri": None,
+                "subtitle_uri": subtitle_asset.uri if subtitle_asset else None,
                 "thumbnail_uri": thumb_asset.uri,
             }
         )

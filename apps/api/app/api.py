@@ -211,7 +211,7 @@ def get_job(job_id: UUID, session: SessionDep) -> Job:
 
 
 @router.get("/jobs", response_model=List[Job], tags=["Jobs"])
-def list_jobs(status_filter: Optional[JobStatus] = None, session: SessionDep = Depends(get_session)) -> List[Job]:
+def list_jobs(session: SessionDep, status_filter: Optional[JobStatus] = None) -> List[Job]:
     query = select(Job)
     if status_filter:
         query = query.where(Job.status == status_filter)
@@ -420,9 +420,9 @@ def translate_subtitle_tool(payload: TranslateSubtitleToolRequest, session: Sess
     dependencies=[Depends(enforce_rate_limit)],
 )
 async def upload_asset(
+    session: SessionDep,
     file: UploadFile = File(...),
     kind: str = Form("video"),
-    session: SessionDep = Depends(get_session),
 ) -> MediaAsset:
     settings = get_settings()
     media_root = Path(settings.media_root)
@@ -448,7 +448,7 @@ async def upload_asset(
     response_model=List[MediaAsset],
     tags=["Assets"],
 )
-def list_assets(kind: Optional[str] = None, limit: int = 25, session: SessionDep = Depends(get_session)) -> List[MediaAsset]:
+def list_assets(session: SessionDep, kind: Optional[str] = None, limit: int = 25) -> List[MediaAsset]:
     limit = max(1, min(limit, 200))
     query = select(MediaAsset)
     if kind:

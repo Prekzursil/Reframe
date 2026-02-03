@@ -282,10 +282,10 @@
 - [x] Add health check endpoint (`/healthz`).
 - [x] Unit tests for media-core modules:
   - [x] transcribe, subtitles, translate, video_edit, segment.
-- [ ] Integration tests:
-  - [ ] End‑to‑end “video → SRT” job.
-  - [ ] End‑to‑end “video → TikTok‑style rendered” sample.
-  - [ ] End‑to‑end “video → shorts with subtitles” with small test video.
+- [x] Integration tests:
+  - [x] End‑to‑end “video → SRT” job.
+  - [x] End‑to‑end “video → TikTok‑style rendered” sample.
+  - [x] End‑to‑end “video → shorts with subtitles” with small test video.
 - [ ] Frontend tests:
   - [ ] Component tests for forms and job list.
   - [ ] Minimal e2e flow (upload → job complete → download).

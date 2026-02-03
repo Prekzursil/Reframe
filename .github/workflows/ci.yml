@@ -26,10 +26,17 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r apps/api/requirements.txt -r services/worker/requirements.txt
+          pip install pytest httpx
       - name: Syntax check
         if: hashFiles('apps/api/requirements.txt', 'services/worker/requirements.txt') != ''
         run: |
           python -m compileall apps/api services/worker packages/media-core
+      - name: Run tests
+        if: hashFiles('apps/api/requirements.txt', 'services/worker/requirements.txt') != ''
+        env:
+          PYTHONPATH: .:apps/api:packages/media-core/src
+        run: |
+          python -m pytest apps/api/tests services/worker packages/media-core/tests
       - name: Skip notice
         if: hashFiles('apps/api/requirements.txt', 'services/worker/requirements.txt') == ''
         run: echo "API/worker sources not present; skipping Python job."

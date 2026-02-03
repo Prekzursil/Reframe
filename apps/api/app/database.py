@@ -11,7 +11,9 @@ from app.config import get_settings
 @lru_cache(maxsize=1)
 def get_engine():
     settings = get_settings()
-    return create_engine(settings.database.url, echo=False)
+    url = settings.database.url
+    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+    return create_engine(url, echo=False, connect_args=connect_args)
 
 
 def create_db_and_tables() -> None:
