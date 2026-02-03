@@ -341,7 +341,9 @@
 - [x] Worker: implement `tasks.generate_shorts` using `probe_media` + candidate generation + `cut_clip` (no LLM scoring required initially).
 - [x] Worker: implement `tasks.generate_captions` using media-core transcription + subtitle builder; support SRT/VTT/ASS output.
 - [x] Worker: implement `tasks.translate_subtitles` using media-core SRT translator (default local/Argos or no-op; optional Groq).
-- [ ] Worker: implement `tasks.render_styled_subtitles` using media-core MoviePy renderer; support `preview_seconds`.
+- [x] Worker: implement `tasks.render_styled_subtitles` using ffmpeg/libass subtitle burn-in; support `preview_seconds`.
+- [ ] Styled subtitles: implement word-by-word highlight (ASS karaoke) to use `highlight_color`.
+- [ ] Styled subtitles: accept `.vtt` inputs (convert to `.srt`/`.ass`) for render jobs.
 
 ### Offline + Groq free-tier (optional)
 - [ ] Add Groq chat client integration (OpenAI-compatible) for:

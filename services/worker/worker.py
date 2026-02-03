@@ -143,6 +143,27 @@ def _coerce_bool(value: Any) -> bool:
     return False
 
 
+def _hex_to_ass_color(value: Any, *, default: str) -> str:
+    if not isinstance(value, str):
+        return default
+    raw = value.strip()
+    if not raw:
+        return default
+    if raw.startswith("#"):
+        raw = raw[1:]
+    if len(raw) == 3:
+        raw = "".join(ch * 2 for ch in raw)
+    if len(raw) != 6:
+        return default
+    try:
+        r = int(raw[0:2], 16)
+        g = int(raw[2:4], 16)
+        b = int(raw[4:6], 16)
+    except ValueError:
+        return default
+    return f"&H00{b:02X}{g:02X}{r:02X}"
+
+
 def _transcribe_media(path: Path, config: TranscriptionConfig, *, warnings: list[str]):
     try:
         if config.backend == TranscriptionBackend.OPENAI_WHISPER:
@@ -433,14 +454,133 @@ def translate_subtitles(self, job_id: str, subtitle_asset_id: str, options: dict
 def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_asset_id: str, style: dict | None = None, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
-    src_asset, src_path = fetch_asset(video_asset_id)
-    rendered_marker = src_path if src_path and src_path.exists() else None
-    asset = create_asset(kind="video", mime_type=src_asset.mime_type if src_asset and src_asset.mime_type else "application/octet-stream", suffix=src_path.suffix if src_path else ".txt", contents="styled-render" if rendered_marker is None else b"", source_path=rendered_marker)
+    opts = options or {}
+    raw_preview_seconds = opts.get("preview_seconds")
+    try:
+        preview_seconds = int(raw_preview_seconds) if raw_preview_seconds is not None else None
+    except (TypeError, ValueError):
+        preview_seconds = None
+    if preview_seconds is not None and preview_seconds <= 0:
+        preview_seconds = None
+
+    video_asset, video_path = fetch_asset(video_asset_id)
+    subtitle_asset, subtitle_path = fetch_asset(subtitle_asset_id)
+
+    if not video_path or not video_path.exists():
+        error = f"Video asset file missing for {video_asset_id}"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
+        return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+
+    if not subtitle_path or not subtitle_path.exists():
+        error = f"Subtitle asset file missing for {subtitle_asset_id}"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
+        return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+
+    if subtitle_path.suffix.lower() not in {".srt", ".ass"}:
+        error = f"Only .srt/.ass subtitles are supported for styled render currently (got {subtitle_path.suffix or 'no extension'})."
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
+        return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        error = "ffmpeg is required to render styled subtitles"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
+        return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+
+    style_dict = style if isinstance(style, dict) else {}
+    font = str(style_dict.get("font") or "Arial")
+    try:
+        font_size = int(style_dict.get("font_size") or 48)
+    except (TypeError, ValueError):
+        font_size = 48
+
+    outline_enabled = _coerce_bool(style_dict.get("outline_enabled", True))
+    try:
+        stroke_width = int(style_dict.get("stroke_width") or 2)
+    except (TypeError, ValueError):
+        stroke_width = 2
+    outline_width = max(0, stroke_width if outline_enabled else 0)
+
+    shadow_enabled = _coerce_bool(style_dict.get("shadow_enabled", True))
+    try:
+        shadow_offset = int(style_dict.get("shadow_offset") or 0)
+    except (TypeError, ValueError):
+        shadow_offset = 0
+    shadow_strength = max(0, shadow_offset if shadow_enabled else 0)
+
+    text_color = _hex_to_ass_color(style_dict.get("text_color"), default="&H00FFFFFF")
+    outline_color = _hex_to_ass_color(style_dict.get("outline_color"), default="&H00000000")
+
+    position = str(style_dict.get("position") or "bottom").strip().lower()
+    alignment = 2
+    if position == "top":
+        alignment = 8
+    elif position == "center":
+        alignment = 5
+
+    # Commas are escaped as `\,` because ffmpeg uses commas to separate filters.
+    force_style = "\\,".join(
+        [
+            f"Fontname={font}",
+            f"Fontsize={font_size}",
+            f"PrimaryColour={text_color}",
+            f"OutlineColour={outline_color}",
+            "BorderStyle=1",
+            f"Outline={outline_width}",
+            f"Shadow={shadow_strength}",
+            f"Alignment={alignment}",
+        ]
+    )
+    vf = f"subtitles={subtitle_path}:force_style={force_style}"
+
+    output_path = new_tmp_file(".mp4")
+    cmd = [ffmpeg, "-y", "-v", "error", "-i", str(video_path)]
+    if preview_seconds is not None:
+        cmd += ["-t", str(preview_seconds)]
+    cmd += [
+        "-vf",
+        vf,
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, (bytes, bytearray)) else str(exc.stderr or "")
+        error = f"Styled render failed: {stderr[-4000:] or exc}"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
+        return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+
+    if not output_path.exists() or output_path.stat().st_size <= 0:
+        error = "Styled render failed: output file was not created"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
+        return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+
+    mime_type = video_asset.mime_type if video_asset and video_asset.mime_type else "video/mp4"
+    asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=output_path)
     result = {
         "video_asset_id": video_asset_id,
         "subtitle_asset_id": subtitle_asset_id,
-        "style": style or {},
-        "options": options or {},
+        "style": style_dict,
+        "options": {"preview_seconds": preview_seconds, **opts},
         "status": "styled_render",
         "output_asset_id": str(asset.id),
     }

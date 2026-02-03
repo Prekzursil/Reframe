@@ -148,11 +148,11 @@ def test_end_to_end_srt_translation_job(test_client):
     assert translated_asset["uri"].endswith(".srt")
 
 
-def test_end_to_end_video_to_tiktok_style_rendered_job(test_client):
-    client, _enqueued, worker, _media_root = test_client
+def test_end_to_end_video_to_tiktok_style_rendered_job(test_client, tmp_path: Path):
+    client, _enqueued, worker, media_root = test_client
 
-    original_bytes = b"fake-video-bytes"
-    video = _upload_fake_video(client, content=original_bytes, filename="styled.mp4")
+    video_bytes = _generate_test_video_bytes(tmp_path, duration_seconds=4.0)
+    video = _upload_fake_video(client, content=video_bytes, filename="styled.mp4")
 
     captions = client.post(
         "/api/v1/captions/jobs",
@@ -169,12 +169,12 @@ def test_end_to_end_video_to_tiktok_style_rendered_job(test_client):
     style = {"font": "Inter", "text_color": "#ffffff"}
     styled = client.post(
         "/api/v1/subtitles/style",
-        json={"video_asset_id": video["id"], "subtitle_asset_id": subtitle_id, "style": style, "preview_seconds": 5},
+        json={"video_asset_id": video["id"], "subtitle_asset_id": subtitle_id, "style": style, "preview_seconds": 2},
     )
     assert styled.status_code == 201, styled.text
     styled_job = styled.json()
 
-    worker.render_styled_subtitles(styled_job["id"], video["id"], subtitle_id, style, {"preview_seconds": 5})
+    worker.render_styled_subtitles(styled_job["id"], video["id"], subtitle_id, style, {"preview_seconds": 2})
 
     styled_done = client.get(f"/api/v1/jobs/{styled_job['id']}").json()
     assert styled_done["status"] == "completed"
@@ -186,7 +186,14 @@ def test_end_to_end_video_to_tiktok_style_rendered_job(test_client):
 
     download = client.get(f"/api/v1/assets/{output_asset['id']}/download")
     assert download.status_code == 200, download.text
-    assert download.content == original_bytes
+    assert download.content
+
+    from media_core.video_edit.ffmpeg import probe_media
+
+    out_path = media_root / Path(output_asset["uri"]).relative_to("/media")
+    info = probe_media(out_path)
+    assert info["duration"] is not None
+    assert float(info["duration"]) <= 2.2
 
 
 def test_end_to_end_video_to_shorts_with_subtitles_job(test_client, tmp_path: Path):
