@@ -280,8 +280,8 @@
 - [x] Integrate structured logging on the backend (JSON logs).
 - [x] Log FFmpeg commands and exit codes when processing fails.
 - [x] Add health check endpoint (`/healthz`).
-- [ ] Unit tests for media-core modules:
-  - [ ] transcribe, subtitles, translate, video_edit, segment.
+- [x] Unit tests for media-core modules:
+  - [x] transcribe, subtitles, translate, video_edit, segment.
 - [ ] Integration tests:
   - [ ] End‑to‑end “video → SRT” job.
   - [ ] End‑to‑end “video → TikTok‑style rendered” sample.
