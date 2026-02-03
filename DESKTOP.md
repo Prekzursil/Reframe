@@ -17,6 +17,7 @@ Use **Tauri** as the desktop wrapper (recommended for performance and a smaller 
 - It currently relies on **local Docker Compose** (simplest):
   - start/stop `infra/docker-compose.yml`,
   - open the UI at `http://localhost:5173`.
+- See `apps/desktop/README.md` for prerequisites (especially for WSL vs native Windows/macOS/Linux builds).
 
 ## Next steps (planned)
 

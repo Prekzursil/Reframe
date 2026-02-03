@@ -304,7 +304,7 @@
   - [x] Decide wrapper (Tauri recommended for performance).
   - [x] Wire Tauri to run API/worker as child processes or rely on local Docker (v1: local Docker Compose).
   - [ ] Integrate update mechanism (optional later).
-  - [ ] Desktop: document build prerequisites per OS (Windows/macOS/Linux) and recommended build flow.
+  - [x] Desktop: document build prerequisites per OS (Windows/macOS/Linux) and recommended build flow.
 - [x] Provide example configs for:
   - [x] Local dev (no GPU),
   - [x] Local GPU workstation,

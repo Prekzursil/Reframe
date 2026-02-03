@@ -14,6 +14,15 @@ This is an **early** desktop wrapper for Reframe using **Tauri**.
 - Rust toolchain (for building the desktop app).
 - Tauri OS prerequisites (varies per OS; see Tauri docs).
 
+### Notes for WSL users
+
+This repo is often developed inside WSL2, but **building Tauri on Linux** typically requires system packages
+(`webkit2gtk`, `librsvg2`, etc.) that you may not have (and may not be able to install without admin rights).
+
+Recommended workflow:
+- Develop the Reframe stack in WSL (Docker + API/worker/web).
+- Build the Tauri desktop app on the **native host OS** (Windows) with the Tauri prerequisites installed.
+
 ## Development
 
 From `apps/desktop`:
