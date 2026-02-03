@@ -622,6 +622,9 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job) => void }) {
   const [maxDuration, setMaxDuration] = useState(45);
   const [aspect, setAspect] = useState(ASPECTS[0]);
   const [useSubtitles, setUseSubtitles] = useState(false);
+  const [trimSilence, setTrimSilence] = useState(false);
+  const [silenceNoiseDb, setSilenceNoiseDb] = useState(-35);
+  const [silenceMinDuration, setSilenceMinDuration] = useState(0.4);
   const [stylePreset, setStylePreset] = useState("TikTok Bold");
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
@@ -636,12 +639,14 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job) => void }) {
       aspect_ratio: aspect,
       options: {
         use_subtitles: useSubtitles,
+        trim_silence: trimSilence,
+        ...(trimSilence ? { silence_noise_db: silenceNoiseDb, silence_min_duration: silenceMinDuration } : {}),
         style_preset: stylePreset,
         prompt: prompt || undefined,
       },
     };
     return `curl -sS -X POST \"${apiClient.baseUrl}/shorts/jobs\" -H \"Content-Type: application/json\" -d '${JSON.stringify(payload)}'`;
-  }, [videoId, numClips, minDuration, maxDuration, aspect, useSubtitles, stylePreset, prompt]);
+  }, [videoId, numClips, minDuration, maxDuration, aspect, useSubtitles, trimSilence, silenceNoiseDb, silenceMinDuration, stylePreset, prompt]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -656,6 +661,8 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job) => void }) {
         aspect_ratio: aspect,
         options: {
           use_subtitles: useSubtitles,
+          trim_silence: trimSilence,
+          ...(trimSilence ? { silence_noise_db: silenceNoiseDb, silence_min_duration: silenceMinDuration } : {}),
           style_preset: stylePreset,
           prompt: prompt || undefined,
         },
@@ -703,6 +710,49 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job) => void }) {
           </label>
         </div>
       </label>
+      <details className="field full">
+        <summary>Advanced selection</summary>
+        <div className="form-grid" style={{ marginTop: 12 }}>
+          <label className="field">
+            <span>Trim silence</span>
+            <div className="checkbox-row">
+              <label className="checkbox">
+                <input type="checkbox" checked={trimSilence} onChange={(e) => setTrimSilence(e.target.checked)} />
+                <span>Prefer non-silent segments (experimental)</span>
+              </label>
+            </div>
+          </label>
+          <label className="field" title="Silence threshold in dB. More negative = stricter (detects quieter audio as silence).">
+            <span>Silence threshold (dB)</span>
+            <Input
+              type="number"
+              min={-80}
+              max={0}
+              step={1}
+              value={silenceNoiseDb}
+              onChange={(e) => setSilenceNoiseDb(Number(e.target.value))}
+              disabled={!trimSilence}
+            />
+          </label>
+          <label className="field" title="Minimum contiguous silence duration to consider (seconds).">
+            <span>Min silence duration (s)</span>
+            <Input
+              type="number"
+              min={0}
+              step={0.1}
+              value={silenceMinDuration}
+              onChange={(e) => setSilenceMinDuration(Number(e.target.value))}
+              disabled={!trimSilence}
+            />
+          </label>
+          <div className="field full">
+            <p className="muted">
+              Uses ffmpeg <code>silencedetect</code> to down-rank clips with more silence. Enable only for videos with clear speech/audio
+              tracks.
+            </p>
+          </div>
+        </div>
+      </details>
       <label className="field">
         <span>Style preset</span>
         <select className="input" value={stylePreset} onChange={(e) => setStylePreset(e.target.value)}>
