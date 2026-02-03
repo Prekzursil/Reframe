@@ -6,6 +6,29 @@ The app is configured to check:
 
 - `https://github.com/Prekzursil/Reframe/releases/latest/download/latest.json`
 
+## Automated publishing (GitHub Actions)
+
+This repo includes a GitHub Actions workflow that builds + publishes desktop releases (including `latest.json`) when you push a tag like:
+
+- `desktop-v0.1.0`
+
+Required repository secrets:
+
+- `TAURI_SIGNING_PRIVATE_KEY` — contents of `apps/desktop/src-tauri/keys/tauri.key` (keep secret)
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — optional (only if your key is password-protected)
+
+Release flow:
+
+1) Bump the version in:
+   - `apps/desktop/package.json`
+   - `apps/desktop/src-tauri/tauri.conf.json`
+2) Push a tag:
+   - `git tag desktop-v0.1.1`
+   - `git push origin desktop-v0.1.1`
+3) Wait for **Desktop Release** workflow to finish. A GitHub Release is created with:
+   - updater bundles + `.sig`
+   - `latest.json` asset used by the desktop app
+
 ## Signing keys
 
 Keys are generated with the Tauri CLI signer:
@@ -29,6 +52,10 @@ TAURI_SIGNING_PRIVATE_KEY_PATH=src-tauri/keys/tauri.key npx tauri build
 Optional (recommended): set a password on the private key and provide it using `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
 
 ## Publish an update (GitHub Releases)
+
+Preferred: use the automated GitHub Actions workflow described above.
+
+Manual (if needed):
 
 1) Create a GitHub release for the new desktop version (tag should match `apps/desktop/src-tauri/tauri.conf.json` `version`).
 
@@ -66,4 +93,3 @@ The simplest test loop is:
 1) Build and publish a `0.x.y` release and `latest.json`.
 2) Run an older installed desktop build.
 3) Click “Check updates” in the desktop UI to download/install and restart.
-
