@@ -303,9 +303,11 @@
 - [ ] Tauri/Electron:
   - [x] Decide wrapper (Tauri recommended for performance).
   - [x] Wire Tauri to run API/worker as child processes or rely on local Docker (v1: local Docker Compose).
-  - [x] Integrate update mechanism (optional later) (v1: link to GitHub Releases).
+  - [x] Integrate update mechanism (optional later) (v1: signed Tauri updater + UI).
   - [x] Desktop: document build prerequisites per OS (Windows/macOS/Linux) and recommended build flow.
-  - [ ] Desktop: implement signed auto-updater via GitHub releases (Tauri updater plugin).
+  - [x] Desktop: implement signed auto-updater via GitHub releases (Tauri updater plugin).
+  - [ ] Desktop: automate release publishing (updater artifacts + `latest.json`) via GitHub Actions.
+  - [ ] Desktop: verify updater end-to-end (install old version → update → relaunch).
 - [x] Provide example configs for:
   - [x] Local dev (no GPU),
   - [x] Local GPU workstation,

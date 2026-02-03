@@ -22,4 +22,4 @@ Use **Tauri** as the desktop wrapper (recommended for performance and a smaller 
 ## Next steps (planned)
 
 - Decide whether to keep the Docker approach long-term, or switch to running API/worker as bundled child processes.
-- Integrate an update mechanism (optional later).
+- Automate the signed updater release workflow (GitHub Releases + signing secrets).

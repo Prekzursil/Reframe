@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check } from "@tauri-apps/plugin-updater";
 
 const UI_URL = "http://localhost:5173";
 const RELEASES_URL = "https://github.com/Prekzursil/Reframe/releases";
@@ -71,13 +73,53 @@ async function stop() {
   }
 }
 
+async function checkUpdates() {
+  appendLog("Checking for updates...");
+  try {
+    const update = await check();
+    if (!update) {
+      appendLog("No updates available.");
+      return;
+    }
+
+    appendLog(`Update available: ${update.currentVersion} → ${update.version}`);
+    const ok = window.confirm(`Update available: ${update.currentVersion} → ${update.version}\n\nDownload and install now?`);
+    if (!ok) {
+      appendLog("Update cancelled.");
+      return;
+    }
+
+    let downloaded = 0;
+    await update.downloadAndInstall((event) => {
+      if (event.event === "Started") {
+        downloaded = 0;
+        appendLog(`Downloading update… (${event.data.contentLength ?? "unknown"} bytes)`);
+      } else if (event.event === "Progress") {
+        downloaded += event.data.chunkLength;
+        appendLog(`Downloaded ${downloaded} bytes…`);
+      } else if (event.event === "Finished") {
+        appendLog("Download finished.");
+      }
+    });
+
+    appendLog("Update installed; restarting…");
+    await relaunch();
+  } catch (err) {
+    appendLog(err instanceof Error ? err.message : String(err));
+    const openReleases = window.confirm("Update check failed. Open GitHub Releases page?");
+    if (openReleases) {
+      await openUrl(RELEASES_URL);
+    }
+  }
+}
+
 window.addEventListener("DOMContentLoaded", () => {
   byId<HTMLButtonElement>("btn-up").addEventListener("click", () => start(true));
   byId<HTMLButtonElement>("btn-up-nobuild").addEventListener("click", () => start(false));
   byId<HTMLButtonElement>("btn-down").addEventListener("click", () => stop());
   byId<HTMLButtonElement>("btn-refresh").addEventListener("click", () => refresh());
-  byId<HTMLButtonElement>("btn-open-ui").addEventListener("click", () => open(UI_URL));
-  byId<HTMLButtonElement>("btn-updates").addEventListener("click", () => open(RELEASES_URL));
+  byId<HTMLButtonElement>("btn-open-ui").addEventListener("click", () => openUrl(UI_URL));
+  byId<HTMLButtonElement>("btn-updates").addEventListener("click", () => checkUpdates());
 
   void refresh();
 });

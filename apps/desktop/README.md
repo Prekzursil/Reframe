@@ -6,8 +6,12 @@ This is an **early** desktop wrapper for Reframe using **Tauri**.
 
 - Provides Start/Stop buttons for the local `infra/docker-compose.yml` stack.
 - Opens the Reframe UI at `http://localhost:5173` (via Docker Compose `web` service).
-- “Check updates” opens the GitHub Releases page (manual update flow for now).
+- “Check updates” uses the Tauri updater (and falls back to opening GitHub Releases if misconfigured).
 - Designed to be **offline-first** (no paid APIs required).
+
+## Auto-updates
+
+See `apps/desktop/UPDATER.md`.
 
 ## Prerequisites
 
