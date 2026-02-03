@@ -156,17 +156,19 @@ def test_end_to_end_video_to_tiktok_style_rendered_job(test_client, tmp_path: Pa
 
     captions = client.post(
         "/api/v1/captions/jobs",
-        json={"video_asset_id": video["id"], "options": {"formats": ["srt"]}},
+        json={"video_asset_id": video["id"], "options": {"formats": ["vtt"]}},
     )
     assert captions.status_code == 201, captions.text
     captions_job = captions.json()
-    worker.generate_captions(captions_job["id"], video["id"], {"formats": ["srt"]})
+    worker.generate_captions(captions_job["id"], video["id"], {"formats": ["vtt"]})
 
     captions_done = client.get(f"/api/v1/jobs/{captions_job['id']}").json()
     subtitle_id = captions_done["output_asset_id"]
     assert subtitle_id
+    subtitle_asset = client.get(f"/api/v1/assets/{subtitle_id}").json()
+    assert subtitle_asset["uri"].endswith(".vtt")
 
-    style = {"font": "Inter", "text_color": "#ffffff"}
+    style = {"font": "Inter", "text_color": "#ffffff", "highlight_color": "#facc15"}
     styled = client.post(
         "/api/v1/subtitles/style",
         json={"video_asset_id": video["id"], "subtitle_asset_id": subtitle_id, "style": style, "preview_seconds": 2},

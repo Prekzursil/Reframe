@@ -33,7 +33,8 @@ from app.models import Job, JobStatus, MediaAsset
 from celery import Celery
 
 from media_core.segment.shorts import equal_splits, select_top
-from media_core.subtitles.builder import GroupingConfig, group_words, to_ass, to_srt, to_vtt
+from media_core.subtitles.builder import GroupingConfig, group_words, to_ass, to_ass_karaoke, to_srt, to_vtt
+from media_core.subtitles.vtt import parse_vtt
 from media_core.transcribe import (
     TranscriptionBackend,
     TranscriptionConfig,
@@ -43,7 +44,7 @@ from media_core.transcribe import (
     transcribe_whisper_cpp,
     transcribe_whisper_timestamped,
 )
-from media_core.translate.srt import translate_srt, translate_srt_bilingual
+from media_core.translate.srt import parse_srt, translate_srt, translate_srt_bilingual
 from media_core.translate.translator import LocalTranslator, NoOpTranslator
 from media_core.video_edit.ffmpeg import cut_clip, merge_video_audio as ffmpeg_merge_video_audio, probe_media
 
@@ -418,8 +419,17 @@ def translate_subtitles(self, job_id: str, subtitle_asset_id: str, options: dict
         translator = NoOpTranslator()
 
     text = src_path.read_text(encoding="utf-8", errors="replace")
-    if src_path.suffix.lower() != ".srt":
-        error = f"Only .srt subtitles are supported for translation currently (got {src_path.suffix or 'no extension'})."
+    src_suffix = src_path.suffix.lower()
+    if src_suffix == ".vtt":
+        try:
+            text = to_srt(parse_vtt(text))
+        except Exception as exc:
+            error = f"Failed to parse VTT subtitles: {exc}"
+            update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+            _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
+            return {"subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+    elif src_suffix != ".srt":
+        error = f"Only .srt/.vtt subtitles are supported for translation currently (got {src_path.suffix or 'no extension'})."
         update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
         _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
         return {"subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
@@ -435,7 +445,7 @@ def translate_subtitles(self, job_id: str, subtitle_asset_id: str, options: dict
         _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
         return {"subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
 
-    asset = create_asset(kind="subtitle", mime_type=src_asset.mime_type or "text/srt", suffix=".srt", contents=translated)
+    asset = create_asset(kind="subtitle", mime_type="text/srt", suffix=".srt", contents=translated)
     result = {
         "subtitle_asset_id": subtitle_asset_id,
         "status": "translated",
@@ -478,11 +488,29 @@ def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_ass
         _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
         return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
 
-    if subtitle_path.suffix.lower() not in {".srt", ".ass"}:
-        error = f"Only .srt/.ass subtitles are supported for styled render currently (got {subtitle_path.suffix or 'no extension'})."
+    subtitle_suffix = subtitle_path.suffix.lower()
+    if subtitle_suffix not in {".srt", ".vtt", ".ass"}:
+        error = (
+            "Only .srt/.vtt/.ass subtitles are supported for styled render currently "
+            f"(got {subtitle_path.suffix or 'no extension'})."
+        )
         update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
         _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
         return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+
+    subtitle_render_path = subtitle_path
+    if subtitle_suffix in {".srt", ".vtt"}:
+        try:
+            subtitle_text = subtitle_path.read_text(encoding="utf-8", errors="replace")
+            subtitle_lines = parse_srt(subtitle_text) if subtitle_suffix == ".srt" else parse_vtt(subtitle_text)
+            karaoke_ass = to_ass_karaoke(subtitle_lines)
+            subtitle_render_path = new_tmp_file(".ass")
+            subtitle_render_path.write_text(karaoke_ass, encoding="utf-8")
+        except Exception as exc:
+            error = f"Failed to convert subtitles for styled render: {exc}"
+            update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+            _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
+            return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
 
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
@@ -513,6 +541,7 @@ def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_ass
     shadow_strength = max(0, shadow_offset if shadow_enabled else 0)
 
     text_color = _hex_to_ass_color(style_dict.get("text_color"), default="&H00FFFFFF")
+    highlight_color = _hex_to_ass_color(style_dict.get("highlight_color"), default="&H0000FFFF")
     outline_color = _hex_to_ass_color(style_dict.get("outline_color"), default="&H00000000")
 
     position = str(style_dict.get("position") or "bottom").strip().lower()
@@ -528,6 +557,7 @@ def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_ass
             f"Fontname={font}",
             f"Fontsize={font_size}",
             f"PrimaryColour={text_color}",
+            f"SecondaryColour={highlight_color}",
             f"OutlineColour={outline_color}",
             "BorderStyle=1",
             f"Outline={outline_width}",
@@ -535,7 +565,7 @@ def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_ass
             f"Alignment={alignment}",
         ]
     )
-    vf = f"subtitles={subtitle_path}:force_style={force_style}"
+    vf = f"subtitles={subtitle_render_path}:force_style={force_style}"
 
     output_path = new_tmp_file(".mp4")
     cmd = [ffmpeg, "-y", "-v", "error", "-i", str(video_path)]
