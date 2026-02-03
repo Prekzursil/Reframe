@@ -301,13 +301,13 @@
 - [x] Docker-compose: share/mount `MEDIA_ROOT` volume between API + worker so generated assets are downloadable.
 - [x] Document `Dockerfile.allinone` usage + required env vars in README.
 - [ ] Tauri/Electron:
-  - [ ] Decide wrapper (Tauri recommended for performance).
+  - [x] Decide wrapper (Tauri recommended for performance).
   - [ ] Wire Tauri to run API/worker as child processes or rely on local Docker.
   - [ ] Integrate update mechanism (optional later).
-- [ ] Provide example configs for:
-  - [ ] Local dev (no GPU),
-  - [ ] Local GPU workstation,
-  - [ ] Small server deployment.
+- [x] Provide example configs for:
+  - [x] Local dev (no GPU),
+  - [x] Local GPU workstation,
+  - [x] Small server deployment.
 
 ---
 
