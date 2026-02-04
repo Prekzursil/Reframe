@@ -389,4 +389,28 @@
 - [x] CI: install `ffmpeg` in GitHub Actions (Python job) so worker integration tests can exercise real processing paths.
 - [x] Add a tiny generated sample video/audio fixture (generated at test time or via script; avoid large binaries).
 
+---
+
+## 22. Next Level (Beta polish + creator workflow)
+
+### Local-first UX (no paid APIs)
+- [ ] Add a “System status / Dependencies” panel in the web UI (ffmpeg present, whisper backend availability, model cache locations).
+- [ ] Add scripts to download/manage local models in a predictable cache dir (whisper.cpp + faster-whisper) and document disk sizes.
+- [ ] Add scripts to download/manage Argos Translate language packs and document supported language pairs.
+
+### Creator workflow (quality + control)
+- [ ] Add transcript viewer with search + click-to-seek timestamps (no re-run required).
+- [ ] Add a shorts “segment editor” (adjust start/end, reorder, re-cut selected clips without re-scoring).
+- [ ] Add per-clip subtitle style overrides + a “batch apply style” action.
+
+### Reliability & safety
+- [ ] Add upload limits (max bytes) + content-type validation for `/assets/upload`.
+- [ ] Add a “delete asset/job” flow + retention policy for `MEDIA_ROOT/tmp`.
+- [ ] Add job retries with backoff for transient ffmpeg failures (and surface retry attempts in the UI).
+
+### Desktop readiness
+- [ ] Desktop: add an in-app “Diagnostics” screen (shows backend URLs, ffmpeg detected, worker connectivity, storage backend).
+
+### Optional diarization improvements (free/offline)
+- [ ] Add an optional SpeechBrain diarization backend (no HF token) as a fallback when pyannote models are unavailable.
 
