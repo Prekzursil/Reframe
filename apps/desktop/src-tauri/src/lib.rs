@@ -85,7 +85,9 @@ fn run_compose(args: &[&str]) -> Result<String, String> {
 
 #[tauri::command]
 fn docker_version() -> Result<String, String> {
-    run_checked(Command::new("docker").arg("--version"))
+    let mut cmd = Command::new("docker");
+    cmd.arg("--version");
+    run_checked(cmd)
 }
 
 #[tauri::command]
