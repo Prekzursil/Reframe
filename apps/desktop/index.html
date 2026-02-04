@@ -47,6 +47,44 @@
       </section>
 
       <section class="card">
+        <h2>Diagnostics</h2>
+        <p class="muted">
+          Reads live status from the local API (when the stack is running).
+        </p>
+        <div class="grid">
+          <div class="field">
+            <div class="label">UI URL</div>
+            <code id="ui-url" class="mono">http://localhost:5173</code>
+          </div>
+          <div class="field">
+            <div class="label">API URL</div>
+            <code id="api-url" class="mono">http://localhost:8000/api/v1</code>
+          </div>
+          <div class="field">
+            <div class="label">Offline mode</div>
+            <code id="offline-mode" class="mono">unknown</code>
+          </div>
+          <div class="field">
+            <div class="label">Storage backend</div>
+            <code id="storage-backend" class="mono">unknown</code>
+          </div>
+          <div class="field">
+            <div class="label">Worker ping</div>
+            <code id="worker-ping" class="mono">unknown</code>
+          </div>
+          <div class="field">
+            <div class="label">ffmpeg</div>
+            <code id="ffmpeg" class="mono">unknown</code>
+          </div>
+        </div>
+
+        <details>
+          <summary class="muted">Raw system status</summary>
+          <pre id="system-status" class="status">Not loaded.</pre>
+        </details>
+      </section>
+
+      <section class="card">
         <h2>Output</h2>
         <pre id="log" class="log muted">Ready.</pre>
       </section>

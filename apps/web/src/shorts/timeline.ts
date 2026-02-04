@@ -1,11 +1,17 @@
 export type ShortsClip = {
   id: string;
+  asset_id?: string | null;
   start?: number | null;
   end?: number | null;
   duration?: number | null;
   score?: number | null;
   uri?: string | null;
+  styled_asset_id?: string | null;
+  styled_uri?: string | null;
+  style_preset?: string | null;
+  subtitle_asset_id?: string | null;
   subtitle_uri?: string | null;
+  thumbnail_asset_id?: string | null;
   thumbnail_uri?: string | null;
   reel_name?: string | null;
 };

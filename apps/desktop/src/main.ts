@@ -4,6 +4,8 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 
 const UI_URL = "http://localhost:5173";
+const API_URL = "http://localhost:8000/api/v1";
+const SYSTEM_STATUS_URL = `${API_URL}/system/status`;
 const RELEASES_URL = "https://github.com/Prekzursil/Reframe/releases";
 
 function byId<T extends HTMLElement>(id: string): T {
@@ -22,6 +24,42 @@ function appendLog(text: string) {
 
 function setStatus(text: string) {
   byId<HTMLPreElement>("status").textContent = text;
+}
+
+function setText(id: string, text: string) {
+  byId<HTMLElement>(id).textContent = text;
+}
+
+async function refreshDiagnostics() {
+  setText("ui-url", UI_URL);
+  setText("api-url", API_URL);
+
+  try {
+    const resp = await fetch(SYSTEM_STATUS_URL, { headers: { Accept: "application/json" } });
+    if (!resp.ok) {
+      throw new Error(`API returned ${resp.status}`);
+    }
+    const data = (await resp.json()) as any;
+    const worker = data?.worker ?? {};
+    const systemInfo = worker?.system_info ?? {};
+    const ffmpeg = systemInfo?.ffmpeg ?? {};
+
+    setText("offline-mode", data?.offline_mode ? "true" : "false");
+    setText("storage-backend", String(data?.storage_backend ?? "unknown"));
+    setText("worker-ping", worker?.ping_ok ? "ok" : "no response");
+    setText(
+      "ffmpeg",
+      ffmpeg?.present ? `ok${ffmpeg?.version ? ` (${ffmpeg.version})` : ""}` : "missing",
+    );
+    setText("system-status", JSON.stringify(data, null, 2));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    setText("offline-mode", "unknown");
+    setText("storage-backend", "unknown");
+    setText("worker-ping", "unknown");
+    setText("ffmpeg", "unknown");
+    setText("system-status", `Diagnostics unavailable.\n\n${msg}`);
+  }
 }
 
 async function refresh() {
@@ -47,6 +85,8 @@ async function refresh() {
   } catch (err) {
     setStatus(err instanceof Error ? err.message : String(err));
   }
+
+  await refreshDiagnostics();
 }
 
 async function start(build: boolean) {

@@ -406,7 +406,9 @@
 ### Creator workflow (quality + control)
 - [x] Add transcript viewer with search + click-to-seek timestamps (no re-run required).
 - [x] Add a shorts “segment editor” (adjust start/end, reorder, re-cut selected clips without re-scoring).
-- [ ] Add per-clip subtitle style overrides + a “batch apply style” action.
+- [x] Add per-clip subtitle style overrides + a “batch apply style” action.
+- [ ] Shorts: generate real per-clip captions by slicing a timed captions asset (SRT/VTT) and shifting to clip time.
+- [ ] Shorts: optionally auto-render/burn-in subtitles per clip when `use_subtitles=true` (uses chosen preset; stores styled clip URIs in the manifest).
 
 ### Reliability & safety
 - [x] Add upload limits (max bytes) + content-type validation for `/assets/upload`.
@@ -414,7 +416,7 @@
 - [x] Add job retries with backoff for transient ffmpeg failures (and surface retry attempts in the UI).
 
 ### Desktop readiness
-- [ ] Desktop: add an in-app “Diagnostics” screen (shows backend URLs, ffmpeg detected, worker connectivity, storage backend).
+- [x] Desktop: add an in-app “Diagnostics” screen (shows backend URLs, ffmpeg detected, worker connectivity, storage backend).
 
 ### Optional diarization improvements (free/offline)
 - [ ] Add an optional SpeechBrain diarization backend (no HF token) as a fallback when pyannote models are unavailable.

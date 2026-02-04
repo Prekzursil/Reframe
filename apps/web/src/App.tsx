@@ -18,10 +18,58 @@ const NAV_ITEMS = [
   { id: "system", label: "System" },
 ];
 
-const PRESETS = [
-  { name: "TikTok Bold", accent: "var(--accent-coral)", desc: "High contrast with warm highlight" },
-  { name: "Clean Slate", accent: "var(--accent-mint)", desc: "Minimalist white/gray with subtle shadow" },
-  { name: "Night Runner", accent: "var(--accent-blue)", desc: "Dark base with electric cyan highlight" },
+const PRESETS: { name: string; accent: string; desc: string; style: Record<string, unknown> }[] = [
+  {
+    name: "TikTok Bold",
+    accent: "var(--accent-coral)",
+    desc: "High contrast with warm highlight",
+    style: {
+      font: "Inter",
+      font_size: 48,
+      text_color: "#ffffff",
+      highlight_color: "#facc15",
+      stroke_width: 3,
+      outline_enabled: true,
+      outline_color: "#000000",
+      shadow_enabled: true,
+      shadow_offset: 4,
+      position: "bottom",
+    },
+  },
+  {
+    name: "Clean Slate",
+    accent: "var(--accent-mint)",
+    desc: "Minimalist white/gray with subtle shadow",
+    style: {
+      font: "Inter",
+      font_size: 44,
+      text_color: "#f9fafb",
+      highlight_color: "#34d399",
+      stroke_width: 2,
+      outline_enabled: false,
+      outline_color: "#000000",
+      shadow_enabled: true,
+      shadow_offset: 3,
+      position: "bottom",
+    },
+  },
+  {
+    name: "Night Runner",
+    accent: "var(--accent-blue)",
+    desc: "Dark base with electric cyan highlight",
+    style: {
+      font: "Space Grotesk",
+      font_size: 46,
+      text_color: "#e5e7eb",
+      highlight_color: "#22d3ee",
+      stroke_width: 3,
+      outline_enabled: true,
+      outline_color: "#111827",
+      shadow_enabled: true,
+      shadow_offset: 4,
+      position: "bottom",
+    },
+  },
 ];
 
 const OUTPUT_FORMATS = ["srt", "vtt", "ass"];
@@ -1306,19 +1354,23 @@ function StyleEditor({
   const [subtitleAssetId, setSubtitleAssetId] = useState<string>("");
   const [subtitlePreview, setSubtitlePreview] = useState<string | null>(null);
   const [subtitleFileName, setSubtitleFileName] = useState<string | null>(null);
-  const [captionJob, setCaptionJob] = useState<Job | null>(null);
+			  const [captionJob, setCaptionJob] = useState<Job | null>(null);
   const [captionOutput, setCaptionOutput] = useState<MediaAsset | null>(null);
   const [translateJob, setTranslateJob] = useState<Job | null>(null);
   const [translateOutput, setTranslateOutput] = useState<MediaAsset | null>(null);
-			const [shortsClips, setShortsClips] = useState<
-		    ShortsClip[]
-		  >([]);
-	    const [editingClipId, setEditingClipId] = useState<string | null>(null);
-	    const [recutClipId, setRecutClipId] = useState<string | null>(null);
-	    const [shortsEditError, setShortsEditError] = useState<string | null>(null);
-	    const [timelineFps, setTimelineFps] = useState(30);
-	    const [timelineIncludeAudio, setTimelineIncludeAudio] = useState(false);
-	    const [timelinePerClipReel, setTimelinePerClipReel] = useState(false);
+				const [shortsClips, setShortsClips] = useState<
+			    ShortsClip[]
+			  >([]);
+		    const [editingClipId, setEditingClipId] = useState<string | null>(null);
+		    const [recutClipId, setRecutClipId] = useState<string | null>(null);
+        const [styleClipId, setStyleClipId] = useState<string | null>(null);
+		    const [shortsEditError, setShortsEditError] = useState<string | null>(null);
+        const [shortsStyleError, setShortsStyleError] = useState<string | null>(null);
+        const [shortsStylePresetAll, setShortsStylePresetAll] = useState(PRESETS[0]?.name ?? "TikTok Bold");
+        const [shortsStyleAllBusy, setShortsStyleAllBusy] = useState(false);
+		    const [timelineFps, setTimelineFps] = useState(30);
+		    const [timelineIncludeAudio, setTimelineIncludeAudio] = useState(false);
+		    const [timelinePerClipReel, setTimelinePerClipReel] = useState(false);
   const [shortsJob, setShortsJob] = useState<Job | null>(null);
   const [shortsStatusPolling, setShortsStatusPolling] = useState(false);
   const [subtitleToolsJob, setSubtitleToolsJob] = useState<Job | null>(null);
@@ -1502,28 +1554,51 @@ function StyleEditor({
     return setInterval(async () => {
       try {
         const refreshed = await apiClient.getJob(job.id);
-        onUpdate(refreshed);
-        if (job.job_type === "shorts" && refreshed.payload && "clip_assets" in (refreshed.payload as any)) {
-          const resolveUri = (value: unknown): string | null => {
-            if (!value || typeof value !== "string") return null;
-            return apiClient.mediaUrl(value);
-          };
-	          const clips = ((refreshed.payload as any).clip_assets as any[]).map((c, i) => ({
-	            id: c.id || `${refreshed.id}-clip-${i + 1}`,
-              start: c.start ?? null,
-              end: c.end ?? null,
-	            duration: c.duration ?? null,
-	            score: c.score ?? null,
-	            uri: resolveUri(c.uri ?? c.url),
-	            subtitle_uri: resolveUri(c.subtitle_uri),
-	            thumbnail_uri: resolveUri(c.thumbnail_uri),
-	          }));
-	          setShortsClips(clips.filter(Boolean));
-	        }
-        if (onAsset && refreshed.output_asset_id) {
-          try {
-            const asset = await apiClient.getAsset(refreshed.output_asset_id);
-            onAsset(asset);
+	        onUpdate(refreshed);
+	        if (job.job_type === "shorts" && refreshed.payload && "clip_assets" in (refreshed.payload as any)) {
+	          const resolveUri = (value: unknown): string | null => {
+	            if (!value || typeof value !== "string") return null;
+	            return apiClient.mediaUrl(value);
+	          };
+            const defaultStylePreset =
+              typeof (refreshed.payload as any).style_preset === "string" && (refreshed.payload as any).style_preset.trim()
+                ? (refreshed.payload as any).style_preset.trim()
+                : (PRESETS[0]?.name ?? "TikTok Bold");
+
+		          const clips = ((refreshed.payload as any).clip_assets as any[]).map((c, i) => ({
+		            id: c.id || `${refreshed.id}-clip-${i + 1}`,
+                asset_id: c.asset_id ?? null,
+                subtitle_asset_id: c.subtitle_asset_id ?? null,
+                thumbnail_asset_id: c.thumbnail_asset_id ?? null,
+                style_preset:
+                  typeof c.style_preset === "string" && c.style_preset.trim() ? c.style_preset.trim() : defaultStylePreset,
+	              start: c.start ?? null,
+	              end: c.end ?? null,
+		            duration: c.duration ?? null,
+		            score: c.score ?? null,
+		            uri: resolveUri(c.uri ?? c.url),
+		            subtitle_uri: resolveUri(c.subtitle_uri),
+		            thumbnail_uri: resolveUri(c.thumbnail_uri),
+		          }));
+		          setShortsClips((prev) => {
+                const byId = new Map(prev.map((clip) => [clip.id, clip]));
+                return clips
+                  .filter(Boolean)
+                  .map((clip) => {
+                    const existing = byId.get(clip.id);
+                    return {
+                      ...clip,
+                      styled_asset_id: existing?.styled_asset_id ?? null,
+                      styled_uri: existing?.styled_uri ?? null,
+                      style_preset: existing?.style_preset ?? clip.style_preset ?? defaultStylePreset,
+                    };
+                  });
+              });
+		        }
+	        if (onAsset && refreshed.output_asset_id) {
+	          try {
+	            const asset = await apiClient.getAsset(refreshed.output_asset_id);
+	            onAsset(asset);
           } catch {
             onAsset(null);
           }
@@ -1719,11 +1794,11 @@ function StyleEditor({
 		    });
 		  };
 
-		  const recutShortsClip = async (clip: ShortsClip) => {
-		    setShortsEditError(null);
-		    if (!uploadedVideoId) {
-		      setShortsEditError("Upload a source video first.");
-		      return;
+			  const recutShortsClip = async (clip: ShortsClip) => {
+			    setShortsEditError(null);
+			    if (!uploadedVideoId) {
+			      setShortsEditError("Upload a source video first.");
+			      return;
 		    }
 		    const start = Number(clip.start ?? 0);
 		    const end = Number(clip.end ?? start);
@@ -1739,29 +1814,116 @@ function StyleEditor({
 		      if (!asset?.uri) throw new Error("Cut-clip job did not produce an output asset.");
 		      const payload = (finished.payload || {}) as any;
 
-		      setShortsClips((prev) =>
-		        prev.map((c) =>
-		          c.id === clip.id
-		            ? {
-		                ...c,
-		                uri: asset.uri,
-		                thumbnail_uri: payload.thumbnail_uri ?? c.thumbnail_uri,
-		                duration: payload.duration ?? Math.max(0, end - start),
-		              }
-		            : c,
-		        ),
-		      );
+			      setShortsClips((prev) =>
+			        prev.map((c) =>
+			          c.id === clip.id
+			            ? {
+			                ...c,
+                      asset_id: asset.id,
+			                uri: asset.uri,
+                      styled_asset_id: null,
+                      styled_uri: null,
+                      thumbnail_asset_id: payload.thumbnail_asset_id ?? c.thumbnail_asset_id ?? null,
+			                thumbnail_uri: payload.thumbnail_uri ?? c.thumbnail_uri,
+			                duration: payload.duration ?? Math.max(0, end - start),
+			              }
+			            : c,
+			        ),
+			      );
 		      refresh();
 		    } catch (err) {
 		      setShortsEditError(err instanceof Error ? err.message : "Failed to re-cut clip");
-		    } finally {
-		      setRecutClipId(null);
-		    }
-		  };
+			    } finally {
+			      setRecutClipId(null);
+			    }
+			  };
 
-	  return (
-	    <div className="layout">
-      <aside className="sidebar">
+        const resolveStylePreset = (name: string | null | undefined) => {
+          const presetName = String(name || "").trim();
+          const preset = PRESETS.find((p) => p.name === presetName) ?? PRESETS[0];
+          return { name: preset?.name ?? "TikTok Bold", style: (preset?.style ?? {}) as Record<string, unknown> };
+        };
+
+        const applyShortsStylePresetToAll = () => {
+          setShortsClips((prev) => prev.map((c) => ({ ...c, style_preset: shortsStylePresetAll })));
+        };
+
+        const renderStyledSubtitlesForClip = async (clip: ShortsClip, previewSeconds?: number) => {
+          setShortsStyleError(null);
+          if (shortsJob && shortsJob.status !== "completed") {
+            setShortsStyleError("Wait for the shorts job to finish before rendering styled subtitles.");
+            return;
+          }
+          if (!clip.asset_id) {
+            setShortsStyleError("Missing clip asset id (asset_id). Re-run the shorts job.");
+            return;
+          }
+          if (!clip.subtitle_asset_id) {
+            setShortsStyleError("This clip has no subtitle asset. Enable “Use subtitles” when generating shorts.");
+            return;
+          }
+
+          const { style } = resolveStylePreset(clip.style_preset || shortsStylePresetAll);
+
+          setStyleClipId(clip.id);
+          try {
+            const job = await apiClient.createStyledSubtitleJob({
+              video_asset_id: clip.asset_id,
+              subtitle_asset_id: clip.subtitle_asset_id,
+              style,
+              ...(previewSeconds ? { preview_seconds: previewSeconds } : {}),
+            });
+            refresh();
+            const { job: finished, asset } = await waitForJobAsset(job.id);
+            if (finished.status !== "completed") {
+              throw new Error(finished.error || "Subtitle render failed");
+            }
+            if (!asset?.uri) {
+              throw new Error("Subtitle render did not produce an output asset.");
+            }
+
+            setShortsClips((prev) =>
+              prev.map((c) =>
+                c.id === clip.id
+                  ? {
+                      ...c,
+                      styled_asset_id: asset.id,
+                      styled_uri: asset.uri,
+                    }
+                  : c,
+              ),
+            );
+          } catch (err) {
+            setShortsStyleError(err instanceof Error ? err.message : "Failed to render styled subtitles");
+          } finally {
+            setStyleClipId(null);
+          }
+        };
+
+        const renderStyledSubtitlesForAllClips = async () => {
+          setShortsStyleError(null);
+          if (!shortsClips.length) return;
+          if (shortsJob && shortsJob.status !== "completed") {
+            setShortsStyleError("Wait for the shorts job to finish before rendering styled subtitles.");
+            return;
+          }
+
+          setShortsStyleAllBusy(true);
+          try {
+            const clips = [...shortsClips];
+            for (const clip of clips) {
+              if (!clip.subtitle_asset_id) continue;
+              await renderStyledSubtitlesForClip(clip);
+            }
+          } finally {
+            setShortsStyleAllBusy(false);
+            setStyleClipId(null);
+          }
+        };
+
+		  return (
+		    <div className="layout">
+	      <aside className="sidebar">
         <div className="brand">
           <span className="dot" />
           <div>
@@ -2022,42 +2184,113 @@ function StyleEditor({
 	                <p className="muted">Create a shorts job to view progress.</p>
 	              )}
 	            </Card>
-          <Card title="Results">
-            {shortsClips.length === 0 && (
-              <p className="muted">
-                {shortsJob && ["running", "queued"].includes(shortsJob.status)
-                  ? "Waiting for clips from backend..."
-                  : "No clips yet."}
-              </p>
-            )}
-	            <div className="clip-grid">
-	              {shortsClips.map((clip, idx) => (
-	                <div key={clip.id} className="clip-card">
-	                  <div className="clip-thumb">
+	          <Card title="Results">
+	            {shortsClips.length === 0 && (
+	              <p className="muted">
+	                {shortsJob && ["running", "queued"].includes(shortsJob.status)
+	                  ? "Waiting for clips from backend..."
+	                  : "No clips yet."}
+	              </p>
+	            )}
+              {shortsStyleError && <div className="error-inline">{shortsStyleError}</div>}
+              {shortsClips.length > 0 && (
+                <div className="actions-row">
+                  <label className="field" style={{ margin: 0, minWidth: 220 }}>
+                    <span className="muted">Style preset (batch)</span>
+                    <select className="input" value={shortsStylePresetAll} onChange={(e) => setShortsStylePresetAll(e.target.value)}>
+                      {PRESETS.map((p) => (
+                        <option key={p.name}>{p.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <Button type="button" variant="ghost" onClick={applyShortsStylePresetToAll} disabled={shortsStyleAllBusy || styleClipId !== null}>
+                    Apply to all
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => void renderStyledSubtitlesForAllClips()}
+                    disabled={shortsStyleAllBusy || styleClipId !== null || shortsClips.every((c) => !c.subtitle_asset_id)}
+                    title={shortsClips.some((c) => !c.subtitle_asset_id) ? "Some clips have no subtitle asset to render." : undefined}
+                  >
+                    {shortsStyleAllBusy ? "Rendering…" : "Render styled (all clips)"}
+                  </Button>
+                </div>
+              )}
+		            <div className="clip-grid">
+		              {shortsClips.map((clip, idx) => (
+		                <div key={clip.id} className="clip-card">
+		                  <div className="clip-thumb">
 	                    {clip.thumbnail_uri ? <img src={apiClient.mediaUrl(clip.thumbnail_uri)} alt="Clip thumbnail" /> : <div className="placeholder-thumb" />}
 	                  </div>
 	                  <p className="metric-value">{clip.duration ? `${clip.duration}s` : "?"}</p>
 	                  <p className="muted">Score: {clip.score ?? "?"}</p>
-	                  {clip.start != null && clip.end != null && (
-	                    <p className="muted">
-	                      Time: {formatCueTime(Number(clip.start))}–{formatCueTime(Number(clip.end))}
-	                    </p>
-	                  )}
-	                  <div className="actions-row">
-	                    <Button variant="secondary" disabled={!clip.uri} onClick={() => clip.uri && window.open(apiClient.mediaUrl(clip.uri), "_blank")}>
-	                      {clip.uri ? "Download video" : "Video not ready"}
-	                    </Button>
-	                    <Button variant="ghost" disabled={!clip.subtitle_uri} onClick={() => clip.subtitle_uri && window.open(apiClient.mediaUrl(clip.subtitle_uri), "_blank")}>
-	                      {clip.subtitle_uri ? "Download subs" : "Subs not ready"}
-	                    </Button>
-	                    <Button variant="ghost" onClick={() => setShortsClips((prev) => prev.filter((c) => c.id !== clip.id))}>
-	                      Remove
-	                    </Button>
-	                  </div>
-	                  <div className="actions-row">
-	                    <Button type="button" variant="ghost" disabled={idx === 0} onClick={() => moveShortsClip(clip.id, -1)}>
-	                      Up
-	                    </Button>
+		                  {clip.start != null && clip.end != null && (
+		                    <p className="muted">
+		                      Time: {formatCueTime(Number(clip.start))}–{formatCueTime(Number(clip.end))}
+		                    </p>
+		                  )}
+                      {clip.subtitle_asset_id && (
+                        <label className="field">
+                          <span className="muted">Subtitle style</span>
+                          <select
+                            className="input"
+                            value={clip.style_preset ?? shortsStylePresetAll}
+                            onChange={(e) => {
+                              const next = e.target.value;
+                              setShortsClips((prev) => prev.map((c) => (c.id === clip.id ? { ...c, style_preset: next } : c)));
+                            }}
+                          >
+                            {PRESETS.map((p) => (
+                              <option key={p.name}>{p.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+		                  <div className="actions-row">
+		                    <Button variant="secondary" disabled={!clip.uri} onClick={() => clip.uri && window.open(apiClient.mediaUrl(clip.uri), "_blank")}>
+		                      {clip.uri ? (clip.styled_uri ? "Download raw" : "Download video") : "Video not ready"}
+		                    </Button>
+                        <Button
+                          variant="ghost"
+                          disabled={!clip.styled_uri}
+                          onClick={() => clip.styled_uri && window.open(apiClient.mediaUrl(clip.styled_uri), "_blank")}
+                        >
+                          {clip.styled_uri ? "Download styled" : "No styled render"}
+                        </Button>
+		                    <Button variant="ghost" disabled={!clip.subtitle_uri} onClick={() => clip.subtitle_uri && window.open(apiClient.mediaUrl(clip.subtitle_uri), "_blank")}>
+		                      {clip.subtitle_uri ? "Download subs" : "Subs not ready"}
+		                    </Button>
+		                    <Button variant="ghost" onClick={() => setShortsClips((prev) => prev.filter((c) => c.id !== clip.id))}>
+		                      Remove
+		                    </Button>
+		                  </div>
+                      {clip.subtitle_asset_id && (
+                        <div className="actions-row">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            disabled={shortsStyleAllBusy || styleClipId !== null}
+                            onClick={() => void renderStyledSubtitlesForClip(clip, 5)}
+                            title="Render a quick preview (5 seconds)."
+                          >
+                            {styleClipId === clip.id ? "Rendering…" : "Preview 5s"}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            disabled={shortsStyleAllBusy || styleClipId !== null}
+                            onClick={() => void renderStyledSubtitlesForClip(clip)}
+                            title="Render the full clip with burnt-in subtitles."
+                          >
+                            {styleClipId === clip.id ? "Rendering…" : "Render styled"}
+                          </Button>
+                        </div>
+                      )}
+		                  <div className="actions-row">
+		                    <Button type="button" variant="ghost" disabled={idx === 0} onClick={() => moveShortsClip(clip.id, -1)}>
+		                      Up
+		                    </Button>
 	                    <Button
 	                      type="button"
 	                      variant="ghost"
