@@ -76,6 +76,13 @@ HF_TOKEN=... scripts/benchmark_diarization.py /path/to/video-or-audio.mp4 --back
 scripts/benchmark_diarization.py /path/to/video-or-audio.mp4 --backend speechbrain --warmup --runs 1 --format md
 ```
 
+If you don’t want to install Torch/pyannote locally, you can run the benchmark inside the Docker Compose worker container:
+
+```bash
+HF_TOKEN=... bash scripts/benchmark_diarization_docker.sh /path/to/video-or-audio.mp4 --backend pyannote --warmup --runs 1 --format md
+bash scripts/benchmark_diarization_docker.sh /path/to/video-or-audio.mp4 --backend speechbrain --warmup --runs 1 --format md
+```
+
 Notes:
 - This is expected to be **heavy** (Torch + model downloads). Run it on the target machine you plan to deploy on.
 - `REFRAME_OFFLINE_MODE=true` is intended to disable network-backed providers; for pyannote benchmarks you’ll need network access for model download.

@@ -343,6 +343,7 @@
     - [x] Add a small benchmark script (`scripts/benchmark_diarization.py`) to run diarization on a sample and print timing + peak RSS.
     - [x] Benchmark script: support `--format md` output for easy doc pasting.
     - [x] Benchmark script: fail fast with a clear error when `HF_TOKEN` is missing for pyannote.
+    - [x] Benchmark script: add a Docker helper (`scripts/benchmark_diarization_docker.sh`) to avoid local Torch installs.
     - [ ] Run benchmarks (CPU + GPU if available) and paste results into docs.
 - [x] Smart silence trimming (cut dead air before generating shorts).
   - [x] media-core: add ffmpeg `silencedetect` helper (`detect_silence`).
