@@ -593,6 +593,29 @@ h2, h3 { margin: 0; }
   font-weight: 600;
 }
 
+.cue-table {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.cue-row {
+  display: grid;
+  grid-template-columns: 42px 140px 140px 1fr auto;
+  gap: 10px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.cue-index {
+  padding-top: 24px;
+  text-align: center;
+}
+
 @media (max-width: 900px) {
   .layout {
     grid-template-columns: 1fr;

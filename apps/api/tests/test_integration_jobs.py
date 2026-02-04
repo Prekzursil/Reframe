@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import io
+import json
 import shutil
 import subprocess
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -359,3 +362,51 @@ def test_end_to_end_video_audio_merge_job(test_client, tmp_path: Path):
 
     info = probe_media(merged_path)
     assert info["audio_codecs"], "expected an audio track in merged output"
+
+
+def test_end_to_end_shorts_job_bundle_includes_upload_package_and_clip_files(test_client, tmp_path: Path):
+    client, _enqueued, worker, _media_root = test_client
+
+    video_bytes = _generate_test_video_bytes(tmp_path, duration_seconds=4.0)
+    video = _upload_fake_video(client, content=video_bytes, filename="bundle-shorts.mp4")
+
+    payload = {
+        "video_asset_id": video["id"],
+        "max_clips": 2,
+        "min_duration": 1,
+        "max_duration": 2,
+        "aspect_ratio": "9:16",
+        "options": {"use_subtitles": True, "prompt": "Test upload package"},
+    }
+    resp = client.post("/api/v1/shorts/jobs", json=payload)
+    assert resp.status_code == 201, resp.text
+    job = resp.json()
+
+    worker.generate_shorts(
+        job["id"],
+        video["id"],
+        {"max_clips": 2, "min_duration": 1, "max_duration": 2, "aspect_ratio": "9:16", **payload["options"]},
+    )
+
+    done = client.get(f"/api/v1/jobs/{job['id']}").json()
+    assert done["status"] == "completed"
+
+    bundle = client.get(f"/api/v1/jobs/{job['id']}/bundle")
+    assert bundle.status_code == 200, bundle.text
+    assert bundle.headers.get("content-type", "").startswith("application/zip")
+
+    with zipfile.ZipFile(io.BytesIO(bundle.content)) as zf:
+        names = set(zf.namelist())
+        assert "job.json" in names
+        assert "upload_package.json" in names
+
+        upload = json.loads(zf.read("upload_package.json").decode("utf-8"))
+        assert upload["job_id"] == done["id"]
+        assert len(upload["clips"]) == 2
+
+        # Ensure each clip includes the expected assets.
+        for clip in upload["clips"]:
+            files = clip.get("files") or {}
+            assert files.get("video") in names
+            assert files.get("thumbnail") in names
+            assert files.get("subtitles") in names

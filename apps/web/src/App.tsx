@@ -6,6 +6,7 @@ import { Spinner } from "./components/Spinner";
 import { SettingsModal } from "./components/SettingsModal";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { detectSubtitleFormat, shiftSubtitleTimings } from "./subtitles/shift";
+import { cuesToSubtitles, sortCuesByStart, subtitlesToCues, type SubtitleCue, validateCues } from "./subtitles/cues";
 import { exportShortsTimelineCsv, exportShortsTimelineEdl, type ShortsClip } from "./shorts/timeline";
 
 const NAV_ITEMS = [
@@ -463,6 +464,10 @@ function SubtitleEditorCard({
   const [contents, setContents] = useState("");
   const [original, setOriginal] = useState<string | null>(null);
   const [offsetSeconds, setOffsetSeconds] = useState(0);
+  const [editorMode, setEditorMode] = useState<"raw" | "cues">("raw");
+  const [cues, setCues] = useState<SubtitleCue[]>([]);
+  const [cuesFormat, setCuesFormat] = useState<"srt" | "vtt">("srt");
+  const [cuesError, setCuesError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<MediaAsset | null>(null);
@@ -470,6 +475,18 @@ function SubtitleEditorCard({
   useEffect(() => {
     if (initialAssetId) setAssetId(initialAssetId);
   }, [initialAssetId]);
+
+  const syncCuesFromText = (text: string) => {
+    const parsed = subtitlesToCues(text);
+    setCuesFormat(parsed.format);
+    setCues(parsed.cues);
+    setCuesError(null);
+  };
+
+  const setCuesAndRewriteText = (nextCues: SubtitleCue[]) => {
+    setCues(nextCues);
+    setContents(cuesToSubtitles(cuesFormat, nextCues));
+  };
 
   const loadFromAssetId = async () => {
     const id = assetId.trim();
@@ -486,6 +503,14 @@ function SubtitleEditorCard({
       const text = await resp.text();
       setOriginal(text);
       setContents(text);
+      if (editorMode === "cues") {
+        try {
+          syncCuesFromText(text);
+        } catch (err) {
+          setCuesError(err instanceof Error ? err.message : "Failed to parse cues");
+          setEditorMode("raw");
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load subtitle asset");
     } finally {
@@ -494,11 +519,29 @@ function SubtitleEditorCard({
   };
 
   const applyShift = () => {
-    setContents((prev) => shiftSubtitleTimings(prev, offsetSeconds));
+    const next = shiftSubtitleTimings(contents, offsetSeconds);
+    setContents(next);
+    if (editorMode === "cues") {
+      try {
+        syncCuesFromText(next);
+      } catch (err) {
+        setCuesError(err instanceof Error ? err.message : "Failed to parse cues");
+        setEditorMode("raw");
+      }
+    }
   };
 
   const reset = () => {
-    if (original != null) setContents(original);
+    if (original == null) return;
+    setContents(original);
+    if (editorMode === "cues") {
+      try {
+        syncCuesFromText(original);
+      } catch (err) {
+        setCuesError(err instanceof Error ? err.message : "Failed to parse cues");
+        setEditorMode("raw");
+      }
+    }
   };
 
   const downloadLocal = () => {
@@ -535,6 +578,7 @@ function SubtitleEditorCard({
   };
 
   const fmt = detectSubtitleFormat(contents);
+  const cueWarnings = editorMode === "cues" ? validateCues(cues) : [];
 
   return (
     <div className="form-grid">
@@ -547,6 +591,57 @@ function SubtitleEditorCard({
             {busy ? "Loading..." : "Load"}
           </Button>
         </div>
+      </label>
+      <label className="field">
+        <span>Editor mode</span>
+        <div className="actions-row">
+          <Button type="button" variant={editorMode === "raw" ? "primary" : "secondary"} onClick={() => setEditorMode("raw")}>
+            Raw text
+          </Button>
+          <Button
+            type="button"
+            variant={editorMode === "cues" ? "primary" : "secondary"}
+            onClick={() => {
+              try {
+                syncCuesFromText(contents);
+                setEditorMode("cues");
+              } catch (err) {
+                setCuesError(err instanceof Error ? err.message : "Failed to parse cues");
+                setEditorMode("raw");
+              }
+            }}
+            disabled={!contents.trim()}
+            title="Cue table rewrites the subtitle file and may drop advanced WEBVTT blocks (STYLE/NOTE)."
+          >
+            Cue table
+          </Button>
+          {editorMode === "cues" && (
+            <>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setCuesAndRewriteText(sortCuesByStart(cues))}
+                disabled={cues.length < 2}
+                title="Sort by start time (and rewrite subtitle file)."
+              >
+                Sort cues
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  const last = cues[cues.length - 1];
+                  const start = last ? Math.max(0, Number(last.end) || 0) : 0;
+                  setCuesAndRewriteText([...cues, { start, end: start + 1, text: "" }]);
+                }}
+              >
+                Add cue
+              </Button>
+            </>
+          )}
+        </div>
+        {cuesError && <div className="error-inline">{cuesError}</div>}
+        {editorMode === "cues" && <p className="muted">Cue table mode rewrites the subtitle file; use raw mode for advanced VTT styling.</p>}
       </label>
       <label className="field">
         <span>Shift timings (seconds)</span>
@@ -566,12 +661,90 @@ function SubtitleEditorCard({
           </Button>
         </div>
       </label>
-      <label className="field full">
-        <span>
-          Subtitle contents {fmt ? <span className="muted">({fmt.toUpperCase()})</span> : <span className="muted">(unknown format)</span>}
-        </span>
-        <TextArea rows={14} value={contents} onChange={(e) => setContents(e.target.value)} placeholder="Paste SRT/VTT here…" />
-      </label>
+      {editorMode === "raw" ? (
+        <label className="field full">
+          <span>
+            Subtitle contents {fmt ? <span className="muted">({fmt.toUpperCase()})</span> : <span className="muted">(unknown format)</span>}
+          </span>
+          <TextArea
+            rows={14}
+            value={contents}
+            onChange={(e) => {
+              setContents(e.target.value);
+              setCuesError(null);
+            }}
+            placeholder="Paste SRT/VTT here…"
+          />
+        </label>
+      ) : (
+        <div className="field full">
+          <span className="muted">Cue table ({cuesFormat.toUpperCase()})</span>
+          {cueWarnings.length > 0 && (
+            <div className="output-card">
+              <p className="metric-label">Validation</p>
+              <ul className="muted">
+                {cueWarnings.map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className="cue-table">
+            {cues.length === 0 && <p className="muted">No cues parsed. Switch to raw mode to edit text directly.</p>}
+            {cues.map((cue, idx) => (
+              <div key={`${idx}-${cue.start}-${cue.end}`} className="cue-row">
+                <div className="cue-index muted">{idx + 1}</div>
+                <label className="field" style={{ margin: 0 }}>
+                  <span className="muted">Start</span>
+                  <Input
+                    type="number"
+                    step="0.001"
+                    value={cue.start}
+                    onChange={(e) => {
+                      const next = [...cues];
+                      next[idx] = { ...cue, start: Number(e.target.value) };
+                      setCuesAndRewriteText(next);
+                    }}
+                  />
+                </label>
+                <label className="field" style={{ margin: 0 }}>
+                  <span className="muted">End</span>
+                  <Input
+                    type="number"
+                    step="0.001"
+                    value={cue.end}
+                    onChange={(e) => {
+                      const next = [...cues];
+                      next[idx] = { ...cue, end: Number(e.target.value) };
+                      setCuesAndRewriteText(next);
+                    }}
+                  />
+                </label>
+                <label className="field" style={{ margin: 0 }}>
+                  <span className="muted">Text</span>
+                  <TextArea
+                    rows={2}
+                    value={cue.text}
+                    onChange={(e) => {
+                      const next = [...cues];
+                      next[idx] = { ...cue, text: e.target.value };
+                      setCuesAndRewriteText(next);
+                    }}
+                  />
+                </label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setCuesAndRewriteText(cues.filter((_, i) => i !== idx))}
+                  title="Remove cue"
+                >
+                  Remove
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {error && <div className="error-inline">{error}</div>}
       {saved?.id && (
         <div className="output-card">
@@ -776,6 +949,8 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job) => void }) {
   const [trimSilence, setTrimSilence] = useState(false);
   const [silenceNoiseDb, setSilenceNoiseDb] = useState(-35);
   const [silenceMinDuration, setSilenceMinDuration] = useState(0.4);
+  const [subtitleForScoringId, setSubtitleForScoringId] = useState("");
+  const [useGroqScoring, setUseGroqScoring] = useState(false);
   const [stylePreset, setStylePreset] = useState("TikTok Bold");
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
@@ -792,12 +967,28 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job) => void }) {
         use_subtitles: useSubtitles,
         trim_silence: trimSilence,
         ...(trimSilence ? { silence_noise_db: silenceNoiseDb, silence_min_duration: silenceMinDuration } : {}),
+        subtitle_asset_id: subtitleForScoringId.trim() || undefined,
+        segment_scoring_backend: useGroqScoring ? "groq" : undefined,
         style_preset: stylePreset,
         prompt: prompt || undefined,
       },
     };
     return `curl -sS -X POST \"${apiClient.baseUrl}/shorts/jobs\" -H \"Content-Type: application/json\" -d '${JSON.stringify(payload)}'`;
-  }, [videoId, numClips, minDuration, maxDuration, aspect, useSubtitles, trimSilence, silenceNoiseDb, silenceMinDuration, stylePreset, prompt]);
+  }, [
+    videoId,
+    numClips,
+    minDuration,
+    maxDuration,
+    aspect,
+    useSubtitles,
+    trimSilence,
+    silenceNoiseDb,
+    silenceMinDuration,
+    subtitleForScoringId,
+    useGroqScoring,
+    stylePreset,
+    prompt,
+  ]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -814,6 +1005,8 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job) => void }) {
           use_subtitles: useSubtitles,
           trim_silence: trimSilence,
           ...(trimSilence ? { silence_noise_db: silenceNoiseDb, silence_min_duration: silenceMinDuration } : {}),
+          subtitle_asset_id: subtitleForScoringId.trim() || undefined,
+          segment_scoring_backend: useGroqScoring ? "groq" : undefined,
           style_preset: stylePreset,
           prompt: prompt || undefined,
         },
@@ -902,6 +1095,22 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job) => void }) {
               tracks.
             </p>
           </div>
+          <label className="field full">
+            <span>Subtitle asset for prompt scoring (optional)</span>
+            <Input value={subtitleForScoringId} onChange={(e) => setSubtitleForScoringId(e.target.value)} placeholder="SRT/VTT asset id (timed captions)" />
+            <p className="muted">
+              Used only when <b>Groq scoring</b> is enabled. Generate captions first, then paste the subtitle asset id here.
+            </p>
+          </label>
+          <label className="field">
+            <span>Groq prompt scoring</span>
+            <div className="checkbox-row">
+              <label className="checkbox">
+                <input type="checkbox" checked={useGroqScoring} onChange={(e) => setUseGroqScoring(e.target.checked)} />
+                <span>Use Groq (requires GROQ_API_KEY on the worker)</span>
+              </label>
+            </div>
+          </label>
         </div>
       </details>
       <label className="field">
@@ -915,7 +1124,12 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job) => void }) {
       <label className="field full">
         <span>Prompt to guide selection</span>
         <TextArea rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Highlight the funniest moments..." />
-        {prompt.trim() && <p className="muted">Note: prompt scoring is not implemented yet; clips are selected by simple heuristics.</p>}
+        {prompt.trim() && !useGroqScoring && <p className="muted">Tip: enable Groq scoring (advanced) to use the prompt for segment selection.</p>}
+        {prompt.trim() && useGroqScoring && (
+          <p className="muted">
+            Groq scoring uses your prompt + a timed subtitle asset to score segments. Requires <code>GROQ_API_KEY</code> on the worker.
+          </p>
+        )}
       </label>
       {(useSubtitles || numClips > 6 || maxDuration > 60) && (
         <div className="field full">
@@ -1094,6 +1308,8 @@ function StyleEditor({
 	    ShortsClip[]
 	  >([]);
     const [timelineFps, setTimelineFps] = useState(30);
+    const [timelineIncludeAudio, setTimelineIncludeAudio] = useState(false);
+    const [timelinePerClipReel, setTimelinePerClipReel] = useState(false);
   const [shortsJob, setShortsJob] = useState<Job | null>(null);
   const [shortsStatusPolling, setShortsStatusPolling] = useState(false);
   const [subtitleToolsJob, setSubtitleToolsJob] = useState<Job | null>(null);
@@ -1600,6 +1816,14 @@ function StyleEditor({
                               <option value={60}>60</option>
                             </select>
                           </label>
+                          <label className="checkbox" title="Include an audio track line per clip (A) in the EDL export.">
+                            <input type="checkbox" checked={timelineIncludeAudio} onChange={(e) => setTimelineIncludeAudio(e.target.checked)} />
+                            <span>Audio</span>
+                          </label>
+                          <label className="checkbox" title="Use unique reel names per clip in the EDL export (helps NLE imports).">
+                            <input type="checkbox" checked={timelinePerClipReel} onChange={(e) => setTimelinePerClipReel(e.target.checked)} />
+                            <span>Per-clip reel</span>
+                          </label>
                           <Button
                             type="button"
                             variant="secondary"
@@ -1622,7 +1846,12 @@ function StyleEditor({
                             type="button"
                             variant="secondary"
                             onClick={() => {
-                              const edl = exportShortsTimelineEdl(shortsClips, { fps: timelineFps, title: `Reframe Shorts (${shortsJob.id})` });
+                              const edl = exportShortsTimelineEdl(shortsClips, {
+                                fps: timelineFps,
+                                title: `Reframe Shorts (${shortsJob.id})`,
+                                includeAudio: timelineIncludeAudio,
+                                perClipReel: timelinePerClipReel,
+                              });
                               const blob = new Blob([edl], { type: "text/plain" });
                               const url = URL.createObjectURL(blob);
                               const a = document.createElement("a");

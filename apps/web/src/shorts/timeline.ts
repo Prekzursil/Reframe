@@ -7,6 +7,7 @@ export type ShortsClip = {
   uri?: string | null;
   subtitle_uri?: string | null;
   thumbnail_uri?: string | null;
+  reel_name?: string | null;
 };
 
 function secondsToTimecode(seconds: number, fps: number): string {
@@ -41,9 +42,20 @@ export function exportShortsTimelineCsv(clips: ShortsClip[]): string {
   return [header, ...rows].map((row) => row.map(escape).join(",")).join("\n") + "\n";
 }
 
-export function exportShortsTimelineEdl(clips: ShortsClip[], opts?: { fps?: number; title?: string }): string {
+function deriveReelName(clip: ShortsClip, idx: number): string {
+  const raw = (clip.reel_name || "").trim();
+  if (raw) return raw.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8) || `CLIP${String(idx + 1).padStart(3, "0")}`;
+  return `CLIP${String(idx + 1).padStart(3, "0")}`;
+}
+
+export function exportShortsTimelineEdl(
+  clips: ShortsClip[],
+  opts?: { fps?: number; title?: string; includeAudio?: boolean; perClipReel?: boolean }
+): string {
   const fps = opts?.fps ?? 30;
   const title = opts?.title ?? "Reframe Shorts Timeline";
+  const includeAudio = opts?.includeAudio ?? false;
+  const perClipReel = opts?.perClipReel ?? false;
   const lines: string[] = [];
   lines.push(`TITLE: ${title}`);
   lines.push("FCM: NON-DROP FRAME");
@@ -60,15 +72,21 @@ export function exportShortsTimelineEdl(clips: ShortsClip[], opts?: { fps?: numb
     recordCursorSeconds = recOut;
 
     const event = String(idx + 1).padStart(3, "0");
-    const reel = "AX";
-    const track = "V";
+    const reel = perClipReel ? deriveReelName(clip, idx) : "AX";
+    const reelField = reel.padEnd(8, " ").slice(0, 8);
     const transition = "C";
     const srcIn = secondsToTimecode(start, fps);
     const srcOut = secondsToTimecode(end, fps);
     const recInTc = secondsToTimecode(recIn, fps);
     const recOutTc = secondsToTimecode(recOut, fps);
 
-    lines.push(`${event}  ${reel}       ${track}     ${transition}        ${srcIn} ${srcOut} ${recInTc} ${recOutTc}`);
+    const pushEvent = (track: string) => {
+      const trackField = track.padEnd(4, " ").slice(0, 4);
+      lines.push(`${event}  ${reelField}  ${trackField}  ${transition}        ${srcIn} ${srcOut} ${recInTc} ${recOutTc}`);
+    };
+
+    pushEvent("V");
+    if (includeAudio) pushEvent("A");
     lines.push(`* FROM CLIP NAME: ${clip.id}`);
     if (clip.uri) lines.push(`* SOURCE FILE: ${clip.uri}`);
     lines.push("");
@@ -76,4 +94,3 @@ export function exportShortsTimelineEdl(clips: ShortsClip[], opts?: { fps?: numb
 
   return lines.join("\n").trimEnd() + "\n";
 }
-

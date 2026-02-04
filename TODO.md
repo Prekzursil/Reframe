@@ -344,12 +344,12 @@
   - [x] Add an integration test with a silent-padding fixture and assert fewer silent segments chosen.
 - [x] Basic subtitle editor (inline text edit + shift timings).
   - [x] Web: add a raw subtitle editor (load from asset id → edit → shift timings → re-upload as new asset).
-  - [ ] Subtitle editor: add a cue table view (per-line edit) + validation (optional).
+  - [x] Subtitle editor: add a cue table view (per-line edit) + validation (optional).
 - [x] Support for timelines / EDL export.
   - [x] Web: export Shorts results as CSV + basic CMX3600-style EDL.
-  - [ ] Timeline export: support audio tracks + per-clip reel names (optional).
+  - [x] Timeline export: support audio tracks + per-clip reel names (optional).
 - [ ] Optional cloud integrations (S3, remote GPU workers).
-- [ ] Optional “export upload package” for YouTube/TikTok (title, description, tags).
+- [x] Optional “export upload package” for YouTube/TikTok (title, description, tags).
 
 ---
 
@@ -366,10 +366,10 @@
 - [x] Styled subtitles: accept `.vtt` inputs (convert to `.srt`/`.ass`) for render jobs.
 
 ### Offline + Groq free-tier (optional)
-- [ ] Add Groq chat client integration (OpenAI-compatible) for:
-  - [ ] shorts segment scoring (optional),
-  - [ ] CloudTranslator (optional),
-  - [ ] only when `GROQ_API_KEY` is set; otherwise fallback to heuristics/offline.
+- [x] Add Groq chat client integration (OpenAI-compatible) for:
+  - [x] shorts segment scoring (optional),
+  - [x] CloudTranslator (optional),
+  - [x] only when `GROQ_API_KEY` is set; otherwise fallback to heuristics/offline.
 - [x] Add `REFRAME_OFFLINE_MODE=true` to hard-disable any network-backed providers (including OpenAI API transcription).
 
 ### Config + docs correctness

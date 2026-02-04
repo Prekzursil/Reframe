@@ -255,11 +255,49 @@ def download_job_bundle(job_id: UUID, session: SessionDep) -> StreamingResponse:
     settings = get_settings()
     media_root = Path(settings.media_root)
 
+    def _is_remote_uri(uri: str) -> bool:
+        lowered = uri.strip().lower()
+        return lowered.startswith(("http://", "https://", "s3://", "gs://"))
+
     def resolve_asset_path(asset: MediaAsset) -> Path:
-        uri_path = Path((asset.uri or "").lstrip("/"))
+        uri = asset.uri or ""
+        if _is_remote_uri(uri):
+            return Path(uri)
+        uri_path = Path(uri.lstrip("/"))
         if uri_path.parts and uri_path.parts[0] == "media":
             uri_path = Path(*uri_path.parts[1:])
         return media_root / uri_path
+
+    def add_asset_to_zip(*, asset: MediaAsset, base_name: str, zf: zipfile.ZipFile) -> Optional[str]:
+        """Add an asset's metadata + local file (if available) to the zip.
+
+        Returns the relative file path inside the zip when the local file is included.
+        """
+        zf.writestr(f"{base_name}_meta.json", json.dumps(asset.model_dump(), default=str, indent=2))
+        uri = asset.uri or ""
+        if not uri:
+            return None
+
+        if _is_remote_uri(uri):
+            zf.writestr(f"{base_name}_uri.txt", uri)
+            return f"{base_name}_uri.txt"
+
+        path = resolve_asset_path(asset)
+        if path.is_file():
+            suffix = path.suffix or Path(uri).suffix or ""
+            rel_path = f"{base_name}{suffix}"
+            zf.write(path, arcname=rel_path)
+            return rel_path
+
+        zf.writestr(f"{base_name}_file_missing.txt", f"Asset file missing at {path} (uri={uri})")
+        return None
+
+    def add_asset_by_id(*, asset_id: UUID, base_name: str, zf: zipfile.ZipFile) -> Optional[str]:
+        asset = session.get(MediaAsset, asset_id)
+        if not asset:
+            zf.writestr(f"{base_name}_missing.txt", f"Asset {asset_id} missing from database")
+            return None
+        return add_asset_to_zip(asset=asset, base_name=base_name, zf=zf)
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -270,19 +308,79 @@ def download_job_bundle(job_id: UUID, session: SessionDep) -> StreamingResponse:
         for label, asset_id in (("input", job.input_asset_id), ("output", job.output_asset_id)):
             if not asset_id:
                 continue
-            asset = session.get(MediaAsset, asset_id)
-            if not asset:
-                zf.writestr(f"{label}_asset_missing.txt", f"{label} asset {asset_id} missing from database")
-                continue
-            zf.writestr(f"{label}_asset.json", json.dumps(asset.model_dump(), default=str, indent=2))
-            if not asset.uri:
-                continue
-            path = resolve_asset_path(asset)
-            if path.is_file():
-                suffix = path.suffix or ""
-                zf.write(path, arcname=f"{label}_asset{suffix}")
-            else:
-                zf.writestr(f"{label}_asset_file_missing.txt", f"{label} asset file missing at {path}")
+            add_asset_by_id(asset_id=asset_id, base_name=f"{label}_asset", zf=zf)
+
+        if job.job_type == "shorts" and isinstance(job.payload, dict):
+            raw_clips = job.payload.get("clip_assets")
+            if isinstance(raw_clips, list):
+                upload_package: dict = {
+                    "version": 1,
+                    "job_id": str(job.id),
+                    "job_type": job.job_type,
+                    "note": "Edit the suggested titles/descriptions/tags before uploading.",
+                    "prompt": job.payload.get("prompt"),
+                    "clips": [],
+                }
+
+                for idx, clip in enumerate(raw_clips):
+                    if not isinstance(clip, dict):
+                        continue
+                    clip_dir = f"clips/clip_{idx + 1:02d}"
+                    zf.writestr(f"{clip_dir}/clip.json", json.dumps(clip, default=str, indent=2))
+
+                    video_file = None
+                    thumb_file = None
+                    subs_file = None
+
+                    video_id = clip.get("asset_id")
+                    try:
+                        if video_id:
+                            video_file = add_asset_by_id(asset_id=UUID(str(video_id)), base_name=f"{clip_dir}/video", zf=zf)
+                    except Exception:
+                        video_file = None
+
+                    thumb_id = clip.get("thumbnail_asset_id")
+                    try:
+                        if thumb_id:
+                            thumb_file = add_asset_by_id(asset_id=UUID(str(thumb_id)), base_name=f"{clip_dir}/thumbnail", zf=zf)
+                    except Exception:
+                        thumb_file = None
+
+                    subs_id = clip.get("subtitle_asset_id")
+                    try:
+                        if subs_id:
+                            subs_file = add_asset_by_id(asset_id=UUID(str(subs_id)), base_name=f"{clip_dir}/subtitles", zf=zf)
+                    except Exception:
+                        subs_file = None
+
+                    clip_title = f"Reframe Clip {idx + 1}"
+                    if isinstance(job.payload.get("prompt"), str) and job.payload["prompt"].strip():
+                        prompt = job.payload["prompt"].strip()
+                        clip_title = f"{prompt[:80]} (Clip {idx + 1})"
+
+                    upload_package["clips"].append(
+                        {
+                            "index": idx + 1,
+                            "id": clip.get("id"),
+                            "start": clip.get("start"),
+                            "end": clip.get("end"),
+                            "duration": clip.get("duration"),
+                            "score": clip.get("score"),
+                            "files": {"video": video_file, "thumbnail": thumb_file, "subtitles": subs_file},
+                            "suggested": {
+                                "title": clip_title,
+                                "description": f"Generated by Reframe from job {job.id}.",
+                                "tags": ["reframe", "shorts"],
+                            },
+                            "source_uris": {
+                                "video": clip.get("uri"),
+                                "thumbnail": clip.get("thumbnail_uri"),
+                                "subtitles": clip.get("subtitle_uri"),
+                            },
+                        }
+                    )
+
+                zf.writestr("upload_package.json", json.dumps(upload_package, default=str, indent=2))
 
     buffer.seek(0)
     headers = {"Content-Disposition": f'attachment; filename=\"job_{job_id}.zip\"'}

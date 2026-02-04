@@ -42,3 +42,20 @@ If the model requires a Hugging Face token, set one of:
 
 - `HUGGINGFACE_TOKEN`
 - `HF_TOKEN`
+
+## Translate subtitles: Groq (optional)
+
+By default, `tasks.translate_subtitles` uses **Argos Translate** (offline) when available, and falls back to **NoOp** when not.
+
+You can opt into **Groq** (OpenAI-compatible chat API) by setting `GROQ_API_KEY` and either:
+- passing `translator_backend: "groq"` in the job `options`, or
+- letting the worker auto-fallback to Groq when Argos isn’t installed.
+
+Env vars:
+- `GROQ_API_KEY` (required)
+- `GROQ_MODEL` (optional, default: `llama3-8b-8192`)
+- `GROQ_BASE_URL` (optional, default: `https://api.groq.com/openai/v1`)
+- `GROQ_TIMEOUT_SECONDS` (optional, default: `30`)
+
+Notes:
+- If `REFRAME_OFFLINE_MODE=true`, the worker will refuse Groq and fall back to offline/noop behavior.

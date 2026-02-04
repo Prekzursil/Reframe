@@ -30,5 +30,17 @@ describe("exportShortsTimelineEdl", () => {
     expect(out).toContain("00:00:00:00 00:00:04:00");
     expect(out).toContain("00:00:04:00 00:00:06:00");
   });
-});
 
+  it("supports per-clip reels and audio tracks", () => {
+    const out = exportShortsTimelineEdl(
+      [
+        { id: "clip-1", start: 0, end: 2, uri: "/media/a.mp4" },
+        { id: "clip-2", start: 2, end: 4, uri: "/media/b.mp4" },
+      ],
+      { fps: 30, title: "Test", includeAudio: true, perClipReel: true }
+    );
+    expect(out).toContain("CLIP001");
+    expect(out).toContain("CLIP002");
+    expect(out).toContain(" A");
+  });
+});

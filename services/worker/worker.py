@@ -32,7 +32,7 @@ from app.config import get_settings
 from app.models import Job, JobStatus, MediaAsset
 from celery import Celery
 
-from media_core.segment.shorts import equal_splits, select_top
+from media_core.segment.shorts import equal_splits, score_segments_llm, select_top
 from media_core.diarize import DiarizationBackend, DiarizationConfig, assign_speakers_to_lines, diarize_audio
 from media_core.subtitles.builder import GroupingConfig, group_words, to_ass, to_ass_karaoke, to_srt, to_vtt
 from media_core.subtitles.vtt import parse_vtt
@@ -46,8 +46,13 @@ from media_core.transcribe import (
     transcribe_whisper_timestamped,
 )
 from media_core.translate.srt import parse_srt, translate_srt, translate_srt_bilingual
-from media_core.translate.translator import LocalTranslator, NoOpTranslator
+from media_core.translate.translator import CloudTranslator, LocalTranslator, NoOpTranslator
 from media_core.video_edit.ffmpeg import cut_clip, detect_silence, merge_video_audio as ffmpeg_merge_video_audio, probe_media
+
+try:
+    from .groq_client import get_groq_chat_client_from_env
+except Exception:  # pragma: no cover - supports running worker as a top-level module
+    from groq_client import get_groq_chat_client_from_env  # type: ignore
 
 BROKER_URL = os.getenv("BROKER_URL", "redis://redis:6379/0")
 RESULT_BACKEND = os.getenv("RESULT_BACKEND", BROKER_URL)
@@ -483,11 +488,33 @@ def translate_subtitles(self, job_id: str, subtitle_asset_id: str, options: dict
     if not src_language or src_language.lower() == "auto":
         src_language = "en"
 
-    try:
-        translator = LocalTranslator(src_language, target_language)
-    except Exception as exc:
-        warnings.append(str(exc))
+    translator_backend = str(opts.get("translator_backend") or opts.get("translator") or "").strip().lower()
+
+    def _build_groq_translator() -> CloudTranslator | None:
+        if offline_mode_enabled():
+            warnings.append("Offline mode enabled; refusing Groq translator.")
+            return None
+        client = get_groq_chat_client_from_env()
+        if not client:
+            warnings.append("GROQ_API_KEY not set; Groq translator unavailable.")
+            return None
+        model = str(opts.get("groq_model") or os.getenv("GROQ_MODEL") or "llama3-8b-8192").strip()
+        if not model:
+            model = "llama3-8b-8192"
+        warnings.append(f"Using Groq cloud translator model={model}.")
+        return CloudTranslator(client=client, model=model)
+
+    translator = None
+    if translator_backend in {"noop"}:
         translator = NoOpTranslator()
+    elif translator_backend in {"groq", "cloud"}:
+        translator = _build_groq_translator() or NoOpTranslator()
+    else:
+        try:
+            translator = LocalTranslator(src_language, target_language)
+        except Exception as exc:
+            warnings.append(str(exc))
+            translator = _build_groq_translator() or NoOpTranslator()
 
     text = src_path.read_text(encoding="utf-8", errors="replace")
     src_suffix = src_path.suffix.lower()
@@ -695,6 +722,7 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id)
     opts = options or {}
+    warnings: list[str] = []
     max_clips = int(opts.get("max_clips") or 3)
     min_duration = float(opts.get("min_duration") or 10.0)
     max_duration = float(opts.get("max_duration") or 60.0)
@@ -748,6 +776,59 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
         for idx, cand in enumerate(candidates):
             cand.score = 1.0 - (idx * 0.01)
 
+    scoring_backend = str(opts.get("segment_scoring_backend") or opts.get("scoring_backend") or "").strip().lower()
+    prompt = str(opts.get("prompt") or "").strip()
+    scoring_subtitle_asset_id = str(opts.get("subtitle_asset_id") or "").strip()
+    if scoring_backend == "groq":
+        if not prompt:
+            warnings.append("Groq scoring requested but no prompt was provided; falling back to heuristics.")
+        elif offline_mode_enabled():
+            warnings.append("Groq scoring requested but offline mode is enabled; falling back to heuristics.")
+        elif not scoring_subtitle_asset_id:
+            warnings.append("Groq scoring requested but no subtitle_asset_id provided; falling back to heuristics.")
+        else:
+            try:
+                _subs_asset, subs_path = fetch_asset(scoring_subtitle_asset_id)
+                if not subs_path or not subs_path.exists():
+                    warnings.append(f"subtitle_asset_id {scoring_subtitle_asset_id} missing on disk; falling back to heuristics.")
+                else:
+                    subs_text = subs_path.read_text(encoding='utf-8', errors='replace')
+                    if subs_path.suffix.lower() == ".vtt":
+                        subtitle_lines = parse_vtt(subs_text)
+                    else:
+                        subtitle_lines = parse_srt(subs_text)
+
+                    transcript = "\n".join(l.text() for l in subtitle_lines if l.text())
+                    for cand in candidates:
+                        parts = [l.text() for l in subtitle_lines if l.start < cand.end and l.end > cand.start and l.text()]
+                        snippet = " ".join(parts).strip()
+                        cand.snippet = snippet[:800] if snippet else None
+
+                    client = get_groq_chat_client_from_env()
+                    if not client:
+                        warnings.append("Groq scoring requested but GROQ_API_KEY is not set; falling back to heuristics.")
+                    else:
+                        model = str(opts.get("groq_model") or os.getenv("GROQ_MODEL") or "llama3-8b-8192").strip()
+                        if not model:
+                            model = "llama3-8b-8192"
+
+                        base_scores = {(c.start, c.end): float(c.score) for c in candidates}
+                        score_prompt = (
+                            "You are scoring candidate video segments for creating short clips.\n"
+                            f"Goal: {prompt}\n\n"
+                            "Return ONLY a JSON array. Each item must be an object:\n"
+                            '{\"start\": number, \"end\": number, \"score\": number}\n'
+                            "Score each candidate from 0.0 to 1.0 (higher is better)."
+                        )
+                        score_segments_llm(transcript=transcript, candidates=candidates, prompt=score_prompt, model=model, client=client, provider="groq")
+                        # Blend with existing heuristics (e.g., silence trimming) so we still down-rank silent segments.
+                        for cand in candidates:
+                            base = base_scores.get((cand.start, cand.end), 0.0)
+                            cand.score = (0.2 * base) + (0.8 * float(cand.score))
+                        warnings.append(f"Applied Groq segment scoring model={model}.")
+            except Exception as exc:
+                warnings.append(f"Groq scoring failed; falling back to heuristics ({exc}).")
+
     selected = select_top(candidates, max_segments=max_clips, min_duration=min_duration, max_duration=max_duration)
     if not selected:
         selected = candidates[:max_clips]
@@ -789,7 +870,9 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
                 "duration": round(seg.duration, 3),
                 "score": seg.score,
                 "uri": clip_asset.uri,
+                "thumbnail_asset_id": str(thumb_asset.id),
                 "subtitle_uri": subtitle_asset.uri if subtitle_asset else None,
+                "subtitle_asset_id": str(subtitle_asset.id) if subtitle_asset else None,
                 "thumbnail_uri": thumb_asset.uri,
             }
         )
@@ -797,6 +880,7 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
     manifest = {
         "video_asset_id": video_asset_id,
         "options": opts,
+        "warnings": warnings,
         "clip_assets": clips,
     }
     manifest_asset = create_asset(
@@ -806,8 +890,14 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
         contents=json.dumps(manifest, indent=2),
     )
 
-    result = {"video_asset_id": video_asset_id, "status": "shorts_generated", "clip_assets": clips, "output_asset_id": str(manifest_asset.id)}
-    update_job(job_id, status=JobStatus.completed, progress=1.0, payload={"clip_assets": clips, **opts}, output_asset_id=str(manifest_asset.id))
+    result = {
+        "video_asset_id": video_asset_id,
+        "status": "shorts_generated",
+        "warnings": warnings,
+        "clip_assets": clips,
+        "output_asset_id": str(manifest_asset.id),
+    }
+    update_job(job_id, status=JobStatus.completed, progress=1.0, payload={"clip_assets": clips, "warnings": warnings, **opts}, output_asset_id=str(manifest_asset.id))
     _progress(self, "completed", 1.0, video_asset_id=video_asset_id)
     return result
 
