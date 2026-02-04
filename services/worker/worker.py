@@ -517,9 +517,17 @@ def generate_captions(self, job_id: str, video_asset_id: str, options: dict | No
     language_raw = opts.get("language") or opts.get("source_language") or None
     language = None if not language_raw or str(language_raw).strip().lower() == "auto" else str(language_raw).strip()
 
+    default_model = "whisper-1"
+    if backend == TranscriptionBackend.FASTER_WHISPER:
+        default_model = "whisper-large-v3"
+    elif backend == TranscriptionBackend.WHISPER_CPP:
+        default_model = "ggml-base.en"
+    elif backend == TranscriptionBackend.WHISPER_TIMESTAMPED:
+        default_model = "base"
+
     config = TranscriptionConfig(
         backend=backend,
-        model=str(opts.get("model") or "whisper-1"),
+        model=str(opts.get("model") or default_model),
         language=language,
         device=str(opts.get("device")) if opts.get("device") else None,
     )
