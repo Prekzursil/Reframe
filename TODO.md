@@ -313,10 +313,10 @@
     - [x] Docs: add end-to-end verification checklist.
     - [x] Desktop: display current app version in UI (helps verify old→new relaunch).
     - [x] Desktop: add quick link to open GitHub Releases from the UI.
-    - [ ] Publish two signed desktop releases via tags (`desktop-v0.x.y`, then `desktop-v0.x.(y+1)`), so `latest.json` exists.
-      - [ ] Set GitHub repo secrets `TAURI_SIGNING_PRIVATE_KEY` (and optional password) for the Desktop Release workflow.
-      - [ ] Push tag `desktop-v0.x.y` and confirm GitHub Release assets include `latest.json`.
-      - [ ] Push tag `desktop-v0.x.(y+1)` and confirm `latest.json` updates to the newer version.
+    - [x] Publish two signed desktop releases via tags (`desktop-v0.1.6`, then `desktop-v0.1.7`), so `latest.json` exists.
+      - [x] Set GitHub repo secrets `TAURI_SIGNING_PRIVATE_KEY` + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` for the Desktop Release workflow.
+      - [x] Push tag `desktop-v0.1.6` and confirm GitHub Release assets include `latest.json`.
+      - [x] Push tag `desktop-v0.1.7` and confirm `latest.json` updates to the newer version.
     - [ ] Manual: install an older build and confirm update + relaunch (Windows/macOS/Linux).
 - [x] Provide example configs for:
   - [x] Local dev (no GPU),
