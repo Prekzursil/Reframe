@@ -1061,6 +1061,57 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
     return result
 
 
+@celery_app.task(bind=True, name="tasks.cut_clip")
+def cut_clip_asset(self, job_id: str, video_asset_id: str, start: float, end: float, options: dict | None = None) -> dict:
+    update_job(job_id, status=JobStatus.running, progress=0.1)
+    _progress(self, "started", 0.0, video_asset_id=video_asset_id, start=start, end=end)
+    opts = options or {}
+
+    src_asset, src_path = fetch_asset(video_asset_id)
+    if not src_path or not src_path.exists():
+        error = f"Video asset file missing for {video_asset_id}"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id)
+        return {"video_asset_id": video_asset_id, "status": "failed", "error": error}
+
+    start_s = float(start or 0.0)
+    end_s = float(end or start_s)
+    if end_s < start_s:
+        start_s, end_s = end_s, start_s
+
+    output_path = new_tmp_file(".mp4")
+    try:
+        _run_ffmpeg_with_retries(
+            job_id=job_id,
+            step="cut_clip",
+            fn=lambda: cut_clip(src_path, start_s, end_s, output_path),
+        )
+    except Exception as exc:
+        error = f"Cut clip failed: {exc}"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, start=start_s, end=end_s)
+        return {"video_asset_id": video_asset_id, "status": "failed", "error": error}
+
+    mime_type = src_asset.mime_type if src_asset and src_asset.mime_type else "video/mp4"
+    clip_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=output_path)
+    thumb_asset = create_thumbnail_asset(output_path)
+
+    result = {
+        "video_asset_id": video_asset_id,
+        "start": start_s,
+        "end": end_s,
+        "duration": round(max(0.0, end_s - start_s), 3),
+        "asset_id": str(clip_asset.id),
+        "uri": clip_asset.uri,
+        "thumbnail_asset_id": str(thumb_asset.id),
+        "thumbnail_uri": thumb_asset.uri,
+        **opts,
+    }
+    update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(clip_asset.id))
+    _progress(self, "completed", 1.0, video_asset_id=video_asset_id, start=start_s, end=end_s, output_asset_id=str(clip_asset.id))
+    return result
+
+
 @celery_app.task(bind=True, name="tasks.merge_video_audio")
 def merge_video_audio(self, job_id: str, video_asset_id: str, audio_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)

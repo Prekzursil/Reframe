@@ -1310,12 +1310,15 @@ function StyleEditor({
   const [captionOutput, setCaptionOutput] = useState<MediaAsset | null>(null);
   const [translateJob, setTranslateJob] = useState<Job | null>(null);
   const [translateOutput, setTranslateOutput] = useState<MediaAsset | null>(null);
-		const [shortsClips, setShortsClips] = useState<
-	    ShortsClip[]
-	  >([]);
-    const [timelineFps, setTimelineFps] = useState(30);
-    const [timelineIncludeAudio, setTimelineIncludeAudio] = useState(false);
-    const [timelinePerClipReel, setTimelinePerClipReel] = useState(false);
+			const [shortsClips, setShortsClips] = useState<
+		    ShortsClip[]
+		  >([]);
+	    const [editingClipId, setEditingClipId] = useState<string | null>(null);
+	    const [recutClipId, setRecutClipId] = useState<string | null>(null);
+	    const [shortsEditError, setShortsEditError] = useState<string | null>(null);
+	    const [timelineFps, setTimelineFps] = useState(30);
+	    const [timelineIncludeAudio, setTimelineIncludeAudio] = useState(false);
+	    const [timelinePerClipReel, setTimelinePerClipReel] = useState(false);
   const [shortsJob, setShortsJob] = useState<Job | null>(null);
   const [shortsStatusPolling, setShortsStatusPolling] = useState(false);
   const [subtitleToolsJob, setSubtitleToolsJob] = useState<Job | null>(null);
@@ -1698,13 +1701,66 @@ function StyleEditor({
 		    () => ({
 		      completed: jobs.filter((j) => j.status === "completed").length,
 		      running: jobs.filter((j) => j.status === "running").length,
-      queued: jobs.filter((j) => j.status === "queued").length,
-    }),
-    [jobs]
-  );
+		      queued: jobs.filter((j) => j.status === "queued").length,
+		    }),
+		    [jobs]
+		  );
 
-  return (
-    <div className="layout">
+		  const moveShortsClip = (clipId: string, delta: -1 | 1) => {
+		    setShortsClips((prev) => {
+		      const idx = prev.findIndex((c) => c.id === clipId);
+		      if (idx < 0) return prev;
+		      const nextIdx = idx + delta;
+		      if (nextIdx < 0 || nextIdx >= prev.length) return prev;
+		      const next = [...prev];
+		      const [item] = next.splice(idx, 1);
+		      next.splice(nextIdx, 0, item!);
+		      return next;
+		    });
+		  };
+
+		  const recutShortsClip = async (clip: ShortsClip) => {
+		    setShortsEditError(null);
+		    if (!uploadedVideoId) {
+		      setShortsEditError("Upload a source video first.");
+		      return;
+		    }
+		    const start = Number(clip.start ?? 0);
+		    const end = Number(clip.end ?? start);
+		    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+		      setShortsEditError("Start/end must be valid numbers and end must be greater than start.");
+		      return;
+		    }
+
+		    setRecutClipId(clip.id);
+		    try {
+		      const job = await apiClient.createCutClipJob({ video_asset_id: uploadedVideoId, start, end });
+		      const { job: finished, asset } = await waitForJobAsset(job.id);
+		      if (!asset?.uri) throw new Error("Cut-clip job did not produce an output asset.");
+		      const payload = (finished.payload || {}) as any;
+
+		      setShortsClips((prev) =>
+		        prev.map((c) =>
+		          c.id === clip.id
+		            ? {
+		                ...c,
+		                uri: asset.uri,
+		                thumbnail_uri: payload.thumbnail_uri ?? c.thumbnail_uri,
+		                duration: payload.duration ?? Math.max(0, end - start),
+		              }
+		            : c,
+		        ),
+		      );
+		      refresh();
+		    } catch (err) {
+		      setShortsEditError(err instanceof Error ? err.message : "Failed to re-cut clip");
+		    } finally {
+		      setRecutClipId(null);
+		    }
+		  };
+
+	  return (
+	    <div className="layout">
       <aside className="sidebar">
         <div className="brand">
           <span className="dot" />
@@ -1974,29 +2030,99 @@ function StyleEditor({
                   : "No clips yet."}
               </p>
             )}
-            <div className="clip-grid">
-              {shortsClips.map((clip) => (
-                <div key={clip.id} className="clip-card">
-                  <div className="clip-thumb">
-                    {clip.thumbnail_uri ? <img src={apiClient.mediaUrl(clip.thumbnail_uri)} alt="Clip thumbnail" /> : <div className="placeholder-thumb" />}
-                  </div>
-                  <p className="metric-value">{clip.duration ? `${clip.duration}s` : "?"}</p>
-                  <p className="muted">Score: {clip.score ?? "?"}</p>
-                  <div className="actions-row">
-                    <Button variant="secondary" disabled={!clip.uri} onClick={() => clip.uri && window.open(apiClient.mediaUrl(clip.uri), "_blank")}>
-                      {clip.uri ? "Download video" : "Video not ready"}
-                    </Button>
-                    <Button variant="ghost" disabled={!clip.subtitle_uri} onClick={() => clip.subtitle_uri && window.open(apiClient.mediaUrl(clip.subtitle_uri), "_blank")}>
-                      {clip.subtitle_uri ? "Download subs" : "Subs not ready"}
-                    </Button>
-                    <Button variant="ghost" onClick={() => setShortsClips((prev) => prev.filter((c) => c.id !== clip.id))}>
-                      Remove
-                    </Button>
-                  </div>
-                </div>
-                ))}
-              </div>
-            </Card>
+	            <div className="clip-grid">
+	              {shortsClips.map((clip, idx) => (
+	                <div key={clip.id} className="clip-card">
+	                  <div className="clip-thumb">
+	                    {clip.thumbnail_uri ? <img src={apiClient.mediaUrl(clip.thumbnail_uri)} alt="Clip thumbnail" /> : <div className="placeholder-thumb" />}
+	                  </div>
+	                  <p className="metric-value">{clip.duration ? `${clip.duration}s` : "?"}</p>
+	                  <p className="muted">Score: {clip.score ?? "?"}</p>
+	                  {clip.start != null && clip.end != null && (
+	                    <p className="muted">
+	                      Time: {formatCueTime(Number(clip.start))}–{formatCueTime(Number(clip.end))}
+	                    </p>
+	                  )}
+	                  <div className="actions-row">
+	                    <Button variant="secondary" disabled={!clip.uri} onClick={() => clip.uri && window.open(apiClient.mediaUrl(clip.uri), "_blank")}>
+	                      {clip.uri ? "Download video" : "Video not ready"}
+	                    </Button>
+	                    <Button variant="ghost" disabled={!clip.subtitle_uri} onClick={() => clip.subtitle_uri && window.open(apiClient.mediaUrl(clip.subtitle_uri), "_blank")}>
+	                      {clip.subtitle_uri ? "Download subs" : "Subs not ready"}
+	                    </Button>
+	                    <Button variant="ghost" onClick={() => setShortsClips((prev) => prev.filter((c) => c.id !== clip.id))}>
+	                      Remove
+	                    </Button>
+	                  </div>
+	                  <div className="actions-row">
+	                    <Button type="button" variant="ghost" disabled={idx === 0} onClick={() => moveShortsClip(clip.id, -1)}>
+	                      Up
+	                    </Button>
+	                    <Button
+	                      type="button"
+	                      variant="ghost"
+	                      disabled={idx === shortsClips.length - 1}
+	                      onClick={() => moveShortsClip(clip.id, 1)}
+	                    >
+	                      Down
+	                    </Button>
+	                    <Button
+	                      type="button"
+	                      variant="ghost"
+	                      onClick={() => {
+	                        setShortsEditError(null);
+	                        setEditingClipId((prev) => (prev === clip.id ? null : clip.id));
+	                      }}
+	                    >
+	                      {editingClipId === clip.id ? "Close editor" : "Edit"}
+	                    </Button>
+	                  </div>
+
+	                  {editingClipId === clip.id && (
+	                    <>
+	                      {shortsEditError && <div className="error-inline">{shortsEditError}</div>}
+	                      <div className="form-grid">
+	                        <label className="field">
+	                          <span>Start (s)</span>
+	                          <Input
+	                            type="number"
+	                            step="0.1"
+	                            value={String(clip.start ?? 0)}
+	                            onChange={(e) => {
+	                              const nextStart = Number(e.target.value);
+	                              setShortsClips((prev) => prev.map((c) => (c.id === clip.id ? { ...c, start: nextStart } : c)));
+	                            }}
+	                          />
+	                        </label>
+	                        <label className="field">
+	                          <span>End (s)</span>
+	                          <Input
+	                            type="number"
+	                            step="0.1"
+	                            value={String(clip.end ?? 0)}
+	                            onChange={(e) => {
+	                              const nextEnd = Number(e.target.value);
+	                              setShortsClips((prev) => prev.map((c) => (c.id === clip.id ? { ...c, end: nextEnd } : c)));
+	                            }}
+	                          />
+	                        </label>
+	                      </div>
+	                      <div className="actions-row">
+	                        <Button
+	                          type="button"
+	                          variant="secondary"
+	                          disabled={recutClipId === clip.id}
+	                          onClick={() => void recutShortsClip(clip)}
+	                        >
+	                          {recutClipId === clip.id ? "Re-cutting..." : "Re-cut clip"}
+	                        </Button>
+	                      </div>
+	                    </>
+	                  )}
+	                </div>
+	                ))}
+	              </div>
+	            </Card>
           </section>
         )}
 

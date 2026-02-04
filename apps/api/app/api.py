@@ -210,6 +210,24 @@ class MergeAVRequest(SQLModel):
     }
 
 
+class CutClipRequest(SQLModel):
+    video_asset_id: UUID
+    start: float
+    end: float
+    options: Optional[dict] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "video_asset_id": "00000000-0000-0000-0000-000000000004",
+                "start": 12.5,
+                "end": 27.0,
+                "options": {},
+            }
+        }
+    }
+
+
 class StyledSubtitleJobRequest(SQLModel):
     video_asset_id: UUID
     subtitle_asset_id: UUID
@@ -563,6 +581,39 @@ def create_merge_job(payload: MergeAVRequest, session: SessionDep) -> Job:
         str(job.id),
         str(payload.video_asset_id),
         str(payload.audio_asset_id),
+        job.payload,
+    )
+
+
+@router.post(
+    "/utilities/cut-clip",
+    response_model=Job,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Utilities"],
+    dependencies=[Depends(enforce_rate_limit)],
+)
+def cut_clip_tool(payload: CutClipRequest, session: SessionDep) -> Job:
+    start = max(0.0, float(payload.start or 0.0))
+    end = max(start, float(payload.end or start))
+    job = Job(
+        job_type="cut_clip",
+        status=JobStatus.queued,
+        progress=0.0,
+        input_asset_id=payload.video_asset_id,
+        payload={
+            "start": start,
+            "end": end,
+            **(payload.options or {}),
+        },
+    )
+    return save_and_dispatch(
+        job,
+        session,
+        "tasks.cut_clip",
+        str(job.id),
+        str(payload.video_asset_id),
+        start,
+        end,
         job.payload,
     )
 

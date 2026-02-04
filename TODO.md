@@ -405,7 +405,7 @@
 
 ### Creator workflow (quality + control)
 - [x] Add transcript viewer with search + click-to-seek timestamps (no re-run required).
-- [ ] Add a shorts “segment editor” (adjust start/end, reorder, re-cut selected clips without re-scoring).
+- [x] Add a shorts “segment editor” (adjust start/end, reorder, re-cut selected clips without re-scoring).
 - [ ] Add per-clip subtitle style overrides + a “batch apply style” action.
 
 ### Reliability & safety

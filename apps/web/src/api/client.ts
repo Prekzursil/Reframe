@@ -54,6 +54,13 @@ export interface MergeAvRequest {
   normalize?: boolean;
 }
 
+export interface CutClipRequest {
+  video_asset_id: string;
+  start: number;
+  end: number;
+  options?: Record<string, unknown>;
+}
+
 export interface MediaAsset {
   id: string;
   kind: string;
@@ -150,6 +157,10 @@ export class ApiClient {
 
   mergeAv(payload: MergeAvRequest) {
     return this.request<Job>("/utilities/merge-av", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  createCutClipJob(payload: CutClipRequest) {
+    return this.request<Job>("/utilities/cut-clip", { method: "POST", body: JSON.stringify(payload) });
   }
 
   getSystemStatus() {
