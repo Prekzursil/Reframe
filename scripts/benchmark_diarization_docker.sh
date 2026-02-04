@@ -128,6 +128,40 @@ case "${backend}" in
     ;;
 esac
 
+if [[ "${backend}" == "pyannote" ]]; then
+  hf_token="${HF_TOKEN:-}"
+  if [[ -z "${hf_token}" && -f "${ROOT_DIR}/.env" ]]; then
+    hf_token="$(python3 - "${ROOT_DIR}/.env" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    line = raw.strip()
+    if not line or line.startswith("#"):
+        continue
+    if not line.startswith("HF_TOKEN="):
+        continue
+    value = line.split("=", 1)[1].strip()
+    if value:
+        print(value)
+    break
+PY
+)"
+  fi
+  if [[ -z "${hf_token}" ]]; then
+    echo "ERROR: HF_TOKEN is required for pyannote. Add it to .env (HF_TOKEN=...) after accepting model terms." >&2
+    echo "  Model: pyannote/speaker-diarization-3.1" >&2
+    echo "  File:  ${ROOT_DIR}/.env" >&2
+    echo "" >&2
+    echo "Then re-run:" >&2
+    echo "  bash scripts/benchmark_diarization_docker.sh ${abs_input@Q} --backend pyannote --warmup --runs 1 --format md" >&2
+    exit 1
+  fi
+fi
+
 py_args=(
   "${container_input}"
   "--backend" "${backend}"
@@ -155,4 +189,3 @@ echo ""
   -v "${input_dir}:/bench:ro" \
   worker \
   bash -lc "pip install --no-cache-dir '/worker/packages/media-core[${extra}]' && python /worker/scripts/benchmark_diarization.py ${quoted_py_args}"
-
