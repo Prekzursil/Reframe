@@ -55,9 +55,20 @@ def _get_peak_rss_mb() -> float:
 def main(argv: list[str]) -> int:
     repo_root = _ensure_repo_paths()
 
-    parser = argparse.ArgumentParser(description="Benchmark pyannote diarization wall time and peak RSS.")
+    parser = argparse.ArgumentParser(description="Benchmark diarization wall time and peak RSS.")
     parser.add_argument("input", help="Path to an audio/video file.")
-    parser.add_argument("--model", default="pyannote/speaker-diarization-3.1", help="HF model id (default: %(default)s)")
+    parser.add_argument(
+        "--backend",
+        default="pyannote",
+        choices=["pyannote", "speechbrain"],
+        help="Diarization backend to benchmark (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Model id. For pyannote: pipeline id (e.g. pyannote/speaker-diarization-3.1). "
+        "For speechbrain: speaker embedding model id (e.g. speechbrain/spkrec-ecapa-voxceleb).",
+    )
     parser.add_argument("--min-segment-duration", type=float, default=0.0, help="Drop segments shorter than this (seconds).")
     parser.add_argument("--hf-token", default="", help="Hugging Face token (or set HF_TOKEN/HUGGINGFACE_TOKEN env var).")
     parser.add_argument("--warmup", action="store_true", help="Run one warmup pass (downloads/loads model) before measuring.")
@@ -68,27 +79,35 @@ def main(argv: list[str]) -> int:
     if not input_path.is_file():
         raise FileNotFoundError(input_path)
 
-    token = (args.hf_token or os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN") or "").strip() or None
-    if not token:
-        dotenv_path = repo_root / ".env"
-        if dotenv_path.is_file():
-            for line in dotenv_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-                stripped = line.strip()
-                if not stripped or stripped.startswith("#") or "=" not in stripped:
-                    continue
-                key, value = stripped.split("=", 1)
-                key = key.strip()
-                if key not in {"HF_TOKEN", "HUGGINGFACE_TOKEN"}:
-                    continue
-                token = value.strip().strip("\"'") or None
-                if token:
-                    break
+    backend_raw = str(args.backend or "pyannote").strip().lower()
+    token = None
+    if backend_raw == "pyannote":
+        token = (args.hf_token or os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN") or "").strip() or None
+        if not token:
+            dotenv_path = repo_root / ".env"
+            if dotenv_path.is_file():
+                for line in dotenv_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith("#") or "=" not in stripped:
+                        continue
+                    key, value = stripped.split("=", 1)
+                    key = key.strip()
+                    if key not in {"HF_TOKEN", "HUGGINGFACE_TOKEN"}:
+                        continue
+                    token = value.strip().strip("\"'") or None
+                    if token:
+                        break
 
     from media_core.diarize import DiarizationBackend, DiarizationConfig, diarize_audio
 
+    backend = DiarizationBackend(backend_raw)
+    model = args.model
+    if not model:
+        model = "pyannote/speaker-diarization-3.1" if backend == DiarizationBackend.PYANNOTE else "speechbrain/spkrec-ecapa-voxceleb"
+
     config = DiarizationConfig(
-        backend=DiarizationBackend.PYANNOTE,
-        model=args.model,
+        backend=backend,
+        model=model,
         huggingface_token=token,
         min_segment_duration=max(0.0, float(args.min_segment_duration or 0.0)),
     )
@@ -114,7 +133,8 @@ def main(argv: list[str]) -> int:
     peak_mb = _get_peak_rss_mb()
     print("")
     print("Summary")
-    print(f"model={args.model}")
+    print(f"backend={backend.value}")
+    print(f"model={model}")
     print(f"runs={len(durations)} warmup={bool(args.warmup)}")
     print(f"duration_s_min={min(durations):.3f} duration_s_max={max(durations):.3f} duration_s_avg={(sum(durations)/len(durations)):.3f}")
     if segments_count is not None:

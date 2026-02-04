@@ -419,5 +419,5 @@
 - [x] Desktop: add an in-app “Diagnostics” screen (shows backend URLs, ffmpeg detected, worker connectivity, storage backend).
 
 ### Optional diarization improvements (free/offline)
-- [ ] Add an optional SpeechBrain diarization backend (no HF token) as a fallback when pyannote models are unavailable.
+- [x] Add an optional SpeechBrain diarization backend (no HF token) as a fallback when pyannote models are unavailable.
 

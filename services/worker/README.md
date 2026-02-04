@@ -21,13 +21,16 @@ The captions worker supports **optional speaker labels** via diarization.
 Job options (POST `/api/v1/captions/jobs`):
 
 - `speaker_labels`: boolean (default `false`)
-- `diarization_backend`: `"noop"` or `"pyannote"` (default `"noop"`)
-- `diarization_model`: default `"pyannote/speaker-diarization-3.1"`
+- `diarization_backend`: `"noop"`, `"pyannote"`, or `"speechbrain"` (default `"noop"`)
+- `diarization_model`:
+  - pyannote default: `"pyannote/speaker-diarization-3.1"`
+  - speechbrain default: `"speechbrain/spkrec-ecapa-voxceleb"` (used for speaker embeddings)
 - `min_segment_duration`: float seconds (default `0.0`)
 
 Notes:
-- Diarization is **offline-default** (`noop`). The `"pyannote"` backend is optional and heavy (pulls `torch`).
+- Diarization is **offline-default** (`noop`). The `"pyannote"` and `"speechbrain"` backends are optional and heavy (pull `torch`).
 - If `REFRAME_OFFLINE_MODE=true`, the worker will refuse `"pyannote"` diarization (to avoid network downloads) and continue without speaker labels.
+- If `REFRAME_OFFLINE_MODE=true`, the worker will refuse `"speechbrain"` diarization (it may download models) and continue without speaker labels.
 - If required deps aren’t installed, the worker logs a warning and continues without speaker labels (job still completes).
 
 ### Enabling pyannote in Docker images
@@ -43,14 +46,25 @@ If the model requires a Hugging Face token, set one of:
 - `HUGGINGFACE_TOKEN`
 - `HF_TOKEN`
 
+### Enabling SpeechBrain diarization in Docker images
+
+To enable the token-free SpeechBrain diarization fallback, install the optional extra:
+
+```bash
+pip install '/worker/packages/media-core[diarize-speechbrain]'
+```
+
 ### Benchmark diarization (CPU/memory)
 
-To measure rough wall time + peak RSS for pyannote diarization on a sample file:
+To measure rough wall time + peak RSS for diarization on a sample file (pyannote or speechbrain):
 
 ```bash
 make tools-ffmpeg
 pip install 'packages/media-core[diarize-pyannote]'
-HF_TOKEN=... scripts/benchmark_diarization.py /path/to/video-or-audio.mp4 --warmup --runs 1
+HF_TOKEN=... scripts/benchmark_diarization.py /path/to/video-or-audio.mp4 --backend pyannote --warmup --runs 1
+
+pip install 'packages/media-core[diarize-speechbrain]'
+scripts/benchmark_diarization.py /path/to/video-or-audio.mp4 --backend speechbrain --warmup --runs 1
 ```
 
 Notes:

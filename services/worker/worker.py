@@ -457,6 +457,7 @@ def system_info(self) -> dict:
             "transcribe_whisper_cpp": has_module("whispercpp"),
             "translate_argos": has_module("argostranslate"),
             "diarize_pyannote": has_module("pyannote.audio"),
+            "diarize_speechbrain": has_module("speechbrain"),
         },
         "cache": {
             "hf_home": os.getenv("HF_HOME") or None,
@@ -547,9 +548,13 @@ def generate_captions(self, job_id: str, video_asset_id: str, options: dict | No
         warnings.append(f"Unknown diarization backend '{diarization_backend_raw}'; using noop.")
         diarization_backend = DiarizationBackend.NOOP
 
+    default_diarization_model = "pyannote/speaker-diarization-3.1"
+    if diarization_backend == DiarizationBackend.SPEECHBRAIN:
+        default_diarization_model = "speechbrain/spkrec-ecapa-voxceleb"
+
     diarization_config = DiarizationConfig(
         backend=diarization_backend,
-        model=str(opts.get("diarization_model") or "pyannote/speaker-diarization-3.1"),
+        model=str(opts.get("diarization_model") or default_diarization_model),
         huggingface_token=str(
             opts.get("huggingface_token")
             or opts.get("hf_token")
@@ -564,6 +569,10 @@ def generate_captions(self, job_id: str, video_asset_id: str, options: dict | No
     if speaker_labels and diarization_config.backend != DiarizationBackend.NOOP:
         if diarization_config.backend == DiarizationBackend.PYANNOTE and offline_mode_enabled():
             warnings.append("Offline mode enabled; refusing pyannote diarization and continuing without speaker labels.")
+        elif diarization_config.backend == DiarizationBackend.SPEECHBRAIN and offline_mode_enabled():
+            warnings.append(
+                "Offline mode enabled; refusing speechbrain diarization (may download models) and continuing without speaker labels."
+            )
         else:
             audio_wav = new_tmp_file(".wav")
             try:

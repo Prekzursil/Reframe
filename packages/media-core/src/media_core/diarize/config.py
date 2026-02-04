@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class DiarizationBackend(str, Enum):
     NOOP = "noop"
     PYANNOTE = "pyannote"
+    SPEECHBRAIN = "speechbrain"
 
 
 class DiarizationConfig(BaseModel):
@@ -33,4 +34,3 @@ class DiarizationConfig(BaseModel):
         ge=0.0,
         description="Drop speaker segments shorter than this duration (seconds).",
     )
-
