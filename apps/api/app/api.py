@@ -19,8 +19,9 @@ from app.config import get_settings
 from app.errors import ErrorResponse, conflict, not_found, server_error
 from app.models import Job, JobStatus, MediaAsset, SubtitleStylePreset
 from app.rate_limit import enforce_rate_limit
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
+from app.storage import get_storage, is_remote_uri
 
 router = APIRouter(prefix="/api/v1")
 
@@ -255,13 +256,9 @@ def download_job_bundle(job_id: UUID, session: SessionDep) -> StreamingResponse:
     settings = get_settings()
     media_root = Path(settings.media_root)
 
-    def _is_remote_uri(uri: str) -> bool:
-        lowered = uri.strip().lower()
-        return lowered.startswith(("http://", "https://", "s3://", "gs://"))
-
     def resolve_asset_path(asset: MediaAsset) -> Path:
         uri = asset.uri or ""
-        if _is_remote_uri(uri):
+        if is_remote_uri(uri):
             return Path(uri)
         uri_path = Path(uri.lstrip("/"))
         if uri_path.parts and uri_path.parts[0] == "media":
@@ -278,7 +275,7 @@ def download_job_bundle(job_id: UUID, session: SessionDep) -> StreamingResponse:
         if not uri:
             return None
 
-        if _is_remote_uri(uri):
+        if is_remote_uri(uri):
             zf.writestr(f"{base_name}_uri.txt", uri)
             return f"{base_name}_uri.txt"
 
@@ -523,18 +520,13 @@ async def upload_asset(
     kind: str = Form("video"),
 ) -> MediaAsset:
     settings = get_settings()
-    media_root = Path(settings.media_root)
-    media_root.mkdir(parents=True, exist_ok=True)
+    storage = get_storage(media_root=settings.media_root)
 
     suffix = Path(file.filename or "").suffix
     filename = f"{uuid4()}{suffix}"
-    target_dir = media_root / "tmp"
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target_path = target_dir / filename
     data = await file.read()
-    target_path.write_bytes(data)
-
-    asset = MediaAsset(kind=kind, uri=f"/media/tmp/{filename}", mime_type=file.content_type)
+    uri = storage.write_bytes(rel_dir="tmp", filename=filename, data=data)
+    asset = MediaAsset(kind=kind, uri=uri, mime_type=file.content_type)
     session.add(asset)
     session.commit()
     session.refresh(asset)
@@ -579,10 +571,10 @@ def download_asset(asset_id: UUID, session: SessionDep) -> FileResponse:
     if not asset:
         raise not_found("Asset not found", details={"asset_id": str(asset_id)})
     settings = get_settings()
-    uri_path = Path(asset.uri.lstrip("/"))
-    if uri_path.parts and uri_path.parts[0] == "media":
-        uri_path = Path(*uri_path.parts[1:])
-    file_path = Path(settings.media_root) / uri_path
+    if asset.uri and is_remote_uri(asset.uri):
+        return RedirectResponse(url=asset.uri, status_code=302)
+    storage = get_storage(media_root=settings.media_root)
+    file_path = storage.resolve_local_path(asset.uri or "")
     if not file_path.exists():
         raise not_found("Asset file missing", details={"asset_id": str(asset_id), "path": str(file_path)})
     return FileResponse(path=file_path, media_type=asset.mime_type or "application/octet-stream", filename=file_path.name)

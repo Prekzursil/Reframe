@@ -1,10 +1,13 @@
 import base64
 import json
 import logging
+import mimetypes
 import os
 import shutil
 import subprocess
 import sys
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any, Optional, Tuple
 from uuid import UUID, uuid4
@@ -171,6 +174,36 @@ def _hex_to_ass_color(value: Any, *, default: str) -> str:
     return f"&H00{b:02X}{g:02X}{r:02X}"
 
 
+def _is_remote_uri(uri: str) -> bool:
+    lowered = (uri or "").strip().lower()
+    return lowered.startswith(("http://", "https://"))
+
+
+def _download_remote_asset_to_tmp(asset: MediaAsset) -> Path:
+    if offline_mode_enabled():
+        raise RuntimeError("REFRAME_OFFLINE_MODE is enabled; refusing to download remote assets.")
+
+    uri = (asset.uri or "").strip()
+    if not _is_remote_uri(uri):
+        raise ValueError(f"Not a remote http(s) uri: {uri}")
+
+    parsed = urllib.parse.urlparse(uri)
+    suffix = Path(parsed.path).suffix
+    if not suffix and asset.mime_type:
+        suffix = mimetypes.guess_extension(asset.mime_type) or ""
+    if not suffix:
+        suffix = ".bin"
+
+    dest = new_tmp_file(suffix)
+    request = urllib.request.Request(uri, headers={"User-Agent": "reframe-worker"})
+    with urllib.request.urlopen(request, timeout=60) as response, dest.open("wb") as f:  # noqa: S310 - intended outbound request (gated)
+        shutil.copyfileobj(response, f)
+
+    if not dest.exists() or dest.stat().st_size <= 0:
+        raise RuntimeError(f"Downloaded asset is empty: {uri}")
+    return dest
+
+
 def _transcribe_media(path: Path, config: TranscriptionConfig, *, warnings: list[str]):
     try:
         if config.backend == TranscriptionBackend.OPENAI_WHISPER:
@@ -266,6 +299,12 @@ def fetch_asset(asset_id: str) -> Tuple[Optional[MediaAsset], Optional[Path]]:
         asset = session.get(MediaAsset, uuid)
         if not asset:
             return None, None
+        if asset.uri and _is_remote_uri(asset.uri):
+            try:
+                return asset, _download_remote_asset_to_tmp(asset)
+            except Exception as exc:  # pragma: no cover - optional best-effort behavior
+                logger.warning("Failed to download remote asset %s: %s", asset.uri, exc)
+                return asset, None
         uri_path = Path(asset.uri.lstrip("/"))
         if uri_path.parts and uri_path.parts[0] == "media":
             uri_path = Path(*uri_path.parts[1:])

@@ -43,6 +43,20 @@ If the model requires a Hugging Face token, set one of:
 - `HUGGINGFACE_TOKEN`
 - `HF_TOKEN`
 
+### Benchmark diarization (CPU/memory)
+
+To measure rough wall time + peak RSS for pyannote diarization on a sample file:
+
+```bash
+make tools-ffmpeg
+pip install 'packages/media-core[diarize-pyannote]'
+HF_TOKEN=... scripts/benchmark_diarization.py /path/to/video-or-audio.mp4 --warmup --runs 1
+```
+
+Notes:
+- This is expected to be **heavy** (Torch + model downloads). Run it on the target machine you plan to deploy on.
+- `REFRAME_OFFLINE_MODE=true` is intended to disable network-backed providers; for pyannote benchmarks you’ll need network access for model download.
+
 ## Translate subtitles: Groq (optional)
 
 By default, `tasks.translate_subtitles` uses **Argos Translate** (offline) when available, and falls back to **NoOp** when not.
