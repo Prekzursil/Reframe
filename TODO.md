@@ -351,7 +351,7 @@
 - [x] Support for timelines / EDL export.
   - [x] Web: export Shorts results as CSV + basic CMX3600-style EDL.
   - [x] Timeline export: support audio tracks + per-clip reel names (optional).
-- [ ] Optional cloud integrations (S3, remote GPU workers).
+- [x] Optional cloud integrations (S3, remote GPU workers).
   - [x] Define a storage abstraction (`StorageBackend`) and keep local filesystem as default.
   - [x] Add S3-compatible backend (AWS S3 / Cloudflare R2) for assets + bundles (opt-in via env).
   - [x] Worker: support downloading remote input assets (pre-signed URL) into `MEDIA_ROOT/tmp` before processing.
@@ -395,13 +395,13 @@
 
 ### Local-first UX (no paid APIs)
 - [x] Add a “System status / Dependencies” panel in the web UI (ffmpeg present, whisper backend availability, model cache locations).
-- [ ] Add scripts to download/manage local models in a predictable cache dir (whisper.cpp + faster-whisper) and document disk sizes.
+- [x] Add scripts to download/manage local models in a predictable cache dir (whisper.cpp + faster-whisper) and document disk sizes.
   - [x] Add `scripts/prefetch_whisper_model.py` (faster-whisper model prefetch).
-  - [ ] Add whisper.cpp model download helper (ggml) and document placement.
-  - [ ] Document disk sizes + cache locations for Whisper models.
-- [ ] Add scripts to download/manage Argos Translate language packs and document supported language pairs.
+  - [x] Add whisper.cpp model download helper (ggml) and document placement.
+  - [x] Document disk sizes + cache locations for Whisper models.
+- [x] Add scripts to download/manage Argos Translate language packs and document supported language pairs.
   - [x] Add `scripts/install_argos_pack.py` (install packs by src/tgt).
-  - [ ] Document recommended language packs + supported pairs for common workflows.
+  - [x] Document recommended language packs + supported pairs for common workflows.
 
 ### Creator workflow (quality + control)
 - [ ] Add transcript viewer with search + click-to-seek timestamps (no re-run required).

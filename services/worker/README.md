@@ -72,6 +72,38 @@ To pre-download the model into the worker’s cache (recommended so the first jo
 docker compose -f infra/docker-compose.yml run --rm worker python /worker/scripts/prefetch_whisper_model.py --model whisper-large-v3
 ```
 
+### Model cache locations + disk size
+
+Docker Compose persists model downloads so you don’t pay the “first run download” penalty every time:
+
+- Hugging Face cache (faster-whisper): `hf-cache` → `/root/.cache/huggingface`
+- Argos packs: `argos-data` → `/root/.local/share/argos-translate`
+
+To inspect disk usage:
+
+```bash
+docker compose -f infra/docker-compose.yml run --rm worker du -sh /root/.cache/huggingface /root/.local/share/argos-translate || true
+```
+
+Rough sizing notes (varies by backend and quantization):
+
+- `whisper-large-v3` is **several GB** (plan ~3–6 GB of cache).
+- Argos packs are typically **tens to hundreds of MB per language pair**.
+
+### Optional: whisper.cpp models (GGML)
+
+If you want to use the `whisper_cpp` backend (not the default), you’ll need a GGML model file (e.g. `ggml-large-v3.bin`).
+
+To download into a predictable cache dir:
+
+```bash
+docker compose -f infra/docker-compose.yml run --rm worker python /worker/scripts/download_whispercpp_model.py --model large-v3
+```
+
+By default this writes to:
+- `${REFRAME_MEDIA_ROOT}/models/whispercpp` when `REFRAME_MEDIA_ROOT` exists (Docker Compose uses `/data/media`)
+- otherwise `.tools/models/whispercpp` in the repo
+
 ## Translate subtitles: Groq (optional)
 
 By default, `tasks.translate_subtitles` uses **Argos Translate** (offline) when available, and falls back to **NoOp** when not.
@@ -97,3 +129,10 @@ Argos requires per-language-pair packages. To install one in the worker containe
 docker compose -f infra/docker-compose.yml run --rm worker python /worker/scripts/install_argos_pack.py --list
 docker compose -f infra/docker-compose.yml run --rm worker python /worker/scripts/install_argos_pack.py --src en --tgt es
 ```
+
+Recommended starting packs (pick what you actually need; packs are directional):
+- `en->es`, `es->en`
+- `en->fr`, `fr->en`
+- `en->de`, `de->en`
+- `en->it`, `it->en`
+- `en->pt`, `pt->en`
