@@ -73,6 +73,12 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--hf-token", default="", help="Hugging Face token (or set HF_TOKEN/HUGGINGFACE_TOKEN env var).")
     parser.add_argument("--warmup", action="store_true", help="Run one warmup pass (downloads/loads model) before measuring.")
     parser.add_argument("--runs", type=int, default=1, help="Number of measured runs (default: %(default)s)")
+    parser.add_argument(
+        "--format",
+        default="text",
+        choices=["text", "md"],
+        help="Output format (default: %(default)s)",
+    )
     args = parser.parse_args(argv)
 
     input_path = Path(args.input)
@@ -122,24 +128,50 @@ def main(argv: list[str]) -> int:
 
         durations: list[float] = []
         segments_count: int | None = None
+        run_lines: list[str] = []
 
         for i in range(max(1, int(args.runs))):
             start = time.perf_counter()
             segments = diarize_audio(wav_path, config)
             durations.append(time.perf_counter() - start)
             segments_count = len(segments)
-            print(f"run={i + 1} duration_s={durations[-1]:.3f} segments={segments_count}")
+            run_line = f"run={i + 1} duration_s={durations[-1]:.3f} segments={segments_count}"
+            run_lines.append(run_line)
+            if args.format == "text":
+                print(run_line)
 
     peak_mb = _get_peak_rss_mb()
-    print("")
-    print("Summary")
-    print(f"backend={backend.value}")
-    print(f"model={model}")
-    print(f"runs={len(durations)} warmup={bool(args.warmup)}")
-    print(f"duration_s_min={min(durations):.3f} duration_s_max={max(durations):.3f} duration_s_avg={(sum(durations)/len(durations)):.3f}")
-    if segments_count is not None:
-        print(f"segments_last_run={segments_count}")
-    print(f"peak_rss_mb={peak_mb:.1f}")
+    duration_min = min(durations)
+    duration_max = max(durations)
+    duration_avg = sum(durations) / len(durations)
+
+    if args.format == "md":
+        print("")
+        print("### Diarization benchmark")
+        print("")
+        print(f"- backend: `{backend.value}`")
+        print(f"- model: `{model}`")
+        print(f"- runs: `{len(durations)}` (warmup: `{bool(args.warmup)}`)")
+        print(f"- duration_s_avg: `{duration_avg:.3f}` (min `{duration_min:.3f}`, max `{duration_max:.3f}`)")
+        if segments_count is not None:
+            print(f"- segments_last_run: `{segments_count}`")
+        print(f"- peak_rss_mb: `{peak_mb:.1f}`")
+        if run_lines:
+            print("")
+            print("```text")
+            for line in run_lines:
+                print(line)
+            print("```")
+    else:
+        print("")
+        print("Summary")
+        print(f"backend={backend.value}")
+        print(f"model={model}")
+        print(f"runs={len(durations)} warmup={bool(args.warmup)}")
+        print(f"duration_s_min={duration_min:.3f} duration_s_max={duration_max:.3f} duration_s_avg={duration_avg:.3f}")
+        if segments_count is not None:
+            print(f"segments_last_run={segments_count}")
+        print(f"peak_rss_mb={peak_mb:.1f}")
 
     return 0
 

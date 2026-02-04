@@ -340,6 +340,7 @@
   - [x] Add UI option to enable speaker labels (optional; advanced).
   - [ ] Validate with a real pyannote run and document expected memory/CPU impact.
     - [x] Add a small benchmark script (`scripts/benchmark_diarization.py`) to run diarization on a sample and print timing + peak RSS.
+    - [x] Benchmark script: support `--format md` output for easy doc pasting.
     - [ ] Run benchmarks (CPU + GPU if available) and paste results into docs.
 - [x] Smart silence trimming (cut dead air before generating shorts).
   - [x] media-core: add ffmpeg `silencedetect` helper (`detect_silence`).

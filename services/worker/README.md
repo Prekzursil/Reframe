@@ -67,6 +67,13 @@ pip install 'packages/media-core[diarize-speechbrain]'
 scripts/benchmark_diarization.py /path/to/video-or-audio.mp4 --backend speechbrain --warmup --runs 1
 ```
 
+To generate a markdown snippet you can paste into docs:
+
+```bash
+HF_TOKEN=... scripts/benchmark_diarization.py /path/to/video-or-audio.mp4 --backend pyannote --warmup --runs 1 --format md
+scripts/benchmark_diarization.py /path/to/video-or-audio.mp4 --backend speechbrain --warmup --runs 1 --format md
+```
+
 Notes:
 - This is expected to be **heavy** (Torch + model downloads). Run it on the target machine you plan to deploy on.
 - `REFRAME_OFFLINE_MODE=true` is intended to disable network-backed providers; for pyannote benchmarks you’ll need network access for model download.
