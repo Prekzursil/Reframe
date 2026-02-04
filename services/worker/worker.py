@@ -38,7 +38,7 @@ from celery import Celery
 
 from media_core.segment.shorts import equal_splits, score_segments_llm, select_top
 from media_core.diarize import DiarizationBackend, DiarizationConfig, assign_speakers_to_lines, diarize_audio
-from media_core.subtitles.builder import GroupingConfig, group_words, to_ass, to_ass_karaoke, to_srt, to_vtt
+from media_core.subtitles.builder import GroupingConfig, SubtitleLine, group_words, to_ass, to_ass_karaoke, to_srt, to_vtt
 from media_core.subtitles.vtt import parse_vtt
 from media_core.transcribe import (
     TranscriptionBackend,
@@ -49,6 +49,7 @@ from media_core.transcribe import (
     transcribe_whisper_cpp,
     transcribe_whisper_timestamped,
 )
+from media_core.transcribe.models import Word
 from media_core.translate.srt import parse_srt, translate_srt, translate_srt_bilingual
 from media_core.translate.translator import CloudTranslator, LocalTranslator, NoOpTranslator
 from media_core.video_edit.ffmpeg import cut_clip, detect_silence, merge_video_audio as ffmpeg_merge_video_audio, probe_media
@@ -707,64 +708,125 @@ def translate_subtitles(self, job_id: str, subtitle_asset_id: str, options: dict
     return result
 
 
-@celery_app.task(bind=True, name="tasks.render_styled_subtitles")
-def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_asset_id: str, style: dict | None = None, options: dict | None = None) -> dict:
-    update_job(job_id, status=JobStatus.running, progress=0.1)
-    _progress(self, "started", 0.0, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
-    opts = options or {}
-    raw_preview_seconds = opts.get("preview_seconds")
-    try:
-        preview_seconds = int(raw_preview_seconds) if raw_preview_seconds is not None else None
-    except (TypeError, ValueError):
-        preview_seconds = None
-    if preview_seconds is not None and preview_seconds <= 0:
-        preview_seconds = None
+_SHORTS_STYLE_PRESETS: dict[str, dict[str, Any]] = {
+    "tiktok bold": {
+        "font": "Inter",
+        "font_size": 48,
+        "text_color": "#ffffff",
+        "highlight_color": "#facc15",
+        "stroke_width": 3,
+        "outline_enabled": True,
+        "outline_color": "#000000",
+        "shadow_enabled": True,
+        "shadow_offset": 4,
+        "position": "bottom",
+    },
+    "clean slate": {
+        "font": "Inter",
+        "font_size": 44,
+        "text_color": "#f9fafb",
+        "highlight_color": "#34d399",
+        "stroke_width": 2,
+        "outline_enabled": False,
+        "outline_color": "#000000",
+        "shadow_enabled": True,
+        "shadow_offset": 3,
+        "position": "bottom",
+    },
+    "night runner": {
+        "font": "Space Grotesk",
+        "font_size": 46,
+        "text_color": "#e5e7eb",
+        "highlight_color": "#22d3ee",
+        "stroke_width": 3,
+        "outline_enabled": True,
+        "outline_color": "#111827",
+        "shadow_enabled": True,
+        "shadow_offset": 4,
+        "position": "bottom",
+    },
+}
 
-    video_asset, video_path = fetch_asset(video_asset_id)
-    subtitle_asset, subtitle_path = fetch_asset(subtitle_asset_id)
 
-    if not video_path or not video_path.exists():
-        error = f"Video asset file missing for {video_asset_id}"
-        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
-        return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+def _resolve_style_from_options(opts: dict | None) -> dict[str, Any]:
+    if not isinstance(opts, dict):
+        return dict(_SHORTS_STYLE_PRESETS["tiktok bold"])
+    style = opts.get("style")
+    if isinstance(style, dict) and style:
+        return style
+    preset = str(opts.get("style_preset") or "").strip().lower()
+    if preset:
+        resolved = _SHORTS_STYLE_PRESETS.get(preset)
+        if resolved:
+            return dict(resolved)
+    return dict(_SHORTS_STYLE_PRESETS["tiktok bold"])
 
-    if not subtitle_path or not subtitle_path.exists():
-        error = f"Subtitle asset file missing for {subtitle_asset_id}"
-        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
-        return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
 
+def _slice_subtitle_lines(lines: list[SubtitleLine], *, start: float, end: float) -> list[SubtitleLine]:
+    """Extract and time-shift subtitle lines so the clip starts at 0s."""
+    clip_duration = max(0.0, float(end) - float(start))
+    out: list[SubtitleLine] = []
+    for line in lines:
+        if line.start >= end or line.end <= start:
+            continue
+
+        shifted_start = max(0.0, line.start - start)
+        shifted_end = min(clip_duration, line.end - start)
+        if shifted_end <= shifted_start:
+            continue
+
+        shifted_words: list[Word] = []
+        for w in line.words or []:
+            try:
+                ws = max(0.0, float(w.start) - start)
+                we = min(clip_duration, float(w.end) - start)
+            except Exception:
+                continue
+            if we <= ws:
+                continue
+            try:
+                shifted_words.append(Word(text=w.text, start=ws, end=we, probability=getattr(w, "probability", None)))
+            except Exception:
+                continue
+
+        if not shifted_words:
+            # Preserve text even when word timings can't be shifted cleanly.
+            text = line.text()
+            if text:
+                try:
+                    shifted_words = [Word(text=text, start=shifted_start, end=shifted_end)]
+                except Exception:
+                    shifted_words = []
+
+        if shifted_words:
+            out.append(SubtitleLine(start=shifted_start, end=shifted_end, words=shifted_words, speaker=line.speaker))
+    return out
+
+
+def _render_styled_subtitles_to_file(
+    *,
+    job_id: str,
+    step: str,
+    video_path: Path,
+    subtitle_path: Path,
+    style: dict | None,
+    preview_seconds: int | None = None,
+) -> Path:
     subtitle_suffix = subtitle_path.suffix.lower()
     if subtitle_suffix not in {".srt", ".vtt", ".ass"}:
-        error = (
-            "Only .srt/.vtt/.ass subtitles are supported for styled render currently "
-            f"(got {subtitle_path.suffix or 'no extension'})."
-        )
-        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
-        return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+        raise ValueError(f"Only .srt/.vtt/.ass subtitles are supported (got {subtitle_path.suffix or 'no extension'}).")
 
     subtitle_render_path = subtitle_path
     if subtitle_suffix in {".srt", ".vtt"}:
-        try:
-            subtitle_text = subtitle_path.read_text(encoding="utf-8", errors="replace")
-            subtitle_lines = parse_srt(subtitle_text) if subtitle_suffix == ".srt" else parse_vtt(subtitle_text)
-            karaoke_ass = to_ass_karaoke(subtitle_lines)
-            subtitle_render_path = new_tmp_file(".ass")
-            subtitle_render_path.write_text(karaoke_ass, encoding="utf-8")
-        except Exception as exc:
-            error = f"Failed to convert subtitles for styled render: {exc}"
-            update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-            _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
-            return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+        subtitle_text = subtitle_path.read_text(encoding="utf-8", errors="replace")
+        subtitle_lines = parse_srt(subtitle_text) if subtitle_suffix == ".srt" else parse_vtt(subtitle_text)
+        karaoke_ass = to_ass_karaoke(subtitle_lines)
+        subtitle_render_path = new_tmp_file(".ass")
+        subtitle_render_path.write_text(karaoke_ass, encoding="utf-8")
 
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
-        error = "ffmpeg is required to render styled subtitles"
-        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
-        return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+        raise RuntimeError("ffmpeg is required to render styled subtitles")
 
     style_dict = style if isinstance(style, dict) else {}
     font = str(style_dict.get("font") or "Arial")
@@ -836,23 +898,60 @@ def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_ass
         str(output_path),
     ]
 
+    _run_ffmpeg_with_retries(
+        job_id=job_id,
+        step=step,
+        fn=lambda: subprocess.run(cmd, check=True, capture_output=True),
+    )
+
+    if not output_path.exists() or output_path.stat().st_size <= 0:
+        raise RuntimeError("Styled render failed: output file was not created")
+    return output_path
+
+
+@celery_app.task(bind=True, name="tasks.render_styled_subtitles")
+def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_asset_id: str, style: dict | None = None, options: dict | None = None) -> dict:
+    update_job(job_id, status=JobStatus.running, progress=0.1)
+    _progress(self, "started", 0.0, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
+    opts = options or {}
+    raw_preview_seconds = opts.get("preview_seconds")
     try:
-        _run_ffmpeg_with_retries(
+        preview_seconds = int(raw_preview_seconds) if raw_preview_seconds is not None else None
+    except (TypeError, ValueError):
+        preview_seconds = None
+    if preview_seconds is not None and preview_seconds <= 0:
+        preview_seconds = None
+
+    video_asset, video_path = fetch_asset(video_asset_id)
+    subtitle_asset, subtitle_path = fetch_asset(subtitle_asset_id)
+
+    if not video_path or not video_path.exists():
+        error = f"Video asset file missing for {video_asset_id}"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
+        return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+
+    if not subtitle_path or not subtitle_path.exists():
+        error = f"Subtitle asset file missing for {subtitle_asset_id}"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
+        return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+
+    style_dict = style if isinstance(style, dict) else {}
+    try:
+        output_path = _render_styled_subtitles_to_file(
             job_id=job_id,
             step="render_styled_subtitles",
-            fn=lambda: subprocess.run(cmd, check=True, capture_output=True),
+            video_path=video_path,
+            subtitle_path=subtitle_path,
+            style=style_dict,
+            preview_seconds=preview_seconds,
         )
     except Exception as exc:
         stderr = ""
         if isinstance(exc, subprocess.CalledProcessError):
             stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, (bytes, bytearray)) else str(exc.stderr or "")
         error = f"Styled render failed: {stderr[-4000:] or exc}"
-        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
-        return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
-
-    if not output_path.exists() or output_path.stat().st_size <= 0:
-        error = "Styled render failed: output file was not created"
         update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
         _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
         return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
@@ -881,8 +980,30 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
     max_clips = int(opts.get("max_clips") or 3)
     min_duration = float(opts.get("min_duration") or 10.0)
     max_duration = float(opts.get("max_duration") or 60.0)
-    use_subtitles = bool(opts.get("use_subtitles"))
+    use_subtitles = _coerce_bool(opts.get("use_subtitles"))
     trim_silence = _coerce_bool(opts.get("trim_silence"))
+    subtitle_asset_id = str(opts.get("subtitle_asset_id") or "").strip()
+    style_for_clip = _resolve_style_from_options(opts) if use_subtitles else {}
+
+    subtitle_source_lines: list[SubtitleLine] | None = None
+    if use_subtitles and subtitle_asset_id:
+        try:
+            _subs_asset, subs_path = fetch_asset(subtitle_asset_id)
+            if not subs_path or not subs_path.exists():
+                warnings.append(f"subtitle_asset_id {subtitle_asset_id} missing on disk; using placeholder subtitles per clip.")
+            else:
+                subs_text = subs_path.read_text(encoding="utf-8", errors="replace")
+                suffix = subs_path.suffix.lower()
+                if suffix == ".vtt":
+                    subtitle_source_lines = parse_vtt(subs_text)
+                elif suffix == ".srt":
+                    subtitle_source_lines = parse_srt(subs_text)
+                else:
+                    warnings.append(f"subtitle_asset_id must be .srt/.vtt for per-clip slicing (got {subs_path.suffix}); using placeholder subtitles per clip.")
+        except Exception as exc:
+            warnings.append(f"Failed to load subtitle_asset_id {subtitle_asset_id}; using placeholder subtitles per clip ({exc}).")
+    elif use_subtitles:
+        warnings.append("use_subtitles enabled but no subtitle_asset_id provided; using placeholder subtitles per clip.")
 
     src_asset, src_path = fetch_asset(video_asset_id)
     if not src_path or not src_path.exists():
@@ -933,25 +1054,31 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
 
     scoring_backend = str(opts.get("segment_scoring_backend") or opts.get("scoring_backend") or "").strip().lower()
     prompt = str(opts.get("prompt") or "").strip()
-    scoring_subtitle_asset_id = str(opts.get("subtitle_asset_id") or "").strip()
     if scoring_backend == "groq":
         if not prompt:
             warnings.append("Groq scoring requested but no prompt was provided; falling back to heuristics.")
         elif offline_mode_enabled():
             warnings.append("Groq scoring requested but offline mode is enabled; falling back to heuristics.")
-        elif not scoring_subtitle_asset_id:
+        elif not subtitle_asset_id:
             warnings.append("Groq scoring requested but no subtitle_asset_id provided; falling back to heuristics.")
         else:
             try:
-                _subs_asset, subs_path = fetch_asset(scoring_subtitle_asset_id)
+                _subs_asset, subs_path = fetch_asset(subtitle_asset_id)
                 if not subs_path or not subs_path.exists():
-                    warnings.append(f"subtitle_asset_id {scoring_subtitle_asset_id} missing on disk; falling back to heuristics.")
+                    warnings.append(f"subtitle_asset_id {subtitle_asset_id} missing on disk; falling back to heuristics.")
                 else:
-                    subs_text = subs_path.read_text(encoding='utf-8', errors='replace')
-                    if subs_path.suffix.lower() == ".vtt":
+                    subs_text = subs_path.read_text(encoding="utf-8", errors="replace")
+                    suffix = subs_path.suffix.lower()
+                    if suffix == ".vtt":
                         subtitle_lines = parse_vtt(subs_text)
-                    else:
+                    elif suffix == ".srt":
                         subtitle_lines = parse_srt(subs_text)
+                    else:
+                        warnings.append(f"subtitle_asset_id must be .srt/.vtt for Groq scoring (got {subs_path.suffix}); falling back to heuristics.")
+                        subtitle_lines = None
+
+                    if not subtitle_lines:
+                        raise ValueError("Subtitle parsing failed or unsupported subtitle format.")
 
                     transcript = "\n".join(l.text() for l in subtitle_lines if l.text())
                     for cand in candidates:
@@ -1012,23 +1139,58 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
         thumb_asset = create_thumbnail_asset(clip_path)
 
         subtitle_asset = None
+        styled_asset = None
+        clip_style_preset = str(opts.get("style_preset") or "").strip() or None
         if use_subtitles:
-            subtitle_contents = (
-                "WEBVTT\n\n"
-                "00:00:00.000 --> 00:00:02.000\n"
-                f"Clip {idx + 1} subtitle placeholder\n"
-            )
-            subtitle_asset = create_asset(kind="subtitle", mime_type="text/vtt", suffix=".vtt", contents=subtitle_contents)
+            subtitle_file: Path | None = None
+            try:
+                subtitle_file = new_tmp_file(".vtt")
+                if subtitle_source_lines is not None:
+                    sliced = _slice_subtitle_lines(subtitle_source_lines, start=seg.start, end=seg.end)
+                    subtitle_contents = to_vtt(sliced)
+                else:
+                    subtitle_contents = (
+                        "WEBVTT\n\n"
+                        "00:00:00.000 --> 00:00:02.000\n"
+                        f"Clip {idx + 1} subtitle placeholder\n"
+                    )
+                subtitle_file.write_text(subtitle_contents, encoding="utf-8")
+                subtitle_asset = create_asset_for_existing_file(kind="subtitle", mime_type="text/vtt", file_path=subtitle_file)
+            except Exception as exc:
+                warnings.append(f"Clip {idx + 1}: failed to build subtitles ({exc}); continuing without subtitles.")
+                subtitle_asset = None
+                subtitle_file = None
+
+            if subtitle_file and subtitle_asset:
+                try:
+                    styled_path = _render_styled_subtitles_to_file(
+                        job_id=job_id,
+                        step=f"render_shorts_clip:{idx + 1}",
+                        video_path=clip_path,
+                        subtitle_path=subtitle_file,
+                        style=style_for_clip,
+                        preview_seconds=None,
+                    )
+                    styled_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=styled_path)
+                except Exception as exc:
+                    stderr = ""
+                    if isinstance(exc, subprocess.CalledProcessError):
+                        stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, (bytes, bytearray)) else str(exc.stderr or "")
+                    warnings.append(f"Clip {idx + 1}: styled render failed ({stderr[-4000:] or exc}).")
+                    styled_asset = None
 
         clips.append(
             {
                 "id": f"{job_id}-clip-{idx + 1}",
                 "asset_id": str(clip_asset.id),
+                "style_preset": clip_style_preset,
                 "start": seg.start,
                 "end": seg.end,
                 "duration": round(seg.duration, 3),
                 "score": seg.score,
                 "uri": clip_asset.uri,
+                "styled_uri": styled_asset.uri if styled_asset else None,
+                "styled_asset_id": str(styled_asset.id) if styled_asset else None,
                 "thumbnail_asset_id": str(thumb_asset.id),
                 "subtitle_uri": subtitle_asset.uri if subtitle_asset else None,
                 "subtitle_asset_id": str(subtitle_asset.id) if subtitle_asset else None,

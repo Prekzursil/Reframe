@@ -30,6 +30,16 @@ def _upload_fake_audio(client, *, content: bytes = b"fake-audio", filename: str 
     return resp.json()
 
 
+def _upload_fake_subtitle(client, *, content: str, filename: str = "captions.vtt") -> dict:
+    resp = client.post(
+        "/api/v1/assets/upload",
+        data={"kind": "subtitle"},
+        files={"file": (filename, content.encode("utf-8"), "text/vtt")},
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
 def _require_ffmpeg() -> str:
     ffmpeg = shutil.which("ffmpeg")
     ffprobe = shutil.which("ffprobe")
@@ -256,6 +266,16 @@ def test_end_to_end_video_to_shorts_with_subtitles_job(test_client, tmp_path: Pa
 
     video_bytes = _generate_test_video_bytes(tmp_path, duration_seconds=4.0)
     video = _upload_fake_video(client, content=video_bytes, filename="shorts.mp4")
+    timed_subs = _upload_fake_subtitle(
+        client,
+        content=(
+            "WEBVTT\n\n"
+            "00:00:00.000 --> 00:00:01.500\n"
+            "Hello from the first half\n\n"
+            "00:00:02.000 --> 00:00:03.500\n"
+            "Second half subtitle\n\n"
+        ),
+    )
 
     payload = {
         "video_asset_id": video["id"],
@@ -263,7 +283,7 @@ def test_end_to_end_video_to_shorts_with_subtitles_job(test_client, tmp_path: Pa
         "min_duration": 1,
         "max_duration": 2,
         "aspect_ratio": "9:16",
-        "options": {"use_subtitles": True, "style_preset": "TikTok Bold"},
+        "options": {"use_subtitles": True, "style_preset": "TikTok Bold", "subtitle_asset_id": timed_subs["id"]},
     }
     resp = client.post("/api/v1/shorts/jobs", json=payload)
     assert resp.status_code == 201, resp.text
@@ -284,13 +304,26 @@ def test_end_to_end_video_to_shorts_with_subtitles_job(test_client, tmp_path: Pa
     assert isinstance(clips, list)
     assert len(clips) == 2
     assert all(c.get("subtitle_uri") for c in clips)
+    assert all(c.get("styled_uri") for c in clips)
 
-    for clip in clips:
+    for idx, clip in enumerate(clips):
         uri = clip.get("subtitle_uri")
         assert isinstance(uri, str)
         assert uri.startswith("/media/")
         path = media_root / Path(uri).relative_to("/media")
         assert path.exists()
+        text = path.read_text(encoding="utf-8", errors="replace")
+        assert "WEBVTT" in text
+        if idx == 0:
+            assert "Hello from the first half" in text
+        else:
+            assert "Second half subtitle" in text
+
+        styled_uri = clip.get("styled_uri")
+        assert isinstance(styled_uri, str)
+        assert styled_uri.startswith("/media/")
+        styled_path = media_root / Path(styled_uri).relative_to("/media")
+        assert styled_path.exists()
 
 
 def test_end_to_end_video_to_shorts_trim_silence_prefers_non_silent_segments(test_client, tmp_path: Path):
@@ -408,5 +441,6 @@ def test_end_to_end_shorts_job_bundle_includes_upload_package_and_clip_files(tes
         for clip in upload["clips"]:
             files = clip.get("files") or {}
             assert files.get("video") in names
+            assert files.get("video_styled") in names
             assert files.get("thumbnail") in names
             assert files.get("subtitles") in names

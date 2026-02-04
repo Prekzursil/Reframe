@@ -1145,10 +1145,15 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job) => void }) {
             </p>
           </div>
           <label className="field full">
-            <span>Subtitle asset for prompt scoring (optional)</span>
-            <Input value={subtitleForScoringId} onChange={(e) => setSubtitleForScoringId(e.target.value)} placeholder="SRT/VTT asset id (timed captions)" />
+            <span>Timed subtitle asset (SRT/VTT) (optional)</span>
+            <Input
+              value={subtitleForScoringId}
+              onChange={(e) => setSubtitleForScoringId(e.target.value)}
+              placeholder="Subtitle asset id (SRT/VTT with timings)"
+            />
             <p className="muted">
-              Used only when <b>Groq scoring</b> is enabled. Generate captions first, then paste the subtitle asset id here.
+              If set, it’s used for <b>Groq scoring</b> <i>and</i> for slicing real per-clip subtitles when <b>Use subtitles</b> is enabled.
+              Generate captions first, then paste the output subtitle asset id here.
             </p>
           </label>
           <label className="field">
@@ -1180,13 +1185,13 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job) => void }) {
           </p>
         )}
       </label>
-      {(useSubtitles || numClips > 6 || maxDuration > 60) && (
-        <div className="field full">
-          <p className="muted">
-            Heads-up: generating many/long clips can take a while. Subtitles for clips are currently placeholders (real per-clip captions are a follow-up).
-          </p>
-        </div>
-      )}
+	      {(useSubtitles || numClips > 6 || maxDuration > 60) && (
+	        <div className="field full">
+	          <p className="muted">
+	            Heads-up: generating many/long clips can take a while. For real per-clip subtitles, set a timed subtitle asset id (SRT/VTT) in Advanced selection.
+	          </p>
+	        </div>
+	      )}
       {error && <div className="error-inline">{error}</div>}
       <div className="actions-row">
         <CopyCommandButton command={curlCommand} />
@@ -1565,22 +1570,24 @@ function StyleEditor({
                 ? (refreshed.payload as any).style_preset.trim()
                 : (PRESETS[0]?.name ?? "TikTok Bold");
 
-		          const clips = ((refreshed.payload as any).clip_assets as any[]).map((c, i) => ({
-		            id: c.id || `${refreshed.id}-clip-${i + 1}`,
+			          const clips = ((refreshed.payload as any).clip_assets as any[]).map((c, i) => ({
+			            id: c.id || `${refreshed.id}-clip-${i + 1}`,
                 asset_id: c.asset_id ?? null,
                 subtitle_asset_id: c.subtitle_asset_id ?? null,
                 thumbnail_asset_id: c.thumbnail_asset_id ?? null,
+                styled_asset_id: c.styled_asset_id ?? null,
+                styled_uri: resolveUri(c.styled_uri),
                 style_preset:
                   typeof c.style_preset === "string" && c.style_preset.trim() ? c.style_preset.trim() : defaultStylePreset,
-	              start: c.start ?? null,
-	              end: c.end ?? null,
-		            duration: c.duration ?? null,
-		            score: c.score ?? null,
-		            uri: resolveUri(c.uri ?? c.url),
-		            subtitle_uri: resolveUri(c.subtitle_uri),
-		            thumbnail_uri: resolveUri(c.thumbnail_uri),
-		          }));
-		          setShortsClips((prev) => {
+		              start: c.start ?? null,
+		              end: c.end ?? null,
+			            duration: c.duration ?? null,
+			            score: c.score ?? null,
+			            uri: resolveUri(c.uri ?? c.url),
+			            subtitle_uri: resolveUri(c.subtitle_uri),
+			            thumbnail_uri: resolveUri(c.thumbnail_uri),
+			          }));
+			          setShortsClips((prev) => {
                 const byId = new Map(prev.map((clip) => [clip.id, clip]));
                 return clips
                   .filter(Boolean)
@@ -1588,8 +1595,8 @@ function StyleEditor({
                     const existing = byId.get(clip.id);
                     return {
                       ...clip,
-                      styled_asset_id: existing?.styled_asset_id ?? null,
-                      styled_uri: existing?.styled_uri ?? null,
+                      styled_asset_id: clip.styled_asset_id ?? existing?.styled_asset_id ?? null,
+                      styled_uri: clip.styled_uri ?? existing?.styled_uri ?? null,
                       style_preset: existing?.style_preset ?? clip.style_preset ?? defaultStylePreset,
                     };
                   });
