@@ -157,11 +157,12 @@ Right now this repo is in the **planning / scaffolding** stage:
 Once the initial scaffolding is done, the flow will look like:
 
 ```bash
-# 1. Configure env (edit as needed)
-cp .env.example .env
+# 1. Quick start (recommended)
+./start.sh up
 
-# 2. Start services
-docker compose -f infra/docker-compose.yml up --build
+# Or manually:
+# cp .env.example .env
+# docker compose -f infra/docker-compose.yml up --build
 
 # 3. API will run on http://localhost:8000
 # 4. Web UI will run on http://localhost:5173
