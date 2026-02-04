@@ -313,6 +313,10 @@
     - [x] Docs: add end-to-end verification checklist.
     - [x] Desktop: display current app version in UI (helps verify old→new relaunch).
     - [x] Desktop: add quick link to open GitHub Releases from the UI.
+    - [ ] Publish two signed desktop releases via tags (`desktop-v0.x.y`, then `desktop-v0.x.(y+1)`), so `latest.json` exists.
+      - [ ] Set GitHub repo secrets `TAURI_SIGNING_PRIVATE_KEY` (and optional password) for the Desktop Release workflow.
+      - [ ] Push tag `desktop-v0.x.y` and confirm GitHub Release assets include `latest.json`.
+      - [ ] Push tag `desktop-v0.x.(y+1)` and confirm `latest.json` updates to the newer version.
     - [ ] Manual: install an older build and confirm update + relaunch (Windows/macOS/Linux).
 - [x] Provide example configs for:
   - [x] Local dev (no GPU),
@@ -344,6 +348,7 @@
     - [x] Benchmark script: support `--format md` output for easy doc pasting.
     - [x] Benchmark script: fail fast with a clear error when `HF_TOKEN` is missing for pyannote.
     - [x] Benchmark script: add a Docker helper (`scripts/benchmark_diarization_docker.sh`) to avoid local Torch installs.
+    - [ ] Prereq: accept Hugging Face model terms for `pyannote/speaker-diarization-3.1` and set `HF_TOKEN` locally (never commit).
     - [ ] Run benchmarks (CPU + GPU if available) and paste results into docs.
 - [x] Smart silence trimming (cut dead air before generating shorts).
   - [x] media-core: add ffmpeg `silencedetect` helper (`detect_silence`).

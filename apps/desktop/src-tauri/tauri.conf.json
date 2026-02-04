@@ -36,7 +36,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI1M0U4OTc3NDlDODE4NjIKUldSaUdNaEpkNGsrSmRGRkc3N3ZzMUpscEY1bDFkM2NSK3FYaVljaHdhRkswOFlGQjZkUHBYcksK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDcxMUM1QTlDRkRFNjlCQTUKUldTbG0rYjluRm9jY1RTcTBKenB1SE43M21zbGNPaHdzRmZQNmFMSHl1dmU5eU1XYmI0dWxoK3gK",
       "endpoints": [
         "https://github.com/Prekzursil/Reframe/releases/latest/download/latest.json"
       ]

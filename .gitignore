@@ -1,6 +1,9 @@
 .env
 .env.*
 
+# Desktop signing keys (never commit private key)
+apps/desktop/src-tauri/keys/tauri.key
+
 # Python
 __pycache__/
 *.py[cod]
