@@ -56,6 +56,7 @@ HF_TOKEN=... scripts/benchmark_diarization.py /path/to/video-or-audio.mp4 --warm
 Notes:
 - This is expected to be **heavy** (Torch + model downloads). Run it on the target machine you plan to deploy on.
 - `REFRAME_OFFLINE_MODE=true` is intended to disable network-backed providers; for pyannote benchmarks you’ll need network access for model download.
+- `scripts/benchmark_diarization.py` will also pick up `HF_TOKEN` / `HUGGINGFACE_TOKEN` from the repo `.env` if present.
 
 ## Captions: high-quality transcription (Whisper Large v3)
 

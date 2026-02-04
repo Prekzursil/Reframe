@@ -53,7 +53,7 @@ def _get_peak_rss_mb() -> float:
 
 
 def main(argv: list[str]) -> int:
-    _ensure_repo_paths()
+    repo_root = _ensure_repo_paths()
 
     parser = argparse.ArgumentParser(description="Benchmark pyannote diarization wall time and peak RSS.")
     parser.add_argument("input", help="Path to an audio/video file.")
@@ -69,6 +69,20 @@ def main(argv: list[str]) -> int:
         raise FileNotFoundError(input_path)
 
     token = (args.hf_token or os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN") or "").strip() or None
+    if not token:
+        dotenv_path = repo_root / ".env"
+        if dotenv_path.is_file():
+            for line in dotenv_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                key, value = stripped.split("=", 1)
+                key = key.strip()
+                if key not in {"HF_TOKEN", "HUGGINGFACE_TOKEN"}:
+                    continue
+                token = value.strip().strip("\"'") or None
+                if token:
+                    break
 
     from media_core.diarize import DiarizationBackend, DiarizationConfig, diarize_audio
 
@@ -112,4 +126,3 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-
