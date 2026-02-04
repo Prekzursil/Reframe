@@ -352,10 +352,10 @@
   - [x] Timeline export: support audio tracks + per-clip reel names (optional).
 - [ ] Optional cloud integrations (S3, remote GPU workers).
   - [x] Define a storage abstraction (`StorageBackend`) and keep local filesystem as default.
-  - [ ] Add S3-compatible backend (AWS S3 / Cloudflare R2) for assets + bundles (opt-in via env).
+  - [x] Add S3-compatible backend (AWS S3 / Cloudflare R2) for assets + bundles (opt-in via env).
   - [x] Worker: support downloading remote input assets (pre-signed URL) into `MEDIA_ROOT/tmp` before processing.
-  - [ ] API: optional pre-signed download URLs for large assets (avoid proxying through API).
-  - [ ] Docs: deployment guide for remote storage + remote workers (free-tier friendly defaults).
+  - [x] API: optional pre-signed download URLs for large assets (avoid proxying through API).
+  - [x] Docs: deployment guide for remote storage + remote workers (free-tier friendly defaults).
 - [x] Optional “export upload package” for YouTube/TikTok (title, description, tags).
 
 ---

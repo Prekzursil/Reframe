@@ -21,7 +21,7 @@ from app.models import Job, JobStatus, MediaAsset, SubtitleStylePreset
 from app.rate_limit import enforce_rate_limit
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
-from app.storage import get_storage, is_remote_uri
+from app.storage import LocalStorageBackend, get_storage, is_remote_uri
 
 router = APIRouter(prefix="/api/v1")
 
@@ -123,6 +123,10 @@ class ShortsJobRequest(SQLModel):
             }
         }
     }
+
+
+class DownloadUrlResponse(SQLModel):
+    url: str
 
 
 class MergeAVRequest(SQLModel):
@@ -525,7 +529,7 @@ async def upload_asset(
     suffix = Path(file.filename or "").suffix
     filename = f"{uuid4()}{suffix}"
     data = await file.read()
-    uri = storage.write_bytes(rel_dir="tmp", filename=filename, data=data)
+    uri = storage.write_bytes(rel_dir="tmp", filename=filename, data=data, content_type=file.content_type)
     asset = MediaAsset(kind=kind, uri=uri, mime_type=file.content_type)
     session.add(asset)
     session.commit()
@@ -561,6 +565,28 @@ def get_asset(asset_id: UUID, session: SessionDep) -> MediaAsset:
 
 
 @router.get(
+    "/assets/{asset_id}/download-url",
+    response_model=DownloadUrlResponse,
+    tags=["Assets"],
+    responses={404: {"model": ErrorResponse}},
+)
+def get_asset_download_url(asset_id: UUID, session: SessionDep, presign: bool = True) -> DownloadUrlResponse:
+    asset = session.get(MediaAsset, asset_id)
+    if not asset:
+        raise not_found("Asset not found", details={"asset_id": str(asset_id)})
+    if not asset.uri:
+        raise not_found("Asset has no URI", details={"asset_id": str(asset_id)})
+    settings = get_settings()
+    storage = get_storage(media_root=settings.media_root)
+    url = asset.uri
+    if presign:
+        resolved = storage.get_download_url(asset.uri)
+        if resolved:
+            url = resolved
+    return DownloadUrlResponse(url=url)
+
+
+@router.get(
     "/assets/{asset_id}/download",
     response_class=FileResponse,
     tags=["Assets"],
@@ -573,8 +599,7 @@ def download_asset(asset_id: UUID, session: SessionDep) -> FileResponse:
     settings = get_settings()
     if asset.uri and is_remote_uri(asset.uri):
         return RedirectResponse(url=asset.uri, status_code=302)
-    storage = get_storage(media_root=settings.media_root)
-    file_path = storage.resolve_local_path(asset.uri or "")
+    file_path = LocalStorageBackend(media_root=Path(settings.media_root)).resolve_local_path(asset.uri or "")
     if not file_path.exists():
         raise not_found("Asset file missing", details={"asset_id": str(asset_id), "path": str(file_path)})
     return FileResponse(path=file_path, media_type=asset.mime_type or "application/octet-stream", filename=file_path.name)
