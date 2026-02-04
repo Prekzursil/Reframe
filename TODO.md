@@ -411,7 +411,7 @@
 ### Reliability & safety
 - [x] Add upload limits (max bytes) + content-type validation for `/assets/upload`.
 - [x] Add a “delete asset/job” flow + retention policy for `MEDIA_ROOT/tmp`.
-- [ ] Add job retries with backoff for transient ffmpeg failures (and surface retry attempts in the UI).
+- [x] Add job retries with backoff for transient ffmpeg failures (and surface retry attempts in the UI).
 
 ### Desktop readiness
 - [ ] Desktop: add an in-app “Diagnostics” screen (shows backend URLs, ffmpeg detected, worker connectivity, storage backend).

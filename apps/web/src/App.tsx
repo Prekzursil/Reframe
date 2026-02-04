@@ -2345,20 +2345,36 @@ function StyleEditor({
 	              {!selectedJob && <p className="muted">Select a job to view details.</p>}
 	              {selectedJob && (
 	                <>
-	                  <div className="snapshot">
-	                    <div>
-	                      <p className="metric-label">Type</p>
-	                      <p className="metric-value">{selectedJob.job_type}</p>
-	                    </div>
-	                    <div>
-	                      <p className="metric-label">Status</p>
-	                      <JobStatusPill status={selectedJob.status} />
-	                    </div>
-	                    <div>
-	                      <p className="metric-label">Progress</p>
-	                      <p className="metric-value">{Math.round((selectedJob.progress || 0) * 100)}%</p>
-	                    </div>
-	                  </div>
+		                  <div className="snapshot">
+		                    <div>
+		                      <p className="metric-label">Type</p>
+		                      <p className="metric-value">{selectedJob.job_type}</p>
+		                    </div>
+		                    <div>
+		                      <p className="metric-label">Status</p>
+		                      <JobStatusPill status={selectedJob.status} />
+		                    </div>
+		                    <div>
+		                      <p className="metric-label">Progress</p>
+		                      <p className="metric-value">{Math.round((selectedJob.progress || 0) * 100)}%</p>
+		                    </div>
+		                    {(() => {
+		                      const payload = (selectedJob.payload || {}) as any;
+		                      const attempt = payload.retry_attempt;
+		                      const max = payload.retry_max_attempts;
+		                      const step = payload.retry_step;
+		                      if (!attempt || !max) return null;
+		                      return (
+		                        <div>
+		                          <p className="metric-label">Retry</p>
+		                          <p className="metric-value">
+		                            {String(attempt)}/{String(max)}
+		                          </p>
+		                          {step && <p className="muted">{String(step)}</p>}
+		                        </div>
+		                      );
+		                    })()}
+		                  </div>
 	                  <div className="output-card">
 	                    <p className="metric-label">IDs</p>
 	                    <p className="muted mono">Job: {selectedJob.id}</p>

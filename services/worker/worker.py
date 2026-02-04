@@ -6,10 +6,11 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple, TypeVar
 from uuid import UUID, uuid4
 
 from sqlmodel import Session, create_engine
@@ -67,6 +68,62 @@ logger = logging.getLogger(__name__)
 
 _engine = None
 _media_tmp: Path | None = None
+
+T = TypeVar("T")
+
+
+def _retry_max_attempts() -> int:
+    raw = (os.getenv("REFRAME_JOB_RETRY_MAX_ATTEMPTS") or "").strip()
+    try:
+        value = int(raw) if raw else 2
+    except ValueError:
+        value = 2
+    return max(1, value)
+
+
+def _retry_base_delay_seconds() -> float:
+    raw = (os.getenv("REFRAME_JOB_RETRY_BASE_DELAY_SECONDS") or "").strip()
+    try:
+        value = float(raw) if raw else 1.0
+    except ValueError:
+        value = 1.0
+    return max(0.0, value)
+
+
+def _run_ffmpeg_with_retries(*, job_id: str, step: str, fn: Callable[[], T]) -> T:
+    max_attempts = _retry_max_attempts()
+    base_delay = _retry_base_delay_seconds()
+    last_exc: Exception | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return fn()
+        except subprocess.CalledProcessError as exc:
+            last_exc = exc
+            if attempt >= max_attempts:
+                raise
+            delay = base_delay * (2 ** (attempt - 1))
+            stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, (bytes, bytearray)) else str(exc.stderr or "")
+            update_job(
+                job_id,
+                payload={
+                    "retry_step": step,
+                    "retry_attempt": attempt,
+                    "retry_max_attempts": max_attempts,
+                    "retry_delay_seconds": round(delay, 3),
+                    "retry_error": (stderr[-1000:] or str(exc))[:1000],
+                },
+            )
+            if delay > 0:
+                time.sleep(delay)
+        except Exception as exc:
+            last_exc = exc
+            raise
+
+    # Should not reach here.
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Retry loop failed without an exception")
 
 _FALLBACK_THUMBNAIL_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
@@ -780,9 +837,15 @@ def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_ass
     ]
 
     try:
-        subprocess.run(cmd, check=True, capture_output=True)
-    except subprocess.CalledProcessError as exc:
-        stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, (bytes, bytearray)) else str(exc.stderr or "")
+        _run_ffmpeg_with_retries(
+            job_id=job_id,
+            step="render_styled_subtitles",
+            fn=lambda: subprocess.run(cmd, check=True, capture_output=True),
+        )
+    except Exception as exc:
+        stderr = ""
+        if isinstance(exc, subprocess.CalledProcessError):
+            stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, (bytes, bytearray)) else str(exc.stderr or "")
         error = f"Styled render failed: {stderr[-4000:] or exc}"
         update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
         _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
@@ -932,7 +995,11 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
 
         clip_path = new_tmp_file(".mp4")
         try:
-            cut_clip(src_path, seg.start, seg.end, clip_path)
+            _run_ffmpeg_with_retries(
+                job_id=job_id,
+                step=f"cut_clip:{idx + 1}",
+                fn=lambda: cut_clip(src_path, seg.start, seg.end, clip_path),
+            )
         except Exception as exc:
             error = f"Failed to cut clip {idx + 1}: {exc}"
             update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
@@ -1016,13 +1083,17 @@ def merge_video_audio(self, job_id: str, video_asset_id: str, audio_asset_id: st
 
     output_path = new_tmp_file(".mp4")
     try:
-        ffmpeg_merge_video_audio(
-            video_path,
-            audio_path,
-            output_path,
-            offset=float(opts.get("offset") or 0.0),
-            ducking=opts.get("ducking"),
-            normalize=bool(opts.get("normalize", True)),
+        _run_ffmpeg_with_retries(
+            job_id=job_id,
+            step="merge_video_audio",
+            fn=lambda: ffmpeg_merge_video_audio(
+                video_path,
+                audio_path,
+                output_path,
+                offset=float(opts.get("offset") or 0.0),
+                ducking=opts.get("ducking"),
+                normalize=bool(opts.get("normalize", True)),
+            ),
         )
     except Exception as exc:
         error = f"Merge failed: {exc}"
