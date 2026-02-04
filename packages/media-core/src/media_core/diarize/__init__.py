@@ -52,7 +52,14 @@ def _diarize_pyannote(audio_path: str | Path, config: DiarizationConfig) -> List
         ) from exc
 
     path = str(audio_path)
-    pipeline = Pipeline.from_pretrained(config.model, use_auth_token=config.huggingface_token)
+    if config.huggingface_token:
+        # pyannote.audio switched from `use_auth_token=` to `token=` across versions.
+        try:
+            pipeline = Pipeline.from_pretrained(config.model, token=config.huggingface_token)
+        except TypeError:
+            pipeline = Pipeline.from_pretrained(config.model, use_auth_token=config.huggingface_token)
+    else:
+        pipeline = Pipeline.from_pretrained(config.model)
     diarization = pipeline(path)
 
     segments: List[SpeakerSegment] = []
