@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
-import { apiClient, type Job, type JobStatus, type MediaAsset } from "./api/client";
+import { apiClient, type Job, type JobStatus, type MediaAsset, type SystemStatusResponse } from "./api/client";
 import { Button, Card, Chip, Input, TextArea } from "./components/ui";
 import { Spinner } from "./components/Spinner";
 import { SettingsModal } from "./components/SettingsModal";
@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { id: "subtitles", label: "Subtitles" },
   { id: "utilities", label: "Utilities" },
   { id: "jobs", label: "Jobs" },
+  { id: "system", label: "System" },
 ];
 
 const PRESETS = [
@@ -106,7 +107,7 @@ function JobStatusPill({ status }: { status: JobStatus }) {
 function CaptionsForm({ onCreated, initialVideoId }: { onCreated: (job: Job) => void; initialVideoId?: string }) {
   const [videoId, setVideoId] = useState(initialVideoId || "");
   const [sourceLang, setSourceLang] = useState("auto");
-  const [backend, setBackend] = useState(BACKENDS[0]);
+  const [backend, setBackend] = useState("faster_whisper");
   const [model, setModel] = useState("whisper-large-v3");
   const [formats, setFormats] = useState<string[]>(["srt"]);
   const [speakerLabels, setSpeakerLabels] = useState(false);
@@ -1334,6 +1335,9 @@ function StyleEditor({
 	  const [jobsTypeFilter, setJobsTypeFilter] = useState("");
 	  const [jobsDateFrom, setJobsDateFrom] = useState("");
 	  const [jobsDateTo, setJobsDateTo] = useState("");
+    const [systemStatus, setSystemStatus] = useState<SystemStatusResponse | null>(null);
+    const [systemLoading, setSystemLoading] = useState(false);
+    const [systemError, setSystemError] = useState<string | null>(null);
 
   const [showQuickStart, setShowQuickStart] = useState(() => {
     try {
@@ -1397,6 +1401,25 @@ function StyleEditor({
 	      void loadJobsPage();
 	    }
 	  }, [active]);
+
+    const loadSystemStatus = async () => {
+      setSystemLoading(true);
+      setSystemError(null);
+      try {
+        const status = await apiClient.getSystemStatus();
+        setSystemStatus(status);
+      } catch (err) {
+        setSystemError(err instanceof Error ? err.message : "Failed to load system status");
+      } finally {
+        setSystemLoading(false);
+      }
+    };
+
+    useEffect(() => {
+      if (active === "system") {
+        void loadSystemStatus();
+      }
+    }, [active]);
 
 	  const formatTimestamp = (value?: string | null) => {
 	    if (!value) return "n/a";
@@ -1664,7 +1687,7 @@ function StyleEditor({
             <Card title="Quick start">
               <ol className="muted">
                 <li>
-                  Start the stack: <code>docker compose -f infra/docker-compose.yml up --build</code>
+                  Start the stack: <code>./start.sh up</code>
                 </li>
                 <li>
                   (Optional) Generate sample media: <code>make tools-ffmpeg &amp;&amp; make sample-media</code>
@@ -1672,7 +1695,7 @@ function StyleEditor({
                 <li>Upload a video, then create a captions/shorts job.</li>
               </ol>
               <div className="actions-row">
-                <CopyCommandButton command={`docker compose -f infra/docker-compose.yml up --build`} label="Copy compose command" />
+                <CopyCommandButton command={`./start.sh up`} label="Copy start command" />
                 <CopyCommandButton command={`make tools-ffmpeg && make sample-media`} label="Copy sample media command" />
                 <Button type="button" variant="ghost" onClick={dismissQuickStart}>
                   Dismiss
@@ -2420,6 +2443,69 @@ function StyleEditor({
 	            </Card>
 	          </section>
 	        )}
+
+          {active === "system" && (
+            <section className="grid">
+              <Card title="Diagnostics">
+                {systemLoading && <Spinner label="Loading system status..." />}
+                {systemError && <div className="error-inline">{systemError}</div>}
+                {systemStatus && (
+                  <>
+                    <div className="snapshot">
+                      <div>
+                        <p className="metric-label">API version</p>
+                        <p className="metric-value">{systemStatus.api_version}</p>
+                      </div>
+                      <div>
+                        <p className="metric-label">Offline mode</p>
+                        <p className="metric-value">{systemStatus.offline_mode ? "on" : "off"}</p>
+                      </div>
+                      <div>
+                        <p className="metric-label">Storage</p>
+                        <p className="metric-value">{systemStatus.storage_backend}</p>
+                      </div>
+                    </div>
+
+                    <div className="output-card">
+                      <p className="metric-label">Worker</p>
+                      <p className="muted">Ping: {systemStatus.worker.ping_ok ? "ok" : "no response"}</p>
+                      {systemStatus.worker.workers?.length ? (
+                        <ul className="muted">
+                          {systemStatus.worker.workers.map((w) => (
+                            <li key={w}>
+                              <code>{w}</code>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {systemStatus.worker.error && <div className="error-inline">{systemStatus.worker.error}</div>}
+                    </div>
+
+                    {systemStatus.worker.system_info && (
+                      <div className="output-card">
+                        <p className="metric-label">Worker system info</p>
+                        <pre className="code-block">{JSON.stringify(systemStatus.worker.system_info, null, 2)}</pre>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <div className="actions-row">
+                  <Button type="button" variant="ghost" onClick={() => void loadSystemStatus()} disabled={systemLoading}>
+                    {systemLoading ? "Refreshing..." : "Refresh"}
+                  </Button>
+                  <CopyCommandButton
+                    command={`docker compose -f infra/docker-compose.yml run --rm worker python /worker/scripts/prefetch_whisper_model.py --model whisper-large-v3`}
+                    label="Copy Whisper model prefetch"
+                  />
+                  <CopyCommandButton
+                    command={`docker compose -f infra/docker-compose.yml run --rm worker python /worker/scripts/install_argos_pack.py --list`}
+                    label="Copy Argos pack list"
+                  />
+                </div>
+              </Card>
+            </section>
+          )}
 
 	        {(active === "shorts" || active === "subtitles") && (
 	          <section className="grid two-col">

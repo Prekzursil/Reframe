@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import zipfile
 from functools import lru_cache
 from pathlib import Path
@@ -32,7 +33,7 @@ SessionDep = Annotated[Session, Depends(get_session)]
 @lru_cache(maxsize=1)
 def get_celery_app() -> Celery:
     settings = get_settings()
-    return Celery("reframe_api", broker=settings.broker.broker_url, backend=settings.broker.result_backend)
+    return Celery("reframe_api", broker=settings.broker_url, backend=settings.result_backend)
 
 
 def enqueue_job(job: Job, task_name: str, *args) -> str:
@@ -53,6 +54,65 @@ def save_and_dispatch(job: Job, session: Session, task_name: str, *args) -> Job:
     session.commit()
     session.refresh(job)
     return job
+
+
+class WorkerDiagnostics(SQLModel):
+    ping_ok: bool = False
+    workers: list[str] = []
+    system_info: dict | None = None
+    error: str | None = None
+
+
+class SystemStatusResponse(SQLModel):
+    api_version: str
+    offline_mode: bool
+    storage_backend: str
+    broker_url: str
+    result_backend: str
+    worker: WorkerDiagnostics
+
+
+def _truthy_env(name: str) -> bool:
+    raw = (os.getenv(name) or os.getenv(f"REFRAME_{name}") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+@router.get("/system/status", response_model=SystemStatusResponse, tags=["System"])
+def system_status() -> SystemStatusResponse:
+    settings = get_settings()
+    storage = get_storage(media_root=settings.media_root)
+
+    worker_diag = WorkerDiagnostics()
+    try:
+        app = get_celery_app()
+        try:
+            pongs = app.control.ping(timeout=1.0)
+            workers = []
+            for item in pongs or []:
+                if isinstance(item, dict):
+                    workers.extend(item.keys())
+            worker_diag.workers = sorted(set(workers))
+            worker_diag.ping_ok = bool(worker_diag.workers)
+        except Exception as exc:
+            worker_diag.error = f"Worker ping failed: {exc}"
+
+        try:
+            res = app.send_task("tasks.system_info")
+            worker_diag.system_info = res.get(timeout=3.0)
+        except Exception as exc:
+            msg = f"Worker diagnostics task failed: {exc}"
+            worker_diag.error = f"{worker_diag.error}; {msg}" if worker_diag.error else msg
+    except Exception as exc:  # pragma: no cover - best effort
+        worker_diag.error = f"Celery unavailable: {exc}"
+
+    return SystemStatusResponse(
+        api_version=settings.api_version,
+        offline_mode=_truthy_env("OFFLINE_MODE"),
+        storage_backend=type(storage).__name__,
+        broker_url=settings.broker_url,
+        result_backend=settings.result_backend,
+        worker=worker_diag,
+    )
 
 
 class CaptionJobRequest(SQLModel):
@@ -127,7 +187,6 @@ class ShortsJobRequest(SQLModel):
 
 class DownloadUrlResponse(SQLModel):
     url: str
-
 
 class MergeAVRequest(SQLModel):
     video_asset_id: UUID

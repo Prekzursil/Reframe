@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import threading
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -19,7 +18,7 @@ def test_fetch_asset_downloads_remote_http(monkeypatch, tmp_path: Path):
 
     db_path = tmp_path / "reframe-test.db"
     db_url = f"sqlite:////{str(db_path).lstrip('/')}"
-    monkeypatch.setenv("REFRAME_DATABASE", json.dumps({"url": db_url}))
+    monkeypatch.setenv("DATABASE_URL", db_url)
     monkeypatch.setenv("REFRAME_MEDIA_ROOT", str(media_root))
 
     get_settings.cache_clear()
@@ -55,4 +54,3 @@ def test_fetch_asset_downloads_remote_http(monkeypatch, tmp_path: Path):
     finally:
         httpd.shutdown()
         httpd.server_close()
-

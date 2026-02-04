@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -26,7 +25,7 @@ def test_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
     db_path = tmp_path / "reframe-test.db"
     db_url = f"sqlite:////{str(db_path).lstrip('/')}"
-    monkeypatch.setenv("REFRAME_DATABASE", json.dumps({"url": db_url}))
+    monkeypatch.setenv("DATABASE_URL", db_url)
     monkeypatch.setenv("REFRAME_MEDIA_ROOT", str(media_root))
 
     from app.api import get_celery_app

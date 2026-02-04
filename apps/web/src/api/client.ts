@@ -64,6 +64,22 @@ export interface MediaAsset {
   updated_at?: string;
 }
 
+export interface WorkerDiagnostics {
+  ping_ok: boolean;
+  workers: string[];
+  system_info?: Record<string, unknown> | null;
+  error?: string | null;
+}
+
+export interface SystemStatusResponse {
+  api_version: string;
+  offline_mode: boolean;
+  storage_backend: string;
+  broker_url: string;
+  result_backend: string;
+  worker: WorkerDiagnostics;
+}
+
 interface ApiClientOptions {
   baseUrl?: string;
   fetcher?: typeof fetch;
@@ -134,6 +150,10 @@ export class ApiClient {
 
   mergeAv(payload: MergeAvRequest) {
     return this.request<Job>("/utilities/merge-av", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  getSystemStatus() {
+    return this.request<SystemStatusResponse>("/system/status");
   }
 
   async uploadAsset(file: File, kind = "video"): Promise<MediaAsset> {

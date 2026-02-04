@@ -29,6 +29,7 @@ def create_app() -> FastAPI:
         {"name": "Jobs", "description": "Job retrieval and listings."},
         {"name": "Assets", "description": "Manage media assets."},
         {"name": "Presets", "description": "Subtitle style presets."},
+        {"name": "System", "description": "Diagnostics for local setup."},
     ]
 
     @asynccontextmanager

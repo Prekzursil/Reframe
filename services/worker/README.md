@@ -57,6 +57,20 @@ Notes:
 - This is expected to be **heavy** (Torch + model downloads). Run it on the target machine you plan to deploy on.
 - `REFRAME_OFFLINE_MODE=true` is intended to disable network-backed providers; for pyannote benchmarks you’ll need network access for model download.
 
+## Captions: high-quality transcription (Whisper Large v3)
+
+For best offline/free quality, prefer **Whisper Large v3** via the `faster_whisper` backend.
+
+In the web UI:
+- Backend: `faster_whisper`
+- Model: `whisper-large-v3` (alias; maps to `large-v3` internally)
+
+To pre-download the model into the worker’s cache (recommended so the first job doesn’t stall on downloads):
+
+```bash
+docker compose -f infra/docker-compose.yml run --rm worker python /worker/scripts/prefetch_whisper_model.py --model whisper-large-v3
+```
+
 ## Translate subtitles: Groq (optional)
 
 By default, `tasks.translate_subtitles` uses **Argos Translate** (offline) when available, and falls back to **NoOp** when not.
@@ -73,3 +87,12 @@ Env vars:
 
 Notes:
 - If `REFRAME_OFFLINE_MODE=true`, the worker will refuse Groq and fall back to offline/noop behavior.
+
+### Install Argos language packs (offline translation)
+
+Argos requires per-language-pair packages. To install one in the worker container:
+
+```bash
+docker compose -f infra/docker-compose.yml run --rm worker python /worker/scripts/install_argos_pack.py --list
+docker compose -f infra/docker-compose.yml run --rm worker python /worker/scripts/install_argos_pack.py --src en --tgt es
+```

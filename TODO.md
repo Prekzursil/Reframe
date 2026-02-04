@@ -394,9 +394,14 @@
 ## 22. Next Level (Beta polish + creator workflow)
 
 ### Local-first UX (no paid APIs)
-- [ ] Add a “System status / Dependencies” panel in the web UI (ffmpeg present, whisper backend availability, model cache locations).
+- [x] Add a “System status / Dependencies” panel in the web UI (ffmpeg present, whisper backend availability, model cache locations).
 - [ ] Add scripts to download/manage local models in a predictable cache dir (whisper.cpp + faster-whisper) and document disk sizes.
+  - [x] Add `scripts/prefetch_whisper_model.py` (faster-whisper model prefetch).
+  - [ ] Add whisper.cpp model download helper (ggml) and document placement.
+  - [ ] Document disk sizes + cache locations for Whisper models.
 - [ ] Add scripts to download/manage Argos Translate language packs and document supported language pairs.
+  - [x] Add `scripts/install_argos_pack.py` (install packs by src/tgt).
+  - [ ] Document recommended language packs + supported pairs for common workflows.
 
 ### Creator workflow (quality + control)
 - [ ] Add transcript viewer with search + click-to-seek timestamps (no re-run required).

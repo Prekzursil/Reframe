@@ -1,16 +1,20 @@
 from functools import lru_cache
-from pydantic import BaseModel, Field, AliasChoices
+from pydantic import Field, AliasChoices
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_prefix="REFRAME_",
+        env_nested_delimiter="__",
+        extra="ignore",
+    )
 
-class DatabaseSettings(BaseModel):
-    url: str = Field(
+    database_url: str = Field(
         default="sqlite:///./reframe.db",
         validation_alias=AliasChoices("DATABASE_URL", "REFRAME_DATABASE__URL", "DATABASE__URL"),
     )
-
-
-class BrokerSettings(BaseModel):
     broker_url: str = Field(
         default="redis://redis:6379/0",
         validation_alias=AliasChoices("BROKER_URL", "REFRAME_BROKER__BROKER_URL", "BROKER__BROKER_URL"),
@@ -19,18 +23,6 @@ class BrokerSettings(BaseModel):
         default="redis://redis:6379/0",
         validation_alias=AliasChoices("RESULT_BACKEND", "REFRAME_BROKER__RESULT_BACKEND", "BROKER__RESULT_BACKEND"),
     )
-
-
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        env_prefix="REFRAME_",
-        env_nested_delimiter="__",
-    )
-
-    database: DatabaseSettings = Field(default_factory=DatabaseSettings)
-    broker: BrokerSettings = Field(default_factory=BrokerSettings)
     media_root: str = Field(
         default="./media",
         validation_alias=AliasChoices("MEDIA_ROOT", "REFRAME_MEDIA_ROOT"),

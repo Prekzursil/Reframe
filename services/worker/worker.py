@@ -77,7 +77,7 @@ def get_engine():
     global _engine
     if _engine is None:
         settings = get_settings()
-        url = settings.database.url
+        url = settings.database_url
         connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
         _engine = create_engine(url, echo=False, connect_args=connect_args)
     return _engine
@@ -355,6 +355,59 @@ def ping(self) -> str:
 def echo(self, message: str) -> str:
     _progress(self, "started", 0.0, message=message)
     return message
+
+
+@celery_app.task(bind=True, name="tasks.system_info")
+def system_info(self) -> dict:
+    """Return basic worker capability info for the web UI diagnostics panel."""
+    _progress(self, "started", 0.0)
+
+    def has_module(name: str) -> bool:
+        try:
+            __import__(name)
+            return True
+        except Exception:
+            return False
+
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    ffmpeg_version = None
+    if ffmpeg:
+        try:
+            out = subprocess.check_output([ffmpeg, "-version"], text=True, stderr=subprocess.STDOUT)
+            ffmpeg_version = (out.splitlines()[0] if out else "").strip() or None
+        except Exception:
+            ffmpeg_version = None
+
+    info = {
+        "python": {
+            "version": sys.version.split()[0],
+        },
+        "env": {
+            "offline_mode": offline_mode_enabled(),
+            "media_root": str(get_settings().media_root),
+            "hf_token_set": bool(os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")),
+        },
+        "ffmpeg": {
+            "present": bool(ffmpeg and ffprobe),
+            "ffmpeg_path": ffmpeg,
+            "ffprobe_path": ffprobe,
+            "version": ffmpeg_version,
+        },
+        "features": {
+            "transcribe_faster_whisper": has_module("faster_whisper"),
+            "transcribe_whisper_cpp": has_module("whispercpp"),
+            "translate_argos": has_module("argostranslate"),
+            "diarize_pyannote": has_module("pyannote.audio"),
+        },
+        "cache": {
+            "hf_home": os.getenv("HF_HOME") or None,
+            "hf_hub_cache": os.getenv("HUGGINGFACE_HUB_CACHE") or None,
+        },
+    }
+
+    _progress(self, "completed", 1.0)
+    return info
 
 
 @celery_app.task(bind=True, name="tasks.transcribe_video")
