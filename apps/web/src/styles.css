@@ -255,6 +255,13 @@ h2, h3 { margin: 0; }
   white-space: pre-wrap;
 }
 
+.video-preview {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: #000;
+}
+
 .dropzone {
   border: 2px dashed var(--border);
   border-radius: 14px;

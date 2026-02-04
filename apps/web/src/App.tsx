@@ -1290,13 +1290,18 @@ function StyleEditor({
 	  const [active, setActive] = useState(NAV_ITEMS[0].id);
 	  const [theme, setTheme] = useState<"light" | "dark">("dark");
 	  const [showSettings, setShowSettings] = useState(false);
-	  const { jobs, loading, error, refresh } = useLiveJobs();
-	  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
-	  const [inputAsset, setInputAsset] = useState<MediaAsset | null>(null);
-	  const [outputAsset, setOutputAsset] = useState<MediaAsset | null>(null);
-	  const [assetError, setAssetError] = useState<string | null>(null);
-	  const [assetLoading, setAssetLoading] = useState(false);
-  const [uploadedVideoId, setUploadedVideoId] = useState<string>("");
+		  const { jobs, loading, error, refresh } = useLiveJobs();
+		  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+		  const [inputAsset, setInputAsset] = useState<MediaAsset | null>(null);
+		  const [outputAsset, setOutputAsset] = useState<MediaAsset | null>(null);
+		  const [assetError, setAssetError] = useState<string | null>(null);
+		  const [assetLoading, setAssetLoading] = useState(false);
+		  const jobVideoRef = useRef<HTMLVideoElement | null>(null);
+		  const [transcriptCues, setTranscriptCues] = useState<SubtitleCue[]>([]);
+		  const [transcriptSearch, setTranscriptSearch] = useState("");
+		  const [transcriptError, setTranscriptError] = useState<string | null>(null);
+		  const [transcriptLoading, setTranscriptLoading] = useState(false);
+	  const [uploadedVideoId, setUploadedVideoId] = useState<string>("");
   const [uploadedPreview, setUploadedPreview] = useState<string | null>(null);
   const [subtitleAssetId, setSubtitleAssetId] = useState<string>("");
   const [subtitlePreview, setSubtitlePreview] = useState<string | null>(null);
@@ -1446,17 +1451,26 @@ function StyleEditor({
       }
     }, [active]);
 
-	  const formatTimestamp = (value?: string | null) => {
-	    if (!value) return "n/a";
-	    const date = new Date(value);
-	    if (Number.isNaN(date.getTime())) return value;
-	    return date.toLocaleString();
-	  };
+		  const formatTimestamp = (value?: string | null) => {
+		    if (!value) return "n/a";
+		    const date = new Date(value);
+		    if (Number.isNaN(date.getTime())) return value;
+		    return date.toLocaleString();
+		  };
 
-	  const jobTypeOptions = useMemo(() => {
-	    const types = new Set(jobsPageJobs.map((job) => job.job_type).filter(Boolean));
-	    return Array.from(types).sort();
-	  }, [jobsPageJobs]);
+		  const formatCueTime = (seconds: number) => {
+		    const total = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
+		    const h = Math.floor(total / 3600);
+		    const m = Math.floor((total % 3600) / 60);
+		    const s = total % 60;
+		    const pad2 = (v: number) => String(v).padStart(2, "0");
+		    return h > 0 ? `${h}:${pad2(m)}:${pad2(s)}` : `${m}:${pad2(s)}`;
+		  };
+
+		  const jobTypeOptions = useMemo(() => {
+		    const types = new Set(jobsPageJobs.map((job) => job.job_type).filter(Boolean));
+		    return Array.from(types).sort();
+		  }, [jobsPageJobs]);
 
 	  const filteredJobs = useMemo(() => {
 	    const from = jobsDateFrom ? new Date(`${jobsDateFrom}T00:00:00`) : null;
@@ -1625,13 +1639,13 @@ function StyleEditor({
 	    throw new Error("Captions did not produce an output asset.");
 	  };
 
-	  const selectJobAndAssets = async (job: Job) => {
-	    setSelectedJob(job);
-	    setInputAsset(null);
-	    setOutputAsset(null);
-	    setAssetError(null);
-	    setAssetLoading(true);
-	    try {
+		  const selectJobAndAssets = async (job: Job) => {
+		    setSelectedJob(job);
+		    setInputAsset(null);
+		    setOutputAsset(null);
+		    setAssetError(null);
+		    setAssetLoading(true);
+		    try {
 	      const refreshed = await apiClient.getJob(job.id);
 	      setSelectedJob(refreshed);
 
@@ -1647,13 +1661,43 @@ function StyleEditor({
 	      setAssetError(err instanceof Error ? err.message : "Failed to fetch job details");
 	    } finally {
 	      setAssetLoading(false);
-	    }
-	  };
+		    }
+		  };
 
-  const recentStatuses = useMemo(
-    () => ({
-      completed: jobs.filter((j) => j.status === "completed").length,
-      running: jobs.filter((j) => j.status === "running").length,
+		  useEffect(() => {
+		    setTranscriptCues([]);
+		    setTranscriptError(null);
+		    setTranscriptLoading(false);
+		    setTranscriptSearch("");
+
+		    if (!selectedJob || !outputAsset || outputAsset.kind !== "subtitle" || !outputAsset.uri) return;
+
+		    let cancelled = false;
+		    const load = async () => {
+		      setTranscriptLoading(true);
+		      try {
+		        const url = apiClient.mediaUrl(outputAsset.uri!);
+		        const resp = await fetch(url);
+		        const text = await resp.text();
+		        const { cues } = subtitlesToCues(text);
+		        if (!cancelled) setTranscriptCues(cues);
+		      } catch (err) {
+		        if (!cancelled) setTranscriptError(err instanceof Error ? err.message : "Failed to load transcript");
+		      } finally {
+		        if (!cancelled) setTranscriptLoading(false);
+		      }
+		    };
+
+		    void load();
+		    return () => {
+		      cancelled = true;
+		    };
+		  }, [selectedJob?.id, outputAsset?.uri]);
+
+		  const recentStatuses = useMemo(
+		    () => ({
+		      completed: jobs.filter((j) => j.status === "completed").length,
+		      running: jobs.filter((j) => j.status === "running").length,
       queued: jobs.filter((j) => j.status === "queued").length,
     }),
     [jobs]
@@ -2421,11 +2465,79 @@ function StyleEditor({
 			                    </Button>
 			                  </div>
 
-	                  {selectedJob.error && (
-	                    <div className="output-card">
-	                      <p className="metric-label">Logs / error</p>
-	                      <pre className="code-block">{selectedJob.error}</pre>
-	                    </div>
+			                  {outputAsset?.kind === "subtitle" && (
+			                    <div className="output-card">
+			                      <p className="metric-label">Transcript viewer</p>
+			                      {inputAsset?.kind === "video" && inputAsset.uri && (
+			                        <video
+			                          ref={jobVideoRef}
+			                          className="video-preview"
+			                          controls
+			                          src={apiClient.mediaUrl(inputAsset.uri)}
+			                        />
+			                      )}
+			                      <div className="form-grid">
+			                        <label className="field">
+			                          <span>Search</span>
+			                          <Input
+			                            type="text"
+			                            value={transcriptSearch}
+			                            placeholder="Find text…"
+			                            onChange={(e) => setTranscriptSearch(e.target.value)}
+			                          />
+			                        </label>
+			                      </div>
+			                      {transcriptLoading && <Spinner label="Loading transcript..." />}
+			                      {transcriptError && <div className="error-inline">{transcriptError}</div>}
+			                      {!transcriptLoading && !transcriptError && transcriptCues.length === 0 && (
+			                        <p className="muted">No cues found for this output.</p>
+			                      )}
+			                      {!transcriptLoading && transcriptCues.length > 0 && (
+			                        <div className="table-scroll">
+			                          <table className="table">
+			                            <thead>
+			                              <tr>
+			                                <th>Time</th>
+			                                <th>Text</th>
+			                              </tr>
+			                            </thead>
+			                            <tbody>
+			                              {transcriptCues
+			                                .filter((cue) => {
+			                                  const q = transcriptSearch.trim().toLowerCase();
+			                                  if (!q) return true;
+			                                  return cue.text.toLowerCase().includes(q);
+			                                })
+			                                .map((cue, idx) => (
+			                                  <tr
+			                                    key={`${idx}-${cue.start}-${cue.end}`}
+			                                    className="row-clickable"
+			                                    onClick={() => {
+			                                      if (!jobVideoRef.current) return;
+			                                      jobVideoRef.current.currentTime = cue.start;
+			                                      void jobVideoRef.current.play().catch(() => {});
+			                                    }}
+			                                  >
+			                                    <td className="muted mono">
+			                                      {formatCueTime(cue.start)}–{formatCueTime(cue.end)}
+			                                    </td>
+			                                    <td>
+			                                      <pre className="code-block">{cue.text}</pre>
+			                                    </td>
+			                                  </tr>
+			                                ))}
+			                            </tbody>
+			                          </table>
+			                        </div>
+			                      )}
+			                    </div>
+			                  )}
+
+		                  {selectedJob.error && (
+		                    <div className="output-card">
+		                      <p className="metric-label">Logs / error</p>
+		                      <pre className="code-block">{selectedJob.error}</pre>
+		                    </div>
 	                  )}
 
 	                  {(selectedJob.payload || inputAsset || outputAsset) && (
