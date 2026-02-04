@@ -318,6 +318,9 @@
       - [x] Push tag `desktop-v0.1.6` and confirm GitHub Release assets include `latest.json`.
       - [x] Push tag `desktop-v0.1.7` and confirm `latest.json` updates to the newer version.
     - [ ] Manual: install an older build and confirm update + relaunch (Windows/macOS/Linux).
+      - [ ] Windows: install `desktop-v0.1.6`, update to `desktop-v0.1.7`, confirm relaunch + version bump.
+      - [ ] macOS: install `desktop-v0.1.6` (aarch64/x64), update to `desktop-v0.1.7`, confirm relaunch + version bump.
+      - [ ] Linux: run `desktop-v0.1.6` (AppImage), update to `desktop-v0.1.7`, confirm relaunch + version bump.
 - [x] Provide example configs for:
   - [x] Local dev (no GPU),
   - [x] Local GPU workstation,

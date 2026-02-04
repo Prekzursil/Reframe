@@ -96,6 +96,23 @@ The simplest test loop is:
 2) Run an older installed desktop build.
 3) Click “Check updates” in the desktop UI to download/install and restart.
 
+## Known-good E2E test releases (already published)
+
+These tags are published and signed, and `latest.json` is already live:
+
+- **Old**: `desktop-v0.1.6`
+- **New (latest)**: `desktop-v0.1.7`
+
+You can download the **old** installer for each OS using `gh`:
+
+- Windows (MSI)
+  - `gh release download desktop-v0.1.6 -p 'Reframe_0.1.6_x64_en-US.msi'`
+- macOS (DMG)
+  - Apple Silicon: `gh release download desktop-v0.1.6 -p 'Reframe_0.1.6_aarch64.dmg'`
+  - Intel: `gh release download desktop-v0.1.6 -p 'Reframe_0.1.6_x64.dmg'`
+- Linux (AppImage)
+  - `gh release download desktop-v0.1.6 -p 'Reframe_0.1.6_amd64.AppImage'`
+
 ### End-to-end verification checklist
 
 1) Publish two releases:
