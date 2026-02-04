@@ -5,6 +5,7 @@ import { Button, Card, Chip, Input, TextArea } from "./components/ui";
 import { Spinner } from "./components/Spinner";
 import { SettingsModal } from "./components/SettingsModal";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { detectSubtitleFormat, shiftSubtitleTimings } from "./subtitles/shift";
 
 const NAV_ITEMS = [
   { id: "shorts", label: "Shorts" },
@@ -447,6 +448,155 @@ function SubtitleUpload({
       {uploading && <span className="muted">Uploading...</span>}
       {error && <div className="error-inline">{error}</div>}
     </label>
+  );
+}
+
+function SubtitleEditorCard({
+  initialAssetId,
+  onAssetChosen,
+}: {
+  initialAssetId?: string;
+  onAssetChosen: (asset: MediaAsset) => void;
+}) {
+  const [assetId, setAssetId] = useState(initialAssetId || "");
+  const [contents, setContents] = useState("");
+  const [original, setOriginal] = useState<string | null>(null);
+  const [offsetSeconds, setOffsetSeconds] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<MediaAsset | null>(null);
+
+  useEffect(() => {
+    if (initialAssetId) setAssetId(initialAssetId);
+  }, [initialAssetId]);
+
+  const loadFromAssetId = async () => {
+    const id = assetId.trim();
+    if (!id) return;
+    setBusy(true);
+    setError(null);
+    setSaved(null);
+    try {
+      const resp = await apiClient.fetcher(`${apiClient.baseUrl}/assets/${id}/download`);
+      if (!resp.ok) {
+        const msg = await resp.text().catch(() => resp.statusText);
+        throw new Error(msg || "Failed to download subtitle asset");
+      }
+      const text = await resp.text();
+      setOriginal(text);
+      setContents(text);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load subtitle asset");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyShift = () => {
+    setContents((prev) => shiftSubtitleTimings(prev, offsetSeconds));
+  };
+
+  const reset = () => {
+    if (original != null) setContents(original);
+  };
+
+  const downloadLocal = () => {
+    const fmt = detectSubtitleFormat(contents) || "srt";
+    const filename = `edited.${fmt}`;
+    const blob = new Blob([contents], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const saveToBackend = async () => {
+    setBusy(true);
+    setError(null);
+    setSaved(null);
+    try {
+      const fmt = detectSubtitleFormat(contents) || "srt";
+      const filename = `edited.${fmt}`;
+      const file = new File([contents], filename, { type: "text/plain" });
+      const asset = await apiClient.uploadAsset(file, "subtitle");
+      setSaved(asset);
+      setAssetId(asset.id);
+      onAssetChosen(asset);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save subtitle asset");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const fmt = detectSubtitleFormat(contents);
+
+  return (
+    <div className="form-grid">
+      <p className="muted">Edit subtitles inline and optionally shift all timings, then re-upload as a new subtitle asset.</p>
+      <label className="field">
+        <span>Subtitle asset ID</span>
+        <div className="actions-row">
+          <Input value={assetId} onChange={(e) => setAssetId(e.target.value)} placeholder="Paste an asset id or upload first" />
+          <Button type="button" variant="secondary" onClick={() => void loadFromAssetId()} disabled={busy || !assetId.trim()}>
+            {busy ? "Loading..." : "Load"}
+          </Button>
+        </div>
+      </label>
+      <label className="field">
+        <span>Shift timings (seconds)</span>
+        <div className="actions-row">
+          <Input
+            type="number"
+            step="0.1"
+            value={offsetSeconds}
+            onChange={(e) => setOffsetSeconds(Number(e.target.value))}
+            title="Positive shifts subtitles forward; negative shifts earlier (clamped to 0)."
+          />
+          <Button type="button" variant="secondary" onClick={applyShift} disabled={!contents}>
+            Apply shift
+          </Button>
+          <Button type="button" variant="ghost" onClick={reset} disabled={original == null}>
+            Reset
+          </Button>
+        </div>
+      </label>
+      <label className="field full">
+        <span>
+          Subtitle contents {fmt ? <span className="muted">({fmt.toUpperCase()})</span> : <span className="muted">(unknown format)</span>}
+        </span>
+        <TextArea rows={14} value={contents} onChange={(e) => setContents(e.target.value)} placeholder="Paste SRT/VTT here…" />
+      </label>
+      {error && <div className="error-inline">{error}</div>}
+      {saved?.id && (
+        <div className="output-card">
+          <p className="metric-label">Saved subtitle asset</p>
+          <p className="metric-value">{saved.id}</p>
+          {saved.uri && (
+            <div className="actions-row">
+              <Button type="button" variant="secondary" onClick={() => window.open(apiClient.mediaUrl(saved.uri!), "_blank")}>
+                Open
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => navigator.clipboard.writeText(saved.id).catch(() => {})}>
+                Copy ID
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+      <div className="actions-row">
+        <Button type="button" variant="ghost" onClick={downloadLocal} disabled={!contents}>
+          Download locally
+        </Button>
+        <Button type="button" variant="primary" onClick={() => void saveToBackend()} disabled={busy || !contents.trim()}>
+          {busy ? "Saving..." : "Save as new subtitle asset"}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -1524,9 +1674,9 @@ function StyleEditor({
       </section>
         )}
 
-	        {active === "subtitles" && (
-	          <section className="grid two-col">
-	            <Card title="Select assets">
+		        {active === "subtitles" && (
+		          <section className="grid two-col">
+		            <Card title="Select assets">
 	              <label className="field">
 	                <span>Video asset ID</span>
 	                <Input value={uploadedVideoId} onChange={(e) => setUploadedVideoId(e.target.value)} />
@@ -1633,7 +1783,7 @@ function StyleEditor({
                 </div>
               )}
             </Card>
-            <Card title="Style editor">
+		            <Card title="Style editor">
               <p className="muted">Tune subtitle styling; if no subtitles are set, we will auto-generate captions first.</p>
               <StyleEditor
                 videoId={uploadedVideoId}
@@ -1675,9 +1825,19 @@ function StyleEditor({
 	                  )}
 	                </div>
 	              )}
-	            </Card>
-	          </section>
-	        )}
+		            </Card>
+                <Card title="Subtitle editor">
+                  <SubtitleEditorCard
+                    initialAssetId={subtitleAssetId}
+                    onAssetChosen={(asset) => {
+                      setSubtitleAssetId(asset.id);
+                      setSubtitlePreview(asset.uri ? apiClient.mediaUrl(asset.uri) : null);
+                      setSubtitleFileName(asset.uri?.split("/").pop() || "edited.srt");
+                    }}
+                  />
+                </Card>
+		          </section>
+		        )}
 
 	        {active === "utilities" && (
 	          <section className="grid two-col">

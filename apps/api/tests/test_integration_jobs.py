@@ -84,6 +84,56 @@ def _generate_test_audio_bytes(tmp_path: Path, *, duration_seconds: float = 3.0)
     return out.read_bytes()
 
 
+def _generate_test_video_with_silence_bytes(
+    tmp_path: Path,
+    *,
+    silence_seconds: float = 4.0,
+    tone_seconds: float = 4.0,
+    tone_hz: float = 1000.0,
+) -> bytes:
+    ffmpeg = _require_ffmpeg()
+    total = silence_seconds * 2 + tone_seconds
+    out = tmp_path / "fixture_silence.mp4"
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c=black:s=320x240:d={total}",
+        "-f",
+        "lavfi",
+        "-i",
+        f"anullsrc=r=16000:cl=mono:d={silence_seconds}",
+        "-f",
+        "lavfi",
+        "-i",
+        f"sine=frequency={tone_hz}:duration={tone_seconds}",
+        "-f",
+        "lavfi",
+        "-i",
+        f"anullsrc=r=16000:cl=mono:d={silence_seconds}",
+        "-filter_complex",
+        "[1:a][2:a][3:a]concat=n=3:v=0:a=1[aout]",
+        "-map",
+        "0:v:0",
+        "-map",
+        "[aout]",
+        "-shortest",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        str(out),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return out.read_bytes()
+
+
 def test_end_to_end_video_to_srt_job(test_client):
     client, _enqueued, worker, _media_root = test_client
 
@@ -238,6 +288,40 @@ def test_end_to_end_video_to_shorts_with_subtitles_job(test_client, tmp_path: Pa
         assert uri.startswith("/media/")
         path = media_root / Path(uri).relative_to("/media")
         assert path.exists()
+
+
+def test_end_to_end_video_to_shorts_trim_silence_prefers_non_silent_segments(test_client, tmp_path: Path):
+    client, _enqueued, worker, _media_root = test_client
+
+    video_bytes = _generate_test_video_with_silence_bytes(tmp_path, silence_seconds=4.0, tone_seconds=4.0)
+    video = _upload_fake_video(client, content=video_bytes, filename="shorts-silence.mp4")
+
+    payload = {
+        "video_asset_id": video["id"],
+        "max_clips": 1,
+        "min_duration": 3,
+        "max_duration": 4,
+        "aspect_ratio": "9:16",
+        "options": {"trim_silence": True},
+    }
+    resp = client.post("/api/v1/shorts/jobs", json=payload)
+    assert resp.status_code == 201, resp.text
+    job = resp.json()
+
+    worker.generate_shorts(
+        job["id"],
+        video["id"],
+        {"max_clips": 1, "min_duration": 3, "max_duration": 4, "aspect_ratio": "9:16", **payload["options"]},
+    )
+
+    done = client.get(f"/api/v1/jobs/{job['id']}").json()
+    assert done["status"] == "completed"
+    clips = done["payload"].get("clip_assets")
+    assert isinstance(clips, list)
+    assert len(clips) == 1
+
+    clip = clips[0]
+    assert 3.5 <= float(clip.get("start")) <= 4.5, f"expected tone segment around 4s start, got {clip}"
 
 
 def test_end_to_end_video_audio_merge_job(test_client, tmp_path: Path):
