@@ -345,7 +345,9 @@
 - [x] Basic subtitle editor (inline text edit + shift timings).
   - [x] Web: add a raw subtitle editor (load from asset id → edit → shift timings → re-upload as new asset).
   - [ ] Subtitle editor: add a cue table view (per-line edit) + validation (optional).
-- [ ] Support for timelines / EDL export.
+- [x] Support for timelines / EDL export.
+  - [x] Web: export Shorts results as CSV + basic CMX3600-style EDL.
+  - [ ] Timeline export: support audio tracks + per-clip reel names (optional).
 - [ ] Optional cloud integrations (S3, remote GPU workers).
 - [ ] Optional “export upload package” for YouTube/TikTok (title, description, tags).
 

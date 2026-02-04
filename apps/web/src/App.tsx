@@ -6,6 +6,7 @@ import { Spinner } from "./components/Spinner";
 import { SettingsModal } from "./components/SettingsModal";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { detectSubtitleFormat, shiftSubtitleTimings } from "./subtitles/shift";
+import { exportShortsTimelineCsv, exportShortsTimelineEdl, type ShortsClip } from "./shorts/timeline";
 
 const NAV_ITEMS = [
   { id: "shorts", label: "Shorts" },
@@ -1089,9 +1090,10 @@ function StyleEditor({
   const [captionOutput, setCaptionOutput] = useState<MediaAsset | null>(null);
   const [translateJob, setTranslateJob] = useState<Job | null>(null);
   const [translateOutput, setTranslateOutput] = useState<MediaAsset | null>(null);
-  const [shortsClips, setShortsClips] = useState<
-    { id: string; duration: number; score: number; uri?: string | null; subtitle_uri?: string | null; thumbnail_uri?: string | null }[]
-  >([]);
+		const [shortsClips, setShortsClips] = useState<
+	    ShortsClip[]
+	  >([]);
+    const [timelineFps, setTimelineFps] = useState(30);
   const [shortsJob, setShortsJob] = useState<Job | null>(null);
   const [shortsStatusPolling, setShortsStatusPolling] = useState(false);
   const [subtitleToolsJob, setSubtitleToolsJob] = useState<Job | null>(null);
@@ -1214,7 +1216,7 @@ function StyleEditor({
 	      });
 	  }, [jobsPageJobs, jobsDateFrom, jobsDateTo, jobsStatusFilter, jobsTypeFilter]);
 
-  const pollJob = (job: Job | null, onUpdate: (j: Job) => void, onAsset?: (a: MediaAsset | null) => void) => {
+	  const pollJob = (job: Job | null, onUpdate: (j: Job) => void, onAsset?: (a: MediaAsset | null) => void) => {
     if (!job || ["completed", "failed", "cancelled"].includes(job.status)) return null;
     return setInterval(async () => {
       try {
@@ -1225,16 +1227,18 @@ function StyleEditor({
             if (!value || typeof value !== "string") return null;
             return apiClient.mediaUrl(value);
           };
-          const clips = ((refreshed.payload as any).clip_assets as any[]).map((c, i) => ({
-            id: c.id || `${refreshed.id}-clip-${i + 1}`,
-            duration: c.duration ?? null,
-            score: c.score ?? null,
-            uri: resolveUri(c.uri ?? c.url),
-            subtitle_uri: resolveUri(c.subtitle_uri),
-            thumbnail_uri: resolveUri(c.thumbnail_uri),
-          }));
-          setShortsClips(clips.filter(Boolean));
-        }
+	          const clips = ((refreshed.payload as any).clip_assets as any[]).map((c, i) => ({
+	            id: c.id || `${refreshed.id}-clip-${i + 1}`,
+              start: c.start ?? null,
+              end: c.end ?? null,
+	            duration: c.duration ?? null,
+	            score: c.score ?? null,
+	            uri: resolveUri(c.uri ?? c.url),
+	            subtitle_uri: resolveUri(c.subtitle_uri),
+	            thumbnail_uri: resolveUri(c.thumbnail_uri),
+	          }));
+	          setShortsClips(clips.filter(Boolean));
+	        }
         if (onAsset && refreshed.output_asset_id) {
           try {
             const asset = await apiClient.getAsset(refreshed.output_asset_id);
@@ -1543,8 +1547,8 @@ function StyleEditor({
           </Card>
         </section>
 
-        {active === "shorts" && (
-          <section className="grid two-col">
+	        {active === "shorts" && (
+	          <section className="grid two-col">
             <Card title="Upload or link video">
               <UploadPanel onAssetId={(id) => setUploadedVideoId(id)} onPreview={(url) => setUploadedPreview(url)} />
               {uploadedPreview && <video className="preview" controls src={uploadedPreview} />}
@@ -1559,9 +1563,9 @@ function StyleEditor({
                 }}
               />
             </Card>
-          <Card title="Progress">
-            {shortsJob ? (
-              <div className="snapshot">
+	          <Card title="Progress">
+	            {shortsJob ? (
+	              <div className="snapshot">
                 <div>
                   <p className="metric-label">Job</p>
                   <p className="metric-value">{shortsJob.id}</p>
@@ -1578,18 +1582,69 @@ function StyleEditor({
                 </div>
                 <p className="muted">Steps: transcribe → segment → render</p>
                 {shortsStatusPolling && <Spinner label="Polling job status..." />}
-                {shortsOutput && shortsOutput.uri && (
-                  <div className="actions-row">
-                    <a className="btn btn-primary" href={apiClient.mediaUrl(shortsOutput.uri)} download>
-                      Download compiled shorts
-                      </a>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <p className="muted">Create a shorts job to view progress.</p>
-              )}
-            </Card>
+	                {(shortsOutput?.uri || shortsClips.length > 0) && (
+	                  <div className="actions-row">
+	                    {shortsOutput?.uri && (
+	                      <a className="btn btn-primary" href={apiClient.mediaUrl(shortsOutput.uri)} download>
+	                        Download manifest
+	                      </a>
+	                    )}
+                      {shortsClips.length > 0 && (
+                        <>
+                          <label className="field" style={{ margin: 0 }}>
+                            <span className="muted">FPS</span>
+                            <select className="input" value={timelineFps} onChange={(e) => setTimelineFps(Number(e.target.value))}>
+                              <option value={24}>24</option>
+                              <option value={25}>25</option>
+                              <option value={30}>30</option>
+                              <option value={60}>60</option>
+                            </select>
+                          </label>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => {
+                              const csv = exportShortsTimelineCsv(shortsClips);
+                              const blob = new Blob([csv], { type: "text/csv" });
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement("a");
+                              a.href = url;
+                              a.download = "shorts_timeline.csv";
+                              document.body.appendChild(a);
+                              a.click();
+                              document.body.removeChild(a);
+                              window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+                            }}
+                          >
+                            Download CSV
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => {
+                              const edl = exportShortsTimelineEdl(shortsClips, { fps: timelineFps, title: `Reframe Shorts (${shortsJob.id})` });
+                              const blob = new Blob([edl], { type: "text/plain" });
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement("a");
+                              a.href = url;
+                              a.download = "shorts_timeline.edl";
+                              document.body.appendChild(a);
+                              a.click();
+                              document.body.removeChild(a);
+                              window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+                            }}
+                          >
+                            Download EDL
+                          </Button>
+                        </>
+                      )}
+	                    </div>
+	                  )}
+	                </div>
+	              ) : (
+	                <p className="muted">Create a shorts job to view progress.</p>
+	              )}
+	            </Card>
           <Card title="Results">
             {shortsClips.length === 0 && (
               <p className="muted">
