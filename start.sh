@@ -54,6 +54,9 @@ RESULT_BACKEND=redis://redis:6379/0
 # Disable all network-backed providers by default.
 REFRAME_OFFLINE_MODE=true
 
+# Optional (required for some gated models like pyannote diarization)
+HF_TOKEN=
+
 # Optional providers (disabled by offline mode)
 OPENAI_API_KEY=
 GROQ_API_KEY=
