@@ -409,7 +409,7 @@
 - [ ] Add per-clip subtitle style overrides + a “batch apply style” action.
 
 ### Reliability & safety
-- [ ] Add upload limits (max bytes) + content-type validation for `/assets/upload`.
+- [x] Add upload limits (max bytes) + content-type validation for `/assets/upload`.
 - [ ] Add a “delete asset/job” flow + retention policy for `MEDIA_ROOT/tmp`.
 - [ ] Add job retries with backoff for transient ffmpeg failures (and surface retry attempts in the UI).
 

@@ -57,6 +57,9 @@ REFRAME_OFFLINE_MODE=true
 # Optional (required for some gated models like pyannote diarization)
 HF_TOKEN=
 
+# Upload safety (0 disables)
+REFRAME_MAX_UPLOAD_BYTES=1073741824
+
 # Optional providers (disabled by offline mode)
 OPENAI_API_KEY=
 GROQ_API_KEY=

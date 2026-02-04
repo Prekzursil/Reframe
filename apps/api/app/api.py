@@ -17,7 +17,7 @@ from sqlmodel import Session, SQLModel, select
 
 from app.database import get_session
 from app.config import get_settings
-from app.errors import ErrorResponse, conflict, not_found, server_error
+from app.errors import ApiError, ErrorCode, ErrorResponse, conflict, not_found, server_error
 from app.models import Job, JobStatus, MediaAsset, SubtitleStylePreset
 from app.rate_limit import enforce_rate_limit
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
@@ -570,6 +570,55 @@ def translate_subtitle_tool(payload: TranslateSubtitleToolRequest, session: Sess
     )
 
 
+_ALLOWED_UPLOAD_KINDS = {"video", "audio", "subtitle"}
+_ALLOWED_SUBTITLE_MIME_TYPES = {
+    "text/plain",
+    "text/vtt",
+    "application/x-subrip",
+    "application/octet-stream",
+}
+
+
+def _validate_upload(kind: str, content_type: str | None, filename: str | None) -> None:
+    normalized_kind = (kind or "").strip().lower()
+    ct = (content_type or "").strip().lower()
+
+    if normalized_kind not in _ALLOWED_UPLOAD_KINDS:
+        raise ApiError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Invalid asset kind",
+            details={"kind": kind, "allowed_kinds": sorted(_ALLOWED_UPLOAD_KINDS)},
+        )
+
+    if normalized_kind == "video":
+        if not ct.startswith("video/"):
+            raise ApiError(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code=ErrorCode.VALIDATION_ERROR,
+                message="Invalid content type for video upload",
+                details={"content_type": content_type, "filename": filename},
+            )
+
+    if normalized_kind == "audio":
+        if not ct.startswith("audio/"):
+            raise ApiError(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code=ErrorCode.VALIDATION_ERROR,
+                message="Invalid content type for audio upload",
+                details={"content_type": content_type, "filename": filename},
+            )
+
+    if normalized_kind == "subtitle":
+        if ct and ct not in _ALLOWED_SUBTITLE_MIME_TYPES and not ct.startswith("text/"):
+            raise ApiError(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code=ErrorCode.VALIDATION_ERROR,
+                message="Invalid content type for subtitle upload",
+                details={"content_type": content_type, "filename": filename},
+            )
+
+
 @router.post(
     "/assets/upload",
     response_model=MediaAsset,
@@ -584,11 +633,37 @@ async def upload_asset(
 ) -> MediaAsset:
     settings = get_settings()
     storage = get_storage(media_root=settings.media_root)
+    kind = (kind or "").strip().lower()
+    _validate_upload(kind, file.content_type, file.filename)
 
     suffix = Path(file.filename or "").suffix
     filename = f"{uuid4()}{suffix}"
-    data = await file.read()
-    uri = storage.write_bytes(rel_dir="tmp", filename=filename, data=data, content_type=file.content_type)
+
+    max_bytes = max(0, int(settings.max_upload_bytes or 0))
+    tmp_dir = Path(settings.media_root) / "tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_path = tmp_dir / filename
+    total = 0
+    with tmp_path.open("wb") as out:
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if max_bytes and total > max_bytes:
+                tmp_path.unlink(missing_ok=True)
+                raise ApiError(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    code=ErrorCode.VALIDATION_ERROR,
+                    message="Upload too large",
+                    details={"max_upload_bytes": max_bytes, "uploaded_bytes": total},
+                )
+            out.write(chunk)
+
+    uri = storage.write_file(rel_dir="tmp", filename=filename, source_path=tmp_path, content_type=file.content_type)
+    if not isinstance(storage, LocalStorageBackend):
+        tmp_path.unlink(missing_ok=True)
+
     asset = MediaAsset(kind=kind, uri=uri, mime_type=file.content_type)
     session.add(asset)
     session.commit()

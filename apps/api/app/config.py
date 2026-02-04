@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", description="Logging level, e.g. DEBUG|INFO|WARNING")
     rate_limit_requests: int = Field(default=60)
     rate_limit_window_seconds: int = Field(default=60)
+    max_upload_bytes: int = Field(
+        default=1_073_741_824,
+        validation_alias=AliasChoices("MAX_UPLOAD_BYTES", "REFRAME_MAX_UPLOAD_BYTES"),
+        description="Max upload size for /assets/upload (0 disables). Default: 1 GiB.",
+    )
 
 
 @lru_cache(maxsize=1)
