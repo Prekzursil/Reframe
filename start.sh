@@ -60,6 +60,10 @@ HF_TOKEN=
 # Upload safety (0 disables)
 REFRAME_MAX_UPLOAD_BYTES=1073741824
 
+# Local retention for generated files
+REFRAME_CLEANUP_TTL_HOURS=24
+REFRAME_CLEANUP_INTERVAL_SECONDS=3600
+
 # Optional providers (disabled by offline mode)
 OPENAI_API_KEY=
 GROQ_API_KEY=

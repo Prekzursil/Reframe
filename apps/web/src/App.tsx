@@ -1328,13 +1328,14 @@ function StyleEditor({
 	  const [recentSubtitleAssets, setRecentSubtitleAssets] = useState<MediaAsset[]>([]);
 	  const [recentAssetsLoading, setRecentAssetsLoading] = useState(false);
 	  const [recentAssetsError, setRecentAssetsError] = useState<string | null>(null);
-	  const [jobsPageJobs, setJobsPageJobs] = useState<Job[]>([]);
-	  const [jobsPageLoading, setJobsPageLoading] = useState(false);
-	  const [jobsPageError, setJobsPageError] = useState<string | null>(null);
-	  const [jobsStatusFilter, setJobsStatusFilter] = useState<JobStatus | "">("");
-	  const [jobsTypeFilter, setJobsTypeFilter] = useState("");
-	  const [jobsDateFrom, setJobsDateFrom] = useState("");
-	  const [jobsDateTo, setJobsDateTo] = useState("");
+		  const [jobsPageJobs, setJobsPageJobs] = useState<Job[]>([]);
+		  const [jobsPageLoading, setJobsPageLoading] = useState(false);
+		  const [jobsPageError, setJobsPageError] = useState<string | null>(null);
+		  const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
+		  const [jobsStatusFilter, setJobsStatusFilter] = useState<JobStatus | "">("");
+		  const [jobsTypeFilter, setJobsTypeFilter] = useState("");
+		  const [jobsDateFrom, setJobsDateFrom] = useState("");
+		  const [jobsDateTo, setJobsDateTo] = useState("");
     const [systemStatus, setSystemStatus] = useState<SystemStatusResponse | null>(null);
     const [systemLoading, setSystemLoading] = useState(false);
     const [systemError, setSystemError] = useState<string | null>(null);
@@ -1383,24 +1384,48 @@ function StyleEditor({
 	    }
 	  }, [active]);
 
-	  const loadJobsPage = async () => {
-	    setJobsPageLoading(true);
-	    setJobsPageError(null);
-	    try {
-	      const data = await apiClient.listJobs();
-	      setJobsPageJobs(data);
-	    } catch (err) {
-	      setJobsPageError(err instanceof Error ? err.message : "Failed to load jobs");
-	    } finally {
-	      setJobsPageLoading(false);
-	    }
-	  };
+		  const loadJobsPage = async () => {
+		    setJobsPageLoading(true);
+		    setJobsPageError(null);
+		    try {
+		      const data = await apiClient.listJobs();
+		      setJobsPageJobs(data);
+		    } catch (err) {
+		      setJobsPageError(err instanceof Error ? err.message : "Failed to load jobs");
+		    } finally {
+		      setJobsPageLoading(false);
+		    }
+		  };
 
-	  useEffect(() => {
-	    if (active === "jobs") {
-	      void loadJobsPage();
-	    }
-	  }, [active]);
+		  const deleteJobAndRefresh = async (job: Job) => {
+		    const confirmed = window.confirm(
+		      "Delete this job and its derived assets?\n\nThis removes generated files (clips/subtitles/manifests) stored under media/tmp. Input uploads are kept.",
+		    );
+		    if (!confirmed) return;
+
+		    setJobsPageError(null);
+		    setDeletingJobId(job.id);
+		    try {
+		      await apiClient.deleteJob(job.id, { deleteAssets: true });
+		      if (selectedJob?.id === job.id) {
+		        setSelectedJob(null);
+		        setInputAsset(null);
+		        setOutputAsset(null);
+		      }
+		      await loadJobsPage();
+		      refresh();
+		    } catch (err) {
+		      setJobsPageError(err instanceof Error ? err.message : "Failed to delete job");
+		    } finally {
+		      setDeletingJobId(null);
+		    }
+		  };
+
+		  useEffect(() => {
+		    if (active === "jobs") {
+		      void loadJobsPage();
+		    }
+		  }, [active]);
 
     const loadSystemStatus = async () => {
       setSystemLoading(true);
@@ -2345,11 +2370,11 @@ function StyleEditor({
 	                  {assetLoading && <Spinner label="Loading assets..." />}
 	                  {assetError && <div className="error-inline">{assetError}</div>}
 
-		                  <div className="actions-row">
-		                    <Button
-		                      type="button"
-		                      variant="ghost"
-		                      onClick={async () => {
+			                  <div className="actions-row">
+			                    <Button
+			                      type="button"
+			                      variant="ghost"
+			                      onClick={async () => {
 		                        try {
 		                          await navigator.clipboard.writeText(JSON.stringify(selectedJob, null, 2));
 		                        } catch {
@@ -2359,15 +2384,26 @@ function StyleEditor({
 		                    >
 		                      Copy job JSON
 		                    </Button>
-		                    <a className="btn btn-secondary" href={`${apiClient.baseUrl}/jobs/${selectedJob.id}/bundle`}>
-		                      Download bundle
-		                    </a>
-		                    {outputAsset?.uri && (
-		                      <a className="btn btn-secondary" href={apiClient.mediaUrl(outputAsset.uri)} target="_blank" rel="noreferrer">
-		                        Open output
-		                      </a>
-		                    )}
-		                  </div>
+			                    <a className="btn btn-secondary" href={`${apiClient.baseUrl}/jobs/${selectedJob.id}/bundle`}>
+			                      Download bundle
+			                    </a>
+			                    {outputAsset?.uri && (
+			                      <a className="btn btn-secondary" href={apiClient.mediaUrl(outputAsset.uri)} target="_blank" rel="noreferrer">
+			                        Open output
+			                      </a>
+			                    )}
+			                    <Button
+			                      type="button"
+			                      variant="danger"
+			                      disabled={
+			                        deletingJobId === selectedJob.id ||
+			                        !["completed", "failed", "cancelled"].includes(selectedJob.status)
+			                      }
+			                      onClick={() => void deleteJobAndRefresh(selectedJob)}
+			                    >
+			                      {deletingJobId === selectedJob.id ? "Deleting..." : "Delete job"}
+			                    </Button>
+			                  </div>
 
 	                  {selectedJob.error && (
 	                    <div className="output-card">

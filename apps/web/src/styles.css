@@ -367,6 +367,12 @@ h2, h3 { margin: 0; }
   border-color: var(--border);
 }
 
+.btn-danger {
+  background: rgba(251, 113, 133, 0.12);
+  color: var(--accent-coral);
+  border-color: rgba(251, 113, 133, 0.3);
+}
+
 .chip {
   padding: 6px 10px;
   border-radius: 999px;

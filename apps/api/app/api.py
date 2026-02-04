@@ -10,7 +10,7 @@ from typing import Annotated, List, Optional
 from uuid import uuid4
 
 from celery import Celery
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, UploadFile, status, Response
 from uuid import UUID
 
 from sqlmodel import Session, SQLModel, select
@@ -303,6 +303,32 @@ def cancel_job(job_id: UUID, session: SessionDep) -> Job:
     session.commit()
     session.refresh(job)
     return job
+
+
+@router.delete(
+    "/jobs/{job_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Jobs"],
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+def delete_job(job_id: UUID, session: SessionDep, delete_assets: bool = False) -> Response:
+    job = session.get(Job, job_id)
+    if not job:
+        raise not_found("Job not found", details={"job_id": str(job_id)})
+
+    if job.status not in {JobStatus.completed, JobStatus.failed, JobStatus.cancelled}:
+        raise conflict("Job is still active; cancel it before deleting", details={"status": job.status})
+
+    derived_asset_ids = _collect_job_output_asset_ids(job) if delete_assets else set()
+
+    session.delete(job)
+    session.commit()
+
+    if delete_assets:
+        for asset_id in sorted(derived_asset_ids):
+            _delete_asset_if_unreferenced(session, asset_id)
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(
@@ -619,6 +645,57 @@ def _validate_upload(kind: str, content_type: str | None, filename: str | None) 
             )
 
 
+def _coerce_uuid(value: object) -> UUID | None:
+    if value is None:
+        return None
+    try:
+        return UUID(str(value))
+    except Exception:
+        return None
+
+
+def _collect_job_output_asset_ids(job: Job) -> set[UUID]:
+    """Collect output/derived asset IDs for cleanup; does not include input assets."""
+    out: set[UUID] = set()
+    if job.output_asset_id:
+        out.add(job.output_asset_id)
+
+    payload = job.payload or {}
+    if isinstance(payload, dict):
+        clip_assets = payload.get("clip_assets")
+        if isinstance(clip_assets, list):
+            for item in clip_assets:
+                if not isinstance(item, dict):
+                    continue
+                for key in ("asset_id", "thumbnail_asset_id", "subtitle_asset_id"):
+                    uid = _coerce_uuid(item.get(key))
+                    if uid:
+                        out.add(uid)
+    return out
+
+
+def _asset_is_referenced(session: Session, asset_id: UUID) -> bool:
+    query = select(Job).where((Job.input_asset_id == asset_id) | (Job.output_asset_id == asset_id)).limit(1)
+    return session.exec(query).first() is not None
+
+
+def _delete_asset_if_unreferenced(session: Session, asset_id: UUID) -> None:
+    asset = session.get(MediaAsset, asset_id)
+    if not asset:
+        return
+    if _asset_is_referenced(session, asset_id):
+        return
+
+    settings = get_settings()
+    uri = asset.uri or ""
+    if uri and not is_remote_uri(uri):
+        file_path = LocalStorageBackend(media_root=Path(settings.media_root)).resolve_local_path(uri)
+        file_path.unlink(missing_ok=True)
+
+    session.delete(asset)
+    session.commit()
+
+
 @router.post(
     "/assets/upload",
     response_model=MediaAsset,
@@ -696,6 +773,35 @@ def get_asset(asset_id: UUID, session: SessionDep) -> MediaAsset:
     if not asset:
         raise not_found("Asset not found", details={"asset_id": str(asset_id)})
     return asset
+
+
+@router.delete(
+    "/assets/{asset_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Assets"],
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+def delete_asset(asset_id: UUID, session: SessionDep) -> Response:
+    asset = session.get(MediaAsset, asset_id)
+    if not asset:
+        raise not_found("Asset not found", details={"asset_id": str(asset_id)})
+
+    refs = session.exec(select(Job.id).where((Job.input_asset_id == asset_id) | (Job.output_asset_id == asset_id))).all()
+    if refs:
+        raise conflict(
+            "Asset is referenced by jobs; delete the jobs first",
+            details={"asset_id": str(asset_id), "job_ids": [str(r) for r in refs]},
+        )
+
+    settings = get_settings()
+    uri = asset.uri or ""
+    if uri and not is_remote_uri(uri):
+        file_path = LocalStorageBackend(media_root=Path(settings.media_root)).resolve_local_path(uri)
+        file_path.unlink(missing_ok=True)
+
+    session.delete(asset)
+    session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(

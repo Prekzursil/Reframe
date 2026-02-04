@@ -410,7 +410,7 @@
 
 ### Reliability & safety
 - [x] Add upload limits (max bytes) + content-type validation for `/assets/upload`.
-- [ ] Add a “delete asset/job” flow + retention policy for `MEDIA_ROOT/tmp`.
+- [x] Add a “delete asset/job” flow + retention policy for `MEDIA_ROOT/tmp`.
 - [ ] Add job retries with backoff for transient ffmpeg failures (and surface retry attempts in the UI).
 
 ### Desktop readiness

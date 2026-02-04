@@ -156,6 +156,25 @@ export class ApiClient {
     return this.request<SystemStatusResponse>("/system/status");
   }
 
+  async deleteJob(jobId: string, options?: { deleteAssets?: boolean }): Promise<void> {
+    const search = new URLSearchParams();
+    if (options?.deleteAssets) search.set("delete_assets", "true");
+    const query = search.toString();
+    const resp = await this.fetcher(`${this.baseUrl}/jobs/${jobId}${query ? `?${query}` : ""}`, { method: "DELETE" });
+    if (!resp.ok) {
+      const msg = await resp.text().catch(() => resp.statusText);
+      throw new Error(msg || "Delete job failed");
+    }
+  }
+
+  async deleteAsset(assetId: string): Promise<void> {
+    const resp = await this.fetcher(`${this.baseUrl}/assets/${assetId}`, { method: "DELETE" });
+    if (!resp.ok) {
+      const msg = await resp.text().catch(() => resp.statusText);
+      throw new Error(msg || "Delete asset failed");
+    }
+  }
+
   async uploadAsset(file: File, kind = "video"): Promise<MediaAsset> {
     const form = new FormData();
     form.append("file", file);

@@ -35,7 +35,11 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         create_db_and_tables()
-        start_cleanup_loop(settings.media_root)
+        start_cleanup_loop(
+            settings.media_root,
+            interval_seconds=int(settings.cleanup_interval_seconds),
+            ttl_hours=int(settings.cleanup_ttl_hours),
+        )
         yield
 
     app = FastAPI(title=settings.api_title, version=settings.api_version, openapi_tags=tags_metadata, lifespan=lifespan)

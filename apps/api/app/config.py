@@ -38,6 +38,16 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MAX_UPLOAD_BYTES", "REFRAME_MAX_UPLOAD_BYTES"),
         description="Max upload size for /assets/upload (0 disables). Default: 1 GiB.",
     )
+    cleanup_ttl_hours: int = Field(
+        default=24,
+        validation_alias=AliasChoices("CLEANUP_TTL_HOURS", "REFRAME_CLEANUP_TTL_HOURS"),
+        description="Delete files under MEDIA_ROOT/tmp older than this (hours).",
+    )
+    cleanup_interval_seconds: int = Field(
+        default=3600,
+        validation_alias=AliasChoices("CLEANUP_INTERVAL_SECONDS", "REFRAME_CLEANUP_INTERVAL_SECONDS"),
+        description="How often to run tmp cleanup (seconds).",
+    )
 
 
 @lru_cache(maxsize=1)
