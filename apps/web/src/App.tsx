@@ -158,9 +158,10 @@ function CaptionsForm({ onCreated, initialVideoId }: { onCreated: (job: Job) => 
   const [backend, setBackend] = useState("faster_whisper");
   const [model, setModel] = useState("whisper-large-v3");
   const [formats, setFormats] = useState<string[]>(["srt"]);
-  const [speakerLabels, setSpeakerLabels] = useState(false);
+  const [diarizationBackend, setDiarizationBackend] = useState<"noop" | "speechbrain" | "pyannote">("noop");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const speakerLabelsEnabled = diarizationBackend !== "noop";
 
   useEffect(() => {
     if (initialVideoId) {
@@ -184,8 +185,8 @@ function CaptionsForm({ onCreated, initialVideoId }: { onCreated: (job: Job) => 
           backend,
           model,
           formats,
-          speaker_labels: speakerLabels,
-          diarization_backend: speakerLabels ? "pyannote" : "noop",
+          speaker_labels: speakerLabelsEnabled,
+          diarization_backend: diarizationBackend,
         },
       });
       onCreated(job);
@@ -211,12 +212,12 @@ function CaptionsForm({ onCreated, initialVideoId }: { onCreated: (job: Job) => 
         backend,
         model,
         formats,
-        speaker_labels: speakerLabels,
-        diarization_backend: speakerLabels ? "pyannote" : "noop",
+        speaker_labels: speakerLabelsEnabled,
+        diarization_backend: diarizationBackend,
       },
     };
     return `curl -sS -X POST \"${apiClient.baseUrl}/captions/jobs\" -H \"Content-Type: application/json\" -d '${JSON.stringify(payload)}'`;
-  }, [videoId, sourceLang, backend, model, formats, speakerLabels]);
+  }, [videoId, sourceLang, backend, model, formats, diarizationBackend, speakerLabelsEnabled]);
 
   return (
     <form className="form-grid" onSubmit={submit}>
@@ -264,17 +265,24 @@ function CaptionsForm({ onCreated, initialVideoId }: { onCreated: (job: Job) => 
             title="Adds speaker labels (e.g. SPEAKER_01) using optional diarization. Requires extra worker deps; offline mode disables model downloads."
           >
             <span>Speaker labels</span>
-            <select className="input" value={speakerLabels ? "on" : "off"} onChange={(e) => setSpeakerLabels(e.target.value === "on")}>
-              <option value="off">Off</option>
-              <option value="on">On (pyannote)</option>
+            <select className="input" value={diarizationBackend} onChange={(e) => setDiarizationBackend(e.target.value as typeof diarizationBackend)}>
+              <option value="noop">Off</option>
+              <option value="speechbrain">On (speechbrain, token-free)</option>
+              <option value="pyannote">On (pyannote, HF token)</option>
             </select>
           </label>
           <div className="field full">
             <p className="muted">{backendHelp}</p>
-            {speakerLabels && (
+            {speakerLabelsEnabled && diarizationBackend === "pyannote" && (
               <p className="muted">
-                Speaker labels are experimental and require a worker build that includes diarization deps (pyannote + torch). If
-                the worker can’t diarize, it will fall back without failing the job.
+                Speaker labels via pyannote require a worker build that includes diarization deps (pyannote + torch) and a Hugging Face token
+                (`HF_TOKEN`). Offline mode will skip diarization. If the worker can’t diarize, it will fall back without failing the job.
+              </p>
+            )}
+            {speakerLabelsEnabled && diarizationBackend === "speechbrain" && (
+              <p className="muted">
+                Speaker labels via SpeechBrain are token-free, but still require heavy deps (speechbrain + torch + torchaudio) and may download
+                models. Offline mode will skip diarization. If the worker can’t diarize, it will fall back without failing the job.
               </p>
             )}
           </div>
