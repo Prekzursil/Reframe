@@ -103,13 +103,29 @@ The simplest test loop is:
    - New: `desktop-v0.x.(y+1)` (this should be the update you receive)
 2) Confirm the updater JSON is reachable and valid:
    - `python3 scripts/verify_desktop_updater_release.py`
-3) Launch the **old** desktop build and click **Check updates**:
+3) Launch the **old** desktop build and confirm the app version:
+   - Expected: the UI shows `Desktop version: 0.x.y`
+4) Click **Check updates**:
    - Expected: a prompt like `Update available: 0.x.y → 0.x.(y+1)`
-4) Accept the update and watch the log panel:
+5) Accept the update and watch the log panel:
    - Expected: `Downloading update…` → progress logs → `Download finished.` → `Update installed; restarting…`
-5) After restart:
+6) After restart:
    - Click **Check updates** again
    - Expected: `No updates available.`
+
+### Installing an older build (manual)
+
+For the “old” release in the checklist above, install it from GitHub Releases:
+
+- Linux
+  - Download the `.AppImage` (or the installer bundle you ship) from the old release assets.
+  - `chmod +x ./Reframe*.AppImage && ./Reframe*.AppImage`
+- Windows
+  - Download and install the old `.msi` from the old release assets.
+  - If you already have a newer install, uninstall it first so you can validate the updater path.
+- macOS
+  - Download and install the old build from the old release assets (often `.dmg` or `.app.tar.gz`).
+  - If Gatekeeper blocks the app, you may need to allow it in System Settings → Privacy & Security.
 
 Common failure modes:
 - “Signature verification failed” typically means `latest.json` points at the wrong asset or signature contents are incorrect.

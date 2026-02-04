@@ -1,3 +1,4 @@
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -63,6 +64,14 @@ async function refreshDiagnostics() {
 }
 
 async function refresh() {
+  try {
+    const appVersion = await getVersion();
+    setText("app-version", appVersion.trim() || "unknown");
+  } catch (err) {
+    setText("app-version", "unknown");
+    appendLog(err instanceof Error ? err.message : String(err));
+  }
+
   try {
     const composePath = await invoke<string>("compose_file_path");
     byId<HTMLElement>("compose-path").textContent = composePath;
@@ -160,6 +169,7 @@ window.addEventListener("DOMContentLoaded", () => {
   byId<HTMLButtonElement>("btn-refresh").addEventListener("click", () => refresh());
   byId<HTMLButtonElement>("btn-open-ui").addEventListener("click", () => openUrl(UI_URL));
   byId<HTMLButtonElement>("btn-updates").addEventListener("click", () => checkUpdates());
+  byId<HTMLButtonElement>("btn-releases").addEventListener("click", () => openUrl(RELEASES_URL));
 
   void refresh();
 });

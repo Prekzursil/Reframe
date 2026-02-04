@@ -26,22 +26,27 @@
           </button>
           <button id="btn-down" class="danger">Stop stack</button>
         </div>
-        <div class="row">
-          <button id="btn-refresh" class="secondary">Refresh status</button>
-          <button id="btn-open-ui" class="secondary">Open UI</button>
-          <button id="btn-updates" class="secondary">Check updates</button>
-        </div>
+	        <div class="row">
+	          <button id="btn-refresh" class="secondary">Refresh status</button>
+	          <button id="btn-open-ui" class="secondary">Open UI</button>
+	          <button id="btn-updates" class="secondary">Check updates</button>
+	          <button id="btn-releases" class="secondary">Open Releases</button>
+	        </div>
 
-        <div class="grid">
-          <div class="field">
-            <div class="label">Compose file</div>
-            <code id="compose-path" class="mono">detecting…</code>
-          </div>
-          <div class="field">
-            <div class="label">Docker</div>
-            <code id="docker-version" class="mono">checking…</code>
-          </div>
-        </div>
+	        <div class="grid">
+	          <div class="field">
+	            <div class="label">Compose file</div>
+	            <code id="compose-path" class="mono">detecting…</code>
+	          </div>
+	          <div class="field">
+	            <div class="label">Desktop version</div>
+	            <code id="app-version" class="mono">checking…</code>
+	          </div>
+	          <div class="field">
+	            <div class="label">Docker</div>
+	            <code id="docker-version" class="mono">checking…</code>
+	          </div>
+	        </div>
 
         <pre id="status" class="status">Loading…</pre>
       </section>

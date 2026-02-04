@@ -311,6 +311,7 @@
   - [ ] Desktop: verify updater end-to-end (install old version → update → relaunch).
     - [x] Script: validate published `latest.json` + release asset URLs.
     - [x] Docs: add end-to-end verification checklist.
+    - [x] Desktop: display current app version in UI (helps verify old→new relaunch).
     - [ ] Manual: install an older build and confirm update + relaunch (Windows/macOS/Linux).
 - [x] Provide example configs for:
   - [x] Local dev (no GPU),
