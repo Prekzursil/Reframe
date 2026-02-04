@@ -337,6 +337,8 @@
   - [x] Docs: explain diarization dependencies (torch/pyannote) + offline-mode behavior.
   - [x] Add UI option to enable speaker labels (optional; advanced).
   - [ ] Validate with a real pyannote run and document expected memory/CPU impact.
+    - [ ] Add a small benchmark script (`scripts/benchmark_diarization.py`) to run diarization on a sample and print timing + peak RSS.
+    - [ ] Run benchmarks (CPU + GPU if available) and paste results into docs.
 - [x] Smart silence trimming (cut dead air before generating shorts).
   - [x] media-core: add ffmpeg `silencedetect` helper (`detect_silence`).
   - [x] Worker: optional `trim_silence` scoring for `tasks.generate_shorts`.
@@ -349,6 +351,11 @@
   - [x] Web: export Shorts results as CSV + basic CMX3600-style EDL.
   - [x] Timeline export: support audio tracks + per-clip reel names (optional).
 - [ ] Optional cloud integrations (S3, remote GPU workers).
+  - [ ] Define a storage abstraction (`StorageBackend`) and keep local filesystem as default.
+  - [ ] Add S3-compatible backend (AWS S3 / Cloudflare R2) for assets + bundles (opt-in via env).
+  - [ ] Worker: support downloading remote input assets (pre-signed URL) into `MEDIA_ROOT/tmp` before processing.
+  - [ ] API: optional pre-signed download URLs for large assets (avoid proxying through API).
+  - [ ] Docs: deployment guide for remote storage + remote workers (free-tier friendly defaults).
 - [x] Optional “export upload package” for YouTube/TikTok (title, description, tags).
 
 ---
