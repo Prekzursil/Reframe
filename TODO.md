@@ -312,6 +312,7 @@
     - [x] Script: validate published `latest.json` + release asset URLs.
     - [x] Docs: add end-to-end verification checklist.
     - [x] Desktop: display current app version in UI (helps verify old→new relaunch).
+    - [x] Desktop: add quick link to open GitHub Releases from the UI.
     - [ ] Manual: install an older build and confirm update + relaunch (Windows/macOS/Linux).
 - [x] Provide example configs for:
   - [x] Local dev (no GPU),
@@ -341,6 +342,7 @@
   - [ ] Validate with a real pyannote run and document expected memory/CPU impact.
     - [x] Add a small benchmark script (`scripts/benchmark_diarization.py`) to run diarization on a sample and print timing + peak RSS.
     - [x] Benchmark script: support `--format md` output for easy doc pasting.
+    - [x] Benchmark script: fail fast with a clear error when `HF_TOKEN` is missing for pyannote.
     - [ ] Run benchmarks (CPU + GPU if available) and paste results into docs.
 - [x] Smart silence trimming (cut dead air before generating shorts).
   - [x] media-core: add ffmpeg `silencedetect` helper (`detect_silence`).

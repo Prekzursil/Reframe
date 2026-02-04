@@ -46,6 +46,8 @@ If the model requires a Hugging Face token, set one of:
 - `HUGGINGFACE_TOKEN`
 - `HF_TOKEN`
 
+Note: `pyannote/speaker-diarization-3.1` is gated on Hugging Face — you must accept the model terms and provide a token.
+
 ### Enabling SpeechBrain diarization in Docker images
 
 To enable the token-free SpeechBrain diarization fallback, install the optional extra:

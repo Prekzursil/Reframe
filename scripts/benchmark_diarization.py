@@ -111,6 +111,15 @@ def main(argv: list[str]) -> int:
     if not model:
         model = "pyannote/speaker-diarization-3.1" if backend == DiarizationBackend.PYANNOTE else "speechbrain/spkrec-ecapa-voxceleb"
 
+    if backend == DiarizationBackend.PYANNOTE and model.startswith("pyannote/") and not token:
+        print(
+            "ERROR: Hugging Face token is required for this pyannote model.\n"
+            "- Set HF_TOKEN (or HUGGINGFACE_TOKEN) in your environment or repo .env\n"
+            "- Ensure you’ve accepted the model terms on Hugging Face\n",
+            file=sys.stderr,
+        )
+        return 2
+
     config = DiarizationConfig(
         backend=backend,
         model=model,

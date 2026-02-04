@@ -117,6 +117,8 @@ The simplest test loop is:
 
 For the “old” release in the checklist above, install it from GitHub Releases:
 
+- You can click **Open Releases** in the desktop UI to jump to the Releases page.
+
 - Linux
   - Download the `.AppImage` (or the installer bundle you ship) from the old release assets.
   - `chmod +x ./Reframe*.AppImage && ./Reframe*.AppImage`
