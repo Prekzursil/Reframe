@@ -52,14 +52,26 @@ def _diarize_pyannote(audio_path: str | Path, config: DiarizationConfig) -> List
         ) from exc
 
     path = str(audio_path)
-    if config.huggingface_token:
-        # pyannote.audio switched from `use_auth_token=` to `token=` across versions.
-        try:
-            pipeline = Pipeline.from_pretrained(config.model, token=config.huggingface_token)
-        except TypeError:
-            pipeline = Pipeline.from_pretrained(config.model, use_auth_token=config.huggingface_token)
-    else:
-        pipeline = Pipeline.from_pretrained(config.model)
+    try:
+        if config.huggingface_token:
+            # pyannote.audio switched from `use_auth_token=` to `token=` across versions.
+            try:
+                pipeline = Pipeline.from_pretrained(config.model, token=config.huggingface_token)
+            except TypeError:
+                pipeline = Pipeline.from_pretrained(config.model, use_auth_token=config.huggingface_token)
+        else:
+            pipeline = Pipeline.from_pretrained(config.model)
+    except Exception as exc:
+        hint = ""
+        msg = str(exc)
+        if "403" in msg or "gated" in msg.lower() or "restricted" in msg.lower():
+            hint = (
+                "\n\nHint: this model is gated on Hugging Face. Ensure you:\n"
+                "- accepted the model terms / requested access (one-time)\n"
+                "- created an HF token with read access\n"
+                "- set HF_TOKEN (or HUGGINGFACE_TOKEN) in your environment\n"
+            )
+        raise RuntimeError(f"Failed to load pyannote pipeline '{config.model}'.{hint}") from exc
     diarization = pipeline(path)
 
     segments: List[SpeakerSegment] = []
