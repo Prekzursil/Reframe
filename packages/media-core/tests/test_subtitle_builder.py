@@ -4,8 +4,10 @@ from media_core.subtitles.builder import (
     group_words,
     to_srt,
     to_ass,
+    to_ass_karaoke,
     to_vtt,
 )
+from media_core.subtitles.vtt import parse_vtt
 from media_core.transcribe.models import Word
 
 
@@ -83,3 +85,19 @@ def test_grouping_handles_multilingual_tokens():
     assert len(lines) == 2
     assert lines[0].text() == "hola bonjour"
     assert lines[1].text() == "hello"
+
+
+def test_parse_vtt_parses_basic_cue():
+    vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.500\nhello world\n\n"
+    lines = parse_vtt(vtt)
+    assert len(lines) == 1
+    assert lines[0].start == 1.0
+    assert lines[0].end == 2.5
+    assert lines[0].text() == "hello world"
+
+
+def test_to_ass_karaoke_includes_k_tags():
+    line = SubtitleLine(start=1.0, end=2.0, words=[Word(text="hello world", start=1.0, end=2.0)])
+    ass = to_ass_karaoke([line])
+    assert "Dialogue:" in ass
+    assert "{\\k" in ass

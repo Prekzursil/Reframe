@@ -19,6 +19,16 @@ transcribe-faster-whisper = ["faster-whisper>=1.0.0"]
 transcribe-whispercpp = ["whispercpp>=0.0.9"]
 render = ["moviepy>=1.0.3", "pysubs2>=1.6.1"]
 translate-local = ["argostranslate>=1.9.0"]
+diarize-pyannote = ["pyannote.audio>=3.1.1"]
+diarize-speechbrain = [
+    # SpeechBrain currently expects the legacy TorchAudio backend helpers
+    # (e.g. `torchaudio.list_audio_backends()`), which were removed in
+    # torchaudio 2.9+. Keep this pinned until SpeechBrain updates.
+    "speechbrain>=0.5.16",
+    "torch>=2.0.0,<2.9.0",
+    "torchaudio>=2.0.0,<2.9.0",
+    "soundfile>=0.12.1",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

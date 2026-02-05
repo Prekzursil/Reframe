@@ -32,6 +32,8 @@ services:
       - redis
     volumes:
       - media-data:/data/media
+      - hf-cache:/root/.cache/huggingface
+      - argos-data:/root/.local/share/argos-translate
 
   web:
     build:
@@ -54,3 +56,5 @@ services:
 volumes:
   redis-data: {}
   media-data: {}
+  hf-cache: {}
+  argos-data: {}

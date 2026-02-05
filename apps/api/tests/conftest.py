@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-import json
+import os
 import sys
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+_tools_bin = REPO_ROOT / ".tools" / "bin"
+if _tools_bin.is_dir():
+    os.environ["PATH"] = f"{_tools_bin}{os.pathsep}{os.environ.get('PATH', '')}"
 
 API_ROOT = Path(__file__).resolve().parents[1]
 if str(API_ROOT) not in sys.path:
@@ -20,7 +25,7 @@ def test_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
     db_path = tmp_path / "reframe-test.db"
     db_url = f"sqlite:////{str(db_path).lstrip('/')}"
-    monkeypatch.setenv("REFRAME_DATABASE", json.dumps({"url": db_url}))
+    monkeypatch.setenv("DATABASE_URL", db_url)
     monkeypatch.setenv("REFRAME_MEDIA_ROOT", str(media_root))
 
     from app.api import get_celery_app
@@ -52,4 +57,3 @@ def test_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
     with TestClient(app) as client:
         yield client, enqueued, worker, media_root
-

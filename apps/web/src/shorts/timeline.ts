@@ -1,0 +1,102 @@
+export type ShortsClip = {
+  id: string;
+  asset_id?: string | null;
+  start?: number | null;
+  end?: number | null;
+  duration?: number | null;
+  score?: number | null;
+  uri?: string | null;
+  styled_asset_id?: string | null;
+  styled_uri?: string | null;
+  style_preset?: string | null;
+  subtitle_asset_id?: string | null;
+  subtitle_uri?: string | null;
+  thumbnail_asset_id?: string | null;
+  thumbnail_uri?: string | null;
+  reel_name?: string | null;
+};
+
+function secondsToTimecode(seconds: number, fps: number): string {
+  const safeFps = fps > 0 ? fps : 30;
+  const totalFrames = Math.max(0, Math.round(seconds * safeFps));
+  const frames = totalFrames % safeFps;
+  const totalSeconds = Math.floor(totalFrames / safeFps);
+  const s = totalSeconds % 60;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const m = totalMinutes % 60;
+  const h = Math.floor(totalMinutes / 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}:${String(frames).padStart(2, "0")}`;
+}
+
+export function exportShortsTimelineCsv(clips: ShortsClip[]): string {
+  const header = ["clip_id", "start_seconds", "end_seconds", "duration_seconds", "score", "video_uri", "subtitle_uri", "thumbnail_uri"];
+  const rows = clips.map((clip) => [
+    clip.id,
+    clip.start ?? "",
+    clip.end ?? "",
+    clip.duration ?? "",
+    clip.score ?? "",
+    clip.uri ?? "",
+    clip.subtitle_uri ?? "",
+    clip.thumbnail_uri ?? "",
+  ]);
+  const escape = (value: unknown) => {
+    const s = String(value ?? "");
+    if (s.includes(",") || s.includes("\"") || s.includes("\n")) return `"${s.replaceAll("\"", "\"\"")}"`;
+    return s;
+  };
+  return [header, ...rows].map((row) => row.map(escape).join(",")).join("\n") + "\n";
+}
+
+function deriveReelName(clip: ShortsClip, idx: number): string {
+  const raw = (clip.reel_name || "").trim();
+  if (raw) return raw.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8) || `CLIP${String(idx + 1).padStart(3, "0")}`;
+  return `CLIP${String(idx + 1).padStart(3, "0")}`;
+}
+
+export function exportShortsTimelineEdl(
+  clips: ShortsClip[],
+  opts?: { fps?: number; title?: string; includeAudio?: boolean; perClipReel?: boolean }
+): string {
+  const fps = opts?.fps ?? 30;
+  const title = opts?.title ?? "Reframe Shorts Timeline";
+  const includeAudio = opts?.includeAudio ?? false;
+  const perClipReel = opts?.perClipReel ?? false;
+  const lines: string[] = [];
+  lines.push(`TITLE: ${title}`);
+  lines.push("FCM: NON-DROP FRAME");
+  lines.push("");
+
+  let recordCursorSeconds = 0;
+  clips.forEach((clip, idx) => {
+    const start = Number(clip.start ?? 0);
+    const end = Number(clip.end ?? start);
+    const duration = Math.max(0, end - start);
+
+    const recIn = recordCursorSeconds;
+    const recOut = recordCursorSeconds + duration;
+    recordCursorSeconds = recOut;
+
+    const event = String(idx + 1).padStart(3, "0");
+    const reel = perClipReel ? deriveReelName(clip, idx) : "AX";
+    const reelField = reel.padEnd(8, " ").slice(0, 8);
+    const transition = "C";
+    const srcIn = secondsToTimecode(start, fps);
+    const srcOut = secondsToTimecode(end, fps);
+    const recInTc = secondsToTimecode(recIn, fps);
+    const recOutTc = secondsToTimecode(recOut, fps);
+
+    const pushEvent = (track: string) => {
+      const trackField = track.padEnd(4, " ").slice(0, 4);
+      lines.push(`${event}  ${reelField}  ${trackField}  ${transition}        ${srcIn} ${srcOut} ${recInTc} ${recOutTc}`);
+    };
+
+    pushEvent("V");
+    if (includeAudio) pushEvent("A");
+    lines.push(`* FROM CLIP NAME: ${clip.id}`);
+    if (clip.uri) lines.push(`* SOURCE FILE: ${clip.uri}`);
+    lines.push("");
+  });
+
+  return lines.join("\n").trimEnd() + "\n";
+}

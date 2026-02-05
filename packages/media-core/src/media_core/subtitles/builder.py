@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Iterable, List, Sequence
 
@@ -11,6 +12,7 @@ class SubtitleLine:
     start: float
     end: float
     words: List[Word] = field(default_factory=list)
+    speaker: str | None = None
 
     def text(self) -> str:
         return " ".join(w.text for w in self.words).strip()
@@ -83,7 +85,10 @@ def to_srt(lines: Iterable[SubtitleLine]) -> str:
     for idx, line in enumerate(lines, start=1):
         output.append(str(idx))
         output.append(f"{_format_timestamp(line.start)} --> {_format_timestamp(line.end)}")
-        output.append(line.text())
+        text = line.text()
+        if line.speaker:
+            text = f"{line.speaker}: {text}" if text else line.speaker
+        output.append(text)
         output.append("")  # blank line separator
     return "\n".join(output)
 
@@ -92,7 +97,10 @@ def to_vtt(lines: Iterable[SubtitleLine]) -> str:
     output = ["WEBVTT", ""]
     for line in lines:
         output.append(f"{_format_timestamp(line.start).replace(',', '.')} --> {_format_timestamp(line.end).replace(',', '.')}")
-        output.append(line.text())
+        text = line.text()
+        if line.speaker:
+            text = f"{line.speaker}: {text}" if text else line.speaker
+        output.append(text)
         output.append("")
     return "\n".join(output)
 
@@ -103,6 +111,100 @@ def _format_ass_timestamp(seconds: float) -> str:
     minutes, rem = divmod(rem, 6_000)
     secs, cs = divmod(rem, 100)
     return f"{hours:d}:{minutes:02d}:{secs:02d}.{cs:02d}"
+
+
+def _tokenize_for_karaoke(text: str) -> List[str]:
+    return re.findall(r"\S+", text.strip())
+
+
+def _allocate_karaoke_durations_cs(tokens: List[str], total_cs: int) -> List[int]:
+    if not tokens:
+        return []
+
+    # ASS karaoke durations are centiseconds. If the cue is extremely short, we still
+    # want word-by-word highlighting rather than zero-duration tags.
+    if total_cs <= 0:
+        total_cs = len(tokens)
+
+    if total_cs < len(tokens):
+        return [1] * len(tokens)
+
+    weights = [max(1, len(t)) for t in tokens]
+    denom = sum(weights) or len(tokens)
+    durations = [max(1, int(total_cs * w / denom)) for w in weights]
+
+    delta = total_cs - sum(durations)
+    if delta > 0:
+        # Add remaining centiseconds to longer tokens first.
+        order = sorted(range(len(tokens)), key=lambda i: weights[i], reverse=True)
+        i = 0
+        while delta > 0:
+            durations[order[i % len(order)]] += 1
+            delta -= 1
+            i += 1
+    elif delta < 0:
+        # Remove extra centiseconds from longer tokens while keeping >= 1.
+        order = sorted(range(len(tokens)), key=lambda i: weights[i], reverse=True)
+        i = 0
+        while delta < 0 and any(d > 1 for d in durations):
+            idx = order[i % len(order)]
+            if durations[idx] > 1:
+                durations[idx] -= 1
+                delta += 1
+            i += 1
+    return durations
+
+
+def _escape_ass_text(text: str) -> str:
+    # Keep it minimal: escape backslashes and braces which can introduce ASS override blocks.
+    return text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
+
+
+def _karaoke_text_for_line(line: SubtitleLine) -> str:
+    # Prefer real word timings when available; otherwise synthesize timings per token.
+    if line.words and len(line.words) > 1:
+        segments: List[tuple[str, int]] = []
+        for w in line.words:
+            dur_cs = int(round(max(0.0, w.end - w.start) * 100))
+            segments.append((w.text, max(1, dur_cs)))
+        return " ".join(f"{{\\k{dur}}}{_escape_ass_text(text)}" for text, dur in segments if text.strip())
+
+    tokens = _tokenize_for_karaoke(line.text())
+    total_cs = int(round(max(0.01, line.duration) * 100))
+    durations = _allocate_karaoke_durations_cs(tokens, total_cs)
+    return " ".join(
+        f"{{\\k{dur}}}{_escape_ass_text(token)}" for token, dur in zip(tokens, durations) if token.strip()
+    )
+
+
+def to_ass_karaoke(lines: Iterable[SubtitleLine]) -> str:
+    """Render subtitles to ASS with word-by-word karaoke tags (\\k) suitable for libass burn-in."""
+    header = [
+        "[Script Info]",
+        "ScriptType: v4.00+",
+        "PlayResX: 384",
+        "PlayResY: 288",
+        "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
+        "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding",
+        # SecondaryColour is used by karaoke highlighting; runtime render can override via force_style.
+        "Style: Default,Arial,36,&H00FFFFFF,&H0000FFFF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1",
+        "",
+        "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ]
+
+    body: List[str] = []
+    for line in lines:
+        name = (line.speaker or "").replace(",", " ")
+        speaker_prefix = f"{_escape_ass_text(line.speaker)}: " if line.speaker else ""
+        body.append(
+            f"Dialogue: 0,{_format_ass_timestamp(line.start)},{_format_ass_timestamp(line.end)},"
+            f"Default,{name},0,0,0,,{speaker_prefix}{_karaoke_text_for_line(line)}"
+        )
+    return "\n".join(header + body)
 
 
 def to_ass(lines: Iterable[SubtitleLine]) -> str:
@@ -144,8 +246,10 @@ def to_ass(lines: Iterable[SubtitleLine]) -> str:
     ]
     body = []
     for line in lines:
+        name = (line.speaker or "").replace(",", " ")
+        speaker_prefix = f"{line.speaker}: " if line.speaker else ""
         body.append(
             f"Dialogue: 0,{_format_ass_timestamp(line.start)},{_format_ass_timestamp(line.end)},"
-            f"Default,,0,0,0,,{line.text()}"
+            f"Default,{name},0,0,0,,{speaker_prefix}{line.text()}"
         )
     return "\n".join(header + body)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -53,6 +54,8 @@ def normalize_verbose_json(
 
 def transcribe_openai_file(path: str | Path, config: TranscriptionConfig) -> TranscriptionResult:
     """Transcribe a media file using OpenAI Whisper."""
+    if os.getenv("REFRAME_OFFLINE_MODE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        raise RuntimeError("REFRAME_OFFLINE_MODE is enabled; refusing to call OpenAI transcription API.")
     openai = _ensure_openai()
     client = openai.OpenAI()
     media_path = Path(path)
