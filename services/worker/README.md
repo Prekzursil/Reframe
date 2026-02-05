@@ -46,7 +46,7 @@ If the model requires a Hugging Face token, set one of:
 - `HUGGINGFACE_TOKEN`
 - `HF_TOKEN`
 
-Note: `pyannote/speaker-diarization-3.1` is gated on Hugging Face — you must accept the model terms and provide a token.
+Note: `pyannote/speaker-diarization-3.1` is gated on Hugging Face — you must accept the model terms / request access and provide a token.
 
 ### Enabling SpeechBrain diarization in Docker images
 
@@ -87,6 +87,23 @@ Notes:
 - This is expected to be **heavy** (Torch + model downloads). Run it on the target machine you plan to deploy on.
 - `REFRAME_OFFLINE_MODE=true` is intended to disable network-backed providers; for pyannote benchmarks you’ll need network access for model download.
 - `scripts/benchmark_diarization.py` will also pick up `HF_TOKEN` / `HUGGINGFACE_TOKEN` from the repo `.env` if present.
+
+#### Example benchmark output (Docker CPU)
+
+These numbers are meant for *order-of-magnitude* sizing only.
+
+### Diarization benchmark
+
+- backend: `speechbrain`
+- model: `speechbrain/spkrec-ecapa-voxceleb`
+- runs: `1` (warmup: `True`)
+- duration_s_avg: `0.541` (min `0.541`, max `0.541`)
+- segments_last_run: `0`
+- peak_rss_mb: `803.0`
+
+```text
+run=1 duration_s=0.541 segments=0
+```
 
 ## Captions: high-quality transcription (Whisper Large v3)
 

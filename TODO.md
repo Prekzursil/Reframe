@@ -351,8 +351,9 @@
     - [x] Benchmark script: support `--format md` output for easy doc pasting.
     - [x] Benchmark script: fail fast with a clear error when `HF_TOKEN` is missing for pyannote.
     - [x] Benchmark script: add a Docker helper (`scripts/benchmark_diarization_docker.sh`) to avoid local Torch installs.
-    - [ ] Prereq: accept Hugging Face model terms for `pyannote/speaker-diarization-3.1` and set `HF_TOKEN` locally (never commit).
-    - [ ] Run benchmarks (CPU + GPU if available) and paste results into docs.
+    - [ ] Prereq: accept Hugging Face model terms / request access for `pyannote/speaker-diarization-3.1` and set `HF_TOKEN` locally (never commit).
+    - [x] Run SpeechBrain benchmark (token-free fallback) and paste results into docs.
+    - [ ] Run pyannote benchmark (CPU + GPU if available) and paste results into docs.
 - [x] Smart silence trimming (cut dead air before generating shorts).
   - [x] media-core: add ffmpeg `silencedetect` helper (`detect_silence`).
   - [x] Worker: optional `trim_silence` scoring for `tasks.generate_shorts`.
