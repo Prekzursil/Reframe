@@ -1,4 +1,10 @@
-import { getVersion } from "@tauri-apps/api/app";
+import {
+  getBundleType,
+  getIdentifier,
+  getName,
+  getTauriVersion,
+  getVersion,
+} from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -10,6 +16,9 @@ const SYSTEM_STATUS_URL = `${API_URL}/system/status`;
 const RELEASES_URL = "https://github.com/Prekzursil/Reframe/releases";
 const UPDATER_MANIFEST_URL =
   "https://github.com/Prekzursil/Reframe/releases/latest/download/latest.json";
+
+let lastUpdaterError: string | null = null;
+let lastDiagnosticsError: string | null = null;
 
 function byId<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -31,6 +40,126 @@ function setStatus(text: string) {
 
 function setText(id: string, text: string) {
   byId<HTMLElement>(id).textContent = text;
+}
+
+function errToString(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+function truncate(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}\n…(truncated)…`;
+}
+
+async function collectDebugInfo(): Promise<string> {
+  const lines: string[] = [];
+
+  const push = (label: string, value: string) => {
+    lines.push(`${label}: ${value}`);
+  };
+
+  push("timestamp", new Date().toISOString());
+  push("user_agent", navigator.userAgent);
+  push("updater_manifest", UPDATER_MANIFEST_URL);
+  push("releases_url", RELEASES_URL);
+
+  try {
+    push("app_name", (await getName()).trim() || "unknown");
+  } catch (err) {
+    push("app_name", `error: ${errToString(err)}`);
+  }
+
+  try {
+    push("app_version", (await getVersion()).trim() || "unknown");
+  } catch (err) {
+    push("app_version", `error: ${errToString(err)}`);
+  }
+
+  try {
+    push("tauri_version", (await getTauriVersion()).trim() || "unknown");
+  } catch (err) {
+    push("tauri_version", `error: ${errToString(err)}`);
+  }
+
+  try {
+    push("identifier", (await getIdentifier()).trim() || "unknown");
+  } catch (err) {
+    push("identifier", `error: ${errToString(err)}`);
+  }
+
+  try {
+    push("bundle_type", String(await getBundleType()));
+  } catch (err) {
+    push("bundle_type", `error: ${errToString(err)}`);
+  }
+
+  try {
+    push("compose_file", await invoke<string>("compose_file_path"));
+  } catch (err) {
+    push("compose_file", `error: ${errToString(err)}`);
+  }
+
+  try {
+    push("docker_version", (await invoke<string>("docker_version")).trim());
+  } catch (err) {
+    push("docker_version", `error: ${errToString(err)}`);
+  }
+
+  try {
+    push("compose_ps", (await invoke<string>("compose_ps")).trim() || "(empty)");
+  } catch (err) {
+    push("compose_ps", `error: ${errToString(err)}`);
+  }
+
+  try {
+    const resp = await fetch(SYSTEM_STATUS_URL, { headers: { Accept: "application/json" } });
+    push("system_status_http", `${resp.status} ${resp.statusText}`.trim());
+    if (resp.ok) {
+      const text = await resp.text();
+      push("system_status_body", truncate(text, 4000));
+    }
+  } catch (err) {
+    push("system_status_http", `error: ${errToString(err)}`);
+  }
+
+  if (lastUpdaterError) {
+    push("last_updater_error", lastUpdaterError);
+  }
+  if (lastDiagnosticsError) {
+    push("last_diagnostics_error", lastDiagnosticsError);
+  }
+
+  const statusText = byId<HTMLPreElement>("status").textContent ?? "";
+  if (statusText.trim()) {
+    push("ui_compose_status", truncate(statusText.trim(), 2000));
+  }
+
+  const logText = byId<HTMLPreElement>("log").textContent ?? "";
+  if (logText.trim()) {
+    push("ui_log", truncate(logText.trim(), 4000));
+  }
+
+  return lines.join("\n");
+}
+
+async function copyDebugInfo() {
+  appendLog("Collecting debug info...");
+  const text = await collectDebugInfo();
+
+  try {
+    await navigator.clipboard.writeText(text);
+    appendLog("Copied debug info to clipboard.");
+  } catch (err) {
+    const msg = errToString(err);
+    appendLog(`Clipboard copy failed: ${msg}`);
+    window.prompt("Copy debug info:", text);
+  }
 }
 
 async function refreshDiagnostics() {
@@ -55,13 +184,15 @@ async function refreshDiagnostics() {
       ffmpeg?.present ? `ok${ffmpeg?.version ? ` (${ffmpeg.version})` : ""}` : "missing",
     );
     setText("system-status", JSON.stringify(data, null, 2));
+    lastDiagnosticsError = null;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errToString(err);
     setText("offline-mode", "unknown");
     setText("storage-backend", "unknown");
     setText("worker-ping", "unknown");
     setText("ffmpeg", "unknown");
     setText("system-status", `Diagnostics unavailable.\n\n${msg}`);
+    lastDiagnosticsError = msg;
   }
 }
 
@@ -132,6 +263,7 @@ async function checkUpdates() {
     const update = await check();
     if (!update) {
       appendLog("No updates available.");
+      lastUpdaterError = null;
       return;
     }
 
@@ -139,6 +271,7 @@ async function checkUpdates() {
     const ok = window.confirm(`Update available: ${update.currentVersion} → ${update.version}\n\nDownload and install now?`);
     if (!ok) {
       appendLog("Update cancelled.");
+      lastUpdaterError = null;
       return;
     }
 
@@ -156,9 +289,12 @@ async function checkUpdates() {
     });
 
     appendLog("Update installed; restarting…");
+    lastUpdaterError = null;
     await relaunch();
   } catch (err) {
-    appendLog(err instanceof Error ? err.message : String(err));
+    const msg = errToString(err);
+    lastUpdaterError = msg;
+    appendLog(msg);
     const openReleases = window.confirm("Update check failed. Open GitHub Releases page?");
     if (openReleases) {
       await openUrl(RELEASES_URL);
@@ -172,6 +308,7 @@ window.addEventListener("DOMContentLoaded", () => {
   byId<HTMLButtonElement>("btn-down").addEventListener("click", () => stop());
   byId<HTMLButtonElement>("btn-refresh").addEventListener("click", () => refresh());
   byId<HTMLButtonElement>("btn-open-ui").addEventListener("click", () => openUrl(UI_URL));
+  byId<HTMLButtonElement>("btn-copy-debug").addEventListener("click", () => copyDebugInfo());
   byId<HTMLButtonElement>("btn-updates").addEventListener("click", () => checkUpdates());
   byId<HTMLButtonElement>("btn-latest-json").addEventListener("click", () =>
     openUrl(UPDATER_MANIFEST_URL),

@@ -136,6 +136,7 @@ For the “old” release in the checklist above, install it from GitHub Release
 
 - You can click **Open Releases** in the desktop UI to jump to the Releases page.
 - You can click **Open latest.json** in the desktop UI to quickly verify the updater manifest is reachable.
+- If an update fails, click **Copy debug info** and paste it into an issue/PR comment (includes version, bundle type, manifest URL, and compose/docker status).
 
 - Linux
   - Download the `.AppImage` (or the installer bundle you ship) from the old release assets.
