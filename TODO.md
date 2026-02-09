@@ -436,6 +436,8 @@
 
 Goal: offer Reframe as a paid hosted service (multi-tenant web app) while keeping the existing local-first + self-hosted mode.
 
+- [x] Capture a first-pass hosted SaaS roadmap in `ARCHITECTURE.md` + `TODO.md`.
+
 ### Foundations (multi-tenancy + security)
 - [ ] Add auth for the hosted API (start with a simple JWT/session approach; later consider OAuth/SSO).
 - [ ] Add `User` / `Organization` models and enforce job/asset ownership in all API endpoints.
