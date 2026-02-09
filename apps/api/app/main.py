@@ -1,5 +1,6 @@
 import logging
 import time
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from fastapi import FastAPI
@@ -28,9 +29,20 @@ def create_app() -> FastAPI:
         {"name": "Jobs", "description": "Job retrieval and listings."},
         {"name": "Assets", "description": "Manage media assets."},
         {"name": "Presets", "description": "Subtitle style presets."},
+        {"name": "System", "description": "Diagnostics for local setup."},
     ]
 
-    app = FastAPI(title=settings.api_title, version=settings.api_version, openapi_tags=tags_metadata)
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        create_db_and_tables()
+        start_cleanup_loop(
+            settings.media_root,
+            interval_seconds=int(settings.cleanup_interval_seconds),
+            ttl_hours=int(settings.cleanup_ttl_hours),
+        )
+        yield
+
+    app = FastAPI(title=settings.api_title, version=settings.api_version, openapi_tags=tags_metadata, lifespan=lifespan)
 
     app.mount("/media", StaticFiles(directory=settings.media_root), name="media")
 
@@ -69,11 +81,6 @@ def create_app() -> FastAPI:
         )
         response.headers["x-request-id"] = request_id
         return response
-
-    @app.on_event("startup")
-    def startup() -> None:
-        create_db_and_tables()
-        start_cleanup_loop(settings.media_root)
 
     @app.exception_handler(ApiError)
     async def api_error_handler(_, exc: ApiError):

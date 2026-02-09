@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Reframe Desktop</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <main class="container">
+      <header class="header">
+        <h1>Reframe Desktop</h1>
+        <p class="muted">
+          Runs the Reframe stack via Docker Compose and opens the local UI.
+        </p>
+      </header>
+
+      <section class="card">
+        <h2>Stack</h2>
+        <div class="row">
+          <button id="btn-up">Start stack (build)</button>
+          <button id="btn-up-nobuild" class="secondary">
+            Start stack (no build)
+          </button>
+          <button id="btn-down" class="danger">Stop stack</button>
+        </div>
+        <div class="row">
+          <button id="btn-refresh" class="secondary">Refresh status</button>
+          <button id="btn-open-ui" class="secondary">Open UI</button>
+          <button id="btn-copy-debug" class="secondary">Copy debug info</button>
+          <button id="btn-updates" class="secondary">Check updates</button>
+          <button id="btn-latest-json" class="secondary">Open latest.json</button>
+          <button id="btn-releases" class="secondary">Open Releases</button>
+        </div>
+
+        <div class="grid">
+          <div class="field">
+            <div class="label">Compose file</div>
+            <code id="compose-path" class="mono">detecting…</code>
+          </div>
+          <div class="field">
+            <div class="label">Desktop version</div>
+            <code id="app-version" class="mono">checking…</code>
+          </div>
+          <div class="field">
+            <div class="label">Updater manifest</div>
+            <code id="updater-manifest" class="mono">checking…</code>
+          </div>
+          <div class="field">
+            <div class="label">Docker</div>
+            <code id="docker-version" class="mono">checking…</code>
+          </div>
+        </div>
+
+        <pre id="status" class="status">Loading…</pre>
+      </section>
+
+      <section class="card">
+        <h2>Diagnostics</h2>
+        <p class="muted">
+          Reads live status from the local API (when the stack is running).
+        </p>
+        <div class="grid">
+          <div class="field">
+            <div class="label">UI URL</div>
+            <code id="ui-url" class="mono">http://localhost:5173</code>
+          </div>
+          <div class="field">
+            <div class="label">API URL</div>
+            <code id="api-url" class="mono">http://localhost:8000/api/v1</code>
+          </div>
+          <div class="field">
+            <div class="label">Offline mode</div>
+            <code id="offline-mode" class="mono">unknown</code>
+          </div>
+          <div class="field">
+            <div class="label">Storage backend</div>
+            <code id="storage-backend" class="mono">unknown</code>
+          </div>
+          <div class="field">
+            <div class="label">Worker ping</div>
+            <code id="worker-ping" class="mono">unknown</code>
+          </div>
+          <div class="field">
+            <div class="label">ffmpeg</div>
+            <code id="ffmpeg" class="mono">unknown</code>
+          </div>
+        </div>
+
+        <details>
+          <summary class="muted">Raw system status</summary>
+          <pre id="system-status" class="status">Not loaded.</pre>
+        </details>
+      </section>
+
+      <section class="card">
+        <h2>Output</h2>
+        <pre id="log" class="log muted">Ready.</pre>
+      </section>
+
+      <footer class="footer muted">
+        Tip: if you don’t have a `.env` yet, copy `.env.example` in the repo
+        root and set `REFRAME_OFFLINE_MODE=true` for offline-only behavior.
+      </footer>
+    </main>
+  </body>
+</html>

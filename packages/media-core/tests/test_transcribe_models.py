@@ -2,7 +2,7 @@ import pytest
 
 from media_core.transcribe import TranscriptionResult, Word
 from media_core.transcribe.backends.openai_whisper import normalize_verbose_json
-from media_core.transcribe.backends.faster_whisper import normalize_faster_whisper
+from media_core.transcribe.backends.faster_whisper import _normalize_model_name, normalize_faster_whisper
 from media_core.transcribe.backends.whisper_cpp import normalize_whisper_cpp
 from media_core.transcribe.backends.whisper_timestamped import normalize_whisper_timestamped
 from pydantic import ValidationError
@@ -67,6 +67,12 @@ def test_normalize_faster_whisper_accepts_segment_like_objects():
     assert [w.text for w in result.words] == ["hello", "world"]
     assert result.model == "faster-whisper-large-v3"
     assert result.language == "en"
+
+
+def test_faster_whisper_model_aliases():
+    assert _normalize_model_name("whisper-large-v3") == "large-v3"
+    assert _normalize_model_name("openai/whisper-large-v3") == "large-v3"
+    assert _normalize_model_name("large-v3") == "large-v3"
 
 
 def test_normalize_whisper_cpp_fallback_on_segments():

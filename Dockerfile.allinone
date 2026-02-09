@@ -14,6 +14,9 @@ COPY apps/api/requirements.txt /tmp/requirements-api.txt
 COPY services/worker/requirements.txt /tmp/requirements-worker.txt
 RUN pip install --no-cache-dir -r /tmp/requirements-api.txt -r /tmp/requirements-worker.txt
 
+COPY packages/media-core /tmp/media-core
+RUN pip install --no-cache-dir /tmp/media-core
+
 COPY apps/api /app/apps/api
 COPY services/worker /app/services/worker
 COPY scripts/entrypoint-allinone.sh /app/entrypoint.sh

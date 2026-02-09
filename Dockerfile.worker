@@ -12,7 +12,11 @@ RUN apt-get update \
 COPY services/worker/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+COPY packages/media-core /worker/packages/media-core
+RUN pip install --no-cache-dir '/worker/packages/media-core[transcribe-faster-whisper,translate-local]'
+
 COPY apps/api /worker/apps/api
 COPY services/worker /worker
+COPY scripts /worker/scripts
 
 CMD ["celery", "-A", "worker.celery_app", "worker", "--loglevel=info"]
