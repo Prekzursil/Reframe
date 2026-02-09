@@ -8,6 +8,8 @@ const UI_URL = "http://localhost:5173";
 const API_URL = "http://localhost:8000/api/v1";
 const SYSTEM_STATUS_URL = `${API_URL}/system/status`;
 const RELEASES_URL = "https://github.com/Prekzursil/Reframe/releases";
+const UPDATER_MANIFEST_URL =
+  "https://github.com/Prekzursil/Reframe/releases/latest/download/latest.json";
 
 function byId<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -71,6 +73,8 @@ async function refresh() {
     setText("app-version", "unknown");
     appendLog(err instanceof Error ? err.message : String(err));
   }
+
+  setText("updater-manifest", UPDATER_MANIFEST_URL);
 
   try {
     const composePath = await invoke<string>("compose_file_path");
@@ -169,6 +173,9 @@ window.addEventListener("DOMContentLoaded", () => {
   byId<HTMLButtonElement>("btn-refresh").addEventListener("click", () => refresh());
   byId<HTMLButtonElement>("btn-open-ui").addEventListener("click", () => openUrl(UI_URL));
   byId<HTMLButtonElement>("btn-updates").addEventListener("click", () => checkUpdates());
+  byId<HTMLButtonElement>("btn-latest-json").addEventListener("click", () =>
+    openUrl(UPDATER_MANIFEST_URL),
+  );
   byId<HTMLButtonElement>("btn-releases").addEventListener("click", () => openUrl(RELEASES_URL));
 
   void refresh();

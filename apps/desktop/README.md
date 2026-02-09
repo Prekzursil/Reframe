@@ -2,6 +2,8 @@
 
 This is an **early** desktop wrapper for Reframe using **Tauri**.
 
+If you’re deciding between Tauri vs Electron, see `DESKTOP.md` in the repo root for the detailed comparison and rationale.
+
 ## What it does (v1)
 
 - Provides Start/Stop buttons for the local `infra/docker-compose.yml` stack.

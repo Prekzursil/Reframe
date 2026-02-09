@@ -135,6 +135,7 @@ You can download the **old** installer for each OS using `gh`:
 For the “old” release in the checklist above, install it from GitHub Releases:
 
 - You can click **Open Releases** in the desktop UI to jump to the Releases page.
+- You can click **Open latest.json** in the desktop UI to quickly verify the updater manifest is reachable.
 
 - Linux
   - Download the `.AppImage` (or the installer bundle you ship) from the old release assets.
