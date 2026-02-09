@@ -307,6 +307,7 @@
   - [x] Signed updater via GitHub Releases (`latest.json` + signatures).
   - [x] Automate publishing via GitHub Actions (Desktop Release workflow).
   - [x] Desktop UI: add a quick link to open `latest.json` (helps debug updater issues).
+  - [x] Desktop UI: add “Copy debug info” (version, bundle type, updater URL, docker/compose status).
 - [ ] Desktop: verify updater end-to-end (install old version → update → relaunch) (manual per OS).
   - [x] Script: validate published `latest.json` + release asset URLs.
   - [x] Docs: add end-to-end verification checklist.
@@ -428,4 +429,37 @@
 
 ### Optional diarization improvements (free/offline)
 - [x] Add an optional SpeechBrain diarization backend (no HF token) as a fallback when pyannote models are unavailable.
+
+---
+
+## 23. Hosted SaaS (Opus Clip‑style) — Productization Roadmap
+
+Goal: offer Reframe as a paid hosted service (multi-tenant web app) while keeping the existing local-first + self-hosted mode.
+
+### Foundations (multi-tenancy + security)
+- [ ] Add auth for the hosted API (start with a simple JWT/session approach; later consider OAuth/SSO).
+- [ ] Add `User` / `Organization` models and enforce job/asset ownership in all API endpoints.
+- [ ] Add per-tenant storage prefixes (S3/R2) so all assets live under `{org_id}/...` (supports isolation + lifecycle rules).
+- [ ] Add API-side rate limits and abuse protections for expensive endpoints (uploads, rendering, transcription).
+
+### Upload/download at scale
+- [ ] Add direct-to-object-storage uploads via pre-signed URLs (avoid proxying large uploads through FastAPI).
+- [ ] Add resumable uploads (TUS/S3 multipart) for large videos.
+- [ ] Add CDN-backed delivery for public/preview assets (optional) with signed URLs for private outputs.
+
+### Billing + usage metering
+- [ ] Define the cost model: what you bill for (minutes processed, GPU-seconds, storage, egress) and what limits exist per plan.
+- [ ] Add usage metering tables (per job) and a “usage” page in the UI.
+- [ ] Integrate Stripe for subscriptions + seat/org billing + plan enforcement.
+- [ ] Add per-plan concurrency limits (e.g., max running jobs) and queueing behavior.
+
+### Worker scaling + reliability
+- [ ] Split workers into CPU and GPU pools (routing by job type/backends) and add autoscaling deployment configs.
+- [ ] Add job idempotency + dedupe for retry safety (especially for uploads + long-running jobs).
+- [ ] Add retention policies for intermediate assets and plan-based retention windows.
+
+### Opus Clip‑style UX
+- [ ] Add a “project” abstraction (source video → derived clips, transcripts, styles, exports).
+- [ ] Add shareable preview links for clips (signed, time-limited URLs).
+- [ ] Add team collaboration features (org members, roles, shared projects) (later).
 
