@@ -20,85 +20,126 @@ jobs:
         with:
           script: |
             const issue = context.payload.issue;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issue_number = issue.number;
 
-            // Idempotency guard: check if contract already posted
-            const comments = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issue.number
+            const currentLabels = (issue.labels || []).map(l => typeof l === "string" ? l : l.name);
+            const hadReady = currentLabels.includes("agent:ready");
+            const hadInProgress = currentLabels.includes("agent:in-progress");
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
             });
-            
-            const contractMarker = "@copilot Please implement this task using repository guardrails.";
-            const alreadyPosted = comments.data.some(c => c.body.includes(contractMarker));
-            
-            if (alreadyPosted) {
-              console.log("Contract already posted; skipping duplicate queue event.");
+
+            const existingContract = comments.find(c =>
+              c.body?.includes("### Execution Contract") &&
+              c.body?.includes(`- #${issue_number}: ${issue.title}`)
+            );
+
+            if (existingContract) {
+              core.info("Execution contract comment already exists; skipping duplicate enqueue.");
               return;
             }
 
+            let addedInProgress = false;
+            let removedReady = false;
+
             try {
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issue.number,
-                labels: ["agent:in-progress"]
-              });
+              if (!hadInProgress) {
+                await github.rest.issues.addLabels({
+                  owner,
+                  repo,
+                  issue_number,
+                  labels: ["agent:in-progress"],
+                });
+                addedInProgress = true;
+              }
 
-              await github.rest.issues.removeLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issue.number,
-                name: "agent:ready"
-              }).catch((error) => {
-                // Only ignore 404 (label not found), rethrow other errors
-                if (error.status !== 404) {
-                  throw error;
+              if (hadReady) {
+                try {
+                  await github.rest.issues.removeLabel({
+                    owner,
+                    repo,
+                    issue_number,
+                    name: "agent:ready",
+                  });
+                  removedReady = true;
+                } catch (error) {
+                  if (error.status === 404) {
+                    core.info("agent:ready was already removed.");
+                  } else {
+                    throw error;
+                  }
                 }
-              });
+              }
 
-              const body = [
-                "@copilot Please implement this task using repository guardrails.",
+              const intro = repo === "SWFOC-Mod-Menu"
+                ? "@copilot Please implement this task using SWFOC runtime safety guardrails."
+                : "@copilot Please implement this task using repository guardrails.";
+
+              const lines = [
+                intro,
                 "",
                 "### Execution Contract",
-                "1. Decompose work by monorepo slice and keep ownership explicit.",
-                "2. Keep changes minimal and avoid unrelated refactors.",
+                "1. Keep the change minimal and in scope.",
+                "2. Run deterministic verification before requesting review.",
                 `3. Required verification command: \`${process.env.VERIFY_COMMAND}\`.`,
                 "4. Include PR sections: Summary, Risk, Evidence, Rollback, Scope Guard.",
-                "5. Do not merge; maintainers perform final review.",
+                "5. Do not merge; maintainers perform final human review.",
+              ];
+
+              if (repo === "SWFOC-Mod-Menu") {
+                lines.push(
+                  "6. Keep profile compatibility explicit (`base`, `aotr`, `roe`, `custom`).",
+                  "7. Include reason-code-level diagnostics for runtime behavior changes.",
+                  "8. Attach repro-bundle evidence for runtime/mod bugfixes.",
+                );
+              }
+
+              lines.push(
                 "",
                 "### Source Issue",
-                `- #${issue.number}: ${issue.title}`
-              ].join("\n");
+                `- #${issue_number}: ${issue.title}`,
+              );
 
               await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issue.number,
-                body
+                owner,
+                repo,
+                issue_number,
+                body: lines.join("\n"),
               });
             } catch (error) {
-              // Rollback: remove agent:in-progress if contract posting failed
-              await github.rest.issues.removeLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issue.number,
-                name: "agent:in-progress"
-              }).catch((rollbackError) => {
-                // Only ignore 404 during rollback
-                if (rollbackError.status !== 404) {
-                  console.error("Rollback failed:", rollbackError);
+              core.warning(`Queue transition failed: ${error.message}`);
+
+              if (addedInProgress && !hadInProgress) {
+                try {
+                  await github.rest.issues.removeLabel({
+                    owner,
+                    repo,
+                    issue_number,
+                    name: "agent:in-progress",
+                  });
+                } catch (rollbackError) {
+                  core.warning(`Rollback remove agent:in-progress failed: ${rollbackError.message}`);
                 }
-              });
-              
-              // Re-add agent:ready to allow retry
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issue.number,
-                labels: ["agent:ready"]
-              }).catch((rollbackError) => {
-                console.error("Failed to re-add agent:ready during rollback:", rollbackError);
-              });
-              
+              }
+
+              if (removedReady && hadReady) {
+                try {
+                  await github.rest.issues.addLabels({
+                    owner,
+                    repo,
+                    issue_number,
+                    labels: ["agent:ready"],
+                  });
+                } catch (rollbackError) {
+                  core.warning(`Rollback add agent:ready failed: ${rollbackError.message}`);
+                }
+              }
+
               throw error;
             }

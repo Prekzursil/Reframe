@@ -35,11 +35,6 @@ jobs:
 
             for (const label of labels) {
               try {
-                await github.rest.issues.getLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: label.name
-                });
                 await github.rest.issues.updateLabel({
                   owner: context.repo.owner,
                   repo: context.repo.repo,

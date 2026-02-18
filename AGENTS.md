@@ -33,3 +33,6 @@ See `README.md` for details on what this command does.
 - Intake work via `.github/ISSUE_TEMPLATE/agent_task.yml`.
 - Queue with label `agent:ready`.
 - Queue workflow posts execution packet and notifies `@copilot`.
+
+## Queue Trigger Warning
+Applying label `agent:ready` triggers the queue workflow immediately.
