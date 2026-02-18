@@ -21,37 +21,84 @@ jobs:
           script: |
             const issue = context.payload.issue;
 
-            await github.rest.issues.addLabels({
+            // Idempotency guard: check if contract already posted
+            const comments = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: issue.number,
-              labels: ["agent:in-progress"]
+              issue_number: issue.number
             });
+            
+            const contractMarker = "@copilot Please implement this task using repository guardrails.";
+            const alreadyPosted = comments.data.some(c => c.body.includes(contractMarker));
+            
+            if (alreadyPosted) {
+              console.log("Contract already posted; skipping duplicate queue event.");
+              return;
+            }
 
-            await github.rest.issues.removeLabel({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issue.number,
-              name: "agent:ready"
-            }).catch(() => {});
+            try {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                labels: ["agent:in-progress"]
+              });
 
-            const body = [
-              "@copilot Please implement this task using repository guardrails.",
-              "",
-              "### Execution Contract",
-              "1. Decompose work by monorepo slice and keep ownership explicit.",
-              "2. Keep changes minimal and avoid unrelated refactors.",
-              `3. Required verification command: \`${process.env.VERIFY_COMMAND}\`.`,
-              "4. Include PR sections: Summary, Risk, Evidence, Rollback, Scope Guard.",
-              "5. Do not merge; maintainers perform final review.",
-              "",
-              "### Source Issue",
-              `- #${issue.number}: ${issue.title}`
-            ].join("\n");
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                name: "agent:ready"
+              }).catch((error) => {
+                // Only ignore 404 (label not found), rethrow other errors
+                if (error.status !== 404) {
+                  throw error;
+                }
+              });
 
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issue.number,
-              body
-            });
+              const body = [
+                "@copilot Please implement this task using repository guardrails.",
+                "",
+                "### Execution Contract",
+                "1. Decompose work by monorepo slice and keep ownership explicit.",
+                "2. Keep changes minimal and avoid unrelated refactors.",
+                `3. Required verification command: \`${process.env.VERIFY_COMMAND}\`.`,
+                "4. Include PR sections: Summary, Risk, Evidence, Rollback, Scope Guard.",
+                "5. Do not merge; maintainers perform final review.",
+                "",
+                "### Source Issue",
+                `- #${issue.number}: ${issue.title}`
+              ].join("\n");
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body
+              });
+            } catch (error) {
+              // Rollback: remove agent:in-progress if contract posting failed
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                name: "agent:in-progress"
+              }).catch((rollbackError) => {
+                // Only ignore 404 during rollback
+                if (rollbackError.status !== 404) {
+                  console.error("Rollback failed:", rollbackError);
+                }
+              });
+              
+              // Re-add agent:ready to allow retry
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                labels: ["agent:ready"]
+              }).catch((rollbackError) => {
+                console.error("Failed to re-add agent:ready during rollback:", rollbackError);
+              });
+              
+              throw error;
+            }
