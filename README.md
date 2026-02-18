@@ -152,7 +152,34 @@ Right now this repo is in the **planning / scaffolding** stage:
 
 ---
 
-## Getting Started (planned flow)
+## Getting Started
+
+### For Contributors & Developers
+
+Before making changes, familiarize yourself with the monorepo structure:
+
+- **`apps/api`** – FastAPI backend service
+- **`apps/web`** – React frontend application
+- **`services/worker`** – Celery worker processes
+- **`packages/media-core`** – Core media processing library
+
+### Verification Command
+
+**Always run from the repository root:**
+
+```bash
+make verify
+```
+
+This command runs:
+- Python compilation checks (`python-compile`)
+- Python tests (`python-test`)
+- Web tests (`web-test`)
+- Web build (`web-build`)
+
+Run `make verify` before submitting any changes to ensure code quality and prevent regressions.
+
+### Running the Application (planned flow)
 
 Once the initial scaffolding is done, the flow will look like:
 
