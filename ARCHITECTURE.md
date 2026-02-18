@@ -90,3 +90,48 @@ Reframe is a **local‑first media processing stack**:
    ├─ README.md
    ├─ goal.md
    └─ todo.md
+```
+
+---
+
+## 3. Monorepo Slice Ownership
+
+When working on tasks in this monorepo, **clearly identify which slice(s) are affected**:
+
+### Slice Definitions
+
+- **`apps/api`** – Backend API slice
+  - Changes to REST endpoints, database models, request/response schemas
+  - Dependencies: `packages/media-core`
+  - Testing: Integration tests in `apps/api/tests`
+
+- **`apps/web`** – Frontend slice
+  - React components, pages, UI logic, API client
+  - Testing: Component tests, E2E tests
+  - Build output: Static assets for production
+
+- **`services/worker`** – Background worker slice
+  - Celery task definitions, job processing logic
+  - Dependencies: `packages/media-core`
+  - Testing: Worker-specific tests
+
+- **`packages/media-core`** – Core library slice
+  - Media processing algorithms, transcription, translation, video editing
+  - No web or API dependencies (standalone)
+  - Testing: Unit tests for all modules
+
+- **`infra/`** – Infrastructure slice
+  - Docker configuration, deployment scripts
+  - Affects all services when changed
+
+- **`docs/`** – Documentation slice
+  - Markdown files, architecture diagrams
+  - No runtime impact; docs-only changes are low-risk
+
+### Slice Ownership Guidelines
+
+1. **Single-slice changes** are preferred and easier to review
+2. **Multi-slice changes** require explicit coordination and integration plan
+3. Always specify affected slices in issue descriptions and PRs
+4. Run `make verify` from **repository root** before submitting changes
+5. Keep changes **minimal and scoped** to the task at hand

@@ -8,6 +8,7 @@ Use GitHub Copilot coding agent and Codex app/IDE/CLI for implementation and rev
 - Decompose non-trivial work into independent slices (API, worker, web, docs).
 - Assign explicit slice ownership in issue intake.
 - Integrate through one human-reviewed PR after deterministic verification.
+- See `ARCHITECTURE.md` section 3 for detailed slice definitions and ownership guidelines.
 
 ## Risk Policy
 - Default merge policy: human-reviewed only.
@@ -15,11 +16,13 @@ Use GitHub Copilot coding agent and Codex app/IDE/CLI for implementation and rev
 - High-risk changes require rollback notes.
 
 ## Canonical Verification Command
-Run this before completion claims:
+Run this before completion claims **from the repository root**:
 
 ```bash
 make verify
 ```
+
+See `README.md` for details on what this command does.
 
 ## Scope Guardrails
 - Keep changes minimal and scoped to one slice unless explicitly requested.
