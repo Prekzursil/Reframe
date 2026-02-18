@@ -1,0 +1,88 @@
+name: Agent Task
+description: Structured task packet for @copilot/Codex implementation.
+title: "[Agent Task] "
+labels:
+  - agent:ready
+body:
+  - type: textarea
+    id: problem_statement
+    attributes:
+      label: Problem statement
+      description: What problem are we solving and why now?
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_behavior
+    attributes:
+      label: Current behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: target_behavior
+    attributes:
+      label: Target behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+    validations:
+      required: true
+
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk level
+      options:
+        - low
+        - medium
+        - high
+    validations:
+      required: true
+
+  - type: dropdown
+    id: primary_area
+    attributes:
+      label: Primary area
+      options:
+        - area:frontend
+        - area:backend
+        - area:infra
+        - area:docs
+        - area:security
+        - area:release
+    validations:
+      required: true
+
+  - type: textarea
+    id: slice_plan
+    attributes:
+      label: Monorepo slice plan
+      description: Specify which slices are affected and owners.
+      placeholder: |
+        - apps/api: owner
+        - services/worker: owner
+        - apps/web: owner
+        - docs: owner
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance criteria
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence_commands
+    attributes:
+      label: Evidence command list
+      value: |
+        make verify
+    validations:
+      required: true

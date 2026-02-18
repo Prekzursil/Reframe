@@ -1,7 +1,7 @@
-.PHONY: help api-install worker-install web-install api-dev worker-dev web-dev web-build compose-up compose-down
+.PHONY: help api-install worker-install web-install api-dev worker-dev web-dev web-build compose-up compose-down python-compile python-test web-test verify
 
 help:
-	@echo "Targets: api-install, worker-install, web-install, api-dev, worker-dev, web-dev, web-build, compose-up, compose-down"
+	@echo "Targets: api-install, worker-install, web-install, api-dev, worker-dev, web-dev, web-build, compose-up, compose-down, verify"
 
 api-install:
 	pip install -r apps/api/requirements.txt
@@ -23,6 +23,17 @@ web-dev:
 
 web-build:
 	cd apps/web && npm run build
+
+python-compile:
+	python -m compileall apps/api services/worker packages/media-core
+
+python-test:
+	PYTHONPATH=.:apps/api:packages/media-core/src python -m pytest apps/api/tests services/worker packages/media-core/tests
+
+web-test:
+	cd apps/web && npm test
+
+verify: python-compile python-test web-test web-build
 
 compose-up:
 	cd infra && docker compose up --build

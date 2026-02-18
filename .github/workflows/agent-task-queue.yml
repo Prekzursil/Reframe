@@ -1,0 +1,57 @@
+name: Agent Task Queue
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  queue:
+    if: ${{ github.event.label.name == 'agent:ready' && github.event.issue.pull_request == null }}
+    runs-on: ubuntu-latest
+    env:
+      VERIFY_COMMAND: make verify
+    steps:
+      - name: Build agent task packet and notify Copilot
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              labels: ["agent:in-progress"]
+            });
+
+            await github.rest.issues.removeLabel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              name: "agent:ready"
+            }).catch(() => {});
+
+            const body = [
+              "@copilot Please implement this task using repository guardrails.",
+              "",
+              "### Execution Contract",
+              "1. Decompose work by monorepo slice and keep ownership explicit.",
+              "2. Keep changes minimal and avoid unrelated refactors.",
+              `3. Required verification command: \`${process.env.VERIFY_COMMAND}\`.`,
+              "4. Include PR sections: Summary, Risk, Evidence, Rollback, Scope Guard.",
+              "5. Do not merge; maintainers perform final review.",
+              "",
+              "### Source Issue",
+              `- #${issue.number}: ${issue.title}`
+            ].join("\n");
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body
+            });
