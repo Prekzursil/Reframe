@@ -163,6 +163,12 @@ Before making changes, familiarize yourself with the monorepo structure:
 - **`services/worker`** – Celery worker processes
 - **`packages/media-core`** – Core media processing library
 
+**Important Governance Documents:**
+- [`AGENTS.md`](./AGENTS.md) – Operating model and agent guidelines
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) – Architecture and slice ownership
+- [`docs/BRANCH_PROTECTION.md`](./docs/BRANCH_PROTECTION.md) – Branch protection policy
+- [`docs/KPI_METRICS.md`](./docs/KPI_METRICS.md) – Development metrics and targets
+
 ### Verification Command
 
 **Always run from the repository root:**
@@ -178,6 +184,17 @@ This command runs:
 - Web build (`web-build`)
 
 Run `make verify` before submitting any changes to ensure code quality and prevent regressions.
+
+### Development Workflow
+
+1. **Create a feature branch**: `git checkout -b feature/your-feature`
+2. **Make minimal, focused changes**: Keep scope tight to one slice when possible
+3. **Run verification**: `make verify` to ensure quality
+4. **Create pull request**: Use the PR template to document changes
+5. **Address review feedback**: All comments must be resolved before merge
+6. **Merge**: Requires 1 approval and passing CI checks
+
+See [`docs/BRANCH_PROTECTION.md`](./docs/BRANCH_PROTECTION.md) for full details.
 
 ### Running the Application (planned flow)
 
