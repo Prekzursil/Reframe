@@ -1,6 +1,6 @@
 ---
 name: test-specialist
-description: Improve deterministic tests first, then make minimal implementation updates only when needed.
+description: Improve or add deterministic tests first, then make minimal implementation changes only if needed.
 tools: ["read", "search", "edit", "execute"]
 ---
 
