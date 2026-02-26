@@ -44,7 +44,8 @@ def _extract_wav_16k_mono(input_path: Path, output_path: Path) -> None:
         "pcm_s16le",
         str(output_path),
     ]
-    subprocess.run(cmd, check=True, capture_output=True)
+    # Command is provided as an argv list (not shell-interpreted).
+    subprocess.run(cmd, check=True, capture_output=True, shell=False)
 
 
 def _get_peak_rss_mb() -> float:
@@ -54,6 +55,7 @@ def _get_peak_rss_mb() -> float:
 
 def main(argv: list[str]) -> int:
     repo_root = _ensure_repo_paths()
+    from media_core.transcribe.path_guard import validate_media_input_path
 
     parser = argparse.ArgumentParser(description="Benchmark diarization wall time and peak RSS.")
     parser.add_argument("input", help="Path to an audio/video file.")
@@ -81,9 +83,7 @@ def main(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
 
-    input_path = Path(args.input)
-    if not input_path.is_file():
-        raise FileNotFoundError(input_path)
+    input_path = validate_media_input_path(args.input)
 
     backend_raw = str(args.backend or "pyannote").strip().lower()
     token = None

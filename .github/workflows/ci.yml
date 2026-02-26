@@ -17,6 +17,8 @@ jobs:
   python:
     name: Python API & worker checks
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - name: Install ffmpeg
@@ -49,6 +51,8 @@ jobs:
   web:
     name: Web build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - name: Set up Node

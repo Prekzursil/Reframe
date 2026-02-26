@@ -8,18 +8,22 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from security_helpers import normalize_https_url
+
 
 DEFAULT_CONFIG_PATH = Path("apps/desktop/src-tauri/tauri.conf.json")
 
 
 def _fetch_bytes(url: str) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "reframe-updater-verify"})
+    safe_url = normalize_https_url(url)
+    request = urllib.request.Request(safe_url, headers={"User-Agent": "reframe-updater-verify"})
     with urllib.request.urlopen(request, timeout=30) as response:
         return response.read()
 
 
 def _head(url: str) -> int:
-    request = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "reframe-updater-verify"})
+    safe_url = normalize_https_url(url)
+    request = urllib.request.Request(safe_url, method="HEAD", headers={"User-Agent": "reframe-updater-verify"})
     with urllib.request.urlopen(request, timeout=30) as response:
         return getattr(response, "status", 200)
 
@@ -31,7 +35,7 @@ def _load_default_endpoint(config_path: Path) -> str:
         raise ValueError(f"No updater endpoints found in {config_path}")
     if not isinstance(endpoints[0], str) or not endpoints[0]:
         raise ValueError(f"Invalid updater endpoint: {endpoints[0]!r}")
-    return endpoints[0]
+    return normalize_https_url(endpoints[0])
 
 
 def _require_field(obj: dict, key: str) -> str:
@@ -53,6 +57,8 @@ def main(argv: list[str]) -> int:
         if not config_path.is_file():
             raise FileNotFoundError(config_path)
         endpoint = _load_default_endpoint(config_path)
+    else:
+        endpoint = normalize_https_url(endpoint)
 
     print(f"Fetching updater JSON: {endpoint}")
     latest_bytes = _fetch_bytes(endpoint)
@@ -75,7 +81,7 @@ def main(argv: list[str]) -> int:
             failures.append(f"{platform_key}: invalid platform object: {platform_meta!r}")
             continue
         try:
-            url = _require_field(platform_meta, "url")
+            url = normalize_https_url(_require_field(platform_meta, "url"))
             signature = _require_field(platform_meta, "signature")
             if len(signature) < 20:
                 failures.append(f"{platform_key}: signature looks too short")
@@ -106,4 +112,3 @@ if __name__ == "__main__":
     except urllib.error.URLError as exc:
         print(f"Network error: {exc.reason}", file=sys.stderr)
         raise SystemExit(2)
-

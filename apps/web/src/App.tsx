@@ -1482,6 +1482,9 @@ function StyleEditor({
   };
   const outputAssetUrl = toSafeMediaHref(outputAsset?.uri);
   const subtitlePreviewUrl = toSafeUrl(subtitlePreview);
+  const safeUploadedPreview = toSafeUrl(uploadedPreview);
+  const safeMergeVideoPreview = toSafeUrl(mergeVideoPreview);
+  const safeMergeAudioPreview = toSafeUrl(mergeAudioPreview);
 
   const dismissQuickStart = () => {
     setShowQuickStart(false);
@@ -2154,8 +2157,8 @@ function StyleEditor({
 	        {active === "shorts" && (
 	          <section className="grid two-col">
             <Card title="Upload or link video">
-              <UploadPanel onAssetId={(id) => setUploadedVideoId(id)} onPreview={(url) => setUploadedPreview(url)} />
-              {uploadedPreview && <video className="preview" controls src={uploadedPreview} />}
+              <UploadPanel onAssetId={(id) => setUploadedVideoId(id)} onPreview={(url) => setUploadedPreview(toSafeUrl(url))} />
+              {safeUploadedPreview && <video className="preview" controls src={safeUploadedPreview} />}
             </Card>
             <Card title="Shorts maker">
               <ShortsForm
@@ -2461,8 +2464,8 @@ function StyleEditor({
         {active === "captions" && (
           <section className="grid two-col">
             <Card title="Upload video">
-              <UploadPanel onAssetId={(id) => setUploadedVideoId(id)} onPreview={(url) => setUploadedPreview(url)} />
-              {uploadedPreview && <video className="preview" controls src={uploadedPreview} />}
+              <UploadPanel onAssetId={(id) => setUploadedVideoId(id)} onPreview={(url) => setUploadedPreview(toSafeUrl(url))} />
+              {safeUploadedPreview && <video className="preview" controls src={safeUploadedPreview} />}
             </Card>
             <Card title="Captions & Translate">
               <p className="muted">Create caption jobs with backend/model and format options.</p>
@@ -2608,8 +2611,8 @@ function StyleEditor({
                 </Button>
                 {captionJob && <JobStatusPill status={captionJob.status} />}
               </div>
-              <UploadPanel onAssetId={(id) => setUploadedVideoId(id)} onPreview={(url) => setUploadedPreview(url)} />
-              {uploadedPreview && <video className="preview" controls src={uploadedPreview} />}
+              <UploadPanel onAssetId={(id) => setUploadedVideoId(id)} onPreview={(url) => setUploadedPreview(toSafeUrl(url))} />
+              {safeUploadedPreview && <video className="preview" controls src={safeUploadedPreview} />}
 	              {subtitlePreviewUrl && (
 	                <div className="output-card">
                     <TextPreview url={subtitlePreviewUrl} title={`Subtitle preview ${subtitleFileName ? `(${subtitleFileName})` : ""}`} />
@@ -2702,10 +2705,10 @@ function StyleEditor({
 
             <Card title="Video / Audio merge">
               <p className="muted">Merge audio into a video with optional offset, ducking, and normalization.</p>
-              <UploadPanel onAssetId={(id) => setMergeVideoId(id)} onPreview={(url) => setMergeVideoPreview(url)} />
-              {mergeVideoPreview && <video className="preview" controls src={mergeVideoPreview} />}
-              <AudioUploadPanel onAssetId={(id) => setMergeAudioId(id)} onPreview={(url) => setMergeAudioPreview(url)} />
-              {mergeAudioPreview && <audio controls src={mergeAudioPreview} />}
+              <UploadPanel onAssetId={(id) => setMergeVideoId(id)} onPreview={(url) => setMergeVideoPreview(toSafeUrl(url))} />
+              {safeMergeVideoPreview && <video className="preview" controls src={safeMergeVideoPreview} />}
+              <AudioUploadPanel onAssetId={(id) => setMergeAudioId(id)} onPreview={(url) => setMergeAudioPreview(toSafeUrl(url))} />
+              {safeMergeAudioPreview && <audio controls src={safeMergeAudioPreview} />}
               <MergeAvForm
                 onCreated={(job) => {
                   setMergeJob(job);
