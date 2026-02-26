@@ -2,7 +2,7 @@ import { ComponentProps, PropsWithChildren } from "react";
 
 type ButtonProps = PropsWithChildren<
   ComponentProps<"button"> & {
-    variant?: "primary" | "secondary" | "ghost";
+    variant?: "primary" | "secondary" | "ghost" | "danger";
   }
 >;
 

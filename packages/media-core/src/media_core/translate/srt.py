@@ -56,6 +56,7 @@ def translate_srt(srt_text: str, translator: Translator, src: str, tgt: str) -> 
             SubtitleLine(
                 start=line.start,
                 end=line.end,
+                speaker=line.speaker,
                 words=[Word(text=new_text, start=line.start, end=line.end)],
             )
         )
@@ -80,6 +81,7 @@ def translate_srt_bilingual(
             SubtitleLine(
                 start=line.start,
                 end=line.end,
+                speaker=line.speaker,
                 words=[Word(text=combined, start=line.start, end=line.end)],
             )
         )

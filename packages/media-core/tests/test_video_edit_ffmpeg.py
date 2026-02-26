@@ -80,8 +80,9 @@ def test_merge_video_audio(monkeypatch, tmp_path):
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/" + name)
     runner, calls = dummy_run([])
     merge_video_audio(video, audio, out, offset=0.5, ducking=0.7, normalize=True, runner=runner)
-    # ensure ffmpeg is called and filter_complex present
-    assert calls and "ffmpeg" in calls[0][0]
+    ffmpeg_calls = [cmd for cmd in calls if cmd and cmd[0].endswith("ffmpeg")]
+    assert ffmpeg_calls, "expected ffmpeg to be invoked"
+    assert "-filter_complex" in ffmpeg_calls[0]
 
 
 def test_burn_subtitles(monkeypatch, tmp_path):

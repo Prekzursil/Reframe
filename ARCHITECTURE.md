@@ -49,6 +49,48 @@ Reframe is a **local‑first media processing stack**:
     - rendered outputs (`/data/outputs`).
   - SQLite DB (dev) for metadata & jobs; Postgres optional later.
 
+### 1.1 Hosted SaaS mode (Opus Clip‑style) — roadmap
+
+You can also operate Reframe as a **hosted** service (multi‑tenant, paid plans) without rewriting the media pipeline.
+Conceptually, the same building blocks apply, but the “local filesystem + local Docker” assumptions are replaced by
+cloud primitives:
+
+- **Web app delivery**
+  - Serve `apps/web` as a static build from a CDN (Cloudflare Pages, Vercel, S3+CloudFront, etc.).
+  - All API calls go to a hosted API base URL (not `localhost`).
+
+- **Multi‑tenant API**
+  - Add authentication (session cookies or JWT) and a `user_id`/`org_id` concept.
+  - Every job and asset is owned by a user/org; enforce authorization at the API boundary.
+  - Prefer direct-to-object-storage uploads (pre-signed PUT) to avoid proxying large files through the API.
+
+- **Workers & scaling**
+  - Keep Celery (or move to a managed queue) with autoscaled worker pools:
+    - CPU pool (cheap) for light work.
+    - GPU pool (expensive) for fast transcription and heavy rendering.
+  - Enforce per-user concurrency limits and quotas to control cost.
+
+- **Object storage**
+  - Store assets/bundles in S3-compatible storage (AWS S3 / Cloudflare R2).
+  - Use per-tenant prefixes (e.g. `s3://bucket/{org_id}/...`) to simplify isolation and lifecycle policies.
+  - Prefer generating **signed download URLs** for large assets (already supported) instead of streaming via the API.
+
+- **Billing + metering**
+  - Integrate payments (typically Stripe) and a plan model (free trial, monthly tiers, usage-based add-ons).
+  - Meter usage in units that map to cost drivers:
+    - minutes transcribed,
+    - minutes rendered,
+    - GPU-seconds,
+    - storage GB-month,
+    - egress/download bandwidth (if relevant).
+
+- **Privacy & retention**
+  - Clear policy for where uploads are stored, for how long, and how deletions are handled.
+  - Automated retention rules for temp/intermediate outputs (especially for free plans).
+
+This repo already has several “hosted-ready” building blocks (remote storage backend, remote-worker asset download,
+download URL endpoint), so the next step is primarily **auth + multi-tenancy + metering**.
+
 ---
 
 ## 2. Directory Layout (Proposed)

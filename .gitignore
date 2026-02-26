@@ -1,6 +1,9 @@
 .env
 .env.*
 
+# Desktop signing keys (never commit private key)
+apps/desktop/src-tauri/keys/tauri.key
+
 # Python
 __pycache__/
 *.py[cod]
@@ -17,8 +20,15 @@ dist/
 .DS_Store
 .vscode/
 .idea/
+.tools/
 
 # Logs & coverage
 *.log
 coverage/
 .coverage
+
+# Local dev SQLite DB
+reframe*.db
+
+# Local sample media
+samples/

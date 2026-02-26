@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TranscriptionBackend(str, Enum):
@@ -16,8 +16,10 @@ class TranscriptionBackend(str, Enum):
 class TranscriptionConfig(BaseModel):
     """Config describing how audio should be transcribed."""
 
+    model_config = ConfigDict(validate_assignment=True, extra="forbid")
+
     backend: TranscriptionBackend = Field(
-        default=TranscriptionBackend.OPENAI_WHISPER,
+        default=TranscriptionBackend.NOOP,
         description="Which backend to use for transcription.",
     )
     model: str = Field(
@@ -38,7 +40,3 @@ class TranscriptionConfig(BaseModel):
         le=1.0,
         description="Sampling temperature for stochastic backends that support it.",
     )
-
-    class Config:
-        validate_assignment = True
-        extra = "forbid"

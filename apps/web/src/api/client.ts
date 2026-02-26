@@ -54,6 +54,13 @@ export interface MergeAvRequest {
   normalize?: boolean;
 }
 
+export interface CutClipRequest {
+  video_asset_id: string;
+  start: number;
+  end: number;
+  options?: Record<string, unknown>;
+}
+
 export interface MediaAsset {
   id: string;
   kind: string;
@@ -62,6 +69,22 @@ export interface MediaAsset {
   duration?: number | null;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface WorkerDiagnostics {
+  ping_ok: boolean;
+  workers: string[];
+  system_info?: Record<string, unknown> | null;
+  error?: string | null;
+}
+
+export interface SystemStatusResponse {
+  api_version: string;
+  offline_mode: boolean;
+  storage_backend: string;
+  broker_url: string;
+  result_backend: string;
+  worker: WorkerDiagnostics;
 }
 
 interface ApiClientOptions {
@@ -134,6 +157,33 @@ export class ApiClient {
 
   mergeAv(payload: MergeAvRequest) {
     return this.request<Job>("/utilities/merge-av", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  createCutClipJob(payload: CutClipRequest) {
+    return this.request<Job>("/utilities/cut-clip", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  getSystemStatus() {
+    return this.request<SystemStatusResponse>("/system/status");
+  }
+
+  async deleteJob(jobId: string, options?: { deleteAssets?: boolean }): Promise<void> {
+    const search = new URLSearchParams();
+    if (options?.deleteAssets) search.set("delete_assets", "true");
+    const query = search.toString();
+    const resp = await this.fetcher(`${this.baseUrl}/jobs/${jobId}${query ? `?${query}` : ""}`, { method: "DELETE" });
+    if (!resp.ok) {
+      const msg = await resp.text().catch(() => resp.statusText);
+      throw new Error(msg || "Delete job failed");
+    }
+  }
+
+  async deleteAsset(assetId: string): Promise<void> {
+    const resp = await this.fetcher(`${this.baseUrl}/assets/${assetId}`, { method: "DELETE" });
+    if (!resp.ok) {
+      const msg = await resp.text().catch(() => resp.statusText);
+      throw new Error(msg || "Delete asset failed");
+    }
   }
 
   async uploadAsset(file: File, kind = "video"): Promise<MediaAsset> {

@@ -289,7 +289,8 @@
 - [x] Frontend tests:
   - [x] Component tests for forms and job list.
   - [x] Minimal e2e flow (upload → job complete → download).
-- [ ] Address `npm audit` moderate vulnerabilities in `apps/web` dependencies.
+- [x] Address `npm audit` moderate vulnerabilities in `apps/web` dependencies.
+  - [x] Was: `esbuild <=0.24.2` via Vite; fixed by bumping Vite to v7 (esbuild upgraded).
 
 ---
 
@@ -298,36 +299,169 @@
 - [x] Add `Dockerfile` for an “all‑in‑one” image (API + worker) for simple servers.
 - [x] Align `.env.example` env var names with `REFRAME_*` settings (or support unprefixed `DATABASE_URL`/`MEDIA_ROOT` env vars).
 - [x] Docker-compose: share/mount `MEDIA_ROOT` volume between API + worker so generated assets are downloadable.
-- [ ] Document `Dockerfile.allinone` usage + required env vars in README.
-- [ ] Tauri/Electron:
-  - [ ] Decide wrapper (Tauri recommended for performance).
-  - [ ] Wire Tauri to run API/worker as child processes or rely on local Docker.
-  - [ ] Integrate update mechanism (optional later).
-- [ ] Provide example configs for:
-  - [ ] Local dev (no GPU),
-  - [ ] Local GPU workstation,
-  - [ ] Small server deployment.
+- [x] Document `Dockerfile.allinone` usage + required env vars in README.
+- [x] Add `./start.sh` quickstart for Docker Compose (creates `.env` with safe defaults).
+- [x] Desktop wrapper (Tauri):
+  - [x] Decide wrapper (Tauri recommended for performance).
+  - [x] v1: manage the stack via local Docker Compose.
+  - [x] Signed updater via GitHub Releases (`latest.json` + signatures).
+  - [x] Automate publishing via GitHub Actions (Desktop Release workflow).
+  - [x] Desktop UI: add a quick link to open `latest.json` (helps debug updater issues).
+  - [x] Desktop UI: add “Copy debug info” (version, bundle type, updater URL, docker/compose status).
+- [ ] Desktop: verify updater end-to-end (install old version → update → relaunch) (manual per OS).
+  - [x] Script: validate published `latest.json` + release asset URLs.
+  - [x] Docs: add end-to-end verification checklist.
+  - [x] Desktop: display current app version in UI (helps verify old→new relaunch).
+  - [x] Publish two signed desktop releases via tags (`desktop-v0.1.6`, then `desktop-v0.1.7`), so `latest.json` exists.
+  - [ ] Windows: install `desktop-v0.1.6`, update to `desktop-v0.1.7`, confirm relaunch + version bump.
+  - [ ] macOS: install `desktop-v0.1.6` (aarch64/x64), update to `desktop-v0.1.7`, confirm relaunch + version bump.
+  - [ ] Linux: run `desktop-v0.1.6` (AppImage), update to `desktop-v0.1.7`, confirm relaunch + version bump.
+- [x] Provide example configs for:
+  - [x] Local dev (no GPU),
+  - [x] Local GPU workstation,
+  - [x] Small server deployment.
 
 ---
 
 ## 19. UX & Polish
 
-- [ ] Add onboarding “wizard” or quick start card on home page.
-- [ ] Provide a few sample videos for testing.
-- [ ] Add warnings for long jobs (e.g., “this may take ~N minutes on CPU”).
-- [ ] Expose only the most important knobs in v1; hide advanced settings in collapsible sections.
-- [ ] Add tooltips explaining Whisper backends, models, and trade‑offs.
-- [ ] Add “copy command” buttons that show the equivalent CLI for advanced users.
+- [x] Add onboarding “wizard” or quick start card on home page.
+- [x] Provide a few sample videos for testing.
+- [x] Add warnings for long jobs (e.g., “this may take ~N minutes on CPU”).
+- [x] Expose only the most important knobs in v1; hide advanced settings in collapsible sections.
+- [x] Add tooltips explaining Whisper backends, models, and trade‑offs.
+- [x] Add “copy command” buttons that show the equivalent CLI for advanced users.
 
 ---
 
 ## 20. Future / Nice‑to‑Have
 
-- [ ] Speaker diarization integration (pyannote) for speaker‑labeled subtitles.
-- [ ] Smart silence trimming (cut dead air before generating shorts).
-- [ ] Basic subtitle editor (inline text edit + shift timings).
-- [ ] Support for timelines / EDL export.
-- [ ] Optional cloud integrations (S3, remote GPU workers).
-- [ ] Optional “export upload package” for YouTube/TikTok (title, description, tags).
+- [x] Speaker diarization integration (pyannote) for speaker‑labeled subtitles.
+  - [x] Add media-core diarization config + speaker segment model (offline-default noop).
+  - [x] Implement optional pyannote backend wiring in worker captions pipeline (extract audio → diarize → label lines).
+  - [x] Docs: explain diarization dependencies (torch/pyannote) + offline-mode behavior.
+  - [x] Add UI option to enable speaker labels (optional; advanced).
+  - [ ] Validate with a real pyannote run and document expected memory/CPU impact.
+    - [x] Add a small benchmark script (`scripts/benchmark_diarization.py`) to run diarization on a sample and print timing + peak RSS.
+    - [x] Benchmark script: support `--format md` output for easy doc pasting.
+    - [x] Benchmark script: fail fast with a clear error when `HF_TOKEN` is missing for pyannote.
+    - [x] Benchmark script: add a Docker helper (`scripts/benchmark_diarization_docker.sh`) to avoid local Torch installs.
+    - [ ] Prereq: accept Hugging Face model terms / request access for `pyannote/speaker-diarization-3.1` and set `HF_TOKEN` locally (never commit).
+    - [x] Run SpeechBrain benchmark (token-free fallback) and paste results into docs.
+    - [ ] Run pyannote benchmark (CPU + GPU if available) and paste results into docs.
+- [x] Smart silence trimming (cut dead air before generating shorts).
+  - [x] media-core: add ffmpeg `silencedetect` helper (`detect_silence`).
+  - [x] Worker: optional `trim_silence` scoring for `tasks.generate_shorts`.
+  - [x] Web: expose `trim_silence` toggle + thresholds in Shorts form.
+  - [x] Add an integration test with a silent-padding fixture and assert fewer silent segments chosen.
+- [x] Basic subtitle editor (inline text edit + shift timings).
+  - [x] Web: add a raw subtitle editor (load from asset id → edit → shift timings → re-upload as new asset).
+  - [x] Subtitle editor: add a cue table view (per-line edit) + validation (optional).
+- [x] Support for timelines / EDL export.
+  - [x] Web: export Shorts results as CSV + basic CMX3600-style EDL.
+  - [x] Timeline export: support audio tracks + per-clip reel names (optional).
+- [x] Optional cloud integrations (S3, remote GPU workers).
+  - [x] Define a storage abstraction (`StorageBackend`) and keep local filesystem as default.
+  - [x] Add S3-compatible backend (AWS S3 / Cloudflare R2) for assets + bundles (opt-in via env).
+  - [x] Worker: support downloading remote input assets (pre-signed URL) into `MEDIA_ROOT/tmp` before processing.
+  - [x] API: optional pre-signed download URLs for large assets (avoid proxying through API).
+  - [x] Docs: deployment guide for remote storage + remote workers (free-tier friendly defaults).
+- [x] Optional “export upload package” for YouTube/TikTok (title, description, tags).
 
+---
+
+## 21. Offline‑First + Real Worker Pipelines (Next)
+
+### Worker: replace placeholders with real processing
+- [x] Worker: make `packages/media-core` importable in all runtimes (local dev, Docker worker, all-in-one image).
+- [x] Worker: implement `tasks.merge_video_audio` using `media_core.video_edit.ffmpeg.merge_video_audio` (no placeholders).
+- [x] Worker: implement `tasks.generate_shorts` using `probe_media` + candidate generation + `cut_clip` (no LLM scoring required initially).
+- [x] Worker: implement `tasks.generate_captions` using media-core transcription + subtitle builder; support SRT/VTT/ASS output.
+- [x] Worker: implement `tasks.translate_subtitles` using media-core SRT translator (default local/Argos or no-op; optional Groq).
+- [x] Worker: implement `tasks.render_styled_subtitles` using ffmpeg/libass subtitle burn-in; support `preview_seconds`.
+- [x] Styled subtitles: implement word-by-word highlight (ASS karaoke) to use `highlight_color`.
+- [x] Styled subtitles: accept `.vtt` inputs (convert to `.srt`/`.ass`) for render jobs.
+
+### Offline + Groq free-tier (optional)
+- [x] Add Groq chat client integration (OpenAI-compatible) for:
+  - [x] shorts segment scoring (optional),
+  - [x] CloudTranslator (optional),
+  - [x] only when `GROQ_API_KEY` is set; otherwise fallback to heuristics/offline.
+- [x] Add `REFRAME_OFFLINE_MODE=true` to hard-disable any network-backed providers (including OpenAI API transcription).
+
+### Config + docs correctness
+- [x] Fix `.env.example` so `VITE_API_BASE_URL` matches the API client expectation (`/api/v1`) OR make the web client auto-append.
+- [x] Make `TranscriptionConfig` default backend offline/cost-safe (no OpenAI API calls by default).
+- [x] Clean docs: remove stray `:contentReference[oaicite:*]` markers from `README.md` (and `RAW_PROMPT.md` if still needed).
+
+### CI + fixtures
+- [x] CI: install `ffmpeg` in GitHub Actions (Python job) so worker integration tests can exercise real processing paths.
+- [x] Add a tiny generated sample video/audio fixture (generated at test time or via script; avoid large binaries).
+
+---
+
+## 22. Next Level (Beta polish + creator workflow)
+
+### Local-first UX (no paid APIs)
+- [x] Add a “System status / Dependencies” panel in the web UI (ffmpeg present, whisper backend availability, model cache locations).
+- [x] Add scripts to download/manage local models in a predictable cache dir (whisper.cpp + faster-whisper) and document disk sizes.
+  - [x] Add `scripts/prefetch_whisper_model.py` (faster-whisper model prefetch).
+  - [x] Add whisper.cpp model download helper (ggml) and document placement.
+  - [x] Document disk sizes + cache locations for Whisper models.
+- [x] Add scripts to download/manage Argos Translate language packs and document supported language pairs.
+  - [x] Add `scripts/install_argos_pack.py` (install packs by src/tgt).
+  - [x] Document recommended language packs + supported pairs for common workflows.
+
+### Creator workflow (quality + control)
+- [x] Add transcript viewer with search + click-to-seek timestamps (no re-run required).
+- [x] Add a shorts “segment editor” (adjust start/end, reorder, re-cut selected clips without re-scoring).
+- [x] Add per-clip subtitle style overrides + a “batch apply style” action.
+- [x] Shorts: generate real per-clip captions by slicing a timed captions asset (SRT/VTT) and shifting to clip time.
+- [x] Shorts: optionally auto-render/burn-in subtitles per clip when `use_subtitles=true` (uses chosen preset; stores styled clip URIs in the manifest).
+
+### Reliability & safety
+- [x] Add upload limits (max bytes) + content-type validation for `/assets/upload`.
+- [x] Add a “delete asset/job” flow + retention policy for `MEDIA_ROOT/tmp`.
+- [x] Add job retries with backoff for transient ffmpeg failures (and surface retry attempts in the UI).
+
+### Desktop readiness
+- [x] Desktop: add an in-app “Diagnostics” screen (shows backend URLs, ffmpeg detected, worker connectivity, storage backend).
+
+### Optional diarization improvements (free/offline)
+- [x] Add an optional SpeechBrain diarization backend (no HF token) as a fallback when pyannote models are unavailable.
+
+---
+
+## 23. Hosted SaaS (Opus Clip‑style) — Productization Roadmap
+
+Goal: offer Reframe as a paid hosted service (multi-tenant web app) while keeping the existing local-first + self-hosted mode.
+
+- [x] Capture a first-pass hosted SaaS roadmap in `ARCHITECTURE.md` + `TODO.md`.
+
+### Foundations (multi-tenancy + security)
+- [ ] Add auth for the hosted API (start with a simple JWT/session approach; later consider OAuth/SSO).
+- [ ] Add `User` / `Organization` models and enforce job/asset ownership in all API endpoints.
+- [ ] Add per-tenant storage prefixes (S3/R2) so all assets live under `{org_id}/...` (supports isolation + lifecycle rules).
+- [ ] Add API-side rate limits and abuse protections for expensive endpoints (uploads, rendering, transcription).
+
+### Upload/download at scale
+- [ ] Add direct-to-object-storage uploads via pre-signed URLs (avoid proxying large uploads through FastAPI).
+- [ ] Add resumable uploads (TUS/S3 multipart) for large videos.
+- [ ] Add CDN-backed delivery for public/preview assets (optional) with signed URLs for private outputs.
+
+### Billing + usage metering
+- [ ] Define the cost model: what you bill for (minutes processed, GPU-seconds, storage, egress) and what limits exist per plan.
+- [ ] Add usage metering tables (per job) and a “usage” page in the UI.
+- [ ] Integrate Stripe for subscriptions + seat/org billing + plan enforcement.
+- [ ] Add per-plan concurrency limits (e.g., max running jobs) and queueing behavior.
+
+### Worker scaling + reliability
+- [ ] Split workers into CPU and GPU pools (routing by job type/backends) and add autoscaling deployment configs.
+- [ ] Add job idempotency + dedupe for retry safety (especially for uploads + long-running jobs).
+- [ ] Add retention policies for intermediate assets and plan-based retention windows.
+
+### Opus Clip‑style UX
+- [ ] Add a “project” abstraction (source video → derived clips, transcripts, styles, exports).
+- [ ] Add shareable preview links for clips (signed, time-limited URLs).
+- [ ] Add team collaboration features (org members, roles, shared projects) (later).
 
