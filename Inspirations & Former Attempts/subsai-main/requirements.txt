@@ -6,13 +6,13 @@ pydub==0.25.1
 
 # to avoid problem with dependencies versions
 numpy<2
-torch==2.2.0
+torch==2.8.0
 torchaudio==2.2.0
 
 
 # For the Web-UI
 pandas==1.5.3
-streamlit~=1.20.0
+streamlit~=1.50.0
 streamlit_player~=0.1.5
 streamlit-aggrid~=0.3.4
 
@@ -39,7 +39,7 @@ stable-ts==2.18.2
 whisperx @ git+https://github.com/m-bain/whisperx.git@8c58c54635cd6ee2d9d8665a3cf789863f6ed700
 
 # huggingface:
-transformers==4.48.1
+transformers==4.53.0
 
 # stable-ts, whisper, whisperx, faster_whisper, whisper-timestamped
 openai-whisper==20240930

@@ -14,7 +14,7 @@ torch
 torchaudio
 git+https://github.com/jhj0517/jhj0517-whisper.git
 faster-whisper==1.1.1
-transformers==4.47.1
+transformers==4.53.0
 gradio
 gradio-i18n==0.3.0
 pytubefix
