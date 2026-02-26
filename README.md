@@ -2,12 +2,14 @@
 
 > Local‑first GUI app for AI shorts, captions, translation, and TikTok‑style subtitles.
 
-Reframe is a monolithic but modular toolkit that unifies all the experiments you’ve collected:
+Reframe is a monolithic but modular toolkit that unifies lessons from prior experiments:
 
 - `ai-short-maker` (shorts + subtitles)
 - `long_to_shorts_app` (FastAPI + Celery + GROQ)
 - `video-subtitles-generator` (Descript‑style word highlighting)
-- `subsai`, `Whisper-WebUI`, `pyvideotrans`, etc.
+- `subsai`, `Whisper-WebUI`, `pyvideotrans`, etc. (archived references)
+
+Archived snapshot sources are preserved on the `archive/inspirations-snapshots` branch and intentionally excluded from active maintenance on `main`.
 
 The goal is **one** desktop‑friendly GUI that:
 
@@ -108,7 +110,7 @@ See `ARCHITECTURE.md` for details.
 
 ## How This Builds on Your Existing Prototypes
 
-From the projects in `AI Media Toolkit/`:
+From the archived snapshot projects (see `archive/inspirations-snapshots`):
 
 - **`ai-short-maker`**
   - Great React UI patterns: sidebar layout, job queue, subtitle generator/translator forms.

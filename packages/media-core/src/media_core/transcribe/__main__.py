@@ -14,6 +14,7 @@ from . import (
     transcribe_whisper_cpp,
     transcribe_whisper_timestamped,
 )
+from .path_guard import validate_media_input_path
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,9 +36,10 @@ def main() -> int:
         return 1
 
     config = TranscriptionConfig(backend=backend, model=args.model, language=args.language, device=args.device)
-    input_path = Path(args.input)
-    if not input_path.exists():
-        print(f"Input not found: {input_path}", file=sys.stderr)
+    try:
+        input_path = validate_media_input_path(Path(args.input))
+    except Exception as exc:
+        print(f"Invalid input path: {args.input} ({exc})", file=sys.stderr)
         return 1
 
     try:

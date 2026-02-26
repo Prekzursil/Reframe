@@ -465,3 +465,17 @@ Goal: offer Reframe as a paid hosted service (multi-tenant web app) while keepin
 - [ ] Add shareable preview links for clips (signed, time-limited URLs).
 - [ ] Add team collaboration features (org members, roles, shared projects) (later).
 
+---
+
+## 24. Security Hardening & Supply Chain Baseline
+
+- [x] Preserve legacy inspiration snapshots in `archive/inspirations-snapshots` and remove `Inspirations & Former Attempts/` from `main`.
+- [x] Add `SECURITY.md` with supported scope, disclosure workflow, and response SLAs.
+- [x] Add `.github/dependabot.yml` scoped to active manifests (`apps/web`, `apps/desktop`, GitHub Actions).
+- [x] Add explicit CodeQL workflow + config and exclude archived/reference paths from active analysis.
+- [x] Restrict CI workflow token scope with explicit `permissions: contents: read`.
+- [x] Add transcription input path guard and route CLI/backends through centralized validation.
+- [x] Replace iframe/window-open text preview flows with sanitized URL handling and text-only previews in web UI.
+- [x] Resolve active npm advisories in web/desktop lockfiles (rollup path traversal advisory).
+- [ ] Validate that GitHub security alert counts converge to zero on `main` after post-merge re-analysis completes.
+

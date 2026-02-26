@@ -6,6 +6,7 @@ from typing import Any, Iterable, Optional, Protocol
 
 from media_core.transcribe.config import TranscriptionConfig
 from media_core.transcribe.models import TranscriptionResult, Word
+from media_core.transcribe.path_guard import validate_media_input_path
 
 logger = logging.getLogger(__name__)
 
@@ -111,9 +112,7 @@ def normalize_faster_whisper(
 def transcribe_faster_whisper(path: str | Path, config: TranscriptionConfig) -> TranscriptionResult:
     """Transcribe a media file using faster-whisper."""
     WhisperModel = _ensure_faster_whisper()
-    media_path = Path(path)
-    if not media_path.is_file():
-        raise FileNotFoundError(media_path)
+    media_path = validate_media_input_path(path)
 
     # Use model from config; device is optional.
     model_kwargs: dict[str, Any] = {}

@@ -8,6 +8,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { detectSubtitleFormat, shiftSubtitleTimings } from "./subtitles/shift";
 import { cuesToSubtitles, sortCuesByStart, subtitlesToCues, type SubtitleCue, validateCues } from "./subtitles/cues";
 import { exportShortsTimelineCsv, exportShortsTimelineEdl, type ShortsClip } from "./shorts/timeline";
+import { toSafeUrl } from "./security/url";
 
 const NAV_ITEMS = [
   { id: "shorts", label: "Shorts" },
@@ -114,6 +115,63 @@ function CopyCommandButton({ command, label = "Copy curl" }: { command: string; 
     <Button type="button" variant="ghost" onClick={onCopy}>
       {status || label}
     </Button>
+  );
+}
+
+function TextPreview({
+  url,
+  title,
+  maxChars = 12000,
+}: {
+  url: string;
+  title: string;
+  maxChars?: number;
+}) {
+  const [content, setContent] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setContent("");
+
+    void fetch(url)
+      .then((resp) => {
+        if (!resp.ok) {
+          throw new Error(`Failed to load preview (${resp.status})`);
+        }
+        return resp.text();
+      })
+      .then((text) => {
+        if (!cancelled) {
+          setContent(text.slice(0, maxChars));
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Preview unavailable");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [url, maxChars]);
+
+  return (
+    <div>
+      <p className="metric-label">{title}</p>
+      {loading && <p className="muted">Loading preview…</p>}
+      {error && <div className="error-inline">{error}</div>}
+      {!loading && !error && <pre className="preview-text">{content || "(empty text)"}</pre>}
+    </div>
   );
 }
 
@@ -636,6 +694,7 @@ function SubtitleEditorCard({
 
   const fmt = detectSubtitleFormat(contents);
   const cueWarnings = editorMode === "cues" ? validateCues(cues) : [];
+  const savedOpenUrl = saved?.uri ? toSafeUrl(apiClient.mediaUrl(saved.uri)) : null;
 
   return (
     <div className="form-grid">
@@ -807,11 +866,11 @@ function SubtitleEditorCard({
         <div className="output-card">
           <p className="metric-label">Saved subtitle asset</p>
           <p className="metric-value">{saved.id}</p>
-          {saved.uri && (
+          {savedOpenUrl && (
             <div className="actions-row">
-              <Button type="button" variant="secondary" onClick={() => window.open(apiClient.mediaUrl(saved.uri!), "_blank")}>
+              <a className="btn btn-secondary" href={savedOpenUrl} target="_blank" rel="noreferrer">
                 Open
-              </Button>
+              </a>
               <Button type="button" variant="ghost" onClick={() => navigator.clipboard.writeText(saved.id).catch(() => {})}>
                 Copy ID
               </Button>
@@ -839,6 +898,7 @@ function SubtitleToolsForm({ onCreated }: { onCreated: (job: Job, bilingual: boo
   const [uploadName, setUploadName] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const safeUploadPreview = toSafeUrl(uploadPreview);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -889,12 +949,7 @@ function SubtitleToolsForm({ onCreated }: { onCreated: (job: Job, bilingual: boo
           </label>
         </div>
       </label>
-      {uploadPreview && (
-        <div className="output-card">
-          <p className="metric-label">Uploaded subtitle preview {uploadName ? `(${uploadName})` : ""}</p>
-          <iframe className="preview-text" src={uploadPreview} title="subtitle-tools-preview" />
-        </div>
-      )}
+      {safeUploadPreview && <TextPreview url={safeUploadPreview} title={`Uploaded subtitle preview ${uploadName ? `(${uploadName})` : ""}`} />}
       {error && <div className="error-inline">{error}</div>}
       <div className="actions-row">
         <Button type="submit" disabled={busy}>
@@ -1421,6 +1476,13 @@ function StyleEditor({
     }
   });
 
+  const toSafeMediaHref = (uri: string | null | undefined): string | null => {
+    if (!uri) return null;
+    return toSafeUrl(apiClient.mediaUrl(uri));
+  };
+  const outputAssetUrl = toSafeMediaHref(outputAsset?.uri);
+  const subtitlePreviewUrl = toSafeUrl(subtitlePreview);
+
   const dismissQuickStart = () => {
     setShowQuickStart(false);
     try {
@@ -1571,7 +1633,7 @@ function StyleEditor({
 	        if (job.job_type === "shorts" && refreshed.payload && "clip_assets" in (refreshed.payload as any)) {
 	          const resolveUri = (value: unknown): string | null => {
 	            if (!value || typeof value !== "string") return null;
-	            return apiClient.mediaUrl(value);
+	            return toSafeMediaHref(value);
 	          };
             const defaultStylePreset =
               typeof (refreshed.payload as any).style_preset === "string" && (refreshed.payload as any).style_preset.trim()
@@ -1675,7 +1737,7 @@ function StyleEditor({
     if (captionOutput?.id) {
       setSubtitleAssetId(captionOutput.id);
       if (captionOutput.uri && captionOutput.mime_type?.includes("text")) {
-        setSubtitlePreview(apiClient.mediaUrl(captionOutput.uri));
+        setSubtitlePreview(toSafeMediaHref(captionOutput.uri));
         const ext = captionOutput.uri.split(".").pop();
         setSubtitleFileName(ext ? `captions.${ext}` : "captions");
       }
@@ -1686,7 +1748,7 @@ function StyleEditor({
     if (translateOutput?.id) {
       setSubtitleAssetId(translateOutput.id);
       if (translateOutput.uri && translateOutput.mime_type?.includes("text")) {
-        setSubtitlePreview(apiClient.mediaUrl(translateOutput.uri));
+        setSubtitlePreview(toSafeMediaHref(translateOutput.uri));
         const ext = translateOutput.uri.split(".").pop();
         setSubtitleFileName(ext ? `translated.${ext}` : "translated");
       }
@@ -1766,12 +1828,15 @@ function StyleEditor({
 		    if (!selectedJob || !outputAsset || outputAsset.kind !== "subtitle" || !outputAsset.uri) return;
 
 		    let cancelled = false;
-		    const load = async () => {
-		      setTranscriptLoading(true);
-		      try {
-		        const url = apiClient.mediaUrl(outputAsset.uri!);
-		        const resp = await fetch(url);
-		        const text = await resp.text();
+			    const load = async () => {
+			      setTranscriptLoading(true);
+			      try {
+			        const url = toSafeMediaHref(outputAsset.uri);
+              if (!url) {
+                throw new Error("Unsafe subtitle preview URL");
+              }
+			        const resp = await fetch(url);
+			        const text = await resp.text();
 		        const { cues } = subtitlesToCues(text);
 		        if (!cancelled) setTranscriptCues(cues);
 		      } catch (err) {
@@ -2068,19 +2133,17 @@ function StyleEditor({
                     <p className="metric-label">Asset</p>
                     <p className="metric-value">{outputAsset.id}</p>
                     <p className="muted">{outputAsset.mime_type || outputAsset.kind}</p>
-                    {outputAsset.uri && (
+                    {outputAssetUrl && (
                       <div className="actions-row">
-                        <a className="btn btn-primary" href={apiClient.mediaUrl(outputAsset.uri)} download>
+                        <a className="btn btn-primary" href={outputAssetUrl} download>
                           Download
                         </a>
                       </div>
                     )}
-                    {outputAsset.uri && outputAsset.mime_type?.includes("video") && (
-                      <video className="preview" controls src={apiClient.mediaUrl(outputAsset.uri)} />
+                    {outputAssetUrl && outputAsset.mime_type?.includes("video") && (
+                      <video className="preview" controls src={outputAssetUrl} />
                     )}
-                    {outputAsset.uri && outputAsset.mime_type?.includes("text") && (
-                      <iframe className="preview-text" src={apiClient.mediaUrl(outputAsset.uri)} title="subtitle-preview" />
-                    )}
+                    {outputAssetUrl && outputAsset.mime_type?.includes("text") && <TextPreview url={outputAssetUrl} title="Subtitle preview" />}
                   </div>
                 )}
               </>
@@ -2125,11 +2188,11 @@ function StyleEditor({
                 {shortsStatusPolling && <Spinner label="Polling job status..." />}
 	                {(shortsOutput?.uri || shortsClips.length > 0) && (
 	                  <div className="actions-row">
-	                    {shortsOutput?.uri && (
-	                      <a className="btn btn-primary" href={apiClient.mediaUrl(shortsOutput.uri)} download>
-	                        Download manifest
-	                      </a>
-	                    )}
+		                    {toSafeMediaHref(shortsOutput?.uri) && (
+		                      <a className="btn btn-primary" href={toSafeMediaHref(shortsOutput?.uri)!} download>
+		                        Download manifest
+		                      </a>
+		                    )}
                       {shortsClips.length > 0 && (
                         <>
                           <label className="field" style={{ margin: 0 }}>
@@ -2235,9 +2298,9 @@ function StyleEditor({
 		            <div className="clip-grid">
 		              {shortsClips.map((clip, idx) => (
 		                <div key={clip.id} className="clip-card">
-		                  <div className="clip-thumb">
-	                    {clip.thumbnail_uri ? <img src={apiClient.mediaUrl(clip.thumbnail_uri)} alt="Clip thumbnail" /> : <div className="placeholder-thumb" />}
-	                  </div>
+			                  <div className="clip-thumb">
+		                    {toSafeUrl(clip.thumbnail_uri) ? <img src={toSafeUrl(clip.thumbnail_uri)!} alt="Clip thumbnail" /> : <div className="placeholder-thumb" />}
+		                  </div>
 	                  <p className="metric-value">{clip.duration ? `${clip.duration}s` : "?"}</p>
 	                  <p className="muted">Score: {clip.score ?? "?"}</p>
 		                  {clip.start != null && clip.end != null && (
@@ -2262,24 +2325,45 @@ function StyleEditor({
                           </select>
                         </label>
                       )}
-		                  <div className="actions-row">
-		                    <Button variant="secondary" disabled={!clip.uri} onClick={() => clip.uri && window.open(apiClient.mediaUrl(clip.uri), "_blank")}>
-		                      {clip.uri ? (clip.styled_uri ? "Download raw" : "Download video") : "Video not ready"}
-		                    </Button>
-                        <Button
-                          variant="ghost"
-                          disabled={!clip.styled_uri}
-                          onClick={() => clip.styled_uri && window.open(apiClient.mediaUrl(clip.styled_uri), "_blank")}
-                        >
-                          {clip.styled_uri ? "Download styled" : "No styled render"}
-                        </Button>
-		                    <Button variant="ghost" disabled={!clip.subtitle_uri} onClick={() => clip.subtitle_uri && window.open(apiClient.mediaUrl(clip.subtitle_uri), "_blank")}>
-		                      {clip.subtitle_uri ? "Download subs" : "Subs not ready"}
-		                    </Button>
-		                    <Button variant="ghost" onClick={() => setShortsClips((prev) => prev.filter((c) => c.id !== clip.id))}>
-		                      Remove
-		                    </Button>
-		                  </div>
+                      {(() => {
+                        const clipVideoUrl = toSafeUrl(clip.uri);
+                        const clipStyledUrl = toSafeUrl(clip.styled_uri);
+                        const clipSubtitleUrl = toSafeUrl(clip.subtitle_uri);
+                        return (
+                          <div className="actions-row">
+                            {clipVideoUrl ? (
+                              <a className="btn btn-secondary" href={clipVideoUrl} target="_blank" rel="noreferrer">
+                                {clip.styled_uri ? "Download raw" : "Download video"}
+                              </a>
+                            ) : (
+                              <Button variant="secondary" disabled>
+                                Video not ready
+                              </Button>
+                            )}
+                            {clipStyledUrl ? (
+                              <a className="btn btn-ghost" href={clipStyledUrl} target="_blank" rel="noreferrer">
+                                Download styled
+                              </a>
+                            ) : (
+                              <Button variant="ghost" disabled>
+                                No styled render
+                              </Button>
+                            )}
+                            {clipSubtitleUrl ? (
+                              <a className="btn btn-ghost" href={clipSubtitleUrl} target="_blank" rel="noreferrer">
+                                Download subs
+                              </a>
+                            ) : (
+                              <Button variant="ghost" disabled>
+                                Subs not ready
+                              </Button>
+                            )}
+                            <Button variant="ghost" onClick={() => setShortsClips((prev) => prev.filter((c) => c.id !== clip.id))}>
+                              Remove
+                            </Button>
+                          </div>
+                        );
+                      })()}
                       {clip.subtitle_asset_id && (
                         <div className="actions-row">
                           <Button
@@ -2406,15 +2490,15 @@ function StyleEditor({
                   <p className="metric-value">{(translateJob.payload as any)?.target_language ?? "n/a"}</p>
                 </div>
               </div>
-              {translateOutput?.uri ? (
-                <div className="actions-row">
-                  <a className="btn btn-primary" href={apiClient.mediaUrl(translateOutput.uri)} download>
-                    Download translated subtitles
-                  </a>
-                  <Button variant="ghost" onClick={() => setSubtitlePreview(translateOutput.uri ? apiClient.mediaUrl(translateOutput.uri) : null)}>
-                    Preview
-                  </Button>
-                </div>
+	              {toSafeMediaHref(translateOutput?.uri) ? (
+	                <div className="actions-row">
+	                  <a className="btn btn-primary" href={toSafeMediaHref(translateOutput?.uri)!} download>
+	                    Download translated subtitles
+	                  </a>
+	                  <Button variant="ghost" onClick={() => setSubtitlePreview(toSafeMediaHref(translateOutput?.uri))}>
+	                    Preview
+	                  </Button>
+	                </div>
               ) : (
                 <p className="muted">Waiting for translated subtitles...</p>
               )}
@@ -2437,13 +2521,13 @@ function StyleEditor({
 	                  <select
 	                    className="input"
 	                    value=""
-	                    onChange={(e) => {
-	                      const id = e.target.value;
-	                      if (!id) return;
-	                      const asset = recentVideoAssets.find((a) => a.id === id);
-	                      setUploadedVideoId(id);
-	                      setUploadedPreview(asset?.uri ? apiClient.mediaUrl(asset.uri) : null);
-	                    }}
+		                    onChange={(e) => {
+		                      const id = e.target.value;
+		                      if (!id) return;
+		                      const asset = recentVideoAssets.find((a) => a.id === id);
+		                      setUploadedVideoId(id);
+		                      setUploadedPreview(toSafeMediaHref(asset?.uri));
+		                    }}
 	                  >
 	                    <option value="">Select a video asset…</option>
 	                    {recentVideoAssets.map((asset) => (
@@ -2471,13 +2555,13 @@ function StyleEditor({
 	                    onChange={(e) => {
 	                      const id = e.target.value;
 	                      if (!id) return;
-	                      const asset = recentSubtitleAssets.find((a) => a.id === id);
-	                      setSubtitleAssetId(id);
-	                      if (asset?.uri) {
-	                        setSubtitlePreview(apiClient.mediaUrl(asset.uri));
-	                        const ext = asset.uri.split(".").pop();
-	                        setSubtitleFileName(ext ? `subtitles.${ext}` : "subtitles");
-	                      } else {
+		                      const asset = recentSubtitleAssets.find((a) => a.id === id);
+		                      setSubtitleAssetId(id);
+		                      if (asset?.uri) {
+		                        setSubtitlePreview(toSafeMediaHref(asset.uri));
+		                        const ext = asset.uri.split(".").pop();
+		                        setSubtitleFileName(ext ? `subtitles.${ext}` : "subtitles");
+		                      } else {
 	                        setSubtitlePreview(null);
 	                        setSubtitleFileName(null);
 	                      }
@@ -2496,13 +2580,13 @@ function StyleEditor({
 	                </div>
 	                {recentAssetsError && <div className="error-inline">{recentAssetsError}</div>}
 	              </label>
-	              <SubtitleUpload
-	                onAssetId={(id) => setSubtitleAssetId(id)}
-	                onPreview={(url, name) => {
-	                  setSubtitlePreview(url);
-                  setSubtitleFileName(name || null);
-                }}
-              />
+		              <SubtitleUpload
+		                onAssetId={(id) => setSubtitleAssetId(id)}
+		                onPreview={(url, name) => {
+		                  setSubtitlePreview(toSafeUrl(url));
+	                  setSubtitleFileName(name || null);
+	                }}
+	              />
               <div className="actions-row">
                 <Button
                   type="button"
@@ -2526,12 +2610,11 @@ function StyleEditor({
               </div>
               <UploadPanel onAssetId={(id) => setUploadedVideoId(id)} onPreview={(url) => setUploadedPreview(url)} />
               {uploadedPreview && <video className="preview" controls src={uploadedPreview} />}
-              {subtitlePreview && (
-                <div className="output-card">
-                  <p className="metric-label">Subtitle preview {subtitleFileName ? `(${subtitleFileName})` : ""}</p>
-                  <iframe className="preview-text" src={subtitlePreview} title="subtitle-upload-preview" />
-                </div>
-              )}
+	              {subtitlePreviewUrl && (
+	                <div className="output-card">
+                    <TextPreview url={subtitlePreviewUrl} title={`Subtitle preview ${subtitleFileName ? `(${subtitleFileName})` : ""}`} />
+	                </div>
+	              )}
             </Card>
 		            <Card title="Style editor">
               <p className="muted">Tune subtitle styling; if no subtitles are set, we will auto-generate captions first.</p>
@@ -2563,28 +2646,28 @@ function StyleEditor({
 	                <div className="output-card">
 	                  <p className="metric-label">Styling job {styleJob.id}</p>
 	                  <p className="muted">Status: {styleJob.status}</p>
-                  {styleOutput?.uri && (
-                    <div className="actions-row">
-                      <a className="btn btn-primary" href={apiClient.mediaUrl(styleOutput.uri)} download>
-                        {styleJob.payload && (styleJob.payload as any).preview_seconds ? "Download preview" : "Download render"}
-                      </a>
-                    </div>
-                  )}
-	                  {styleOutput?.uri && styleOutput.mime_type?.includes("video") && (
-	                    <video className="preview" controls src={apiClient.mediaUrl(styleOutput.uri)} />
+	                  {toSafeMediaHref(styleOutput?.uri) && (
+	                    <div className="actions-row">
+	                      <a className="btn btn-primary" href={toSafeMediaHref(styleOutput?.uri)!} download>
+	                        {styleJob.payload && (styleJob.payload as any).preview_seconds ? "Download preview" : "Download render"}
+	                      </a>
+	                    </div>
 	                  )}
+		                  {toSafeMediaHref(styleOutput?.uri) && styleOutput.mime_type?.includes("video") && (
+		                    <video className="preview" controls src={toSafeMediaHref(styleOutput?.uri)!} />
+		                  )}
 	                </div>
 	              )}
 		            </Card>
                 <Card title="Subtitle editor">
-                  <SubtitleEditorCard
-                    initialAssetId={subtitleAssetId}
-                    onAssetChosen={(asset) => {
-                      setSubtitleAssetId(asset.id);
-                      setSubtitlePreview(asset.uri ? apiClient.mediaUrl(asset.uri) : null);
-                      setSubtitleFileName(asset.uri?.split("/").pop() || "edited.srt");
-                    }}
-                  />
+	                  <SubtitleEditorCard
+	                    initialAssetId={subtitleAssetId}
+	                    onAssetChosen={(asset) => {
+	                      setSubtitleAssetId(asset.id);
+	                      setSubtitlePreview(toSafeMediaHref(asset.uri));
+	                      setSubtitleFileName(asset.uri?.split("/").pop() || "edited.srt");
+	                    }}
+	                  />
                 </Card>
 		          </section>
 		        )}
@@ -2605,10 +2688,10 @@ function StyleEditor({
                   <p className="muted">Status: {subtitleToolsJob.status}</p>
                   {["running", "queued"].includes(subtitleToolsJob.status) && <Spinner label="Polling job status..." />}
                   <div className="actions-row">
-                    {subtitleToolsOutput?.uri ? (
-                      <a className="btn btn-primary" href={apiClient.mediaUrl(subtitleToolsOutput.uri)} download>
-                        Download translated subtitles
-                      </a>
+	                    {toSafeMediaHref(subtitleToolsOutput?.uri) ? (
+	                      <a className="btn btn-primary" href={toSafeMediaHref(subtitleToolsOutput?.uri)!} download>
+	                        Download translated subtitles
+	                      </a>
                     ) : (
                       <div className="muted">Waiting for translated subtitles...</div>
                     )}
@@ -2637,10 +2720,10 @@ function StyleEditor({
                   <p className="muted">Status: {mergeJob.status}</p>
                   {["running", "queued"].includes(mergeJob.status) && <Spinner label="Polling job status..." />}
                   <div className="actions-row">
-                    {mergeOutput?.uri ? (
-                      <a className="btn btn-primary" href={apiClient.mediaUrl(mergeOutput.uri)} download>
-                        Download merged output
-                      </a>
+	                    {toSafeMediaHref(mergeOutput?.uri) ? (
+	                      <a className="btn btn-primary" href={toSafeMediaHref(mergeOutput?.uri)!} download>
+	                        Download merged output
+	                      </a>
                     ) : (
                       <div className="muted">Waiting for merged output...</div>
                     )}
@@ -2821,11 +2904,11 @@ function StyleEditor({
 			                    <a className="btn btn-secondary" href={`${apiClient.baseUrl}/jobs/${selectedJob.id}/bundle`}>
 			                      Download bundle
 			                    </a>
-			                    {outputAsset?.uri && (
-			                      <a className="btn btn-secondary" href={apiClient.mediaUrl(outputAsset.uri)} target="_blank" rel="noreferrer">
-			                        Open output
-			                      </a>
-			                    )}
+				                    {toSafeMediaHref(outputAsset?.uri) && (
+				                      <a className="btn btn-secondary" href={toSafeMediaHref(outputAsset?.uri)!} target="_blank" rel="noreferrer">
+				                        Open output
+				                      </a>
+				                    )}
 			                    <Button
 			                      type="button"
 			                      variant="danger"
@@ -2842,14 +2925,14 @@ function StyleEditor({
 			                  {outputAsset?.kind === "subtitle" && (
 			                    <div className="output-card">
 			                      <p className="metric-label">Transcript viewer</p>
-			                      {inputAsset?.kind === "video" && inputAsset.uri && (
-			                        <video
-			                          ref={jobVideoRef}
-			                          className="video-preview"
-			                          controls
-			                          src={apiClient.mediaUrl(inputAsset.uri)}
-			                        />
-			                      )}
+				                      {inputAsset?.kind === "video" && toSafeMediaHref(inputAsset?.uri) && (
+				                        <video
+				                          ref={jobVideoRef}
+				                          className="video-preview"
+				                          controls
+				                          src={toSafeMediaHref(inputAsset?.uri)!}
+				                        />
+				                      )}
 			                      <div className="form-grid">
 			                        <label className="field">
 			                          <span>Search</span>
@@ -2921,12 +3004,12 @@ function StyleEditor({
 	                        <div className="output-card">
 	                          <p className="metric-label">Input asset</p>
 	                          <p className="muted mono">{inputAsset.id}</p>
-	                          {inputAsset.uri && (
-	                            <div className="actions-row">
-	                              <a className="btn btn-ghost" href={apiClient.mediaUrl(inputAsset.uri)} target="_blank" rel="noreferrer">
-	                                Open
-	                              </a>
-	                            </div>
+		                          {toSafeMediaHref(inputAsset?.uri) && (
+		                            <div className="actions-row">
+		                              <a className="btn btn-ghost" href={toSafeMediaHref(inputAsset?.uri)!} target="_blank" rel="noreferrer">
+		                                Open
+		                              </a>
+		                            </div>
 	                          )}
 	                        </div>
 	                      )}
@@ -2935,39 +3018,37 @@ function StyleEditor({
 	                          <p className="metric-label">Output asset</p>
 	                          <p className="muted mono">{outputAsset.id}</p>
 	                          <p className="muted">{outputAsset.mime_type || outputAsset.kind}</p>
-	                          {outputAsset.uri && (
-	                            <div className="actions-row">
-	                              <a className="btn btn-primary" href={apiClient.mediaUrl(outputAsset.uri)} download>
-	                                Download
-	                              </a>
-	                              {outputAsset.mime_type?.includes("text") && (
-	                                <Button
-	                                  type="button"
-	                                  variant="ghost"
-	                                  onClick={async () => {
-	                                    if (!outputAsset.uri) return;
-	                                    try {
-	                                      const resp = await fetch(apiClient.mediaUrl(outputAsset.uri));
-	                                      const text = await resp.text();
-	                                      await navigator.clipboard.writeText(text);
-	                                    } catch {
-	                                      /* ignore */
-	                                    }
+		                          {outputAssetUrl && (
+		                            <div className="actions-row">
+		                              <a className="btn btn-primary" href={outputAssetUrl} download>
+		                                Download
+		                              </a>
+		                              {outputAsset.mime_type?.includes("text") && (
+		                                <Button
+		                                  type="button"
+		                                  variant="ghost"
+		                                  onClick={async () => {
+		                                    if (!outputAssetUrl) return;
+		                                    try {
+		                                      const resp = await fetch(outputAssetUrl);
+		                                      const text = await resp.text();
+		                                      await navigator.clipboard.writeText(text);
+		                                    } catch {
+		                                      /* ignore */
+		                                    }
 	                                  }}
 	                                >
 	                                  Copy output text
 	                                </Button>
-	                              )}
-	                            </div>
-	                          )}
-	                          {outputAsset.uri && outputAsset.mime_type?.includes("video") && (
-	                            <video className="preview" controls src={apiClient.mediaUrl(outputAsset.uri)} />
-	                          )}
-	                          {outputAsset.uri && outputAsset.mime_type?.includes("text") && (
-	                            <iframe className="preview-text" src={apiClient.mediaUrl(outputAsset.uri)} title="job-output-preview" />
-	                          )}
-	                        </div>
-	                      )}
+		                              )}
+		                            </div>
+		                          )}
+		                          {outputAssetUrl && outputAsset.mime_type?.includes("video") && (
+		                            <video className="preview" controls src={outputAssetUrl} />
+		                          )}
+		                          {outputAssetUrl && outputAsset.mime_type?.includes("text") && <TextPreview url={outputAssetUrl} title="Job output preview" />}
+		                        </div>
+		                      )}
 	                      {selectedJob.payload && (
 	                        <div className="output-card">
 	                          <p className="metric-label">Payload</p>
