@@ -12,8 +12,8 @@ from app.errors import rate_limited
 
 class RateLimiter:
     def __init__(self, limit: int, window_seconds: int) -> None:
-        self.limit = max(1, limit)
-        self.window_seconds = max(1, window_seconds)
+        self.limit = max(1, int(limit))
+        self.window_seconds = max(1, int(window_seconds))
         self._hits: Dict[str, Deque[float]] = {}
 
     def allow(self, key: str) -> bool:
@@ -31,17 +31,41 @@ class RateLimiter:
         return True
 
 
-settings = get_settings()
-rate_limiter = RateLimiter(limit=settings.rate_limit_requests, window_seconds=settings.rate_limit_window_seconds)
+def _build_policy_limiters() -> dict[str, RateLimiter]:
+    settings = get_settings()
+    return {
+        "default": RateLimiter(limit=settings.rate_limit_requests, window_seconds=settings.rate_limit_window_seconds),
+        "heavy_jobs": RateLimiter(limit=settings.rate_limit_heavy_requests, window_seconds=settings.rate_limit_heavy_window_seconds),
+        "uploads": RateLimiter(limit=settings.rate_limit_upload_requests, window_seconds=settings.rate_limit_upload_window_seconds),
+    }
 
 
-async def enforce_rate_limit(request: Request) -> None:
+policy_limiters: dict[str, RateLimiter] = _build_policy_limiters()
+
+
+async def _enforce_policy(request: Request, policy: str) -> None:
+    limiter = policy_limiters.get(policy) or policy_limiters["default"]
     client_ip = request.client.host if request.client else "anonymous"
-    if not rate_limiter.allow(client_ip):
+    # Per-path keys avoid one noisy endpoint starving all others under the same policy bucket.
+    bucket_key = f"{client_ip}:{request.url.path}"
+    if not limiter.allow(bucket_key):
         raise rate_limited(
             details={
-                "limit": rate_limiter.limit,
-                "window_seconds": rate_limiter.window_seconds,
+                "policy": policy,
+                "limit": limiter.limit,
+                "window_seconds": limiter.window_seconds,
                 "client": client_ip,
+                "path": request.url.path,
             }
         )
+
+
+def enforce_rate_limit(policy: str = "default"):
+    async def _dependency(request: Request) -> None:
+        await _enforce_policy(request, policy)
+
+    return _dependency
+
+
+async def enforce_default_rate_limit(request: Request) -> None:
+    await _enforce_policy(request, "default")

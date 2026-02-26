@@ -7,7 +7,7 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, List, Optional
+from typing import Annotated, Any, List, Optional
 from uuid import uuid4
 
 try:
@@ -63,9 +63,48 @@ def get_celery_app() -> Celery:
     return app
 
 
+def _env_truthy(name: str) -> bool:
+    raw = (os.getenv(name) or os.getenv(f"REFRAME_{name}") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _celery_queue_name(kind: str) -> str:
+    key = kind.strip().upper()
+    if key == "GPU":
+        return (os.getenv("REFRAME_CELERY_QUEUE_GPU") or "gpu").strip() or "gpu"
+    if key == "CPU":
+        return (os.getenv("REFRAME_CELERY_QUEUE_CPU") or "cpu").strip() or "cpu"
+    return (os.getenv("REFRAME_CELERY_QUEUE_DEFAULT") or "default").strip() or "default"
+
+
+def _task_prefers_gpu(task_name: str, *args) -> bool:
+    if task_name not in {"tasks.generate_captions", "tasks.transcribe_video"}:
+        return False
+    payload = args[-1] if args and isinstance(args[-1], dict) else {}
+    backend = str(payload.get("backend") or "").strip().lower()
+    device = str(payload.get("device") or "").strip().lower()
+    if device in {"cuda", "gpu"}:
+        return True
+    if _env_truthy("ASSUME_GPU_FOR_TRANSCRIBE_BACKENDS") and backend in {"faster_whisper", "whisper_cpp", "whisper_timestamped", "whisperx"}:
+        return True
+    return False
+
+
+def _resolve_task_queue(task_name: str, *args) -> str:
+    gpu_enabled = _env_truthy("ENABLE_GPU_QUEUE")
+    if task_name in {"tasks.generate_captions", "tasks.transcribe_video"}:
+        if gpu_enabled and _task_prefers_gpu(task_name, *args):
+            return _celery_queue_name("GPU")
+        return _celery_queue_name("CPU")
+    if task_name in {"tasks.generate_shorts", "tasks.render_styled_subtitles", "tasks.merge_video_audio", "tasks.cut_clip", "tasks.translate_subtitles"}:
+        return _celery_queue_name("CPU")
+    return _celery_queue_name("DEFAULT")
+
+
 def enqueue_job(job: Job, task_name: str, *args) -> str:
     try:
-        result = get_celery_app().send_task(task_name, args=args)
+        queue = _resolve_task_queue(task_name, *args)
+        result = get_celery_app().send_task(task_name, args=args, queue=queue)
         return result.id
     except Exception as exc:  # pragma: no cover - defensive
         raise server_error("Failed to enqueue job", details={"job_id": str(job.id), "task": task_name, "error": str(exc)})
@@ -179,6 +218,25 @@ def _enforce_org_quota(session: Session, principal: AuthPrincipal) -> None:
                 "plan_code": plan_code,
                 "quota_job_minutes": policy.monthly_job_minutes,
                 "used_job_minutes": round(used_minutes, 3),
+            },
+        )
+
+    storage_usage = session.exec(
+        select(UsageEvent).where(
+            (UsageEvent.org_id == org_id)
+            & (UsageEvent.metric == "storage_bytes")
+            & (UsageEvent.created_at >= month_start)
+        )
+    ).all()
+    used_storage_bytes = sum(float(item.quantity or 0.0) for item in storage_usage)
+    storage_quota_bytes = float(policy.monthly_storage_gb) * float(1024**3)
+    if storage_quota_bytes > 0 and used_storage_bytes >= storage_quota_bytes:
+        raise quota_exceeded(
+            "Monthly storage quota reached",
+            details={
+                "plan_code": plan_code,
+                "quota_storage_gb": policy.monthly_storage_gb,
+                "used_storage_gb": round(used_storage_bytes / float(1024**3), 3),
             },
         )
 
@@ -479,8 +537,10 @@ class UploadInitRequest(SQLModel):
 
 class UploadInitResponse(SQLModel):
     upload_id: str
+    asset_id: Optional[UUID] = None
     upload_url: str
     method: str = "POST"
+    headers: dict[str, str] = Field(default_factory=dict)
     form_fields: dict[str, str] = Field(default_factory=dict)
     expires_at: datetime
     strategy: str = "single_part"
@@ -497,11 +557,63 @@ class UploadCompleteResponse(SQLModel):
     status: str = "completed"
 
 
+class MultipartUploadInitRequest(SQLModel):
+    kind: str = "video"
+    filename: str
+    mime_type: Optional[str] = None
+    project_id: Optional[UUID] = None
+
+
+class MultipartUploadInitResponse(SQLModel):
+    upload_id: str
+    asset_id: UUID
+    strategy: str = "multipart_presigned"
+    expires_at: datetime
+    part_size_bytes: int = 8 * 1024 * 1024
+
+
+class MultipartUploadPartResponse(SQLModel):
+    upload_id: str
+    part_number: int
+    upload_url: str
+    method: str = "PUT"
+    headers: dict[str, str] = Field(default_factory=dict)
+    expires_at: datetime
+
+
+class MultipartPart(SQLModel):
+    part_number: int
+    etag: str
+
+
+class MultipartUploadCompleteRequest(SQLModel):
+    parts: list[MultipartPart]
+
+
+class MultipartUploadAbortResponse(SQLModel):
+    upload_id: str
+    status: str = "aborted"
+
+
 _pending_uploads: dict[str, dict[str, object]] = {}
+_pending_multipart_uploads: dict[str, dict[str, object]] = {}
 
 
 def _owner_fields(principal: AuthPrincipal) -> dict[str, UUID | None]:
     return {"org_id": principal.org_id, "owner_user_id": principal.user_id}
+
+
+def _supports_presigned_uploads(storage: Any) -> bool:
+    return all(
+        hasattr(storage, name)
+        for name in ("create_presigned_upload", "create_multipart_upload", "sign_multipart_part", "complete_multipart_upload", "abort_multipart_upload")
+    )
+
+
+def _scoped_tmp_rel_dir(storage: Any, principal: AuthPrincipal) -> str:
+    if principal.org_id and not isinstance(storage, LocalStorageBackend):
+        return f"{principal.org_id}/tmp"
+    return "tmp"
 
 
 def _dispatch_existing_job(job: Job, session: Session) -> Job:
@@ -563,7 +675,7 @@ def _dispatch_existing_job(job: Job, session: Session) -> Job:
     status_code=status.HTTP_201_CREATED,
     tags=["Captions"],
     responses={404: {"model": ErrorResponse}},
-    dependencies=[Depends(enforce_rate_limit)],
+    dependencies=[Depends(enforce_rate_limit("heavy_jobs"))],
 )
 def create_caption_job(
     payload: CaptionJobRequest,
@@ -600,7 +712,7 @@ def create_caption_job(
     status_code=status.HTTP_201_CREATED,
     tags=["Translate"],
     responses={404: {"model": ErrorResponse}},
-    dependencies=[Depends(enforce_rate_limit)],
+    dependencies=[Depends(enforce_rate_limit("heavy_jobs"))],
 )
 def create_translate_job(
     payload: TranslateJobRequest,
@@ -951,7 +1063,9 @@ def download_shared_asset(asset_id: UUID, token: str, session: SessionDep):
         )
 
     if asset.uri and is_remote_uri(asset.uri):
-        return RedirectResponse(url=asset.uri, status_code=302)
+        storage = get_storage(media_root=settings.media_root)
+        remote_url = storage.get_download_url(asset.uri) or asset.uri
+        return RedirectResponse(url=remote_url, status_code=302)
 
     file_path = LocalStorageBackend(media_root=Path(settings.media_root)).resolve_local_path(asset.uri or "")
     if not file_path.exists():
@@ -1078,6 +1192,7 @@ def download_job_bundle(job_id: UUID, session: SessionDep, principal: PrincipalD
 
     settings = get_settings()
     media_root = Path(settings.media_root)
+    storage = get_storage(media_root=settings.media_root)
 
     def resolve_asset_path(asset: MediaAsset) -> Path:
         uri = asset.uri or ""
@@ -1099,7 +1214,8 @@ def download_job_bundle(job_id: UUID, session: SessionDep, principal: PrincipalD
             return None
 
         if is_remote_uri(uri):
-            zf.writestr(f"{base_name}_uri.txt", uri)
+            resolved = storage.get_download_url(uri) or uri
+            zf.writestr(f"{base_name}_uri.txt", resolved)
             return f"{base_name}_uri.txt"
 
         path = resolve_asset_path(asset)
@@ -1226,7 +1342,7 @@ def download_job_bundle(job_id: UUID, session: SessionDep, principal: PrincipalD
     response_model=Job,
     status_code=status.HTTP_201_CREATED,
     tags=["Shorts"],
-    dependencies=[Depends(enforce_rate_limit)],
+    dependencies=[Depends(enforce_rate_limit("heavy_jobs"))],
 )
 def create_shorts_job(
     payload: ShortsJobRequest,
@@ -1275,7 +1391,7 @@ def create_shorts_job(
     response_model=Job,
     status_code=status.HTTP_201_CREATED,
     tags=["Subtitles"],
-    dependencies=[Depends(enforce_rate_limit)],
+    dependencies=[Depends(enforce_rate_limit("heavy_jobs"))],
 )
 def create_style_job(
     payload: StyledSubtitleJobRequest,
@@ -1330,7 +1446,7 @@ def create_style_job(
     response_model=Job,
     status_code=status.HTTP_201_CREATED,
     tags=["Utilities"],
-    dependencies=[Depends(enforce_rate_limit)],
+    dependencies=[Depends(enforce_rate_limit("heavy_jobs"))],
 )
 def create_merge_job(
     payload: MergeAVRequest,
@@ -1381,7 +1497,7 @@ def create_merge_job(
     response_model=Job,
     status_code=status.HTTP_201_CREATED,
     tags=["Utilities"],
-    dependencies=[Depends(enforce_rate_limit)],
+    dependencies=[Depends(enforce_rate_limit("heavy_jobs"))],
 )
 def cut_clip_tool(
     payload: CutClipRequest,
@@ -1432,7 +1548,7 @@ def cut_clip_tool(
     response_model=Job,
     status_code=status.HTTP_201_CREATED,
     tags=["Utilities"],
-    dependencies=[Depends(enforce_rate_limit)],
+    dependencies=[Depends(enforce_rate_limit("heavy_jobs"))],
 )
 def translate_subtitle_tool(
     payload: TranslateSubtitleToolRequest,
@@ -1571,9 +1687,12 @@ def _delete_asset_if_unreferenced(session: Session, asset_id: UUID) -> None:
 
     settings = get_settings()
     uri = asset.uri or ""
-    if uri and not is_remote_uri(uri):
-        file_path = LocalStorageBackend(media_root=Path(settings.media_root)).resolve_local_path(uri)
-        file_path.unlink(missing_ok=True)
+    if uri:
+        storage = get_storage(media_root=settings.media_root)
+        try:
+            storage.delete_uri(uri)
+        except Exception:
+            pass
 
     session.delete(asset)
     session.commit()
@@ -1583,7 +1702,7 @@ def _delete_asset_if_unreferenced(session: Session, asset_id: UUID) -> None:
     "/assets/upload-init",
     response_model=UploadInitResponse,
     tags=["Assets"],
-    dependencies=[Depends(enforce_rate_limit)],
+    dependencies=[Depends(enforce_rate_limit("uploads"))],
 )
 def init_asset_upload(
     payload: UploadInitRequest,
@@ -1591,32 +1710,81 @@ def init_asset_upload(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> UploadInitResponse:
+    settings = get_settings()
+    storage = get_storage(media_root=settings.media_root)
     kind = (payload.kind or "").strip().lower() or "video"
     _validate_upload(kind, payload.mime_type, payload.filename)
     project = _ensure_project_exists(session, payload.project_id, principal)
 
     upload_id = str(uuid4())
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
-    _pending_uploads[upload_id] = {
+    pending_entry: dict[str, object] = {
         "kind": kind,
         "project_id": str(project.id) if project else None,
         "org_id": str(principal.org_id) if principal.org_id else None,
         "owner_user_id": str(principal.user_id) if principal.user_id else None,
         "expires_at": expires_at,
+        "strategy": "single_part",
     }
 
+    if _supports_presigned_uploads(storage) and not isinstance(storage, LocalStorageBackend):
+        rel_dir = _scoped_tmp_rel_dir(storage, principal)
+        suffix = Path(payload.filename or "").suffix
+        storage_filename = f"{uuid4()}{suffix}"
+        presigned = storage.create_presigned_upload(
+            rel_dir=rel_dir,
+            filename=storage_filename,
+            content_type=payload.mime_type,
+            expires_seconds=15 * 60,
+        )
+        uri = str(presigned.get("uri") or "")
+        if not uri:
+            raise server_error("Storage backend failed to provide upload URI")
+        asset = MediaAsset(
+            kind=kind,
+            uri=uri,
+            mime_type=payload.mime_type,
+            project_id=project.id if project else payload.project_id,
+            **_owner_fields(principal),
+        )
+        session.add(asset)
+        session.commit()
+        session.refresh(asset)
+        pending_entry["strategy"] = "single_part_presigned"
+        pending_entry["asset_id"] = str(asset.id)
+        _pending_uploads[upload_id] = pending_entry
+        return UploadInitResponse(
+            upload_id=upload_id,
+            asset_id=asset.id,
+            upload_url=str(presigned.get("upload_url") or ""),
+            method=str(presigned.get("method") or "PUT"),
+            headers=presigned.get("headers") if isinstance(presigned.get("headers"), dict) else {},
+            form_fields=presigned.get("form_fields") if isinstance(presigned.get("form_fields"), dict) else {},
+            expires_at=expires_at,
+            strategy="single_part_presigned",
+        )
+
+    _pending_uploads[upload_id] = pending_entry
     form_fields = {"kind": kind, "upload_id": upload_id}
     if project:
         form_fields["project_id"] = str(project.id)
     upload_url = str(request.url_for("upload_asset"))
-    return UploadInitResponse(upload_id=upload_id, upload_url=upload_url, form_fields=form_fields, expires_at=expires_at)
+    return UploadInitResponse(
+        upload_id=upload_id,
+        upload_url=upload_url,
+        method="POST",
+        headers={},
+        form_fields=form_fields,
+        expires_at=expires_at,
+        strategy="single_part",
+    )
 
 
 @router.post(
     "/assets/upload-complete",
     response_model=UploadCompleteResponse,
     tags=["Assets"],
-    dependencies=[Depends(enforce_rate_limit)],
+    dependencies=[Depends(enforce_rate_limit("uploads"))],
 )
 def complete_asset_upload(
     payload: UploadCompleteRequest,
@@ -1631,6 +1799,13 @@ def complete_asset_upload(
     if isinstance(expires_at, datetime) and expires_at < datetime.now(timezone.utc):
         _pending_uploads.pop(payload.upload_id, None)
         raise conflict("Upload session expired", details={"upload_id": payload.upload_id})
+
+    expected_asset_raw = entry.get("asset_id")
+    if expected_asset_raw and str(payload.asset_id) != str(expected_asset_raw):
+        raise conflict(
+            "Asset mismatch for upload session",
+            details={"upload_id": payload.upload_id, "asset_id": str(payload.asset_id)},
+        )
 
     asset = session.get(MediaAsset, payload.asset_id)
     if not asset:
@@ -1659,11 +1834,189 @@ def complete_asset_upload(
 
 
 @router.post(
+    "/assets/upload-multipart/init",
+    response_model=MultipartUploadInitResponse,
+    tags=["Assets"],
+    dependencies=[Depends(enforce_rate_limit("uploads"))],
+)
+def init_multipart_asset_upload(
+    payload: MultipartUploadInitRequest,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> MultipartUploadInitResponse:
+    settings = get_settings()
+    storage = get_storage(media_root=settings.media_root)
+    if not _supports_presigned_uploads(storage) or isinstance(storage, LocalStorageBackend):
+        raise ApiError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Multipart uploads require object storage backend (S3/R2).",
+        )
+
+    kind = (payload.kind or "").strip().lower() or "video"
+    _validate_upload(kind, payload.mime_type, payload.filename)
+    project = _ensure_project_exists(session, payload.project_id, principal)
+
+    rel_dir = _scoped_tmp_rel_dir(storage, principal)
+    suffix = Path(payload.filename or "").suffix
+    storage_filename = f"{uuid4()}{suffix}"
+    provider_session = storage.create_multipart_upload(rel_dir=rel_dir, filename=storage_filename, content_type=payload.mime_type)
+
+    asset = MediaAsset(
+        kind=kind,
+        uri=str(provider_session["uri"]),
+        mime_type=payload.mime_type,
+        project_id=project.id if project else payload.project_id,
+        **_owner_fields(principal),
+    )
+    session.add(asset)
+    session.commit()
+    session.refresh(asset)
+
+    upload_id = str(uuid4())
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    _pending_multipart_uploads[upload_id] = {
+        "provider_upload_id": str(provider_session["upload_id"]),
+        "key": str(provider_session["key"]),
+        "asset_id": str(asset.id),
+        "project_id": str(project.id) if project else None,
+        "org_id": str(principal.org_id) if principal.org_id else None,
+        "owner_user_id": str(principal.user_id) if principal.user_id else None,
+        "expires_at": expires_at,
+    }
+    return MultipartUploadInitResponse(upload_id=upload_id, asset_id=asset.id, expires_at=expires_at)
+
+
+@router.post(
+    "/assets/upload-multipart/{upload_id}/parts/{part_number}",
+    response_model=MultipartUploadPartResponse,
+    tags=["Assets"],
+    dependencies=[Depends(enforce_rate_limit("uploads"))],
+)
+def sign_multipart_upload_part(
+    upload_id: str,
+    part_number: int,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> MultipartUploadPartResponse:
+    _ = session  # request-scoped dependency keeps db/session lifecycle consistent for auth context
+    entry = _pending_multipart_uploads.get(upload_id)
+    if not entry:
+        raise not_found("Multipart upload session not found", details={"upload_id": upload_id})
+    expires_at = entry.get("expires_at")
+    if isinstance(expires_at, datetime) and expires_at < datetime.now(timezone.utc):
+        _pending_multipart_uploads.pop(upload_id, None)
+        raise conflict("Multipart upload session expired", details={"upload_id": upload_id})
+
+    expected_org_raw = entry.get("org_id")
+    expected_org = UUID(str(expected_org_raw)) if expected_org_raw else None
+    _assert_org_access(principal=principal, entity_org_id=expected_org, entity="upload", entity_id=upload_id)
+
+    if part_number < 1:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="part_number must be >= 1",
+            details={"part_number": part_number},
+        )
+
+    settings = get_settings()
+    storage = get_storage(media_root=settings.media_root)
+    signed = storage.sign_multipart_part(
+        key=str(entry["key"]),
+        provider_upload_id=str(entry["provider_upload_id"]),
+        part_number=part_number,
+        expires_seconds=15 * 60,
+    )
+    signed_expires = datetime.now(timezone.utc) + timedelta(seconds=int(signed.get("expires_in_seconds") or 15 * 60))
+    return MultipartUploadPartResponse(
+        upload_id=upload_id,
+        part_number=part_number,
+        upload_url=str(signed.get("upload_url") or ""),
+        method=str(signed.get("method") or "PUT"),
+        headers=signed.get("headers") if isinstance(signed.get("headers"), dict) else {},
+        expires_at=signed_expires,
+    )
+
+
+@router.post(
+    "/assets/upload-multipart/{upload_id}/complete",
+    response_model=UploadCompleteResponse,
+    tags=["Assets"],
+    dependencies=[Depends(enforce_rate_limit("uploads"))],
+)
+def complete_multipart_asset_upload(
+    upload_id: str,
+    payload: MultipartUploadCompleteRequest,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> UploadCompleteResponse:
+    entry = _pending_multipart_uploads.get(upload_id)
+    if not entry:
+        raise not_found("Multipart upload session not found", details={"upload_id": upload_id})
+    expires_at = entry.get("expires_at")
+    if isinstance(expires_at, datetime) and expires_at < datetime.now(timezone.utc):
+        _pending_multipart_uploads.pop(upload_id, None)
+        raise conflict("Multipart upload session expired", details={"upload_id": upload_id})
+
+    asset_id = UUID(str(entry["asset_id"]))
+    asset = session.get(MediaAsset, asset_id)
+    if not asset:
+        _pending_multipart_uploads.pop(upload_id, None)
+        raise not_found("Asset not found", details={"asset_id": str(asset_id)})
+    _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
+
+    settings = get_settings()
+    storage = get_storage(media_root=settings.media_root)
+    storage.complete_multipart_upload(
+        key=str(entry["key"]),
+        provider_upload_id=str(entry["provider_upload_id"]),
+        parts=[part.model_dump() for part in payload.parts],
+    )
+    _pending_multipart_uploads.pop(upload_id, None)
+    return UploadCompleteResponse(upload_id=upload_id, asset_id=asset.id, status="completed")
+
+
+@router.post(
+    "/assets/upload-multipart/{upload_id}/abort",
+    response_model=MultipartUploadAbortResponse,
+    tags=["Assets"],
+    dependencies=[Depends(enforce_rate_limit("uploads"))],
+)
+def abort_multipart_asset_upload(
+    upload_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> MultipartUploadAbortResponse:
+    entry = _pending_multipart_uploads.get(upload_id)
+    if not entry:
+        raise not_found("Multipart upload session not found", details={"upload_id": upload_id})
+
+    asset_id = UUID(str(entry["asset_id"]))
+    asset = session.get(MediaAsset, asset_id)
+    if asset:
+        _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
+
+    settings = get_settings()
+    storage = get_storage(media_root=settings.media_root)
+    storage.abort_multipart_upload(
+        key=str(entry["key"]),
+        provider_upload_id=str(entry["provider_upload_id"]),
+    )
+
+    _pending_multipart_uploads.pop(upload_id, None)
+    if asset and not _asset_is_referenced(session, asset.id):
+        session.delete(asset)
+        session.commit()
+    return MultipartUploadAbortResponse(upload_id=upload_id, status="aborted")
+
+
+@router.post(
     "/assets/upload",
     response_model=MediaAsset,
     status_code=status.HTTP_201_CREATED,
     tags=["Assets"],
-    dependencies=[Depends(enforce_rate_limit)],
+    dependencies=[Depends(enforce_rate_limit("uploads"))],
 )
 async def upload_asset(
     session: SessionDep,
@@ -1702,7 +2055,8 @@ async def upload_asset(
                 )
             out.write(chunk)
 
-    uri = storage.write_file(rel_dir="tmp", filename=filename, source_path=tmp_path, content_type=file.content_type)
+    rel_dir = _scoped_tmp_rel_dir(storage, principal)
+    uri = storage.write_file(rel_dir=rel_dir, filename=filename, source_path=tmp_path, content_type=file.content_type)
     if not isinstance(storage, LocalStorageBackend):
         tmp_path.unlink(missing_ok=True)
 
@@ -1780,9 +2134,12 @@ def delete_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep) -
 
     settings = get_settings()
     uri = asset.uri or ""
-    if uri and not is_remote_uri(uri):
-        file_path = LocalStorageBackend(media_root=Path(settings.media_root)).resolve_local_path(uri)
-        file_path.unlink(missing_ok=True)
+    if uri:
+        storage = get_storage(media_root=settings.media_root)
+        try:
+            storage.delete_uri(uri)
+        except Exception:
+            pass
 
     session.delete(asset)
     session.commit()
@@ -1825,7 +2182,9 @@ def download_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep)
     _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
     settings = get_settings()
     if asset.uri and is_remote_uri(asset.uri):
-        return RedirectResponse(url=asset.uri, status_code=302)
+        storage = get_storage(media_root=settings.media_root)
+        remote_url = storage.get_download_url(asset.uri) or asset.uri
+        return RedirectResponse(url=remote_url, status_code=302)
     file_path = LocalStorageBackend(media_root=Path(settings.media_root)).resolve_local_path(asset.uri or "")
     if not file_path.exists():
         raise not_found("Asset file missing", details={"asset_id": str(asset_id), "path": str(file_path)})

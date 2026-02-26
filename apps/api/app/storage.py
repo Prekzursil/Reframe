@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import os
 import shutil
 from pathlib import Path
-from typing import Optional, Protocol
+from typing import Any, Optional, Protocol
 
 
 def is_remote_uri(uri: str) -> bool:
@@ -24,6 +24,38 @@ class StorageBackend(Protocol):
 
     def get_download_url(self, uri: str) -> str | None:
         """Return a direct download URL for the given URI, if available."""
+
+    def delete_uri(self, uri: str) -> None:
+        """Delete a stored object for the given URI if it exists."""
+
+    def create_presigned_upload(
+        self,
+        *,
+        rel_dir: str,
+        filename: str,
+        content_type: str | None,
+        expires_seconds: int,
+    ) -> dict[str, Any]:
+        """Create a single-part direct upload target."""
+
+    def create_multipart_upload(self, *, rel_dir: str, filename: str, content_type: str | None) -> dict[str, str]:
+        """Initialize multipart upload and return provider upload id and URI metadata."""
+
+    def sign_multipart_part(
+        self,
+        *,
+        key: str,
+        provider_upload_id: str,
+        part_number: int,
+        expires_seconds: int,
+    ) -> dict[str, Any]:
+        """Return upload URL metadata for a multipart part."""
+
+    def complete_multipart_upload(self, *, key: str, provider_upload_id: str, parts: list[dict[str, Any]]) -> None:
+        """Complete multipart upload with uploaded parts metadata."""
+
+    def abort_multipart_upload(self, *, key: str, provider_upload_id: str) -> None:
+        """Abort multipart upload."""
 
 
 @dataclass(frozen=True)
@@ -61,6 +93,41 @@ class LocalStorageBackend:
     def get_download_url(self, uri: str) -> str | None:
         return uri or None
 
+    def delete_uri(self, uri: str) -> None:
+        if not uri:
+            return
+        path = self.resolve_local_path(uri)
+        path.unlink(missing_ok=True)
+
+    def create_presigned_upload(
+        self,
+        *,
+        rel_dir: str,
+        filename: str,
+        content_type: str | None,
+        expires_seconds: int,
+    ) -> dict[str, Any]:
+        raise ValueError("Direct presigned uploads are not supported for local storage backend.")
+
+    def create_multipart_upload(self, *, rel_dir: str, filename: str, content_type: str | None) -> dict[str, str]:
+        raise ValueError("Multipart uploads are not supported for local storage backend.")
+
+    def sign_multipart_part(
+        self,
+        *,
+        key: str,
+        provider_upload_id: str,
+        part_number: int,
+        expires_seconds: int,
+    ) -> dict[str, Any]:
+        raise ValueError("Multipart uploads are not supported for local storage backend.")
+
+    def complete_multipart_upload(self, *, key: str, provider_upload_id: str, parts: list[dict[str, Any]]) -> None:
+        raise ValueError("Multipart uploads are not supported for local storage backend.")
+
+    def abort_multipart_upload(self, *, key: str, provider_upload_id: str) -> None:
+        raise ValueError("Multipart uploads are not supported for local storage backend.")
+
 
 def _truthy_env(name: str) -> bool:
     value = os.getenv(name, os.getenv(f"REFRAME_{name}", "")).strip().lower()
@@ -93,6 +160,7 @@ class S3StorageBackend:
         region: str | None = None,
         endpoint_url: str | None = None,
         public_base_url: str | None = None,
+        public_downloads: bool = False,
         presign_expires_seconds: int = 604800,
     ) -> None:
         if not bucket:
@@ -100,6 +168,7 @@ class S3StorageBackend:
         self.bucket = bucket
         self.prefix = prefix
         self.public_base_url = public_base_url.rstrip("/") if public_base_url else None
+        self.public_downloads = bool(public_downloads)
         self.presign_expires_seconds = max(60, int(presign_expires_seconds))
 
         boto3 = _ensure_boto3()
@@ -116,13 +185,12 @@ class S3StorageBackend:
         return _join_key(self.prefix, rel_dir, filename)
 
     def _make_uri(self, *, key: str) -> str:
-        if self.public_base_url:
-            return f"{self.public_base_url}/{key}"
-        return self.client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": self.bucket, "Key": key},
-            ExpiresIn=self.presign_expires_seconds,
-        )
+        return f"s3://{self.bucket}/{key}"
+
+    def _public_url(self, key: str) -> str | None:
+        if not self.public_base_url:
+            return None
+        return f"{self.public_base_url}/{key}"
 
     def _key_from_uri(self, uri: str) -> str | None:
         if not uri:
@@ -162,10 +230,111 @@ class S3StorageBackend:
         key = self._key_from_uri(uri)
         if not key:
             return None
+        if self.public_downloads:
+            public_url = self._public_url(key)
+            if public_url:
+                return public_url
         return self.client.generate_presigned_url(
             "get_object",
             Params={"Bucket": self.bucket, "Key": key},
             ExpiresIn=self.presign_expires_seconds,
+        )
+
+    def delete_uri(self, uri: str) -> None:
+        key = self._key_from_uri(uri)
+        if not key:
+            return
+        self.client.delete_object(Bucket=self.bucket, Key=key)
+
+    def create_presigned_upload(
+        self,
+        *,
+        rel_dir: str,
+        filename: str,
+        content_type: str | None,
+        expires_seconds: int,
+    ) -> dict[str, Any]:
+        key = self._make_key(rel_dir=rel_dir, filename=filename)
+        params = {"Bucket": self.bucket, "Key": key}
+        if content_type:
+            params["ContentType"] = content_type
+        upload_url = self.client.generate_presigned_url(
+            "put_object",
+            Params=params,
+            ExpiresIn=max(60, int(expires_seconds)),
+        )
+        headers: dict[str, str] = {}
+        if content_type:
+            headers["Content-Type"] = content_type
+        return {
+            "uri": self._make_uri(key=key),
+            "upload_url": upload_url,
+            "method": "PUT",
+            "headers": headers,
+            "form_fields": {},
+            "expires_in_seconds": max(60, int(expires_seconds)),
+        }
+
+    def create_multipart_upload(self, *, rel_dir: str, filename: str, content_type: str | None) -> dict[str, str]:
+        key = self._make_key(rel_dir=rel_dir, filename=filename)
+        kwargs: dict[str, Any] = {"Bucket": self.bucket, "Key": key}
+        if content_type:
+            kwargs["ContentType"] = content_type
+        result = self.client.create_multipart_upload(**kwargs)
+        return {
+            "upload_id": str(result["UploadId"]),
+            "key": key,
+            "uri": self._make_uri(key=key),
+        }
+
+    def sign_multipart_part(
+        self,
+        *,
+        key: str,
+        provider_upload_id: str,
+        part_number: int,
+        expires_seconds: int,
+    ) -> dict[str, Any]:
+        upload_url = self.client.generate_presigned_url(
+            "upload_part",
+            Params={
+                "Bucket": self.bucket,
+                "Key": key,
+                "UploadId": provider_upload_id,
+                "PartNumber": int(part_number),
+            },
+            ExpiresIn=max(60, int(expires_seconds)),
+        )
+        return {
+            "upload_url": upload_url,
+            "method": "PUT",
+            "headers": {},
+            "expires_in_seconds": max(60, int(expires_seconds)),
+        }
+
+    def complete_multipart_upload(self, *, key: str, provider_upload_id: str, parts: list[dict[str, Any]]) -> None:
+        normalized_parts: list[dict[str, Any]] = []
+        for part in parts:
+            etag = str(part.get("etag") or "").strip()
+            number = int(part.get("part_number") or 0)
+            if number <= 0 or not etag:
+                continue
+            normalized_parts.append({"ETag": etag, "PartNumber": number})
+        if not normalized_parts:
+            raise ValueError("No multipart upload parts supplied.")
+        normalized_parts.sort(key=lambda p: p["PartNumber"])
+        self.client.complete_multipart_upload(
+            Bucket=self.bucket,
+            Key=key,
+            UploadId=provider_upload_id,
+            MultipartUpload={"Parts": normalized_parts},
+        )
+
+    def abort_multipart_upload(self, *, key: str, provider_upload_id: str) -> None:
+        self.client.abort_multipart_upload(
+            Bucket=self.bucket,
+            Key=key,
+            UploadId=provider_upload_id,
         )
 
 
@@ -184,6 +353,7 @@ def get_storage(*, media_root: str | Path) -> StorageBackend:
             region=_env("S3_REGION") or os.getenv("AWS_REGION", "").strip() or os.getenv("AWS_DEFAULT_REGION", "").strip() or None,
             endpoint_url=_env("S3_ENDPOINT_URL") or None,
             public_base_url=_env("S3_PUBLIC_BASE_URL") or None,
+            public_downloads=_truthy_env("S3_PUBLIC_DOWNLOADS"),
             presign_expires_seconds=int(_env("S3_PRESIGN_EXPIRES_SECONDS") or 604800),
         )
 

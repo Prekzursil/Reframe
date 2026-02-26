@@ -13,6 +13,51 @@ celery -A worker.celery_app worker --loglevel=info
 Tasks available:
 - `tasks.ping`
 - `tasks.echo`
+- `tasks.cleanup_retention`
+
+## Queue split (CPU/GPU)
+
+Worker queue names are configurable:
+
+- `REFRAME_CELERY_QUEUE_CPU` (default: `cpu`)
+- `REFRAME_CELERY_QUEUE_GPU` (default: `gpu`)
+- `REFRAME_CELERY_QUEUE_DEFAULT` (default: `default`)
+
+API dispatch routes jobs to queues as follows:
+
+- Captions/transcription -> `gpu` when `REFRAME_ENABLE_GPU_QUEUE=true` and payload requests GPU (`device=cuda`), otherwise `cpu`.
+- Shorts/style/merge/translate/cut -> `cpu`.
+- Other maintenance tasks -> `default`.
+
+Run split workers:
+
+```bash
+# CPU worker pool
+celery -A worker.celery_app worker --loglevel=info -Q cpu,default
+
+# GPU worker pool
+celery -A worker.celery_app worker --loglevel=info -Q gpu
+```
+
+## Retention cleanup by plan
+
+Retention defaults:
+
+- Free: `14` days
+- Pro: `30` days
+- Enterprise: `90` days
+
+Overrides:
+
+- `REFRAME_RETENTION_FREE_DAYS`
+- `REFRAME_RETENTION_PRO_DAYS`
+- `REFRAME_RETENTION_ENTERPRISE_DAYS`
+
+Periodic cleanup task (prunes old generated assets for terminal jobs):
+
+```bash
+celery -A worker.celery_app call tasks.cleanup_retention
+```
 
 ## Captions: speaker labels (optional)
 

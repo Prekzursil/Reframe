@@ -56,7 +56,14 @@ def _get_stripe():
     return stripe
 
 
-def build_checkout_session(*, customer_id: Optional[str], price_id: str, success_url: str, cancel_url: str) -> dict:
+def build_checkout_session(
+    *,
+    customer_id: Optional[str],
+    price_id: str,
+    success_url: str,
+    cancel_url: str,
+    metadata: Optional[dict[str, str]] = None,
+) -> dict:
     settings = get_settings()
     if not settings.enable_billing:
         raise RuntimeError("Billing is disabled.")
@@ -72,6 +79,8 @@ def build_checkout_session(*, customer_id: Optional[str], price_id: str, success
     }
     if customer_id:
         kwargs["customer"] = customer_id
+    if metadata:
+        kwargs["metadata"] = metadata
     session = stripe.checkout.Session.create(**kwargs)
     return {"id": session.get("id"), "url": session.get("url")}
 

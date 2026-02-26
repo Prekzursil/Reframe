@@ -441,25 +441,26 @@ Goal: offer Reframe as a paid hosted service (multi-tenant web app) while keepin
 ### Foundations (multi-tenancy + security)
 - [x] Add auth for the hosted API (JWT access/refresh + optional OAuth start/callback scaffolding).
 - [x] Add `User` / `Organization` models and enforce job/asset ownership in all API endpoints.
-- [ ] Add per-tenant storage prefixes (S3/R2) so all assets live under `{org_id}/...` (supports isolation + lifecycle rules).
-- [ ] Add API-side rate limits and abuse protections for expensive endpoints (uploads, rendering, transcription).
+- [x] Add per-tenant storage prefixes (S3/R2) so all assets live under `{org_id}/...` (supports isolation + lifecycle rules).
+- [x] Add API-side rate limits and abuse protections for expensive endpoints (uploads, rendering, transcription).
 
 ### Upload/download at scale
-- [ ] Add direct-to-object-storage uploads via pre-signed URLs (avoid proxying large uploads through FastAPI).
-- [ ] Add resumable uploads (TUS/S3 multipart) for large videos.
-- [ ] Add CDN-backed delivery for public/preview assets (optional) with signed URLs for private outputs.
+- [x] Add direct-to-object-storage uploads via pre-signed URLs (avoid proxying large uploads through FastAPI).
+- [x] Add resumable uploads (TUS/S3 multipart) for large videos.
+- [x] Add CDN-backed delivery for public/preview assets (optional) with signed URLs for private outputs.
 
 ### Billing + usage metering
-- [ ] Define the cost model: what you bill for (minutes processed, GPU-seconds, storage, egress) and what limits exist per plan.
+- [x] Define the cost model: what you bill for (minutes processed, GPU-seconds, storage, egress) and what limits exist per plan.
 - [x] Add usage metering tables (per job) and a “usage” page in the UI.
 - [x] Add usage summary groundwork (`GET /api/v1/usage/summary` + frontend Usage dashboard cards/breakdown).
 - [ ] Integrate Stripe for subscriptions + seat/org billing + plan enforcement.
+  - [x] Add Stripe checkout metadata + webhook signature verification + subscription status/plan sync.
 - [x] Add per-plan concurrency limits (e.g., max running jobs) and queueing behavior.
 
 ### Worker scaling + reliability
-- [ ] Split workers into CPU and GPU pools (routing by job type/backends) and add autoscaling deployment configs.
+- [x] Split workers into CPU and GPU pools (routing by job type/backends) and add autoscaling deployment configs.
 - [x] Add job idempotency + dedupe for retry safety (especially for uploads + long-running jobs).
-- [ ] Add retention policies for intermediate assets and plan-based retention windows.
+- [x] Add retention policies for intermediate assets and plan-based retention windows.
 
 ### Opus Clip‑style UX
 - [x] Add a “project” abstraction (source video → derived clips, transcripts, styles, exports).
@@ -467,8 +468,8 @@ Goal: offer Reframe as a paid hosted service (multi-tenant web app) while keepin
 - [ ] Add team collaboration features (org members, roles, shared projects) (later).
 
 ### Next hardening follow-ups
-- [ ] Add true object-storage pre-signed upload URLs (S3/R2) behind hosted mode and move local `/assets/upload-init` to that provider.
-- [ ] Add resumable multipart upload orchestration with commit/abort endpoints and retry-safe parts tracking.
+- [x] Add true object-storage pre-signed upload URLs (S3/R2) behind hosted mode and move local `/assets/upload-init` to that provider.
+- [x] Add resumable multipart upload orchestration with commit/abort endpoints and retry-safe parts tracking.
 - [ ] Expand org collaboration from read-only membership context to invites, role mutation, and seat enforcement workflows.
 
 ---
