@@ -5,12 +5,120 @@ from enum import Enum
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column, JSON
+from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class Organization(SQLModel, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    name: str
+    slug: str = Field(index=True, unique=True)
+    tier: str = Field(default="free")
+    seat_limit: int = Field(default=1)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class User(SQLModel, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    email: str = Field(index=True, unique=True)
+    password_hash: Optional[str] = Field(default=None)
+    display_name: Optional[str] = Field(default=None)
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class OrgMembership(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("org_id", "user_id", name="uq_org_membership_org_user"),)
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    org_id: UUID = Field(foreign_key="organization.id", index=True)
+    user_id: UUID = Field(foreign_key="user.id", index=True)
+    role: str = Field(default="owner")
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class OAuthAccount(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("provider", "provider_subject", name="uq_oauth_provider_subject"),)
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    user_id: UUID = Field(foreign_key="user.id", index=True)
+    provider: str = Field(index=True)
+    provider_subject: str
+    email: Optional[str] = Field(default=None)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class Plan(SQLModel, table=True):
+    code: str = Field(primary_key=True, index=True)
+    name: str
+    max_concurrent_jobs: int = Field(default=1)
+    monthly_job_minutes: int = Field(default=120)
+    monthly_storage_gb: int = Field(default=2)
+    seat_limit: int = Field(default=1)
+    overage_per_minute_cents: int = Field(default=0)
+    active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class Subscription(SQLModel, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    org_id: UUID = Field(foreign_key="organization.id", index=True, unique=True)
+    plan_code: str = Field(foreign_key="plan.code", default="free")
+    status: str = Field(default="active")
+    stripe_customer_id: Optional[str] = Field(default=None, index=True)
+    stripe_subscription_id: Optional[str] = Field(default=None, index=True)
+    current_period_start: Optional[datetime] = Field(default=None)
+    current_period_end: Optional[datetime] = Field(default=None)
+    cancel_at_period_end: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class InvoiceSnapshot(SQLModel, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    org_id: UUID = Field(foreign_key="organization.id", index=True)
+    subscription_id: Optional[UUID] = Field(default=None, foreign_key="subscription.id", index=True)
+    stripe_invoice_id: Optional[str] = Field(default=None, index=True)
+    amount_cents: int = Field(default=0)
+    currency: str = Field(default="usd")
+    status: str = Field(default="draft")
+    period_start: Optional[datetime] = Field(default=None)
+    period_end: Optional[datetime] = Field(default=None)
+    payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class UsageEvent(SQLModel, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    org_id: UUID = Field(foreign_key="organization.id", index=True)
+    user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    job_id: Optional[UUID] = Field(default=None, foreign_key="job.id", index=True)
+    metric: str = Field(index=True)
+    quantity: float = Field(default=0.0)
+    details: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class UsageAggregate(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("org_id", "metric", "period_start", "period_end", name="uq_usage_aggregate_bucket"),)
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    org_id: UUID = Field(foreign_key="organization.id", index=True)
+    metric: str = Field(index=True)
+    period_start: datetime = Field(default_factory=utcnow, index=True)
+    period_end: datetime = Field(default_factory=utcnow, index=True)
+    quantity: float = Field(default=0.0)
+    updated_at: datetime = Field(default_factory=utcnow)
 
 
 class MediaAsset(SQLModel, table=True):
@@ -20,6 +128,8 @@ class MediaAsset(SQLModel, table=True):
     mime_type: Optional[str] = Field(default=None)
     duration: Optional[float] = Field(default=None, description="Duration in seconds if known")
     project_id: Optional[UUID] = Field(default=None, foreign_key="project.id", index=True)
+    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
+    owner_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -44,6 +154,9 @@ class Job(SQLModel, table=True):
     input_asset_id: Optional[UUID] = Field(default=None, foreign_key="mediaasset.id")
     output_asset_id: Optional[UUID] = Field(default=None, foreign_key="mediaasset.id")
     project_id: Optional[UUID] = Field(default=None, foreign_key="project.id", index=True)
+    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
+    owner_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    idempotency_key: Optional[str] = Field(default=None, index=True)
 
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -62,5 +175,7 @@ class Project(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     name: str
     description: Optional[str] = Field(default=None)
+    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
+    owner_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

@@ -22,3 +22,15 @@ def test_select_top_respects_min_duration_and_gap():
     # first candidate filtered out; gap prevents the third from colliding if close
     assert len(out) == 2
     assert out[0].start == 1.0 and out[1].start == 2.4
+
+
+def test_select_top_is_deterministic_for_equal_score_overlaps():
+    cands = [
+        SegmentCandidate(start=0.0, end=6.0, score=1.0),
+        SegmentCandidate(start=1.0, end=7.0, score=1.0),
+        SegmentCandidate(start=7.2, end=10.0, score=0.2),
+    ]
+    out_a = select_top(cands, max_segments=2, min_duration=1.0, max_duration=10.0)
+    out_b = select_top(cands, max_segments=2, min_duration=1.0, max_duration=10.0)
+    assert [(item.start, item.end) for item in out_a] == [(item.start, item.end) for item in out_b]
+    assert out_a[0].start == 0.0

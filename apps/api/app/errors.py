@@ -7,10 +7,12 @@ from pydantic import BaseModel
 
 
 class ErrorCode:
+    UNAUTHORIZED = "UNAUTHORIZED"
     NOT_FOUND = "NOT_FOUND"
     CONFLICT = "CONFLICT"
     VALIDATION_ERROR = "VALIDATION_ERROR"
     PERMISSION_DENIED = "PERMISSION_DENIED"
+    QUOTA_EXCEEDED = "QUOTA_EXCEEDED"
     SERVER_ERROR = "SERVER_ERROR"
     RATE_LIMITED = "RATE_LIMITED"
 
@@ -36,6 +38,14 @@ def not_found(message: str = "Resource not found", details: Optional[Any] = None
 
 def conflict(message: str = "Conflict", details: Optional[Any] = None) -> ApiError:
     return ApiError(status_code=status.HTTP_409_CONFLICT, code=ErrorCode.CONFLICT, message=message, details=details)
+
+
+def unauthorized(message: str = "Unauthorized", details: Optional[Any] = None) -> ApiError:
+    return ApiError(status_code=status.HTTP_401_UNAUTHORIZED, code=ErrorCode.UNAUTHORIZED, message=message, details=details)
+
+
+def quota_exceeded(message: str = "Quota exceeded", details: Optional[Any] = None) -> ApiError:
+    return ApiError(status_code=status.HTTP_429_TOO_MANY_REQUESTS, code=ErrorCode.QUOTA_EXCEEDED, message=message, details=details)
 
 
 def server_error(message: str = "Server error", details: Optional[Any] = None) -> ApiError:

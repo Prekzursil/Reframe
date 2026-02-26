@@ -28,16 +28,46 @@ class GroupingConfig:
     max_words_per_line: int = 12
     max_duration: float = 6.0
     max_gap: float = 0.6
+    max_chars_per_second: float = 35.0
+    sentence_break_on_punctuation: bool = True
+    sentence_break_min_gap: float = 0.05
+    repair_overlaps: bool = True
+    min_word_duration: float = 0.01
+
+
+_SENTENCE_BREAK_RE = re.compile(r"[.!?…]+[\"')\]]*$")
+
+
+def _normalize_words(words: Sequence[Word], config: GroupingConfig) -> list[Word]:
+    ordered = sorted(words, key=lambda item: (item.start, item.end))
+    if not config.repair_overlaps:
+        return ordered
+
+    repaired: list[Word] = []
+    prev_end = 0.0
+    for word in ordered:
+        start = max(float(word.start), prev_end)
+        end = max(float(word.end), start + max(0.001, float(config.min_word_duration)))
+        if start != word.start or end != word.end:
+            word = word.model_copy(update={"start": start, "end": end})
+        repaired.append(word)
+        prev_end = end
+    return repaired
+
+
+def _ends_sentence(text: str) -> bool:
+    return bool(_SENTENCE_BREAK_RE.search((text or "").strip()))
 
 
 def group_words(words: Sequence[Word], config: GroupingConfig) -> List[SubtitleLine]:
     lines: List[SubtitleLine] = []
-    if not words:
+    normalized_words = _normalize_words(words, config)
+    if not normalized_words:
         return lines
 
     current_words: List[Word] = []
-    current_start = words[0].start
-    last_end = words[0].end
+    current_start = normalized_words[0].start
+    last_end = normalized_words[0].end
 
     def flush():
         nonlocal current_words, current_start, last_end
@@ -45,20 +75,36 @@ def group_words(words: Sequence[Word], config: GroupingConfig) -> List[SubtitleL
             lines.append(SubtitleLine(start=current_start, end=last_end, words=current_words.copy()))
         current_words = []
 
-    for w in words:
+    for w in normalized_words:
         if not current_words:
             current_start = w.start
             last_end = w.end
             current_words.append(w)
             continue
 
+        sentence_break = (
+            config.sentence_break_on_punctuation
+            and _ends_sentence(current_words[-1].text)
+            and (w.start - last_end) >= max(0.0, float(config.sentence_break_min_gap))
+        )
+        if sentence_break:
+            flush()
+            current_start = w.start
+            last_end = w.end
+            current_words.append(w)
+            continue
+
         candidate_text = " ".join([*(cw.text for cw in current_words), w.text])
+        candidate_end = max(last_end, w.end)
+        candidate_duration = max(0.001, candidate_end - current_start)
+        candidate_cps = len(candidate_text) / candidate_duration
         too_many_chars = len(candidate_text) > config.max_chars_per_line
         too_many_words = len(current_words) + 1 > config.max_words_per_line
         too_long = (w.end - current_start) > config.max_duration
         too_far = (w.start - last_end) > config.max_gap
+        too_dense = candidate_cps > max(1.0, float(config.max_chars_per_second))
 
-        if too_many_chars or too_many_words or too_long or too_far:
+        if too_many_chars or too_many_words or too_long or too_far or too_dense:
             flush()
             current_start = w.start
             last_end = w.end

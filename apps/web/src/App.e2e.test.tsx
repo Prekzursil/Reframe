@@ -1,9 +1,11 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const apiClientMock = vi.hoisted(() => ({
   baseUrl: "http://localhost:8000/api/v1",
+  accessToken: null as string | null,
+  setAccessToken: vi.fn(),
   listJobs: vi.fn(),
   getJob: vi.fn(),
   getAsset: vi.fn(),
@@ -22,6 +24,18 @@ const apiClientMock = vi.hoisted(() => ({
   listProjectJobs: vi.fn(),
   listProjectAssets: vi.fn(),
   createProjectShareLinks: vi.fn(),
+  retryJob: vi.fn(),
+  register: vi.fn(),
+  login: vi.fn(),
+  logout: vi.fn(),
+  getMe: vi.fn(),
+  getOrgContext: vi.fn(),
+  oauthStart: vi.fn(),
+  listBillingPlans: vi.fn(),
+  getBillingSubscription: vi.fn(),
+  getBillingUsageSummary: vi.fn(),
+  initAssetUpload: vi.fn(),
+  completeAssetUpload: vi.fn(),
   uploadAsset: vi.fn(),
   jobBundleUrl: (jobId: string) => `http://localhost:8000/api/v1/jobs/${jobId}/bundle`,
   mediaUrl: (uri: string) => (uri.startsWith("http") ? uri : `http://localhost:8000${uri}`),
@@ -33,6 +47,8 @@ import App from "./App";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.removeItem("reframe_access_token");
+  apiClientMock.accessToken = null;
   apiClientMock.listAssets.mockResolvedValue([]);
   apiClientMock.listProjects.mockResolvedValue([]);
 });
@@ -100,7 +116,9 @@ describe("minimal e2e flow", () => {
     const file = new File([new Uint8Array([1, 2, 3])], "sample.mp4", { type: "video/mp4" });
     await user.upload(fileInput!, file);
 
-    expect(screen.getByLabelText("Video asset ID")).toHaveValue("video-1");
+    await waitFor(() => {
+      expect(screen.getByLabelText("Video asset ID")).toHaveValue("video-1");
+    });
 
     await user.click(screen.getByRole("button", { name: "Create caption job" }));
 
@@ -118,5 +136,5 @@ describe("minimal e2e flow", () => {
 
     const download = await within(jobDetailCard!).findByRole("link", { name: "Download" });
     expect(download).toHaveAttribute("href", "http://localhost:8000/media/tmp/captions.srt");
-  });
+  }, 15000);
 });

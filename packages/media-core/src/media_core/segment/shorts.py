@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 import json
+import re
 
 
 @dataclass
@@ -18,6 +19,53 @@ class SegmentCandidate:
     @property
     def duration(self) -> float:
         return max(0.0, self.end - self.start)
+
+
+@dataclass(frozen=True)
+class HeuristicWeights:
+    base_score: float = 0.2
+    keyword_density: float = 1.0
+    sentence_boundary_bonus: float = 0.35
+    speech_density_norm: float = 0.6
+    duration_bonus: float = 0.3
+    novelty_penalty: float = 0.35
+
+
+_TOKEN_RE = re.compile(r"[a-z0-9']+")
+_SENTENCE_RE = re.compile(r"[.!?](?:\s|$)")
+
+
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
+
+
+def _to_weights(raw: Optional[HeuristicWeights | dict]) -> HeuristicWeights:
+    if isinstance(raw, HeuristicWeights):
+        return raw
+    if not isinstance(raw, dict):
+        return HeuristicWeights()
+    defaults = HeuristicWeights()
+    values = defaults.__dict__.copy()
+    for key, value in raw.items():
+        if key in values:
+            try:
+                values[key] = float(value)
+            except (TypeError, ValueError):
+                continue
+    return HeuristicWeights(**values)
+
+
+def _tokenize(text: str) -> list[str]:
+    return _TOKEN_RE.findall((text or "").lower())
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    union = a | b
+    if not union:
+        return 0.0
+    return len(a & b) / len(union)
 
 
 def equal_splits(duration: float, clip_length: float) -> List[SegmentCandidate]:
@@ -68,6 +116,10 @@ def select_top(
     # maximize total score under non-overlap (+ optional min_gap).
     intervals = sorted(filtered, key=lambda c: (c.end, c.start))
     ends = [c.end for c in intervals]
+    stable_scores = [
+        float(item.score) - (float(item.start) * 1e-6) - (idx * 1e-9)
+        for idx, item in enumerate(intervals)
+    ]
 
     # p[i] = predecessor index (1-based) of interval i (1..n), 0 means none.
     p: list[int] = []
@@ -81,7 +133,7 @@ def select_top(
     dp: list[list[float]] = [[0.0] * (k_max + 1) for _ in range(n + 1)]
 
     for i in range(1, n + 1):
-        score_i = float(intervals[i - 1].score)
+        score_i = stable_scores[i - 1]
         pred = p[i - 1]
         for k in range(1, k_max + 1):
             skip = dp[i - 1][k]
@@ -92,7 +144,7 @@ def select_top(
     i = n
     k = k_max
     while i > 0 and k > 0:
-        score_i = float(intervals[i - 1].score)
+        score_i = stable_scores[i - 1]
         pred = p[i - 1]
         if score_i + dp[pred][k - 1] > dp[i - 1][k]:
             selected.append(intervals[i - 1])
@@ -108,17 +160,44 @@ def select_top(
 def score_segments_heuristic(
     candidates: List[SegmentCandidate],
     keywords: Optional[List[str]] = None,
+    weights: Optional[HeuristicWeights | dict] = None,
 ) -> List[SegmentCandidate]:
+    cfg = _to_weights(weights)
     keywords = [k.lower() for k in (keywords or []) if k]
+    seen_tokens: list[set[str]] = []
     for cand in candidates:
-        base = 0.0
-        if cand.snippet and keywords:
-            text = cand.snippet.lower()
-            base += sum(text.count(k) for k in keywords)
-        # Favor 15-60s durations lightly.
-        if 15 <= cand.duration <= 60:
-            base += 1.0
-        cand.score = base
+        text = (cand.snippet or "").strip().lower()
+        tokens = _tokenize(text)
+        token_set = set(tokens)
+
+        keyword_hits = 0
+        if text and keywords:
+            keyword_hits = sum(text.count(k) for k in keywords)
+        keyword_density = keyword_hits / max(1, len(tokens))
+
+        sentence_bonus = 1.0 if _SENTENCE_RE.search(text) else 0.0
+        wps = len(tokens) / max(cand.duration, 0.5)
+        target_wps = 2.4
+        speech_density = _clamp(1.0 - abs(wps - target_wps) / target_wps, 0.0, 1.0)
+
+        duration_bonus = 1.0 if 15.0 <= cand.duration <= 60.0 else _clamp(1.0 - abs(cand.duration - 30.0) / 30.0, 0.0, 1.0)
+        novelty_overlap = max((_jaccard(token_set, prev) for prev in seen_tokens), default=0.0)
+
+        base_score = float(cand.score)
+        total = (
+            (cfg.base_score * base_score)
+            + (cfg.keyword_density * keyword_density)
+            + (cfg.sentence_boundary_bonus * sentence_bonus)
+            + (cfg.speech_density_norm * speech_density)
+            + (cfg.duration_bonus * duration_bonus)
+            - (cfg.novelty_penalty * novelty_overlap)
+        )
+        cand.score = float(total)
+        cand.reason = (
+            f"kw={keyword_density:.3f},sentence={sentence_bonus:.1f},speech={speech_density:.3f},"
+            f"duration={duration_bonus:.3f},novelty={novelty_overlap:.3f}"
+        )
+        seen_tokens.append(token_set)
     return candidates
 
 

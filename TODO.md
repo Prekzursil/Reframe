@@ -439,8 +439,8 @@ Goal: offer Reframe as a paid hosted service (multi-tenant web app) while keepin
 - [x] Capture a first-pass hosted SaaS roadmap in `ARCHITECTURE.md` + `TODO.md`.
 
 ### Foundations (multi-tenancy + security)
-- [ ] Add auth for the hosted API (start with a simple JWT/session approach; later consider OAuth/SSO).
-- [ ] Add `User` / `Organization` models and enforce job/asset ownership in all API endpoints.
+- [x] Add auth for the hosted API (JWT access/refresh + optional OAuth start/callback scaffolding).
+- [x] Add `User` / `Organization` models and enforce job/asset ownership in all API endpoints.
 - [ ] Add per-tenant storage prefixes (S3/R2) so all assets live under `{org_id}/...` (supports isolation + lifecycle rules).
 - [ ] Add API-side rate limits and abuse protections for expensive endpoints (uploads, rendering, transcription).
 
@@ -451,20 +451,25 @@ Goal: offer Reframe as a paid hosted service (multi-tenant web app) while keepin
 
 ### Billing + usage metering
 - [ ] Define the cost model: what you bill for (minutes processed, GPU-seconds, storage, egress) and what limits exist per plan.
-- [ ] Add usage metering tables (per job) and a “usage” page in the UI.
+- [x] Add usage metering tables (per job) and a “usage” page in the UI.
 - [x] Add usage summary groundwork (`GET /api/v1/usage/summary` + frontend Usage dashboard cards/breakdown).
 - [ ] Integrate Stripe for subscriptions + seat/org billing + plan enforcement.
-- [ ] Add per-plan concurrency limits (e.g., max running jobs) and queueing behavior.
+- [x] Add per-plan concurrency limits (e.g., max running jobs) and queueing behavior.
 
 ### Worker scaling + reliability
 - [ ] Split workers into CPU and GPU pools (routing by job type/backends) and add autoscaling deployment configs.
-- [ ] Add job idempotency + dedupe for retry safety (especially for uploads + long-running jobs).
+- [x] Add job idempotency + dedupe for retry safety (especially for uploads + long-running jobs).
 - [ ] Add retention policies for intermediate assets and plan-based retention windows.
 
 ### Opus Clip‑style UX
 - [x] Add a “project” abstraction (source video → derived clips, transcripts, styles, exports).
 - [x] Add shareable preview links for clips (signed, time-limited URLs).
 - [ ] Add team collaboration features (org members, roles, shared projects) (later).
+
+### Next hardening follow-ups
+- [ ] Add true object-storage pre-signed upload URLs (S3/R2) behind hosted mode and move local `/assets/upload-init` to that provider.
+- [ ] Add resumable multipart upload orchestration with commit/abort endpoints and retry-safe parts tracking.
+- [ ] Expand org collaboration from read-only membership context to invites, role mutation, and seat enforcement workflows.
 
 ---
 
@@ -482,4 +487,6 @@ Goal: offer Reframe as a paid hosted service (multi-tenant web app) while keepin
 - [x] Merge/clear active Dependabot security PR queue on maintained paths.
 - [x] Fix remaining active-path CodeQL findings (scripts URL/path guards + frontend URL sink hardening).
 - [x] Validate that GitHub security alert counts converge to zero on `main` after post-merge re-analysis completes.
+- [x] Stabilize flaky web CI test (`App.e2e`) using async wait-based assertion after upload state settles.
+- [x] Enforce protected `main` with required PR checks (CI + CodeQL + CodeRabbit) and no direct pushes.
 

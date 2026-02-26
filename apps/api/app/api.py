@@ -4,7 +4,7 @@ import io
 import json
 import os
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, List, Optional
@@ -19,16 +19,19 @@ except ModuleNotFoundError:  # pragma: no cover - allows API tests without optio
 
         def send_task(self, *_args, **_kwargs):
             raise RuntimeError("Celery is not installed in this environment.")
-from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status, Response
+from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile, status, Response
 from uuid import UUID
 
 from sqlmodel import Field, Session, SQLModel, select
 
+from app.auth_api import PrincipalDep, ensure_default_plans
+from app.billing import get_plan_policy
 from app.database import get_session
 from app.config import get_settings
-from app.errors import ApiError, ErrorCode, ErrorResponse, conflict, not_found, server_error
-from app.models import Job, JobStatus, MediaAsset, Project, SubtitleStylePreset
+from app.errors import ApiError, ErrorCode, ErrorResponse, conflict, not_found, quota_exceeded, server_error
+from app.models import Job, JobStatus, MediaAsset, Project, Subscription, SubtitleStylePreset, UsageEvent
 from app.rate_limit import enforce_rate_limit
+from app.security import AuthPrincipal
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
 from app.share_links import build_share_token_with_ttl, parse_and_validate_share_token
@@ -80,13 +83,130 @@ def save_and_dispatch(job: Job, session: Session, task_name: str, *args) -> Job:
     return job
 
 
-def _ensure_project_exists(session: Session, project_id: UUID | None) -> Project | None:
+def _scope_query_by_org(query, model, principal: AuthPrincipal):
+    if principal.org_id and hasattr(model, "org_id"):
+        query = query.where(getattr(model, "org_id") == principal.org_id)
+    return query
+
+
+def _assert_org_access(*, principal: AuthPrincipal, entity_org_id: UUID | None, entity: str, entity_id: str) -> None:
+    if not principal.org_id:
+        return
+    if entity_org_id != principal.org_id:
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code=ErrorCode.PERMISSION_DENIED,
+            message=f"Access denied for {entity}",
+            details={"entity_id": entity_id, "org_id": str(principal.org_id)},
+        )
+
+
+def _resolve_idempotency_key(payload_value: str | None, header_value: str | None) -> str | None:
+    key = (payload_value or header_value or "").strip()
+    if not key:
+        return None
+    if len(key) > 128:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Idempotency key must be at most 128 characters",
+            details={"max_length": 128},
+        )
+    return key
+
+
+def _find_existing_idempotent_job(
+    *,
+    session: Session,
+    principal: AuthPrincipal,
+    job_type: str,
+    idempotency_key: str | None,
+) -> Job | None:
+    if not idempotency_key:
+        return None
+    query = select(Job).where((Job.job_type == job_type) & (Job.idempotency_key == idempotency_key))
+    if principal.org_id:
+        query = query.where(Job.org_id == principal.org_id)
+    if principal.user_id:
+        query = query.where(Job.owner_user_id == principal.user_id)
+    query = query.order_by(Job.created_at.desc())
+    return session.exec(query).first()
+
+
+def _resolve_plan_code(session: Session, *, org_id: UUID | None) -> str:
+    if not org_id:
+        return "free"
+    ensure_default_plans(session)
+    sub = session.exec(select(Subscription).where(Subscription.org_id == org_id)).first()
+    return (sub.plan_code if sub else "free") or "free"
+
+
+def _enforce_org_quota(session: Session, principal: AuthPrincipal) -> None:
+    settings = get_settings()
+    org_id = principal.org_id
+    if not org_id or not settings.enable_billing:
+        return
+
+    plan_code = _resolve_plan_code(session, org_id=org_id)
+    policy = get_plan_policy(plan_code)
+
+    running = session.exec(
+        select(Job).where((Job.org_id == org_id) & (Job.status == JobStatus.running))
+    ).all()
+    if len(running) >= policy.max_concurrent_jobs:
+        raise quota_exceeded(
+            "Concurrent job limit reached",
+            details={
+                "plan_code": plan_code,
+                "max_concurrent_jobs": policy.max_concurrent_jobs,
+                "running_jobs": len(running),
+            },
+        )
+
+    month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    usage = session.exec(
+        select(UsageEvent).where(
+            (UsageEvent.org_id == org_id)
+            & (UsageEvent.metric == "job_minutes")
+            & (UsageEvent.created_at >= month_start)
+        )
+    ).all()
+    used_minutes = sum(float(item.quantity or 0.0) for item in usage)
+    if policy.monthly_job_minutes > 0 and used_minutes >= float(policy.monthly_job_minutes):
+        raise quota_exceeded(
+            "Monthly processing quota reached",
+            details={
+                "plan_code": plan_code,
+                "quota_job_minutes": policy.monthly_job_minutes,
+                "used_job_minutes": round(used_minutes, 3),
+            },
+        )
+
+
+def _ensure_project_exists(session: Session, project_id: UUID | None, principal: AuthPrincipal | None = None) -> Project | None:
     if not project_id:
         return None
     project = session.get(Project, project_id)
     if not project:
         raise not_found("Project not found", details={"project_id": str(project_id)})
+    if principal:
+        _assert_org_access(principal=principal, entity_org_id=project.org_id, entity="project", entity_id=str(project.id))
     return project
+
+
+def _ensure_asset_exists(session: Session, *, asset_id: UUID, principal: AuthPrincipal, kind: str | None = None, field: str = "asset_id") -> MediaAsset:
+    asset = session.get(MediaAsset, asset_id)
+    if not asset:
+        raise not_found("Asset not found", details={field: str(asset_id)})
+    if kind and asset.kind != kind:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message=f"Invalid asset kind for {field}",
+            details={"expected_kind": kind, "actual_kind": asset.kind, field: str(asset_id)},
+        )
+    _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
+    return asset
 
 
 def _resolve_local_asset_path(asset: MediaAsset, *, media_root: Path) -> Path | None:
@@ -168,12 +288,13 @@ class CaptionJobRequest(SQLModel):
     video_asset_id: UUID
     options: Optional[dict] = None
     project_id: Optional[UUID] = None
+    idempotency_key: Optional[str] = None
 
     model_config = {
         "json_schema_extra": {
             "example": {
                 "video_asset_id": "00000000-0000-0000-0000-000000000001",
-                "options": {"language": "en", "backend": "whisper"},
+                "options": {"language": "en", "backend": "whisper", "subtitle_quality_profile": "balanced"},
             }
         }
     }
@@ -184,6 +305,7 @@ class TranslateJobRequest(SQLModel):
     target_language: str
     options: Optional[dict] = None
     project_id: Optional[UUID] = None
+    idempotency_key: Optional[str] = None
 
     model_config = {
         "json_schema_extra": {
@@ -202,6 +324,7 @@ class TranslateSubtitleToolRequest(SQLModel):
     bilingual: bool = False
     options: Optional[dict] = None
     project_id: Optional[UUID] = None
+    idempotency_key: Optional[str] = None
 
     model_config = {
         "json_schema_extra": {
@@ -223,6 +346,7 @@ class ShortsJobRequest(SQLModel):
     aspect_ratio: str = "9:16"
     options: Optional[dict] = None
     project_id: Optional[UUID] = None
+    idempotency_key: Optional[str] = None
 
     model_config = {
         "json_schema_extra": {
@@ -249,6 +373,7 @@ class MergeAVRequest(SQLModel):
     normalize: bool = True
     options: Optional[dict] = None
     project_id: Optional[UUID] = None
+    idempotency_key: Optional[str] = None
 
     model_config = {
         "json_schema_extra": {
@@ -270,6 +395,7 @@ class CutClipRequest(SQLModel):
     end: float
     options: Optional[dict] = None
     project_id: Optional[UUID] = None
+    idempotency_key: Optional[str] = None
 
     model_config = {
         "json_schema_extra": {
@@ -289,6 +415,7 @@ class StyledSubtitleJobRequest(SQLModel):
     style: dict
     preview_seconds: Optional[int] = None
     project_id: Optional[UUID] = None
+    idempotency_key: Optional[str] = None
 
     model_config = {
         "json_schema_extra": {
@@ -313,6 +440,11 @@ class UsageSummary(SQLModel):
     output_assets_count: int = 0
     output_duration_seconds: float = 0.0
     generated_bytes: int = 0
+    plan_code: Optional[str] = None
+    quota_job_minutes: Optional[int] = None
+    used_job_minutes: Optional[float] = None
+    overage_job_minutes: Optional[float] = None
+    max_concurrent_jobs: Optional[int] = None
     from_date: Optional[datetime] = None
     to_date: Optional[datetime] = None
 
@@ -337,6 +469,94 @@ class ProjectShareLinksResponse(SQLModel):
     links: list[ProjectShareLink]
 
 
+class UploadInitRequest(SQLModel):
+    kind: str = "video"
+    filename: str
+    mime_type: Optional[str] = None
+    size_bytes: Optional[int] = None
+    project_id: Optional[UUID] = None
+
+
+class UploadInitResponse(SQLModel):
+    upload_id: str
+    upload_url: str
+    method: str = "POST"
+    form_fields: dict[str, str] = Field(default_factory=dict)
+    expires_at: datetime
+    strategy: str = "single_part"
+
+
+class UploadCompleteRequest(SQLModel):
+    upload_id: str
+    asset_id: UUID
+
+
+class UploadCompleteResponse(SQLModel):
+    upload_id: str
+    asset_id: UUID
+    status: str = "completed"
+
+
+_pending_uploads: dict[str, dict[str, Any]] = {}
+
+
+def _owner_fields(principal: AuthPrincipal) -> dict[str, UUID | None]:
+    return {"org_id": principal.org_id, "owner_user_id": principal.user_id}
+
+
+def _dispatch_existing_job(job: Job, session: Session) -> Job:
+    payload = job.payload or {}
+    if job.job_type == "captions":
+        return save_and_dispatch(job, session, "tasks.generate_captions", str(job.id), str(job.input_asset_id), payload)
+    if job.job_type == "translate_subtitles":
+        return save_and_dispatch(job, session, "tasks.translate_subtitles", str(job.id), str(job.input_asset_id), payload)
+    if job.job_type == "shorts":
+        return save_and_dispatch(job, session, "tasks.generate_shorts", str(job.id), str(job.input_asset_id), payload)
+    if job.job_type == "style_subtitles":
+        subtitle_asset_id = str(payload.get("subtitle_asset_id") or "")
+        style = payload.get("style") if isinstance(payload.get("style"), dict) else {}
+        return save_and_dispatch(
+            job,
+            session,
+            "tasks.render_styled_subtitles",
+            str(job.id),
+            str(job.input_asset_id),
+            subtitle_asset_id,
+            style,
+            {"preview_seconds": payload.get("preview_seconds")},
+        )
+    if job.job_type == "merge_av":
+        audio_asset_id = str(payload.get("audio_asset_id") or "")
+        return save_and_dispatch(
+            job,
+            session,
+            "tasks.merge_video_audio",
+            str(job.id),
+            str(job.input_asset_id),
+            audio_asset_id,
+            payload,
+        )
+    if job.job_type == "cut_clip":
+        start = max(0.0, float(payload.get("start") or 0.0))
+        end = max(start, float(payload.get("end") or start))
+        return save_and_dispatch(
+            job,
+            session,
+            "tasks.cut_clip",
+            str(job.id),
+            str(job.input_asset_id),
+            start,
+            end,
+            payload,
+        )
+    raise ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        code=ErrorCode.VALIDATION_ERROR,
+        message="Job type does not support retry",
+        details={"job_type": job.job_type},
+    )
+
+
 @router.post(
     "/captions/jobs",
     response_model=Job,
@@ -345,15 +565,31 @@ class ProjectShareLinksResponse(SQLModel):
     responses={404: {"model": ErrorResponse}},
     dependencies=[Depends(enforce_rate_limit)],
 )
-def create_caption_job(payload: CaptionJobRequest, session: SessionDep) -> Job:
-    _ensure_project_exists(session, payload.project_id)
+def create_caption_job(
+    payload: CaptionJobRequest,
+    session: SessionDep,
+    principal: PrincipalDep,
+    response: Response,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> Job:
+    _ensure_asset_exists(session, asset_id=payload.video_asset_id, principal=principal, kind="video", field="video_asset_id")
+    project = _ensure_project_exists(session, payload.project_id, principal)
+    _enforce_org_quota(session, principal)
+    idem = _resolve_idempotency_key(payload.idempotency_key, idempotency_key)
+    existing = _find_existing_idempotent_job(session=session, principal=principal, job_type="captions", idempotency_key=idem)
+    if existing:
+        response.status_code = status.HTTP_200_OK
+        return existing
+
     job = Job(
         job_type="captions",
         status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.video_asset_id,
         payload=payload.options or {},
-        project_id=payload.project_id,
+        project_id=project.id if project else payload.project_id,
+        idempotency_key=idem,
+        **_owner_fields(principal),
     )
     return save_and_dispatch(job, session, "tasks.generate_captions", str(job.id), str(payload.video_asset_id), payload.options or {})
 
@@ -366,15 +602,36 @@ def create_caption_job(payload: CaptionJobRequest, session: SessionDep) -> Job:
     responses={404: {"model": ErrorResponse}},
     dependencies=[Depends(enforce_rate_limit)],
 )
-def create_translate_job(payload: TranslateJobRequest, session: SessionDep) -> Job:
-    _ensure_project_exists(session, payload.project_id)
+def create_translate_job(
+    payload: TranslateJobRequest,
+    session: SessionDep,
+    principal: PrincipalDep,
+    response: Response,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> Job:
+    _ensure_asset_exists(session, asset_id=payload.subtitle_asset_id, principal=principal, kind="subtitle", field="subtitle_asset_id")
+    project = _ensure_project_exists(session, payload.project_id, principal)
+    _enforce_org_quota(session, principal)
+    idem = _resolve_idempotency_key(payload.idempotency_key, idempotency_key)
+    existing = _find_existing_idempotent_job(
+        session=session,
+        principal=principal,
+        job_type="translate_subtitles",
+        idempotency_key=idem,
+    )
+    if existing:
+        response.status_code = status.HTTP_200_OK
+        return existing
+
     job = Job(
         job_type="translate_subtitles",
         status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.subtitle_asset_id,
         payload={"target_language": payload.target_language, **(payload.options or {})},
-        project_id=payload.project_id,
+        project_id=project.id if project else payload.project_id,
+        idempotency_key=idem,
+        **_owner_fields(principal),
     )
     return save_and_dispatch(
         job,
@@ -392,19 +649,27 @@ def create_translate_job(payload: TranslateJobRequest, session: SessionDep) -> J
     tags=["Jobs"],
     responses={404: {"model": ErrorResponse}},
 )
-def get_job(job_id: UUID, session: SessionDep) -> Job:
+def get_job(job_id: UUID, session: SessionDep, principal: PrincipalDep) -> Job:
     job = session.get(Job, job_id)
     if not job:
         raise not_found("Job not found", details={"job_id": str(job_id)})
+    _assert_org_access(principal=principal, entity_org_id=job.org_id, entity="job", entity_id=str(job.id))
     return job
 
 
 @router.get("/jobs", response_model=List[Job], tags=["Jobs"])
-def list_jobs(session: SessionDep, status_filter: Optional[JobStatus] = None, project_id: Optional[UUID] = None) -> List[Job]:
+def list_jobs(
+    session: SessionDep,
+    principal: PrincipalDep,
+    status_filter: Optional[JobStatus] = None,
+    project_id: Optional[UUID] = None,
+) -> List[Job]:
     query = select(Job)
+    query = _scope_query_by_org(query, Job, principal)
     if status_filter:
         query = query.where(Job.status == status_filter)
     if project_id:
+        _ensure_project_exists(session, project_id, principal)
         query = query.where(Job.project_id == project_id)
     results = session.exec(query).all()
     return results
@@ -413,6 +678,7 @@ def list_jobs(session: SessionDep, status_filter: Optional[JobStatus] = None, pr
 @router.get("/usage/summary", response_model=UsageSummary, tags=["Usage"])
 def get_usage_summary(
     session: SessionDep,
+    principal: PrincipalDep,
     from_date: Optional[datetime] = Query(default=None, alias="from"),
     to_date: Optional[datetime] = Query(default=None, alias="to"),
     project_id: Optional[UUID] = None,
@@ -421,7 +687,9 @@ def get_usage_summary(
     to_dt = _coerce_aware_datetime(to_date)
 
     query = select(Job)
+    query = _scope_query_by_org(query, Job, principal)
     if project_id:
+        _ensure_project_exists(session, project_id, principal)
         query = query.where(Job.project_id == project_id)
     if from_dt:
         query = query.where(Job.created_at >= from_dt)
@@ -461,6 +729,27 @@ def get_usage_summary(
                 except OSError:
                     continue
 
+    plan_code: str | None = None
+    quota_minutes: int | None = None
+    used_minutes: float | None = None
+    overage_minutes: float | None = None
+    max_concurrent_jobs: int | None = None
+    if principal.org_id:
+        plan_code = _resolve_plan_code(session, org_id=principal.org_id)
+        policy = get_plan_policy(plan_code)
+        quota_minutes = policy.monthly_job_minutes
+        max_concurrent_jobs = policy.max_concurrent_jobs
+        month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        usage_events = session.exec(
+            select(UsageEvent).where(
+                (UsageEvent.org_id == principal.org_id)
+                & (UsageEvent.metric == "job_minutes")
+                & (UsageEvent.created_at >= month_start)
+            )
+        ).all()
+        used_minutes = sum(float(item.quantity or 0.0) for item in usage_events)
+        overage_minutes = max(0.0, float(used_minutes) - float(policy.monthly_job_minutes))
+
     return UsageSummary(
         total_jobs=len(jobs),
         queued_jobs=counts_by_status.get(JobStatus.queued, 0),
@@ -472,6 +761,11 @@ def get_usage_summary(
         output_assets_count=len(output_asset_ids),
         output_duration_seconds=round(output_duration_seconds, 3),
         generated_bytes=generated_bytes,
+        plan_code=plan_code,
+        quota_job_minutes=quota_minutes,
+        used_job_minutes=round(float(used_minutes), 3) if used_minutes is not None else None,
+        overage_job_minutes=round(float(overage_minutes), 3) if overage_minutes is not None else None,
+        max_concurrent_jobs=max_concurrent_jobs,
         from_date=from_dt,
         to_date=to_dt,
     )
@@ -484,7 +778,7 @@ def get_usage_summary(
     tags=["Projects"],
     responses={422: {"model": ErrorResponse}},
 )
-def create_project(payload: ProjectCreateRequest, session: SessionDep) -> Project:
+def create_project(payload: ProjectCreateRequest, session: SessionDep, principal: PrincipalDep) -> Project:
     name = (payload.name or "").strip()
     if not name:
         raise ApiError(
@@ -493,7 +787,11 @@ def create_project(payload: ProjectCreateRequest, session: SessionDep) -> Projec
             message="Project name is required",
             details={"field": "name"},
         )
-    project = Project(name=name, description=(payload.description or "").strip() or None)
+    project = Project(
+        name=name,
+        description=(payload.description or "").strip() or None,
+        **_owner_fields(principal),
+    )
     session.add(project)
     session.commit()
     session.refresh(project)
@@ -501,8 +799,9 @@ def create_project(payload: ProjectCreateRequest, session: SessionDep) -> Projec
 
 
 @router.get("/projects", response_model=list[Project], tags=["Projects"])
-def list_projects(session: SessionDep) -> list[Project]:
+def list_projects(session: SessionDep, principal: PrincipalDep) -> list[Project]:
     query = select(Project).order_by(Project.created_at.desc())
+    query = _scope_query_by_org(query, Project, principal)
     return session.exec(query).all()
 
 
@@ -512,10 +811,11 @@ def list_projects(session: SessionDep) -> list[Project]:
     tags=["Projects"],
     responses={404: {"model": ErrorResponse}},
 )
-def get_project(project_id: UUID, session: SessionDep) -> Project:
+def get_project(project_id: UUID, session: SessionDep, principal: PrincipalDep) -> Project:
     project = session.get(Project, project_id)
     if not project:
         raise not_found("Project not found", details={"project_id": str(project_id)})
+    _assert_org_access(principal=principal, entity_org_id=project.org_id, entity="project", entity_id=str(project.id))
     return project
 
 
@@ -525,9 +825,15 @@ def get_project(project_id: UUID, session: SessionDep) -> Project:
     tags=["Projects"],
     responses={404: {"model": ErrorResponse}},
 )
-def list_project_jobs(project_id: UUID, session: SessionDep, status_filter: Optional[JobStatus] = None) -> list[Job]:
-    _ensure_project_exists(session, project_id)
+def list_project_jobs(
+    project_id: UUID,
+    session: SessionDep,
+    principal: PrincipalDep,
+    status_filter: Optional[JobStatus] = None,
+) -> list[Job]:
+    _ensure_project_exists(session, project_id, principal)
     query = select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc())
+    query = _scope_query_by_org(query, Job, principal)
     if status_filter:
         query = query.where(Job.status == status_filter)
     return session.exec(query).all()
@@ -539,10 +845,17 @@ def list_project_jobs(project_id: UUID, session: SessionDep, status_filter: Opti
     tags=["Projects"],
     responses={404: {"model": ErrorResponse}},
 )
-def list_project_assets(project_id: UUID, session: SessionDep, kind: Optional[str] = None, limit: int = 50) -> list[MediaAsset]:
-    _ensure_project_exists(session, project_id)
+def list_project_assets(
+    project_id: UUID,
+    session: SessionDep,
+    principal: PrincipalDep,
+    kind: Optional[str] = None,
+    limit: int = 50,
+) -> list[MediaAsset]:
+    _ensure_project_exists(session, project_id, principal)
     limit = max(1, min(limit, 200))
     query = select(MediaAsset).where(MediaAsset.project_id == project_id)
+    query = _scope_query_by_org(query, MediaAsset, principal)
     if kind:
         query = query.where(MediaAsset.kind == kind)
     query = query.order_by(MediaAsset.created_at.desc()).limit(limit)
@@ -560,8 +873,9 @@ def create_project_share_links(
     payload: ProjectShareLinksRequest,
     session: SessionDep,
     request: Request,
+    principal: PrincipalDep,
 ) -> ProjectShareLinksResponse:
-    project = _ensure_project_exists(session, project_id)
+    project = _ensure_project_exists(session, project_id, principal)
     assert project is not None  # for typing
 
     expires_in_hours = max(1, min(int(payload.expires_in_hours or 24), 24 * 30))
@@ -572,6 +886,7 @@ def create_project_share_links(
         asset = session.get(MediaAsset, asset_id)
         if not asset:
             raise not_found("Asset not found", details={"asset_id": str(asset_id)})
+        _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
         if asset.project_id != project.id:
             raise conflict(
                 "Asset does not belong to project",
@@ -650,10 +965,11 @@ def download_shared_asset(asset_id: UUID, token: str, session: SessionDep):
     tags=["Jobs"],
     responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
-def cancel_job(job_id: UUID, session: SessionDep) -> Job:
+def cancel_job(job_id: UUID, session: SessionDep, principal: PrincipalDep) -> Job:
     job = session.get(Job, job_id)
     if not job:
         raise not_found("Job not found", details={"job_id": str(job_id)})
+    _assert_org_access(principal=principal, entity_org_id=job.org_id, entity="job", entity_id=str(job.id))
 
     if job.status in {JobStatus.completed, JobStatus.failed, JobStatus.cancelled}:
         raise conflict("Job already finished", details={"status": job.status})
@@ -666,16 +982,72 @@ def cancel_job(job_id: UUID, session: SessionDep) -> Job:
     return job
 
 
+@router.post(
+    "/jobs/{job_id}/retry",
+    response_model=Job,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Jobs"],
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def retry_job(
+    job_id: UUID,
+    session: SessionDep,
+    principal: PrincipalDep,
+    response: Response,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> Job:
+    source = session.get(Job, job_id)
+    if not source:
+        raise not_found("Job not found", details={"job_id": str(job_id)})
+    _assert_org_access(principal=principal, entity_org_id=source.org_id, entity="job", entity_id=str(source.id))
+    if source.status not in {JobStatus.failed, JobStatus.cancelled}:
+        raise conflict("Only failed/cancelled jobs can be retried", details={"status": source.status})
+    if not source.input_asset_id:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Retry is only supported for jobs with an input asset",
+            details={"job_id": str(source.id), "job_type": source.job_type},
+        )
+
+    _enforce_org_quota(session, principal)
+    original_payload = source.payload or {}
+    retry_attempt = int(original_payload.get("retry_attempt") or 0) + 1 if isinstance(original_payload, dict) else 1
+    retry_payload = {**(original_payload if isinstance(original_payload, dict) else {})}
+    retry_payload.update({"retry_of": str(source.id), "retry_attempt": retry_attempt})
+
+    idem = _resolve_idempotency_key(None, idempotency_key)
+    if idem:
+        existing = _find_existing_idempotent_job(session=session, principal=principal, job_type=source.job_type, idempotency_key=idem)
+        if existing:
+            response.status_code = status.HTTP_200_OK
+            return existing
+
+    cloned = Job(
+        job_type=source.job_type,
+        status=JobStatus.queued,
+        progress=0.0,
+        input_asset_id=source.input_asset_id,
+        payload=retry_payload,
+        project_id=source.project_id,
+        org_id=source.org_id,
+        owner_user_id=source.owner_user_id,
+        idempotency_key=idem,
+    )
+    return _dispatch_existing_job(cloned, session)
+
+
 @router.delete(
     "/jobs/{job_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=["Jobs"],
     responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
-def delete_job(job_id: UUID, session: SessionDep, delete_assets: bool = False) -> Response:
+def delete_job(job_id: UUID, session: SessionDep, principal: PrincipalDep, delete_assets: bool = False) -> Response:
     job = session.get(Job, job_id)
     if not job:
         raise not_found("Job not found", details={"job_id": str(job_id)})
+    _assert_org_access(principal=principal, entity_org_id=job.org_id, entity="job", entity_id=str(job.id))
 
     if job.status not in {JobStatus.completed, JobStatus.failed, JobStatus.cancelled}:
         raise conflict("Job is still active; cancel it before deleting", details={"status": job.status})
@@ -698,10 +1070,11 @@ def delete_job(job_id: UUID, session: SessionDep, delete_assets: bool = False) -
     tags=["Jobs"],
     responses={404: {"model": ErrorResponse}},
 )
-def download_job_bundle(job_id: UUID, session: SessionDep) -> StreamingResponse:
+def download_job_bundle(job_id: UUID, session: SessionDep, principal: PrincipalDep) -> StreamingResponse:
     job = session.get(Job, job_id)
     if not job:
         raise not_found("Job not found", details={"job_id": str(job_id)})
+    _assert_org_access(principal=principal, entity_org_id=job.org_id, entity="job", entity_id=str(job.id))
 
     settings = get_settings()
     media_root = Path(settings.media_root)
@@ -855,14 +1228,30 @@ def download_job_bundle(job_id: UUID, session: SessionDep) -> StreamingResponse:
     tags=["Shorts"],
     dependencies=[Depends(enforce_rate_limit)],
 )
-def create_shorts_job(payload: ShortsJobRequest, session: SessionDep) -> Job:
-    _ensure_project_exists(session, payload.project_id)
+def create_shorts_job(
+    payload: ShortsJobRequest,
+    session: SessionDep,
+    principal: PrincipalDep,
+    response: Response,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> Job:
+    _ensure_asset_exists(session, asset_id=payload.video_asset_id, principal=principal, kind="video", field="video_asset_id")
+    project = _ensure_project_exists(session, payload.project_id, principal)
+    _enforce_org_quota(session, principal)
+    idem = _resolve_idempotency_key(payload.idempotency_key, idempotency_key)
+    existing = _find_existing_idempotent_job(session=session, principal=principal, job_type="shorts", idempotency_key=idem)
+    if existing:
+        response.status_code = status.HTTP_200_OK
+        return existing
+
     job = Job(
         job_type="shorts",
         status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.video_asset_id,
-        project_id=payload.project_id,
+        project_id=project.id if project else payload.project_id,
+        idempotency_key=idem,
+        **_owner_fields(principal),
         payload={
             "max_clips": payload.max_clips,
             "min_duration": payload.min_duration,
@@ -888,14 +1277,36 @@ def create_shorts_job(payload: ShortsJobRequest, session: SessionDep) -> Job:
     tags=["Subtitles"],
     dependencies=[Depends(enforce_rate_limit)],
 )
-def create_style_job(payload: StyledSubtitleJobRequest, session: SessionDep) -> Job:
-    _ensure_project_exists(session, payload.project_id)
+def create_style_job(
+    payload: StyledSubtitleJobRequest,
+    session: SessionDep,
+    principal: PrincipalDep,
+    response: Response,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> Job:
+    _ensure_asset_exists(session, asset_id=payload.video_asset_id, principal=principal, kind="video", field="video_asset_id")
+    _ensure_asset_exists(session, asset_id=payload.subtitle_asset_id, principal=principal, kind="subtitle", field="subtitle_asset_id")
+    project = _ensure_project_exists(session, payload.project_id, principal)
+    _enforce_org_quota(session, principal)
+    idem = _resolve_idempotency_key(payload.idempotency_key, idempotency_key)
+    existing = _find_existing_idempotent_job(
+        session=session,
+        principal=principal,
+        job_type="style_subtitles",
+        idempotency_key=idem,
+    )
+    if existing:
+        response.status_code = status.HTTP_200_OK
+        return existing
+
     job = Job(
         job_type="style_subtitles",
         status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.video_asset_id,
-        project_id=payload.project_id,
+        project_id=project.id if project else payload.project_id,
+        idempotency_key=idem,
+        **_owner_fields(principal),
         payload={
             "subtitle_asset_id": str(payload.subtitle_asset_id),
             "style": payload.style,
@@ -921,14 +1332,31 @@ def create_style_job(payload: StyledSubtitleJobRequest, session: SessionDep) -> 
     tags=["Utilities"],
     dependencies=[Depends(enforce_rate_limit)],
 )
-def create_merge_job(payload: MergeAVRequest, session: SessionDep) -> Job:
-    _ensure_project_exists(session, payload.project_id)
+def create_merge_job(
+    payload: MergeAVRequest,
+    session: SessionDep,
+    principal: PrincipalDep,
+    response: Response,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> Job:
+    _ensure_asset_exists(session, asset_id=payload.video_asset_id, principal=principal, kind="video", field="video_asset_id")
+    _ensure_asset_exists(session, asset_id=payload.audio_asset_id, principal=principal, kind="audio", field="audio_asset_id")
+    project = _ensure_project_exists(session, payload.project_id, principal)
+    _enforce_org_quota(session, principal)
+    idem = _resolve_idempotency_key(payload.idempotency_key, idempotency_key)
+    existing = _find_existing_idempotent_job(session=session, principal=principal, job_type="merge_av", idempotency_key=idem)
+    if existing:
+        response.status_code = status.HTTP_200_OK
+        return existing
+
     job = Job(
         job_type="merge_av",
         status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.video_asset_id,
-        project_id=payload.project_id,
+        project_id=project.id if project else payload.project_id,
+        idempotency_key=idem,
+        **_owner_fields(principal),
         payload={
             "audio_asset_id": str(payload.audio_asset_id),
             "offset": payload.offset,
@@ -955,16 +1383,32 @@ def create_merge_job(payload: MergeAVRequest, session: SessionDep) -> Job:
     tags=["Utilities"],
     dependencies=[Depends(enforce_rate_limit)],
 )
-def cut_clip_tool(payload: CutClipRequest, session: SessionDep) -> Job:
-    _ensure_project_exists(session, payload.project_id)
+def cut_clip_tool(
+    payload: CutClipRequest,
+    session: SessionDep,
+    principal: PrincipalDep,
+    response: Response,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> Job:
+    _ensure_asset_exists(session, asset_id=payload.video_asset_id, principal=principal, kind="video", field="video_asset_id")
+    project = _ensure_project_exists(session, payload.project_id, principal)
+    _enforce_org_quota(session, principal)
     start = max(0.0, float(payload.start or 0.0))
     end = max(start, float(payload.end or start))
+    idem = _resolve_idempotency_key(payload.idempotency_key, idempotency_key)
+    existing = _find_existing_idempotent_job(session=session, principal=principal, job_type="cut_clip", idempotency_key=idem)
+    if existing:
+        response.status_code = status.HTTP_200_OK
+        return existing
+
     job = Job(
         job_type="cut_clip",
         status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.video_asset_id,
-        project_id=payload.project_id,
+        project_id=project.id if project else payload.project_id,
+        idempotency_key=idem,
+        **_owner_fields(principal),
         payload={
             "start": start,
             "end": end,
@@ -990,14 +1434,35 @@ def cut_clip_tool(payload: CutClipRequest, session: SessionDep) -> Job:
     tags=["Utilities"],
     dependencies=[Depends(enforce_rate_limit)],
 )
-def translate_subtitle_tool(payload: TranslateSubtitleToolRequest, session: SessionDep) -> Job:
-    _ensure_project_exists(session, payload.project_id)
+def translate_subtitle_tool(
+    payload: TranslateSubtitleToolRequest,
+    session: SessionDep,
+    principal: PrincipalDep,
+    response: Response,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> Job:
+    _ensure_asset_exists(session, asset_id=payload.subtitle_asset_id, principal=principal, kind="subtitle", field="subtitle_asset_id")
+    project = _ensure_project_exists(session, payload.project_id, principal)
+    _enforce_org_quota(session, principal)
+    idem = _resolve_idempotency_key(payload.idempotency_key, idempotency_key)
+    existing = _find_existing_idempotent_job(
+        session=session,
+        principal=principal,
+        job_type="translate_subtitles",
+        idempotency_key=idem,
+    )
+    if existing:
+        response.status_code = status.HTTP_200_OK
+        return existing
+
     job = Job(
         job_type="translate_subtitles",
         status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.subtitle_asset_id,
-        project_id=payload.project_id,
+        project_id=project.id if project else payload.project_id,
+        idempotency_key=idem,
+        **_owner_fields(principal),
         payload={
             "target_language": payload.target_language,
             "bilingual": payload.bilingual,
@@ -1115,6 +1580,85 @@ def _delete_asset_if_unreferenced(session: Session, asset_id: UUID) -> None:
 
 
 @router.post(
+    "/assets/upload-init",
+    response_model=UploadInitResponse,
+    tags=["Assets"],
+    dependencies=[Depends(enforce_rate_limit)],
+)
+def init_asset_upload(
+    payload: UploadInitRequest,
+    request: Request,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> UploadInitResponse:
+    kind = (payload.kind or "").strip().lower() or "video"
+    _validate_upload(kind, payload.mime_type, payload.filename)
+    project = _ensure_project_exists(session, payload.project_id, principal)
+
+    upload_id = str(uuid4())
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+    _pending_uploads[upload_id] = {
+        "kind": kind,
+        "project_id": str(project.id) if project else None,
+        "org_id": str(principal.org_id) if principal.org_id else None,
+        "owner_user_id": str(principal.user_id) if principal.user_id else None,
+        "expires_at": expires_at,
+    }
+
+    form_fields = {"kind": kind, "upload_id": upload_id}
+    if project:
+        form_fields["project_id"] = str(project.id)
+    upload_url = str(request.url_for("upload_asset"))
+    return UploadInitResponse(upload_id=upload_id, upload_url=upload_url, form_fields=form_fields, expires_at=expires_at)
+
+
+@router.post(
+    "/assets/upload-complete",
+    response_model=UploadCompleteResponse,
+    tags=["Assets"],
+    dependencies=[Depends(enforce_rate_limit)],
+)
+def complete_asset_upload(
+    payload: UploadCompleteRequest,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> UploadCompleteResponse:
+    entry = _pending_uploads.get(payload.upload_id)
+    if not entry:
+        raise not_found("Upload session not found", details={"upload_id": payload.upload_id})
+
+    expires_at = entry.get("expires_at")
+    if isinstance(expires_at, datetime) and expires_at < datetime.now(timezone.utc):
+        _pending_uploads.pop(payload.upload_id, None)
+        raise conflict("Upload session expired", details={"upload_id": payload.upload_id})
+
+    asset = session.get(MediaAsset, payload.asset_id)
+    if not asset:
+        raise not_found("Asset not found", details={"asset_id": str(payload.asset_id)})
+    _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
+
+    expected_project_raw = entry.get("project_id")
+    expected_project = UUID(str(expected_project_raw)) if expected_project_raw else None
+    if expected_project and asset.project_id and asset.project_id != expected_project:
+        raise conflict(
+            "Asset project mismatch for upload session",
+            details={"upload_id": payload.upload_id, "asset_id": str(asset.id)},
+        )
+    if expected_project and not asset.project_id:
+        asset.project_id = expected_project
+
+    if principal.org_id and not asset.org_id:
+        asset.org_id = principal.org_id
+    if principal.user_id and not asset.owner_user_id:
+        asset.owner_user_id = principal.user_id
+
+    session.add(asset)
+    session.commit()
+    _pending_uploads.pop(payload.upload_id, None)
+    return UploadCompleteResponse(upload_id=payload.upload_id, asset_id=asset.id)
+
+
+@router.post(
     "/assets/upload",
     response_model=MediaAsset,
     status_code=status.HTTP_201_CREATED,
@@ -1123,6 +1667,7 @@ def _delete_asset_if_unreferenced(session: Session, asset_id: UUID) -> None:
 )
 async def upload_asset(
     session: SessionDep,
+    principal: PrincipalDep,
     file: UploadFile = File(...),
     kind: str = Form("video"),
     project_id: Optional[UUID] = Form(default=None),
@@ -1131,7 +1676,7 @@ async def upload_asset(
     storage = get_storage(media_root=settings.media_root)
     kind = (kind or "").strip().lower()
     _validate_upload(kind, file.content_type, file.filename)
-    _ensure_project_exists(session, project_id)
+    project = _ensure_project_exists(session, project_id, principal)
 
     suffix = Path(file.filename or "").suffix
     filename = f"{uuid4()}{suffix}"
@@ -1161,7 +1706,13 @@ async def upload_asset(
     if not isinstance(storage, LocalStorageBackend):
         tmp_path.unlink(missing_ok=True)
 
-    asset = MediaAsset(kind=kind, uri=uri, mime_type=file.content_type, project_id=project_id)
+    asset = MediaAsset(
+        kind=kind,
+        uri=uri,
+        mime_type=file.content_type,
+        project_id=project.id if project else project_id,
+        **_owner_fields(principal),
+    )
     session.add(asset)
     session.commit()
     session.refresh(asset)
@@ -1173,12 +1724,20 @@ async def upload_asset(
     response_model=List[MediaAsset],
     tags=["Assets"],
 )
-def list_assets(session: SessionDep, kind: Optional[str] = None, limit: int = 25, project_id: Optional[UUID] = None) -> List[MediaAsset]:
+def list_assets(
+    session: SessionDep,
+    principal: PrincipalDep,
+    kind: Optional[str] = None,
+    limit: int = 25,
+    project_id: Optional[UUID] = None,
+) -> List[MediaAsset]:
     limit = max(1, min(limit, 200))
     query = select(MediaAsset)
+    query = _scope_query_by_org(query, MediaAsset, principal)
     if kind:
         query = query.where(MediaAsset.kind == kind)
     if project_id:
+        _ensure_project_exists(session, project_id, principal)
         query = query.where(MediaAsset.project_id == project_id)
     query = query.order_by(MediaAsset.created_at.desc()).limit(limit)
     return session.exec(query).all()
@@ -1190,10 +1749,11 @@ def list_assets(session: SessionDep, kind: Optional[str] = None, limit: int = 25
     tags=["Assets"],
     responses={404: {"model": ErrorResponse}},
 )
-def get_asset(asset_id: UUID, session: SessionDep) -> MediaAsset:
+def get_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep) -> MediaAsset:
     asset = session.get(MediaAsset, asset_id)
     if not asset:
         raise not_found("Asset not found", details={"asset_id": str(asset_id)})
+    _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
     return asset
 
 
@@ -1203,12 +1763,15 @@ def get_asset(asset_id: UUID, session: SessionDep) -> MediaAsset:
     tags=["Assets"],
     responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
-def delete_asset(asset_id: UUID, session: SessionDep) -> Response:
+def delete_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep) -> Response:
     asset = session.get(MediaAsset, asset_id)
     if not asset:
         raise not_found("Asset not found", details={"asset_id": str(asset_id)})
+    _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
 
-    refs = session.exec(select(Job.id).where((Job.input_asset_id == asset_id) | (Job.output_asset_id == asset_id))).all()
+    refs_query = select(Job.id).where((Job.input_asset_id == asset_id) | (Job.output_asset_id == asset_id))
+    refs_query = _scope_query_by_org(refs_query, Job, principal)
+    refs = session.exec(refs_query).all()
     if refs:
         raise conflict(
             "Asset is referenced by jobs; delete the jobs first",
@@ -1232,10 +1795,11 @@ def delete_asset(asset_id: UUID, session: SessionDep) -> Response:
     tags=["Assets"],
     responses={404: {"model": ErrorResponse}},
 )
-def get_asset_download_url(asset_id: UUID, session: SessionDep, presign: bool = True) -> DownloadUrlResponse:
+def get_asset_download_url(asset_id: UUID, session: SessionDep, principal: PrincipalDep, presign: bool = True) -> DownloadUrlResponse:
     asset = session.get(MediaAsset, asset_id)
     if not asset:
         raise not_found("Asset not found", details={"asset_id": str(asset_id)})
+    _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
     if not asset.uri:
         raise not_found("Asset has no URI", details={"asset_id": str(asset_id)})
     settings = get_settings()
@@ -1254,10 +1818,11 @@ def get_asset_download_url(asset_id: UUID, session: SessionDep, presign: bool = 
     tags=["Assets"],
     responses={404: {"model": ErrorResponse}},
 )
-def download_asset(asset_id: UUID, session: SessionDep) -> FileResponse:
+def download_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep) -> FileResponse:
     asset = session.get(MediaAsset, asset_id)
     if not asset:
         raise not_found("Asset not found", details={"asset_id": str(asset_id)})
+    _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
     settings = get_settings()
     if asset.uri and is_remote_uri(asset.uri):
         return RedirectResponse(url=asset.uri, status_code=302)
@@ -1268,6 +1833,6 @@ def download_asset(asset_id: UUID, session: SessionDep) -> FileResponse:
 
 
 @router.get("/presets/styles", response_model=List[SubtitleStylePreset], tags=["Presets"])
-def list_style_presets(session: SessionDep) -> List[SubtitleStylePreset]:
+def list_style_presets(session: SessionDep, principal: PrincipalDep) -> List[SubtitleStylePreset]:
     presets = session.exec(select(SubtitleStylePreset)).all()
     return presets

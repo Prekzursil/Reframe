@@ -73,6 +73,61 @@ def test_group_words_handles_fast_and_slow_speech():
     assert len(slow_lines) == 2
 
 
+def test_group_words_splits_on_sentence_punctuation():
+    words = [
+        Word(text="Hello.", start=0.0, end=0.4),
+        Word(text="Next", start=0.5, end=0.9),
+        Word(text="sentence", start=1.0, end=1.4),
+    ]
+    cfg = GroupingConfig(
+        max_gap=1.0,
+        max_duration=4.0,
+        max_words_per_line=8,
+        max_chars_per_line=40,
+        sentence_break_on_punctuation=True,
+    )
+    lines = group_words(words, cfg)
+    assert len(lines) == 2
+    assert lines[0].text() == "Hello."
+    assert lines[1].text() == "Next sentence"
+
+
+def test_group_words_respects_chars_per_second_ceiling():
+    words = [
+        Word(text="supercalifragilisticexpialidocious", start=0.0, end=0.7),
+        Word(text="indeed", start=0.72, end=1.1),
+    ]
+    cfg = GroupingConfig(
+        max_gap=1.0,
+        max_duration=4.0,
+        max_words_per_line=8,
+        max_chars_per_line=80,
+        max_chars_per_second=20.0,
+    )
+    lines = group_words(words, cfg)
+    assert len(lines) == 2
+    assert lines[0].text() == "supercalifragilisticexpialidocious"
+    assert lines[1].text() == "indeed"
+
+
+def test_group_words_repairs_overlaps_when_enabled():
+    words = [
+        Word(text="one", start=0.0, end=0.6),
+        Word(text="two", start=0.5, end=0.9),
+    ]
+    cfg = GroupingConfig(
+        max_gap=1.0,
+        max_duration=4.0,
+        max_words_per_line=8,
+        max_chars_per_line=40,
+        repair_overlaps=True,
+    )
+    lines = group_words(words, cfg)
+    assert len(lines) == 1
+    assert len(lines[0].words) == 2
+    assert lines[0].words[1].start >= lines[0].words[0].end
+
+
 def test_grouping_handles_multilingual_tokens():
     words = [
         Word(text="hola", start=0.0, end=0.4),

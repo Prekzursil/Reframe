@@ -53,6 +53,96 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("SHARE_LINK_SECRET", "REFRAME_SHARE_LINK_SECRET"),
         description="HMAC secret used to sign public share links for local assets.",
     )
+    hosted_mode: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("HOSTED_MODE", "REFRAME_HOSTED_MODE"),
+        description="Enable hosted multi-tenant auth and billing enforcement.",
+    )
+    enable_oauth: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("ENABLE_OAUTH", "REFRAME_ENABLE_OAUTH"),
+        description="Enable Google/GitHub OAuth routes.",
+    )
+    enable_billing: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("ENABLE_BILLING", "REFRAME_ENABLE_BILLING"),
+        description="Enable billing and quota enforcement routes.",
+    )
+    jwt_secret: str = Field(
+        default="reframe-dev-jwt-secret",
+        validation_alias=AliasChoices("JWT_SECRET", "REFRAME_JWT_SECRET"),
+        description="Secret used to sign access tokens.",
+    )
+    jwt_refresh_secret: str = Field(
+        default="reframe-dev-jwt-refresh-secret",
+        validation_alias=AliasChoices("JWT_REFRESH_SECRET", "REFRAME_JWT_REFRESH_SECRET"),
+        description="Secret used to sign refresh tokens.",
+    )
+    jwt_access_ttl_minutes: int = Field(
+        default=15,
+        validation_alias=AliasChoices("JWT_ACCESS_TTL_MINUTES", "REFRAME_JWT_ACCESS_TTL_MINUTES"),
+        description="Access token lifetime in minutes.",
+    )
+    jwt_refresh_ttl_days: int = Field(
+        default=30,
+        validation_alias=AliasChoices("JWT_REFRESH_TTL_DAYS", "REFRAME_JWT_REFRESH_TTL_DAYS"),
+        description="Refresh token lifetime in days.",
+    )
+    app_base_url: str = Field(
+        default="http://localhost:5173",
+        validation_alias=AliasChoices("APP_BASE_URL", "REFRAME_APP_BASE_URL"),
+        description="Public frontend URL used for OAuth/billing redirects.",
+    )
+    api_base_url: str = Field(
+        default="http://localhost:8000",
+        validation_alias=AliasChoices("API_BASE_URL", "REFRAME_API_BASE_URL"),
+        description="Public API URL used in callback URLs.",
+    )
+    oauth_google_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("OAUTH_GOOGLE_CLIENT_ID", "REFRAME_OAUTH_GOOGLE_CLIENT_ID"),
+        description="Google OAuth client id.",
+    )
+    oauth_google_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("OAUTH_GOOGLE_CLIENT_SECRET", "REFRAME_OAUTH_GOOGLE_CLIENT_SECRET"),
+        description="Google OAuth client secret.",
+    )
+    oauth_github_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("OAUTH_GITHUB_CLIENT_ID", "REFRAME_OAUTH_GITHUB_CLIENT_ID"),
+        description="GitHub OAuth client id.",
+    )
+    oauth_github_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("OAUTH_GITHUB_CLIENT_SECRET", "REFRAME_OAUTH_GITHUB_CLIENT_SECRET"),
+        description="GitHub OAuth client secret.",
+    )
+    oauth_state_secret: str = Field(
+        default="reframe-dev-oauth-state",
+        validation_alias=AliasChoices("OAUTH_STATE_SECRET", "REFRAME_OAUTH_STATE_SECRET"),
+        description="Secret used to sign OAuth state payloads.",
+    )
+    stripe_secret_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("STRIPE_SECRET_KEY", "REFRAME_STRIPE_SECRET_KEY"),
+        description="Stripe secret key (test mode in this phase).",
+    )
+    stripe_webhook_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("STRIPE_WEBHOOK_SECRET", "REFRAME_STRIPE_WEBHOOK_SECRET"),
+        description="Stripe webhook secret for signature verification.",
+    )
+    stripe_price_pro: str = Field(
+        default="",
+        validation_alias=AliasChoices("STRIPE_PRICE_PRO", "REFRAME_STRIPE_PRICE_PRO"),
+        description="Stripe price id for pro plan.",
+    )
+    stripe_price_enterprise: str = Field(
+        default="",
+        validation_alias=AliasChoices("STRIPE_PRICE_ENTERPRISE", "REFRAME_STRIPE_PRICE_ENTERPRISE"),
+        description="Stripe price id for enterprise plan.",
+    )
 
 
 @lru_cache(maxsize=1)
