@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -38,6 +39,7 @@ from app.share_links import build_share_token_with_ttl, parse_and_validate_share
 from app.storage import LocalStorageBackend, get_storage, is_remote_uri
 
 router = APIRouter(prefix="/api/v1")
+logger = logging.getLogger("reframe.api")
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -186,7 +188,15 @@ def _enforce_org_quota(session: Session, principal: AuthPrincipal) -> None:
     if not org_id or not settings.enable_billing:
         return
 
-    plan_code = _resolve_plan_code(session, org_id=org_id)
+    sub = session.exec(select(Subscription).where(Subscription.org_id == org_id)).first()
+    plan_code = (sub.plan_code if sub else "free") or "free"
+    if sub and plan_code != "free":
+        status_value = (sub.status or "").strip().lower()
+        if status_value not in {"active", "trialing"}:
+            raise quota_exceeded(
+                "Subscription is not active for paid plan usage",
+                details={"plan_code": plan_code, "status": sub.status},
+            )
     policy = get_plan_policy(plan_code)
 
     running = session.exec(
@@ -1691,8 +1701,11 @@ def _delete_asset_if_unreferenced(session: Session, asset_id: UUID) -> None:
         storage = get_storage(media_root=settings.media_root)
         try:
             storage.delete_uri(uri)
-        except Exception:
-            pass
+        except Exception as exc:  # pragma: no cover - best effort deletion path
+            logger.warning(
+                "asset-delete-best-effort-failed",
+                extra={"asset_id": str(asset_id), "uri": uri, "reason": str(exc)},
+            )
 
     session.delete(asset)
     session.commit()
@@ -2138,8 +2151,11 @@ def delete_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep) -
         storage = get_storage(media_root=settings.media_root)
         try:
             storage.delete_uri(uri)
-        except Exception:
-            pass
+        except Exception as exc:  # pragma: no cover - best effort deletion path
+            logger.warning(
+                "asset-delete-best-effort-failed",
+                extra={"asset_id": str(asset_id), "uri": uri, "reason": str(exc)},
+            )
 
     session.delete(asset)
     session.commit()
