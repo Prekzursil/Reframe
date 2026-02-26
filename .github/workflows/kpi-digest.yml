@@ -1,0 +1,260 @@
+name: Weekly KPI Digest
+
+on:
+  schedule:
+    # Run every Monday at 9:00 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: read
+  pull-requests: read
+
+jobs:
+  generate-kpi-digest:
+    name: Generate Weekly KPI Report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for trend analysis
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Calculate KPI Metrics
+        id: kpi
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const now = new Date();
+            const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+            const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+            
+            // ISO week number calculation
+            function getISOWeek(date) {
+              const d = new Date(date);
+              d.setHours(0, 0, 0, 0);
+              d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+              const yearStart = new Date(d.getFullYear(), 0, 1);
+              return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+            }
+            
+            const weekNumber = getISOWeek(now);
+            const year = now.getFullYear();
+            
+            // Fetch PRs from the last week
+            const { data: prsLastWeek } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'all',
+              sort: 'updated',
+              direction: 'desc',
+              per_page: 100
+            });
+            
+            // Filter PRs merged in the last week
+            const mergedPRs = prsLastWeek.filter(pr => 
+              pr.merged_at && new Date(pr.merged_at) >= oneWeekAgo
+            );
+            
+            // Calculate cycle time (PR creation to merge)
+            const cycleTimes = mergedPRs.map(pr => {
+              const created = new Date(pr.created_at);
+              const merged = new Date(pr.merged_at);
+              return (merged - created) / (1000 * 60 * 60); // hours
+            });
+            
+            const avgCycleTime = cycleTimes.length > 0 
+              ? (cycleTimes.reduce((a, b) => a + b, 0) / cycleTimes.length).toFixed(1)
+              : 0;
+            
+            // Fetch issues from the last week
+            const { data: issuesLastWeek } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'closed',
+              since: oneWeekAgo.toISOString(),
+              per_page: 100
+            });
+            
+            // Filter actual issues (not PRs)
+            const closedIssues = issuesLastWeek.filter(issue => !issue.pull_request);
+            
+            // Calculate lead time (issue creation to closure)
+            const leadTimes = closedIssues.map(issue => {
+              const created = new Date(issue.created_at);
+              const closed = new Date(issue.closed_at);
+              return (closed - created) / (1000 * 60 * 60 * 24); // days
+            });
+            
+            const avgLeadTime = leadTimes.length > 0
+              ? (leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length).toFixed(1)
+              : 0;
+            
+            // Fetch workflow runs for failure rate
+            const { data: workflowRuns } = await github.rest.actions.listWorkflowRunsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              created: `>=${oneWeekAgo.toISOString().split('T')[0]}`,
+              per_page: 100
+            });
+            
+            const mainBranchRuns = workflowRuns.workflow_runs.filter(run => 
+              run.head_branch === 'main'
+            );
+            
+            const failedMainRuns = mainBranchRuns.filter(run => 
+              run.conclusion === 'failure'
+            );
+            
+            const ciFailureRate = mainBranchRuns.length > 0
+              ? ((failedMainRuns.length / mainBranchRuns.length) * 100).toFixed(1)
+              : 0;
+            
+            // Count reverts
+            const revertPRs = mergedPRs.filter(pr => 
+              pr.title.toLowerCase().includes('revert')
+            );
+            
+            const revertRate = mergedPRs.length > 0
+              ? ((revertPRs.length / mergedPRs.length) * 100).toFixed(1)
+              : 0;
+            
+            // Build metrics object
+            const metrics = {
+              week: weekNumber,
+              year: year,
+              period: `${oneWeekAgo.toISOString().split('T')[0]} to ${now.toISOString().split('T')[0]}`,
+              cycle_time: {
+                average_hours: avgCycleTime,
+                count: cycleTimes.length,
+                target: 48,
+                status: avgCycleTime <= 48 ? 'green' : avgCycleTime <= 72 ? 'yellow' : 'red'
+              },
+              lead_time: {
+                average_days: avgLeadTime,
+                count: leadTimes.length,
+                target: 14,
+                status: avgLeadTime <= 14 ? 'green' : avgLeadTime <= 21 ? 'yellow' : 'red'
+              },
+              failure_rate: {
+                ci_failure_percent: ciFailureRate,
+                failed_count: failedMainRuns.length,
+                total_count: mainBranchRuns.length,
+                target: 5,
+                status: ciFailureRate <= 5 ? 'green' : ciFailureRate <= 10 ? 'yellow' : 'red'
+              },
+              rework_rate: {
+                revert_percent: revertRate,
+                revert_count: revertPRs.length,
+                total_prs: mergedPRs.length,
+                target: 2,
+                status: revertRate <= 2 ? 'green' : revertRate <= 5 ? 'yellow' : 'red'
+              },
+              summary: {
+                total_prs_merged: mergedPRs.length,
+                total_issues_closed: closedIssues.length,
+                total_ci_runs: mainBranchRuns.length
+              }
+            };
+            
+            // Store metrics as output
+            core.setOutput('metrics', JSON.stringify(metrics, null, 2));
+            core.setOutput('week', `${year}-W${weekNumber.toString().padStart(2, '0')}`);
+            
+            return metrics;
+
+      - name: Save KPI Report
+        run: |
+          mkdir -p .github/kpi-reports
+          echo '${{ steps.kpi.outputs.metrics }}' > .github/kpi-reports/${{ steps.kpi.outputs.week }}.json
+
+      - name: Generate Digest Summary
+        id: summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const metrics = JSON.parse(`${{ steps.kpi.outputs.metrics }}`);
+            
+            const statusEmoji = (status) => {
+              return status === 'green' ? '✅' : status === 'yellow' ? '⚠️' : '❌';
+            };
+            
+            const summary = `# 📊 Weekly KPI Digest - Week ${metrics.week} (${metrics.year})
+
+            **Period**: ${metrics.period}
+
+            ## Key Metrics
+
+            ### Cycle Time ${statusEmoji(metrics.cycle_time.status)}
+            - **Average**: ${metrics.cycle_time.average_hours} hours
+            - **Target**: ≤ ${metrics.cycle_time.target} hours
+            - **PRs Merged**: ${metrics.cycle_time.count}
+
+            ### Lead Time ${statusEmoji(metrics.lead_time.status)}
+            - **Average**: ${metrics.lead_time.average_days} days
+            - **Target**: ≤ ${metrics.lead_time.target} days
+            - **Issues Closed**: ${metrics.lead_time.count}
+
+            ### CI Failure Rate ${statusEmoji(metrics.failure_rate.status)}
+            - **Rate**: ${metrics.failure_rate.ci_failure_percent}%
+            - **Target**: ≤ ${metrics.failure_rate.target}%
+            - **Failed Runs**: ${metrics.failure_rate.failed_count} / ${metrics.failure_rate.total_count}
+
+            ### Rework Rate ${statusEmoji(metrics.rework_rate.status)}
+            - **Revert Rate**: ${metrics.rework_rate.revert_percent}%
+            - **Target**: ≤ ${metrics.rework_rate.target}%
+            - **Reverts**: ${metrics.rework_rate.revert_count} / ${metrics.rework_rate.total_prs}
+
+            ## Activity Summary
+            - **Total PRs Merged**: ${metrics.summary.total_prs_merged}
+            - **Total Issues Closed**: ${metrics.summary.total_issues_closed}
+            - **Total CI Runs (main)**: ${metrics.summary.total_ci_runs}
+
+            ## Health Status
+            ${metrics.cycle_time.status === 'green' && metrics.lead_time.status === 'green' && 
+              metrics.failure_rate.status === 'green' && metrics.rework_rate.status === 'green' 
+              ? '✅ All metrics are healthy!' 
+              : '⚠️ Some metrics need attention. Review targets in docs/KPI_METRICS.md'}
+
+            ---
+            *Generated automatically by KPI Digest workflow*
+            `;
+            
+            core.setOutput('summary', summary);
+            return summary;
+
+      - name: Commit KPI Report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/kpi-reports/
+          git diff --staged --quiet || git commit -m "chore: add KPI report for week ${{ steps.kpi.outputs.week }}"
+          git push || echo "No changes to commit"
+
+      - name: Post to Discussions
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const summary = `${{ steps.summary.outputs.summary }}`;
+            
+            // Note: GitHub Discussions API requires additional setup
+            // For now, we'll create an issue comment or use console
+            console.log(summary);
+            
+            // Optionally, create an issue for tracking
+            // await github.rest.issues.create({
+            //   owner: context.repo.owner,
+            //   repo: context.repo.repo,
+            //   title: `KPI Digest - Week ${{ steps.kpi.outputs.week }}`,
+            //   body: summary,
+            //   labels: ['kpi-digest', 'area:infra']
+            // });
+
+      - name: Output Summary
+        run: |
+          echo "${{ steps.summary.outputs.summary }}"

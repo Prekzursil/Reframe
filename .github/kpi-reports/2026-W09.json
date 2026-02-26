@@ -1,0 +1,36 @@
+{
+  "week": 9,
+  "year": 2026,
+  "period": "2026-02-16 to 2026-02-23",
+  "cycle_time": {
+    "average_hours": "0.3",
+    "count": 4,
+    "target": 48,
+    "status": "green"
+  },
+  "lead_time": {
+    "average_days": "0.0",
+    "count": 3,
+    "target": 14,
+    "status": "green"
+  },
+  "failure_rate": {
+    "ci_failure_percent": "0.0",
+    "failed_count": 0,
+    "total_count": 23,
+    "target": 5,
+    "status": "green"
+  },
+  "rework_rate": {
+    "revert_percent": "0.0",
+    "revert_count": 0,
+    "total_prs": 4,
+    "target": 2,
+    "status": "green"
+  },
+  "summary": {
+    "total_prs_merged": 4,
+    "total_issues_closed": 3,
+    "total_ci_runs": 23
+  }
+}
