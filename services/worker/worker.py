@@ -152,7 +152,14 @@ def get_media_tmp() -> Path:
     return _media_tmp
 
 
-def create_asset(kind: str, mime_type: str, suffix: str, contents: bytes | str = b"", source_path: Path | None = None) -> MediaAsset:
+def create_asset(
+    kind: str,
+    mime_type: str,
+    suffix: str,
+    contents: bytes | str = b"",
+    source_path: Path | None = None,
+    project_id: UUID | None = None,
+) -> MediaAsset:
     tmp = get_media_tmp()
     filename = f"{uuid4()}{suffix}"
     target = tmp / filename
@@ -161,7 +168,7 @@ def create_asset(kind: str, mime_type: str, suffix: str, contents: bytes | str =
     else:
         data = contents.encode() if isinstance(contents, str) else contents
         target.write_bytes(data)
-    asset = MediaAsset(kind=kind, uri=f"/media/tmp/{filename}", mime_type=mime_type)
+    asset = MediaAsset(kind=kind, uri=f"/media/tmp/{filename}", mime_type=mime_type, project_id=project_id)
     with Session(get_engine()) as session:
         session.add(asset)
         session.commit()
@@ -169,7 +176,7 @@ def create_asset(kind: str, mime_type: str, suffix: str, contents: bytes | str =
         return asset
 
 
-def create_asset_for_existing_file(*, kind: str, mime_type: str, file_path: Path) -> MediaAsset:
+def create_asset_for_existing_file(*, kind: str, mime_type: str, file_path: Path, project_id: UUID | None = None) -> MediaAsset:
     tmp = get_media_tmp()
     resolved = file_path.resolve()
     try:
@@ -177,7 +184,7 @@ def create_asset_for_existing_file(*, kind: str, mime_type: str, file_path: Path
     except Exception:
         raise ValueError(f"file_path must be under {tmp}, got {file_path}")
     uri = f"/media/tmp/{file_path.name}"
-    asset = MediaAsset(kind=kind, uri=uri, mime_type=mime_type)
+    asset = MediaAsset(kind=kind, uri=uri, mime_type=mime_type, project_id=project_id)
     with Session(get_engine()) as session:
         session.add(asset)
         session.commit()
@@ -305,13 +312,13 @@ def _extract_audio_wav_for_diarization(video_path: Path, output_path: Path, runn
     runner(cmd, check=True, capture_output=True)
 
 
-def create_thumbnail_asset(video_path: Path | None, runner=None) -> MediaAsset:
+def create_thumbnail_asset(video_path: Path | None, runner=None, project_id: UUID | None = None) -> MediaAsset:
     if not video_path or not video_path.exists():
-        return create_asset(kind="image", mime_type="image/png", suffix=".png", contents=_FALLBACK_THUMBNAIL_PNG)
+        return create_asset(kind="image", mime_type="image/png", suffix=".png", contents=_FALLBACK_THUMBNAIL_PNG, project_id=project_id)
 
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
-        return create_asset(kind="image", mime_type="image/png", suffix=".png", contents=_FALLBACK_THUMBNAIL_PNG)
+        return create_asset(kind="image", mime_type="image/png", suffix=".png", contents=_FALLBACK_THUMBNAIL_PNG, project_id=project_id)
 
     thumb_tmp = get_media_tmp() / f"thumb-{uuid4()}.png"
     runner = runner or subprocess.run
@@ -333,7 +340,7 @@ def create_thumbnail_asset(video_path: Path | None, runner=None) -> MediaAsset:
     try:
         runner(cmd, check=True, capture_output=True)
         if thumb_tmp.exists() and thumb_tmp.stat().st_size > 0:
-            return create_asset(kind="image", mime_type="image/png", suffix=".png", source_path=thumb_tmp)
+            return create_asset(kind="image", mime_type="image/png", suffix=".png", source_path=thumb_tmp, project_id=project_id)
     except Exception as exc:  # pragma: no cover - best effort
         logger.debug("Thumbnail generation failed: %s", exc)
     finally:
@@ -344,7 +351,7 @@ def create_thumbnail_asset(video_path: Path | None, runner=None) -> MediaAsset:
         except Exception:  # pragma: no cover - best effort
             logger.debug("Failed to remove temporary thumbnail: %s", thumb_tmp)
 
-    return create_asset(kind="image", mime_type="image/png", suffix=".png", contents=_FALLBACK_THUMBNAIL_PNG)
+    return create_asset(kind="image", mime_type="image/png", suffix=".png", contents=_FALLBACK_THUMBNAIL_PNG, project_id=project_id)
 
 
 def fetch_asset(asset_id: str) -> Tuple[Optional[MediaAsset], Optional[Path]]:
@@ -392,6 +399,17 @@ def update_job(job_id: str, *, status: JobStatus | None = None, progress: float 
             session.commit()
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.error("Failed to update job %s: %s", job_id, exc)
+
+
+def get_job_project_id(job_id: str) -> UUID | None:
+    try:
+        with Session(get_engine()) as session:
+            job = session.get(Job, UUID(job_id))
+            if not job:
+                return None
+            return job.project_id
+    except Exception:
+        return None
 
 
 def _progress(task, status: str, progress: float = 0.0, **meta):
@@ -473,8 +491,9 @@ def system_info(self) -> dict:
 def transcribe_video(self, job_id: str, video_asset_id: str, config: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id)
+    project_id = get_job_project_id(job_id)
     transcript_text = f"Transcription for asset {video_asset_id}"
-    asset = create_asset(kind="transcription", mime_type="text/plain", suffix=".txt", contents=transcript_text)
+    asset = create_asset(kind="transcription", mime_type="text/plain", suffix=".txt", contents=transcript_text, project_id=project_id)
     result = {"video_asset_id": video_asset_id, "status": "transcribed", "config": config or {}, "output_asset_id": str(asset.id)}
     update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(asset.id))
     _progress(self, "completed", 1.0, video_asset_id=video_asset_id)
@@ -485,6 +504,7 @@ def transcribe_video(self, job_id: str, video_asset_id: str, config: dict | None
 def generate_captions(self, job_id: str, video_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id)
+    project_id = get_job_project_id(job_id)
     opts = options or {}
     warnings: list[str] = []
 
@@ -610,7 +630,7 @@ def generate_captions(self, job_id: str, video_asset_id: str, options: dict | No
         mime = "text/srt"
         suffix = ".srt"
 
-    asset = create_asset(kind="subtitle", mime_type=mime, suffix=suffix, contents=payload)
+    asset = create_asset(kind="subtitle", mime_type=mime, suffix=suffix, contents=payload, project_id=project_id)
     result = {
         "video_asset_id": video_asset_id,
         "status": "captions_generated",
@@ -633,6 +653,7 @@ def generate_captions(self, job_id: str, video_asset_id: str, options: dict | No
 def translate_subtitles(self, job_id: str, subtitle_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, subtitle_asset_id=subtitle_asset_id)
+    project_id = get_job_project_id(job_id)
     opts = options or {}
     warnings: list[str] = []
 
@@ -710,7 +731,7 @@ def translate_subtitles(self, job_id: str, subtitle_asset_id: str, options: dict
         _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
         return {"subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
 
-    asset = create_asset(kind="subtitle", mime_type="text/srt", suffix=".srt", contents=translated)
+    asset = create_asset(kind="subtitle", mime_type="text/srt", suffix=".srt", contents=translated, project_id=project_id)
     result = {
         "subtitle_asset_id": subtitle_asset_id,
         "status": "translated",
@@ -930,6 +951,7 @@ def _render_styled_subtitles_to_file(
 def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_asset_id: str, style: dict | None = None, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
+    project_id = get_job_project_id(job_id)
     opts = options or {}
     raw_preview_seconds = opts.get("preview_seconds")
     try:
@@ -974,7 +996,7 @@ def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_ass
         return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
 
     mime_type = video_asset.mime_type if video_asset and video_asset.mime_type else "video/mp4"
-    asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=output_path)
+    asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=output_path, project_id=project_id)
     result = {
         "video_asset_id": video_asset_id,
         "subtitle_asset_id": subtitle_asset_id,
@@ -992,6 +1014,7 @@ def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_ass
 def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id)
+    project_id = get_job_project_id(job_id)
     opts = options or {}
     warnings: list[str] = []
     max_clips = int(opts.get("max_clips") or 3)
@@ -1151,9 +1174,9 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
             return {"video_asset_id": video_asset_id, "status": "failed", "error": error}
 
         mime_type = src_asset.mime_type if src_asset and src_asset.mime_type else "video/mp4"
-        clip_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=clip_path)
+        clip_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=clip_path, project_id=project_id)
 
-        thumb_asset = create_thumbnail_asset(clip_path)
+        thumb_asset = create_thumbnail_asset(clip_path, project_id=project_id)
 
         subtitle_asset = None
         styled_asset = None
@@ -1172,7 +1195,12 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
                         f"Clip {idx + 1} subtitle placeholder\n"
                     )
                 subtitle_file.write_text(subtitle_contents, encoding="utf-8")
-                subtitle_asset = create_asset_for_existing_file(kind="subtitle", mime_type="text/vtt", file_path=subtitle_file)
+                subtitle_asset = create_asset_for_existing_file(
+                    kind="subtitle",
+                    mime_type="text/vtt",
+                    file_path=subtitle_file,
+                    project_id=project_id,
+                )
             except Exception as exc:
                 warnings.append(f"Clip {idx + 1}: failed to build subtitles ({exc}); continuing without subtitles.")
                 subtitle_asset = None
@@ -1188,7 +1216,7 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
                         style=style_for_clip,
                         preview_seconds=None,
                     )
-                    styled_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=styled_path)
+                    styled_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=styled_path, project_id=project_id)
                 except Exception as exc:
                     stderr = ""
                     if isinstance(exc, subprocess.CalledProcessError):
@@ -1226,6 +1254,7 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
         mime_type="application/json",
         suffix=".json",
         contents=json.dumps(manifest, indent=2),
+        project_id=project_id,
     )
 
     result = {
@@ -1244,6 +1273,7 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
 def cut_clip_asset(self, job_id: str, video_asset_id: str, start: float, end: float, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id, start=start, end=end)
+    project_id = get_job_project_id(job_id)
     opts = options or {}
 
     src_asset, src_path = fetch_asset(video_asset_id)
@@ -1272,8 +1302,8 @@ def cut_clip_asset(self, job_id: str, video_asset_id: str, start: float, end: fl
         return {"video_asset_id": video_asset_id, "status": "failed", "error": error}
 
     mime_type = src_asset.mime_type if src_asset and src_asset.mime_type else "video/mp4"
-    clip_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=output_path)
-    thumb_asset = create_thumbnail_asset(output_path)
+    clip_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=output_path, project_id=project_id)
+    thumb_asset = create_thumbnail_asset(output_path, project_id=project_id)
 
     result = {
         "video_asset_id": video_asset_id,
@@ -1295,6 +1325,7 @@ def cut_clip_asset(self, job_id: str, video_asset_id: str, start: float, end: fl
 def merge_video_audio(self, job_id: str, video_asset_id: str, audio_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id, audio_asset_id=audio_asset_id)
+    project_id = get_job_project_id(job_id)
     opts = options or {}
     video_asset, video_path = fetch_asset(video_asset_id)
     audio_asset, audio_path = fetch_asset(audio_asset_id)
@@ -1332,7 +1363,7 @@ def merge_video_audio(self, job_id: str, video_asset_id: str, audio_asset_id: st
         return {"video_asset_id": video_asset_id, "audio_asset_id": audio_asset_id, "status": "failed", "error": error}
 
     mime_type = video_asset.mime_type if video_asset and video_asset.mime_type else "video/mp4"
-    merged_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=output_path)
+    merged_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=output_path, project_id=project_id)
 
     result = {
         "video_asset_id": video_asset_id,
