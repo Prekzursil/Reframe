@@ -453,8 +453,9 @@ Goal: offer Reframe as a paid hosted service (multi-tenant web app) while keepin
 - [x] Define the cost model: what you bill for (minutes processed, GPU-seconds, storage, egress) and what limits exist per plan.
 - [x] Add usage metering tables (per job) and a “usage” page in the UI.
 - [x] Add usage summary groundwork (`GET /api/v1/usage/summary` + frontend Usage dashboard cards/breakdown).
-- [ ] Integrate Stripe for subscriptions + seat/org billing + plan enforcement.
+- [x] Integrate Stripe for subscriptions + seat/org billing + plan enforcement.
   - [x] Add Stripe checkout metadata + webhook signature verification + subscription status/plan sync.
+  - [x] Enforce seat limits in invite creation/acceptance and expose seat usage/update endpoints.
 - [x] Add per-plan concurrency limits (e.g., max running jobs) and queueing behavior.
 
 ### Worker scaling + reliability
@@ -465,12 +466,12 @@ Goal: offer Reframe as a paid hosted service (multi-tenant web app) while keepin
 ### Opus Clip‑style UX
 - [x] Add a “project” abstraction (source video → derived clips, transcripts, styles, exports).
 - [x] Add shareable preview links for clips (signed, time-limited URLs).
-- [ ] Add team collaboration features (org members, roles, shared projects) (later).
+- [x] Add team collaboration features (org members, roles, shared projects) (later).
 
 ### Next hardening follow-ups
 - [x] Add true object-storage pre-signed upload URLs (S3/R2) behind hosted mode and move local `/assets/upload-init` to that provider.
 - [x] Add resumable multipart upload orchestration with commit/abort endpoints and retry-safe parts tracking.
-- [ ] Expand org collaboration from read-only membership context to invites, role mutation, and seat enforcement workflows.
+- [x] Expand org collaboration from read-only membership context to invites, role mutation, and seat enforcement workflows.
 
 ---
 
