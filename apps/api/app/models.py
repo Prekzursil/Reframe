@@ -19,6 +19,7 @@ class MediaAsset(SQLModel, table=True):
     uri: Optional[str] = Field(default=None, description="Storage URI or path for the asset")
     mime_type: Optional[str] = Field(default=None)
     duration: Optional[float] = Field(default=None, description="Duration in seconds if known")
+    project_id: Optional[UUID] = Field(default=None, foreign_key="project.id", index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -42,6 +43,7 @@ class Job(SQLModel, table=True):
 
     input_asset_id: Optional[UUID] = Field(default=None, foreign_key="mediaasset.id")
     output_asset_id: Optional[UUID] = Field(default=None, foreign_key="mediaasset.id")
+    project_id: Optional[UUID] = Field(default=None, foreign_key="project.id", index=True)
 
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -52,5 +54,13 @@ class SubtitleStylePreset(SQLModel, table=True):
     name: str
     description: Optional[str] = Field(default=None)
     style: dict = Field(default_factory=dict, sa_column=Column(JSON), description="Serialized style payload")
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class Project(SQLModel, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    name: str
+    description: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

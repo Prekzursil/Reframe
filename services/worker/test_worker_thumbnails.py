@@ -9,7 +9,7 @@ def test_create_thumbnail_asset_falls_back_when_ffmpeg_missing(monkeypatch, tmp_
 
     calls = []
 
-    def fake_create_asset(*, kind, mime_type, suffix, contents=b"", source_path=None):
+    def fake_create_asset(*, kind, mime_type, suffix, contents=b"", source_path=None, project_id=None):
         calls.append(
             {
                 "kind": kind,
@@ -17,6 +17,7 @@ def test_create_thumbnail_asset_falls_back_when_ffmpeg_missing(monkeypatch, tmp_
                 "suffix": suffix,
                 "contents": contents,
                 "source_path": source_path,
+                "project_id": project_id,
             }
         )
 
@@ -61,7 +62,7 @@ def test_create_thumbnail_asset_uses_ffmpeg_when_available(monkeypatch, tmp_path
 
     created = []
 
-    def fake_create_asset(*, kind, mime_type, suffix, contents=b"", source_path=None):
+    def fake_create_asset(*, kind, mime_type, suffix, contents=b"", source_path=None, project_id=None):
         created.append(
             {
                 "kind": kind,
@@ -69,6 +70,7 @@ def test_create_thumbnail_asset_uses_ffmpeg_when_available(monkeypatch, tmp_path
                 "suffix": suffix,
                 "contents": contents,
                 "source_path": source_path,
+                "project_id": project_id,
             }
         )
 
@@ -86,4 +88,3 @@ def test_create_thumbnail_asset_uses_ffmpeg_when_available(monkeypatch, tmp_path
     assert "scale=320:-1" in runner_calls[0]
     assert asset.uri == "/media/tmp/thumb.png"
     assert any(entry["source_path"] is not None for entry in created)
-

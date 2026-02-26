@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { toSafeUrl } from "./url";
+import { toSafeExternalUrl, toSafeMediaUrl, toSafeUrl } from "./url";
 
 describe("toSafeUrl", () => {
   it("allows https and http urls", () => {
@@ -16,5 +16,25 @@ describe("toSafeUrl", () => {
     expect(toSafeUrl("javascript:alert(1)")).toBeNull();
     expect(toSafeUrl("data:text/html,<script>alert(1)</script>")).toBeNull();
     expect(toSafeUrl("file:///etc/passwd")).toBeNull();
+  });
+
+  it("rejects urls with credentials", () => {
+    expect(toSafeUrl("https://user:pass@example.com/file.srt")).toBeNull();
+  });
+
+  it("sanitizes protocol-relative input to https/http safely", () => {
+    expect(toSafeUrl("//example.com/path/file.srt")).toBe("http://example.com/path/file.srt");
+  });
+});
+
+describe("toSafeMediaUrl", () => {
+  it("allows blob urls", () => {
+    expect(toSafeMediaUrl("blob:http://localhost:5173/abc-123")).toBe("blob:http://localhost:5173/abc-123");
+  });
+});
+
+describe("toSafeExternalUrl", () => {
+  it("rejects blob urls for navigation", () => {
+    expect(toSafeExternalUrl("blob:http://localhost:5173/abc-123")).toBeNull();
   });
 });

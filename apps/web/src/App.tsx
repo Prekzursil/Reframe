@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
-import { apiClient, type Job, type JobStatus, type MediaAsset, type SystemStatusResponse } from "./api/client";
+import { apiClient, type Job, type JobStatus, type MediaAsset, type Project, type ProjectShareLink, type SystemStatusResponse, type UsageSummary } from "./api/client";
 import { Button, Card, Chip, Input, TextArea } from "./components/ui";
 import { Spinner } from "./components/Spinner";
 import { SettingsModal } from "./components/SettingsModal";
@@ -8,7 +8,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { detectSubtitleFormat, shiftSubtitleTimings } from "./subtitles/shift";
 import { cuesToSubtitles, sortCuesByStart, subtitlesToCues, type SubtitleCue, validateCues } from "./subtitles/cues";
 import { exportShortsTimelineCsv, exportShortsTimelineEdl, type ShortsClip } from "./shorts/timeline";
-import { toSafeUrl } from "./security/url";
+import { toSafeExternalUrl, toSafeMediaUrl } from "./security/url";
 
 const NAV_ITEMS = [
   { id: "shorts", label: "Shorts" },
@@ -16,6 +16,8 @@ const NAV_ITEMS = [
   { id: "subtitles", label: "Subtitles" },
   { id: "utilities", label: "Utilities" },
   { id: "jobs", label: "Jobs" },
+  { id: "usage", label: "Usage" },
+  { id: "projects", label: "Projects" },
   { id: "system", label: "System" },
 ];
 
@@ -137,7 +139,16 @@ function TextPreview({
     setError(null);
     setContent("");
 
-    void fetch(url)
+    const safeUrl = toSafeMediaUrl(url);
+    if (!safeUrl) {
+      setLoading(false);
+      setError("Unsafe preview URL");
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void fetch(safeUrl)
       .then((resp) => {
         if (!resp.ok) {
           throw new Error(`Failed to load preview (${resp.status})`);
@@ -210,7 +221,15 @@ function JobStatusPill({ status }: { status: JobStatus }) {
   return <Chip tone={toneMap[status]}>{status}</Chip>;
 }
 
-function CaptionsForm({ onCreated, initialVideoId }: { onCreated: (job: Job) => void; initialVideoId?: string }) {
+function CaptionsForm({
+  onCreated,
+  initialVideoId,
+  projectId,
+}: {
+  onCreated: (job: Job) => void;
+  initialVideoId?: string;
+  projectId?: string;
+}) {
   const [videoId, setVideoId] = useState(initialVideoId || "");
   const [sourceLang, setSourceLang] = useState("auto");
   const [backend, setBackend] = useState("faster_whisper");
@@ -238,6 +257,7 @@ function CaptionsForm({ onCreated, initialVideoId }: { onCreated: (job: Job) => 
     try {
       const job = await apiClient.createCaptionJob({
         video_asset_id: videoId.trim(),
+        project_id: projectId || undefined,
         options: {
           source_language: sourceLang || "auto",
           backend,
@@ -265,6 +285,7 @@ function CaptionsForm({ onCreated, initialVideoId }: { onCreated: (job: Job) => 
   const curlCommand = useMemo(() => {
     const payload = {
       video_asset_id: videoId.trim() || "<VIDEO_ASSET_ID>",
+      ...(projectId ? { project_id: projectId } : {}),
       options: {
         source_language: sourceLang || "auto",
         backend,
@@ -275,7 +296,7 @@ function CaptionsForm({ onCreated, initialVideoId }: { onCreated: (job: Job) => 
       },
     };
     return `curl -sS -X POST \"${apiClient.baseUrl}/captions/jobs\" -H \"Content-Type: application/json\" -d '${JSON.stringify(payload)}'`;
-  }, [videoId, sourceLang, backend, model, formats, diarizationBackend, speakerLabelsEnabled]);
+  }, [videoId, sourceLang, backend, model, formats, diarizationBackend, speakerLabelsEnabled, projectId]);
 
   return (
     <form className="form-grid" onSubmit={submit}>
@@ -362,7 +383,7 @@ function CaptionsForm({ onCreated, initialVideoId }: { onCreated: (job: Job) => 
   );
 }
 
-function TranslateForm({ onCreated }: { onCreated: (job: Job) => void }) {
+function TranslateForm({ onCreated, projectId }: { onCreated: (job: Job) => void; projectId?: string }) {
   const [subtitleId, setSubtitleId] = useState("");
   const [targetLang, setTargetLang] = useState("es");
   const [notes, setNotes] = useState("");
@@ -373,10 +394,11 @@ function TranslateForm({ onCreated }: { onCreated: (job: Job) => void }) {
     const payload = {
       subtitle_asset_id: subtitleId.trim() || "<SUBTITLE_ASSET_ID>",
       target_language: targetLang.trim() || "es",
+      ...(projectId ? { project_id: projectId } : {}),
       options: notes ? { notes } : {},
     };
     return `curl -sS -X POST \"${apiClient.baseUrl}/subtitles/translate\" -H \"Content-Type: application/json\" -d '${JSON.stringify(payload)}'`;
-  }, [subtitleId, targetLang, notes]);
+  }, [subtitleId, targetLang, notes, projectId]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -386,6 +408,7 @@ function TranslateForm({ onCreated }: { onCreated: (job: Job) => void }) {
       const job = await apiClient.createTranslateJob({
         subtitle_asset_id: subtitleId.trim(),
         target_language: targetLang.trim(),
+        project_id: projectId || undefined,
         options: notes ? { notes } : {},
       });
       onCreated(job);
@@ -424,9 +447,11 @@ function TranslateForm({ onCreated }: { onCreated: (job: Job) => void }) {
 function UploadPanel({
   onAssetId,
   onPreview,
+  projectId,
 }: {
   onAssetId: (id: string) => void;
   onPreview: (url: string | null) => void;
+  projectId?: string;
 }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -439,7 +464,7 @@ function UploadPanel({
     setUploading(true);
     setError(null);
     try {
-      const asset = await apiClient.uploadAsset(file, "video");
+      const asset = await apiClient.uploadAsset(file, "video", projectId);
       onPreview(objectUrl);
       onAssetId(asset.id);
     } catch (err) {
@@ -479,9 +504,11 @@ function UploadPanel({
 function AudioUploadPanel({
   onAssetId,
   onPreview,
+  projectId,
 }: {
   onAssetId: (id: string) => void;
   onPreview: (url: string | null) => void;
+  projectId?: string;
 }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -494,7 +521,7 @@ function AudioUploadPanel({
     setUploading(true);
     setError(null);
     try {
-      const asset = await apiClient.uploadAsset(file, "audio");
+      const asset = await apiClient.uploadAsset(file, "audio", projectId);
       onPreview(objectUrl);
       onAssetId(asset.id);
     } catch (err) {
@@ -528,10 +555,12 @@ function SubtitleUpload({
   onAssetId,
   onPreview,
   label = "Upload subtitles (SRT/VTT)",
+  projectId,
 }: {
   onAssetId: (id: string) => void;
   onPreview: (url: string | null, name?: string | null) => void;
   label?: string;
+  projectId?: string;
 }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -543,7 +572,7 @@ function SubtitleUpload({
     setUploading(true);
     setError(null);
     try {
-      const asset = await apiClient.uploadAsset(file, "subtitle");
+      const asset = await apiClient.uploadAsset(file, "subtitle", projectId);
       onAssetId(asset.id);
       onPreview(objectUrl, file.name);
     } catch (err) {
@@ -571,9 +600,11 @@ function SubtitleUpload({
 function SubtitleEditorCard({
   initialAssetId,
   onAssetChosen,
+  projectId,
 }: {
   initialAssetId?: string;
   onAssetChosen: (asset: MediaAsset) => void;
+  projectId?: string;
 }) {
   const [assetId, setAssetId] = useState(initialAssetId || "");
   const [contents, setContents] = useState("");
@@ -681,7 +712,7 @@ function SubtitleEditorCard({
       const fmt = detectSubtitleFormat(contents) || "srt";
       const filename = `edited.${fmt}`;
       const file = new File([contents], filename, { type: "text/plain" });
-      const asset = await apiClient.uploadAsset(file, "subtitle");
+      const asset = await apiClient.uploadAsset(file, "subtitle", projectId);
       setSaved(asset);
       setAssetId(asset.id);
       onAssetChosen(asset);
@@ -694,7 +725,7 @@ function SubtitleEditorCard({
 
   const fmt = detectSubtitleFormat(contents);
   const cueWarnings = editorMode === "cues" ? validateCues(cues) : [];
-  const savedOpenUrl = saved?.uri ? toSafeUrl(apiClient.mediaUrl(saved.uri)) : null;
+  const savedOpenUrl = saved?.uri ? toSafeMediaUrl(apiClient.mediaUrl(saved.uri)) : null;
 
   return (
     <div className="form-grid">
@@ -890,7 +921,7 @@ function SubtitleEditorCard({
   );
 }
 
-function SubtitleToolsForm({ onCreated }: { onCreated: (job: Job, bilingual: boolean) => void }) {
+function SubtitleToolsForm({ onCreated, projectId }: { onCreated: (job: Job, bilingual: boolean) => void; projectId?: string }) {
   const [subtitleId, setSubtitleId] = useState("");
   const [targetLang, setTargetLang] = useState("es");
   const [bilingual, setBilingual] = useState(false);
@@ -898,7 +929,7 @@ function SubtitleToolsForm({ onCreated }: { onCreated: (job: Job, bilingual: boo
   const [uploadName, setUploadName] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const safeUploadPreview = toSafeUrl(uploadPreview);
+  const safeUploadPreview = toSafeMediaUrl(uploadPreview);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -909,6 +940,7 @@ function SubtitleToolsForm({ onCreated }: { onCreated: (job: Job, bilingual: boo
         subtitle_asset_id: subtitleId.trim(),
         target_language: targetLang.trim(),
         bilingual,
+        project_id: projectId || undefined,
       });
       onCreated(job, bilingual);
     } catch (err) {
@@ -926,6 +958,7 @@ function SubtitleToolsForm({ onCreated }: { onCreated: (job: Job, bilingual: boo
       </label>
       <SubtitleUpload
         label="Upload SRT/VTT (uploads to backend)"
+        projectId={projectId}
         onAssetId={(id) => setSubtitleId(id)}
         onPreview={(url, name) => {
           setUploadPreview(url);
@@ -960,7 +993,17 @@ function SubtitleToolsForm({ onCreated }: { onCreated: (job: Job, bilingual: boo
   );
 }
 
-function MergeAvForm({ onCreated, initialVideoId, initialAudioId }: { onCreated: (job: Job) => void; initialVideoId?: string; initialAudioId?: string }) {
+function MergeAvForm({
+  onCreated,
+  initialVideoId,
+  initialAudioId,
+  projectId,
+}: {
+  onCreated: (job: Job) => void;
+  initialVideoId?: string;
+  initialAudioId?: string;
+  projectId?: string;
+}) {
   const [videoId, setVideoId] = useState(initialVideoId || "");
   const [audioId, setAudioId] = useState(initialAudioId || "");
   const [offset, setOffset] = useState(0);
@@ -973,12 +1016,13 @@ function MergeAvForm({ onCreated, initialVideoId, initialAudioId }: { onCreated:
     const payload = {
       video_asset_id: videoId.trim() || "<VIDEO_ASSET_ID>",
       audio_asset_id: audioId.trim() || "<AUDIO_ASSET_ID>",
+      ...(projectId ? { project_id: projectId } : {}),
       offset,
       ducking,
       normalize,
     };
     return `curl -sS -X POST \"${apiClient.baseUrl}/utilities/merge-av\" -H \"Content-Type: application/json\" -d '${JSON.stringify(payload)}'`;
-  }, [videoId, audioId, offset, ducking, normalize]);
+  }, [videoId, audioId, offset, ducking, normalize, projectId]);
 
   useEffect(() => {
     if (initialVideoId) setVideoId(initialVideoId);
@@ -996,6 +1040,7 @@ function MergeAvForm({ onCreated, initialVideoId, initialAudioId }: { onCreated:
       const job = await apiClient.mergeAv({
         video_asset_id: videoId.trim(),
         audio_asset_id: audioId.trim(),
+        project_id: projectId || undefined,
         offset,
         ducking,
         normalize,
@@ -1051,7 +1096,7 @@ function MergeAvForm({ onCreated, initialVideoId, initialAudioId }: { onCreated:
   );
 }
 
-function ShortsForm({ onCreated }: { onCreated: (job: Job) => void }) {
+function ShortsForm({ onCreated, projectId }: { onCreated: (job: Job) => void; projectId?: string }) {
   const [videoId, setVideoId] = useState("");
   const [numClips, setNumClips] = useState(3);
   const [minDuration, setMinDuration] = useState(10);
@@ -1071,6 +1116,7 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job) => void }) {
   const curlCommand = useMemo(() => {
     const payload = {
       video_asset_id: videoId.trim() || "<VIDEO_ASSET_ID>",
+      ...(projectId ? { project_id: projectId } : {}),
       max_clips: numClips,
       min_duration: minDuration,
       max_duration: maxDuration,
@@ -1100,6 +1146,7 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job) => void }) {
     useGroqScoring,
     stylePreset,
     prompt,
+    projectId,
   ]);
 
   const submit = async (e: React.FormEvent) => {
@@ -1109,6 +1156,7 @@ function ShortsForm({ onCreated }: { onCreated: (job: Job) => void }) {
     try {
       const job = await apiClient.createShortsJob({
         video_asset_id: videoId.trim(),
+        project_id: projectId || undefined,
         max_clips: numClips,
         min_duration: minDuration,
         max_duration: maxDuration,
@@ -1463,10 +1511,29 @@ function StyleEditor({
 		  const [jobsStatusFilter, setJobsStatusFilter] = useState<JobStatus | "">("");
 		  const [jobsTypeFilter, setJobsTypeFilter] = useState("");
 		  const [jobsDateFrom, setJobsDateFrom] = useState("");
-		  const [jobsDateTo, setJobsDateTo] = useState("");
+  const [jobsDateTo, setJobsDateTo] = useState("");
     const [systemStatus, setSystemStatus] = useState<SystemStatusResponse | null>(null);
     const [systemLoading, setSystemLoading] = useState(false);
     const [systemError, setSystemError] = useState<string | null>(null);
+    const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
+    const [usageLoading, setUsageLoading] = useState(false);
+    const [usageError, setUsageError] = useState<string | null>(null);
+    const [usageFrom, setUsageFrom] = useState("");
+    const [usageTo, setUsageTo] = useState("");
+    const [projects, setProjects] = useState<Project[]>([]);
+    const [projectsLoading, setProjectsLoading] = useState(false);
+    const [projectsError, setProjectsError] = useState<string | null>(null);
+    const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+    const [projectJobs, setProjectJobs] = useState<Job[]>([]);
+    const [projectAssets, setProjectAssets] = useState<MediaAsset[]>([]);
+    const [projectDataLoading, setProjectDataLoading] = useState(false);
+    const [projectDataError, setProjectDataError] = useState<string | null>(null);
+    const [newProjectName, setNewProjectName] = useState("");
+    const [newProjectDescription, setNewProjectDescription] = useState("");
+    const [projectCreateBusy, setProjectCreateBusy] = useState(false);
+    const [shareSourceAssetId, setShareSourceAssetId] = useState("");
+    const [shareBusy, setShareBusy] = useState(false);
+    const [shareLinks, setShareLinks] = useState<ProjectShareLink[]>([]);
 
   const [showQuickStart, setShowQuickStart] = useState(() => {
     try {
@@ -1478,13 +1545,13 @@ function StyleEditor({
 
   const toSafeMediaHref = (uri: string | null | undefined): string | null => {
     if (!uri) return null;
-    return toSafeUrl(apiClient.mediaUrl(uri));
+    return toSafeMediaUrl(apiClient.mediaUrl(uri));
   };
   const outputAssetUrl = toSafeMediaHref(outputAsset?.uri);
-  const subtitlePreviewUrl = toSafeUrl(subtitlePreview);
-  const safeUploadedPreview = toSafeUrl(uploadedPreview);
-  const safeMergeVideoPreview = toSafeUrl(mergeVideoPreview);
-  const safeMergeAudioPreview = toSafeUrl(mergeAudioPreview);
+  const subtitlePreviewUrl = toSafeMediaUrl(subtitlePreview);
+  const safeUploadedPreview = toSafeMediaUrl(uploadedPreview);
+  const safeMergeVideoPreview = toSafeMediaUrl(mergeVideoPreview);
+  const safeMergeAudioPreview = toSafeMediaUrl(mergeAudioPreview);
 
   const dismissQuickStart = () => {
     setShowQuickStart(false);
@@ -1504,8 +1571,8 @@ function StyleEditor({
     setRecentAssetsError(null);
     try {
       const [videos, subtitles] = await Promise.all([
-        apiClient.listAssets({ kind: "video", limit: 25 }),
-        apiClient.listAssets({ kind: "subtitle", limit: 25 }),
+        apiClient.listAssets({ kind: "video", limit: 25, project_id: selectedProjectId || undefined }),
+        apiClient.listAssets({ kind: "subtitle", limit: 25, project_id: selectedProjectId || undefined }),
       ]);
       setRecentVideoAssets(videos);
       setRecentSubtitleAssets(subtitles);
@@ -1520,13 +1587,13 @@ function StyleEditor({
 	    if (active === "subtitles") {
 	      void refreshRecentAssets();
 	    }
-	  }, [active]);
+	  }, [active, selectedProjectId]);
 
 		  const loadJobsPage = async () => {
 		    setJobsPageLoading(true);
 		    setJobsPageError(null);
 		    try {
-		      const data = await apiClient.listJobs();
+		      const data = await apiClient.listJobs({ project_id: selectedProjectId || undefined });
 		      setJobsPageJobs(data);
 		    } catch (err) {
 		      setJobsPageError(err instanceof Error ? err.message : "Failed to load jobs");
@@ -1563,7 +1630,7 @@ function StyleEditor({
 		    if (active === "jobs") {
 		      void loadJobsPage();
 		    }
-		  }, [active]);
+		  }, [active, selectedProjectId]);
 
     const loadSystemStatus = async () => {
       setSystemLoading(true);
@@ -1583,6 +1650,88 @@ function StyleEditor({
         void loadSystemStatus();
       }
     }, [active]);
+
+    const loadUsageSummary = async () => {
+      setUsageLoading(true);
+      setUsageError(null);
+      try {
+        const summary = await apiClient.getUsageSummary({
+          from: usageFrom || undefined,
+          to: usageTo || undefined,
+          project_id: selectedProjectId || undefined,
+        });
+        setUsageSummary(summary);
+      } catch (err) {
+        setUsageError(err instanceof Error ? err.message : "Failed to load usage summary");
+      } finally {
+        setUsageLoading(false);
+      }
+    };
+
+    const loadProjects = async () => {
+      setProjectsLoading(true);
+      setProjectsError(null);
+      try {
+        const data = await apiClient.listProjects();
+        setProjects(data);
+        if (data.length === 0) {
+          setSelectedProjectId("");
+        } else if (!selectedProjectId || !data.some((p) => p.id === selectedProjectId)) {
+          setSelectedProjectId(data[0]!.id);
+        }
+      } catch (err) {
+        setProjectsError(err instanceof Error ? err.message : "Failed to load projects");
+      } finally {
+        setProjectsLoading(false);
+      }
+    };
+
+    useEffect(() => {
+      void loadProjects();
+    }, []);
+
+    const loadProjectData = async (projectId: string) => {
+      if (!projectId) {
+        setProjectJobs([]);
+        setProjectAssets([]);
+        return;
+      }
+      setProjectDataLoading(true);
+      setProjectDataError(null);
+      try {
+        const [jobsData, assetsData] = await Promise.all([
+          apiClient.listProjectJobs(projectId),
+          apiClient.listProjectAssets(projectId),
+        ]);
+        setProjectJobs(jobsData);
+        setProjectAssets(assetsData);
+        if (!assetsData.some((asset) => asset.id === shareSourceAssetId)) {
+          setShareSourceAssetId(assetsData[0]?.id || "");
+        }
+      } catch (err) {
+        setProjectDataError(err instanceof Error ? err.message : "Failed to load project data");
+      } finally {
+        setProjectDataLoading(false);
+      }
+    };
+
+    useEffect(() => {
+      if (active === "usage") {
+        void loadUsageSummary();
+      }
+    }, [active, usageFrom, usageTo, selectedProjectId]);
+
+    useEffect(() => {
+      if (active === "projects") {
+        void loadProjects();
+      }
+    }, [active]);
+
+    useEffect(() => {
+      if (active === "projects" && selectedProjectId) {
+        void loadProjectData(selectedProjectId);
+      }
+    }, [active, selectedProjectId]);
 
 		  const formatTimestamp = (value?: string | null) => {
 		    if (!value) return "n/a";
@@ -1785,7 +1934,11 @@ function StyleEditor({
 	    if (!uploadedVideoId) throw new Error("Upload a video or provide a subtitle asset id first.");
 	    setCaptionOutput(null);
 	    setCaptionJob(null);
-	    const job = await apiClient.createCaptionJob({ video_asset_id: uploadedVideoId, options: {} });
+	    const job = await apiClient.createCaptionJob({
+        video_asset_id: uploadedVideoId,
+        project_id: selectedProjectId || undefined,
+        options: {},
+      });
 	    setCaptionJob(job);
 	    const { job: finished, asset } = await waitForJobAsset(job.id);
 	    setCaptionJob(finished);
@@ -1892,7 +2045,12 @@ function StyleEditor({
 
 		    setRecutClipId(clip.id);
 		    try {
-		      const job = await apiClient.createCutClipJob({ video_asset_id: uploadedVideoId, start, end });
+		      const job = await apiClient.createCutClipJob({
+            video_asset_id: uploadedVideoId,
+            project_id: selectedProjectId || undefined,
+            start,
+            end,
+          });
 		      const { job: finished, asset } = await waitForJobAsset(job.id);
 		      if (!asset?.uri) throw new Error("Cut-clip job did not produce an output asset.");
 		      const payload = (finished.payload || {}) as any;
@@ -1953,6 +2111,7 @@ function StyleEditor({
             const job = await apiClient.createStyledSubtitleJob({
               video_asset_id: clip.asset_id,
               subtitle_asset_id: clip.subtitle_asset_id,
+              project_id: selectedProjectId || undefined,
               style,
               ...(previewSeconds ? { preview_seconds: previewSeconds } : {}),
             });
@@ -2004,6 +2163,45 @@ function StyleEditor({
           }
         };
 
+        const createProject = async () => {
+          const name = newProjectName.trim();
+          if (!name) return;
+          setProjectCreateBusy(true);
+          setProjectsError(null);
+          try {
+            const created = await apiClient.createProject({
+              name,
+              description: newProjectDescription.trim() || undefined,
+            });
+            setNewProjectName("");
+            setNewProjectDescription("");
+            setProjects((prev) => [created, ...prev.filter((p) => p.id !== created.id)]);
+            setSelectedProjectId(created.id);
+            setShareLinks([]);
+          } catch (err) {
+            setProjectsError(err instanceof Error ? err.message : "Failed to create project");
+          } finally {
+            setProjectCreateBusy(false);
+          }
+        };
+
+        const createShareLink = async () => {
+          if (!selectedProjectId || !shareSourceAssetId) return;
+          setShareBusy(true);
+          setProjectDataError(null);
+          try {
+            const response = await apiClient.createProjectShareLinks(selectedProjectId, {
+              asset_ids: [shareSourceAssetId],
+              expires_in_hours: 24,
+            });
+            setShareLinks(response.links);
+          } catch (err) {
+            setProjectDataError(err instanceof Error ? err.message : "Failed to generate share link");
+          } finally {
+            setShareBusy(false);
+          }
+        };
+
 		  return (
 		    <div className="layout">
 	      <aside className="sidebar">
@@ -2046,6 +2244,17 @@ function StyleEditor({
             </p>
           </div>
           <div className="topbar-actions">
+            <label className="field" style={{ marginBottom: 0, minWidth: 220 }}>
+              <span>Project scope</span>
+              <select className="input" value={selectedProjectId} onChange={(e) => setSelectedProjectId(e.target.value)}>
+                <option value="">All projects</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </label>
             <Button variant="primary" onClick={() => setShowSettings(true)}>
               Quick settings
             </Button>
@@ -2157,11 +2366,16 @@ function StyleEditor({
 	        {active === "shorts" && (
 	          <section className="grid two-col">
             <Card title="Upload or link video">
-              <UploadPanel onAssetId={(id) => setUploadedVideoId(id)} onPreview={(url) => setUploadedPreview(toSafeUrl(url))} />
+              <UploadPanel
+                projectId={selectedProjectId || undefined}
+                onAssetId={(id) => setUploadedVideoId(id)}
+                onPreview={(url) => setUploadedPreview(toSafeMediaUrl(url))}
+              />
               {safeUploadedPreview && <video className="preview" controls src={safeUploadedPreview} />}
             </Card>
             <Card title="Shorts maker">
               <ShortsForm
+                projectId={selectedProjectId || undefined}
                 onCreated={(job) => {
                   setShortsJob(job);
                   setShortsClips([]);
@@ -2302,7 +2516,7 @@ function StyleEditor({
 		              {shortsClips.map((clip, idx) => (
 		                <div key={clip.id} className="clip-card">
 			                  <div className="clip-thumb">
-		                    {toSafeUrl(clip.thumbnail_uri) ? <img src={toSafeUrl(clip.thumbnail_uri)!} alt="Clip thumbnail" /> : <div className="placeholder-thumb" />}
+		                    {toSafeMediaUrl(clip.thumbnail_uri) ? <img src={toSafeMediaUrl(clip.thumbnail_uri)!} alt="Clip thumbnail" /> : <div className="placeholder-thumb" />}
 		                  </div>
 	                  <p className="metric-value">{clip.duration ? `${clip.duration}s` : "?"}</p>
 	                  <p className="muted">Score: {clip.score ?? "?"}</p>
@@ -2329,9 +2543,9 @@ function StyleEditor({
                         </label>
                       )}
                       {(() => {
-                        const clipVideoUrl = toSafeUrl(clip.uri);
-                        const clipStyledUrl = toSafeUrl(clip.styled_uri);
-                        const clipSubtitleUrl = toSafeUrl(clip.subtitle_uri);
+                        const clipVideoUrl = toSafeMediaUrl(clip.uri);
+                        const clipStyledUrl = toSafeMediaUrl(clip.styled_uri);
+                        const clipSubtitleUrl = toSafeMediaUrl(clip.subtitle_uri);
                         return (
                           <div className="actions-row">
                             {clipVideoUrl ? (
@@ -2464,16 +2678,21 @@ function StyleEditor({
         {active === "captions" && (
           <section className="grid two-col">
             <Card title="Upload video">
-              <UploadPanel onAssetId={(id) => setUploadedVideoId(id)} onPreview={(url) => setUploadedPreview(toSafeUrl(url))} />
+              <UploadPanel
+                projectId={selectedProjectId || undefined}
+                onAssetId={(id) => setUploadedVideoId(id)}
+                onPreview={(url) => setUploadedPreview(toSafeMediaUrl(url))}
+              />
               {safeUploadedPreview && <video className="preview" controls src={safeUploadedPreview} />}
             </Card>
             <Card title="Captions & Translate">
               <p className="muted">Create caption jobs with backend/model and format options.</p>
-              <CaptionsForm onCreated={() => refresh()} initialVideoId={uploadedVideoId} />
+              <CaptionsForm onCreated={() => refresh()} initialVideoId={uploadedVideoId} projectId={selectedProjectId || undefined} />
             </Card>
             <Card title="Translate subtitles">
           <p className="muted">Submit translation jobs for existing subtitle assets.</p>
           <TranslateForm
+            projectId={selectedProjectId || undefined}
             onCreated={(job) => {
               setTranslateJob(job);
               setTranslateOutput(null);
@@ -2584,9 +2803,10 @@ function StyleEditor({
 	                {recentAssetsError && <div className="error-inline">{recentAssetsError}</div>}
 	              </label>
 		              <SubtitleUpload
+                    projectId={selectedProjectId || undefined}
 		                onAssetId={(id) => setSubtitleAssetId(id)}
 		                onPreview={(url, name) => {
-		                  setSubtitlePreview(toSafeUrl(url));
+		                  setSubtitlePreview(toSafeMediaUrl(url));
 	                  setSubtitleFileName(name || null);
 	                }}
 	              />
@@ -2600,7 +2820,11 @@ function StyleEditor({
                     setCaptionJob(null);
                     if (!uploadedVideoId) return;
                     try {
-                      const job = await apiClient.createCaptionJob({ video_asset_id: uploadedVideoId, options: {} });
+                      const job = await apiClient.createCaptionJob({
+                        video_asset_id: uploadedVideoId,
+                        project_id: selectedProjectId || undefined,
+                        options: {},
+                      });
                       setCaptionJob(job);
                     } catch (err) {
                       setAssetError(err instanceof Error ? err.message : "Failed to request captions");
@@ -2611,7 +2835,11 @@ function StyleEditor({
                 </Button>
                 {captionJob && <JobStatusPill status={captionJob.status} />}
               </div>
-              <UploadPanel onAssetId={(id) => setUploadedVideoId(id)} onPreview={(url) => setUploadedPreview(toSafeUrl(url))} />
+              <UploadPanel
+                projectId={selectedProjectId || undefined}
+                onAssetId={(id) => setUploadedVideoId(id)}
+                onPreview={(url) => setUploadedPreview(toSafeMediaUrl(url))}
+              />
               {safeUploadedPreview && <video className="preview" controls src={safeUploadedPreview} />}
 	              {subtitlePreviewUrl && (
 	                <div className="output-card">
@@ -2626,7 +2854,12 @@ function StyleEditor({
                 subtitleId={subtitleAssetId}
                 onPreview={async (payload) => {
                   const sid = await ensureSubtitleAssetForStyling();
-                  const job = await apiClient.createStyledSubtitleJob({ ...payload, subtitle_asset_id: sid, preview_seconds: 5 });
+                  const job = await apiClient.createStyledSubtitleJob({
+                    ...payload,
+                    subtitle_asset_id: sid,
+                    project_id: selectedProjectId || undefined,
+                    preview_seconds: 5,
+                  });
                   setStyleJob(job);
                   setStyleOutput(null);
                   refresh();
@@ -2634,7 +2867,11 @@ function StyleEditor({
                 }}
                 onRender={async (payload) => {
                   const sid = await ensureSubtitleAssetForStyling();
-                  const job = await apiClient.createStyledSubtitleJob({ ...payload, subtitle_asset_id: sid });
+                  const job = await apiClient.createStyledSubtitleJob({
+                    ...payload,
+                    subtitle_asset_id: sid,
+                    project_id: selectedProjectId || undefined,
+                  });
                   setStyleJob(job);
                   setStyleOutput(null);
                   refresh();
@@ -2665,6 +2902,7 @@ function StyleEditor({
                 <Card title="Subtitle editor">
 	                  <SubtitleEditorCard
 	                    initialAssetId={subtitleAssetId}
+                      projectId={selectedProjectId || undefined}
 	                    onAssetChosen={(asset) => {
 	                      setSubtitleAssetId(asset.id);
 	                      setSubtitlePreview(toSafeMediaHref(asset.uri));
@@ -2680,6 +2918,7 @@ function StyleEditor({
             <Card title="Subtitle tools">
               <p className="muted">Upload or specify subtitle asset to translate; bilingual option available.</p>
               <SubtitleToolsForm
+                projectId={selectedProjectId || undefined}
                 onCreated={(job) => {
                   setSubtitleToolsJob(job);
                   setSubtitleToolsOutput(null);
@@ -2705,11 +2944,20 @@ function StyleEditor({
 
             <Card title="Video / Audio merge">
               <p className="muted">Merge audio into a video with optional offset, ducking, and normalization.</p>
-              <UploadPanel onAssetId={(id) => setMergeVideoId(id)} onPreview={(url) => setMergeVideoPreview(toSafeUrl(url))} />
+              <UploadPanel
+                projectId={selectedProjectId || undefined}
+                onAssetId={(id) => setMergeVideoId(id)}
+                onPreview={(url) => setMergeVideoPreview(toSafeMediaUrl(url))}
+              />
               {safeMergeVideoPreview && <video className="preview" controls src={safeMergeVideoPreview} />}
-              <AudioUploadPanel onAssetId={(id) => setMergeAudioId(id)} onPreview={(url) => setMergeAudioPreview(toSafeUrl(url))} />
+              <AudioUploadPanel
+                projectId={selectedProjectId || undefined}
+                onAssetId={(id) => setMergeAudioId(id)}
+                onPreview={(url) => setMergeAudioPreview(toSafeMediaUrl(url))}
+              />
               {safeMergeAudioPreview && <audio controls src={safeMergeAudioPreview} />}
               <MergeAvForm
+                projectId={selectedProjectId || undefined}
                 onCreated={(job) => {
                   setMergeJob(job);
                   setMergeOutput(null);
@@ -2737,8 +2985,8 @@ function StyleEditor({
 	          </section>
 	        )}
 
-		        {active === "jobs" && (
-		          <section className="grid two-col">
+	        {active === "jobs" && (
+	          <section className="grid two-col">
 		            <Card title="Jobs">
 		              <div className="form-grid">
 		                <label className="field">
@@ -2904,9 +3152,11 @@ function StyleEditor({
 		                    >
 		                      Copy job JSON
 		                    </Button>
-			                    <a className="btn btn-secondary" href={`${apiClient.baseUrl}/jobs/${selectedJob.id}/bundle`}>
-			                      Download bundle
-			                    </a>
+			                    {toSafeExternalUrl(apiClient.jobBundleUrl(selectedJob.id)) && (
+			                      <a className="btn btn-secondary" href={toSafeExternalUrl(apiClient.jobBundleUrl(selectedJob.id))!}>
+			                        Download bundle
+			                      </a>
+			                    )}
 				                    {toSafeMediaHref(outputAsset?.uri) && (
 				                      <a className="btn btn-secondary" href={toSafeMediaHref(outputAsset?.uri)!} target="_blank" rel="noreferrer">
 				                        Open output
@@ -3065,6 +3315,174 @@ function StyleEditor({
 	            </Card>
 	          </section>
 	        )}
+
+          {active === "usage" && (
+            <section className="grid two-col">
+              <Card title="Usage summary">
+                <div className="form-grid">
+                  <label className="field">
+                    <span>From date</span>
+                    <Input type="date" value={usageFrom} onChange={(e) => setUsageFrom(e.target.value)} />
+                  </label>
+                  <label className="field">
+                    <span>To date</span>
+                    <Input type="date" value={usageTo} onChange={(e) => setUsageTo(e.target.value)} />
+                  </label>
+                </div>
+                <div className="actions-row">
+                  <Button type="button" variant="ghost" onClick={() => void loadUsageSummary()} disabled={usageLoading}>
+                    {usageLoading ? "Refreshing..." : "Refresh"}
+                  </Button>
+                </div>
+                {usageError && <div className="error-inline">{usageError}</div>}
+                {usageLoading && <Spinner label="Loading usage summary..." />}
+                {usageSummary && (
+                  <div className="snapshot">
+                    <div>
+                      <p className="metric-label">Total jobs</p>
+                      <p className="metric-value">{usageSummary.total_jobs}</p>
+                    </div>
+                    <div>
+                      <p className="metric-label">Completed</p>
+                      <p className="metric-value">{usageSummary.completed_jobs}</p>
+                    </div>
+                    <div>
+                      <p className="metric-label">Running</p>
+                      <p className="metric-value">{usageSummary.running_jobs}</p>
+                    </div>
+                    <div>
+                      <p className="metric-label">Failed</p>
+                      <p className="metric-value">{usageSummary.failed_jobs}</p>
+                    </div>
+                    <div>
+                      <p className="metric-label">Generated assets</p>
+                      <p className="metric-value">{usageSummary.output_assets_count}</p>
+                    </div>
+                    <div>
+                      <p className="metric-label">Output duration</p>
+                      <p className="metric-value">{usageSummary.output_duration_seconds.toFixed(2)}s</p>
+                    </div>
+                  </div>
+                )}
+              </Card>
+              <Card title="By job type">
+                {!usageSummary && <p className="muted">No summary loaded yet.</p>}
+                {usageSummary && Object.keys(usageSummary.job_type_counts).length === 0 && <p className="muted">No jobs in selected range.</p>}
+                {usageSummary && Object.entries(usageSummary.job_type_counts).length > 0 && (
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Job type</th>
+                        <th>Count</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(usageSummary.job_type_counts)
+                        .sort(([a], [b]) => a.localeCompare(b))
+                        .map(([jobType, count]) => (
+                          <tr key={jobType}>
+                            <td>{jobType}</td>
+                            <td>{count}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                )}
+              </Card>
+            </section>
+          )}
+
+          {active === "projects" && (
+            <section className="grid two-col">
+              <Card title="Projects">
+                {projectsError && <div className="error-inline">{projectsError}</div>}
+                {projectsLoading && <Spinner label="Loading projects..." />}
+                <div className="form-grid">
+                  <label className="field">
+                    <span>Project</span>
+                    <select className="input" value={selectedProjectId} onChange={(e) => setSelectedProjectId(e.target.value)}>
+                      <option value="">Select a project...</option>
+                      {projects.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Project name</span>
+                    <Input value={newProjectName} onChange={(e) => setNewProjectName(e.target.value)} />
+                  </label>
+                  <label className="field">
+                    <span>Description</span>
+                    <TextArea rows={3} value={newProjectDescription} onChange={(e) => setNewProjectDescription(e.target.value)} />
+                  </label>
+                </div>
+                <div className="actions-row">
+                  <Button type="button" variant="primary" onClick={() => void createProject()} disabled={projectCreateBusy || !newProjectName.trim()}>
+                    {projectCreateBusy ? "Creating..." : "Create project"}
+                  </Button>
+                  <Button type="button" variant="ghost" onClick={() => void loadProjects()} disabled={projectsLoading}>
+                    {projectsLoading ? "Refreshing..." : "Refresh"}
+                  </Button>
+                </div>
+              </Card>
+              <Card title="Project assets & sharing">
+                {!selectedProjectId && <p className="muted">Select a project to inspect jobs/assets.</p>}
+                {projectDataError && <div className="error-inline">{projectDataError}</div>}
+                {projectDataLoading && <Spinner label="Loading project data..." />}
+                {selectedProjectId && !projectDataLoading && (
+                  <>
+                    <div className="snapshot">
+                      <div>
+                        <p className="metric-label">Jobs</p>
+                        <p className="metric-value">{projectJobs.length}</p>
+                      </div>
+                      <div>
+                        <p className="metric-label">Assets</p>
+                        <p className="metric-value">{projectAssets.length}</p>
+                      </div>
+                    </div>
+                    <label className="field">
+                      <span>Share source asset</span>
+                      <select className="input" value={shareSourceAssetId} onChange={(e) => setShareSourceAssetId(e.target.value)}>
+                        <option value="">Select asset...</option>
+                        {projectAssets.map((asset) => (
+                          <option key={asset.id} value={asset.id}>
+                            {asset.id} ({asset.kind})
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="actions-row">
+                      <Button type="button" variant="secondary" onClick={() => void createShareLink()} disabled={shareBusy || !shareSourceAssetId}>
+                        {shareBusy ? "Generating..." : "Generate share link"}
+                      </Button>
+                    </div>
+                    {shareLinks.length > 0 && (
+                      <div className="output-card">
+                        {shareLinks.map((link) => {
+                          const safeLink = toSafeExternalUrl(link.url);
+                          return (
+                            <div key={link.asset_id}>
+                              <p className="muted mono">{link.asset_id}</p>
+                              {safeLink ? (
+                                <a className="btn btn-secondary" href={safeLink} target="_blank" rel="noreferrer">
+                                  {safeLink}
+                                </a>
+                              ) : (
+                                <p className="muted">Generated link was rejected by URL policy.</p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
+                )}
+              </Card>
+            </section>
+          )}
 
           {active === "system" && (
             <section className="grid">

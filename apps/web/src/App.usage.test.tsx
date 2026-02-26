@@ -35,43 +35,41 @@ beforeEach(() => {
   vi.clearAllMocks();
   apiClientMock.listJobs.mockResolvedValue([]);
   apiClientMock.listAssets.mockResolvedValue([]);
+  apiClientMock.getUsageSummary.mockResolvedValue({
+    total_jobs: 12,
+    queued_jobs: 2,
+    running_jobs: 3,
+    completed_jobs: 6,
+    failed_jobs: 1,
+    cancelled_jobs: 0,
+    job_type_counts: { captions: 5, shorts: 4, merge_av: 3 },
+    output_assets_count: 8,
+    output_duration_seconds: 122.5,
+    generated_bytes: 1000,
+    from_date: null,
+    to_date: null,
+  });
   apiClientMock.listProjects.mockResolvedValue([]);
+  apiClientMock.getSystemStatus.mockResolvedValue({
+    api_version: "0.1.0",
+    offline_mode: false,
+    storage_backend: "LocalStorageBackend",
+    broker_url: "redis://localhost:6379/0",
+    result_backend: "redis://localhost:6379/0",
+    worker: { ping_ok: false, workers: [] },
+  });
 });
 
-describe("frontend forms", () => {
-  it("submits a captions job with selected options", async () => {
+describe("usage page", () => {
+  it("loads usage summary and renders key metrics", async () => {
     const user = userEvent.setup();
-    apiClientMock.createCaptionJob.mockResolvedValue({
-      id: "job-1",
-      job_type: "captions",
-      status: "queued",
-      progress: 0,
-      payload: {},
-    });
-
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "Captions" }));
+    await user.click(screen.getByRole("button", { name: "Usage" }));
 
-    await user.clear(screen.getByLabelText("Video asset ID"));
-    await user.type(screen.getByLabelText("Video asset ID"), "video-123");
-
-    await user.click(screen.getByRole("checkbox", { name: "VTT" }));
-    await user.click(screen.getByRole("checkbox", { name: "ASS" }));
-
-    await user.click(screen.getByRole("button", { name: "Create caption job" }));
-
-    expect(apiClientMock.createCaptionJob).toHaveBeenCalledWith({
-      video_asset_id: "video-123",
-      project_id: undefined,
-      options: {
-        source_language: "auto",
-        backend: "faster_whisper",
-        model: "whisper-large-v3",
-        formats: ["srt", "vtt", "ass"],
-        speaker_labels: false,
-        diarization_backend: "noop",
-      },
-    });
+    expect(await screen.findByText("12")).toBeInTheDocument();
+    expect(screen.getByText("8")).toBeInTheDocument();
+    expect(screen.getByText(/122.50s/)).toBeInTheDocument();
+    expect(apiClientMock.getUsageSummary).toHaveBeenCalled();
   });
 });
