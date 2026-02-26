@@ -477,5 +477,8 @@ Goal: offer Reframe as a paid hosted service (multi-tenant web app) while keepin
 - [x] Add transcription input path guard and route CLI/backends through centralized validation.
 - [x] Replace iframe/window-open text preview flows with sanitized URL handling and text-only previews in web UI.
 - [x] Resolve active npm advisories in web/desktop lockfiles (rollup path traversal advisory).
+- [x] Dismiss legacy code-scanning alerts tied to archived `Inspirations & Former Attempts/` paths with documented rationale.
+- [x] Merge/clear active Dependabot security PR queue on maintained paths.
+- [ ] Fix remaining active-path CodeQL findings (currently concentrated in scripts + frontend preview sinks).
 - [ ] Validate that GitHub security alert counts converge to zero on `main` after post-merge re-analysis completes.
 

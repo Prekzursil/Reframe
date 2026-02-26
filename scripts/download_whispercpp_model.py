@@ -3,11 +3,17 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+from security_helpers import normalize_https_url
+
+
+ALLOWED_MODEL_HOSTS = {"huggingface.co", "www.huggingface.co"}
 
 
 def _default_output_dir() -> Path:
@@ -34,6 +40,9 @@ def _normalize_filename(model: str) -> str:
         name = f"{name}.bin"
     if not name.startswith("ggml-"):
         name = f"ggml-{name}"
+    name = Path(name).name
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
+        raise ValueError(f"Model filename contains unsupported characters: {model!r}")
     return name
 
 
@@ -50,6 +59,12 @@ def _download(url: str, dest_path: Path) -> None:
         raise RuntimeError(f"Failed to download {url}: {exc}") from exc
 
     tmp_path.replace(dest_path)
+
+
+def _resolve_output_dir(raw_output_dir: str) -> Path:
+    if raw_output_dir:
+        return Path(raw_output_dir).expanduser().resolve(strict=False)
+    return _default_output_dir().expanduser().resolve(strict=False)
 
 
 def main(argv: list[str]) -> int:
@@ -69,15 +84,21 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--base-url",
         default="https://huggingface.co/ggerganov/whisper.cpp/resolve/main",
-        help="Base URL for model downloads. Default: %(default)s",
+        help="Base URL for model downloads. Must be HTTPS and hosted on Hugging Face. Default: %(default)s",
     )
     parser.add_argument("--force", action="store_true", help="Re-download even if the file already exists.")
     args = parser.parse_args(argv)
 
-    filename = _normalize_filename(args.model)
-    output_dir = Path(args.output_dir) if args.output_dir else _default_output_dir()
+    try:
+        filename = _normalize_filename(args.model)
+        output_dir = _resolve_output_dir(args.output_dir)
+        base_url = normalize_https_url(args.base_url, allowed_hosts=ALLOWED_MODEL_HOSTS)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
     dest_path = output_dir / filename
-    url = f"{args.base_url.rstrip('/')}/{filename}"
+    url = f"{base_url.rstrip('/')}/{filename}"
 
     if dest_path.exists() and not args.force:
         print(f"Already present: {dest_path}")
@@ -102,4 +123,3 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-
