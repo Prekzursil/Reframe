@@ -16,7 +16,7 @@ jobs:
       VERIFY_COMMAND: make verify
     steps:
       - name: Build agent task packet and notify Copilot
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const issue = context.payload.issue;

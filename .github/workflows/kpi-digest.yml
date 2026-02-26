@@ -27,7 +27,7 @@ jobs:
 
       - name: Calculate KPI Metrics
         id: kpi
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const now = new Date();
@@ -175,7 +175,7 @@ jobs:
 
       - name: Generate Digest Summary
         id: summary
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const metrics = JSON.parse(`${{ steps.kpi.outputs.metrics }}`);
@@ -237,7 +237,7 @@ jobs:
           git push || echo "No changes to commit"
 
       - name: Post to Discussions
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const summary = `${{ steps.summary.outputs.summary }}`;
