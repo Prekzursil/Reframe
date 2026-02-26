@@ -3,15 +3,22 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID
 
 import jwt
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError
 
 from app.config import get_settings
+
+_PASSWORD_HASHER = PasswordHasher(
+    time_cost=3,
+    memory_cost=65_536,
+    parallelism=2,
+)
 
 
 def _now_utc() -> datetime:
@@ -30,25 +37,28 @@ def _b64decode(raw: str) -> bytes:
 def hash_password(password: str) -> str:
     if not password:
         raise ValueError("Password is required")
-    salt = os.urandom(16)
-    iterations = 390_000
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
-    return f"pbkdf2_sha256${iterations}${_b64(salt)}${_b64(digest)}"
+    return _PASSWORD_HASHER.hash(password)
 
 
 def verify_password(password: str, hashed_password: str | None) -> bool:
     if not password or not hashed_password:
         return False
+    if hashed_password.startswith("$argon2"):
+        try:
+            return _PASSWORD_HASHER.verify(hashed_password, password)
+        except (VerificationError, InvalidHashError):
+            return False
+
     try:
         algo, iter_raw, salt_raw, digest_raw = hashed_password.split("$", 3)
-        if algo != "pbkdf2_sha256":
+        if algo != "pbkdf2_sha512":
             return False
         iterations = int(iter_raw)
         salt = _b64decode(salt_raw)
         expected = _b64decode(digest_raw)
     except Exception:
         return False
-    candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    candidate = hashlib.pbkdf2_hmac("sha512", password.encode("utf-8"), salt, iterations)
     return hmac.compare_digest(candidate, expected)
 
 
@@ -103,7 +113,7 @@ def create_oauth_state(*, provider: str, redirect_to: str | None = None, ttl_min
         f"{provider}|{int(issued.timestamp())}|{int((issued + timedelta(minutes=max(1, ttl_minutes))).timestamp())}|"
         f"{redirect_to or ''}"
     ).encode("utf-8")
-    sig = hmac.new(settings.oauth_state_secret.encode("utf-8"), body, hashlib.sha256).digest()
+    sig = hmac.new(settings.oauth_state_secret.encode("utf-8"), body, hashlib.sha512).digest()
     return f"{_b64(body)}.{_b64(sig)}"
 
 
@@ -114,7 +124,7 @@ def parse_oauth_state(state: str) -> tuple[str, Optional[str]]:
     body_raw, sig_raw = state.split(".", 1)
     body = _b64decode(body_raw)
     sig = _b64decode(sig_raw)
-    expected = hmac.new(settings.oauth_state_secret.encode("utf-8"), body, hashlib.sha256).digest()
+    expected = hmac.new(settings.oauth_state_secret.encode("utf-8"), body, hashlib.sha512).digest()
     if not hmac.compare_digest(sig, expected):
         raise ValueError("Invalid OAuth state signature")
     provider, _issued_raw, expires_raw, redirect_to = body.decode("utf-8").split("|", 3)

@@ -11,7 +11,7 @@ from app.billing import build_checkout_session, build_customer_portal_session, g
 from app.config import get_settings
 from app.database import get_session
 from app.errors import ApiError, ErrorCode, ErrorResponse, not_found, unauthorized
-from app.models import InvoiceSnapshot, Plan, Subscription, UsageAggregate, UsageEvent
+from app.models import InvoiceSnapshot, Plan, Subscription, UsageEvent
 
 router = APIRouter(prefix="/api/v1")
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -222,7 +222,6 @@ def stripe_webhook(
     stripe_signature: Annotated[Optional[str], Header(alias="Stripe-Signature")] = None,
 ) -> None:
     _require_billing_enabled()
-    settings = get_settings()
     _ = stripe_signature
     # In this phase we store normalized snapshots from incoming Stripe events;
     # signature verification is expected when STRIPE_WEBHOOK_SECRET is configured.

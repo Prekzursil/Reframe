@@ -7,7 +7,7 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any, List, Optional
+from typing import Annotated, List, Optional
 from uuid import uuid4
 
 try:
@@ -497,7 +497,7 @@ class UploadCompleteResponse(SQLModel):
     status: str = "completed"
 
 
-_pending_uploads: dict[str, dict[str, Any]] = {}
+_pending_uploads: dict[str, dict[str, object]] = {}
 
 
 def _owner_fields(principal: AuthPrincipal) -> dict[str, UUID | None]:
