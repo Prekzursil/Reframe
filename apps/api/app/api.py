@@ -4,24 +4,34 @@ import io
 import json
 import os
 import zipfile
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, List, Optional
+from typing import Annotated, Any, List, Optional
 from uuid import uuid4
 
-from celery import Celery
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status, Response
+try:
+    from celery import Celery
+except ModuleNotFoundError:  # pragma: no cover - allows API tests without optional celery install
+    class Celery:  # type: ignore[override]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def send_task(self, *_args, **_kwargs):
+            raise RuntimeError("Celery is not installed in this environment.")
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status, Response
 from uuid import UUID
 
-from sqlmodel import Session, SQLModel, select
+from sqlmodel import Field, Session, SQLModel, select
 
 from app.database import get_session
 from app.config import get_settings
 from app.errors import ApiError, ErrorCode, ErrorResponse, conflict, not_found, server_error
-from app.models import Job, JobStatus, MediaAsset, SubtitleStylePreset
+from app.models import Job, JobStatus, MediaAsset, Project, SubtitleStylePreset
 from app.rate_limit import enforce_rate_limit
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
+from app.share_links import build_share_token_with_ttl, parse_and_validate_share_token
 from app.storage import LocalStorageBackend, get_storage, is_remote_uri
 
 router = APIRouter(prefix="/api/v1")
@@ -33,7 +43,21 @@ SessionDep = Annotated[Session, Depends(get_session)]
 @lru_cache(maxsize=1)
 def get_celery_app() -> Celery:
     settings = get_settings()
-    return Celery("reframe_api", broker=settings.broker_url, backend=settings.result_backend)
+    app = Celery("reframe_api", broker=settings.broker_url, backend=settings.result_backend)
+    # Fail fast when broker/backend are unavailable so API diagnostics and tests do not hang.
+    app.conf.broker_connection_retry_on_startup = False
+    app.conf.broker_connection_max_retries = 0
+    app.conf.broker_transport_options = {
+        "socket_connect_timeout": 1,
+        "socket_timeout": 1,
+        "max_retries": 0,
+    }
+    app.conf.result_backend_transport_options = {
+        "socket_connect_timeout": 1,
+        "socket_timeout": 1,
+        "max_retries": 0,
+    }
+    return app
 
 
 def enqueue_job(job: Job, task_name: str, *args) -> str:
@@ -54,6 +78,30 @@ def save_and_dispatch(job: Job, session: Session, task_name: str, *args) -> Job:
     session.commit()
     session.refresh(job)
     return job
+
+
+def _ensure_project_exists(session: Session, project_id: UUID | None) -> Project | None:
+    if not project_id:
+        return None
+    project = session.get(Project, project_id)
+    if not project:
+        raise not_found("Project not found", details={"project_id": str(project_id)})
+    return project
+
+
+def _resolve_local_asset_path(asset: MediaAsset, *, media_root: Path) -> Path | None:
+    uri = asset.uri or ""
+    if not uri or is_remote_uri(uri):
+        return None
+    return LocalStorageBackend(media_root=media_root).resolve_local_path(uri)
+
+
+def _coerce_aware_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 class WorkerDiagnostics(SQLModel):
@@ -96,12 +144,13 @@ def system_status() -> SystemStatusResponse:
         except Exception as exc:
             worker_diag.error = f"Worker ping failed: {exc}"
 
-        try:
-            res = app.send_task("tasks.system_info")
-            worker_diag.system_info = res.get(timeout=3.0)
-        except Exception as exc:
-            msg = f"Worker diagnostics task failed: {exc}"
-            worker_diag.error = f"{worker_diag.error}; {msg}" if worker_diag.error else msg
+        if worker_diag.ping_ok:
+            try:
+                res = app.send_task("tasks.system_info")
+                worker_diag.system_info = res.get(timeout=3.0)
+            except Exception as exc:
+                msg = f"Worker diagnostics task failed: {exc}"
+                worker_diag.error = f"{worker_diag.error}; {msg}" if worker_diag.error else msg
     except Exception as exc:  # pragma: no cover - best effort
         worker_diag.error = f"Celery unavailable: {exc}"
 
@@ -118,6 +167,7 @@ def system_status() -> SystemStatusResponse:
 class CaptionJobRequest(SQLModel):
     video_asset_id: UUID
     options: Optional[dict] = None
+    project_id: Optional[UUID] = None
 
     model_config = {
         "json_schema_extra": {
@@ -133,6 +183,7 @@ class TranslateJobRequest(SQLModel):
     subtitle_asset_id: UUID
     target_language: str
     options: Optional[dict] = None
+    project_id: Optional[UUID] = None
 
     model_config = {
         "json_schema_extra": {
@@ -150,6 +201,7 @@ class TranslateSubtitleToolRequest(SQLModel):
     target_language: str
     bilingual: bool = False
     options: Optional[dict] = None
+    project_id: Optional[UUID] = None
 
     model_config = {
         "json_schema_extra": {
@@ -170,6 +222,7 @@ class ShortsJobRequest(SQLModel):
     max_duration: float = 60.0
     aspect_ratio: str = "9:16"
     options: Optional[dict] = None
+    project_id: Optional[UUID] = None
 
     model_config = {
         "json_schema_extra": {
@@ -195,6 +248,7 @@ class MergeAVRequest(SQLModel):
     ducking: bool = False
     normalize: bool = True
     options: Optional[dict] = None
+    project_id: Optional[UUID] = None
 
     model_config = {
         "json_schema_extra": {
@@ -215,6 +269,7 @@ class CutClipRequest(SQLModel):
     start: float
     end: float
     options: Optional[dict] = None
+    project_id: Optional[UUID] = None
 
     model_config = {
         "json_schema_extra": {
@@ -233,6 +288,7 @@ class StyledSubtitleJobRequest(SQLModel):
     subtitle_asset_id: UUID
     style: dict
     preview_seconds: Optional[int] = None
+    project_id: Optional[UUID] = None
 
     model_config = {
         "json_schema_extra": {
@@ -246,6 +302,41 @@ class StyledSubtitleJobRequest(SQLModel):
     }
 
 
+class UsageSummary(SQLModel):
+    total_jobs: int = 0
+    queued_jobs: int = 0
+    running_jobs: int = 0
+    completed_jobs: int = 0
+    failed_jobs: int = 0
+    cancelled_jobs: int = 0
+    job_type_counts: dict[str, int] = Field(default_factory=dict)
+    output_assets_count: int = 0
+    output_duration_seconds: float = 0.0
+    generated_bytes: int = 0
+    from_date: Optional[datetime] = None
+    to_date: Optional[datetime] = None
+
+
+class ProjectCreateRequest(SQLModel):
+    name: str
+    description: Optional[str] = None
+
+
+class ProjectShareLinksRequest(SQLModel):
+    asset_ids: list[UUID]
+    expires_in_hours: int = 24
+
+
+class ProjectShareLink(SQLModel):
+    asset_id: UUID
+    url: str
+    expires_at: datetime
+
+
+class ProjectShareLinksResponse(SQLModel):
+    links: list[ProjectShareLink]
+
+
 @router.post(
     "/captions/jobs",
     response_model=Job,
@@ -255,7 +346,15 @@ class StyledSubtitleJobRequest(SQLModel):
     dependencies=[Depends(enforce_rate_limit)],
 )
 def create_caption_job(payload: CaptionJobRequest, session: SessionDep) -> Job:
-    job = Job(job_type="captions", status=JobStatus.queued, progress=0.0, input_asset_id=payload.video_asset_id, payload=payload.options or {})
+    _ensure_project_exists(session, payload.project_id)
+    job = Job(
+        job_type="captions",
+        status=JobStatus.queued,
+        progress=0.0,
+        input_asset_id=payload.video_asset_id,
+        payload=payload.options or {},
+        project_id=payload.project_id,
+    )
     return save_and_dispatch(job, session, "tasks.generate_captions", str(job.id), str(payload.video_asset_id), payload.options or {})
 
 
@@ -268,7 +367,15 @@ def create_caption_job(payload: CaptionJobRequest, session: SessionDep) -> Job:
     dependencies=[Depends(enforce_rate_limit)],
 )
 def create_translate_job(payload: TranslateJobRequest, session: SessionDep) -> Job:
-    job = Job(job_type="translate_subtitles", status=JobStatus.queued, progress=0.0, input_asset_id=payload.subtitle_asset_id, payload={"target_language": payload.target_language, **(payload.options or {})})
+    _ensure_project_exists(session, payload.project_id)
+    job = Job(
+        job_type="translate_subtitles",
+        status=JobStatus.queued,
+        progress=0.0,
+        input_asset_id=payload.subtitle_asset_id,
+        payload={"target_language": payload.target_language, **(payload.options or {})},
+        project_id=payload.project_id,
+    )
     return save_and_dispatch(
         job,
         session,
@@ -293,12 +400,248 @@ def get_job(job_id: UUID, session: SessionDep) -> Job:
 
 
 @router.get("/jobs", response_model=List[Job], tags=["Jobs"])
-def list_jobs(session: SessionDep, status_filter: Optional[JobStatus] = None) -> List[Job]:
+def list_jobs(session: SessionDep, status_filter: Optional[JobStatus] = None, project_id: Optional[UUID] = None) -> List[Job]:
     query = select(Job)
     if status_filter:
         query = query.where(Job.status == status_filter)
+    if project_id:
+        query = query.where(Job.project_id == project_id)
     results = session.exec(query).all()
     return results
+
+
+@router.get("/usage/summary", response_model=UsageSummary, tags=["Usage"])
+def get_usage_summary(
+    session: SessionDep,
+    from_date: Optional[datetime] = Query(default=None, alias="from"),
+    to_date: Optional[datetime] = Query(default=None, alias="to"),
+    project_id: Optional[UUID] = None,
+) -> UsageSummary:
+    from_dt = _coerce_aware_datetime(from_date)
+    to_dt = _coerce_aware_datetime(to_date)
+
+    query = select(Job)
+    if project_id:
+        query = query.where(Job.project_id == project_id)
+    if from_dt:
+        query = query.where(Job.created_at >= from_dt)
+    if to_dt:
+        query = query.where(Job.created_at <= to_dt)
+
+    jobs = session.exec(query).all()
+    by_type: dict[str, int] = {}
+    output_asset_ids: set[UUID] = set()
+
+    counts_by_status: dict[JobStatus, int] = {
+        JobStatus.queued: 0,
+        JobStatus.running: 0,
+        JobStatus.completed: 0,
+        JobStatus.failed: 0,
+        JobStatus.cancelled: 0,
+    }
+
+    for job in jobs:
+        counts_by_status[job.status] = counts_by_status.get(job.status, 0) + 1
+        by_type[job.job_type] = by_type.get(job.job_type, 0) + 1
+        if job.output_asset_id:
+            output_asset_ids.add(job.output_asset_id)
+
+    output_duration_seconds = 0.0
+    generated_bytes = 0
+    if output_asset_ids:
+        assets = session.exec(select(MediaAsset).where(MediaAsset.id.in_(output_asset_ids))).all()
+        settings = get_settings()
+        media_root = Path(settings.media_root)
+        for asset in assets:
+            output_duration_seconds += float(asset.duration or 0.0)
+            local_path = _resolve_local_asset_path(asset, media_root=media_root)
+            if local_path and local_path.exists():
+                try:
+                    generated_bytes += int(local_path.stat().st_size)
+                except OSError:
+                    continue
+
+    return UsageSummary(
+        total_jobs=len(jobs),
+        queued_jobs=counts_by_status.get(JobStatus.queued, 0),
+        running_jobs=counts_by_status.get(JobStatus.running, 0),
+        completed_jobs=counts_by_status.get(JobStatus.completed, 0),
+        failed_jobs=counts_by_status.get(JobStatus.failed, 0),
+        cancelled_jobs=counts_by_status.get(JobStatus.cancelled, 0),
+        job_type_counts=by_type,
+        output_assets_count=len(output_asset_ids),
+        output_duration_seconds=round(output_duration_seconds, 3),
+        generated_bytes=generated_bytes,
+        from_date=from_dt,
+        to_date=to_dt,
+    )
+
+
+@router.post(
+    "/projects",
+    response_model=Project,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Projects"],
+    responses={422: {"model": ErrorResponse}},
+)
+def create_project(payload: ProjectCreateRequest, session: SessionDep) -> Project:
+    name = (payload.name or "").strip()
+    if not name:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Project name is required",
+            details={"field": "name"},
+        )
+    project = Project(name=name, description=(payload.description or "").strip() or None)
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    return project
+
+
+@router.get("/projects", response_model=list[Project], tags=["Projects"])
+def list_projects(session: SessionDep) -> list[Project]:
+    query = select(Project).order_by(Project.created_at.desc())
+    return session.exec(query).all()
+
+
+@router.get(
+    "/projects/{project_id}",
+    response_model=Project,
+    tags=["Projects"],
+    responses={404: {"model": ErrorResponse}},
+)
+def get_project(project_id: UUID, session: SessionDep) -> Project:
+    project = session.get(Project, project_id)
+    if not project:
+        raise not_found("Project not found", details={"project_id": str(project_id)})
+    return project
+
+
+@router.get(
+    "/projects/{project_id}/jobs",
+    response_model=list[Job],
+    tags=["Projects"],
+    responses={404: {"model": ErrorResponse}},
+)
+def list_project_jobs(project_id: UUID, session: SessionDep, status_filter: Optional[JobStatus] = None) -> list[Job]:
+    _ensure_project_exists(session, project_id)
+    query = select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc())
+    if status_filter:
+        query = query.where(Job.status == status_filter)
+    return session.exec(query).all()
+
+
+@router.get(
+    "/projects/{project_id}/assets",
+    response_model=list[MediaAsset],
+    tags=["Projects"],
+    responses={404: {"model": ErrorResponse}},
+)
+def list_project_assets(project_id: UUID, session: SessionDep, kind: Optional[str] = None, limit: int = 50) -> list[MediaAsset]:
+    _ensure_project_exists(session, project_id)
+    limit = max(1, min(limit, 200))
+    query = select(MediaAsset).where(MediaAsset.project_id == project_id)
+    if kind:
+        query = query.where(MediaAsset.kind == kind)
+    query = query.order_by(MediaAsset.created_at.desc()).limit(limit)
+    return session.exec(query).all()
+
+
+@router.post(
+    "/projects/{project_id}/share-links",
+    response_model=ProjectShareLinksResponse,
+    tags=["Projects"],
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+def create_project_share_links(
+    project_id: UUID,
+    payload: ProjectShareLinksRequest,
+    session: SessionDep,
+    request: Request,
+) -> ProjectShareLinksResponse:
+    project = _ensure_project_exists(session, project_id)
+    assert project is not None  # for typing
+
+    expires_in_hours = max(1, min(int(payload.expires_in_hours or 24), 24 * 30))
+    settings = get_settings()
+    links: list[ProjectShareLink] = []
+
+    for asset_id in payload.asset_ids:
+        asset = session.get(MediaAsset, asset_id)
+        if not asset:
+            raise not_found("Asset not found", details={"asset_id": str(asset_id)})
+        if asset.project_id != project.id:
+            raise conflict(
+                "Asset does not belong to project",
+                details={"asset_id": str(asset_id), "project_id": str(project.id)},
+            )
+
+        token, expires_at = build_share_token_with_ttl(
+            secret=settings.share_link_secret,
+            asset_id=asset.id,
+            project_id=project.id,
+            ttl_hours=expires_in_hours,
+        )
+        path = request.url_for("download_shared_asset", asset_id=str(asset.id))
+        links.append(ProjectShareLink(asset_id=asset.id, url=f"{path}?token={token}", expires_at=expires_at))
+
+    return ProjectShareLinksResponse(links=links)
+
+
+@router.get(
+    "/share/assets/{asset_id}",
+    response_class=FileResponse,
+    tags=["Projects"],
+    responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+    name="download_shared_asset",
+)
+def download_shared_asset(asset_id: UUID, token: str, session: SessionDep):
+    settings = get_settings()
+    try:
+        token_payload = parse_and_validate_share_token(token, secret=settings.share_link_secret)
+    except ValueError as exc:
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code=ErrorCode.PERMISSION_DENIED,
+            message="Invalid or expired share token",
+            details={"reason": str(exc)},
+        ) from exc
+
+    if token_payload.asset_id != asset_id:
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code=ErrorCode.PERMISSION_DENIED,
+            message="Invalid share token",
+            details={"reason": "asset mismatch"},
+        )
+
+    asset = session.get(MediaAsset, asset_id)
+    if not asset:
+        raise not_found("Asset not found", details={"asset_id": str(asset_id)})
+    if not asset.project_id:
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code=ErrorCode.PERMISSION_DENIED,
+            message="Asset is not shareable",
+            details={"asset_id": str(asset_id)},
+        )
+    if token_payload.project_id != asset.project_id:
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code=ErrorCode.PERMISSION_DENIED,
+            message="Invalid share token",
+            details={"reason": "project mismatch"},
+        )
+
+    if asset.uri and is_remote_uri(asset.uri):
+        return RedirectResponse(url=asset.uri, status_code=302)
+
+    file_path = LocalStorageBackend(media_root=Path(settings.media_root)).resolve_local_path(asset.uri or "")
+    if not file_path.exists():
+        raise not_found("Asset file missing", details={"asset_id": str(asset_id), "path": str(file_path)})
+    return FileResponse(path=file_path, media_type=asset.mime_type or "application/octet-stream", filename=file_path.name)
 
 
 @router.post(
@@ -513,11 +856,13 @@ def download_job_bundle(job_id: UUID, session: SessionDep) -> StreamingResponse:
     dependencies=[Depends(enforce_rate_limit)],
 )
 def create_shorts_job(payload: ShortsJobRequest, session: SessionDep) -> Job:
+    _ensure_project_exists(session, payload.project_id)
     job = Job(
         job_type="shorts",
         status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.video_asset_id,
+        project_id=payload.project_id,
         payload={
             "max_clips": payload.max_clips,
             "min_duration": payload.min_duration,
@@ -544,11 +889,13 @@ def create_shorts_job(payload: ShortsJobRequest, session: SessionDep) -> Job:
     dependencies=[Depends(enforce_rate_limit)],
 )
 def create_style_job(payload: StyledSubtitleJobRequest, session: SessionDep) -> Job:
+    _ensure_project_exists(session, payload.project_id)
     job = Job(
         job_type="style_subtitles",
         status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.video_asset_id,
+        project_id=payload.project_id,
         payload={
             "subtitle_asset_id": str(payload.subtitle_asset_id),
             "style": payload.style,
@@ -575,11 +922,13 @@ def create_style_job(payload: StyledSubtitleJobRequest, session: SessionDep) -> 
     dependencies=[Depends(enforce_rate_limit)],
 )
 def create_merge_job(payload: MergeAVRequest, session: SessionDep) -> Job:
+    _ensure_project_exists(session, payload.project_id)
     job = Job(
         job_type="merge_av",
         status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.video_asset_id,
+        project_id=payload.project_id,
         payload={
             "audio_asset_id": str(payload.audio_asset_id),
             "offset": payload.offset,
@@ -607,6 +956,7 @@ def create_merge_job(payload: MergeAVRequest, session: SessionDep) -> Job:
     dependencies=[Depends(enforce_rate_limit)],
 )
 def cut_clip_tool(payload: CutClipRequest, session: SessionDep) -> Job:
+    _ensure_project_exists(session, payload.project_id)
     start = max(0.0, float(payload.start or 0.0))
     end = max(start, float(payload.end or start))
     job = Job(
@@ -614,6 +964,7 @@ def cut_clip_tool(payload: CutClipRequest, session: SessionDep) -> Job:
         status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.video_asset_id,
+        project_id=payload.project_id,
         payload={
             "start": start,
             "end": end,
@@ -640,11 +991,13 @@ def cut_clip_tool(payload: CutClipRequest, session: SessionDep) -> Job:
     dependencies=[Depends(enforce_rate_limit)],
 )
 def translate_subtitle_tool(payload: TranslateSubtitleToolRequest, session: SessionDep) -> Job:
+    _ensure_project_exists(session, payload.project_id)
     job = Job(
         job_type="translate_subtitles",
         status=JobStatus.queued,
         progress=0.0,
         input_asset_id=payload.subtitle_asset_id,
+        project_id=payload.project_id,
         payload={
             "target_language": payload.target_language,
             "bilingual": payload.bilingual,
@@ -732,7 +1085,7 @@ def _collect_job_output_asset_ids(job: Job) -> set[UUID]:
             for item in clip_assets:
                 if not isinstance(item, dict):
                     continue
-                for key in ("asset_id", "thumbnail_asset_id", "subtitle_asset_id"):
+                for key in ("asset_id", "thumbnail_asset_id", "subtitle_asset_id", "styled_asset_id"):
                     uid = _coerce_uuid(item.get(key))
                     if uid:
                         out.add(uid)
@@ -772,11 +1125,13 @@ async def upload_asset(
     session: SessionDep,
     file: UploadFile = File(...),
     kind: str = Form("video"),
+    project_id: Optional[UUID] = Form(default=None),
 ) -> MediaAsset:
     settings = get_settings()
     storage = get_storage(media_root=settings.media_root)
     kind = (kind or "").strip().lower()
     _validate_upload(kind, file.content_type, file.filename)
+    _ensure_project_exists(session, project_id)
 
     suffix = Path(file.filename or "").suffix
     filename = f"{uuid4()}{suffix}"
@@ -806,7 +1161,7 @@ async def upload_asset(
     if not isinstance(storage, LocalStorageBackend):
         tmp_path.unlink(missing_ok=True)
 
-    asset = MediaAsset(kind=kind, uri=uri, mime_type=file.content_type)
+    asset = MediaAsset(kind=kind, uri=uri, mime_type=file.content_type, project_id=project_id)
     session.add(asset)
     session.commit()
     session.refresh(asset)
@@ -818,11 +1173,13 @@ async def upload_asset(
     response_model=List[MediaAsset],
     tags=["Assets"],
 )
-def list_assets(session: SessionDep, kind: Optional[str] = None, limit: int = 25) -> List[MediaAsset]:
+def list_assets(session: SessionDep, kind: Optional[str] = None, limit: int = 25, project_id: Optional[UUID] = None) -> List[MediaAsset]:
     limit = max(1, min(limit, 200))
     query = select(MediaAsset)
     if kind:
         query = query.where(MediaAsset.kind == kind)
+    if project_id:
+        query = query.where(MediaAsset.project_id == project_id)
     query = query.order_by(MediaAsset.created_at.desc()).limit(limit)
     return session.exec(query).all()
 

@@ -48,6 +48,11 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("CLEANUP_INTERVAL_SECONDS", "REFRAME_CLEANUP_INTERVAL_SECONDS"),
         description="How often to run tmp cleanup (seconds).",
     )
+    share_link_secret: str = Field(
+        default="reframe-dev-share-secret",
+        validation_alias=AliasChoices("SHARE_LINK_SECRET", "REFRAME_SHARE_LINK_SECRET"),
+        description="HMAC secret used to sign public share links for local assets.",
+    )
 
 
 @lru_cache(maxsize=1)

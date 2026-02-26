@@ -28,6 +28,8 @@ def create_app() -> FastAPI:
         {"name": "Utilities", "description": "Utility processing like merge A/V."},
         {"name": "Jobs", "description": "Job retrieval and listings."},
         {"name": "Assets", "description": "Manage media assets."},
+        {"name": "Projects", "description": "Project containers and share-link flows."},
+        {"name": "Usage", "description": "Aggregated usage and processing metrics."},
         {"name": "Presets", "description": "Subtitle style presets."},
         {"name": "System", "description": "Diagnostics for local setup."},
     ]
