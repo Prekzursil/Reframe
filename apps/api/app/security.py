@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -11,6 +8,7 @@ from uuid import UUID
 import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
+from jwt import ExpiredSignatureError, InvalidTokenError
 
 from app.config import get_settings
 
@@ -23,15 +21,6 @@ _PASSWORD_HASHER = PasswordHasher(
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _b64(raw: bytes) -> str:
-    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-
-
-def _b64decode(raw: str) -> bytes:
-    padded = raw + "=" * ((4 - len(raw) % 4) % 4)
-    return base64.urlsafe_b64decode(padded.encode("ascii"))
 
 
 def hash_password(password: str) -> str:
@@ -48,18 +37,7 @@ def verify_password(password: str, hashed_password: str | None) -> bool:
             return _PASSWORD_HASHER.verify(hashed_password, password)
         except (VerificationError, InvalidHashError):
             return False
-
-    try:
-        algo, iter_raw, salt_raw, digest_raw = hashed_password.split("$", 3)
-        if algo != "pbkdf2_sha512":
-            return False
-        iterations = int(iter_raw)
-        salt = _b64decode(salt_raw)
-        expected = _b64decode(digest_raw)
-    except Exception:
-        return False
-    candidate = hashlib.pbkdf2_hmac("sha512", password.encode("utf-8"), salt, iterations)
-    return hmac.compare_digest(candidate, expected)
+    return False
 
 
 def create_access_token(*, user_id: UUID, org_id: Optional[UUID], role: str) -> str:
@@ -109,27 +87,36 @@ def decode_refresh_token(token: str) -> dict[str, Any]:
 def create_oauth_state(*, provider: str, redirect_to: str | None = None, ttl_minutes: int = 10) -> str:
     settings = get_settings()
     issued = _now_utc()
-    body = (
-        f"{provider}|{int(issued.timestamp())}|{int((issued + timedelta(minutes=max(1, ttl_minutes))).timestamp())}|"
-        f"{redirect_to or ''}"
-    ).encode("utf-8")
-    sig = hmac.new(settings.oauth_state_secret.encode("utf-8"), body, hashlib.sha512).digest()
-    return f"{_b64(body)}.{_b64(sig)}"
+    expires = issued + timedelta(minutes=max(1, ttl_minutes))
+    payload = {
+        "typ": "oauth_state",
+        "provider": provider.strip().lower(),
+        "redirect_to": redirect_to or "",
+        "iat": int(issued.timestamp()),
+        "exp": int(expires.timestamp()),
+    }
+    return jwt.encode(payload, settings.oauth_state_secret, algorithm="HS256")
 
 
 def parse_oauth_state(state: str) -> tuple[str, Optional[str]]:
     settings = get_settings()
-    if "." not in state:
-        raise ValueError("Invalid OAuth state format")
-    body_raw, sig_raw = state.split(".", 1)
-    body = _b64decode(body_raw)
-    sig = _b64decode(sig_raw)
-    expected = hmac.new(settings.oauth_state_secret.encode("utf-8"), body, hashlib.sha512).digest()
-    if not hmac.compare_digest(sig, expected):
+    try:
+        payload = jwt.decode(state, settings.oauth_state_secret, algorithms=["HS256"])
+    except ExpiredSignatureError as exc:
+        raise ValueError("OAuth state expired") from exc
+    except InvalidTokenError as exc:
+        raise ValueError("Invalid OAuth state signature") from exc
+
+    if payload.get("typ") != "oauth_state":
         raise ValueError("Invalid OAuth state signature")
-    provider, _issued_raw, expires_raw, redirect_to = body.decode("utf-8").split("|", 3)
-    if int(expires_raw) < int(_now_utc().timestamp()):
-        raise ValueError("OAuth state expired")
+
+    provider = str(payload.get("provider") or "").strip().lower()
+    if not provider:
+        raise ValueError("Invalid OAuth state signature")
+    redirect_to_raw = payload.get("redirect_to")
+    if redirect_to_raw is not None and not isinstance(redirect_to_raw, str):
+        raise ValueError("Invalid OAuth state signature")
+    redirect_to = redirect_to_raw or ""
     return provider, (redirect_to or None)
 
 

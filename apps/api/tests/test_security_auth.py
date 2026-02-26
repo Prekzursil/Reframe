@@ -24,10 +24,10 @@ def test_hash_password_uses_argon2id_format():
     assert hashed.startswith("$argon2id$")
 
 
-def test_verify_password_supports_legacy_pbkdf2_sha512():
+def test_verify_password_rejects_legacy_pbkdf2_sha512():
     secret = "legacy-secret-42"
     hashed = _legacy_pbkdf2_sha512(secret)
-    assert verify_password(secret, hashed) is True
+    assert verify_password(secret, hashed) is False
     assert verify_password("wrong-secret", hashed) is False
 
 
