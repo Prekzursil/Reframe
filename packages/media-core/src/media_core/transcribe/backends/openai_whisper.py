@@ -8,6 +8,7 @@ from typing import Any, Iterable, Optional
 
 from media_core.transcribe.config import TranscriptionConfig
 from media_core.transcribe.models import TranscriptionResult, Word
+from media_core.transcribe.path_guard import validate_media_input_path
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +59,7 @@ def transcribe_openai_file(path: str | Path, config: TranscriptionConfig) -> Tra
         raise RuntimeError("REFRAME_OFFLINE_MODE is enabled; refusing to call OpenAI transcription API.")
     openai = _ensure_openai()
     client = openai.OpenAI()
-    media_path = Path(path)
-    if not media_path.is_file():
-        raise FileNotFoundError(media_path)
+    media_path = validate_media_input_path(path)
 
     with media_path.open("rb") as f:
         # OpenAI SDK expects a file-like object; also send a filename hint.

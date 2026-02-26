@@ -1,0 +1,10 @@
+name: "Reframe CodeQL Config"
+
+paths-ignore:
+  - "Inspirations & Former Attempts/**"
+  - "docs/**"
+  - "infra/examples/**"
+  - "apps/desktop/src-tauri/icons/**"
+
+queries:
+  - uses: security-and-quality

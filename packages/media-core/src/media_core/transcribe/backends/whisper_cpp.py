@@ -6,6 +6,7 @@ from typing import Any, Iterable, Optional, Protocol
 
 from media_core.transcribe.config import TranscriptionConfig
 from media_core.transcribe.models import TranscriptionResult, Word
+from media_core.transcribe.path_guard import validate_media_input_path
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +75,7 @@ def normalize_whisper_cpp(
 
 def transcribe_whisper_cpp(path: str | Path, config: TranscriptionConfig) -> TranscriptionResult:
     """Transcribe using whisper.cpp (pywhispercpp) when available, else graceful fallback."""
-    media_path = Path(path)
-    if not media_path.is_file():
-        raise FileNotFoundError(media_path)
+    media_path = validate_media_input_path(path)
 
     try:
         whispercpp = _ensure_whispercpp()

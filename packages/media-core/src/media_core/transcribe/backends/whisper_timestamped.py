@@ -6,6 +6,7 @@ from typing import Any, Iterable, Optional
 
 from media_core.transcribe.config import TranscriptionConfig
 from media_core.transcribe.models import TranscriptionResult, Word
+from media_core.transcribe.path_guard import validate_media_input_path
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +67,7 @@ def transcribe_whisper_timestamped(path: str | Path, config: TranscriptionConfig
     If the provided path points to a JSON file with `segments`, it will be parsed
     and normalized. Otherwise, returns a stub result so downstream callers don't crash.
     """
-    media_path = Path(path)
-    if not media_path.exists():
-        raise FileNotFoundError(media_path)
+    media_path = validate_media_input_path(path)
 
     if media_path.suffix.lower() == ".json":
         import json
