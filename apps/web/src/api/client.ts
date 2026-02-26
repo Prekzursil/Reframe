@@ -227,6 +227,25 @@ export interface OrgContextResponse {
   members: OrgMemberView[];
 }
 
+export interface OrgInviteView {
+  id: string;
+  org_id: string;
+  email: string;
+  role: string;
+  status: string;
+  expires_at: string;
+  invite_url?: string | null;
+}
+
+export interface OrgInviteResolveResponse {
+  org_id: string;
+  org_name: string;
+  email: string;
+  role: string;
+  status: string;
+  expires_at: string;
+}
+
 export interface BillingPlan {
   code: string;
   name: string;
@@ -262,6 +281,15 @@ export interface BillingUsageSummary {
 export interface BillingSessionResponse {
   id: string;
   url: string;
+}
+
+export interface BillingSeatUsage {
+  org_id: string;
+  plan_code: string;
+  active_members: number;
+  pending_invites: number;
+  seat_limit: number;
+  available_seats: number;
 }
 
 export interface BillingMetric {
@@ -531,6 +559,42 @@ export class ApiClient {
     return this.request<OrgContextResponse>("/orgs/me");
   }
 
+  listOrgInvites() {
+    return this.request<OrgInviteView[]>("/orgs/invites");
+  }
+
+  createOrgInvite(payload: { email: string; role: string; expires_in_days: number }) {
+    return this.request<OrgInviteView>("/orgs/invites", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  revokeOrgInvite(inviteId: string) {
+    return this.request<OrgInviteView>(`/orgs/invites/${inviteId}/revoke`, { method: "POST" });
+  }
+
+  resolveOrgInvite(token: string) {
+    const query = new URLSearchParams({ token }).toString();
+    return this.request<OrgInviteResolveResponse>(`/orgs/invites/resolve?${query}`);
+  }
+
+  acceptOrgInvite(payload: { token: string }) {
+    return this.request<AuthTokenResponse>("/orgs/invites/accept", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  updateOrgMemberRole(userId: string, payload: { role: string }) {
+    return this.request<OrgMemberView>(`/orgs/members/${userId}/role`, { method: "PATCH", body: JSON.stringify(payload) });
+  }
+
+  async removeOrgMember(userId: string): Promise<void> {
+    const resp = await this.fetcher(`${this.baseUrl}/orgs/members/${userId}`, {
+      method: "DELETE",
+      headers: this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : undefined,
+    });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => resp.statusText);
+      throw new Error(body || "Failed to remove member");
+    }
+  }
+
   listBillingPlans() {
     return this.request<BillingPlan[]>("/billing/plans");
   }
@@ -543,12 +607,20 @@ export class ApiClient {
     return this.request<BillingUsageSummary>("/billing/usage-summary");
   }
 
+  getBillingSeatUsage() {
+    return this.request<BillingSeatUsage>("/billing/seat-usage");
+  }
+
   getBillingCostModel() {
     return this.request<BillingCostModel>("/billing/cost-model");
   }
 
-  createBillingCheckoutSession(payload: { plan_code: string; success_url?: string; cancel_url?: string }) {
+  createBillingCheckoutSession(payload: { plan_code: string; seat_limit?: number; success_url?: string; cancel_url?: string }) {
     return this.request<BillingSessionResponse>("/billing/checkout-session", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  updateBillingSeatLimit(payload: { seat_limit: number }) {
+    return this.request<BillingSeatUsage>("/billing/seat-limit", { method: "PATCH", body: JSON.stringify(payload) });
   }
 
   createBillingPortalSession(payload?: { return_url?: string }) {

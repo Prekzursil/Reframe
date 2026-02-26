@@ -4,12 +4,15 @@ import {
   apiClient,
   type AuthMeResponse,
   type BillingPlan,
+  type BillingSeatUsage,
   type BillingSubscription,
   type BillingUsageSummary,
   type Job,
   type JobStatus,
   type MediaAsset,
   type OrgContextResponse,
+  type OrgInviteResolveResponse,
+  type OrgInviteView,
   type Project,
   type ProjectShareLink,
   type SystemStatusResponse,
@@ -96,6 +99,8 @@ const BACKENDS = ["noop", "faster_whisper", "whisper_cpp"];
 const FONTS = ["Inter", "Space Grotesk", "Montserrat", "Open Sans"];
 const ASPECTS = ["9:16", "16:9", "1:1"];
 const LANGS = ["en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh"];
+const ORG_ROLE_OPTIONS = ["owner", "admin", "editor", "viewer"];
+const ORG_MANAGER_ROLES = ["owner", "admin"];
 
 async function copyToClipboard(text: string): Promise<boolean> {
   try {
@@ -1573,9 +1578,21 @@ function StyleEditor({
     const [authError, setAuthError] = useState<string | null>(null);
     const [authInfo, setAuthInfo] = useState<AuthMeResponse | null>(null);
     const [orgInfo, setOrgInfo] = useState<OrgContextResponse | null>(null);
+    const [orgInvites, setOrgInvites] = useState<OrgInviteView[]>([]);
+    const [inviteEmail, setInviteEmail] = useState("");
+    const [inviteRole, setInviteRole] = useState("viewer");
+    const [inviteExpiryDays, setInviteExpiryDays] = useState("7");
+    const [inviteBusy, setInviteBusy] = useState(false);
+    const [inviteError, setInviteError] = useState<string | null>(null);
+    const [inviteResolveToken, setInviteResolveToken] = useState<string | null>(null);
+    const [inviteResolveInfo, setInviteResolveInfo] = useState<OrgInviteResolveResponse | null>(null);
+    const [inviteResolveError, setInviteResolveError] = useState<string | null>(null);
+    const [inviteAcceptBusy, setInviteAcceptBusy] = useState(false);
     const [billingPlans, setBillingPlans] = useState<BillingPlan[]>([]);
     const [billingSubscription, setBillingSubscription] = useState<BillingSubscription | null>(null);
     const [billingUsage, setBillingUsage] = useState<BillingUsageSummary | null>(null);
+    const [billingSeatUsage, setBillingSeatUsage] = useState<BillingSeatUsage | null>(null);
+    const [billingSeatLimitDraft, setBillingSeatLimitDraft] = useState("1");
     const [billingLoading, setBillingLoading] = useState(false);
     const [billingError, setBillingError] = useState<string | null>(null);
 
@@ -2328,15 +2345,31 @@ function StyleEditor({
           }
         };
 
+        const loadOrgInvites = async (roleHint?: string) => {
+          const normalizedRole = String(roleHint || orgInfo?.role || "").trim().toLowerCase();
+          if (!apiClient.accessToken || !ORG_MANAGER_ROLES.includes(normalizedRole)) {
+            setOrgInvites([]);
+            return;
+          }
+          try {
+            const invites = await apiClient.listOrgInvites();
+            setOrgInvites(invites);
+          } catch (err) {
+            setInviteError(err instanceof Error ? err.message : "Failed to load invites");
+          }
+        };
+
         const loadAuthContext = async () => {
           try {
             const [me, org] = await Promise.all([apiClient.getMe(), apiClient.getOrgContext()]);
             setAuthInfo(me);
             setOrgInfo(org);
             setAuthError(null);
+            await loadOrgInvites(org.role);
           } catch (err) {
             setAuthInfo(null);
             setOrgInfo(null);
+            setOrgInvites([]);
             setAuthError(err instanceof Error ? err.message : "Failed to load account context");
           }
         };
@@ -2388,7 +2421,103 @@ function StyleEditor({
             persistTokens(null);
             setAuthInfo(null);
             setOrgInfo(null);
+            setOrgInvites([]);
             setAuthBusy(false);
+          }
+        };
+
+        const createInvite = async () => {
+          const email = inviteEmail.trim();
+          const role = inviteRole.trim().toLowerCase();
+          const expiresInDays = Math.max(1, Math.min(30, Number(inviteExpiryDays || "7")));
+          if (!email) return;
+          setInviteBusy(true);
+          setInviteError(null);
+          try {
+            const created = await apiClient.createOrgInvite({
+              email,
+              role,
+              expires_in_days: expiresInDays,
+            });
+            setOrgInvites((prev) => [created, ...prev.filter((invite) => invite.id !== created.id)]);
+            setInviteEmail("");
+          } catch (err) {
+            setInviteError(err instanceof Error ? err.message : "Failed to create invite");
+          } finally {
+            setInviteBusy(false);
+          }
+        };
+
+        const revokeInvite = async (inviteId: string) => {
+          setInviteBusy(true);
+          setInviteError(null);
+          try {
+            const updated = await apiClient.revokeOrgInvite(inviteId);
+            setOrgInvites((prev) => prev.map((invite) => (invite.id === inviteId ? updated : invite)));
+          } catch (err) {
+            setInviteError(err instanceof Error ? err.message : "Failed to revoke invite");
+          } finally {
+            setInviteBusy(false);
+          }
+        };
+
+        const updateMemberRole = async (userId: string, role: string) => {
+          setInviteBusy(true);
+          setInviteError(null);
+          try {
+            await apiClient.updateOrgMemberRole(userId, { role });
+            await loadAuthContext();
+          } catch (err) {
+            setInviteError(err instanceof Error ? err.message : "Failed to update member role");
+          } finally {
+            setInviteBusy(false);
+          }
+        };
+
+        const removeMember = async (userId: string) => {
+          setInviteBusy(true);
+          setInviteError(null);
+          try {
+            await apiClient.removeOrgMember(userId);
+            await loadAuthContext();
+          } catch (err) {
+            setInviteError(err instanceof Error ? err.message : "Failed to remove member");
+          } finally {
+            setInviteBusy(false);
+          }
+        };
+
+        const resolveInviteToken = async (token: string) => {
+          const normalized = token.trim();
+          if (!normalized) {
+            setInviteResolveInfo(null);
+            setInviteResolveError(null);
+            return;
+          }
+          setInviteResolveError(null);
+          try {
+            const resolved = await apiClient.resolveOrgInvite(normalized);
+            setInviteResolveInfo(resolved);
+          } catch (err) {
+            setInviteResolveInfo(null);
+            setInviteResolveError(err instanceof Error ? err.message : "Failed to resolve invite");
+          }
+        };
+
+        const acceptInvite = async () => {
+          if (!inviteResolveToken) return;
+          setInviteAcceptBusy(true);
+          setInviteResolveError(null);
+          try {
+            const tokens = await apiClient.acceptOrgInvite({ token: inviteResolveToken });
+            persistTokens(tokens.access_token);
+            await loadAuthContext();
+            setInviteResolveToken(null);
+            setInviteResolveInfo(null);
+          } catch (err) {
+            setInviteResolveError(err instanceof Error ? err.message : "Failed to accept invite");
+          } finally {
+            setInviteAcceptBusy(false);
           }
         };
 
@@ -2396,14 +2525,17 @@ function StyleEditor({
           setBillingLoading(true);
           setBillingError(null);
           try {
-            const [plans, subscription, usage] = await Promise.all([
+            const [plans, subscription, usage, seatUsage] = await Promise.all([
               apiClient.listBillingPlans(),
               apiClient.getBillingSubscription(),
               apiClient.getBillingUsageSummary(),
+              apiClient.getBillingSeatUsage(),
             ]);
             setBillingPlans(plans);
             setBillingSubscription(subscription);
             setBillingUsage(usage);
+            setBillingSeatUsage(seatUsage);
+            setBillingSeatLimitDraft(String(seatUsage.seat_limit || 1));
           } catch (err) {
             setBillingError(err instanceof Error ? err.message : "Failed to load billing data");
           } finally {
@@ -2411,8 +2543,32 @@ function StyleEditor({
           }
         };
 
+        const updateSeatLimit = async () => {
+          const parsed = Number(billingSeatLimitDraft);
+          if (!Number.isFinite(parsed) || parsed < 1) {
+            setBillingError("Seat limit must be at least 1");
+            return;
+          }
+          setBillingLoading(true);
+          setBillingError(null);
+          try {
+            const next = await apiClient.updateBillingSeatLimit({ seat_limit: Math.trunc(parsed) });
+            setBillingSeatUsage(next);
+            setBillingSeatLimitDraft(String(next.seat_limit));
+          } catch (err) {
+            setBillingError(err instanceof Error ? err.message : "Failed to update seat limit");
+          } finally {
+            setBillingLoading(false);
+          }
+        };
+
         useEffect(() => {
           try {
+            const params = new URLSearchParams(window.location.search);
+            const token = params.get("token");
+            if (token) {
+              setInviteResolveToken(token);
+            }
             const existing = localStorage.getItem("reframe_access_token");
             if (existing) {
               apiClient.setAccessToken(existing);
@@ -2428,6 +2584,12 @@ function StyleEditor({
             void loadAuthContext();
           }
         }, [active]);
+
+        useEffect(() => {
+          if (active === "account" && inviteResolveToken) {
+            void resolveInviteToken(inviteResolveToken);
+          }
+        }, [active, inviteResolveToken]);
 
         useEffect(() => {
           if (active === "billing" && apiClient.accessToken) {
@@ -3923,22 +4085,176 @@ function StyleEditor({
                     <p className="muted">
                       {orgInfo.org_name} ({orgInfo.slug})
                     </p>
+                    {inviteResolveToken && (
+                      <div className="output-card">
+                        <p className="metric-label">Invite acceptance</p>
+                        {!inviteResolveInfo && !inviteResolveError && <p className="muted">Resolving invite token...</p>}
+                        {inviteResolveError && <div className="error-inline">{inviteResolveError}</div>}
+                        {inviteResolveInfo && (
+                          <>
+                            <p className="muted">
+                              Invite for <code>{inviteResolveInfo.email}</code> as <code>{inviteResolveInfo.role}</code>
+                            </p>
+                            <p className="muted">Expires: {formatTimestamp(inviteResolveInfo.expires_at)}</p>
+                            <div className="actions-row">
+                              <Button type="button" variant="primary" onClick={() => void acceptInvite()} disabled={inviteAcceptBusy || !apiClient.accessToken}>
+                                {inviteAcceptBusy ? "Accepting..." : "Accept invite"}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                onClick={() => {
+                                  setInviteResolveToken(null);
+                                  setInviteResolveInfo(null);
+                                  setInviteResolveError(null);
+                                }}
+                              >
+                                Dismiss
+                              </Button>
+                            </div>
+                            {!apiClient.accessToken && <p className="muted">Log in first, then accept the invite.</p>}
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {(ORG_MANAGER_ROLES.includes(String(orgInfo.role || "").toLowerCase()) || !orgInfo.role) && (
+                      <div className="output-card">
+                        <p className="metric-label">Invite teammate</p>
+                        {inviteError && <div className="error-inline">{inviteError}</div>}
+                        <div className="form-grid">
+                          <label className="field">
+                            <span>Invite email</span>
+                            <Input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="member@example.com" />
+                          </label>
+                          <label className="field">
+                            <span>Invite role</span>
+                            <select className="input" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
+                              {ORG_ROLE_OPTIONS.map((role) => (
+                                <option key={role} value={role}>
+                                  {role}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="field">
+                            <span>Invite expiry (days)</span>
+                            <Input
+                              type="number"
+                              min={1}
+                              max={30}
+                              value={inviteExpiryDays}
+                              onChange={(e) => setInviteExpiryDays(e.target.value)}
+                            />
+                          </label>
+                        </div>
+                        <div className="actions-row">
+                          <Button
+                            type="button"
+                            variant="primary"
+                            disabled={inviteBusy || !inviteEmail.trim()}
+                            onClick={() => void createInvite()}
+                          >
+                            {inviteBusy ? "Working..." : "Create invite"}
+                          </Button>
+                          <Button type="button" variant="ghost" disabled={inviteBusy} onClick={() => void loadOrgInvites(orgInfo.role)}>
+                            Refresh invites
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                     <table className="table">
                       <thead>
                         <tr>
                           <th>Email</th>
                           <th>Role</th>
+                          <th>Actions</th>
                         </tr>
                       </thead>
                       <tbody>
                         {orgInfo.members.map((member) => (
                           <tr key={member.user_id}>
                             <td>{member.email}</td>
-                            <td>{member.role}</td>
+                            <td>
+                              {ORG_MANAGER_ROLES.includes(String(orgInfo.role || "").toLowerCase()) ? (
+                                <select
+                                  className="input"
+                                  value={member.role}
+                                  onChange={(e) => void updateMemberRole(member.user_id, e.target.value)}
+                                  disabled={inviteBusy}
+                                >
+                                  {ORG_ROLE_OPTIONS.map((role) => (
+                                    <option key={role} value={role}>
+                                      {role}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                member.role
+                              )}
+                            </td>
+                            <td>
+                              {ORG_MANAGER_ROLES.includes(String(orgInfo.role || "").toLowerCase()) ? (
+                                <Button type="button" variant="ghost" disabled={inviteBusy} onClick={() => void removeMember(member.user_id)}>
+                                  Remove
+                                </Button>
+                              ) : (
+                                <span className="muted">n/a</span>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
+                    <div className="output-card">
+                      <p className="metric-label">Invites</p>
+                      {orgInvites.length === 0 && <p className="muted">No invites yet.</p>}
+                      {orgInvites.length > 0 && (
+                        <table className="table">
+                          <thead>
+                            <tr>
+                              <th>Email</th>
+                              <th>Role</th>
+                              <th>Status</th>
+                              <th>Invite link</th>
+                              <th>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {orgInvites.map((invite) => {
+                              const safeInviteUrl = toSafeExternalUrl(invite.invite_url || null);
+                              return (
+                                <tr key={invite.id}>
+                                  <td>{invite.email}</td>
+                                  <td>{invite.role}</td>
+                                  <td>{invite.status}</td>
+                                  <td>
+                                    {safeInviteUrl ? (
+                                      <p className="muted mono">{safeInviteUrl}</p>
+                                    ) : (
+                                      <span className="muted">n/a</span>
+                                    )}
+                                  </td>
+                                  <td>
+                                    <div className="actions-row">
+                                      {safeInviteUrl && (
+                                        <Button type="button" variant="ghost" onClick={() => void copyToClipboard(safeInviteUrl)}>
+                                          Copy link
+                                        </Button>
+                                      )}
+                                      {invite.status === "pending" && ORG_MANAGER_ROLES.includes(String(orgInfo.role || "").toLowerCase()) && (
+                                        <Button type="button" variant="ghost" onClick={() => void revokeInvite(invite.id)} disabled={inviteBusy}>
+                                          Revoke
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
                   </>
                 )}
               </Card>
@@ -3981,6 +4297,44 @@ function StyleEditor({
                       Storage: {billingUsage.used_storage_gb.toFixed(2)}GB / {billingUsage.quota_storage_gb}GB
                     </p>
                     <p className="muted">Estimated overage: ${(billingUsage.estimated_overage_cents / 100).toFixed(2)}</p>
+                  </div>
+                )}
+                {billingSeatUsage && (
+                  <div className="output-card">
+                    <p className="metric-label">Seat usage</p>
+                    <div className="snapshot">
+                      <div>
+                        <p className="metric-label">Active</p>
+                        <p className="metric-value">{billingSeatUsage.active_members}</p>
+                      </div>
+                      <div>
+                        <p className="metric-label">Pending</p>
+                        <p className="metric-value">{billingSeatUsage.pending_invites}</p>
+                      </div>
+                      <div>
+                        <p className="metric-label">Available</p>
+                        <p className="metric-value">{billingSeatUsage.available_seats}</p>
+                      </div>
+                      <div>
+                        <p className="metric-label">Limit</p>
+                        <p className="metric-value">{billingSeatUsage.seat_limit}</p>
+                      </div>
+                    </div>
+                    <label className="field">
+                      <span>Seat limit</span>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={billingSeatLimitDraft}
+                        onChange={(e) => setBillingSeatLimitDraft(e.target.value)}
+                        disabled={billingLoading}
+                      />
+                    </label>
+                    <div className="actions-row">
+                      <Button type="button" variant="secondary" disabled={billingLoading || !apiClient.accessToken} onClick={() => void updateSeatLimit()}>
+                        {billingLoading ? "Updating..." : "Update seat limit"}
+                      </Button>
+                    </div>
                   </div>
                 )}
               </Card>
