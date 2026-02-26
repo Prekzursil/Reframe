@@ -9,6 +9,7 @@ export interface Job {
   payload?: Record<string, unknown>;
   input_asset_id?: string | null;
   output_asset_id?: string | null;
+  project_id?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -16,12 +17,14 @@ export interface Job {
 export interface CaptionJobRequest {
   video_asset_id: string;
   options?: Record<string, unknown>;
+  project_id?: string;
 }
 
 export interface TranslateJobRequest {
   subtitle_asset_id: string;
   target_language: string;
   options?: Record<string, unknown>;
+  project_id?: string;
 }
 
 export interface StyledSubtitleJobRequest {
@@ -29,6 +32,7 @@ export interface StyledSubtitleJobRequest {
   subtitle_asset_id: string;
   style: Record<string, unknown>;
   preview_seconds?: number;
+  project_id?: string;
 }
 
 export interface ShortsJobRequest {
@@ -38,12 +42,14 @@ export interface ShortsJobRequest {
   max_duration?: number;
   aspect_ratio?: string;
   options?: Record<string, unknown>;
+  project_id?: string;
 }
 
 export interface SubtitleToolsRequest {
   subtitle_asset_id: string;
   target_language: string;
   bilingual?: boolean;
+  project_id?: string;
 }
 
 export interface MergeAvRequest {
@@ -52,6 +58,7 @@ export interface MergeAvRequest {
   offset?: number;
   ducking?: boolean;
   normalize?: boolean;
+  project_id?: string;
 }
 
 export interface CutClipRequest {
@@ -59,6 +66,7 @@ export interface CutClipRequest {
   start: number;
   end: number;
   options?: Record<string, unknown>;
+  project_id?: string;
 }
 
 export interface MediaAsset {
@@ -67,8 +75,42 @@ export interface MediaAsset {
   uri?: string | null;
   mime_type?: string | null;
   duration?: number | null;
+  project_id?: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface UsageSummary {
+  total_jobs: number;
+  queued_jobs: number;
+  running_jobs: number;
+  completed_jobs: number;
+  failed_jobs: number;
+  cancelled_jobs: number;
+  job_type_counts: Record<string, number>;
+  output_assets_count: number;
+  output_duration_seconds: number;
+  generated_bytes: number;
+  from_date?: string | null;
+  to_date?: string | null;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  description?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ProjectShareLink {
+  asset_id: string;
+  url: string;
+  expires_at: string;
+}
+
+export interface ProjectShareLinksResponse {
+  links: ProjectShareLink[];
 }
 
 export interface WorkerDiagnostics {
@@ -115,8 +157,12 @@ export class ApiClient {
     return (await resp.json()) as T;
   }
 
-  listJobs() {
-    return this.request<Job[]>("/jobs");
+  listJobs(params?: { status?: JobStatus; project_id?: string }) {
+    const search = new URLSearchParams();
+    if (params?.status) search.set("status_filter", params.status);
+    if (params?.project_id) search.set("project_id", params.project_id);
+    const query = search.toString();
+    return this.request<Job[]>(`/jobs${query ? `?${query}` : ""}`);
   }
 
   getJob(jobId: string) {
@@ -127,10 +173,11 @@ export class ApiClient {
     return this.request<MediaAsset>(`/assets/${assetId}`);
   }
 
-  listAssets(params?: { kind?: string; limit?: number }) {
+  listAssets(params?: { kind?: string; limit?: number; project_id?: string }) {
     const search = new URLSearchParams();
     if (params?.kind) search.set("kind", params.kind);
     if (params?.limit) search.set("limit", String(params.limit));
+    if (params?.project_id) search.set("project_id", params.project_id);
     const query = search.toString();
     return this.request<MediaAsset[]>(`/assets${query ? `?${query}` : ""}`);
   }
@@ -167,6 +214,46 @@ export class ApiClient {
     return this.request<SystemStatusResponse>("/system/status");
   }
 
+  getUsageSummary(params?: { from?: string; to?: string; project_id?: string }) {
+    const search = new URLSearchParams();
+    if (params?.from) search.set("from", params.from);
+    if (params?.to) search.set("to", params.to);
+    if (params?.project_id) search.set("project_id", params.project_id);
+    const query = search.toString();
+    return this.request<UsageSummary>(`/usage/summary${query ? `?${query}` : ""}`);
+  }
+
+  listProjects() {
+    return this.request<Project[]>("/projects");
+  }
+
+  createProject(payload: { name: string; description?: string | null }) {
+    return this.request<Project>("/projects", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  getProject(projectId: string) {
+    return this.request<Project>(`/projects/${projectId}`);
+  }
+
+  listProjectJobs(projectId: string) {
+    return this.request<Job[]>(`/projects/${projectId}/jobs`);
+  }
+
+  listProjectAssets(projectId: string, params?: { kind?: string; limit?: number }) {
+    const search = new URLSearchParams();
+    if (params?.kind) search.set("kind", params.kind);
+    if (params?.limit) search.set("limit", String(params.limit));
+    const query = search.toString();
+    return this.request<MediaAsset[]>(`/projects/${projectId}/assets${query ? `?${query}` : ""}`);
+  }
+
+  createProjectShareLinks(projectId: string, payload: { asset_ids: string[]; expires_in_hours?: number }) {
+    return this.request<ProjectShareLinksResponse>(`/projects/${projectId}/share-links`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
   async deleteJob(jobId: string, options?: { deleteAssets?: boolean }): Promise<void> {
     const search = new URLSearchParams();
     if (options?.deleteAssets) search.set("delete_assets", "true");
@@ -186,10 +273,11 @@ export class ApiClient {
     }
   }
 
-  async uploadAsset(file: File, kind = "video"): Promise<MediaAsset> {
+  async uploadAsset(file: File, kind = "video", projectId?: string): Promise<MediaAsset> {
     const form = new FormData();
     form.append("file", file);
     form.append("kind", kind);
+    if (projectId) form.append("project_id", projectId);
     const resp = await this.fetcher(`${this.baseUrl}/assets/upload`, {
       method: "POST",
       body: form,
@@ -211,6 +299,10 @@ export class ApiClient {
       }
     })();
     return new URL(uri, base.origin).toString();
+  }
+
+  jobBundleUrl(jobId: string): string {
+    return `${this.baseUrl}/jobs/${jobId}/bundle`;
   }
 }
 

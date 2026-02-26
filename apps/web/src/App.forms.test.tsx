@@ -14,7 +14,16 @@ const apiClientMock = vi.hoisted(() => ({
   createShortsJob: vi.fn(),
   translateSubtitleAsset: vi.fn(),
   mergeAv: vi.fn(),
+  createCutClipJob: vi.fn(),
+  getSystemStatus: vi.fn(),
+  getUsageSummary: vi.fn(),
+  listProjects: vi.fn(),
+  createProject: vi.fn(),
+  listProjectJobs: vi.fn(),
+  listProjectAssets: vi.fn(),
+  createProjectShareLinks: vi.fn(),
   uploadAsset: vi.fn(),
+  jobBundleUrl: (jobId: string) => `http://localhost:8000/api/v1/jobs/${jobId}/bundle`,
   mediaUrl: (uri: string) => (uri.startsWith("http") ? uri : `http://localhost:8000${uri}`),
 }));
 
@@ -26,6 +35,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   apiClientMock.listJobs.mockResolvedValue([]);
   apiClientMock.listAssets.mockResolvedValue([]);
+  apiClientMock.listProjects.mockResolvedValue([]);
 });
 
 describe("frontend forms", () => {
@@ -53,6 +63,7 @@ describe("frontend forms", () => {
 
     expect(apiClientMock.createCaptionJob).toHaveBeenCalledWith({
       video_asset_id: "video-123",
+      project_id: undefined,
       options: {
         source_language: "auto",
         backend: "faster_whisper",

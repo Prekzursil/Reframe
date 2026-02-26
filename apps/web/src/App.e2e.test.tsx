@@ -14,7 +14,16 @@ const apiClientMock = vi.hoisted(() => ({
   createShortsJob: vi.fn(),
   translateSubtitleAsset: vi.fn(),
   mergeAv: vi.fn(),
+  createCutClipJob: vi.fn(),
+  getSystemStatus: vi.fn(),
+  getUsageSummary: vi.fn(),
+  listProjects: vi.fn(),
+  createProject: vi.fn(),
+  listProjectJobs: vi.fn(),
+  listProjectAssets: vi.fn(),
+  createProjectShareLinks: vi.fn(),
   uploadAsset: vi.fn(),
+  jobBundleUrl: (jobId: string) => `http://localhost:8000/api/v1/jobs/${jobId}/bundle`,
   mediaUrl: (uri: string) => (uri.startsWith("http") ? uri : `http://localhost:8000${uri}`),
 }));
 
@@ -25,6 +34,7 @@ import App from "./App";
 beforeEach(() => {
   vi.clearAllMocks();
   apiClientMock.listAssets.mockResolvedValue([]);
+  apiClientMock.listProjects.mockResolvedValue([]);
 });
 
 describe("minimal e2e flow", () => {
