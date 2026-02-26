@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Annotated, Optional
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Depends, Header, Request, status
 from sqlmodel import Session, SQLModel, select
 
 from app.auth_api import PrincipalDep, ensure_default_plans
@@ -64,6 +65,20 @@ class SessionResponse(SQLModel):
     url: str
 
 
+class BillingMetricView(SQLModel):
+    metric: str
+    unit: str
+    description: str
+    included_in_plan: bool = True
+
+
+class CostModelResponse(SQLModel):
+    currency: str = "usd"
+    billable_metrics: list[BillingMetricView]
+    plans: list[PlanView]
+    notes: list[str] = []
+
+
 def _require_billing_enabled() -> None:
     settings = get_settings()
     if not settings.enable_billing:
@@ -72,6 +87,25 @@ def _require_billing_enabled() -> None:
             code=ErrorCode.VALIDATION_ERROR,
             message="Billing is disabled",
         )
+
+
+def _price_to_plan_code(price_id: str, settings) -> str:
+    value = (price_id or "").strip()
+    if value and value == settings.stripe_price_enterprise:
+        return "enterprise"
+    if value and value == settings.stripe_price_pro:
+        return "pro"
+    return "free"
+
+
+def _unix_to_datetime(value: object) -> datetime | None:
+    try:
+        ts = int(value) if value is not None else 0
+    except (TypeError, ValueError):
+        return None
+    if ts <= 0:
+        return None
+    return datetime.fromtimestamp(ts, tz=timezone.utc)
 
 
 @router.get("/billing/plans", response_model=list[PlanView], tags=["Billing"])
@@ -90,6 +124,39 @@ def list_plans(session: SessionDep) -> list[PlanView]:
         )
         for p in plans
     ]
+
+
+@router.get("/billing/cost-model", response_model=CostModelResponse, tags=["Billing"])
+def get_cost_model(session: SessionDep) -> CostModelResponse:
+    plans = list_plans(session)
+    return CostModelResponse(
+        currency="usd",
+        billable_metrics=[
+            BillingMetricView(
+                metric="job_minutes",
+                unit="minute",
+                description="Completed-job output duration converted to minutes.",
+                included_in_plan=True,
+            ),
+            BillingMetricView(
+                metric="storage_bytes",
+                unit="byte",
+                description="Generated output bytes retained this billing month.",
+                included_in_plan=True,
+            ),
+            BillingMetricView(
+                metric="concurrent_jobs",
+                unit="count",
+                description="Simultaneous running jobs per organization.",
+                included_in_plan=True,
+            ),
+        ],
+        plans=plans,
+        notes=[
+            "Overage is currently calculated from job_minutes above plan quota.",
+            "Storage and concurrency limits are enforced as hard limits on job creation.",
+        ],
+    )
 
 
 @router.get("/billing/subscription", response_model=SubscriptionView, tags=["Billing"], responses={401: {"model": ErrorResponse}})
@@ -192,6 +259,7 @@ def create_checkout(session: SessionDep, payload: CheckoutSessionRequest, princi
         price_id=price_id,
         success_url=success_url,
         cancel_url=cancel_url,
+        metadata={"org_id": str(principal.org_id), "plan_code": plan_code},
     )
     return SessionResponse(id=result["id"], url=result["url"])
 
@@ -216,18 +284,70 @@ def create_portal(session: SessionDep, payload: PortalSessionRequest, principal:
 
 
 @router.post("/billing/webhook", status_code=status.HTTP_204_NO_CONTENT, tags=["Billing"])
-def stripe_webhook(
-    payload: dict,
+async def stripe_webhook(
+    request: Request,
     session: SessionDep,
     stripe_signature: Annotated[Optional[str], Header(alias="Stripe-Signature")] = None,
 ) -> None:
     _require_billing_enabled()
-    _ = stripe_signature
-    # In this phase we store normalized snapshots from incoming Stripe events;
-    # signature verification is expected when STRIPE_WEBHOOK_SECRET is configured.
+    settings = get_settings()
+    raw_body = await request.body()
+    payload: dict
+    if settings.stripe_webhook_secret:
+        if not stripe_signature:
+            raise ApiError(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code=ErrorCode.VALIDATION_ERROR,
+                message="Missing Stripe-Signature header",
+            )
+        try:
+            import stripe  # type: ignore
+        except ImportError as exc:
+            raise ApiError(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                code=ErrorCode.SERVER_ERROR,
+                message="stripe package is required for webhook verification",
+            ) from exc
+        stripe.api_key = settings.stripe_secret_key
+        try:
+            event = stripe.Webhook.construct_event(raw_body, stripe_signature, settings.stripe_webhook_secret)
+        except Exception as exc:
+            raise ApiError(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code=ErrorCode.VALIDATION_ERROR,
+                message="Invalid Stripe webhook signature",
+                details={"reason": str(exc)},
+            ) from exc
+        payload = event
+    else:
+        payload = await request.json()
+
     event_type = str(payload.get("type") or "")
     data = payload.get("data") if isinstance(payload, dict) else {}
     obj = data.get("object") if isinstance(data, dict) else {}
+
+    if event_type == "checkout.session.completed":
+        customer_id = str(obj.get("customer") or "")
+        metadata = obj.get("metadata") if isinstance(obj.get("metadata"), dict) else {}
+        metadata = metadata if isinstance(metadata, dict) else {}
+        org_id_raw = metadata.get("org_id")
+        plan_code_raw = str(metadata.get("plan_code") or "").strip().lower()
+        if customer_id and org_id_raw:
+            try:
+                org_id = UUID(str(org_id_raw))
+            except Exception:
+                org_id = None
+            if not org_id:
+                return None
+            sub = session.exec(select(Subscription).where(Subscription.org_id == org_id)).first()
+            if not sub:
+                sub = Subscription(org_id=org_id, plan_code="free", status="active")
+            if plan_code_raw in {"pro", "enterprise"}:
+                sub.plan_code = plan_code_raw
+            sub.status = "active"
+            sub.stripe_customer_id = customer_id
+            session.add(sub)
+            session.commit()
 
     customer_id = str(obj.get("customer") or "")
     if not customer_id:
@@ -238,8 +358,24 @@ def stripe_webhook(
 
     if event_type in {"customer.subscription.updated", "customer.subscription.created"}:
         status_value = str(obj.get("status") or "active")
+        items = obj.get("items") if isinstance(obj.get("items"), dict) else {}
+        data_items = items.get("data") if isinstance(items, dict) else []
+        first_item = data_items[0] if isinstance(data_items, list) and data_items else {}
+        price = first_item.get("price") if isinstance(first_item, dict) else {}
+        price_id = str(price.get("id") or "")
         sub.status = status_value
         sub.stripe_subscription_id = str(obj.get("id") or sub.stripe_subscription_id or "")
+        if price_id:
+            sub.plan_code = _price_to_plan_code(price_id, settings)
+        sub.current_period_start = _unix_to_datetime(obj.get("current_period_start"))
+        sub.current_period_end = _unix_to_datetime(obj.get("current_period_end"))
+        sub.cancel_at_period_end = bool(obj.get("cancel_at_period_end") or False)
+        session.add(sub)
+        session.commit()
+
+    if event_type == "customer.subscription.deleted":
+        sub.status = "cancelled"
+        sub.cancel_at_period_end = False
         session.add(sub)
         session.commit()
 

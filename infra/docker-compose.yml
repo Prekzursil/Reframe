@@ -35,6 +35,49 @@ services:
       - hf-cache:/root/.cache/huggingface
       - argos-data:/root/.local/share/argos-translate
 
+  worker-cpu:
+    profiles: ["scale"]
+    build:
+      context: ..
+      dockerfile: Dockerfile.worker
+    env_file:
+      - ../.env
+    environment:
+      BROKER_URL: ${BROKER_URL:-redis://redis:6379/0}
+      RESULT_BACKEND: ${RESULT_BACKEND:-redis://redis:6379/0}
+      REFRAME_MEDIA_ROOT: /data/media
+    command: >
+      celery -A worker.celery_app worker --loglevel=info
+      -Q ${REFRAME_CELERY_QUEUE_CPU:-cpu},${REFRAME_CELERY_QUEUE_DEFAULT:-default}
+    depends_on:
+      - redis
+    volumes:
+      - media-data:/data/media
+      - hf-cache:/root/.cache/huggingface
+      - argos-data:/root/.local/share/argos-translate
+
+  worker-gpu:
+    profiles: ["scale"]
+    build:
+      context: ..
+      dockerfile: Dockerfile.worker
+    env_file:
+      - ../.env
+    environment:
+      BROKER_URL: ${BROKER_URL:-redis://redis:6379/0}
+      RESULT_BACKEND: ${RESULT_BACKEND:-redis://redis:6379/0}
+      REFRAME_MEDIA_ROOT: /data/media
+      REFRAME_ENABLE_GPU_QUEUE: "true"
+    command: >
+      celery -A worker.celery_app worker --loglevel=info
+      -Q ${REFRAME_CELERY_QUEUE_GPU:-gpu}
+    depends_on:
+      - redis
+    volumes:
+      - media-data:/data/media
+      - hf-cache:/root/.cache/huggingface
+      - argos-data:/root/.local/share/argos-translate
+
   web:
     build:
       context: ..

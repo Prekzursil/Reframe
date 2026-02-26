@@ -129,15 +129,19 @@ export interface UploadInitRequest {
   filename: string;
   mime_type: string;
   kind?: string;
-  size?: number;
+  size_bytes?: number;
   project_id?: string | null;
 }
 
 export interface UploadInitResponse {
   upload_id: string;
+  asset_id?: string | null;
   upload_url: string;
+  method: string;
+  headers: Record<string, string>;
   form_fields: Record<string, string>;
   expires_at: string;
+  strategy: string;
 }
 
 export interface UploadCompleteRequest {
@@ -148,6 +152,40 @@ export interface UploadCompleteRequest {
 export interface UploadCompleteResponse {
   upload_id: string;
   asset_id: string;
+  status?: string;
+}
+
+export interface MultipartUploadInitRequest {
+  kind?: string;
+  filename: string;
+  mime_type?: string;
+  project_id?: string | null;
+}
+
+export interface MultipartUploadInitResponse {
+  upload_id: string;
+  asset_id: string;
+  strategy: string;
+  expires_at: string;
+  part_size_bytes: number;
+}
+
+export interface MultipartUploadPartResponse {
+  upload_id: string;
+  part_number: number;
+  upload_url: string;
+  method: string;
+  headers: Record<string, string>;
+  expires_at: string;
+}
+
+export interface MultipartUploadCompleteRequest {
+  parts: Array<{ part_number: number; etag: string }>;
+}
+
+export interface MultipartUploadAbortResponse {
+  upload_id: string;
+  status: string;
 }
 
 export interface AuthTokenResponse {
@@ -224,6 +262,20 @@ export interface BillingUsageSummary {
 export interface BillingSessionResponse {
   id: string;
   url: string;
+}
+
+export interface BillingMetric {
+  metric: string;
+  unit: string;
+  description: string;
+  included_in_plan: boolean;
+}
+
+export interface BillingCostModel {
+  currency: string;
+  billable_metrics: BillingMetric[];
+  plans: BillingPlan[];
+  notes: string[];
 }
 
 export interface WorkerDiagnostics {
@@ -426,6 +478,28 @@ export class ApiClient {
     return this.request<UploadCompleteResponse>("/assets/upload-complete", { method: "POST", body: JSON.stringify(payload) });
   }
 
+  initMultipartAssetUpload(payload: MultipartUploadInitRequest) {
+    return this.request<MultipartUploadInitResponse>("/assets/upload-multipart/init", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  signMultipartUploadPart(uploadId: string, partNumber: number) {
+    return this.request<MultipartUploadPartResponse>(`/assets/upload-multipart/${uploadId}/parts/${partNumber}`, { method: "POST" });
+  }
+
+  completeMultipartUpload(uploadId: string, payload: MultipartUploadCompleteRequest) {
+    return this.request<UploadCompleteResponse>(`/assets/upload-multipart/${uploadId}/complete`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  abortMultipartUpload(uploadId: string) {
+    return this.request<MultipartUploadAbortResponse>(`/assets/upload-multipart/${uploadId}/abort`, { method: "POST" });
+  }
+
   register(payload: { email: string; password: string; display_name?: string; organization_name?: string }) {
     return this.request<AuthTokenResponse>("/auth/register", { method: "POST", body: JSON.stringify(payload) });
   }
@@ -469,6 +543,10 @@ export class ApiClient {
     return this.request<BillingUsageSummary>("/billing/usage-summary");
   }
 
+  getBillingCostModel() {
+    return this.request<BillingCostModel>("/billing/cost-model");
+  }
+
   createBillingCheckoutSession(payload: { plan_code: string; success_url?: string; cancel_url?: string }) {
     return this.request<BillingSessionResponse>("/billing/checkout-session", { method: "POST", body: JSON.stringify(payload) });
   }
@@ -500,19 +578,64 @@ export class ApiClient {
   }
 
   async uploadAsset(file: File, kind = "video", projectId?: string): Promise<MediaAsset> {
-    const form = new FormData();
-    form.append("file", file);
-    form.append("kind", kind);
-    if (projectId) form.append("project_id", projectId);
-    const resp = await this.fetcher(`${this.baseUrl}/assets/upload`, {
-      method: "POST",
-      body: form,
+    const mimeType =
+      file.type ||
+      (kind === "video" ? "video/mp4" : kind === "audio" ? "audio/mpeg" : "text/plain");
+    const init = await this.initAssetUpload({
+      filename: file.name,
+      mime_type: mimeType,
+      kind,
+      size_bytes: file.size,
+      project_id: projectId || null,
     });
-    if (!resp.ok) {
-      const msg = await resp.text().catch(() => resp.statusText);
-      throw new Error(msg || "Upload failed");
+
+    const uploadMethod = (init.method || "POST").toUpperCase();
+    const uploadHeaders = new Headers(init.headers || {});
+
+    if (uploadMethod === "POST") {
+      const form = new FormData();
+      Object.entries(init.form_fields || {}).forEach(([k, v]) => form.append(k, v));
+      form.append("file", file);
+      const localUploadUrl = init.upload_url || `${this.baseUrl}/assets/upload`;
+      const shouldAttachAuth = localUploadUrl.includes("/api/v1/");
+      if (shouldAttachAuth && this.accessToken) {
+        uploadHeaders.set("Authorization", `Bearer ${this.accessToken}`);
+      }
+      const resp = await this.fetcher(localUploadUrl, {
+        method: "POST",
+        headers: uploadHeaders,
+        body: form,
+      });
+      if (!resp.ok) {
+        const msg = await resp.text().catch(() => resp.statusText);
+        throw new Error(msg || "Upload failed");
+      }
+      const asset = (await resp.json()) as MediaAsset;
+      await this.completeAssetUpload({ upload_id: init.upload_id, asset_id: asset.id });
+      return asset;
     }
-    return (await resp.json()) as MediaAsset;
+
+    if (uploadMethod === "PUT") {
+      if (!uploadHeaders.has("Content-Type") && file.type) {
+        uploadHeaders.set("Content-Type", file.type);
+      }
+      const resp = await this.fetcher(init.upload_url, {
+        method: "PUT",
+        headers: uploadHeaders,
+        body: file,
+      });
+      if (!resp.ok) {
+        const msg = await resp.text().catch(() => resp.statusText);
+        throw new Error(msg || "Upload failed");
+      }
+      if (!init.asset_id) {
+        throw new Error("Upload session missing asset_id");
+      }
+      await this.completeAssetUpload({ upload_id: init.upload_id, asset_id: init.asset_id });
+      return this.getAsset(init.asset_id);
+    }
+
+    throw new Error(`Unsupported upload method: ${uploadMethod}`);
   }
 
   mediaUrl(uri: string): string {

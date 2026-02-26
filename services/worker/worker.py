@@ -10,11 +10,12 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional, Tuple, TypeVar
 from uuid import UUID, uuid4
 
-from sqlmodel import Session, create_engine
+from sqlmodel import Session, create_engine, select
 
 # Ensure app package is importable for shared models/config when running from services/.
 def _find_repo_root(start: Path) -> Path:
@@ -34,8 +35,10 @@ if MEDIA_CORE_SRC.is_dir() and str(MEDIA_CORE_SRC) not in sys.path:
     sys.path.append(str(MEDIA_CORE_SRC))
 
 from app.config import get_settings
-from app.models import Job, JobStatus, MediaAsset, UsageEvent
+from app.models import Job, JobStatus, MediaAsset, Subscription, UsageEvent
+from app.storage import LocalStorageBackend, get_storage, is_remote_uri
 from celery import Celery
+from kombu import Queue
 
 from media_core.segment.shorts import HeuristicWeights, equal_splits, score_segments_heuristic, score_segments_llm, select_top
 from media_core.diarize import DiarizationBackend, DiarizationConfig, assign_speakers_to_lines, diarize_audio
@@ -64,7 +67,22 @@ BROKER_URL = os.getenv("BROKER_URL", "redis://redis:6379/0")
 RESULT_BACKEND = os.getenv("RESULT_BACKEND", BROKER_URL)
 
 celery_app = Celery("reframe_worker", broker=BROKER_URL, backend=RESULT_BACKEND)
-celery_app.conf.task_default_queue = "default"
+
+
+def _env_truthy(name: str) -> bool:
+    value = (os.getenv(name) or os.getenv(f"REFRAME_{name}") or "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+CPU_QUEUE = (os.getenv("REFRAME_CELERY_QUEUE_CPU") or "cpu").strip() or "cpu"
+GPU_QUEUE = (os.getenv("REFRAME_CELERY_QUEUE_GPU") or "gpu").strip() or "gpu"
+DEFAULT_QUEUE = (os.getenv("REFRAME_CELERY_QUEUE_DEFAULT") or "default").strip() or "default"
+celery_app.conf.task_default_queue = CPU_QUEUE
+celery_app.conf.task_queues = (
+    Queue(DEFAULT_QUEUE),
+    Queue(CPU_QUEUE),
+    Queue(GPU_QUEUE),
+)
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +194,17 @@ def get_media_tmp() -> Path:
     return _media_tmp
 
 
+def _worker_storage():
+    settings = get_settings()
+    return get_storage(media_root=settings.media_root)
+
+
+def _worker_rel_dir(*, storage: Any, org_id: UUID | None) -> str:
+    if org_id and not isinstance(storage, LocalStorageBackend):
+        return f"{org_id}/tmp"
+    return "tmp"
+
+
 def create_asset(
     kind: str,
     mime_type: str,
@@ -186,6 +215,7 @@ def create_asset(
     org_id: UUID | None = None,
     owner_user_id: UUID | None = None,
 ) -> MediaAsset:
+    storage = _worker_storage()
     tmp = get_media_tmp()
     filename = f"{uuid4()}{suffix}"
     target = tmp / filename
@@ -194,9 +224,11 @@ def create_asset(
     else:
         data = contents.encode() if isinstance(contents, str) else contents
         target.write_bytes(data)
+    rel_dir = _worker_rel_dir(storage=storage, org_id=org_id)
+    uri = storage.write_file(rel_dir=rel_dir, filename=filename, source_path=target, content_type=mime_type)
     asset = MediaAsset(
         kind=kind,
-        uri=f"/media/tmp/{filename}",
+        uri=uri,
         mime_type=mime_type,
         project_id=project_id,
         org_id=org_id,
@@ -218,13 +250,15 @@ def create_asset_for_existing_file(
     org_id: UUID | None = None,
     owner_user_id: UUID | None = None,
 ) -> MediaAsset:
+    storage = _worker_storage()
     tmp = get_media_tmp()
     resolved = file_path.resolve()
     try:
         resolved.relative_to(tmp.resolve())
     except Exception:
         raise ValueError(f"file_path must be under {tmp}, got {file_path}")
-    uri = f"/media/tmp/{file_path.name}"
+    rel_dir = _worker_rel_dir(storage=storage, org_id=org_id)
+    uri = storage.write_file(rel_dir=rel_dir, filename=file_path.name, source_path=file_path, content_type=mime_type)
     asset = MediaAsset(
         kind=kind,
         uri=uri,
@@ -248,8 +282,7 @@ def new_tmp_file(suffix: str) -> Path:
 
 
 def _truthy_env(name: str) -> bool:
-    value = os.getenv(name, "").strip().lower()
-    return value in {"1", "true", "yes", "on"}
+    return _env_truthy(name)
 
 
 def offline_mode_enabled() -> bool:
@@ -293,23 +326,23 @@ def _hex_to_ass_color(value: Any, *, default: str) -> str:
     return f"&H00{b:02X}{g:02X}{r:02X}"
 
 
-def _is_remote_uri(uri: str) -> bool:
+def _is_http_uri(uri: str) -> bool:
     lowered = (uri or "").strip().lower()
     return lowered.startswith(("http://", "https://"))
 
 
-def _download_remote_asset_to_tmp(asset: MediaAsset) -> Path:
+def _download_remote_uri_to_tmp(*, uri: str, mime_type: str | None = None) -> Path:
     if offline_mode_enabled():
         raise RuntimeError("REFRAME_OFFLINE_MODE is enabled; refusing to download remote assets.")
 
-    uri = (asset.uri or "").strip()
-    if not _is_remote_uri(uri):
+    uri = (uri or "").strip()
+    if not _is_http_uri(uri):
         raise ValueError(f"Not a remote http(s) uri: {uri}")
 
     parsed = urllib.parse.urlparse(uri)
     suffix = Path(parsed.path).suffix
-    if not suffix and asset.mime_type:
-        suffix = mimetypes.guess_extension(asset.mime_type) or ""
+    if not suffix and mime_type:
+        suffix = mimetypes.guess_extension(mime_type) or ""
     if not suffix:
         suffix = ".bin"
 
@@ -452,13 +485,21 @@ def fetch_asset(asset_id: str) -> Tuple[Optional[MediaAsset], Optional[Path]]:
     except Exception:
         return None, None
     settings = get_settings()
+    storage = get_storage(media_root=settings.media_root)
     with Session(get_engine()) as session:
         asset = session.get(MediaAsset, uuid)
         if not asset:
             return None, None
-        if asset.uri and _is_remote_uri(asset.uri):
+        if asset.uri and is_remote_uri(asset.uri):
             try:
-                return asset, _download_remote_asset_to_tmp(asset)
+                download_uri = (asset.uri or "").strip()
+                if not _is_http_uri(download_uri):
+                    resolved = storage.get_download_url(download_uri)
+                    if not resolved:
+                        logger.warning("Could not resolve remote download URL for asset %s (%s)", asset.id, asset.uri)
+                        return asset, None
+                    download_uri = resolved
+                return asset, _download_remote_uri_to_tmp(uri=download_uri, mime_type=asset.mime_type)
             except Exception as exc:  # pragma: no cover - optional best-effort behavior
                 logger.warning("Failed to download remote asset %s: %s", asset.uri, exc)
                 return asset, None
@@ -493,7 +534,7 @@ def _record_usage_event(
 
 
 def _asset_size_bytes(asset: MediaAsset) -> int:
-    if not asset.uri or _is_remote_uri(asset.uri):
+    if not asset.uri or is_remote_uri(asset.uri):
         return 0
     settings = get_settings()
     uri_path = Path(asset.uri.lstrip("/"))
@@ -504,6 +545,75 @@ def _asset_size_bytes(asset: MediaAsset) -> int:
         return int(path.stat().st_size) if path.exists() else 0
     except OSError:
         return 0
+
+
+_RETENTION_DAYS_BY_PLAN: dict[str, int] = {
+    "free": 14,
+    "pro": 30,
+    "enterprise": 90,
+}
+
+
+def _retention_days_for_plan(plan_code: str) -> int:
+    normalized = (plan_code or "").strip().lower()
+    base = _RETENTION_DAYS_BY_PLAN.get(normalized, _RETENTION_DAYS_BY_PLAN["free"])
+    env_key = f"REFRAME_RETENTION_{normalized.upper()}_DAYS" if normalized else "REFRAME_RETENTION_FREE_DAYS"
+    raw = (os.getenv(env_key) or "").strip()
+    if raw:
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            return base
+    return base
+
+
+def _is_older_than_retention(*, created_at: datetime | None, plan_code: str, now: datetime | None = None) -> bool:
+    if created_at is None:
+        return False
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=_retention_days_for_plan(plan_code))
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    else:
+        created_at = created_at.astimezone(timezone.utc)
+    return created_at < cutoff
+
+
+def _job_related_asset_ids(job: Job) -> set[UUID]:
+    out: set[UUID] = set()
+    if job.output_asset_id:
+        out.add(job.output_asset_id)
+    payload = job.payload or {}
+    if isinstance(payload, dict):
+        clips = payload.get("clip_assets")
+        if isinstance(clips, list):
+            for item in clips:
+                if not isinstance(item, dict):
+                    continue
+                for key in ("asset_id", "thumbnail_asset_id", "subtitle_asset_id", "styled_asset_id"):
+                    raw = item.get(key)
+                    if not raw:
+                        continue
+                    try:
+                        out.add(UUID(str(raw)))
+                    except Exception:
+                        continue
+    return out
+
+
+def _asset_referenced_by_jobs(session: Session, asset_id: UUID) -> bool:
+    query = select(Job.id).where((Job.input_asset_id == asset_id) | (Job.output_asset_id == asset_id)).limit(1)
+    return session.exec(query).first() is not None
+
+
+def _delete_asset(session: Session, asset: MediaAsset) -> None:
+    if asset.uri:
+        storage = _worker_storage()
+        try:
+            storage.delete_uri(asset.uri)
+        except Exception as exc:  # pragma: no cover - best effort cleanup
+            logger.debug("Failed to delete asset URI %s: %s", asset.uri, exc)
+    session.delete(asset)
 
 
 def update_job(
@@ -1693,6 +1803,60 @@ def merge_video_audio(self, job_id: str, video_asset_id: str, audio_asset_id: st
     }
     update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(merged_asset.id))
     _progress(self, "completed", 1.0, video_asset_id=video_asset_id, audio_asset_id=audio_asset_id)
+    return result
+
+
+@celery_app.task(bind=True, name="tasks.cleanup_retention")
+def cleanup_retention(self) -> dict:
+    _progress(self, "started", 0.0)
+    now = datetime.now(timezone.utc)
+    cleaned_jobs = 0
+    cleaned_assets = 0
+
+    with Session(get_engine()) as session:
+        subs = session.exec(select(Subscription)).all()
+        plan_by_org: dict[UUID, str] = {sub.org_id: sub.plan_code for sub in subs if sub.org_id}
+
+        terminal_statuses = [JobStatus.completed, JobStatus.failed, JobStatus.cancelled]
+        jobs = session.exec(select(Job).where(Job.status.in_(terminal_statuses))).all()
+        for idx, job in enumerate(jobs):
+            if not job.org_id:
+                continue
+            plan_code = plan_by_org.get(job.org_id, "free")
+            if not _is_older_than_retention(created_at=job.updated_at, plan_code=plan_code, now=now):
+                continue
+
+            related_asset_ids = _job_related_asset_ids(job)
+            payload = job.payload if isinstance(job.payload, dict) else {}
+            payload = {**payload, "retention_cleanup_at": now.isoformat(), "retention_plan_code": plan_code}
+            payload.pop("clip_assets", None)
+            job.payload = payload
+            job.output_asset_id = None
+            session.add(job)
+            session.flush()
+
+            for asset_id in related_asset_ids:
+                asset = session.get(MediaAsset, asset_id)
+                if not asset:
+                    continue
+                if _asset_referenced_by_jobs(session, asset_id):
+                    continue
+                _delete_asset(session, asset)
+                cleaned_assets += 1
+
+            cleaned_jobs += 1
+            if jobs:
+                _progress(self, "running", min(0.99, (idx + 1) / max(1, len(jobs))))
+
+        session.commit()
+
+    result = {
+        "status": "ok",
+        "cleaned_jobs": cleaned_jobs,
+        "cleaned_assets": cleaned_assets,
+        "timestamp": now.isoformat(),
+    }
+    _progress(self, "completed", 1.0, **result)
     return result
 
 

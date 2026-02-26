@@ -33,6 +33,22 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", description="Logging level, e.g. DEBUG|INFO|WARNING")
     rate_limit_requests: int = Field(default=60)
     rate_limit_window_seconds: int = Field(default=60)
+    rate_limit_heavy_requests: int = Field(
+        default=20,
+        validation_alias=AliasChoices("RATE_LIMIT_HEAVY_REQUESTS", "REFRAME_RATE_LIMIT_HEAVY_REQUESTS"),
+    )
+    rate_limit_heavy_window_seconds: int = Field(
+        default=60,
+        validation_alias=AliasChoices("RATE_LIMIT_HEAVY_WINDOW_SECONDS", "REFRAME_RATE_LIMIT_HEAVY_WINDOW_SECONDS"),
+    )
+    rate_limit_upload_requests: int = Field(
+        default=30,
+        validation_alias=AliasChoices("RATE_LIMIT_UPLOAD_REQUESTS", "REFRAME_RATE_LIMIT_UPLOAD_REQUESTS"),
+    )
+    rate_limit_upload_window_seconds: int = Field(
+        default=60,
+        validation_alias=AliasChoices("RATE_LIMIT_UPLOAD_WINDOW_SECONDS", "REFRAME_RATE_LIMIT_UPLOAD_WINDOW_SECONDS"),
+    )
     max_upload_bytes: int = Field(
         default=1_073_741_824,
         validation_alias=AliasChoices("MAX_UPLOAD_BYTES", "REFRAME_MAX_UPLOAD_BYTES"),
