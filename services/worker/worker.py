@@ -3,6 +3,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -33,10 +34,10 @@ if MEDIA_CORE_SRC.is_dir() and str(MEDIA_CORE_SRC) not in sys.path:
     sys.path.append(str(MEDIA_CORE_SRC))
 
 from app.config import get_settings
-from app.models import Job, JobStatus, MediaAsset
+from app.models import Job, JobStatus, MediaAsset, UsageEvent
 from celery import Celery
 
-from media_core.segment.shorts import equal_splits, score_segments_llm, select_top
+from media_core.segment.shorts import HeuristicWeights, equal_splits, score_segments_heuristic, score_segments_llm, select_top
 from media_core.diarize import DiarizationBackend, DiarizationConfig, assign_speakers_to_lines, diarize_audio
 from media_core.subtitles.builder import GroupingConfig, SubtitleLine, group_words, to_ass, to_ass_karaoke, to_srt, to_vtt
 from media_core.subtitles.vtt import parse_vtt
@@ -71,6 +72,29 @@ _engine = None
 _media_tmp: Path | None = None
 
 T = TypeVar("T")
+
+
+CAPTION_QUALITY_PROFILES: dict[str, dict[str, Any]] = {
+    "balanced": {},
+    "readable": {
+        "max_chars_per_line": 36,
+        "max_words_per_line": 10,
+        "max_duration": 5.5,
+        "max_gap": 0.55,
+        "max_chars_per_second": 26.0,
+        "sentence_break_on_punctuation": True,
+        "sentence_break_min_gap": 0.05,
+    },
+    "high_impact": {
+        "max_chars_per_line": 28,
+        "max_words_per_line": 6,
+        "max_duration": 3.8,
+        "max_gap": 0.45,
+        "max_chars_per_second": 22.0,
+        "sentence_break_on_punctuation": True,
+        "sentence_break_min_gap": 0.03,
+    },
+}
 
 
 def _retry_max_attempts() -> int:
@@ -159,6 +183,8 @@ def create_asset(
     contents: bytes | str = b"",
     source_path: Path | None = None,
     project_id: UUID | None = None,
+    org_id: UUID | None = None,
+    owner_user_id: UUID | None = None,
 ) -> MediaAsset:
     tmp = get_media_tmp()
     filename = f"{uuid4()}{suffix}"
@@ -168,7 +194,14 @@ def create_asset(
     else:
         data = contents.encode() if isinstance(contents, str) else contents
         target.write_bytes(data)
-    asset = MediaAsset(kind=kind, uri=f"/media/tmp/{filename}", mime_type=mime_type, project_id=project_id)
+    asset = MediaAsset(
+        kind=kind,
+        uri=f"/media/tmp/{filename}",
+        mime_type=mime_type,
+        project_id=project_id,
+        org_id=org_id,
+        owner_user_id=owner_user_id,
+    )
     with Session(get_engine()) as session:
         session.add(asset)
         session.commit()
@@ -176,7 +209,15 @@ def create_asset(
         return asset
 
 
-def create_asset_for_existing_file(*, kind: str, mime_type: str, file_path: Path, project_id: UUID | None = None) -> MediaAsset:
+def create_asset_for_existing_file(
+    *,
+    kind: str,
+    mime_type: str,
+    file_path: Path,
+    project_id: UUID | None = None,
+    org_id: UUID | None = None,
+    owner_user_id: UUID | None = None,
+) -> MediaAsset:
     tmp = get_media_tmp()
     resolved = file_path.resolve()
     try:
@@ -184,7 +225,14 @@ def create_asset_for_existing_file(*, kind: str, mime_type: str, file_path: Path
     except Exception:
         raise ValueError(f"file_path must be under {tmp}, got {file_path}")
     uri = f"/media/tmp/{file_path.name}"
-    asset = MediaAsset(kind=kind, uri=uri, mime_type=mime_type, project_id=project_id)
+    asset = MediaAsset(
+        kind=kind,
+        uri=uri,
+        mime_type=mime_type,
+        project_id=project_id,
+        org_id=org_id,
+        owner_user_id=owner_user_id,
+    )
     with Session(get_engine()) as session:
         session.add(asset)
         session.commit()
@@ -216,6 +264,12 @@ def _coerce_bool(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return False
+
+
+def _coerce_bool_with_default(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    return _coerce_bool(value)
 
 
 def _hex_to_ass_color(value: Any, *, default: str) -> str:
@@ -312,13 +366,39 @@ def _extract_audio_wav_for_diarization(video_path: Path, output_path: Path, runn
     runner(cmd, check=True, capture_output=True)
 
 
-def create_thumbnail_asset(video_path: Path | None, runner=None, project_id: UUID | None = None) -> MediaAsset:
+def create_thumbnail_asset(
+    video_path: Path | None,
+    runner=None,
+    project_id: UUID | None = None,
+    org_id: UUID | None = None,
+    owner_user_id: UUID | None = None,
+) -> MediaAsset:
+    asset_kwargs: dict[str, UUID] = {}
+    if project_id is not None:
+        asset_kwargs["project_id"] = project_id
+    if org_id is not None:
+        asset_kwargs["org_id"] = org_id
+    if owner_user_id is not None:
+        asset_kwargs["owner_user_id"] = owner_user_id
+
     if not video_path or not video_path.exists():
-        return create_asset(kind="image", mime_type="image/png", suffix=".png", contents=_FALLBACK_THUMBNAIL_PNG, project_id=project_id)
+        return create_asset(
+            kind="image",
+            mime_type="image/png",
+            suffix=".png",
+            contents=_FALLBACK_THUMBNAIL_PNG,
+            **asset_kwargs,
+        )
 
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
-        return create_asset(kind="image", mime_type="image/png", suffix=".png", contents=_FALLBACK_THUMBNAIL_PNG, project_id=project_id)
+        return create_asset(
+            kind="image",
+            mime_type="image/png",
+            suffix=".png",
+            contents=_FALLBACK_THUMBNAIL_PNG,
+            **asset_kwargs,
+        )
 
     thumb_tmp = get_media_tmp() / f"thumb-{uuid4()}.png"
     runner = runner or subprocess.run
@@ -340,7 +420,13 @@ def create_thumbnail_asset(video_path: Path | None, runner=None, project_id: UUI
     try:
         runner(cmd, check=True, capture_output=True)
         if thumb_tmp.exists() and thumb_tmp.stat().st_size > 0:
-            return create_asset(kind="image", mime_type="image/png", suffix=".png", source_path=thumb_tmp, project_id=project_id)
+            return create_asset(
+                kind="image",
+                mime_type="image/png",
+                suffix=".png",
+                source_path=thumb_tmp,
+                **asset_kwargs,
+            )
     except Exception as exc:  # pragma: no cover - best effort
         logger.debug("Thumbnail generation failed: %s", exc)
     finally:
@@ -351,7 +437,13 @@ def create_thumbnail_asset(video_path: Path | None, runner=None, project_id: UUI
         except Exception:  # pragma: no cover - best effort
             logger.debug("Failed to remove temporary thumbnail: %s", thumb_tmp)
 
-    return create_asset(kind="image", mime_type="image/png", suffix=".png", contents=_FALLBACK_THUMBNAIL_PNG, project_id=project_id)
+    return create_asset(
+        kind="image",
+        mime_type="image/png",
+        suffix=".png",
+        contents=_FALLBACK_THUMBNAIL_PNG,
+        **asset_kwargs,
+    )
 
 
 def fetch_asset(asset_id: str) -> Tuple[Optional[MediaAsset], Optional[Path]]:
@@ -377,13 +469,59 @@ def fetch_asset(asset_id: str) -> Tuple[Optional[MediaAsset], Optional[Path]]:
         return asset, file_path
 
 
-def update_job(job_id: str, *, status: JobStatus | None = None, progress: float | None = None, error: str | None = None, payload: dict | None = None, output_asset_id: str | None = None) -> None:
+def _record_usage_event(
+    session: Session,
+    *,
+    org_id: UUID | None,
+    user_id: UUID | None,
+    job_id: UUID,
+    metric: str,
+    quantity: float,
+    details: dict | None = None,
+) -> None:
+    if not org_id:
+        return
+    event = UsageEvent(
+        org_id=org_id,
+        user_id=user_id,
+        job_id=job_id,
+        metric=metric,
+        quantity=float(quantity),
+        details=details or {},
+    )
+    session.add(event)
+
+
+def _asset_size_bytes(asset: MediaAsset) -> int:
+    if not asset.uri or _is_remote_uri(asset.uri):
+        return 0
+    settings = get_settings()
+    uri_path = Path(asset.uri.lstrip("/"))
+    if uri_path.parts and uri_path.parts[0] == "media":
+        uri_path = Path(*uri_path.parts[1:])
+    path = Path(settings.media_root) / uri_path
+    try:
+        return int(path.stat().st_size) if path.exists() else 0
+    except OSError:
+        return 0
+
+
+def update_job(
+    job_id: str,
+    *,
+    status: JobStatus | None = None,
+    progress: float | None = None,
+    error: str | None = None,
+    payload: dict | None = None,
+    output_asset_id: str | None = None,
+) -> None:
     try:
         with Session(get_engine()) as session:
             job = session.get(Job, UUID(job_id))
             if not job:
                 logger.warning("Job not found for status update: %s", job_id)
                 return
+            previous_status = job.status
             if status:
                 job.status = status
             if progress is not None:
@@ -395,21 +533,75 @@ def update_job(job_id: str, *, status: JobStatus | None = None, progress: float 
                 job.payload = merged
             if output_asset_id:
                 job.output_asset_id = UUID(output_asset_id) if output_asset_id else None
+
+            if job.status == JobStatus.completed and previous_status != JobStatus.completed:
+                _record_usage_event(
+                    session,
+                    org_id=job.org_id,
+                    user_id=job.owner_user_id,
+                    job_id=job.id,
+                    metric="jobs_completed",
+                    quantity=1.0,
+                    details={"job_type": job.job_type},
+                )
+                if job.output_asset_id:
+                    output = session.get(MediaAsset, job.output_asset_id)
+                    if output:
+                        minutes = max(0.0, float(output.duration or 0.0) / 60.0)
+                        if minutes > 0:
+                            _record_usage_event(
+                                session,
+                                org_id=job.org_id,
+                                user_id=job.owner_user_id,
+                                job_id=job.id,
+                                metric="job_minutes",
+                                quantity=minutes,
+                                details={"job_type": job.job_type, "asset_id": str(output.id)},
+                            )
+                        size_bytes = _asset_size_bytes(output)
+                        if size_bytes > 0:
+                            _record_usage_event(
+                                session,
+                                org_id=job.org_id,
+                                user_id=job.owner_user_id,
+                                job_id=job.id,
+                                metric="storage_bytes",
+                                quantity=float(size_bytes),
+                                details={"job_type": job.job_type, "asset_id": str(output.id)},
+                            )
             session.add(job)
             session.commit()
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.error("Failed to update job %s: %s", job_id, exc)
 
 
-def get_job_project_id(job_id: str) -> UUID | None:
+def get_job_context(job_id: str) -> dict[str, UUID | None]:
     try:
         with Session(get_engine()) as session:
             job = session.get(Job, UUID(job_id))
             if not job:
-                return None
-            return job.project_id
+                return {"project_id": None, "org_id": None, "owner_user_id": None}
+            return {
+                "project_id": job.project_id,
+                "org_id": job.org_id,
+                "owner_user_id": job.owner_user_id,
+            }
     except Exception:
-        return None
+        return {"project_id": None, "org_id": None, "owner_user_id": None}
+
+
+def get_job_project_id(job_id: str) -> UUID | None:
+    return get_job_context(job_id).get("project_id")
+
+
+def _job_asset_kwargs(job_id: str) -> dict[str, UUID]:
+    ctx = get_job_context(job_id)
+    out: dict[str, UUID] = {}
+    for key in ("project_id", "org_id", "owner_user_id"):
+        value = ctx.get(key)
+        if value is not None:
+            out[key] = value
+    return out
 
 
 def _progress(task, status: str, progress: float = 0.0, **meta):
@@ -491,10 +683,58 @@ def system_info(self) -> dict:
 def transcribe_video(self, job_id: str, video_asset_id: str, config: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id)
-    project_id = get_job_project_id(job_id)
-    transcript_text = f"Transcription for asset {video_asset_id}"
-    asset = create_asset(kind="transcription", mime_type="text/plain", suffix=".txt", contents=transcript_text, project_id=project_id)
-    result = {"video_asset_id": video_asset_id, "status": "transcribed", "config": config or {}, "output_asset_id": str(asset.id)}
+    asset_kwargs = _job_asset_kwargs(job_id)
+    opts = config or {}
+    warnings: list[str] = []
+
+    src_asset, src_path = fetch_asset(video_asset_id)
+    if not src_path or not src_path.exists():
+        error = f"Video asset file missing for {video_asset_id}"
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id)
+        return {"video_asset_id": video_asset_id, "status": "failed", "error": error}
+
+    backend_raw = str(opts.get("backend") or "noop").strip().lower()
+    if backend_raw == "whisper":
+        backend_raw = "faster_whisper"
+    try:
+        backend = TranscriptionBackend(backend_raw)
+    except ValueError:
+        warnings.append(f"Unknown backend '{backend_raw}'; using noop.")
+        backend = TranscriptionBackend.NOOP
+    if backend == TranscriptionBackend.OPENAI_WHISPER and offline_mode_enabled():
+        warnings.append("Offline mode enabled; refusing openai_whisper and using noop.")
+        backend = TranscriptionBackend.NOOP
+
+    cfg = TranscriptionConfig(
+        backend=backend,
+        model=str(opts.get("model") or "whisper-large-v3"),
+        language=str(opts.get("language") or "").strip() or None,
+        device=str(opts.get("device")) if opts.get("device") else None,
+    )
+    transcription = _transcribe_media(src_path, cfg, warnings=warnings)
+    words = sorted(getattr(transcription, "words", []) or [], key=lambda w: (w.start, w.end))  # type: ignore[attr-defined]
+    if not words:
+        warnings.append("Transcription returned no words; falling back to noop output.")
+        transcription = transcribe_noop(str(src_path), cfg)
+        words = sorted(transcription.words or [], key=lambda w: (w.start, w.end))
+
+    transcript_lines = [
+        f"{w.start:.3f}\t{w.end:.3f}\t{w.text}".rstrip()
+        for w in words
+    ]
+    transcript_text = "\n".join(transcript_lines) if transcript_lines else "(no transcription words)"
+    asset = create_asset(kind="transcription", mime_type="text/plain", suffix=".txt", contents=transcript_text, **asset_kwargs)
+    result = {
+        "video_asset_id": video_asset_id,
+        "status": "transcribed",
+        "config": opts,
+        "warnings": warnings,
+        "output_asset_id": str(asset.id),
+        "backend": backend.value,
+        "model": cfg.model,
+        "word_count": len(words),
+    }
     update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(asset.id))
     _progress(self, "completed", 1.0, video_asset_id=video_asset_id)
     return result
@@ -504,7 +744,7 @@ def transcribe_video(self, job_id: str, video_asset_id: str, config: dict | None
 def generate_captions(self, job_id: str, video_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id)
-    project_id = get_job_project_id(job_id)
+    asset_kwargs = _job_asset_kwargs(job_id)
     opts = options or {}
     warnings: list[str] = []
 
@@ -558,11 +798,33 @@ def generate_captions(self, job_id: str, video_asset_id: str, options: dict | No
         transcription = transcribe_noop(str(src_path), config)
         words = sorted(transcription.words or [], key=lambda w: (w.start, w.end))
 
+    quality_profile = str(opts.get("subtitle_quality_profile") or "balanced").strip().lower()
+    profile_defaults = CAPTION_QUALITY_PROFILES.get(quality_profile)
+    if profile_defaults is None:
+        warnings.append(f"Unknown subtitle_quality_profile '{quality_profile}'; falling back to balanced.")
+        quality_profile = "balanced"
+        profile_defaults = CAPTION_QUALITY_PROFILES["balanced"]
+
     grouping = GroupingConfig(
-        max_chars_per_line=int(opts.get("max_chars_per_line") or GroupingConfig.max_chars_per_line),
-        max_words_per_line=int(opts.get("max_words_per_line") or GroupingConfig.max_words_per_line),
-        max_duration=float(opts.get("max_duration") or GroupingConfig.max_duration),
-        max_gap=float(opts.get("max_gap") or GroupingConfig.max_gap),
+        max_chars_per_line=int(opts.get("max_chars_per_line") or profile_defaults.get("max_chars_per_line") or GroupingConfig.max_chars_per_line),
+        max_words_per_line=int(opts.get("max_words_per_line") or profile_defaults.get("max_words_per_line") or GroupingConfig.max_words_per_line),
+        max_duration=float(opts.get("max_duration") or profile_defaults.get("max_duration") or GroupingConfig.max_duration),
+        max_gap=float(opts.get("max_gap") or profile_defaults.get("max_gap") or GroupingConfig.max_gap),
+        max_chars_per_second=float(
+            opts.get("max_chars_per_second")
+            or profile_defaults.get("max_chars_per_second")
+            or GroupingConfig.max_chars_per_second
+        ),
+        sentence_break_on_punctuation=_coerce_bool_with_default(
+            opts.get("sentence_break_on_punctuation"),
+            bool(profile_defaults.get("sentence_break_on_punctuation", GroupingConfig.sentence_break_on_punctuation)),
+        ),
+        sentence_break_min_gap=float(
+            opts.get("sentence_break_min_gap")
+            or profile_defaults.get("sentence_break_min_gap")
+            or GroupingConfig.sentence_break_min_gap
+        ),
+        repair_overlaps=_coerce_bool_with_default(opts.get("repair_overlaps"), GroupingConfig.repair_overlaps),
     )
     subtitle_lines = group_words(words, grouping)
 
@@ -630,7 +892,7 @@ def generate_captions(self, job_id: str, video_asset_id: str, options: dict | No
         mime = "text/srt"
         suffix = ".srt"
 
-    asset = create_asset(kind="subtitle", mime_type=mime, suffix=suffix, contents=payload, project_id=project_id)
+    asset = create_asset(kind="subtitle", mime_type=mime, suffix=suffix, contents=payload, **asset_kwargs)
     result = {
         "video_asset_id": video_asset_id,
         "status": "captions_generated",
@@ -642,6 +904,7 @@ def generate_captions(self, job_id: str, video_asset_id: str, options: dict | No
         "model": config.model,
         "language": config.language,
         "warnings": warnings,
+        "subtitle_quality_profile": quality_profile,
         "output_asset_id": str(asset.id),
     }
     update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(asset.id))
@@ -653,7 +916,7 @@ def generate_captions(self, job_id: str, video_asset_id: str, options: dict | No
 def translate_subtitles(self, job_id: str, subtitle_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, subtitle_asset_id=subtitle_asset_id)
-    project_id = get_job_project_id(job_id)
+    asset_kwargs = _job_asset_kwargs(job_id)
     opts = options or {}
     warnings: list[str] = []
 
@@ -731,7 +994,7 @@ def translate_subtitles(self, job_id: str, subtitle_asset_id: str, options: dict
         _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
         return {"subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
 
-    asset = create_asset(kind="subtitle", mime_type="text/srt", suffix=".srt", contents=translated, project_id=project_id)
+    asset = create_asset(kind="subtitle", mime_type="text/srt", suffix=".srt", contents=translated, **asset_kwargs)
     result = {
         "subtitle_asset_id": subtitle_asset_id,
         "status": "translated",
@@ -951,7 +1214,7 @@ def _render_styled_subtitles_to_file(
 def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_asset_id: str, style: dict | None = None, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
-    project_id = get_job_project_id(job_id)
+    asset_kwargs = _job_asset_kwargs(job_id)
     opts = options or {}
     raw_preview_seconds = opts.get("preview_seconds")
     try:
@@ -996,7 +1259,7 @@ def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_ass
         return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
 
     mime_type = video_asset.mime_type if video_asset and video_asset.mime_type else "video/mp4"
-    asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=output_path, project_id=project_id)
+    asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=output_path, **asset_kwargs)
     result = {
         "video_asset_id": video_asset_id,
         "subtitle_asset_id": subtitle_asset_id,
@@ -1014,7 +1277,7 @@ def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_ass
 def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id)
-    project_id = get_job_project_id(job_id)
+    asset_kwargs = _job_asset_kwargs(job_id)
     opts = options or {}
     warnings: list[str] = []
     max_clips = int(opts.get("max_clips") or 3)
@@ -1062,6 +1325,7 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
         return {"video_asset_id": video_asset_id, "status": "failed", "error": error}
 
     candidates = equal_splits(duration, clip_length=max_duration)
+    prompt = str(opts.get("prompt") or "").strip()
     if trim_silence:
         try:
             silent = detect_silence(
@@ -1088,12 +1352,61 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
             for idx, cand in enumerate(candidates):
                 cand.score = 1.0 - (idx * 0.01)
     else:
-        # Assign simple deterministic scores for now (heuristics/LLM scoring comes later).
         for idx, cand in enumerate(candidates):
             cand.score = 1.0 - (idx * 0.01)
 
+    if subtitle_source_lines:
+        for cand in candidates:
+            parts = [line.text() for line in subtitle_source_lines if line.start < cand.end and line.end > cand.start and line.text()]
+            snippet = " ".join(parts).strip()
+            cand.snippet = snippet[:800] if snippet else None
+
+    keywords: list[str] = []
+    prompt_keywords = [token for token in re.findall(r"[a-z0-9']+", prompt.lower()) if len(token) >= 3]
+    keywords.extend(prompt_keywords)
+    extra_keywords = opts.get("keywords")
+    if isinstance(extra_keywords, list):
+        keywords.extend(str(item).strip().lower() for item in extra_keywords if str(item).strip())
+    deduped_keywords: list[str] = []
+    seen_kw: set[str] = set()
+    for keyword in keywords:
+        if keyword in seen_kw:
+            continue
+        seen_kw.add(keyword)
+        deduped_keywords.append(keyword)
+
+    weight_overrides = opts.get("segment_scoring_weights")
+    if not isinstance(weight_overrides, dict):
+        weight_overrides = {}
+    legacy_weight_map = {
+        "keyword_density_weight": "keyword_density",
+        "sentence_boundary_bonus_weight": "sentence_boundary_bonus",
+        "speech_density_weight": "speech_density_norm",
+        "duration_bonus_weight": "duration_bonus",
+        "novelty_penalty_weight": "novelty_penalty",
+        "base_score_weight": "base_score",
+    }
+    for legacy_key, canonical_key in legacy_weight_map.items():
+        if legacy_key in opts and canonical_key not in weight_overrides:
+            weight_overrides[canonical_key] = opts.get(legacy_key)
+
+    parsed_weight_overrides: dict[str, float] = {}
+    if weight_overrides:
+        for key, value in weight_overrides.items():
+            if key not in HeuristicWeights.__dataclass_fields__:
+                continue
+            try:
+                parsed_weight_overrides[key] = float(value)
+            except (TypeError, ValueError):
+                continue
+
+    score_segments_heuristic(
+        candidates,
+        keywords=deduped_keywords,
+        weights=HeuristicWeights(**parsed_weight_overrides) if parsed_weight_overrides else None,
+    )
+
     scoring_backend = str(opts.get("segment_scoring_backend") or opts.get("scoring_backend") or "").strip().lower()
-    prompt = str(opts.get("prompt") or "").strip()
     if scoring_backend == "groq":
         if not prompt:
             warnings.append("Groq scoring requested but no prompt was provided; falling back to heuristics.")
@@ -1151,7 +1464,13 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
             except Exception as exc:
                 warnings.append(f"Groq scoring failed; falling back to heuristics ({exc}).")
 
-    selected = select_top(candidates, max_segments=max_clips, min_duration=min_duration, max_duration=max_duration)
+    selected = select_top(
+        candidates,
+        max_segments=max_clips,
+        min_duration=min_duration,
+        max_duration=max_duration,
+        min_gap=float(opts.get("min_gap") or 0.0),
+    )
     if not selected:
         selected = candidates[:max_clips]
 
@@ -1174,9 +1493,9 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
             return {"video_asset_id": video_asset_id, "status": "failed", "error": error}
 
         mime_type = src_asset.mime_type if src_asset and src_asset.mime_type else "video/mp4"
-        clip_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=clip_path, project_id=project_id)
+        clip_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=clip_path, **asset_kwargs)
 
-        thumb_asset = create_thumbnail_asset(clip_path, project_id=project_id)
+        thumb_asset = create_thumbnail_asset(clip_path, **asset_kwargs)
 
         subtitle_asset = None
         styled_asset = None
@@ -1199,7 +1518,7 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
                     kind="subtitle",
                     mime_type="text/vtt",
                     file_path=subtitle_file,
-                    project_id=project_id,
+                    **asset_kwargs,
                 )
             except Exception as exc:
                 warnings.append(f"Clip {idx + 1}: failed to build subtitles ({exc}); continuing without subtitles.")
@@ -1216,7 +1535,7 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
                         style=style_for_clip,
                         preview_seconds=None,
                     )
-                    styled_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=styled_path, project_id=project_id)
+                    styled_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=styled_path, **asset_kwargs)
                 except Exception as exc:
                     stderr = ""
                     if isinstance(exc, subprocess.CalledProcessError):
@@ -1254,7 +1573,7 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
         mime_type="application/json",
         suffix=".json",
         contents=json.dumps(manifest, indent=2),
-        project_id=project_id,
+        **asset_kwargs,
     )
 
     result = {
@@ -1273,7 +1592,7 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
 def cut_clip_asset(self, job_id: str, video_asset_id: str, start: float, end: float, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id, start=start, end=end)
-    project_id = get_job_project_id(job_id)
+    asset_kwargs = _job_asset_kwargs(job_id)
     opts = options or {}
 
     src_asset, src_path = fetch_asset(video_asset_id)
@@ -1302,8 +1621,8 @@ def cut_clip_asset(self, job_id: str, video_asset_id: str, start: float, end: fl
         return {"video_asset_id": video_asset_id, "status": "failed", "error": error}
 
     mime_type = src_asset.mime_type if src_asset and src_asset.mime_type else "video/mp4"
-    clip_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=output_path, project_id=project_id)
-    thumb_asset = create_thumbnail_asset(output_path, project_id=project_id)
+    clip_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=output_path, **asset_kwargs)
+    thumb_asset = create_thumbnail_asset(output_path, **asset_kwargs)
 
     result = {
         "video_asset_id": video_asset_id,
@@ -1325,7 +1644,7 @@ def cut_clip_asset(self, job_id: str, video_asset_id: str, start: float, end: fl
 def merge_video_audio(self, job_id: str, video_asset_id: str, audio_asset_id: str, options: dict | None = None) -> dict:
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id, audio_asset_id=audio_asset_id)
-    project_id = get_job_project_id(job_id)
+    asset_kwargs = _job_asset_kwargs(job_id)
     opts = options or {}
     video_asset, video_path = fetch_asset(video_asset_id)
     audio_asset, audio_path = fetch_asset(audio_asset_id)
@@ -1363,7 +1682,7 @@ def merge_video_audio(self, job_id: str, video_asset_id: str, audio_asset_id: st
         return {"video_asset_id": video_asset_id, "audio_asset_id": audio_asset_id, "status": "failed", "error": error}
 
     mime_type = video_asset.mime_type if video_asset and video_asset.mime_type else "video/mp4"
-    merged_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=output_path, project_id=project_id)
+    merged_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=output_path, **asset_kwargs)
 
     result = {
         "video_asset_id": video_asset_id,

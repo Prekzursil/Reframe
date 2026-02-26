@@ -1,6 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
-import { apiClient, type Job, type JobStatus, type MediaAsset, type Project, type ProjectShareLink, type SystemStatusResponse, type UsageSummary } from "./api/client";
+import {
+  apiClient,
+  type AuthMeResponse,
+  type BillingPlan,
+  type BillingSubscription,
+  type BillingUsageSummary,
+  type Job,
+  type JobStatus,
+  type MediaAsset,
+  type OrgContextResponse,
+  type Project,
+  type ProjectShareLink,
+  type SystemStatusResponse,
+  type UsageSummary,
+} from "./api/client";
 import { Button, Card, Chip, Input, TextArea } from "./components/ui";
 import { Spinner } from "./components/Spinner";
 import { SettingsModal } from "./components/SettingsModal";
@@ -18,6 +32,8 @@ const NAV_ITEMS = [
   { id: "jobs", label: "Jobs" },
   { id: "usage", label: "Usage" },
   { id: "projects", label: "Projects" },
+  { id: "account", label: "Account" },
+  { id: "billing", label: "Billing" },
   { id: "system", label: "System" },
 ];
 
@@ -234,6 +250,7 @@ function CaptionsForm({
   const [sourceLang, setSourceLang] = useState("auto");
   const [backend, setBackend] = useState("faster_whisper");
   const [model, setModel] = useState("whisper-large-v3");
+  const [qualityProfile, setQualityProfile] = useState("balanced");
   const [formats, setFormats] = useState<string[]>(["srt"]);
   const [diarizationBackend, setDiarizationBackend] = useState<"noop" | "speechbrain" | "pyannote">("noop");
   const [busy, setBusy] = useState(false);
@@ -262,6 +279,7 @@ function CaptionsForm({
           source_language: sourceLang || "auto",
           backend,
           model,
+          subtitle_quality_profile: qualityProfile,
           formats,
           speaker_labels: speakerLabelsEnabled,
           diarization_backend: diarizationBackend,
@@ -290,13 +308,14 @@ function CaptionsForm({
         source_language: sourceLang || "auto",
         backend,
         model,
+        subtitle_quality_profile: qualityProfile,
         formats,
         speaker_labels: speakerLabelsEnabled,
         diarization_backend: diarizationBackend,
       },
     };
     return `curl -sS -X POST \"${apiClient.baseUrl}/captions/jobs\" -H \"Content-Type: application/json\" -d '${JSON.stringify(payload)}'`;
-  }, [videoId, sourceLang, backend, model, formats, diarizationBackend, speakerLabelsEnabled, projectId]);
+  }, [videoId, sourceLang, backend, model, qualityProfile, formats, diarizationBackend, speakerLabelsEnabled, projectId]);
 
   return (
     <form className="form-grid" onSubmit={submit}>
@@ -338,6 +357,14 @@ function CaptionsForm({
           <label className="field" title="Model name used by the selected backend. Ignored for 'noop'.">
             <span>Model</span>
             <Input value={model} onChange={(e) => setModel(e.target.value)} />
+          </label>
+          <label className="field" title="Subtitle segmentation profile tuned for readability or high-impact edits.">
+            <span>Subtitle quality profile</span>
+            <select className="input" value={qualityProfile} onChange={(e) => setQualityProfile(e.target.value)}>
+              <option value="balanced">balanced</option>
+              <option value="readable">readable</option>
+              <option value="high_impact">high_impact</option>
+            </select>
           </label>
           <label
             className="field"
@@ -1507,7 +1534,8 @@ function StyleEditor({
 		  const [jobsPageJobs, setJobsPageJobs] = useState<Job[]>([]);
 		  const [jobsPageLoading, setJobsPageLoading] = useState(false);
 		  const [jobsPageError, setJobsPageError] = useState<string | null>(null);
-		  const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
+    const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
+    const [retryingJobId, setRetryingJobId] = useState<string | null>(null);
 		  const [jobsStatusFilter, setJobsStatusFilter] = useState<JobStatus | "">("");
 		  const [jobsTypeFilter, setJobsTypeFilter] = useState("");
 		  const [jobsDateFrom, setJobsDateFrom] = useState("");
@@ -1532,8 +1560,24 @@ function StyleEditor({
     const [newProjectDescription, setNewProjectDescription] = useState("");
     const [projectCreateBusy, setProjectCreateBusy] = useState(false);
     const [shareSourceAssetId, setShareSourceAssetId] = useState("");
+    const [projectSearch, setProjectSearch] = useState("");
+    const [projectAssetKindFilter, setProjectAssetKindFilter] = useState("");
+    const [selectedShareAssetIds, setSelectedShareAssetIds] = useState<string[]>([]);
     const [shareBusy, setShareBusy] = useState(false);
     const [shareLinks, setShareLinks] = useState<ProjectShareLink[]>([]);
+    const [authEmail, setAuthEmail] = useState("");
+    const [authPassword, setAuthPassword] = useState("");
+    const [authDisplayName, setAuthDisplayName] = useState("");
+    const [authOrgName, setAuthOrgName] = useState("");
+    const [authBusy, setAuthBusy] = useState(false);
+    const [authError, setAuthError] = useState<string | null>(null);
+    const [authInfo, setAuthInfo] = useState<AuthMeResponse | null>(null);
+    const [orgInfo, setOrgInfo] = useState<OrgContextResponse | null>(null);
+    const [billingPlans, setBillingPlans] = useState<BillingPlan[]>([]);
+    const [billingSubscription, setBillingSubscription] = useState<BillingSubscription | null>(null);
+    const [billingUsage, setBillingUsage] = useState<BillingUsageSummary | null>(null);
+    const [billingLoading, setBillingLoading] = useState(false);
+    const [billingError, setBillingError] = useState<string | null>(null);
 
   const [showQuickStart, setShowQuickStart] = useState(() => {
     try {
@@ -1552,6 +1596,23 @@ function StyleEditor({
   const safeUploadedPreview = toSafeMediaUrl(uploadedPreview);
   const safeMergeVideoPreview = toSafeMediaUrl(mergeVideoPreview);
   const safeMergeAudioPreview = toSafeMediaUrl(mergeAudioPreview);
+  const usageMinutesPct = useMemo(() => {
+    if (!usageSummary?.quota_job_minutes || !usageSummary.used_job_minutes) return 0;
+    return Math.max(0, Math.min(100, (usageSummary.used_job_minutes / usageSummary.quota_job_minutes) * 100));
+  }, [usageSummary]);
+  const filteredProjects = useMemo(() => {
+    const q = projectSearch.trim().toLowerCase();
+    if (!q) return projects;
+    return projects.filter((project) => {
+      const name = project.name?.toLowerCase() || "";
+      const desc = project.description?.toLowerCase() || "";
+      return name.includes(q) || desc.includes(q);
+    });
+  }, [projectSearch, projects]);
+  const filteredProjectAssets = useMemo(() => {
+    return projectAssets.filter((asset) => (projectAssetKindFilter ? asset.kind === projectAssetKindFilter : true));
+  }, [projectAssets, projectAssetKindFilter]);
+  const projectAssetKinds = useMemo(() => Array.from(new Set(projectAssets.map((asset) => asset.kind))).sort(), [projectAssets]);
 
   const dismissQuickStart = () => {
     setShowQuickStart(false);
@@ -1625,6 +1686,21 @@ function StyleEditor({
 		      setDeletingJobId(null);
 		    }
 		  };
+
+      const retryJobAndRefresh = async (job: Job) => {
+        setJobsPageError(null);
+        setRetryingJobId(job.id);
+        try {
+          const retried = await apiClient.retryJob(job.id, { idempotency_key: `retry-${job.id}-${Date.now()}` });
+          setSelectedJob(retried);
+          await loadJobsPage();
+          refresh();
+        } catch (err) {
+          setJobsPageError(err instanceof Error ? err.message : "Failed to retry job");
+        } finally {
+          setRetryingJobId(null);
+        }
+      };
 
 		  useEffect(() => {
 		    if (active === "jobs") {
@@ -1708,6 +1784,7 @@ function StyleEditor({
         if (!assetsData.some((asset) => asset.id === shareSourceAssetId)) {
           setShareSourceAssetId(assetsData[0]?.id || "");
         }
+        setSelectedShareAssetIds((prev) => prev.filter((id) => assetsData.some((asset) => asset.id === id)));
       } catch (err) {
         setProjectDataError(err instanceof Error ? err.message : "Failed to load project data");
       } finally {
@@ -1732,6 +1809,11 @@ function StyleEditor({
         void loadProjectData(selectedProjectId);
       }
     }, [active, selectedProjectId]);
+
+    useEffect(() => {
+      setSelectedShareAssetIds([]);
+      setShareLinks([]);
+    }, [selectedProjectId]);
 
 		  const formatTimestamp = (value?: string | null) => {
 		    if (!value) return "n/a";
@@ -1776,66 +1858,109 @@ function StyleEditor({
 	      });
 	  }, [jobsPageJobs, jobsDateFrom, jobsDateTo, jobsStatusFilter, jobsTypeFilter]);
 
-	  const pollJob = (job: Job | null, onUpdate: (j: Job) => void, onAsset?: (a: MediaAsset | null) => void) => {
-    if (!job || ["completed", "failed", "cancelled"].includes(job.status)) return null;
-    return setInterval(async () => {
+  const pollJob = (job: Job | null, onUpdate: (j: Job) => void, onAsset?: (a: MediaAsset | null) => void) => {
+    if (!job || ["completed", "failed", "cancelled"].includes(job.status)) return () => {};
+    let cancelled = false;
+    let timer: number | null = null;
+    let delayMs = 2000;
+    let lastStatus = job.status;
+    let lastProgress = job.progress;
+    let lastOutputAssetId = job.output_asset_id ?? null;
+    let terminalConsistencyChecks = 0;
+
+    const schedule = (ms: number) => {
+      if (cancelled) return;
+      timer = window.setTimeout(() => {
+        void tick();
+      }, ms);
+    };
+
+    const tick = async () => {
+      if (cancelled) return;
       try {
         const refreshed = await apiClient.getJob(job.id);
-	        onUpdate(refreshed);
-	        if (job.job_type === "shorts" && refreshed.payload && "clip_assets" in (refreshed.payload as any)) {
-	          const resolveUri = (value: unknown): string | null => {
-	            if (!value || typeof value !== "string") return null;
-	            return toSafeMediaHref(value);
-	          };
-            const defaultStylePreset =
-              typeof (refreshed.payload as any).style_preset === "string" && (refreshed.payload as any).style_preset.trim()
-                ? (refreshed.payload as any).style_preset.trim()
-                : (PRESETS[0]?.name ?? "TikTok Bold");
+        onUpdate(refreshed);
 
-			          const clips = ((refreshed.payload as any).clip_assets as any[]).map((c, i) => ({
-			            id: c.id || `${refreshed.id}-clip-${i + 1}`,
-                asset_id: c.asset_id ?? null,
-                subtitle_asset_id: c.subtitle_asset_id ?? null,
-                thumbnail_asset_id: c.thumbnail_asset_id ?? null,
-                styled_asset_id: c.styled_asset_id ?? null,
-                styled_uri: resolveUri(c.styled_uri),
-                style_preset:
-                  typeof c.style_preset === "string" && c.style_preset.trim() ? c.style_preset.trim() : defaultStylePreset,
-		              start: c.start ?? null,
-		              end: c.end ?? null,
-			            duration: c.duration ?? null,
-			            score: c.score ?? null,
-			            uri: resolveUri(c.uri ?? c.url),
-			            subtitle_uri: resolveUri(c.subtitle_uri),
-			            thumbnail_uri: resolveUri(c.thumbnail_uri),
-			          }));
-			          setShortsClips((prev) => {
-                const byId = new Map(prev.map((clip) => [clip.id, clip]));
-                return clips
-                  .filter(Boolean)
-                  .map((clip) => {
-                    const existing = byId.get(clip.id);
-                    return {
-                      ...clip,
-                      styled_asset_id: clip.styled_asset_id ?? existing?.styled_asset_id ?? null,
-                      styled_uri: clip.styled_uri ?? existing?.styled_uri ?? null,
-                      style_preset: existing?.style_preset ?? clip.style_preset ?? defaultStylePreset,
-                    };
-                  });
+        if (job.job_type === "shorts" && refreshed.payload && "clip_assets" in (refreshed.payload as any)) {
+          const resolveUri = (value: unknown): string | null => {
+            if (!value || typeof value !== "string") return null;
+            return toSafeMediaHref(value);
+          };
+          const defaultStylePreset =
+            typeof (refreshed.payload as any).style_preset === "string" && (refreshed.payload as any).style_preset.trim()
+              ? (refreshed.payload as any).style_preset.trim()
+              : PRESETS[0]?.name ?? "TikTok Bold";
+          const clips = ((refreshed.payload as any).clip_assets as any[]).map((c, i) => ({
+            id: c.id || `${refreshed.id}-clip-${i + 1}`,
+            asset_id: c.asset_id ?? null,
+            subtitle_asset_id: c.subtitle_asset_id ?? null,
+            thumbnail_asset_id: c.thumbnail_asset_id ?? null,
+            styled_asset_id: c.styled_asset_id ?? null,
+            styled_uri: resolveUri(c.styled_uri),
+            style_preset: typeof c.style_preset === "string" && c.style_preset.trim() ? c.style_preset.trim() : defaultStylePreset,
+            start: c.start ?? null,
+            end: c.end ?? null,
+            duration: c.duration ?? null,
+            score: c.score ?? null,
+            uri: resolveUri(c.uri ?? c.url),
+            subtitle_uri: resolveUri(c.subtitle_uri),
+            thumbnail_uri: resolveUri(c.thumbnail_uri),
+          }));
+          setShortsClips((prev) => {
+            const byId = new Map(prev.map((clip) => [clip.id, clip]));
+            return clips
+              .filter(Boolean)
+              .map((clip) => {
+                const existing = byId.get(clip.id);
+                return {
+                  ...clip,
+                  styled_asset_id: clip.styled_asset_id ?? existing?.styled_asset_id ?? null,
+                  styled_uri: clip.styled_uri ?? existing?.styled_uri ?? null,
+                  style_preset: existing?.style_preset ?? clip.style_preset ?? defaultStylePreset,
+                };
               });
-		        }
-	        if (onAsset && refreshed.output_asset_id) {
-	          try {
-	            const asset = await apiClient.getAsset(refreshed.output_asset_id);
-	            onAsset(asset);
+          });
+        }
+
+        if (onAsset && refreshed.output_asset_id && refreshed.output_asset_id !== lastOutputAssetId) {
+          try {
+            const asset = await apiClient.getAsset(refreshed.output_asset_id);
+            onAsset(asset);
+            lastOutputAssetId = refreshed.output_asset_id;
           } catch {
             onAsset(null);
           }
         }
+
+        const terminal = ["completed", "failed", "cancelled"].includes(refreshed.status);
+        if (terminal) {
+          if (refreshed.status === "completed" && !refreshed.output_asset_id && terminalConsistencyChecks < 2) {
+            terminalConsistencyChecks += 1;
+            schedule(1500 * (terminalConsistencyChecks + 1));
+            return;
+          }
+          return;
+        }
+
+        terminalConsistencyChecks = 0;
+        const progressed = refreshed.status !== lastStatus || (refreshed.progress ?? 0) > (lastProgress ?? 0);
+        delayMs = progressed ? 2000 : Math.min(15000, Math.round(delayMs * 1.5));
+        lastStatus = refreshed.status;
+        lastProgress = refreshed.progress ?? 0;
+        schedule(delayMs);
       } catch {
-        /* ignore */
+        delayMs = Math.min(20000, Math.round(delayMs * 1.8));
+        schedule(delayMs);
       }
-    }, 5000);
+    };
+
+    schedule(0);
+    return () => {
+      cancelled = true;
+      if (timer !== null) {
+        clearTimeout(timer);
+      }
+    };
   };
 
   useEffect(() => {
@@ -1844,45 +1969,27 @@ function StyleEditor({
       return;
     }
     setShortsStatusPolling(true);
-    const id = pollJob(shortsJob, setShortsJob, setShortsOutput);
-    return () => {
-      if (id) clearInterval(id);
-    };
+    return pollJob(shortsJob, setShortsJob, setShortsOutput);
   }, [shortsJob]);
 
   useEffect(() => {
-    const id = pollJob(subtitleToolsJob, setSubtitleToolsJob, setSubtitleToolsOutput);
-    return () => {
-      if (id) clearInterval(id);
-    };
+    return pollJob(subtitleToolsJob, setSubtitleToolsJob, setSubtitleToolsOutput);
   }, [subtitleToolsJob]);
 
   useEffect(() => {
-    const id = pollJob(mergeJob, setMergeJob, setMergeOutput);
-    return () => {
-      if (id) clearInterval(id);
-    };
+    return pollJob(mergeJob, setMergeJob, setMergeOutput);
   }, [mergeJob]);
 
   useEffect(() => {
-    const id = pollJob(styleJob, setStyleJob, setStyleOutput);
-    return () => {
-      if (id) clearInterval(id);
-    };
+    return pollJob(styleJob, setStyleJob, setStyleOutput);
   }, [styleJob]);
 
   useEffect(() => {
-    const id = pollJob(captionJob, setCaptionJob, setCaptionOutput);
-    return () => {
-      if (id) clearInterval(id);
-    };
+    return pollJob(captionJob, setCaptionJob, setCaptionOutput);
   }, [captionJob]);
 
   useEffect(() => {
-    const id = pollJob(translateJob, setTranslateJob, setTranslateOutput);
-    return () => {
-      if (id) clearInterval(id);
-    };
+    return pollJob(translateJob, setTranslateJob, setTranslateOutput);
   }, [translateJob]);
 
   useEffect(() => {
@@ -2186,12 +2293,14 @@ function StyleEditor({
         };
 
         const createShareLink = async () => {
-          if (!selectedProjectId || !shareSourceAssetId) return;
+          if (!selectedProjectId) return;
+          const assetIds = selectedShareAssetIds.length ? selectedShareAssetIds : shareSourceAssetId ? [shareSourceAssetId] : [];
+          if (!assetIds.length) return;
           setShareBusy(true);
           setProjectDataError(null);
           try {
             const response = await apiClient.createProjectShareLinks(selectedProjectId, {
-              asset_ids: [shareSourceAssetId],
+              asset_ids: assetIds,
               expires_in_hours: 24,
             });
             setShareLinks(response.links);
@@ -2201,6 +2310,130 @@ function StyleEditor({
             setShareBusy(false);
           }
         };
+
+        const toggleShareAsset = (assetId: string) => {
+          setSelectedShareAssetIds((prev) => (prev.includes(assetId) ? prev.filter((item) => item !== assetId) : [...prev, assetId]));
+        };
+
+        const persistTokens = (accessToken: string | null) => {
+          apiClient.setAccessToken(accessToken);
+          try {
+            if (accessToken) {
+              localStorage.setItem("reframe_access_token", accessToken);
+            } else {
+              localStorage.removeItem("reframe_access_token");
+            }
+          } catch {
+            // ignore
+          }
+        };
+
+        const loadAuthContext = async () => {
+          try {
+            const [me, org] = await Promise.all([apiClient.getMe(), apiClient.getOrgContext()]);
+            setAuthInfo(me);
+            setOrgInfo(org);
+            setAuthError(null);
+          } catch (err) {
+            setAuthInfo(null);
+            setOrgInfo(null);
+            setAuthError(err instanceof Error ? err.message : "Failed to load account context");
+          }
+        };
+
+        const registerAccount = async () => {
+          setAuthBusy(true);
+          setAuthError(null);
+          try {
+            const tokens = await apiClient.register({
+              email: authEmail.trim(),
+              password: authPassword,
+              display_name: authDisplayName.trim() || undefined,
+              organization_name: authOrgName.trim() || undefined,
+            });
+            persistTokens(tokens.access_token);
+            await loadAuthContext();
+          } catch (err) {
+            setAuthError(err instanceof Error ? err.message : "Registration failed");
+          } finally {
+            setAuthBusy(false);
+          }
+        };
+
+        const loginAccount = async () => {
+          setAuthBusy(true);
+          setAuthError(null);
+          try {
+            const tokens = await apiClient.login({
+              email: authEmail.trim(),
+              password: authPassword,
+            });
+            persistTokens(tokens.access_token);
+            await loadAuthContext();
+          } catch (err) {
+            setAuthError(err instanceof Error ? err.message : "Login failed");
+          } finally {
+            setAuthBusy(false);
+          }
+        };
+
+        const logoutAccount = async () => {
+          setAuthBusy(true);
+          setAuthError(null);
+          try {
+            await apiClient.logout();
+          } catch {
+            // ignore logout failures, clear local session anyway
+          } finally {
+            persistTokens(null);
+            setAuthInfo(null);
+            setOrgInfo(null);
+            setAuthBusy(false);
+          }
+        };
+
+        const loadBillingData = async () => {
+          setBillingLoading(true);
+          setBillingError(null);
+          try {
+            const [plans, subscription, usage] = await Promise.all([
+              apiClient.listBillingPlans(),
+              apiClient.getBillingSubscription(),
+              apiClient.getBillingUsageSummary(),
+            ]);
+            setBillingPlans(plans);
+            setBillingSubscription(subscription);
+            setBillingUsage(usage);
+          } catch (err) {
+            setBillingError(err instanceof Error ? err.message : "Failed to load billing data");
+          } finally {
+            setBillingLoading(false);
+          }
+        };
+
+        useEffect(() => {
+          try {
+            const existing = localStorage.getItem("reframe_access_token");
+            if (existing) {
+              apiClient.setAccessToken(existing);
+              void loadAuthContext();
+            }
+          } catch {
+            // ignore
+          }
+        }, []);
+
+        useEffect(() => {
+          if (active === "account" && apiClient.accessToken) {
+            void loadAuthContext();
+          }
+        }, [active]);
+
+        useEffect(() => {
+          if (active === "billing" && apiClient.accessToken) {
+            void loadBillingData();
+          }
+        }, [active]);
 
 		  return (
 		    <div className="layout">
@@ -3127,14 +3360,20 @@ function StyleEditor({
 		                      );
 		                    })()}
 		                  </div>
-	                  <div className="output-card">
-	                    <p className="metric-label">IDs</p>
-	                    <p className="muted mono">Job: {selectedJob.id}</p>
-	                    {selectedJob.input_asset_id && <p className="muted mono">Input: {selectedJob.input_asset_id}</p>}
-	                    {selectedJob.output_asset_id && <p className="muted mono">Output: {selectedJob.output_asset_id}</p>}
-	                    <p className="muted">Created: {formatTimestamp(selectedJob.created_at)}</p>
-	                    <p className="muted">Updated: {formatTimestamp(selectedJob.updated_at)}</p>
-	                  </div>
+                  <div className="output-card">
+                    <p className="metric-label">IDs</p>
+                    <p className="muted mono">Job: {selectedJob.id}</p>
+                    {selectedJob.input_asset_id && <p className="muted mono">Input: {selectedJob.input_asset_id}</p>}
+                    {selectedJob.output_asset_id && <p className="muted mono">Output: {selectedJob.output_asset_id}</p>}
+                    <p className="muted">Created: {formatTimestamp(selectedJob.created_at)}</p>
+                    <p className="muted">Updated: {formatTimestamp(selectedJob.updated_at)}</p>
+                    {selectedJob.error && (
+                      <>
+                        <p className="metric-label">Last error</p>
+                        <pre className="code-block">{selectedJob.error}</pre>
+                      </>
+                    )}
+                  </div>
 	                  {assetLoading && <Spinner label="Loading assets..." />}
 	                  {assetError && <div className="error-inline">{assetError}</div>}
 
@@ -3157,14 +3396,22 @@ function StyleEditor({
 			                        Download bundle
 			                      </a>
 			                    )}
-				                    {toSafeMediaHref(outputAsset?.uri) && (
-				                      <a className="btn btn-secondary" href={toSafeMediaHref(outputAsset?.uri)!} target="_blank" rel="noreferrer">
-				                        Open output
-				                      </a>
-				                    )}
-			                    <Button
-			                      type="button"
-			                      variant="danger"
+                    {toSafeMediaHref(outputAsset?.uri) && (
+                      <a className="btn btn-secondary" href={toSafeMediaHref(outputAsset?.uri)!} target="_blank" rel="noreferrer">
+                        Open output
+                      </a>
+                    )}
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={retryingJobId === selectedJob.id || !["failed", "cancelled"].includes(selectedJob.status)}
+                      onClick={() => void retryJobAndRefresh(selectedJob)}
+                    >
+                      {retryingJobId === selectedJob.id ? "Retrying..." : "Retry job"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="danger"
 			                      disabled={
 			                        deletingJobId === selectedJob.id ||
 			                        !["completed", "failed", "cancelled"].includes(selectedJob.status)
@@ -3339,6 +3586,10 @@ function StyleEditor({
                 {usageSummary && (
                   <div className="snapshot">
                     <div>
+                      <p className="metric-label">Plan</p>
+                      <p className="metric-value">{usageSummary.plan_code || "n/a"}</p>
+                    </div>
+                    <div>
                       <p className="metric-label">Total jobs</p>
                       <p className="metric-value">{usageSummary.total_jobs}</p>
                     </div>
@@ -3362,6 +3613,23 @@ function StyleEditor({
                       <p className="metric-label">Output duration</p>
                       <p className="metric-value">{usageSummary.output_duration_seconds.toFixed(2)}s</p>
                     </div>
+                  </div>
+                )}
+                {usageSummary?.quota_job_minutes != null && (
+                  <div className="output-card">
+                    <p className="metric-label">Job minute quota</p>
+                    <div className="progress-track">
+                      <div className="progress-fill" style={{ width: `${usageMinutesPct}%` }} />
+                    </div>
+                    <p className="muted">
+                      {(usageSummary.used_job_minutes || 0).toFixed(2)} / {usageSummary.quota_job_minutes} minutes
+                    </p>
+                    {usageSummary.max_concurrent_jobs != null && (
+                      <p className="muted">Concurrent jobs cap: {usageSummary.max_concurrent_jobs}</p>
+                    )}
+                    {(usageSummary.overage_job_minutes || 0) > 0 && (
+                      <p className="error-inline">Overage preview: {(usageSummary.overage_job_minutes || 0).toFixed(2)} minutes</p>
+                    )}
                   </div>
                 )}
               </Card>
@@ -3399,10 +3667,14 @@ function StyleEditor({
                 {projectsLoading && <Spinner label="Loading projects..." />}
                 <div className="form-grid">
                   <label className="field">
+                    <span>Search projects</span>
+                    <Input value={projectSearch} onChange={(e) => setProjectSearch(e.target.value)} placeholder="Filter by name/description" />
+                  </label>
+                  <label className="field">
                     <span>Project</span>
                     <select className="input" value={selectedProjectId} onChange={(e) => setSelectedProjectId(e.target.value)}>
                       <option value="">Select a project...</option>
-                      {projects.map((project) => (
+                      {filteredProjects.map((project) => (
                         <option key={project.id} value={project.id}>
                           {project.name}
                         </option>
@@ -3447,16 +3719,75 @@ function StyleEditor({
                       <span>Share source asset</span>
                       <select className="input" value={shareSourceAssetId} onChange={(e) => setShareSourceAssetId(e.target.value)}>
                         <option value="">Select asset...</option>
-                        {projectAssets.map((asset) => (
+                        {filteredProjectAssets.map((asset) => (
                           <option key={asset.id} value={asset.id}>
                             {asset.id} ({asset.kind})
                           </option>
                         ))}
                       </select>
                     </label>
+                    <div className="form-grid">
+                      <label className="field">
+                        <span>Filter assets by kind</span>
+                        <select className="input" value={projectAssetKindFilter} onChange={(e) => setProjectAssetKindFilter(e.target.value)}>
+                          <option value="">All kinds</option>
+                          {projectAssetKinds.map((kind) => (
+                            <option key={kind} value={kind}>
+                              {kind}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    {filteredProjectAssets.length > 0 && (
+                      <div className="output-card">
+                        <p className="metric-label">Bulk share asset selection</p>
+                        <div className="actions-row">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={() => setSelectedShareAssetIds(filteredProjectAssets.map((asset) => asset.id))}
+                          >
+                            Select filtered
+                          </Button>
+                          <Button type="button" variant="ghost" onClick={() => setSelectedShareAssetIds([])}>
+                            Clear selection
+                          </Button>
+                        </div>
+                        <table className="table">
+                          <thead>
+                            <tr>
+                              <th></th>
+                              <th>Asset</th>
+                              <th>Kind</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredProjectAssets.map((asset) => (
+                              <tr key={asset.id}>
+                                <td>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedShareAssetIds.includes(asset.id)}
+                                    onChange={() => toggleShareAsset(asset.id)}
+                                  />
+                                </td>
+                                <td className="mono">{asset.id}</td>
+                                <td>{asset.kind}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                     <div className="actions-row">
-                      <Button type="button" variant="secondary" onClick={() => void createShareLink()} disabled={shareBusy || !shareSourceAssetId}>
-                        {shareBusy ? "Generating..." : "Generate share link"}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => void createShareLink()}
+                        disabled={shareBusy || (selectedShareAssetIds.length === 0 && !shareSourceAssetId)}
+                      >
+                        {shareBusy ? "Generating..." : `Generate share link${selectedShareAssetIds.length ? "s" : ""}`}
                       </Button>
                     </div>
                     {shareLinks.length > 0 && (
@@ -3480,6 +3811,204 @@ function StyleEditor({
                     )}
                   </>
                 )}
+              </Card>
+            </section>
+          )}
+
+          {active === "account" && (
+            <section className="grid two-col">
+              <Card title="Account session">
+                {authError && <div className="error-inline">{authError}</div>}
+                {!authInfo && (
+                  <>
+                    <div className="form-grid">
+                      <label className="field">
+                        <span>Email</span>
+                        <Input value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="you@example.com" />
+                      </label>
+                      <label className="field">
+                        <span>Password</span>
+                        <Input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} />
+                      </label>
+                      <label className="field">
+                        <span>Display name (register)</span>
+                        <Input value={authDisplayName} onChange={(e) => setAuthDisplayName(e.target.value)} />
+                      </label>
+                      <label className="field">
+                        <span>Workspace name (register)</span>
+                        <Input value={authOrgName} onChange={(e) => setAuthOrgName(e.target.value)} />
+                      </label>
+                    </div>
+                    <div className="actions-row">
+                      <Button type="button" variant="primary" disabled={authBusy || !authEmail || !authPassword} onClick={() => void loginAccount()}>
+                        {authBusy ? "Working..." : "Login"}
+                      </Button>
+                      <Button type="button" variant="secondary" disabled={authBusy || !authEmail || !authPassword} onClick={() => void registerAccount()}>
+                        {authBusy ? "Working..." : "Register"}
+                      </Button>
+                    </div>
+                    <div className="actions-row">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={async () => {
+                          try {
+                            const data = await apiClient.oauthStart("google");
+                            const url = toSafeExternalUrl(data.authorize_url);
+                            if (url) {
+                              window.location.href = url;
+                            } else {
+                              setAuthError("Unsafe OAuth redirect URL rejected.");
+                            }
+                          } catch (err) {
+                            setAuthError(err instanceof Error ? err.message : "OAuth start failed");
+                          }
+                        }}
+                      >
+                        Continue with Google
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={async () => {
+                          try {
+                            const data = await apiClient.oauthStart("github");
+                            const url = toSafeExternalUrl(data.authorize_url);
+                            if (url) {
+                              window.location.href = url;
+                            } else {
+                              setAuthError("Unsafe OAuth redirect URL rejected.");
+                            }
+                          } catch (err) {
+                            setAuthError(err instanceof Error ? err.message : "OAuth start failed");
+                          }
+                        }}
+                      >
+                        Continue with GitHub
+                      </Button>
+                    </div>
+                  </>
+                )}
+                {authInfo && (
+                  <>
+                    <div className="snapshot">
+                      <div>
+                        <p className="metric-label">User</p>
+                        <p className="metric-value">{authInfo.email}</p>
+                      </div>
+                      <div>
+                        <p className="metric-label">Role</p>
+                        <p className="metric-value">{authInfo.role}</p>
+                      </div>
+                      <div>
+                        <p className="metric-label">Workspace</p>
+                        <p className="metric-value">{authInfo.org_name}</p>
+                      </div>
+                    </div>
+                    <div className="actions-row">
+                      <Button type="button" variant="ghost" onClick={() => void loadAuthContext()}>
+                        Refresh account
+                      </Button>
+                      <Button type="button" variant="secondary" onClick={() => void logoutAccount()} disabled={authBusy}>
+                        {authBusy ? "Signing out..." : "Logout"}
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </Card>
+              <Card title="Organization">
+                {!orgInfo && <p className="muted">Login first to view organization members.</p>}
+                {orgInfo && (
+                  <>
+                    <p className="muted">
+                      {orgInfo.org_name} ({orgInfo.slug})
+                    </p>
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>Email</th>
+                          <th>Role</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {orgInfo.members.map((member) => (
+                          <tr key={member.user_id}>
+                            <td>{member.email}</td>
+                            <td>{member.role}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </>
+                )}
+              </Card>
+            </section>
+          )}
+
+          {active === "billing" && (
+            <section className="grid two-col">
+              <Card title="Billing status">
+                {!apiClient.accessToken && <p className="muted">Login in Account tab to load billing data.</p>}
+                {billingError && <div className="error-inline">{billingError}</div>}
+                <div className="actions-row">
+                  <Button type="button" variant="ghost" onClick={() => void loadBillingData()} disabled={!apiClient.accessToken || billingLoading}>
+                    {billingLoading ? "Refreshing..." : "Refresh billing"}
+                  </Button>
+                </div>
+                {billingSubscription && (
+                  <div className="snapshot">
+                    <div>
+                      <p className="metric-label">Plan</p>
+                      <p className="metric-value">{billingSubscription.plan_code}</p>
+                    </div>
+                    <div>
+                      <p className="metric-label">Status</p>
+                      <p className="metric-value">{billingSubscription.status}</p>
+                    </div>
+                    <div>
+                      <p className="metric-label">Cancel at period end</p>
+                      <p className="metric-value">{billingSubscription.cancel_at_period_end ? "Yes" : "No"}</p>
+                    </div>
+                  </div>
+                )}
+                {billingUsage && (
+                  <div className="output-card">
+                    <p className="metric-label">Usage & overage preview</p>
+                    <p className="muted">
+                      Minutes: {billingUsage.used_job_minutes.toFixed(2)} / {billingUsage.quota_job_minutes}
+                    </p>
+                    <p className="muted">
+                      Storage: {billingUsage.used_storage_gb.toFixed(2)}GB / {billingUsage.quota_storage_gb}GB
+                    </p>
+                    <p className="muted">Estimated overage: ${(billingUsage.estimated_overage_cents / 100).toFixed(2)}</p>
+                  </div>
+                )}
+              </Card>
+              <Card title="Plans">
+                {billingPlans.length === 0 && <p className="muted">No plans loaded yet.</p>}
+                {billingPlans.length > 0 && (
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Plan</th>
+                        <th>Concurrency</th>
+                        <th>Minutes</th>
+                        <th>Seats</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {billingPlans.map((plan) => (
+                        <tr key={plan.code}>
+                          <td>{plan.name}</td>
+                          <td>{plan.max_concurrent_jobs}</td>
+                          <td>{plan.monthly_job_minutes}</td>
+                          <td>{plan.seat_limit}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                <p className="muted">Checkout/portal session APIs are available under `/billing/*` for hosted mode wiring.</p>
               </Card>
             </section>
           )}

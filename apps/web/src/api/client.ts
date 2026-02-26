@@ -18,6 +18,7 @@ export interface CaptionJobRequest {
   video_asset_id: string;
   options?: Record<string, unknown>;
   project_id?: string;
+  idempotency_key?: string;
 }
 
 export interface TranslateJobRequest {
@@ -25,6 +26,7 @@ export interface TranslateJobRequest {
   target_language: string;
   options?: Record<string, unknown>;
   project_id?: string;
+  idempotency_key?: string;
 }
 
 export interface StyledSubtitleJobRequest {
@@ -33,6 +35,7 @@ export interface StyledSubtitleJobRequest {
   style: Record<string, unknown>;
   preview_seconds?: number;
   project_id?: string;
+  idempotency_key?: string;
 }
 
 export interface ShortsJobRequest {
@@ -43,6 +46,7 @@ export interface ShortsJobRequest {
   aspect_ratio?: string;
   options?: Record<string, unknown>;
   project_id?: string;
+  idempotency_key?: string;
 }
 
 export interface SubtitleToolsRequest {
@@ -50,6 +54,7 @@ export interface SubtitleToolsRequest {
   target_language: string;
   bilingual?: boolean;
   project_id?: string;
+  idempotency_key?: string;
 }
 
 export interface MergeAvRequest {
@@ -59,6 +64,7 @@ export interface MergeAvRequest {
   ducking?: boolean;
   normalize?: boolean;
   project_id?: string;
+  idempotency_key?: string;
 }
 
 export interface CutClipRequest {
@@ -67,6 +73,7 @@ export interface CutClipRequest {
   end: number;
   options?: Record<string, unknown>;
   project_id?: string;
+  idempotency_key?: string;
 }
 
 export interface MediaAsset {
@@ -91,6 +98,11 @@ export interface UsageSummary {
   output_assets_count: number;
   output_duration_seconds: number;
   generated_bytes: number;
+  plan_code?: string | null;
+  quota_job_minutes?: number | null;
+  used_job_minutes?: number | null;
+  overage_job_minutes?: number | null;
+  max_concurrent_jobs?: number | null;
   from_date?: string | null;
   to_date?: string | null;
 }
@@ -111,6 +123,107 @@ export interface ProjectShareLink {
 
 export interface ProjectShareLinksResponse {
   links: ProjectShareLink[];
+}
+
+export interface UploadInitRequest {
+  filename: string;
+  mime_type: string;
+  kind?: string;
+  size?: number;
+  project_id?: string | null;
+}
+
+export interface UploadInitResponse {
+  upload_id: string;
+  upload_url: string;
+  form_fields: Record<string, string>;
+  expires_at: string;
+}
+
+export interface UploadCompleteRequest {
+  upload_id: string;
+  asset_id: string;
+}
+
+export interface UploadCompleteResponse {
+  upload_id: string;
+  asset_id: string;
+}
+
+export interface AuthTokenResponse {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  user_id: string;
+  org_id: string;
+  role: string;
+}
+
+export interface AuthMeResponse {
+  user_id: string;
+  email: string;
+  display_name?: string | null;
+  org_id: string;
+  org_name: string;
+  role: string;
+}
+
+export interface OAuthStartResponse {
+  provider: string;
+  authorize_url: string;
+  state: string;
+}
+
+export interface OrgMemberView {
+  user_id: string;
+  email: string;
+  display_name?: string | null;
+  role: string;
+}
+
+export interface OrgContextResponse {
+  org_id: string;
+  org_name: string;
+  slug: string;
+  role: string;
+  members: OrgMemberView[];
+}
+
+export interface BillingPlan {
+  code: string;
+  name: string;
+  max_concurrent_jobs: number;
+  monthly_job_minutes: number;
+  monthly_storage_gb: number;
+  seat_limit: number;
+  overage_per_minute_cents: number;
+}
+
+export interface BillingSubscription {
+  org_id: string;
+  plan_code: string;
+  status: string;
+  stripe_customer_id?: string | null;
+  stripe_subscription_id?: string | null;
+  current_period_start?: string | null;
+  current_period_end?: string | null;
+  cancel_at_period_end: boolean;
+}
+
+export interface BillingUsageSummary {
+  org_id: string;
+  plan_code: string;
+  used_job_minutes: number;
+  quota_job_minutes: number;
+  used_storage_gb: number;
+  quota_storage_gb: number;
+  overage_job_minutes: number;
+  estimated_overage_cents: number;
+}
+
+export interface BillingSessionResponse {
+  id: string;
+  url: string;
 }
 
 export interface WorkerDiagnostics {
@@ -137,22 +250,38 @@ interface ApiClientOptions {
 export class ApiClient {
   baseUrl: string;
   fetcher: typeof fetch;
+  accessToken: string | null;
 
   constructor(options?: ApiClientOptions) {
     const env = (import.meta as unknown as { env?: Record<string, string> }).env || {};
     this.baseUrl = options?.baseUrl || env.VITE_API_BASE_URL || "http://localhost:8000/api/v1";
     this.fetcher = options?.fetcher || fetch;
+    this.accessToken = null;
+  }
+
+  setAccessToken(token: string | null | undefined) {
+    this.accessToken = token || null;
   }
 
   async request<T>(path: string, init?: RequestInit): Promise<T> {
+    const headers = new Headers(init?.headers || {});
+    if (!headers.has("Content-Type") && !(init?.body instanceof FormData)) {
+      headers.set("Content-Type", "application/json");
+    }
+    if (this.accessToken && !headers.has("Authorization")) {
+      headers.set("Authorization", `Bearer ${this.accessToken}`);
+    }
     const resp = await this.fetcher(`${this.baseUrl}${path}`, {
-      headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+      headers,
       ...init,
     });
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
       const message = (body as any)?.message || resp.statusText || "Request failed";
       throw new Error(message);
+    }
+    if (resp.status === 204) {
+      return undefined as T;
     }
     return (await resp.json()) as T;
   }
@@ -183,31 +312,66 @@ export class ApiClient {
   }
 
   createCaptionJob(payload: CaptionJobRequest) {
-    return this.request<Job>("/captions/jobs", { method: "POST", body: JSON.stringify(payload) });
+    return this.request<Job>("/captions/jobs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: payload.idempotency_key ? { "Idempotency-Key": payload.idempotency_key } : undefined,
+    });
   }
 
   createTranslateJob(payload: TranslateJobRequest) {
-    return this.request<Job>("/subtitles/translate", { method: "POST", body: JSON.stringify(payload) });
+    return this.request<Job>("/subtitles/translate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: payload.idempotency_key ? { "Idempotency-Key": payload.idempotency_key } : undefined,
+    });
   }
 
   createStyledSubtitleJob(payload: StyledSubtitleJobRequest) {
-    return this.request<Job>("/subtitles/style", { method: "POST", body: JSON.stringify(payload) });
+    return this.request<Job>("/subtitles/style", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: payload.idempotency_key ? { "Idempotency-Key": payload.idempotency_key } : undefined,
+    });
   }
 
   createShortsJob(payload: ShortsJobRequest) {
-    return this.request<Job>("/shorts/jobs", { method: "POST", body: JSON.stringify(payload) });
+    return this.request<Job>("/shorts/jobs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: payload.idempotency_key ? { "Idempotency-Key": payload.idempotency_key } : undefined,
+    });
   }
 
   translateSubtitleAsset(payload: SubtitleToolsRequest) {
-    return this.request<Job>("/utilities/translate-subtitle", { method: "POST", body: JSON.stringify(payload) });
+    return this.request<Job>("/utilities/translate-subtitle", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: payload.idempotency_key ? { "Idempotency-Key": payload.idempotency_key } : undefined,
+    });
   }
 
   mergeAv(payload: MergeAvRequest) {
-    return this.request<Job>("/utilities/merge-av", { method: "POST", body: JSON.stringify(payload) });
+    return this.request<Job>("/utilities/merge-av", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: payload.idempotency_key ? { "Idempotency-Key": payload.idempotency_key } : undefined,
+    });
   }
 
   createCutClipJob(payload: CutClipRequest) {
-    return this.request<Job>("/utilities/cut-clip", { method: "POST", body: JSON.stringify(payload) });
+    return this.request<Job>("/utilities/cut-clip", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: payload.idempotency_key ? { "Idempotency-Key": payload.idempotency_key } : undefined,
+    });
+  }
+
+  retryJob(jobId: string, params?: { idempotency_key?: string }) {
+    return this.request<Job>(`/jobs/${jobId}/retry`, {
+      method: "POST",
+      headers: params?.idempotency_key ? { "Idempotency-Key": params.idempotency_key } : undefined,
+    });
   }
 
   getSystemStatus() {
@@ -251,6 +415,68 @@ export class ApiClient {
     return this.request<ProjectShareLinksResponse>(`/projects/${projectId}/share-links`, {
       method: "POST",
       body: JSON.stringify(payload),
+    });
+  }
+
+  initAssetUpload(payload: UploadInitRequest) {
+    return this.request<UploadInitResponse>("/assets/upload-init", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  completeAssetUpload(payload: UploadCompleteRequest) {
+    return this.request<UploadCompleteResponse>("/assets/upload-complete", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  register(payload: { email: string; password: string; display_name?: string; organization_name?: string }) {
+    return this.request<AuthTokenResponse>("/auth/register", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  login(payload: { email: string; password: string }) {
+    return this.request<AuthTokenResponse>("/auth/login", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  refreshToken(refresh_token: string) {
+    return this.request<AuthTokenResponse>("/auth/refresh", { method: "POST", body: JSON.stringify({ refresh_token }) });
+  }
+
+  logout() {
+    return this.request<void>("/auth/logout", { method: "POST" });
+  }
+
+  getMe() {
+    return this.request<AuthMeResponse>("/auth/me");
+  }
+
+  oauthStart(provider: "google" | "github", redirectTo?: string) {
+    const search = new URLSearchParams();
+    if (redirectTo) search.set("redirect_to", redirectTo);
+    const query = search.toString();
+    return this.request<OAuthStartResponse>(`/auth/oauth/${provider}/start${query ? `?${query}` : ""}`);
+  }
+
+  getOrgContext() {
+    return this.request<OrgContextResponse>("/orgs/me");
+  }
+
+  listBillingPlans() {
+    return this.request<BillingPlan[]>("/billing/plans");
+  }
+
+  getBillingSubscription() {
+    return this.request<BillingSubscription>("/billing/subscription");
+  }
+
+  getBillingUsageSummary() {
+    return this.request<BillingUsageSummary>("/billing/usage-summary");
+  }
+
+  createBillingCheckoutSession(payload: { plan_code: string; success_url?: string; cancel_url?: string }) {
+    return this.request<BillingSessionResponse>("/billing/checkout-session", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  createBillingPortalSession(payload?: { return_url?: string }) {
+    return this.request<BillingSessionResponse>("/billing/portal-session", {
+      method: "POST",
+      body: JSON.stringify(payload || {}),
     });
   }
 

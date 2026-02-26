@@ -11,6 +11,8 @@ from fastapi.responses import JSONResponse
 from app.config import get_settings
 from app.database import create_db_and_tables
 from app.api import router as api_router
+from app.auth_api import router as auth_router
+from app.billing_api import router as billing_router
 from app.errors import ApiError, ErrorResponse
 from app.cleanup import start_cleanup_loop
 from app.logging_config import setup_logging
@@ -30,6 +32,8 @@ def create_app() -> FastAPI:
         {"name": "Assets", "description": "Manage media assets."},
         {"name": "Projects", "description": "Project containers and share-link flows."},
         {"name": "Usage", "description": "Aggregated usage and processing metrics."},
+        {"name": "Auth", "description": "Authentication, OAuth, and organization context."},
+        {"name": "Billing", "description": "Subscription, checkout, and usage quota endpoints."},
         {"name": "Presets", "description": "Subtitle style presets."},
         {"name": "System", "description": "Diagnostics for local setup."},
     ]
@@ -90,6 +94,8 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=exc.status_code, content=payload.model_dump())
 
     app.include_router(api_router)
+    app.include_router(auth_router)
+    app.include_router(billing_router)
 
     @app.get("/health", tags=["Health"])
     @app.get("/healthz", tags=["Health"])
