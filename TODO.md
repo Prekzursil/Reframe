@@ -452,6 +452,7 @@ Goal: offer Reframe as a paid hosted service (multi-tenant web app) while keepin
 ### Billing + usage metering
 - [ ] Define the cost model: what you bill for (minutes processed, GPU-seconds, storage, egress) and what limits exist per plan.
 - [ ] Add usage metering tables (per job) and a “usage” page in the UI.
+- [x] Add usage summary groundwork (`GET /api/v1/usage/summary` + frontend Usage dashboard cards/breakdown).
 - [ ] Integrate Stripe for subscriptions + seat/org billing + plan enforcement.
 - [ ] Add per-plan concurrency limits (e.g., max running jobs) and queueing behavior.
 
@@ -461,8 +462,8 @@ Goal: offer Reframe as a paid hosted service (multi-tenant web app) while keepin
 - [ ] Add retention policies for intermediate assets and plan-based retention windows.
 
 ### Opus Clip‑style UX
-- [ ] Add a “project” abstraction (source video → derived clips, transcripts, styles, exports).
-- [ ] Add shareable preview links for clips (signed, time-limited URLs).
+- [x] Add a “project” abstraction (source video → derived clips, transcripts, styles, exports).
+- [x] Add shareable preview links for clips (signed, time-limited URLs).
 - [ ] Add team collaboration features (org members, roles, shared projects) (later).
 
 ---
@@ -479,6 +480,6 @@ Goal: offer Reframe as a paid hosted service (multi-tenant web app) while keepin
 - [x] Resolve active npm advisories in web/desktop lockfiles (rollup path traversal advisory).
 - [x] Dismiss legacy code-scanning alerts tied to archived `Inspirations & Former Attempts/` paths with documented rationale.
 - [x] Merge/clear active Dependabot security PR queue on maintained paths.
-- [ ] Fix remaining active-path CodeQL findings (currently concentrated in scripts + frontend preview sinks).
-- [ ] Validate that GitHub security alert counts converge to zero on `main` after post-merge re-analysis completes.
+- [x] Fix remaining active-path CodeQL findings (scripts URL/path guards + frontend URL sink hardening).
+- [x] Validate that GitHub security alert counts converge to zero on `main` after post-merge re-analysis completes.
 
