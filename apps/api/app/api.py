@@ -1702,11 +1702,8 @@ def _delete_asset_if_unreferenced(session: Session, asset_id: UUID) -> None:
         try:
             storage.delete_uri(uri)
         except Exception as exc:  # pragma: no cover - best effort deletion path
-            # Intentionally avoid logging user-provided URI/error text directly.
-            logger.warning(
-                "asset-delete-best-effort-failed",
-                extra={"error_type": exc.__class__.__name__},
-            )
+            # Intentionally static to avoid tainting logs with user-controlled values.
+            logger.warning("asset-delete-best-effort-failed")
 
     session.delete(asset)
     session.commit()
