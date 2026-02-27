@@ -458,6 +458,7 @@ async def stripe_webhook(
                     org.seat_limit = max(1, int(seat_limit_raw))
                     session.add(org)
                 except (TypeError, ValueError):
+                    # Webhook metadata can be missing/malformed; preserve existing seat limit.
                     pass
             session.commit()
 
@@ -490,6 +491,7 @@ async def stripe_webhook(
                 org.seat_limit = max(1, int(quantity))
                 session.add(org)
             except (TypeError, ValueError):
+                # Provider payloads may omit/format quantity unexpectedly; keep current value.
                 pass
         session.commit()
 

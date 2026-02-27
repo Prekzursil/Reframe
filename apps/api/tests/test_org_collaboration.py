@@ -3,7 +3,7 @@ from __future__ import annotations
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.database import get_engine
 from app.models import Organization
