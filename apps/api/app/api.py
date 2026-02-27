@@ -1701,9 +1701,9 @@ def _delete_asset_if_unreferenced(session: Session, asset_id: UUID) -> None:
         storage = get_storage(media_root=settings.media_root)
         try:
             storage.delete_uri(uri)
-        except Exception as exc:  # pragma: no cover - best effort deletion path
-            # Intentionally static to avoid tainting logs with user-controlled values.
-            logger.warning("asset-delete-best-effort-failed")
+        except Exception:  # pragma: no cover - best effort deletion path
+            # Storage cleanup is best effort; DB delete should still succeed.
+            pass
 
     session.delete(asset)
     session.commit()
