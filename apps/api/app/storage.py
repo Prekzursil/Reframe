@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import os
 import shutil
 from pathlib import Path
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 
 def is_remote_uri(uri: str) -> bool:

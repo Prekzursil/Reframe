@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from app.rate_limit import RateLimiter
+import app.rate_limit as rate_limit_module
 
 
 def test_heavy_job_endpoints_use_separate_limit_policy(test_client, monkeypatch):
     client, _, _, _ = test_client
 
-    import app.rate_limit as rate_limit_module
-
-    heavy = RateLimiter(limit=1, window_seconds=60)
+    heavy = rate_limit_module.RateLimiter(limit=1, window_seconds=60)
     monkeypatch.setitem(rate_limit_module.policy_limiters, "heavy_jobs", heavy)
 
     upload = client.post(
@@ -38,9 +36,7 @@ def test_heavy_job_endpoints_use_separate_limit_policy(test_client, monkeypatch)
 def test_upload_init_uses_upload_policy_limit(test_client, monkeypatch):
     client, _, _, _ = test_client
 
-    import app.rate_limit as rate_limit_module
-
-    upload_limiter = RateLimiter(limit=1, window_seconds=60)
+    upload_limiter = rate_limit_module.RateLimiter(limit=1, window_seconds=60)
     monkeypatch.setitem(rate_limit_module.policy_limiters, "uploads", upload_limiter)
 
     first = client.post(

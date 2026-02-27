@@ -60,6 +60,7 @@ def build_checkout_session(
     *,
     customer_id: Optional[str],
     price_id: str,
+    quantity: int = 1,
     success_url: str,
     cancel_url: str,
     metadata: Optional[dict[str, str]] = None,
@@ -71,9 +72,10 @@ def build_checkout_session(
         raise RuntimeError("STRIPE_SECRET_KEY is not configured.")
     stripe = _get_stripe()
     stripe.api_key = settings.stripe_secret_key
+    qty = max(1, int(quantity or 1))
     kwargs = {
         "mode": "subscription",
-        "line_items": [{"price": price_id, "quantity": 1}],
+        "line_items": [{"price": price_id, "quantity": qty}],
         "success_url": success_url,
         "cancel_url": cancel_url,
     }
@@ -83,6 +85,18 @@ def build_checkout_session(
         kwargs["metadata"] = metadata
     session = stripe.checkout.Session.create(**kwargs)
     return {"id": session.get("id"), "url": session.get("url")}
+
+
+def update_subscription_seat_limit(*, subscription_id: str, quantity: int) -> None:
+    settings = get_settings()
+    if not settings.enable_billing:
+        raise RuntimeError("Billing is disabled.")
+    if not settings.stripe_secret_key:
+        raise RuntimeError("STRIPE_SECRET_KEY is not configured.")
+    stripe = _get_stripe()
+    stripe.api_key = settings.stripe_secret_key
+    qty = max(1, int(quantity or 1))
+    stripe.Subscription.modify(subscription_id, items=[{"quantity": qty}])
 
 
 def build_customer_portal_session(*, customer_id: str, return_url: str) -> dict:

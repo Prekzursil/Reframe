@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import re
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Optional
 from uuid import UUID
 
@@ -12,7 +15,7 @@ from app.billing import DEFAULT_PLAN_POLICIES
 from app.config import get_settings
 from app.database import get_session
 from app.errors import ErrorCode, ErrorResponse, ApiError, conflict, not_found, unauthorized
-from app.models import OAuthAccount, OrgMembership, Organization, Plan, Subscription, User
+from app.models import InviteStatus, OAuthAccount, OrgInvite, OrgMembership, Organization, Plan, Subscription, User
 from app.security import (
     AuthPrincipal,
     create_access_token,
@@ -84,6 +87,39 @@ class OrgContextResponse(SQLModel):
     members: list[OrgMemberView]
 
 
+class OrgInviteRequest(SQLModel):
+    email: str
+    role: str = "viewer"
+    expires_in_days: int = 7
+
+
+class OrgInviteResolveRequest(SQLModel):
+    token: str
+
+
+class OrgInviteView(SQLModel):
+    id: UUID
+    org_id: UUID
+    email: str
+    role: str
+    status: str
+    expires_at: datetime
+    invite_url: Optional[str] = None
+
+
+class OrgInviteResolveResponse(SQLModel):
+    org_id: UUID
+    org_name: str
+    email: str
+    role: str
+    status: str
+    expires_at: datetime
+
+
+class OrgMemberRoleUpdateRequest(SQLModel):
+    role: str
+
+
 def _normalize_email(raw: str) -> str:
     return (raw or "").strip().lower()
 
@@ -91,6 +127,96 @@ def _normalize_email(raw: str) -> str:
 def _slugify(value: str) -> str:
     base = re.sub(r"[^a-z0-9]+", "-", (value or "").strip().lower()).strip("-")
     return base or "org"
+
+
+ORG_ROLES = {"owner", "admin", "editor", "viewer"}
+ORG_MANAGER_ROLES = {"owner", "admin"}
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _hash_invite_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _seat_limit_for_org(org: Organization) -> int:
+    return max(1, int(org.seat_limit or 1))
+
+
+def _active_members_count(session: Session, org_id: UUID) -> int:
+    return len(session.exec(select(OrgMembership).where(OrgMembership.org_id == org_id)).all())
+
+
+def _pending_invite_count(session: Session, org_id: UUID) -> int:
+    now = _now_utc()
+    return len(
+        session.exec(
+            select(OrgInvite).where(
+                (OrgInvite.org_id == org_id) & (OrgInvite.status == InviteStatus.pending) & (OrgInvite.expires_at > now)
+            )
+        ).all()
+    )
+
+
+def _current_membership(session: Session, principal: AuthPrincipal) -> OrgMembership:
+    if not principal.org_id or not principal.user_id:
+        raise unauthorized("Authentication required")
+    membership = session.exec(
+        select(OrgMembership).where((OrgMembership.org_id == principal.org_id) & (OrgMembership.user_id == principal.user_id))
+    ).first()
+    if not membership:
+        raise unauthorized("Organization membership is required")
+    return membership
+
+
+def _require_org_manager(session: Session, principal: AuthPrincipal) -> OrgMembership:
+    membership = _current_membership(session, principal)
+    if membership.role not in ORG_MANAGER_ROLES:
+        raise unauthorized("Owner or admin role is required")
+    return membership
+
+
+def _invite_url(token: str) -> str:
+    settings = get_settings()
+    base = settings.app_base_url.rstrip("/")
+    return f"{base}/invites/accept?token={token}"
+
+
+def _serialize_invite(invite: OrgInvite, *, include_token: str | None = None) -> OrgInviteView:
+    return OrgInviteView(
+        id=invite.id,
+        org_id=invite.org_id,
+        email=invite.email,
+        role=invite.role,
+        status=invite.status.value if isinstance(invite.status, InviteStatus) else str(invite.status),
+        expires_at=invite.expires_at,
+        invite_url=_invite_url(include_token) if include_token else None,
+    )
+
+
+def _coerce_pending_invite(session: Session, token: str) -> OrgInvite:
+    token_hash = _hash_invite_token(token.strip())
+    invite = session.exec(select(OrgInvite).where(OrgInvite.token_hash == token_hash)).first()
+    if not invite:
+        raise not_found("Invite not found")
+    if invite.status != InviteStatus.pending:
+        status_value = invite.status.value if isinstance(invite.status, InviteStatus) else str(invite.status)
+        raise conflict("Invite is no longer pending", details={"status": status_value})
+    if _as_utc(invite.expires_at) <= _now_utc():
+        invite.status = InviteStatus.expired
+        invite.updated_at = _now_utc()
+        session.add(invite)
+        session.commit()
+        raise conflict("Invite is expired", details={"status": "expired"})
+    return invite
 
 
 def ensure_default_plans(session: Session) -> None:
@@ -451,3 +577,254 @@ def org_me(session: SessionDep, principal: PrincipalDep) -> OrgContextResponse:
             role = m.role
 
     return OrgContextResponse(org_id=org.id, org_name=org.name, slug=org.slug, role=role, members=members)
+
+
+@router.post(
+    "/orgs/invites",
+    response_model=OrgInviteView,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Auth"],
+    responses={401: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+def create_org_invite(payload: OrgInviteRequest, session: SessionDep, principal: PrincipalDep) -> OrgInviteView:
+    manager = _require_org_manager(session, principal)
+    if not principal.org_id:
+        raise unauthorized("Authentication required")
+    org = session.get(Organization, principal.org_id)
+    if not org:
+        raise not_found("Organization not found", {"org_id": str(principal.org_id)})
+
+    email = _normalize_email(payload.email)
+    if not email or "@" not in email:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Valid invite email is required",
+        )
+
+    role = (payload.role or "").strip().lower() or "viewer"
+    if role not in ORG_ROLES:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Unsupported role",
+            details={"role": role},
+        )
+    if role == "owner" and manager.role != "owner":
+        raise unauthorized("Only owners can invite another owner")
+
+    expires_in_days = int(payload.expires_in_days or 7)
+    if expires_in_days < 1 or expires_in_days > 30:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="expires_in_days must be between 1 and 30",
+        )
+
+    active_members = _active_members_count(session, org.id)
+    pending_invites = _pending_invite_count(session, org.id)
+    if (active_members + pending_invites) >= _seat_limit_for_org(org):
+        raise conflict(
+            "Seat limit reached; increase seat limit before inviting",
+            details={
+                "active_members": active_members,
+                "pending_invites": pending_invites,
+                "seat_limit": org.seat_limit,
+            },
+        )
+
+    existing_pending = session.exec(
+        select(OrgInvite).where(
+            (OrgInvite.org_id == org.id) & (OrgInvite.email == email) & (OrgInvite.status == InviteStatus.pending)
+        )
+    ).first()
+    if existing_pending and existing_pending.expires_at > _now_utc():
+        raise conflict("A pending invite already exists for this email", details={"email": email})
+
+    token = secrets.token_urlsafe(32)
+    now = _now_utc()
+    invite = OrgInvite(
+        org_id=org.id,
+        email=email,
+        role=role,
+        token_hash=_hash_invite_token(token),
+        status=InviteStatus.pending,
+        invited_by_user_id=manager.user_id,
+        expires_at=now + timedelta(days=expires_in_days),
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(invite)
+    session.commit()
+    session.refresh(invite)
+    return _serialize_invite(invite, include_token=token)
+
+
+@router.get("/orgs/invites", response_model=list[OrgInviteView], tags=["Auth"], responses={401: {"model": ErrorResponse}})
+def list_org_invites(session: SessionDep, principal: PrincipalDep) -> list[OrgInviteView]:
+    _require_org_manager(session, principal)
+    if not principal.org_id:
+        raise unauthorized("Authentication required")
+    now = _now_utc()
+    invites = session.exec(select(OrgInvite).where(OrgInvite.org_id == principal.org_id).order_by(OrgInvite.created_at.desc())).all()
+    changed = False
+    for invite in invites:
+        if invite.status == InviteStatus.pending and _as_utc(invite.expires_at) <= now:
+            invite.status = InviteStatus.expired
+            invite.updated_at = now
+            session.add(invite)
+            changed = True
+    if changed:
+        session.commit()
+    return [_serialize_invite(invite) for invite in invites]
+
+
+@router.post("/orgs/invites/{invite_id}/revoke", response_model=OrgInviteView, tags=["Auth"], responses={401: {"model": ErrorResponse}})
+def revoke_org_invite(invite_id: UUID, session: SessionDep, principal: PrincipalDep) -> OrgInviteView:
+    _require_org_manager(session, principal)
+    if not principal.org_id:
+        raise unauthorized("Authentication required")
+    invite = session.exec(select(OrgInvite).where((OrgInvite.id == invite_id) & (OrgInvite.org_id == principal.org_id))).first()
+    if not invite:
+        raise not_found("Invite not found", {"invite_id": str(invite_id)})
+    if invite.status == InviteStatus.pending:
+        invite.status = InviteStatus.revoked
+        invite.updated_at = _now_utc()
+        session.add(invite)
+        session.commit()
+        session.refresh(invite)
+    return _serialize_invite(invite)
+
+
+@router.get("/orgs/invites/resolve", response_model=OrgInviteResolveResponse, tags=["Auth"])
+def resolve_org_invite(token: str, session: SessionDep) -> OrgInviteResolveResponse:
+    invite = _coerce_pending_invite(session, token)
+    org = session.get(Organization, invite.org_id)
+    if not org:
+        raise not_found("Organization not found", {"org_id": str(invite.org_id)})
+    return OrgInviteResolveResponse(
+        org_id=org.id,
+        org_name=org.name,
+        email=invite.email,
+        role=invite.role,
+        status=invite.status.value if isinstance(invite.status, InviteStatus) else str(invite.status),
+        expires_at=invite.expires_at,
+    )
+
+
+@router.post("/orgs/invites/accept", response_model=AuthTokenResponse, tags=["Auth"], responses={401: {"model": ErrorResponse}})
+def accept_org_invite(payload: OrgInviteResolveRequest, session: SessionDep, principal: PrincipalDep) -> AuthTokenResponse:
+    if not principal.user_id:
+        raise unauthorized("Authentication required")
+    user = session.get(User, principal.user_id)
+    if not user:
+        raise unauthorized("User not found")
+
+    invite = _coerce_pending_invite(session, payload.token)
+    if _normalize_email(user.email) != invite.email:
+        raise unauthorized("Invite email does not match current user")
+
+    org = session.get(Organization, invite.org_id)
+    if not org:
+        raise not_found("Organization not found", {"org_id": str(invite.org_id)})
+
+    membership = session.exec(
+        select(OrgMembership).where((OrgMembership.org_id == org.id) & (OrgMembership.user_id == user.id))
+    ).first()
+    if not membership:
+        active_members = _active_members_count(session, org.id)
+        if active_members >= _seat_limit_for_org(org):
+            raise conflict(
+                "Seat limit reached; cannot accept invite",
+                details={"active_members": active_members, "seat_limit": org.seat_limit},
+            )
+        membership = OrgMembership(org_id=org.id, user_id=user.id, role=invite.role)
+        session.add(membership)
+        session.commit()
+        session.refresh(membership)
+
+    invite.status = InviteStatus.accepted
+    invite.accepted_by_user_id = user.id
+    invite.updated_at = _now_utc()
+    session.add(invite)
+    session.commit()
+    return _issue_tokens(user_id=user.id, org_id=org.id, role=membership.role)
+
+
+@router.patch(
+    "/orgs/members/{user_id}/role",
+    response_model=OrgMemberView,
+    tags=["Auth"],
+    responses={401: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+def update_member_role(
+    user_id: UUID,
+    payload: OrgMemberRoleUpdateRequest,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> OrgMemberView:
+    manager = _require_org_manager(session, principal)
+    if not principal.org_id:
+        raise unauthorized("Authentication required")
+    next_role = (payload.role or "").strip().lower()
+    if next_role not in ORG_ROLES:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Unsupported role",
+            details={"role": next_role},
+        )
+
+    membership = session.exec(
+        select(OrgMembership).where((OrgMembership.org_id == principal.org_id) & (OrgMembership.user_id == user_id))
+    ).first()
+    if not membership:
+        raise not_found("Organization member not found", {"user_id": str(user_id)})
+
+    if membership.role == "owner" and next_role != "owner":
+        owners = session.exec(
+            select(OrgMembership).where((OrgMembership.org_id == principal.org_id) & (OrgMembership.role == "owner"))
+        ).all()
+        if len(owners) <= 1:
+            raise conflict("Cannot demote the last owner")
+    if next_role == "owner" and manager.role != "owner":
+        raise unauthorized("Only owners can promote another owner")
+    if membership.role == "owner" and manager.role != "owner":
+        raise unauthorized("Only owners can change owner roles")
+
+    membership.role = next_role
+    membership.updated_at = _now_utc()
+    session.add(membership)
+    session.commit()
+    user = session.get(User, membership.user_id)
+    if not user:
+        raise not_found("User not found", {"user_id": str(user_id)})
+    return OrgMemberView(user_id=user.id, email=user.email, display_name=user.display_name, role=membership.role)
+
+
+@router.delete(
+    "/orgs/members/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Auth"],
+    responses={401: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+def remove_member(user_id: UUID, session: SessionDep, principal: PrincipalDep) -> None:
+    manager = _require_org_manager(session, principal)
+    if not principal.org_id:
+        raise unauthorized("Authentication required")
+    membership = session.exec(
+        select(OrgMembership).where((OrgMembership.org_id == principal.org_id) & (OrgMembership.user_id == user_id))
+    ).first()
+    if not membership:
+        raise not_found("Organization member not found", {"user_id": str(user_id)})
+    if membership.role == "owner":
+        owners = session.exec(
+            select(OrgMembership).where((OrgMembership.org_id == principal.org_id) & (OrgMembership.role == "owner"))
+        ).all()
+        if len(owners) <= 1:
+            raise conflict("Cannot remove the last owner")
+        if manager.role != "owner":
+            raise unauthorized("Only owners can remove another owner")
+    session.delete(membership)
+    session.commit()
+    return None

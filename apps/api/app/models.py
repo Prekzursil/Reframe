@@ -142,6 +142,20 @@ class JobStatus(str, Enum):
     cancelled = "cancelled"
 
 
+class OrgRole(str, Enum):
+    owner = "owner"
+    admin = "admin"
+    editor = "editor"
+    viewer = "viewer"
+
+
+class InviteStatus(str, Enum):
+    pending = "pending"
+    accepted = "accepted"
+    revoked = "revoked"
+    expired = "expired"
+
+
 class Job(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     job_type: str = Field(description="Pipeline type, e.g., transcribe, translate, shorts")
@@ -177,5 +191,24 @@ class Project(SQLModel, table=True):
     description: Optional[str] = Field(default=None)
     org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
     owner_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class OrgInvite(SQLModel, table=True):
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_org_invite_token_hash"),
+        UniqueConstraint("org_id", "email", "status", name="uq_org_invite_org_email_status"),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    org_id: UUID = Field(foreign_key="organization.id", index=True)
+    email: str = Field(index=True)
+    role: str = Field(default="viewer")
+    token_hash: str = Field(index=True)
+    status: InviteStatus = Field(default=InviteStatus.pending, index=True)
+    invited_by_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    accepted_by_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    expires_at: datetime = Field(default_factory=utcnow, index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
