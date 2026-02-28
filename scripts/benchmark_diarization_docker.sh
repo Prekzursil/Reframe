@@ -91,7 +91,9 @@ PY
 )"
 input_dir="$(dirname "${abs_input}")"
 input_base="$(basename "${abs_input}")"
-container_input="/bench/${input_base}"
+# benchmark_diarization.py enforces allowed roots under /worker/media or /data/media.
+# Mount input media to /worker/media so path validation passes in CI and local runs.
+container_input="/worker/media/${input_base}"
 
 backend="pyannote"
 model=""
@@ -206,6 +208,6 @@ echo "  extra:   ${extra}"
 echo ""
 
 "${COMPOSE[@]}" "${COMPOSE_ENV_FILE_ARGS[@]}" -f infra/docker-compose.yml run --rm \
-  -v "${input_dir}:/bench:ro" \
+  -v "${input_dir}:/worker/media:ro" \
   worker \
   bash -lc "pip install --no-cache-dir '/worker/packages/media-core[${extra}]' && python /worker/scripts/benchmark_diarization.py ${quoted_py_args}"
