@@ -1,0 +1,53 @@
+name: Release Readiness
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    name: Verify + smoke + readiness report
+    runs-on: ubuntu-latest
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HUGGINGFACE_TOKEN: ${{ secrets.HF_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r apps/api/requirements.txt -r services/worker/requirements.txt
+          pip install pytest httpx
+
+      - name: Install web deps
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Run release-readiness gate
+        run: make release-readiness PYTHON=python
+
+      - name: Upload readiness evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-readiness-evidence
+          path: |
+            docs/plans/*

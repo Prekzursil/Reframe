@@ -6,6 +6,7 @@ on:
     - cron: '30 6 * * 1'
 
 permissions:
+  administration: read
   contents: read
   issues: write
 
@@ -32,6 +33,14 @@ jobs:
             if (protection?.data) {
               const reviews = protection.data.required_pull_request_reviews;
               const checks = protection.data.required_status_checks;
+              const linearHistory = protection.data.required_linear_history;
+              const requiredContexts = [
+                "Python API & worker checks",
+                "Web build",
+                "Analyze (actions)",
+                "Analyze (javascript-typescript)",
+                "Analyze (python)",
+              ];
 
               if (!reviews || (reviews.required_approving_review_count ?? 0) < 1) {
                 findings.push("Required approving review count is below 1.");
@@ -39,6 +48,17 @@ jobs:
 
               if (!checks) {
                 findings.push("Required status checks are not configured.");
+              } else {
+                const contexts = checks.contexts || [];
+                for (const requiredContext of requiredContexts) {
+                  if (!contexts.includes(requiredContext)) {
+                    findings.push(`Missing required status check: ${requiredContext}`);
+                  }
+                }
+              }
+
+              if (!linearHistory || linearHistory.enabled !== true) {
+                findings.push("Linear history is disabled.");
               }
             }
 

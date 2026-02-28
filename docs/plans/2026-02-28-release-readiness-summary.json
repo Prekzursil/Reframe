@@ -1,0 +1,142 @@
+{
+  "blocking_reasons": [
+    "Desktop updater OS matrix evidence is incomplete or failing."
+  ],
+  "external_blocker_tracking": {
+    "issue_url": "https://github.com/Prekzursil/Reframe/issues/80",
+    "owner": "@Prekzursil",
+    "recheck_date": "2026-03-07"
+  },
+  "external_blockers": [
+    "Pyannote gated-model access is blocked externally (Hugging Face authorization)."
+  ],
+  "gates": [
+    {
+      "exit_code": 0,
+      "name": "make verify",
+      "ok": true
+    },
+    {
+      "exit_code": 0,
+      "name": "smoke-hosted",
+      "ok": true
+    },
+    {
+      "exit_code": 0,
+      "name": "smoke-local",
+      "ok": true
+    },
+    {
+      "exit_code": 0,
+      "name": "diarization-orchestrator",
+      "ok": true
+    }
+  ],
+  "github": {
+    "branch_protection": {
+      "linear_history": false,
+      "required_checks": [
+        "Python API & worker checks",
+        "Web build",
+        "Analyze (actions)",
+        "Analyze (javascript-typescript)",
+        "Analyze (python)",
+        "CodeQL",
+        "CodeRabbit"
+      ],
+      "required_reviews": 0
+    },
+    "ci": {
+      "conclusion": "success",
+      "createdAt": "2026-02-27T00:45:35Z",
+      "headSha": "8593ead2ad73d5d483cdd6a618d00889a189898f",
+      "status": "completed",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22467729360",
+      "workflowName": "CI"
+    },
+    "codeql": {
+      "conclusion": "success",
+      "createdAt": "2026-02-27T00:45:35Z",
+      "headSha": "8593ead2ad73d5d483cdd6a618d00889a189898f",
+      "status": "completed",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22467729353",
+      "workflowName": "CodeQL"
+    }
+  },
+  "pyannote": {
+    "cpu": {
+      "log": null,
+      "report_md": "docs/plans/2026-02-28-pyannote-benchmark-cpu.md",
+      "status": "blocked_external"
+    },
+    "details": "HF gated access probe failed (exit=4).",
+    "gpu": {
+      "capability_json": "docs/plans/2026-02-28-pyannote-gpu-capability.json",
+      "log": null,
+      "report_md": "docs/plans/2026-02-28-pyannote-benchmark-gpu.md",
+      "status": "skipped"
+    },
+    "input": "/tmp/reframe-worktrees/best-of-best/samples/sample.mp4",
+    "probe_json": "docs/plans/2026-02-28-pyannote-access.json",
+    "stamp": "2026-02-28",
+    "timestamp_utc": "2026-02-28T04:49:40.557475+00:00"
+  },
+  "stamp": "2026-02-28",
+  "status": "NOT_READY",
+  "timestamp_utc": "2026-02-28T04:49:42.112231+00:00",
+  "updater": {
+    "linux": {
+      "error": null,
+      "expected_new_version": "0.1.7",
+      "expected_old_version": "0.1.6",
+      "helper": {
+        "command": [
+          "bash",
+          "/tmp/reframe-worktrees/best-of-best/scripts/desktop_updater_e2e_linux.sh",
+          "--old-tag",
+          "desktop-v0.1.6",
+          "--new-tag",
+          "desktop-v0.1.7",
+          "--work-dir",
+          "/tmp/reframe-worktrees/best-of-best/.tmp/desktop-updater-e2e/linux"
+        ],
+        "returncode": 0,
+        "stderr": ""
+      },
+      "helper_output": {
+        "expected_new_version": "0.1.7",
+        "expected_old_version": "0.1.6",
+        "install_path": "/home/prekzursil/.local/share/reframe-updater-e2e/Reframe.AppImage",
+        "new_asset": "Reframe_0.1.7_amd64.AppImage",
+        "new_tag": "desktop-v0.1.7",
+        "observed_new_version": "0.1.7",
+        "observed_old_version": "0.1.6",
+        "old_asset": "Reframe_0.1.6_amd64.AppImage",
+        "old_tag": "desktop-v0.1.6",
+        "platform": "linux",
+        "success": true,
+        "work_dir": "/tmp/reframe-worktrees/best-of-best/.tmp/desktop-updater-e2e/linux"
+      },
+      "new_tag": "desktop-v0.1.7",
+      "observed_new_version": "0.1.7",
+      "observed_old_version": "0.1.6",
+      "old_tag": "desktop-v0.1.6",
+      "platform": "linux",
+      "success": true,
+      "timestamp_utc": "2026-02-28T02:50:07.934909+00:00",
+      "verify": {
+        "returncode": 0,
+        "stderr": "",
+        "stdout": "Fetching updater JSON: https://github.com/Prekzursil/Reframe/releases/latest/download/latest.json\nversion=0.1.7 pub_date=2026-02-04T20:40:12.573Z\nok darwin-aarch64: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_aarch64.app.tar.gz\nok darwin-aarch64-app: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_aarch64.app.tar.gz\nok darwin-x86_64: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_x64.app.tar.gz\nok darwin-x86_64-app: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_x64.app.tar.gz\nok linux-x86_64: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_0.1.7_amd64.AppImage\nok linux-x86_64-appimage: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_0.1.7_amd64.AppImage\nok linux-x86_64-deb: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_0.1.7_amd64.deb\nok linux-x86_64-rpm: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe-0.1.7-1.x86_64.rpm\nok windows-x86_64: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_0.1.7_x64_en-US.msi\nok windows-x86_64-msi: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_0.1.7_x64_en-US.msi\nok windows-x86_64-nsis: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_0.1.7_x64-setup.exe\n\nOK: updater JSON looks valid and all platform URLs are reachable.\n"
+      }
+    },
+    "macos": {
+      "missing": true,
+      "success": false
+    },
+    "windows": {
+      "missing": true,
+      "success": false
+    }
+  }
+}

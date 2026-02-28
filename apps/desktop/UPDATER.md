@@ -151,3 +151,44 @@ For the “old” release in the checklist above, install it from GitHub Release
 Common failure modes:
 - “Signature verification failed” typically means `latest.json` points at the wrong asset or signature contents are incorrect.
 - “Update check failed” can be missing/invalid `latest.json` at the configured endpoint.
+
+## Automated OS matrix verification (no-manual path)
+
+The repository now includes automation to verify the known-good upgrade path:
+
+- `desktop-v0.1.6 -> desktop-v0.1.7`
+
+Automation entrypoints:
+
+- Local wrapper:
+  - `python3 scripts/desktop_updater_e2e.py --platform linux`
+  - `python3 scripts/desktop_updater_e2e.py --platform macos`
+  - `python3 scripts/desktop_updater_e2e.py --platform windows`
+- CI workflow:
+  - `.github/workflows/desktop-updater-e2e.yml`
+
+Artifacts produced under `docs/plans/`:
+
+- `YYYY-MM-DD-updater-e2e-windows.json|md`
+- `YYYY-MM-DD-updater-e2e-macos.json|md`
+- `YYYY-MM-DD-updater-e2e-linux.json|md`
+
+Each run performs:
+
+1) `latest.json` validation via `scripts/verify_desktop_updater_release.py`.
+2) Old installer retrieval (`desktop-v0.1.6`) and install/placement.
+3) New installer retrieval (`desktop-v0.1.7`) and upgrade/placement.
+4) Observed old/new version capture and strict transition assertion.
+
+Known limitations:
+
+- GitHub-hosted Linux runners verify AppImage metadata transition and replacement (no system package install).
+- macOS and Windows flows depend on runner install privileges and may need occasional retry if the runner image changes.
+
+### 2026-02-28 evidence snapshot
+
+- Linux automated verification: PASS
+  - `docs/plans/2026-02-28-updater-e2e-linux.json`
+  - `docs/plans/2026-02-28-updater-e2e-linux.md`
+- Windows automated verification: pending first matrix run.
+- macOS automated verification: pending first matrix run.

@@ -1,0 +1,65 @@
+name: Diarization Benchmark
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/diarization-benchmark.yml"
+      - "scripts/verify_hf_model_access.py"
+      - "scripts/run_diarization_benchmarks.sh"
+      - "scripts/benchmark_diarization.py"
+      - "scripts/benchmark_diarization_docker.sh"
+      - "services/worker/README.md"
+
+permissions:
+  contents: read
+
+jobs:
+  cpu-benchmark:
+    name: Pyannote CPU benchmark
+    runs-on: ubuntu-latest
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HUGGINGFACE_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run CPU benchmark orchestrator
+        run: |
+          bash scripts/run_diarization_benchmarks.sh samples/sample.mp4 --stamp "$(date -u +%F)"
+
+      - name: Upload benchmark evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diarization-benchmark-cpu
+          path: |
+            docs/plans/*-pyannote-access.json
+            docs/plans/*-pyannote-benchmark-status.json
+            docs/plans/*-pyannote-benchmark-cpu.md
+            docs/plans/*-pyannote-gpu-capability.json
+
+  gpu-benchmark:
+    name: Pyannote GPU benchmark
+    if: ${{ vars.REFRAME_ENABLE_GPU_BENCHMARK == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HUGGINGFACE_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run GPU benchmark orchestrator
+        run: |
+          bash scripts/run_diarization_benchmarks.sh samples/sample.mp4 --stamp "$(date -u +%F)" --run-gpu
+
+      - name: Upload GPU evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diarization-benchmark-gpu
+          path: |
+            docs/plans/*-pyannote-benchmark-gpu.md
+            docs/plans/*-pyannote-gpu-capability.json
+            docs/plans/*-pyannote-benchmark-status.json
