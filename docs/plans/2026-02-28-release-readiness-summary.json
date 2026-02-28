@@ -32,7 +32,7 @@
   ],
   "github": {
     "branch_protection": {
-      "linear_history": false,
+      "linear_history": true,
       "required_checks": [
         "Python API & worker checks",
         "Web build",
@@ -42,22 +42,22 @@
         "CodeQL",
         "CodeRabbit"
       ],
-      "required_reviews": 0
+      "required_reviews": 1
     },
     "ci": {
       "conclusion": "success",
-      "createdAt": "2026-02-27T00:45:35Z",
-      "headSha": "8593ead2ad73d5d483cdd6a618d00889a189898f",
+      "createdAt": "2026-02-28T15:38:40Z",
+      "headSha": "246317a9b98a861ce96b603d8e281b0fcddf3d2e",
       "status": "completed",
-      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22467729360",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22523703140",
       "workflowName": "CI"
     },
     "codeql": {
       "conclusion": "success",
-      "createdAt": "2026-02-27T00:45:35Z",
-      "headSha": "8593ead2ad73d5d483cdd6a618d00889a189898f",
+      "createdAt": "2026-02-28T15:38:40Z",
+      "headSha": "246317a9b98a861ce96b603d8e281b0fcddf3d2e",
       "status": "completed",
-      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22467729353",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22523703136",
       "workflowName": "CodeQL"
     }
   },
@@ -74,14 +74,14 @@
       "report_md": "docs/plans/2026-02-28-pyannote-benchmark-gpu.md",
       "status": "skipped"
     },
-    "input": "/tmp/reframe-worktrees/best-of-best/samples/sample.mp4",
+    "input": "/tmp/reframe-worktrees/best-of-best/samples/sample.wav",
     "probe_json": "docs/plans/2026-02-28-pyannote-access.json",
     "stamp": "2026-02-28",
-    "timestamp_utc": "2026-02-28T04:54:42.438298+00:00"
+    "timestamp_utc": "2026-02-28T16:20:14.928449+00:00"
   },
   "stamp": "2026-02-28",
   "status": "READY_WITH_EXTERNAL_BLOCKER",
-  "timestamp_utc": "2026-02-28T04:54:44.079138+00:00",
+  "timestamp_utc": "2026-02-28T16:20:16.597461+00:00",
   "updater": {
     "linux": {
       "error": null,

@@ -51,7 +51,7 @@ def _load_token(cli_token: str | None, repo_root: Path) -> str:
     return ""
 
 
-def _probe(url: str, token: str) -> ProbeResult:
+def _probe(url: str, token: str, *, model: str) -> ProbeResult:
     safe_url = normalize_https_url(url, allowed_hosts={"huggingface.co"})
     ts = datetime.now(timezone.utc).isoformat()
 
@@ -59,7 +59,7 @@ def _probe(url: str, token: str) -> ProbeResult:
         return ProbeResult(
             timestamp_utc=ts,
             status="missing_token",
-            model="",
+            model=model,
             url=safe_url,
             http_status=None,
             error="HF_TOKEN/HUGGINGFACE_TOKEN is missing.",
@@ -67,6 +67,7 @@ def _probe(url: str, token: str) -> ProbeResult:
 
     request = urllib.request.Request(
         safe_url,
+        method="HEAD",
         headers={
             "Authorization": f"Bearer {token}",
             "User-Agent": "reframe-hf-model-access-probe",
@@ -78,17 +79,17 @@ def _probe(url: str, token: str) -> ProbeResult:
             return ProbeResult(
                 timestamp_utc=ts,
                 status="ok",
-                model="",
+                model=model,
                 url=safe_url,
                 http_status=getattr(response, "status", 200),
                 error=None,
             )
     except urllib.error.HTTPError as exc:
-        status = "blocked_403"
+        status = "blocked_403" if int(exc.code) == 403 else f"http_{int(exc.code)}"
         return ProbeResult(
             timestamp_utc=ts,
             status=status,
-            model="",
+            model=model,
             url=safe_url,
             http_status=int(exc.code),
             error=str(exc),
@@ -97,29 +98,60 @@ def _probe(url: str, token: str) -> ProbeResult:
         return ProbeResult(
             timestamp_utc=ts,
             status="network_error",
-            model="",
+            model=model,
             url=safe_url,
             http_status=None,
             error=str(exc.reason),
         )
 
 
+def _aggregate_status(results: list[ProbeResult]) -> str:
+    statuses = {r.status for r in results}
+    if "missing_token" in statuses:
+        return "missing_token"
+    if "blocked_403" in statuses:
+        return "blocked_403"
+    if any(s.startswith("http_") for s in statuses):
+        return "network_error"
+    if "network_error" in statuses:
+        return "network_error"
+    if statuses == {"ok"}:
+        return "ok"
+    return "blocked_403"
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Probe Hugging Face gated model access for pyannote models.")
-    parser.add_argument("--model", default="pyannote/speaker-diarization-3.1")
+    parser.add_argument(
+        "--model",
+        action="append",
+        default=[],
+        help="Model id to probe (repeat flag for multiple models). Defaults to required pyannote dependencies.",
+    )
     parser.add_argument("--token", default="", help="Optional HF token override")
     parser.add_argument("--out-json", default="", help="Optional output JSON path")
     args = parser.parse_args(argv)
 
     repo_root = Path(__file__).resolve().parents[1]
-    model = str(args.model or "").strip() or "pyannote/speaker-diarization-3.1"
-    url = f"https://huggingface.co/{model}/resolve/main/config.yaml"
+    models = [m.strip() for m in args.model if str(m).strip()]
+    if not models:
+        models = ["pyannote/speaker-diarization-3.1", "pyannote/segmentation-3.0"]
 
     token = _load_token(args.token, repo_root)
-    result = _probe(url, token)
-    result.model = model
+    results = [
+        _probe(f"https://huggingface.co/{model}/resolve/main/config.yaml", token, model=model)
+        for model in models
+    ]
+    status = _aggregate_status(results)
 
-    payload = asdict(result)
+    # Keep top-level compatibility fields while exposing full per-model probe details.
+    primary = next((r for r in results if r.status != "ok"), results[0])
+    payload = {
+        **asdict(primary),
+        "status": status,
+        "models": models,
+        "probes": [asdict(r) for r in results],
+    }
     out_json = Path(args.out_json) if args.out_json else None
     if out_json is not None:
         out_json.parent.mkdir(parents=True, exist_ok=True)
@@ -127,13 +159,13 @@ def main(argv: list[str]) -> int:
 
     print(json.dumps(payload, indent=2, sort_keys=True))
 
-    if result.status == "ok":
+    if status == "ok":
         return 0
-    if result.status == "missing_token":
+    if status == "missing_token":
         return 3
-    if result.status == "blocked_403":
+    if status == "blocked_403":
         return 4
-    if result.status == "network_error":
+    if status == "network_error":
         return 5
     return 4
 

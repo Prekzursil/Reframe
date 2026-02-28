@@ -1,7 +1,7 @@
 # Reframe Release Confidence Report (2026-02-28)
 
 - status: `READY_WITH_EXTERNAL_BLOCKER`
-- generated_utc: `2026-02-28T04:54:44.079138+00:00`
+- generated_utc: `2026-02-28T16:20:16.597461+00:00`
 
 ## Local gates
 
@@ -25,8 +25,8 @@
 
 - ci: `success`
 - codeql: `success`
-- required_reviews: `0`
-- linear_history: `False`
+- required_reviews: `1`
+- linear_history: `True`
 
 ## External blockers
 

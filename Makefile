@@ -47,11 +47,12 @@ release-readiness:
 	@set -eu; \
 	STAMP="$$(date -u +%F)"; \
 	mkdir -p docs/plans; \
+	$(PYTHON) scripts/generate_benchmark_sample.py --out samples/sample.wav --duration 12 >/dev/null; \
 	set +e; \
 	PYTHON=$(PYTHON) $(MAKE) verify > "docs/plans/$$STAMP-make-verify.log" 2>&1; VERIFY_EXIT=$$?; \
 	PYTHON=$(PYTHON) $(MAKE) smoke-hosted > "docs/plans/$$STAMP-smoke-hosted.log" 2>&1; HOSTED_EXIT=$$?; \
 	PYTHON=$(PYTHON) $(MAKE) smoke-local > "docs/plans/$$STAMP-smoke-local.log" 2>&1; LOCAL_EXIT=$$?; \
-	bash scripts/run_diarization_benchmarks.sh samples/sample.mp4 --stamp "$$STAMP" > "docs/plans/$$STAMP-diarization-orchestrator.log" 2>&1; DIAR_EXIT=$$?; \
+	bash scripts/run_diarization_benchmarks.sh samples/sample.wav --stamp "$$STAMP" > "docs/plans/$$STAMP-diarization-orchestrator.log" 2>&1; DIAR_EXIT=$$?; \
 	set -e; \
 	$(PYTHON) scripts/release_readiness_report.py --stamp "$$STAMP" --verify-exit "$$VERIFY_EXIT" --smoke-hosted-exit "$$HOSTED_EXIT" --smoke-local-exit "$$LOCAL_EXIT" --diarization-exit "$$DIAR_EXIT"
 

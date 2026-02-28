@@ -357,7 +357,7 @@
       - `docs/plans/2026-02-28-pyannote-access.json`
       - `docs/plans/2026-02-28-pyannote-benchmark-status.json`
       - `docs/plans/2026-02-28-pyannote-benchmark-cpu.md`
-    - [ ] Prereq: accept Hugging Face model terms / request access for `pyannote/speaker-diarization-3.1` and set `HF_TOKEN` locally (never commit). `blocked_external` tracked in https://github.com/Prekzursil/Reframe/issues/80 (owner: @Prekzursil, target recheck: 2026-03-07).
+    - [ ] Prereq: accept Hugging Face model terms / request access for both `pyannote/speaker-diarization-3.1` and dependency `pyannote/segmentation-3.0`, and set `HF_TOKEN` locally (never commit). As of 2026-02-28 probe: `speaker-diarization-3.1=ok`, `segmentation-3.0=blocked_403`. `blocked_external` tracked in https://github.com/Prekzursil/Reframe/issues/80 (owner: @Prekzursil, target recheck: 2026-03-07).
     - [x] Run SpeechBrain benchmark (token-free fallback) and paste results into docs.
     - [ ] Run pyannote benchmark (CPU + GPU if available) and paste results into docs.
 - [x] Smart silence trimming (cut dead air before generating shorts).

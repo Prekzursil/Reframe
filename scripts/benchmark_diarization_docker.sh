@@ -9,6 +9,26 @@ if command -v docker-compose >/dev/null 2>&1; then
   COMPOSE=(docker-compose)
 fi
 
+CREATED_ENV_FILE="false"
+cleanup_env_file() {
+  if [[ "${CREATED_ENV_FILE}" == "true" && -f "${ROOT_DIR}/.env" ]]; then
+    rm -f "${ROOT_DIR}/.env"
+  fi
+}
+trap cleanup_env_file EXIT
+
+if [[ ! -f "${ROOT_DIR}/.env" && -f "${ROOT_DIR}/.env.example" ]]; then
+  cp "${ROOT_DIR}/.env.example" "${ROOT_DIR}/.env"
+  CREATED_ENV_FILE="true"
+fi
+
+COMPOSE_ENV_FILE_ARGS=()
+if [[ -f "${ROOT_DIR}/.env" ]]; then
+  COMPOSE_ENV_FILE_ARGS=(--env-file "${ROOT_DIR}/.env")
+elif [[ -f "${ROOT_DIR}/.env.example" ]]; then
+  COMPOSE_ENV_FILE_ARGS=(--env-file "${ROOT_DIR}/.env.example")
+fi
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -71,7 +91,9 @@ PY
 )"
 input_dir="$(dirname "${abs_input}")"
 input_base="$(basename "${abs_input}")"
-container_input="/bench/${input_base}"
+# benchmark_diarization.py enforces allowed roots under /worker/media or /data/media.
+# Mount input media to /worker/media so path validation passes in CI and local runs.
+container_input="/worker/media/${input_base}"
 
 backend="pyannote"
 model=""
@@ -79,6 +101,7 @@ warmup="false"
 runs="1"
 min_segment_duration="0.0"
 format="text"
+compose_run_env_args=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -160,6 +183,7 @@ PY
     echo "  bash scripts/benchmark_diarization_docker.sh ${abs_input@Q} --backend pyannote --warmup --runs 1 --format md" >&2
     exit 1
   fi
+  compose_run_env_args=(-e "HF_TOKEN=${hf_token}" -e "HUGGINGFACE_TOKEN=${hf_token}")
 fi
 
 py_args=(
@@ -185,7 +209,8 @@ echo "  backend: ${backend}"
 echo "  extra:   ${extra}"
 echo ""
 
-"${COMPOSE[@]}" -f infra/docker-compose.yml run --rm \
-  -v "${input_dir}:/bench:ro" \
+"${COMPOSE[@]}" "${COMPOSE_ENV_FILE_ARGS[@]}" -f infra/docker-compose.yml run --rm \
+  "${compose_run_env_args[@]}" \
+  -v "${input_dir}:/worker/media:ro" \
   worker \
   bash -lc "pip install --no-cache-dir '/worker/packages/media-core[${extra}]' && python /worker/scripts/benchmark_diarization.py ${quoted_py_args}"

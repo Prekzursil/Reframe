@@ -37,6 +37,26 @@ done
 cd "$ROOT_DIR"
 mkdir -p docs/plans
 
+CREATED_ENV_FILE="false"
+cleanup_env_file() {
+  if [[ "${CREATED_ENV_FILE}" == "true" && -f "${ROOT_DIR}/.env" ]]; then
+    rm -f "${ROOT_DIR}/.env"
+  fi
+}
+trap cleanup_env_file EXIT
+
+if [[ ! -f "${ROOT_DIR}/.env" && -f "${ROOT_DIR}/.env.example" ]]; then
+  cp "${ROOT_DIR}/.env.example" "${ROOT_DIR}/.env"
+  CREATED_ENV_FILE="true"
+fi
+
+COMPOSE_ENV_FILE_ARGS=()
+if [[ -f "${ROOT_DIR}/.env" ]]; then
+  COMPOSE_ENV_FILE_ARGS=(--env-file "${ROOT_DIR}/.env")
+elif [[ -f "${ROOT_DIR}/.env.example" ]]; then
+  COMPOSE_ENV_FILE_ARGS=(--env-file "${ROOT_DIR}/.env.example")
+fi
+
 ACCESS_JSON="docs/plans/${STAMP}-pyannote-access.json"
 STATUS_JSON="docs/plans/${STAMP}-pyannote-benchmark-status.json"
 CPU_MD="docs/plans/${STAMP}-pyannote-benchmark-cpu.md"
@@ -50,7 +70,10 @@ PY
 )"
 
 PROBE_RC=0
-python3 scripts/verify_hf_model_access.py --model pyannote/speaker-diarization-3.1 --out-json "$ACCESS_JSON" >/dev/null || PROBE_RC=$?
+python3 scripts/verify_hf_model_access.py \
+  --model pyannote/speaker-diarization-3.1 \
+  --model pyannote/segmentation-3.0 \
+  --out-json "$ACCESS_JSON" >/dev/null || PROBE_RC=$?
 
 CPU_STATUS="not_run"
 GPU_STATUS="not_run"
@@ -80,7 +103,7 @@ EOF_CPU
 fi
 
 GPU_CAP_RC=0
-docker compose -f infra/docker-compose.yml run --rm worker python - <<'PY' >"$GPU_CAP_JSON" 2>/dev/null || GPU_CAP_RC=$?
+docker compose "${COMPOSE_ENV_FILE_ARGS[@]}" -f infra/docker-compose.yml run --rm worker python - <<'PY' >"$GPU_CAP_JSON" 2>/dev/null || GPU_CAP_RC=$?
 import json
 import torch
 print(json.dumps({
@@ -92,18 +115,35 @@ PY
 
 CUDA_AVAILABLE="false"
 if [[ "$GPU_CAP_RC" -eq 0 ]]; then
+  GPU_PARSE_RC=0
   CUDA_AVAILABLE="$(python3 - <<'PY' "$GPU_CAP_JSON"
 import json, sys
 from pathlib import Path
-p=Path(sys.argv[1])
-obj=json.loads(p.read_text(encoding='utf-8'))
-print('true' if obj.get('cuda_available') else 'false')
+p = Path(sys.argv[1])
+text = p.read_text(encoding='utf-8', errors='replace')
+for line in reversed([ln.strip() for ln in text.splitlines() if ln.strip()]):
+    try:
+        obj = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    print('true' if obj.get('cuda_available') else 'false')
+    break
+else:
+    raise SystemExit(2)
 PY
-)"
-else
+)" || GPU_PARSE_RC=$?
+  if [[ "$GPU_PARSE_RC" -ne 0 ]]; then
+    GPU_CAP_RC="$GPU_PARSE_RC"
+  fi
+fi
+
+if [[ "$GPU_CAP_RC" -ne 0 ]]; then
+  CUDA_AVAILABLE="false"
   cat >"$GPU_CAP_JSON" <<EOF_GPU_JSON
-{"cuda_available": false, "cuda_device_count": 0, "error": "docker probe failed"}
+{"cuda_available": false, "cuda_device_count": 0, "error": "docker probe failed or produced non-json output"}
 EOF_GPU_JSON
+else
+  :
 fi
 
 if [[ "$RUN_GPU" == "true" && "$CUDA_AVAILABLE" == "true" && "$PROBE_RC" -eq 0 ]]; then
