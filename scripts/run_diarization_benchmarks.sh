@@ -37,6 +37,13 @@ done
 cd "$ROOT_DIR"
 mkdir -p docs/plans
 
+COMPOSE_ENV_FILE_ARGS=()
+if [[ -f "${ROOT_DIR}/.env" ]]; then
+  COMPOSE_ENV_FILE_ARGS=(--env-file "${ROOT_DIR}/.env")
+elif [[ -f "${ROOT_DIR}/.env.example" ]]; then
+  COMPOSE_ENV_FILE_ARGS=(--env-file "${ROOT_DIR}/.env.example")
+fi
+
 ACCESS_JSON="docs/plans/${STAMP}-pyannote-access.json"
 STATUS_JSON="docs/plans/${STAMP}-pyannote-benchmark-status.json"
 CPU_MD="docs/plans/${STAMP}-pyannote-benchmark-cpu.md"
@@ -80,7 +87,7 @@ EOF_CPU
 fi
 
 GPU_CAP_RC=0
-docker compose -f infra/docker-compose.yml run --rm worker python - <<'PY' >"$GPU_CAP_JSON" 2>/dev/null || GPU_CAP_RC=$?
+docker compose "${COMPOSE_ENV_FILE_ARGS[@]}" -f infra/docker-compose.yml run --rm worker python - <<'PY' >"$GPU_CAP_JSON" 2>/dev/null || GPU_CAP_RC=$?
 import json
 import torch
 print(json.dumps({

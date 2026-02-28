@@ -9,6 +9,13 @@ if command -v docker-compose >/dev/null 2>&1; then
   COMPOSE=(docker-compose)
 fi
 
+COMPOSE_ENV_FILE_ARGS=()
+if [[ -f "${ROOT_DIR}/.env" ]]; then
+  COMPOSE_ENV_FILE_ARGS=(--env-file "${ROOT_DIR}/.env")
+elif [[ -f "${ROOT_DIR}/.env.example" ]]; then
+  COMPOSE_ENV_FILE_ARGS=(--env-file "${ROOT_DIR}/.env.example")
+fi
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -185,7 +192,7 @@ echo "  backend: ${backend}"
 echo "  extra:   ${extra}"
 echo ""
 
-"${COMPOSE[@]}" -f infra/docker-compose.yml run --rm \
+"${COMPOSE[@]}" "${COMPOSE_ENV_FILE_ARGS[@]}" -f infra/docker-compose.yml run --rm \
   -v "${input_dir}:/bench:ro" \
   worker \
   bash -lc "pip install --no-cache-dir '/worker/packages/media-core[${extra}]' && python /worker/scripts/benchmark_diarization.py ${quoted_py_args}"
