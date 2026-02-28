@@ -13,7 +13,7 @@
       "http_status": 200,
       "model": "pyannote/speaker-diarization-3.1",
       "status": "ok",
-      "timestamp_utc": "2026-02-28T18:26:01.683341+00:00",
+      "timestamp_utc": "2026-02-28T22:52:05.199662+00:00",
       "url": "https://huggingface.co/pyannote/speaker-diarization-3.1/resolve/main/config.yaml"
     },
     {
@@ -21,7 +21,7 @@
       "http_status": 200,
       "model": "pyannote/segmentation-3.0",
       "status": "ok",
-      "timestamp_utc": "2026-02-28T18:26:01.764578+00:00",
+      "timestamp_utc": "2026-02-28T22:52:05.448391+00:00",
       "url": "https://huggingface.co/pyannote/segmentation-3.0/resolve/main/config.yaml"
     },
     {
@@ -29,11 +29,11 @@
       "http_status": 200,
       "model": "pyannote/speaker-diarization-community-1",
       "status": "ok",
-      "timestamp_utc": "2026-02-28T18:26:01.822264+00:00",
+      "timestamp_utc": "2026-02-28T22:52:05.670770+00:00",
       "url": "https://huggingface.co/pyannote/speaker-diarization-community-1/resolve/main/config.yaml"
     }
   ],
   "status": "ok",
-  "timestamp_utc": "2026-02-28T18:26:01.683341+00:00",
+  "timestamp_utc": "2026-02-28T22:52:05.199662+00:00",
   "url": "https://huggingface.co/pyannote/speaker-diarization-3.1/resolve/main/config.yaml"
 }
