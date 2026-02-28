@@ -9,6 +9,19 @@ if command -v docker-compose >/dev/null 2>&1; then
   COMPOSE=(docker-compose)
 fi
 
+CREATED_ENV_FILE="false"
+cleanup_env_file() {
+  if [[ "${CREATED_ENV_FILE}" == "true" && -f "${ROOT_DIR}/.env" ]]; then
+    rm -f "${ROOT_DIR}/.env"
+  fi
+}
+trap cleanup_env_file EXIT
+
+if [[ ! -f "${ROOT_DIR}/.env" && -f "${ROOT_DIR}/.env.example" ]]; then
+  cp "${ROOT_DIR}/.env.example" "${ROOT_DIR}/.env"
+  CREATED_ENV_FILE="true"
+fi
+
 COMPOSE_ENV_FILE_ARGS=()
 if [[ -f "${ROOT_DIR}/.env" ]]; then
   COMPOSE_ENV_FILE_ARGS=(--env-file "${ROOT_DIR}/.env")
