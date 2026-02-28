@@ -133,6 +133,36 @@ Notes:
 - `REFRAME_OFFLINE_MODE=true` is intended to disable network-backed providers; for pyannote benchmarks you’ll need network access for model download.
 - `scripts/benchmark_diarization.py` will also pick up `HF_TOKEN` / `HUGGINGFACE_TOKEN` from the repo `.env` if present.
 
+### Automated pyannote validation runner
+
+To execute the no-manual benchmark flow and collect deterministic artifacts:
+
+```bash
+bash scripts/run_diarization_benchmarks.sh /path/to/video-or-audio.mp4 --stamp "$(date -u +%F)"
+```
+
+This runner will:
+
+- Probe gated-model access (`scripts/verify_hf_model_access.py`) for `pyannote/speaker-diarization-3.1`.
+- Run CPU pyannote benchmark when access is available.
+- Capture GPU capability and run a GPU benchmark only when explicitly requested and CUDA is exposed.
+- Emit artifacts to `docs/plans/`:
+  - `YYYY-MM-DD-pyannote-access.json`
+  - `YYYY-MM-DD-pyannote-benchmark-status.json`
+  - `YYYY-MM-DD-pyannote-benchmark-cpu.md`
+  - `YYYY-MM-DD-pyannote-gpu-capability.json`
+  - `YYYY-MM-DD-pyannote-benchmark-gpu.md`
+
+#### 2026-02-28 run status
+
+- Access probe result: `blocked_403` for `pyannote/speaker-diarization-3.1`
+  - `docs/plans/2026-02-28-pyannote-access.json`
+- Orchestrator status:
+  - CPU: `blocked_external`
+  - GPU: `skipped`
+  - `docs/plans/2026-02-28-pyannote-benchmark-status.json`
+  - Tracking issue: https://github.com/Prekzursil/Reframe/issues/80 (owner: @Prekzursil, recheck target: 2026-03-07)
+
 #### Example benchmark output (Docker CPU)
 
 These numbers are meant for *order-of-magnitude* sizing only.

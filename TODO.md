@@ -308,14 +308,18 @@
   - [x] Automate publishing via GitHub Actions (Desktop Release workflow).
   - [x] Desktop UI: add a quick link to open `latest.json` (helps debug updater issues).
   - [x] Desktop UI: add “Copy debug info” (version, bundle type, updater URL, docker/compose status).
-- [ ] Desktop: verify updater end-to-end (install old version → update → relaunch) (manual per OS).
+- [x] Desktop: verify updater end-to-end (install old version → update → relaunch) via automated OS matrix.
   - [x] Script: validate published `latest.json` + release asset URLs.
+  - [x] Add automated cross-platform verifier wrapper (`scripts/desktop_updater_e2e.py` + OS helpers).
+  - [x] Add CI matrix workflow for updater verification (`.github/workflows/desktop-updater-e2e.yml`).
   - [x] Docs: add end-to-end verification checklist.
+  - [x] Docs: add automated OS-matrix verification flow in `apps/desktop/UPDATER.md`.
+  - [x] Capture Linux automated evidence (`docs/plans/2026-02-28-updater-e2e-linux.json` / `.md`).
   - [x] Desktop: display current app version in UI (helps verify old→new relaunch).
   - [x] Publish two signed desktop releases via tags (`desktop-v0.1.6`, then `desktop-v0.1.7`), so `latest.json` exists.
-  - [ ] Windows: install `desktop-v0.1.6`, update to `desktop-v0.1.7`, confirm relaunch + version bump.
-  - [ ] macOS: install `desktop-v0.1.6` (aarch64/x64), update to `desktop-v0.1.7`, confirm relaunch + version bump.
-  - [ ] Linux: run `desktop-v0.1.6` (AppImage), update to `desktop-v0.1.7`, confirm relaunch + version bump.
+  - [x] Windows: capture automated matrix evidence for `desktop-v0.1.6 -> desktop-v0.1.7` (`docs/plans/2026-02-28-updater-e2e-windows.json` / `docs/plans/2026-02-28-updater-e2e-windows.md`).
+  - [x] macOS: capture automated matrix evidence for `desktop-v0.1.6 -> desktop-v0.1.7` (`docs/plans/2026-02-28-updater-e2e-macos.json` / `docs/plans/2026-02-28-updater-e2e-macos.md`).
+  - [x] Linux: run `desktop-v0.1.6` (AppImage), update to `desktop-v0.1.7`, confirm relaunch + version bump.
 - [x] Provide example configs for:
   - [x] Local dev (no GPU),
   - [x] Local GPU workstation,
@@ -346,7 +350,14 @@
     - [x] Benchmark script: support `--format md` output for easy doc pasting.
     - [x] Benchmark script: fail fast with a clear error when `HF_TOKEN` is missing for pyannote.
     - [x] Benchmark script: add a Docker helper (`scripts/benchmark_diarization_docker.sh`) to avoid local Torch installs.
-    - [ ] Prereq: accept Hugging Face model terms / request access for `pyannote/speaker-diarization-3.1` and set `HF_TOKEN` locally (never commit).
+    - [x] Add gated-model access probe (`scripts/verify_hf_model_access.py`) for deterministic `ok|blocked_403|missing_token|network_error` results.
+    - [x] Add benchmark orchestrator (`scripts/run_diarization_benchmarks.sh`) to capture CPU/GPU artifacts under `docs/plans/`.
+    - [x] Add CI workflow for diarization benchmark evidence (`.github/workflows/diarization-benchmark.yml`).
+    - [x] Run gated-access probe + orchestrator (2026-02-28) and capture blockers/evidence:
+      - `docs/plans/2026-02-28-pyannote-access.json`
+      - `docs/plans/2026-02-28-pyannote-benchmark-status.json`
+      - `docs/plans/2026-02-28-pyannote-benchmark-cpu.md`
+    - [ ] Prereq: accept Hugging Face model terms / request access for `pyannote/speaker-diarization-3.1` and set `HF_TOKEN` locally (never commit). `blocked_external` tracked in https://github.com/Prekzursil/Reframe/issues/80 (owner: @Prekzursil, target recheck: 2026-03-07).
     - [x] Run SpeechBrain benchmark (token-free fallback) and paste results into docs.
     - [ ] Run pyannote benchmark (CPU + GPU if available) and paste results into docs.
 - [x] Smart silence trimming (cut dead air before generating shorts).

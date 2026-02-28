@@ -1,0 +1,45 @@
+{
+  "error": null,
+  "expected_new_version": "0.1.7",
+  "expected_old_version": "0.1.6",
+  "helper": {
+    "command": [
+      "bash",
+      "/tmp/reframe-worktrees/best-of-best/scripts/desktop_updater_e2e_linux.sh",
+      "--old-tag",
+      "desktop-v0.1.6",
+      "--new-tag",
+      "desktop-v0.1.7",
+      "--work-dir",
+      "/tmp/reframe-worktrees/best-of-best/.tmp/desktop-updater-e2e/linux"
+    ],
+    "returncode": 0,
+    "stderr": ""
+  },
+  "helper_output": {
+    "expected_new_version": "0.1.7",
+    "expected_old_version": "0.1.6",
+    "install_path": "/home/prekzursil/.local/share/reframe-updater-e2e/Reframe.AppImage",
+    "new_asset": "Reframe_0.1.7_amd64.AppImage",
+    "new_tag": "desktop-v0.1.7",
+    "observed_new_version": "0.1.7",
+    "observed_old_version": "0.1.6",
+    "old_asset": "Reframe_0.1.6_amd64.AppImage",
+    "old_tag": "desktop-v0.1.6",
+    "platform": "linux",
+    "success": true,
+    "work_dir": "/tmp/reframe-worktrees/best-of-best/.tmp/desktop-updater-e2e/linux"
+  },
+  "new_tag": "desktop-v0.1.7",
+  "observed_new_version": "0.1.7",
+  "observed_old_version": "0.1.6",
+  "old_tag": "desktop-v0.1.6",
+  "platform": "linux",
+  "success": true,
+  "timestamp_utc": "2026-02-28T02:50:07.934909+00:00",
+  "verify": {
+    "returncode": 0,
+    "stderr": "",
+    "stdout": "Fetching updater JSON: https://github.com/Prekzursil/Reframe/releases/latest/download/latest.json\nversion=0.1.7 pub_date=2026-02-04T20:40:12.573Z\nok darwin-aarch64: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_aarch64.app.tar.gz\nok darwin-aarch64-app: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_aarch64.app.tar.gz\nok darwin-x86_64: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_x64.app.tar.gz\nok darwin-x86_64-app: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_x64.app.tar.gz\nok linux-x86_64: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_0.1.7_amd64.AppImage\nok linux-x86_64-appimage: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_0.1.7_amd64.AppImage\nok linux-x86_64-deb: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_0.1.7_amd64.deb\nok linux-x86_64-rpm: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe-0.1.7-1.x86_64.rpm\nok windows-x86_64: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_0.1.7_x64_en-US.msi\nok windows-x86_64-msi: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_0.1.7_x64_en-US.msi\nok windows-x86_64-nsis: https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.7/Reframe_0.1.7_x64-setup.exe\n\nOK: updater JSON looks valid and all platform URLs are reachable.\n"
+  }
+}
