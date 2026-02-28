@@ -6,7 +6,6 @@ on:
     - cron: '30 6 * * 1'
 
 permissions:
-  administration: read
   contents: read
   issues: write
 
