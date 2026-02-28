@@ -43,7 +43,7 @@ jobs:
 
       - name: Run updater E2E
         run: |
-          mkdir -p docs/plans
+          python -c "from pathlib import Path; Path('docs/plans').mkdir(parents=True, exist_ok=True)"
           python scripts/desktop_updater_e2e.py --platform "${{ matrix.platform }}"
 
       - name: Upload updater evidence

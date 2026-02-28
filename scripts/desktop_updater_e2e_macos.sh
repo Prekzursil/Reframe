@@ -42,9 +42,13 @@ plist_version() {
   /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_path/Contents/Info.plist"
 }
 
-mount_dmg() {
-  local dmg_path="$1"
-  hdiutil attach "$dmg_path" -nobrowse -quiet | tail -n1 | awk '{print $3}'
+extract_tarball_bundle() {
+  local tarball_path="$1"
+  local extract_dir="$2"
+  rm -rf "$extract_dir"
+  mkdir -p "$extract_dir"
+  tar -xzf "$tarball_path" -C "$extract_dir"
+  find "$extract_dir" -maxdepth 4 -type d -name '*.app' | head -n1
 }
 
 if [[ -z "$work_dir" ]]; then
@@ -62,44 +66,43 @@ else
   arch_suffix="x64"
 fi
 
-old_asset="Reframe_${old_version}_${arch_suffix}.dmg"
-new_asset="Reframe_${new_version}_${arch_suffix}.dmg"
+old_asset="Reframe_${arch_suffix}.app.tar.gz"
+new_asset="Reframe_${arch_suffix}.app.tar.gz"
 
 if [[ -z "${GH_TOKEN:-}" && -n "${GITHUB_TOKEN:-}" ]]; then
   export GH_TOKEN="$GITHUB_TOKEN"
 fi
 
-gh release download "$old_tag" -R Prekzursil/Reframe -p "$old_asset" -D "$work_dir" --clobber >/dev/null
-gh release download "$new_tag" -R Prekzursil/Reframe -p "$new_asset" -D "$work_dir" --clobber >/dev/null
+old_dir="$work_dir/old"
+new_dir="$work_dir/new"
+mkdir -p "$old_dir" "$new_dir"
+gh release download "$old_tag" -R Prekzursil/Reframe -p "$old_asset" -D "$old_dir" --clobber >/dev/null
+gh release download "$new_tag" -R Prekzursil/Reframe -p "$new_asset" -D "$new_dir" --clobber >/dev/null
 
-old_dmg="$work_dir/$old_asset"
-new_dmg="$work_dir/$new_asset"
+old_tar="$old_dir/$old_asset"
+new_tar="$new_dir/$new_asset"
 install_root="$HOME/Applications"
 install_app="$install_root/Reframe.app"
 mkdir -p "$install_root"
 
 rm -rf "$install_app"
 
-old_mount="$(mount_dmg "$old_dmg")"
-old_bundle="$(find "$old_mount" -maxdepth 2 -type d -name '*.app' | head -n1)"
+old_bundle="$(extract_tarball_bundle "$old_tar" "$old_dir/extracted")"
 if [[ -z "$old_bundle" ]]; then
-  echo "Could not find .app bundle in old DMG" >&2
+  echo "Could not find .app bundle in old tarball" >&2
   exit 1
 fi
 cp -R "$old_bundle" "$install_app"
 observed_old_version="$(plist_version "$install_app")"
-hdiutil detach "$old_mount" -quiet || true
 
-new_mount="$(mount_dmg "$new_dmg")"
-new_bundle="$(find "$new_mount" -maxdepth 2 -type d -name '*.app' | head -n1)"
+new_bundle="$(extract_tarball_bundle "$new_tar" "$new_dir/extracted")"
 if [[ -z "$new_bundle" ]]; then
-  echo "Could not find .app bundle in new DMG" >&2
+  echo "Could not find .app bundle in new tarball" >&2
   exit 1
 fi
 rm -rf "$install_app"
 cp -R "$new_bundle" "$install_app"
 observed_new_version="$(plist_version "$install_app")"
-hdiutil detach "$new_mount" -quiet || true
 
 python3 - <<'PY' "$old_tag" "$new_tag" "$old_version" "$new_version" "$observed_old_version" "$observed_new_version" "$old_asset" "$new_asset" "$work_dir"
 from __future__ import annotations
