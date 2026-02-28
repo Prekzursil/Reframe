@@ -190,5 +190,9 @@ Known limitations:
 - Linux automated verification: PASS
   - `docs/plans/2026-02-28-updater-e2e-linux.json`
   - `docs/plans/2026-02-28-updater-e2e-linux.md`
-- Windows automated verification: pending first matrix run.
-- macOS automated verification: pending first matrix run.
+- Windows automated verification: PASS
+  - `docs/plans/2026-02-28-updater-e2e-windows.json`
+  - `docs/plans/2026-02-28-updater-e2e-windows.md`
+- macOS automated verification: PASS
+  - `docs/plans/2026-02-28-updater-e2e-macos.json`
+  - `docs/plans/2026-02-28-updater-e2e-macos.md`

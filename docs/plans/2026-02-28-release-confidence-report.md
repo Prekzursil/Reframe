@@ -1,7 +1,7 @@
 # Reframe Release Confidence Report (2026-02-28)
 
-- status: `NOT_READY`
-- generated_utc: `2026-02-28T04:49:42.112231+00:00`
+- status: `READY_WITH_EXTERNAL_BLOCKER`
+- generated_utc: `2026-02-28T04:54:44.079138+00:00`
 
 ## Local gates
 
@@ -12,8 +12,8 @@
 
 ## Desktop updater matrix
 
-- windows: `PENDING/FAIL`
-- macos: `PENDING/FAIL`
+- windows: `PASS`
+- macos: `PASS`
 - linux: `PASS`
 
 ## Pyannote benchmark
@@ -27,10 +27,6 @@
 - codeql: `success`
 - required_reviews: `0`
 - linear_history: `False`
-
-## Blocking reasons
-
-- Desktop updater OS matrix evidence is incomplete or failing.
 
 ## External blockers
 

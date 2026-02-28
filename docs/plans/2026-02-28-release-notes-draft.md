@@ -43,11 +43,11 @@ Baseline: `origin/main@8593ead`
 
 ## Current Readiness Decision
 
-- `NOT_READY`
+- `READY_WITH_EXTERNAL_BLOCKER`
 
 ### Blocking
 
-- Desktop updater OS matrix evidence incomplete (Windows/macOS pending).
+- None (all local release-readiness gates are currently passing).
 
 ### External blocker
 
@@ -56,6 +56,6 @@ Baseline: `origin/main@8593ead`
 
 ## Operator Guidance
 
-- To move to `READY`, run desktop updater E2E matrix on Windows/macOS and publish artifacts.
-- To move to `READY_WITH_EXTERNAL_BLOCKER`, keep updater matrix green and retain issue #80 open until HF access is granted.
-- To move to `READY`, close issue #80 after successful pyannote CPU benchmark execution.
+- Maintain updater matrix pass status (Windows/macOS/Linux) on future release tags.
+- Keep issue #80 open until HF access is granted and a true pyannote benchmark can run.
+- Move from `READY_WITH_EXTERNAL_BLOCKER` to `READY` after issue #80 is closed with successful pyannote CPU results.

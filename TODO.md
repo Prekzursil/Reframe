@@ -308,7 +308,7 @@
   - [x] Automate publishing via GitHub Actions (Desktop Release workflow).
   - [x] Desktop UI: add a quick link to open `latest.json` (helps debug updater issues).
   - [x] Desktop UI: add “Copy debug info” (version, bundle type, updater URL, docker/compose status).
-- [ ] Desktop: verify updater end-to-end (install old version → update → relaunch) via automated OS matrix.
+- [x] Desktop: verify updater end-to-end (install old version → update → relaunch) via automated OS matrix.
   - [x] Script: validate published `latest.json` + release asset URLs.
   - [x] Add automated cross-platform verifier wrapper (`scripts/desktop_updater_e2e.py` + OS helpers).
   - [x] Add CI matrix workflow for updater verification (`.github/workflows/desktop-updater-e2e.yml`).
@@ -317,8 +317,8 @@
   - [x] Capture Linux automated evidence (`docs/plans/2026-02-28-updater-e2e-linux.json` / `.md`).
   - [x] Desktop: display current app version in UI (helps verify old→new relaunch).
   - [x] Publish two signed desktop releases via tags (`desktop-v0.1.6`, then `desktop-v0.1.7`), so `latest.json` exists.
-  - [ ] Windows: capture automated matrix evidence for `desktop-v0.1.6 -> desktop-v0.1.7` (`docs/plans/*-updater-e2e-windows.{json,md}`).
-  - [ ] macOS: capture automated matrix evidence for `desktop-v0.1.6 -> desktop-v0.1.7` (`docs/plans/*-updater-e2e-macos.{json,md}`).
+  - [x] Windows: capture automated matrix evidence for `desktop-v0.1.6 -> desktop-v0.1.7` (`docs/plans/2026-02-28-updater-e2e-windows.json` / `docs/plans/2026-02-28-updater-e2e-windows.md`).
+  - [x] macOS: capture automated matrix evidence for `desktop-v0.1.6 -> desktop-v0.1.7` (`docs/plans/2026-02-28-updater-e2e-macos.json` / `docs/plans/2026-02-28-updater-e2e-macos.md`).
   - [x] Linux: run `desktop-v0.1.6` (AppImage), update to `desktop-v0.1.7`, confirm relaunch + version bump.
 - [x] Provide example configs for:
   - [x] Local dev (no GPU),
