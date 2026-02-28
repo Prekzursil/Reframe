@@ -8,6 +8,7 @@ on:
       - ".github/workflows/diarization-benchmark.yml"
       - "scripts/verify_hf_model_access.py"
       - "scripts/run_diarization_benchmarks.sh"
+      - "scripts/generate_benchmark_sample.py"
       - "scripts/benchmark_diarization.py"
       - "scripts/benchmark_diarization_docker.sh"
       - "services/worker/README.md"
@@ -25,9 +26,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Generate benchmark sample
+        run: |
+          python scripts/generate_benchmark_sample.py --out samples/sample.wav --duration 12
+
       - name: Run CPU benchmark orchestrator
         run: |
-          bash scripts/run_diarization_benchmarks.sh samples/sample.mp4 --stamp "$(date -u +%F)"
+          bash scripts/run_diarization_benchmarks.sh samples/sample.wav --stamp "$(date -u +%F)"
 
       - name: Upload benchmark evidence
         uses: actions/upload-artifact@v4
@@ -50,9 +55,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Generate benchmark sample
+        run: |
+          python scripts/generate_benchmark_sample.py --out samples/sample.wav --duration 12
+
       - name: Run GPU benchmark orchestrator
         run: |
-          bash scripts/run_diarization_benchmarks.sh samples/sample.mp4 --stamp "$(date -u +%F)" --run-gpu
+          bash scripts/run_diarization_benchmarks.sh samples/sample.wav --stamp "$(date -u +%F)" --run-gpu
 
       - name: Upload GPU evidence
         uses: actions/upload-artifact@v4
