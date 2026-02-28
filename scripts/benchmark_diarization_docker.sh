@@ -209,7 +209,7 @@ echo "  backend: ${backend}"
 echo "  extra:   ${extra}"
 echo ""
 
-"${COMPOSE[@]}" "${COMPOSE_ENV_FILE_ARGS[@]}" -f infra/docker-compose.yml run --rm \
+"${COMPOSE[@]}" "${COMPOSE_ENV_FILE_ARGS[@]}" -f infra/docker-compose.yml run --rm --build \
   "${compose_run_env_args[@]}" \
   -v "${input_dir}:/worker/media:ro" \
   worker \

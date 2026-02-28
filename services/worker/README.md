@@ -169,6 +169,18 @@ This runner will:
   - `duration_s_avg=0.512`
   - `peak_rss_mb=1075.0`
 
+#### 2026-03-01 local stabilization rerun
+
+- Scope: post-merge mainline stabilization on `chore/mainline-stabilize-2026-03-01`.
+- Access probe status (`docs/plans/2026-02-28-pyannote-access.json`): all required repositories `ok`.
+- Orchestrator status (`docs/plans/2026-02-28-pyannote-benchmark-status.json`):
+  - CPU: `ok`
+  - GPU: `skipped` (no CUDA device available in local runner)
+- CPU sizing metrics (`docs/plans/2026-02-28-pyannote-benchmark-cpu.md`):
+  - `duration_s_avg=1.391`
+  - `peak_rss_mb=1049.7`
+- Stabilization fix applied: `scripts/benchmark_diarization_docker.sh` now forces `docker compose run --build` to avoid stale worker-image code during benchmark execution.
+
 #### Example benchmark output (Docker CPU)
 
 These numbers are meant for *order-of-magnitude* sizing only.

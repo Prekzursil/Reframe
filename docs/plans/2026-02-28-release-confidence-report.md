@@ -1,7 +1,7 @@
 # Reframe Release Confidence Report (2026-02-28)
 
 - status: `READY`
-- generated_utc: `2026-02-28T18:56:52.959380+00:00`
+- generated_utc: `2026-02-28T23:16:49.191168+00:00`
 
 ## Local gates
 

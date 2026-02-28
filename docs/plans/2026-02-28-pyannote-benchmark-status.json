@@ -11,8 +11,8 @@
     "report_md": "docs/plans/2026-02-28-pyannote-benchmark-gpu.md",
     "status": "skipped"
   },
-  "input": "/home/runner/work/Reframe/Reframe/samples/sample.wav",
+  "input": "/tmp/reframe-worktrees/mainline-stabilize-2026-03-01/samples/sample.wav",
   "probe_json": "docs/plans/2026-02-28-pyannote-access.json",
   "stamp": "2026-02-28",
-  "timestamp_utc": "2026-02-28T18:29:28.465577+00:00"
+  "timestamp_utc": "2026-02-28T23:14:58.195718+00:00"
 }
