@@ -58,8 +58,12 @@ Baseline: `origin/main@db77fd2`
   - CPU benchmark status: `ok`
   - GPU status: `skipped` (no CUDA runner)
 - Release Readiness (main stabilization dispatch): https://github.com/Prekzursil/Reframe/actions/runs/22531175640
-  - Status at draft update time: `in_progress`
+  - Conclusion: `success`
   - Stabilization report: `docs/plans/2026-03-01-mainline-stabilization-report.md`
+- Release Readiness (stabilization branch dispatch): https://github.com/Prekzursil/Reframe/actions/runs/22531270273
+  - Status at draft update time: `queued`
+- Diarization Benchmark (stabilization branch dispatch): https://github.com/Prekzursil/Reframe/actions/runs/22531269296
+  - Status at draft update time: `in_progress`
 
 ## Current Readiness Decision
 

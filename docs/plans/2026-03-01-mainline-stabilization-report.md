@@ -50,10 +50,16 @@
 
 - Release Readiness (`main`) run `22531175640`:
   - URL: `https://github.com/Prekzursil/Reframe/actions/runs/22531175640`
-  - Status at report time: `in_progress`
+  - Status: `completed` / `success`
 - Diarization Benchmark (`main`) run `22531176153`:
   - URL: `https://github.com/Prekzursil/Reframe/actions/runs/22531176153`
   - Status: `completed` / `success`
+- Release Readiness (`chore/mainline-stabilize-2026-03-01`) run `22531270273`:
+  - URL: `https://github.com/Prekzursil/Reframe/actions/runs/22531270273`
+  - Status at report update time: `queued`
+- Diarization Benchmark (`chore/mainline-stabilize-2026-03-01`) run `22531269296`:
+  - URL: `https://github.com/Prekzursil/Reframe/actions/runs/22531269296`
+  - Status at report update time: `in_progress`
 - Branch Protection Audit (`main`) latest run `22523705202`:
   - URL: `https://github.com/Prekzursil/Reframe/actions/runs/22523705202`
   - Status: `completed` / `success`
