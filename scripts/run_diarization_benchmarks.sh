@@ -115,18 +115,35 @@ PY
 
 CUDA_AVAILABLE="false"
 if [[ "$GPU_CAP_RC" -eq 0 ]]; then
+  GPU_PARSE_RC=0
   CUDA_AVAILABLE="$(python3 - <<'PY' "$GPU_CAP_JSON"
 import json, sys
 from pathlib import Path
-p=Path(sys.argv[1])
-obj=json.loads(p.read_text(encoding='utf-8'))
-print('true' if obj.get('cuda_available') else 'false')
+p = Path(sys.argv[1])
+text = p.read_text(encoding='utf-8', errors='replace')
+for line in reversed([ln.strip() for ln in text.splitlines() if ln.strip()]):
+    try:
+        obj = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    print('true' if obj.get('cuda_available') else 'false')
+    break
+else:
+    raise SystemExit(2)
 PY
-)"
-else
+)" || GPU_PARSE_RC=$?
+  if [[ "$GPU_PARSE_RC" -ne 0 ]]; then
+    GPU_CAP_RC="$GPU_PARSE_RC"
+  fi
+fi
+
+if [[ "$GPU_CAP_RC" -ne 0 ]]; then
+  CUDA_AVAILABLE="false"
   cat >"$GPU_CAP_JSON" <<EOF_GPU_JSON
-{"cuda_available": false, "cuda_device_count": 0, "error": "docker probe failed"}
+{"cuda_available": false, "cuda_device_count": 0, "error": "docker probe failed or produced non-json output"}
 EOF_GPU_JSON
+else
+  :
 fi
 
 if [[ "$RUN_GPU" == "true" && "$CUDA_AVAILABLE" == "true" && "$PROBE_RC" -eq 0 ]]; then
