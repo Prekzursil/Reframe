@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import Any, Iterable, List, Sequence
 
 from media_core.diarize.config import DiarizationBackend, DiarizationConfig
 from media_core.diarize.models import SpeakerSegment
@@ -42,6 +43,32 @@ def assign_speakers_to_lines(lines: Sequence[SubtitleLine], segments: Iterable[S
     return out
 
 
+def _iter_pyannote_tracks(diarization: Any) -> Iterator[tuple[Any, Any, Any]]:
+    """Yield tracks from either classic Annotation or newer DiarizeOutput shapes."""
+
+    itertracks = getattr(diarization, "itertracks", None)
+    if callable(itertracks):
+        return itertracks(yield_label=True)
+
+    for attr in ("speaker_diarization", "diarization", "annotation"):
+        nested = getattr(diarization, attr, None)
+        nested_itertracks = getattr(nested, "itertracks", None)
+        if callable(nested_itertracks):
+            return nested_itertracks(yield_label=True)
+
+    to_annotation = getattr(diarization, "to_annotation", None)
+    if callable(to_annotation):
+        annotation = to_annotation()
+        annotation_itertracks = getattr(annotation, "itertracks", None)
+        if callable(annotation_itertracks):
+            return annotation_itertracks(yield_label=True)
+
+    raise RuntimeError(
+        "Unsupported pyannote diarization output type "
+        f"'{type(diarization).__name__}'. Expected itertracks()-compatible output."
+    )
+
+
 def _diarize_pyannote(audio_path: str | Path, config: DiarizationConfig) -> List[SpeakerSegment]:
     try:
         from pyannote.audio import Pipeline  # type: ignore
@@ -75,7 +102,7 @@ def _diarize_pyannote(audio_path: str | Path, config: DiarizationConfig) -> List
     diarization = pipeline(path)
 
     segments: List[SpeakerSegment] = []
-    for turn, _, speaker in diarization.itertracks(yield_label=True):
+    for turn, _, speaker in _iter_pyannote_tracks(diarization):
         start = float(turn.start)
         end = float(turn.end)
         if config.min_segment_duration and (end - start) < config.min_segment_duration:
