@@ -101,6 +101,7 @@ warmup="false"
 runs="1"
 min_segment_duration="0.0"
 format="text"
+compose_run_env_args=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -182,6 +183,7 @@ PY
     echo "  bash scripts/benchmark_diarization_docker.sh ${abs_input@Q} --backend pyannote --warmup --runs 1 --format md" >&2
     exit 1
   fi
+  compose_run_env_args=(-e "HF_TOKEN=${hf_token}" -e "HUGGINGFACE_TOKEN=${hf_token}")
 fi
 
 py_args=(
@@ -208,6 +210,7 @@ echo "  extra:   ${extra}"
 echo ""
 
 "${COMPOSE[@]}" "${COMPOSE_ENV_FILE_ARGS[@]}" -f infra/docker-compose.yml run --rm \
+  "${compose_run_env_args[@]}" \
   -v "${input_dir}:/worker/media:ro" \
   worker \
   bash -lc "pip install --no-cache-dir '/worker/packages/media-core[${extra}]' && python /worker/scripts/benchmark_diarization.py ${quoted_py_args}"
