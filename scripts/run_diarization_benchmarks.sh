@@ -73,6 +73,7 @@ PROBE_RC=0
 python3 scripts/verify_hf_model_access.py \
   --model pyannote/speaker-diarization-3.1 \
   --model pyannote/segmentation-3.0 \
+  --model pyannote/speaker-diarization-community-1 \
   --out-json "$ACCESS_JSON" >/dev/null || PROBE_RC=$?
 
 CPU_STATUS="not_run"

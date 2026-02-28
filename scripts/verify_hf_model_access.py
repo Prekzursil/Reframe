@@ -135,7 +135,11 @@ def main(argv: list[str]) -> int:
     repo_root = Path(__file__).resolve().parents[1]
     models = [m.strip() for m in args.model if str(m).strip()]
     if not models:
-        models = ["pyannote/speaker-diarization-3.1", "pyannote/segmentation-3.0"]
+        models = [
+            "pyannote/speaker-diarization-3.1",
+            "pyannote/segmentation-3.0",
+            "pyannote/speaker-diarization-community-1",
+        ]
 
     token = _load_token(args.token, repo_root)
     results = [
