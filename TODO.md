@@ -345,7 +345,7 @@
   - [x] Implement optional pyannote backend wiring in worker captions pipeline (extract audio → diarize → label lines).
   - [x] Docs: explain diarization dependencies (torch/pyannote) + offline-mode behavior.
   - [x] Add UI option to enable speaker labels (optional; advanced).
-  - [ ] Validate with a real pyannote run and document expected memory/CPU impact.
+  - [x] Validate with a real pyannote run and document expected memory/CPU impact.
     - [x] Add a small benchmark script (`scripts/benchmark_diarization.py`) to run diarization on a sample and print timing + peak RSS.
     - [x] Benchmark script: support `--format md` output for easy doc pasting.
     - [x] Benchmark script: fail fast with a clear error when `HF_TOKEN` is missing for pyannote.
@@ -357,9 +357,9 @@
       - `docs/plans/2026-02-28-pyannote-access.json`
       - `docs/plans/2026-02-28-pyannote-benchmark-status.json`
       - `docs/plans/2026-02-28-pyannote-benchmark-cpu.md`
-    - [ ] Prereq: accept Hugging Face model terms / request access for all required pyannote repos (`pyannote/speaker-diarization-3.1`, `pyannote/segmentation-3.0`, `pyannote/speaker-diarization-community-1`) and set `HF_TOKEN` locally (never commit). As of 2026-02-28 probe: `speaker-diarization-3.1=ok`, `segmentation-3.0=ok`, `speaker-diarization-community-1=blocked_403`. `blocked_external` tracked in https://github.com/Prekzursil/Reframe/issues/80 (owner: @Prekzursil, target recheck: 2026-03-07).
+    - [x] Prereq: accept Hugging Face model terms / request access for all required pyannote repos (`pyannote/speaker-diarization-3.1`, `pyannote/segmentation-3.0`, `pyannote/speaker-diarization-community-1`) and set `HF_TOKEN` locally (never commit). Verified on 2026-02-28 via workflow run `22526417778`: all three probes are `ok` in `docs/plans/2026-02-28-pyannote-access.json`.
     - [x] Run SpeechBrain benchmark (token-free fallback) and paste results into docs.
-    - [ ] Run pyannote benchmark (CPU + GPU if available) and paste results into docs.
+    - [x] Run pyannote benchmark (CPU + GPU if available) and paste results into docs. Verified on 2026-02-28 via workflow run `22526417778`: CPU `ok` (`duration_s_avg=0.512`, `peak_rss_mb=1075.0`), GPU `skipped` (no CUDA runner).
 - [x] Smart silence trimming (cut dead air before generating shorts).
   - [x] media-core: add ffmpeg `silencedetect` helper (`detect_silence`).
   - [x] Worker: optional `trim_silence` scoring for `tasks.generate_shorts`.

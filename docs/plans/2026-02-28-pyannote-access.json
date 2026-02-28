@@ -1,7 +1,7 @@
 {
-  "error": "HTTP Error 403: Forbidden",
-  "http_status": 403,
-  "model": "pyannote/speaker-diarization-community-1",
+  "error": null,
+  "http_status": 200,
+  "model": "pyannote/speaker-diarization-3.1",
   "models": [
     "pyannote/speaker-diarization-3.1",
     "pyannote/segmentation-3.0",
@@ -13,7 +13,7 @@
       "http_status": 200,
       "model": "pyannote/speaker-diarization-3.1",
       "status": "ok",
-      "timestamp_utc": "2026-02-28T18:19:48.424898+00:00",
+      "timestamp_utc": "2026-02-28T18:26:01.683341+00:00",
       "url": "https://huggingface.co/pyannote/speaker-diarization-3.1/resolve/main/config.yaml"
     },
     {
@@ -21,19 +21,19 @@
       "http_status": 200,
       "model": "pyannote/segmentation-3.0",
       "status": "ok",
-      "timestamp_utc": "2026-02-28T18:19:48.727177+00:00",
+      "timestamp_utc": "2026-02-28T18:26:01.764578+00:00",
       "url": "https://huggingface.co/pyannote/segmentation-3.0/resolve/main/config.yaml"
     },
     {
-      "error": "HTTP Error 403: Forbidden",
-      "http_status": 403,
+      "error": null,
+      "http_status": 200,
       "model": "pyannote/speaker-diarization-community-1",
-      "status": "blocked_403",
-      "timestamp_utc": "2026-02-28T18:19:49.037176+00:00",
+      "status": "ok",
+      "timestamp_utc": "2026-02-28T18:26:01.822264+00:00",
       "url": "https://huggingface.co/pyannote/speaker-diarization-community-1/resolve/main/config.yaml"
     }
   ],
-  "status": "blocked_403",
-  "timestamp_utc": "2026-02-28T18:19:49.037176+00:00",
-  "url": "https://huggingface.co/pyannote/speaker-diarization-community-1/resolve/main/config.yaml"
+  "status": "ok",
+  "timestamp_utc": "2026-02-28T18:26:01.683341+00:00",
+  "url": "https://huggingface.co/pyannote/speaker-diarization-3.1/resolve/main/config.yaml"
 }

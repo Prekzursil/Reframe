@@ -209,6 +209,23 @@ echo "  backend: ${backend}"
 echo "  extra:   ${extra}"
 echo ""
 
+# Ensure the worker image includes current workspace code before benchmarking.
+# Retry transient network failures (for example PyPI timeouts during pip install).
+build_attempt=1
+build_attempts_max="${REFRAME_DOCKER_BUILD_ATTEMPTS:-3}"
+while true; do
+  if "${COMPOSE[@]}" "${COMPOSE_ENV_FILE_ARGS[@]}" -f infra/docker-compose.yml build worker >/dev/null; then
+    break
+  fi
+  if [[ "$build_attempt" -ge "$build_attempts_max" ]]; then
+    echo "ERROR: docker worker build failed after ${build_attempt} attempt(s)." >&2
+    exit 1
+  fi
+  echo "WARN: docker worker build failed on attempt ${build_attempt}; retrying..." >&2
+  build_attempt=$((build_attempt + 1))
+  sleep 2
+done
+
 "${COMPOSE[@]}" "${COMPOSE_ENV_FILE_ARGS[@]}" -f infra/docker-compose.yml run --rm \
   "${compose_run_env_args[@]}" \
   -v "${input_dir}:/worker/media:ro" \

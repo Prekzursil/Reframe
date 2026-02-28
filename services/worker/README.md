@@ -155,16 +155,19 @@ This runner will:
 
 #### 2026-02-28 run status
 
-- Access probe result: mixed state
+- Workflow run: `22526417778` (branch `feat/pyannote-ready-final`)
+- Access probe result: `ok`
   - `pyannote/speaker-diarization-3.1`: `ok`
   - `pyannote/segmentation-3.0`: `ok`
-  - `pyannote/speaker-diarization-community-1`: `blocked_403`
-  - `docs/plans/2026-02-28-pyannote-access.json`
+  - `pyannote/speaker-diarization-community-1`: `ok`
+  - Evidence: `docs/plans/2026-02-28-pyannote-access.json`
 - Orchestrator status:
-  - CPU: `blocked_external`
-  - GPU: `skipped`
-  - `docs/plans/2026-02-28-pyannote-benchmark-status.json`
-  - Tracking issue: https://github.com/Prekzursil/Reframe/issues/80 (owner: @Prekzursil, recheck target: 2026-03-07)
+  - CPU: `ok`
+  - GPU: `skipped` (no CUDA runner)
+  - Evidence: `docs/plans/2026-02-28-pyannote-benchmark-status.json`
+- CPU sizing metrics (`docs/plans/2026-02-28-pyannote-benchmark-cpu.md`):
+  - `duration_s_avg=0.512`
+  - `peak_rss_mb=1075.0`
 
 #### Example benchmark output (Docker CPU)
 

@@ -1,7 +1,7 @@
 # Reframe Release Confidence Report (2026-02-28)
 
-- status: `READY_WITH_EXTERNAL_BLOCKER`
-- generated_utc: `2026-02-28T16:20:16.597461+00:00`
+- status: `READY`
+- generated_utc: `2026-02-28T18:56:52.959380+00:00`
 
 ## Local gates
 
@@ -18,7 +18,7 @@
 
 ## Pyannote benchmark
 
-- cpu_status: `blocked_external`
+- cpu_status: `ok`
 - gpu_status: `skipped`
 
 ## GitHub policy/check snapshot
@@ -27,11 +27,6 @@
 - codeql: `success`
 - required_reviews: `1`
 - linear_history: `True`
-
-## External blockers
-
-- Pyannote gated-model access is blocked externally (Hugging Face authorization).
-- Tracking issue: https://github.com/Prekzursil/Reframe/issues/80 (owner: @Prekzursil, recheck target: 2026-03-07)
 
 ## Evidence files
 

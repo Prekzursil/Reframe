@@ -3,5 +3,5 @@
 - status: `skipped`
 - run_gpu_flag: `false`
 - cuda_available: `false`
-- probe_exit: `4`
+- probe_exit: `0`
 - gpu_capability_json: `docs/plans/2026-02-28-pyannote-gpu-capability.json`
