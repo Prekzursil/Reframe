@@ -69,6 +69,14 @@
   - URL: `https://github.com/Prekzursil/Reframe/actions/runs/22527282432`
   - Status: `completed` / `success`
 
+## Codacy / Policy Triage
+
+- PR: `https://github.com/Prekzursil/Reframe/pull/86`
+- Codacy check URL: `https://app.codacy.com/gh/Prekzursil/Reframe/pull-requests/86`
+- Current state: `fail`
+- Classification: `non-blocking` for merge under current branch-protection policy (Codacy is not in required contexts on `main`).
+- Action: keep the failure tracked in PR discussion and re-check after merge for any actionable findings that require follow-up issue filing.
+
 ## Decision
 
 - Readiness classification after stabilization evidence refresh: `READY`.
