@@ -1,8 +1,8 @@
 # Reframe v0.1.7 Release Notes (Draft)
 
 Date: 2026-02-28
-Branch: `feat/best-of-best-completion`
-Baseline: `origin/main@8593ead`
+Branch: `feat/pyannote-ready-closure`
+Baseline: `origin/main@246317a`
 
 ## Highlights
 
@@ -49,6 +49,8 @@ Baseline: `origin/main@8593ead`
 - Diarization Benchmark (main): https://github.com/Prekzursil/Reframe/actions/runs/22523641493
   - Artifact (`diarization-benchmark-cpu`): https://api.github.com/repos/Prekzursil/Reframe/actions/artifacts/5704027602/zip
   - Probe status: `blocked_403` (HTTP 403)
+- Diarization Benchmark (branch): https://github.com/Prekzursil/Reframe/actions/runs/22524197888
+  - Probe detail: `speaker-diarization-3.1=ok`, `segmentation-3.0=blocked_403`
 
 ## Current Readiness Decision
 
@@ -60,11 +62,11 @@ Baseline: `origin/main@8593ead`
 
 ### External blocker
 
-- Hugging Face gated access for `pyannote/speaker-diarization-3.1` is blocked (403).
+- Hugging Face gated dependency access for `pyannote/segmentation-3.0` remains blocked (403), while `pyannote/speaker-diarization-3.1` now resolves successfully.
 - Tracking issue: https://github.com/Prekzursil/Reframe/issues/80
 
 ## Operator Guidance
 
 - Maintain updater matrix pass status (Windows/macOS/Linux) on future release tags.
-- Keep issue #80 open until HF access is granted and a true pyannote benchmark can run.
+- Keep issue #80 open until HF access is granted for both required pyannote repositories and a true pyannote benchmark can run.
 - Move from `READY_WITH_EXTERNAL_BLOCKER` to `READY` after issue #80 is closed with successful pyannote CPU results.

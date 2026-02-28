@@ -91,7 +91,7 @@ If the model requires a Hugging Face token, set one of:
 - `HUGGINGFACE_TOKEN`
 - `HF_TOKEN`
 
-Note: `pyannote/speaker-diarization-3.1` is gated on Hugging Face — you must accept the model terms / request access and provide a token.
+Note: `pyannote/speaker-diarization-3.1` depends on gated `pyannote/segmentation-3.0` on Hugging Face. You must have access to both and provide a token.
 
 ### Enabling SpeechBrain diarization in Docker images
 
@@ -143,7 +143,7 @@ bash scripts/run_diarization_benchmarks.sh /path/to/video-or-audio.mp4 --stamp "
 
 This runner will:
 
-- Probe gated-model access (`scripts/verify_hf_model_access.py`) for `pyannote/speaker-diarization-3.1`.
+- Probe gated-model access (`scripts/verify_hf_model_access.py`) for both `pyannote/speaker-diarization-3.1` and required dependency `pyannote/segmentation-3.0`.
 - Run CPU pyannote benchmark when access is available.
 - Capture GPU capability and run a GPU benchmark only when explicitly requested and CUDA is exposed.
 - Emit artifacts to `docs/plans/`:
@@ -155,7 +155,9 @@ This runner will:
 
 #### 2026-02-28 run status
 
-- Access probe result: `blocked_403` for `pyannote/speaker-diarization-3.1`
+- Access probe result: mixed state
+  - `pyannote/speaker-diarization-3.1`: `ok`
+  - `pyannote/segmentation-3.0`: `blocked_403`
   - `docs/plans/2026-02-28-pyannote-access.json`
 - Orchestrator status:
   - CPU: `blocked_external`
