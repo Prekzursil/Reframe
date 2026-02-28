@@ -41,6 +41,15 @@ Baseline: `origin/main@8593ead`
   - `docs/plans/2026-02-28-release-readiness-summary.json`
   - `docs/plans/2026-02-28-release-confidence-report.md`
 
+## Mainline Workflow Snapshots (2026-02-28)
+
+- Release Readiness (main): https://github.com/Prekzursil/Reframe/actions/runs/22523603682
+  - Artifact (`release-readiness-evidence`): https://api.github.com/repos/Prekzursil/Reframe/actions/artifacts/5704024538/zip
+  - Result status: `READY_WITH_EXTERNAL_BLOCKER`
+- Diarization Benchmark (main): https://github.com/Prekzursil/Reframe/actions/runs/22523641493
+  - Artifact (`diarization-benchmark-cpu`): https://api.github.com/repos/Prekzursil/Reframe/actions/artifacts/5704027602/zip
+  - Probe status: `blocked_403` (HTTP 403)
+
 ## Current Readiness Decision
 
 - `READY_WITH_EXTERNAL_BLOCKER`
