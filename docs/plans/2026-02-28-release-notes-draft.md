@@ -1,8 +1,8 @@
 # Reframe v0.1.7 Release Notes (Draft)
 
 Date: 2026-02-28
-Branch: `feat/pyannote-ready-closure`
-Baseline: `origin/main@246317a`
+Branch: `feat/pyannote-ready-final`
+Baseline: `origin/main@db77fd2`
 
 ## Highlights
 
@@ -24,49 +24,50 @@ Baseline: `origin/main@246317a`
   - `.github/workflows/release-readiness.yml`
 - Added dependency audit workflow:
   - `.github/workflows/dependency-audit.yml`
-- Hardened branch protection audit workflow checks in:
+- Hardened branch-protection audit checks in:
   - `.github/workflows/branch-protection-audit.yml`
 
 ## Validation Evidence
 
-- Linux updater E2E evidence:
+- Updater E2E matrix evidence:
+  - `docs/plans/2026-02-28-updater-e2e-windows.json`
+  - `docs/plans/2026-02-28-updater-e2e-macos.json`
   - `docs/plans/2026-02-28-updater-e2e-linux.json`
-  - `docs/plans/2026-02-28-updater-e2e-linux.md`
 - Pyannote access and benchmark evidence:
   - `docs/plans/2026-02-28-pyannote-access.json`
   - `docs/plans/2026-02-28-pyannote-benchmark-status.json`
   - `docs/plans/2026-02-28-pyannote-benchmark-cpu.md`
-  - `docs/plans/2026-02-28-pyannote-benchmark-gpu.md`
 - Readiness summary:
   - `docs/plans/2026-02-28-release-readiness-summary.json`
   - `docs/plans/2026-02-28-release-confidence-report.md`
 
-## Mainline Workflow Snapshots (2026-02-28)
+## Key Workflow Runs
 
-- Release Readiness (main): https://github.com/Prekzursil/Reframe/actions/runs/22523603682
-  - Artifact (`release-readiness-evidence`): https://api.github.com/repos/Prekzursil/Reframe/actions/artifacts/5704024538/zip
-  - Result status: `READY_WITH_EXTERNAL_BLOCKER`
-- Diarization Benchmark (main): https://github.com/Prekzursil/Reframe/actions/runs/22523641493
-  - Artifact (`diarization-benchmark-cpu`): https://api.github.com/repos/Prekzursil/Reframe/actions/artifacts/5704027602/zip
-  - Probe status: `blocked_403` (HTTP 403)
-- Diarization Benchmark (branch): https://github.com/Prekzursil/Reframe/actions/runs/22524197888
-  - Probe detail: `speaker-diarization-3.1=ok`, `segmentation-3.0=blocked_403`
+- Diarization Benchmark (branch): https://github.com/Prekzursil/Reframe/actions/runs/22526417778
+  - Probe status: all required pyannote repositories `ok`
+  - CPU benchmark status: `ok`
+  - GPU status: `skipped` (no CUDA runner)
+- Release Readiness (branch): https://github.com/Prekzursil/Reframe/actions/runs/22526874023
+  - Conclusion: `success`
+  - Status classification: `READY`
+- Release Readiness (main, historical): https://github.com/Prekzursil/Reframe/actions/runs/22524606622
+  - Historical status at that point: `READY_WITH_EXTERNAL_BLOCKER`
 
 ## Current Readiness Decision
 
-- `READY_WITH_EXTERNAL_BLOCKER`
+- `READY`
 
 ### Blocking
 
-- None (all local release-readiness gates are currently passing).
+- None.
 
-### External blocker
+### External blockers
 
-- Hugging Face gated dependency access for `pyannote/segmentation-3.0` remains blocked (403), while `pyannote/speaker-diarization-3.1` now resolves successfully.
-- Tracking issue: https://github.com/Prekzursil/Reframe/issues/80
+- None.
+- Previously tracked blocker issue is now closed: https://github.com/Prekzursil/Reframe/issues/80
 
 ## Operator Guidance
 
-- Maintain updater matrix pass status (Windows/macOS/Linux) on future release tags.
-- Keep issue #80 open until HF access is granted for both required pyannote repositories and a true pyannote benchmark can run.
-- Move from `READY_WITH_EXTERNAL_BLOCKER` to `READY` after issue #80 is closed with successful pyannote CPU results.
+- Maintain updater matrix pass status (Windows/macOS/Linux) for future desktop tags.
+- Re-run diarization benchmark workflow if pyannote model dependencies or Hugging Face access policy changes.
+- Keep commit/push/PR checkpoints for each substantial implementation chunk.

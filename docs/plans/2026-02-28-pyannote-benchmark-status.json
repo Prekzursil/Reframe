@@ -2,17 +2,17 @@
   "cpu": {
     "log": null,
     "report_md": "docs/plans/2026-02-28-pyannote-benchmark-cpu.md",
-    "status": "blocked_external"
+    "status": "ok"
   },
-  "details": "HF gated access probe failed (exit=4).",
+  "details": null,
   "gpu": {
     "capability_json": "docs/plans/2026-02-28-pyannote-gpu-capability.json",
     "log": null,
     "report_md": "docs/plans/2026-02-28-pyannote-benchmark-gpu.md",
     "status": "skipped"
   },
-  "input": "/tmp/reframe-worktrees/best-of-best/samples/sample.wav",
+  "input": "/home/runner/work/Reframe/Reframe/samples/sample.wav",
   "probe_json": "docs/plans/2026-02-28-pyannote-access.json",
   "stamp": "2026-02-28",
-  "timestamp_utc": "2026-02-28T16:25:23.632036+00:00"
+  "timestamp_utc": "2026-02-28T18:29:28.465577+00:00"
 }

@@ -15,6 +15,11 @@ class _Diarization:
         yield _Turn(0.0, 1.0), None, "SPEAKER_00"
 
 
+class _DiarizeOutput:
+    def __init__(self):
+        self.speaker_diarization = _Diarization()
+
+
 def _install_fake_pyannote(monkeypatch, *, Pipeline):
     pyannote = types.ModuleType("pyannote")
     pyannote_audio = types.ModuleType("pyannote.audio")
@@ -66,3 +71,18 @@ def test_pyannote_falls_back_to_use_auth_token(monkeypatch):
     assert [s.speaker for s in segments] == ["SPEAKER_00"]
     assert UseAuthTokenOnlyPipeline.called_kwargs == {"use_auth_token": "hf_dummy"}
 
+
+def test_pyannote_accepts_diarizeoutput_shape(monkeypatch):
+    class TokenOnlyPipeline:
+        @classmethod
+        def from_pretrained(cls, _model, **kwargs):
+            return cls()
+
+        def __call__(self, _path):
+            return _DiarizeOutput()
+
+    _install_fake_pyannote(monkeypatch, Pipeline=TokenOnlyPipeline)
+
+    config = DiarizationConfig(backend=DiarizationBackend.PYANNOTE, huggingface_token="hf_dummy")
+    segments = diarize_audio("fake.wav", config)
+    assert [s.speaker for s in segments] == ["SPEAKER_00"]
