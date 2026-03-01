@@ -1,7 +1,7 @@
 # Reframe Release Confidence Report (2026-03-01)
 
 - status: `READY`
-- generated_utc: `2026-03-01T14:15:46.434080+00:00`
+- generated_utc: `2026-03-01T17:34:18.886041+00:00`
 
 ## Local gates
 
@@ -31,8 +31,8 @@
 
 ## GitHub policy/check snapshot
 
-- ci: `unknown`
-- codeql: `unknown`
+- ci: `success`
+- codeql: `success`
 - required_reviews: `1`
 - linear_history: `True`
 
