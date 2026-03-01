@@ -47,6 +47,15 @@ def _load_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
+def _load_latest_updater_result(plans: Path, platform: str) -> tuple[dict[str, Any] | None, Path | None]:
+    candidates = sorted(plans.glob(f"*-updater-e2e-{platform}.json"), reverse=True)
+    for candidate in candidates:
+        payload = _load_json(candidate)
+        if payload is not None:
+            return payload, candidate
+    return None, None
+
+
 def _main_sha(repo: Path) -> str | None:
     proc = subprocess.run(["git", "rev-parse", "origin/main"], cwd=str(repo), text=True, capture_output=True, check=False)
     if proc.returncode != 0:
@@ -90,6 +99,14 @@ def _collect_gh_status(repo: Path) -> dict[str, Any]:
         }
 
     return out
+
+
+def _display_path(path: Path, repo: Path) -> str:
+    candidate = path if path.is_absolute() else (repo / path)
+    try:
+        return str(candidate.resolve().relative_to(repo.resolve()))
+    except ValueError:
+        return str(path)
 
 
 def _resolve_status(*, local_ok: bool, updater_ok: bool, pyannote_cpu_status: str) -> tuple[str, list[str], list[str]]:
@@ -147,9 +164,23 @@ def main(argv: list[str]) -> int:
     updater_results: dict[str, dict[str, Any]] = {}
     updater_ok = True
     for platform in ("windows", "macos", "linux"):
-        payload = _load_json(plans / f"{args.stamp}-updater-e2e-{platform}.json")
-        updater_results[platform] = payload or {"success": False, "missing": True}
-        if not payload or not bool(payload.get("success")):
+        stamp_path = plans / f"{args.stamp}-updater-e2e-{platform}.json"
+        payload = _load_json(stamp_path)
+        source_path = stamp_path if payload else None
+
+        if payload is None:
+            payload, source_path = _load_latest_updater_result(plans, platform)
+
+        if payload is None:
+            updater_results[platform] = {"success": False, "missing": True}
+            updater_ok = False
+            continue
+
+        result = dict(payload)
+        if source_path:
+            result["source_file"] = str(source_path.relative_to(plans))
+        updater_results[platform] = result
+        if not bool(result.get("success")):
             updater_ok = False
 
     pyannote = _load_json(plans / f"{args.stamp}-pyannote-benchmark-status.json") or {}
@@ -251,7 +282,7 @@ def main(argv: list[str]) -> int:
     lines.append("")
     lines.append("## Evidence files")
     lines.append("")
-    lines.append(f"- `{out_json.relative_to(repo)}`")
+    lines.append(f"- `{_display_path(out_json, repo)}`")
     lines.append(f"- `docs/plans/{args.stamp}-updater-e2e-*.json`")
     lines.append(f"- `docs/plans/{args.stamp}-pyannote-benchmark-status.json`")
 
