@@ -1,0 +1,18 @@
+{
+  "cpu": {
+    "log": "docs/plans/2026-03-01-pyannote-benchmark-cpu.md",
+    "report_md": "docs/plans/2026-03-01-pyannote-benchmark-cpu.md",
+    "status": "failed"
+  },
+  "details": null,
+  "gpu": {
+    "capability_json": "docs/plans/2026-03-01-pyannote-gpu-capability.json",
+    "log": null,
+    "report_md": "docs/plans/2026-03-01-pyannote-benchmark-gpu.md",
+    "status": "skipped"
+  },
+  "input": "/tmp/reframe-worktrees/next-big-phase-2026-03-01/samples/sample.wav",
+  "probe_json": "docs/plans/2026-03-01-pyannote-access.json",
+  "stamp": "2026-03-01",
+  "timestamp_utc": "2026-03-01T00:45:20.542047+00:00"
+}
