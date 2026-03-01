@@ -64,7 +64,8 @@ release-readiness:
 	PYTHON=$(PYTHON) $(MAKE) smoke-security > "docs/plans/$$STAMP-smoke-security.log" 2>&1; SECURITY_EXIT=$$?; \
 	PYTHON=$(PYTHON) $(MAKE) smoke-workflows > "docs/plans/$$STAMP-smoke-workflows.log" 2>&1; WORKFLOWS_EXIT=$$?; \
 	PYTHON=$(PYTHON) $(MAKE) smoke-perf-cost > "docs/plans/$$STAMP-smoke-perf-cost.log" 2>&1; PERF_COST_EXIT=$$?; \
-	bash scripts/run_diarization_benchmarks.sh samples/sample.wav --stamp "$$STAMP" > "docs/plans/$$STAMP-diarization-orchestrator.log" 2>&1; DIAR_EXIT=$$?; \
+	if [ "$${CI:-}" = "true" ]; then REUSE_ARGS=""; else REUSE_ARGS="--reuse-existing"; fi; \
+	bash scripts/run_diarization_benchmarks.sh samples/sample.wav --stamp "$$STAMP" $$REUSE_ARGS > "docs/plans/$$STAMP-diarization-orchestrator.log" 2>&1; DIAR_EXIT=$$?; \
 	set -e; \
 	$(PYTHON) scripts/release_readiness_report.py --stamp "$$STAMP" --verify-exit "$$VERIFY_EXIT" --smoke-hosted-exit "$$HOSTED_EXIT" --smoke-local-exit "$$LOCAL_EXIT" --smoke-security-exit "$$SECURITY_EXIT" --smoke-workflows-exit "$$WORKFLOWS_EXIT" --smoke-perf-cost-exit "$$PERF_COST_EXIT" --diarization-exit "$$DIAR_EXIT"
 

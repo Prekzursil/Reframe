@@ -17,6 +17,21 @@ API_ROOT = Path(__file__).resolve().parents[1]
 if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
 
+TEST_JWT_SECRET = "reframe-test-jwt-secret-0123456789abcdef"
+TEST_JWT_REFRESH_SECRET = "reframe-test-jwt-refresh-secret-0123456789abcdef"
+TEST_OAUTH_STATE_SECRET = "reframe-test-oauth-state-secret-0123456789abcdef"
+
+
+@pytest.fixture(autouse=True)
+def _set_test_security_secrets(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("REFRAME_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("REFRAME_JWT_REFRESH_SECRET", TEST_JWT_REFRESH_SECRET)
+    monkeypatch.setenv("REFRAME_OAUTH_STATE_SECRET", TEST_OAUTH_STATE_SECRET)
+
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
 
 @pytest.fixture()
 def test_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
