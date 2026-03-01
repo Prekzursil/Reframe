@@ -29,8 +29,22 @@ from app.auth_api import PrincipalDep, ensure_default_plans
 from app.billing import get_plan_policy
 from app.database import get_session
 from app.config import get_settings
-from app.errors import ApiError, ErrorCode, ErrorResponse, conflict, not_found, quota_exceeded, server_error
-from app.models import Job, JobStatus, MediaAsset, Project, Subscription, SubtitleStylePreset, UsageEvent
+from app.errors import ApiError, ErrorCode, ErrorResponse, conflict, not_found, quota_exceeded, server_error, unauthorized
+from app.models import (
+    Job,
+    JobStatus,
+    MediaAsset,
+    Project,
+    Subscription,
+    SubtitleStylePreset,
+    UsageEvent,
+    UsageLedgerEntry,
+    WorkflowRun,
+    WorkflowRunStatus,
+    WorkflowRunStep,
+    WorkflowStepStatus,
+    WorkflowTemplate,
+)
 from app.rate_limit import enforce_rate_limit
 from app.security import AuthPrincipal
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
@@ -517,6 +531,63 @@ class UsageSummary(SQLModel):
     to_date: Optional[datetime] = None
 
 
+class UsageCostSummary(SQLModel):
+    currency: str = "usd"
+    total_estimated_cost_cents: int = 0
+    entries_count: int = 0
+    by_metric: dict[str, float] = Field(default_factory=dict)
+    by_metric_cost_cents: dict[str, int] = Field(default_factory=dict)
+    from_date: Optional[datetime] = None
+    to_date: Optional[datetime] = None
+
+
+class WorkflowTemplateCreateRequest(SQLModel):
+    name: str
+    description: Optional[str] = None
+    steps: list[dict]
+    active: bool = True
+
+
+class WorkflowTemplateView(SQLModel):
+    id: UUID
+    name: str
+    description: Optional[str] = None
+    steps: list[dict]
+    active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorkflowRunCreateRequest(SQLModel):
+    template_id: UUID
+    video_asset_id: UUID
+    options: Optional[dict] = None
+    project_id: Optional[UUID] = None
+
+
+class WorkflowRunStepView(SQLModel):
+    id: UUID
+    order_index: int
+    step_type: str
+    status: str
+    payload: dict
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorkflowRunView(SQLModel):
+    id: UUID
+    template_id: UUID
+    task_id: Optional[str] = None
+    status: str
+    input_asset_id: Optional[UUID] = None
+    payload: dict
+    project_id: Optional[UUID] = None
+    created_at: datetime
+    updated_at: datetime
+    steps: list[WorkflowRunStepView] = Field(default_factory=list)
+
+
 class ProjectCreateRequest(SQLModel):
     name: str
     description: Optional[str] = None
@@ -676,6 +747,64 @@ def _dispatch_existing_job(job: Job, session: Session) -> Job:
         code=ErrorCode.VALIDATION_ERROR,
         message="Job type does not support retry",
         details={"job_type": job.job_type},
+    )
+
+
+def _normalize_workflow_steps(steps: list[dict]) -> list[dict]:
+    normalized: list[dict] = []
+    for idx, raw in enumerate(steps):
+        if not isinstance(raw, dict):
+            raise ApiError(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                code=ErrorCode.VALIDATION_ERROR,
+                message="Workflow steps must be objects",
+                details={"index": idx},
+            )
+        step_type = str(raw.get("type") or raw.get("step_type") or "").strip().lower()
+        if step_type not in {"captions", "translate_subtitles", "style_subtitles", "shorts"}:
+            raise ApiError(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                code=ErrorCode.VALIDATION_ERROR,
+                message="Unsupported workflow step type",
+                details={"index": idx, "step_type": step_type},
+            )
+        payload = raw.get("payload") if isinstance(raw.get("payload"), dict) else {}
+        normalized.append({"type": step_type, "payload": payload})
+    if not normalized:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Workflow must include at least one step",
+        )
+    return normalized
+
+
+def _serialize_workflow_run(session: Session, run: WorkflowRun) -> WorkflowRunView:
+    steps = session.exec(
+        select(WorkflowRunStep).where(WorkflowRunStep.run_id == run.id).order_by(WorkflowRunStep.order_index.asc())
+    ).all()
+    return WorkflowRunView(
+        id=run.id,
+        template_id=run.template_id,
+        task_id=run.task_id,
+        status=str(run.status),
+        input_asset_id=run.input_asset_id,
+        payload=dict(run.payload or {}),
+        project_id=run.project_id,
+        created_at=run.created_at,
+        updated_at=run.updated_at,
+        steps=[
+            WorkflowRunStepView(
+                id=step.id,
+                order_index=step.order_index,
+                step_type=step.step_type,
+                status=str(step.status),
+                payload=dict(step.payload or {}),
+                created_at=step.created_at,
+                updated_at=step.updated_at,
+            )
+            for step in steps
+        ],
     )
 
 
@@ -893,6 +1022,58 @@ def get_usage_summary(
     )
 
 
+@router.get("/usage/costs", tags=["Usage"])
+def get_usage_costs(
+    session: SessionDep,
+    principal: PrincipalDep,
+    from_date: Annotated[Optional[datetime], Query(alias="from")] = None,
+    to_date: Annotated[Optional[datetime], Query(alias="to")] = None,
+    project_id: Optional[UUID] = None,
+) -> UsageCostSummary:
+    if not principal.org_id:
+        return UsageCostSummary(from_date=from_date, to_date=to_date)
+
+    from_dt = _coerce_aware_datetime(from_date)
+    to_dt = _coerce_aware_datetime(to_date)
+
+    query = select(UsageLedgerEntry).where(UsageLedgerEntry.org_id == principal.org_id)
+    if from_dt:
+        query = query.where(UsageLedgerEntry.created_at >= from_dt)
+    if to_dt:
+        query = query.where(UsageLedgerEntry.created_at <= to_dt)
+
+    if project_id:
+        _ensure_project_exists(session, project_id, principal)
+        project_job_ids = list(
+            session.exec(
+                select(Job.id).where((Job.org_id == principal.org_id) & (Job.project_id == project_id))
+            ).all()
+        )
+        if not project_job_ids:
+            return UsageCostSummary(from_date=from_dt, to_date=to_dt)
+        query = query.where(UsageLedgerEntry.job_id.in_(project_job_ids))
+
+    entries = session.exec(query).all()
+
+    by_metric: dict[str, float] = {}
+    by_metric_costs: dict[str, int] = {}
+    total_cost = 0
+    for entry in entries:
+        metric = str(entry.metric or "unknown")
+        by_metric[metric] = by_metric.get(metric, 0.0) + float(entry.quantity or 0.0)
+        by_metric_costs[metric] = by_metric_costs.get(metric, 0) + int(entry.estimated_cost_cents or 0)
+        total_cost += int(entry.estimated_cost_cents or 0)
+
+    return UsageCostSummary(
+        total_estimated_cost_cents=total_cost,
+        entries_count=len(entries),
+        by_metric={k: round(v, 3) for k, v in sorted(by_metric.items())},
+        by_metric_cost_cents={k: int(v) for k, v in sorted(by_metric_costs.items())},
+        from_date=from_dt,
+        to_date=to_dt,
+    )
+
+
 @router.post(
     "/projects",
     response_model=Project,
@@ -925,6 +1106,174 @@ def list_projects(session: SessionDep, principal: PrincipalDep) -> list[Project]
     query = select(Project).order_by(Project.created_at.desc())
     query = _scope_query_by_org(query, Project, principal)
     return session.exec(query).all()
+
+
+@router.post(
+    "/workflows/templates",
+    status_code=status.HTTP_201_CREATED,
+    tags=["Projects"],
+    responses={401: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def create_workflow_template(payload: WorkflowTemplateCreateRequest, session: SessionDep, principal: PrincipalDep) -> WorkflowTemplateView:
+    if not principal.org_id:
+        raise unauthorized("Authentication required")
+    name = (payload.name or "").strip()
+    if not name:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Template name is required",
+        )
+    steps = _normalize_workflow_steps(payload.steps)
+    template = WorkflowTemplate(
+        name=name,
+        description=(payload.description or "").strip() or None,
+        steps=steps,
+        active=bool(payload.active),
+        **_owner_fields(principal),
+    )
+    session.add(template)
+    session.commit()
+    session.refresh(template)
+    return WorkflowTemplateView(
+        id=template.id,
+        name=template.name,
+        description=template.description,
+        steps=list(template.steps or []),
+        active=template.active,
+        created_at=template.created_at,
+        updated_at=template.updated_at,
+    )
+
+
+@router.get("/workflows/templates", tags=["Projects"])
+def list_workflow_templates(session: SessionDep, principal: PrincipalDep, include_inactive: bool = False) -> list[WorkflowTemplateView]:
+    query = select(WorkflowTemplate).order_by(WorkflowTemplate.created_at.desc())
+    query = _scope_query_by_org(query, WorkflowTemplate, principal)
+    if not include_inactive:
+        query = query.where(WorkflowTemplate.active == True)  # noqa: E712
+    templates = session.exec(query).all()
+    return [
+        WorkflowTemplateView(
+            id=item.id,
+            name=item.name,
+            description=item.description,
+            steps=list(item.steps or []),
+            active=item.active,
+            created_at=item.created_at,
+            updated_at=item.updated_at,
+        )
+        for item in templates
+    ]
+
+
+@router.post(
+    "/workflows/runs",
+    status_code=status.HTTP_201_CREATED,
+    tags=["Projects"],
+    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def create_workflow_run(payload: WorkflowRunCreateRequest, session: SessionDep, principal: PrincipalDep) -> WorkflowRunView:
+    if not principal.org_id:
+        raise unauthorized("Authentication required")
+    template = session.get(WorkflowTemplate, payload.template_id)
+    if not template:
+        raise not_found("Workflow template not found", {"template_id": str(payload.template_id)})
+    _assert_org_access(principal=principal, entity_org_id=template.org_id, entity="workflow_template", entity_id=str(template.id))
+    if not template.active:
+        raise ApiError(
+            status_code=status.HTTP_409_CONFLICT,
+            code=ErrorCode.CONFLICT,
+            message="Workflow template is inactive",
+            details={"template_id": str(template.id)},
+        )
+    _ensure_asset_exists(session, asset_id=payload.video_asset_id, principal=principal, kind="video", field="video_asset_id")
+    project = _ensure_project_exists(session, payload.project_id, principal)
+
+    run = WorkflowRun(
+        template_id=template.id,
+        status=WorkflowRunStatus.queued,
+        input_asset_id=payload.video_asset_id,
+        payload=payload.options or {},
+        project_id=project.id if project else payload.project_id,
+        **_owner_fields(principal),
+    )
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+
+    for idx, step in enumerate(list(template.steps or [])):
+        session.add(
+            WorkflowRunStep(
+                run_id=run.id,
+                order_index=idx,
+                step_type=str(step.get("type") or ""),
+                status=WorkflowStepStatus.queued,
+                payload=dict(step.get("payload") or {}),
+            )
+        )
+    session.commit()
+
+    try:
+        result = get_celery_app().send_task("tasks.run_workflow_pipeline", args=[str(run.id)])
+        run.task_id = result.id
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+    except Exception as exc:  # pragma: no cover - defensive
+        run.status = WorkflowRunStatus.failed
+        run.payload = {**(run.payload or {}), "error": f"Failed to dispatch workflow pipeline: {exc}"}
+        session.add(run)
+        session.commit()
+
+    return _serialize_workflow_run(session, run)
+
+
+@router.get(
+    "/workflows/runs/{run_id}",
+    tags=["Projects"],
+    responses={404: {"model": ErrorResponse}},
+)
+def get_workflow_run(run_id: UUID, session: SessionDep, principal: PrincipalDep) -> WorkflowRunView:
+    run = session.get(WorkflowRun, run_id)
+    if not run:
+        raise not_found("Workflow run not found", {"run_id": str(run_id)})
+    _assert_org_access(principal=principal, entity_org_id=run.org_id, entity="workflow_run", entity_id=str(run.id))
+    return _serialize_workflow_run(session, run)
+
+
+@router.post(
+    "/workflows/runs/{run_id}/cancel",
+    tags=["Projects"],
+    responses={404: {"model": ErrorResponse}},
+)
+def cancel_workflow_run(run_id: UUID, session: SessionDep, principal: PrincipalDep) -> WorkflowRunView:
+    run = session.get(WorkflowRun, run_id)
+    if not run:
+        raise not_found("Workflow run not found", {"run_id": str(run_id)})
+    _assert_org_access(principal=principal, entity_org_id=run.org_id, entity="workflow_run", entity_id=str(run.id))
+    if run.status not in {WorkflowRunStatus.completed, WorkflowRunStatus.failed, WorkflowRunStatus.cancelled}:
+        run.status = WorkflowRunStatus.cancelled
+        run.updated_at = datetime.now(timezone.utc)
+        session.add(run)
+        if run.task_id:
+            try:
+                get_celery_app().control.revoke(run.task_id, terminate=False)
+            except Exception:
+                pass
+        pending_steps = session.exec(
+            select(WorkflowRunStep).where(
+                (WorkflowRunStep.run_id == run.id)
+                & WorkflowRunStep.status.in_([WorkflowStepStatus.queued, WorkflowStepStatus.running])
+            )
+        ).all()
+        for step in pending_steps:
+            step.status = WorkflowStepStatus.cancelled
+            step.updated_at = datetime.now(timezone.utc)
+            session.add(step)
+        session.commit()
+    session.refresh(run)
+    return _serialize_workflow_run(session, run)
 
 
 @router.get(

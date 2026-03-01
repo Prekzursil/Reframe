@@ -13,72 +13,129 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - name: Audit main branch protection
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run branch protection audit
+        id: audit
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p branch-protection-audit
+          python3 scripts/audit_branch_protection.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --branch main \
+            --policy docs/branch-protection-policy.json \
+            --out-json branch-protection-audit/audit.json \
+            --out-md branch-protection-audit/audit.md
+
+      - name: Print audit summary
+        run: |
+          set -euo pipefail
+          cat branch-protection-audit/audit.md
+
+      - name: Manage findings issue
         uses: actions/github-script@v8
         with:
           script: |
+            const fs = require("fs");
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const branch = "main";
-            const findings = [];
+            const audit = JSON.parse(fs.readFileSync("branch-protection-audit/audit.json", "utf8"));
+            const titlePrefix = "Branch protection audit findings";
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
 
-            let protection;
-            try {
-              protection = await github.rest.repos.getBranchProtection({ owner, repo, branch });
-            } catch (error) {
-              findings.push(`Branch protection missing or inaccessible for ${branch}: ${error.message}`);
-            }
+            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: "open",
+              labels: "area:security",
+              per_page: 100,
+            });
 
-            if (protection?.data) {
-              const reviews = protection.data.required_pull_request_reviews;
-              const checks = protection.data.required_status_checks;
-              const linearHistory = protection.data.required_linear_history;
-              const requiredContexts = [
-                "Python API & worker checks",
-                "Web build",
-                "Analyze (actions)",
-                "Analyze (javascript-typescript)",
-                "Analyze (python)",
-              ];
+            const auditIssues = openIssues
+              .filter((issue) => !issue.pull_request)
+              .filter((issue) => issue.title.toLowerCase().startsWith(titlePrefix.toLowerCase()))
+              .sort((a, b) => a.number - b.number);
 
-              if (!reviews || (reviews.required_approving_review_count ?? 0) < 1) {
-                findings.push("Required approving review count is below 1.");
+            if (audit.status === "pass") {
+              if (auditIssues.length === 0) {
+                core.info("Audit passed and no open branch-protection finding issues exist.");
+                return;
               }
 
-              if (!checks) {
-                findings.push("Required status checks are not configured.");
-              } else {
-                const contexts = checks.contexts || [];
-                for (const requiredContext of requiredContexts) {
-                  if (!contexts.includes(requiredContext)) {
-                    findings.push(`Missing required status check: ${requiredContext}`);
-                  }
-                }
+              for (const issue of auditIssues) {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  body: [
+                    "Closing: latest automated branch-protection audit is compliant.",
+                    `- Run: ${runUrl}`,
+                    "- Status: `pass`",
+                  ].join("\n"),
+                });
+                await github.rest.issues.update({
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  state: "closed",
+                  state_reason: "completed",
+                });
               }
-
-              if (!linearHistory || linearHistory.enabled !== true) {
-                findings.push("Linear history is disabled.");
-              }
-            }
-
-            if (findings.length === 0) {
-              core.info("Branch protection audit passed.");
               return;
             }
 
-            const title = `Branch protection audit findings - ${new Date().toISOString().slice(0, 10)}`;
+            const findings = (audit.findings || []).map((f) => `- ${f}`).join("\n") || "- None";
             const body = [
               "## Findings",
-              ...findings.map(f => `- ${f}`),
+              findings,
+              "",
+              "## Audit status",
+              `- Status: \`${audit.status}\``,
+              `- Run: ${runUrl}`,
               "",
               "## Required action",
-              "- Update branch protection to meet Phase-3/4 policy baseline.",
+              "- Resolve policy drift, or grant branch-protection read scope for this workflow when status is inconclusive.",
             ].join("\n");
 
-            await github.rest.issues.create({
-              owner,
-              repo,
-              title,
-              body,
-              labels: ["area:security", "risk:medium"],
-            });
+            if (auditIssues.length > 0) {
+              const target = auditIssues[0];
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: target.number,
+                body,
+              });
+
+              for (const extra of auditIssues.slice(1)) {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: extra.number,
+                  body: `Superseded by #${target.number}.`,
+                });
+                await github.rest.issues.update({
+                  owner,
+                  repo,
+                  issue_number: extra.number,
+                  state: "closed",
+                  state_reason: "not_planned",
+                });
+              }
+            } else {
+              await github.rest.issues.create({
+                owner,
+                repo,
+                title: titlePrefix,
+                body,
+                labels: ["area:security", "risk:medium"],
+              });
+            }
+
+      - name: Upload audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: branch-protection-audit
+          path: branch-protection-audit

@@ -13,6 +13,15 @@ from typing import Any
 PYANNOTE_BLOCKER_ISSUE_URL = "https://github.com/Prekzursil/Reframe/issues/80"
 PYANNOTE_BLOCKER_OWNER = "@Prekzursil"
 PYANNOTE_BLOCKER_RECHECK_DATE = "2026-03-07"
+LOCAL_GATE_NAMES = (
+    "make verify",
+    "smoke-hosted",
+    "smoke-local",
+    "smoke-security",
+    "smoke-workflows",
+    "smoke-perf-cost",
+)
+PERF_COST_GATE_NAME = "smoke-perf-cost"
 
 
 @dataclass
@@ -23,6 +32,20 @@ class GateStatus:
     @property
     def ok(self) -> bool:
         return self.exit_code == 0
+
+
+def _gate_lookup(gates: list[GateStatus]) -> dict[str, GateStatus]:
+    return {gate.name: gate for gate in gates}
+
+
+def _compute_local_ok(gates: list[GateStatus]) -> bool:
+    lookup = _gate_lookup(gates)
+    return all(name in lookup and lookup[name].ok for name in LOCAL_GATE_NAMES)
+
+
+def _gate_ok(gates: list[GateStatus], gate_name: str) -> bool:
+    gate = _gate_lookup(gates).get(gate_name)
+    return bool(gate and gate.ok)
 
 
 def _run_json(cmd: list[str], *, cwd: Path) -> dict[str, Any] | list[Any] | None:
@@ -45,6 +68,15 @@ def _load_json(path: Path) -> dict[str, Any] | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return None
+
+
+def _load_latest_updater_result(plans: Path, platform: str) -> tuple[dict[str, Any] | None, Path | None]:
+    candidates = sorted(plans.glob(f"*-updater-e2e-{platform}.json"), reverse=True)
+    for candidate in candidates:
+        payload = _load_json(candidate)
+        if payload is not None:
+            return payload, candidate
+    return None, None
 
 
 def _main_sha(repo: Path) -> str | None:
@@ -92,6 +124,14 @@ def _collect_gh_status(repo: Path) -> dict[str, Any]:
     return out
 
 
+def _display_path(path: Path, repo: Path) -> str:
+    candidate = path if path.is_absolute() else (repo / path)
+    try:
+        return str(candidate.resolve().relative_to(repo.resolve()))
+    except ValueError:
+        return str(path)
+
+
 def _resolve_status(*, local_ok: bool, updater_ok: bool, pyannote_cpu_status: str) -> tuple[str, list[str], list[str]]:
     blocking: list[str] = []
     external: list[str] = []
@@ -119,6 +159,9 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--verify-exit", type=int, required=True)
     parser.add_argument("--smoke-hosted-exit", type=int, required=True)
     parser.add_argument("--smoke-local-exit", type=int, required=True)
+    parser.add_argument("--smoke-security-exit", type=int, required=False, default=0)
+    parser.add_argument("--smoke-workflows-exit", type=int, required=False, default=0)
+    parser.add_argument("--smoke-perf-cost-exit", type=int, required=False, default=0)
     parser.add_argument("--diarization-exit", type=int, required=True)
     parser.add_argument("--out-md", default="")
     parser.add_argument("--out-json", default="")
@@ -135,21 +178,38 @@ def main(argv: list[str]) -> int:
         GateStatus("make verify", args.verify_exit),
         GateStatus("smoke-hosted", args.smoke_hosted_exit),
         GateStatus("smoke-local", args.smoke_local_exit),
+        GateStatus("smoke-security", args.smoke_security_exit),
+        GateStatus("smoke-workflows", args.smoke_workflows_exit),
+        GateStatus("smoke-perf-cost", args.smoke_perf_cost_exit),
         GateStatus("diarization-orchestrator", args.diarization_exit),
     ]
 
     updater_results: dict[str, dict[str, Any]] = {}
     updater_ok = True
     for platform in ("windows", "macos", "linux"):
-        payload = _load_json(plans / f"{args.stamp}-updater-e2e-{platform}.json")
-        updater_results[platform] = payload or {"success": False, "missing": True}
-        if not payload or not bool(payload.get("success")):
+        stamp_path = plans / f"{args.stamp}-updater-e2e-{platform}.json"
+        payload = _load_json(stamp_path)
+        source_path = stamp_path if payload else None
+
+        if payload is None:
+            payload, source_path = _load_latest_updater_result(plans, platform)
+
+        if payload is None:
+            updater_results[platform] = {"success": False, "missing": True}
+            updater_ok = False
+            continue
+
+        result = dict(payload)
+        if source_path:
+            result["source_file"] = str(source_path.relative_to(plans))
+        updater_results[platform] = result
+        if not bool(result.get("success")):
             updater_ok = False
 
     pyannote = _load_json(plans / f"{args.stamp}-pyannote-benchmark-status.json") or {}
     pyannote_cpu_status = str(((pyannote.get("cpu") or {}).get("status") or "unknown"))
 
-    local_ok = all(g.ok for g in gates[:3])
+    local_ok = _compute_local_ok(gates)
     status, blocking, external = _resolve_status(
         local_ok=local_ok,
         updater_ok=updater_ok,
@@ -188,6 +248,13 @@ def main(argv: list[str]) -> int:
     for g in payload["gates"]:
         marker = "PASS" if g["ok"] else "FAIL"
         lines.append(f"- {g['name']}: `{marker}` (exit `{g['exit_code']}`)")
+
+    lines.append("")
+    lines.append("## Performance and cost readiness")
+    lines.append("")
+    perf_cost_ok = _gate_ok(gates, PERF_COST_GATE_NAME)
+    lines.append(f"- smoke-perf-cost: `{'PASS' if perf_cost_ok else 'FAIL'}`")
+    lines.append(f"- usage-cost endpoint gate: `{'ready' if perf_cost_ok else 'needs_attention'}`")
 
     lines.append("")
     lines.append("## Desktop updater matrix")
@@ -239,7 +306,7 @@ def main(argv: list[str]) -> int:
     lines.append("")
     lines.append("## Evidence files")
     lines.append("")
-    lines.append(f"- `{out_json.relative_to(repo)}`")
+    lines.append(f"- `{_display_path(out_json, repo)}`")
     lines.append(f"- `docs/plans/{args.stamp}-updater-e2e-*.json`")
     lines.append(f"- `docs/plans/{args.stamp}-pyannote-benchmark-status.json`")
 

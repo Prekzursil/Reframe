@@ -127,8 +127,9 @@ KPI data is collected from:
 
 ### Storage
 
-- Weekly aggregated metrics stored in `.github/kpi-reports/YYYY-WW.json`
-- Historical trends accessible via KPI dashboard
+- Weekly aggregated metrics are generated as workflow artifacts by `ops-weekly-digest.yml`
+- Rolling digest issue (`Weekly Ops Digest (rolling)`) holds the latest snapshot
+- Historical trends are reconstructed from artifact archives/run history
 
 ### Privacy
 
@@ -137,13 +138,13 @@ KPI data is collected from:
 
 ## Reporting
 
-### Weekly KPI Digest
+### Weekly Ops Digest
 
-Generated every Monday via GitHub Actions workflow:
-- Summary of key metrics vs. targets
-- Trend analysis (week-over-week, month-over-month)
-- Top 3 improvements and concerns
-- Recommended actions
+Generated every Monday via `Ops Weekly Digest` workflow:
+- Summary of key operational metrics vs. targets
+- Single rolling issue update (no repetitive issue spam)
+- Artifact upload (`digest.json`, `digest.md`, `upsert.json`) per run
+- Recommended actions embedded in digest output
 
 ### Monthly Review
 

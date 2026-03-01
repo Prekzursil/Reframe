@@ -35,7 +35,20 @@ if MEDIA_CORE_SRC.is_dir() and str(MEDIA_CORE_SRC) not in sys.path:
     sys.path.append(str(MEDIA_CORE_SRC))
 
 from app.config import get_settings
-from app.models import Job, JobStatus, MediaAsset, Subscription, UsageEvent
+from app.billing import get_plan_policy
+from app.models import (
+    Job,
+    JobStatus,
+    MediaAsset,
+    Subscription,
+    UsageEvent,
+    UsageLedgerEntry,
+    WorkflowRun,
+    WorkflowRunStatus,
+    WorkflowRunStep,
+    WorkflowStepStatus,
+    WorkflowTemplate,
+)
 from app.storage import LocalStorageBackend, get_storage, is_remote_uri
 from celery import Celery
 from kombu import Queue
@@ -522,6 +535,22 @@ def _record_usage_event(
 ) -> None:
     if not org_id:
         return
+    plan_code = "free"
+    sub = session.exec(select(Subscription).where(Subscription.org_id == org_id)).first()
+    if sub and sub.plan_code:
+        plan_code = sub.plan_code
+    policy = get_plan_policy(plan_code)
+
+    estimated_cost_cents = 0
+    unit = "count"
+    if metric == "job_minutes":
+        unit = "minute"
+        estimated_cost_cents = int(round(float(quantity) * float(policy.overage_per_minute_cents)))
+    elif metric == "storage_bytes":
+        unit = "byte"
+    elif metric == "jobs_completed":
+        unit = "count"
+
     event = UsageEvent(
         org_id=org_id,
         user_id=user_id,
@@ -531,6 +560,18 @@ def _record_usage_event(
         details=details or {},
     )
     session.add(event)
+    session.add(
+        UsageLedgerEntry(
+            org_id=org_id,
+            user_id=user_id,
+            job_id=job_id,
+            metric=metric,
+            unit=unit,
+            quantity=float(quantity),
+            estimated_cost_cents=estimated_cost_cents,
+            payload={**(details or {}), "plan_code": plan_code},
+        )
+    )
 
 
 def _asset_size_bytes(asset: MediaAsset) -> int:
@@ -721,6 +762,148 @@ def _progress(task, status: str, progress: float = 0.0, **meta):
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("Progress update failed: %s", exc)
     return payload
+
+
+def _dispatch_pipeline_step(
+    *,
+    job: Job,
+    run: WorkflowRun,
+    step_type: str,
+    input_asset_id: UUID | None,
+    step_payload: dict,
+) -> str:
+    if not input_asset_id and step_type in {"captions", "shorts", "translate_subtitles"}:
+        raise ValueError(f"Workflow step `{step_type}` is missing input asset")
+
+    if step_type == "captions":
+        result = celery_app.send_task("tasks.generate_captions", args=[str(job.id), str(input_asset_id), step_payload], queue=CPU_QUEUE)
+        return str(result.id)
+    if step_type == "translate_subtitles":
+        result = celery_app.send_task("tasks.translate_subtitles", args=[str(job.id), str(input_asset_id), step_payload], queue=CPU_QUEUE)
+        return str(result.id)
+    if step_type == "style_subtitles":
+        video_asset_id = str(step_payload.get("video_asset_id") or run.input_asset_id or "")
+        subtitle_asset_id = str(step_payload.get("subtitle_asset_id") or input_asset_id or "")
+        style = step_payload.get("style") if isinstance(step_payload.get("style"), dict) else {}
+        options = {"preview_seconds": step_payload.get("preview_seconds")}
+        result = celery_app.send_task(
+            "tasks.render_styled_subtitles",
+            args=[str(job.id), video_asset_id, subtitle_asset_id, style, options],
+            queue=CPU_QUEUE,
+        )
+        return str(result.id)
+    if step_type == "shorts":
+        result = celery_app.send_task("tasks.generate_shorts", args=[str(job.id), str(input_asset_id), step_payload], queue=CPU_QUEUE)
+        return str(result.id)
+    raise ValueError(f"Unsupported workflow step type: {step_type}")
+
+
+@celery_app.task(bind=True, name="tasks.run_workflow_pipeline")
+def run_workflow_pipeline(self, workflow_run_id: str) -> dict:
+    try:
+        run_uuid = UUID(workflow_run_id)
+    except Exception:
+        return {"status": "invalid_run_id", "workflow_run_id": workflow_run_id}
+
+    now = datetime.now(timezone.utc)
+    with Session(get_engine()) as session:
+        run = session.get(WorkflowRun, run_uuid)
+        if not run:
+            return {"status": "missing", "workflow_run_id": workflow_run_id}
+        if run.status == WorkflowRunStatus.cancelled:
+            return {"status": "cancelled", "workflow_run_id": workflow_run_id}
+
+        template = session.get(WorkflowTemplate, run.template_id)
+        if not template:
+            run.status = WorkflowRunStatus.failed
+            run.updated_at = now
+            run.payload = {**(run.payload or {}), "error": "Workflow template not found"}
+            session.add(run)
+            session.commit()
+            return {"status": "failed", "workflow_run_id": workflow_run_id, "error": "template_missing"}
+
+        run.status = WorkflowRunStatus.running
+        run.updated_at = now
+        session.add(run)
+        session.commit()
+
+        steps = session.exec(
+            select(WorkflowRunStep).where(WorkflowRunStep.run_id == run.id).order_by(WorkflowRunStep.order_index.asc())
+        ).all()
+        current_input_asset_id = run.input_asset_id
+        dispatched_jobs: list[dict[str, str]] = []
+
+        for step in steps:
+            refreshed_run = session.get(WorkflowRun, run.id)
+            if refreshed_run and refreshed_run.status == WorkflowRunStatus.cancelled:
+                step.status = WorkflowStepStatus.cancelled
+                step.updated_at = datetime.now(timezone.utc)
+                session.add(step)
+                session.commit()
+                continue
+
+            step.status = WorkflowStepStatus.running
+            step.updated_at = datetime.now(timezone.utc)
+            session.add(step)
+            session.commit()
+
+            step_payload = dict(step.payload or {})
+            try:
+                job = Job(
+                    job_type=step.step_type,
+                    status=JobStatus.queued,
+                    progress=0.0,
+                    input_asset_id=current_input_asset_id,
+                    payload=step_payload,
+                    project_id=run.project_id,
+                    org_id=run.org_id,
+                    owner_user_id=run.owner_user_id,
+                )
+                session.add(job)
+                session.commit()
+                session.refresh(job)
+
+                task_id = _dispatch_pipeline_step(
+                    job=job,
+                    run=run,
+                    step_type=step.step_type,
+                    input_asset_id=current_input_asset_id,
+                    step_payload=step_payload,
+                )
+                job.task_id = task_id
+                session.add(job)
+
+                step.status = WorkflowStepStatus.completed
+                step.updated_at = datetime.now(timezone.utc)
+                step.payload = {**step_payload, "job_id": str(job.id), "task_id": task_id}
+                session.add(step)
+                session.commit()
+
+                dispatched_jobs.append({"step_type": step.step_type, "job_id": str(job.id), "task_id": task_id})
+            except Exception as exc:
+                step.status = WorkflowStepStatus.failed
+                step.updated_at = datetime.now(timezone.utc)
+                step.payload = {**step_payload, "error": str(exc)}
+                session.add(step)
+                run.status = WorkflowRunStatus.failed
+                run.updated_at = datetime.now(timezone.utc)
+                run.payload = {**(run.payload or {}), "error": f"Step `{step.step_type}` failed to dispatch: {exc}"}
+                session.add(run)
+                session.commit()
+                return {
+                    "status": "failed",
+                    "workflow_run_id": workflow_run_id,
+                    "step_id": str(step.id),
+                    "error": str(exc),
+                }
+
+        run.status = WorkflowRunStatus.completed
+        run.updated_at = datetime.now(timezone.utc)
+        run.payload = {**(run.payload or {}), "dispatched_jobs": dispatched_jobs}
+        session.add(run)
+        session.commit()
+
+        return {"status": "completed", "workflow_run_id": workflow_run_id, "dispatched_jobs": dispatched_jobs}
 
 
 @celery_app.task(bind=True, name="tasks.ping")

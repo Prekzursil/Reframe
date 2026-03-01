@@ -20,12 +20,17 @@ The `main` branch is the primary production branch and has the strictest protect
 2. **Require Status Checks Before Merging**
    - **Require branches to be up to date before merging**: Yes
    - **Required status checks**:
-     - `python / Python API & worker checks` - Validates Python code compilation and tests
-     - `web / Web build` - Ensures frontend builds successfully
+     - `Python API & worker checks` - Validates Python code compilation and tests
+     - `Web build` - Ensures frontend builds successfully
+     - `Analyze (actions)` - CodeQL analysis for GitHub Actions workflows
+     - `Analyze (javascript-typescript)` - CodeQL analysis for web code
+     - `Analyze (python)` - CodeQL analysis for API/worker/media-core code
+     - `CodeQL` - Aggregate CodeQL workflow signal
+     - `CodeRabbit` - Automated review gate configured on `main`
 
 3. **Require Conversation Resolution Before Merging**
-   - All review comments must be resolved before merge
-   - Ensures all feedback is addressed
+   - **Current setting**: Disabled on `main`.
+   - Recommended to enable if reviewer workflow can enforce strict thread closure.
 
 4. **Require Signed Commits**
    - Optional but recommended for enhanced security
@@ -130,6 +135,28 @@ Feature branches follow a naming convention and have lighter protections:
 **Failure Handling**:
 - PR cannot be merged if this check fails
 - Must fix build or test errors before approval
+
+### 3. CodeQL
+
+**Job Names**:
+- `Analyze (actions)`
+- `Analyze (javascript-typescript)`
+- `Analyze (python)`
+- `CodeQL` (workflow-level status)
+
+**Workflow**: `.github/workflows/codeql.yml`
+
+**Purpose**:
+- Run static security analysis over Actions, JavaScript/TypeScript, and Python code.
+- Block merges on unresolved high-signal analysis failures in required contexts.
+
+### 4. CodeRabbit
+
+**Job Name**: `CodeRabbit`
+
+**Purpose**:
+- Enforce configured automated review policy before merge to `main`.
+- Keep review automation as a required branch protection context.
 
 ## Human Approval Requirements
 
@@ -237,8 +264,15 @@ To apply these protections to the repository:
      - ✅ Dismiss stale pull request approvals when new commits are pushed
    - ✅ Require status checks to pass before merging
      - ✅ Require branches to be up to date before merging
-     - Add required checks: `python`, `web`
-   - ✅ Require conversation resolution before merging
+     - Add required checks:
+       - `Python API & worker checks`
+       - `Web build`
+       - `Analyze (actions)`
+       - `Analyze (javascript-typescript)`
+       - `Analyze (python)`
+       - `CodeQL`
+       - `CodeRabbit`
+   - ⛔ Require conversation resolution before merging (currently not enabled)
    - ✅ Require linear history
    - ✅ Do not allow bypassing the above settings
    - ✅ Restrict who can push to matching branches (none)
