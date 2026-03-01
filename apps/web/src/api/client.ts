@@ -107,6 +107,16 @@ export interface UsageSummary {
   to_date?: string | null;
 }
 
+export interface UsageCostSummary {
+  currency: string;
+  total_estimated_cost_cents: number;
+  entries_count: number;
+  by_metric: Record<string, number>;
+  by_metric_cost_cents: Record<string, number>;
+  from_date?: string | null;
+  to_date?: string | null;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -227,6 +237,15 @@ export interface OrgContextResponse {
   members: OrgMemberView[];
 }
 
+export interface OrgView {
+  org_id: string;
+  name: string;
+  slug: string;
+  role: string;
+  seat_limit: number;
+  tier: string;
+}
+
 export interface OrgInviteView {
   id: string;
   org_id: string;
@@ -237,6 +256,29 @@ export interface OrgInviteView {
   invite_url?: string | null;
 }
 
+export interface ApiKeyView {
+  id: string;
+  org_id: string;
+  name: string;
+  key_prefix: string;
+  scopes: string[];
+  created_at: string;
+  last_used_at?: string | null;
+  revoked_at?: string | null;
+  secret?: string | null;
+}
+
+export interface AuditEventView {
+  id: string;
+  org_id: string;
+  actor_user_id?: string | null;
+  event_type: string;
+  entity_type?: string | null;
+  entity_id?: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
 export interface OrgInviteResolveResponse {
   org_id: string;
   org_name: string;
@@ -244,6 +286,39 @@ export interface OrgInviteResolveResponse {
   role: string;
   status: string;
   expires_at: string;
+}
+
+export interface WorkflowTemplateView {
+  id: string;
+  name: string;
+  description?: string | null;
+  steps: Array<Record<string, unknown>>;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowRunStepView {
+  id: string;
+  order_index: number;
+  step_type: string;
+  status: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowRunView {
+  id: string;
+  template_id: string;
+  task_id?: string | null;
+  status: string;
+  input_asset_id?: string | null;
+  payload: Record<string, unknown>;
+  project_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  steps: WorkflowRunStepView[];
 }
 
 export interface BillingPlan {
@@ -467,6 +542,15 @@ export class ApiClient {
     return this.request<UsageSummary>(`/usage/summary${query ? `?${query}` : ""}`);
   }
 
+  getUsageCosts(params?: { from?: string; to?: string; project_id?: string }) {
+    const search = new URLSearchParams();
+    if (params?.from) search.set("from", params.from);
+    if (params?.to) search.set("to", params.to);
+    if (params?.project_id) search.set("project_id", params.project_id);
+    const query = search.toString();
+    return this.request<UsageCostSummary>(`/usage/costs${query ? `?${query}` : ""}`);
+  }
+
   listProjects() {
     return this.request<Project[]>("/projects");
   }
@@ -559,6 +643,14 @@ export class ApiClient {
     return this.request<OrgContextResponse>("/orgs/me");
   }
 
+  listOrgs() {
+    return this.request<OrgView[]>("/orgs");
+  }
+
+  createOrg(payload: { name: string; slug?: string; seat_limit?: number }) {
+    return this.request<OrgView>("/orgs", { method: "POST", body: JSON.stringify(payload) });
+  }
+
   listOrgInvites() {
     return this.request<OrgInviteView[]>("/orgs/invites");
   }
@@ -584,6 +676,21 @@ export class ApiClient {
     return this.request<OrgMemberView>(`/orgs/members/${userId}/role`, { method: "PATCH", body: JSON.stringify(payload) });
   }
 
+  addOrgMember(orgId: string, payload: { email: string; role?: string }) {
+    return this.request<OrgMemberView>(`/orgs/${orgId}/members`, { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  async removeOrgMemberFromOrg(orgId: string, userId: string): Promise<void> {
+    const resp = await this.fetcher(`${this.baseUrl}/orgs/${orgId}/members/${userId}`, {
+      method: "DELETE",
+      headers: this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : undefined,
+    });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => resp.statusText);
+      throw new Error(body || "Failed to remove org member");
+    }
+  }
+
   async removeOrgMember(userId: string): Promise<void> {
     const resp = await this.fetcher(`${this.baseUrl}/orgs/members/${userId}`, {
       method: "DELETE",
@@ -593,6 +700,50 @@ export class ApiClient {
       const body = await resp.text().catch(() => resp.statusText);
       throw new Error(body || "Failed to remove member");
     }
+  }
+
+  listAuditEvents(limit = 50) {
+    return this.request<AuditEventView[]>(`/audit-events?limit=${encodeURIComponent(String(limit))}`);
+  }
+
+  listApiKeys(orgId: string) {
+    return this.request<ApiKeyView[]>(`/orgs/${orgId}/api-keys`);
+  }
+
+  createApiKey(orgId: string, payload: { name: string; scopes?: string[] }) {
+    return this.request<ApiKeyView>(`/orgs/${orgId}/api-keys`, { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  async revokeApiKey(orgId: string, keyId: string): Promise<void> {
+    const resp = await this.fetcher(`${this.baseUrl}/orgs/${orgId}/api-keys/${keyId}`, {
+      method: "DELETE",
+      headers: this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : undefined,
+    });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => resp.statusText);
+      throw new Error(body || "Failed to revoke api key");
+    }
+  }
+
+  createWorkflowTemplate(payload: { name: string; description?: string; steps: Array<Record<string, unknown>>; active?: boolean }) {
+    return this.request<WorkflowTemplateView>("/workflows/templates", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  listWorkflowTemplates(includeInactive = false) {
+    const query = includeInactive ? "?include_inactive=true" : "";
+    return this.request<WorkflowTemplateView[]>(`/workflows/templates${query}`);
+  }
+
+  createWorkflowRun(payload: { template_id: string; video_asset_id: string; options?: Record<string, unknown>; project_id?: string }) {
+    return this.request<WorkflowRunView>("/workflows/runs", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  getWorkflowRun(runId: string) {
+    return this.request<WorkflowRunView>(`/workflows/runs/${runId}`);
+  }
+
+  cancelWorkflowRun(runId: string) {
+    return this.request<WorkflowRunView>(`/workflows/runs/${runId}/cancel`, { method: "POST" });
   }
 
   listBillingPlans() {

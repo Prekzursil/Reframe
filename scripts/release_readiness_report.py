@@ -119,6 +119,9 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--verify-exit", type=int, required=True)
     parser.add_argument("--smoke-hosted-exit", type=int, required=True)
     parser.add_argument("--smoke-local-exit", type=int, required=True)
+    parser.add_argument("--smoke-security-exit", type=int, required=False, default=0)
+    parser.add_argument("--smoke-workflows-exit", type=int, required=False, default=0)
+    parser.add_argument("--smoke-perf-cost-exit", type=int, required=False, default=0)
     parser.add_argument("--diarization-exit", type=int, required=True)
     parser.add_argument("--out-md", default="")
     parser.add_argument("--out-json", default="")
@@ -135,6 +138,9 @@ def main(argv: list[str]) -> int:
         GateStatus("make verify", args.verify_exit),
         GateStatus("smoke-hosted", args.smoke_hosted_exit),
         GateStatus("smoke-local", args.smoke_local_exit),
+        GateStatus("smoke-security", args.smoke_security_exit),
+        GateStatus("smoke-workflows", args.smoke_workflows_exit),
+        GateStatus("smoke-perf-cost", args.smoke_perf_cost_exit),
         GateStatus("diarization-orchestrator", args.diarization_exit),
     ]
 
@@ -149,7 +155,7 @@ def main(argv: list[str]) -> int:
     pyannote = _load_json(plans / f"{args.stamp}-pyannote-benchmark-status.json") or {}
     pyannote_cpu_status = str(((pyannote.get("cpu") or {}).get("status") or "unknown"))
 
-    local_ok = all(g.ok for g in gates[:3])
+    local_ok = all(g.ok for g in gates[:6])
     status, blocking, external = _resolve_status(
         local_ok=local_ok,
         updater_ok=updater_ok,
@@ -188,6 +194,12 @@ def main(argv: list[str]) -> int:
     for g in payload["gates"]:
         marker = "PASS" if g["ok"] else "FAIL"
         lines.append(f"- {g['name']}: `{marker}` (exit `{g['exit_code']}`)")
+
+    lines.append("")
+    lines.append("## Performance and cost readiness")
+    lines.append("")
+    lines.append(f"- smoke-perf-cost: `{'PASS' if gates[5].ok else 'FAIL'}`")
+    lines.append(f"- usage-cost endpoint gate: `{'ready' if gates[5].ok else 'needs_attention'}`")
 
     lines.append("")
     lines.append("## Desktop updater matrix")

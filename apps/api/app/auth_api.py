@@ -9,13 +9,13 @@ from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, Header, Query, status
-from sqlmodel import Session, SQLModel, select
+from sqlmodel import Field, Session, SQLModel, select
 
 from app.billing import DEFAULT_PLAN_POLICIES
 from app.config import get_settings
 from app.database import get_session
 from app.errors import ErrorCode, ErrorResponse, ApiError, conflict, not_found, unauthorized
-from app.models import InviteStatus, OAuthAccount, OrgInvite, OrgMembership, Organization, Plan, Subscription, User
+from app.models import ApiKey, AuditEvent, InviteStatus, OAuthAccount, OrgInvite, OrgMembership, Organization, Plan, Subscription, User
 from app.security import (
     AuthPrincipal,
     create_access_token,
@@ -87,6 +87,21 @@ class OrgContextResponse(SQLModel):
     members: list[OrgMemberView]
 
 
+class OrgView(SQLModel):
+    org_id: UUID
+    name: str
+    slug: str
+    role: str
+    seat_limit: int
+    tier: str
+
+
+class OrgCreateRequest(SQLModel):
+    name: str
+    slug: Optional[str] = None
+    seat_limit: Optional[int] = None
+
+
 class OrgInviteRequest(SQLModel):
     email: str
     role: str = "viewer"
@@ -118,6 +133,39 @@ class OrgInviteResolveResponse(SQLModel):
 
 class OrgMemberRoleUpdateRequest(SQLModel):
     role: str
+
+
+class OrgMemberAddRequest(SQLModel):
+    email: str
+    role: str = "viewer"
+
+
+class ApiKeyCreateRequest(SQLModel):
+    name: str
+    scopes: list[str] = Field(default_factory=list)
+
+
+class ApiKeyView(SQLModel):
+    id: UUID
+    org_id: UUID
+    name: str
+    key_prefix: str
+    scopes: list[str]
+    created_at: datetime
+    last_used_at: Optional[datetime] = None
+    revoked_at: Optional[datetime] = None
+    secret: Optional[str] = None
+
+
+class AuditEventView(SQLModel):
+    id: UUID
+    org_id: UUID
+    actor_user_id: Optional[UUID] = None
+    event_type: str
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    payload: dict
+    created_at: datetime
 
 
 def _normalize_email(raw: str) -> str:
@@ -182,6 +230,53 @@ def _require_org_manager(session: Session, principal: AuthPrincipal) -> OrgMembe
     if membership.role not in ORG_MANAGER_ROLES:
         raise unauthorized("Owner or admin role is required")
     return membership
+
+
+def _require_org_manager_for(session: Session, principal: AuthPrincipal, org_id: UUID) -> OrgMembership:
+    if not principal.user_id or not principal.org_id:
+        raise unauthorized("Authentication required")
+    if principal.org_id != org_id:
+        raise unauthorized("Token organization does not match requested organization")
+    return _require_org_manager(session, principal)
+
+
+def _emit_audit_event(
+    session: Session,
+    *,
+    org_id: UUID,
+    actor_user_id: UUID | None,
+    event_type: str,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+    payload: dict | None = None,
+) -> None:
+    event = AuditEvent(
+        org_id=org_id,
+        actor_user_id=actor_user_id,
+        event_type=event_type,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        payload=payload or {},
+    )
+    session.add(event)
+
+
+def _hash_api_key_secret(secret: str) -> str:
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
+def _serialize_api_key(key: ApiKey, *, secret: str | None = None) -> ApiKeyView:
+    return ApiKeyView(
+        id=key.id,
+        org_id=key.org_id,
+        name=key.name,
+        key_prefix=key.key_prefix,
+        scopes=list(key.scopes or []),
+        created_at=key.created_at,
+        last_used_at=key.last_used_at,
+        revoked_at=key.revoked_at,
+        secret=secret,
+    )
 
 
 def _invite_url(token: str) -> str:
@@ -577,6 +672,271 @@ def org_me(session: SessionDep, principal: PrincipalDep) -> OrgContextResponse:
             role = m.role
 
     return OrgContextResponse(org_id=org.id, org_name=org.name, slug=org.slug, role=role, members=members)
+
+
+@router.get("/orgs", response_model=list[OrgView], tags=["Auth"], responses={401: {"model": ErrorResponse}})
+def list_orgs(session: SessionDep, principal: PrincipalDep) -> list[OrgView]:
+    if not principal.user_id:
+        raise unauthorized("Authentication required")
+    memberships = session.exec(select(OrgMembership).where(OrgMembership.user_id == principal.user_id)).all()
+    out: list[OrgView] = []
+    for membership in memberships:
+        org = session.get(Organization, membership.org_id)
+        if not org:
+            continue
+        out.append(
+            OrgView(
+                org_id=org.id,
+                name=org.name,
+                slug=org.slug,
+                role=membership.role,
+                seat_limit=max(1, int(org.seat_limit or 1)),
+                tier=org.tier,
+            )
+        )
+    out.sort(key=lambda item: item.name.lower())
+    return out
+
+
+@router.post("/orgs", response_model=OrgView, status_code=status.HTTP_201_CREATED, tags=["Auth"], responses={401: {"model": ErrorResponse}})
+def create_org(payload: OrgCreateRequest, session: SessionDep, principal: PrincipalDep) -> OrgView:
+    if not principal.user_id:
+        raise unauthorized("Authentication required")
+    user = session.get(User, principal.user_id)
+    if not user:
+        raise unauthorized("User not found")
+
+    name = (payload.name or "").strip()
+    if not name:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Organization name is required",
+        )
+
+    raw_slug = (payload.slug or "").strip().lower()
+    slug = _slugify(raw_slug or name)
+    while session.exec(select(Organization).where(Organization.slug == slug)).first():
+        slug = f"{slug}-{secrets.randbelow(9999):04d}"
+
+    org = Organization(
+        name=name,
+        slug=slug,
+        tier="free",
+        seat_limit=max(1, int(payload.seat_limit or 1)),
+    )
+    session.add(org)
+    session.commit()
+    session.refresh(org)
+
+    membership = OrgMembership(org_id=org.id, user_id=user.id, role="owner")
+    session.add(membership)
+    session.add(Subscription(org_id=org.id, plan_code="free", status="active"))
+    _emit_audit_event(
+        session,
+        org_id=org.id,
+        actor_user_id=user.id,
+        event_type="org.created",
+        entity_type="organization",
+        entity_id=str(org.id),
+        payload={"name": org.name, "slug": org.slug},
+    )
+    session.commit()
+
+    return OrgView(
+        org_id=org.id,
+        name=org.name,
+        slug=org.slug,
+        role=membership.role,
+        seat_limit=org.seat_limit,
+        tier=org.tier,
+    )
+
+
+@router.post(
+    "/orgs/{org_id}/members",
+    response_model=OrgMemberView,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Auth"],
+    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+def add_org_member(org_id: UUID, payload: OrgMemberAddRequest, session: SessionDep, principal: PrincipalDep) -> OrgMemberView:
+    manager = _require_org_manager_for(session, principal, org_id)
+    org = session.get(Organization, org_id)
+    if not org:
+        raise not_found("Organization not found", {"org_id": str(org_id)})
+
+    email = _normalize_email(payload.email)
+    if not email or "@" not in email:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Valid member email is required",
+        )
+    role = (payload.role or "").strip().lower() or "viewer"
+    if role not in ORG_ROLES:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Unsupported role",
+            details={"role": role},
+        )
+    if role == "owner" and manager.role != "owner":
+        raise unauthorized("Only owners can add another owner")
+
+    user = session.exec(select(User).where(User.email == email)).first()
+    if not user:
+        raise not_found("User not found", {"email": email})
+
+    existing = session.exec(select(OrgMembership).where((OrgMembership.org_id == org_id) & (OrgMembership.user_id == user.id))).first()
+    if existing:
+        raise conflict("User is already a member", details={"user_id": str(user.id)})
+
+    active_members = _active_members_count(session, org.id)
+    if active_members >= _seat_limit_for_org(org):
+        raise conflict(
+            "Seat limit reached; increase seat limit before adding member",
+            details={"active_members": active_members, "seat_limit": org.seat_limit},
+        )
+
+    membership = OrgMembership(org_id=org_id, user_id=user.id, role=role)
+    session.add(membership)
+    _emit_audit_event(
+        session,
+        org_id=org_id,
+        actor_user_id=principal.user_id,
+        event_type="org.member_added",
+        entity_type="user",
+        entity_id=str(user.id),
+        payload={"email": user.email, "role": role},
+    )
+    session.commit()
+    return OrgMemberView(user_id=user.id, email=user.email, display_name=user.display_name, role=role)
+
+
+@router.delete(
+    "/orgs/{org_id}/members/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Auth"],
+    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+def remove_org_member(org_id: UUID, user_id: UUID, session: SessionDep, principal: PrincipalDep) -> None:
+    manager = _require_org_manager_for(session, principal, org_id)
+    membership = session.exec(select(OrgMembership).where((OrgMembership.org_id == org_id) & (OrgMembership.user_id == user_id))).first()
+    if not membership:
+        raise not_found("Organization member not found", {"user_id": str(user_id)})
+    if membership.role == "owner":
+        owners = session.exec(select(OrgMembership).where((OrgMembership.org_id == org_id) & (OrgMembership.role == "owner"))).all()
+        if len(owners) <= 1:
+            raise conflict("Cannot remove the last owner")
+        if manager.role != "owner":
+            raise unauthorized("Only owners can remove another owner")
+    session.delete(membership)
+    _emit_audit_event(
+        session,
+        org_id=org_id,
+        actor_user_id=principal.user_id,
+        event_type="org.member_removed",
+        entity_type="user",
+        entity_id=str(user_id),
+        payload={"removed_role": membership.role},
+    )
+    session.commit()
+    return None
+
+
+@router.post(
+    "/orgs/{org_id}/api-keys",
+    response_model=ApiKeyView,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Auth"],
+    responses={401: {"model": ErrorResponse}},
+)
+def create_api_key(org_id: UUID, payload: ApiKeyCreateRequest, session: SessionDep, principal: PrincipalDep) -> ApiKeyView:
+    _require_org_manager_for(session, principal, org_id)
+    name = (payload.name or "").strip()
+    if not name:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="API key name is required",
+        )
+
+    secret = f"rf_{secrets.token_urlsafe(32)}"
+    prefix = secret[:12]
+    key = ApiKey(
+        org_id=org_id,
+        created_by_user_id=principal.user_id,  # type: ignore[arg-type]
+        name=name,
+        key_prefix=prefix,
+        key_hash=_hash_api_key_secret(secret),
+        scopes=[s.strip() for s in payload.scopes if s.strip()],
+    )
+    session.add(key)
+    _emit_audit_event(
+        session,
+        org_id=org_id,
+        actor_user_id=principal.user_id,
+        event_type="api_key.created",
+        entity_type="api_key",
+        entity_id=str(key.id),
+        payload={"name": key.name, "scopes": key.scopes},
+    )
+    session.commit()
+    session.refresh(key)
+    return _serialize_api_key(key, secret=secret)
+
+
+@router.get("/orgs/{org_id}/api-keys", response_model=list[ApiKeyView], tags=["Auth"], responses={401: {"model": ErrorResponse}})
+def list_api_keys(org_id: UUID, session: SessionDep, principal: PrincipalDep) -> list[ApiKeyView]:
+    _require_org_manager_for(session, principal, org_id)
+    keys = session.exec(select(ApiKey).where(ApiKey.org_id == org_id).order_by(ApiKey.created_at.desc())).all()
+    return [_serialize_api_key(key) for key in keys]
+
+
+@router.delete("/orgs/{org_id}/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Auth"], responses={401: {"model": ErrorResponse}})
+def revoke_api_key(org_id: UUID, key_id: UUID, session: SessionDep, principal: PrincipalDep) -> None:
+    _require_org_manager_for(session, principal, org_id)
+    key = session.exec(select(ApiKey).where((ApiKey.id == key_id) & (ApiKey.org_id == org_id))).first()
+    if not key:
+        raise not_found("API key not found", {"key_id": str(key_id)})
+    if not key.revoked_at:
+        key.revoked_at = _now_utc()
+        key.updated_at = _now_utc()
+        session.add(key)
+        _emit_audit_event(
+            session,
+            org_id=org_id,
+            actor_user_id=principal.user_id,
+            event_type="api_key.revoked",
+            entity_type="api_key",
+            entity_id=str(key.id),
+            payload={"name": key.name},
+        )
+        session.commit()
+    return None
+
+
+@router.get("/audit-events", response_model=list[AuditEventView], tags=["Auth"], responses={401: {"model": ErrorResponse}})
+def list_audit_events(session: SessionDep, principal: PrincipalDep, limit: int = Query(default=50, ge=1, le=500)) -> list[AuditEventView]:
+    if not principal.org_id:
+        raise unauthorized("Authentication required")
+    events = session.exec(
+        select(AuditEvent).where(AuditEvent.org_id == principal.org_id).order_by(AuditEvent.created_at.desc()).limit(limit)
+    ).all()
+    return [
+        AuditEventView(
+            id=event.id,
+            org_id=event.org_id,
+            actor_user_id=event.actor_user_id,
+            event_type=event.event_type,
+            entity_type=event.entity_type,
+            entity_id=event.entity_id,
+            payload=dict(event.payload or {}),
+            created_at=event.created_at,
+        )
+        for event in events
+    ]
 
 
 @router.post(
