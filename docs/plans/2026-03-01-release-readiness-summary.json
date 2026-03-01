@@ -39,23 +39,21 @@
     }
   ],
   "github": {
-    "branch_protection": null,
-    "ci": {
-      "conclusion": "success",
-      "createdAt": "2026-03-01T01:44:48Z",
-      "headSha": "72a158f922b3fc8ad9ffa4e0e27638655d07e7cf",
-      "status": "completed",
-      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22533477880",
-      "workflowName": "CI"
+    "branch_protection": {
+      "linear_history": true,
+      "required_checks": [
+        "Python API & worker checks",
+        "Web build",
+        "Analyze (actions)",
+        "Analyze (javascript-typescript)",
+        "Analyze (python)",
+        "CodeQL",
+        "CodeRabbit"
+      ],
+      "required_reviews": 1
     },
-    "codeql": {
-      "conclusion": "success",
-      "createdAt": "2026-03-01T01:44:48Z",
-      "headSha": "72a158f922b3fc8ad9ffa4e0e27638655d07e7cf",
-      "status": "completed",
-      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22533477882",
-      "workflowName": "CodeQL"
-    }
+    "ci": null,
+    "codeql": null
   },
   "pyannote": {
     "cpu": {
@@ -77,7 +75,7 @@
   },
   "stamp": "2026-03-01",
   "status": "READY",
-  "timestamp_utc": "2026-03-01T01:50:39.999168+00:00",
+  "timestamp_utc": "2026-03-01T14:15:46.434080+00:00",
   "updater": {
     "linux": {
       "error": null,
