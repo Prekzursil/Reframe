@@ -183,7 +183,9 @@ PY
     echo "  bash scripts/benchmark_diarization_docker.sh ${abs_input@Q} --backend pyannote --warmup --runs 1 --format md" >&2
     exit 1
   fi
-  compose_run_env_args=(-e "HF_TOKEN=${hf_token}" -e "HUGGINGFACE_TOKEN=${hf_token}")
+  export HF_TOKEN="${hf_token}"
+  export HUGGINGFACE_TOKEN="${hf_token}"
+  compose_run_env_args=(-e HF_TOKEN -e HUGGINGFACE_TOKEN)
 fi
 
 py_args=(

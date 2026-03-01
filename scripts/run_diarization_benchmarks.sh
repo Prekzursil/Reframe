@@ -82,8 +82,18 @@ CPU_LOG=""
 GPU_LOG=""
 DETAILS=""
 
+prepare_hf_env() {
+  local resolved_hf_token
+  resolved_hf_token="${HF_TOKEN:-${HUGGINGFACE_TOKEN:-}}"
+  if [[ -n "${resolved_hf_token}" ]]; then
+    export HF_TOKEN="${resolved_hf_token}"
+    export HUGGINGFACE_TOKEN="${resolved_hf_token}"
+  fi
+}
+
 if [[ "$PROBE_RC" -eq 0 ]]; then
-  if HF_TOKEN="${HF_TOKEN:-${HUGGINGFACE_TOKEN:-}}" bash scripts/benchmark_diarization_docker.sh "$INPUT_ABS" --backend pyannote --warmup --runs "$RUNS" --format md >"$CPU_MD" 2>&1; then
+  prepare_hf_env
+  if bash scripts/benchmark_diarization_docker.sh "$INPUT_ABS" --backend pyannote --warmup --runs "$RUNS" --format md >"$CPU_MD" 2>&1; then
     CPU_STATUS="ok"
   else
     CPU_STATUS="failed"
@@ -148,7 +158,8 @@ else
 fi
 
 if [[ "$RUN_GPU" == "true" && "$CUDA_AVAILABLE" == "true" && "$PROBE_RC" -eq 0 ]]; then
-  if HF_TOKEN="${HF_TOKEN:-${HUGGINGFACE_TOKEN:-}}" bash scripts/benchmark_diarization_docker.sh "$INPUT_ABS" --backend pyannote --warmup --runs "$RUNS" --format md >"$GPU_MD" 2>&1; then
+  prepare_hf_env
+  if bash scripts/benchmark_diarization_docker.sh "$INPUT_ABS" --backend pyannote --warmup --runs "$RUNS" --format md >"$GPU_MD" 2>&1; then
     GPU_STATUS="ok"
   else
     GPU_STATUS="failed"
