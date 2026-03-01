@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
@@ -10,6 +11,7 @@ def _load_module():
     spec = spec_from_file_location("audit_branch_protection", module_path)
     assert spec and spec.loader
     module = module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 

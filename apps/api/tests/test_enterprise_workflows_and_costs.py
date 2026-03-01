@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
+
+from sqlmodel import Session
+
+from app.database import get_engine
+from app.models import Organization
 
 
 class _FakeAsyncResult:
@@ -42,6 +48,16 @@ def _upload_fake_video(client, headers: dict[str, str], content: bytes = b"fake-
     return resp.json()
 
 
+def _set_org_seat_limit(org_id: str, seat_limit: int) -> None:
+    engine = get_engine()
+    with Session(engine) as session:
+        org = session.get(Organization, UUID(org_id))
+        assert org is not None
+        org.seat_limit = seat_limit
+        session.add(org)
+        session.commit()
+
+
 def test_enterprise_org_and_workflow_surfaces(test_client, monkeypatch):
     client, _enqueued, _worker, _media_root = test_client
 
@@ -50,6 +66,7 @@ def test_enterprise_org_and_workflow_surfaces(test_client, monkeypatch):
 
     owner = _register(client, email="owner-enterprise@test.dev", organization_name="Owner Org")
     owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
+    _set_org_seat_limit(owner["org_id"], 3)
 
     orgs_resp = client.get("/api/v1/orgs", headers=owner_headers)
     assert orgs_resp.status_code == 200, orgs_resp.text
@@ -119,7 +136,7 @@ def test_enterprise_org_and_workflow_surfaces(test_client, monkeypatch):
 
     cancel_resp = client.post(f"/api/v1/workflows/runs/{run['id']}/cancel", headers=owner_headers)
     assert cancel_resp.status_code == 200, cancel_resp.text
-    assert cancel_resp.json()["status"] in {"queued", "running", "cancelled", "completed", "failed"}
+    assert str(cancel_resp.json()["status"]).lower().endswith("cancelled")
 
     costs_resp = client.get("/api/v1/usage/costs", headers=owner_headers)
     assert costs_resp.status_code == 200, costs_resp.text

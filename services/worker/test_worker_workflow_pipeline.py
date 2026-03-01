@@ -11,7 +11,7 @@ class _Result:
 def test_run_workflow_pipeline_dispatches_child_jobs(monkeypatch, tmp_path: Path):
     from app.config import get_settings
     from app.database import create_db_and_tables, get_engine
-    from app.models import User, Organization, WorkflowTemplate, WorkflowRun, WorkflowRunStep
+    from app.models import MediaAsset, Organization, User, WorkflowRun, WorkflowRunStep, WorkflowTemplate
     from services.worker import worker
     from sqlmodel import Session
 
@@ -61,7 +61,23 @@ def test_run_workflow_pipeline_dispatches_child_jobs(monkeypatch, tmp_path: Path
         session.commit()
         session.refresh(template)
 
-        run = WorkflowRun(template_id=template.id, org_id=org.id, owner_user_id=user.id)
+        input_asset = MediaAsset(
+            kind="video",
+            uri="tmp://workflow-input.mp4",
+            mime_type="video/mp4",
+            org_id=org.id,
+            owner_user_id=user.id,
+        )
+        session.add(input_asset)
+        session.commit()
+        session.refresh(input_asset)
+
+        run = WorkflowRun(
+            template_id=template.id,
+            org_id=org.id,
+            owner_user_id=user.id,
+            input_asset_id=input_asset.id,
+        )
         session.add(run)
         session.commit()
         session.refresh(run)
@@ -72,7 +88,7 @@ def test_run_workflow_pipeline_dispatches_child_jobs(monkeypatch, tmp_path: Path
 
         run_id = str(run.id)
 
-    result = worker.run_workflow_pipeline(None, run_id)
+    result = worker.run_workflow_pipeline.run(run_id)
 
     assert result["status"] == "completed"
     assert len(calls) == 2
