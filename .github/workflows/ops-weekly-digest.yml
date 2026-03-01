@@ -1,0 +1,55 @@
+name: Ops Weekly Digest
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '15 6 * * 1'
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  actions: read
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Generate ops digest artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p ops-digest
+          python3 scripts/generate_ops_digest.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --window-days 7 \
+            --out-json ops-digest/digest.json \
+            --out-md ops-digest/digest.md
+
+      - name: Upsert rolling digest issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 scripts/upsert_ops_digest_issue.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --digest-json ops-digest/digest.json \
+            --digest-md ops-digest/digest.md \
+            --out-json ops-digest/upsert.json
+
+      - name: Print digest
+        run: |
+          set -euo pipefail
+          cat ops-digest/digest.md
+          echo
+          cat ops-digest/upsert.json
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ops-weekly-digest
+          path: ops-digest
