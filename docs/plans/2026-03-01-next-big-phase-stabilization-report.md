@@ -58,12 +58,21 @@
   - URL: https://github.com/Prekzursil/Reframe/actions/runs/22533481241
   - Result: SUCCESS
 
+- Branch protection policy audit (main):
+  - Local script run timestamp: `2026-03-01T02:11:23.675428+00:00`
+  - Result: `pass` (no findings, no missing status checks)
+  - Evidence:
+    - `docs/plans/2026-03-01-branch-protection-audit.json`
+    - `docs/plans/2026-03-01-branch-protection-audit.md`
+
 - Synced artifacts:
   - `docs/plans/2026-03-01-release-readiness-summary.json`
   - `docs/plans/2026-03-01-release-confidence-report.md`
   - `docs/plans/2026-03-01-pyannote-benchmark-status.json`
   - `docs/plans/2026-03-01-pyannote-benchmark-cpu.md`
   - `docs/plans/2026-03-01-pyannote-access.json`
+  - `docs/plans/2026-03-01-branch-protection-audit.json`
+  - `docs/plans/2026-03-01-branch-protection-audit.md`
 
 ## Current Readiness and Blockers
 
@@ -71,4 +80,3 @@
 - Remaining merge blocker is governance policy, not code quality:
   - `main` branch protection requires `1` approving review from a writer.
   - Self-approval is disallowed; direct merge remains blocked until external approval is added.
-
