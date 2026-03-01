@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INPUT_PATH="${1:-}"
 if [[ -z "$INPUT_PATH" ]]; then
-  echo "Usage: bash scripts/run_diarization_benchmarks.sh <input-media> [--stamp YYYY-MM-DD] [--runs N] [--run-gpu]" >&2
+  echo "Usage: bash scripts/run_diarization_benchmarks.sh <input-media> [--stamp YYYY-MM-DD] [--runs N] [--run-gpu] [--reuse-existing]" >&2
   exit 2
 fi
 shift
@@ -12,6 +12,7 @@ shift
 STAMP="$(date -u +%F)"
 RUNS="1"
 RUN_GPU="false"
+REUSE_EXISTING="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -25,6 +26,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --run-gpu)
       RUN_GPU="true"
+      shift
+      ;;
+    --reuse-existing)
+      REUSE_EXISTING="true"
       shift
       ;;
     *)
@@ -62,6 +67,41 @@ STATUS_JSON="docs/plans/${STAMP}-pyannote-benchmark-status.json"
 CPU_MD="docs/plans/${STAMP}-pyannote-benchmark-cpu.md"
 GPU_MD="docs/plans/${STAMP}-pyannote-benchmark-gpu.md"
 GPU_CAP_JSON="docs/plans/${STAMP}-pyannote-gpu-capability.json"
+
+can_reuse_existing_benchmark() {
+  if [[ ! -f "${STATUS_JSON}" || ! -f "${ACCESS_JSON}" || ! -f "${CPU_MD}" || ! -f "${GPU_MD}" || ! -f "${GPU_CAP_JSON}" ]]; then
+    return 1
+  fi
+
+  python3 - <<'PY' "${STATUS_JSON}" "${STAMP}" >/dev/null
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+status_path = Path(sys.argv[1])
+expected_stamp = sys.argv[2]
+try:
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+except json.JSONDecodeError:
+    raise SystemExit(1)
+
+if payload.get("stamp") != expected_stamp:
+    raise SystemExit(1)
+cpu = payload.get("cpu") or {}
+cpu_status = str(cpu.get("status") or "")
+if not cpu_status or cpu_status == "failed":
+    raise SystemExit(1)
+raise SystemExit(0)
+PY
+}
+
+if [[ "${REUSE_EXISTING}" == "true" ]] && can_reuse_existing_benchmark; then
+  echo "Reusing existing diarization benchmark artifacts for stamp ${STAMP}" >&2
+  cat "${STATUS_JSON}"
+  exit 0
+fi
 
 INPUT_ABS="$(python3 - <<'PY' "$INPUT_PATH"
 import os, sys
