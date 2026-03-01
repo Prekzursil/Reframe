@@ -1022,12 +1022,12 @@ def get_usage_summary(
     )
 
 
-@router.get("/usage/costs", response_model=UsageCostSummary, tags=["Usage"])
+@router.get("/usage/costs", tags=["Usage"])
 def get_usage_costs(
     session: SessionDep,
     principal: PrincipalDep,
-    from_date: Optional[datetime] = Query(default=None, alias="from"),
-    to_date: Optional[datetime] = Query(default=None, alias="to"),
+    from_date: Annotated[Optional[datetime], Query(alias="from")] = None,
+    to_date: Annotated[Optional[datetime], Query(alias="to")] = None,
     project_id: Optional[UUID] = None,
 ) -> UsageCostSummary:
     if not principal.org_id:
@@ -1044,12 +1044,11 @@ def get_usage_costs(
 
     if project_id:
         _ensure_project_exists(session, project_id, principal)
-        project_job_ids = [
-            job_id
-            for job_id in session.exec(
+        project_job_ids = list(
+            session.exec(
                 select(Job.id).where((Job.org_id == principal.org_id) & (Job.project_id == project_id))
             ).all()
-        ]
+        )
         if not project_job_ids:
             return UsageCostSummary(from_date=from_dt, to_date=to_dt)
         query = query.where(UsageLedgerEntry.job_id.in_(project_job_ids))
@@ -1111,7 +1110,6 @@ def list_projects(session: SessionDep, principal: PrincipalDep) -> list[Project]
 
 @router.post(
     "/workflows/templates",
-    response_model=WorkflowTemplateView,
     status_code=status.HTTP_201_CREATED,
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
@@ -1148,7 +1146,7 @@ def create_workflow_template(payload: WorkflowTemplateCreateRequest, session: Se
     )
 
 
-@router.get("/workflows/templates", response_model=list[WorkflowTemplateView], tags=["Projects"])
+@router.get("/workflows/templates", tags=["Projects"])
 def list_workflow_templates(session: SessionDep, principal: PrincipalDep, include_inactive: bool = False) -> list[WorkflowTemplateView]:
     query = select(WorkflowTemplate).order_by(WorkflowTemplate.created_at.desc())
     query = _scope_query_by_org(query, WorkflowTemplate, principal)
@@ -1171,7 +1169,6 @@ def list_workflow_templates(session: SessionDep, principal: PrincipalDep, includ
 
 @router.post(
     "/workflows/runs",
-    response_model=WorkflowRunView,
     status_code=status.HTTP_201_CREATED,
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
@@ -1234,7 +1231,6 @@ def create_workflow_run(payload: WorkflowRunCreateRequest, session: SessionDep, 
 
 @router.get(
     "/workflows/runs/{run_id}",
-    response_model=WorkflowRunView,
     tags=["Projects"],
     responses={404: {"model": ErrorResponse}},
 )
@@ -1248,7 +1244,6 @@ def get_workflow_run(run_id: UUID, session: SessionDep, principal: PrincipalDep)
 
 @router.post(
     "/workflows/runs/{run_id}/cancel",
-    response_model=WorkflowRunView,
     tags=["Projects"],
     responses={404: {"model": ErrorResponse}},
 )

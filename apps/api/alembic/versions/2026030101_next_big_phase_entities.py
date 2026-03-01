@@ -15,6 +15,9 @@ down_revision = "2026022602"
 branch_labels = None
 depends_on = None
 
+FK_ORGANIZATION_ID = "organization.id"
+FK_USER_ID = "user.id"
+
 
 def upgrade() -> None:
     op.create_table(
@@ -30,8 +33,8 @@ def upgrade() -> None:
         sa.Column("revoked_at", sa.DateTime(), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(["org_id"], ["organization.id"]),
-        sa.ForeignKeyConstraint(["created_by_user_id"], ["user.id"]),
+        sa.ForeignKeyConstraint(["org_id"], [FK_ORGANIZATION_ID]),
+        sa.ForeignKeyConstraint(["created_by_user_id"], [FK_USER_ID]),
         sa.UniqueConstraint("org_id", "key_hash", name="uq_apikey_org_key_hash"),
     )
     op.create_index("ix_apikey_id", "apikey", ["id"], unique=False)
@@ -49,8 +52,8 @@ def upgrade() -> None:
         sa.Column("entity_id", sa.String(length=255), nullable=True),
         sa.Column("payload", sa.JSON(), nullable=False, server_default=sa.text("'{}'")),
         sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(["org_id"], ["organization.id"]),
-        sa.ForeignKeyConstraint(["actor_user_id"], ["user.id"]),
+        sa.ForeignKeyConstraint(["org_id"], [FK_ORGANIZATION_ID]),
+        sa.ForeignKeyConstraint(["actor_user_id"], [FK_USER_ID]),
     )
     op.create_index("ix_auditevent_id", "auditevent", ["id"], unique=False)
     op.create_index("ix_auditevent_org_id", "auditevent", ["org_id"], unique=False)
@@ -71,8 +74,8 @@ def upgrade() -> None:
         sa.Column("owner_user_id", sa.String(length=36), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(["org_id"], ["organization.id"]),
-        sa.ForeignKeyConstraint(["owner_user_id"], ["user.id"]),
+        sa.ForeignKeyConstraint(["org_id"], [FK_ORGANIZATION_ID]),
+        sa.ForeignKeyConstraint(["owner_user_id"], [FK_USER_ID]),
     )
     op.create_index("ix_workflowtemplate_id", "workflowtemplate", ["id"], unique=False)
     op.create_index("ix_workflowtemplate_org_id", "workflowtemplate", ["org_id"], unique=False)
@@ -94,8 +97,8 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["template_id"], ["workflowtemplate.id"]),
         sa.ForeignKeyConstraint(["input_asset_id"], ["mediaasset.id"]),
         sa.ForeignKeyConstraint(["project_id"], ["project.id"]),
-        sa.ForeignKeyConstraint(["org_id"], ["organization.id"]),
-        sa.ForeignKeyConstraint(["owner_user_id"], ["user.id"]),
+        sa.ForeignKeyConstraint(["org_id"], [FK_ORGANIZATION_ID]),
+        sa.ForeignKeyConstraint(["owner_user_id"], [FK_USER_ID]),
     )
     op.create_index("ix_workflowrun_id", "workflowrun", ["id"], unique=False)
     op.create_index("ix_workflowrun_template_id", "workflowrun", ["template_id"], unique=False)
@@ -135,8 +138,8 @@ def upgrade() -> None:
         sa.Column("estimated_cost_cents", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("payload", sa.JSON(), nullable=False, server_default=sa.text("'{}'")),
         sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(["org_id"], ["organization.id"]),
-        sa.ForeignKeyConstraint(["user_id"], ["user.id"]),
+        sa.ForeignKeyConstraint(["org_id"], [FK_ORGANIZATION_ID]),
+        sa.ForeignKeyConstraint(["user_id"], [FK_USER_ID]),
         sa.ForeignKeyConstraint(["job_id"], ["job.id"]),
     )
     op.create_index("ix_usageledgerentry_id", "usageledgerentry", ["id"], unique=False)

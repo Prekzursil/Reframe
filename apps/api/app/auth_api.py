@@ -178,6 +178,9 @@ def _slugify(value: str) -> str:
 
 
 ORG_ROLES = {"owner", "admin", "editor", "viewer"}
+ERR_USER_NOT_FOUND = "User not found"
+ERR_UNSUPPORTED_ROLE = "Unsupported role"
+ERR_ORG_MEMBER_NOT_FOUND = "Organization member not found"
 ORG_MANAGER_ROLES = {"owner", "admin"}
 
 
@@ -674,7 +677,7 @@ def org_me(session: SessionDep, principal: PrincipalDep) -> OrgContextResponse:
     return OrgContextResponse(org_id=org.id, org_name=org.name, slug=org.slug, role=role, members=members)
 
 
-@router.get("/orgs", response_model=list[OrgView], tags=["Auth"], responses={401: {"model": ErrorResponse}})
+@router.get("/orgs", tags=["Auth"], responses={401: {"model": ErrorResponse}})
 def list_orgs(session: SessionDep, principal: PrincipalDep) -> list[OrgView]:
     if not principal.user_id:
         raise unauthorized("Authentication required")
@@ -698,13 +701,13 @@ def list_orgs(session: SessionDep, principal: PrincipalDep) -> list[OrgView]:
     return out
 
 
-@router.post("/orgs", response_model=OrgView, status_code=status.HTTP_201_CREATED, tags=["Auth"], responses={401: {"model": ErrorResponse}})
+@router.post("/orgs", status_code=status.HTTP_201_CREATED, tags=["Auth"], responses={401: {"model": ErrorResponse}})
 def create_org(payload: OrgCreateRequest, session: SessionDep, principal: PrincipalDep) -> OrgView:
     if not principal.user_id:
         raise unauthorized("Authentication required")
     user = session.get(User, principal.user_id)
     if not user:
-        raise unauthorized("User not found")
+        raise unauthorized(ERR_USER_NOT_FOUND)
 
     name = (payload.name or "").strip()
     if not name:
@@ -755,7 +758,6 @@ def create_org(payload: OrgCreateRequest, session: SessionDep, principal: Princi
 
 @router.post(
     "/orgs/{org_id}/members",
-    response_model=OrgMemberView,
     status_code=status.HTTP_201_CREATED,
     tags=["Auth"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
@@ -778,7 +780,7 @@ def add_org_member(org_id: UUID, payload: OrgMemberAddRequest, session: SessionD
         raise ApiError(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             code=ErrorCode.VALIDATION_ERROR,
-            message="Unsupported role",
+            message=ERR_UNSUPPORTED_ROLE,
             details={"role": role},
         )
     if role == "owner" and manager.role != "owner":
@@ -786,7 +788,7 @@ def add_org_member(org_id: UUID, payload: OrgMemberAddRequest, session: SessionD
 
     user = session.exec(select(User).where(User.email == email)).first()
     if not user:
-        raise not_found("User not found", {"email": email})
+        raise not_found(ERR_USER_NOT_FOUND, {"email": email})
 
     existing = session.exec(select(OrgMembership).where((OrgMembership.org_id == org_id) & (OrgMembership.user_id == user.id))).first()
     if existing:
@@ -824,7 +826,7 @@ def remove_org_member(org_id: UUID, user_id: UUID, session: SessionDep, principa
     manager = _require_org_manager_for(session, principal, org_id)
     membership = session.exec(select(OrgMembership).where((OrgMembership.org_id == org_id) & (OrgMembership.user_id == user_id))).first()
     if not membership:
-        raise not_found("Organization member not found", {"user_id": str(user_id)})
+        raise not_found(ERR_ORG_MEMBER_NOT_FOUND, {"user_id": str(user_id)})
     if membership.role == "owner":
         owners = session.exec(select(OrgMembership).where((OrgMembership.org_id == org_id) & (OrgMembership.role == "owner"))).all()
         if len(owners) <= 1:
@@ -847,7 +849,6 @@ def remove_org_member(org_id: UUID, user_id: UUID, session: SessionDep, principa
 
 @router.post(
     "/orgs/{org_id}/api-keys",
-    response_model=ApiKeyView,
     status_code=status.HTTP_201_CREATED,
     tags=["Auth"],
     responses={401: {"model": ErrorResponse}},
@@ -887,7 +888,7 @@ def create_api_key(org_id: UUID, payload: ApiKeyCreateRequest, session: SessionD
     return _serialize_api_key(key, secret=secret)
 
 
-@router.get("/orgs/{org_id}/api-keys", response_model=list[ApiKeyView], tags=["Auth"], responses={401: {"model": ErrorResponse}})
+@router.get("/orgs/{org_id}/api-keys", tags=["Auth"], responses={401: {"model": ErrorResponse}})
 def list_api_keys(org_id: UUID, session: SessionDep, principal: PrincipalDep) -> list[ApiKeyView]:
     _require_org_manager_for(session, principal, org_id)
     keys = session.exec(select(ApiKey).where(ApiKey.org_id == org_id).order_by(ApiKey.created_at.desc())).all()
@@ -917,8 +918,12 @@ def revoke_api_key(org_id: UUID, key_id: UUID, session: SessionDep, principal: P
     return None
 
 
-@router.get("/audit-events", response_model=list[AuditEventView], tags=["Auth"], responses={401: {"model": ErrorResponse}})
-def list_audit_events(session: SessionDep, principal: PrincipalDep, limit: int = Query(default=50, ge=1, le=500)) -> list[AuditEventView]:
+@router.get("/audit-events", tags=["Auth"], responses={401: {"model": ErrorResponse}})
+def list_audit_events(
+    session: SessionDep,
+    principal: PrincipalDep,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+) -> list[AuditEventView]:
     if not principal.org_id:
         raise unauthorized("Authentication required")
     events = session.exec(
@@ -967,7 +972,7 @@ def create_org_invite(payload: OrgInviteRequest, session: SessionDep, principal:
         raise ApiError(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             code=ErrorCode.VALIDATION_ERROR,
-            message="Unsupported role",
+            message=ERR_UNSUPPORTED_ROLE,
             details={"role": role},
         )
     if role == "owner" and manager.role != "owner":
@@ -1078,7 +1083,7 @@ def accept_org_invite(payload: OrgInviteResolveRequest, session: SessionDep, pri
         raise unauthorized("Authentication required")
     user = session.get(User, principal.user_id)
     if not user:
-        raise unauthorized("User not found")
+        raise unauthorized(ERR_USER_NOT_FOUND)
 
     invite = _coerce_pending_invite(session, payload.token)
     if _normalize_email(user.email) != invite.email:
@@ -1131,7 +1136,7 @@ def update_member_role(
         raise ApiError(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             code=ErrorCode.VALIDATION_ERROR,
-            message="Unsupported role",
+            message=ERR_UNSUPPORTED_ROLE,
             details={"role": next_role},
         )
 
@@ -1139,7 +1144,7 @@ def update_member_role(
         select(OrgMembership).where((OrgMembership.org_id == principal.org_id) & (OrgMembership.user_id == user_id))
     ).first()
     if not membership:
-        raise not_found("Organization member not found", {"user_id": str(user_id)})
+        raise not_found(ERR_ORG_MEMBER_NOT_FOUND, {"user_id": str(user_id)})
 
     if membership.role == "owner" and next_role != "owner":
         owners = session.exec(
@@ -1158,7 +1163,7 @@ def update_member_role(
     session.commit()
     user = session.get(User, membership.user_id)
     if not user:
-        raise not_found("User not found", {"user_id": str(user_id)})
+        raise not_found(ERR_USER_NOT_FOUND, {"user_id": str(user_id)})
     return OrgMemberView(user_id=user.id, email=user.email, display_name=user.display_name, role=membership.role)
 
 
@@ -1176,7 +1181,7 @@ def remove_member(user_id: UUID, session: SessionDep, principal: PrincipalDep) -
         select(OrgMembership).where((OrgMembership.org_id == principal.org_id) & (OrgMembership.user_id == user_id))
     ).first()
     if not membership:
-        raise not_found("Organization member not found", {"user_id": str(user_id)})
+        raise not_found(ERR_ORG_MEMBER_NOT_FOUND, {"user_id": str(user_id)})
     if membership.role == "owner":
         owners = session.exec(
             select(OrgMembership).where((OrgMembership.org_id == principal.org_id) & (OrgMembership.role == "owner"))

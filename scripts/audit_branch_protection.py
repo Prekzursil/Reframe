@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -34,6 +34,35 @@ def _classify_http_status(status_code: int) -> str:
     return "api_error"
 
 
+def _evaluate_required_reviews(
+    *,
+    findings: list[str],
+    reviews_payload: dict[str, Any],
+    required_reviews: int,
+) -> int | None:
+    observed_reviews_raw = reviews_payload.get("required_approving_review_count")
+    if observed_reviews_raw is None:
+        findings.append(f"Required approving review count is below policy ({observed_reviews_raw!r} < {required_reviews}).")
+        return None
+    observed_reviews = int(observed_reviews_raw)
+    if observed_reviews < required_reviews:
+        findings.append(f"Required approving review count is below policy ({observed_reviews!r} < {required_reviews}).")
+    return observed_reviews
+
+
+def _evaluate_bool_control(
+    *,
+    findings: list[str],
+    payload: dict[str, Any],
+    required: bool,
+    failure_message: str,
+) -> bool | None:
+    observed = bool(payload.get("enabled")) if payload else None
+    if required and observed is not True:
+        findings.append(failure_message)
+    return observed
+
+
 def evaluate_protection_payload(protection: dict[str, Any], policy: dict[str, Any]) -> AuditResult:
     findings: list[str] = []
 
@@ -47,33 +76,36 @@ def evaluate_protection_payload(protection: dict[str, Any], policy: dict[str, An
     linear_history = protection.get("required_linear_history") or {}
     conversation_resolution = protection.get("required_conversation_resolution") or {}
 
-    observed_reviews = reviews.get("required_approving_review_count")
-    if observed_reviews is None or int(observed_reviews) < required_reviews:
-        findings.append(
-            f"Required approving review count is below policy ({observed_reviews!r} < {required_reviews})."
-        )
+    observed_reviews = _evaluate_required_reviews(
+        findings=findings,
+        reviews_payload=reviews,
+        required_reviews=required_reviews,
+    )
 
     contexts = checks.get("contexts") or []
     missing_checks = [name for name in required_checks if name not in contexts]
     for check in missing_checks:
         findings.append(f"Missing required status check: {check}")
 
-    observed_linear_history = bool(linear_history.get("enabled")) if linear_history else None
-    if require_linear_history and observed_linear_history is not True:
-        findings.append("Linear history is disabled.")
-
-    observed_conversation_resolution = (
-        bool(conversation_resolution.get("enabled")) if conversation_resolution else None
+    observed_linear_history = _evaluate_bool_control(
+        findings=findings,
+        payload=linear_history,
+        required=require_linear_history,
+        failure_message="Linear history is disabled.",
     )
-    if require_conversation_resolution and observed_conversation_resolution is not True:
-        findings.append("Conversation resolution is disabled.")
+    observed_conversation_resolution = _evaluate_bool_control(
+        findings=findings,
+        payload=conversation_resolution,
+        required=require_conversation_resolution,
+        failure_message="Conversation resolution is disabled.",
+    )
 
     status = "pass" if not findings else "fail"
     return AuditResult(
         status=status,
         findings=findings,
         missing_status_checks=missing_checks,
-        observed_reviews=int(observed_reviews) if observed_reviews is not None else None,
+        observed_reviews=observed_reviews,
         observed_linear_history=observed_linear_history,
         observed_conversation_resolution=observed_conversation_resolution,
     )

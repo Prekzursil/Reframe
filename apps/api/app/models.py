@@ -8,6 +8,9 @@ from uuid import UUID, uuid4
 from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
+FK_MEDIA_ASSET_ID = "mediaasset.id"
+FK_PROJECT_ID = "project.id"
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -181,9 +184,9 @@ class WorkflowRun(SQLModel, table=True):
     template_id: UUID = Field(foreign_key="workflowtemplate.id", index=True)
     task_id: Optional[str] = Field(default=None, index=True)
     status: WorkflowRunStatus = Field(default=WorkflowRunStatus.queued, index=True)
-    input_asset_id: Optional[UUID] = Field(default=None, foreign_key="mediaasset.id", index=True)
+    input_asset_id: Optional[UUID] = Field(default=None, foreign_key=FK_MEDIA_ASSET_ID, index=True)
     payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    project_id: Optional[UUID] = Field(default=None, foreign_key="project.id", index=True)
+    project_id: Optional[UUID] = Field(default=None, foreign_key=FK_PROJECT_ID, index=True)
     org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
     owner_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
     created_at: datetime = Field(default_factory=utcnow)
@@ -222,7 +225,7 @@ class MediaAsset(SQLModel, table=True):
     uri: Optional[str] = Field(default=None, description="Storage URI or path for the asset")
     mime_type: Optional[str] = Field(default=None)
     duration: Optional[float] = Field(default=None, description="Duration in seconds if known")
-    project_id: Optional[UUID] = Field(default=None, foreign_key="project.id", index=True)
+    project_id: Optional[UUID] = Field(default=None, foreign_key=FK_PROJECT_ID, index=True)
     org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
     owner_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
     created_at: datetime = Field(default_factory=utcnow)
@@ -260,9 +263,9 @@ class Job(SQLModel, table=True):
     error: Optional[str] = Field(default=None, description="Error message if failed")
     payload: dict = Field(default_factory=dict, sa_column=Column(JSON), description="Options or parameters for the job")
 
-    input_asset_id: Optional[UUID] = Field(default=None, foreign_key="mediaasset.id")
-    output_asset_id: Optional[UUID] = Field(default=None, foreign_key="mediaasset.id")
-    project_id: Optional[UUID] = Field(default=None, foreign_key="project.id", index=True)
+    input_asset_id: Optional[UUID] = Field(default=None, foreign_key=FK_MEDIA_ASSET_ID)
+    output_asset_id: Optional[UUID] = Field(default=None, foreign_key=FK_MEDIA_ASSET_ID)
+    project_id: Optional[UUID] = Field(default=None, foreign_key=FK_PROJECT_ID, index=True)
     org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
     owner_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
     idempotency_key: Optional[str] = Field(default=None, index=True)

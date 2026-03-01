@@ -539,7 +539,8 @@ export class ApiClient {
     if (params?.to) search.set("to", params.to);
     if (params?.project_id) search.set("project_id", params.project_id);
     const query = search.toString();
-    return this.request<UsageSummary>(`/usage/summary${query ? `?${query}` : ""}`);
+    const querySuffix = query ? `?${query}` : "";
+    return this.request<UsageSummary>(`/usage/summary${querySuffix}`);
   }
 
   getUsageCosts(params?: { from?: string; to?: string; project_id?: string }) {
@@ -548,7 +549,8 @@ export class ApiClient {
     if (params?.to) search.set("to", params.to);
     if (params?.project_id) search.set("project_id", params.project_id);
     const query = search.toString();
-    return this.request<UsageCostSummary>(`/usage/costs${query ? `?${query}` : ""}`);
+    const querySuffix = query ? `?${query}` : "";
+    return this.request<UsageCostSummary>(`/usage/costs${querySuffix}`);
   }
 
   listProjects() {

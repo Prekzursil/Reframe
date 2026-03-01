@@ -75,7 +75,7 @@ def test_enterprise_org_and_workflow_surfaces(test_client, monkeypatch):
     create_org_resp = client.post("/api/v1/orgs", headers=owner_headers, json={"name": "Second Org"})
     assert create_org_resp.status_code == 201, create_org_resp.text
 
-    teammate = _register(client, email="teammate-enterprise@test.dev", organization_name="Teammate Org")
+    _register(client, email="teammate-enterprise@test.dev", organization_name="Teammate Org")
     add_member_resp = client.post(
         f"/api/v1/orgs/{owner['org_id']}/members",
         headers=owner_headers,
