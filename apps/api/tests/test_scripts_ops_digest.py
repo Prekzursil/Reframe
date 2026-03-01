@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
+import pytest
+
 
 def _load_module(name: str, relative_path: str):
     repo_root = Path(__file__).resolve().parents[3]
@@ -51,7 +53,7 @@ def test_compute_digest_counts_window_metrics():
     assert digest["metrics"]["open_agent_issues"] == 1
     assert digest["metrics"]["main_ci_runs"] == 2
     assert digest["metrics"]["main_ci_failed_runs"] == 1
-    assert digest["metrics"]["main_ci_failure_rate_pct"] == 50.0
+    assert digest["metrics"]["main_ci_failure_rate_pct"] == pytest.approx(50.0)
 
 
 def test_upsert_render_issue_body_contains_digest_markdown():
