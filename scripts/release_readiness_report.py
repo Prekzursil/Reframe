@@ -13,6 +13,15 @@ from typing import Any
 PYANNOTE_BLOCKER_ISSUE_URL = "https://github.com/Prekzursil/Reframe/issues/80"
 PYANNOTE_BLOCKER_OWNER = "@Prekzursil"
 PYANNOTE_BLOCKER_RECHECK_DATE = "2026-03-07"
+LOCAL_GATE_NAMES = (
+    "make verify",
+    "smoke-hosted",
+    "smoke-local",
+    "smoke-security",
+    "smoke-workflows",
+    "smoke-perf-cost",
+)
+PERF_COST_GATE_NAME = "smoke-perf-cost"
 
 
 @dataclass
@@ -23,6 +32,20 @@ class GateStatus:
     @property
     def ok(self) -> bool:
         return self.exit_code == 0
+
+
+def _gate_lookup(gates: list[GateStatus]) -> dict[str, GateStatus]:
+    return {gate.name: gate for gate in gates}
+
+
+def _compute_local_ok(gates: list[GateStatus]) -> bool:
+    lookup = _gate_lookup(gates)
+    return all(name in lookup and lookup[name].ok for name in LOCAL_GATE_NAMES)
+
+
+def _gate_ok(gates: list[GateStatus], gate_name: str) -> bool:
+    gate = _gate_lookup(gates).get(gate_name)
+    return bool(gate and gate.ok)
 
 
 def _run_json(cmd: list[str], *, cwd: Path) -> dict[str, Any] | list[Any] | None:
@@ -186,7 +209,7 @@ def main(argv: list[str]) -> int:
     pyannote = _load_json(plans / f"{args.stamp}-pyannote-benchmark-status.json") or {}
     pyannote_cpu_status = str(((pyannote.get("cpu") or {}).get("status") or "unknown"))
 
-    local_ok = all(g.ok for g in gates[:6])
+    local_ok = _compute_local_ok(gates)
     status, blocking, external = _resolve_status(
         local_ok=local_ok,
         updater_ok=updater_ok,
@@ -229,8 +252,9 @@ def main(argv: list[str]) -> int:
     lines.append("")
     lines.append("## Performance and cost readiness")
     lines.append("")
-    lines.append(f"- smoke-perf-cost: `{'PASS' if gates[5].ok else 'FAIL'}`")
-    lines.append(f"- usage-cost endpoint gate: `{'ready' if gates[5].ok else 'needs_attention'}`")
+    perf_cost_ok = _gate_ok(gates, PERF_COST_GATE_NAME)
+    lines.append(f"- smoke-perf-cost: `{'PASS' if perf_cost_ok else 'FAIL'}`")
+    lines.append(f"- usage-cost endpoint gate: `{'ready' if perf_cost_ok else 'needs_attention'}`")
 
     lines.append("")
     lines.append("## Desktop updater matrix")
