@@ -531,10 +531,10 @@ Acceptance criteria:
 - Permission denials are classified as inconclusive with actionable message, not drift.
 
 ### Track C — ops weekly digest quality signal (issue #88)
-- [ ] Extend `scripts/generate_ops_digest.py` with trend deltas (7d vs prior 7d) for CI failure rate and PR throughput.
-- [ ] Add issue-upsert guardrails to avoid duplicate noise and preserve one rolling digest issue.
-- [ ] Add operator runbook updates in `docs/KPI_DIGEST_TESTING.md` for failure modes and expected remediation cadence.
-- [ ] Add lightweight tests for digest metric calculations and issue body rendering.
+- [x] Extend `scripts/generate_ops_digest.py` with trend deltas (7d vs prior 7d) for CI failure rate and PR throughput.
+- [x] Add issue-upsert guardrails to avoid duplicate noise and preserve one rolling digest issue.
+- [x] Add operator runbook updates in `docs/KPI_DIGEST_TESTING.md` for failure modes and expected remediation cadence.
+- [x] Add lightweight tests for digest metric calculations and issue body rendering.
 
 Acceptance criteria:
 - Exactly one rolling ops digest issue is maintained.

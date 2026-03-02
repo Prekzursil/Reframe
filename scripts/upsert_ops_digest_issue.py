@@ -33,6 +33,11 @@ def _request_json(url: str, token: str, method: str = "GET", body: dict[str, Any
 
 
 def _render_issue_body(repo: str, digest_md: str, digest_json: dict[str, Any], run_url: str | None) -> str:
+    snapshot = {
+        "metrics": digest_json.get("metrics", {}),
+        "trends": digest_json.get("trends", {}),
+        "health": digest_json.get("health", {}),
+    }
     lines = [
         "## Weekly Ops Digest (rolling)",
         "",
@@ -47,7 +52,7 @@ def _render_issue_body(repo: str, digest_md: str, digest_json: dict[str, Any], r
             "",
             "### Snapshot",
             "```json",
-            json.dumps(digest_json.get("metrics", {}), indent=2, sort_keys=True),
+            json.dumps(snapshot, indent=2, sort_keys=True),
             "```",
             "",
             "### Digest",

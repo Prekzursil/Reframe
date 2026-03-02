@@ -22,11 +22,13 @@ def test_compute_digest_counts_window_metrics():
 
     now = datetime(2026, 3, 1, tzinfo=timezone.utc)
     recent = (now - timedelta(days=2)).isoformat()
+    previous = (now - timedelta(days=9)).isoformat()
     old = (now - timedelta(days=20)).isoformat()
 
     pulls = [
         {"created_at": recent, "merged_at": recent},
         {"created_at": recent, "merged_at": None},
+        {"created_at": previous, "merged_at": previous},
         {"created_at": old, "merged_at": old},
     ]
     issues = [
@@ -36,6 +38,7 @@ def test_compute_digest_counts_window_metrics():
     workflow_runs = [
         {"head_branch": "main", "created_at": recent, "conclusion": "failure"},
         {"head_branch": "main", "created_at": recent, "conclusion": "success"},
+        {"head_branch": "main", "created_at": previous, "conclusion": "success"},
         {"head_branch": "feature", "created_at": recent, "conclusion": "failure"},
     ]
 
@@ -54,6 +57,11 @@ def test_compute_digest_counts_window_metrics():
     assert digest["metrics"]["main_ci_runs"] == 2
     assert digest["metrics"]["main_ci_failed_runs"] == 1
     assert digest["metrics"]["main_ci_failure_rate_pct"] == pytest.approx(50.0)
+    assert digest["metrics_previous_window"]["prs_merged"] == 1
+    assert digest["metrics_previous_window"]["main_ci_runs"] == 1
+    assert digest["trends"]["prs_merged_delta"] == 0
+    assert digest["trends"]["main_ci_failure_rate_pct_delta"] == pytest.approx(50.0)
+    assert digest["health"]["main_ci_failure_rate_trend"] == "worsening"
 
 
 def test_upsert_render_issue_body_contains_digest_markdown():
@@ -62,10 +70,14 @@ def test_upsert_render_issue_body_contains_digest_markdown():
     body = module._render_issue_body(
         "Prekzursil/Reframe",
         "# Weekly Ops Digest\n\n- PRs merged: **3**\n",
-        {"metrics": {"prs_merged": 3, "main_ci_failure_rate_pct": 0.0}},
+        {
+            "metrics": {"prs_merged": 3, "main_ci_failure_rate_pct": 0.0},
+            "trends": {"prs_merged_delta": 1, "main_ci_failure_rate_pct_delta": -2.5},
+        },
         "https://github.com/Prekzursil/Reframe/actions/runs/123",
     )
 
     assert "Weekly Ops Digest (rolling)" in body
     assert '"prs_merged": 3' in body
+    assert '"prs_merged_delta": 1' in body
     assert "https://github.com/Prekzursil/Reframe/actions/runs/123" in body

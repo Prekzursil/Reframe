@@ -73,6 +73,37 @@ def _paginate(url: str, token: str, max_pages: int = 5) -> list[dict[str, Any]]:
     return out
 
 
+def _in_window(value: datetime | None, start: datetime, end: datetime) -> bool:
+    if value is None:
+        return False
+    return start <= value < end
+
+
+def _window_metrics(
+    *,
+    start: datetime,
+    end: datetime,
+    pulls: list[dict[str, Any]],
+    workflow_runs: list[dict[str, Any]],
+) -> dict[str, float]:
+    opened_prs = [pr for pr in pulls if _in_window(_parse_dt(pr.get("created_at")), start, end)]
+    merged_prs = [pr for pr in pulls if _in_window(_parse_dt(pr.get("merged_at")), start, end)]
+    runs_window = [
+        r
+        for r in workflow_runs
+        if (r.get("head_branch") == "main") and _in_window(_parse_dt(r.get("created_at")), start, end)
+    ]
+    failed_runs = [r for r in runs_window if r.get("conclusion") == "failure"]
+    ci_failure_rate = (len(failed_runs) / len(runs_window) * 100.0) if runs_window else 0.0
+    return {
+        "prs_opened": len(opened_prs),
+        "prs_merged": len(merged_prs),
+        "main_ci_runs": len(runs_window),
+        "main_ci_failed_runs": len(failed_runs),
+        "main_ci_failure_rate_pct": round(ci_failure_rate, 2),
+    }
+
+
 def compute_digest(
     *,
     now: datetime,
@@ -81,10 +112,10 @@ def compute_digest(
     issues: list[dict[str, Any]],
     workflow_runs: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    since = now - timedelta(days=window_days)
-
-    opened_prs = [pr for pr in pulls if (_parse_dt(pr.get("created_at")) or now) >= since]
-    merged_prs = [pr for pr in pulls if (_parse_dt(pr.get("merged_at")) or datetime.min.replace(tzinfo=timezone.utc)) >= since]
+    window_end = now
+    window_start = now - timedelta(days=window_days)
+    previous_window_start = window_start - timedelta(days=window_days)
+    previous_window_end = window_start
 
     open_non_pr_issues = [i for i in issues if not i.get("pull_request")]
     open_agent_issues = [
@@ -93,37 +124,75 @@ def compute_digest(
         if any((lbl.get("name") or "") in {"agent:ready", "agent:in-progress", "agent:blocked"} for lbl in (i.get("labels") or []))
     ]
 
-    runs_window = [
-        r
-        for r in workflow_runs
-        if (r.get("head_branch") == "main") and ((_parse_dt(r.get("created_at")) or now) >= since)
-    ]
-    failed_runs = [r for r in runs_window if r.get("conclusion") == "failure"]
-    ci_failure_rate = (len(failed_runs) / len(runs_window) * 100.0) if runs_window else 0.0
+    current = _window_metrics(
+        start=window_start,
+        end=window_end,
+        pulls=pulls,
+        workflow_runs=workflow_runs,
+    )
+    previous = _window_metrics(
+        start=previous_window_start,
+        end=previous_window_end,
+        pulls=pulls,
+        workflow_runs=workflow_runs,
+    )
+
+    trends = {
+        "prs_opened_delta": int(current["prs_opened"] - previous["prs_opened"]),
+        "prs_merged_delta": int(current["prs_merged"] - previous["prs_merged"]),
+        "main_ci_runs_delta": int(current["main_ci_runs"] - previous["main_ci_runs"]),
+        "main_ci_failed_runs_delta": int(current["main_ci_failed_runs"] - previous["main_ci_failed_runs"]),
+        "main_ci_failure_rate_pct_delta": round(
+            current["main_ci_failure_rate_pct"] - previous["main_ci_failure_rate_pct"],
+            2,
+        ),
+    }
+
+    throughput_state = "ok" if current["prs_merged"] > 0 else "watch"
+    failure_rate_state = "ok" if current["main_ci_failure_rate_pct"] <= 5.0 else "watch"
+    if trends["main_ci_failure_rate_pct_delta"] > 0.25:
+        trend_state = "worsening"
+    elif trends["main_ci_failure_rate_pct_delta"] < -0.25:
+        trend_state = "improving"
+    else:
+        trend_state = "stable"
 
     return {
         "timestamp_utc": now.isoformat(),
         "window_days": window_days,
-        "window_start_utc": since.isoformat(),
-        "window_end_utc": now.isoformat(),
+        "window_start_utc": window_start.isoformat(),
+        "window_end_utc": window_end.isoformat(),
+        "previous_window_start_utc": previous_window_start.isoformat(),
+        "previous_window_end_utc": previous_window_end.isoformat(),
         "metrics": {
-            "prs_opened": len(opened_prs),
-            "prs_merged": len(merged_prs),
+            "prs_opened": int(current["prs_opened"]),
+            "prs_merged": int(current["prs_merged"]),
             "open_issues": len(open_non_pr_issues),
             "open_agent_issues": len(open_agent_issues),
-            "main_ci_runs": len(runs_window),
-            "main_ci_failed_runs": len(failed_runs),
-            "main_ci_failure_rate_pct": round(ci_failure_rate, 2),
+            "main_ci_runs": int(current["main_ci_runs"]),
+            "main_ci_failed_runs": int(current["main_ci_failed_runs"]),
+            "main_ci_failure_rate_pct": float(current["main_ci_failure_rate_pct"]),
         },
+        "metrics_previous_window": {
+            "prs_opened": int(previous["prs_opened"]),
+            "prs_merged": int(previous["prs_merged"]),
+            "main_ci_runs": int(previous["main_ci_runs"]),
+            "main_ci_failed_runs": int(previous["main_ci_failed_runs"]),
+            "main_ci_failure_rate_pct": float(previous["main_ci_failure_rate_pct"]),
+        },
+        "trends": trends,
         "health": {
-            "main_ci_failure_rate": "ok" if ci_failure_rate <= 5.0 else "watch",
-            "delivery_throughput": "ok" if len(merged_prs) > 0 else "watch",
+            "main_ci_failure_rate": failure_rate_state,
+            "main_ci_failure_rate_trend": trend_state,
+            "delivery_throughput": throughput_state,
         },
     }
 
 
 def _render_markdown(repo: str, digest: dict[str, Any]) -> str:
     m = digest["metrics"]
+    prev = digest["metrics_previous_window"]
+    trends = digest["trends"]
     h = digest["health"]
     return (
         "# Weekly Ops Digest\n\n"
@@ -137,8 +206,21 @@ def _render_markdown(repo: str, digest: dict[str, Any]) -> str:
         f"- Main CI runs: **{m['main_ci_runs']}**\n"
         f"- Main CI failures: **{m['main_ci_failed_runs']}**\n"
         f"- Main CI failure rate: **{m['main_ci_failure_rate_pct']}%**\n\n"
+        "## Previous Window (baseline)\n"
+        f"- PRs opened: **{prev['prs_opened']}**\n"
+        f"- PRs merged: **{prev['prs_merged']}**\n"
+        f"- Main CI runs: **{prev['main_ci_runs']}**\n"
+        f"- Main CI failures: **{prev['main_ci_failed_runs']}**\n"
+        f"- Main CI failure rate: **{prev['main_ci_failure_rate_pct']}%**\n\n"
+        "## Trends (current - previous)\n"
+        f"- PRs opened delta: **{trends['prs_opened_delta']}**\n"
+        f"- PRs merged delta: **{trends['prs_merged_delta']}**\n"
+        f"- Main CI runs delta: **{trends['main_ci_runs_delta']}**\n"
+        f"- Main CI failures delta: **{trends['main_ci_failed_runs_delta']}**\n"
+        f"- Main CI failure rate delta: **{trends['main_ci_failure_rate_pct_delta']}%**\n\n"
         "## Health\n"
         f"- Main CI failure rate: `{h['main_ci_failure_rate']}`\n"
+        f"- Main CI failure rate trend: `{h['main_ci_failure_rate_trend']}`\n"
         f"- Delivery throughput: `{h['delivery_throughput']}`\n"
     )
 
