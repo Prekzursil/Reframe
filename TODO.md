@@ -524,10 +524,10 @@ Acceptance criteria:
 
 ### Track B — branch-protection audit policy hardening (issue #89)
 
-- [ ] Add `docs/branch-protection-policy.json` as the single source of expected policy (`required checks`, `required reviews`, `linear history`).
-- [ ] Update `scripts/audit_branch_protection.py` to read policy JSON and compare deterministically.
-- [ ] Ensure `branch-protection-audit.yml` opens/updates findings only on true drift; permission problems must be `inconclusive_permissions`.
-- [ ] Add/extend tests in `apps/api/tests/test_scripts_branch_protection_audit.py` for policy mismatch and permission-denied paths.
+- [x] Add `docs/branch-protection-policy.json` as the single source of expected policy (`required checks`, `required reviews`, `linear history`).
+- [x] Update `scripts/audit_branch_protection.py` to read policy JSON and compare deterministically.
+- [x] Ensure `branch-protection-audit.yml` opens/updates findings only on true drift; permission problems must be `inconclusive_permissions`.
+- [x] Add/extend tests in `apps/api/tests/test_scripts_branch_protection_audit.py` for policy mismatch and permission-denied paths.
 
 Acceptance criteria:
 

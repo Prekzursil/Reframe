@@ -43,7 +43,8 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const audit = JSON.parse(fs.readFileSync("branch-protection-audit/audit.json", "utf8"));
-            const titlePrefix = "Branch protection audit findings";
+            const findingsTitle = "Branch protection audit findings";
+            const permissionsTitle = "Branch protection audit inconclusive (permissions)";
             const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
 
             const openIssues = await github.paginate(github.rest.issues.listForRepo, {
@@ -56,8 +57,26 @@ jobs:
 
             const auditIssues = openIssues
               .filter((issue) => !issue.pull_request)
-              .filter((issue) => issue.title.toLowerCase().startsWith(titlePrefix.toLowerCase()))
+              .filter((issue) => [findingsTitle, permissionsTitle].includes(issue.title))
               .sort((a, b) => a.number - b.number);
+            const findingsIssues = auditIssues.filter((issue) => issue.title === findingsTitle);
+            const permissionIssues = auditIssues.filter((issue) => issue.title === permissionsTitle);
+
+            const closeIssue = async (issue, reason) => {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issue.number,
+                body: reason,
+              });
+              await github.rest.issues.update({
+                owner,
+                repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+            };
 
             if (audit.status === "pass") {
               if (auditIssues.length === 0) {
@@ -66,25 +85,53 @@ jobs:
               }
 
               for (const issue of auditIssues) {
-                await github.rest.issues.createComment({
-                  owner,
-                  repo,
-                  issue_number: issue.number,
-                  body: [
+                await closeIssue(
+                  issue,
+                  [
                     "Closing: latest automated branch-protection audit is compliant.",
                     `- Run: ${runUrl}`,
                     "- Status: `pass`",
-                  ].join("\n"),
-                });
-                await github.rest.issues.update({
-                  owner,
-                  repo,
-                  issue_number: issue.number,
-                  state: "closed",
-                  state_reason: "completed",
-                });
+                  ].join("\n")
+                );
               }
               return;
+            }
+
+            if (audit.status === "inconclusive_permissions") {
+              if (findingsIssues.length > 0) {
+                core.warning("Audit is inconclusive due to permissions; leaving existing drift findings unchanged.");
+              }
+              if (permissionIssues.length > 0) {
+                core.info("Inconclusive-permissions tracker already open; skipping duplicate issue updates.");
+                return;
+              }
+              await github.rest.issues.create({
+                owner,
+                repo,
+                title: permissionsTitle,
+                body: [
+                  "## Status",
+                  "- `inconclusive_permissions`",
+                  `- Run: ${runUrl}`,
+                  "",
+                  "## Detail",
+                  "- Branch protection endpoint could not be read with current token scope.",
+                  "- No policy drift finding was emitted in this run.",
+                ].join("\n"),
+                labels: ["area:security", "risk:low"],
+              });
+              return;
+            }
+
+            for (const issue of permissionIssues) {
+              await closeIssue(
+                issue,
+                [
+                  "Closing: permissions-access tracker superseded by deterministic audit result.",
+                  `- Run: ${runUrl}`,
+                  `- Status: \`${audit.status}\``,
+                ].join("\n")
+              );
             }
 
             const findings = (audit.findings || []).map((f) => `- ${f}`).join("\n") || "- None";
@@ -100,8 +147,8 @@ jobs:
               "- Resolve policy drift, or grant branch-protection read scope for this workflow when status is inconclusive.",
             ].join("\n");
 
-            if (auditIssues.length > 0) {
-              const target = auditIssues[0];
+            if (findingsIssues.length > 0) {
+              const target = findingsIssues[0];
               await github.rest.issues.createComment({
                 owner,
                 repo,
@@ -109,7 +156,7 @@ jobs:
                 body,
               });
 
-              for (const extra of auditIssues.slice(1)) {
+              for (const extra of findingsIssues.slice(1)) {
                 await github.rest.issues.createComment({
                   owner,
                   repo,
@@ -128,7 +175,7 @@ jobs:
               await github.rest.issues.create({
                 owner,
                 repo,
-                title: titlePrefix,
+                title: findingsTitle,
                 body,
                 labels: ["area:security", "risk:medium"],
               });
