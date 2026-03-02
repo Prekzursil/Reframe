@@ -19,6 +19,8 @@ const apiClientMock = vi.hoisted(() => ({
   createCutClipJob: vi.fn(),
   getSystemStatus: vi.fn(),
   getUsageSummary: vi.fn(),
+  getBudgetPolicy: vi.fn(),
+  updateBudgetPolicy: vi.fn(),
   listProjects: vi.fn(),
   createProject: vi.fn(),
   listProjectJobs: vi.fn(),

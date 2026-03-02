@@ -553,9 +553,9 @@ Acceptance criteria:
   - [x] `GET /api/v1/usage/budget-policy`
   - [x] `PUT /api/v1/usage/budget-policy`
 - [x] Enforce budget checks during expensive job submission paths with clear `quota_exceeded` payloads.
-- [ ] Add Usage dashboard controls to view/update policy and show projected overrun warnings.
+- [x] Add Usage dashboard controls to view/update policy and show projected overrun warnings.
 - [x] Add API tests for org-scoped budget CRUD and enforcement behavior.
-- [ ] Add web tests for usage dashboard budget controls and warning behavior.
+- [x] Add web tests for usage dashboard budget controls and warning behavior.
 
 Acceptance criteria:
 

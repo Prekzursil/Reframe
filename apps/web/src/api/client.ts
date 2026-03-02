@@ -117,6 +117,16 @@ export interface UsageCostSummary {
   to_date?: string | null;
 }
 
+export interface BudgetPolicy {
+  org_id: string;
+  monthly_soft_limit_cents?: number | null;
+  monthly_hard_limit_cents?: number | null;
+  enforce_hard_limit: boolean;
+  current_month_estimated_cost_cents: number;
+  projected_status: string;
+  updated_at?: string | null;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -551,6 +561,21 @@ export class ApiClient {
     const query = search.toString();
     const querySuffix = query ? `?${query}` : "";
     return this.request<UsageCostSummary>(`/usage/costs${querySuffix}`);
+  }
+
+  getBudgetPolicy() {
+    return this.request<BudgetPolicy>("/usage/budget-policy");
+  }
+
+  updateBudgetPolicy(payload: {
+    monthly_soft_limit_cents?: number | null;
+    monthly_hard_limit_cents?: number | null;
+    enforce_hard_limit: boolean;
+  }) {
+    return this.request<BudgetPolicy>("/usage/budget-policy", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
   }
 
   listProjects() {
