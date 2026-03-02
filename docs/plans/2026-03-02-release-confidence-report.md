@@ -1,7 +1,7 @@
-# Reframe Release Confidence Report (2026-03-01)
+# Reframe Release Confidence Report (2026-03-02)
 
 - status: `READY`
-- generated_utc: `2026-03-01T17:34:18.886041+00:00`
+- generated_utc: `2026-03-02T16:49:53.074326+00:00`
 
 ## Local gates
 
@@ -38,6 +38,6 @@
 
 ## Evidence files
 
-- `docs/plans/2026-03-01-release-readiness-summary.json`
-- `docs/plans/2026-03-01-updater-e2e-*.json`
-- `docs/plans/2026-03-01-pyannote-benchmark-status.json`
+- `docs/plans/2026-03-02-release-readiness-summary.json`
+- `docs/plans/2026-03-02-updater-e2e-*.json`
+- `docs/plans/2026-03-02-pyannote-benchmark-status.json`

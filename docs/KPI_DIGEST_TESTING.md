@@ -41,8 +41,19 @@ Expected:
 Download the artifact and verify:
 
 - `digest.json` includes `window_start_utc`, `window_end_utc`, and `metrics`.
+- `digest.json` includes `metrics_previous_window` and `trends`.
 - `digest.md` renders the same metric values.
+- `digest.md` includes a baseline section and trend deltas (`current - previous`).
 - `upsert.json` indicates `created` or `updated` with issue URL.
+
+### 2b. Trend/Health Classification
+
+Expected:
+
+- `health.main_ci_failure_rate_trend` is one of `improving|stable|worsening`.
+- Positive `main_ci_failure_rate_pct_delta` maps to degraded/worsening trend.
+- Negative `main_ci_failure_rate_pct_delta` maps to improving trend.
+- Rolling issue snapshot JSON includes `metrics`, `trends`, and `health`.
 
 ### 3. Rolling Issue Upsert Behavior
 
@@ -100,6 +111,14 @@ python3 scripts/upsert_ops_digest_issue.py \
 
 - Confirm window selection (`--window-days`) matches expected period.
 - Verify repository activity actually occurred in that window.
+
+### Trend looks wrong
+
+- Verify both windows are populated:
+  - current window (`window_start_utc` -> `window_end_utc`)
+  - previous window (`previous_window_start_utc` -> `previous_window_end_utc`)
+- Confirm workflow-run filter is still constrained to `head_branch=main`.
+- Re-run digest with the same token and compare artifact `digest.json` values directly.
 
 ## Operational Notes
 

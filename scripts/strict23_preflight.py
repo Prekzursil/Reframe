@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+PERMISSION_HTTP_CODES = {401, 403, 404}
+DEFAULT_CANONICAL_CONTEXTS = [
+    "applitools-core",
+    "pr-agent",
+    "deep-agent",
+    "audit-pr-evidence",
+    "backend",
+    "backend-postgres",
+    "coverage",
+    "CodeQL",
+    "codecov-analytics",
+    "CodeRabbit",
+    "dependency-review",
+    "compose-smoke",
+    "frontend",
+    "label",
+    "codacy-equivalent-zero",
+    "sonar-branch-zero",
+    "Seer Code Review",
+    "Vercel",
+    "Vercel Preview Comments",
+]
+
+
+@dataclass
+class PreflightResult:
+    status: str
+    findings: list[str]
+    missing_in_branch_protection: list[str]
+    missing_in_check_runs: list[str]
+    ref_sha: str | None
+    http_status: int | None = None
+    http_error: str | None = None
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Strict-23 preflight: compare canonical contexts against branch protection and emitted check-runs."
+    )
+    parser.add_argument("--repo", required=True, help="GitHub repository in owner/repo format")
+    parser.add_argument("--ref", default="main", help="Ref (branch/tag/SHA) used for emitted check context inventory")
+    parser.add_argument("--branch", default="main", help="Branch used for branch-protection context inventory")
+    parser.add_argument("--api-base", default="https://api.github.com", help="GitHub API base URL")
+    parser.add_argument(
+        "--canonical-contexts",
+        default="",
+        help="Optional comma-separated canonical context names; defaults to built-in strict-23 list.",
+    )
+    parser.add_argument("--out-json", required=True, help="Output JSON path")
+    parser.add_argument("--out-md", required=True, help="Output markdown path")
+    return parser.parse_args()
+
+
+def _classify_http_status(code: int) -> str:
+    return "inconclusive_permissions" if code in PERMISSION_HTTP_CODES else "api_error"
+
+
+def _api_get(api_base: str, repo: str, path: str, token: str) -> dict[str, Any]:
+    url = f"{api_base.rstrip('/')}/repos/{repo}/{path.lstrip('/')}"
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"Unsupported API URL: {url!r}")
+    req = Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "reframe-strict23-preflight",
+        },
+        method="GET",
+    )
+    with urlopen(req, timeout=30) as resp:  # nosec B310 - URL scheme and host are validated above
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _canonical_contexts(raw: str) -> list[str]:
+    if not raw.strip():
+        return list(DEFAULT_CANONICAL_CONTEXTS)
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def evaluate_contexts(
+    *,
+    canonical_contexts: list[str],
+    branch_required_checks: list[str],
+    emitted_contexts: list[str],
+    ref_sha: str | None,
+) -> PreflightResult:
+    missing_in_branch = [ctx for ctx in canonical_contexts if ctx not in branch_required_checks]
+    missing_in_emitted = [ctx for ctx in canonical_contexts if ctx not in emitted_contexts]
+
+    findings: list[str] = []
+    if missing_in_branch:
+        findings.append(
+            "Canonical contexts missing from branch protection: "
+            + ", ".join(missing_in_branch)
+        )
+    if missing_in_emitted:
+        findings.append(
+            "Canonical contexts missing from emitted checks on ref: "
+            + ", ".join(missing_in_emitted)
+        )
+
+    status = "compliant" if not findings else "non_compliant"
+    return PreflightResult(
+        status=status,
+        findings=findings,
+        missing_in_branch_protection=missing_in_branch,
+        missing_in_check_runs=missing_in_emitted,
+        ref_sha=ref_sha,
+    )
+
+
+def _collect_emitted_contexts(check_runs: dict[str, Any], status_payload: dict[str, Any]) -> list[str]:
+    contexts: set[str] = set(_collect_named_values(check_runs.get("check_runs") or [], "name"))
+    contexts.update(_collect_named_values(status_payload.get("statuses") or [], "context"))
+    return sorted(contexts)
+
+
+def _collect_named_values(items: list[dict[str, Any]], field: str) -> list[str]:
+    values: list[str] = []
+    for item in items:
+        value = str(item.get(field) or "").strip()
+        if value:
+            values.append(value)
+    return values
+
+
+def _render_markdown(payload: dict[str, Any]) -> str:
+    lines = [
+        "# strict-23 Preflight",
+        "",
+        f"- Status: `{payload['status']}`",
+        f"- Repo: `{payload['repo']}`",
+        f"- Branch policy target: `{payload['branch']}`",
+        f"- Ref target: `{payload['ref']}`",
+        f"- Resolved ref SHA: `{payload.get('ref_sha') or 'unknown'}`",
+        f"- Timestamp (UTC): `{payload['timestamp_utc']}`",
+        "",
+        "## Findings",
+    ]
+
+    findings = payload.get("findings") or []
+    if findings:
+        lines.extend(f"- {item}" for item in findings)
+    else:
+        lines.append("- None")
+
+    lines.extend(
+        [
+            "",
+            "## Missing contexts",
+            "",
+            f"- branch protection missing: `{len(payload.get('missing_in_branch_protection') or [])}`",
+            f"- emitted checks missing: `{len(payload.get('missing_in_check_runs') or [])}`",
+        ]
+    )
+
+    if payload.get("http_status") is not None:
+        lines.extend(
+            [
+                "",
+                "## API details",
+                f"- HTTP status: `{payload['http_status']}`",
+                f"- Message: `{payload.get('http_error') or ''}`",
+            ]
+        )
+
+    return "\n".join(lines) + "\n"
+
+
+def _missing_token_result() -> tuple[PreflightResult, list[str], list[str]]:
+    result = PreflightResult(
+        status="inconclusive_permissions",
+        findings=["GitHub token missing; strict-23 preflight cannot query branch protection/check-runs."],
+        missing_in_branch_protection=[],
+        missing_in_check_runs=[],
+        ref_sha=None,
+    )
+    return result, [], []
+
+
+def _http_error_result(exc: HTTPError) -> tuple[PreflightResult, list[str], list[str]]:
+    message = exc.read().decode("utf-8", errors="replace")[:1000]
+    result = PreflightResult(
+        status=_classify_http_status(exc.code),
+        findings=[f"GitHub API request failed (HTTP {exc.code}) while running strict-23 preflight."],
+        missing_in_branch_protection=[],
+        missing_in_check_runs=[],
+        ref_sha=None,
+        http_status=exc.code,
+        http_error=message,
+    )
+    return result, [], []
+
+
+def _url_error_result(exc: URLError) -> tuple[PreflightResult, list[str], list[str]]:
+    result = PreflightResult(
+        status="api_error",
+        findings=["Network error while requesting GitHub API for strict-23 preflight."],
+        missing_in_branch_protection=[],
+        missing_in_check_runs=[],
+        ref_sha=None,
+        http_error=str(exc.reason),
+    )
+    return result, [], []
+
+
+def _run_preflight(
+    *,
+    args: argparse.Namespace,
+    canonical: list[str],
+    token: str,
+) -> tuple[PreflightResult, list[str], list[str]]:
+    try:
+        protection = _api_get(args.api_base, args.repo, f"branches/{args.branch}/protection", token)
+        ref_payload = _api_get(args.api_base, args.repo, f"commits/{args.ref}", token)
+        ref_sha = str(ref_payload.get("sha") or "").strip() or None
+        if ref_sha is None:
+            raise RuntimeError(f"Unable to resolve SHA for ref {args.ref!r}")
+        check_runs = _api_get(args.api_base, args.repo, f"commits/{ref_sha}/check-runs?per_page=100", token)
+        status_payload = _api_get(args.api_base, args.repo, f"commits/{ref_sha}/status", token)
+
+        branch_required_checks = sorted((protection.get("required_status_checks") or {}).get("contexts") or [])
+        emitted_contexts = _collect_emitted_contexts(check_runs, status_payload)
+        result = evaluate_contexts(
+            canonical_contexts=canonical,
+            branch_required_checks=branch_required_checks,
+            emitted_contexts=emitted_contexts,
+            ref_sha=ref_sha,
+        )
+        return result, branch_required_checks, emitted_contexts
+    except HTTPError as exc:
+        return _http_error_result(exc)
+    except URLError as exc:
+        return _url_error_result(exc)
+
+
+def main() -> int:
+    args = _parse_args()
+    out_json = Path(args.out_json)
+    out_md = Path(args.out_md)
+    canonical = _canonical_contexts(args.canonical_contexts)
+
+    token = (os.environ.get("GITHUB_TOKEN") or "").strip() or (os.environ.get("GH_TOKEN") or "").strip()
+    now = datetime.now(timezone.utc).isoformat()
+    if not token:
+        result, branch_required_checks, emitted_contexts = _missing_token_result()
+    else:
+        result, branch_required_checks, emitted_contexts = _run_preflight(
+            args=args,
+            canonical=canonical,
+            token=token,
+        )
+
+    payload = {
+        "status": result.status,
+        "repo": args.repo,
+        "branch": args.branch,
+        "ref": args.ref,
+        "ref_sha": result.ref_sha,
+        "timestamp_utc": now,
+        "canonical_contexts": canonical,
+        "branch_protection_required_checks": branch_required_checks,
+        "emitted_contexts": emitted_contexts,
+        "missing_in_branch_protection": result.missing_in_branch_protection,
+        "missing_in_check_runs": result.missing_in_check_runs,
+        "findings": result.findings,
+        "http_status": result.http_status,
+        "http_error": result.http_error,
+    }
+
+    out_json.parent.mkdir(parents=True, exist_ok=True)
+    out_md.parent.mkdir(parents=True, exist_ok=True)
+    out_json.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    out_md.write_text(_render_markdown(payload), encoding="utf-8")
+
+    if result.status in {"non_compliant", "api_error"}:
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -503,3 +503,71 @@ Goal: offer Reframe as a paid hosted service (multi-tenant web app) while keepin
 - [x] Stabilize flaky web CI test (`App.e2e`) using async wait-based assertion after upload state settles.
 - [x] Enforce protected `main` with required PR checks (CI + CodeQL + CodeRabbit) and no direct pushes.
 
+---
+
+## 25. Hosted SaaS V2 Hardening & Scale
+
+Goal: extend the hosted SaaS baseline with deterministic release gating, stricter policy visibility, and cost/safety controls for multi-tenant growth.
+
+### Track A — strict-23 integration reliability (issue #91, #92)
+
+- [x] Add `scripts/strict23_preflight.py` to inventory canonical required contexts against latest branch-protection policy and recent check-run emissions.
+- [x] Add `.github/workflows/strict23-preflight.yml` to publish a machine-readable preflight artifact on PRs and manual dispatch.
+- [x] Require explicit status taxonomy in preflight output: `compliant`, `non_compliant`, `inconclusive_permissions`.
+- [x] Add deterministic tests for context diffing and permission-denied handling under `apps/api/tests/test_scripts_strict23_preflight.py`.
+- [x] Add `docs/plans/<stamp>-strict23-preflight.md` report with context deltas and rollout recommendation.
+
+Acceptance criteria:
+
+- strict-23 preflight artifact exists for every PR run.
+- No false-positive "missing check" result when API permissions are insufficient.
+
+### Track B — branch-protection audit policy hardening (issue #89)
+
+- [ ] Add `docs/branch-protection-policy.json` as the single source of expected policy (`required checks`, `required reviews`, `linear history`).
+- [ ] Update `scripts/audit_branch_protection.py` to read policy JSON and compare deterministically.
+- [ ] Ensure `branch-protection-audit.yml` opens/updates findings only on true drift; permission problems must be `inconclusive_permissions`.
+- [ ] Add/extend tests in `apps/api/tests/test_scripts_branch_protection_audit.py` for policy mismatch and permission-denied paths.
+
+Acceptance criteria:
+
+- Branch-protection audit passes when policy and GitHub protection match.
+- Permission denials are classified as inconclusive with actionable message, not drift.
+
+### Track C — ops weekly digest quality signal (issue #88)
+
+- [x] Extend `scripts/generate_ops_digest.py` with trend deltas (7d vs prior 7d) for CI failure rate and PR throughput.
+- [x] Add issue-upsert guardrails to avoid duplicate noise and preserve one rolling digest issue.
+- [x] Add operator runbook updates in `docs/KPI_DIGEST_TESTING.md` for failure modes and expected remediation cadence.
+- [x] Add lightweight tests for digest metric calculations and issue body rendering.
+
+Acceptance criteria:
+
+- Exactly one rolling ops digest issue is maintained.
+- Digest includes trend deltas and health classification for operator action.
+
+### Track D — SaaS budget guardrails (net-new V2 capability)
+
+- [ ] Add `OrgBudgetPolicy` model + migration for monthly soft/hard budget thresholds.
+- [ ] Add API endpoints:
+  - [ ] `GET /api/v1/usage/budget-policy`
+  - [ ] `PUT /api/v1/usage/budget-policy`
+- [ ] Enforce budget checks during expensive job submission paths with clear `quota_exceeded` payloads.
+- [ ] Add Usage dashboard controls to view/update policy and show projected overrun warnings.
+- [ ] Add API + web tests for org-scoped budget CRUD and enforcement behavior.
+
+Acceptance criteria:
+
+- Hosted org admins can configure budget policy and enforcement is deterministic.
+- Enforcement never leaks cross-org budget state.
+
+### Validation gates for this section
+
+- [ ] `make verify`
+- [ ] `make smoke-hosted`
+- [ ] `make smoke-local`
+- [ ] `make smoke-security`
+- [ ] `make smoke-workflows`
+- [ ] `make smoke-perf-cost`
+- [ ] `make release-readiness`
+
