@@ -42,6 +42,11 @@ Download the artifact and verify:
 
 - `digest.json` includes `window_start_utc`, `window_end_utc`, and `metrics`.
 - `digest.json` includes `metrics_previous_window` and `trends`.
+- `digest.json` includes enriched CI metrics:
+  - `required_check_pass_rate_pct`
+  - `ci_duration_median_seconds`
+  - `ci_duration_p95_seconds`
+  - `top_failed_checks`
 - `digest.md` renders the same metric values.
 - `digest.md` includes a baseline section and trend deltas (`current - previous`).
 - `upsert.json` indicates `created` or `updated` with issue URL.
@@ -51,9 +56,16 @@ Download the artifact and verify:
 Expected:
 
 - `health.main_ci_failure_rate_trend` is one of `improving|stable|worsening`.
+- `health.required_check_pass_rate` is one of `ok|watch|alert`.
+- `health.ci_duration_p95` is one of `ok|watch|alert`.
 - Positive `main_ci_failure_rate_pct_delta` maps to degraded/worsening trend.
 - Negative `main_ci_failure_rate_pct_delta` maps to improving trend.
 - Rolling issue snapshot JSON includes `metrics`, `trends`, and `health`.
+
+Threshold policy source of truth:
+
+- `docs/ops-health-policy.json` defines pass/fail/watch boundaries for enriched digest health states.
+- If this policy file is absent, script defaults are used and should be treated as fallback only.
 
 ### 3. Rolling Issue Upsert Behavior
 

@@ -139,6 +139,81 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("OAUTH_STATE_SECRET", "REFRAME_OAUTH_STATE_SECRET"),
         description="Secret used to sign OAuth state payloads.",
     )
+    enable_sso_scim: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("ENABLE_SSO_SCIM", "REFRAME_ENABLE_SSO_SCIM"),
+        description="Enable enterprise SSO/SCIM routes for hosted organizations.",
+    )
+    okta_issuer_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("OKTA_ISSUER_URL", "REFRAME_OKTA_ISSUER_URL"),
+        description="Default Okta issuer URL for hosted SSO.",
+    )
+    okta_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("OKTA_CLIENT_ID", "REFRAME_OKTA_CLIENT_ID"),
+        description="Default Okta OAuth client ID.",
+    )
+    okta_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("OKTA_CLIENT_SECRET", "REFRAME_OKTA_CLIENT_SECRET"),
+        description="Default Okta OAuth client secret.",
+    )
+    okta_audience: str = Field(
+        default="",
+        validation_alias=AliasChoices("OKTA_AUDIENCE", "REFRAME_OKTA_AUDIENCE"),
+        description="Optional Okta audience for API authorization.",
+    )
+    scim_token_prefix: str = Field(
+        default="rscim_",
+        validation_alias=AliasChoices("SCIM_TOKEN_PREFIX", "REFRAME_SCIM_TOKEN_PREFIX"),
+        description="Prefix used when issuing SCIM bearer tokens.",
+    )
+    publish_state_secret: str = Field(
+        default="reframe-dev-publish-state-secret",
+        validation_alias=AliasChoices("PUBLISH_STATE_SECRET", "REFRAME_PUBLISH_STATE_SECRET"),
+        description="Secret used to sign publish provider connection state.",
+    )
+    publish_youtube_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("PUBLISH_YOUTUBE_CLIENT_ID", "REFRAME_PUBLISH_YOUTUBE_CLIENT_ID"),
+        description="OAuth client id for YouTube publishing integration.",
+    )
+    publish_youtube_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("PUBLISH_YOUTUBE_CLIENT_SECRET", "REFRAME_PUBLISH_YOUTUBE_CLIENT_SECRET"),
+        description="OAuth client secret for YouTube publishing integration.",
+    )
+    publish_tiktok_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("PUBLISH_TIKTOK_CLIENT_ID", "REFRAME_PUBLISH_TIKTOK_CLIENT_ID"),
+        description="OAuth client id for TikTok publishing integration.",
+    )
+    publish_tiktok_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("PUBLISH_TIKTOK_CLIENT_SECRET", "REFRAME_PUBLISH_TIKTOK_CLIENT_SECRET"),
+        description="OAuth client secret for TikTok publishing integration.",
+    )
+    publish_instagram_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("PUBLISH_INSTAGRAM_CLIENT_ID", "REFRAME_PUBLISH_INSTAGRAM_CLIENT_ID"),
+        description="OAuth client id for Instagram publishing integration.",
+    )
+    publish_instagram_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("PUBLISH_INSTAGRAM_CLIENT_SECRET", "REFRAME_PUBLISH_INSTAGRAM_CLIENT_SECRET"),
+        description="OAuth client secret for Instagram publishing integration.",
+    )
+    publish_facebook_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("PUBLISH_FACEBOOK_CLIENT_ID", "REFRAME_PUBLISH_FACEBOOK_CLIENT_ID"),
+        description="OAuth client id for Facebook publishing integration.",
+    )
+    publish_facebook_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("PUBLISH_FACEBOOK_CLIENT_SECRET", "REFRAME_PUBLISH_FACEBOOK_CLIENT_SECRET"),
+        description="OAuth client secret for Facebook publishing integration.",
+    )
     stripe_secret_key: str = Field(
         default="",
         validation_alias=AliasChoices("STRIPE_SECRET_KEY", "REFRAME_STRIPE_SECRET_KEY"),

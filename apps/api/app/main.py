@@ -13,6 +13,9 @@ from app.database import create_db_and_tables
 from app.api import router as api_router
 from app.auth_api import router as auth_router
 from app.billing_api import router as billing_router
+from app.collaboration_api import router as collaboration_router
+from app.identity_api import router as identity_router
+from app.publish_api import router as publish_router
 from app.errors import ApiError, ErrorResponse
 from app.cleanup import start_cleanup_loop
 from app.logging_config import setup_logging
@@ -95,6 +98,9 @@ def create_app() -> FastAPI:
 
     app.include_router(api_router)
     app.include_router(auth_router)
+    app.include_router(identity_router)
+    app.include_router(collaboration_router)
+    app.include_router(publish_router)
     app.include_router(billing_router)
 
     @app.get("/health", tags=["Health"])

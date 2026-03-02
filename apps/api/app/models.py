@@ -232,6 +232,160 @@ class OrgBudgetPolicy(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
+class SsoConnection(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("org_id", name="uq_sso_connection_org"),)
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    org_id: UUID = Field(foreign_key="organization.id", index=True)
+    provider: str = Field(default="okta", index=True)
+    enabled: bool = Field(default=False)
+    issuer_url: Optional[str] = Field(default=None)
+    client_id: Optional[str] = Field(default=None)
+    client_secret_ref: Optional[str] = Field(default=None)
+    audience: Optional[str] = Field(default=None)
+    default_role: str = Field(default="viewer")
+    jit_enabled: bool = Field(default=True)
+    allow_email_link: bool = Field(default=True)
+    config: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ScimToken(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("org_id", "token_hash", name="uq_scim_token_org_hash"),)
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    org_id: UUID = Field(foreign_key="organization.id", index=True)
+    created_by_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    token_hint: str = Field(index=True)
+    token_hash: str
+    scopes: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    last_used_at: Optional[datetime] = Field(default=None)
+    revoked_at: Optional[datetime] = Field(default=None)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ScimIdentity(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("org_id", "provider", "external_id", "resource_type", name="uq_scim_identity_external"),)
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    org_id: UUID = Field(foreign_key="organization.id", index=True)
+    user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    provider: str = Field(default="okta", index=True)
+    external_id: str = Field(index=True)
+    resource_type: str = Field(default="user", index=True)
+    email: Optional[str] = Field(default=None, index=True)
+    group_name: Optional[str] = Field(default=None, index=True)
+    active: bool = Field(default=True)
+    attributes: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class RoleMapping(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("org_id", "provider", "external_value", name="uq_role_mapping_external"),)
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    org_id: UUID = Field(foreign_key="organization.id", index=True)
+    provider: str = Field(default="okta", index=True)
+    external_value: str = Field(index=True)
+    role: str = Field(default="viewer")
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ProjectMembership(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("project_id", "user_id", name="uq_project_membership_project_user"),)
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    project_id: UUID = Field(foreign_key=FK_PROJECT_ID, index=True)
+    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
+    user_id: UUID = Field(foreign_key="user.id", index=True)
+    role: str = Field(default="viewer", index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ProjectComment(SQLModel, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    project_id: UUID = Field(foreign_key=FK_PROJECT_ID, index=True)
+    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
+    author_user_id: UUID = Field(foreign_key="user.id", index=True)
+    parent_comment_id: Optional[UUID] = Field(default=None, foreign_key="projectcomment.id", index=True)
+    body: str
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ProjectApprovalRequest(SQLModel, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    project_id: UUID = Field(foreign_key=FK_PROJECT_ID, index=True)
+    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
+    requested_by_user_id: UUID = Field(foreign_key="user.id", index=True)
+    status: str = Field(default="pending", index=True)
+    summary: Optional[str] = Field(default=None)
+    resolved_by_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    resolved_at: Optional[datetime] = Field(default=None)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ProjectActivityEvent(SQLModel, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    project_id: UUID = Field(foreign_key=FK_PROJECT_ID, index=True)
+    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
+    actor_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    event_type: str = Field(index=True)
+    payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class PublishConnection(SQLModel, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    org_id: UUID = Field(foreign_key="organization.id", index=True)
+    user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    provider: str = Field(index=True)
+    account_label: Optional[str] = Field(default=None)
+    external_account_id: Optional[str] = Field(default=None, index=True)
+    token_ref: Optional[str] = Field(default=None)
+    refresh_token_ref: Optional[str] = Field(default=None)
+    connection_meta: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    revoked_at: Optional[datetime] = Field(default=None)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class PublishJob(SQLModel, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    org_id: UUID = Field(foreign_key="organization.id", index=True)
+    user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    provider: str = Field(index=True)
+    connection_id: UUID = Field(foreign_key="publishconnection.id", index=True)
+    asset_id: UUID = Field(foreign_key=FK_MEDIA_ASSET_ID, index=True)
+    status: str = Field(default="queued", index=True)
+    payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    retry_count: int = Field(default=0)
+    error: Optional[str] = Field(default=None)
+    external_post_id: Optional[str] = Field(default=None)
+    published_url: Optional[str] = Field(default=None)
+    task_id: Optional[str] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class AutomationRunEvent(SQLModel, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
+    workflow_run_id: Optional[UUID] = Field(default=None, foreign_key="workflowrun.id", index=True)
+    publish_job_id: Optional[UUID] = Field(default=None, foreign_key="publishjob.id", index=True)
+    step_name: str = Field(index=True)
+    status: str = Field(index=True)
+    message: Optional[str] = Field(default=None)
+    payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class MediaAsset(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     kind: str = Field(description="Type of asset, e.g., video, audio, subtitle")
