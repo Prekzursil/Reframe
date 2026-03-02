@@ -34,6 +34,7 @@ from app.models import (
     Job,
     JobStatus,
     MediaAsset,
+    OrgBudgetPolicy,
     Project,
     Subscription,
     SubtitleStylePreset,
@@ -196,7 +197,125 @@ def _resolve_plan_code(session: Session, *, org_id: UUID | None) -> str:
     return (sub.plan_code if sub else "free") or "free"
 
 
-def _enforce_org_quota(session: Session, principal: AuthPrincipal) -> None:
+def _month_start_utc() -> datetime:
+    return datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def _current_month_estimated_cost_cents(session: Session, *, org_id: UUID) -> int:
+    month_start = _month_start_utc()
+    entries = session.exec(
+        select(UsageLedgerEntry).where(
+            (UsageLedgerEntry.org_id == org_id)
+            & (UsageLedgerEntry.created_at >= month_start)
+        )
+    ).all()
+    return sum(int(item.estimated_cost_cents or 0) for item in entries)
+
+
+def _estimate_job_submission_cost_cents(*, job_type: str | None, payload: dict[str, Any] | None) -> int:
+    raw = payload or {}
+    explicit = raw.get("estimated_cost_cents")
+    if explicit is not None:
+        try:
+            return max(0, int(float(explicit)))
+        except (TypeError, ValueError):
+            return 0
+
+    default_base_costs = {
+        "captions": 25,
+        "translate_subtitles": 10,
+        "shorts": 35,
+        "style_subtitles": 15,
+        "merge_av": 8,
+        "cut_clip": 5,
+    }
+    base = int(default_base_costs.get((job_type or "").strip().lower(), 10))
+    minutes = 0.0
+    if "expected_minutes" in raw:
+        try:
+            minutes = max(0.0, float(raw.get("expected_minutes") or 0.0))
+        except (TypeError, ValueError):
+            minutes = 0.0
+    elif "duration_seconds" in raw:
+        try:
+            minutes = max(0.0, float(raw.get("duration_seconds") or 0.0) / 60.0)
+        except (TypeError, ValueError):
+            minutes = 0.0
+    return base + int(round(minutes * 2.0))
+
+
+def _require_org_manager_role(principal: AuthPrincipal) -> None:
+    role = (principal.role or "").strip().lower()
+    if role not in {"owner", "admin"}:
+        raise unauthorized("Owner or admin role is required")
+
+
+def _serialize_budget_policy(
+    *,
+    policy: OrgBudgetPolicy | None,
+    org_id: UUID,
+    current_month_estimated_cost_cents: int,
+) -> BudgetPolicyView:
+    soft_limit = int(policy.monthly_soft_limit_cents) if (policy and policy.monthly_soft_limit_cents is not None) else None
+    hard_limit = int(policy.monthly_hard_limit_cents) if (policy and policy.monthly_hard_limit_cents is not None) else None
+    projected_status = "ok"
+    if hard_limit is not None and hard_limit > 0 and current_month_estimated_cost_cents > hard_limit:
+        projected_status = "hard_limit_exceeded"
+    elif soft_limit is not None and soft_limit > 0 and current_month_estimated_cost_cents > soft_limit:
+        projected_status = "soft_limit_exceeded"
+    return BudgetPolicyView(
+        org_id=org_id,
+        monthly_soft_limit_cents=soft_limit,
+        monthly_hard_limit_cents=hard_limit,
+        enforce_hard_limit=bool(policy.enforce_hard_limit) if policy else False,
+        current_month_estimated_cost_cents=current_month_estimated_cost_cents,
+        projected_status=projected_status,
+        updated_at=(policy.updated_at if policy else None),
+    )
+
+
+def _enforce_org_budget_policy(
+    session: Session,
+    principal: AuthPrincipal,
+    *,
+    job_type: str | None,
+    job_payload: dict[str, Any] | None,
+) -> None:
+    settings = get_settings()
+    org_id = principal.org_id
+    if not org_id or not settings.enable_billing:
+        return
+
+    policy = session.exec(select(OrgBudgetPolicy).where(OrgBudgetPolicy.org_id == org_id)).first()
+    if not policy:
+        return
+
+    current_cost = _current_month_estimated_cost_cents(session, org_id=org_id)
+    estimated_new_cost = _estimate_job_submission_cost_cents(job_type=job_type, payload=job_payload)
+    projected_cost = current_cost + estimated_new_cost
+    hard_limit = int(policy.monthly_hard_limit_cents or 0)
+    if bool(policy.enforce_hard_limit) and hard_limit > 0 and projected_cost > hard_limit:
+        raise quota_exceeded(
+            "Monthly budget hard limit would be exceeded",
+            details={
+                "org_id": str(org_id),
+                "job_type": job_type,
+                "current_month_estimated_cost_cents": current_cost,
+                "estimated_new_job_cost_cents": estimated_new_cost,
+                "projected_month_estimated_cost_cents": projected_cost,
+                "monthly_hard_limit_cents": hard_limit,
+                "enforce_hard_limit": bool(policy.enforce_hard_limit),
+            },
+        )
+
+
+def _enforce_org_quota(
+    session: Session,
+    principal: AuthPrincipal,
+    *,
+    job_type: str | None = None,
+    job_payload: dict[str, Any] | None = None,
+) -> None:
     settings = get_settings()
     org_id = principal.org_id
     if not org_id or not settings.enable_billing:
@@ -226,7 +345,7 @@ def _enforce_org_quota(session: Session, principal: AuthPrincipal) -> None:
             },
         )
 
-    month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_start = _month_start_utc()
     usage = session.exec(
         select(UsageEvent).where(
             (UsageEvent.org_id == org_id)
@@ -263,6 +382,12 @@ def _enforce_org_quota(session: Session, principal: AuthPrincipal) -> None:
                 "used_storage_gb": round(used_storage_bytes / float(1024**3), 3),
             },
         )
+    _enforce_org_budget_policy(
+        session,
+        principal,
+        job_type=job_type,
+        job_payload=job_payload,
+    )
 
 
 def _ensure_project_exists(session: Session, project_id: UUID | None, principal: AuthPrincipal | None = None) -> Project | None:
@@ -539,6 +664,22 @@ class UsageCostSummary(SQLModel):
     by_metric_cost_cents: dict[str, int] = Field(default_factory=dict)
     from_date: Optional[datetime] = None
     to_date: Optional[datetime] = None
+
+
+class BudgetPolicyView(SQLModel):
+    org_id: UUID
+    monthly_soft_limit_cents: Optional[int] = None
+    monthly_hard_limit_cents: Optional[int] = None
+    enforce_hard_limit: bool = False
+    current_month_estimated_cost_cents: int = 0
+    projected_status: str = "ok"
+    updated_at: Optional[datetime] = None
+
+
+class BudgetPolicyUpdateRequest(SQLModel):
+    monthly_soft_limit_cents: Optional[int] = Field(default=None, ge=0)
+    monthly_hard_limit_cents: Optional[int] = Field(default=None, ge=0)
+    enforce_hard_limit: bool = False
 
 
 class WorkflowTemplateCreateRequest(SQLModel):
@@ -825,7 +966,7 @@ def create_caption_job(
 ) -> Job:
     _ensure_asset_exists(session, asset_id=payload.video_asset_id, principal=principal, kind="video", field="video_asset_id")
     project = _ensure_project_exists(session, payload.project_id, principal)
-    _enforce_org_quota(session, principal)
+    _enforce_org_quota(session, principal, job_type="captions", job_payload=payload.options or {})
     idem = _resolve_idempotency_key(payload.idempotency_key, idempotency_key)
     existing = _find_existing_idempotent_job(session=session, principal=principal, job_type="captions", idempotency_key=idem)
     if existing:
@@ -862,7 +1003,12 @@ def create_translate_job(
 ) -> Job:
     _ensure_asset_exists(session, asset_id=payload.subtitle_asset_id, principal=principal, kind="subtitle", field="subtitle_asset_id")
     project = _ensure_project_exists(session, payload.project_id, principal)
-    _enforce_org_quota(session, principal)
+    _enforce_org_quota(
+        session,
+        principal,
+        job_type="translate_subtitles",
+        job_payload={"target_language": payload.target_language, **(payload.options or {})},
+    )
     idem = _resolve_idempotency_key(payload.idempotency_key, idempotency_key)
     existing = _find_existing_idempotent_job(
         session=session,
@@ -1072,6 +1218,61 @@ def get_usage_costs(
         from_date=from_dt,
         to_date=to_dt,
     )
+
+
+@router.get("/usage/budget-policy", response_model=BudgetPolicyView, tags=["Usage"])
+def get_budget_policy(session: SessionDep, principal: PrincipalDep) -> BudgetPolicyView:
+    if not principal.org_id:
+        raise unauthorized("Organization context missing")
+    policy = session.exec(select(OrgBudgetPolicy).where(OrgBudgetPolicy.org_id == principal.org_id)).first()
+    current_cost = _current_month_estimated_cost_cents(session, org_id=principal.org_id)
+    return _serialize_budget_policy(policy=policy, org_id=principal.org_id, current_month_estimated_cost_cents=current_cost)
+
+
+@router.put("/usage/budget-policy", response_model=BudgetPolicyView, tags=["Usage"])
+def update_budget_policy(
+    payload: BudgetPolicyUpdateRequest,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> BudgetPolicyView:
+    if not principal.org_id:
+        raise unauthorized("Organization context missing")
+    _require_org_manager_role(principal)
+
+    soft = payload.monthly_soft_limit_cents
+    hard = payload.monthly_hard_limit_cents
+    if soft is not None and hard is not None and soft > hard:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Soft budget limit cannot exceed hard budget limit",
+            details={"monthly_soft_limit_cents": soft, "monthly_hard_limit_cents": hard},
+        )
+
+    policy = session.exec(select(OrgBudgetPolicy).where(OrgBudgetPolicy.org_id == principal.org_id)).first()
+    now = datetime.now(timezone.utc)
+    if not policy:
+        policy = OrgBudgetPolicy(
+            org_id=principal.org_id,
+            monthly_soft_limit_cents=soft,
+            monthly_hard_limit_cents=hard,
+            enforce_hard_limit=payload.enforce_hard_limit,
+            updated_by_user_id=principal.user_id,
+            created_at=now,
+            updated_at=now,
+        )
+    else:
+        policy.monthly_soft_limit_cents = soft
+        policy.monthly_hard_limit_cents = hard
+        policy.enforce_hard_limit = payload.enforce_hard_limit
+        policy.updated_by_user_id = principal.user_id
+        policy.updated_at = now
+    session.add(policy)
+    session.commit()
+    session.refresh(policy)
+
+    current_cost = _current_month_estimated_cost_cents(session, org_id=principal.org_id)
+    return _serialize_budget_policy(policy=policy, org_id=principal.org_id, current_month_estimated_cost_cents=current_cost)
 
 
 @router.post(
@@ -1483,7 +1684,12 @@ def retry_job(
             details={"job_id": str(source.id), "job_type": source.job_type},
         )
 
-    _enforce_org_quota(session, principal)
+    _enforce_org_quota(
+        session,
+        principal,
+        job_type=source.job_type,
+        job_payload=(source.payload if isinstance(source.payload, dict) else {}),
+    )
     original_payload = source.payload or {}
     retry_attempt = int(original_payload.get("retry_attempt") or 0) + 1 if isinstance(original_payload, dict) else 1
     retry_payload = {**(original_payload if isinstance(original_payload, dict) else {})}
@@ -1712,7 +1918,18 @@ def create_shorts_job(
 ) -> Job:
     _ensure_asset_exists(session, asset_id=payload.video_asset_id, principal=principal, kind="video", field="video_asset_id")
     project = _ensure_project_exists(session, payload.project_id, principal)
-    _enforce_org_quota(session, principal)
+    _enforce_org_quota(
+        session,
+        principal,
+        job_type="shorts",
+        job_payload={
+            "max_clips": payload.max_clips,
+            "min_duration": payload.min_duration,
+            "max_duration": payload.max_duration,
+            "aspect_ratio": payload.aspect_ratio,
+            **(payload.options or {}),
+        },
+    )
     idem = _resolve_idempotency_key(payload.idempotency_key, idempotency_key)
     existing = _find_existing_idempotent_job(session=session, principal=principal, job_type="shorts", idempotency_key=idem)
     if existing:
@@ -1762,7 +1979,12 @@ def create_style_job(
     _ensure_asset_exists(session, asset_id=payload.video_asset_id, principal=principal, kind="video", field="video_asset_id")
     _ensure_asset_exists(session, asset_id=payload.subtitle_asset_id, principal=principal, kind="subtitle", field="subtitle_asset_id")
     project = _ensure_project_exists(session, payload.project_id, principal)
-    _enforce_org_quota(session, principal)
+    _enforce_org_quota(
+        session,
+        principal,
+        job_type="style_subtitles",
+        job_payload={"preview_seconds": payload.preview_seconds},
+    )
     idem = _resolve_idempotency_key(payload.idempotency_key, idempotency_key)
     existing = _find_existing_idempotent_job(
         session=session,
@@ -1817,7 +2039,17 @@ def create_merge_job(
     _ensure_asset_exists(session, asset_id=payload.video_asset_id, principal=principal, kind="video", field="video_asset_id")
     _ensure_asset_exists(session, asset_id=payload.audio_asset_id, principal=principal, kind="audio", field="audio_asset_id")
     project = _ensure_project_exists(session, payload.project_id, principal)
-    _enforce_org_quota(session, principal)
+    _enforce_org_quota(
+        session,
+        principal,
+        job_type="merge_av",
+        job_payload={
+            "offset": payload.offset,
+            "ducking": payload.ducking,
+            "normalize": payload.normalize,
+            **(payload.options or {}),
+        },
+    )
     idem = _resolve_idempotency_key(payload.idempotency_key, idempotency_key)
     existing = _find_existing_idempotent_job(session=session, principal=principal, job_type="merge_av", idempotency_key=idem)
     if existing:
@@ -1867,7 +2099,12 @@ def cut_clip_tool(
 ) -> Job:
     _ensure_asset_exists(session, asset_id=payload.video_asset_id, principal=principal, kind="video", field="video_asset_id")
     project = _ensure_project_exists(session, payload.project_id, principal)
-    _enforce_org_quota(session, principal)
+    _enforce_org_quota(
+        session,
+        principal,
+        job_type="cut_clip",
+        job_payload={"start": payload.start, "end": payload.end, **(payload.options or {})},
+    )
     start = max(0.0, float(payload.start or 0.0))
     end = max(start, float(payload.end or start))
     idem = _resolve_idempotency_key(payload.idempotency_key, idempotency_key)
@@ -1918,7 +2155,16 @@ def translate_subtitle_tool(
 ) -> Job:
     _ensure_asset_exists(session, asset_id=payload.subtitle_asset_id, principal=principal, kind="subtitle", field="subtitle_asset_id")
     project = _ensure_project_exists(session, payload.project_id, principal)
-    _enforce_org_quota(session, principal)
+    _enforce_org_quota(
+        session,
+        principal,
+        job_type="translate_subtitles",
+        job_payload={
+            "target_language": payload.target_language,
+            "bilingual": payload.bilingual,
+            **(payload.options or {}),
+        },
+    )
     idem = _resolve_idempotency_key(payload.idempotency_key, idempotency_key)
     existing = _find_existing_idempotent_job(
         session=session,

@@ -548,13 +548,14 @@ Acceptance criteria:
 
 ### Track D — SaaS budget guardrails (net-new V2 capability)
 
-- [ ] Add `OrgBudgetPolicy` model + migration for monthly soft/hard budget thresholds.
-- [ ] Add API endpoints:
-  - [ ] `GET /api/v1/usage/budget-policy`
-  - [ ] `PUT /api/v1/usage/budget-policy`
-- [ ] Enforce budget checks during expensive job submission paths with clear `quota_exceeded` payloads.
+- [x] Add `OrgBudgetPolicy` model + migration for monthly soft/hard budget thresholds.
+- [x] Add API endpoints:
+  - [x] `GET /api/v1/usage/budget-policy`
+  - [x] `PUT /api/v1/usage/budget-policy`
+- [x] Enforce budget checks during expensive job submission paths with clear `quota_exceeded` payloads.
 - [ ] Add Usage dashboard controls to view/update policy and show projected overrun warnings.
-- [ ] Add API + web tests for org-scoped budget CRUD and enforcement behavior.
+- [x] Add API tests for org-scoped budget CRUD and enforcement behavior.
+- [ ] Add web tests for usage dashboard budget controls and warning behavior.
 
 Acceptance criteria:
 
