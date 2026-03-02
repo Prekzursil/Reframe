@@ -524,10 +524,10 @@ Acceptance criteria:
 
 ### Track B — branch-protection audit policy hardening (issue #89)
 
-- [ ] Add `docs/branch-protection-policy.json` as the single source of expected policy (`required checks`, `required reviews`, `linear history`).
-- [ ] Update `scripts/audit_branch_protection.py` to read policy JSON and compare deterministically.
-- [ ] Ensure `branch-protection-audit.yml` opens/updates findings only on true drift; permission problems must be `inconclusive_permissions`.
-- [ ] Add/extend tests in `apps/api/tests/test_scripts_branch_protection_audit.py` for policy mismatch and permission-denied paths.
+- [x] Add `docs/branch-protection-policy.json` as the single source of expected policy (`required checks`, `required reviews`, `linear history`).
+- [x] Update `scripts/audit_branch_protection.py` to read policy JSON and compare deterministically.
+- [x] Ensure `branch-protection-audit.yml` opens/updates findings only on true drift; permission problems must be `inconclusive_permissions`.
+- [x] Add/extend tests in `apps/api/tests/test_scripts_branch_protection_audit.py` for policy mismatch and permission-denied paths.
 
 Acceptance criteria:
 
@@ -548,13 +548,14 @@ Acceptance criteria:
 
 ### Track D — SaaS budget guardrails (net-new V2 capability)
 
-- [ ] Add `OrgBudgetPolicy` model + migration for monthly soft/hard budget thresholds.
-- [ ] Add API endpoints:
-  - [ ] `GET /api/v1/usage/budget-policy`
-  - [ ] `PUT /api/v1/usage/budget-policy`
-- [ ] Enforce budget checks during expensive job submission paths with clear `quota_exceeded` payloads.
-- [ ] Add Usage dashboard controls to view/update policy and show projected overrun warnings.
-- [ ] Add API + web tests for org-scoped budget CRUD and enforcement behavior.
+- [x] Add `OrgBudgetPolicy` model + migration for monthly soft/hard budget thresholds.
+- [x] Add API endpoints:
+  - [x] `GET /api/v1/usage/budget-policy`
+  - [x] `PUT /api/v1/usage/budget-policy`
+- [x] Enforce budget checks during expensive job submission paths with clear `quota_exceeded` payloads.
+- [x] Add Usage dashboard controls to view/update policy and show projected overrun warnings.
+- [x] Add API tests for org-scoped budget CRUD and enforcement behavior.
+- [x] Add web tests for usage dashboard budget controls and warning behavior.
 
 Acceptance criteria:
 

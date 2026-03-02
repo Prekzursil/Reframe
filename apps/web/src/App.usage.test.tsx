@@ -19,6 +19,8 @@ const apiClientMock = vi.hoisted(() => ({
   createCutClipJob: vi.fn(),
   getSystemStatus: vi.fn(),
   getUsageSummary: vi.fn(),
+  getBudgetPolicy: vi.fn(),
+  updateBudgetPolicy: vi.fn(),
   listProjects: vi.fn(),
   createProject: vi.fn(),
   listProjectJobs: vi.fn(),
@@ -65,6 +67,24 @@ beforeEach(() => {
     from_date: null,
     to_date: null,
   });
+  apiClientMock.getBudgetPolicy.mockResolvedValue({
+    org_id: "00000000-0000-0000-0000-000000000001",
+    monthly_soft_limit_cents: 500,
+    monthly_hard_limit_cents: 800,
+    enforce_hard_limit: true,
+    current_month_estimated_cost_cents: 640,
+    projected_status: "soft_limit_exceeded",
+    updated_at: "2026-03-02T00:00:00Z",
+  });
+  apiClientMock.updateBudgetPolicy.mockImplementation(async (payload: Record<string, unknown>) => ({
+    org_id: "00000000-0000-0000-0000-000000000001",
+    monthly_soft_limit_cents: payload.monthly_soft_limit_cents,
+    monthly_hard_limit_cents: payload.monthly_hard_limit_cents,
+    enforce_hard_limit: Boolean(payload.enforce_hard_limit),
+    current_month_estimated_cost_cents: 640,
+    projected_status: "soft_limit_exceeded",
+    updated_at: "2026-03-02T00:00:00Z",
+  }));
   apiClientMock.listProjects.mockResolvedValue([]);
   apiClientMock.getSystemStatus.mockResolvedValue({
     api_version: "0.1.0",
@@ -87,5 +107,25 @@ describe("usage page", () => {
     expect(screen.getByText("8")).toBeInTheDocument();
     expect(screen.getByText(/122.50s/)).toBeInTheDocument();
     expect(apiClientMock.getUsageSummary).toHaveBeenCalled();
+    expect(apiClientMock.getBudgetPolicy).toHaveBeenCalled();
+  });
+
+  it("updates budget policy from usage page controls", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Usage" }));
+    await screen.findByText("Budget policy");
+
+    const hardLimitInput = screen.getByLabelText("Hard limit (cents)");
+    await user.clear(hardLimitInput);
+    await user.type(hardLimitInput, "1200");
+    await user.click(screen.getByRole("button", { name: "Save budget policy" }));
+
+    expect(apiClientMock.updateBudgetPolicy).toHaveBeenCalledWith({
+      monthly_soft_limit_cents: 500,
+      monthly_hard_limit_cents: 1200,
+      enforce_hard_limit: true,
+    });
   });
 });

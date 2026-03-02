@@ -3,6 +3,7 @@ import "./styles.css";
 import {
   apiClient,
   type AuthMeResponse,
+  type BudgetPolicy,
   type BillingPlan,
   type BillingSeatUsage,
   type BillingSubscription,
@@ -1549,10 +1550,15 @@ function StyleEditor({
     const [systemLoading, setSystemLoading] = useState(false);
     const [systemError, setSystemError] = useState<string | null>(null);
     const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
+    const [budgetPolicy, setBudgetPolicy] = useState<BudgetPolicy | null>(null);
     const [usageLoading, setUsageLoading] = useState(false);
     const [usageError, setUsageError] = useState<string | null>(null);
     const [usageFrom, setUsageFrom] = useState("");
     const [usageTo, setUsageTo] = useState("");
+    const [budgetSoftLimitDraft, setBudgetSoftLimitDraft] = useState("");
+    const [budgetHardLimitDraft, setBudgetHardLimitDraft] = useState("");
+    const [budgetEnforceHardLimit, setBudgetEnforceHardLimit] = useState(false);
+    const [budgetSaving, setBudgetSaving] = useState(false);
     const [projects, setProjects] = useState<Project[]>([]);
     const [projectsLoading, setProjectsLoading] = useState(false);
     const [projectsError, setProjectsError] = useState<string | null>(null);
@@ -1617,6 +1623,12 @@ function StyleEditor({
     if (!usageSummary?.quota_job_minutes || !usageSummary.used_job_minutes) return 0;
     return Math.max(0, Math.min(100, (usageSummary.used_job_minutes / usageSummary.quota_job_minutes) * 100));
   }, [usageSummary]);
+  const budgetProjectedLabel = useMemo(() => {
+    const statusValue = budgetPolicy?.projected_status || "ok";
+    if (statusValue === "hard_limit_exceeded") return "Hard limit exceeded";
+    if (statusValue === "soft_limit_exceeded") return "Soft limit exceeded";
+    return "Within budget";
+  }, [budgetPolicy]);
   const filteredProjects = useMemo(() => {
     const q = projectSearch.trim().toLowerCase();
     if (!q) return projects;
@@ -1748,16 +1760,65 @@ function StyleEditor({
       setUsageLoading(true);
       setUsageError(null);
       try {
-        const summary = await apiClient.getUsageSummary({
-          from: usageFrom || undefined,
-          to: usageTo || undefined,
-          project_id: selectedProjectId || undefined,
-        });
+        const [summary, budget] = await Promise.all([
+          apiClient.getUsageSummary({
+            from: usageFrom || undefined,
+            to: usageTo || undefined,
+            project_id: selectedProjectId || undefined,
+          }),
+          apiClient.getBudgetPolicy().catch(() => null),
+        ]);
         setUsageSummary(summary);
+        setBudgetPolicy(budget);
+        if (budget) {
+          setBudgetSoftLimitDraft(
+            budget.monthly_soft_limit_cents != null ? String(budget.monthly_soft_limit_cents) : "",
+          );
+          setBudgetHardLimitDraft(
+            budget.monthly_hard_limit_cents != null ? String(budget.monthly_hard_limit_cents) : "",
+          );
+          setBudgetEnforceHardLimit(Boolean(budget.enforce_hard_limit));
+        } else {
+          setBudgetSoftLimitDraft("");
+          setBudgetHardLimitDraft("");
+          setBudgetEnforceHardLimit(false);
+        }
       } catch (err) {
         setUsageError(err instanceof Error ? err.message : "Failed to load usage summary");
       } finally {
         setUsageLoading(false);
+      }
+    };
+
+    const saveBudgetPolicy = async () => {
+      const parseLimit = (raw: string, field: string): number | null => {
+        const trimmed = raw.trim();
+        if (!trimmed) return null;
+        const numeric = Number(trimmed);
+        if (!Number.isFinite(numeric) || numeric < 0) {
+          throw new Error(`${field} must be a non-negative number`);
+        }
+        return Math.round(numeric);
+      };
+
+      setBudgetSaving(true);
+      setUsageError(null);
+      try {
+        const monthly_soft_limit_cents = parseLimit(budgetSoftLimitDraft, "Soft limit");
+        const monthly_hard_limit_cents = parseLimit(budgetHardLimitDraft, "Hard limit");
+        const updated = await apiClient.updateBudgetPolicy({
+          monthly_soft_limit_cents,
+          monthly_hard_limit_cents,
+          enforce_hard_limit: budgetEnforceHardLimit,
+        });
+        setBudgetPolicy(updated);
+        setBudgetSoftLimitDraft(updated.monthly_soft_limit_cents != null ? String(updated.monthly_soft_limit_cents) : "");
+        setBudgetHardLimitDraft(updated.monthly_hard_limit_cents != null ? String(updated.monthly_hard_limit_cents) : "");
+        setBudgetEnforceHardLimit(Boolean(updated.enforce_hard_limit));
+      } catch (err) {
+        setUsageError(err instanceof Error ? err.message : "Failed to save budget policy");
+      } finally {
+        setBudgetSaving(false);
       }
     };
 
@@ -3794,6 +3855,55 @@ function StyleEditor({
                     )}
                   </div>
                 )}
+                <div className="output-card">
+                  <p className="metric-label">Budget policy</p>
+                  {budgetPolicy ? (
+                    <p className="muted">
+                      Current month estimated cost: ${(budgetPolicy.current_month_estimated_cost_cents / 100).toFixed(2)} · {budgetProjectedLabel}
+                    </p>
+                  ) : (
+                    <p className="muted">Budget policy unavailable in this mode.</p>
+                  )}
+                  <div className="form-grid">
+                    <label className="field">
+                      <span>Soft limit (cents)</span>
+                      <Input
+                        inputMode="numeric"
+                        value={budgetSoftLimitDraft}
+                        onChange={(e) => setBudgetSoftLimitDraft(e.target.value)}
+                        placeholder="optional"
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Hard limit (cents)</span>
+                      <Input
+                        inputMode="numeric"
+                        value={budgetHardLimitDraft}
+                        onChange={(e) => setBudgetHardLimitDraft(e.target.value)}
+                        placeholder="optional"
+                      />
+                    </label>
+                  </div>
+                  <label className="checkbox">
+                    <input
+                      type="checkbox"
+                      checked={budgetEnforceHardLimit}
+                      onChange={(e) => setBudgetEnforceHardLimit(e.target.checked)}
+                    />
+                    <span>Enforce hard limit during job submission</span>
+                  </label>
+                  <div className="actions-row">
+                    <Button type="button" variant="primary" onClick={() => void saveBudgetPolicy()} disabled={budgetSaving}>
+                      {budgetSaving ? "Saving..." : "Save budget policy"}
+                    </Button>
+                  </div>
+                  {budgetPolicy?.projected_status === "hard_limit_exceeded" && (
+                    <p className="error-inline">Projected monthly cost is already above hard limit.</p>
+                  )}
+                  {budgetPolicy?.projected_status === "soft_limit_exceeded" && (
+                    <p className="muted">Projected monthly cost is above soft limit.</p>
+                  )}
+                </div>
               </Card>
               <Card title="By job type">
                 {!usageSummary && <p className="muted">No summary loaded yet.</p>}

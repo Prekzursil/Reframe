@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -113,6 +114,9 @@ def evaluate_protection_payload(protection: dict[str, Any], policy: dict[str, An
 
 def _fetch_protection(api_base: str, repo: str, branch: str, token: str) -> dict[str, Any]:
     url = f"{api_base.rstrip('/')}/repos/{repo}/branches/{branch}/protection"
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"Unsupported API URL: {url!r}")
     req = Request(
         url,
         headers={
@@ -123,7 +127,7 @@ def _fetch_protection(api_base: str, repo: str, branch: str, token: str) -> dict
         },
         method="GET",
     )
-    with urlopen(req, timeout=30) as resp:
+    with urlopen(req, timeout=30) as resp:  # nosec B310 - URL scheme and host are validated above
         return json.loads(resp.read().decode("utf-8"))
 
 

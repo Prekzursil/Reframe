@@ -219,6 +219,19 @@ class UsageLedgerEntry(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+class OrgBudgetPolicy(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("org_id", name="uq_org_budget_policy_org"),)
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    org_id: UUID = Field(foreign_key="organization.id", index=True)
+    monthly_soft_limit_cents: Optional[int] = Field(default=None)
+    monthly_hard_limit_cents: Optional[int] = Field(default=None)
+    enforce_hard_limit: bool = Field(default=False)
+    updated_by_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 class MediaAsset(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     kind: str = Field(description="Type of asset, e.g., video, audio, subtitle")
