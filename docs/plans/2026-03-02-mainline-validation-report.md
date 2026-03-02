@@ -37,7 +37,7 @@
 
 - Branch release-readiness:
   - run: `22586189984`
-  - url: https://github.com/Prekzursil/Reframe/actions/runs/22586189984
+  - url: [actions run 22586189984](https://github.com/Prekzursil/Reframe/actions/runs/22586189984)
   - conclusion: `success`
 - Main release-readiness:
   - run: `22586191139`
