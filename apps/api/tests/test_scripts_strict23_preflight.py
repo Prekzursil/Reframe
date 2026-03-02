@@ -142,3 +142,21 @@ def test_main_missing_token_is_inconclusive_permissions(tmp_path, monkeypatch):
     _expect(payload["required_contexts"] == ["CodeQL"], "Expected required contexts resolved from policy")
     _expect(payload["optional_contexts"] == ["DeepScan"], "Expected optional contexts resolved from policy")
     _expect("Status: `inconclusive_permissions`" in markdown, "Expected inconclusive status in markdown output")
+
+
+def test_default_canonical_contexts_drop_vercel_and_include_current_core_checks():
+    module = _load_module()
+    defaults = module.DEFAULT_CANONICAL_CONTEXTS
+
+    _expect("Vercel" not in defaults, "Vercel should not be part of strict canonical fallback contexts")
+    _expect(
+        "Vercel Preview Comments" not in defaults,
+        "Vercel Preview Comments should not be part of strict canonical fallback contexts",
+    )
+    _expect("Analyze (actions)" in defaults, "Expected Analyze (actions) in strict canonical fallback contexts")
+    _expect(
+        "Analyze (javascript-typescript)" in defaults,
+        "Expected Analyze (javascript-typescript) in strict canonical fallback contexts",
+    )
+    _expect("Analyze (python)" in defaults, "Expected Analyze (python) in strict canonical fallback contexts")
+    _expect("SonarCloud Code Analysis" in defaults, "Expected SonarCloud Code Analysis in strict canonical fallback contexts")

@@ -23,6 +23,9 @@ DEFAULT_CANONICAL_CONTEXTS = [
     "coverage",
     "CodeQL",
     "codecov-analytics",
+    "Analyze (actions)",
+    "Analyze (javascript-typescript)",
+    "Analyze (python)",
     "CodeRabbit",
     "dependency-review",
     "compose-smoke",
@@ -31,8 +34,7 @@ DEFAULT_CANONICAL_CONTEXTS = [
     "codacy-equivalent-zero",
     "sonar-branch-zero",
     "Seer Code Review",
-    "Vercel",
-    "Vercel Preview Comments",
+    "SonarCloud Code Analysis",
 ]
 
 
