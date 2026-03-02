@@ -572,3 +572,57 @@ Acceptance criteria:
 - [x] `make smoke-perf-cost`
 - [x] `make release-readiness`
 
+---
+
+## 26. Enterprise Identity, Collaboration, and Multi-Channel Automation
+
+Goal: ship one full implementation wave covering strict policy hardening, enterprise SSO/SCIM, collaboration depth, and creator publish automation.
+
+### Track A — strict policy and issue closure
+
+- [ ] strict-23 preflight reads canonical contexts from `docs/branch-protection-policy.json` (no hardcoded source of truth).
+- [ ] strict-23 preflight supports optional supplemental contexts with explicit required/non-required behavior.
+- [ ] strict-23 preflight tests cover policy loading, mismatch, missing token, and permission-denied outcomes.
+- [ ] branch-protection audit workflow issue lifecycle is deterministic and deduplicated for drift vs inconclusive permission states.
+- [ ] issue closure pass: update and close `#91`, `#92`, `#89` with linked run evidence.
+
+### Track B — ops digest hardening
+
+- [ ] add required-check pass-rate and CI duration (median/p95) trends to ops digest metrics.
+- [ ] add failing-check top offender reporting in digest output.
+- [ ] add `docs/ops-health-policy.json` threshold policy and classification rules.
+- [ ] extend digest tests and update `docs/KPI_DIGEST_TESTING.md`.
+- [ ] ensure rolling digest issue `#88` remains single-threaded and noise-free.
+
+### Track C — enterprise SSO + SCIM (Okta-first)
+
+- [ ] add models + migration: `SsoConnection`, `ScimToken`, `ScimIdentity`, `RoleMapping`.
+- [ ] add org security endpoints for SSO config and SCIM token lifecycle.
+- [ ] add Okta SSO start/callback endpoints with JIT account linking policy.
+- [ ] add SCIM v2 Users and Groups endpoints with hashed token auth and org seat-limit enforcement.
+- [ ] add audit event coverage for SSO/SCIM lifecycle operations.
+
+### Track D — advanced project collaboration
+
+- [ ] add models + migration: `ProjectMembership`, `ProjectComment`, `ProjectApprovalRequest`, `ProjectActivityEvent`.
+- [ ] add project membership API (list/add/role update/remove).
+- [ ] add project comment API (list/create/delete).
+- [ ] add project approval API (request/approve/reject) and activity feed.
+- [ ] add collaboration UI tab (members, comments, approvals, activity timeline) with polling updates.
+
+### Track E — creator publish automation
+
+- [ ] add models + migration: `PublishConnection`, `PublishJob`, `AutomationRunEvent`.
+- [ ] add provider connect lifecycle endpoints and persisted connection metadata.
+- [ ] add publish job lifecycle endpoints (create/list/get/retry).
+- [ ] add worker publish adapter interface and provider implementations: YouTube, TikTok, Instagram, Facebook.
+- [ ] extend workflow step validation/execution for publish actions and publish history UI.
+
+### Track F — verification and release evidence
+
+- [ ] add API/worker/web tests for SSO, SCIM, collaboration, and publish workflows.
+- [ ] run full local gate pack: `make verify`, `make smoke-hosted`, `make smoke-local`, `make smoke-security`, `make smoke-workflows`, `make smoke-perf-cost`, `make release-readiness`.
+- [ ] run branch workflows: CI, release-readiness, strict23-preflight, branch-protection-audit, ops-weekly-digest.
+- [ ] publish `docs/plans/2026-03-02-enterprise-collab-automation-report.md` and release-notes draft with run IDs/artifacts.
+- [ ] merge umbrella PR and verify post-merge `release-readiness` on `main`.
+
