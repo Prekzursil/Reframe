@@ -65,8 +65,10 @@ Migration:
   - Branch Protection Audit: https://github.com/Prekzursil/Reframe/actions/runs/22599126733
   - Ops Weekly Digest: https://github.com/Prekzursil/Reframe/actions/runs/22599127735
 - Readiness summary: `docs/plans/2026-03-02-release-readiness-summary.json` (`READY`)
+- PR merged to `main`: https://github.com/Prekzursil/Reframe/pull/96 (commit `664e950`)
+- Post-merge Release Readiness on `main`: https://github.com/Prekzursil/Reframe/actions/runs/22599936721 ✅
 
 ## Known Follow-up
 
 - Branch-protection API scope in Actions still returns `403 Resource not accessible by integration`; issue `#89` remains as the single active tracker for permission-scope closure.
-- Post-merge action required: trigger `release-readiness.yml` on `main` and archive run/artifact link in this release train.
+- Post-merge release-readiness has been run and archived (`22599936721`).

@@ -96,4 +96,6 @@
 
 - Current classification: `READY`
 - External blockers in readiness summary: none
-- Remaining closure step for this branch: merge PR #96 and run post-merge `release-readiness` on `main`.
+- Umbrella PR merged: https://github.com/Prekzursil/Reframe/pull/96
+- Merge commit on `main`: `664e95019c28338910308c168f912b2e5a5a69ff`
+- Post-merge `release-readiness` on `main`: https://github.com/Prekzursil/Reframe/actions/runs/22599936721 ✅

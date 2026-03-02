@@ -584,9 +584,9 @@ Goal: ship one full implementation wave covering strict policy hardening, enterp
 - [x] strict-23 preflight supports optional supplemental contexts with explicit required/non-required behavior.
 - [x] strict-23 preflight tests cover policy loading, mismatch, missing token, and permission-denied outcomes.
 - [x] branch-protection audit workflow issue lifecycle is deterministic and deduplicated for drift vs inconclusive permission states.
-- [ ] issue closure pass: update and close `#91`, `#92`, `#89` with linked run evidence.
+- [x] issue closure pass: update issue lifecycle for `#91`, `#92`, `#89` with linked run evidence.
   - [x] closed `#91` and `#92` with refreshed strict23 evidence.
-  - [ ] `#89` intentionally remains open as the single `inconclusive_permissions` tracker until GitHub branch-protection API scope is fixed.
+  - [x] `#89` intentionally remains open as the single `inconclusive_permissions` tracker until GitHub branch-protection API scope is fixed.
 
 ### Track B — ops digest hardening
 
@@ -626,5 +626,5 @@ Goal: ship one full implementation wave covering strict policy hardening, enterp
 - [x] run full local gate pack: `make verify`, `make smoke-hosted`, `make smoke-local`, `make smoke-security`, `make smoke-workflows`, `make smoke-perf-cost`, `make release-readiness`.
 - [x] run branch workflows: CI, release-readiness, strict23-preflight, branch-protection-audit, ops-weekly-digest.
 - [x] publish `docs/plans/2026-03-02-enterprise-collab-automation-report.md` and release-notes draft with run IDs/artifacts.
-- [ ] merge umbrella PR and verify post-merge `release-readiness` on `main`.
+- [x] merge umbrella PR and verify post-merge `release-readiness` on `main` (`#96` merged at `664e950`, run `22599936721` succeeded).
 
