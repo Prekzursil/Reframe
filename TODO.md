@@ -564,11 +564,11 @@ Acceptance criteria:
 
 ### Validation gates for this section
 
-- [ ] `make verify`
-- [ ] `make smoke-hosted`
-- [ ] `make smoke-local`
-- [ ] `make smoke-security`
-- [ ] `make smoke-workflows`
-- [ ] `make smoke-perf-cost`
-- [ ] `make release-readiness`
+- [x] `make verify`
+- [x] `make smoke-hosted`
+- [x] `make smoke-local`
+- [x] `make smoke-security`
+- [x] `make smoke-workflows`
+- [x] `make smoke-perf-cost`
+- [x] `make release-readiness`
 
