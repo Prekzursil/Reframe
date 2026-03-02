@@ -11,10 +11,19 @@ import {
   type Job,
   type JobStatus,
   type MediaAsset,
+  type ProjectActivityEvent,
+  type ProjectApproval,
+  type ProjectComment,
+  type ProjectMember,
   type OrgContextResponse,
   type OrgInviteResolveResponse,
   type OrgInviteView,
+  type PublishConnectionView,
+  type PublishJobView,
+  type PublishProviderView,
   type Project,
+  type ScimTokenView,
+  type SsoConfig,
   type ProjectShareLink,
   type SystemStatusResponse,
   type UsageSummary,
@@ -102,6 +111,8 @@ const ASPECTS = ["9:16", "16:9", "1:1"];
 const LANGS = ["en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh"];
 const ORG_ROLE_OPTIONS = ["owner", "admin", "editor", "viewer"];
 const ORG_MANAGER_ROLES = ["owner", "admin"];
+const PUBLISH_PROVIDERS = ["youtube", "tiktok", "instagram", "facebook"] as const;
+type PublishProvider = (typeof PUBLISH_PROVIDERS)[number];
 
 async function copyToClipboard(text: string): Promise<boolean> {
   try {
@@ -1601,6 +1612,47 @@ function StyleEditor({
     const [billingSeatLimitDraft, setBillingSeatLimitDraft] = useState("1");
     const [billingLoading, setBillingLoading] = useState(false);
     const [billingError, setBillingError] = useState<string | null>(null);
+    const [ssoConfig, setSsoConfig] = useState<SsoConfig | null>(null);
+    const [ssoEnabledDraft, setSsoEnabledDraft] = useState(false);
+    const [ssoIssuerDraft, setSsoIssuerDraft] = useState("");
+    const [ssoClientIdDraft, setSsoClientIdDraft] = useState("");
+    const [ssoAudienceDraft, setSsoAudienceDraft] = useState("");
+    const [ssoDefaultRoleDraft, setSsoDefaultRoleDraft] = useState("viewer");
+    const [ssoJitDraft, setSsoJitDraft] = useState(true);
+    const [ssoEmailLinkDraft, setSsoEmailLinkDraft] = useState(true);
+    const [ssoLoading, setSsoLoading] = useState(false);
+    const [ssoSaving, setSsoSaving] = useState(false);
+    const [ssoError, setSsoError] = useState<string | null>(null);
+    const [scimTokens, setScimTokens] = useState<ScimTokenView[]>([]);
+    const [scimCreateBusy, setScimCreateBusy] = useState(false);
+    const [scimCreateError, setScimCreateError] = useState<string | null>(null);
+    const [newScimToken, setNewScimToken] = useState<string | null>(null);
+    const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([]);
+    const [projectComments, setProjectComments] = useState<ProjectComment[]>([]);
+    const [projectApprovals, setProjectApprovals] = useState<ProjectApproval[]>([]);
+    const [projectActivity, setProjectActivity] = useState<ProjectActivityEvent[]>([]);
+    const [projectCollabLoading, setProjectCollabLoading] = useState(false);
+    const [projectCollabError, setProjectCollabError] = useState<string | null>(null);
+    const [projectMemberEmailDraft, setProjectMemberEmailDraft] = useState("");
+    const [projectMemberRoleDraft, setProjectMemberRoleDraft] = useState("viewer");
+    const [projectCommentDraft, setProjectCommentDraft] = useState("");
+    const [projectApprovalSummaryDraft, setProjectApprovalSummaryDraft] = useState("");
+    const [projectCollabBusy, setProjectCollabBusy] = useState(false);
+    const [publishProvider, setPublishProvider] = useState<PublishProvider>("youtube");
+    const [publishProviders, setPublishProviders] = useState<PublishProviderView[]>([]);
+    const [publishConnections, setPublishConnections] = useState<PublishConnectionView[]>([]);
+    const [publishJobs, setPublishJobs] = useState<PublishJobView[]>([]);
+    const [publishLoading, setPublishLoading] = useState(false);
+    const [publishBusy, setPublishBusy] = useState(false);
+    const [publishError, setPublishError] = useState<string | null>(null);
+    const [publishConnectCodeDraft, setPublishConnectCodeDraft] = useState("dev-code");
+    const [publishConnectAccountIdDraft, setPublishConnectAccountIdDraft] = useState("");
+    const [publishConnectLabelDraft, setPublishConnectLabelDraft] = useState("");
+    const [publishAssetIdDraft, setPublishAssetIdDraft] = useState("");
+    const [publishConnectionIdDraft, setPublishConnectionIdDraft] = useState("");
+    const [publishTitleDraft, setPublishTitleDraft] = useState("");
+    const [publishDescriptionDraft, setPublishDescriptionDraft] = useState("");
+    const [publishTagsDraft, setPublishTagsDraft] = useState("");
 
   const [showQuickStart, setShowQuickStart] = useState(() => {
     try {
@@ -2623,6 +2675,359 @@ function StyleEditor({
           }
         };
 
+        const _projectApprovalsFromActivity = (events: ProjectActivityEvent[]): ProjectApproval[] => {
+          const byId = new Map<string, ProjectApproval>();
+          const sorted = [...events].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+          for (const event of sorted) {
+            const payload = (event.payload || {}) as Record<string, unknown>;
+            const approvalId = String(payload.approval_id || "").trim();
+            if (!approvalId) continue;
+            const existing = byId.get(approvalId);
+            if (event.event_type === "project.approval_requested") {
+              byId.set(approvalId, {
+                id: approvalId,
+                project_id: event.project_id,
+                status: "pending",
+                summary: typeof payload.summary === "string" ? payload.summary : null,
+                requested_by_user_id: String(payload.requested_by_user_id || event.actor_user_id || ""),
+                resolved_by_user_id: null,
+                resolved_at: null,
+                created_at: event.created_at,
+                updated_at: event.created_at,
+              });
+              continue;
+            }
+            if (!existing) continue;
+            if (event.event_type === "project.approval_approved" || event.event_type === "project.approval_rejected") {
+              byId.set(approvalId, {
+                ...existing,
+                status: event.event_type === "project.approval_approved" ? "approved" : "rejected",
+                resolved_by_user_id: event.actor_user_id || null,
+                resolved_at: event.created_at,
+                updated_at: event.created_at,
+              });
+            }
+          }
+          return Array.from(byId.values()).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+        };
+
+        const loadSsoSecurityContext = async () => {
+          if (!orgInfo || !apiClient.accessToken) return;
+          const role = String(orgInfo.role || "").toLowerCase();
+          if (!ORG_MANAGER_ROLES.includes(role)) return;
+          const clientAny = apiClient as any;
+          if (typeof clientAny.getOrgSsoConfig !== "function") return;
+          setSsoLoading(true);
+          setSsoError(null);
+          try {
+            const config = await apiClient.getOrgSsoConfig(orgInfo.org_id);
+            setSsoConfig(config);
+            setSsoEnabledDraft(Boolean(config.enabled));
+            setSsoIssuerDraft(config.issuer_url || "");
+            setSsoClientIdDraft(config.client_id || "");
+            setSsoAudienceDraft(config.audience || "");
+            setSsoDefaultRoleDraft(config.default_role || "viewer");
+            setSsoJitDraft(Boolean(config.jit_enabled));
+            setSsoEmailLinkDraft(Boolean(config.allow_email_link));
+          } catch (err) {
+            setSsoError(err instanceof Error ? err.message : "Failed to load SSO configuration");
+          } finally {
+            setSsoLoading(false);
+          }
+        };
+
+        const saveSsoSecurityConfig = async () => {
+          if (!orgInfo) return;
+          setSsoSaving(true);
+          setSsoError(null);
+          try {
+            const next = await apiClient.updateOrgSsoConfig(orgInfo.org_id, {
+              enabled: ssoEnabledDraft,
+              issuer_url: ssoIssuerDraft || undefined,
+              client_id: ssoClientIdDraft || undefined,
+              audience: ssoAudienceDraft || undefined,
+              default_role: ssoDefaultRoleDraft || "viewer",
+              jit_enabled: ssoJitDraft,
+              allow_email_link: ssoEmailLinkDraft,
+            });
+            setSsoConfig(next);
+          } catch (err) {
+            setSsoError(err instanceof Error ? err.message : "Failed to save SSO config");
+          } finally {
+            setSsoSaving(false);
+          }
+        };
+
+        const createScimToken = async () => {
+          if (!orgInfo) return;
+          setScimCreateBusy(true);
+          setScimCreateError(null);
+          setNewScimToken(null);
+          try {
+            const created = await apiClient.createScimToken(orgInfo.org_id);
+            setScimTokens((prev) => [created, ...prev.filter((token) => token.id !== created.id)]);
+            setNewScimToken(created.token || null);
+          } catch (err) {
+            setScimCreateError(err instanceof Error ? err.message : "Failed to create SCIM token");
+          } finally {
+            setScimCreateBusy(false);
+          }
+        };
+
+        const revokeScimToken = async (tokenId: string) => {
+          if (!orgInfo) return;
+          setScimCreateBusy(true);
+          setScimCreateError(null);
+          try {
+            await apiClient.revokeScimToken(orgInfo.org_id, tokenId);
+            setScimTokens((prev) => prev.map((item) => (item.id === tokenId ? { ...item, revoked_at: new Date().toISOString() } : item)));
+          } catch (err) {
+            setScimCreateError(err instanceof Error ? err.message : "Failed to revoke SCIM token");
+          } finally {
+            setScimCreateBusy(false);
+          }
+        };
+
+        const startOktaSsoFlow = async () => {
+          setSsoError(null);
+          try {
+            const start = await apiClient.startOktaSso(window.location.href);
+            const safeUrl = toSafeExternalUrl(start.authorize_url);
+            if (!safeUrl) {
+              throw new Error("Rejected unsafe Okta authorize URL");
+            }
+            window.location.href = safeUrl;
+          } catch (err) {
+            setSsoError(err instanceof Error ? err.message : "Failed to start Okta SSO flow");
+          }
+        };
+
+        const loadProjectCollaboration = async (projectId: string) => {
+          if (!projectId || !apiClient.accessToken) return;
+          const clientAny = apiClient as any;
+          if (typeof clientAny.listProjectMembers !== "function") return;
+          setProjectCollabLoading(true);
+          setProjectCollabError(null);
+          try {
+            const [members, comments, activity] = await Promise.all([
+              apiClient.listProjectMembers(projectId),
+              apiClient.listProjectComments(projectId),
+              apiClient.listProjectActivity(projectId, 150),
+            ]);
+            setProjectMembers(members);
+            setProjectComments(comments);
+            setProjectActivity(activity);
+            setProjectApprovals(_projectApprovalsFromActivity(activity));
+          } catch (err) {
+            setProjectCollabError(err instanceof Error ? err.message : "Failed to load project collaboration data");
+          } finally {
+            setProjectCollabLoading(false);
+          }
+        };
+
+        const addProjectMember = async () => {
+          if (!selectedProjectId || !projectMemberEmailDraft.trim()) return;
+          setProjectCollabBusy(true);
+          setProjectCollabError(null);
+          try {
+            await apiClient.addProjectMember(selectedProjectId, {
+              email: projectMemberEmailDraft.trim(),
+              role: projectMemberRoleDraft,
+            });
+            setProjectMemberEmailDraft("");
+            await loadProjectCollaboration(selectedProjectId);
+          } catch (err) {
+            setProjectCollabError(err instanceof Error ? err.message : "Failed to add project member");
+          } finally {
+            setProjectCollabBusy(false);
+          }
+        };
+
+        const updateProjectMemberRole = async (userId: string, role: string) => {
+          if (!selectedProjectId) return;
+          setProjectCollabBusy(true);
+          setProjectCollabError(null);
+          try {
+            await apiClient.updateProjectMemberRole(selectedProjectId, userId, { role });
+            await loadProjectCollaboration(selectedProjectId);
+          } catch (err) {
+            setProjectCollabError(err instanceof Error ? err.message : "Failed to update project member role");
+          } finally {
+            setProjectCollabBusy(false);
+          }
+        };
+
+        const removeProjectMember = async (userId: string) => {
+          if (!selectedProjectId) return;
+          setProjectCollabBusy(true);
+          setProjectCollabError(null);
+          try {
+            await apiClient.removeProjectMember(selectedProjectId, userId);
+            await loadProjectCollaboration(selectedProjectId);
+          } catch (err) {
+            setProjectCollabError(err instanceof Error ? err.message : "Failed to remove project member");
+          } finally {
+            setProjectCollabBusy(false);
+          }
+        };
+
+        const createProjectComment = async () => {
+          if (!selectedProjectId || !projectCommentDraft.trim()) return;
+          setProjectCollabBusy(true);
+          setProjectCollabError(null);
+          try {
+            await apiClient.createProjectComment(selectedProjectId, { body: projectCommentDraft.trim() });
+            setProjectCommentDraft("");
+            await loadProjectCollaboration(selectedProjectId);
+          } catch (err) {
+            setProjectCollabError(err instanceof Error ? err.message : "Failed to add comment");
+          } finally {
+            setProjectCollabBusy(false);
+          }
+        };
+
+        const deleteProjectComment = async (commentId: string) => {
+          if (!selectedProjectId) return;
+          setProjectCollabBusy(true);
+          setProjectCollabError(null);
+          try {
+            await apiClient.deleteProjectComment(selectedProjectId, commentId);
+            await loadProjectCollaboration(selectedProjectId);
+          } catch (err) {
+            setProjectCollabError(err instanceof Error ? err.message : "Failed to delete comment");
+          } finally {
+            setProjectCollabBusy(false);
+          }
+        };
+
+        const requestProjectApproval = async () => {
+          if (!selectedProjectId) return;
+          setProjectCollabBusy(true);
+          setProjectCollabError(null);
+          try {
+            const created = await apiClient.requestProjectApproval(selectedProjectId, {
+              summary: projectApprovalSummaryDraft.trim() || undefined,
+            });
+            setProjectApprovals((prev) => [created, ...prev.filter((item) => item.id !== created.id)]);
+            setProjectApprovalSummaryDraft("");
+            await loadProjectCollaboration(selectedProjectId);
+          } catch (err) {
+            setProjectCollabError(err instanceof Error ? err.message : "Failed to request approval");
+          } finally {
+            setProjectCollabBusy(false);
+          }
+        };
+
+        const resolveProjectApproval = async (approvalId: string, action: "approve" | "reject") => {
+          if (!selectedProjectId) return;
+          setProjectCollabBusy(true);
+          setProjectCollabError(null);
+          try {
+            if (action === "approve") {
+              await apiClient.approveProjectApproval(selectedProjectId, approvalId);
+            } else {
+              await apiClient.rejectProjectApproval(selectedProjectId, approvalId);
+            }
+            await loadProjectCollaboration(selectedProjectId);
+          } catch (err) {
+            setProjectCollabError(err instanceof Error ? err.message : "Failed to resolve approval");
+          } finally {
+            setProjectCollabBusy(false);
+          }
+        };
+
+        const loadPublishAutomation = async () => {
+          if (!apiClient.accessToken) return;
+          const clientAny = apiClient as any;
+          if (typeof clientAny.listPublishProviders !== "function") return;
+          setPublishLoading(true);
+          setPublishError(null);
+          try {
+            const [providers, connections, jobs] = await Promise.all([
+              apiClient.listPublishProviders(),
+              apiClient.listPublishConnections(publishProvider),
+              apiClient.listPublishJobs({ provider: publishProvider }),
+            ]);
+            setPublishProviders(providers);
+            setPublishConnections(connections);
+            setPublishJobs(jobs);
+            setPublishConnectionIdDraft((prev) => prev || connections[0]?.id || "");
+          } catch (err) {
+            setPublishError(err instanceof Error ? err.message : "Failed to load publish data");
+          } finally {
+            setPublishLoading(false);
+          }
+        };
+
+        const connectPublishProvider = async () => {
+          setPublishBusy(true);
+          setPublishError(null);
+          try {
+            const start = await apiClient.startPublishConnection(publishProvider, window.location.href);
+            await apiClient.completePublishConnection(publishProvider, {
+              state: start.state,
+              code: publishConnectCodeDraft.trim() || "dev-code",
+              account_id: publishConnectAccountIdDraft.trim() || undefined,
+              account_label: publishConnectLabelDraft.trim() || undefined,
+            });
+            await loadPublishAutomation();
+          } catch (err) {
+            setPublishError(err instanceof Error ? err.message : "Failed to connect provider");
+          } finally {
+            setPublishBusy(false);
+          }
+        };
+
+        const revokePublishConnection = async (connectionId: string) => {
+          setPublishBusy(true);
+          setPublishError(null);
+          try {
+            await apiClient.revokePublishConnection(publishProvider, connectionId);
+            await loadPublishAutomation();
+          } catch (err) {
+            setPublishError(err instanceof Error ? err.message : "Failed to revoke provider connection");
+          } finally {
+            setPublishBusy(false);
+          }
+        };
+
+        const createPublishJob = async () => {
+          if (!publishConnectionIdDraft || !publishAssetIdDraft.trim()) return;
+          setPublishBusy(true);
+          setPublishError(null);
+          try {
+            await apiClient.createPublishJob({
+              provider: publishProvider,
+              connection_id: publishConnectionIdDraft,
+              asset_id: publishAssetIdDraft.trim(),
+              title: publishTitleDraft.trim() || undefined,
+              description: publishDescriptionDraft.trim() || undefined,
+              tags: publishTagsDraft
+                .split(",")
+                .map((item) => item.trim())
+                .filter(Boolean),
+            });
+            await loadPublishAutomation();
+          } catch (err) {
+            setPublishError(err instanceof Error ? err.message : "Failed to create publish job");
+          } finally {
+            setPublishBusy(false);
+          }
+        };
+
+        const retryPublishJob = async (jobId: string) => {
+          setPublishBusy(true);
+          setPublishError(null);
+          try {
+            await apiClient.retryPublishJob(jobId);
+            await loadPublishAutomation();
+          } catch (err) {
+            setPublishError(err instanceof Error ? err.message : "Failed to retry publish job");
+          } finally {
+            setPublishBusy(false);
+          }
+        };
+
         useEffect(() => {
           try {
             const params = new URLSearchParams(window.location.search);
@@ -2657,6 +3062,33 @@ function StyleEditor({
             void loadBillingData();
           }
         }, [active]);
+
+        useEffect(() => {
+          if (active !== "account") return;
+          if (!orgInfo) return;
+          const role = String(orgInfo.role || "").toLowerCase();
+          if (!ORG_MANAGER_ROLES.includes(role)) return;
+          void loadSsoSecurityContext();
+        }, [active, orgInfo?.org_id, orgInfo?.role]);
+
+        useEffect(() => {
+          if (active !== "projects") return;
+          if (!selectedProjectId) return;
+          if (!apiClient.accessToken) return;
+          void loadProjectCollaboration(selectedProjectId);
+        }, [active, selectedProjectId, apiClient.accessToken]);
+
+        useEffect(() => {
+          if (active !== "projects") return;
+          if (!apiClient.accessToken) return;
+          void loadPublishAutomation();
+        }, [active, publishProvider, apiClient.accessToken]);
+
+        useEffect(() => {
+          if (!publishAssetIdDraft && shareSourceAssetId) {
+            setPublishAssetIdDraft(shareSourceAssetId);
+          }
+        }, [shareSourceAssetId, publishAssetIdDraft]);
 
 		  return (
 		    <div className="layout">
@@ -4084,6 +4516,355 @@ function StyleEditor({
                   </>
                 )}
               </Card>
+              <Card title="Project collaboration">
+                {!selectedProjectId && <p className="muted">Select a project to manage members, comments, and approvals.</p>}
+                {projectCollabError && <div className="error-inline">{projectCollabError}</div>}
+                {projectCollabLoading && <Spinner label="Loading collaboration data..." />}
+                {selectedProjectId && !projectCollabLoading && (
+                  <>
+                    <div className="output-card">
+                      <p className="metric-label">Members</p>
+                      <div className="form-grid">
+                        <label className="field">
+                          <span>Member email</span>
+                          <Input
+                            value={projectMemberEmailDraft}
+                            onChange={(e) => setProjectMemberEmailDraft(e.target.value)}
+                            placeholder="member@example.com"
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Role</span>
+                          <select className="input" value={projectMemberRoleDraft} onChange={(e) => setProjectMemberRoleDraft(e.target.value)}>
+                            {ORG_ROLE_OPTIONS.map((role) => (
+                              <option key={role} value={role}>
+                                {role}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      <div className="actions-row">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => void addProjectMember()}
+                          disabled={projectCollabBusy || !projectMemberEmailDraft.trim()}
+                        >
+                          {projectCollabBusy ? "Working..." : "Add project member"}
+                        </Button>
+                        <Button type="button" variant="ghost" onClick={() => void loadProjectCollaboration(selectedProjectId)} disabled={projectCollabBusy}>
+                          Refresh collaboration
+                        </Button>
+                      </div>
+                      {projectMembers.length > 0 ? (
+                        <table className="table">
+                          <thead>
+                            <tr>
+                              <th>Email</th>
+                              <th>Role</th>
+                              <th>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {projectMembers.map((member) => (
+                              <tr key={member.user_id}>
+                                <td>{member.email}</td>
+                                <td>
+                                  <select
+                                    className="input"
+                                    value={member.role}
+                                    onChange={(e) => void updateProjectMemberRole(member.user_id, e.target.value)}
+                                    disabled={projectCollabBusy}
+                                  >
+                                    {ORG_ROLE_OPTIONS.map((role) => (
+                                      <option key={role} value={role}>
+                                        {role}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </td>
+                                <td>
+                                  <Button type="button" variant="ghost" onClick={() => void removeProjectMember(member.user_id)} disabled={projectCollabBusy}>
+                                    Remove
+                                  </Button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <p className="muted">No project-level members yet.</p>
+                      )}
+                    </div>
+                    <div className="output-card">
+                      <p className="metric-label">Comments</p>
+                      <label className="field">
+                        <span>Comment</span>
+                        <TextArea rows={3} value={projectCommentDraft} onChange={(e) => setProjectCommentDraft(e.target.value)} />
+                      </label>
+                      <div className="actions-row">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => void createProjectComment()}
+                          disabled={projectCollabBusy || !projectCommentDraft.trim()}
+                        >
+                          {projectCollabBusy ? "Working..." : "Add comment"}
+                        </Button>
+                      </div>
+                      {projectComments.length > 0 ? (
+                        <ul className="muted">
+                          {projectComments.map((comment) => (
+                            <li key={comment.id}>
+                              <span className="mono">{comment.author_email || comment.author_user_id}</span>: {comment.body}
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                onClick={() => void deleteProjectComment(comment.id)}
+                                disabled={projectCollabBusy}
+                                style={{ marginLeft: 8 }}
+                              >
+                                Delete
+                              </Button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="muted">No comments yet.</p>
+                      )}
+                    </div>
+                    <div className="output-card">
+                      <p className="metric-label">Approvals</p>
+                      <label className="field">
+                        <span>Approval summary</span>
+                        <Input value={projectApprovalSummaryDraft} onChange={(e) => setProjectApprovalSummaryDraft(e.target.value)} placeholder="Final review for launch assets" />
+                      </label>
+                      <div className="actions-row">
+                        <Button type="button" variant="secondary" onClick={() => void requestProjectApproval()} disabled={projectCollabBusy}>
+                          {projectCollabBusy ? "Working..." : "Request approval"}
+                        </Button>
+                      </div>
+                      {projectApprovals.length > 0 ? (
+                        <table className="table">
+                          <thead>
+                            <tr>
+                              <th>ID</th>
+                              <th>Status</th>
+                              <th>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {projectApprovals.map((approval) => (
+                              <tr key={approval.id}>
+                                <td className="mono">{approval.id}</td>
+                                <td>{approval.status}</td>
+                                <td>
+                                  {approval.status === "pending" ? (
+                                    <div className="actions-row">
+                                      <Button type="button" variant="ghost" onClick={() => void resolveProjectApproval(approval.id, "approve")} disabled={projectCollabBusy}>
+                                        Approve
+                                      </Button>
+                                      <Button type="button" variant="ghost" onClick={() => void resolveProjectApproval(approval.id, "reject")} disabled={projectCollabBusy}>
+                                        Reject
+                                      </Button>
+                                    </div>
+                                  ) : (
+                                    <span className="muted">Resolved</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <p className="muted">No approvals tracked yet.</p>
+                      )}
+                    </div>
+                    <div className="output-card">
+                      <p className="metric-label">Activity timeline</p>
+                      {projectActivity.length > 0 ? (
+                        <ul className="muted">
+                          {projectActivity.map((event) => (
+                            <li key={event.id}>
+                              <code>{event.event_type}</code> · {formatTimestamp(event.created_at)}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="muted">No activity yet.</p>
+                      )}
+                    </div>
+                  </>
+                )}
+              </Card>
+              <Card title="Publish automation">
+                {!apiClient.accessToken && <p className="muted">Login in Account tab to manage publish providers.</p>}
+                {publishError && <div className="error-inline">{publishError}</div>}
+                {publishLoading && <Spinner label="Loading publish data..." />}
+                {apiClient.accessToken && (
+                  <>
+                    <div className="form-grid">
+                      <label className="field">
+                        <span>Provider</span>
+                        <select className="input" value={publishProvider} onChange={(e) => setPublishProvider(e.target.value as PublishProvider)}>
+                          {PUBLISH_PROVIDERS.map((provider) => (
+                            <option key={provider} value={provider}>
+                              {provider}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span>OAuth code (dev/test)</span>
+                        <Input value={publishConnectCodeDraft} onChange={(e) => setPublishConnectCodeDraft(e.target.value)} />
+                      </label>
+                      <label className="field">
+                        <span>Account ID (optional)</span>
+                        <Input value={publishConnectAccountIdDraft} onChange={(e) => setPublishConnectAccountIdDraft(e.target.value)} />
+                      </label>
+                      <label className="field">
+                        <span>Account label (optional)</span>
+                        <Input value={publishConnectLabelDraft} onChange={(e) => setPublishConnectLabelDraft(e.target.value)} />
+                      </label>
+                    </div>
+                    <div className="actions-row">
+                      <Button type="button" variant="secondary" onClick={() => void connectPublishProvider()} disabled={publishBusy}>
+                        {publishBusy ? "Working..." : `Connect ${publishProvider}`}
+                      </Button>
+                      <Button type="button" variant="ghost" onClick={() => void loadPublishAutomation()} disabled={publishBusy}>
+                        Refresh publish
+                      </Button>
+                    </div>
+                    {publishProviders.length > 0 && (
+                      <div className="output-card">
+                        <p className="metric-label">Provider status</p>
+                        <table className="table">
+                          <thead>
+                            <tr>
+                              <th>Provider</th>
+                              <th>Connected</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {publishProviders.map((provider) => (
+                              <tr key={provider.provider}>
+                                <td>{provider.display_name}</td>
+                                <td>{provider.connected_count}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    <div className="output-card">
+                      <p className="metric-label">Connections</p>
+                      {publishConnections.length === 0 && <p className="muted">No active connections for {publishProvider}.</p>}
+                      {publishConnections.length > 0 && (
+                        <table className="table">
+                          <thead>
+                            <tr>
+                              <th>ID</th>
+                              <th>Account</th>
+                              <th>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {publishConnections.map((connection) => (
+                              <tr key={connection.id}>
+                                <td className="mono">{connection.id}</td>
+                                <td>{connection.account_label || connection.external_account_id || "n/a"}</td>
+                                <td>
+                                  <div className="actions-row">
+                                    <Button type="button" variant="ghost" onClick={() => setPublishConnectionIdDraft(connection.id)}>
+                                      Use
+                                    </Button>
+                                    <Button type="button" variant="ghost" onClick={() => void revokePublishConnection(connection.id)} disabled={publishBusy}>
+                                      Revoke
+                                    </Button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                    <div className="output-card">
+                      <p className="metric-label">Create publish job</p>
+                      <div className="form-grid">
+                        <label className="field">
+                          <span>Connection ID</span>
+                          <Input value={publishConnectionIdDraft} onChange={(e) => setPublishConnectionIdDraft(e.target.value)} />
+                        </label>
+                        <label className="field">
+                          <span>Asset ID</span>
+                          <Input value={publishAssetIdDraft} onChange={(e) => setPublishAssetIdDraft(e.target.value)} />
+                        </label>
+                        <label className="field">
+                          <span>Title</span>
+                          <Input value={publishTitleDraft} onChange={(e) => setPublishTitleDraft(e.target.value)} />
+                        </label>
+                        <label className="field">
+                          <span>Description</span>
+                          <TextArea rows={2} value={publishDescriptionDraft} onChange={(e) => setPublishDescriptionDraft(e.target.value)} />
+                        </label>
+                        <label className="field">
+                          <span>Tags (comma separated)</span>
+                          <Input value={publishTagsDraft} onChange={(e) => setPublishTagsDraft(e.target.value)} />
+                        </label>
+                      </div>
+                      <div className="actions-row">
+                        <Button
+                          type="button"
+                          variant="primary"
+                          onClick={() => void createPublishJob()}
+                          disabled={publishBusy || !publishConnectionIdDraft || !publishAssetIdDraft.trim()}
+                        >
+                          {publishBusy ? "Working..." : "Create publish job"}
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="output-card">
+                      <p className="metric-label">Publish jobs</p>
+                      {publishJobs.length === 0 && <p className="muted">No publish jobs for {publishProvider}.</p>}
+                      {publishJobs.length > 0 && (
+                        <table className="table">
+                          <thead>
+                            <tr>
+                              <th>ID</th>
+                              <th>Status</th>
+                              <th>URL</th>
+                              <th>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {publishJobs.map((job) => {
+                              const safePublishUrl = toSafeExternalUrl(job.published_url || null);
+                              return (
+                                <tr key={job.id}>
+                                  <td className="mono">{job.id}</td>
+                                  <td>{job.status}</td>
+                                  <td>{safePublishUrl ? <a href={safePublishUrl} target="_blank" rel="noreferrer">{safePublishUrl}</a> : "n/a"}</td>
+                                  <td>
+                                    {job.status === "failed" || job.status === "cancelled" ? (
+                                      <Button type="button" variant="ghost" onClick={() => void retryPublishJob(job.id)} disabled={publishBusy}>
+                                        Retry
+                                      </Button>
+                                    ) : (
+                                      <span className="muted">n/a</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </>
+                )}
+              </Card>
             </section>
           )}
 
@@ -4365,6 +5146,114 @@ function StyleEditor({
                         </table>
                       )}
                     </div>
+                    {ORG_MANAGER_ROLES.includes(String(orgInfo.role || "").toLowerCase()) && (
+                      <div className="output-card">
+                        <p className="metric-label">Enterprise security (Okta + SCIM)</p>
+                        {ssoError && <div className="error-inline">{ssoError}</div>}
+                        {ssoLoading && <Spinner label="Loading SSO config..." />}
+                        {!ssoLoading && (
+                          <>
+                            <div className="form-grid">
+                              <label className="checkbox">
+                                <input type="checkbox" checked={ssoEnabledDraft} onChange={(e) => setSsoEnabledDraft(e.target.checked)} />
+                                <span>Enable Okta SSO</span>
+                              </label>
+                              <label className="checkbox">
+                                <input type="checkbox" checked={ssoJitDraft} onChange={(e) => setSsoJitDraft(e.target.checked)} />
+                                <span>Allow JIT user provisioning</span>
+                              </label>
+                              <label className="checkbox">
+                                <input type="checkbox" checked={ssoEmailLinkDraft} onChange={(e) => setSsoEmailLinkDraft(e.target.checked)} />
+                                <span>Allow verified email account linking</span>
+                              </label>
+                              <label className="field">
+                                <span>Okta issuer URL</span>
+                                <Input value={ssoIssuerDraft} onChange={(e) => setSsoIssuerDraft(e.target.value)} placeholder="https://example.okta.com/oauth2/default" />
+                              </label>
+                              <label className="field">
+                                <span>Okta client ID</span>
+                                <Input value={ssoClientIdDraft} onChange={(e) => setSsoClientIdDraft(e.target.value)} />
+                              </label>
+                              <label className="field">
+                                <span>Audience (optional)</span>
+                                <Input value={ssoAudienceDraft} onChange={(e) => setSsoAudienceDraft(e.target.value)} />
+                              </label>
+                              <label className="field">
+                                <span>Default role</span>
+                                <select className="input" value={ssoDefaultRoleDraft} onChange={(e) => setSsoDefaultRoleDraft(e.target.value)}>
+                                  {ORG_ROLE_OPTIONS.map((role) => (
+                                    <option key={role} value={role}>
+                                      {role}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            </div>
+                            <div className="actions-row">
+                              <Button type="button" variant="secondary" onClick={() => void saveSsoSecurityConfig()} disabled={ssoSaving}>
+                                {ssoSaving ? "Saving..." : "Save SSO config"}
+                              </Button>
+                              <Button type="button" variant="ghost" onClick={() => void loadSsoSecurityContext()} disabled={ssoSaving}>
+                                Refresh SSO
+                              </Button>
+                              <Button type="button" variant="ghost" onClick={() => void startOktaSsoFlow()} disabled={!ssoEnabledDraft}>
+                                Start Okta SSO
+                              </Button>
+                            </div>
+                          </>
+                        )}
+                        {ssoConfig?.updated_at && <p className="muted">Last updated: {formatTimestamp(ssoConfig.updated_at)}</p>}
+                        <div className="output-card">
+                          <p className="metric-label">SCIM tokens</p>
+                          {scimCreateError && <div className="error-inline">{scimCreateError}</div>}
+                          {newScimToken && (
+                            <div className="output-card">
+                              <p className="metric-label">New token (shown once)</p>
+                              <p className="mono">{newScimToken}</p>
+                              <Button type="button" variant="ghost" onClick={() => void copyToClipboard(newScimToken)}>
+                                Copy token
+                              </Button>
+                            </div>
+                          )}
+                          <div className="actions-row">
+                            <Button type="button" variant="secondary" onClick={() => void createScimToken()} disabled={scimCreateBusy}>
+                              {scimCreateBusy ? "Working..." : "Create SCIM token"}
+                            </Button>
+                          </div>
+                          {scimTokens.length === 0 && <p className="muted">No locally-created SCIM tokens in this session.</p>}
+                          {scimTokens.length > 0 && (
+                            <table className="table">
+                              <thead>
+                                <tr>
+                                  <th>Hint</th>
+                                  <th>Created</th>
+                                  <th>Status</th>
+                                  <th>Actions</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {scimTokens.map((token) => (
+                                  <tr key={token.id}>
+                                    <td>{token.token_hint}</td>
+                                    <td>{formatTimestamp(token.created_at)}</td>
+                                    <td>{token.revoked_at ? "revoked" : "active"}</td>
+                                    <td>
+                                      {!token.revoked_at ? (
+                                        <Button type="button" variant="ghost" onClick={() => void revokeScimToken(token.id)} disabled={scimCreateBusy}>
+                                          Revoke
+                                        </Button>
+                                      ) : (
+                                        <span className="muted">n/a</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </>
                 )}
               </Card>
