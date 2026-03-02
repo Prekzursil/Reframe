@@ -510,11 +510,11 @@ Goal: offer Reframe as a paid hosted service (multi-tenant web app) while keepin
 Goal: extend the hosted SaaS baseline with deterministic release gating, stricter policy visibility, and cost/safety controls for multi-tenant growth.
 
 ### Track A — strict-23 integration reliability (issue #91, #92)
-- [ ] Add `scripts/strict23_preflight.py` to inventory canonical required contexts against latest branch-protection policy and recent check-run emissions.
-- [ ] Add `.github/workflows/strict23-preflight.yml` to publish a machine-readable preflight artifact on PRs and manual dispatch.
-- [ ] Require explicit status taxonomy in preflight output: `compliant`, `non_compliant`, `inconclusive_permissions`.
-- [ ] Add deterministic tests for context diffing and permission-denied handling under `apps/api/tests/test_scripts_strict23_preflight.py`.
-- [ ] Add `docs/plans/<stamp>-strict23-preflight.md` report with context deltas and rollout recommendation.
+- [x] Add `scripts/strict23_preflight.py` to inventory canonical required contexts against latest branch-protection policy and recent check-run emissions.
+- [x] Add `.github/workflows/strict23-preflight.yml` to publish a machine-readable preflight artifact on PRs and manual dispatch.
+- [x] Require explicit status taxonomy in preflight output: `compliant`, `non_compliant`, `inconclusive_permissions`.
+- [x] Add deterministic tests for context diffing and permission-denied handling under `apps/api/tests/test_scripts_strict23_preflight.py`.
+- [x] Add `docs/plans/<stamp>-strict23-preflight.md` report with context deltas and rollout recommendation.
 
 Acceptance criteria:
 - strict-23 preflight artifact exists for every PR run.

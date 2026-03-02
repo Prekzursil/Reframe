@@ -34,16 +34,18 @@
 - Branch release-readiness:
   - run: `22586189984`
   - url: https://github.com/Prekzursil/Reframe/actions/runs/22586189984
+  - conclusion: `success`
 - Main release-readiness:
   - run: `22586191139`
   - url: https://github.com/Prekzursil/Reframe/actions/runs/22586191139
+  - conclusion: `success`
 - Main diarization benchmark:
   - run: `22586192267`
   - url: https://github.com/Prekzursil/Reframe/actions/runs/22586192267
+  - conclusion: `success`
 
 Status notes:
-- Runs were dispatched and tracked during this batch.
-- Final merge decision must use latest run conclusions from the links above.
+- All three parity runs completed successfully during this batch.
 
 ## Diarization Notes
 - HF gated-model access probe is `ok` in local artifact:
