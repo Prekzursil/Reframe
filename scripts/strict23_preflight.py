@@ -31,8 +31,6 @@ DEFAULT_CANONICAL_CONTEXTS = [
     "codacy-equivalent-zero",
     "sonar-branch-zero",
     "Seer Code Review",
-    "Vercel",
-    "Vercel Preview Comments",
 ]
 
 
@@ -49,7 +47,7 @@ class PreflightResult:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Strict-23 preflight: compare canonical contexts against branch protection and emitted check-runs."
+        description="Strict-21 preflight: compare canonical contexts against branch protection and emitted check-runs."
     )
     parser.add_argument("--repo", required=True, help="GitHub repository in owner/repo format")
     parser.add_argument("--ref", default="main", help="Ref (branch/tag/SHA) used for emitted check context inventory")
@@ -58,7 +56,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--canonical-contexts",
         default="",
-        help="Optional comma-separated canonical context names; defaults to built-in strict-23 list.",
+        help="Optional comma-separated canonical context names; defaults to built-in strict-21 list.",
     )
     parser.add_argument("--out-json", required=True, help="Output JSON path")
     parser.add_argument("--out-md", required=True, help="Output markdown path")
@@ -80,7 +78,7 @@ def _api_get(api_base: str, repo: str, path: str, token: str) -> dict[str, Any]:
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {token}",
             "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "reframe-strict23-preflight",
+            "User-Agent": "reframe-strict21-preflight",
         },
         method="GET",
     )
@@ -143,7 +141,7 @@ def _collect_named_values(items: list[dict[str, Any]], field: str) -> list[str]:
 
 def _render_markdown(payload: dict[str, Any]) -> str:
     lines = [
-        "# strict-23 Preflight",
+        "# strict-21 Preflight",
         "",
         f"- Status: `{payload['status']}`",
         f"- Repo: `{payload['repo']}`",
@@ -187,7 +185,7 @@ def _render_markdown(payload: dict[str, Any]) -> str:
 def _missing_token_result() -> tuple[PreflightResult, list[str], list[str]]:
     result = PreflightResult(
         status="inconclusive_permissions",
-        findings=["GitHub token missing; strict-23 preflight cannot query branch protection/check-runs."],
+        findings=["GitHub token missing; strict-21 preflight cannot query branch protection/check-runs."],
         missing_in_branch_protection=[],
         missing_in_check_runs=[],
         ref_sha=None,
@@ -199,7 +197,7 @@ def _http_error_result(exc: HTTPError) -> tuple[PreflightResult, list[str], list
     message = exc.read().decode("utf-8", errors="replace")[:1000]
     result = PreflightResult(
         status=_classify_http_status(exc.code),
-        findings=[f"GitHub API request failed (HTTP {exc.code}) while running strict-23 preflight."],
+        findings=[f"GitHub API request failed (HTTP {exc.code}) while running strict-21 preflight."],
         missing_in_branch_protection=[],
         missing_in_check_runs=[],
         ref_sha=None,
@@ -212,7 +210,7 @@ def _http_error_result(exc: HTTPError) -> tuple[PreflightResult, list[str], list
 def _url_error_result(exc: URLError) -> tuple[PreflightResult, list[str], list[str]]:
     result = PreflightResult(
         status="api_error",
-        findings=["Network error while requesting GitHub API for strict-23 preflight."],
+        findings=["Network error while requesting GitHub API for strict-21 preflight."],
         missing_in_branch_protection=[],
         missing_in_check_runs=[],
         ref_sha=None,

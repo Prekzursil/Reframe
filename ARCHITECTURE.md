@@ -56,7 +56,7 @@ Conceptually, the same building blocks apply, but the “local filesystem + loca
 cloud primitives:
 
 - **Web app delivery**
-  - Serve `apps/web` as a static build from a CDN (Cloudflare Pages, Vercel, S3+CloudFront, etc.).
+  - Serve `apps/web` as a static build from a CDN (Cloudflare Pages, S3+CloudFront, etc.).
   - All API calls go to a hosted API base URL (not `localhost`).
 
 - **Multi‑tenant API**

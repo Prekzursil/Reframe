@@ -1,4 +1,4 @@
-# strict-23 Preflight
+# strict-21 Preflight
 
 - Status: `non_compliant`
 - Repo: `Prekzursil/Reframe`
@@ -9,10 +9,10 @@
 
 ## Findings
 
-- Canonical contexts missing from branch protection: applitools-core, pr-agent, deep-agent, audit-pr-evidence, backend, backend-postgres, coverage, codecov-analytics, dependency-review, compose-smoke, frontend, label, codacy-equivalent-zero, sonar-branch-zero, Seer Code Review, Vercel, Vercel Preview Comments
-- Canonical contexts missing from emitted checks on ref: applitools-core, pr-agent, deep-agent, audit-pr-evidence, backend, backend-postgres, coverage, codecov-analytics, dependency-review, compose-smoke, frontend, label, codacy-equivalent-zero, sonar-branch-zero, Seer Code Review, Vercel, Vercel Preview Comments
+- Canonical contexts missing from branch protection: applitools-core, pr-agent, deep-agent, audit-pr-evidence, backend, backend-postgres, coverage, codecov-analytics, dependency-review, compose-smoke, frontend, label, codacy-equivalent-zero, sonar-branch-zero, Seer Code Review
+- Canonical contexts missing from emitted checks on ref: applitools-core, pr-agent, deep-agent, audit-pr-evidence, backend, backend-postgres, coverage, codecov-analytics, dependency-review, compose-smoke, frontend, label, codacy-equivalent-zero, sonar-branch-zero, Seer Code Review
 
 ## Missing contexts
 
-- branch protection missing: `17`
-- emitted checks missing: `17`
+- branch protection missing: `15`
+- emitted checks missing: `15`
