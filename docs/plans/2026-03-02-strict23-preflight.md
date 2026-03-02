@@ -8,6 +8,7 @@
 - Timestamp (UTC): `2026-03-02T16:57:20.837153+00:00`
 
 ## Findings
+
 - Canonical contexts missing from branch protection: applitools-core, pr-agent, deep-agent, audit-pr-evidence, backend, backend-postgres, coverage, codecov-analytics, dependency-review, compose-smoke, frontend, label, codacy-equivalent-zero, sonar-branch-zero, Seer Code Review, Vercel, Vercel Preview Comments
 - Canonical contexts missing from emitted checks on ref: applitools-core, pr-agent, deep-agent, audit-pr-evidence, backend, backend-postgres, coverage, codecov-analytics, dependency-review, compose-smoke, frontend, label, codacy-equivalent-zero, sonar-branch-zero, Seer Code Review, Vercel, Vercel Preview Comments
 

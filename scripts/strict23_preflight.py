@@ -123,16 +123,18 @@ def evaluate_contexts(
 
 
 def _collect_emitted_contexts(check_runs: dict[str, Any], status_payload: dict[str, Any]) -> list[str]:
-    contexts: set[str] = set()
-    for run in check_runs.get("check_runs") or []:
-        name = str(run.get("name") or "").strip()
-        if name:
-            contexts.add(name)
-    for item in status_payload.get("statuses") or []:
-        context = str(item.get("context") or "").strip()
-        if context:
-            contexts.add(context)
+    contexts: set[str] = set(_collect_named_values(check_runs.get("check_runs") or [], "name"))
+    contexts.update(_collect_named_values(status_payload.get("statuses") or [], "context"))
     return sorted(contexts)
+
+
+def _collect_named_values(items: list[dict[str, Any]], field: str) -> list[str]:
+    values: list[str] = []
+    for item in items:
+        value = str(item.get(field) or "").strip()
+        if value:
+            values.append(value)
+    return values
 
 
 def _render_markdown(payload: dict[str, Any]) -> str:
@@ -178,6 +180,76 @@ def _render_markdown(payload: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _missing_token_result() -> tuple[PreflightResult, list[str], list[str]]:
+    result = PreflightResult(
+        status="inconclusive_permissions",
+        findings=["GitHub token missing; strict-23 preflight cannot query branch protection/check-runs."],
+        missing_in_branch_protection=[],
+        missing_in_check_runs=[],
+        ref_sha=None,
+    )
+    return result, [], []
+
+
+def _http_error_result(exc: HTTPError) -> tuple[PreflightResult, list[str], list[str]]:
+    message = exc.read().decode("utf-8", errors="replace")[:1000]
+    result = PreflightResult(
+        status=_classify_http_status(exc.code),
+        findings=[f"GitHub API request failed (HTTP {exc.code}) while running strict-23 preflight."],
+        missing_in_branch_protection=[],
+        missing_in_check_runs=[],
+        ref_sha=None,
+        http_status=exc.code,
+        http_error=message,
+    )
+    return result, [], []
+
+
+def _url_error_result(exc: URLError) -> tuple[PreflightResult, list[str], list[str]]:
+    result = PreflightResult(
+        status="api_error",
+        findings=["Network error while requesting GitHub API for strict-23 preflight."],
+        missing_in_branch_protection=[],
+        missing_in_check_runs=[],
+        ref_sha=None,
+        http_error=str(exc.reason),
+    )
+    return result, [], []
+
+
+def _run_preflight(
+    *,
+    args: argparse.Namespace,
+    canonical: list[str],
+    token: str,
+) -> tuple[PreflightResult, list[str], list[str]]:
+    if not token:
+        return _missing_token_result()
+
+    try:
+        protection = _api_get(args.api_base, args.repo, f"branches/{args.branch}/protection", token)
+        ref_payload = _api_get(args.api_base, args.repo, f"commits/{args.ref}", token)
+        ref_sha = str(ref_payload.get("sha") or "").strip() or None
+        if ref_sha is None:
+            raise RuntimeError(f"Unable to resolve SHA for ref {args.ref!r}")
+        check_runs = _api_get(args.api_base, args.repo, f"commits/{ref_sha}/check-runs?per_page=100", token)
+        status_payload = _api_get(args.api_base, args.repo, f"commits/{ref_sha}/status", token)
+
+        branch_required_checks = sorted((protection.get("required_status_checks") or {}).get("contexts") or [])
+        emitted_contexts = _collect_emitted_contexts(check_runs, status_payload)
+        result = evaluate_contexts(
+            canonical_contexts=canonical,
+            branch_required_checks=branch_required_checks,
+            emitted_contexts=emitted_contexts,
+            ref_sha=ref_sha,
+        )
+        return result, branch_required_checks, emitted_contexts
+    except HTTPError as exc:
+        return _http_error_result(exc)
+    except URLError as exc:
+        return _url_error_result(exc)
+
+
 def main() -> int:
     args = _parse_args()
     out_json = Path(args.out_json)
@@ -186,59 +258,11 @@ def main() -> int:
 
     token = (os.environ.get("GITHUB_TOKEN") or "").strip() or (os.environ.get("GH_TOKEN") or "").strip()
     now = datetime.now(timezone.utc).isoformat()
-
-    if not token:
-        result = PreflightResult(
-            status="inconclusive_permissions",
-            findings=["GitHub token missing; strict-23 preflight cannot query branch protection/check-runs."],
-            missing_in_branch_protection=[],
-            missing_in_check_runs=[],
-            ref_sha=None,
-        )
-        branch_required_checks: list[str] = []
-        emitted_contexts: list[str] = []
-    else:
-        try:
-            protection = _api_get(args.api_base, args.repo, f"branches/{args.branch}/protection", token)
-            ref_payload = _api_get(args.api_base, args.repo, f"commits/{args.ref}", token)
-            ref_sha = str(ref_payload.get("sha") or "").strip() or None
-            if ref_sha is None:
-                raise RuntimeError(f"Unable to resolve SHA for ref {args.ref!r}")
-            check_runs = _api_get(args.api_base, args.repo, f"commits/{ref_sha}/check-runs?per_page=100", token)
-            status_payload = _api_get(args.api_base, args.repo, f"commits/{ref_sha}/status", token)
-
-            branch_required_checks = sorted((protection.get("required_status_checks") or {}).get("contexts") or [])
-            emitted_contexts = _collect_emitted_contexts(check_runs, status_payload)
-            result = evaluate_contexts(
-                canonical_contexts=canonical,
-                branch_required_checks=branch_required_checks,
-                emitted_contexts=emitted_contexts,
-                ref_sha=ref_sha,
-            )
-        except HTTPError as exc:
-            message = exc.read().decode("utf-8", errors="replace")[:1000]
-            result = PreflightResult(
-                status=_classify_http_status(exc.code),
-                findings=[f"GitHub API request failed (HTTP {exc.code}) while running strict-23 preflight."],
-                missing_in_branch_protection=[],
-                missing_in_check_runs=[],
-                ref_sha=None,
-                http_status=exc.code,
-                http_error=message,
-            )
-            branch_required_checks = []
-            emitted_contexts = []
-        except URLError as exc:
-            result = PreflightResult(
-                status="api_error",
-                findings=["Network error while requesting GitHub API for strict-23 preflight."],
-                missing_in_branch_protection=[],
-                missing_in_check_runs=[],
-                ref_sha=None,
-                http_error=str(exc.reason),
-            )
-            branch_required_checks = []
-            emitted_contexts = []
+    result, branch_required_checks, emitted_contexts = _run_preflight(
+        args=args,
+        canonical=canonical,
+        token=token,
+    )
 
     payload = {
         "status": result.status,

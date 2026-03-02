@@ -79,6 +79,39 @@ def _in_window(value: datetime | None, start: datetime, end: datetime) -> bool:
     return start <= value < end
 
 
+def _count_items_in_window(
+    items: list[dict[str, Any]],
+    *,
+    date_field: str,
+    start: datetime,
+    end: datetime,
+) -> int:
+    return sum(1 for item in items if _in_window(_parse_dt(item.get(date_field)), start, end))
+
+
+def _main_runs_in_window(
+    workflow_runs: list[dict[str, Any]],
+    *,
+    start: datetime,
+    end: datetime,
+) -> list[dict[str, Any]]:
+    return [
+        run
+        for run in workflow_runs
+        if run.get("head_branch") == "main" and _in_window(_parse_dt(run.get("created_at")), start, end)
+    ]
+
+
+def _count_failed_runs(runs: list[dict[str, Any]]) -> int:
+    return sum(1 for run in runs if run.get("conclusion") == "failure")
+
+
+def _failure_rate(failed_runs: int, total_runs: int) -> float:
+    if total_runs == 0:
+        return 0.0
+    return failed_runs / total_runs * 100.0
+
+
 def _window_metrics(
     *,
     start: datetime,
@@ -86,20 +119,16 @@ def _window_metrics(
     pulls: list[dict[str, Any]],
     workflow_runs: list[dict[str, Any]],
 ) -> dict[str, float]:
-    opened_prs = [pr for pr in pulls if _in_window(_parse_dt(pr.get("created_at")), start, end)]
-    merged_prs = [pr for pr in pulls if _in_window(_parse_dt(pr.get("merged_at")), start, end)]
-    runs_window = [
-        r
-        for r in workflow_runs
-        if (r.get("head_branch") == "main") and _in_window(_parse_dt(r.get("created_at")), start, end)
-    ]
-    failed_runs = [r for r in runs_window if r.get("conclusion") == "failure"]
-    ci_failure_rate = (len(failed_runs) / len(runs_window) * 100.0) if runs_window else 0.0
+    opened_prs = _count_items_in_window(pulls, date_field="created_at", start=start, end=end)
+    merged_prs = _count_items_in_window(pulls, date_field="merged_at", start=start, end=end)
+    runs_window = _main_runs_in_window(workflow_runs, start=start, end=end)
+    failed_runs = _count_failed_runs(runs_window)
+    ci_failure_rate = _failure_rate(failed_runs, len(runs_window))
     return {
-        "prs_opened": len(opened_prs),
-        "prs_merged": len(merged_prs),
+        "prs_opened": opened_prs,
+        "prs_merged": merged_prs,
         "main_ci_runs": len(runs_window),
-        "main_ci_failed_runs": len(failed_runs),
+        "main_ci_failed_runs": failed_runs,
         "main_ci_failure_rate_pct": round(ci_failure_rate, 2),
     }
 
