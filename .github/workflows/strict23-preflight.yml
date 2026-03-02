@@ -1,4 +1,4 @@
-name: strict-23 Preflight
+name: strict-21 Preflight
 
 on:
   workflow_dispatch:
@@ -16,26 +16,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Run strict-23 preflight
+      - name: Run strict-21 preflight
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           STAMP: ${{ github.event.pull_request.number || github.run_id }}
         run: |
           set -euo pipefail
-          mkdir -p docs/plans strict23-preflight
+          mkdir -p docs/plans strict21-preflight
           python3 scripts/strict23_preflight.py \
             --repo "${GITHUB_REPOSITORY}" \
             --branch main \
             --ref "${GITHUB_SHA}" \
-            --out-json "strict23-preflight/preflight.json" \
-            --out-md "strict23-preflight/preflight.md"
+            --out-json "strict21-preflight/preflight.json" \
+            --out-md "strict21-preflight/preflight.md"
 
-          cp strict23-preflight/preflight.json "docs/plans/${STAMP}-strict23-preflight.json"
-          cp strict23-preflight/preflight.md "docs/plans/${STAMP}-strict23-preflight.md"
-          cat strict23-preflight/preflight.md
+          cp strict21-preflight/preflight.json "docs/plans/${STAMP}-strict21-preflight.json"
+          cp strict21-preflight/preflight.md "docs/plans/${STAMP}-strict21-preflight.md"
+          cat strict21-preflight/preflight.md
 
-      - name: Upload strict-23 artifact
+      - name: Upload strict-21 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: strict23-preflight
-          path: strict23-preflight
+          name: strict21-preflight
+          path: strict21-preflight
