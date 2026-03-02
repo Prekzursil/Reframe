@@ -216,10 +216,7 @@ def _estimate_job_submission_cost_cents(*, job_type: str | None, payload: dict[s
     raw = payload or {}
     explicit = raw.get("estimated_cost_cents")
     if explicit is not None:
-        try:
-            return max(0, int(float(explicit)))
-        except (TypeError, ValueError):
-            return 0
+        return max(0, int(_coerce_non_negative_float(explicit)))
 
     default_base_costs = {
         "captions": 25,
@@ -230,18 +227,24 @@ def _estimate_job_submission_cost_cents(*, job_type: str | None, payload: dict[s
         "cut_clip": 5,
     }
     base = int(default_base_costs.get((job_type or "").strip().lower(), 10))
-    minutes = 0.0
-    if "expected_minutes" in raw:
-        try:
-            minutes = max(0.0, float(raw.get("expected_minutes") or 0.0))
-        except (TypeError, ValueError):
-            minutes = 0.0
-    elif "duration_seconds" in raw:
-        try:
-            minutes = max(0.0, float(raw.get("duration_seconds") or 0.0) / 60.0)
-        except (TypeError, ValueError):
-            minutes = 0.0
+    minutes = _extract_estimated_minutes(raw)
     return base + int(round(minutes * 2.0))
+
+
+def _coerce_non_negative_float(value: Any, *, scale: float = 1.0) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, parsed * scale)
+
+
+def _extract_estimated_minutes(raw: dict[str, Any]) -> float:
+    if "expected_minutes" in raw:
+        return _coerce_non_negative_float(raw.get("expected_minutes"))
+    if "duration_seconds" in raw:
+        return _coerce_non_negative_float(raw.get("duration_seconds"), scale=1.0 / 60.0)
+    return 0.0
 
 
 def _require_org_manager_role(principal: AuthPrincipal) -> None:
@@ -256,13 +259,13 @@ def _serialize_budget_policy(
     org_id: UUID,
     current_month_estimated_cost_cents: int,
 ) -> BudgetPolicyView:
-    soft_limit = int(policy.monthly_soft_limit_cents) if (policy and policy.monthly_soft_limit_cents is not None) else None
-    hard_limit = int(policy.monthly_hard_limit_cents) if (policy and policy.monthly_hard_limit_cents is not None) else None
-    projected_status = "ok"
-    if hard_limit is not None and hard_limit > 0 and current_month_estimated_cost_cents > hard_limit:
-        projected_status = "hard_limit_exceeded"
-    elif soft_limit is not None and soft_limit > 0 and current_month_estimated_cost_cents > soft_limit:
-        projected_status = "soft_limit_exceeded"
+    soft_limit = _optional_int(policy.monthly_soft_limit_cents if policy else None)
+    hard_limit = _optional_int(policy.monthly_hard_limit_cents if policy else None)
+    projected_status = _budget_projected_status(
+        current_month_estimated_cost_cents=current_month_estimated_cost_cents,
+        soft_limit=soft_limit,
+        hard_limit=hard_limit,
+    )
     return BudgetPolicyView(
         org_id=org_id,
         monthly_soft_limit_cents=soft_limit,
@@ -272,6 +275,25 @@ def _serialize_budget_policy(
         projected_status=projected_status,
         updated_at=(policy.updated_at if policy else None),
     )
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    return int(value)
+
+
+def _budget_projected_status(
+    *,
+    current_month_estimated_cost_cents: int,
+    soft_limit: int | None,
+    hard_limit: int | None,
+) -> str:
+    if hard_limit is not None and hard_limit > 0 and current_month_estimated_cost_cents > hard_limit:
+        return "hard_limit_exceeded"
+    if soft_limit is not None and soft_limit > 0 and current_month_estimated_cost_cents > soft_limit:
+        return "soft_limit_exceeded"
+    return "ok"
 
 
 def _enforce_org_budget_policy(
@@ -309,6 +331,69 @@ def _enforce_org_budget_policy(
         )
 
 
+def _enforce_subscription_active_for_plan(sub: Subscription | None, *, plan_code: str) -> None:
+    if not sub or plan_code == "free":
+        return
+    status_value = (sub.status or "").strip().lower()
+    if status_value in {"active", "trialing"}:
+        return
+    raise quota_exceeded(
+        "Subscription is not active for paid plan usage",
+        details={"plan_code": plan_code, "status": sub.status},
+    )
+
+
+def _running_jobs_count(session: Session, *, org_id: UUID) -> int:
+    running = session.exec(
+        select(Job).where((Job.org_id == org_id) & (Job.status == JobStatus.running))
+    ).all()
+    return len(running)
+
+
+def _usage_metric_total(
+    session: Session,
+    *,
+    org_id: UUID,
+    metric: str,
+    month_start: datetime,
+) -> float:
+    usage = session.exec(
+        select(UsageEvent).where(
+            (UsageEvent.org_id == org_id)
+            & (UsageEvent.metric == metric)
+            & (UsageEvent.created_at >= month_start)
+        )
+    ).all()
+    return sum(float(item.quantity or 0.0) for item in usage)
+
+
+def _enforce_monthly_minutes_limit(*, plan_code: str, monthly_limit: int, used_minutes: float) -> None:
+    if monthly_limit <= 0 or used_minutes < float(monthly_limit):
+        return
+    raise quota_exceeded(
+        "Monthly processing quota reached",
+        details={
+            "plan_code": plan_code,
+            "quota_job_minutes": monthly_limit,
+            "used_job_minutes": round(used_minutes, 3),
+        },
+    )
+
+
+def _enforce_storage_limit(*, plan_code: str, monthly_storage_gb: int, used_storage_bytes: float) -> None:
+    storage_quota_bytes = float(monthly_storage_gb) * float(1024**3)
+    if storage_quota_bytes <= 0 or used_storage_bytes < storage_quota_bytes:
+        return
+    raise quota_exceeded(
+        "Monthly storage quota reached",
+        details={
+            "plan_code": plan_code,
+            "quota_storage_gb": monthly_storage_gb,
+            "used_storage_gb": round(used_storage_bytes / float(1024**3), 3),
+        },
+    )
+
+
 def _enforce_org_quota(
     session: Session,
     principal: AuthPrincipal,
@@ -323,65 +408,39 @@ def _enforce_org_quota(
 
     sub = session.exec(select(Subscription).where(Subscription.org_id == org_id)).first()
     plan_code = (sub.plan_code if sub else "free") or "free"
-    if sub and plan_code != "free":
-        status_value = (sub.status or "").strip().lower()
-        if status_value not in {"active", "trialing"}:
-            raise quota_exceeded(
-                "Subscription is not active for paid plan usage",
-                details={"plan_code": plan_code, "status": sub.status},
-            )
+    _enforce_subscription_active_for_plan(sub, plan_code=plan_code)
     policy = get_plan_policy(plan_code)
 
-    running = session.exec(
-        select(Job).where((Job.org_id == org_id) & (Job.status == JobStatus.running))
-    ).all()
-    if len(running) >= policy.max_concurrent_jobs:
+    running_jobs = _running_jobs_count(session, org_id=org_id)
+    if running_jobs >= policy.max_concurrent_jobs:
         raise quota_exceeded(
             "Concurrent job limit reached",
             details={
                 "plan_code": plan_code,
                 "max_concurrent_jobs": policy.max_concurrent_jobs,
-                "running_jobs": len(running),
+                "running_jobs": running_jobs,
             },
         )
 
     month_start = _month_start_utc()
-    usage = session.exec(
-        select(UsageEvent).where(
-            (UsageEvent.org_id == org_id)
-            & (UsageEvent.metric == "job_minutes")
-            & (UsageEvent.created_at >= month_start)
-        )
-    ).all()
-    used_minutes = sum(float(item.quantity or 0.0) for item in usage)
-    if policy.monthly_job_minutes > 0 and used_minutes >= float(policy.monthly_job_minutes):
-        raise quota_exceeded(
-            "Monthly processing quota reached",
-            details={
-                "plan_code": plan_code,
-                "quota_job_minutes": policy.monthly_job_minutes,
-                "used_job_minutes": round(used_minutes, 3),
-            },
-        )
+    used_minutes = _usage_metric_total(session, org_id=org_id, metric="job_minutes", month_start=month_start)
+    _enforce_monthly_minutes_limit(
+        plan_code=plan_code,
+        monthly_limit=policy.monthly_job_minutes,
+        used_minutes=used_minutes,
+    )
 
-    storage_usage = session.exec(
-        select(UsageEvent).where(
-            (UsageEvent.org_id == org_id)
-            & (UsageEvent.metric == "storage_bytes")
-            & (UsageEvent.created_at >= month_start)
-        )
-    ).all()
-    used_storage_bytes = sum(float(item.quantity or 0.0) for item in storage_usage)
-    storage_quota_bytes = float(policy.monthly_storage_gb) * float(1024**3)
-    if storage_quota_bytes > 0 and used_storage_bytes >= storage_quota_bytes:
-        raise quota_exceeded(
-            "Monthly storage quota reached",
-            details={
-                "plan_code": plan_code,
-                "quota_storage_gb": policy.monthly_storage_gb,
-                "used_storage_gb": round(used_storage_bytes / float(1024**3), 3),
-            },
-        )
+    used_storage_bytes = _usage_metric_total(
+        session,
+        org_id=org_id,
+        metric="storage_bytes",
+        month_start=month_start,
+    )
+    _enforce_storage_limit(
+        plan_code=plan_code,
+        monthly_storage_gb=policy.monthly_storage_gb,
+        used_storage_bytes=used_storage_bytes,
+    )
     _enforce_org_budget_policy(
         session,
         principal,
