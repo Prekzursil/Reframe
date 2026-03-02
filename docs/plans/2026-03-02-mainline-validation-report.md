@@ -5,7 +5,7 @@
 - Repository: `Prekzursil/Reframe`
 - Validation branch: `feat/reframe-sync-saas-v2-2026-03-02`
 - Base/source-of-truth: `origin/main@02fd4b5`
-- Related PR: https://github.com/Prekzursil/Reframe/pull/93
+- Related PR: [#93](https://github.com/Prekzursil/Reframe/pull/93)
 
 ## Sync Reality Check
 
@@ -41,16 +41,16 @@
   - conclusion: `success`
 - Main release-readiness:
   - run: `22586191139`
-  - url: https://github.com/Prekzursil/Reframe/actions/runs/22586191139
+  - url: [actions run 22586191139](https://github.com/Prekzursil/Reframe/actions/runs/22586191139)
   - conclusion: `success`
 - Main diarization benchmark:
   - run: `22586192267`
-  - url: https://github.com/Prekzursil/Reframe/actions/runs/22586192267
+  - url: [actions run 22586192267](https://github.com/Prekzursil/Reframe/actions/runs/22586192267)
   - conclusion: `success`
 
 Status notes:
 
-- All three parity runs completed successfully during this batch.
+- All three parity runs completed successfully during this batch: [branch readiness](https://github.com/Prekzursil/Reframe/actions/runs/22586189984), [main readiness](https://github.com/Prekzursil/Reframe/actions/runs/22586191139), and [main diarization](https://github.com/Prekzursil/Reframe/actions/runs/22586192267).
 
 ## Diarization Notes
 

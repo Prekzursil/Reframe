@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -70,6 +71,9 @@ def _classify_http_status(code: int) -> str:
 
 def _api_get(api_base: str, repo: str, path: str, token: str) -> dict[str, Any]:
     url = f"{api_base.rstrip('/')}/repos/{repo}/{path.lstrip('/')}"
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"Unsupported API URL: {url!r}")
     req = Request(
         url,
         headers={
@@ -80,7 +84,7 @@ def _api_get(api_base: str, repo: str, path: str, token: str) -> dict[str, Any]:
         },
         method="GET",
     )
-    with urlopen(req, timeout=30) as resp:
+    with urlopen(req, timeout=30) as resp:  # nosec B310 - URL scheme and host are validated above
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -223,9 +227,6 @@ def _run_preflight(
     canonical: list[str],
     token: str,
 ) -> tuple[PreflightResult, list[str], list[str]]:
-    if not token:
-        return _missing_token_result()
-
     try:
         protection = _api_get(args.api_base, args.repo, f"branches/{args.branch}/protection", token)
         ref_payload = _api_get(args.api_base, args.repo, f"commits/{args.ref}", token)
@@ -258,11 +259,14 @@ def main() -> int:
 
     token = (os.environ.get("GITHUB_TOKEN") or "").strip() or (os.environ.get("GH_TOKEN") or "").strip()
     now = datetime.now(timezone.utc).isoformat()
-    result, branch_required_checks, emitted_contexts = _run_preflight(
-        args=args,
-        canonical=canonical,
-        token=token,
-    )
+    if not token:
+        result, branch_required_checks, emitted_contexts = _missing_token_result()
+    else:
+        result, branch_required_checks, emitted_contexts = _run_preflight(
+            args=args,
+            canonical=canonical,
+            token=token,
+        )
 
     payload = {
         "status": result.status,
