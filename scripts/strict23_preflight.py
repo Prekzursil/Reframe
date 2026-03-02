@@ -42,6 +42,7 @@ class PreflightResult:
     findings: list[str]
     missing_in_branch_protection: list[str]
     missing_in_check_runs: list[str]
+    missing_optional_contexts: list[str]
     ref_sha: str | None
     http_status: int | None = None
     http_error: str | None = None
@@ -55,10 +56,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--ref", default="main", help="Ref (branch/tag/SHA) used for emitted check context inventory")
     parser.add_argument("--branch", default="main", help="Branch used for branch-protection context inventory")
     parser.add_argument("--api-base", default="https://api.github.com", help="GitHub API base URL")
+    parser.add_argument("--policy", default="docs/branch-protection-policy.json", help="Policy JSON path")
     parser.add_argument(
         "--canonical-contexts",
         default="",
-        help="Optional comma-separated canonical context names; defaults to built-in strict-23 list.",
+        help="Optional comma-separated required context names; when set, overrides policy required contexts.",
     )
     parser.add_argument("--out-json", required=True, help="Output JSON path")
     parser.add_argument("--out-md", required=True, help="Output markdown path")
@@ -90,38 +92,62 @@ def _api_get(api_base: str, repo: str, path: str, token: str) -> dict[str, Any]:
 
 def _canonical_contexts(raw: str) -> list[str]:
     if not raw.strip():
-        return list(DEFAULT_CANONICAL_CONTEXTS)
+        return []
     return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        name = str(item).strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
+def _context_sets_from_policy(policy: dict[str, Any]) -> tuple[list[str], list[str]]:
+    required_checks = _dedupe([str(v).strip() for v in (policy.get("required_status_checks") or []) if str(v).strip()])
+    supplemental = policy.get("strict23_supplemental_contexts")
+    required_supplemental: list[str] = []
+    optional_supplemental: list[str] = []
+    if isinstance(supplemental, dict):
+        required_supplemental = _dedupe([str(v).strip() for v in (supplemental.get("required") or []) if str(v).strip()])
+        optional_supplemental = _dedupe([str(v).strip() for v in (supplemental.get("optional") or []) if str(v).strip()])
+    required_contexts = _dedupe(required_checks + required_supplemental)
+    optional_contexts = [item for item in optional_supplemental if item not in required_contexts]
+    return required_contexts, optional_contexts
 
 
 def evaluate_contexts(
     *,
-    canonical_contexts: list[str],
+    required_contexts: list[str],
+    optional_contexts: list[str],
     branch_required_checks: list[str],
     emitted_contexts: list[str],
     ref_sha: str | None,
 ) -> PreflightResult:
-    missing_in_branch = [ctx for ctx in canonical_contexts if ctx not in branch_required_checks]
-    missing_in_emitted = [ctx for ctx in canonical_contexts if ctx not in emitted_contexts]
+    missing_in_branch = [ctx for ctx in required_contexts if ctx not in branch_required_checks]
+    missing_in_emitted = [ctx for ctx in required_contexts if ctx not in emitted_contexts]
+    missing_optional_contexts = [ctx for ctx in optional_contexts if ctx not in emitted_contexts]
 
     findings: list[str] = []
     if missing_in_branch:
-        findings.append(
-            "Canonical contexts missing from branch protection: "
-            + ", ".join(missing_in_branch)
-        )
+        findings.append("Required contexts missing from branch protection: " + ", ".join(missing_in_branch))
     if missing_in_emitted:
-        findings.append(
-            "Canonical contexts missing from emitted checks on ref: "
-            + ", ".join(missing_in_emitted)
-        )
+        findings.append("Required contexts missing from emitted checks on ref: " + ", ".join(missing_in_emitted))
+    if missing_optional_contexts:
+        findings.append("Optional contexts missing from emitted checks on ref: " + ", ".join(missing_optional_contexts))
 
-    status = "compliant" if not findings else "non_compliant"
+    status = "compliant" if not (missing_in_branch or missing_in_emitted) else "non_compliant"
     return PreflightResult(
         status=status,
         findings=findings,
         missing_in_branch_protection=missing_in_branch,
         missing_in_check_runs=missing_in_emitted,
+        missing_optional_contexts=missing_optional_contexts,
         ref_sha=ref_sha,
     )
 
@@ -166,8 +192,9 @@ def _render_markdown(payload: dict[str, Any]) -> str:
             "",
             "## Missing contexts",
             "",
-            f"- branch protection missing: `{len(payload.get('missing_in_branch_protection') or [])}`",
-            f"- emitted checks missing: `{len(payload.get('missing_in_check_runs') or [])}`",
+            f"- required missing in branch protection: `{len(payload.get('missing_in_branch_protection') or [])}`",
+            f"- required missing in emitted checks: `{len(payload.get('missing_in_check_runs') or [])}`",
+            f"- optional missing in emitted checks: `{len(payload.get('missing_optional_contexts') or [])}`",
         ]
     )
 
@@ -190,6 +217,7 @@ def _missing_token_result() -> tuple[PreflightResult, list[str], list[str]]:
         findings=["GitHub token missing; strict-23 preflight cannot query branch protection/check-runs."],
         missing_in_branch_protection=[],
         missing_in_check_runs=[],
+        missing_optional_contexts=[],
         ref_sha=None,
     )
     return result, [], []
@@ -202,6 +230,7 @@ def _http_error_result(exc: HTTPError) -> tuple[PreflightResult, list[str], list
         findings=[f"GitHub API request failed (HTTP {exc.code}) while running strict-23 preflight."],
         missing_in_branch_protection=[],
         missing_in_check_runs=[],
+        missing_optional_contexts=[],
         ref_sha=None,
         http_status=exc.code,
         http_error=message,
@@ -215,6 +244,7 @@ def _url_error_result(exc: URLError) -> tuple[PreflightResult, list[str], list[s
         findings=["Network error while requesting GitHub API for strict-23 preflight."],
         missing_in_branch_protection=[],
         missing_in_check_runs=[],
+        missing_optional_contexts=[],
         ref_sha=None,
         http_error=str(exc.reason),
     )
@@ -224,7 +254,8 @@ def _url_error_result(exc: URLError) -> tuple[PreflightResult, list[str], list[s
 def _run_preflight(
     *,
     args: argparse.Namespace,
-    canonical: list[str],
+    required_contexts: list[str],
+    optional_contexts: list[str],
     token: str,
 ) -> tuple[PreflightResult, list[str], list[str]]:
     try:
@@ -239,7 +270,8 @@ def _run_preflight(
         branch_required_checks = sorted((protection.get("required_status_checks") or {}).get("contexts") or [])
         emitted_contexts = _collect_emitted_contexts(check_runs, status_payload)
         result = evaluate_contexts(
-            canonical_contexts=canonical,
+            required_contexts=required_contexts,
+            optional_contexts=optional_contexts,
             branch_required_checks=branch_required_checks,
             emitted_contexts=emitted_contexts,
             ref_sha=ref_sha,
@@ -255,7 +287,16 @@ def main() -> int:
     args = _parse_args()
     out_json = Path(args.out_json)
     out_md = Path(args.out_md)
-    canonical = _canonical_contexts(args.canonical_contexts)
+
+    policy: dict[str, Any] = {}
+    policy_path = Path(args.policy)
+    if policy_path.exists():
+        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+
+    policy_required_contexts, policy_optional_contexts = _context_sets_from_policy(policy)
+    explicit_required_contexts = _canonical_contexts(args.canonical_contexts)
+    required_contexts = explicit_required_contexts or policy_required_contexts or list(DEFAULT_CANONICAL_CONTEXTS)
+    optional_contexts = policy_optional_contexts
 
     token = (os.environ.get("GITHUB_TOKEN") or "").strip() or (os.environ.get("GH_TOKEN") or "").strip()
     now = datetime.now(timezone.utc).isoformat()
@@ -264,7 +305,8 @@ def main() -> int:
     else:
         result, branch_required_checks, emitted_contexts = _run_preflight(
             args=args,
-            canonical=canonical,
+            required_contexts=required_contexts,
+            optional_contexts=optional_contexts,
             token=token,
         )
 
@@ -275,11 +317,15 @@ def main() -> int:
         "ref": args.ref,
         "ref_sha": result.ref_sha,
         "timestamp_utc": now,
-        "canonical_contexts": canonical,
+        "policy_path": str(policy_path),
+        "required_contexts": required_contexts,
+        "optional_contexts": optional_contexts,
+        "canonical_contexts": required_contexts,
         "branch_protection_required_checks": branch_required_checks,
         "emitted_contexts": emitted_contexts,
         "missing_in_branch_protection": result.missing_in_branch_protection,
         "missing_in_check_runs": result.missing_in_check_runs,
+        "missing_optional_contexts": result.missing_optional_contexts,
         "findings": result.findings,
         "http_status": result.http_status,
         "http_error": result.http_error,

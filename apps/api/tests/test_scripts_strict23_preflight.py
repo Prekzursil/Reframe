@@ -23,32 +23,38 @@ def _load_module():
 
 def test_evaluate_contexts_compliant_when_all_canonical_present():
     module = _load_module()
-    canonical = ["CodeQL", "CodeRabbit", "backend"]
-    required = ["CodeQL", "CodeRabbit", "backend", "extra-context"]
+    required = ["CodeQL", "CodeRabbit", "backend"]
+    optional = ["DeepScan"]
     emitted = ["CodeQL", "CodeRabbit", "backend", "another-context"]
 
     result = module.evaluate_contexts(
-        canonical_contexts=canonical,
+        required_contexts=required,
+        optional_contexts=optional,
         branch_required_checks=required,
         emitted_contexts=emitted,
         ref_sha="abc123",
     )
 
     _expect(result.status == "compliant", "Expected compliant status when all canonical contexts are present")
-    _expect(result.findings == [], "Expected no findings for compliant context set")
+    _expect(
+        any("Optional contexts missing from emitted checks on ref" in finding for finding in result.findings),
+        "Expected optional-missing finding for missing optional context",
+    )
     _expect(result.missing_in_branch_protection == [], "Expected no missing branch-protection contexts")
     _expect(result.missing_in_check_runs == [], "Expected no missing emitted contexts")
+    _expect(result.missing_optional_contexts == ["DeepScan"], "Expected missing optional contexts to be reported")
     _expect(result.ref_sha == "abc123", "Expected ref SHA to be carried into result payload")
 
 
 def test_evaluate_contexts_non_compliant_when_contexts_missing():
     module = _load_module()
-    canonical = ["CodeQL", "CodeRabbit", "backend"]
+    required_contexts = ["CodeQL", "CodeRabbit", "backend"]
     required = ["CodeQL"]
     emitted = ["CodeQL", "backend"]
 
     result = module.evaluate_contexts(
-        canonical_contexts=canonical,
+        required_contexts=required_contexts,
+        optional_contexts=[],
         branch_required_checks=required,
         emitted_contexts=emitted,
         ref_sha="def456",
@@ -80,3 +86,59 @@ def test_classify_http_status_maps_permission_codes_to_inconclusive():
     _expect(module._classify_http_status(403) == "inconclusive_permissions", "403 should map to inconclusive_permissions")
     _expect(module._classify_http_status(404) == "inconclusive_permissions", "404 should map to inconclusive_permissions")
     _expect(module._classify_http_status(500) == "api_error", "500 should map to api_error")
+
+
+def test_context_sets_from_policy_reads_required_and_optional_supplemental():
+    module = _load_module()
+    policy = {
+        "required_status_checks": ["CodeQL", "CodeRabbit"],
+        "strict23_supplemental_contexts": {
+            "required": ["backend"],
+            "optional": ["DeepScan", "SonarCloud"],
+        },
+    }
+    required, optional = module._context_sets_from_policy(policy)
+    _expect(required == ["CodeQL", "CodeRabbit", "backend"], "Expected required list to include policy + required supplemental")
+    _expect(optional == ["DeepScan", "SonarCloud"], "Expected optional supplemental contexts to be preserved")
+
+
+def test_main_missing_token_is_inconclusive_permissions(tmp_path, monkeypatch):
+    module = _load_module()
+    policy_path = tmp_path / "policy.json"
+    out_json = tmp_path / "preflight.json"
+    out_md = tmp_path / "preflight.md"
+    policy_path.write_text(
+        '{"required_status_checks":["CodeQL"],"strict23_supplemental_contexts":{"required":[],"optional":["DeepScan"]}}',
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "strict23_preflight.py",
+            "--repo",
+            "Prekzursil/Reframe",
+            "--branch",
+            "main",
+            "--ref",
+            "main",
+            "--policy",
+            str(policy_path),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+        ],
+    )
+
+    exit_code = module.main()
+    payload = module.json.loads(out_json.read_text(encoding="utf-8"))
+    markdown = out_md.read_text(encoding="utf-8")
+
+    _expect(exit_code == 0, "Missing token should be non-fatal as inconclusive permissions")
+    _expect(payload["status"] == "inconclusive_permissions", "Expected inconclusive status in JSON payload")
+    _expect(payload["required_contexts"] == ["CodeQL"], "Expected required contexts resolved from policy")
+    _expect(payload["optional_contexts"] == ["DeepScan"], "Expected optional contexts resolved from policy")
+    _expect("Status: `inconclusive_permissions`" in markdown, "Expected inconclusive status in markdown output")
