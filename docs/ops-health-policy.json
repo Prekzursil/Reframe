@@ -1,0 +1,28 @@
+{
+  "required_checks": [
+    "Python API & worker checks",
+    "Web build",
+    "Analyze (actions)",
+    "Analyze (javascript-typescript)",
+    "Analyze (python)",
+    "CodeQL",
+    "CodeRabbit"
+  ],
+  "thresholds": {
+    "main_ci_failure_rate_pct": {
+      "ok_max": 5.0,
+      "watch_max": 15.0
+    },
+    "required_check_pass_rate_pct": {
+      "ok_min": 95.0,
+      "watch_min": 85.0
+    },
+    "ci_duration_p95_seconds": {
+      "ok_max": 1800.0,
+      "watch_max": 3600.0
+    },
+    "delivery_throughput": {
+      "ok_min_prs_merged": 1
+    }
+  }
+}

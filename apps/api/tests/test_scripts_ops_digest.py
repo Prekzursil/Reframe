@@ -41,10 +41,41 @@ def test_compute_digest_counts_window_metrics():
         {"labels": [{"name": "area:infra"}]},
     ]
     workflow_runs = [
-        {"head_branch": "main", "created_at": recent, "conclusion": "failure"},
-        {"head_branch": "main", "created_at": recent, "conclusion": "success"},
-        {"head_branch": "main", "created_at": previous, "conclusion": "success"},
-        {"head_branch": "feature", "created_at": recent, "conclusion": "failure"},
+        {
+            "head_branch": "main",
+            "name": "CI",
+            "created_at": recent,
+            "updated_at": (now - timedelta(days=2, minutes=-4)).isoformat(),
+            "conclusion": "failure",
+        },
+        {
+            "head_branch": "main",
+            "name": "CI",
+            "created_at": recent,
+            "updated_at": (now - timedelta(days=2, minutes=-8)).isoformat(),
+            "conclusion": "success",
+        },
+        {
+            "head_branch": "main",
+            "name": "CodeQL",
+            "created_at": recent,
+            "updated_at": (now - timedelta(days=2, minutes=-10)).isoformat(),
+            "conclusion": "failure",
+        },
+        {
+            "head_branch": "main",
+            "name": "CodeQL",
+            "created_at": previous,
+            "updated_at": (now - timedelta(days=9, minutes=-3)).isoformat(),
+            "conclusion": "success",
+        },
+        {
+            "head_branch": "feature",
+            "name": "CI",
+            "created_at": recent,
+            "updated_at": (now - timedelta(days=2, minutes=-5)).isoformat(),
+            "conclusion": "failure",
+        },
     ]
 
     digest = module.compute_digest(
@@ -59,17 +90,30 @@ def test_compute_digest_counts_window_metrics():
     _expect(digest["metrics"]["prs_merged"] == 1, "Expected prs_merged metric for current window")
     _expect(digest["metrics"]["open_issues"] == 2, "Expected open issue count")
     _expect(digest["metrics"]["open_agent_issues"] == 1, "Expected open agent issue count")
-    _expect(digest["metrics"]["main_ci_runs"] == 2, "Expected main CI run count for current window")
-    _expect(digest["metrics"]["main_ci_failed_runs"] == 1, "Expected failed main CI run count for current window")
+    _expect(digest["metrics"]["main_ci_runs"] == 3, "Expected main CI run count for current window")
+    _expect(digest["metrics"]["main_ci_failed_runs"] == 2, "Expected failed main CI run count for current window")
     _expect(
-        digest["metrics"]["main_ci_failure_rate_pct"] == pytest.approx(50.0),
+        digest["metrics"]["main_ci_failure_rate_pct"] == pytest.approx(66.67, abs=0.01),
         "Expected current window CI failure rate",
     )
+    _expect(
+        digest["metrics"]["required_check_pass_rate_pct"] == pytest.approx(33.33, abs=0.01),
+        "Expected required check pass-rate percentage metric",
+    )
+    _expect(
+        digest["metrics"]["ci_duration_median_seconds"] == pytest.approx(480.0),
+        "Expected median CI duration in seconds",
+    )
+    _expect(
+        digest["metrics"]["ci_duration_p95_seconds"] == pytest.approx(600.0),
+        "Expected p95 CI duration in seconds",
+    )
+    _expect(digest["metrics"]["top_failed_checks"][0]["name"] == "CI", "Expected top failed check ranking by run failures")
     _expect(digest["metrics_previous_window"]["prs_merged"] == 1, "Expected previous-window merged PR count")
     _expect(digest["metrics_previous_window"]["main_ci_runs"] == 1, "Expected previous-window CI run count")
     _expect(digest["trends"]["prs_merged_delta"] == 0, "Expected merged PR delta to be zero")
     _expect(
-        digest["trends"]["main_ci_failure_rate_pct_delta"] == pytest.approx(50.0),
+        digest["trends"]["main_ci_failure_rate_pct_delta"] == pytest.approx(66.67, abs=0.01),
         "Expected CI failure-rate delta between windows",
     )
     _expect(

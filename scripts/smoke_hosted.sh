@@ -13,6 +13,10 @@ export REFRAME_ENABLE_OAUTH="true"
 TMPDIR=/tmp PYTHONPATH=.:apps/api:packages/media-core/src "$PYTHON_BIN" -m pytest --rootdir=. \
   apps/api/tests/test_security_auth.py \
   apps/api/tests/test_org_collaboration.py \
+  apps/api/tests/test_sso_okta.py \
+  apps/api/tests/test_scim_users_groups.py \
+  apps/api/tests/test_project_collaboration.py \
   apps/api/tests/test_hosted_uploads.py \
   apps/api/tests/test_billing_seats.py \
+  apps/api/tests/test_publish_jobs.py \
   apps/api/tests/test_usage_summary.py

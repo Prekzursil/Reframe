@@ -572,3 +572,59 @@ Acceptance criteria:
 - [x] `make smoke-perf-cost`
 - [x] `make release-readiness`
 
+---
+
+## 26. Enterprise Identity, Collaboration, and Multi-Channel Automation
+
+Goal: ship one full implementation wave covering strict policy hardening, enterprise SSO/SCIM, collaboration depth, and creator publish automation.
+
+### Track A — strict policy and issue closure
+
+- [x] strict-23 preflight reads canonical contexts from `docs/branch-protection-policy.json` (no hardcoded source of truth).
+- [x] strict-23 preflight supports optional supplemental contexts with explicit required/non-required behavior.
+- [x] strict-23 preflight tests cover policy loading, mismatch, missing token, and permission-denied outcomes.
+- [x] branch-protection audit workflow issue lifecycle is deterministic and deduplicated for drift vs inconclusive permission states.
+- [ ] issue closure pass: update and close `#91`, `#92`, `#89` with linked run evidence.
+  - [x] closed `#91` and `#92` with refreshed strict23 evidence.
+  - [ ] `#89` intentionally remains open as the single `inconclusive_permissions` tracker until GitHub branch-protection API scope is fixed.
+
+### Track B — ops digest hardening
+
+- [x] add required-check pass-rate and CI duration (median/p95) trends to ops digest metrics.
+- [x] add failing-check top offender reporting in digest output.
+- [x] add `docs/ops-health-policy.json` threshold policy and classification rules.
+- [x] extend digest tests and update `docs/KPI_DIGEST_TESTING.md`.
+- [x] ensure rolling digest issue `#88` remains single-threaded and noise-free.
+
+### Track C — enterprise SSO + SCIM (Okta-first)
+
+- [x] add models + migration: `SsoConnection`, `ScimToken`, `ScimIdentity`, `RoleMapping`.
+- [x] add org security endpoints for SSO config and SCIM token lifecycle.
+- [x] add Okta SSO start/callback endpoints with JIT account linking policy.
+- [x] add SCIM v2 Users and Groups endpoints with hashed token auth and org seat-limit enforcement.
+- [x] add audit event coverage for SSO/SCIM lifecycle operations.
+
+### Track D — advanced project collaboration
+
+- [x] add models + migration: `ProjectMembership`, `ProjectComment`, `ProjectApprovalRequest`, `ProjectActivityEvent`.
+- [x] add project membership API (list/add/role update/remove).
+- [x] add project comment API (list/create/delete).
+- [x] add project approval API (request/approve/reject) and activity feed.
+- [x] add collaboration UI tab (members, comments, approvals, activity timeline) with polling updates.
+
+### Track E — creator publish automation
+
+- [x] add models + migration: `PublishConnection`, `PublishJob`, `AutomationRunEvent`.
+- [x] add provider connect lifecycle endpoints and persisted connection metadata.
+- [x] add publish job lifecycle endpoints (create/list/get/retry).
+- [x] add worker publish adapter interface and provider implementations: YouTube, TikTok, Instagram, Facebook.
+- [x] extend workflow step validation/execution for publish actions and publish history UI.
+
+### Track F — verification and release evidence
+
+- [x] add API/worker/web tests for SSO, SCIM, collaboration, and publish workflows.
+- [x] run full local gate pack: `make verify`, `make smoke-hosted`, `make smoke-local`, `make smoke-security`, `make smoke-workflows`, `make smoke-perf-cost`, `make release-readiness`.
+- [x] run branch workflows: CI, release-readiness, strict23-preflight, branch-protection-audit, ops-weekly-digest.
+- [x] publish `docs/plans/2026-03-02-enterprise-collab-automation-report.md` and release-notes draft with run IDs/artifacts.
+- [ ] merge umbrella PR and verify post-merge `release-readiness` on `main`.
+

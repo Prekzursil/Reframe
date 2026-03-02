@@ -36,6 +36,7 @@ from app.models import (
     MediaAsset,
     OrgBudgetPolicy,
     Project,
+    ProjectMembership,
     Subscription,
     SubtitleStylePreset,
     UsageEvent,
@@ -951,6 +952,17 @@ def _dispatch_existing_job(job: Job, session: Session) -> Job:
 
 
 def _normalize_workflow_steps(steps: list[dict]) -> list[dict]:
+    supported_step_types = {
+        "captions",
+        "translate_subtitles",
+        "style_subtitles",
+        "shorts",
+        "publish",
+        "publish_youtube",
+        "publish_tiktok",
+        "publish_instagram",
+        "publish_facebook",
+    }
     normalized: list[dict] = []
     for idx, raw in enumerate(steps):
         if not isinstance(raw, dict):
@@ -961,7 +973,7 @@ def _normalize_workflow_steps(steps: list[dict]) -> list[dict]:
                 details={"index": idx},
             )
         step_type = str(raw.get("type") or raw.get("step_type") or "").strip().lower()
-        if step_type not in {"captions", "translate_subtitles", "style_subtitles", "shorts"}:
+        if step_type not in supported_step_types:
             raise ApiError(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 code=ErrorCode.VALIDATION_ERROR,
@@ -969,6 +981,13 @@ def _normalize_workflow_steps(steps: list[dict]) -> list[dict]:
                 details={"index": idx, "step_type": step_type},
             )
         payload = raw.get("payload") if isinstance(raw.get("payload"), dict) else {}
+        if step_type.startswith("publish") and not str(payload.get("connection_id") or "").strip():
+            raise ApiError(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                code=ErrorCode.VALIDATION_ERROR,
+                message="Publish workflow steps require payload.connection_id",
+                details={"index": idx, "step_type": step_type},
+            )
         normalized.append({"type": step_type, "payload": payload})
     if not normalized:
         raise ApiError(
@@ -1358,6 +1377,25 @@ def create_project(payload: ProjectCreateRequest, session: SessionDep, principal
     session.add(project)
     session.commit()
     session.refresh(project)
+    if principal.user_id:
+        existing_membership = session.exec(
+            select(ProjectMembership).where(
+                (ProjectMembership.project_id == project.id) & (ProjectMembership.user_id == principal.user_id)
+            )
+        ).first()
+        if not existing_membership:
+            session.add(
+                ProjectMembership(
+                    project_id=project.id,
+                    org_id=project.org_id,
+                    user_id=principal.user_id,
+                    role="owner",
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+            )
+            session.commit()
+            session.refresh(project)
     return project
 
 

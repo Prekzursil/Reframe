@@ -247,6 +247,31 @@ export interface OrgContextResponse {
   members: OrgMemberView[];
 }
 
+export interface SsoConfig {
+  org_id: string;
+  provider: string;
+  enabled: boolean;
+  issuer_url?: string | null;
+  client_id?: string | null;
+  audience?: string | null;
+  default_role: string;
+  jit_enabled: boolean;
+  allow_email_link: boolean;
+  config: Record<string, unknown>;
+  updated_at: string;
+}
+
+export interface ScimTokenView {
+  id: string;
+  org_id: string;
+  token_hint: string;
+  scopes: string[];
+  created_at: string;
+  last_used_at?: string | null;
+  revoked_at?: string | null;
+  token?: string | null;
+}
+
 export interface OrgView {
   org_id: string;
   name: string;
@@ -329,6 +354,85 @@ export interface WorkflowRunView {
   created_at: string;
   updated_at: string;
   steps: WorkflowRunStepView[];
+}
+
+export interface ProjectMember {
+  user_id: string;
+  email: string;
+  display_name?: string | null;
+  role: string;
+  added_at: string;
+}
+
+export interface ProjectComment {
+  id: string;
+  project_id: string;
+  author_user_id: string;
+  author_email?: string | null;
+  parent_comment_id?: string | null;
+  body: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectApproval {
+  id: string;
+  project_id: string;
+  status: string;
+  summary?: string | null;
+  requested_by_user_id: string;
+  resolved_by_user_id?: string | null;
+  resolved_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectActivityEvent {
+  id: string;
+  project_id: string;
+  actor_user_id?: string | null;
+  event_type: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface PublishProviderView {
+  provider: "youtube" | "tiktok" | "instagram" | "facebook";
+  display_name: string;
+  connected_count: number;
+}
+
+export interface PublishConnectionView {
+  id: string;
+  provider: string;
+  account_label?: string | null;
+  external_account_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  revoked_at?: string | null;
+}
+
+export interface PublishConnectStartResponse {
+  provider: string;
+  authorize_url: string;
+  state: string;
+  redirect_uri: string;
+}
+
+export interface PublishJobView {
+  id: string;
+  provider: string;
+  connection_id: string;
+  asset_id: string;
+  status: string;
+  retry_count: number;
+  payload: Record<string, unknown>;
+  error?: string | null;
+  external_post_id?: string | null;
+  published_url?: string | null;
+  task_id?: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface BillingPlan {
@@ -602,6 +706,67 @@ export class ApiClient {
     return this.request<MediaAsset[]>(`/projects/${projectId}/assets${query ? `?${query}` : ""}`);
   }
 
+  listProjectMembers(projectId: string) {
+    return this.request<ProjectMember[]>(`/projects/${projectId}/members`);
+  }
+
+  addProjectMember(projectId: string, payload: { user_id?: string; email?: string; role: string }) {
+    return this.request<ProjectMember>(`/projects/${projectId}/members`, { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  updateProjectMemberRole(projectId: string, userId: string, payload: { role: string }) {
+    return this.request<ProjectMember>(`/projects/${projectId}/members/${userId}`, { method: "PATCH", body: JSON.stringify(payload) });
+  }
+
+  async removeProjectMember(projectId: string, userId: string): Promise<void> {
+    const resp = await this.fetcher(`${this.baseUrl}/projects/${projectId}/members/${userId}`, {
+      method: "DELETE",
+      headers: this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : undefined,
+    });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => resp.statusText);
+      throw new Error(body || "Failed to remove project member");
+    }
+  }
+
+  listProjectComments(projectId: string) {
+    return this.request<ProjectComment[]>(`/projects/${projectId}/comments`);
+  }
+
+  createProjectComment(projectId: string, payload: { body: string; parent_comment_id?: string }) {
+    return this.request<ProjectComment>(`/projects/${projectId}/comments`, { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  async deleteProjectComment(projectId: string, commentId: string): Promise<void> {
+    const resp = await this.fetcher(`${this.baseUrl}/projects/${projectId}/comments/${commentId}`, {
+      method: "DELETE",
+      headers: this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : undefined,
+    });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => resp.statusText);
+      throw new Error(body || "Failed to delete project comment");
+    }
+  }
+
+  requestProjectApproval(projectId: string, payload?: { summary?: string }) {
+    return this.request<ProjectApproval>(`/projects/${projectId}/approvals/request`, {
+      method: "POST",
+      body: JSON.stringify(payload || {}),
+    });
+  }
+
+  approveProjectApproval(projectId: string, approvalId: string) {
+    return this.request<ProjectApproval>(`/projects/${projectId}/approvals/${approvalId}/approve`, { method: "POST" });
+  }
+
+  rejectProjectApproval(projectId: string, approvalId: string) {
+    return this.request<ProjectApproval>(`/projects/${projectId}/approvals/${approvalId}/reject`, { method: "POST" });
+  }
+
+  listProjectActivity(projectId: string, limit = 100) {
+    return this.request<ProjectActivityEvent[]>(`/projects/${projectId}/activity?limit=${encodeURIComponent(String(limit))}`);
+  }
+
   createProjectShareLinks(projectId: string, payload: { asset_ids: string[]; expires_in_hours?: number }) {
     return this.request<ProjectShareLinksResponse>(`/projects/${projectId}/share-links`, {
       method: "POST",
@@ -676,6 +841,64 @@ export class ApiClient {
 
   createOrg(payload: { name: string; slug?: string; seat_limit?: number }) {
     return this.request<OrgView>("/orgs", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  getOrgSsoConfig(orgId: string) {
+    return this.request<SsoConfig>(`/orgs/${orgId}/sso/config`);
+  }
+
+  updateOrgSsoConfig(
+    orgId: string,
+    payload: {
+      enabled: boolean;
+      issuer_url?: string;
+      client_id?: string;
+      client_secret_ref?: string;
+      audience?: string;
+      default_role?: string;
+      jit_enabled?: boolean;
+      allow_email_link?: boolean;
+      config?: Record<string, unknown>;
+    },
+  ) {
+    return this.request<SsoConfig>(`/orgs/${orgId}/sso/config`, { method: "PUT", body: JSON.stringify(payload) });
+  }
+
+  createScimToken(orgId: string, payload?: { scopes?: string[] }) {
+    return this.request<ScimTokenView>(`/orgs/${orgId}/sso/scim-tokens`, {
+      method: "POST",
+      body: JSON.stringify(payload || {}),
+    });
+  }
+
+  async revokeScimToken(orgId: string, tokenId: string): Promise<void> {
+    const resp = await this.fetcher(`${this.baseUrl}/orgs/${orgId}/sso/scim-tokens/${tokenId}`, {
+      method: "DELETE",
+      headers: this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : undefined,
+    });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => resp.statusText);
+      throw new Error(body || "Failed to revoke SCIM token");
+    }
+  }
+
+  startOktaSso(redirectTo?: string) {
+    const search = new URLSearchParams();
+    if (redirectTo) search.set("redirect_to", redirectTo);
+    const query = search.toString();
+    return this.request<{ provider: string; authorize_url: string; state: string; redirect_uri: string; org_id: string }>(
+      `/auth/sso/okta/start${query ? `?${query}` : ""}`,
+    );
+  }
+
+  completeOktaSso(params: { state: string; code?: string; email?: string; sub?: string; groups?: string }) {
+    const search = new URLSearchParams();
+    search.set("state", params.state);
+    if (params.code) search.set("code", params.code);
+    if (params.email) search.set("email", params.email);
+    if (params.sub) search.set("sub", params.sub);
+    if (params.groups) search.set("groups", params.groups);
+    return this.request<AuthTokenResponse>(`/auth/sso/okta/callback?${search.toString()}`);
   }
 
   listOrgInvites() {
@@ -771,6 +994,74 @@ export class ApiClient {
 
   cancelWorkflowRun(runId: string) {
     return this.request<WorkflowRunView>(`/workflows/runs/${runId}/cancel`, { method: "POST" });
+  }
+
+  listPublishProviders() {
+    return this.request<PublishProviderView[]>("/publish/providers");
+  }
+
+  listPublishConnections(provider: "youtube" | "tiktok" | "instagram" | "facebook") {
+    return this.request<PublishConnectionView[]>(`/publish/${provider}/connections`);
+  }
+
+  startPublishConnection(provider: "youtube" | "tiktok" | "instagram" | "facebook", redirectTo?: string) {
+    const search = new URLSearchParams();
+    if (redirectTo) search.set("redirect_to", redirectTo);
+    const query = search.toString();
+    return this.request<PublishConnectStartResponse>(`/publish/${provider}/connect/start${query ? `?${query}` : ""}`);
+  }
+
+  completePublishConnection(
+    provider: "youtube" | "tiktok" | "instagram" | "facebook",
+    params: { state: string; code?: string; refresh_token?: string; account_id?: string; account_label?: string },
+  ) {
+    const search = new URLSearchParams();
+    search.set("state", params.state);
+    if (params.code) search.set("code", params.code);
+    if (params.refresh_token) search.set("refresh_token", params.refresh_token);
+    if (params.account_id) search.set("account_id", params.account_id);
+    if (params.account_label) search.set("account_label", params.account_label);
+    return this.request<PublishConnectionView>(`/publish/${provider}/connect/callback?${search.toString()}`);
+  }
+
+  async revokePublishConnection(provider: "youtube" | "tiktok" | "instagram" | "facebook", connectionId: string): Promise<void> {
+    const resp = await this.fetcher(`${this.baseUrl}/publish/${provider}/connections/${connectionId}`, {
+      method: "DELETE",
+      headers: this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : undefined,
+    });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => resp.statusText);
+      throw new Error(body || "Failed to revoke publish connection");
+    }
+  }
+
+  createPublishJob(payload: {
+    provider: "youtube" | "tiktok" | "instagram" | "facebook";
+    connection_id: string;
+    asset_id: string;
+    title?: string;
+    description?: string;
+    tags?: string[];
+    schedule_at?: string;
+    workflow_run_id?: string;
+  }) {
+    return this.request<PublishJobView>("/publish/jobs", { method: "POST", body: JSON.stringify(payload) });
+  }
+
+  listPublishJobs(params?: { provider?: "youtube" | "tiktok" | "instagram" | "facebook"; status?: string }) {
+    const search = new URLSearchParams();
+    if (params?.provider) search.set("provider", params.provider);
+    if (params?.status) search.set("status", params.status);
+    const query = search.toString();
+    return this.request<PublishJobView[]>(`/publish/jobs${query ? `?${query}` : ""}`);
+  }
+
+  getPublishJob(jobId: string) {
+    return this.request<PublishJobView>(`/publish/jobs/${jobId}`);
+  }
+
+  retryPublishJob(jobId: string) {
+    return this.request<PublishJobView>(`/publish/jobs/${jobId}/retry`, { method: "POST" });
   }
 
   listBillingPlans() {

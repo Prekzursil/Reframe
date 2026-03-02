@@ -27,6 +27,7 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --branch main \
             --ref "${GITHUB_SHA}" \
+            --policy "docs/branch-protection-policy.json" \
             --out-json "strict23-preflight/preflight.json" \
             --out-md "strict23-preflight/preflight.md"
 
