@@ -59,6 +59,7 @@ from app.storage import LocalStorageBackend, get_storage, is_remote_uri
 
 router = APIRouter(prefix="/api/v1")
 logger = logging.getLogger("reframe.api")
+_DEFAULT_BINARY_MEDIA_TYPE = "application/octet-stream"
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -249,7 +250,7 @@ def _stream_local_file(*, file_path: Path, mime_type: str | None) -> StreamingRe
     file_name = file_path.name or "download"
     quoted = urllib.parse.quote(file_name)
     headers = {"Content-Disposition": f'attachment; filename="{file_name}"; filename*=UTF-8\'\'{quoted}'}
-    return StreamingResponse(_iterator(), media_type=mime_type or "application/octet-stream", headers=headers)
+    return StreamingResponse(_iterator(), media_type=mime_type or _DEFAULT_BINARY_MEDIA_TYPE, headers=headers)
 
 
 def _stream_remote_download(*, url: str, filename: str, mime_type: str | None) -> StreamingResponse:
@@ -280,7 +281,7 @@ def _stream_remote_download(*, url: str, filename: str, mime_type: str | None) -
             upstream.close()
             client.close()
 
-    response_media_type = mime_type or upstream.headers.get("content-type", "").split(";")[0] or "application/octet-stream"
+    response_media_type = mime_type or upstream.headers.get("content-type", "").split(";")[0] or _DEFAULT_BINARY_MEDIA_TYPE
     quoted = urllib.parse.quote(filename or "download")
     headers = {"Content-Disposition": f'attachment; filename="{filename or "download"}"; filename*=UTF-8\'\'{quoted}'}
     return StreamingResponse(_iterator(), media_type=response_media_type, headers=headers)
@@ -2416,7 +2417,7 @@ _ALLOWED_SUBTITLE_MIME_TYPES = {
     "text/plain",
     "text/vtt",
     "application/x-subrip",
-    "application/octet-stream",
+    _DEFAULT_BINARY_MEDIA_TYPE,
 }
 
 

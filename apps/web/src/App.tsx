@@ -1670,14 +1670,14 @@ function StyleEditor({
     if (!safeUrl) return;
     let parsed: URL;
     try {
-      parsed = new URL(safeUrl, window.location.origin);
+      parsed = new URL(safeUrl, globalThis.location.origin);
     } catch {
       return;
     }
-    if (parsed.origin !== window.location.origin) {
+    if (parsed.origin !== globalThis.location.origin) {
       return;
     }
-    window.location.assign(parsed.toString());
+    globalThis.location.assign(parsed.toString());
   };
   const outputAssetUrl = toSafeMediaHref(outputAsset?.uri);
   const subtitlePreviewUrl = toSafeMediaUrl(subtitlePreview);
