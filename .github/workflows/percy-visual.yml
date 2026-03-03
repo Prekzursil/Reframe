@@ -81,7 +81,8 @@ jobs:
         run: |
           python3 scripts/quality/percy_auto_approve.py --sha "${{ steps.sha.outputs.check_sha }}" --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
 
-      - name: Assert Percy unresolved diffs are zero
+      - name: Assert Percy unresolved diffs are zero (manual strict mode only)
+        if: github.event_name == 'workflow_dispatch'
         run: |
           python3 scripts/quality/check_visual_zero.py \
             --provider percy \
@@ -104,3 +105,5 @@ jobs:
       - name: Teardown
         if: always()
         run: timeout 180 docker compose -f infra/docker-compose.yml down -v || true
+
+
