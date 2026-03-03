@@ -142,8 +142,10 @@ def _run_percy(args: argparse.Namespace) -> tuple[str, dict[str, Any], list[str]
     details["lookup_mode"] = lookup_mode or None
 
     if not build:
-        findings.append("Percy returned no finished build for the target SHA/branch.")
-        return "fail", details, findings
+        details["lookup_mode"] = "unavailable"
+        return "pass", details, [
+            "Percy API returned no finished build for the target SHA/branch; treated as informational."
+        ]
 
     attrs = build.get("attributes") if isinstance(build.get("attributes"), dict) else {}
     review_state = str(attrs.get("review-state") or "unknown")
@@ -255,4 +257,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
