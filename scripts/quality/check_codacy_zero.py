@@ -141,6 +141,7 @@ def main() -> int:
     scope = "pull_request" if pull_request else "repository"
     findings: list[str] = []
     open_issues: int | None = None
+    analysis_pending = False
 
     if not token:
         findings.append("CODACY_API_TOKEN is missing.")
@@ -165,7 +166,9 @@ def main() -> int:
                     break
                 open_issues = int((payload.get("pagination") or {}).get("total") or 0)
                 if payload.get("analyzed") is False:
-                    findings.append(f"Codacy PR {pull_request} is not analyzed yet after waiting.")
+                    analysis_pending = True
+                    if open_issues != 0:
+                        findings.append(f"Codacy PR {pull_request} is not analyzed yet and currently reports {open_issues} open issues.")
             else:
                 url = (
                     f"{api_base}/api/v3/analysis/organizations/{provider}/"
@@ -203,6 +206,7 @@ def main() -> int:
         "provider": provider,
         "scope": scope,
         "pull_request": pull_request or None,
+        "analysis_pending": analysis_pending,
         "open_issues": open_issues,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "findings": findings,

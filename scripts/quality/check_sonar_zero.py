@@ -5,6 +5,7 @@ import argparse
 import base64
 import json
 import sys
+import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -27,6 +28,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--token", default="", help="Sonar token (falls back to SONAR_TOKEN env)")
     parser.add_argument("--branch", default="", help="Optional branch scope")
     parser.add_argument("--pull-request", default="", help="Optional PR scope")
+    parser.add_argument(
+        "--wait-seconds",
+        type=int,
+        default=120,
+        help="Maximum time to wait for Sonar PR issue counts to settle.",
+    )
     parser.add_argument(
         "--require-quality-gate",
         action="store_true",
@@ -55,6 +62,41 @@ def _request_json(url: str, auth_header: str) -> dict[str, Any]:
     )
     with urllib.request.urlopen(request, timeout=30) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def _query_sonar_status(
+    *,
+    api_base: str,
+    auth: str,
+    project_key: str,
+    branch: str,
+    pull_request: str,
+) -> tuple[int, str]:
+    issues_query = {
+        "componentKeys": project_key,
+        "resolved": "false",
+        "ps": "1",
+    }
+    if branch:
+        issues_query["branch"] = branch
+    if pull_request:
+        issues_query["pullRequest"] = pull_request
+
+    issues_url = f"{api_base}/api/issues/search?{urllib.parse.urlencode(issues_query)}"
+    issues_payload = _request_json(issues_url, auth)
+    paging = issues_payload.get("paging") or {}
+    open_issues = int(paging.get("total") or 0)
+
+    gate_query = {"projectKey": project_key}
+    if branch:
+        gate_query["branch"] = branch
+    if pull_request:
+        gate_query["pullRequest"] = pull_request
+    gate_url = f"{api_base}/api/qualitygates/project_status?{urllib.parse.urlencode(gate_query)}"
+    gate_payload = _request_json(gate_url, auth)
+    project_status = (gate_payload.get("projectStatus") or {})
+    quality_gate = str(project_status.get("status") or "UNKNOWN")
+    return open_issues, quality_gate
 
 
 def _render_md(payload: dict) -> str:
@@ -116,30 +158,25 @@ def main() -> int:
     else:
         auth = _auth_header(token)
         try:
-            issues_query = {
-                "componentKeys": args.project_key,
-                "resolved": "false",
-                "ps": "1",
-            }
-            if args.branch:
-                issues_query["branch"] = args.branch
-            if args.pull_request:
-                issues_query["pullRequest"] = args.pull_request
+            open_issues, quality_gate = _query_sonar_status(
+                api_base=api_base,
+                auth=auth,
+                project_key=args.project_key,
+                branch=args.branch,
+                pull_request=args.pull_request,
+            )
 
-            issues_url = f"{api_base}/api/issues/search?{urllib.parse.urlencode(issues_query)}"
-            issues_payload = _request_json(issues_url, auth)
-            paging = issues_payload.get("paging") or {}
-            open_issues = int(paging.get("total") or 0)
-
-            gate_query = {"projectKey": args.project_key}
-            if args.branch:
-                gate_query["branch"] = args.branch
-            if args.pull_request:
-                gate_query["pullRequest"] = args.pull_request
-            gate_url = f"{api_base}/api/qualitygates/project_status?{urllib.parse.urlencode(gate_query)}"
-            gate_payload = _request_json(gate_url, auth)
-            project_status = (gate_payload.get("projectStatus") or {})
-            quality_gate = str(project_status.get("status") or "UNKNOWN")
+            if args.pull_request and open_issues != 0 and args.wait_seconds > 0:
+                deadline = time.time() + max(0, args.wait_seconds)
+                while open_issues != 0 and time.time() < deadline:
+                    time.sleep(10)
+                    open_issues, quality_gate = _query_sonar_status(
+                        api_base=api_base,
+                        auth=auth,
+                        project_key=args.project_key,
+                        branch=args.branch,
+                        pull_request=args.pull_request,
+                    )
 
             if open_issues != 0:
                 findings.append(f"Sonar reports {open_issues} open issues (expected 0).")
