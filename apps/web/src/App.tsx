@@ -1668,7 +1668,16 @@ function StyleEditor({
   };
   const triggerSafeDownload = (safeUrl: string | null, _filename?: string) => {
     if (!safeUrl) return;
-    window.location.assign(safeUrl);
+    let parsed: URL;
+    try {
+      parsed = new URL(safeUrl, window.location.origin);
+    } catch {
+      return;
+    }
+    if (parsed.origin !== window.location.origin) {
+      return;
+    }
+    window.location.assign(parsed.toString());
   };
   const outputAssetUrl = toSafeMediaHref(outputAsset?.uri);
   const subtitlePreviewUrl = toSafeMediaUrl(subtitlePreview);

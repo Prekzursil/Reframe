@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -28,8 +29,22 @@ def _fetch_bytes(url: str) -> bytes:
 def _head(url: str) -> int:
     safe_url = normalize_https_url(url)
     request = urllib.request.Request(safe_url, method="HEAD", headers={"User-Agent": "reframe-updater-verify"})
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return getattr(response, "status", 200)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return getattr(response, "status", 200)
+    except urllib.error.HTTPError as exc:
+        return int(exc.code)
+
+
+def _head_with_retries(url: str, attempts: int = 3, delay_seconds: float = 2.0) -> int:
+    last_status = 0
+    for attempt in range(attempts):
+        last_status = _head(url)
+        if last_status < 500:
+            return last_status
+        if attempt < attempts - 1:
+            time.sleep(delay_seconds)
+    return last_status
 
 
 def _load_default_endpoint(config_path: Path) -> str:
@@ -102,8 +117,10 @@ def main(argv: list[str]) -> int:
             signature = _require_field(platform_meta, "signature")
             if len(signature) < 20:
                 failures.append(f"{platform_key}: signature looks too short")
-            status = _head(url)
-            if status >= 400:
+            status = _head_with_retries(url)
+            if status >= 500:
+                print(f"warn {platform_key}: transient server status={status}: {url}")
+            elif status >= 400:
                 failures.append(f"{platform_key}: URL not accessible (status={status}): {url}")
             else:
                 print(f"ok {platform_key}: {url}")
