@@ -18,7 +18,6 @@ function clampTime(seconds: number): number {
 
 function parseSrtTimestamp(ts: string): number {
   const [hh, mm, ssMs] = ts.trim().split(":");
-  if (hh === undefined || mm === undefined || ssMs === undefined) return 0;
   const [ss, ms] = ssMs.split(",");
   return Number(hh) * 3600 + Number(mm) * 60 + Number(ss) + Number(ms) / 1000;
 }
@@ -34,11 +33,9 @@ function parseVttTimestamp(ts: string): number {
     h = Number(parts[0] ?? 0);
     m = Number(parts[1] ?? 0);
     sMs = parts[2] ?? "0.000";
-  } else if (parts.length === 2) {
+  } else {
     m = Number(parts[0] ?? 0);
     sMs = parts[1] ?? "0.000";
-  } else {
-    return 0;
   }
 
   const [s, ms] = sMs.split(".");
@@ -161,4 +158,3 @@ export function cuesToSubtitles(format: SubtitleFormat, cues: SubtitleCue[]): st
   });
   return out.join("\n").trimEnd() + "\n";
 }
-

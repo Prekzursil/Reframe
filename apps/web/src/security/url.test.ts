@@ -31,10 +31,23 @@ describe("toSafeMediaUrl", () => {
   it("allows blob urls", () => {
     expect(toSafeMediaUrl("blob:http://localhost:5173/abc-123")).toBe("blob:http://localhost:5173/abc-123");
   });
+
+  it("returns null when URL parsing throws", () => {
+    expect(toSafeMediaUrl("http://[::1")).toBeNull();
+  });
+
+  it("rejects blank media urls", () => {
+    expect(toSafeMediaUrl("   ")).toBeNull();
+  });
 });
 
 describe("toSafeExternalUrl", () => {
   it("rejects blob urls for navigation", () => {
     expect(toSafeExternalUrl("blob:http://localhost:5173/abc-123")).toBeNull();
+  });
+
+  it("rejects invalid external URLs and credentials", () => {
+    expect(toSafeExternalUrl("http://[::1")).toBeNull();
+    expect(toSafeExternalUrl("https://user:pass@example.com")).toBeNull();
   });
 });

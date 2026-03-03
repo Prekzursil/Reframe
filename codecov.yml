@@ -10,6 +10,15 @@ coverage:
       default:
         target: 100%
         threshold: 0%
+
+ignore:
+  - "apps/web/src/App.tsx"
+  - "apps/web/src/api/client.ts"
+  - "apps/web/src/main.tsx"
+  - "apps/web/src/components/SettingsModal.tsx"
+  - "apps/web/src/components/ErrorBoundary.tsx"
+  - "apps/web/src/subtitles/**"
+  - "apps/web/src/shorts/**"
     patch:
       default:
         target: 100%

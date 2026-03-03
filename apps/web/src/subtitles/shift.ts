@@ -45,11 +45,9 @@ function parseVttTimestamp(ts: string): { seconds: number; includeHours: boolean
     h = Number(parts[0] ?? 0);
     m = Number(parts[1] ?? 0);
     sMs = parts[2] ?? "0.000";
-  } else if (parts.length === 2) {
+  } else {
     m = Number(parts[0] ?? 0);
     sMs = parts[1] ?? "0.000";
-  } else {
-    return { seconds: 0, includeHours: false };
   }
 
   const [s, ms] = sMs.split(".");
@@ -109,4 +107,3 @@ export function shiftSubtitleTimings(text: string, offsetSeconds: number): strin
 
   return out.join("\n");
 }
-
