@@ -9,20 +9,25 @@ on:
 
 permissions:
   contents: read
+  checks: read
 
 jobs:
   deepscan-zero:
     name: DeepScan Zero
     runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v6
 
-      - name: Assert DeepScan zero-open gate
-        env:
-          DEEPSCAN_API_TOKEN: ${{ secrets.DEEPSCAN_API_TOKEN }}
-          DEEPSCAN_OPEN_ISSUES_URL: ${{ vars.DEEPSCAN_OPEN_ISSUES_URL }}
+      - name: Assert DeepScan vendor check is green
         run: |
-          python3 scripts/quality/check_deepscan_zero.py \
+          python3 scripts/quality/check_required_checks.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --sha "${GITHUB_SHA}" \
+            --required-context "DeepScan" \
+            --timeout-seconds 1200 \
+            --poll-seconds 20 \
             --out-json "deepscan-zero/deepscan.json" \
             --out-md "deepscan-zero/deepscan.md"
 

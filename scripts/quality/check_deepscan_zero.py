@@ -21,11 +21,6 @@ TOTAL_KEYS = {"total", "totalItems", "total_items", "count", "hits", "open_issue
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Assert DeepScan has zero total open issues.")
-    parser.add_argument(
-        "--open-issues-url",
-        default="",
-        help="DeepScan API URL returning open issue totals (falls back to DEEPSCAN_OPEN_ISSUES_URL env)",
-    )
     parser.add_argument("--token", default="", help="DeepScan API token (falls back to DEEPSCAN_API_TOKEN env)")
     parser.add_argument("--out-json", default="deepscan-zero/deepscan.json", help="Output JSON path")
     parser.add_argument("--out-md", default="deepscan-zero/deepscan.md", help="Output markdown path")
@@ -50,8 +45,9 @@ def extract_total_open(payload: Any) -> int | None:
 
 
 def _request_json(url: str, token: str) -> dict[str, Any]:
+    safe_url = normalize_https_url(url, allowed_host_suffixes={"deepscan.io"})
     req = urllib.request.Request(
-        url,
+        safe_url,
         headers={
             "Accept": "application/json",
             "Authorization": f"Bearer {token}",
@@ -100,7 +96,7 @@ def main() -> int:
 
     args = _parse_args()
     token = (args.token or os.environ.get("DEEPSCAN_API_TOKEN", "")).strip()
-    open_issues_url = (args.open_issues_url or os.environ.get("DEEPSCAN_OPEN_ISSUES_URL", "")).strip()
+    open_issues_url = os.environ.get("DEEPSCAN_OPEN_ISSUES_URL", "").strip()
 
     findings: list[str] = []
     open_issues: int | None = None

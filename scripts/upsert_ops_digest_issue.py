@@ -16,13 +16,16 @@ if str(_SCRIPT_DIR) not in sys.path:
 
 from security_helpers import normalize_https_url
 
+GITHUB_API_BASE = "https://api.github.com"
+
 
 def _request_json(url: str, token: str, method: str = "GET", body: dict[str, Any] | None = None) -> Any:
+    safe_url = normalize_https_url(url, allowed_hosts={"api.github.com"}, strip_query=False).rstrip("/")
     data = None
     if body is not None:
         data = json.dumps(body).encode("utf-8")
     req = Request(
-        url,
+        safe_url,
         data=data,
         headers={
             "Accept": "application/vnd.github+json",
@@ -79,7 +82,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--digest-json", required=True)
     parser.add_argument("--digest-md", required=True)
     parser.add_argument("--out-json", required=True)
-    parser.add_argument("--api-base", default="https://api.github.com")
     parser.add_argument("--title", default="Weekly Ops Digest (rolling)")
     return parser.parse_args()
 
@@ -104,7 +106,7 @@ def main() -> int:
         raise SystemExit("GITHUB_TOKEN or GH_TOKEN is required")
 
     owner, repo = args.repo.split("/", 1)
-    api = normalize_https_url(args.api_base, allowed_hosts={"api.github.com"}, strip_query=True).rstrip("/")
+    api = normalize_https_url(GITHUB_API_BASE, allowed_hosts={"api.github.com"}, strip_query=True).rstrip("/")
 
     try:
         digest_json_path = _safe_output_path(args.digest_json, base=root)

@@ -17,10 +17,11 @@ if str(_HELPER_ROOT) not in sys.path:
 
 from security_helpers import normalize_https_url
 
+SENTRY_API_BASE = "https://sentry.io/api/0"
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Assert Sentry has zero unresolved issues for configured projects.")
-    parser.add_argument("--api-base", default="https://sentry.io/api/0", help="Sentry API base URL")
     parser.add_argument("--org", default="", help="Sentry org slug (falls back to SENTRY_ORG env)")
     parser.add_argument(
         "--project",
@@ -35,8 +36,9 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _request(url: str, token: str) -> tuple[list[Any], dict[str, str]]:
+    safe_url = normalize_https_url(url, allowed_host_suffixes={"sentry.io"})
     req = urllib.request.Request(
-        url,
+        safe_url,
         headers={
             "Accept": "application/json",
             "Authorization": f"Bearer {token}",
@@ -108,11 +110,7 @@ def main() -> int:
     args = _parse_args()
     token = (args.token or os.environ.get("SENTRY_AUTH_TOKEN", "")).strip()
     org = (args.org or os.environ.get("SENTRY_ORG", "")).strip()
-    try:
-        api_base = normalize_https_url(args.api_base, allowed_host_suffixes={"sentry.io"}).rstrip("/")
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
+    api_base = normalize_https_url(SENTRY_API_BASE, allowed_hosts={"sentry.io"}).rstrip("/")
 
     projects = [p for p in args.project if p]
     if not projects:
@@ -136,7 +134,9 @@ def main() -> int:
         try:
             for project in projects:
                 query = urllib.parse.urlencode({"query": "is:unresolved", "limit": "1"})
-                url = f"{api_base}/projects/{org}/{project}/issues/?{query}"
+                org_slug = urllib.parse.quote(org, safe="")
+                project_slug = urllib.parse.quote(project, safe="")
+                url = f"{api_base}/projects/{org_slug}/{project_slug}/issues/?{query}"
                 issues, headers = _request(url, token)
                 unresolved = _hits_from_headers(headers)
                 if unresolved is None:

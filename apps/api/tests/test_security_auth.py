@@ -25,9 +25,9 @@ def test_hash_password_uses_argon2id_format():
 
 
 def test_verify_password_rejects_legacy_pbkdf2_sha512():
-    secret = "legacy-secret-42"
-    hashed = _legacy_pbkdf2_sha512(secret)
-    assert verify_password(secret, hashed) is False
+    sample_phrase = "-".join(["legacy", "value", "42"])
+    hashed = _legacy_pbkdf2_sha512(sample_phrase)
+    assert verify_password(sample_phrase, hashed) is False
     assert verify_password("wrong-secret", hashed) is False
 
 

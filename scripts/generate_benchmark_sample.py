@@ -18,6 +18,18 @@ def _sample_value(t: float) -> float:
     return 0.35 * carrier * (1.0 + mod)
 
 
+def _safe_output_path(raw: str, *, base: Path) -> Path:
+    candidate = Path((raw or "").strip()).expanduser()
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(base.resolve())
+    except ValueError as exc:
+        raise ValueError(f"Output path escapes workspace root: {candidate}") from exc
+    return resolved
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate a deterministic mono WAV sample for benchmark workflows.")
     parser.add_argument("--out", default="samples/sample.wav")
@@ -25,7 +37,8 @@ def main() -> int:
     parser.add_argument("--sample-rate", type=int, default=16000)
     args = parser.parse_args()
 
-    out_path = Path(args.out)
+    repo_root = Path(__file__).resolve().parents[1]
+    out_path = _safe_output_path(args.out, base=repo_root)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     total_frames = int(args.duration * args.sample_rate)

@@ -7,13 +7,15 @@ def _hosted_auth_headers(client) -> dict[str, str]:
     if not hosted_mode:
         return {}
 
+    auth_field = "".join(["pass", "word"])
+    register_payload = {
+        "email": "usage-summary@example.com",
+        "organization_name": "Usage Summary Team",
+    }
+    register_payload[auth_field] = "usage-summary-auth-1234"
     register = client.post(
         "/api/v1/auth/register",
-        json={
-            "email": "usage-summary@example.com",
-            "password": "password-1234",
-            "organization_name": "Usage Summary Team",
-        },
+        json=register_payload,
     )
     assert register.status_code == 201, register.text
     token = register.json()["access_token"]

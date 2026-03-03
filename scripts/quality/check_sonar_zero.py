@@ -18,10 +18,11 @@ if str(_HELPER_ROOT) not in sys.path:
 
 from security_helpers import normalize_https_url
 
+SONAR_API_BASE = "https://sonarcloud.io"
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Assert SonarCloud has zero open issues and a passing quality gate.")
-    parser.add_argument("--api-base", default="https://sonarcloud.io", help="Sonar API base URL")
     parser.add_argument("--project-key", required=True, help="Sonar project key")
     parser.add_argument("--token", default="", help="Sonar token (falls back to SONAR_TOKEN env)")
     parser.add_argument("--branch", default="", help="Optional branch scope")
@@ -37,8 +38,9 @@ def _auth_header(token: str) -> str:
 
 
 def _request_json(url: str, auth_header: str) -> dict[str, Any]:
+    safe_url = normalize_https_url(url, allowed_host_suffixes={"sonarcloud.io"}).rstrip("/")
     request = urllib.request.Request(
-        url,
+        safe_url,
         headers={
             "Accept": "application/json",
             "Authorization": auth_header,
@@ -88,11 +90,7 @@ def main() -> int:
 
     args = _parse_args()
     token = (args.token or os.environ.get("SONAR_TOKEN", "")).strip()
-    try:
-        api_base = normalize_https_url(args.api_base, allowed_host_suffixes={"sonarcloud.io"}).rstrip("/")
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
+    api_base = normalize_https_url(SONAR_API_BASE, allowed_hosts={"sonarcloud.io"}).rstrip("/")
 
     findings: list[str] = []
     open_issues: int | None = None

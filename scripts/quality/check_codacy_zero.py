@@ -20,11 +20,11 @@ from security_helpers import normalize_https_url
 
 
 TOTAL_KEYS = {"total", "totalItems", "total_items", "count", "hits", "open_issues"}
+CODACY_API_BASE = "https://api.codacy.com"
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Assert Codacy has zero total open issues.")
-    parser.add_argument("--api-base", default="https://api.codacy.com", help="Codacy API base")
     parser.add_argument("--provider", default="gh", help="Organization provider, for example gh")
     parser.add_argument("--owner", required=True, help="Repository owner")
     parser.add_argument("--repo", required=True, help="Repository name")
@@ -35,6 +35,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _request_json(url: str, token: str, *, method: str = "GET", data: dict[str, Any] | None = None) -> dict[str, Any]:
+    safe_url = normalize_https_url(url, allowed_host_suffixes={"codacy.com"}).rstrip("/")
     body = None
     headers = {
         "Accept": "application/json",
@@ -45,7 +46,7 @@ def _request_json(url: str, token: str, *, method: str = "GET", data: dict[str, 
         body = json.dumps(data).encode("utf-8")
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(
-        url,
+        safe_url,
         headers=headers,
         method=method,
         data=body,
@@ -118,14 +119,9 @@ def main() -> int:
 
     args = _parse_args()
     token = (args.token or os.environ.get("CODACY_API_TOKEN", "")).strip()
-    try:
-        api_base = normalize_https_url(
-            args.api_base,
-            allowed_hosts={"api.codacy.com", "app.codacy.com"},
-        ).rstrip("/")
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
+    api_base = normalize_https_url(CODACY_API_BASE, allowed_hosts={"api.codacy.com"}).rstrip("/")
+    owner = urllib.parse.quote(args.owner.strip(), safe="")
+    repo = urllib.parse.quote(args.repo.strip(), safe="")
 
     findings: list[str] = []
     open_issues: int | None = None
@@ -142,7 +138,7 @@ def main() -> int:
         for provider in provider_candidates:
             url = (
                 f"{api_base}/api/v3/analysis/organizations/{provider}/"
-                f"{args.owner}/repositories/{args.repo}/issues/search?{query}"
+                f"{owner}/repositories/{repo}/issues/search?{query}"
             )
             try:
                 payload = _request_json(url, token, method="POST", data={})

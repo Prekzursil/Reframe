@@ -120,6 +120,18 @@ def _aggregate_status(results: list[ProbeResult]) -> str:
     return "blocked_403"
 
 
+def _safe_output_path(raw: str, *, base: Path) -> Path:
+    candidate = Path((raw or "").strip()).expanduser()
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(base.resolve())
+    except ValueError as exc:
+        raise ValueError(f"Output path escapes workspace root: {candidate}") from exc
+    return resolved
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Probe Hugging Face gated model access for pyannote models.")
     parser.add_argument(
@@ -156,7 +168,7 @@ def main(argv: list[str]) -> int:
         "models": models,
         "probes": [asdict(r) for r in results],
     }
-    out_json = Path(args.out_json) if args.out_json else None
+    out_json = _safe_output_path(args.out_json, base=repo_root) if args.out_json else None
     if out_json is not None:
         out_json.parent.mkdir(parents=True, exist_ok=True)
         out_json.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
