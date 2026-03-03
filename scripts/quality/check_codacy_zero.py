@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -144,66 +145,49 @@ def main() -> int:
     if not token:
         findings.append("CODACY_API_TOKEN is missing.")
         status = "fail"
+    elif pull_request and not pull_request.isdigit():
+        findings.append(f"Invalid pull request number: {pull_request!r}")
+        status = "fail"
     else:
         query = urllib.parse.urlencode({"limit": "1", "page": "1"})
-        last_exc: Exception | None = None
-        if pull_request:
-            if not pull_request.isdigit():
-                findings.append(f"Invalid pull request number: {pull_request!r}")
-                status = "fail"
-                payload = {
-                    "status": status,
-                    "owner": owner_raw,
-                    "repo": repo_raw,
-                    "provider": provider,
-                    "scope": scope,
-                    "pull_request": pull_request,
-                    "open_issues": open_issues,
-                    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-                    "findings": findings,
-                }
-                out_json = _safe_output_path(args.out_json, "codacy-zero/codacy.json")
-                out_md = _safe_output_path(args.out_md, "codacy-zero/codacy.md")
-                out_json.parent.mkdir(parents=True, exist_ok=True)
-                out_md.parent.mkdir(parents=True, exist_ok=True)
-                out_json.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-                out_md.write_text(_render_md(payload), encoding="utf-8")
-                print(out_md.read_text(encoding="utf-8"), end="")
-                return 1
-            url = (
-                f"{api_base}/api/v3/analysis/organizations/{provider}/"
-                f"{owner}/repositories/{repo}/pull-requests/{urllib.parse.quote(pull_request, safe='')}/issues?{query}"
-            )
-        else:
-            url = (
-                f"{api_base}/api/v3/analysis/organizations/{provider}/"
-                f"{owner}/repositories/{repo}/issues/search?{query}"
-            )
         try:
             if pull_request:
-                payload = _request_json(url, token, method="GET")
+                url = (
+                    f"{api_base}/api/v3/analysis/organizations/{provider}/"
+                    f"{owner}/repositories/{repo}/pull-requests/{urllib.parse.quote(pull_request, safe='')}/issues?{query}"
+                )
+                payload: dict[str, Any] = {}
+                for _ in range(30):
+                    payload = _request_json(url, token, method="GET")
+                    if payload.get("analyzed") is False:
+                        time.sleep(5)
+                        continue
+                    break
                 open_issues = int((payload.get("pagination") or {}).get("total") or 0)
                 if payload.get("analyzed") is False:
-                    findings.append(f"Codacy PR {pull_request} is not analyzed yet.")
+                    findings.append(f"Codacy PR {pull_request} is not analyzed yet after waiting.")
             else:
+                url = (
+                    f"{api_base}/api/v3/analysis/organizations/{provider}/"
+                    f"{owner}/repositories/{repo}/issues/search?{query}"
+                )
                 payload = _request_json(url, token, method="POST", data={})
                 open_issues = extract_total_open(payload)
-            if open_issues is None:
-                findings.append("Codacy response did not include a parseable total issue count.")
-            elif open_issues != 0:
+                if open_issues is None:
+                    findings.append("Codacy response did not include a parseable total issue count.")
+
+            if open_issues is not None and open_issues != 0:
                 if pull_request:
                     findings.append(f"Codacy reports {open_issues} open issues on PR #{pull_request} (expected 0).")
                 else:
                     findings.append(f"Codacy reports {open_issues} open issues (expected 0).")
             status = "pass" if not findings else "fail"
         except urllib.error.HTTPError as exc:
-            last_exc = exc
             if pull_request:
                 findings.append(f"Codacy API request failed for PR #{pull_request}: HTTP {exc.code}")
             else:
                 findings.append(f"Codacy API request failed: HTTP {exc.code}")
-            if last_exc is not None:
-                findings.append(f"Last Codacy API error: {last_exc}")
+            findings.append(f"Last Codacy API error: {exc}")
             status = "fail"
         except Exception as exc:  # pragma: no cover - network/runtime surface
             if pull_request:
