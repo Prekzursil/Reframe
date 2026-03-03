@@ -11,6 +11,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_HELPER_ROOT = _SCRIPT_DIR if (_SCRIPT_DIR / "security_helpers.py").exists() else _SCRIPT_DIR.parent
+if str(_HELPER_ROOT) not in sys.path:
+    sys.path.insert(0, str(_HELPER_ROOT))
+
+from security_helpers import normalize_https_url
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Assert SonarCloud has zero open issues and a passing quality gate.")
@@ -81,6 +88,11 @@ def main() -> int:
 
     args = _parse_args()
     token = (args.token or os.environ.get("SONAR_TOKEN", "")).strip()
+    try:
+        api_base = normalize_https_url(args.api_base, allowed_host_suffixes={"sonarcloud.io"}).rstrip("/")
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
     findings: list[str] = []
     open_issues: int | None = None
@@ -102,7 +114,7 @@ def main() -> int:
             if args.pull_request:
                 issues_query["pullRequest"] = args.pull_request
 
-            issues_url = f"{args.api_base.rstrip('/')}/api/issues/search?{urllib.parse.urlencode(issues_query)}"
+            issues_url = f"{api_base}/api/issues/search?{urllib.parse.urlencode(issues_query)}"
             issues_payload = _request_json(issues_url, auth)
             paging = issues_payload.get("paging") or {}
             open_issues = int(paging.get("total") or 0)
@@ -112,7 +124,7 @@ def main() -> int:
                 gate_query["branch"] = args.branch
             if args.pull_request:
                 gate_query["pullRequest"] = args.pull_request
-            gate_url = f"{args.api_base.rstrip('/')}/api/qualitygates/project_status?{urllib.parse.urlencode(gate_query)}"
+            gate_url = f"{api_base}/api/qualitygates/project_status?{urllib.parse.urlencode(gate_query)}"
             gate_payload = _request_json(gate_url, auth)
             project_status = (gate_payload.get("projectStatus") or {})
             quality_gate = str(project_status.get("status") or "UNKNOWN")

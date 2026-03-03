@@ -5,7 +5,6 @@ import argparse
 import json
 import re
 import sys
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +25,9 @@ class CoverageStats:
 
 
 _PAIR_RE = re.compile(r"^(?P<name>[^=]+)=(?P<path>.+)$")
+_XML_LINES_VALID_RE = re.compile(r'lines-valid="([0-9]+(?:\\.[0-9]+)?)"')
+_XML_LINES_COVERED_RE = re.compile(r'lines-covered="([0-9]+(?:\\.[0-9]+)?)"')
+_XML_LINE_HITS_RE = re.compile(r"<line\\b[^>]*\\bhits=\"([0-9]+(?:\\.[0-9]+)?)\"")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -45,22 +47,18 @@ def parse_named_path(value: str) -> tuple[str, Path]:
 
 
 def parse_coverage_xml(name: str, path: Path) -> CoverageStats:
-    root = ET.fromstring(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    lines_valid_match = _XML_LINES_VALID_RE.search(text)
+    lines_covered_match = _XML_LINES_COVERED_RE.search(text)
 
-    lines_valid = root.attrib.get("lines-valid")
-    lines_covered = root.attrib.get("lines-covered")
-
-    if lines_valid is not None and lines_covered is not None:
-        total = int(float(lines_valid))
-        covered = int(float(lines_covered))
+    if lines_valid_match and lines_covered_match:
+        total = int(float(lines_valid_match.group(1)))
+        covered = int(float(lines_covered_match.group(1)))
         return CoverageStats(name=name, path=str(path), covered=covered, total=total)
 
     total = 0
     covered = 0
-    for line in root.findall(".//line"):
-        hits_raw = line.attrib.get("hits")
-        if hits_raw is None:
-            continue
+    for hits_raw in _XML_LINE_HITS_RE.findall(text):
         total += 1
         try:
             if int(float(hits_raw)) > 0:

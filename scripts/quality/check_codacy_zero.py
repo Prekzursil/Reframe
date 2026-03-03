@@ -11,6 +11,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_HELPER_ROOT = _SCRIPT_DIR if (_SCRIPT_DIR / "security_helpers.py").exists() else _SCRIPT_DIR.parent
+if str(_HELPER_ROOT) not in sys.path:
+    sys.path.insert(0, str(_HELPER_ROOT))
+
+from security_helpers import normalize_https_url
+
 
 TOTAL_KEYS = {"total", "totalItems", "total_items", "count", "hits", "open_issues"}
 
@@ -111,6 +118,14 @@ def main() -> int:
 
     args = _parse_args()
     token = (args.token or os.environ.get("CODACY_API_TOKEN", "")).strip()
+    try:
+        api_base = normalize_https_url(
+            args.api_base,
+            allowed_hosts={"api.codacy.com", "app.codacy.com"},
+        ).rstrip("/")
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
     findings: list[str] = []
     open_issues: int | None = None
@@ -126,7 +141,7 @@ def main() -> int:
         last_exc: Exception | None = None
         for provider in provider_candidates:
             url = (
-                f"{args.api_base.rstrip('/')}/api/v3/analysis/organizations/{provider}/"
+                f"{api_base}/api/v3/analysis/organizations/{provider}/"
                 f"{args.owner}/repositories/{args.repo}/issues/search?{query}"
             )
             try:

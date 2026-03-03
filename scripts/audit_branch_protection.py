@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,12 @@ from typing import Any
 from urllib.parse import urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from security_helpers import normalize_https_url
 
 
 @dataclass
@@ -113,7 +120,8 @@ def evaluate_protection_payload(protection: dict[str, Any], policy: dict[str, An
 
 
 def _fetch_protection(api_base: str, repo: str, branch: str, token: str) -> dict[str, Any]:
-    url = f"{api_base.rstrip('/')}/repos/{repo}/branches/{branch}/protection"
+    validated_base = normalize_https_url(api_base, allowed_hosts={"api.github.com"}, strip_query=True).rstrip("/")
+    url = f"{validated_base}/repos/{repo}/branches/{branch}/protection"
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError(f"Unsupported API URL: {url!r}")
@@ -173,12 +181,29 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _safe_workspace_path(raw: str, *, base: Path) -> Path:
+    candidate = Path((raw or "").strip()).expanduser()
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(base.resolve())
+    except ValueError as exc:
+        raise ValueError(f"Path escapes workspace root: {candidate}") from exc
+    return resolved
+
+
 def main() -> int:
     args = parse_args()
+    root = Path.cwd().resolve()
 
-    policy_path = Path(args.policy)
-    out_json_path = Path(args.out_json)
-    out_md_path = Path(args.out_md)
+    try:
+        policy_path = _safe_workspace_path(args.policy, base=root)
+        out_json_path = _safe_workspace_path(args.out_json, base=root)
+        out_md_path = _safe_workspace_path(args.out_md, base=root)
+    except ValueError as exc:
+        print(str(exc))
+        return 1
 
     policy = _load_json(policy_path)
 

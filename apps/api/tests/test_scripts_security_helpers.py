@@ -26,12 +26,22 @@ def test_normalize_https_url_rejects_private_and_non_https():
         module.normalize_https_url("https://localhost/resource")
 
 
-
-def test_normalize_https_url_accepts_allowed_host_and_strips_query_fragment():
+def test_normalize_https_url_accepts_allowed_host_and_keeps_query():
     module = _load_security_helpers_module()
 
     normalized = module.normalize_https_url(
         "https://huggingface.co/ggerganov/whisper.cpp/resolve/main?x=1#frag",
         allowed_hosts={"huggingface.co"},
     )
-    assert normalized == "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
+    assert normalized == "https://huggingface.co/ggerganov/whisper.cpp/resolve/main?x=1"
+
+
+def test_normalize_https_url_supports_host_suffix_allowlist_and_optional_query_strip():
+    module = _load_security_helpers_module()
+
+    normalized = module.normalize_https_url(
+        "https://api.sentry.io/api/0/projects?x=1#frag",
+        allowed_host_suffixes={"sentry.io"},
+        strip_query=True,
+    )
+    assert normalized == "https://api.sentry.io/api/0/projects"

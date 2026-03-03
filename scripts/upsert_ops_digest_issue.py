@@ -4,10 +4,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from security_helpers import normalize_https_url
 
 
 def _request_json(url: str, token: str, method: str = "GET", body: dict[str, Any] | None = None) -> Any:
@@ -91,15 +98,22 @@ def _safe_output_path(raw: str, *, base: Path) -> Path:
 
 def main() -> int:
     args = parse_args()
+    root = Path.cwd().resolve()
     token = (os.environ.get("GITHUB_TOKEN") or "").strip() or (os.environ.get("GH_TOKEN") or "").strip()
     if not token:
         raise SystemExit("GITHUB_TOKEN or GH_TOKEN is required")
 
     owner, repo = args.repo.split("/", 1)
-    api = args.api_base.rstrip("/")
+    api = normalize_https_url(args.api_base, allowed_hosts={"api.github.com"}, strip_query=True).rstrip("/")
 
-    digest_json = json.loads(Path(args.digest_json).read_text(encoding="utf-8"))
-    digest_md = Path(args.digest_md).read_text(encoding="utf-8")
+    try:
+        digest_json_path = _safe_output_path(args.digest_json, base=root)
+        digest_md_path = _safe_output_path(args.digest_md, base=root)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+
+    digest_json = json.loads(digest_json_path.read_text(encoding="utf-8"))
+    digest_md = digest_md_path.read_text(encoding="utf-8")
 
     run_url = os.environ.get("GITHUB_SERVER_URL") and os.environ.get("GITHUB_REPOSITORY") and os.environ.get("GITHUB_RUN_ID")
     if run_url:
@@ -150,7 +164,7 @@ def main() -> int:
         }
 
     try:
-        out = _safe_output_path(args.out_json, base=Path.cwd().resolve())
+        out = _safe_output_path(args.out_json, base=root)
     except ValueError as exc:
         raise SystemExit(str(exc))
     out.parent.mkdir(parents=True, exist_ok=True)

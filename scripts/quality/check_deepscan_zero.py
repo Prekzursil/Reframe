@@ -9,6 +9,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_HELPER_ROOT = _SCRIPT_DIR if (_SCRIPT_DIR / "security_helpers.py").exists() else _SCRIPT_DIR.parent
+if str(_HELPER_ROOT) not in sys.path:
+    sys.path.insert(0, str(_HELPER_ROOT))
+
+from security_helpers import normalize_https_url
+
 TOTAL_KEYS = {"total", "totalItems", "total_items", "count", "hits", "open_issues"}
 
 
@@ -102,6 +109,14 @@ def main() -> int:
         findings.append("DEEPSCAN_API_TOKEN is missing.")
     if not open_issues_url:
         findings.append("DEEPSCAN_OPEN_ISSUES_URL is missing.")
+    else:
+        try:
+            open_issues_url = normalize_https_url(
+                open_issues_url,
+                allowed_host_suffixes={"deepscan.io"},
+            )
+        except ValueError as exc:
+            findings.append(str(exc))
 
     status = "fail"
     if not findings:

@@ -10,6 +10,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_HELPER_ROOT = _SCRIPT_DIR if (_SCRIPT_DIR / "security_helpers.py").exists() else _SCRIPT_DIR.parent
+if str(_HELPER_ROOT) not in sys.path:
+    sys.path.insert(0, str(_HELPER_ROOT))
+
+from security_helpers import normalize_https_url
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Assert Sentry has zero unresolved issues for configured projects.")
@@ -101,6 +108,11 @@ def main() -> int:
     args = _parse_args()
     token = (args.token or os.environ.get("SENTRY_AUTH_TOKEN", "")).strip()
     org = (args.org or os.environ.get("SENTRY_ORG", "")).strip()
+    try:
+        api_base = normalize_https_url(args.api_base, allowed_host_suffixes={"sentry.io"}).rstrip("/")
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
     projects = [p for p in args.project if p]
     if not projects:
@@ -124,7 +136,7 @@ def main() -> int:
         try:
             for project in projects:
                 query = urllib.parse.urlencode({"query": "is:unresolved", "limit": "1"})
-                url = f"{args.api_base.rstrip('/')}/projects/{org}/{project}/issues/?{query}"
+                url = f"{api_base}/projects/{org}/{project}/issues/?{query}"
                 issues, headers = _request(url, token)
                 unresolved = _hits_from_headers(headers)
                 if unresolved is None:

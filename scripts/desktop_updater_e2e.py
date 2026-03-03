@@ -98,6 +98,18 @@ def _write_markdown(path: Path, payload: dict[str, Any], verify_cmd: list[str], 
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _safe_workspace_path(raw: str, *, base: Path) -> Path:
+    candidate = Path((raw or "").strip()).expanduser()
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(base.resolve())
+    except ValueError as exc:
+        raise ValueError(f"Path escapes workspace root: {candidate}") from exc
+    return resolved
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Automated desktop updater E2E verification wrapper.")
     parser.add_argument("--old-tag", default="desktop-v0.1.6")
@@ -110,8 +122,12 @@ def main(argv: list[str]) -> int:
     repo = _repo_root()
     stamp = _default_stamp()
     default_base = repo / "docs" / "plans" / f"{stamp}-updater-e2e-{args.platform}"
-    out_md = Path(args.out_md) if args.out_md else default_base.with_suffix(".md")
-    out_json = Path(args.out_json) if args.out_json else default_base.with_suffix(".json")
+    try:
+        out_md = _safe_workspace_path(args.out_md, base=repo) if args.out_md else default_base.with_suffix(".md")
+        out_json = _safe_workspace_path(args.out_json, base=repo) if args.out_json else default_base.with_suffix(".json")
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
     work_dir = repo / ".tmp" / "desktop-updater-e2e" / args.platform
     work_dir.mkdir(parents=True, exist_ok=True)

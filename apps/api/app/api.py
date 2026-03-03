@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import os
+import urllib.parse
 import zipfile
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -170,6 +171,25 @@ def _resolve_idempotency_key(payload_value: str | None, header_value: str | None
             details={"max_length": 128},
         )
     return key
+
+
+def _safe_redirect_url(url: str) -> str:
+    parsed = urllib.parse.urlparse((url or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Download URL is not a valid HTTP(S) target",
+            details={"url": url},
+        )
+    if parsed.username or parsed.password:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Download URL must not include credentials",
+            details={"url": url},
+        )
+    return urllib.parse.urlunparse(parsed._replace(fragment=""))
 
 
 def _find_existing_idempotent_job(
@@ -1721,10 +1741,20 @@ def download_shared_asset(asset_id: UUID, token: str, session: SessionDep):
 
     if asset.uri and is_remote_uri(asset.uri):
         storage = get_storage(media_root=settings.media_root)
-        remote_url = storage.get_download_url(asset.uri) or asset.uri
-        return RedirectResponse(url=remote_url, status_code=302)
+        remote_url = storage.get_download_url(asset.uri)
+        if not remote_url:
+            raise not_found("Asset download URL is unavailable", details={"asset_id": str(asset_id)})
+        return RedirectResponse(url=_safe_redirect_url(remote_url), status_code=302)
 
-    file_path = LocalStorageBackend(media_root=Path(settings.media_root)).resolve_local_path(asset.uri or "")
+    try:
+        file_path = LocalStorageBackend(media_root=Path(settings.media_root)).resolve_local_path(asset.uri or "")
+    except ValueError as exc:
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code=ErrorCode.PERMISSION_DENIED,
+            message="Asset path is invalid",
+            details={"asset_id": str(asset_id), "reason": str(exc)},
+        ) from exc
     if not file_path.exists():
         raise not_found("Asset file missing", details={"asset_id": str(asset_id), "path": str(file_path)})
     return FileResponse(path=file_path, media_type=asset.mime_type or "application/octet-stream", filename=file_path.name)
@@ -2887,9 +2917,19 @@ def download_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep)
     settings = get_settings()
     if asset.uri and is_remote_uri(asset.uri):
         storage = get_storage(media_root=settings.media_root)
-        remote_url = storage.get_download_url(asset.uri) or asset.uri
-        return RedirectResponse(url=remote_url, status_code=302)
-    file_path = LocalStorageBackend(media_root=Path(settings.media_root)).resolve_local_path(asset.uri or "")
+        remote_url = storage.get_download_url(asset.uri)
+        if not remote_url:
+            raise not_found("Asset download URL is unavailable", details={"asset_id": str(asset_id)})
+        return RedirectResponse(url=_safe_redirect_url(remote_url), status_code=302)
+    try:
+        file_path = LocalStorageBackend(media_root=Path(settings.media_root)).resolve_local_path(asset.uri or "")
+    except ValueError as exc:
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code=ErrorCode.PERMISSION_DENIED,
+            message="Asset path is invalid",
+            details={"asset_id": str(asset_id), "reason": str(exc)},
+        ) from exc
     if not file_path.exists():
         raise not_found("Asset file missing", details={"asset_id": str(asset_id), "path": str(file_path)})
     return FileResponse(path=file_path, media_type=asset.mime_type or "application/octet-stream", filename=file_path.name)

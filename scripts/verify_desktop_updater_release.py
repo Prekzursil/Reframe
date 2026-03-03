@@ -8,6 +8,10 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
 from security_helpers import normalize_https_url
 
 
@@ -45,13 +49,26 @@ def _require_field(obj: dict, key: str) -> str:
     return value
 
 
+def _safe_workspace_path(raw: str, *, base: Path) -> Path:
+    candidate = Path((raw or "").strip()).expanduser()
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(base.resolve())
+    except ValueError as exc:
+        raise ValueError(f"Path escapes workspace root: {candidate}") from exc
+    return resolved
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Verify Tauri updater 'latest.json' and asset URLs.")
     parser.add_argument("--endpoint", help="Updater JSON URL. Defaults to the first endpoint in tauri.conf.json.")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Path to tauri.conf.json (default: %(default)s)")
     args = parser.parse_args(argv)
 
-    config_path = Path(args.config)
+    root = Path.cwd().resolve()
+    config_path = _safe_workspace_path(args.config, base=root)
     endpoint = args.endpoint
     if not endpoint:
         if not config_path.is_file():
