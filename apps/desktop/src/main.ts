@@ -288,6 +288,17 @@ async function checkUpdates() {
   }
 }
 
+export const __test = {
+  byId,
+  collectDebugInfo,
+  copyDebugInfo,
+  refreshDiagnostics,
+  refresh,
+  start,
+  stop,
+  checkUpdates,
+};
+
 window.addEventListener("DOMContentLoaded", () => {
   byId<HTMLButtonElement>("btn-up").addEventListener("click", () => start(true));
   byId<HTMLButtonElement>("btn-up-nobuild").addEventListener("click", () => start(false));

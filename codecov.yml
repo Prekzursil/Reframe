@@ -10,6 +10,10 @@ coverage:
       default:
         target: 100%
         threshold: 0%
+    patch:
+      default:
+        target: 100%
+        threshold: 0%
 
 ignore:
   - "apps/web/src/App.tsx"
@@ -19,10 +23,6 @@ ignore:
   - "apps/web/src/components/ErrorBoundary.tsx"
   - "apps/web/src/subtitles/**"
   - "apps/web/src/shorts/**"
-    patch:
-      default:
-        target: 100%
-        threshold: 0%
 
 comment:
   layout: "reach,diff,flags,files"

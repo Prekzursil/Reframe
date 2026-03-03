@@ -6,6 +6,10 @@ describe("text helpers", () => {
     expect(errToString(new Error("boom"))).toBe("boom");
     expect(errToString("plain")).toBe("plain");
     expect(errToString({ code: 7 })).toContain("code");
+
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(errToString(circular)).toContain("[object Object]");
   });
 
   it("truncates long strings with marker", () => {
