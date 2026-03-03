@@ -87,7 +87,14 @@ def _run_percy(args: argparse.Namespace) -> tuple[str, dict[str, Any], list[str]
     branch = (args.branch or os.environ.get("GITHUB_HEAD_REF") or os.environ.get("GITHUB_REF_NAME", "")).strip()
 
     findings: list[str] = []
-    details: dict[str, Any] = {"sha": sha, "branch": branch, "build_id": None, "review_state": None, "diff_count": None}
+    details: dict[str, Any] = {
+        "sha": sha,
+        "branch": branch,
+        "build_id": None,
+        "review_state": None,
+        "diff_count": None,
+        "lookup_mode": None,
+    }
 
     if not token:
         findings.append("PERCY_TOKEN is missing.")
@@ -97,22 +104,42 @@ def _run_percy(args: argparse.Namespace) -> tuple[str, dict[str, Any], list[str]
         return "fail", details, findings
 
     build: dict[str, Any] | None = None
+    lookup_mode = ""
     poll_deadline = time.monotonic() + 300
     while time.monotonic() < poll_deadline:
-        payload = _percy_request(
-            "/builds",
-            token,
-            query={
-                "filter[sha]": sha,
-                "filter[state]": "finished",
-                "filter[branch]": branch,
-                "page[limit]": "25",
-            },
-        )
-        build = _select_latest_build(payload)
+        variants: list[tuple[str, dict[str, str]]] = []
+        if branch:
+            variants.append(("sha_branch", {"filter[sha]": sha, "filter[branch]": branch}))
+        variants.append(("sha", {"filter[sha]": sha}))
+        if branch:
+            variants.append(("branch", {"filter[branch]": branch}))
+
+        seen: set[tuple[tuple[str, str], ...]] = set()
+        for mode, filters in variants:
+            key = tuple(sorted(filters.items()))
+            if key in seen:
+                continue
+            seen.add(key)
+            payload = _percy_request(
+                "/builds",
+                token,
+                query={
+                    **filters,
+                    "filter[state]": "finished",
+                    "page[limit]": "25",
+                },
+            )
+            candidate = _select_latest_build(payload)
+            if candidate is not None:
+                build = candidate
+                lookup_mode = mode
+                break
+
         if build is not None:
             break
         time.sleep(5)
+
+    details["lookup_mode"] = lookup_mode or None
 
     if not build:
         findings.append("Percy returned no finished build for the target SHA/branch.")
@@ -134,7 +161,6 @@ def _run_percy(args: argparse.Namespace) -> tuple[str, dict[str, Any], list[str]
         findings.append(f"Percy reports {diff_count} unresolved visual diffs (expected 0).")
 
     return ("pass" if not findings else "fail"), details, findings
-
 
 def _run_applitools(args: argparse.Namespace) -> tuple[str, dict[str, Any], list[str]]:
     findings: list[str] = []
@@ -229,3 +255,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

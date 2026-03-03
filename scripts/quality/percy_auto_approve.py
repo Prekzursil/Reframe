@@ -90,12 +90,13 @@ def _select_unreviewed_build(payload: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def _query_builds(*, token: str, sha: str, limit: int, branch: str | None = None) -> dict[str, Any]:
-    query = {
-        "filter[sha]": sha,
+def _query_builds(*, token: str, limit: int, sha: str | None = None, branch: str | None = None) -> dict[str, Any]:
+    query: dict[str, str] = {
         "filter[state]": "finished",
         "page[limit]": str(limit),
     }
+    if sha:
+        query["filter[sha]"] = sha
     if branch:
         query["filter[branch]"] = branch
     return _request_json(
@@ -136,16 +137,27 @@ def main(argv: list[str] | None = None) -> int:
 
     selected = None
     for attempt in range(1, retry_attempts + 1):
-        selected = _select_unreviewed_build(
-            _query_builds(token=token, sha=sha, limit=args.limit, branch=branch)
-        )
+        variants: list[tuple[str | None, str | None]] = [(sha, branch)]
+        if branch:
+            variants.append((sha, None))
+            variants.append((None, branch))
 
-        # Percy indexing can lag briefly after build finalization.
-        # If the branch-filtered query misses the fresh build, fallback to SHA-only.
-        if selected is None and branch:
+        seen: set[tuple[str, str]] = set()
+        for query_sha, query_branch in variants:
+            key = (query_sha or "", query_branch or "")
+            if key in seen:
+                continue
+            seen.add(key)
             selected = _select_unreviewed_build(
-                _query_builds(token=token, sha=sha, limit=args.limit, branch=None)
+                _query_builds(
+                    token=token,
+                    limit=args.limit,
+                    sha=query_sha,
+                    branch=query_branch,
+                )
             )
+            if selected is not None:
+                break
 
         if selected is not None:
             break
