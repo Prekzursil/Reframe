@@ -4,7 +4,7 @@ codecov:
 coverage:
   precision: 2
   round: down
-  range: "0...100"
+  range: "100...100"
   status:
     project:
       default:
@@ -37,3 +37,39 @@ flags:
   desktop-rust:
     paths:
       - apps/desktop/src-tauri/src/
+
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: 100%
+        threshold: 0%
+  individual_components:
+    - component_id: api
+      name: api
+      paths:
+        - apps/api/
+    - component_id: worker
+      name: worker
+      paths:
+        - services/worker/
+    - component_id: media-core
+      name: media-core
+      paths:
+        - packages/media-core/
+    - component_id: web
+      name: web
+      paths:
+        - apps/web/
+    - component_id: desktop-ts
+      name: desktop-ts
+      paths:
+        - apps/desktop/src/
+    - component_id: desktop-rust
+      name: desktop-rust
+      paths:
+        - apps/desktop/src-tauri/src/
+
+bundle_analysis:
+  warning_threshold: "0%"
+  status: informational
