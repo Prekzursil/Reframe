@@ -16,6 +16,14 @@ coverage:
         threshold: 0%
 
 ignore:
+  - "apps/api/tests/**"
+  - "services/worker/test_*.py"
+  - "packages/media-core/test_*.py"
+  - "packages/media-core/tests/**"
+  - "apps/web/src/**/*.test.ts"
+  - "apps/web/src/**/*.test.tsx"
+  - "apps/desktop/src/**/*.test.ts"
+  - "apps/desktop/vitest.config.ts"
   - "apps/web/src/App.tsx"
   - "apps/web/src/api/client.ts"
   - "apps/web/src/main.tsx"

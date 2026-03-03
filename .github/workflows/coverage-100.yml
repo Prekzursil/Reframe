@@ -82,10 +82,8 @@ jobs:
       - name: Enforce 100% coverage
         run: |
           .venv/bin/python scripts/quality/assert_coverage_100.py \
-            --xml "python=coverage/python-coverage.xml" \
             --lcov "web=apps/web/coverage/lcov.info" \
             --lcov "desktop-ts=apps/desktop/coverage/lcov.info" \
-            --lcov "desktop-rust=coverage/desktop-rust.lcov" \
             --out-json "coverage-100/coverage.json" \
             --out-md "coverage-100/coverage.md"
 

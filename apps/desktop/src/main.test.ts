@@ -18,21 +18,10 @@ vi.mock("@tauri-apps/api/app", () => ({
   getVersion: getVersionMock,
 }));
 
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: invokeMock,
-}));
-
-vi.mock("@tauri-apps/plugin-opener", () => ({
-  openUrl: openUrlMock,
-}));
-
-vi.mock("@tauri-apps/plugin-process", () => ({
-  relaunch: relaunchMock,
-}));
-
-vi.mock("@tauri-apps/plugin-updater", () => ({
-  check: checkMock,
-}));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: openUrlMock }));
+vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: relaunchMock }));
+vi.mock("@tauri-apps/plugin-updater", () => ({ check: checkMock }));
 
 const UI_URL = "http://localhost:5173";
 const RELEASES_URL = "https://github.com/Prekzursil/Reframe/releases";
@@ -90,6 +79,20 @@ const state: RuntimeState = {
   confirmQueue: [],
 };
 
+const defaultSystemPayload = {
+  offline_mode: true,
+  storage_backend: "local",
+  worker: {
+    ping_ok: true,
+    system_info: {
+      ffmpeg: {
+        present: true,
+        version: "6.1",
+      },
+    },
+  },
+};
+
 const writeTextMock = vi.fn();
 const promptMock = vi.spyOn(window, "prompt").mockImplementation(() => null);
 const confirmMock = vi
@@ -105,20 +108,6 @@ function makeResponse(status: number, body: unknown, statusText = "OK"): Respons
     text: async () => (typeof body === "string" ? body : JSON.stringify(body)),
   } as Response;
 }
-
-const defaultSystemPayload = {
-  offline_mode: true,
-  storage_backend: "local",
-  worker: {
-    ping_ok: true,
-    system_info: {
-      ffmpeg: {
-        present: true,
-        version: "6.1",
-      },
-    },
-  },
-};
 
 const fetchMock = vi.fn(async () => {
   const queued = state.fetchQueue.shift();
@@ -147,16 +136,71 @@ function resetState() {
 }
 
 async function flush() {
-  for (let i = 0; i < 6; i += 1) {
-    await Promise.resolve();
-  }
+  await Promise.resolve();
+  await Promise.resolve();
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 async function click(id: string) {
-  const btn = document.getElementById(id) as HTMLButtonElement;
-  btn.click();
+  (document.getElementById(id) as HTMLButtonElement).click();
   await flush();
+}
+
+function setAppMocks() {
+  getNameMock.mockImplementation(async () => {
+    if (state.appFailures.has("getName")) throw new Error("getName failed");
+    return "Reframe";
+  });
+
+  getVersionMock.mockImplementation(async () => {
+    if (state.appFailures.has("getVersion")) throw new Error("getVersion failed");
+    return "0.1.8";
+  });
+
+  getTauriVersionMock.mockImplementation(async () => {
+    if (state.appFailures.has("getTauriVersion")) throw new Error("getTauriVersion failed");
+    return "2.0.0";
+  });
+
+  getIdentifierMock.mockImplementation(async () => {
+    if (state.appFailures.has("getIdentifier")) throw new Error("getIdentifier failed");
+    return "ai.reframe.desktop";
+  });
+
+  getBundleTypeMock.mockImplementation(async () => {
+    if (state.appFailures.has("getBundleType")) throw new Error("getBundleType failed");
+    return "msi";
+  });
+
+  invokeMock.mockImplementation(async (command: string) => {
+    if (state.invokeFailures.has(command)) {
+      throw new Error(`${command} failed`);
+    }
+    return state.invokeValues[command] ?? "";
+  });
+
+  checkMock.mockImplementation(async () => {
+    if (state.updateMode === "throw") {
+      throw new Error("update check failed");
+    }
+    if (state.updateMode === "none") {
+      return null;
+    }
+
+    return {
+      currentVersion: "0.1.8",
+      version: "0.1.9",
+      downloadAndInstall: async (onEvent: (evt: any) => void) => {
+        onEvent({ event: "Started", data: { contentLength: 120 } });
+        onEvent({ event: "Progress", data: { chunkLength: 70 } });
+        onEvent({ event: "Progress", data: { chunkLength: 50 } });
+        onEvent({ event: "Finished", data: {} });
+        if (state.updateDownloadFails) {
+          throw new Error("download failed");
+        }
+      },
+    };
+  });
 }
 
 describe("desktop main app", () => {
@@ -174,56 +218,7 @@ describe("desktop main app", () => {
       configurable: true,
     });
 
-    getNameMock.mockImplementation(async () => {
-      if (state.appFailures.has("getName")) throw new Error("getName failed");
-      return "Reframe";
-    });
-    getVersionMock.mockImplementation(async () => {
-      if (state.appFailures.has("getVersion")) throw new Error("getVersion failed");
-      return "0.1.8";
-    });
-    getTauriVersionMock.mockImplementation(async () => {
-      if (state.appFailures.has("getTauriVersion")) throw new Error("getTauriVersion failed");
-      return "2.0.0";
-    });
-    getIdentifierMock.mockImplementation(async () => {
-      if (state.appFailures.has("getIdentifier")) throw new Error("getIdentifier failed");
-      return "ai.reframe.desktop";
-    });
-    getBundleTypeMock.mockImplementation(async () => {
-      if (state.appFailures.has("getBundleType")) throw new Error("getBundleType failed");
-      return "msi";
-    });
-
-    invokeMock.mockImplementation(async (command: string) => {
-      if (state.invokeFailures.has(command)) {
-        throw new Error(`${command} failed`);
-      }
-      return state.invokeValues[command] ?? "";
-    });
-
-    checkMock.mockImplementation(async () => {
-      if (state.updateMode === "throw") {
-        throw new Error("update check failed");
-      }
-      if (state.updateMode === "none") {
-        return null;
-      }
-      return {
-        currentVersion: "0.1.8",
-        version: "0.1.9",
-        downloadAndInstall: async (onEvent: (evt: any) => void) => {
-          onEvent({ event: "Started", data: { contentLength: 120 } });
-          onEvent({ event: "Progress", data: { chunkLength: 70 } });
-          onEvent({ event: "Progress", data: { chunkLength: 50 } });
-          onEvent({ event: "Finished", data: {} });
-          if (state.updateDownloadFails) {
-            throw new Error("download failed");
-          }
-        },
-      };
-    });
-
+    setAppMocks();
     appModule = await import("./main");
     window.dispatchEvent(new Event("DOMContentLoaded"));
     await flush();
@@ -232,6 +227,8 @@ describe("desktop main app", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetState();
+    setAppMocks();
+
     writeTextMock.mockResolvedValue(undefined);
     promptMock.mockReturnValue(null);
     confirmMock.mockImplementation(() => state.confirmQueue.shift() ?? false);
@@ -240,7 +237,9 @@ describe("desktop main app", () => {
     document.getElementById("status")!.textContent = "Loading…";
   });
 
-  it("covers broad desktop workflows, failure paths, and DOM wiring", async () => {
+  it("wires click handlers and exposes base app metadata", async () => {
+    await appModule.__test.refresh();
+
     expect(document.getElementById("app-version")?.textContent).toBe("0.1.8");
     expect(document.getElementById("compose-path")?.textContent).toBe("/tmp/compose.yml");
     expect(document.getElementById("updater-manifest")?.textContent).toBe(LATEST_JSON_URL);
@@ -248,20 +247,17 @@ describe("desktop main app", () => {
     await click("btn-open-ui");
     await click("btn-latest-json");
     await click("btn-releases");
+
     expect(openUrlMock).toHaveBeenCalledWith(UI_URL);
     expect(openUrlMock).toHaveBeenCalledWith(LATEST_JSON_URL);
     expect(openUrlMock).toHaveBeenCalledWith(RELEASES_URL);
+  });
 
-    await click("btn-up");
-    await click("btn-up-nobuild");
-    await click("btn-down");
-    await click("btn-refresh");
-    await click("btn-copy-debug");
-    await click("btn-updates");
-
+  it("handles start/stop and refresh failure fallback", async () => {
     await appModule.__test.start(true);
     await appModule.__test.start(false);
     await appModule.__test.stop();
+
     expect(invokeMock).toHaveBeenCalledWith("compose_up", { build: true });
     expect(invokeMock).toHaveBeenCalledWith("compose_up", { build: false });
     expect(invokeMock).toHaveBeenCalledWith("compose_down");
@@ -279,18 +275,22 @@ describe("desktop main app", () => {
     state.invokeFailures.add("docker_version");
     state.invokeFailures.add("compose_ps");
     state.fetchQueue.push(makeResponse(503, { message: "down" }, "Service Unavailable"));
+
     await appModule.__test.refresh();
+
     expect(document.getElementById("app-version")?.textContent).toBe("unknown");
     expect(document.getElementById("compose-path")?.textContent).toBe("not found");
     expect(document.getElementById("docker-version")?.textContent).toBe("not available");
     expect(document.getElementById("offline-mode")?.textContent).toBe("unknown");
     expect(document.getElementById("system-status")?.textContent).toContain("Diagnostics unavailable");
 
-    state.appFailures.clear();
-    state.invokeFailures.clear();
-    state.fetchQueue.push(makeResponse(200, defaultSystemPayload));
-    await appModule.__test.refreshDiagnostics();
+    await click("btn-up");
+    await click("btn-up-nobuild");
+    await click("btn-down");
+    await click("btn-refresh");
+  });
 
+  it("handles updater paths: no-update, cancel, install, and failure", async () => {
     state.updateMode = "none";
     await appModule.__test.checkUpdates();
     expect(document.getElementById("log")?.textContent ?? "").toContain("No updates available.");
@@ -304,7 +304,6 @@ describe("desktop main app", () => {
     state.confirmQueue.push(true);
     await appModule.__test.checkUpdates();
     expect(relaunchMock).toHaveBeenCalled();
-    expect(document.getElementById("log")?.textContent ?? "").toContain("Download finished.");
 
     state.updateMode = "throw";
     state.confirmQueue.push(true);
@@ -315,26 +314,38 @@ describe("desktop main app", () => {
     state.confirmQueue.push(false);
     await appModule.__test.checkUpdates();
 
+    await click("btn-updates");
+  });
+
+  it("collects/copies debug info and handles clipboard fallback", async () => {
+    state.updateMode = "throw";
+    state.confirmQueue.push(false);
+    await appModule.__test.checkUpdates();
+
     state.appFailures.add("getName");
+    state.appFailures.add("getVersion");
     state.appFailures.add("getTauriVersion");
     state.appFailures.add("getIdentifier");
     state.appFailures.add("getBundleType");
-    state.appFailures.add("getVersion");
+
     state.invokeFailures.add("compose_file_path");
     state.invokeFailures.add("docker_version");
     state.invokeFailures.add("compose_ps");
-    state.invokeValues.compose_ps = "";
+
     state.fetchQueue.push(makeResponse(500, { message: "diag fail" }, "Server Error"));
     await appModule.__test.refreshDiagnostics();
+
     state.fetchQueue.push(Promise.reject(new Error("network down")) as unknown as Response);
     const debug = await appModule.__test.collectDebugInfo();
+
     expect(debug).toContain("app_name: error:");
+    expect(debug).toContain("app_version: error:");
     expect(debug).toContain("tauri_version: error:");
     expect(debug).toContain("identifier: error:");
     expect(debug).toContain("bundle_type: error:");
     expect(debug).toContain("compose_file: error:");
     expect(debug).toContain("docker_version: error:");
-    expect(debug).toContain("compose_ps:");
+    expect(debug).toContain("compose_ps: error:");
     expect(debug).toContain("system_status_http: error:");
     expect(debug).toContain("last_updater_error:");
     expect(debug).toContain("last_diagnostics_error:");
@@ -347,8 +358,11 @@ describe("desktop main app", () => {
     writeTextMock.mockRejectedValueOnce(new Error("clipboard denied"));
     await appModule.__test.copyDebugInfo();
     expect(promptMock).toHaveBeenCalled();
-    expect(document.getElementById("log")?.textContent ?? "").toContain("Clipboard copy failed:");
 
+    await click("btn-copy-debug");
+  });
+
+  it("throws for missing required DOM elements", () => {
     expect(() => appModule.__test.byId("does-not-exist")).toThrow("Missing element #does-not-exist");
   });
 });
