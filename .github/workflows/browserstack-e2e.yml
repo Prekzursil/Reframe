@@ -70,4 +70,4 @@ jobs:
 
       - name: Teardown
         if: always()
-        run: docker compose -f infra/docker-compose.yml down -v || true
+        run: timeout 180 docker compose -f infra/docker-compose.yml down -v || true
