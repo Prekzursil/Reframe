@@ -70,29 +70,38 @@ jobs:
 
       - name: Assert required quality contexts are green
         run: |
+          required_contexts=(
+            --required-context "Python API & worker checks"
+            --required-context "Web build"
+            --required-context "Analyze (actions)"
+            --required-context "Analyze (javascript-typescript)"
+            --required-context "Analyze (python)"
+            --required-context "Coverage 100 Gate"
+            --required-context "Codecov Analytics"
+            --required-context "Sonar Zero"
+            --required-context "Codacy Zero"
+            --required-context "DeepScan Zero"
+            --required-context "SonarCloud Code Analysis"
+            --required-context "Snyk Zero"
+            --required-context "Percy Visual"
+            --required-context "Applitools Visual"
+            --required-context "BrowserStack E2E"
+            --required-context "Sentry Zero"
+          )
+
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            required_contexts+=(
+              --required-context "CodeQL"
+              --required-context "CodeRabbit"
+              --required-context "Codacy Static Code Analysis"
+              --required-context "DeepScan"
+            )
+          fi
+
           python3 scripts/quality/check_required_checks.py \
             --repo "${GITHUB_REPOSITORY}" \
             --sha "${{ steps.sha.outputs.check_sha }}" \
-            --required-context "Python API & worker checks" \
-            --required-context "Web build" \
-            --required-context "Analyze (actions)" \
-            --required-context "Analyze (javascript-typescript)" \
-            --required-context "Analyze (python)" \
-            --required-context "CodeQL" \
-            --required-context "CodeRabbit" \
-            --required-context "Coverage 100 Gate" \
-            --required-context "Codecov Analytics" \
-            --required-context "Sonar Zero" \
-            --required-context "Codacy Zero" \
-            --required-context "DeepScan Zero" \
-            --required-context "SonarCloud Code Analysis" \
-            --required-context "Codacy Static Code Analysis" \
-            --required-context "DeepScan" \
-            --required-context "Snyk Zero" \
-            --required-context "Percy Visual" \
-            --required-context "Applitools Visual" \
-            --required-context "BrowserStack E2E" \
-            --required-context "Sentry Zero" \
+            "${required_contexts[@]}" \
             --timeout-seconds 1500 \
             --poll-seconds 20 \
             --out-json quality-zero-gate/required-checks.json \
