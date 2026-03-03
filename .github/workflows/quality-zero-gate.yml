@@ -52,6 +52,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Resolve canonical check SHA
+        id: sha
+        run: |
+          CHECK_SHA="${GITHUB_SHA}"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            CHECK_SHA="${{ github.event.pull_request.head.sha }}"
+          fi
+          echo "check_sha=${CHECK_SHA}" >> "${GITHUB_OUTPUT}"
+
       - name: Assert secrets preflight succeeded
         run: |
           if [ "${{ needs.secrets-preflight.result }}" != "success" ]; then
@@ -63,7 +72,7 @@ jobs:
         run: |
           python3 scripts/quality/check_required_checks.py \
             --repo "${GITHUB_REPOSITORY}" \
-            --sha "${GITHUB_SHA}" \
+            --sha "${{ steps.sha.outputs.check_sha }}" \
             --required-context "Python API & worker checks" \
             --required-context "Web build" \
             --required-context "Analyze (actions)" \

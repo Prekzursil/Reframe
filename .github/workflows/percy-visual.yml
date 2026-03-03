@@ -22,6 +22,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Resolve canonical check SHA
+        id: sha
+        run: |
+          CHECK_SHA="${GITHUB_SHA}"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            CHECK_SHA="${{ github.event.pull_request.head.sha }}"
+          fi
+          echo "check_sha=${CHECK_SHA}" >> "${GITHUB_OUTPUT}"
+
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
@@ -67,13 +76,13 @@ jobs:
 
       - name: Auto-approve Percy build for current SHA
         run: |
-          python3 scripts/quality/percy_auto_approve.py --sha "${GITHUB_SHA}" --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          python3 scripts/quality/percy_auto_approve.py --sha "${{ steps.sha.outputs.check_sha }}" --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
 
       - name: Assert Percy unresolved diffs are zero
         run: |
           python3 scripts/quality/check_visual_zero.py \
             --provider percy \
-            --sha "${GITHUB_SHA}" \
+            --sha "${{ steps.sha.outputs.check_sha }}" \
             --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" \
             --out-json "percy-visual/percy.json" \
             --out-md "percy-visual/percy.md"
