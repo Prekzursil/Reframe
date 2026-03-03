@@ -17,7 +17,7 @@ jobs:
     env:
       APPLITOOLS_API_KEY: ${{ secrets.APPLITOOLS_API_KEY }}
       APPLITOOLS_BATCH_NAME: Reframe-${{ github.sha }}
-      APPLITOOLS_RESULTS_PATH: applitools/results.json
+      APPLITOOLS_RESULTS_PATH: apps/web/applitools/results.json
       E2E_BASE_URL: http://127.0.0.1:5173
     steps:
       - uses: actions/checkout@v6
@@ -69,7 +69,7 @@ jobs:
         run: |
           python3 scripts/quality/check_visual_zero.py \
             --provider applitools \
-            --applitools-results "applitools/results.json" \
+            --applitools-results "apps/web/applitools/results.json" \
             --out-json "applitools-visual/applitools.json" \
             --out-md "applitools-visual/applitools.md"
 
@@ -79,7 +79,7 @@ jobs:
         with:
           name: applitools-visual
           path: |
-            applitools
+            apps/web/applitools
             applitools-visual
 
       - name: Logs on failure

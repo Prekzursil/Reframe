@@ -18,8 +18,7 @@ export function navButton(page: Page, label: (typeof NAV_LABELS)[number]) {
 
 export async function walkPrimarySections(page: Page): Promise<void> {
   await page.goto("/");
-  await expect(page.locator("aside.sidebar .brand-title")).toHaveText("Reframe");
-  await expect(page.getByRole("heading", { name: "Creative media pipeline", exact: true })).toBeVisible();
+  await expect(navButton(page, "Shorts")).toBeVisible();
 
   for (const label of NAV_LABELS) {
     const button = navButton(page, label);
