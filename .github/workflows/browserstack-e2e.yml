@@ -1,0 +1,73 @@
+name: BrowserStack E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browserstack-e2e:
+    name: BrowserStack E2E
+    runs-on: ubuntu-latest
+    env:
+      BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
+      BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+      E2E_BASE_URL: http://bs-local.com:5173
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Validate BrowserStack credentials
+        run: |
+          if [ -z "${BROWSERSTACK_USERNAME}" ] || [ -z "${BROWSERSTACK_ACCESS_KEY}" ]; then
+            echo "Missing BrowserStack credentials" >&2
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: |
+          cd apps/web
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Prepare env file
+        run: cp .env.example .env
+
+      - name: Start local stack
+        run: docker compose -f infra/docker-compose.yml up -d --build
+
+      - name: Wait for web
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:5173 >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "web failed to start" >&2
+          exit 1
+
+      - name: Run BrowserStack matrix tests
+        run: |
+          cd apps/web
+          npx browserstack-node-sdk playwright test e2e/browserstack-core.spec.ts --config=playwright.config.ts --workers=1
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose -f infra/docker-compose.yml logs --no-color --tail=200 || true
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f infra/docker-compose.yml down -v || true

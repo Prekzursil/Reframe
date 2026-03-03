@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import io
+import httpx
+import ipaddress
 import json
 import logging
 import os
+import urllib.parse
 import zipfile
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -49,13 +52,14 @@ from app.models import (
 )
 from app.rate_limit import enforce_rate_limit
 from app.security import AuthPrincipal
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from app.share_links import build_share_token_with_ttl, parse_and_validate_share_token
 from app.storage import LocalStorageBackend, get_storage, is_remote_uri
 
 router = APIRouter(prefix="/api/v1")
 logger = logging.getLogger("reframe.api")
+_DEFAULT_BINARY_MEDIA_TYPE = "application/octet-stream"
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -170,6 +174,117 @@ def _resolve_idempotency_key(payload_value: str | None, header_value: str | None
             details={"max_length": 128},
         )
     return key
+
+
+def _invalid_download_url(url: str, message: str) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        code=ErrorCode.VALIDATION_ERROR,
+        message=message,
+        details={"url": url},
+    )
+
+
+def _is_forbidden_ip_host(hostname: str) -> bool:
+    try:
+        ip_value = ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+    return (
+        ip_value.is_private
+        or ip_value.is_loopback
+        or ip_value.is_link_local
+        or ip_value.is_reserved
+        or ip_value.is_multicast
+    )
+
+
+def _assert_safe_redirect_host(hostname: str, url: str) -> None:
+    if hostname in {"localhost", "localhost.localdomain"}:
+        raise _invalid_download_url(url, "Download URL must not target localhost")
+    if _is_forbidden_ip_host(hostname):
+        raise _invalid_download_url(url, "Download URL must not target private or local addresses")
+
+
+def _safe_redirect_url(url: str) -> str:
+    parsed = urllib.parse.urlparse((url or "").strip())
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise _invalid_download_url(url, "Download URL is not a valid HTTP(S) target")
+    if parsed.username or parsed.password:
+        raise _invalid_download_url(url, "Download URL must not include credentials")
+    hostname = (parsed.hostname or "").strip().lower()
+    if not hostname:
+        raise _invalid_download_url(url, "Download URL is missing a hostname")
+    _assert_safe_redirect_host(hostname, url)
+    return urllib.parse.urlunparse(parsed._replace(fragment=""))
+
+
+def _safe_local_asset_path(*, media_root: str, uri: str) -> Path:
+    media_root_path = Path(media_root).resolve()
+    candidate = LocalStorageBackend(media_root=media_root_path).resolve_local_path(uri or "")
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(media_root_path)
+    except ValueError as exc:
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code=ErrorCode.PERMISSION_DENIED,
+            message="Asset path escapes media root",
+            details={"uri": uri},
+        ) from exc
+    return resolved
+
+
+def _stream_local_file(*, file_path: Path, mime_type: str | None) -> StreamingResponse:
+    if not file_path.exists() or not file_path.is_file():
+        raise not_found("Asset file missing", details={"path": str(file_path)})
+
+    def _iterator():
+        with file_path.open("rb") as handle:
+            while True:
+                chunk = handle.read(64 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+
+    file_name = file_path.name or "download"
+    quoted = urllib.parse.quote(file_name)
+    headers = {"Content-Disposition": f'attachment; filename="{file_name}"; filename*=UTF-8\'\'{quoted}'}
+    return StreamingResponse(_iterator(), media_type=mime_type or _DEFAULT_BINARY_MEDIA_TYPE, headers=headers)
+
+
+def _stream_remote_download(*, url: str, filename: str, mime_type: str | None) -> StreamingResponse:
+    safe_url = _safe_redirect_url(url)
+    client = httpx.Client(
+        follow_redirects=True,
+        timeout=30.0,
+        headers={
+            "User-Agent": "reframe-api-download-proxy",
+            "Accept": "*/*",
+        },
+    )
+    try:
+        upstream = client.stream("GET", safe_url)
+        upstream.__enter__()
+        upstream.raise_for_status()
+    except Exception as exc:  # pragma: no cover - upstream network surface
+        client.close()
+        raise server_error("Remote download failed", details={"url": safe_url, "reason": str(exc)}) from exc
+
+    def _iterator():
+        try:
+            for chunk in upstream.iter_bytes(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                yield chunk
+        finally:
+            upstream.close()
+            client.close()
+
+    response_media_type = mime_type or upstream.headers.get("content-type", "").split(";")[0] or _DEFAULT_BINARY_MEDIA_TYPE
+    quoted = urllib.parse.quote(filename or "download")
+    headers = {"Content-Disposition": f'attachment; filename="{filename or "download"}"; filename*=UTF-8\'\'{quoted}'}
+    return StreamingResponse(_iterator(), media_type=response_media_type, headers=headers)
 
 
 def _find_existing_idempotent_job(
@@ -1721,13 +1836,13 @@ def download_shared_asset(asset_id: UUID, token: str, session: SessionDep):
 
     if asset.uri and is_remote_uri(asset.uri):
         storage = get_storage(media_root=settings.media_root)
-        remote_url = storage.get_download_url(asset.uri) or asset.uri
-        return RedirectResponse(url=remote_url, status_code=302)
+        remote_url = storage.get_download_url(asset.uri)
+        if not remote_url:
+            raise not_found("Asset download URL is unavailable", details={"asset_id": str(asset_id)})
+        return _stream_remote_download(url=remote_url, filename=Path(asset.uri).name or "asset.bin", mime_type=asset.mime_type)
 
-    file_path = LocalStorageBackend(media_root=Path(settings.media_root)).resolve_local_path(asset.uri or "")
-    if not file_path.exists():
-        raise not_found("Asset file missing", details={"asset_id": str(asset_id), "path": str(file_path)})
-    return FileResponse(path=file_path, media_type=asset.mime_type or "application/octet-stream", filename=file_path.name)
+    file_path = _safe_local_asset_path(media_root=settings.media_root, uri=asset.uri or "")
+    return _stream_local_file(file_path=file_path, mime_type=asset.mime_type)
 
 
 @router.post(
@@ -2302,7 +2417,7 @@ _ALLOWED_SUBTITLE_MIME_TYPES = {
     "text/plain",
     "text/vtt",
     "application/x-subrip",
-    "application/octet-stream",
+    _DEFAULT_BINARY_MEDIA_TYPE,
 }
 
 
@@ -2879,7 +2994,7 @@ def get_asset_download_url(asset_id: UUID, session: SessionDep, principal: Princ
     tags=["Assets"],
     responses={404: {"model": ErrorResponse}},
 )
-def download_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep) -> FileResponse:
+def download_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep) -> StreamingResponse:
     asset = session.get(MediaAsset, asset_id)
     if not asset:
         raise not_found("Asset not found", details={"asset_id": str(asset_id)})
@@ -2887,12 +3002,13 @@ def download_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep)
     settings = get_settings()
     if asset.uri and is_remote_uri(asset.uri):
         storage = get_storage(media_root=settings.media_root)
-        remote_url = storage.get_download_url(asset.uri) or asset.uri
-        return RedirectResponse(url=remote_url, status_code=302)
-    file_path = LocalStorageBackend(media_root=Path(settings.media_root)).resolve_local_path(asset.uri or "")
-    if not file_path.exists():
-        raise not_found("Asset file missing", details={"asset_id": str(asset_id), "path": str(file_path)})
-    return FileResponse(path=file_path, media_type=asset.mime_type or "application/octet-stream", filename=file_path.name)
+        remote_url = storage.get_download_url(asset.uri)
+        if not remote_url:
+            raise not_found("Asset download URL is unavailable", details={"asset_id": str(asset_id)})
+        return _stream_remote_download(url=remote_url, filename=Path(asset.uri).name or "asset.bin", mime_type=asset.mime_type)
+
+    file_path = _safe_local_asset_path(media_root=settings.media_root, uri=asset.uri or "")
+    return _stream_local_file(file_path=file_path, mime_type=asset.mime_type)
 
 
 @router.get("/presets/styles", response_model=List[SubtitleStylePreset], tags=["Presets"])

@@ -1,0 +1,360 @@
+{
+  "checks": [
+    {
+      "conclusion": "SUCCESS",
+      "name": "Analyze (actions)",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517404/job/65496598083",
+      "workflow": "CodeQL"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Analyze (javascript-typescript)",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517404/job/65496598087",
+      "workflow": "CodeQL"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Analyze (python)",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517404/job/65496598287",
+      "workflow": "CodeQL"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "CodeRabbit",
+      "state": "SUCCESS",
+      "type": "StatusContext",
+      "url": "",
+      "workflow": ""
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "DeepScan",
+      "state": "SUCCESS",
+      "type": "StatusContext",
+      "url": "https://deepscan.io/dashboard/#view=project&tid=29074&pid=31131&bid=1008125&subview=pull-request&prid=2293389",
+      "workflow": ""
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Node dependency audit",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517455/job/65496598089",
+      "workflow": "Dependency Audit"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Python API & worker checks",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517423/job/65496598234",
+      "workflow": "CI"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Python dependency audit",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517455/job/65496598096",
+      "workflow": "Dependency Audit"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "SonarCloud",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/runs/65496666181",
+      "workflow": ""
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "Web build",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517423/job/65496598264",
+      "workflow": "CI"
+    },
+    {
+      "conclusion": "SUCCESS",
+      "name": "preflight",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517399/job/65496598254",
+      "workflow": "strict-23 Preflight"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Applitools Visual",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517410/job/65496598208",
+      "workflow": "Applitools Visual"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "BrowserStack E2E",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517428/job/65496598233",
+      "workflow": "BrowserStack E2E"
+    },
+    {
+      "conclusion": "ACTION_REQUIRED",
+      "name": "Codacy Static Code Analysis",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://app.codacy.com/gh/Prekzursil/Reframe/pull-requests/104",
+      "workflow": ""
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Codacy Zero",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517441/job/65496598158",
+      "workflow": "Codacy Zero"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "CodeQL",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/runs/65496725937",
+      "workflow": ""
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Codecov Analytics",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517406/job/65496598167",
+      "workflow": "Codecov Analytics"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Coverage 100 Gate",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517398/job/65496598173",
+      "workflow": "Coverage 100"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "DeepScan Zero",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517422/job/65496598170",
+      "workflow": "DeepScan Zero"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Percy Visual",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517424/job/65496598138",
+      "workflow": "Percy Visual"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Quality Secrets Preflight",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517408/job/65496598228",
+      "workflow": "Quality Zero Gate"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Quality Zero Gate",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517408/job/65496797195",
+      "workflow": "Quality Zero Gate"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Sentry Zero",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517419/job/65496598421",
+      "workflow": "Sentry Zero"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Snyk Zero",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517421/job/65496598149",
+      "workflow": "Snyk Zero"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Sonar Zero",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517418/job/65496598362",
+      "workflow": "Sonar Zero"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "SonarCloud Code Analysis",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://sonarcloud.io",
+      "workflow": ""
+    },
+    {
+      "conclusion": "ERROR",
+      "name": "percy/Reframe-eaab9257",
+      "state": "ERROR",
+      "type": "StatusContext",
+      "url": "https://percy.io/607b6c4a/web/Reframe-eaab9257/builds/47375808?utm_campaign=607b6c4a&utm_content=Reframe-eaab9257&utm_source=github_status_private",
+      "workflow": ""
+    }
+  ],
+  "failing_or_non_success": [
+    {
+      "conclusion": "FAILURE",
+      "name": "Applitools Visual",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517410/job/65496598208",
+      "workflow": "Applitools Visual"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "BrowserStack E2E",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517428/job/65496598233",
+      "workflow": "BrowserStack E2E"
+    },
+    {
+      "conclusion": "ACTION_REQUIRED",
+      "name": "Codacy Static Code Analysis",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://app.codacy.com/gh/Prekzursil/Reframe/pull-requests/104",
+      "workflow": ""
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Codacy Zero",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517441/job/65496598158",
+      "workflow": "Codacy Zero"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "CodeQL",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/runs/65496725937",
+      "workflow": ""
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Codecov Analytics",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517406/job/65496598167",
+      "workflow": "Codecov Analytics"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Coverage 100 Gate",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517398/job/65496598173",
+      "workflow": "Coverage 100"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "DeepScan Zero",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517422/job/65496598170",
+      "workflow": "DeepScan Zero"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Percy Visual",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517424/job/65496598138",
+      "workflow": "Percy Visual"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Quality Secrets Preflight",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517408/job/65496598228",
+      "workflow": "Quality Zero Gate"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Quality Zero Gate",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517408/job/65496797195",
+      "workflow": "Quality Zero Gate"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Sentry Zero",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517419/job/65496598421",
+      "workflow": "Sentry Zero"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Snyk Zero",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517421/job/65496598149",
+      "workflow": "Snyk Zero"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "Sonar Zero",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://github.com/Prekzursil/Reframe/actions/runs/22605517418/job/65496598362",
+      "workflow": "Sonar Zero"
+    },
+    {
+      "conclusion": "FAILURE",
+      "name": "SonarCloud Code Analysis",
+      "state": "COMPLETED",
+      "type": "CheckRun",
+      "url": "https://sonarcloud.io",
+      "workflow": ""
+    },
+    {
+      "conclusion": "ERROR",
+      "name": "percy/Reframe-eaab9257",
+      "state": "ERROR",
+      "type": "StatusContext",
+      "url": "https://percy.io/607b6c4a/web/Reframe-eaab9257/builds/47375808?utm_campaign=607b6c4a&utm_content=Reframe-eaab9257&utm_source=github_status_private",
+      "workflow": ""
+    }
+  ],
+  "pr": {
+    "base": "main",
+    "draft": true,
+    "head": "feat/quality-zero-gates-2026-03-03",
+    "number": 104,
+    "state": "OPEN",
+    "title": "chore: enforce zero-issue quality gates and 100% coverage controls",
+    "url": "https://github.com/Prekzursil/Reframe/pull/104"
+  },
+  "timestamp_utc": "2026-03-03T02:51:49.091021+00:00"
+}

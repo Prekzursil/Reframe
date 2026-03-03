@@ -88,7 +88,13 @@ class LocalStorageBackend:
         uri_path = Path((uri or "").lstrip("/"))
         if uri_path.parts and uri_path.parts[0] == self.public_prefix.strip("/"):
             uri_path = Path(*uri_path.parts[1:])
-        return self.media_root / uri_path
+        media_root = self.media_root.resolve()
+        candidate = (media_root / uri_path).resolve(strict=False)
+        try:
+            candidate.relative_to(media_root)
+        except ValueError as exc:
+            raise ValueError(f"Resolved path escapes media root: {uri!r}") from exc
+        return candidate
 
     def get_download_url(self, uri: str) -> str | None:
         return uri or None

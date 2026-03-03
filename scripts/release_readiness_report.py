@@ -132,6 +132,18 @@ def _display_path(path: Path, repo: Path) -> str:
         return str(path)
 
 
+def _safe_output_path(raw: str, fallback: Path, *, root: Path) -> Path:
+    candidate = Path(raw).expanduser() if raw else fallback
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(root.resolve())
+    except ValueError as exc:
+        raise ValueError(f"Output path escapes repository root: {candidate}") from exc
+    return resolved
+
+
 def _resolve_status(*, local_ok: bool, updater_ok: bool, pyannote_cpu_status: str) -> tuple[str, list[str], list[str]]:
     blocking: list[str] = []
     external: list[str] = []
@@ -171,8 +183,12 @@ def main(argv: list[str]) -> int:
     plans = repo / "docs" / "plans"
     plans.mkdir(parents=True, exist_ok=True)
 
-    out_md = Path(args.out_md) if args.out_md else plans / f"{args.stamp}-release-confidence-report.md"
-    out_json = Path(args.out_json) if args.out_json else plans / f"{args.stamp}-release-readiness-summary.json"
+    try:
+        out_md = _safe_output_path(args.out_md, plans / f"{args.stamp}-release-confidence-report.md", root=repo)
+        out_json = _safe_output_path(args.out_json, plans / f"{args.stamp}-release-readiness-summary.json", root=repo)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
     gates = [
         GateStatus("make verify", args.verify_exit),

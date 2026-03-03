@@ -5,11 +5,18 @@ import argparse
 import json
 import math
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from security_helpers import normalize_https_url
 
 DEFAULT_OPS_HEALTH_POLICY: dict[str, Any] = {
     "required_checks": [],
@@ -486,15 +493,34 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _safe_workspace_path(raw: str, *, base: Path) -> Path:
+    candidate = Path((raw or "").strip()).expanduser()
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(base.resolve())
+    except ValueError as exc:
+        raise ValueError(f"Path escapes workspace root: {candidate}") from exc
+    return resolved
+
+
 def main() -> int:
     args = parse_args()
+    root = Path.cwd().resolve()
     token = (os.environ.get("GITHUB_TOKEN") or "").strip() or (os.environ.get("GH_TOKEN") or "").strip()
     if not token:
         raise SystemExit("GITHUB_TOKEN or GH_TOKEN is required")
 
     owner_repo = args.repo
-    api = args.api_base.rstrip("/")
-    policy, policy_loaded = _load_policy(Path(args.policy))
+    api = normalize_https_url(args.api_base, allowed_hosts={"api.github.com"}, strip_query=True).rstrip("/")
+    try:
+        policy_path = _safe_workspace_path(args.policy, base=root)
+        out_json = _safe_workspace_path(args.out_json, base=root)
+        out_md = _safe_workspace_path(args.out_md, base=root)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+    policy, policy_loaded = _load_policy(policy_path)
 
     pulls = _paginate(f"{api}/repos/{owner_repo}/pulls?state=all&sort=updated&direction=desc&per_page=100", token)
     issues = _paginate(f"{api}/repos/{owner_repo}/issues?state=open&per_page=100", token)
@@ -508,11 +534,9 @@ def main() -> int:
         workflow_runs=runs,
         policy=policy,
     )
-    digest["policy"]["path"] = str(Path(args.policy))
+    digest["policy"]["path"] = str(policy_path)
     digest["policy"]["loaded_from_file"] = policy_loaded
 
-    out_json = Path(args.out_json)
-    out_md = Path(args.out_md)
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_md.parent.mkdir(parents=True, exist_ok=True)
 

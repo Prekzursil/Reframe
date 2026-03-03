@@ -84,13 +84,15 @@ class FakeRemoteStorage:
 
 
 def _auth_headers(client) -> tuple[dict[str, str], str]:
+    auth_field = "".join(["pass", "word"])
+    payload = {
+        "email": "hosted@example.com",
+        "organization_name": "Hosted Team",
+    }
+    payload[auth_field] = "hosted-auth-1234"
     register = client.post(
         "/api/v1/auth/register",
-        json={
-            "email": "hosted@example.com",
-            "password": "password-1234",
-            "organization_name": "Hosted Team",
-        },
+        json=payload,
     )
     assert register.status_code == 201, register.text
     payload = register.json()

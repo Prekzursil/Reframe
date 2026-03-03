@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
+import { errToString, truncate } from "./text";
 
 const UI_URL = "http://localhost:5173";
 const API_URL = "http://localhost:8000/api/v1";
@@ -40,21 +41,6 @@ function setStatus(text: string) {
 
 function setText(id: string, text: string) {
   byId<HTMLElement>(id).textContent = text;
-}
-
-function errToString(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (typeof err === "string") return err;
-  try {
-    return JSON.stringify(err);
-  } catch {
-    return String(err);
-  }
-}
-
-function truncate(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars)}\n…(truncated)…`;
 }
 
 async function collectDebugInfo(): Promise<string> {
@@ -301,6 +287,17 @@ async function checkUpdates() {
     }
   }
 }
+
+export const __test = {
+  byId,
+  collectDebugInfo,
+  copyDebugInfo,
+  refreshDiagnostics,
+  refresh,
+  start,
+  stop,
+  checkUpdates,
+};
 
 window.addEventListener("DOMContentLoaded", () => {
   byId<HTMLButtonElement>("btn-up").addEventListener("click", () => start(true));

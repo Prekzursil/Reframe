@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,29 +13,32 @@ from urllib.parse import urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from security_helpers import normalize_https_url
+
 PERMISSION_HTTP_CODES = {401, 403, 404}
 DEFAULT_CANONICAL_CONTEXTS = [
-    "applitools-core",
-    "pr-agent",
-    "deep-agent",
-    "audit-pr-evidence",
-    "backend",
-    "backend-postgres",
-    "coverage",
-    "CodeQL",
-    "codecov-analytics",
+    "Python API & worker checks",
+    "Web build",
     "Analyze (actions)",
     "Analyze (javascript-typescript)",
     "Analyze (python)",
+    "CodeQL",
     "CodeRabbit",
-    "dependency-review",
-    "compose-smoke",
-    "frontend",
-    "label",
-    "codacy-equivalent-zero",
-    "sonar-branch-zero",
-    "Seer Code Review",
+    "Coverage 100 Gate",
+    "Codecov Analytics",
+    "Quality Zero Gate",
     "SonarCloud Code Analysis",
+    "Codacy Static Code Analysis",
+    "DeepScan",
+    "Snyk Zero",
+    "Percy Visual",
+    "Applitools Visual",
+    "BrowserStack E2E",
+    "Sentry Zero",
 ]
 
 
@@ -74,7 +78,8 @@ def _classify_http_status(code: int) -> str:
 
 
 def _api_get(api_base: str, repo: str, path: str, token: str) -> dict[str, Any]:
-    url = f"{api_base.rstrip('/')}/repos/{repo}/{path.lstrip('/')}"
+    validated_base = normalize_https_url(api_base, allowed_hosts={"api.github.com"}, strip_query=True).rstrip("/")
+    url = f"{validated_base}/repos/{repo}/{path.lstrip('/')}"
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError(f"Unsupported API URL: {url!r}")
@@ -285,13 +290,50 @@ def _run_preflight(
         return _url_error_result(exc)
 
 
+def _safe_output_path(raw: str, *, base: Path) -> Path:
+    candidate = Path((raw or "").strip()).expanduser()
+    if candidate.is_absolute():
+        return candidate.resolve(strict=False)
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(base.resolve())
+    except ValueError as exc:
+        raise ValueError(f"Output path escapes workspace root: {candidate}") from exc
+    return resolved
+
+
+def _safe_policy_path(raw: str, *, base: Path) -> Path:
+    candidate = Path((raw or "").strip()).expanduser()
+    if candidate.is_absolute():
+        return candidate.resolve(strict=False)
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(base.resolve())
+    except ValueError as exc:
+        raise ValueError(f"Policy path escapes workspace root: {candidate}") from exc
+    return resolved
+
+
 def main() -> int:
     args = _parse_args()
-    out_json = Path(args.out_json)
-    out_md = Path(args.out_md)
+    root = Path.cwd().resolve()
+    try:
+        out_json = _safe_output_path(args.out_json, base=root)
+        out_md = _safe_output_path(args.out_md, base=root)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
     policy: dict[str, Any] = {}
-    policy_path = Path(args.policy)
+    try:
+        policy_path = _safe_policy_path(args.policy, base=root)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if policy_path.exists():
         policy = json.loads(policy_path.read_text(encoding="utf-8"))
 

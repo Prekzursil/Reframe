@@ -1,0 +1,48 @@
+name: DeepScan Zero
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: read
+
+jobs:
+  deepscan-zero:
+    name: DeepScan Zero
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve canonical check SHA
+        id: sha
+        run: |
+          CHECK_SHA="${GITHUB_SHA}"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            CHECK_SHA="${{ github.event.pull_request.head.sha }}"
+          fi
+          echo "check_sha=${CHECK_SHA}" >> "${GITHUB_OUTPUT}"
+
+      - name: Assert DeepScan vendor check is green
+        run: |
+          python3 scripts/quality/check_required_checks.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --sha "${{ steps.sha.outputs.check_sha }}" \
+            --required-context "DeepScan" \
+            --timeout-seconds 1200 \
+            --poll-seconds 20 \
+            --out-json "deepscan-zero/deepscan.json" \
+            --out-md "deepscan-zero/deepscan.md"
+
+      - name: Upload DeepScan zero artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepscan-zero
+          path: deepscan-zero

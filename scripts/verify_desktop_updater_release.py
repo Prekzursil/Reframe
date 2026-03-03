@@ -4,9 +4,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
 
 from security_helpers import normalize_https_url
 
@@ -24,8 +29,22 @@ def _fetch_bytes(url: str) -> bytes:
 def _head(url: str) -> int:
     safe_url = normalize_https_url(url)
     request = urllib.request.Request(safe_url, method="HEAD", headers={"User-Agent": "reframe-updater-verify"})
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return getattr(response, "status", 200)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return getattr(response, "status", 200)
+    except urllib.error.HTTPError as exc:
+        return int(exc.code)
+
+
+def _head_with_retries(url: str, attempts: int = 3, delay_seconds: float = 2.0) -> int:
+    last_status = 0
+    for attempt in range(attempts):
+        last_status = _head(url)
+        if last_status < 500:
+            return last_status
+        if attempt < attempts - 1:
+            time.sleep(delay_seconds)
+    return last_status
 
 
 def _load_default_endpoint(config_path: Path) -> str:
@@ -45,13 +64,26 @@ def _require_field(obj: dict, key: str) -> str:
     return value
 
 
+def _safe_workspace_path(raw: str, *, base: Path) -> Path:
+    candidate = Path((raw or "").strip()).expanduser()
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(base.resolve())
+    except ValueError as exc:
+        raise ValueError(f"Path escapes workspace root: {candidate}") from exc
+    return resolved
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Verify Tauri updater 'latest.json' and asset URLs.")
     parser.add_argument("--endpoint", help="Updater JSON URL. Defaults to the first endpoint in tauri.conf.json.")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Path to tauri.conf.json (default: %(default)s)")
     args = parser.parse_args(argv)
 
-    config_path = Path(args.config)
+    root = Path.cwd().resolve()
+    config_path = _safe_workspace_path(args.config, base=root)
     endpoint = args.endpoint
     if not endpoint:
         if not config_path.is_file():
@@ -85,8 +117,10 @@ def main(argv: list[str]) -> int:
             signature = _require_field(platform_meta, "signature")
             if len(signature) < 20:
                 failures.append(f"{platform_key}: signature looks too short")
-            status = _head(url)
-            if status >= 400:
+            status = _head_with_retries(url)
+            if status >= 500:
+                print(f"warn {platform_key}: transient server status={status}: {url}")
+            elif status >= 400:
                 failures.append(f"{platform_key}: URL not accessible (status={status}): {url}")
             else:
                 print(f"ok {platform_key}: {url}")

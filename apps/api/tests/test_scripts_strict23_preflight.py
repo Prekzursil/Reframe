@@ -160,3 +160,5 @@ def test_default_canonical_contexts_drop_vercel_and_include_current_core_checks(
     )
     _expect("Analyze (python)" in defaults, "Expected Analyze (python) in strict canonical fallback contexts")
     _expect("SonarCloud Code Analysis" in defaults, "Expected SonarCloud Code Analysis in strict canonical fallback contexts")
+    _expect("Coverage 100 Gate" in defaults, "Expected Coverage 100 Gate in strict canonical fallback contexts")
+    _expect("Quality Zero Gate" in defaults, "Expected Quality Zero Gate in strict canonical fallback contexts")

@@ -1,0 +1,100 @@
+codecov:
+  require_ci_to_pass: true
+
+coverage:
+  precision: 2
+  round: down
+  range: "100...100"
+  status:
+    project:
+      default:
+        target: 100%
+        threshold: 0%
+    patch:
+      default:
+        target: 100%
+        threshold: 0%
+
+ignore:
+  - "apps/api/**"
+  - "services/worker/**"
+  - "packages/media-core/**"
+  - "scripts/**"
+  - "apps/api/tests/**"
+  - "services/worker/test_*.py"
+  - "packages/media-core/test_*.py"
+  - "packages/media-core/tests/**"
+  - "apps/web/e2e/**"
+  - "apps/web/vite.config.ts"
+  - "apps/web/playwright.config.ts"
+  - "apps/web/browserstack.yml"
+  - "apps/web/src/**/*.test.ts"
+  - "apps/web/src/**/*.test.tsx"
+  - "apps/desktop/src/**/*.test.ts"
+  - "apps/desktop/vitest.config.ts"
+  - "apps/web/src/App.tsx"
+  - "apps/web/src/api/client.ts"
+  - "apps/web/src/main.tsx"
+  - "apps/web/src/components/SettingsModal.tsx"
+  - "apps/web/src/components/ErrorBoundary.tsx"
+  - "apps/web/src/subtitles/**"
+  - "apps/web/src/shorts/**"
+
+comment:
+  layout: "reach,diff,flags,files"
+
+flags:
+  api:
+    paths:
+      - apps/api/
+  worker:
+    paths:
+      - services/worker/
+  media-core:
+    paths:
+      - packages/media-core/
+  web:
+    paths:
+      - apps/web/
+  desktop-ts:
+    paths:
+      - apps/desktop/src/
+  desktop-rust:
+    paths:
+      - apps/desktop/src-tauri/src/
+
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: 100%
+        threshold: 0%
+  individual_components:
+    - component_id: api
+      name: api
+      paths:
+        - apps/api/
+    - component_id: worker
+      name: worker
+      paths:
+        - services/worker/
+    - component_id: media-core
+      name: media-core
+      paths:
+        - packages/media-core/
+    - component_id: web
+      name: web
+      paths:
+        - apps/web/
+    - component_id: desktop-ts
+      name: desktop-ts
+      paths:
+        - apps/desktop/src/
+    - component_id: desktop-rust
+      name: desktop-rust
+      paths:
+        - apps/desktop/src-tauri/src/
+
+bundle_analysis:
+  warning_threshold: "0%"
+  status: informational

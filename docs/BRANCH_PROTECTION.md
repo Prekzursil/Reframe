@@ -27,6 +27,17 @@ The `main` branch is the primary production branch and has the strictest protect
      - `Analyze (python)` - CodeQL analysis for API/worker/media-core code
      - `CodeQL` - Aggregate CodeQL workflow signal
      - `CodeRabbit` - Automated review gate configured on `main`
+     - `Coverage 100 Gate` - Enforces 100% coverage across API/worker/media-core/web/desktop
+     - `Codecov Analytics` - Uploads and enforces Codecov coverage signal
+     - `Quality Zero Gate` - Aggregates all strict quality contexts and fails on missing/inconclusive status
+     - `SonarCloud Code Analysis` - SonarCloud quality gate signal
+     - `Codacy Static Code Analysis` - Codacy static analysis signal
+     - `DeepScan` - DeepScan static analysis signal
+     - `Snyk Zero` - Snyk OSS/Code/IaC zero-finding gate
+     - `Percy Visual` - Percy visual regression gate
+     - `Applitools Visual` - Applitools Eyes visual regression gate
+     - `BrowserStack E2E` - Cross-browser Playwright validation via BrowserStack
+     - `Sentry Zero` - Zero unresolved Sentry issues gate
 
 3. **Require Conversation Resolution Before Merging**
    - **Current setting**: Disabled on `main`.

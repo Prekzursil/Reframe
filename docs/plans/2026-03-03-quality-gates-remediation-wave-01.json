@@ -1,0 +1,41 @@
+{
+  "wave": "2026-03-03-remediation-wave-01",
+  "branch": "feat/quality-zero-gates-2026-03-03",
+  "pr": 104,
+  "head_sha": "103a9a055ccd7df7d09487c220a2f7ffefb61bd1",
+  "commits": [
+    "de2330e",
+    "103a9a0"
+  ],
+  "integration_fixes": [
+    "npm10-compatible web lockfile regeneration",
+    "visual/browser workflows create .env before docker compose",
+    "quality-zero-gate aggregator runs with if:always and fails when preflight fails",
+    "codacy-zero switched to POST issues/search with provider fallback",
+    "browserstack e2e base URL switched to bs-local.com"
+  ],
+  "local_verification": {
+    "scripts_tests": "pass",
+    "web_tests": "pass",
+    "desktop_tests": "pass",
+    "make_verify": "pass",
+    "web_coverage_100_gate": "fail_expected",
+    "desktop_coverage_100_gate": "fail_expected"
+  },
+  "ci_evidence": {
+    "codacy_zero_run": 22605225554,
+    "codacy_open_issues": 760,
+    "deepscan_zero_run": 22605225567,
+    "deepscan_missing_inputs": [
+      "DEEPSCAN_API_TOKEN",
+      "DEEPSCAN_OPEN_ISSUES_URL"
+    ],
+    "snyk_zero_run": 22605225594
+  },
+  "blocker_classes": [
+    "policy_findings",
+    "missing_secrets_or_vars",
+    "coverage_below_100",
+    "dependency_audit_high"
+  ]
+}

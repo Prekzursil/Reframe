@@ -1,0 +1,89 @@
+name: Sonar Zero
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sonar-zero:
+    name: Sonar Zero
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: .:apps/api:packages/media-core/src
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install -r apps/api/requirements.txt -r services/worker/requirements.txt
+          .venv/bin/pip install pytest pytest-cov
+          cd apps/web && npm ci
+          cd ../desktop && npm ci
+
+      - name: Generate coverage artifacts for Sonar
+        run: |
+          mkdir -p coverage
+          .venv/bin/python -m pytest \
+            --cov=apps/api/app \
+            --cov=services/worker \
+            --cov=packages/media-core/src/media_core \
+            --cov-report=xml:coverage/python-coverage.xml \
+            apps/api/tests services/worker packages/media-core/tests
+          cd apps/web
+          npx vitest run --coverage \
+            --coverage.thresholds.lines=0 \
+            --coverage.thresholds.functions=0 \
+            --coverage.thresholds.branches=0 \
+            --coverage.thresholds.statements=0
+          cd ../desktop
+          npx vitest run --coverage \
+            --coverage.thresholds.lines=0 \
+            --coverage.thresholds.functions=0 \
+            --coverage.thresholds.branches=0 \
+            --coverage.thresholds.statements=0
+
+      - name: Run Sonar scan
+        uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Assert Sonar zero-open gate
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          EXTRA_ARGS=()
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            EXTRA_ARGS+=(--pull-request "${{ github.event.pull_request.number }}")
+          else
+            EXTRA_ARGS+=(--branch "${GITHUB_REF_NAME}")
+          fi
+          python3 scripts/quality/check_sonar_zero.py \
+            --project-key "Prekzursil_Reframe" \
+            "${EXTRA_ARGS[@]}" \
+            --out-json "sonar-zero/sonar.json" \
+            --out-md "sonar-zero/sonar.md"
+
+      - name: Upload Sonar zero artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonar-zero
+          path: sonar-zero

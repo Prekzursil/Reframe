@@ -1,0 +1,22 @@
+userName: ${BROWSERSTACK_USERNAME}
+accessKey: ${BROWSERSTACK_ACCESS_KEY}
+framework: playwright
+platforms:
+  - os: Windows
+    osVersion: 11
+    browserName: chrome
+    browserVersion: latest
+  - os: OS X
+    osVersion: Sonoma
+    browserName: playwright-webkit
+    browserVersion: latest
+  - os: OS X
+    osVersion: Ventura
+    browserName: playwright-firefox
+    browserVersion: latest
+parallelsPerPlatform: 1
+browserstackLocal: true
+buildName: reframe-browserstack-${GITHUB_RUN_ID}
+projectName: Reframe
+debug: true
+testObservability: true
