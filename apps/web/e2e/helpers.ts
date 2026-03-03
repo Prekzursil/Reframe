@@ -12,12 +12,18 @@ export const NAV_LABELS = [
   "Billing",
 ] as const;
 
+export function navButton(page: Page, label: (typeof NAV_LABELS)[number]) {
+  return page.locator("aside.sidebar nav").getByRole("button", { name: label, exact: true });
+}
+
 export async function walkPrimarySections(page: Page): Promise<void> {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Reframe" })).toBeVisible();
+  await expect(page.locator("aside.sidebar .brand-title")).toHaveText("Reframe");
+  await expect(page.getByRole("heading", { name: "Creative media pipeline", exact: true })).toBeVisible();
 
   for (const label of NAV_LABELS) {
-    await page.getByRole("button", { name: label }).click();
-    await expect(page.getByRole("button", { name: label })).toHaveClass(/active/);
+    const button = navButton(page, label);
+    await button.click();
+    await expect(button).toHaveClass(/active/);
   }
 }

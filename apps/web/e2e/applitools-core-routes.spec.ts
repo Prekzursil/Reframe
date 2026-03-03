@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { BatchInfo, Configuration, Eyes, Target } from "@applitools/eyes-playwright";
 import { test } from "@playwright/test";
-import { NAV_LABELS } from "./helpers";
+import { NAV_LABELS, navButton } from "./helpers";
 
 function numberOrZero(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -23,9 +23,10 @@ test("capture primary sections with Applitools", async ({ page }) => {
 
   await page.goto("/");
   await eyes.open(page, "Reframe", "primary-sections", { width: 1280, height: 900 });
+  await navButton(page, "Shorts").waitFor({ state: "visible" });
 
   for (const label of NAV_LABELS) {
-    await page.getByRole("button", { name: label }).click();
+    await navButton(page, label).click();
     await eyes.check(label, Target.window().fully());
   }
 

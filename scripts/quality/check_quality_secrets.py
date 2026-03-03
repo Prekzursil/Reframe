@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -87,6 +88,19 @@ def _render_md(payload: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _safe_output_path(raw: str, fallback: str, base: Path | None = None) -> Path:
+    root = (base or Path.cwd()).resolve()
+    candidate = Path((raw or "").strip() or fallback).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"Output path escapes workspace root: {candidate}") from exc
+    return resolved
+
+
 def main() -> int:
     args = _parse_args()
     required_secrets = _dedupe(DEFAULT_REQUIRED_SECRETS + list(args.required_secret or []))
@@ -102,8 +116,13 @@ def main() -> int:
         **result,
     }
 
-    out_json = Path(args.out_json)
-    out_md = Path(args.out_md)
+    try:
+        out_json = _safe_output_path(args.out_json, "quality-secrets/secrets.json")
+        out_md = _safe_output_path(args.out_md, "quality-secrets/secrets.md")
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_md.parent.mkdir(parents=True, exist_ok=True)
 

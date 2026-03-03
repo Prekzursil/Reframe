@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -120,6 +121,19 @@ def _render_md(payload: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _safe_output_path(raw: str, fallback: str, base: Path | None = None) -> Path:
+    root = (base or Path.cwd()).resolve()
+    candidate = Path((raw or "").strip() or fallback).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"Output path escapes workspace root: {candidate}") from exc
+    return resolved
+
+
 def main() -> int:
     args = _parse_args()
     token = (os.environ.get("GITHUB_TOKEN", "") or os.environ.get("GH_TOKEN", "")).strip()
@@ -162,8 +176,13 @@ def main() -> int:
     if final_payload is None:
         raise SystemExit("No payload collected")
 
-    out_json = Path(args.out_json)
-    out_md = Path(args.out_md)
+    try:
+        out_json = _safe_output_path(args.out_json, "quality-zero-gate/required-checks.json")
+        out_md = _safe_output_path(args.out_md, "quality-zero-gate/required-checks.md")
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_md.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(final_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

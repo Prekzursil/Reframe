@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -74,6 +75,19 @@ def _render_md(payload: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _safe_output_path(raw: str, fallback: str, base: Path | None = None) -> Path:
+    root = (base or Path.cwd()).resolve()
+    candidate = Path((raw or "").strip() or fallback).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"Output path escapes workspace root: {candidate}") from exc
+    return resolved
+
+
 def main() -> int:
     import os
 
@@ -111,8 +125,13 @@ def main() -> int:
         "findings": findings,
     }
 
-    out_json = Path(args.out_json)
-    out_md = Path(args.out_md)
+    try:
+        out_json = _safe_output_path(args.out_json, "deepscan-zero/deepscan.json")
+        out_md = _safe_output_path(args.out_md, "deepscan-zero/deepscan.md")
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_md.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

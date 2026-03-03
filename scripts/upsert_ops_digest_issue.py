@@ -77,6 +77,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _safe_output_path(raw: str, *, base: Path) -> Path:
+    candidate = Path((raw or "").strip()).expanduser()
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(base.resolve())
+    except ValueError as exc:
+        raise ValueError(f"Output path escapes workspace root: {candidate}") from exc
+    return resolved
+
+
 def main() -> int:
     args = parse_args()
     token = (os.environ.get("GITHUB_TOKEN") or "").strip() or (os.environ.get("GH_TOKEN") or "").strip()
@@ -137,7 +149,10 @@ def main() -> int:
             "issue_url": updated["html_url"],
         }
 
-    out = Path(args.out_json)
+    try:
+        out = _safe_output_path(args.out_json, base=Path.cwd().resolve())
+    except ValueError as exc:
+        raise SystemExit(str(exc))
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return 0

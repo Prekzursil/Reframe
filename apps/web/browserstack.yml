@@ -8,11 +8,11 @@ platforms:
     browserVersion: latest
   - os: OS X
     osVersion: Sonoma
-    browserName: safari
+    browserName: playwright-webkit
     browserVersion: latest
   - os: OS X
     osVersion: Ventura
-    browserName: firefox
+    browserName: playwright-firefox
     browserVersion: latest
 parallelsPerPlatform: 1
 browserstackLocal: true

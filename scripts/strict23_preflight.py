@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -282,10 +283,29 @@ def _run_preflight(
         return _url_error_result(exc)
 
 
+def _safe_output_path(raw: str, *, base: Path) -> Path:
+    candidate = Path((raw or "").strip()).expanduser()
+    if candidate.is_absolute():
+        return candidate.resolve(strict=False)
+
+    candidate = base / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(base.resolve())
+    except ValueError as exc:
+        raise ValueError(f"Output path escapes workspace root: {candidate}") from exc
+    return resolved
+
+
 def main() -> int:
     args = _parse_args()
-    out_json = Path(args.out_json)
-    out_md = Path(args.out_md)
+    root = Path.cwd().resolve()
+    try:
+        out_json = _safe_output_path(args.out_json, base=root)
+        out_md = _safe_output_path(args.out_md, base=root)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
     policy: dict[str, Any] = {}
     policy_path = Path(args.policy)

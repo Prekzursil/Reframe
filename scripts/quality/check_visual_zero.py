@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -21,6 +22,19 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--out-json", default="visual-zero/visual.json", help="Output JSON path")
     parser.add_argument("--out-md", default="visual-zero/visual.md", help="Output markdown path")
     return parser.parse_args()
+
+
+def _safe_path(raw: str, fallback: str, *, base: Path | None = None) -> Path:
+    root = (base or Path.cwd()).resolve()
+    candidate = Path((raw or "").strip() or fallback).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"Path escapes workspace root: {candidate}") from exc
+    return resolved
 
 
 def _percy_request(path: str, token: str, query: dict[str, str] | None = None) -> dict[str, Any]:
@@ -116,7 +130,7 @@ def _run_percy(args: argparse.Namespace) -> tuple[str, dict[str, Any], list[str]
 
 def _run_applitools(args: argparse.Namespace) -> tuple[str, dict[str, Any], list[str]]:
     findings: list[str] = []
-    results_path = Path(args.applitools_results or "").expanduser()
+    results_path = _safe_path(args.applitools_results, "")
     details: dict[str, Any] = {
         "results_path": str(results_path) if args.applitools_results else "",
         "unresolved": None,
@@ -189,8 +203,13 @@ def main() -> int:
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
     }
 
-    out_json = Path(args.out_json)
-    out_md = Path(args.out_md)
+    try:
+        out_json = _safe_path(args.out_json, "visual-zero/visual.json")
+        out_md = _safe_path(args.out_md, "visual-zero/visual.md")
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_md.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
