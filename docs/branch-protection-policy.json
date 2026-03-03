@@ -8,7 +8,18 @@
     "Analyze (javascript-typescript)",
     "Analyze (python)",
     "CodeQL",
-    "CodeRabbit"
+    "CodeRabbit",
+    "Coverage 100 Gate",
+    "Codecov Analytics",
+    "Quality Zero Gate",
+    "SonarCloud Code Analysis",
+    "Codacy Static Code Analysis",
+    "DeepScan",
+    "Snyk Zero",
+    "Percy Visual",
+    "Applitools Visual",
+    "BrowserStack E2E",
+    "Sentry Zero"
   ],
   "strict23_supplemental_contexts": {
     "required": [],

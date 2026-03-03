@@ -1,0 +1,29 @@
+{
+  "timestamp_utc": "2026-03-03T00:00:00Z",
+  "baseline_commit": "8c7f5f1",
+  "branch_protection_required_contexts": [
+    "Python API & worker checks",
+    "Web build",
+    "Analyze (actions)",
+    "Analyze (javascript-typescript)",
+    "Analyze (python)",
+    "CodeQL",
+    "CodeRabbit"
+  ],
+  "sonarcloud_main": {
+    "context": "SonarCloud Code Analysis",
+    "conclusion": "failure",
+    "quality_gate": "failed",
+    "note": "Reliability Rating on New Code below required threshold"
+  },
+  "codacy_pr_signal": {
+    "context": "Codacy Static Code Analysis",
+    "summary_example": "39 new issues (0 max.)",
+    "notes": "Vendor status is delta-oriented"
+  },
+  "deepscan_signal": {
+    "context": "DeepScan",
+    "description_example": "0 new and 0 fixed issues",
+    "notes": "Total-open strict enforcement now requires API-backed evidence"
+  }
+}
