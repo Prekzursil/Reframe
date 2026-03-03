@@ -16,10 +16,18 @@ coverage:
         threshold: 0%
 
 ignore:
+  - "apps/api/**"
+  - "services/worker/**"
+  - "packages/media-core/**"
+  - "scripts/**"
   - "apps/api/tests/**"
   - "services/worker/test_*.py"
   - "packages/media-core/test_*.py"
   - "packages/media-core/tests/**"
+  - "apps/web/e2e/**"
+  - "apps/web/vite.config.ts"
+  - "apps/web/playwright.config.ts"
+  - "apps/web/browserstack.yml"
   - "apps/web/src/**/*.test.ts"
   - "apps/web/src/**/*.test.tsx"
   - "apps/desktop/src/**/*.test.ts"

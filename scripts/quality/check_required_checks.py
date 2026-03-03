@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -27,18 +28,34 @@ def _parse_args() -> argparse.Namespace:
 
 def _api_get(repo: str, path: str, token: str) -> dict[str, Any]:
     url = f"https://api.github.com/repos/{repo}/{path.lstrip('/')}"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {token}",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "reframe-quality-zero-gate",
-        },
-        method="GET",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "reframe-quality-zero-gate",
+    }
+    transient_http_codes = {429, 500, 502, 503, 504}
+    last_error: Exception | None = None
+
+    for attempt in range(1, 7):
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code not in transient_http_codes:
+                raise
+            last_error = exc
+        except urllib.error.URLError as exc:
+            last_error = exc
+        except OSError as exc:
+            last_error = exc
+
+        if attempt < 6:
+            # Short exponential backoff keeps the gate resilient without masking persistent failures.
+            time.sleep(2 ** (attempt - 1))
+
+    raise RuntimeError(f"GitHub API request failed after retries for {url}: {last_error}")
 
 
 def _collect_contexts(check_runs_payload: dict[str, Any], status_payload: dict[str, Any]) -> dict[str, dict[str, str]]:
