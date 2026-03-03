@@ -253,7 +253,7 @@ describe("desktop main app", () => {
     expect(openUrlMock).toHaveBeenCalledWith(RELEASES_URL);
   });
 
-  it("handles start/stop and refresh failure fallback", async () => {
+  it("runs start/stop commands and click handlers", async () => {
     await appModule.__test.start(true);
     await appModule.__test.start(false);
     await appModule.__test.stop();
@@ -262,13 +262,22 @@ describe("desktop main app", () => {
     expect(invokeMock).toHaveBeenCalledWith("compose_up", { build: false });
     expect(invokeMock).toHaveBeenCalledWith("compose_down");
 
+    await click("btn-up");
+    await click("btn-up-nobuild");
+    await click("btn-down");
+    await click("btn-refresh");
+  });
+
+  it("logs start and stop failures", async () => {
     state.invokeFailures.add("compose_up");
     state.invokeFailures.add("compose_down");
     await appModule.__test.start(true);
     await appModule.__test.stop();
     expect(document.getElementById("log")?.textContent ?? "").toContain("compose_up failed");
     expect(document.getElementById("log")?.textContent ?? "").toContain("compose_down failed");
+  });
 
+  it("falls back when refresh dependencies fail", async () => {
     state.invokeFailures.clear();
     state.appFailures.add("getVersion");
     state.invokeFailures.add("compose_file_path");
@@ -283,11 +292,6 @@ describe("desktop main app", () => {
     expect(document.getElementById("docker-version")?.textContent).toBe("not available");
     expect(document.getElementById("offline-mode")?.textContent).toBe("unknown");
     expect(document.getElementById("system-status")?.textContent).toContain("Diagnostics unavailable");
-
-    await click("btn-up");
-    await click("btn-up-nobuild");
-    await click("btn-down");
-    await click("btn-refresh");
   });
 
   it("handles updater paths: no-update, cancel, install, and failure", async () => {
