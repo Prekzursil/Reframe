@@ -1,0 +1,80 @@
+name: Codecov Analytics
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  codecov-analytics:
+    name: Codecov Analytics
+    runs-on: ubuntu-latest
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      PYTHONPATH: .:apps/api:packages/media-core/src
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate Codecov token
+        run: |
+          if [ -z "${CODECOV_TOKEN}" ]; then
+            echo "Missing CODECOV_TOKEN" >&2
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Install Python deps
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install -r apps/api/requirements.txt -r services/worker/requirements.txt
+          .venv/bin/pip install pytest pytest-cov
+
+      - name: Install web deps
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Install desktop deps
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Run python coverage
+        run: |
+          mkdir -p coverage
+          .venv/bin/python -m pytest \
+            --cov=apps/api/app \
+            --cov=services/worker \
+            --cov=packages/media-core/src/media_core \
+            --cov-report=xml:coverage/python-coverage.xml \
+            apps/api/tests services/worker packages/media-core/tests
+
+      - name: Run web coverage
+        working-directory: apps/web
+        run: npm run test:coverage
+
+      - name: Run desktop TS coverage
+        working-directory: apps/desktop
+        run: npm run test:coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/python-coverage.xml,apps/web/coverage/lcov.info,apps/desktop/coverage/lcov.info
+          flags: api,worker,media-core,web,desktop-ts
+          fail_ci_if_error: true
+          verbose: true

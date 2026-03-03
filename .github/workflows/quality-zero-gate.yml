@@ -1,0 +1,91 @@
+name: Quality Zero Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets-preflight:
+    name: Quality Secrets Preflight
+    runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      APPLITOOLS_API_KEY: ${{ secrets.APPLITOOLS_API_KEY }}
+      PERCY_TOKEN: ${{ secrets.PERCY_TOKEN }}
+      BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
+      BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+      DEEPSCAN_API_TOKEN: ${{ secrets.DEEPSCAN_API_TOKEN }}
+      SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+      SENTRY_PROJECT_BACKEND: ${{ vars.SENTRY_PROJECT_BACKEND }}
+      SENTRY_PROJECT_WEB: ${{ vars.SENTRY_PROJECT_WEB }}
+      DEEPSCAN_OPEN_ISSUES_URL: ${{ vars.DEEPSCAN_OPEN_ISSUES_URL }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run quality secrets preflight
+        run: |
+          python3 scripts/quality/check_quality_secrets.py \
+            --out-json quality-secrets/secrets.json \
+            --out-md quality-secrets/secrets.md
+      - name: Upload secrets preflight artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-secrets
+          path: quality-secrets
+
+  quality-zero-gate:
+    name: Quality Zero Gate
+    runs-on: ubuntu-latest
+    needs:
+      - secrets-preflight
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Assert required quality contexts are green
+        run: |
+          python3 scripts/quality/check_required_checks.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --sha "${GITHUB_SHA}" \
+            --required-context "Python API & worker checks" \
+            --required-context "Web build" \
+            --required-context "Analyze (actions)" \
+            --required-context "Analyze (javascript-typescript)" \
+            --required-context "Analyze (python)" \
+            --required-context "CodeQL" \
+            --required-context "CodeRabbit" \
+            --required-context "Coverage 100 Gate" \
+            --required-context "Codecov Analytics" \
+            --required-context "Sonar Zero" \
+            --required-context "Codacy Zero" \
+            --required-context "DeepScan Zero" \
+            --required-context "SonarCloud Code Analysis" \
+            --required-context "Codacy Static Code Analysis" \
+            --required-context "DeepScan" \
+            --required-context "Snyk Zero" \
+            --required-context "Percy Visual" \
+            --required-context "Applitools Visual" \
+            --required-context "BrowserStack E2E" \
+            --required-context "Sentry Zero" \
+            --timeout-seconds 1500 \
+            --poll-seconds 20 \
+            --out-json quality-zero-gate/required-checks.json \
+            --out-md quality-zero-gate/required-checks.md
+
+      - name: Upload aggregate artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-zero-gate
+          path: quality-zero-gate

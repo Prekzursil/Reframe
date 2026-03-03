@@ -1,0 +1,36 @@
+name: Sentry Zero
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sentry-zero:
+    name: Sentry Zero
+    runs-on: ubuntu-latest
+    env:
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+      SENTRY_PROJECT_BACKEND: ${{ vars.SENTRY_PROJECT_BACKEND }}
+      SENTRY_PROJECT_WEB: ${{ vars.SENTRY_PROJECT_WEB }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Assert Sentry unresolved issues are zero
+        run: |
+          python3 scripts/quality/check_sentry_zero.py \
+            --out-json "sentry-zero/sentry.json" \
+            --out-md "sentry-zero/sentry.md"
+
+      - name: Upload Sentry artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentry-zero
+          path: sentry-zero

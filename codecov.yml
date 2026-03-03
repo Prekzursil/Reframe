@@ -1,0 +1,39 @@
+codecov:
+  require_ci_to_pass: true
+
+coverage:
+  precision: 2
+  round: down
+  range: "0...100"
+  status:
+    project:
+      default:
+        target: 100%
+        threshold: 0%
+    patch:
+      default:
+        target: 100%
+        threshold: 0%
+
+comment:
+  layout: "reach,diff,flags,files"
+
+flags:
+  api:
+    paths:
+      - apps/api/
+  worker:
+    paths:
+      - services/worker/
+  media-core:
+    paths:
+      - packages/media-core/
+  web:
+    paths:
+      - apps/web/
+  desktop-ts:
+    paths:
+      - apps/desktop/src/
+  desktop-rust:
+    paths:
+      - apps/desktop/src-tauri/src/

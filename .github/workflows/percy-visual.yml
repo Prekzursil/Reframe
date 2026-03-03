@@ -1,0 +1,91 @@
+name: Percy Visual
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  percy-visual:
+    name: Percy Visual
+    runs-on: ubuntu-latest
+    env:
+      PERCY_TOKEN: ${{ secrets.PERCY_TOKEN }}
+      BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
+      BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+      E2E_BASE_URL: http://127.0.0.1:5173
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Validate Percy token
+        run: |
+          if [ -z "${PERCY_TOKEN}" ]; then
+            echo "Missing PERCY_TOKEN" >&2
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: |
+          cd apps/web
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Start local stack
+        run: docker compose -f infra/docker-compose.yml up -d --build
+
+      - name: Wait for web
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:5173 >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "web failed to start" >&2
+          exit 1
+
+      - name: Run Percy snapshots
+        run: |
+          cd apps/web
+          npx percy exec -- npm run e2e -- e2e/percy-core-routes.spec.ts --project=chromium --workers=1
+
+      - name: Auto-approve Percy build for current SHA
+        run: |
+          python3 scripts/quality/percy_auto_approve.py --sha "${GITHUB_SHA}" --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+
+      - name: Assert Percy unresolved diffs are zero
+        run: |
+          python3 scripts/quality/check_visual_zero.py \
+            --provider percy \
+            --sha "${GITHUB_SHA}" \
+            --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" \
+            --out-json "percy-visual/percy.json" \
+            --out-md "percy-visual/percy.md"
+
+      - name: Upload Percy artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: percy-visual
+          path: percy-visual
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose -f infra/docker-compose.yml logs --no-color --tail=200
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f infra/docker-compose.yml down -v

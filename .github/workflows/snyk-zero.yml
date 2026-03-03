@@ -1,0 +1,44 @@
+name: Snyk Zero
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snyk-zero:
+    name: Snyk Zero
+    runs-on: ubuntu-latest
+    env:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Install Snyk CLI
+        run: npm install -g snyk
+
+      - name: Validate token
+        run: |
+          if [ -z "${SNYK_TOKEN}" ]; then
+            echo "Missing SNYK_TOKEN" >&2
+            exit 1
+          fi
+
+      - name: Snyk OSS test
+        run: snyk test --all-projects --severity-threshold=low
+
+      - name: Snyk code test
+        run: snyk code test --severity-threshold=low
+
+      - name: Snyk IaC test
+        run: snyk iac test infra --severity-threshold=low

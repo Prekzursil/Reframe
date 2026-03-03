@@ -1,0 +1,35 @@
+name: Codacy Zero
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  codacy-zero:
+    name: Codacy Zero
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Assert Codacy zero-open gate
+        env:
+          CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
+        run: |
+          python3 scripts/quality/check_codacy_zero.py \
+            --owner "${GITHUB_REPOSITORY_OWNER}" \
+            --repo "${GITHUB_REPOSITORY#*/}" \
+            --out-json "codacy-zero/codacy.json" \
+            --out-md "codacy-zero/codacy.md"
+
+      - name: Upload Codacy zero artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codacy-zero
+          path: codacy-zero
