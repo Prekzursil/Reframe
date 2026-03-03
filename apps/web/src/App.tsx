@@ -1666,18 +1666,9 @@ function StyleEditor({
     if (!uri) return null;
     return toSafeMediaUrl(apiClient.mediaUrl(uri));
   };
-  const triggerSafeDownload = (safeUrl: string | null, filename?: string) => {
+  const triggerSafeDownload = (safeUrl: string | null, _filename?: string) => {
     if (!safeUrl) return;
-    const anchor = document.createElement("a");
-    anchor.href = safeUrl;
-    anchor.rel = "noreferrer";
-    anchor.target = "_blank";
-    if (filename) {
-      anchor.download = filename;
-    }
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
+    window.location.assign(safeUrl);
   };
   const outputAssetUrl = toSafeMediaHref(outputAsset?.uri);
   const subtitlePreviewUrl = toSafeMediaUrl(subtitlePreview);

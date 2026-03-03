@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import re
@@ -9,7 +10,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.request import Request, urlopen
+from urllib.parse import urlencode
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
@@ -17,31 +18,43 @@ if str(_SCRIPT_DIR) not in sys.path:
 
 from security_helpers import normalize_https_url
 
-GITHUB_API_BASE = "https://api.github.com"
+GITHUB_API_HOST = "api.github.com"
+GITHUB_API_BASE = f"https://{GITHUB_API_HOST}"
 REPO_PART_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
-def _request_json(url: str, token: str, method: str = "GET", body: dict[str, Any] | None = None) -> Any:
-    safe_url = normalize_https_url(url, allowed_hosts={"api.github.com"}, strip_query=False).rstrip("/")
+def _request_json(path: str, token: str, method: str = "GET", body: dict[str, Any] | None = None) -> Any:
+    safe_path = (path or "").strip()
+    if not safe_path.startswith("/"):
+        raise ValueError(f"GitHub API path must start with '/': {safe_path!r}")
+    safe_url = normalize_https_url(f"{GITHUB_API_BASE}{safe_path}", allowed_hosts={GITHUB_API_HOST}, strip_query=False).rstrip("/")
+    parsed = safe_url.removeprefix(f"{GITHUB_API_BASE}")
+    if not parsed.startswith("/"):
+        raise ValueError(f"Normalized GitHub API path is invalid: {parsed!r}")
     data = None
     if body is not None:
         data = json.dumps(body).encode("utf-8")
-    req = Request(
-        safe_url,
-        data=data,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {token}",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "reframe-ops-digest-upsert",
-            "Content-Type": "application/json",
-        },
-        method=method,
-    )
-    with urlopen(req, timeout=30) as resp:
-        if resp.status == 204:
-            return None
-        return json.loads(resp.read().decode("utf-8"))
+    conn = http.client.HTTPSConnection(GITHUB_API_HOST, timeout=30)
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "reframe-ops-digest-upsert",
+    }
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    try:
+        conn.request(method.upper(), parsed, body=data, headers=headers)
+        resp = conn.getresponse()
+        payload = resp.read()
+    finally:
+        conn.close()
+    if resp.status == 204:
+        return None
+    if resp.status < 200 or resp.status >= 300:
+        detail = payload.decode("utf-8", errors="replace")
+        raise RuntimeError(f"GitHub API request failed: HTTP {resp.status} ({detail[:300]})")
+    return json.loads(payload.decode("utf-8"))
 
 
 def _render_issue_body(repo: str, digest_md: str, digest_json: dict[str, Any], run_url: str | None) -> str:
@@ -112,8 +125,6 @@ def main() -> int:
     owner, repo = args.repo.split("/", 1)
     if not REPO_PART_RE.fullmatch(owner) or not REPO_PART_RE.fullmatch(repo):
         raise SystemExit("Invalid owner/repo slug in --repo")
-    api = normalize_https_url(GITHUB_API_BASE, allowed_hosts={"api.github.com"}, strip_query=True).rstrip("/")
-
     try:
         digest_json_path = _safe_output_path(args.digest_json, base=root)
         digest_md_path = _safe_output_path(args.digest_md, base=root)
@@ -130,7 +141,7 @@ def main() -> int:
     body = _render_issue_body(args.repo, digest_md, digest_json, run_url)
 
     open_issues = _request_json(
-        f"{api}/repos/{owner}/{repo}/issues?state=open&per_page=100&labels=area:infra",
+        f"/repos/{owner}/{repo}/issues?{urlencode({'state': 'open', 'per_page': '100', 'labels': 'area:infra'})}",
         token,
         method="GET",
     )
@@ -144,7 +155,7 @@ def main() -> int:
 
     if target is None:
         created = _request_json(
-            f"{api}/repos/{owner}/{repo}/issues",
+            f"/repos/{owner}/{repo}/issues",
             token,
             method="POST",
             body={
@@ -160,7 +171,7 @@ def main() -> int:
         }
     else:
         updated = _request_json(
-            f"{api}/repos/{owner}/{repo}/issues/{target['number']}",
+            f"/repos/{owner}/{repo}/issues/{target['number']}",
             token,
             method="PATCH",
             body={"title": args.title, "body": body},

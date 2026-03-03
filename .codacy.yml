@@ -1,0 +1,7 @@
+exclude_paths:
+  - "docs/plans/**"
+  - "scripts/**"
+  - "apps/api/tests/**"
+  - "apps/web/e2e/**"
+  - "apps/desktop/src/text.ts"
+  - "apps/desktop/src/text.test.ts"

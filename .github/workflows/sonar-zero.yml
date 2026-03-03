@@ -69,8 +69,15 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
+          EXTRA_ARGS=()
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            EXTRA_ARGS+=(--pull-request "${{ github.event.pull_request.number }}")
+          else
+            EXTRA_ARGS+=(--branch "${GITHUB_REF_NAME}")
+          fi
           python3 scripts/quality/check_sonar_zero.py \
             --project-key "Prekzursil_Reframe" \
+            "${EXTRA_ARGS[@]}" \
             --out-json "sonar-zero/sonar.json" \
             --out-md "sonar-zero/sonar.md"
 

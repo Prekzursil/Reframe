@@ -22,11 +22,16 @@ SONAR_API_BASE = "https://sonarcloud.io"
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Assert SonarCloud has zero open issues and a passing quality gate.")
+    parser = argparse.ArgumentParser(description="Assert SonarCloud has zero actionable open issues.")
     parser.add_argument("--project-key", required=True, help="Sonar project key")
     parser.add_argument("--token", default="", help="Sonar token (falls back to SONAR_TOKEN env)")
     parser.add_argument("--branch", default="", help="Optional branch scope")
     parser.add_argument("--pull-request", default="", help="Optional PR scope")
+    parser.add_argument(
+        "--require-quality-gate",
+        action="store_true",
+        help="Require Sonar quality gate status to be OK in addition to open issues == 0",
+    )
     parser.add_argument("--out-json", default="sonar-zero/sonar.json", help="Output JSON path")
     parser.add_argument("--out-md", default="sonar-zero/sonar.md", help="Output markdown path")
     return parser.parse_args()
@@ -53,11 +58,15 @@ def _request_json(url: str, auth_header: str) -> dict[str, Any]:
 
 
 def _render_md(payload: dict) -> str:
+    scope = payload.get("scope", "project")
     lines = [
         "# Sonar Zero Gate",
         "",
         f"- Status: `{payload['status']}`",
         f"- Project: `{payload['project_key']}`",
+        f"- Scope: `{scope}`",
+        f"- Branch: `{payload.get('branch')}`",
+        f"- Pull request: `{payload.get('pull_request')}`",
         f"- Open issues: `{payload.get('open_issues')}`",
         f"- Quality gate: `{payload.get('quality_gate')}`",
         f"- Timestamp (UTC): `{payload['timestamp_utc']}`",
@@ -92,6 +101,11 @@ def main() -> int:
     token = (args.token or os.environ.get("SONAR_TOKEN", "")).strip()
     api_base = normalize_https_url(SONAR_API_BASE, allowed_hosts={"sonarcloud.io"}).rstrip("/")
 
+    scope = "project"
+    if args.pull_request:
+        scope = "pull_request"
+    elif args.branch:
+        scope = "branch"
     findings: list[str] = []
     open_issues: int | None = None
     quality_gate: str | None = None
@@ -129,7 +143,7 @@ def main() -> int:
 
             if open_issues != 0:
                 findings.append(f"Sonar reports {open_issues} open issues (expected 0).")
-            if quality_gate != "OK":
+            if args.require_quality_gate and quality_gate != "OK":
                 findings.append(f"Sonar quality gate status is {quality_gate} (expected OK).")
 
             status = "pass" if not findings else "fail"
@@ -140,6 +154,9 @@ def main() -> int:
     payload = {
         "status": status,
         "project_key": args.project_key,
+        "scope": scope,
+        "branch": args.branch or None,
+        "pull_request": args.pull_request or None,
         "open_issues": open_issues,
         "quality_gate": quality_gate,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),

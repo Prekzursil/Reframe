@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sys
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path

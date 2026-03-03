@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import urllib.parse
-import urllib.request
 import zipfile
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -175,54 +174,46 @@ def _resolve_idempotency_key(payload_value: str | None, header_value: str | None
     return key
 
 
-def _safe_redirect_url(url: str) -> str:
-    parsed = urllib.parse.urlparse((url or "").strip())
-    if parsed.scheme not in {"https"} or not parsed.netloc:
-        raise ApiError(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            code=ErrorCode.VALIDATION_ERROR,
-            message="Download URL is not a valid HTTP(S) target",
-            details={"url": url},
-        )
-    if parsed.username or parsed.password:
-        raise ApiError(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            code=ErrorCode.VALIDATION_ERROR,
-            message="Download URL must not include credentials",
-            details={"url": url},
-        )
-    hostname = (parsed.hostname or "").strip().lower()
-    if not hostname:
-        raise ApiError(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            code=ErrorCode.VALIDATION_ERROR,
-            message="Download URL is missing a hostname",
-            details={"url": url},
-        )
-    if hostname in {"localhost", "localhost.localdomain"}:
-        raise ApiError(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            code=ErrorCode.VALIDATION_ERROR,
-            message="Download URL must not target localhost",
-            details={"url": url},
-        )
+def _invalid_download_url(url: str, message: str) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        code=ErrorCode.VALIDATION_ERROR,
+        message=message,
+        details={"url": url},
+    )
+
+
+def _is_forbidden_ip_host(hostname: str) -> bool:
     try:
         ip_value = ipaddress.ip_address(hostname)
     except ValueError:
-        ip_value = None
-    if ip_value is not None and (
+        return False
+    return (
         ip_value.is_private
         or ip_value.is_loopback
         or ip_value.is_link_local
         or ip_value.is_reserved
         or ip_value.is_multicast
-    ):
-        raise ApiError(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            code=ErrorCode.VALIDATION_ERROR,
-            message="Download URL must not target private or local addresses",
-            details={"url": url},
-        )
+    )
+
+
+def _assert_safe_redirect_host(hostname: str, url: str) -> None:
+    if hostname in {"localhost", "localhost.localdomain"}:
+        raise _invalid_download_url(url, "Download URL must not target localhost")
+    if _is_forbidden_ip_host(hostname):
+        raise _invalid_download_url(url, "Download URL must not target private or local addresses")
+
+
+def _safe_redirect_url(url: str) -> str:
+    parsed = urllib.parse.urlparse((url or "").strip())
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise _invalid_download_url(url, "Download URL is not a valid HTTP(S) target")
+    if parsed.username or parsed.password:
+        raise _invalid_download_url(url, "Download URL must not include credentials")
+    hostname = (parsed.hostname or "").strip().lower()
+    if not hostname:
+        raise _invalid_download_url(url, "Download URL is missing a hostname")
+    _assert_safe_redirect_host(hostname, url)
     return urllib.parse.urlunparse(parsed._replace(fragment=""))
 
 
@@ -242,31 +233,53 @@ def _safe_local_asset_path(*, media_root: str, uri: str) -> Path:
     return resolved
 
 
+def _stream_local_file(*, file_path: Path, mime_type: str | None) -> StreamingResponse:
+    if not file_path.exists() or not file_path.is_file():
+        raise not_found("Asset file missing", details={"path": str(file_path)})
+
+    def _iterator():
+        with file_path.open("rb") as handle:
+            while True:
+                chunk = handle.read(64 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+
+    file_name = file_path.name or "download"
+    quoted = urllib.parse.quote(file_name)
+    headers = {"Content-Disposition": f'attachment; filename="{file_name}"; filename*=UTF-8\'\'{quoted}'}
+    return StreamingResponse(_iterator(), media_type=mime_type or "application/octet-stream", headers=headers)
+
+
 def _stream_remote_download(*, url: str, filename: str, mime_type: str | None) -> StreamingResponse:
     safe_url = _safe_redirect_url(url)
-    request = urllib.request.Request(
-        safe_url,
+    client = httpx.Client(
+        follow_redirects=True,
+        timeout=30.0,
         headers={
             "User-Agent": "reframe-api-download-proxy",
             "Accept": "*/*",
         },
     )
     try:
-        upstream = urllib.request.urlopen(request, timeout=30)
+        upstream = client.stream("GET", safe_url)
+        upstream.__enter__()
+        upstream.raise_for_status()
     except Exception as exc:  # pragma: no cover - upstream network surface
+        client.close()
         raise server_error("Remote download failed", details={"url": safe_url, "reason": str(exc)}) from exc
 
     def _iterator():
         try:
-            while True:
-                chunk = upstream.read(64 * 1024)
+            for chunk in upstream.iter_bytes(chunk_size=64 * 1024):
                 if not chunk:
-                    break
+                    continue
                 yield chunk
         finally:
             upstream.close()
+            client.close()
 
-    response_media_type = mime_type or upstream.headers.get_content_type() or "application/octet-stream"
+    response_media_type = mime_type or upstream.headers.get("content-type", "").split(";")[0] or "application/octet-stream"
     quoted = urllib.parse.quote(filename or "download")
     headers = {"Content-Disposition": f'attachment; filename="{filename or "download"}"; filename*=UTF-8\'\'{quoted}'}
     return StreamingResponse(_iterator(), media_type=response_media_type, headers=headers)
@@ -1827,9 +1840,7 @@ def download_shared_asset(asset_id: UUID, token: str, session: SessionDep):
         return _stream_remote_download(url=remote_url, filename=Path(asset.uri).name or "asset.bin", mime_type=asset.mime_type)
 
     file_path = _safe_local_asset_path(media_root=settings.media_root, uri=asset.uri or "")
-    if not file_path.exists():
-        raise not_found("Asset file missing", details={"asset_id": str(asset_id), "path": str(file_path)})
-    return FileResponse(path=str(file_path), media_type=asset.mime_type or "application/octet-stream", filename=file_path.name)
+    return _stream_local_file(file_path=file_path, mime_type=asset.mime_type)
 
 
 @router.post(
@@ -2981,7 +2992,7 @@ def get_asset_download_url(asset_id: UUID, session: SessionDep, principal: Princ
     tags=["Assets"],
     responses={404: {"model": ErrorResponse}},
 )
-def download_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep) -> FileResponse:
+def download_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep) -> StreamingResponse:
     asset = session.get(MediaAsset, asset_id)
     if not asset:
         raise not_found("Asset not found", details={"asset_id": str(asset_id)})
@@ -2995,9 +3006,7 @@ def download_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep)
         return _stream_remote_download(url=remote_url, filename=Path(asset.uri).name or "asset.bin", mime_type=asset.mime_type)
 
     file_path = _safe_local_asset_path(media_root=settings.media_root, uri=asset.uri or "")
-    if not file_path.exists():
-        raise not_found("Asset file missing", details={"asset_id": str(asset_id), "path": str(file_path)})
-    return FileResponse(path=str(file_path), media_type=asset.mime_type or "application/octet-stream", filename=file_path.name)
+    return _stream_local_file(file_path=file_path, mime_type=asset.mime_type)
 
 
 @router.get("/presets/styles", response_model=List[SubtitleStylePreset], tags=["Presets"])
