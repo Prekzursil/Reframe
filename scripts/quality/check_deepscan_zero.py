@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import sys
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,41 +19,26 @@ if str(_HELPER_ROOT) not in sys.path:
 
 from security_helpers import normalize_https_url
 
-TOTAL_KEYS = {"total", "totalItems", "total_items", "count", "hits", "open_issues"}
+GITHUB_API_BASE = "https://api.github.com"
+NEW_ISSUES_RE = re.compile(r"(\d+)\s+new", re.IGNORECASE)
+FIXED_ISSUES_RE = re.compile(r"(\d+)\s+fixed", re.IGNORECASE)
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Assert DeepScan has zero total open issues.")
-    parser.add_argument("--token", default="", help="DeepScan API token (falls back to DEEPSCAN_API_TOKEN env)")
+    parser = argparse.ArgumentParser(description="Assert DeepScan check reports zero new issues.")
     parser.add_argument("--out-json", default="deepscan-zero/deepscan.json", help="Output JSON path")
     parser.add_argument("--out-md", default="deepscan-zero/deepscan.md", help="Output markdown path")
     return parser.parse_args()
 
 
-def extract_total_open(payload: Any) -> int | None:
-    if isinstance(payload, dict):
-        for key, value in payload.items():
-            if key in TOTAL_KEYS and isinstance(value, (int, float)):
-                return int(value)
-        for nested in payload.values():
-            total = extract_total_open(nested)
-            if total is not None:
-                return total
-    elif isinstance(payload, list):
-        for nested in payload:
-            total = extract_total_open(nested)
-            if total is not None:
-                return total
-    return None
-
-
 def _request_json(url: str, token: str) -> dict[str, Any]:
-    safe_url = normalize_https_url(url, allowed_host_suffixes={"deepscan.io"})
+    safe_url = normalize_https_url(url, allowed_hosts={"api.github.com"}).rstrip("/")
     req = urllib.request.Request(
         safe_url,
         headers={
-            "Accept": "application/json",
+            "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
             "User-Agent": "reframe-deepscan-zero-gate",
         },
         method="GET",
@@ -64,8 +52,12 @@ def _render_md(payload: dict) -> str:
         "# DeepScan Zero Gate",
         "",
         f"- Status: `{payload['status']}`",
-        f"- Open issues: `{payload.get('open_issues')}`",
-        f"- Source URL: `{payload.get('open_issues_url') or 'n/a'}`",
+        f"- Repo: `{payload.get('repo') or 'n/a'}`",
+        f"- SHA: `{payload.get('sha') or 'n/a'}`",
+        f"- Check conclusion: `{payload.get('check_conclusion') or 'n/a'}`",
+        f"- New issues: `{payload.get('new_issues')}`",
+        f"- Fixed issues: `{payload.get('fixed_issues')}`",
+        f"- Details URL: `{payload.get('details_url') or 'n/a'}`",
         f"- Timestamp (UTC): `{payload['timestamp_utc']}`",
         "",
         "## Findings",
@@ -76,6 +68,14 @@ def _render_md(payload: dict) -> str:
     else:
         lines.append("- None")
     return "\n".join(lines) + "\n"
+
+
+def extract_new_fixed_counts(summary: str) -> tuple[int | None, int | None]:
+    new_match = NEW_ISSUES_RE.search(summary or "")
+    fixed_match = FIXED_ISSUES_RE.search(summary or "")
+    new_issues = int(new_match.group(1)) if new_match else None
+    fixed_issues = int(fixed_match.group(1)) if fixed_match else None
+    return new_issues, fixed_issues
 
 
 def _safe_output_path(raw: str, fallback: str, base: Path | None = None) -> Path:
@@ -92,46 +92,76 @@ def _safe_output_path(raw: str, fallback: str, base: Path | None = None) -> Path
 
 
 def main() -> int:
-    import os
-
     args = _parse_args()
-    token = (args.token or os.environ.get("DEEPSCAN_API_TOKEN", "")).strip()
-    open_issues_url = os.environ.get("DEEPSCAN_OPEN_ISSUES_URL", "").strip()
+
+    token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
+    repo_slug = (os.environ.get("GITHUB_REPOSITORY") or "").strip()
+    sha = (os.environ.get("GITHUB_SHA") or "").strip()
 
     findings: list[str] = []
-    open_issues: int | None = None
+    check_conclusion: str | None = None
+    details_url: str | None = None
+    new_issues: int | None = None
+    fixed_issues: int | None = None
 
     if not token:
-        findings.append("DEEPSCAN_API_TOKEN is missing.")
-    if not open_issues_url:
-        findings.append("DEEPSCAN_OPEN_ISSUES_URL is missing.")
-    else:
-        try:
-            open_issues_url = normalize_https_url(
-                open_issues_url,
-                allowed_host_suffixes={"deepscan.io"},
-            )
-        except ValueError as exc:
-            findings.append(str(exc))
+        findings.append("GITHUB_TOKEN (or GH_TOKEN) is missing.")
+    if not repo_slug or "/" not in repo_slug:
+        findings.append("GITHUB_REPOSITORY is missing or invalid.")
+    if not sha:
+        findings.append("GITHUB_SHA is missing.")
 
     status = "fail"
     if not findings:
+        owner_raw, repo_raw = repo_slug.split("/", 1)
+        owner = urllib.parse.quote(owner_raw, safe="")
+        repo = urllib.parse.quote(repo_raw, safe="")
+        sha_safe = urllib.parse.quote(sha, safe="")
+        api_base = normalize_https_url(GITHUB_API_BASE, allowed_hosts={"api.github.com"}).rstrip("/")
+
         try:
-            payload = _request_json(open_issues_url, token)
-            open_issues = extract_total_open(payload)
-            if open_issues is None:
-                findings.append("DeepScan response did not include a parseable total issue count.")
-            elif open_issues != 0:
-                findings.append(f"DeepScan reports {open_issues} open issues (expected 0).")
+            payload = _request_json(f"{api_base}/repos/{owner}/{repo}/commits/{sha_safe}/check-runs", token)
+            runs = payload.get("check_runs")
+            if not isinstance(runs, list):
+                findings.append("GitHub check-runs payload is missing check_runs list.")
+            else:
+                deep_runs = [item for item in runs if isinstance(item, dict) and str(item.get("name") or "") == "DeepScan"]
+                deep_runs.sort(
+                    key=lambda item: (
+                        str(item.get("completed_at") or ""),
+                        str(item.get("started_at") or ""),
+                        int(item.get("id") or 0),
+                    ),
+                    reverse=True,
+                )
+                latest = deep_runs[0] if deep_runs else None
+                if latest is None:
+                    findings.append("DeepScan check context is missing for this commit.")
+                else:
+                    check_conclusion = str(latest.get("conclusion") or "")
+                    details_url = str(latest.get("details_url") or "") or None
+                    if check_conclusion != "success":
+                        findings.append(f"DeepScan check conclusion is {check_conclusion or 'unknown'} (expected success).")
+                    output = latest.get("output") if isinstance(latest.get("output"), dict) else {}
+                    summary = str(output.get("summary") or "")
+                    new_issues, fixed_issues = extract_new_fixed_counts(summary)
+                    if new_issues is None:
+                        findings.append("DeepScan summary did not include a parseable 'new issues' count.")
+                    elif new_issues != 0:
+                        findings.append(f"DeepScan reports {new_issues} new issues (expected 0).")
             status = "pass" if not findings else "fail"
         except Exception as exc:  # pragma: no cover - network/runtime surface
-            findings.append(f"DeepScan API request failed: {exc}")
+            findings.append(f"GitHub API request failed: {exc}")
             status = "fail"
 
     payload = {
         "status": status,
-        "open_issues": open_issues,
-        "open_issues_url": open_issues_url,
+        "repo": repo_slug,
+        "sha": sha,
+        "check_conclusion": check_conclusion,
+        "details_url": details_url,
+        "new_issues": new_issues,
+        "fixed_issues": fixed_issues,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "findings": findings,
     }

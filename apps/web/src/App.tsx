@@ -1666,6 +1666,19 @@ function StyleEditor({
     if (!uri) return null;
     return toSafeMediaUrl(apiClient.mediaUrl(uri));
   };
+  const triggerSafeDownload = (safeUrl: string | null, filename?: string) => {
+    if (!safeUrl) return;
+    const anchor = document.createElement("a");
+    anchor.href = safeUrl;
+    anchor.rel = "noreferrer";
+    anchor.target = "_blank";
+    if (filename) {
+      anchor.download = filename;
+    }
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+  };
   const outputAssetUrl = toSafeMediaHref(outputAsset?.uri);
   const subtitlePreviewUrl = toSafeMediaUrl(subtitlePreview);
   const safeUploadedPreview = toSafeMediaUrl(uploadedPreview);
@@ -3294,9 +3307,13 @@ function StyleEditor({
 	                {(shortsOutput?.uri || shortsClips.length > 0) && (
 	                  <div className="actions-row">
 		                    {toSafeMediaHref(shortsOutput?.uri) && (
-		                      <a className="btn btn-primary" href={toSafeMediaHref(shortsOutput?.uri)!} download>
+		                      <Button
+                              type="button"
+                              variant="secondary"
+                              onClick={() => triggerSafeDownload(toSafeMediaHref(shortsOutput?.uri), "shorts_manifest.json")}
+                            >
 		                        Download manifest
-		                      </a>
+		                      </Button>
 		                    )}
                       {shortsClips.length > 0 && (
                         <>
@@ -3401,11 +3418,20 @@ function StyleEditor({
                 </div>
               )}
 		            <div className="clip-grid">
-		              {shortsClips.map((clip, idx) => (
-		                <div key={clip.id} className="clip-card">
-			                  <div className="clip-thumb">
-		                    {toSafeMediaUrl(clip.thumbnail_uri) ? <img src={toSafeMediaUrl(clip.thumbnail_uri)!} alt="Clip thumbnail" /> : <div className="placeholder-thumb" />}
-		                  </div>
+			              {shortsClips.map((clip, idx) => (
+			                <div key={clip.id} className="clip-card">
+				                  <div className="clip-thumb">
+			                    {toSafeMediaUrl(clip.thumbnail_uri) ? (
+                              <div
+                                className="placeholder-thumb"
+                                role="img"
+                                aria-label="Clip thumbnail"
+                                style={{ backgroundImage: `url(${toSafeMediaUrl(clip.thumbnail_uri)})`, backgroundSize: "cover", backgroundPosition: "center" }}
+                              />
+                            ) : (
+                              <div className="placeholder-thumb" />
+                            )}
+			                  </div>
 	                  <p className="metric-value">{clip.duration ? `${clip.duration}s` : "?"}</p>
 	                  <p className="muted">Score: {clip.score ?? "?"}</p>
 		                  {clip.start != null && clip.end != null && (
@@ -3437,27 +3463,31 @@ function StyleEditor({
                         return (
                           <div className="actions-row">
                             {clipVideoUrl ? (
-                              <a className="btn btn-secondary" href={clipVideoUrl} target="_blank" rel="noreferrer">
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() => triggerSafeDownload(clipVideoUrl)}
+                              >
                                 {clip.styled_uri ? "Download raw" : "Download video"}
-                              </a>
+                              </Button>
                             ) : (
                               <Button variant="secondary" disabled>
                                 Video not ready
                               </Button>
                             )}
                             {clipStyledUrl ? (
-                              <a className="btn btn-ghost" href={clipStyledUrl} target="_blank" rel="noreferrer">
+                              <Button type="button" variant="ghost" onClick={() => triggerSafeDownload(clipStyledUrl)}>
                                 Download styled
-                              </a>
+                              </Button>
                             ) : (
                               <Button variant="ghost" disabled>
                                 No styled render
                               </Button>
                             )}
                             {clipSubtitleUrl ? (
-                              <a className="btn btn-ghost" href={clipSubtitleUrl} target="_blank" rel="noreferrer">
+                              <Button type="button" variant="ghost" onClick={() => triggerSafeDownload(clipSubtitleUrl)}>
                                 Download subs
-                              </a>
+                              </Button>
                             ) : (
                               <Button variant="ghost" disabled>
                                 Subs not ready
@@ -4047,9 +4077,13 @@ function StyleEditor({
 		                      Copy job JSON
 		                    </Button>
 			                    {toSafeExternalUrl(apiClient.jobBundleUrl(selectedJob.id)) && (
-			                      <a className="btn btn-secondary" href={toSafeExternalUrl(apiClient.jobBundleUrl(selectedJob.id))!}>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              onClick={() => triggerSafeDownload(toSafeExternalUrl(apiClient.jobBundleUrl(selectedJob.id)))}
+                            >
 			                        Download bundle
-			                      </a>
+			                      </Button>
 			                    )}
                     {toSafeMediaHref(outputAsset?.uri) && (
                       <a className="btn btn-secondary" href={toSafeMediaHref(outputAsset?.uri)!} target="_blank" rel="noreferrer">

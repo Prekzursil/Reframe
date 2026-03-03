@@ -36,6 +36,23 @@ jobs:
             exit 1
           fi
 
+      - name: Preflight Applitools key
+        run: |
+          set -euo pipefail
+          status="$(curl -sS -o /tmp/applitools-renderinfo.json -w '%{http_code}' \
+            -H "X-Api-Key: ${APPLITOOLS_API_KEY}" \
+            "https://eyesapi.applitools.com/api/sessions/renderinfo")"
+          if [ "${status}" = "403" ]; then
+            echo "APPLITOOLS_API_KEY is invalid or unauthorized (HTTP 403)." >&2
+            cat /tmp/applitools-renderinfo.json >&2 || true
+            exit 1
+          fi
+          if [ "${status}" -lt "200" ] || [ "${status}" -ge "300" ]; then
+            echo "Applitools preflight failed with HTTP ${status}." >&2
+            cat /tmp/applitools-renderinfo.json >&2 || true
+            exit 1
+          fi
+
       - name: Install dependencies
         run: |
           cd apps/web

@@ -6,21 +6,22 @@
 - Merge state: `BLOCKED`
 
 ## Failing or non-success contexts at capture time
-- `Applitools Visual`: `FAILURE` (https://github.com/Prekzursil/Reframe/actions/runs/22611491423/job/65514719940)
-- `BrowserStack E2E`: `FAILURE` (https://github.com/Prekzursil/Reframe/actions/runs/22611491411/job/65514719805)
-- `Codacy Zero`: `FAILURE` (https://github.com/Prekzursil/Reframe/actions/runs/22611491426/job/65514719874)
-- `Coverage 100 Gate`: `FAILURE` (https://github.com/Prekzursil/Reframe/actions/runs/22611491429/job/65514719905)
-- `DeepScan Zero`: `FAILURE` (https://github.com/Prekzursil/Reframe/actions/runs/22611491405/job/65514719966)
-- `Percy Visual`: `FAILURE` (https://github.com/Prekzursil/Reframe/actions/runs/22611491427/job/65514719873)
-- `Sentry Zero`: `FAILURE` (https://github.com/Prekzursil/Reframe/actions/runs/22611491431/job/65514719895)
-- `Snyk Zero`: `FAILURE` (https://github.com/Prekzursil/Reframe/actions/runs/22611491404/job/65514719894)
-- `Sonar Zero`: `FAILURE` (https://github.com/Prekzursil/Reframe/actions/runs/22611491417/job/65514719820)
-- `Quality Zero Gate`: `FAILURE` (https://github.com/Prekzursil/Reframe/actions/runs/22611491433/job/65516387295)
-- `Pyannote GPU benchmark`: `SKIPPED` (https://github.com/Prekzursil/Reframe/actions/runs/22611491434/job/65514719991)
-- `Codacy Static Code Analysis`: `ACTION_REQUIRED` (https://app.codacy.com/gh/Prekzursil/Reframe/pull-requests/104)
-- `percy/Reframe-eaab9257`: `ERROR` (https://percy.io/607b6c4a/web/Reframe-eaab9257/builds/47382023?utm_campaign=607b6c4a&utm_content=Reframe-eaab9257&utm_source=github_status_private)
-- `SonarCloud Code Analysis`: `FAILURE` (https://sonarcloud.io)
-- `codecov/patch`: `FAILURE` (https://app.codecov.io/gh/Prekzursil/Reframe/pull/104)
+
+- `Applitools Visual`: `FAILURE` ([run](https://github.com/Prekzursil/Reframe/actions/runs/22611491423/job/65514719940))
+- `BrowserStack E2E`: `FAILURE` ([run](https://github.com/Prekzursil/Reframe/actions/runs/22611491411/job/65514719805))
+- `Codacy Zero`: `FAILURE` ([run](https://github.com/Prekzursil/Reframe/actions/runs/22611491426/job/65514719874))
+- `Coverage 100 Gate`: `FAILURE` ([run](https://github.com/Prekzursil/Reframe/actions/runs/22611491429/job/65514719905))
+- `DeepScan Zero`: `FAILURE` ([run](https://github.com/Prekzursil/Reframe/actions/runs/22611491405/job/65514719966))
+- `Percy Visual`: `FAILURE` ([run](https://github.com/Prekzursil/Reframe/actions/runs/22611491427/job/65514719873))
+- `Sentry Zero`: `FAILURE` ([run](https://github.com/Prekzursil/Reframe/actions/runs/22611491431/job/65514719895))
+- `Snyk Zero`: `FAILURE` ([run](https://github.com/Prekzursil/Reframe/actions/runs/22611491404/job/65514719894))
+- `Sonar Zero`: `FAILURE` ([run](https://github.com/Prekzursil/Reframe/actions/runs/22611491417/job/65514719820))
+- `Quality Zero Gate`: `FAILURE` ([run](https://github.com/Prekzursil/Reframe/actions/runs/22611491433/job/65516387295))
+- `Pyannote GPU benchmark`: `SKIPPED` ([run](https://github.com/Prekzursil/Reframe/actions/runs/22611491434/job/65514719991))
+- `Codacy Static Code Analysis`: `ACTION_REQUIRED` ([report](https://app.codacy.com/gh/Prekzursil/Reframe/pull-requests/104))
+- `percy/Reframe-eaab9257`: `ERROR` ([build](https://percy.io/607b6c4a/web/Reframe-eaab9257/builds/47382023?utm_campaign=607b6c4a&utm_content=Reframe-eaab9257&utm_source=github_status_private))
+- `SonarCloud Code Analysis`: `FAILURE` ([dashboard](https://sonarcloud.io))
+- `codecov/patch`: `FAILURE` ([report](https://app.codecov.io/gh/Prekzursil/Reframe/pull/104))
 
 ## Recent run IDs on PR branch
 - `22611491437` `Desktop Updater E2E` `completed/success` sha `af601684f0f9` https://github.com/Prekzursil/Reframe/actions/runs/22611491437

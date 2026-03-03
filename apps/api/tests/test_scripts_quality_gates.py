@@ -75,13 +75,13 @@ def test_codacy_extract_total_open_from_nested_payload():
     _expect(total == 7, "Expected nested pagination.total to be extracted")
 
 
-def test_deepscan_extract_total_open_from_nested_payload():
+def test_deepscan_extract_new_and_fixed_counts():
     module = _load_module("check_deepscan_zero")
 
-    payload = {"result": {"summary": {"open_issues": 3}}}
-    total = module.extract_total_open(payload)
+    new_issues, fixed_issues = module.extract_new_fixed_counts("0 new and 7 fixed issues")
 
-    _expect(total == 3, "Expected open_issues value to be extracted")
+    _expect(new_issues == 0, "Expected new issues count to be parsed")
+    _expect(fixed_issues == 7, "Expected fixed issues count to be parsed")
 
 
 def test_required_context_evaluate_flags_missing_and_failed():

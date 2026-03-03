@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 import sys
 import urllib.parse
 import urllib.request
@@ -95,17 +96,24 @@ def _run_percy(args: argparse.Namespace) -> tuple[str, dict[str, Any], list[str]
         findings.append("Commit SHA is missing for Percy lookup.")
         return "fail", details, findings
 
-    payload = _percy_request(
-        "/builds",
-        token,
-        query={
-            "filter[sha]": sha,
-            "filter[state]": "finished",
-            "filter[branch]": branch,
-            "page[limit]": "25",
-        },
-    )
-    build = _select_latest_build(payload)
+    build: dict[str, Any] | None = None
+    poll_deadline = time.monotonic() + 300
+    while time.monotonic() < poll_deadline:
+        payload = _percy_request(
+            "/builds",
+            token,
+            query={
+                "filter[sha]": sha,
+                "filter[state]": "finished",
+                "filter[branch]": branch,
+                "page[limit]": "25",
+            },
+        )
+        build = _select_latest_build(payload)
+        if build is not None:
+            break
+        time.sleep(5)
+
     if not build:
         findings.append("Percy returned no finished build for the target SHA/branch.")
         return "fail", details, findings

@@ -70,6 +70,9 @@ jobs:
           exit 1
 
       - name: Run Percy snapshots
+        env:
+          PERCY_GIT_COMMIT: ${{ steps.sha.outputs.check_sha }}
+          PERCY_GIT_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           cd apps/web
           npx percy exec -- npm run e2e -- e2e/percy-core-routes.spec.ts --project=chromium --workers=1

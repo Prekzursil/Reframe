@@ -10,7 +10,8 @@ def _load_security_helpers_module():
     repo_root = Path(__file__).resolve().parents[3]
     module_path = repo_root / "scripts" / "security_helpers.py"
     spec = spec_from_file_location("security_helpers", module_path)
-    assert spec and spec.loader
+    if spec is None or spec.loader is None:
+        raise AssertionError(f"Unable to load module spec from {module_path}")
     module = module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -33,7 +34,8 @@ def test_normalize_https_url_accepts_allowed_host_and_keeps_query():
         "https://huggingface.co/ggerganov/whisper.cpp/resolve/main?x=1#frag",
         allowed_hosts={"huggingface.co"},
     )
-    assert normalized == "https://huggingface.co/ggerganov/whisper.cpp/resolve/main?x=1"
+    if normalized != "https://huggingface.co/ggerganov/whisper.cpp/resolve/main?x=1":
+        raise AssertionError(f"Unexpected normalized URL: {normalized}")
 
 
 def test_normalize_https_url_supports_host_suffix_allowlist_and_optional_query_strip():
@@ -44,4 +46,5 @@ def test_normalize_https_url_supports_host_suffix_allowlist_and_optional_query_s
         allowed_host_suffixes={"sentry.io"},
         strip_query=True,
     )
-    assert normalized == "https://api.sentry.io/api/0/projects"
+    if normalized != "https://api.sentry.io/api/0/projects":
+        raise AssertionError(f"Unexpected normalized URL: {normalized}")

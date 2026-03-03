@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import sys
 import urllib.parse
 import urllib.request
@@ -18,18 +20,11 @@ if str(_HELPER_ROOT) not in sys.path:
 from security_helpers import normalize_https_url
 
 SENTRY_API_BASE = "https://sentry.io/api/0"
+SENTRY_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Assert Sentry has zero unresolved issues for configured projects.")
-    parser.add_argument("--org", default="", help="Sentry org slug (falls back to SENTRY_ORG env)")
-    parser.add_argument(
-        "--project",
-        action="append",
-        default=[],
-        help="Project slug (repeatable, falls back to SENTRY_PROJECT_BACKEND/SENTRY_PROJECT_WEB env)",
-    )
-    parser.add_argument("--token", default="", help="Sentry auth token (falls back to SENTRY_AUTH_TOKEN env)")
     parser.add_argument("--out-json", default="sentry-zero/sentry.json", help="Output JSON path")
     parser.add_argument("--out-md", default="sentry-zero/sentry.md", help="Output markdown path")
     return parser.parse_args()
@@ -105,19 +100,17 @@ def _safe_output_path(raw: str, fallback: str, base: Path | None = None) -> Path
 
 
 def main() -> int:
-    import os
-
     args = _parse_args()
-    token = (args.token or os.environ.get("SENTRY_AUTH_TOKEN", "")).strip()
-    org = (args.org or os.environ.get("SENTRY_ORG", "")).strip()
+    token = os.environ.get("SENTRY_AUTH_TOKEN", "").strip()
+    org = os.environ.get("SENTRY_ORG", "").strip()
     api_base = normalize_https_url(SENTRY_API_BASE, allowed_hosts={"sentry.io"}).rstrip("/")
 
-    projects = [p for p in args.project if p]
-    if not projects:
-        for env_name in ("SENTRY_PROJECT_BACKEND", "SENTRY_PROJECT_WEB"):
-            value = str(os.environ.get(env_name, "")).strip()
-            if value:
-                projects.append(value)
+    projects: list[str] = []
+    for env_name in ("SENTRY_PROJECT_BACKEND", "SENTRY_PROJECT_WEB"):
+        value = str(os.environ.get(env_name, "")).strip()
+        if value:
+            projects.append(value)
+    projects = list(dict.fromkeys(projects))
 
     findings: list[str] = []
     project_results: list[dict[str, Any]] = []
@@ -126,8 +119,14 @@ def main() -> int:
         findings.append("SENTRY_AUTH_TOKEN is missing.")
     if not org:
         findings.append("SENTRY_ORG is missing.")
+    elif not SENTRY_SLUG_RE.fullmatch(org):
+        findings.append("SENTRY_ORG is not a valid slug.")
     if not projects:
         findings.append("No Sentry projects configured (SENTRY_PROJECT_BACKEND/SENTRY_PROJECT_WEB).")
+    else:
+        bad_projects = [project for project in projects if not SENTRY_SLUG_RE.fullmatch(project)]
+        if bad_projects:
+            findings.append(f"Invalid Sentry project slug(s): {', '.join(bad_projects)}")
 
     status = "fail"
     if not findings:

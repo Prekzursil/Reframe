@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +18,7 @@ if str(_SCRIPT_DIR) not in sys.path:
 from security_helpers import normalize_https_url
 
 GITHUB_API_BASE = "https://api.github.com"
+REPO_PART_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def _request_json(url: str, token: str, method: str = "GET", body: dict[str, Any] | None = None) -> Any:
@@ -105,7 +107,11 @@ def main() -> int:
     if not token:
         raise SystemExit("GITHUB_TOKEN or GH_TOKEN is required")
 
+    if "/" not in args.repo:
+        raise SystemExit("Invalid --repo value, expected owner/repo")
     owner, repo = args.repo.split("/", 1)
+    if not REPO_PART_RE.fullmatch(owner) or not REPO_PART_RE.fullmatch(repo):
+        raise SystemExit("Invalid owner/repo slug in --repo")
     api = normalize_https_url(GITHUB_API_BASE, allowed_hosts={"api.github.com"}, strip_query=True).rstrip("/")
 
     try:

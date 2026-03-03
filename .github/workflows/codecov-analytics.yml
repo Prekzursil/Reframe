@@ -81,7 +81,7 @@ jobs:
             --coverage.thresholds.statements=0
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage/python-coverage.xml,apps/web/coverage/lcov.info,apps/desktop/coverage/lcov.info
