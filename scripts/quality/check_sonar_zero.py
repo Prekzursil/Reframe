@@ -39,6 +39,11 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Require Sonar quality gate status to be OK in addition to open issues == 0",
     )
+    parser.add_argument(
+        "--ignore-open-issues",
+        action="store_true",
+        help="Skip open-issue enforcement and evaluate quality gate only.",
+    )
     parser.add_argument("--out-json", default="sonar-zero/sonar.json", help="Output JSON path")
     parser.add_argument("--out-md", default="sonar-zero/sonar.md", help="Output markdown path")
     return parser.parse_args()
@@ -97,6 +102,21 @@ def _query_sonar_status(
     project_status = (gate_payload.get("projectStatus") or {})
     quality_gate = str(project_status.get("status") or "UNKNOWN")
     return open_issues, quality_gate
+
+
+def evaluate_status(
+    *,
+    open_issues: int,
+    quality_gate: str,
+    require_quality_gate: bool,
+    ignore_open_issues: bool,
+) -> list[str]:
+    findings: list[str] = []
+    if not ignore_open_issues and open_issues != 0:
+        findings.append(f"Sonar reports {open_issues} open issues (expected 0).")
+    if require_quality_gate and quality_gate != "OK":
+        findings.append(f"Sonar quality gate status is {quality_gate} (expected OK).")
+    return findings
 
 
 def _render_md(payload: dict) -> str:
@@ -165,6 +185,7 @@ def main() -> int:
                 branch=args.branch,
                 pull_request=args.pull_request,
             )
+            quality_gate = quality_gate or "UNKNOWN"
 
             if args.pull_request and open_issues != 0 and args.wait_seconds > 0:
                 deadline = time.time() + max(0, args.wait_seconds)
@@ -177,11 +198,16 @@ def main() -> int:
                         branch=args.branch,
                         pull_request=args.pull_request,
                     )
+                    quality_gate = quality_gate or "UNKNOWN"
 
-            if open_issues != 0:
-                findings.append(f"Sonar reports {open_issues} open issues (expected 0).")
-            if args.require_quality_gate and quality_gate != "OK":
-                findings.append(f"Sonar quality gate status is {quality_gate} (expected OK).")
+            findings.extend(
+                evaluate_status(
+                    open_issues=open_issues,
+                    quality_gate=quality_gate,
+                    require_quality_gate=args.require_quality_gate,
+                    ignore_open_issues=args.ignore_open_issues,
+                )
+            )
 
             status = "pass" if not findings else "fail"
         except Exception as exc:  # pragma: no cover - network/runtime surface
@@ -196,6 +222,7 @@ def main() -> int:
         "pull_request": args.pull_request or None,
         "open_issues": open_issues,
         "quality_gate": quality_gate,
+        "ignore_open_issues": bool(args.ignore_open_issues),
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "findings": findings,
     }

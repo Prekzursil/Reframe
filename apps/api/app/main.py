@@ -1,6 +1,7 @@
 import logging
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI
@@ -53,6 +54,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title=settings.api_title, version=settings.api_version, openapi_tags=tags_metadata, lifespan=lifespan)
 
+    Path(settings.media_root).mkdir(parents=True, exist_ok=True)
     app.mount("/media", StaticFiles(directory=settings.media_root), name="media")
 
     @app.middleware("http")

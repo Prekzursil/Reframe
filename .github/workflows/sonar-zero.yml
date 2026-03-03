@@ -69,12 +69,12 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          EXTRA_ARGS=()
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            EXTRA_ARGS+=(--pull-request "${{ github.event.pull_request.number }}")
+            EXTRA_ARGS=(--pull-request "${{ github.event.pull_request.number }}" --require-quality-gate)
           else
-            EXTRA_ARGS+=(--branch "${GITHUB_REF_NAME}")
+            EXTRA_ARGS=(--branch "${GITHUB_REF_NAME}" --require-quality-gate --ignore-open-issues)
           fi
+
           python3 scripts/quality/check_sonar_zero.py \
             --project-key "Prekzursil_Reframe" \
             "${EXTRA_ARGS[@]}" \

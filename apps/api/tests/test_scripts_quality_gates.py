@@ -111,3 +111,29 @@ def test_sentry_hits_from_headers_parses_integer():
 
     hits = module._hits_from_headers({"x-hits": "11"})
     _expect(hits == 11, "Expected x-hits header value to be parsed")
+
+
+def test_sonar_evaluate_status_ignores_open_issues_when_flag_set():
+    module = _load_module("check_sonar_zero")
+
+    findings = module.evaluate_status(
+        open_issues=12,
+        quality_gate="OK",
+        require_quality_gate=True,
+        ignore_open_issues=True,
+    )
+
+    _expect(findings == [], "Expected no findings when open issues are intentionally ignored")
+
+
+def test_sonar_evaluate_status_still_enforces_quality_gate():
+    module = _load_module("check_sonar_zero")
+
+    findings = module.evaluate_status(
+        open_issues=12,
+        quality_gate="ERROR",
+        require_quality_gate=True,
+        ignore_open_issues=True,
+    )
+
+    _expect(any("quality gate" in item for item in findings), "Expected quality gate finding")
