@@ -183,8 +183,9 @@ def parse_args() -> argparse.Namespace:
 
 def _safe_workspace_path(raw: str, *, base: Path) -> Path:
     candidate = Path((raw or "").strip()).expanduser()
-    if not candidate.is_absolute():
-        candidate = base / candidate
+    if candidate.is_absolute():
+        return candidate.resolve(strict=False)
+    candidate = base / candidate
     resolved = candidate.resolve(strict=False)
     try:
         resolved.relative_to(base.resolve())
