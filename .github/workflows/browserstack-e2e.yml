@@ -41,6 +41,9 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
 
+      - name: Prepare env file
+        run: cp .env.example .env
+
       - name: Start local stack
         run: docker compose -f infra/docker-compose.yml up -d --build
 
@@ -63,8 +66,8 @@ jobs:
 
       - name: Logs on failure
         if: failure()
-        run: docker compose -f infra/docker-compose.yml logs --no-color --tail=200
+        run: docker compose -f infra/docker-compose.yml logs --no-color --tail=200 || true
 
       - name: Teardown
         if: always()
-        run: docker compose -f infra/docker-compose.yml down -v
+        run: docker compose -f infra/docker-compose.yml down -v || true

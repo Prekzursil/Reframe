@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -25,15 +26,21 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _request_json(url: str, token: str) -> dict[str, Any]:
+def _request_json(url: str, token: str, *, method: str = "GET", data: dict[str, Any] | None = None) -> dict[str, Any]:
+    body = None
+    headers = {
+        "Accept": "application/json",
+        "api-token": token,
+        "User-Agent": "reframe-codacy-zero-gate",
+    }
+    if data is not None:
+        body = json.dumps(data).encode("utf-8")
+        headers["Content-Type"] = "application/json"
     req = urllib.request.Request(
         url,
-        headers={
-            "Accept": "application/json",
-            "api-token": token,
-            "User-Agent": "reframe-codacy-zero-gate",
-        },
-        method="GET",
+        headers=headers,
+        method=method,
+        data=body,
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read().decode("utf-8"))
@@ -98,21 +105,43 @@ def main() -> int:
         findings.append("CODACY_API_TOKEN is missing.")
         status = "fail"
     else:
-        query = urllib.parse.urlencode({"status": "Open", "limit": "1"})
-        url = (
-            f"{args.api_base.rstrip('/')}/api/v3/analysis/organizations/{args.provider}/"
-            f"{args.owner}/repositories/{args.repo}/issues?{query}"
-        )
-        try:
-            payload = _request_json(url, token)
-            open_issues = extract_total_open(payload)
-            if open_issues is None:
-                findings.append("Codacy response did not include a parseable total issue count.")
-            elif open_issues != 0:
-                findings.append(f"Codacy reports {open_issues} open issues (expected 0).")
-            status = "pass" if not findings else "fail"
-        except Exception as exc:  # pragma: no cover - network/runtime surface
-            findings.append(f"Codacy API request failed: {exc}")
+        query = urllib.parse.urlencode({"limit": "1"})
+        provider_candidates = [args.provider, "gh", "github"]
+        provider_candidates = list(dict.fromkeys(p for p in provider_candidates if p))
+
+        last_exc: Exception | None = None
+        for provider in provider_candidates:
+            url = (
+                f"{args.api_base.rstrip('/')}/api/v3/analysis/organizations/{provider}/"
+                f"{args.owner}/repositories/{args.repo}/issues/search?{query}"
+            )
+            try:
+                payload = _request_json(url, token, method="POST", data={})
+                open_issues = extract_total_open(payload)
+                if open_issues is None:
+                    findings.append("Codacy response did not include a parseable total issue count.")
+                elif open_issues != 0:
+                    findings.append(f"Codacy reports {open_issues} open issues (expected 0).")
+                status = "pass" if not findings else "fail"
+                break
+            except urllib.error.HTTPError as exc:
+                last_exc = exc
+                if exc.code == 404:
+                    continue
+                findings.append(f"Codacy API request failed: HTTP {exc.code}")
+                status = "fail"
+                break
+            except Exception as exc:  # pragma: no cover - network/runtime surface
+                last_exc = exc
+                findings.append(f"Codacy API request failed: {exc}")
+                status = "fail"
+                break
+        else:
+            findings.append(
+                f"Codacy API endpoint was not found for provider(s): {', '.join(provider_candidates)}."
+            )
+            if last_exc is not None:
+                findings.append(f"Last Codacy API error: {last_exc}")
             status = "fail"
 
     payload = {
