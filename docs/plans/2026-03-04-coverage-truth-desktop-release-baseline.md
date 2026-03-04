@@ -1,37 +1,36 @@
-# 2026-03-04 Coverage Truth + Desktop Release Baseline
+# Coverage Truth + Desktop Product Baseline (2026-03-04)
 
-- captured_at_utc: 2026-03-04T06:02:10.4850475Z
-- branch: feat/coverage-truth-desktop-product-2026-03-04
-- head_sha: 4f7349caf2966f25902a72e8384cdd43a9b2a65e
-- pr: https://github.com/Prekzursil/Reframe/pull/107
+## Branch
+- branch: `feat/coverage-truth-desktop-product-2026-03-04`
+- head: `d8e1556`
+- base main: `8db2a7c`
 
-## Coverage baseline (strict script output)
+## Coverage truth baseline
+Source: `coverage-100/coverage.local.wave3.json`
 
-- source report: docs/plans/2026-03-04-coverage-truth-baseline.md
-- python: 63.92% (6627/10367)
-- web: 65.85% (1475/2240)
-- desktop-ts: 100.00% (197/197)
-- combined: 64.82% (8299/12804)
-- expected files: 83
-- missing files: 5
-- uncovered files: 58
+- python: `78.18%` (`8831/11296`)
+- web: `83.85%` (`1884/2247`)
+- desktop-ts: `100.00%` (`209/209`)
+- combined: `79.44%` (`10924/13752`)
 
-## Exclusion baseline
+Inventory findings:
+- expected files: `80`
+- missing files: `2` (`apps/desktop/src-tauri/src/lib.rs`, `apps/desktop/src-tauri/src/main.rs`)
+- uncovered files: `57`
 
-- codecov.yml ignore list currently excludes only generated/build/vendor-style areas and test files.
-- apps/web/vite.config.ts coverage excludes only test and e2e scaffolding.
-- apps/desktop/vitest.config.ts thresholds are currently all set to 100.
+Largest hotspots by line volume:
+- `apps/web/src/App.tsx` -> `1418/1762`
+- `services/worker/worker.py` -> `913/1326`
+- `apps/api/app/api.py` -> `1068/1482`
+- `apps/api/app/auth_api.py` -> `436/663`
+- `apps/api/app/identity_api.py` -> `363/495`
 
-## Desktop release baseline
+## Config posture (truth-restored)
+- `codecov.yml` no longer ignores first-party app/runtime trees.
+- `apps/web/vite.config.ts` tracks all `src/**/*.ts(x)` except test/bootstrap files.
+- `apps/desktop/vitest.config.ts` thresholds are strict `100/100/100/100`.
+- `scripts/quality/assert_coverage_100.py` enforces tracked-file inventory presence and uncovered-file diagnostics.
 
-- current desktop release: Reframe Desktop v0.1.8 (tag desktop-v0.1.8)
-- prerelease: true
-- release URL: https://github.com/Prekzursil/Reframe/releases/tag/desktop-v0.1.8
-- key Windows artifacts present:
-  - Reframe_0.1.8_x64-setup.exe
-  - Reframe_0.1.8_x64_en-US.msi
-
-## Known UX/runtime baseline gaps
-
-- Desktop currently uses an operator-oriented command vocabulary in UI/runtime surface (compose_* naming and diagnostics-first framing).
-- Product-first in-app onboarding and guided flow still needs hardening for non-operator users.
+## Desktop runtime posture baseline
+- Desktop app currently uses bundled local runtime bootstrap (`REFRAME_LOCAL_QUEUE_MODE=true`), no Docker dependency for runtime path.
+- UX is functional but still diagnostics-heavy; next wave will streamline first-run product flow and guided creation path.
