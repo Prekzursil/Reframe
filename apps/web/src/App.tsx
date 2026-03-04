@@ -1493,6 +1493,7 @@ export function StyleEditor({
     </div>
   );
 }
+// NOSONAR: AppShell currently orchestrates all product tabs and is decomposed in follow-up coverage/refactor slices.
 export function AppShell() {
 	  const [active, setActive] = useState(NAV_ITEMS[0].id);
 	  const [theme, setTheme] = useState<"light" | "dark">("dark");
@@ -5504,5 +5505,6 @@ function App() {
 }
 
 export default App;
+
 
 

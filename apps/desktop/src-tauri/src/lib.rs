@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use tauri::Manager;
 
@@ -238,21 +238,30 @@ fn mark_runtime_ready(marker: &Path) -> Result<(), String> {
     })
 }
 
+fn runtime_venv_ready(python: &Path, marker: &Path) -> bool {
+    python.is_file() && marker.is_file()
+}
+
+fn bootstrap_runtime_venv(runtime_root: &Path, python: &Path, marker: &Path) -> Result<(), String> {
+    let venv = venv_dir(runtime_root)?;
+    let host_python = resolve_host_python_binary(runtime_root)?;
+    create_runtime_venv_if_missing(&host_python, &venv, python)?;
+
+    let (req_api, req_worker) = runtime_requirement_files(runtime_root)?;
+    install_runtime_requirements(python, &req_api, &req_worker)?;
+    mark_runtime_ready(marker)
+}
+
 fn ensure_runtime_venv(runtime_root: &Path) -> Result<PathBuf, String> {
     let venv = venv_dir(runtime_root)?;
     let python = venv_python(&venv);
     let marker = venv.join(".reframe_runtime_ready");
 
-    if python.is_file() && marker.is_file() {
+    if runtime_venv_ready(&python, &marker) {
         return Ok(python);
     }
 
-    let host_python = resolve_host_python_binary(runtime_root)?;
-    create_runtime_venv_if_missing(&host_python, &venv, &python)?;
-
-    let (req_api, req_worker) = runtime_requirement_files(runtime_root)?;
-    install_runtime_requirements(&python, &req_api, &req_worker)?;
-    mark_runtime_ready(&marker)?;
+    bootstrap_runtime_venv(runtime_root, &python, &marker)?;
     Ok(python)
 }
 
@@ -356,24 +365,30 @@ fn build_runtime_command(
     cmd
 }
 
+fn runtime_state_guard() -> Result<MutexGuard<'static, RuntimeState>, String> {
+    runtime_state()
+        .lock()
+        .map_err(|_| "Runtime state lock poisoned".to_string())
+}
+
+fn spawn_local_runtime(runtime_root: &Path, python: &Path, pythonpath: OsString) -> Result<Child, String> {
+    let media_root = ensure_media_root(runtime_root)?;
+    let mut cmd = build_runtime_command(runtime_root, python, pythonpath, &media_root);
+    cmd.spawn()
+        .map_err(|e| format!("Failed to start local runtime API process: {e}"))
+}
+
 fn start_local_runtime() -> Result<String, String> {
     let runtime_root = find_runtime_root()?;
     let python = ensure_runtime_venv(&runtime_root)?;
     let pythonpath = pythonpath_for_runtime(&runtime_root)?;
 
-    let mut guard = runtime_state()
-        .lock()
-        .map_err(|_| "Runtime state lock poisoned".to_string())?;
+    let mut guard = runtime_state_guard()?;
     if let Some(pid) = running_runtime_pid(&mut guard)? {
         return Ok(format!("local runtime already running (api pid {pid})"));
     }
 
-    let media_root = ensure_media_root(&runtime_root)?;
-    let mut cmd = build_runtime_command(&runtime_root, &python, pythonpath, &media_root);
-
-    let child = cmd
-        .spawn()
-        .map_err(|e| format!("Failed to start local runtime API process: {e}"))?;
+    let child = spawn_local_runtime(&runtime_root, &python, pythonpath)?;
     let pid = child.id();
     guard.api = Some(child);
     Ok(format!("local runtime started (api pid {pid})"))

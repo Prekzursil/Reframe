@@ -46,6 +46,12 @@ def test_desktop_embedded_web_mount_serves_index_and_assets(monkeypatch, tmp_pat
         assert spa.status_code == 200
         assert "desktop studio" in spa.text
 
+        traversal = client.get("/%2e%2e/%2e%2e/secret.txt")
+        assert traversal.status_code == 404
+
+        reserved = client.get("/api/_desktop_shell_test")
+        assert reserved.status_code == 404
+
 
 def test_desktop_embedded_web_mount_skips_when_dist_missing(monkeypatch, tmp_path: Path):
     media_root = tmp_path / "media"

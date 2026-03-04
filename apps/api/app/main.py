@@ -1,4 +1,5 @@
 import logging
+import stat
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -25,11 +26,11 @@ from app.publish_api import router as publish_router
 
 
 _RESERVED_DESKTOP_PREFIXES = (
-    "api/",
+    "api",
     "docs",
     "openapi.json",
     "redoc",
-    "media/",
+    "media",
     "health",
     "healthz",
 )
@@ -44,27 +45,26 @@ def _mount_desktop_web(app: FastAPI, desktop_web_dist: str) -> None:
     index_path = web_dist / "index.html"
     if not index_path.is_file():
         return
+    static_files = StaticFiles(directory=str(web_dist), check_dir=False)
 
     @app.get("/", include_in_schema=False)
     def desktop_index() -> FileResponse:
         return FileResponse(index_path)
 
-    @app.get("/{full_path:path}", include_in_schema=False)
+    @app.get("/{full_path:path}", include_in_schema=False, responses={404: {"description": "Not Found"}})
     def desktop_spa(full_path: str) -> FileResponse:
         normalized = (full_path or "").lstrip("/")
+        segments = [part for part in normalized.replace("\\", "/").split("/") if part]
+        if any(part == ".." for part in segments):
+            raise HTTPException(status_code=404)
         if any(
             normalized == reserved or normalized.startswith(f"{reserved}/")
             for reserved in _RESERVED_DESKTOP_PREFIXES
         ):
             raise HTTPException(status_code=404)
 
-        candidate = (web_dist / normalized).resolve(strict=False)
-        try:
-            candidate.relative_to(web_dist)
-        except ValueError as exc:
-            raise HTTPException(status_code=404) from exc
-
-        if candidate.is_file():
+        candidate, stat_result = static_files.lookup_path(normalized)
+        if stat_result is not None and stat.S_ISREG(stat_result.st_mode):
             return FileResponse(candidate)
         return FileResponse(index_path)
 

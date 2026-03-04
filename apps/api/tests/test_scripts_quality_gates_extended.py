@@ -89,6 +89,37 @@ def test_check_deepscan_zero_main_paths(monkeypatch):
     _expect(module.main() == 0, "Expected DeepScan zero-main path to pass")
 
 
+
+
+def test_check_deepscan_zero_status_context_fallback(monkeypatch):
+    module = _load_quality("check_deepscan_zero")
+
+    args = argparse.Namespace(out_json="out/deepscan-status.json", out_md="out/deepscan-status.md")
+    monkeypatch.setattr(module, "_parse_args", lambda: args)
+    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "Prekzursil/Reframe")
+    monkeypatch.setenv("GITHUB_SHA", "abc123")
+
+    def fake_request(url: str, _token: str):
+        if "check-runs" in url:
+            return {"check_runs": []}
+        return {
+            "statuses": [
+                {
+                    "context": "DeepScan",
+                    "state": "success",
+                    "description": "0 new and 1 fixed issues",
+                    "target_url": "https://deepscan.io/dashboard",
+                    "updated_at": "2026-03-04T01:00:00Z",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(module, "_request_json", fake_request)
+
+    _expect(module.main() == 0, "Expected status-context fallback to pass when new issues are zero")
+
+
 def test_check_sentry_zero_main_paths(monkeypatch):
     module = _load_quality("check_sentry_zero")
     args = argparse.Namespace(out_json="out/sentry.json", out_md="out/sentry.md")

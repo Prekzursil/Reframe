@@ -643,6 +643,54 @@ def _truthy_env(name: str) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _append_diag_error(existing: str | None, message: str) -> str:
+    return f"{existing}; {message}" if existing else message
+
+
+def _populate_worker_diag_local_queue(worker_diag: WorkerDiagnostics) -> None:
+    diag = local_queue_diagnostics()
+    worker_diag.ping_ok = bool(diag.get("ping_ok"))
+    worker_diag.workers = sorted({str(item) for item in (diag.get("workers") or []) if item})
+    worker_diag.system_info = diag.get("system_info")
+    worker_diag.error = str(diag.get("error")) if diag.get("error") else None
+
+
+def _collect_celery_worker_names(pongs: object) -> list[str]:
+    names: set[str] = set()
+    for item in pongs or []:
+        if isinstance(item, dict):
+            names.update(str(name) for name in item.keys() if name)
+    return sorted(names)
+
+
+def _populate_worker_diag_celery(worker_diag: WorkerDiagnostics) -> None:
+    try:
+        app = get_celery_app()
+    except Exception as exc:  # pragma: no cover - best effort
+        worker_diag.error = f"Celery unavailable: {exc}"
+        return
+
+    try:
+        pongs = app.control.ping(timeout=1.0)
+        worker_diag.workers = _collect_celery_worker_names(pongs)
+        worker_diag.ping_ok = bool(worker_diag.workers)
+    except Exception as exc:
+        worker_diag.error = f"Worker ping failed: {exc}"
+        return
+
+    if not worker_diag.ping_ok:
+        return
+
+    try:
+        res = app.send_task("tasks.system_info")
+        worker_diag.system_info = res.get(timeout=3.0)
+    except Exception as exc:
+        worker_diag.error = _append_diag_error(
+            worker_diag.error,
+            f"Worker diagnostics task failed: {exc}",
+        )
+
+
 @router.get("/system/status", response_model=SystemStatusResponse, tags=["System"])
 def system_status() -> SystemStatusResponse:
     settings = get_settings()
@@ -650,34 +698,9 @@ def system_status() -> SystemStatusResponse:
 
     worker_diag = WorkerDiagnostics()
     if is_local_queue_mode():
-        diag = local_queue_diagnostics()
-        worker_diag.ping_ok = bool(diag.get("ping_ok"))
-        worker_diag.workers = list(diag.get("workers") or [])
-        worker_diag.system_info = diag.get("system_info")
-        worker_diag.error = diag.get("error")
+        _populate_worker_diag_local_queue(worker_diag)
     else:
-        try:
-            app = get_celery_app()
-            try:
-                pongs = app.control.ping(timeout=1.0)
-                workers = []
-                for item in pongs or []:
-                    if isinstance(item, dict):
-                        workers.extend(item.keys())
-                worker_diag.workers = sorted(set(workers))
-                worker_diag.ping_ok = bool(worker_diag.workers)
-            except Exception as exc:
-                worker_diag.error = f"Worker ping failed: {exc}"
-
-            if worker_diag.ping_ok:
-                try:
-                    res = app.send_task("tasks.system_info")
-                    worker_diag.system_info = res.get(timeout=3.0)
-                except Exception as exc:
-                    msg = f"Worker diagnostics task failed: {exc}"
-                    worker_diag.error = f"{worker_diag.error}; {msg}" if worker_diag.error else msg
-        except Exception as exc:  # pragma: no cover - best effort
-            worker_diag.error = f"Celery unavailable: {exc}"
+        _populate_worker_diag_celery(worker_diag)
 
     return SystemStatusResponse(
         api_version=settings.api_version,

@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import io
-import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlparse
 from uuid import uuid4
 
 
 def _expect(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
+
+
+def _publish_host_matches(url: str, host: str) -> bool:
+    parsed = urlparse(url or "")
+    candidate = (parsed.hostname or "").lower()
+    return candidate == host or candidate.endswith(f".{host}")
 
 
 def test_worker_bool_and_color_helpers(monkeypatch):
@@ -208,7 +214,7 @@ def test_worker_extract_audio_and_thumbnail_paths(monkeypatch, tmp_path: Path):
     _expect(success.get("source_path") is not None, "Expected source-path thumbnail success")
 
     def _runner_fail(_cmd, **_kwargs):
-        raise subprocess.CalledProcessError(returncode=1, cmd=["ffmpeg"])
+        raise worker.subprocess.CalledProcessError(returncode=1, cmd=["ffmpeg"])
 
     failed = worker.create_thumbnail_asset(video, runner=_runner_fail)
     _expect(failed.get("contents") is not None, "Expected fallback thumbnail on ffmpeg error")
@@ -240,10 +246,10 @@ def test_worker_retention_publish_and_asset_helpers(monkeypatch, tmp_path: Path)
     tk = worker._publish_result_for_provider(provider="tiktok", connection=conn, asset=asset, payload={})
     ig = worker._publish_result_for_provider(provider="instagram", connection=conn, asset=asset, payload={})
     fb = worker._publish_result_for_provider(provider="facebook", connection=conn, asset=asset, payload={})
-    _expect("youtube.com" in yt["published_url"], "Expected youtube URL")
-    _expect("tiktok.com" in tk["published_url"], "Expected tiktok URL")
-    _expect("instagram.com" in ig["published_url"], "Expected instagram URL")
-    _expect("facebook.com" in fb["published_url"], "Expected facebook URL")
+    _expect(_publish_host_matches(yt["published_url"], "youtube.com"), "Expected youtube URL")
+    _expect(_publish_host_matches(tk["published_url"], "tiktok.com"), "Expected tiktok URL")
+    _expect(_publish_host_matches(ig["published_url"], "instagram.com"), "Expected instagram URL")
+    _expect(_publish_host_matches(fb["published_url"], "facebook.com"), "Expected facebook URL")
 
     _expect(worker._publish_provider_from_step("publish_youtube", {}) == "youtube", "Expected provider from typed step")
     _expect(worker._publish_provider_from_step("publish", {"provider": "facebook"}) == "facebook", "Expected provider from payload")
