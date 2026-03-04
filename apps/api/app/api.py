@@ -32,6 +32,12 @@ from app.auth_api import PrincipalDep, ensure_default_plans
 from app.billing import get_plan_policy
 from app.database import get_session
 from app.config import get_settings
+from app.local_queue import (
+    diagnostics as local_queue_diagnostics,
+    dispatch_task as dispatch_local_task,
+    is_local_queue_mode,
+    revoke_task as revoke_local_task,
+)
 from app.errors import ApiError, ErrorCode, ErrorResponse, conflict, not_found, quota_exceeded, server_error, unauthorized
 from app.models import (
     Job,
@@ -126,6 +132,8 @@ def _resolve_task_queue(task_name: str, *args) -> str:
 def enqueue_job(job: Job, task_name: str, *args) -> str:
     try:
         queue = _resolve_task_queue(task_name, *args)
+        if is_local_queue_mode():
+            return dispatch_local_task(task_name, *args, queue=queue)
         result = get_celery_app().send_task(task_name, args=args, queue=queue)
         return result.id
     except Exception as exc:  # pragma: no cover - defensive
@@ -633,28 +641,35 @@ def system_status() -> SystemStatusResponse:
     storage = get_storage(media_root=settings.media_root)
 
     worker_diag = WorkerDiagnostics()
-    try:
-        app = get_celery_app()
+    if is_local_queue_mode():
+        diag = local_queue_diagnostics()
+        worker_diag.ping_ok = bool(diag.get("ping_ok"))
+        worker_diag.workers = list(diag.get("workers") or [])
+        worker_diag.system_info = diag.get("system_info")
+        worker_diag.error = diag.get("error")
+    else:
         try:
-            pongs = app.control.ping(timeout=1.0)
-            workers = []
-            for item in pongs or []:
-                if isinstance(item, dict):
-                    workers.extend(item.keys())
-            worker_diag.workers = sorted(set(workers))
-            worker_diag.ping_ok = bool(worker_diag.workers)
-        except Exception as exc:
-            worker_diag.error = f"Worker ping failed: {exc}"
-
-        if worker_diag.ping_ok:
+            app = get_celery_app()
             try:
-                res = app.send_task("tasks.system_info")
-                worker_diag.system_info = res.get(timeout=3.0)
+                pongs = app.control.ping(timeout=1.0)
+                workers = []
+                for item in pongs or []:
+                    if isinstance(item, dict):
+                        workers.extend(item.keys())
+                worker_diag.workers = sorted(set(workers))
+                worker_diag.ping_ok = bool(worker_diag.workers)
             except Exception as exc:
-                msg = f"Worker diagnostics task failed: {exc}"
-                worker_diag.error = f"{worker_diag.error}; {msg}" if worker_diag.error else msg
-    except Exception as exc:  # pragma: no cover - best effort
-        worker_diag.error = f"Celery unavailable: {exc}"
+                worker_diag.error = f"Worker ping failed: {exc}"
+
+            if worker_diag.ping_ok:
+                try:
+                    res = app.send_task("tasks.system_info")
+                    worker_diag.system_info = res.get(timeout=3.0)
+                except Exception as exc:
+                    msg = f"Worker diagnostics task failed: {exc}"
+                    worker_diag.error = f"{worker_diag.error}; {msg}" if worker_diag.error else msg
+        except Exception as exc:  # pragma: no cover - best effort
+            worker_diag.error = f"Celery unavailable: {exc}"
 
     return SystemStatusResponse(
         api_version=settings.api_version,
@@ -1628,8 +1643,11 @@ def create_workflow_run(payload: WorkflowRunCreateRequest, session: SessionDep, 
     session.commit()
 
     try:
-        result = get_celery_app().send_task("tasks.run_workflow_pipeline", args=[str(run.id)])
-        run.task_id = result.id
+        if is_local_queue_mode():
+            run.task_id = dispatch_local_task("tasks.run_workflow_pipeline", str(run.id), queue=_celery_queue_name("CPU"))
+        else:
+            result = get_celery_app().send_task("tasks.run_workflow_pipeline", args=[str(run.id)])
+            run.task_id = result.id
         session.add(run)
         session.commit()
         session.refresh(run)
@@ -1671,7 +1689,10 @@ def cancel_workflow_run(run_id: UUID, session: SessionDep, principal: PrincipalD
         session.add(run)
         if run.task_id:
             try:
-                get_celery_app().control.revoke(run.task_id, terminate=False)
+                if is_local_queue_mode():
+                    revoke_local_task(run.task_id)
+                else:
+                    get_celery_app().control.revoke(run.task_id, terminate=False)
             except Exception:
                 pass
         pending_steps = session.exec(

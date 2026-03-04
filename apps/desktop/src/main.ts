@@ -14,6 +14,7 @@ import { errToString, truncate } from "./text";
 const UI_URL = "http://localhost:5173";
 const API_URL = "http://localhost:8000/api/v1";
 const SYSTEM_STATUS_URL = `${API_URL}/system/status`;
+const DOCS_URL = "http://localhost:8000/docs";
 const RELEASES_URL = "https://github.com/Prekzursil/Reframe/releases";
 const UPDATER_MANIFEST_URL =
   "https://github.com/Prekzursil/Reframe/releases/latest/download/latest.json";
@@ -43,6 +44,13 @@ function setText(id: string, text: string) {
   byId<HTMLElement>(id).textContent = text;
 }
 
+function setTextIfPresent(id: string, text: string) {
+  const el = document.getElementById(id);
+  if (el) {
+    el.textContent = text;
+  }
+}
+
 async function collectDebugInfo(): Promise<string> {
   const lines: string[] = [];
 
@@ -53,6 +61,7 @@ async function collectDebugInfo(): Promise<string> {
   push("timestamp", new Date().toISOString());
   push("user_agent", navigator.userAgent);
   push("updater_manifest", UPDATER_MANIFEST_URL);
+  push("docs_url", DOCS_URL);
   push("releases_url", RELEASES_URL);
 
   try {
@@ -170,6 +179,9 @@ async function refreshDiagnostics() {
       ffmpeg?.present ? `ok${ffmpeg?.version ? ` (${ffmpeg.version})` : ""}` : "missing",
     );
     setText("system-status", JSON.stringify(data, null, 2));
+    setTextIfPresent("step-runtime", "ready");
+    setTextIfPresent("step-api", "reachable");
+    setTextIfPresent("step-worker", worker?.ping_ok ? "ready" : "no response");
     lastDiagnosticsError = null;
   } catch (err) {
     const msg = errToString(err);
@@ -178,6 +190,9 @@ async function refreshDiagnostics() {
     setText("worker-ping", "unknown");
     setText("ffmpeg", "unknown");
     setText("system-status", `Diagnostics unavailable.\n\n${msg}`);
+    setTextIfPresent("step-runtime", "check logs");
+    setTextIfPresent("step-api", "unreachable");
+    setTextIfPresent("step-worker", "unknown");
     lastDiagnosticsError = msg;
   }
 }
@@ -220,7 +235,7 @@ async function refresh() {
 }
 
 async function start(build: boolean) {
-  appendLog(build ? "Starting stack (build)..." : "Starting stack (no build)...");
+  appendLog(build ? "Starting local runtime..." : "Starting local runtime...");
   try {
     const out = await invoke<string>("compose_up", { build });
     appendLog(out.trim() || "OK");
@@ -232,7 +247,7 @@ async function start(build: boolean) {
 }
 
 async function stop() {
-  appendLog("Stopping stack...");
+  appendLog("Stopping local runtime...");
   try {
     const out = await invoke<string>("compose_down");
     appendLog(out.trim() || "OK");
@@ -241,6 +256,19 @@ async function stop() {
   } finally {
     await refresh();
   }
+}
+
+async function openProductExperience() {
+  try {
+    const ui = await fetch(UI_URL, { method: "GET" });
+    if (ui.ok) {
+      await openUrl(UI_URL);
+      return;
+    }
+  } catch {
+    // fall through to docs URL when the standalone web app is not reachable.
+  }
+  await openUrl(DOCS_URL);
 }
 
 async function checkUpdates() {
@@ -296,6 +324,7 @@ export const __test = {
   refresh,
   start,
   stop,
+  openProductExperience,
   checkUpdates,
 };
 
@@ -304,7 +333,7 @@ window.addEventListener("DOMContentLoaded", () => {
   byId<HTMLButtonElement>("btn-up-nobuild").addEventListener("click", () => start(false));
   byId<HTMLButtonElement>("btn-down").addEventListener("click", () => stop());
   byId<HTMLButtonElement>("btn-refresh").addEventListener("click", () => refresh());
-  byId<HTMLButtonElement>("btn-open-ui").addEventListener("click", () => openUrl(UI_URL));
+  byId<HTMLButtonElement>("btn-open-ui").addEventListener("click", () => void openProductExperience());
   byId<HTMLButtonElement>("btn-copy-debug").addEventListener("click", () => copyDebugInfo());
   byId<HTMLButtonElement>("btn-updates").addEventListener("click", () => checkUpdates());
   byId<HTMLButtonElement>("btn-latest-json").addEventListener("click", () =>

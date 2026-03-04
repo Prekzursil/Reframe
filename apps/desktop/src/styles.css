@@ -1,63 +1,72 @@
 :root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  --bg: #f3efe6;
+  --bg-accent: #e9dcc6;
+  --card: rgba(255, 255, 255, 0.82);
+  --card-border: rgba(25, 29, 38, 0.12);
+  --text: #1f2230;
+  --muted: #4f5d73;
+  --primary: #1d6de0;
+  --danger: #b32323;
+  --chip: #eef2fb;
+  --chip-border: rgba(29, 109, 224, 0.22);
+
+  font-family: "Space Grotesk", "Segoe UI", "Trebuchet MS", sans-serif;
   font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
+  line-height: 1.45;
+  color: var(--text);
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
+* {
+  box-sizing: border-box;
 }
 
-a:hover {
-  color: #535bf2;
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 8% 6%, rgba(29, 109, 224, 0.18), transparent 35%),
+    radial-gradient(circle at 92% 12%, rgba(198, 127, 40, 0.22), transparent 36%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg-accent) 100%);
 }
 
 .muted {
-  color: #5b5b5b;
+  color: var(--muted);
 }
 
 .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: "Cascadia Mono", "Consolas", "Courier New", monospace;
 }
 
 .container {
-  max-width: 920px;
+  max-width: 980px;
   margin: 0 auto;
-  padding: 28px 20px 48px;
+  padding: 28px 20px 46px;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-.header {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.hero h1 {
+  margin: 0;
+  letter-spacing: -0.02em;
+  font-size: clamp(1.8rem, 1.4rem + 1.6vw, 2.5rem);
 }
 
-.header h1 {
-  margin: 0;
-  font-size: 26px;
-  line-height: 1.2;
+.hero p {
+  margin: 8px 0 0;
+  max-width: 72ch;
 }
 
 .card {
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(255, 255, 255, 0.9);
-  border-radius: 14px;
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
   padding: 16px;
+  background: var(--card);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 12px 30px rgba(24, 32, 52, 0.08);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -65,7 +74,8 @@ a:hover {
 
 .card h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: 1.05rem;
+  letter-spacing: 0.01em;
 }
 
 .row {
@@ -88,14 +98,52 @@ a:hover {
 }
 
 .label {
-  font-size: 12px;
-  color: #6b7280;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.step-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.step-card {
+  border: 1px solid rgba(29, 109, 224, 0.18);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.62);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.step-title {
+  font-weight: 700;
+  font-size: 0.92rem;
+}
+
+.step-body {
+  min-height: 2.6em;
+  font-size: 0.87rem;
+}
+
+.chip {
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1px solid var(--chip-border);
+  border-radius: 999px;
+  background: var(--chip);
+  padding: 2px 10px;
+  font-size: 0.78rem;
 }
 
 .status,
 .log {
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(25, 29, 38, 0.1);
+  background: rgba(247, 250, 255, 0.8);
   border-radius: 12px;
   padding: 12px;
   overflow: auto;
@@ -106,22 +154,20 @@ a:hover {
 
 button {
   border-radius: 10px;
-  border: 1px solid rgba(0, 0, 0, 0.12);
+  border: 1px solid rgba(25, 29, 38, 0.15);
   padding: 10px 12px;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 0.9rem;
+  font-weight: 700;
   font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition:
-    border-color 0.2s,
-    background-color 0.2s,
-    transform 0.02s;
+  color: var(--text);
+  background: #fff;
+  transition: border-color 0.16s ease, transform 0.06s ease, box-shadow 0.16s ease;
   cursor: pointer;
 }
 
 button:hover {
-  border-color: rgba(57, 108, 216, 0.8);
+  border-color: rgba(29, 109, 224, 0.8);
+  box-shadow: 0 4px 16px rgba(29, 109, 224, 0.18);
 }
 
 button:active {
@@ -129,63 +175,58 @@ button:active {
 }
 
 button.secondary {
-  background: rgba(0, 0, 0, 0.02);
+  background: rgba(255, 255, 255, 0.7);
 }
 
 button.danger {
-  border-color: rgba(220, 38, 38, 0.45);
-  color: #b91c1c;
+  border-color: rgba(179, 35, 35, 0.45);
+  color: var(--danger);
 }
 
 button.danger:hover {
-  border-color: rgba(220, 38, 38, 0.8);
+  border-color: rgba(179, 35, 35, 0.85);
+  box-shadow: 0 4px 14px rgba(179, 35, 35, 0.2);
 }
 
 .footer {
-  font-size: 12px;
+  font-size: 0.78rem;
+}
+
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .step-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    color: #f6f6f6;
-    background-color: #121212;
-  }
-
-  .muted {
-    color: rgba(255, 255, 255, 0.7);
-  }
-
-  .card {
-    background: rgba(18, 18, 18, 0.6);
-    border-color: rgba(255, 255, 255, 0.12);
+    --bg: #10141e;
+    --bg-accent: #192334;
+    --card: rgba(16, 20, 30, 0.82);
+    --card-border: rgba(255, 255, 255, 0.14);
+    --text: #eef2ff;
+    --muted: #a9b4cf;
+    --chip: rgba(68, 94, 160, 0.3);
+    --chip-border: rgba(134, 181, 255, 0.45);
   }
 
   .status,
   .log {
-    border-color: rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.15);
+    background: rgba(2, 6, 14, 0.64);
   }
 
   button {
-    color: #ffffff;
-    background-color: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.12);
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.18);
   }
 
   button.secondary {
     background: rgba(255, 255, 255, 0.04);
-  }
-
-  button:hover {
-    border-color: rgba(125, 211, 252, 0.6);
-  }
-
-  button.danger {
-    border-color: rgba(248, 113, 113, 0.4);
-    color: rgba(248, 113, 113, 0.95);
-  }
-
-  button.danger:hover {
-    border-color: rgba(248, 113, 113, 0.75);
   }
 }

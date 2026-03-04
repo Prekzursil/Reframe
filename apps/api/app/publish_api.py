@@ -21,6 +21,7 @@ from sqlmodel import Session, SQLModel, select
 
 from app.auth_api import PrincipalDep
 from app.config import get_settings
+from app.local_queue import dispatch_task as dispatch_local_task, is_local_queue_mode
 from app.database import get_session
 from app.errors import ApiError, ErrorCode, ErrorResponse, conflict, not_found, unauthorized
 from app.models import AutomationRunEvent, MediaAsset, PublishConnection, PublishJob
@@ -179,6 +180,8 @@ def _celery_app() -> Celery:
 
 
 def _dispatch_publish_task(job: PublishJob) -> str:
+    if is_local_queue_mode():
+        return dispatch_local_task("tasks.publish_asset", str(job.id))
     result = _celery_app().send_task("tasks.publish_asset", args=[str(job.id)])
     return result.id
 

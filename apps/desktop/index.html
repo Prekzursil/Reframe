@@ -10,25 +10,41 @@
 
   <body>
     <main class="container">
-      <header class="header">
-        <h1>Reframe Desktop</h1>
+      <header class="header hero">
+        <h1>Reframe Studio Desktop</h1>
         <p class="muted">
-          Runs the Reframe stack via Docker Compose and opens the local UI.
+          Run Reframe locally with a built-in queue mode. No Docker is required.
         </p>
       </header>
 
       <section class="card">
-        <h2>Stack</h2>
+        <h2>Get Started</h2>
+        <div class="step-grid">
+          <div class="step-card">
+            <div class="step-title">1. Runtime</div>
+            <div class="step-body muted">Start the local API runtime.</div>
+            <code id="step-runtime" class="chip">pending</code>
+          </div>
+          <div class="step-card">
+            <div class="step-title">2. API</div>
+            <div class="step-body muted">Confirm diagnostics and health.</div>
+            <code id="step-api" class="chip">pending</code>
+          </div>
+          <div class="step-card">
+            <div class="step-title">3. Worker</div>
+            <div class="step-body muted">Local queue executor readiness.</div>
+            <code id="step-worker" class="chip">pending</code>
+          </div>
+        </div>
+
         <div class="row">
-          <button id="btn-up">Start stack (build)</button>
-          <button id="btn-up-nobuild" class="secondary">
-            Start stack (no build)
-          </button>
-          <button id="btn-down" class="danger">Stop stack</button>
+          <button id="btn-up">Start local runtime</button>
+          <button id="btn-up-nobuild" class="secondary">Restart local runtime</button>
+          <button id="btn-down" class="danger">Stop local runtime</button>
         </div>
         <div class="row">
           <button id="btn-refresh" class="secondary">Refresh status</button>
-          <button id="btn-open-ui" class="secondary">Open UI</button>
+          <button id="btn-open-ui" class="secondary">Open Studio</button>
           <button id="btn-copy-debug" class="secondary">Copy debug info</button>
           <button id="btn-updates" class="secondary">Check updates</button>
           <button id="btn-latest-json" class="secondary">Open latest.json</button>
@@ -37,7 +53,7 @@
 
         <div class="grid">
           <div class="field">
-            <div class="label">Compose file</div>
+            <div class="label">Runtime root</div>
             <code id="compose-path" class="mono">detecting…</code>
           </div>
           <div class="field">
@@ -49,7 +65,7 @@
             <code id="updater-manifest" class="mono">checking…</code>
           </div>
           <div class="field">
-            <div class="label">Docker</div>
+            <div class="label">Runtime engine</div>
             <code id="docker-version" class="mono">checking…</code>
           </div>
         </div>
@@ -60,7 +76,7 @@
       <section class="card">
         <h2>Diagnostics</h2>
         <p class="muted">
-          Reads live status from the local API (when the stack is running).
+          Reads live status from the local API runtime.
         </p>
         <div class="grid">
           <div class="field">
@@ -96,13 +112,12 @@
       </section>
 
       <section class="card">
-        <h2>Output</h2>
+        <h2>Session Log</h2>
         <pre id="log" class="log muted">Ready.</pre>
       </section>
 
       <footer class="footer muted">
-        Tip: if you don’t have a `.env` yet, copy `.env.example` in the repo
-        root and set `REFRAME_OFFLINE_MODE=true` for offline-only behavior.
+        For local-only mode, keep `REFRAME_OFFLINE_MODE=true` in your environment.
       </footer>
     </main>
   </body>
