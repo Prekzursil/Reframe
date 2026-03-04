@@ -27,6 +27,11 @@ jobs:
             exit 1
           fi
 
+      - name: Install system dependencies for desktop Rust coverage
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev librsvg2-dev patchelf
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -36,6 +41,9 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '20'
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
 
       - name: Install Python deps
         run: |
@@ -59,32 +67,59 @@ jobs:
             --cov=apps/api/app \
             --cov=services/worker \
             --cov=packages/media-core/src/media_core \
+            --cov=scripts \
             --cov-report=xml:coverage/python-coverage.xml \
             apps/api/tests services/worker packages/media-core/tests
 
       - name: Run web coverage
         working-directory: apps/web
-        run: |
-          npx vitest run --coverage \
-            --coverage.thresholds.lines=0 \
-            --coverage.thresholds.functions=0 \
-            --coverage.thresholds.branches=0 \
-            --coverage.thresholds.statements=0
+        run: npm run test:coverage
 
       - name: Run desktop TS coverage
         working-directory: apps/desktop
-        run: |
-          npx vitest run --coverage \
-            --coverage.thresholds.lines=0 \
-            --coverage.thresholds.functions=0 \
-            --coverage.thresholds.branches=0 \
-            --coverage.thresholds.statements=0
+        run: npm run test:coverage
 
-      - name: Upload coverage to Codecov
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Run desktop Rust coverage
+        run: |
+          mkdir -p coverage
+          cd apps/desktop/src-tauri
+          cargo llvm-cov --workspace --all-features --lcov --output-path ../../../coverage/desktop-rust.lcov
+
+      - name: Upload Python coverage to Codecov
         uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage/python-coverage.xml,apps/web/coverage/lcov.info,apps/desktop/coverage/lcov.info
-          flags: api,worker,media-core,web,desktop-ts
+          files: coverage/python-coverage.xml
+          flags: api,worker,media-core,scripts
+          fail_ci_if_error: true
+          verbose: true
+
+      - name: Upload web coverage to Codecov
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: apps/web/coverage/lcov.info
+          flags: web
+          fail_ci_if_error: true
+          verbose: true
+
+      - name: Upload desktop TS coverage to Codecov
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: apps/desktop/coverage/lcov.info
+          flags: desktop-ts
+          fail_ci_if_error: true
+          verbose: true
+
+      - name: Upload desktop Rust coverage to Codecov
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/desktop-rust.lcov
+          flags: desktop-rust
           fail_ci_if_error: true
           verbose: true

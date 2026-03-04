@@ -48,7 +48,7 @@ def test_assert_coverage_100_parses_xml_and_lcov(tmp_path):
     _expect(xml_stats.percent == 100.0, "Expected XML coverage percent to be 100")
     _expect(lcov_stats.percent == 100.0, "Expected LCOV coverage percent to be 100")
 
-    status, findings = module.evaluate([xml_stats, lcov_stats])
+    status, findings, _metrics = module.evaluate([xml_stats, lcov_stats], expected_inventory=None)
     _expect(status == "pass", "Expected pass when all components are at 100%")
     _expect(findings == [], "Expected no findings for full coverage")
 
@@ -60,7 +60,7 @@ def test_assert_coverage_100_detects_below_target(tmp_path):
     lcov_path.write_text("TN:\nSF:file.ts\nLF:4\nLH:3\nend_of_record\n", encoding="utf-8")
     stats = module.parse_lcov("web", lcov_path)
 
-    status, findings = module.evaluate([stats])
+    status, findings, _metrics = module.evaluate([stats], expected_inventory=None)
     _expect(status == "fail", "Expected fail when a component is below 100%")
     _expect(any("below 100%" in item for item in findings), "Expected below-100 finding")
 
@@ -137,3 +137,4 @@ def test_sonar_evaluate_status_still_enforces_quality_gate():
     )
 
     _expect(any("quality gate" in item for item in findings), "Expected quality gate finding")
+

@@ -1,0 +1,159 @@
+{
+  "timestamp_utc": "2026-03-04T04:16:45.2440247Z",
+  "branch": "feat/coverage-truth-desktop-product-2026-03-04",
+  "head_sha": "8db2a7ca6270383ae803d5df33624e36636bb733",
+  "codecov_ignore_patterns": [
+    "- \"apps/api/**\"",
+    "- \"services/worker/**\"",
+    "- \"packages/media-core/**\"",
+    "- \"scripts/**\"",
+    "- \"apps/api/tests/**\"",
+    "- \"services/worker/test_*.py\"",
+    "- \"packages/media-core/test_*.py\"",
+    "- \"packages/media-core/tests/**\"",
+    "- \"apps/web/e2e/**\"",
+    "- \"apps/web/vite.config.ts\"",
+    "- \"apps/web/playwright.config.ts\"",
+    "- \"apps/web/browserstack.yml\"",
+    "- \"apps/web/src/**/*.test.ts\"",
+    "- \"apps/web/src/**/*.test.tsx\"",
+    "- \"apps/desktop/src/**/*.test.ts\"",
+    "- \"apps/desktop/vitest.config.ts\"",
+    "- \"apps/web/src/App.tsx\"",
+    "- \"apps/web/src/api/client.ts\"",
+    "- \"apps/web/src/main.tsx\"",
+    "- \"apps/web/src/components/SettingsModal.tsx\"",
+    "- \"apps/web/src/components/ErrorBoundary.tsx\"",
+    "- \"apps/web/src/subtitles/**\"",
+    "- \"apps/web/src/shorts/**\""
+  ],
+  "web_coverage_excludes": [
+    "\"src/test/**\",",
+    "\"src/**/*.test.ts\",",
+    "\"src/**/*.test.tsx\",",
+    "\"e2e/**\",",
+    "\"src/main.tsx\",",
+    "\"src/App.tsx\",",
+    "\"src/api/client.ts\",",
+    "\"src/components/SettingsModal.tsx\",",
+    "\"src/components/ErrorBoundary.tsx\",",
+    "\"src/subtitles/**\",",
+    "\"src/shorts/**\","
+  ],
+  "desktop_thresholds": [
+    "lines: 100,",
+    "functions: 100,",
+    "branches: 0,",
+    "statements: 100,"
+  ],
+  "desktop_release": {
+    "published_at": "2026-03-03T00:41:30Z",
+    "url": "https://github.com/Prekzursil/Reframe/releases/tag/desktop-v0.1.8",
+    "prerelease": true,
+    "tag": "desktop-v0.1.8",
+    "assets": [
+      {
+        "name": "latest.json",
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/latest.json",
+        "size": 6543,
+        "downloadCount": 0
+      },
+      {
+        "name": "Reframe-0.1.8-1.x86_64.rpm",
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe-0.1.8-1.x86_64.rpm",
+        "size": 5697392,
+        "downloadCount": 0
+      },
+      {
+        "name": "Reframe-0.1.8-1.x86_64.rpm.sig",
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe-0.1.8-1.x86_64.rpm.sig",
+        "size": 416,
+        "downloadCount": 0
+      },
+      {
+        "name": "Reframe_0.1.8_aarch64.dmg",
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_aarch64.dmg",
+        "size": 4611944,
+        "downloadCount": 0
+      },
+      {
+        "name": "Reframe_0.1.8_amd64.AppImage",
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_amd64.AppImage",
+        "size": 82962936,
+        "downloadCount": 0
+      },
+      {
+        "name": "Reframe_0.1.8_amd64.AppImage.sig",
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_amd64.AppImage.sig",
+        "size": 420,
+        "downloadCount": 0
+      },
+      {
+        "name": "Reframe_0.1.8_amd64.deb",
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_amd64.deb",
+        "size": 5697476,
+        "downloadCount": 0
+      },
+      {
+        "name": "Reframe_0.1.8_amd64.deb.sig",
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_amd64.deb.sig",
+        "size": 412,
+        "downloadCount": 0
+      },
+      {
+        "name": "Reframe_0.1.8_x64-setup.exe",
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_x64-setup.exe",
+        "size": 2946411,
+        "downloadCount": 1
+      },
+      {
+        "name": "Reframe_0.1.8_x64-setup.exe.sig",
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_x64-setup.exe.sig",
+        "size": 416,
+        "downloadCount": 0
+      },
+      {
+        "name": "Reframe_0.1.8_x64.dmg",
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_x64.dmg",
+        "size": 4781642,
+        "downloadCount": 0
+      },
+      {
+        "name": "Reframe_0.1.8_x64_en-US.msi",
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_x64_en-US.msi",
+        "size": 4382720,
+        "downloadCount": 0
+      },
+      {
+        "name": "Reframe_0.1.8_x64_en-US.msi.sig",
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_x64_en-US.msi.sig",
+        "size": 416,
+        "downloadCount": 0
+      },
+      {
+        "name": "Reframe_aarch64.app.tar.gz",
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_aarch64.app.tar.gz",
+        "size": 4654498,
+        "downloadCount": 0
+      },
+      {
+        "name": "Reframe_aarch64.app.tar.gz.sig",
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_aarch64.app.tar.gz.sig",
+        "size": 404,
+        "downloadCount": 0
+      },
+      {
+        "name": "Reframe_x64.app.tar.gz",
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_x64.app.tar.gz",
+        "size": 4785003,
+        "downloadCount": 0
+      },
+      {
+        "name": "Reframe_x64.app.tar.gz.sig",
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_x64.app.tar.gz.sig",
+        "size": 404,
+        "downloadCount": 0
+      }
+    ]
+  }
+}

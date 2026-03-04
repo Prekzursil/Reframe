@@ -2857,6 +2857,7 @@ async def upload_asset(
     tmp_dir.mkdir(parents=True, exist_ok=True)
     tmp_path = tmp_dir / filename
     total = 0
+    exceeded = False
     with tmp_path.open("wb") as out:
         while True:
             chunk = await file.read(1024 * 1024)
@@ -2864,14 +2865,18 @@ async def upload_asset(
                 break
             total += len(chunk)
             if max_bytes and total > max_bytes:
-                tmp_path.unlink(missing_ok=True)
-                raise ApiError(
-                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-                    code=ErrorCode.VALIDATION_ERROR,
-                    message="Upload too large",
-                    details={"max_upload_bytes": max_bytes, "uploaded_bytes": total},
-                )
+                exceeded = True
+                break
             out.write(chunk)
+
+    if exceeded:
+        tmp_path.unlink(missing_ok=True)
+        raise ApiError(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Upload too large",
+            details={"max_upload_bytes": max_bytes, "uploaded_bytes": total},
+        )
 
     rel_dir = _scoped_tmp_rel_dir(storage, principal)
     uri = storage.write_file(rel_dir=rel_dir, filename=filename, source_path=tmp_path, content_type=file.content_type)
