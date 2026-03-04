@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 
 
 def _expect(condition: bool, message: str) -> None:

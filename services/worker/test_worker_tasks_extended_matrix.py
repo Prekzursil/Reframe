@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -250,12 +248,6 @@ def test_render_styled_subtitles_failure_and_success_paths(monkeypatch, tmp_path
     assert missing_sub["status"] == "failed"
 
     # ffmpeg failure
-    monkeypatch.setattr(worker, "fetch_asset", lambda asset_id: (SimpleNamespace(id=UUID(asset_id), mime_type="video/mp4"), video if asset_id else sub))
-    def _fetch2(asset_id: str):
-        if asset_id.endswith("1"):
-            return (SimpleNamespace(id=UUID(asset_id), mime_type="video/mp4"), video)
-        return (SimpleNamespace(id=UUID(asset_id), mime_type="text/plain"), sub)
-
     vid_id = str(uuid4())
     sub_id = str(uuid4())
 

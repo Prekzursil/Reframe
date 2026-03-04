@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import types
 from dataclasses import dataclass
@@ -190,7 +189,10 @@ def test_benchmark_diarization_extract_and_main_paths(monkeypatch, tmp_path, cap
     _expect(recorded["cmd"][0] == "ffmpeg", "Expected ffmpeg command execution")
 
     fake_path_guard = types.ModuleType("media_core.transcribe.path_guard")
-    fake_path_guard.validate_media_input_path = lambda value: Path(value)
+    def _validate_media_input_path(value):
+        return Path(value)
+
+    fake_path_guard.validate_media_input_path = _validate_media_input_path
 
     class _Backend(Enum):
         PYANNOTE = "pyannote"

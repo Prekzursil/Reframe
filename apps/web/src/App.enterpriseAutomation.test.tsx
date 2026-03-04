@@ -357,7 +357,7 @@ describe("enterprise automation surfaces", () => {
     await user.click(await screen.findByRole("button", { name: "Select filtered" }));
     await user.click(screen.getByRole("button", { name: /Generate share links/i }));
     expect(apiClientMock.createProjectShareLinks).toHaveBeenCalled();
-    expect(await screen.findByText(/https:\/\/example.com\/share\/asset-1/i)).toBeInTheDocument();
+    expect(await screen.findByText("https://example.com/share/asset-1")).toBeInTheDocument();
     expect(await screen.findByText(/Generated link was rejected by URL policy\./i)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Delete" }));

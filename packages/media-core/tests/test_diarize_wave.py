@@ -70,7 +70,7 @@ class _FakeTensor:
     def shape(self):
         if self.ndim == 2:
             return (len(self.data), len(self.data[0]) if self.data[0] else 0)
-        return (len(self.data),)
+        return (len(self.data), 0)
 
     def __getitem__(self, key):
         if isinstance(key, tuple):

@@ -122,14 +122,21 @@ def test_generate_ops_digest_main_paths(monkeypatch, tmp_path):
     # Missing token path
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("GH_TOKEN", raising=False)
-    monkeypatch.setattr(module, "parse_args", lambda: type("Args", (), {
-        "repo": "Prekzursil/Reframe",
-        "window_days": 7,
-        "out_json": str(out_json.relative_to(repo)),
-        "out_md": str(out_md.relative_to(repo)),
-        "policy": str(policy.relative_to(repo)),
-        "api_base": "https://api.github.com",
-    })())
+    def _parse_args_missing_token():
+        return type(
+            "Args",
+            (),
+            {
+                "repo": "Prekzursil/Reframe",
+                "window_days": 7,
+                "out_json": str(out_json.relative_to(repo)),
+                "out_md": str(out_md.relative_to(repo)),
+                "policy": str(policy.relative_to(repo)),
+                "api_base": "https://api.github.com",
+            },
+        )()
+
+    monkeypatch.setattr(module, "parse_args", _parse_args_missing_token)
 
     prev = Path.cwd()
     os.chdir(repo)
@@ -232,18 +239,21 @@ def test_assert_coverage_inventory_and_cli_paths(tmp_path, monkeypatch, capsys):
     rc = module.main.__wrapped__ if hasattr(module.main, "__wrapped__") else None
     _expect(rc is None, "No wrapper expected")
 
-    monkeypatch.setattr(
-        module,
-        "_parse_args",
-        lambda: type("Args", (), {
-            "xml": [],
-            "lcov": [f"web={lcov}"],
-            "out_json": str(json_out),
-            "out_md": str(md_out),
-            "inventory_root": str(root),
-            "no_inventory_check": True,
-        })(),
-    )
+    def _parse_args_no_inventory():
+        return type(
+            "Args",
+            (),
+            {
+                "xml": [],
+                "lcov": [f"web={lcov}"],
+                "out_json": str(json_out),
+                "out_md": str(md_out),
+                "inventory_root": str(root),
+                "no_inventory_check": True,
+            },
+        )()
+
+    monkeypatch.setattr(module, "_parse_args", _parse_args_no_inventory)
     exit_code = module.main()
     _expect(exit_code == 1, "Expected fail exit code when coverage is below 100")
     _expect(json_out.is_file(), "Expected JSON artifact output")

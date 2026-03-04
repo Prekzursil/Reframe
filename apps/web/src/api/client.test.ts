@@ -268,5 +268,94 @@ describe("ApiClient", () => {
     expect(malformed.mediaUrl("/asset")).toContain("/asset");
     expect(client.jobBundleUrl("job-1")).toBe("http://localhost:8000/api/v1/jobs/job-1/bundle");
   });
+
+  it("covers revoke/delete/upload failure branches across enterprise helpers", async () => {
+    client.setAccessToken("token");
+    const file = new File(["video"], "clip.mp4", { type: "video/mp4" });
+
+    const failWithText = (message: string, status = 500, statusText = "Server Error") =>
+      ({
+        ok: false,
+        status,
+        statusText,
+        text: async () => message,
+        json: async () => ({ message }),
+      }) as unknown as Response;
+
+    const failWithThrownText = (status = 500, statusText = "fallback-status") =>
+      ({
+        ok: false,
+        status,
+        statusText,
+        text: async () => {
+          throw new Error("text failed");
+        },
+        json: async () => ({}),
+      }) as unknown as Response;
+
+    fetcher.mockResolvedValueOnce(failWithText("scim revoke failed"));
+    await expect(client.revokeScimToken("org-1", "tok-1")).rejects.toThrow("scim revoke failed");
+
+    fetcher.mockResolvedValueOnce(failWithThrownText(500, "remove-org-member-status"));
+    await expect(client.removeOrgMemberFromOrg("org-1", "user-1")).rejects.toThrow(
+      "remove-org-member-status",
+    );
+
+    fetcher.mockResolvedValueOnce(failWithText("remove member failed"));
+    await expect(client.removeOrgMember("user-1")).rejects.toThrow("remove member failed");
+
+    fetcher.mockResolvedValueOnce(failWithThrownText(500, "revoke-api-key-status"));
+    await expect(client.revokeApiKey("org-1", "key-1")).rejects.toThrow("revoke-api-key-status");
+
+    fetcher.mockResolvedValueOnce(failWithText("revoke publish failed"));
+    await expect(client.revokePublishConnection("youtube", "conn-1")).rejects.toThrow(
+      "revoke publish failed",
+    );
+
+    fetcher.mockResolvedValueOnce(failWithThrownText(500, "delete-job-status"));
+    await expect(client.deleteJob("job-1")).rejects.toThrow("delete-job-status");
+
+    fetcher.mockResolvedValueOnce(failWithText("delete-asset-failed"));
+    await expect(client.deleteAsset("asset-1")).rejects.toThrow("delete-asset-failed");
+
+    vi.spyOn(client, "initAssetUpload").mockResolvedValueOnce({
+      upload_id: "u-post-fail",
+      asset_id: null,
+      upload_url: "http://localhost:8000/api/v1/assets/upload",
+      method: "POST",
+      headers: {},
+      form_fields: {},
+      expires_at: "2026-03-04T00:00:00Z",
+      strategy: "presigned_post",
+    });
+    fetcher.mockResolvedValueOnce(failWithText("post upload failed"));
+    await expect(client.uploadAsset(file, "video")).rejects.toThrow("post upload failed");
+
+    vi.spyOn(client, "initAssetUpload").mockResolvedValueOnce({
+      upload_id: "u-put-fail",
+      asset_id: "asset-put",
+      upload_url: "https://storage.example/upload",
+      method: "PUT",
+      headers: {},
+      form_fields: {},
+      expires_at: "2026-03-04T00:00:00Z",
+      strategy: "presigned_put",
+    });
+    fetcher.mockResolvedValueOnce(failWithThrownText(500, "put-upload-status"));
+    await expect(client.uploadAsset(file, "video")).rejects.toThrow("put-upload-status");
+
+    vi.spyOn(client, "initAssetUpload").mockResolvedValueOnce({
+      upload_id: "u-put-missing-asset",
+      asset_id: null,
+      upload_url: "https://storage.example/upload",
+      method: "PUT",
+      headers: {},
+      form_fields: {},
+      expires_at: "2026-03-04T00:00:00Z",
+      strategy: "presigned_put",
+    });
+    fetcher.mockResolvedValueOnce(okJson({}, 200));
+    await expect(client.uploadAsset(file, "video")).rejects.toThrow("Upload session missing asset_id");
+  });
 });
 

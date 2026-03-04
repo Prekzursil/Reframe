@@ -71,7 +71,7 @@ def test_check_quality_secrets_main_pass_and_fail(monkeypatch):
 def test_check_quality_secrets_safe_output_path_escape():
     module = _load_quality("check_quality_secrets")
     with pytest.raises(ValueError):
-        module._safe_output_path("..\\escape.json", "fallback.json", base=Path.cwd())
+        module._safe_output_path("../escape.json", "fallback.json", base=Path.cwd())
 
 
 def test_check_required_checks_main_success_and_missing_token(monkeypatch):
