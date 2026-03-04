@@ -177,7 +177,8 @@ def _install_fake_huggingface_hub(monkeypatch, tmp_path: Path):
         _ = (repo_id, local_dir_use_symlinks)
         p = Path(local_dir)
         p.mkdir(parents=True, exist_ok=True)
-        (p / "hyperparams.yaml").write_text("ok: true\n", encoding="utf-8")
+        with (p / "hyperparams.yaml").open("w", encoding="utf-8") as handle:
+            handle.write("ok: true\\n")
         return str(p)
 
     setattr(hub, "hf_hub_download", hf_hub_download)
@@ -247,7 +248,7 @@ def _install_fake_speechbrain_interfaces(monkeypatch, *, use_pretrained: bool):
             return cls()
 
         def get_speech_segments(self, wav):
-            _ = wav
+            _ = (self, wav)
             # Match SpeechBrain VAD output shape expected by _diarize_speechbrain:
             # flat boundary tensor [start0, end0, start1, end1, ...]
             return _FakeBoundary([0.0, 0.2, 0.2, 0.4])
@@ -259,6 +260,7 @@ def _install_fake_speechbrain_interfaces(monkeypatch, *, use_pretrained: bool):
             return cls()
 
         def encode_batch(self, _tensor):
+            _ = self
             return _FakeTensor([0.6, 0.4])
 
     utils_fetching = types.ModuleType("speechbrain.utils.fetching")
@@ -321,6 +323,7 @@ def test_iter_pyannote_tracks_supports_multiple_shapes():
     _expect(bool(list(_iter_pyannote_tracks(nested))), "Expected nested speaker_diarization support")
 
     annotation_obj = _FakeTracks([(_FakeTurn(0.0, 1.0), None, "C")])
+
     def _to_annotation():
         return annotation_obj
 
@@ -421,3 +424,4 @@ def test_diarize_speechbrain_torchaudio_failure_uses_soundfile(monkeypatch, tmp_
     _install_fake_speechbrain(monkeypatch, tmp_path, use_pretrained=False, torchaudio_fails=True)
     segments = _diarize_speechbrain("audio.wav", cfg)
     _expect(bool(segments), "Expected non-empty speechbrain segments")
+

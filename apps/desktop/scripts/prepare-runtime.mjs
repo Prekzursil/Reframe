@@ -1,4 +1,4 @@
-import fs from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -42,19 +42,19 @@ function resolveRuntime(...segments) {
 
 function ensureDir(resolvedPath) {
   // nosemgrep: javascript.pathtraversal.rule-non-literal-fs-filename -- validated by resolveInside/assertInside
-  fs.mkdirSync(resolvedPath, { recursive: true });
+  mkdirSync(resolvedPath, { recursive: true });
 }
 
 function clearRuntimeDir() {
   // nosemgrep: javascript.pathtraversal.rule-non-literal-fs-filename -- runtimeRoot is fixed and trusted
-  fs.rmSync(runtimeRoot, { recursive: true, force: true });
+  rmSync(runtimeRoot, { recursive: true, force: true });
   // nosemgrep: javascript.pathtraversal.rule-non-literal-fs-filename -- runtimeRoot is fixed and trusted
-  fs.mkdirSync(runtimeRoot, { recursive: true });
+  mkdirSync(runtimeRoot, { recursive: true });
 }
 
 function copyFile(srcPath, dstPath) {
   ensureDir(path.dirname(dstPath));
-  fs.copyFileSync(srcPath, dstPath);
+  copyFileSync(srcPath, dstPath);
 }
 
 function shouldSkip(relPath) {
@@ -80,7 +80,7 @@ function copyTree(srcRoot, dstRoot) {
     const rel = stack.pop();
     const srcDir = resolveInside(srcRoot, rel, "copy-tree-src");
     // nosemgrep: javascript.pathtraversal.rule-non-literal-fs-filename -- srcDir validated by resolveInside
-    const entries = fs.readdirSync(srcDir, { withFileTypes: true });
+    const entries = readdirSync(srcDir, { withFileTypes: true });
 
     for (const entry of entries) {
       const nextRel = rel ? `${rel}/${entry.name}` : entry.name;
@@ -102,7 +102,7 @@ function copyTree(srcRoot, dstRoot) {
 
 function requirePath(label, targetPath) {
   // nosemgrep: javascript.pathtraversal.rule-non-literal-fs-filename -- targetPath pre-resolved from trusted roots
-  if (!fs.existsSync(targetPath)) {
+  if (!existsSync(targetPath)) {
     throw new Error(`${label} missing: ${targetPath}`);
   }
 }
@@ -115,7 +115,7 @@ function writeManifest(files) {
   };
   const outPath = resolveRuntime("manifest.json");
   // nosemgrep: javascript.pathtraversal.rule-non-literal-fs-filename -- outPath resolved inside runtime root
-  fs.writeFileSync(outPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  writeFileSync(outPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
 function main() {
@@ -180,3 +180,4 @@ function main() {
 }
 
 main();
+

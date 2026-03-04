@@ -3,15 +3,7 @@
   "private": true,
   "version": "0.1.8",
   "type": "module",
-  "scripts": {
-    "build": "npm run prepare:runtime && tsc && vite build",
-    "dev": "npm run prepare:runtime && vite",
-    "prepare:runtime": "node ./scripts/prepare-runtime.mjs",
-    "preview": "vite preview",
-    "tauri": "tauri",
-    "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
-  },
+  "scripts": {"build": "npm run prepare:runtime && tsc && vite build", "dev": "npm run prepare:runtime && vite", "prepare:runtime": "node ./scripts/prepare-runtime.mjs", "preview": "vite preview", "tauri": "tauri", "test": "vitest run", "test:coverage": "vitest run --coverage"},
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-opener": "^2.4.0",
