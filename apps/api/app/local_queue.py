@@ -1,12 +1,11 @@
-import logging
+from __future__ import absolute_import
+
 import os
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import lru_cache
 from threading import Lock
 from typing import Any, Dict, Optional, Tuple
 from uuid import uuid4
-
-logger = logging.getLogger("reframe.local_queue")
 
 
 def _truthy(value: Optional[str]) -> bool:
@@ -54,11 +53,7 @@ def dispatch_task(task_name: str, *args: Any, queue: Optional[str] = None) -> st
     task_id = f"local-{uuid4()}"
 
     def _wrapped() -> None:
-        try:
-            _run_task(task_name, args)
-        except Exception:
-            logger.exception("Local queue task failed", extra={"task": task_name, "task_id": task_id, "queue": queue})
-            raise
+        _run_task(task_name, args)
 
     future = _executor().submit(_wrapped)
     with _pending_lock:
@@ -96,7 +91,7 @@ def diagnostics() -> Dict[str, Any]:
         if task is None:
             raise RuntimeError("tasks.system_info is unavailable")
         info = task.run()
-    except Exception as exc:  # pragma: no cover - defensive
+    except (RuntimeError, ValueError, TypeError, AttributeError, OSError) as exc:  # pragma: no cover - defensive
         error = f"Local diagnostics failed: {exc}"
 
     with _pending_lock:
