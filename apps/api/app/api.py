@@ -229,7 +229,15 @@ def _safe_redirect_url(url: str) -> str:
 
 def _safe_local_asset_path(*, media_root: str, uri: str) -> Path:
     media_root_path = Path(media_root).resolve()
-    candidate = LocalStorageBackend(media_root=media_root_path).resolve_local_path(uri or "")
+    try:
+        candidate = LocalStorageBackend(media_root=media_root_path).resolve_local_path(uri or "")
+    except ValueError as exc:
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code=ErrorCode.PERMISSION_DENIED,
+            message="Asset path escapes media root",
+            details={"uri": uri},
+        ) from exc
     resolved = candidate.resolve(strict=False)
     try:
         resolved.relative_to(media_root_path)
@@ -3041,3 +3049,4 @@ def download_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep)
 def list_style_presets(session: SessionDep, principal: PrincipalDep) -> List[SubtitleStylePreset]:
     presets = session.exec(select(SubtitleStylePreset)).all()
     return presets
+

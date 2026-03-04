@@ -114,11 +114,51 @@ def test_worker_transcribe_media_routing(monkeypatch, tmp_path: Path):
 
     warnings: list[str] = []
 
-    _expect(worker._transcribe_media(media, TranscriptionConfig(backend=TranscriptionBackend.FASTER_WHISPER), warnings=warnings) == "faster", "Expected faster route")
-    _expect(worker._transcribe_media(media, TranscriptionConfig(backend=TranscriptionBackend.WHISPER_CPP), warnings=warnings) == "cpp", "Expected whisper.cpp route")
-    _expect(worker._transcribe_media(media, TranscriptionConfig(backend=TranscriptionBackend.WHISPER_TIMESTAMPED), warnings=warnings) == "ts", "Expected timestamped route")
-    _expect(worker._transcribe_media(media, TranscriptionConfig(backend=TranscriptionBackend.NOOP), warnings=warnings) == "noop", "Expected noop route")
-    _expect(worker._transcribe_media(media, TranscriptionConfig(backend=TranscriptionBackend.OPENAI_WHISPER), warnings=warnings) == "openai", "Expected openai route")
+    _expect(
+        worker._transcribe_media(
+            media,
+            TranscriptionConfig(backend=TranscriptionBackend.FASTER_WHISPER),
+            warnings=warnings,
+        )
+        == "faster",
+        "Expected faster route",
+    )
+    _expect(
+        worker._transcribe_media(
+            media,
+            TranscriptionConfig(backend=TranscriptionBackend.WHISPER_CPP),
+            warnings=warnings,
+        )
+        == "cpp",
+        "Expected whisper.cpp route",
+    )
+    _expect(
+        worker._transcribe_media(
+            media,
+            TranscriptionConfig(backend=TranscriptionBackend.WHISPER_TIMESTAMPED),
+            warnings=warnings,
+        )
+        == "ts",
+        "Expected timestamped route",
+    )
+    _expect(
+        worker._transcribe_media(
+            media,
+            TranscriptionConfig(backend=TranscriptionBackend.NOOP),
+            warnings=warnings,
+        )
+        == "noop",
+        "Expected noop route",
+    )
+    _expect(
+        worker._transcribe_media(
+            media,
+            TranscriptionConfig(backend=TranscriptionBackend.OPENAI_WHISPER),
+            warnings=warnings,
+        )
+        == "openai",
+        "Expected openai route",
+    )
 
     monkeypatch.setattr(worker, "offline_mode_enabled", lambda: True)
     _expect(worker._transcribe_media(media, TranscriptionConfig(backend=TranscriptionBackend.OPENAI_WHISPER), warnings=warnings) == "noop", "Expected offline openai fallback")
@@ -216,3 +256,4 @@ def test_worker_retention_publish_and_asset_helpers(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(worker, "get_settings", lambda: SimpleNamespace(media_root=str(tmp_path)))
     size = worker._asset_size_bytes(SimpleNamespace(uri=str(local_file.relative_to(tmp_path))))
     _expect(size == 4, "Expected local asset size bytes")
+

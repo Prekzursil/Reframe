@@ -248,6 +248,7 @@ describe("desktop main app", () => {
     expect(document.getElementById("compose-path")?.textContent).toBe("/tmp/compose.yml");
     expect(document.getElementById("updater-manifest")?.textContent).toBe(LATEST_JSON_URL);
 
+    state.invokeValues.compose_ps = "api running (pid 42)\\nqueue mode: local";
     await click("btn-open-ui");
     await click("btn-latest-json");
     await click("btn-releases");
@@ -255,14 +256,16 @@ describe("desktop main app", () => {
     expect(openUrlMock).toHaveBeenCalledWith(UI_URL);
     expect(openUrlMock).toHaveBeenCalledWith(LATEST_JSON_URL);
     expect(openUrlMock).toHaveBeenCalledWith(RELEASES_URL);
+    state.invokeValues.compose_ps = "api up\\nworker up";
+    await appModule.__test.openProductExperience();
+    expect(invokeMock).toHaveBeenCalledWith("compose_up", { build: true });
+    state.invokeValues.compose_ps = "";
+    await appModule.__test.openProductExperience();
 
-    state.fetchQueue.push(makeResponse(503, { message: "ui down" }, "Service Unavailable"));
+    state.invokeFailures.add("compose_ps");
     await appModule.__test.openProductExperience();
     expect(openUrlMock).toHaveBeenCalledWith(DOCS_URL);
-
-    fetchMock.mockRejectedValueOnce("offline");
-    await appModule.__test.openProductExperience();
-    expect(document.getElementById("log")?.textContent ?? "").toContain("Studio URL unreachable");
+    expect(document.getElementById("log")?.textContent ?? "").toContain("Unable to prepare Studio launch");
   });
 
   it("runs start/stop commands and click handlers", async () => {
@@ -291,18 +294,21 @@ describe("desktop main app", () => {
 
 
   it("covers non-Error and empty-output runtime branches", async () => {
-    invokeMock.mockImplementation(async (command: string) => {
-      if (command === "docker_version") {
+    const firstHandlers: Record<string, () => string | never> = {
+      docker_version: () => {
         throw "docker unavailable";
-      }
-      if (command === "compose_ps") {
+      },
+      compose_ps: () => {
         throw "status unavailable";
-      }
-      if (command === "compose_up") {
-        return "   ";
-      }
-      if (command === "compose_down") {
-        return "";
+      },
+      compose_up: () => "   ",
+      compose_down: () => "",
+    };
+
+    invokeMock.mockImplementation(async (command: string) => {
+      const handler = firstHandlers[command];
+      if (handler) {
+        return handler();
       }
       return state.invokeValues[command] ?? "";
     });
@@ -317,9 +323,19 @@ describe("desktop main app", () => {
     const log = document.getElementById("log")?.textContent ?? "";
     expect(log).toContain("OK");
 
-    invokeMock.mockImplementation(async (command: string) => {
-      if (command === "compose_up" || command === "compose_down") {
+    const secondHandlers: Record<string, () => string | never> = {
+      compose_up: () => {
         throw "runtime failed";
+      },
+      compose_down: () => {
+        throw "runtime failed";
+      },
+    };
+
+    invokeMock.mockImplementation(async (command: string) => {
+      const handler = secondHandlers[command];
+      if (handler) {
+        return handler();
       }
       return state.invokeValues[command] ?? "";
     });
@@ -606,4 +622,6 @@ describe("desktop main app", () => {
     expect(() => appModule.__test.byId("does-not-exist")).toThrow("Missing element #does-not-exist");
   });
 });
+
+
 

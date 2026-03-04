@@ -1,14 +1,14 @@
 :root {
   --bg: #f3efe6;
   --bg-accent: #e9dcc6;
-  --card: rgba(255, 255, 255, 0.82);
-  --card-border: rgba(25, 29, 38, 0.12);
+  --card: rgb(255 255 255 / 82%);
+  --card-border: rgb(25 29 38 / 12%);
   --text: #1f2230;
   --muted: #4f5d73;
   --primary: #1d6de0;
   --danger: #b32323;
   --chip: #eef2fb;
-  --chip-border: rgba(29, 109, 224, 0.22);
+  --chip-border: rgb(29 109 224 / 22%);
 
   font-family: "Space Grotesk", "Segoe UI", "Trebuchet MS", sans-serif;
   font-size: 16px;
@@ -27,8 +27,8 @@ body {
   margin: 0;
   min-height: 100vh;
   background:
-    radial-gradient(circle at 8% 6%, rgba(29, 109, 224, 0.18), transparent 35%),
-    radial-gradient(circle at 92% 12%, rgba(198, 127, 40, 0.22), transparent 36%),
+    radial-gradient(circle at 8% 6%, rgb(29 109 224 / 18%), transparent 35%),
+    radial-gradient(circle at 92% 12%, rgb(198 127 40 / 22%), transparent 36%),
     linear-gradient(180deg, var(--bg) 0%, var(--bg-accent) 100%);
 }
 
@@ -37,7 +37,7 @@ body {
 }
 
 .mono {
-  font-family: "Cascadia Mono", "Consolas", "Courier New", monospace;
+  font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
 }
 
 .container {
@@ -66,7 +66,7 @@ body {
   padding: 16px;
   background: var(--card);
   backdrop-filter: blur(8px);
-  box-shadow: 0 12px 30px rgba(24, 32, 52, 0.08);
+  box-shadow: 0 12px 30px rgb(24 32 52 / 8%);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -111,9 +111,9 @@ body {
 }
 
 .step-card {
-  border: 1px solid rgba(29, 109, 224, 0.18);
+  border: 1px solid rgb(29 109 224 / 18%);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.62);
+  background: rgb(255 255 255 / 62%);
   padding: 10px;
   display: flex;
   flex-direction: column;
@@ -142,8 +142,8 @@ body {
 
 .status,
 .log {
-  border: 1px solid rgba(25, 29, 38, 0.1);
-  background: rgba(247, 250, 255, 0.8);
+  border: 1px solid rgb(25 29 38 / 10%);
+  background: rgb(247 250 255 / 80%);
   border-radius: 12px;
   padding: 12px;
   overflow: auto;
@@ -154,7 +154,7 @@ body {
 
 button {
   border-radius: 10px;
-  border: 1px solid rgba(25, 29, 38, 0.15);
+  border: 1px solid rgb(25 29 38 / 15%);
   padding: 10px 12px;
   font-size: 0.9rem;
   font-weight: 700;
@@ -166,8 +166,8 @@ button {
 }
 
 button:hover {
-  border-color: rgba(29, 109, 224, 0.8);
-  box-shadow: 0 4px 16px rgba(29, 109, 224, 0.18);
+  border-color: rgb(29 109 224 / 80%);
+  box-shadow: 0 4px 16px rgb(29 109 224 / 18%);
 }
 
 button:active {
@@ -175,24 +175,24 @@ button:active {
 }
 
 button.secondary {
-  background: rgba(255, 255, 255, 0.7);
+  background: rgb(255 255 255 / 70%);
 }
 
 button.danger {
-  border-color: rgba(179, 35, 35, 0.45);
+  border-color: rgb(179 35 35 / 45%);
   color: var(--danger);
 }
 
 button.danger:hover {
-  border-color: rgba(179, 35, 35, 0.85);
-  box-shadow: 0 4px 14px rgba(179, 35, 35, 0.2);
+  border-color: rgb(179 35 35 / 85%);
+  box-shadow: 0 4px 14px rgb(179 35 35 / 20%);
 }
 
 .footer {
   font-size: 0.78rem;
 }
 
-@media (max-width: 900px) {
+@media (width <= 900px) {
   .grid {
     grid-template-columns: 1fr;
   }
@@ -206,27 +206,27 @@ button.danger:hover {
   :root {
     --bg: #10141e;
     --bg-accent: #192334;
-    --card: rgba(16, 20, 30, 0.82);
-    --card-border: rgba(255, 255, 255, 0.14);
+    --card: rgb(16 20 30 / 82%);
+    --card-border: rgb(255 255 255 / 14%);
     --text: #eef2ff;
     --muted: #a9b4cf;
-    --chip: rgba(68, 94, 160, 0.3);
-    --chip-border: rgba(134, 181, 255, 0.45);
+    --chip: rgb(68 94 160 / 30%);
+    --chip-border: rgb(134 181 255 / 45%);
   }
 
   .status,
   .log {
-    border-color: rgba(255, 255, 255, 0.15);
-    background: rgba(2, 6, 14, 0.64);
+    border-color: rgb(255 255 255 / 15%);
+    background: rgb(2 6 14 / 64%);
   }
 
   button {
     color: var(--text);
-    background: rgba(255, 255, 255, 0.05);
-    border-color: rgba(255, 255, 255, 0.18);
+    background: rgb(255 255 255 / 5%);
+    border-color: rgb(255 255 255 / 18%);
   }
 
   button.secondary {
-    background: rgba(255, 255, 255, 0.04);
+    background: rgb(255 255 255 / 4%);
   }
 }

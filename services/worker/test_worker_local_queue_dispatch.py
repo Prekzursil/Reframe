@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 
+def _expect(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
 def test_worker_dispatch_task_uses_local_queue(monkeypatch):
     from services.worker import worker
 
@@ -10,4 +15,4 @@ def test_worker_dispatch_task_uses_local_queue(monkeypatch):
 
     result = worker._dispatch_task("tasks.generate_captions", args=["job", "asset", {}], queue="cpu")
 
-    assert result.id == "local-step"
+    _expect(result.id == "local-step", "Expected local queue dispatch result id")

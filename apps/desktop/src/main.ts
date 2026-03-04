@@ -260,17 +260,18 @@ async function stop() {
 
 async function openProductExperience() {
   try {
-    const ui = await fetch(UI_URL, { method: "GET" });
-    if (ui.ok) {
-      await openUrl(UI_URL);
-      return;
+    const runtimeStatus = await invoke<string>("compose_ps");
+    if (!String(runtimeStatus || "").toLowerCase().includes("running")) {
+      appendLog("Local runtime is not running. Starting now before opening Studio...");
+      await start(true);
     }
+    await openUrl(UI_URL);
+    return;
   } catch (err) {
-    appendLog(`Studio URL unreachable: ${errToString(err)}. Opening docs instead.`);
+    appendLog(`Unable to prepare Studio launch: ${errToString(err)}. Opening docs instead.`);
   }
   await openUrl(DOCS_URL);
 }
-
 async function checkUpdates() {
   appendLog("Checking for updates...");
   try {
@@ -343,3 +344,4 @@ window.addEventListener("DOMContentLoaded", () => {
 
   void refresh();
 });
+
