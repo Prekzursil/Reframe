@@ -177,7 +177,7 @@ def _install_fake_huggingface_hub(monkeypatch, tmp_path: Path):
         _ = (repo_id, local_dir_use_symlinks)
         p = Path(local_dir)
         p.mkdir(parents=True, exist_ok=True)
-        with (p / "hyperparams.yaml").open("w", encoding="utf-8") as handle:
+        with open(str(p / "hyperparams.yaml"), "w", encoding="utf-8") as handle:
             handle.write("ok: true\\n")
         return str(p)
 
