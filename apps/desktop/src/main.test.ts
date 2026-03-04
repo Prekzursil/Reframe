@@ -294,41 +294,46 @@ describe("desktop main app", () => {
     expect(document.getElementById("log")?.textContent ?? "").toContain("compose_up failed");
     expect(document.getElementById("log")?.textContent ?? "").toContain("compose_down failed");
   });
-
-
-  it("handles runtime_prepare success/failure and prepare button wiring", async () => {
+  it("handles runtime_prepare success and prepare button wiring", async () => {
     await appModule.__test.prepareRuntime();
     expect(document.getElementById("log")?.textContent ?? "").toContain("runtime ready");
     expect(document.getElementById("step-runtime")?.textContent).toBe("ready");
 
-    state.invokeFailures.add("runtime_prepare");
-    await appModule.__test.prepareRuntime();
-    expect(document.getElementById("step-runtime")?.textContent).toBe("failed");
-    expect(document.getElementById("log")?.textContent ?? "").toContain("runtime_prepare failed");
-
-    state.invokeFailures.delete("runtime_prepare");
     await click("btn-prepare");
     expect(invokeMock).toHaveBeenCalledWith("runtime_prepare");
   });
 
-  it("handles runtime_prepare blank and string-error branches", async () => {
+  it("handles runtime_prepare Error failures", async () => {
+    state.invokeFailures.add("runtime_prepare");
+    await appModule.__test.prepareRuntime();
+
+    expect(document.getElementById("step-runtime")?.textContent).toBe("failed");
+    expect(document.getElementById("log")?.textContent ?? "").toContain("runtime_prepare failed");
+  });
+
+  it("handles runtime_prepare blank output fallback message", async () => {
     state.invokeValues.runtime_prepare = "   ";
     await appModule.__test.prepareRuntime();
+
     expect(document.getElementById("log")?.textContent ?? "").toContain(
       "Runtime dependencies ready.",
     );
     expect(document.getElementById("step-runtime")?.textContent).toBe("ready");
+  });
 
+  it("handles runtime_prepare string-error branch", async () => {
     invokeMock.mockImplementation(async (command: string) => {
       if (command === "runtime_prepare") {
         throw "prepare string failure";
       }
       return state.invokeValues[command] ?? "";
     });
+
     await appModule.__test.prepareRuntime();
     expect(document.getElementById("step-runtime")?.textContent).toBe("failed");
     expect(document.getElementById("log")?.textContent ?? "").toContain("prepare string failure");
   });
+
   it("covers non-Error and empty-output runtime branches", async () => {
     const firstHandlers: Record<string, () => string | never> = {
       docker_version: () => {

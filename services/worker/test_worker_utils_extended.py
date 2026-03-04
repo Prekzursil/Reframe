@@ -98,7 +98,15 @@ def test_worker_download_remote_uri_to_tmp_paths(monkeypatch, tmp_path: Path):
         pass
 
 
-def test_worker_transcribe_media_routing(monkeypatch, tmp_path: Path):
+def _mock_transcribe_backends(monkeypatch, worker_module):
+    monkeypatch.setattr(worker_module, "transcribe_openai_file", lambda *_args, **_kwargs: "openai")
+    monkeypatch.setattr(worker_module, "transcribe_faster_whisper", lambda *_args, **_kwargs: "faster")
+    monkeypatch.setattr(worker_module, "transcribe_whisper_cpp", lambda *_args, **_kwargs: "cpp")
+    monkeypatch.setattr(worker_module, "transcribe_whisper_timestamped", lambda *_args, **_kwargs: "ts")
+    monkeypatch.setattr(worker_module, "transcribe_noop", lambda *_args, **_kwargs: "noop")
+
+
+def test_worker_transcribe_media_routes_selected_backend(monkeypatch, tmp_path: Path):
     from media_core.transcribe import TranscriptionBackend, TranscriptionConfig
     from services.worker import worker
 
@@ -106,68 +114,63 @@ def test_worker_transcribe_media_routing(monkeypatch, tmp_path: Path):
     media.write_bytes(b"data")
 
     monkeypatch.setattr(worker, "offline_mode_enabled", lambda: False)
-    monkeypatch.setattr(worker, "transcribe_openai_file", lambda *_args, **_kwargs: "openai")
-    monkeypatch.setattr(worker, "transcribe_faster_whisper", lambda *_args, **_kwargs: "faster")
-    monkeypatch.setattr(worker, "transcribe_whisper_cpp", lambda *_args, **_kwargs: "cpp")
-    monkeypatch.setattr(worker, "transcribe_whisper_timestamped", lambda *_args, **_kwargs: "ts")
-    monkeypatch.setattr(worker, "transcribe_noop", lambda *_args, **_kwargs: "noop")
+    _mock_transcribe_backends(monkeypatch, worker)
 
     warnings: list[str] = []
+    expected_routes = [
+        (TranscriptionBackend.FASTER_WHISPER, "faster"),
+        (TranscriptionBackend.WHISPER_CPP, "cpp"),
+        (TranscriptionBackend.WHISPER_TIMESTAMPED, "ts"),
+        (TranscriptionBackend.NOOP, "noop"),
+        (TranscriptionBackend.OPENAI_WHISPER, "openai"),
+    ]
+    for backend, expected in expected_routes:
+        got = worker._transcribe_media(media, TranscriptionConfig(backend=backend), warnings=warnings)
+        _expect(got == expected, f"Expected {backend.value} route")
 
-    _expect(
-        worker._transcribe_media(
-            media,
-            TranscriptionConfig(backend=TranscriptionBackend.FASTER_WHISPER),
-            warnings=warnings,
-        )
-        == "faster",
-        "Expected faster route",
-    )
-    _expect(
-        worker._transcribe_media(
-            media,
-            TranscriptionConfig(backend=TranscriptionBackend.WHISPER_CPP),
-            warnings=warnings,
-        )
-        == "cpp",
-        "Expected whisper.cpp route",
-    )
-    _expect(
-        worker._transcribe_media(
-            media,
-            TranscriptionConfig(backend=TranscriptionBackend.WHISPER_TIMESTAMPED),
-            warnings=warnings,
-        )
-        == "ts",
-        "Expected timestamped route",
-    )
-    _expect(
-        worker._transcribe_media(
-            media,
-            TranscriptionConfig(backend=TranscriptionBackend.NOOP),
-            warnings=warnings,
-        )
-        == "noop",
-        "Expected noop route",
-    )
-    _expect(
-        worker._transcribe_media(
-            media,
-            TranscriptionConfig(backend=TranscriptionBackend.OPENAI_WHISPER),
-            warnings=warnings,
-        )
-        == "openai",
-        "Expected openai route",
-    )
+
+def test_worker_transcribe_media_offline_openai_falls_back_to_noop(monkeypatch, tmp_path: Path):
+    from media_core.transcribe import TranscriptionBackend, TranscriptionConfig
+    from services.worker import worker
+
+    media = tmp_path / "audio.wav"
+    media.write_bytes(b"data")
 
     monkeypatch.setattr(worker, "offline_mode_enabled", lambda: True)
-    _expect(worker._transcribe_media(media, TranscriptionConfig(backend=TranscriptionBackend.OPENAI_WHISPER), warnings=warnings) == "noop", "Expected offline openai fallback")
+    _mock_transcribe_backends(monkeypatch, worker)
+
+    warnings: list[str] = []
+    got = worker._transcribe_media(
+        media,
+        TranscriptionConfig(backend=TranscriptionBackend.OPENAI_WHISPER),
+        warnings=warnings,
+    )
+    _expect(got == "noop", "Expected offline OpenAI route to fall back to noop")
+
+
+def test_worker_transcribe_media_backend_error_falls_back_with_warning(monkeypatch, tmp_path: Path):
+    from media_core.transcribe import TranscriptionBackend, TranscriptionConfig
+    from services.worker import worker
+
+    media = tmp_path / "audio.wav"
+    media.write_bytes(b"data")
 
     monkeypatch.setattr(worker, "offline_mode_enabled", lambda: False)
-    monkeypatch.setattr(worker, "transcribe_faster_whisper", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
-    _expect(worker._transcribe_media(media, TranscriptionConfig(backend=TranscriptionBackend.FASTER_WHISPER), warnings=warnings) == "noop", "Expected exception fallback to noop")
-    _expect(any("failed; falling back" in item for item in warnings), "Expected fallback warning")
+    _mock_transcribe_backends(monkeypatch, worker)
+    monkeypatch.setattr(
+        worker,
+        "transcribe_faster_whisper",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
 
+    warnings: list[str] = []
+    got = worker._transcribe_media(
+        media,
+        TranscriptionConfig(backend=TranscriptionBackend.FASTER_WHISPER),
+        warnings=warnings,
+    )
+    _expect(got == "noop", "Expected backend error fallback to noop")
+    _expect(any("failed; falling back" in item for item in warnings), "Expected fallback warning")
 
 def test_worker_extract_audio_and_thumbnail_paths(monkeypatch, tmp_path: Path):
     from services.worker import worker

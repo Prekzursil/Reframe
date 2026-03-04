@@ -66,7 +66,9 @@ fn format_output(stdout: &[u8], stderr: &[u8]) -> String {
 }
 
 fn run_checked(mut cmd: Command) -> Result<String, String> {
-    let output = cmd.output().map_err(|e| format!("Command failed to start: {e}"))?;
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Command failed to start: {e}"))?;
     let rendered = format_output(&output.stdout, &output.stderr);
     if output.status.success() {
         return Ok(rendered);
@@ -88,7 +90,12 @@ fn candidate_python_binaries(runtime_root: &Path) -> Vec<PathBuf> {
         }
     }
 
-    candidates.push(runtime_root.join(".venv").join("Scripts").join("python.exe"));
+    candidates.push(
+        runtime_root
+            .join(".venv")
+            .join("Scripts")
+            .join("python.exe"),
+    );
     candidates.push(runtime_root.join(".venv").join("bin").join("python"));
     candidates.push(PathBuf::from("python"));
     candidates.push(PathBuf::from("python3"));
@@ -112,7 +119,10 @@ fn resolve_host_python_binary(runtime_root: &Path) -> Result<PathBuf, String> {
         }
     }
 
-    Err("No usable Python runtime found. Install Python 3.11+ or set REFRAME_DESKTOP_PYTHON.".to_string())
+    Err(
+        "No usable Python runtime found. Install Python 3.11+ or set REFRAME_DESKTOP_PYTHON."
+            .to_string(),
+    )
 }
 
 fn pythonpath_for_runtime(runtime_root: &Path) -> Result<OsString, String> {
@@ -129,13 +139,15 @@ fn desktop_data_dir(runtime_root: &Path) -> Result<PathBuf, String> {
         let value = raw.trim();
         if !value.is_empty() {
             let path = PathBuf::from(value);
-            fs::create_dir_all(&path).map_err(|e| format!("Unable to create desktop data dir {path:?}: {e}"))?;
+            fs::create_dir_all(&path)
+                .map_err(|e| format!("Unable to create desktop data dir {path:?}: {e}"))?;
             return Ok(path);
         }
     }
 
     let fallback = runtime_root.join(".desktop-runtime");
-    fs::create_dir_all(&fallback).map_err(|e| format!("Unable to create desktop data dir {fallback:?}: {e}"))?;
+    fs::create_dir_all(&fallback)
+        .map_err(|e| format!("Unable to create desktop data dir {fallback:?}: {e}"))?;
     Ok(fallback)
 }
 
@@ -151,6 +163,81 @@ fn venv_python(venv_dir: &Path) -> PathBuf {
     }
 }
 
+fn runtime_requirement_files(runtime_root: &Path) -> Result<(PathBuf, PathBuf), String> {
+    let req_api = runtime_root
+        .join("apps")
+        .join("api")
+        .join("requirements.txt");
+    let req_worker = runtime_root
+        .join("services")
+        .join("worker")
+        .join("requirements.txt");
+    if !req_api.is_file() {
+        return Err(format!(
+            "Missing runtime requirement file: {}",
+            req_api.display()
+        ));
+    }
+    if !req_worker.is_file() {
+        return Err(format!(
+            "Missing runtime requirement file: {}",
+            req_worker.display()
+        ));
+    }
+    Ok((req_api, req_worker))
+}
+
+fn create_runtime_venv_if_missing(
+    host_python: &Path,
+    venv: &Path,
+    python: &Path,
+) -> Result<(), String> {
+    if python.is_file() {
+        return Ok(());
+    }
+    let mut create_cmd = Command::new(host_python);
+    create_cmd.arg("-m").arg("venv").arg(venv);
+    run_checked(create_cmd)?;
+    Ok(())
+}
+
+fn install_runtime_requirements(
+    python: &Path,
+    req_api: &Path,
+    req_worker: &Path,
+) -> Result<(), String> {
+    let mut pip_upgrade = Command::new(python);
+    pip_upgrade
+        .arg("-m")
+        .arg("pip")
+        .arg("install")
+        .arg("--upgrade")
+        .arg("pip");
+    run_checked(pip_upgrade)?;
+
+    let mut install = Command::new(python);
+    install
+        .arg("-m")
+        .arg("pip")
+        .arg("install")
+        .arg("-r")
+        .arg(req_api)
+        .arg("-r")
+        .arg(req_worker)
+        .env("PIP_DISABLE_PIP_VERSION_CHECK", "1");
+    run_checked(install)?;
+    Ok(())
+}
+
+fn mark_runtime_ready(marker: &Path) -> Result<(), String> {
+    fs::write(marker, "ready\n").map_err(|e| {
+        format!(
+            "Unable to write runtime readiness marker {}: {e}",
+            marker.display()
+        )
+    })
+}
+
 fn ensure_runtime_venv(runtime_root: &Path) -> Result<PathBuf, String> {
     let venv = venv_dir(runtime_root)?;
     let python = venv_python(&venv);
@@ -161,39 +248,11 @@ fn ensure_runtime_venv(runtime_root: &Path) -> Result<PathBuf, String> {
     }
 
     let host_python = resolve_host_python_binary(runtime_root)?;
-    if !python.is_file() {
-        let mut create_cmd = Command::new(&host_python);
-        create_cmd.arg("-m").arg("venv").arg(&venv);
-        run_checked(create_cmd)?;
-    }
+    create_runtime_venv_if_missing(&host_python, &venv, &python)?;
 
-    let req_api = runtime_root.join("apps").join("api").join("requirements.txt");
-    let req_worker = runtime_root.join("services").join("worker").join("requirements.txt");
-    if !req_api.is_file() {
-        return Err(format!("Missing runtime requirement file: {}", req_api.display()));
-    }
-    if !req_worker.is_file() {
-        return Err(format!("Missing runtime requirement file: {}", req_worker.display()));
-    }
-
-    let mut pip_upgrade = Command::new(&python);
-    pip_upgrade.arg("-m").arg("pip").arg("install").arg("--upgrade").arg("pip");
-    run_checked(pip_upgrade)?;
-
-    let mut install = Command::new(&python);
-    install
-        .arg("-m")
-        .arg("pip")
-        .arg("install")
-        .arg("-r")
-        .arg(&req_api)
-        .arg("-r")
-        .arg(&req_worker)
-        .env("PIP_DISABLE_PIP_VERSION_CHECK", "1");
-    run_checked(install)?;
-
-    fs::write(&marker, "ready\n")
-        .map_err(|e| format!("Unable to write runtime readiness marker {}: {e}", marker.display()))?;
+    let (req_api, req_worker) = runtime_requirement_files(runtime_root)?;
+    install_runtime_requirements(&python, &req_api, &req_worker)?;
+    mark_runtime_ready(&marker)?;
     Ok(python)
 }
 
@@ -218,7 +277,10 @@ fn runtime_state() -> &'static Mutex<RuntimeState> {
 
 fn api_is_running(state: &mut RuntimeState) -> Result<bool, String> {
     if let Some(child) = state.api.as_mut() {
-        match child.try_wait().map_err(|e| format!("Failed to inspect API process: {e}"))? {
+        match child
+            .try_wait()
+            .map_err(|e| format!("Failed to inspect API process: {e}"))?
+        {
             Some(_) => {
                 state.api = None;
                 Ok(false)
@@ -245,24 +307,34 @@ fn prepare_local_runtime() -> Result<String, String> {
     ))
 }
 
-fn start_local_runtime() -> Result<String, String> {
-    let runtime_root = find_runtime_root()?;
-    let python = ensure_runtime_venv(&runtime_root)?;
-    let pythonpath = pythonpath_for_runtime(&runtime_root)?;
-
-    let mut guard = runtime_state().lock().map_err(|_| "Runtime state lock poisoned".to_string())?;
-    if api_is_running(&mut guard)? {
+fn running_runtime_pid(guard: &mut RuntimeState) -> Result<Option<u32>, String> {
+    if api_is_running(guard)? {
         let pid = guard.api.as_ref().map(|c| c.id()).unwrap_or_default();
-        return Ok(format!("local runtime already running (api pid {pid})"));
+        return Ok(Some(pid));
     }
+    Ok(None)
+}
 
-    let app_data = desktop_data_dir(&runtime_root)?;
+fn ensure_media_root(runtime_root: &Path) -> Result<PathBuf, String> {
+    let app_data = desktop_data_dir(runtime_root)?;
     let media_root = app_data.join("media");
-    fs::create_dir_all(&media_root)
-        .map_err(|e| format!("Unable to create desktop media root {}: {e}", media_root.display()))?;
+    fs::create_dir_all(&media_root).map_err(|e| {
+        format!(
+            "Unable to create desktop media root {}: {e}",
+            media_root.display()
+        )
+    })?;
+    Ok(media_root)
+}
 
-    let mut cmd = Command::new(&python);
-    cmd.current_dir(&runtime_root)
+fn build_runtime_command(
+    runtime_root: &Path,
+    python: &Path,
+    pythonpath: OsString,
+    media_root: &Path,
+) -> Command {
+    let mut cmd = Command::new(python);
+    cmd.current_dir(runtime_root)
         .arg("-m")
         .arg("uvicorn")
         .arg("app.main:create_app")
@@ -278,9 +350,26 @@ fn start_local_runtime() -> Result<String, String> {
         .env("REFRAME_APP_BASE_URL", "http://localhost:8000")
         .env("REFRAME_MEDIA_ROOT", media_root);
 
-    if let Some(web_dist) = desktop_web_dist(&runtime_root) {
+    if let Some(web_dist) = desktop_web_dist(runtime_root) {
         cmd.env("REFRAME_DESKTOP_WEB_DIST", web_dist);
     }
+    cmd
+}
+
+fn start_local_runtime() -> Result<String, String> {
+    let runtime_root = find_runtime_root()?;
+    let python = ensure_runtime_venv(&runtime_root)?;
+    let pythonpath = pythonpath_for_runtime(&runtime_root)?;
+
+    let mut guard = runtime_state()
+        .lock()
+        .map_err(|_| "Runtime state lock poisoned".to_string())?;
+    if let Some(pid) = running_runtime_pid(&mut guard)? {
+        return Ok(format!("local runtime already running (api pid {pid})"));
+    }
+
+    let media_root = ensure_media_root(&runtime_root)?;
+    let mut cmd = build_runtime_command(&runtime_root, &python, pythonpath, &media_root);
 
     let child = cmd
         .spawn()
@@ -291,10 +380,14 @@ fn start_local_runtime() -> Result<String, String> {
 }
 
 fn stop_local_runtime() -> Result<String, String> {
-    let mut guard = runtime_state().lock().map_err(|_| "Runtime state lock poisoned".to_string())?;
+    let mut guard = runtime_state()
+        .lock()
+        .map_err(|_| "Runtime state lock poisoned".to_string())?;
     if let Some(mut child) = guard.api.take() {
         let pid = child.id();
-        child.kill().map_err(|e| format!("Failed to stop local runtime API process {pid}: {e}"))?;
+        child
+            .kill()
+            .map_err(|e| format!("Failed to stop local runtime API process {pid}: {e}"))?;
         let _ = child.wait();
         return Ok(format!("local runtime stopped (api pid {pid})"));
     }
@@ -302,7 +395,9 @@ fn stop_local_runtime() -> Result<String, String> {
 }
 
 fn local_runtime_status() -> Result<String, String> {
-    let mut guard = runtime_state().lock().map_err(|_| "Runtime state lock poisoned".to_string())?;
+    let mut guard = runtime_state()
+        .lock()
+        .map_err(|_| "Runtime state lock poisoned".to_string())?;
     if api_is_running(&mut guard)? {
         let pid = guard.api.as_ref().map(|c| c.id()).unwrap_or_default();
         return Ok(format!("api running (pid {pid})\nqueue mode: local"));
@@ -322,7 +417,9 @@ fn docker_version() -> Result<String, String> {
     let mut cmd = Command::new(python);
     cmd.arg("--version");
     let version = run_checked(cmd)?;
-    Ok(format!("{version}\nmode: local runtime (no docker required)"))
+    Ok(format!(
+        "{version}\nmode: local runtime (no docker required)"
+    ))
 }
 
 #[tauri::command]

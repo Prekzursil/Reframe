@@ -31,7 +31,8 @@ def test_find_repo_root_and_rel_dir(tmp_path: Path):
     class _RemoteStorage:
         pass
 
-    assert worker._worker_rel_dir(storage=_RemoteStorage(), org_id=uuid4()).endswith("/tmp")
+    remote_rel = worker._worker_rel_dir(storage=_RemoteStorage(), org_id=uuid4())
+    assert remote_rel.split("/")[-1] == "tmp"
     assert worker._worker_rel_dir(storage=worker.LocalStorageBackend(media_root=tmp_path), org_id=uuid4()) == "tmp"
 
 
