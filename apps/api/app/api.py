@@ -59,10 +59,12 @@ except ModuleNotFoundError:  # pragma: no cover - allows API tests without optio
 
 
 class _MissingCeleryControl:
-    def ping(self, *_args, **_kwargs):
+    @staticmethod
+    def ping(*_args, **_kwargs):
         raise RuntimeError("Celery is not installed in this environment.")
 
-    def revoke(self, *_args, **_kwargs):
+    @staticmethod
+    def revoke(*_args, **_kwargs):
         raise RuntimeError("Celery is not installed in this environment.")
 
 
@@ -70,7 +72,8 @@ class _MissingCelery:
     def __init__(self, *args, **kwargs):
         self.control = _MissingCeleryControl()
 
-    def send_task(self, *_args, **_kwargs):
+    @staticmethod
+    def send_task(*_args, **_kwargs):
         raise RuntimeError("Celery is not installed in this environment.")
 
 
