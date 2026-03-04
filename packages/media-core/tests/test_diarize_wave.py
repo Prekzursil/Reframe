@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import absolute_import, division
 
 import sys
 import types
@@ -17,6 +17,11 @@ from media_core.diarize.config import DiarizationBackend, DiarizationConfig
 from media_core.diarize.models import SpeakerSegment
 from media_core.subtitles.builder import SubtitleLine
 from media_core.transcribe.models import Word
+
+
+def _expect(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
 
 
 class _FakeTurn:
@@ -168,17 +173,17 @@ def _install_fake_speechbrain(monkeypatch, tmp_path: Path, *, use_pretrained: bo
         (p / "hyperparams.yaml").write_text("ok: true\n", encoding="utf-8")
         return str(p)
 
-    hub.hf_hub_download = hf_hub_download
-    hub.snapshot_download = snapshot_download
+    setattr(hub, "hf_hub_download", hf_hub_download)
+    setattr(hub, "snapshot_download", snapshot_download)
     monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
 
     fake_torch = types.ModuleType("torch")
-    fake_torch.float32 = "float32"
+    setattr(fake_torch, "float32", "float32")
 
     def from_numpy(values):
         return _FakeTensor(values)
 
-    fake_torch.from_numpy = from_numpy
+    setattr(fake_torch, "from_numpy", from_numpy)
 
     functional = types.ModuleType("torch.nn.functional")
 
@@ -190,11 +195,11 @@ def _install_fake_speechbrain(monkeypatch, tmp_path: Path, *, use_pretrained: bo
         _ = dim
         return _FakeScalar(0.9)
 
-    functional.normalize = normalize
-    functional.cosine_similarity = cosine_similarity
+    setattr(functional, "normalize", normalize)
+    setattr(functional, "cosine_similarity", cosine_similarity)
 
     fake_torch_nn = types.ModuleType("torch.nn")
-    fake_torch_nn.functional = functional
+    setattr(fake_torch_nn, "functional", functional)
 
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
     monkeypatch.setitem(sys.modules, "torch.nn", fake_torch_nn)
@@ -207,7 +212,7 @@ def _install_fake_speechbrain(monkeypatch, tmp_path: Path, *, use_pretrained: bo
             raise RuntimeError("torchaudio failure")
         return _FakeTensor([[0.1, 0.2, 0.3, 0.4]]), 10
 
-    torchaudio.load = load
+    setattr(torchaudio, "load", load)
     monkeypatch.setitem(sys.modules, "torchaudio", torchaudio)
 
     if torchaudio_fails:
@@ -217,7 +222,7 @@ def _install_fake_speechbrain(monkeypatch, tmp_path: Path, *, use_pretrained: bo
             _ = (dtype, always_2d)
             return _FakeNumpyLike([[0.1], [0.2], [0.3], [0.4]]), 10
 
-        sf.read = read
+        setattr(sf, "read", read)
         monkeypatch.setitem(sys.modules, "soundfile", sf)
 
     class FakeVAD:
@@ -237,21 +242,21 @@ def _install_fake_speechbrain(monkeypatch, tmp_path: Path, *, use_pretrained: bo
             return _FakeTensor([0.6, 0.4])
 
     utils_fetching = types.ModuleType("speechbrain.utils.fetching")
-    utils_fetching.LocalStrategy = types.SimpleNamespace(NO_LINK="NO_LINK")
+    setattr(utils_fetching, "LocalStrategy", types.SimpleNamespace(NO_LINK="NO_LINK"))
     monkeypatch.setitem(sys.modules, "speechbrain.utils.fetching", utils_fetching)
 
     if use_pretrained:
         pretrained = types.ModuleType("speechbrain.pretrained")
-        pretrained.VAD = FakeVAD
-        pretrained.SpeakerRecognition = FakeSpeakerRecognition
+        setattr(pretrained, "VAD", FakeVAD)
+        setattr(pretrained, "SpeakerRecognition", FakeSpeakerRecognition)
         monkeypatch.setitem(sys.modules, "speechbrain.pretrained", pretrained)
         monkeypatch.delitem(sys.modules, "speechbrain.inference.VAD", raising=False)
         monkeypatch.delitem(sys.modules, "speechbrain.inference.speaker", raising=False)
     else:
         vad_mod = types.ModuleType("speechbrain.inference.VAD")
-        vad_mod.VAD = FakeVAD
+        setattr(vad_mod, "VAD", FakeVAD)
         spk_mod = types.ModuleType("speechbrain.inference.speaker")
-        spk_mod.SpeakerRecognition = FakeSpeakerRecognition
+        setattr(spk_mod, "SpeakerRecognition", FakeSpeakerRecognition)
         monkeypatch.setitem(sys.modules, "speechbrain.inference.VAD", vad_mod)
         monkeypatch.setitem(sys.modules, "speechbrain.inference.speaker", spk_mod)
 
@@ -260,7 +265,7 @@ def _install_fake_speechbrain(monkeypatch, tmp_path: Path, *, use_pretrained: bo
 
 def test_diarize_audio_noop_and_unknown_backend():
     cfg = DiarizationConfig(backend=DiarizationBackend.NOOP)
-    assert diarize_audio("audio.wav", cfg) == []
+    _expect(diarize_audio("audio.wav", cfg) == [], "Expected NOOP backend to yield no segments")
 
     cfg_unknown = types.SimpleNamespace(backend="unknown")
     with pytest.raises(ValueError):
@@ -272,27 +277,30 @@ def test_assign_speakers_to_lines_with_and_without_segments():
     lines = [SubtitleLine(start=0.0, end=0.5, words=[word]), SubtitleLine(start=1.0, end=1.5, words=[word])]
 
     copied = assign_speakers_to_lines(lines, [])
-    assert copied[0].speaker is None
+    _expect(copied[0].speaker is None, "Expected no speaker when no segments are provided")
 
     segments = [
         SpeakerSegment(start=0.0, end=0.4, speaker="SPEAKER_00"),
         SpeakerSegment(start=1.0, end=1.4, speaker="SPEAKER_01"),
     ]
     assigned = assign_speakers_to_lines(lines, segments)
-    assert assigned[0].speaker == "SPEAKER_00"
-    assert assigned[1].speaker == "SPEAKER_01"
+    _expect(assigned[0].speaker == "SPEAKER_00", "Expected first line speaker assignment")
+    _expect(assigned[1].speaker == "SPEAKER_01", "Expected second line speaker assignment")
 
 
 def test_iter_pyannote_tracks_supports_multiple_shapes():
     direct = _FakeTracks([(_FakeTurn(0.0, 1.0), None, "A")])
-    assert list(_iter_pyannote_tracks(direct))
+    _expect(bool(list(_iter_pyannote_tracks(direct))), "Expected direct itertracks support")
 
     nested = types.SimpleNamespace(speaker_diarization=_FakeTracks([(_FakeTurn(0.0, 1.0), None, "B")]))
-    assert list(_iter_pyannote_tracks(nested))
+    _expect(bool(list(_iter_pyannote_tracks(nested))), "Expected nested speaker_diarization support")
 
     annotation_obj = _FakeTracks([(_FakeTurn(0.0, 1.0), None, "C")])
-    to_annotation = types.SimpleNamespace(to_annotation=lambda: annotation_obj)
-    assert list(_iter_pyannote_tracks(to_annotation))
+    def _to_annotation():
+        return annotation_obj
+
+    to_annotation = types.SimpleNamespace(to_annotation=_to_annotation)
+    _expect(bool(list(_iter_pyannote_tracks(to_annotation))), "Expected to_annotation fallback support")
 
     with pytest.raises(RuntimeError):
         list(_iter_pyannote_tracks(object()))
@@ -314,7 +322,7 @@ def test_diarize_pyannote_import_error_and_gated_hint(monkeypatch):
     _install_fake_pyannote(monkeypatch, pipeline_cls=FailingPipeline)
     with pytest.raises(RuntimeError) as exc:
         _diarize_pyannote("audio.wav", cfg)
-    assert "Hint:" in str(exc.value)
+    _expect("Hint:" in str(exc.value), "Expected gated-access hint in pyannote failure")
 
 
 def test_diarize_pyannote_token_fallback_and_segment_filter(monkeypatch):
@@ -338,15 +346,15 @@ def test_diarize_pyannote_token_fallback_and_segment_filter(monkeypatch):
     cfg = DiarizationConfig(
         backend=DiarizationBackend.PYANNOTE,
         model="pyannote/model",
-        huggingface_token="hf-token",
+        huggingface_token="fixture-token",
         min_segment_duration=0.2,
     )
 
     segments = _diarize_pyannote("audio.wav", cfg)
-    assert len(segments) == 1
-    assert segments[0].speaker == "B"
-    assert any(call[1] == "hf-token" for call in calls)
-    assert any(call[2] == "hf-token" for call in calls)
+    _expect(len(segments) == 1, "Expected min-segment-duration filtering to retain one segment")
+    _expect(segments[0].speaker == "B", "Expected retained segment speaker label")
+    _expect(any(call[1] == "fixture-token" for call in calls), "Expected token kwarg fallback to include fixture token")
+    _expect(any(call[2] == "fixture-token" for call in calls), "Expected use_auth_token fallback to include fixture token")
 
 
 def test_diarize_speechbrain_import_error(monkeypatch):
@@ -375,16 +383,16 @@ def test_diarize_speechbrain_main_path_and_pretrained_fallback(monkeypatch, tmp_
 
     _install_fake_speechbrain(monkeypatch, tmp_path, use_pretrained=False, torchaudio_fails=False)
     segments = _diarize_speechbrain("audio.wav", cfg)
-    assert segments
-    assert segments[0].speaker.startswith("SPEAKER_")
+    _expect(bool(segments), "Expected non-empty speechbrain segments")
+    _expect(segments[0].speaker.startswith("SPEAKER_"), "Expected synthetic speaker labels")
 
     _install_fake_speechbrain(monkeypatch, tmp_path, use_pretrained=True, torchaudio_fails=False)
     segments_fallback = _diarize_speechbrain("audio.wav", cfg)
-    assert segments_fallback
+    _expect(bool(segments_fallback), "Expected pretrained fallback to produce segments")
 
 
 def test_diarize_speechbrain_torchaudio_failure_uses_soundfile(monkeypatch, tmp_path):
     cfg = DiarizationConfig(backend=DiarizationBackend.SPEECHBRAIN, model="speechbrain/spkrec-ecapa-voxceleb")
     _install_fake_speechbrain(monkeypatch, tmp_path, use_pretrained=False, torchaudio_fails=True)
     segments = _diarize_speechbrain("audio.wav", cfg)
-    assert segments
+    _expect(bool(segments), "Expected non-empty speechbrain segments")

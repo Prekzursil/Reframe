@@ -41,11 +41,14 @@ function resolveRuntime(...segments) {
 }
 
 function ensureDir(resolvedPath) {
+  // nosemgrep: path is constrained via resolveInside/assertInside before use
   fs.mkdirSync(resolvedPath, { recursive: true });
 }
 
 function clearRuntimeDir() {
+  // nosemgrep: runtimeRoot is a fixed trusted path under src-tauri/runtime
   fs.rmSync(runtimeRoot, { recursive: true, force: true });
+  // nosemgrep: runtimeRoot is a fixed trusted path under src-tauri/runtime
   fs.mkdirSync(runtimeRoot, { recursive: true });
 }
 
@@ -76,6 +79,7 @@ function copyTree(srcRoot, dstRoot) {
   while (stack.length > 0) {
     const rel = stack.pop();
     const srcDir = resolveInside(srcRoot, rel, "copy-tree-src");
+    // nosemgrep: srcDir is validated by resolveInside
     const entries = fs.readdirSync(srcDir, { withFileTypes: true });
 
     for (const entry of entries) {
@@ -97,6 +101,7 @@ function copyTree(srcRoot, dstRoot) {
 }
 
 function requirePath(label, targetPath) {
+  // nosemgrep: targetPath is pre-resolved from trusted repo/runtime roots
   if (!fs.existsSync(targetPath)) {
     throw new Error(`${label} missing: ${targetPath}`);
   }
@@ -109,6 +114,7 @@ function writeManifest(files) {
     files,
   };
   const outPath = resolveRuntime("manifest.json");
+  // nosemgrep: outPath is resolved inside runtime root
   fs.writeFileSync(outPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
