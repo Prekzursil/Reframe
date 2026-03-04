@@ -12,9 +12,45 @@ from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Set
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, Response, UploadFile, status
+from fastapi.responses import FileResponse, StreamingResponse
+from sqlmodel import Field, Session, SQLModel, select
 from typing_extensions import Annotated
+
+from app.auth_api import PrincipalDep, ensure_default_plans
+from app.billing import get_plan_policy
+from app.config import get_settings
+from app.database import get_session
+from app.errors import ApiError, ErrorCode, ErrorResponse, conflict, not_found, quota_exceeded, server_error, unauthorized
+from app.local_queue import (
+    diagnostics as local_queue_diagnostics,
+    dispatch_task as dispatch_local_task,
+    is_local_queue_mode,
+    revoke_task as revoke_local_task,
+)
+from app.models import (
+    Job,
+    JobStatus,
+    MediaAsset,
+    OrgBudgetPolicy,
+    Project,
+    ProjectMembership,
+    Subscription,
+    SubtitleStylePreset,
+    UsageEvent,
+    UsageLedgerEntry,
+    WorkflowRun,
+    WorkflowRunStatus,
+    WorkflowRunStep,
+    WorkflowStepStatus,
+    WorkflowTemplate,
+)
+from app.rate_limit import enforce_rate_limit
+from app.security import AuthPrincipal
+from app.share_links import build_share_token_with_ttl, parse_and_validate_share_token
+from app.storage import LocalStorageBackend, get_storage, is_remote_uri
 
 try:
     from celery import Celery
@@ -25,7 +61,7 @@ except ModuleNotFoundError:  # pragma: no cover - allows API tests without optio
 
         def send_task(self, *_args, **_kwargs):
             raise RuntimeError("Celery is not installed in this environment.")
-from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile, status, Response
+
 
 try:
     from kombu.exceptions import OperationalError as _KombuOperationalError
@@ -64,45 +100,6 @@ _CELERY_RUNTIME_EXCEPTIONS = (
     RedisConnectionError,
     ConnectionError,
 )
-
-from uuid import UUID
-
-from sqlmodel import Field, Session, SQLModel, select
-
-from app.auth_api import PrincipalDep, ensure_default_plans
-from app.billing import get_plan_policy
-from app.database import get_session
-from app.config import get_settings
-from app.local_queue import (
-    diagnostics as local_queue_diagnostics,
-    dispatch_task as dispatch_local_task,
-    is_local_queue_mode,
-    revoke_task as revoke_local_task,
-)
-from app.errors import ApiError, ErrorCode, ErrorResponse, conflict, not_found, quota_exceeded, server_error, unauthorized
-from app.models import (
-    Job,
-    JobStatus,
-    MediaAsset,
-    OrgBudgetPolicy,
-    Project,
-    ProjectMembership,
-    Subscription,
-    SubtitleStylePreset,
-    UsageEvent,
-    UsageLedgerEntry,
-    WorkflowRun,
-    WorkflowRunStatus,
-    WorkflowRunStep,
-    WorkflowStepStatus,
-    WorkflowTemplate,
-)
-from app.rate_limit import enforce_rate_limit
-from app.security import AuthPrincipal
-from fastapi.responses import FileResponse, StreamingResponse
-
-from app.share_links import build_share_token_with_ttl, parse_and_validate_share_token
-from app.storage import LocalStorageBackend, get_storage, is_remote_uri
 
 router = APIRouter(prefix="/api/v1")
 logger = logging.getLogger("reframe.api")

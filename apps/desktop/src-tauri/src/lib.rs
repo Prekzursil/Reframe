@@ -279,9 +279,10 @@ struct RuntimeState {
     api: Option<Child>,
 }
 
+static RUNTIME_STATE: OnceLock<Mutex<RuntimeState>> = OnceLock::new();
+
 fn runtime_state() -> &'static Mutex<RuntimeState> {
-    static STATE: OnceLock<Mutex<RuntimeState>> = OnceLock::new();
-    STATE.get_or_init(|| Mutex::new(RuntimeState::default()))
+    RUNTIME_STATE.get_or_init(|| Mutex::new(RuntimeState::default()))
 }
 
 fn api_is_running(state: &mut RuntimeState) -> Result<bool, String> {

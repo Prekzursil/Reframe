@@ -1,6 +1,7 @@
 from __future__ import division
 
 import logging
+import os
 import stat
 import time
 from contextlib import asynccontextmanager
@@ -48,22 +49,24 @@ def _has_path_traversal(normalized: str) -> bool:
     return any(part == ".." for part in segments)
 
 
-def _mount_desktop_web(app: FastAPI, desktop_web_dist: str) -> None:
+def _mount_desktop_web(api_app: FastAPI, desktop_web_dist: str) -> None:
     raw = (desktop_web_dist or "").strip()
     if not raw:
         return
 
     web_dist = Path(raw).resolve()
     index_path = web_dist / "index.html"
-    if not index_path.is_file():
+    if not os.path.isfile(index_path):
         return
     static_files = StaticFiles(directory=str(web_dist), check_dir=False)
 
-    @app.get("/", include_in_schema=False)
+    @api_app.get("/", include_in_schema=False)
     def desktop_index() -> FileResponse:
         return FileResponse(index_path)
 
-    @app.get("/{full_path:path}", include_in_schema=False, responses={404: {"description": "Not Found"}})
+    _ = desktop_index
+
+    @api_app.get("/{full_path:path}", include_in_schema=False, responses={404: {"description": "Not Found"}})
     def desktop_spa(full_path: str) -> FileResponse:
         normalized = (full_path or "").lstrip("/")
         if _has_path_traversal(normalized) or _is_reserved_desktop_path(normalized):
@@ -73,6 +76,8 @@ def _mount_desktop_web(app: FastAPI, desktop_web_dist: str) -> None:
         if stat_result is not None and stat.S_ISREG(stat_result.st_mode):
             return FileResponse(candidate)
         return FileResponse(index_path)
+
+    _ = desktop_spa
 
 
 def create_app() -> FastAPI:
