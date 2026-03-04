@@ -1,20 +1,54 @@
+use std::env;
 use std::ffi::OsString;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::{Mutex, OnceLock};
 
+use tauri::Manager;
+
+fn has_runtime_layout(root: &Path) -> bool {
+    root.join("apps")
+        .join("api")
+        .join("app")
+        .join("main.py")
+        .is_file()
+        && root
+            .join("packages")
+            .join("media-core")
+            .join("src")
+            .join("media_core")
+            .is_dir()
+}
+
+fn runtime_root_from_env() -> Option<PathBuf> {
+    let raw = env::var("REFRAME_DESKTOP_RUNTIME_ROOT").ok()?;
+    let candidate = PathBuf::from(raw);
+    if has_runtime_layout(&candidate) {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
 fn find_repo_root() -> Result<PathBuf, String> {
-    let mut current = std::env::current_dir().map_err(|e| format!("Unable to read current dir: {e}"))?;
+    let mut current = env::current_dir().map_err(|e| format!("Unable to read current dir: {e}"))?;
     loop {
-        let marker = current.join("apps").join("api").join("app").join("main.py");
-        if marker.is_file() {
+        if has_runtime_layout(&current) {
             return Ok(current);
         }
         if !current.pop() {
             break;
         }
     }
-    Err("Could not locate repo root with apps/api/app/main.py; run desktop app from a repository checkout.".to_string())
+    Err("Could not locate runtime root with apps/api/app/main.py; run desktop app from a repository checkout or package runtime resources.".to_string())
+}
+
+fn find_runtime_root() -> Result<PathBuf, String> {
+    if let Some(root) = runtime_root_from_env() {
+        return Ok(root);
+    }
+    find_repo_root()
 }
 
 fn format_output(stdout: &[u8], stderr: &[u8]) -> String {
@@ -45,25 +79,25 @@ fn run_checked(mut cmd: Command) -> Result<String, String> {
     Err(format!("Command failed (exit {code})\n{rendered}"))
 }
 
-fn candidate_python_binaries(repo_root: &Path) -> Vec<PathBuf> {
+fn candidate_python_binaries(runtime_root: &Path) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
-    if let Ok(explicit) = std::env::var("REFRAME_DESKTOP_PYTHON") {
+    if let Ok(explicit) = env::var("REFRAME_DESKTOP_PYTHON") {
         let trimmed = explicit.trim();
         if !trimmed.is_empty() {
             candidates.push(PathBuf::from(trimmed));
         }
     }
 
-    candidates.push(repo_root.join(".venv").join("Scripts").join("python.exe"));
-    candidates.push(repo_root.join(".venv").join("bin").join("python"));
+    candidates.push(runtime_root.join(".venv").join("Scripts").join("python.exe"));
+    candidates.push(runtime_root.join(".venv").join("bin").join("python"));
     candidates.push(PathBuf::from("python"));
     candidates.push(PathBuf::from("python3"));
 
     candidates
 }
 
-fn resolve_python_binary(repo_root: &Path) -> Result<PathBuf, String> {
-    for candidate in candidate_python_binaries(repo_root) {
+fn resolve_host_python_binary(runtime_root: &Path) -> Result<PathBuf, String> {
+    for candidate in candidate_python_binaries(runtime_root) {
         if candidate.is_absolute() {
             if candidate.is_file() {
                 return Ok(candidate);
@@ -81,13 +115,95 @@ fn resolve_python_binary(repo_root: &Path) -> Result<PathBuf, String> {
     Err("No usable Python runtime found. Install Python 3.11+ or set REFRAME_DESKTOP_PYTHON.".to_string())
 }
 
-fn pythonpath_for_repo(repo_root: &Path) -> Result<OsString, String> {
+fn pythonpath_for_runtime(runtime_root: &Path) -> Result<OsString, String> {
     let paths = vec![
-        repo_root.to_path_buf(),
-        repo_root.join("apps").join("api"),
-        repo_root.join("packages").join("media-core").join("src"),
+        runtime_root.to_path_buf(),
+        runtime_root.join("apps").join("api"),
+        runtime_root.join("packages").join("media-core").join("src"),
     ];
-    std::env::join_paths(paths).map_err(|e| format!("Unable to assemble PYTHONPATH: {e}"))
+    env::join_paths(paths).map_err(|e| format!("Unable to assemble PYTHONPATH: {e}"))
+}
+
+fn desktop_data_dir(runtime_root: &Path) -> Result<PathBuf, String> {
+    if let Ok(raw) = env::var("REFRAME_DESKTOP_APP_DATA") {
+        let value = raw.trim();
+        if !value.is_empty() {
+            let path = PathBuf::from(value);
+            fs::create_dir_all(&path).map_err(|e| format!("Unable to create desktop data dir {path:?}: {e}"))?;
+            return Ok(path);
+        }
+    }
+
+    let fallback = runtime_root.join(".desktop-runtime");
+    fs::create_dir_all(&fallback).map_err(|e| format!("Unable to create desktop data dir {fallback:?}: {e}"))?;
+    Ok(fallback)
+}
+
+fn venv_dir(runtime_root: &Path) -> Result<PathBuf, String> {
+    Ok(desktop_data_dir(runtime_root)?.join("venv"))
+}
+
+fn venv_python(venv_dir: &Path) -> PathBuf {
+    if cfg!(target_os = "windows") {
+        venv_dir.join("Scripts").join("python.exe")
+    } else {
+        venv_dir.join("bin").join("python")
+    }
+}
+
+fn ensure_runtime_venv(runtime_root: &Path) -> Result<PathBuf, String> {
+    let venv = venv_dir(runtime_root)?;
+    let python = venv_python(&venv);
+    let marker = venv.join(".reframe_runtime_ready");
+
+    if python.is_file() && marker.is_file() {
+        return Ok(python);
+    }
+
+    let host_python = resolve_host_python_binary(runtime_root)?;
+    if !python.is_file() {
+        let mut create_cmd = Command::new(&host_python);
+        create_cmd.arg("-m").arg("venv").arg(&venv);
+        run_checked(create_cmd)?;
+    }
+
+    let req_api = runtime_root.join("apps").join("api").join("requirements.txt");
+    let req_worker = runtime_root.join("services").join("worker").join("requirements.txt");
+    if !req_api.is_file() {
+        return Err(format!("Missing runtime requirement file: {}", req_api.display()));
+    }
+    if !req_worker.is_file() {
+        return Err(format!("Missing runtime requirement file: {}", req_worker.display()));
+    }
+
+    let mut pip_upgrade = Command::new(&python);
+    pip_upgrade.arg("-m").arg("pip").arg("install").arg("--upgrade").arg("pip");
+    run_checked(pip_upgrade)?;
+
+    let mut install = Command::new(&python);
+    install
+        .arg("-m")
+        .arg("pip")
+        .arg("install")
+        .arg("-r")
+        .arg(&req_api)
+        .arg("-r")
+        .arg(&req_worker)
+        .env("PIP_DISABLE_PIP_VERSION_CHECK", "1");
+    run_checked(install)?;
+
+    fs::write(&marker, "ready\n")
+        .map_err(|e| format!("Unable to write runtime readiness marker {}: {e}", marker.display()))?;
+    Ok(python)
+}
+
+fn desktop_web_dist(runtime_root: &Path) -> Option<PathBuf> {
+    let candidate = runtime_root.join("apps").join("web").join("dist");
+    if candidate.join("index.html").is_file() {
+        Some(candidate)
+    } else {
+        None
+    }
 }
 
 #[derive(Default)]
@@ -114,10 +230,25 @@ fn api_is_running(state: &mut RuntimeState) -> Result<bool, String> {
     }
 }
 
+fn prepare_local_runtime() -> Result<String, String> {
+    let runtime_root = find_runtime_root()?;
+    let python = ensure_runtime_venv(&runtime_root)?;
+
+    let mut verify = Command::new(&python);
+    verify.arg("-c").arg("import fastapi,uvicorn");
+    run_checked(verify)?;
+
+    Ok(format!(
+        "local runtime dependencies ready\nroot: {}\npython: {}",
+        runtime_root.display(),
+        python.display()
+    ))
+}
+
 fn start_local_runtime() -> Result<String, String> {
-    let repo_root = find_repo_root()?;
-    let python = resolve_python_binary(&repo_root)?;
-    let pythonpath = pythonpath_for_repo(&repo_root)?;
+    let runtime_root = find_runtime_root()?;
+    let python = ensure_runtime_venv(&runtime_root)?;
+    let pythonpath = pythonpath_for_runtime(&runtime_root)?;
 
     let mut guard = runtime_state().lock().map_err(|_| "Runtime state lock poisoned".to_string())?;
     if api_is_running(&mut guard)? {
@@ -125,8 +256,13 @@ fn start_local_runtime() -> Result<String, String> {
         return Ok(format!("local runtime already running (api pid {pid})"));
     }
 
+    let app_data = desktop_data_dir(&runtime_root)?;
+    let media_root = app_data.join("media");
+    fs::create_dir_all(&media_root)
+        .map_err(|e| format!("Unable to create desktop media root {}: {e}", media_root.display()))?;
+
     let mut cmd = Command::new(&python);
-    cmd.current_dir(&repo_root)
+    cmd.current_dir(&runtime_root)
         .arg("-m")
         .arg("uvicorn")
         .arg("app.main:create_app")
@@ -139,9 +275,16 @@ fn start_local_runtime() -> Result<String, String> {
         .env("REFRAME_BROKER_URL", "memory://")
         .env("REFRAME_RESULT_BACKEND", "cache+memory://")
         .env("REFRAME_API_BASE_URL", "http://localhost:8000")
-        .env("REFRAME_APP_BASE_URL", "http://localhost:5173");
+        .env("REFRAME_APP_BASE_URL", "http://localhost:8000")
+        .env("REFRAME_MEDIA_ROOT", media_root);
 
-    let child = cmd.spawn().map_err(|e| format!("Failed to start local runtime API process: {e}"))?;
+    if let Some(web_dist) = desktop_web_dist(&runtime_root) {
+        cmd.env("REFRAME_DESKTOP_WEB_DIST", web_dist);
+    }
+
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to start local runtime API process: {e}"))?;
     let pid = child.id();
     guard.api = Some(child);
     Ok(format!("local runtime started (api pid {pid})"))
@@ -168,9 +311,14 @@ fn local_runtime_status() -> Result<String, String> {
 }
 
 #[tauri::command]
+fn runtime_prepare() -> Result<String, String> {
+    prepare_local_runtime()
+}
+
+#[tauri::command]
 fn docker_version() -> Result<String, String> {
-    let repo_root = find_repo_root()?;
-    let python = resolve_python_binary(&repo_root)?;
+    let runtime_root = find_runtime_root()?;
+    let python = ensure_runtime_venv(&runtime_root)?;
     let mut cmd = Command::new(python);
     cmd.arg("--version");
     let version = run_checked(cmd)?;
@@ -179,7 +327,7 @@ fn docker_version() -> Result<String, String> {
 
 #[tauri::command]
 fn compose_file_path() -> Result<String, String> {
-    Ok(find_repo_root()?.display().to_string())
+    Ok(find_runtime_root()?.display().to_string())
 }
 
 #[tauri::command]
@@ -207,9 +355,22 @@ pub fn run() {
             #[cfg(desktop)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
+
+            if let Ok(resource_dir) = app.path().resource_dir() {
+                let runtime_root = resource_dir.join("runtime");
+                if has_runtime_layout(&runtime_root) {
+                    env::set_var("REFRAME_DESKTOP_RUNTIME_ROOT", runtime_root);
+                }
+            }
+
+            if let Ok(data_dir) = app.path().app_data_dir() {
+                let _ = fs::create_dir_all(&data_dir);
+                env::set_var("REFRAME_DESKTOP_APP_DATA", data_dir);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            runtime_prepare,
             docker_version,
             compose_file_path,
             compose_ps,

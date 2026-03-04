@@ -109,6 +109,11 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("APP_BASE_URL", "REFRAME_APP_BASE_URL"),
         description="Public frontend URL used for OAuth/billing redirects.",
     )
+    desktop_web_dist: str = Field(
+        default="",
+        validation_alias=AliasChoices("DESKTOP_WEB_DIST", "REFRAME_DESKTOP_WEB_DIST"),
+        description="Optional absolute path to built desktop web assets mounted at '/'.",
+    )
     api_base_url: str = Field(
         default="http://localhost:8000",
         validation_alias=AliasChoices("API_BASE_URL", "REFRAME_API_BASE_URL"),

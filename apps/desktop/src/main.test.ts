@@ -23,13 +23,14 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: openUrlMock }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: relaunchMock }));
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: checkMock }));
 
-const UI_URL = "http://localhost:5173";
+const UI_URL = "http://localhost:8000";
 const RELEASES_URL = "https://github.com/Prekzursil/Reframe/releases";
 const DOCS_URL = "http://localhost:8000/docs";
 const LATEST_JSON_URL =
   "https://github.com/Prekzursil/Reframe/releases/latest/download/latest.json";
 
 const htmlFixture = `
+  <button id="btn-prepare">prepare</button>
   <button id="btn-up">up</button>
   <button id="btn-up-nobuild">up-nobuild</button>
   <button id="btn-down">down</button>
@@ -73,6 +74,7 @@ const state: RuntimeState = {
   invokeValues: {
     compose_file_path: "/tmp/compose.yml",
     docker_version: "Docker 28.3.3",
+    runtime_prepare: "runtime ready",
     compose_ps: "api up\nworker up",
     compose_up: "compose up ok",
     compose_down: "compose down ok",
@@ -133,6 +135,7 @@ function resetState() {
   state.invokeValues = {
     compose_file_path: "/tmp/compose.yml",
     docker_version: "Docker 28.3.3",
+    runtime_prepare: "runtime ready",
     compose_ps: "api up\nworker up",
     compose_up: "compose up ok",
     compose_down: "compose down ok",
@@ -293,6 +296,39 @@ describe("desktop main app", () => {
   });
 
 
+  it("handles runtime_prepare success/failure and prepare button wiring", async () => {
+    await appModule.__test.prepareRuntime();
+    expect(document.getElementById("log")?.textContent ?? "").toContain("runtime ready");
+    expect(document.getElementById("step-runtime")?.textContent).toBe("ready");
+
+    state.invokeFailures.add("runtime_prepare");
+    await appModule.__test.prepareRuntime();
+    expect(document.getElementById("step-runtime")?.textContent).toBe("failed");
+    expect(document.getElementById("log")?.textContent ?? "").toContain("runtime_prepare failed");
+
+    state.invokeFailures.delete("runtime_prepare");
+    await click("btn-prepare");
+    expect(invokeMock).toHaveBeenCalledWith("runtime_prepare");
+  });
+
+  it("handles runtime_prepare blank and string-error branches", async () => {
+    state.invokeValues.runtime_prepare = "   ";
+    await appModule.__test.prepareRuntime();
+    expect(document.getElementById("log")?.textContent ?? "").toContain(
+      "Runtime dependencies ready.",
+    );
+    expect(document.getElementById("step-runtime")?.textContent).toBe("ready");
+
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === "runtime_prepare") {
+        throw "prepare string failure";
+      }
+      return state.invokeValues[command] ?? "";
+    });
+    await appModule.__test.prepareRuntime();
+    expect(document.getElementById("step-runtime")?.textContent).toBe("failed");
+    expect(document.getElementById("log")?.textContent ?? "").toContain("prepare string failure");
+  });
   it("covers non-Error and empty-output runtime branches", async () => {
     const firstHandlers: Record<string, () => string | never> = {
       docker_version: () => {
@@ -622,6 +658,3 @@ describe("desktop main app", () => {
     expect(() => appModule.__test.byId("does-not-exist")).toThrow("Missing element #does-not-exist");
   });
 });
-
-
-

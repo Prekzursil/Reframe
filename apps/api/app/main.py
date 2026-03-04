@@ -5,21 +5,68 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi import Request
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
-from app.config import get_settings
-from app.database import create_db_and_tables
 from app.api import router as api_router
 from app.auth_api import router as auth_router
 from app.billing_api import router as billing_router
-from app.collaboration_api import router as collaboration_router
-from app.identity_api import router as identity_router
-from app.publish_api import router as publish_router
-from app.errors import ApiError, ErrorResponse
 from app.cleanup import start_cleanup_loop
+from app.collaboration_api import router as collaboration_router
+from app.config import get_settings
+from app.database import create_db_and_tables
+from app.errors import ApiError, ErrorResponse
+from app.identity_api import router as identity_router
 from app.logging_config import setup_logging
+from app.publish_api import router as publish_router
+
+
+_RESERVED_DESKTOP_PREFIXES = (
+    "api/",
+    "docs",
+    "openapi.json",
+    "redoc",
+    "media/",
+    "health",
+    "healthz",
+)
+
+
+def _mount_desktop_web(app: FastAPI, desktop_web_dist: str) -> None:
+    raw = (desktop_web_dist or "").strip()
+    if not raw:
+        return
+
+    web_dist = Path(raw).resolve()
+    index_path = web_dist / "index.html"
+    if not index_path.is_file():
+        return
+
+    @app.get("/", include_in_schema=False)
+    def desktop_index() -> FileResponse:
+        return FileResponse(index_path)
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def desktop_spa(full_path: str) -> FileResponse:
+        normalized = (full_path or "").lstrip("/")
+        if any(
+            normalized == reserved or normalized.startswith(f"{reserved}/")
+            for reserved in _RESERVED_DESKTOP_PREFIXES
+        ):
+            raise HTTPException(status_code=404)
+
+        candidate = (web_dist / normalized).resolve(strict=False)
+        try:
+            candidate.relative_to(web_dist)
+        except ValueError as exc:
+            raise HTTPException(status_code=404) from exc
+
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(index_path)
 
 
 def create_app() -> FastAPI:
@@ -109,6 +156,8 @@ def create_app() -> FastAPI:
     @app.get("/healthz", tags=["Health"])
     def health() -> dict[str, str]:
         return {"status": "ok", "version": settings.api_version}
+
+    _mount_desktop_web(app, settings.desktop_web_dist)
 
     return app
 

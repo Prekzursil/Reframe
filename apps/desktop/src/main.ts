@@ -11,7 +11,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import { errToString, truncate } from "./text";
 
-const UI_URL = "http://localhost:5173";
+const UI_URL = "http://localhost:8000";
 const API_URL = "http://localhost:8000/api/v1";
 const SYSTEM_STATUS_URL = `${API_URL}/system/status`;
 const DOCS_URL = "http://localhost:8000/docs";
@@ -234,9 +234,21 @@ async function refresh() {
   await refreshDiagnostics();
 }
 
-async function start(build: boolean) {
-  appendLog("Starting local runtime...");
+async function prepareRuntime() {
+  appendLog("Preparing local runtime dependencies...");
   try {
+    const prep = await invoke<string>("runtime_prepare");
+    appendLog(prep.trim() || "Runtime dependencies ready.");
+    setTextIfPresent("step-runtime", "ready");
+  } catch (err) {
+    appendLog(err instanceof Error ? err.message : String(err));
+    setTextIfPresent("step-runtime", "failed");
+  }
+}
+async function start(build: boolean) {
+  try {
+    await prepareRuntime();
+    appendLog("Starting local runtime...");
     const out = await invoke<string>("compose_up", { build });
     appendLog(out.trim() || "OK");
   } catch (err) {
@@ -325,11 +337,13 @@ export const __test = {
   refresh,
   start,
   stop,
+  prepareRuntime,
   openProductExperience,
   checkUpdates,
 };
 
 window.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("btn-prepare")?.addEventListener("click", () => void prepareRuntime());
   byId<HTMLButtonElement>("btn-up").addEventListener("click", () => start(true));
   byId<HTMLButtonElement>("btn-up-nobuild").addEventListener("click", () => start(false));
   byId<HTMLButtonElement>("btn-down").addEventListener("click", () => stop());
@@ -344,4 +358,3 @@ window.addEventListener("DOMContentLoaded", () => {
 
   void refresh();
 });
-

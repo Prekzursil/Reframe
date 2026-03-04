@@ -13,34 +13,36 @@
       <header class="header hero">
         <h1>Reframe Studio Desktop</h1>
         <p class="muted">
-          Run Reframe locally with a built-in queue mode. No Docker is required.
+          Full local product mode for captions, shorts, translation, and publishing workflows.
+          Start once, then open Studio directly from this app.
         </p>
       </header>
 
       <section class="card">
-        <h2>Get Started</h2>
+        <h2>First-Run Onboarding</h2>
         <div class="step-grid">
           <div class="step-card">
-            <div class="step-title">1. Runtime</div>
-            <div class="step-body muted">Start the local API runtime.</div>
+            <div class="step-title">1. Prepare Runtime</div>
+            <div class="step-body muted">Install/check local Python dependencies for desktop queue mode.</div>
             <code id="step-runtime" class="chip">pending</code>
           </div>
           <div class="step-card">
-            <div class="step-title">2. API</div>
-            <div class="step-body muted">Confirm diagnostics and health.</div>
+            <div class="step-title">2. API + Queue</div>
+            <div class="step-body muted">Boot local API with desktop queue mode and health checks.</div>
             <code id="step-api" class="chip">pending</code>
           </div>
           <div class="step-card">
-            <div class="step-title">3. Worker</div>
-            <div class="step-body muted">Local queue executor readiness.</div>
+            <div class="step-title">3. Studio</div>
+            <div class="step-body muted">Open the full Studio experience served locally from the API.</div>
             <code id="step-worker" class="chip">pending</code>
           </div>
         </div>
 
         <div class="row">
-          <button id="btn-up">Start local runtime</button>
-          <button id="btn-up-nobuild" class="secondary">Restart local runtime</button>
-          <button id="btn-down" class="danger">Stop local runtime</button>
+          <button id="btn-prepare" class="secondary">Prepare runtime deps</button>
+          <button id="btn-up">Start Studio runtime</button>
+          <button id="btn-up-nobuild" class="secondary">Restart runtime</button>
+          <button id="btn-down" class="danger">Stop runtime</button>
         </div>
         <div class="row">
           <button id="btn-refresh" class="secondary">Refresh status</button>
@@ -76,12 +78,12 @@
       <section class="card">
         <h2>Diagnostics</h2>
         <p class="muted">
-          Reads live status from the local API runtime.
+          Live system diagnostics from your local Studio runtime.
         </p>
         <div class="grid">
           <div class="field">
-            <div class="label">UI URL</div>
-            <code id="ui-url" class="mono">http://localhost:5173</code>
+            <div class="label">Studio URL</div>
+            <code id="ui-url" class="mono">http://localhost:8000</code>
           </div>
           <div class="field">
             <div class="label">API URL</div>
@@ -117,7 +119,8 @@
       </section>
 
       <footer class="footer muted">
-        For local-only mode, keep `REFRAME_OFFLINE_MODE=true` in your environment.
+        Local-first desktop mode runs with no Docker requirement. For strict offline operation, keep
+        <code>REFRAME_OFFLINE_MODE=true</code> in your environment.
       </footer>
     </main>
   </body>
