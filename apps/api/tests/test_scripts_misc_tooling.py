@@ -114,7 +114,7 @@ def test_generate_benchmark_sample_main_and_path_guard(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir(parents=True, exist_ok=True)
     try:
-        module._safe_output_path("..\\escape.wav", base=repo)
+        module._safe_output_path("../escape.wav", base=repo)
         raise AssertionError("Expected ValueError for escaping output path")
     except ValueError:
         pass
