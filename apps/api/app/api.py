@@ -11,7 +11,7 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any, List, Optional
+from typing import Annotated, Any, List, Optional, Set
 from uuid import uuid4
 
 try:
@@ -24,6 +24,19 @@ except ModuleNotFoundError:  # pragma: no cover - allows API tests without optio
         def send_task(self, *_args, **_kwargs):
             raise RuntimeError("Celery is not installed in this environment.")
 from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile, status, Response
+
+try:
+    from kombu.exceptions import OperationalError as KombuOperationalError
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    class KombuOperationalError(Exception):
+        pass
+
+try:
+    from redis.exceptions import ConnectionError as RedisConnectionError
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    class RedisConnectionError(Exception):
+        pass
+
 from uuid import UUID
 
 from sqlmodel import Field, Session, SQLModel, select
@@ -655,8 +668,8 @@ def _populate_worker_diag_local_queue(worker_diag: WorkerDiagnostics) -> None:
     worker_diag.error = str(diag.get("error")) if diag.get("error") else None
 
 
-def _collect_celery_worker_names(pongs: object) -> list[str]:
-    names: set[str] = set()
+def _collect_celery_worker_names(pongs: object) -> List[str]:
+    names: Set[str] = set()
     for item in pongs or []:
         if isinstance(item, dict):
             names.update(str(name) for name in item.keys() if name)
@@ -666,7 +679,18 @@ def _collect_celery_worker_names(pongs: object) -> list[str]:
 def _populate_worker_diag_celery(worker_diag: WorkerDiagnostics) -> None:
     try:
         app = get_celery_app()
-    except Exception as exc:  # pragma: no cover - best effort
+    except (
+        RuntimeError,
+        ValueError,
+        TypeError,
+        AttributeError,
+        OSError,
+        ImportError,
+        ModuleNotFoundError,
+        KombuOperationalError,
+        RedisConnectionError,
+        ConnectionError,
+    ) as exc:  # pragma: no cover - best effort
         worker_diag.error = f"Celery unavailable: {exc}"
         return
 
@@ -674,7 +698,17 @@ def _populate_worker_diag_celery(worker_diag: WorkerDiagnostics) -> None:
         pongs = app.control.ping(timeout=1.0)
         worker_diag.workers = _collect_celery_worker_names(pongs)
         worker_diag.ping_ok = bool(worker_diag.workers)
-    except Exception as exc:
+    except (
+        RuntimeError,
+        TimeoutError,
+        ValueError,
+        TypeError,
+        AttributeError,
+        OSError,
+        KombuOperationalError,
+        RedisConnectionError,
+        ConnectionError,
+    ) as exc:
         worker_diag.error = f"Worker ping failed: {exc}"
         return
 
@@ -684,7 +718,17 @@ def _populate_worker_diag_celery(worker_diag: WorkerDiagnostics) -> None:
     try:
         res = app.send_task("tasks.system_info")
         worker_diag.system_info = res.get(timeout=3.0)
-    except Exception as exc:
+    except (
+        RuntimeError,
+        TimeoutError,
+        ValueError,
+        TypeError,
+        AttributeError,
+        OSError,
+        KombuOperationalError,
+        RedisConnectionError,
+        ConnectionError,
+    ) as exc:
         worker_diag.error = _append_diag_error(
             worker_diag.error,
             f"Worker diagnostics task failed: {exc}",

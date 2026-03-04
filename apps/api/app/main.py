@@ -34,6 +34,16 @@ _RESERVED_DESKTOP_PREFIXES = (
     "health",
     "healthz",
 )
+def _is_reserved_desktop_path(normalized: str) -> bool:
+    return any(
+        normalized == reserved or normalized.startswith(f"{reserved}/")
+        for reserved in _RESERVED_DESKTOP_PREFIXES
+    )
+
+
+def _has_path_traversal(normalized: str) -> bool:
+    segments = [part for part in normalized.replace("\\", "/").split("/") if part]
+    return any(part == ".." for part in segments)
 
 
 def _mount_desktop_web(app: FastAPI, desktop_web_dist: str) -> None:
@@ -54,13 +64,7 @@ def _mount_desktop_web(app: FastAPI, desktop_web_dist: str) -> None:
     @app.get("/{full_path:path}", include_in_schema=False, responses={404: {"description": "Not Found"}})
     def desktop_spa(full_path: str) -> FileResponse:
         normalized = (full_path or "").lstrip("/")
-        segments = [part for part in normalized.replace("\\", "/").split("/") if part]
-        if any(part == ".." for part in segments):
-            raise HTTPException(status_code=404)
-        if any(
-            normalized == reserved or normalized.startswith(f"{reserved}/")
-            for reserved in _RESERVED_DESKTOP_PREFIXES
-        ):
+        if _has_path_traversal(normalized) or _is_reserved_desktop_path(normalized):
             raise HTTPException(status_code=404)
 
         candidate, stat_result = static_files.lookup_path(normalized)

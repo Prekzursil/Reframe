@@ -1,17 +1,15 @@
-from __future__ import annotations
-
 import logging
 import os
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import lru_cache
 from threading import Lock
-from typing import Any
+from typing import Any, Dict, Optional, Tuple
 from uuid import uuid4
 
 logger = logging.getLogger("reframe.local_queue")
 
 
-def _truthy(value: str | None) -> bool:
+def _truthy(value: Optional[str]) -> bool:
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -30,7 +28,7 @@ def _executor() -> ThreadPoolExecutor:
 
 
 @lru_cache(maxsize=1)
-def _worker_tasks() -> dict[str, Any]:
+def _worker_tasks() -> Dict[str, Any]:
     from services.worker import worker as worker_module
 
     # Celery task registry gives us the same task names that send_task dispatches.
@@ -38,10 +36,10 @@ def _worker_tasks() -> dict[str, Any]:
 
 
 _pending_lock = Lock()
-_pending: dict[str, Future[Any]] = {}
+_pending: Dict[str, Future] = {}
 
 
-def _run_task(task_name: str, args: tuple[Any, ...]) -> Any:
+def _run_task(task_name: str, args: Tuple[Any, ...]) -> Any:
     tasks = _worker_tasks()
     task = tasks.get(task_name)
     if task is None:
@@ -49,7 +47,7 @@ def _run_task(task_name: str, args: tuple[Any, ...]) -> Any:
     return task.run(*args)
 
 
-def dispatch_task(task_name: str, *args: Any, queue: str | None = None) -> str:
+def dispatch_task(task_name: str, *args: Any, queue: Optional[str] = None) -> str:
     if not is_local_queue_mode():
         raise RuntimeError("Local queue mode is not enabled")
 
@@ -66,7 +64,7 @@ def dispatch_task(task_name: str, *args: Any, queue: str | None = None) -> str:
     with _pending_lock:
         _pending[task_id] = future
 
-    def _cleanup(_fut: Future[Any]) -> None:
+    def _cleanup(_fut: Future) -> None:
         with _pending_lock:
             _pending.pop(task_id, None)
 
@@ -82,7 +80,7 @@ def revoke_task(task_id: str) -> bool:
     return future.cancel()
 
 
-def diagnostics() -> dict[str, Any]:
+def diagnostics() -> Dict[str, Any]:
     if not is_local_queue_mode():
         return {
             "ping_ok": False,
@@ -91,8 +89,8 @@ def diagnostics() -> dict[str, Any]:
             "error": "Local queue mode is disabled",
         }
 
-    info: dict[str, Any] | None = None
-    error: str | None = None
+    info: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
     try:
         task = _worker_tasks().get("tasks.system_info")
         if task is None:
