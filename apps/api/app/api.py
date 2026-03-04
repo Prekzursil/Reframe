@@ -53,19 +53,28 @@ from app.share_links import build_share_token_with_ttl, parse_and_validate_share
 from app.storage import LocalStorageBackend, get_storage, is_remote_uri
 
 try:
-    from celery import Celery as _Celery
+    from celery import Celery as _RealCelery
 except ModuleNotFoundError:  # pragma: no cover - allows API tests without optional celery install
-    class _Celery:  # type: ignore[override]
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def send_task(self, *_args, **_kwargs):
-            raise RuntimeError("Celery is not installed in this environment.")
+    _RealCelery = None
 
 
-Celery = _Celery
+class _MissingCeleryControl:
+    def ping(self, *_args, **_kwargs):
+        raise RuntimeError("Celery is not installed in this environment.")
+
+    def revoke(self, *_args, **_kwargs):
+        raise RuntimeError("Celery is not installed in this environment.")
 
 
+class _MissingCelery:
+    def __init__(self, *args, **kwargs):
+        self.control = _MissingCeleryControl()
+
+    def send_task(self, *_args, **_kwargs):
+        raise RuntimeError("Celery is not installed in this environment.")
+
+
+Celery = _RealCelery or _MissingCelery
 try:
     from kombu.exceptions import OperationalError as _KombuOperationalError
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
@@ -113,9 +122,9 @@ SessionDep = Annotated[Session, Depends(get_session)]
 
 
 @lru_cache(maxsize=1)
-def get_celery_app() -> Celery:
+def get_celery_app() -> Any:
     settings = get_settings()
-    app = Celery("reframe_api", broker=settings.broker_url, backend=settings.result_backend)
+    app: Any = Celery("reframe_api", broker=settings.broker_url, backend=settings.result_backend)
     # Fail fast when broker/backend are unavailable so API diagnostics and tests do not hang.
     app.conf.broker_connection_retry_on_startup = False
     app.conf.broker_connection_max_retries = 0

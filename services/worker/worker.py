@@ -35,10 +35,10 @@ MEDIA_CORE_SRC = REPO_ROOT / "packages" / "media-core" / "src"
 if MEDIA_CORE_SRC.is_dir() and str(MEDIA_CORE_SRC) not in sys.path:
     sys.path.append(str(MEDIA_CORE_SRC))
 
-from app.config import get_settings
-from app.local_queue import dispatch_task as dispatch_local_task, is_local_queue_mode
-from app.billing import get_plan_policy
-from app.models import (
+from app.config import get_settings  # noqa: E402
+from app.local_queue import dispatch_task as dispatch_local_task, is_local_queue_mode  # noqa: E402
+from app.billing import get_plan_policy  # noqa: E402
+from app.models import (  # noqa: E402
     AutomationRunEvent,
     Job,
     JobStatus,
@@ -54,15 +54,15 @@ from app.models import (
     WorkflowStepStatus,
     WorkflowTemplate,
 )
-from app.storage import LocalStorageBackend, get_storage, is_remote_uri
-from celery import Celery
-from kombu import Queue
+from app.storage import LocalStorageBackend, get_storage, is_remote_uri  # noqa: E402
+from celery import Celery  # noqa: E402
+from kombu import Queue  # noqa: E402
 
-from media_core.segment.shorts import HeuristicWeights, equal_splits, score_segments_heuristic, score_segments_llm, select_top
-from media_core.diarize import DiarizationBackend, DiarizationConfig, assign_speakers_to_lines, diarize_audio
-from media_core.subtitles.builder import GroupingConfig, SubtitleLine, group_words, to_ass, to_ass_karaoke, to_srt, to_vtt
-from media_core.subtitles.vtt import parse_vtt
-from media_core.transcribe import (
+from media_core.segment.shorts import HeuristicWeights, equal_splits, score_segments_heuristic, score_segments_llm, select_top  # noqa: E402
+from media_core.diarize import DiarizationBackend, DiarizationConfig, assign_speakers_to_lines, diarize_audio  # noqa: E402
+from media_core.subtitles.builder import GroupingConfig, SubtitleLine, group_words, to_ass, to_ass_karaoke, to_srt, to_vtt  # noqa: E402
+from media_core.subtitles.vtt import parse_vtt  # noqa: E402
+from media_core.transcribe import (  # noqa: E402
     TranscriptionBackend,
     TranscriptionConfig,
     transcribe_faster_whisper,
@@ -71,10 +71,10 @@ from media_core.transcribe import (
     transcribe_whisper_cpp,
     transcribe_whisper_timestamped,
 )
-from media_core.transcribe.models import Word
-from media_core.translate.srt import parse_srt, translate_srt, translate_srt_bilingual
-from media_core.translate.translator import CloudTranslator, LocalTranslator, NoOpTranslator
-from media_core.video_edit.ffmpeg import cut_clip, detect_silence, merge_video_audio as ffmpeg_merge_video_audio, probe_media
+from media_core.transcribe.models import Word  # noqa: E402
+from media_core.translate.srt import parse_srt, translate_srt, translate_srt_bilingual  # noqa: E402
+from media_core.translate.translator import CloudTranslator, LocalTranslator, NoOpTranslator  # noqa: E402
+from media_core.video_edit.ffmpeg import cut_clip, detect_silence, merge_video_audio as ffmpeg_merge_video_audio, probe_media  # noqa: E402
 
 try:
     from .groq_client import get_groq_chat_client_from_env
