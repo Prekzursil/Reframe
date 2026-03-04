@@ -13,45 +13,49 @@
       <header class="header hero">
         <h1>Reframe Studio Desktop</h1>
         <p class="muted">
-          Full local product mode for captions, shorts, translation, and publishing workflows.
-          Start once, then open Studio directly from this app.
+          Create captions, shorts, subtitle styles, and publish workflows locally.
+          This desktop build runs a bundled local runtime by default with no Docker requirement.
         </p>
       </header>
 
       <section class="card">
-        <h2>First-Run Onboarding</h2>
+        <h2>First-Run Guide</h2>
         <div class="step-grid">
           <div class="step-card">
             <div class="step-title">1. Prepare Runtime</div>
-            <div class="step-body muted">Install/check local Python dependencies for desktop queue mode.</div>
+            <div class="step-body muted">Validate local Python dependencies and queue worker prerequisites.</div>
             <code id="step-runtime" class="chip">pending</code>
           </div>
           <div class="step-card">
-            <div class="step-title">2. API + Queue</div>
-            <div class="step-body muted">Boot local API with desktop queue mode and health checks.</div>
+            <div class="step-title">2. Start Local Studio</div>
+            <div class="step-body muted">Boot local API + queue mode and wait for health checks.</div>
             <code id="step-api" class="chip">pending</code>
           </div>
           <div class="step-card">
-            <div class="step-title">3. Studio</div>
-            <div class="step-body muted">Open the full Studio experience served locally from the API.</div>
+            <div class="step-title">3. Create in Studio</div>
+            <div class="step-body muted">Open the full product UI and start a media workflow.</div>
             <code id="step-worker" class="chip">pending</code>
           </div>
         </div>
 
         <div class="row">
-          <button id="btn-prepare" class="secondary">Prepare runtime deps</button>
-          <button id="btn-up">Start Studio runtime</button>
-          <button id="btn-up-nobuild" class="secondary">Restart runtime</button>
-          <button id="btn-down" class="danger">Stop runtime</button>
-        </div>
-        <div class="row">
-          <button id="btn-refresh" class="secondary">Refresh status</button>
+          <button id="btn-prepare" class="secondary">Prepare runtime</button>
+          <button id="btn-up">Start Studio</button>
           <button id="btn-open-ui" class="secondary">Open Studio</button>
-          <button id="btn-copy-debug" class="secondary">Copy debug info</button>
-          <button id="btn-updates" class="secondary">Check updates</button>
-          <button id="btn-latest-json" class="secondary">Open latest.json</button>
-          <button id="btn-releases" class="secondary">Open Releases</button>
+          <button id="btn-refresh" class="secondary">Refresh status</button>
         </div>
+
+        <details>
+          <summary class="muted">Advanced runtime controls</summary>
+          <div class="row advanced-row">
+            <button id="btn-up-nobuild" class="secondary">Restart runtime</button>
+            <button id="btn-down" class="danger">Stop runtime</button>
+            <button id="btn-copy-debug" class="secondary">Copy debug info</button>
+            <button id="btn-updates" class="secondary">Check updates</button>
+            <button id="btn-latest-json" class="secondary">Open latest.json</button>
+            <button id="btn-releases" class="secondary">Open Releases</button>
+          </div>
+        </details>
 
         <div class="grid">
           <div class="field">
@@ -77,9 +81,7 @@
 
       <section class="card">
         <h2>Diagnostics</h2>
-        <p class="muted">
-          Live system diagnostics from your local Studio runtime.
-        </p>
+        <p class="muted">Live diagnostics from the local Studio runtime.</p>
         <div class="grid">
           <div class="field">
             <div class="label">Studio URL</div>

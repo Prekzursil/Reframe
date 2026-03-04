@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import argparse
 import os
-import resource
+try:
+    import resource
+except ModuleNotFoundError:  # pragma: no cover - Windows fallback
+    resource = None
 import shutil
 import subprocess
 import sys
@@ -49,6 +52,8 @@ def _extract_wav_16k_mono(input_path: Path, output_path: Path) -> None:
 
 
 def _get_peak_rss_mb() -> float:
+    if resource is None:
+        return 0.0
     # On Linux, ru_maxrss is in KiB.
     return float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) / 1024.0
 

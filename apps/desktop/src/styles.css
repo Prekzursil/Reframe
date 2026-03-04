@@ -230,3 +230,26 @@ button.danger:hover {
     background: rgb(255 255 255 / 4%);
   }
 }
+
+details {
+  border: 1px solid rgb(25 29 38 / 12%);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgb(255 255 255 / 55%);
+}
+
+details summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.advanced-row {
+  margin-top: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  details {
+    border-color: rgb(255 255 255 / 18%);
+    background: rgb(255 255 255 / 4%);
+  }
+}

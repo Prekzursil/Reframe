@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
 import argparse
 import fnmatch
 import json
@@ -297,6 +298,41 @@ def _is_excluded(path: str, patterns: Iterable[str]) -> bool:
     return False
 
 
+def _has_trackable_lines(root: Path, relative_path: str) -> bool:
+    file_path = (root / relative_path).resolve(strict=False)
+    if not file_path.is_file():
+        return False
+    try:
+        content = file_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return file_path.stat().st_size > 0
+
+    if file_path.suffix.lower() == ".py":
+        try:
+            module = ast.parse(content)
+        except SyntaxError:
+            return any(line.strip() for line in content.splitlines())
+
+        body = list(module.body)
+        if body and isinstance(body[0], ast.Expr) and isinstance(getattr(body[0], "value", None), ast.Constant):
+            if isinstance(body[0].value.value, str):
+                body = body[1:]
+
+        for stmt in body:
+            if isinstance(stmt, ast.Assign):
+                names = [target.id for target in stmt.targets if isinstance(target, ast.Name)]
+                if names and all(name.startswith("__") and name.endswith("__") for name in names):
+                    continue
+            if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                name = stmt.target.id
+                if name.startswith("__") and name.endswith("__"):
+                    continue
+            return True
+        return False
+
+    return any(line.strip() for line in content.splitlines())
+
+
 def _collect_expected_inventory(root: Path) -> set[str]:
     tracked = _load_git_tracked_files(root)
     expected: set[str] = set()
@@ -310,6 +346,8 @@ def _collect_expected_inventory(root: Path) -> set[str]:
                 if suffix not in rule["ext"]:
                     continue
                 if _is_excluded(file_path, rule["exclude"]):
+                    continue
+                if not _has_trackable_lines(root, file_path):
                     continue
                 expected.add(file_path)
                 break

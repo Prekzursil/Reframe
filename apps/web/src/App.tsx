@@ -153,6 +153,20 @@ export function CopyCommandButton({ command, label = "Copy curl" }: { command: s
   );
 }
 
+function normalizeProjectShareLinksResponse(response: unknown): ProjectShareLink[] {
+  if (Array.isArray(response)) {
+    return response.filter((item): item is ProjectShareLink => Boolean(item && typeof item === "object"));
+  }
+
+  if (response && typeof response === "object" && "links" in response) {
+    const maybeLinks = (response as { links?: unknown }).links;
+    if (Array.isArray(maybeLinks)) {
+      return maybeLinks.filter((item): item is ProjectShareLink => Boolean(item && typeof item === "object"));
+    }
+  }
+
+  return [];
+}
 export function TextPreview({
   url,
   title,
@@ -2446,7 +2460,7 @@ export function AppShell() {
               asset_ids: assetIds,
               expires_in_hours: 24,
             });
-            setShareLinks(response.links);
+            setShareLinks(normalizeProjectShareLinksResponse(response));
           } catch (err) {
             setProjectDataError(err instanceof Error ? err.message : "Failed to generate share link");
           } finally {

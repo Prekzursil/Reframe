@@ -8,3 +8,6 @@
 
 # Updater signing key (private)
 /keys/*.key
+
+# Generated desktop runtime bundle
+/runtime/

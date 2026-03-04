@@ -239,6 +239,17 @@ describe("enterprise automation surfaces", () => {
     await user.click(screen.getByRole("button", { name: "Create SCIM token" }));
     expect(apiClientMock.createScimToken).toHaveBeenCalledWith("org-1");
     expect(await screen.findByText(/rscim_secret_once/)).toBeInTheDocument();
+
+    apiClientMock.revokeScimToken.mockResolvedValueOnce({
+      id: "scim-token-1",
+      org_id: "org-1",
+      token_hint: "rscim_12...ab",
+      scopes: ["users:read", "users:write"],
+      created_at: "2030-01-01T00:00:00Z",
+      revoked_at: "2030-01-01T01:00:00Z",
+    });
+    await user.click(screen.getByRole("button", { name: "Revoke" }));
+    expect(apiClientMock.revokeScimToken).toHaveBeenCalledWith("org-1", "scim-token-1");
   });
 
   it("adds collaboration member and creates publish job from projects tab", async () => {
@@ -268,4 +279,98 @@ describe("enterprise automation surfaces", () => {
       }),
     );
   }, 15000);
+  it("covers share links, collaboration resolution, and publish retry flows", async () => {
+    const user = userEvent.setup();
+
+    apiClientMock.listProjectAssets.mockResolvedValueOnce([
+      { id: "asset-1", kind: "video", uri: "/media/tmp/clip.mp4", mime_type: "video/mp4" },
+      { id: "asset-2", kind: "audio", uri: "/media/tmp/clip.mp3", mime_type: "audio/mpeg" },
+    ]);
+    apiClientMock.createProjectShareLinks.mockResolvedValueOnce([
+      { project_id: "proj-1", asset_id: "asset-1", url: "https://example.com/share/asset-1", expires_at: "2030-01-02T00:00:00Z" },
+      { project_id: "proj-1", asset_id: "asset-2", url: "javascript:alert(1)", expires_at: "2030-01-02T00:00:00Z" },
+    ]);
+    apiClientMock.listProjectComments.mockResolvedValue([
+      {
+        id: "comment-1",
+        project_id: "proj-1",
+        author_user_id: "user-owner",
+        author_email: "owner@team.test",
+        body: "Needs tweaks",
+        created_at: "2030-01-01T00:00:00Z",
+        updated_at: "2030-01-01T00:00:00Z",
+      },
+    ]);
+    apiClientMock.listProjectActivity.mockResolvedValue([
+      {
+        id: "evt-1",
+        project_id: "proj-1",
+        actor_user_id: "user-owner",
+        event_type: "project.approval_requested",
+        payload: { approval_id: "approval-1", summary: "Ship review", requested_by_user_id: "user-owner" },
+        created_at: "2030-01-01T00:00:00Z",
+      },
+    ]);
+    apiClientMock.approveProjectApproval.mockResolvedValue({
+      id: "approval-1",
+      project_id: "proj-1",
+      status: "approved",
+      summary: "Ship review",
+      requested_by_user_id: "user-owner",
+      resolved_by_user_id: "user-owner",
+      resolved_at: "2030-01-01T01:00:00Z",
+      created_at: "2030-01-01T00:00:00Z",
+      updated_at: "2030-01-01T01:00:00Z",
+    });
+    apiClientMock.deleteProjectComment.mockResolvedValue(undefined);
+    apiClientMock.revokePublishConnection.mockResolvedValue(undefined);
+    apiClientMock.listPublishJobs.mockResolvedValue([
+      {
+        id: "publish-job-failed",
+        provider: "youtube",
+        connection_id: "conn-1",
+        asset_id: "asset-1",
+        status: "failed",
+        retry_count: 1,
+        payload: {},
+        published_url: "https://youtube.com/watch?v=abc",
+        created_at: "2030-01-01T00:00:00Z",
+        updated_at: "2030-01-01T00:00:00Z",
+      },
+    ]);
+    apiClientMock.retryPublishJob.mockResolvedValue({
+      id: "publish-job-failed",
+      provider: "youtube",
+      connection_id: "conn-1",
+      asset_id: "asset-1",
+      status: "queued",
+      retry_count: 2,
+      payload: {},
+      created_at: "2030-01-01T00:00:00Z",
+      updated_at: "2030-01-01T00:02:00Z",
+    });
+
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Projects" }));
+
+    await user.click(await screen.findByRole("button", { name: "Select filtered" }));
+    await user.click(screen.getByRole("button", { name: /Generate share links/i }));
+    expect(apiClientMock.createProjectShareLinks).toHaveBeenCalled();
+    expect(await screen.findByText(/https:\/\/example.com\/share\/asset-1/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Generated link was rejected by URL policy\./i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(apiClientMock.deleteProjectComment).toHaveBeenCalledWith("proj-1", "comment-1");
+
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+    expect(apiClientMock.approveProjectApproval).toHaveBeenCalledWith("proj-1", "approval-1");
+
+    await user.click(screen.getByRole("button", { name: "Use" }));
+    await user.click(screen.getByRole("button", { name: "Revoke" }));
+    expect(apiClientMock.revokePublishConnection).toHaveBeenCalledWith("youtube", "conn-1");
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(apiClientMock.retryPublishJob).toHaveBeenCalledWith("publish-job-failed");
+  }, 30000);
 });

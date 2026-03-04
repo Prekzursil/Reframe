@@ -2292,7 +2292,8 @@ def cleanup_retention(self) -> dict:
         "cleaned_assets": cleaned_assets,
         "timestamp": now.isoformat(),
     }
-    _progress(self, "completed", 1.0, **result)
+    progress_meta = {k: v for k, v in result.items() if k != "status"}
+    _progress(self, "completed", 1.0, **progress_meta)
     return result
 
 

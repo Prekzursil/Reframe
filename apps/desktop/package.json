@@ -4,12 +4,13 @@
   "version": "0.1.8",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
+    "dev": "npm run prepare:runtime && vite",
+    "build": "npm run prepare:runtime && tsc && vite build",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "prepare:runtime": "node ./scripts/prepare-runtime.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",
@@ -26,3 +27,4 @@
     "vitest": "^4.0.18"
   }
 }
+
