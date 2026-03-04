@@ -5,32 +5,69 @@ import { fileURLToPath } from "node:url";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "../../..");
 const runtimeRoot = path.resolve(scriptDir, "../src-tauri/runtime");
-const webDist = path.join(repoRoot, "apps", "web", "dist");
+const webDist = path.resolve(repoRoot, "apps/web/dist");
 
 function normalize(p) {
   return p.replace(/\\/g, "/");
 }
 
-function ensureDir(p) {
-  fs.mkdirSync(p, { recursive: true });
+function assertInside(base, candidate, label) {
+  const rel = path.relative(base, candidate);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    throw new Error(`${label} path escapes root: ${candidate}`);
+  }
 }
 
-function clearDir(dir) {
-  fs.rmSync(dir, { recursive: true, force: true });
-  fs.mkdirSync(dir, { recursive: true });
+function resolveInside(base, relPath, label) {
+  const safeRel = normalize(String(relPath || ""));
+  if (safeRel.includes("..")) {
+    throw new Error(`${label} path traversal detected: ${safeRel}`);
+  }
+  const resolved = path.resolve(base, safeRel);
+  assertInside(base, resolved, label);
+  return resolved;
 }
 
-function copyFile(src, dst) {
-  ensureDir(path.dirname(dst));
-  fs.copyFileSync(src, dst);
+function resolveRepo(...segments) {
+  const resolved = path.resolve(repoRoot, ...segments);
+  assertInside(repoRoot, resolved, "repo");
+  return resolved;
+}
+
+function resolveRuntime(...segments) {
+  const resolved = path.resolve(runtimeRoot, ...segments);
+  assertInside(runtimeRoot, resolved, "runtime");
+  return resolved;
+}
+
+function ensureDir(resolvedPath) {
+  fs.mkdirSync(resolvedPath, { recursive: true });
+}
+
+function clearRuntimeDir() {
+  fs.rmSync(runtimeRoot, { recursive: true, force: true });
+  fs.mkdirSync(runtimeRoot, { recursive: true });
+}
+
+function copyFile(srcPath, dstPath) {
+  ensureDir(path.dirname(dstPath));
+  fs.copyFileSync(srcPath, dstPath);
 }
 
 function shouldSkip(relPath) {
   const normalized = normalize(relPath);
-  if (normalized.includes("/__pycache__/")) return true;
-  if (normalized.endsWith(".pyc")) return true;
-  if (/\/test_.*\.py$/i.test(normalized)) return true;
-  if (normalized.endsWith("/README.md")) return true;
+  if (normalized.includes("/__pycache__/")) {
+    return true;
+  }
+  if (normalized.endsWith(".pyc")) {
+    return true;
+  }
+  if (/\/test_.*\.py$/i.test(normalized)) {
+    return true;
+  }
+  if (normalized.endsWith("/README.md")) {
+    return true;
+  }
   return false;
 }
 
@@ -38,13 +75,17 @@ function copyTree(srcRoot, dstRoot) {
   const stack = [""];
   while (stack.length > 0) {
     const rel = stack.pop();
-    const src = path.join(srcRoot, rel);
-    const entries = fs.readdirSync(src, { withFileTypes: true });
+    const srcDir = resolveInside(srcRoot, rel, "copy-tree-src");
+    const entries = fs.readdirSync(srcDir, { withFileTypes: true });
+
     for (const entry of entries) {
-      const nextRel = rel ? path.join(rel, entry.name) : entry.name;
-      if (shouldSkip(nextRel)) continue;
-      const srcPath = path.join(srcRoot, nextRel);
-      const dstPath = path.join(dstRoot, nextRel);
+      const nextRel = rel ? `${rel}/${entry.name}` : entry.name;
+      if (shouldSkip(nextRel)) {
+        continue;
+      }
+
+      const srcPath = resolveInside(srcRoot, nextRel, "copy-tree-src");
+      const dstPath = resolveInside(dstRoot, nextRel, "copy-tree-dst");
       if (entry.isDirectory()) {
         ensureDir(dstPath);
         stack.push(nextRel);
@@ -55,9 +96,9 @@ function copyTree(srcRoot, dstRoot) {
   }
 }
 
-function requirePath(label, p) {
-  if (!fs.existsSync(p)) {
-    throw new Error(`${label} missing: ${p}`);
+function requirePath(label, targetPath) {
+  if (!fs.existsSync(targetPath)) {
+    throw new Error(`${label} missing: ${targetPath}`);
   }
 }
 
@@ -67,43 +108,48 @@ function writeManifest(files) {
     runtime_root: normalize(path.relative(repoRoot, runtimeRoot)),
     files,
   };
-  const outPath = path.join(runtimeRoot, "manifest.json");
+  const outPath = resolveRuntime("manifest.json");
   fs.writeFileSync(outPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
 function main() {
-  requirePath("API requirements", path.join(repoRoot, "apps", "api", "requirements.txt"));
-  requirePath("Worker requirements", path.join(repoRoot, "services", "worker", "requirements.txt"));
-  requirePath("Media core package", path.join(repoRoot, "packages", "media-core", "src", "media_core"));
-  requirePath("Web dist", webDist);
-  requirePath("Web dist index", path.join(webDist, "index.html"));
+  const apiRequirements = resolveRepo("apps", "api", "requirements.txt");
+  const workerRequirements = resolveRepo("services", "worker", "requirements.txt");
+  const mediaCorePackage = resolveRepo("packages", "media-core", "src", "media_core");
+  const webDistIndex = path.resolve(webDist, "index.html");
 
-  clearDir(runtimeRoot);
+  requirePath("API requirements", apiRequirements);
+  requirePath("Worker requirements", workerRequirements);
+  requirePath("Media core package", mediaCorePackage);
+  requirePath("Web dist", webDist);
+  requirePath("Web dist index", webDistIndex);
+
+  clearRuntimeDir();
 
   const copies = [
     {
-      src: path.join(repoRoot, "apps", "api", "app"),
-      dst: path.join(runtimeRoot, "apps", "api", "app"),
+      src: resolveRepo("apps", "api", "app"),
+      dst: resolveRuntime("apps", "api", "app"),
       tree: true,
     },
     {
-      src: path.join(repoRoot, "apps", "api", "requirements.txt"),
-      dst: path.join(runtimeRoot, "apps", "api", "requirements.txt"),
+      src: apiRequirements,
+      dst: resolveRuntime("apps", "api", "requirements.txt"),
       tree: false,
     },
     {
-      src: path.join(repoRoot, "services", "worker"),
-      dst: path.join(runtimeRoot, "services", "worker"),
+      src: resolveRepo("services", "worker"),
+      dst: resolveRuntime("services", "worker"),
       tree: true,
     },
     {
-      src: path.join(repoRoot, "packages", "media-core", "src", "media_core"),
-      dst: path.join(runtimeRoot, "packages", "media-core", "src", "media_core"),
+      src: mediaCorePackage,
+      dst: resolveRuntime("packages", "media-core", "src", "media_core"),
       tree: true,
     },
     {
       src: webDist,
-      dst: path.join(runtimeRoot, "apps", "web", "dist"),
+      dst: resolveRuntime("apps", "web", "dist"),
       tree: true,
     },
   ];

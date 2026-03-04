@@ -11,3 +11,4 @@
 
 # Generated desktop runtime bundle
 /runtime/
+/Cargo.lock

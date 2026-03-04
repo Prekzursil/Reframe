@@ -516,11 +516,20 @@ mod tests {
     }
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {
-        let mut dir = env::temp_dir();
+        let mut dir = if cfg!(target_os = "windows") {
+            env::var_os("TEMP")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("C:/reframe-test-tmp"))
+        } else {
+            env::var_os("TMPDIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/tmp/reframe-test-tmp"))
+        };
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time went backwards")
             .as_nanos();
+        dir.push("reframe-desktop-tests");
         dir.push(format!("{prefix}-{now}"));
         fs::create_dir_all(&dir).expect("failed to create temp dir");
         dir
