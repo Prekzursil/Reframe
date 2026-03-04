@@ -235,7 +235,7 @@ async function refresh() {
 }
 
 async function start(build: boolean) {
-  appendLog(build ? "Starting local runtime..." : "Starting local runtime...");
+  appendLog("Starting local runtime...");
   try {
     const out = await invoke<string>("compose_up", { build });
     appendLog(out.trim() || "OK");
@@ -265,8 +265,8 @@ async function openProductExperience() {
       await openUrl(UI_URL);
       return;
     }
-  } catch {
-    // fall through to docs URL when the standalone web app is not reachable.
+  } catch (err) {
+    appendLog(`Studio URL unreachable: ${errToString(err)}. Opening docs instead.`);
   }
   await openUrl(DOCS_URL);
 }

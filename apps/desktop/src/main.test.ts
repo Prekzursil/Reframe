@@ -259,6 +259,10 @@ describe("desktop main app", () => {
     state.fetchQueue.push(makeResponse(503, { message: "ui down" }, "Service Unavailable"));
     await appModule.__test.openProductExperience();
     expect(openUrlMock).toHaveBeenCalledWith(DOCS_URL);
+
+    fetchMock.mockRejectedValueOnce("offline");
+    await appModule.__test.openProductExperience();
+    expect(document.getElementById("log")?.textContent ?? "").toContain("Studio URL unreachable");
   });
 
   it("runs start/stop commands and click handlers", async () => {
@@ -602,3 +606,4 @@ describe("desktop main app", () => {
     expect(() => appModule.__test.byId("does-not-exist")).toThrow("Missing element #does-not-exist");
   });
 });
+
