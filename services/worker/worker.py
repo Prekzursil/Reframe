@@ -12,7 +12,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional, Tuple, TypeVar
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, Union
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -103,7 +103,10 @@ celery_app.conf.task_queues = (
 )
 
 
-def _dispatch_task(task_name: str, args: list[str | dict | None], queue: str) -> SimpleNamespace:
+TaskArg = Optional[Union[str, Dict[str, Any]]]
+
+
+def _dispatch_task(task_name: str, args: List[TaskArg], queue: str) -> SimpleNamespace:
     if is_local_queue_mode():
         task_id = dispatch_local_task(task_name, *args, queue=queue)
         return SimpleNamespace(id=task_id)

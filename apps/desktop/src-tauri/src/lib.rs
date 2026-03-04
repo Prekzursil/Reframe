@@ -281,10 +281,6 @@ struct RuntimeState {
 
 static RUNTIME_STATE: OnceLock<Mutex<RuntimeState>> = OnceLock::new();
 
-fn runtime_state() -> &'static Mutex<RuntimeState> {
-    RUNTIME_STATE.get_or_init(|| Mutex::new(RuntimeState::default()))
-}
-
 fn api_is_running(state: &mut RuntimeState) -> Result<bool, String> {
     if let Some(child) = state.api.as_mut() {
         match child
@@ -347,6 +343,7 @@ fn build_runtime_command(
     cmd.current_dir(runtime_root)
         .arg("-m")
         .arg("uvicorn")
+        .arg("--factory")
         .arg("app.main:create_app")
         .arg("--host")
         .arg("127.0.0.1")
@@ -354,8 +351,8 @@ fn build_runtime_command(
         .arg("8000")
         .env("PYTHONPATH", pythonpath)
         .env("REFRAME_LOCAL_QUEUE_MODE", "true")
-        .env("REFRAME_BROKER_URL", "memory://")
-        .env("REFRAME_RESULT_BACKEND", "cache+memory://")
+        .env("BROKER_URL", "memory://")
+        .env("RESULT_BACKEND", "cache+memory://")
         .env("REFRAME_API_BASE_URL", "http://localhost:8000")
         .env("REFRAME_APP_BASE_URL", "http://localhost:8000")
         .env("REFRAME_MEDIA_ROOT", media_root);
@@ -365,14 +362,18 @@ fn build_runtime_command(
     }
     cmd
 }
-
 fn runtime_state_guard() -> Result<MutexGuard<'static, RuntimeState>, String> {
-    runtime_state()
+    RUNTIME_STATE
+        .get_or_init(|| Mutex::new(RuntimeState::default()))
         .lock()
         .map_err(|_| "Runtime state lock poisoned".to_string())
 }
 
-fn spawn_local_runtime(runtime_root: &Path, python: &Path, pythonpath: OsString) -> Result<Child, String> {
+fn spawn_local_runtime(
+    runtime_root: &Path,
+    python: &Path,
+    pythonpath: OsString,
+) -> Result<Child, String> {
     let media_root = ensure_media_root(runtime_root)?;
     let mut cmd = build_runtime_command(runtime_root, python, pythonpath, &media_root);
     cmd.spawn()
@@ -396,11 +397,17 @@ fn start_local_runtime() -> Result<String, String> {
 }
 
 fn stop_local_runtime() -> Result<String, String> {
-    let mut guard = runtime_state()
-        .lock()
-        .map_err(|_| "Runtime state lock poisoned".to_string())?;
+    let mut guard = runtime_state_guard()?;
     if let Some(mut child) = guard.api.take() {
         let pid = child.id();
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|e| format!("Failed to inspect local runtime API process {pid}: {e}"))?
+        {
+            return Ok(format!(
+                "local runtime already stopped (api pid {pid}, status {status})"
+            ));
+        }
         child
             .kill()
             .map_err(|e| format!("Failed to stop local runtime API process {pid}: {e}"))?;
@@ -409,11 +416,8 @@ fn stop_local_runtime() -> Result<String, String> {
     }
     Ok("local runtime is not running".to_string())
 }
-
 fn local_runtime_status() -> Result<String, String> {
-    let mut guard = runtime_state()
-        .lock()
-        .map_err(|_| "Runtime state lock poisoned".to_string())?;
+    let mut guard = runtime_state_guard()?;
     if api_is_running(&mut guard)? {
         let pid = guard.api.as_ref().map(|c| c.id()).unwrap_or_default();
         return Ok(format!("api running (pid {pid})\nqueue mode: local"));

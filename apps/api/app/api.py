@@ -53,14 +53,17 @@ from app.share_links import build_share_token_with_ttl, parse_and_validate_share
 from app.storage import LocalStorageBackend, get_storage, is_remote_uri
 
 try:
-    from celery import Celery
+    from celery import Celery as _Celery
 except ModuleNotFoundError:  # pragma: no cover - allows API tests without optional celery install
-    class Celery:  # type: ignore[override]
+    class _Celery:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
             pass
 
         def send_task(self, *_args, **_kwargs):
             raise RuntimeError("Celery is not installed in this environment.")
+
+
+Celery = _Celery
 
 
 try:
