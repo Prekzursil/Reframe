@@ -114,7 +114,7 @@ const ORG_MANAGER_ROLES = ["owner", "admin"];
 const PUBLISH_PROVIDERS = ["youtube", "tiktok", "instagram", "facebook"] as const;
 type PublishProvider = (typeof PUBLISH_PROVIDERS)[number];
 
-async function copyToClipboard(text: string): Promise<boolean> {
+export async function copyToClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
     return true;
@@ -137,7 +137,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
-function CopyCommandButton({ command, label = "Copy curl" }: { command: string; label?: string }) {
+export function CopyCommandButton({ command, label = "Copy curl" }: { command: string; label?: string }) {
   const [status, setStatus] = useState<string | null>(null);
 
   const onCopy = async () => {
@@ -153,7 +153,7 @@ function CopyCommandButton({ command, label = "Copy curl" }: { command: string; 
   );
 }
 
-function TextPreview({
+export function TextPreview({
   url,
   title,
   maxChars = 12000,
@@ -243,7 +243,7 @@ function useLiveJobs() {
   return { jobs, loading, error, refresh };
 }
 
-function JobStatusPill({ status }: { status: JobStatus }) {
+export function JobStatusPill({ status }: { status: JobStatus }) {
   const toneMap: Record<JobStatus, "neutral" | "info" | "success" | "danger" | "muted"> = {
     queued: "neutral",
     running: "info",
@@ -254,7 +254,7 @@ function JobStatusPill({ status }: { status: JobStatus }) {
   return <Chip tone={toneMap[status]}>{status}</Chip>;
 }
 
-function CaptionsForm({
+export function CaptionsForm({
   onCreated,
   initialVideoId,
   projectId,
@@ -427,7 +427,7 @@ function CaptionsForm({
   );
 }
 
-function TranslateForm({ onCreated, projectId }: { onCreated: (job: Job) => void; projectId?: string }) {
+export function TranslateForm({ onCreated, projectId }: { onCreated: (job: Job) => void; projectId?: string }) {
   const [subtitleId, setSubtitleId] = useState("");
   const [targetLang, setTargetLang] = useState("es");
   const [notes, setNotes] = useState("");
@@ -488,7 +488,7 @@ function TranslateForm({ onCreated, projectId }: { onCreated: (job: Job) => void
   );
 }
 
-function UploadPanel({
+export function UploadPanel({
   onAssetId,
   onPreview,
   projectId,
@@ -545,7 +545,7 @@ function UploadPanel({
   );
 }
 
-function AudioUploadPanel({
+export function AudioUploadPanel({
   onAssetId,
   onPreview,
   projectId,
@@ -595,7 +595,7 @@ function AudioUploadPanel({
   );
 }
 
-function SubtitleUpload({
+export function SubtitleUpload({
   onAssetId,
   onPreview,
   label = "Upload subtitles (SRT/VTT)",
@@ -641,7 +641,7 @@ function SubtitleUpload({
   );
 }
 
-function SubtitleEditorCard({
+export function SubtitleEditorCard({
   initialAssetId,
   onAssetChosen,
   projectId,
@@ -965,7 +965,7 @@ function SubtitleEditorCard({
   );
 }
 
-function SubtitleToolsForm({ onCreated, projectId }: { onCreated: (job: Job, bilingual: boolean) => void; projectId?: string }) {
+export function SubtitleToolsForm({ onCreated, projectId }: { onCreated: (job: Job, bilingual: boolean) => void; projectId?: string }) {
   const [subtitleId, setSubtitleId] = useState("");
   const [targetLang, setTargetLang] = useState("es");
   const [bilingual, setBilingual] = useState(false);
@@ -1037,7 +1037,7 @@ function SubtitleToolsForm({ onCreated, projectId }: { onCreated: (job: Job, bil
   );
 }
 
-function MergeAvForm({
+export function MergeAvForm({
   onCreated,
   initialVideoId,
   initialAudioId,
@@ -1140,7 +1140,7 @@ function MergeAvForm({
   );
 }
 
-function ShortsForm({ onCreated, projectId }: { onCreated: (job: Job) => void; projectId?: string }) {
+export function ShortsForm({ onCreated, projectId }: { onCreated: (job: Job) => void; projectId?: string }) {
   const [videoId, setVideoId] = useState("");
   const [numClips, setNumClips] = useState(3);
   const [minDuration, setMinDuration] = useState(10);
@@ -1358,7 +1358,7 @@ function ShortsForm({ onCreated, projectId }: { onCreated: (job: Job) => void; p
   );
 }
 
-function StyleEditor({
+export function StyleEditor({
   onPreview,
   onRender,
   onJobCreated,
@@ -1493,8 +1493,7 @@ function StyleEditor({
     </div>
   );
 }
-
-	function AppShell() {
+export function AppShell() {
 	  const [active, setActive] = useState(NAV_ITEMS[0].id);
 	  const [theme, setTheme] = useState<"light" | "dark">("dark");
 	  const [showSettings, setShowSettings] = useState(false);
@@ -5505,3 +5504,5 @@ function App() {
 }
 
 export default App;
+
+

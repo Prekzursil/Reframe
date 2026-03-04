@@ -8,7 +8,7 @@ function okJson(body: unknown, status = 200) {
     statusText: "OK",
     json: async () => body,
     text: async () => JSON.stringify(body),
-  } as Response;
+  } as unknown as Response;
 }
 
 function failJson(message: string, status = 400, statusText = "Bad Request") {
@@ -18,7 +18,7 @@ function failJson(message: string, status = 400, statusText = "Bad Request") {
     statusText,
     json: async () => ({ message }),
     text: async () => message,
-  } as Response;
+  } as unknown as Response;
 }
 
 describe("ApiClient", () => {
@@ -44,7 +44,7 @@ describe("ApiClient", () => {
     const [, init2] = fetcher.mock.calls[1] as [string, RequestInit];
     expect(new Headers(init2.headers).get("Authorization")).toBe("Bearer abc");
 
-    fetcher.mockResolvedValueOnce({ ok: true, status: 204, statusText: "No Content", json: async () => ({}) } as Response);
+    fetcher.mockResolvedValueOnce({ ok: true, status: 204, statusText: "No Content", json: async () => ({}) } as unknown as Response);
     await expect(client.request<void>("/auth/logout", { method: "POST" })).resolves.toBeUndefined();
 
     fetcher.mockResolvedValueOnce(failJson("custom fail"));
@@ -58,7 +58,7 @@ describe("ApiClient", () => {
         throw new Error("bad json");
       },
       text: async () => "",
-    } as Response);
+    } as unknown as Response);
     await expect(client.request("/bad2")).rejects.toThrow("Server Error");
   });
 
@@ -207,10 +207,10 @@ describe("ApiClient", () => {
     await client.deleteJob("job-2");
     await client.deleteAsset("asset-1");
 
-    fetcher.mockResolvedValueOnce({ ok: false, status: 500, statusText: "", text: async () => "", json: async () => ({}) } as Response);
+    fetcher.mockResolvedValueOnce({ ok: false, status: 500, statusText: "", text: async () => "", json: async () => ({}) } as unknown as Response);
     await expect(client.removeProjectMember("p1", "u1")).rejects.toThrow("Failed to remove project member");
 
-    fetcher.mockResolvedValueOnce({ ok: false, status: 500, statusText: "oops", text: async () => { throw new Error("x"); }, json: async () => ({}) } as Response);
+    fetcher.mockResolvedValueOnce({ ok: false, status: 500, statusText: "oops", text: async () => { throw new Error("x"); }, json: async () => ({}) } as unknown as Response);
     await expect(client.deleteProjectComment("p1", "c1")).rejects.toThrow("oops");
   });
 
@@ -269,3 +269,4 @@ describe("ApiClient", () => {
     expect(client.jobBundleUrl("job-1")).toBe("http://localhost:8000/api/v1/jobs/job-1/bundle");
   });
 });
+

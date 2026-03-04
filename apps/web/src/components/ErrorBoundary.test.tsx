@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ErrorBoundary } from "./ErrorBoundary";
 
-function Thrower() {
+function Thrower(): never {
   throw new Error("boom");
 }
 
