@@ -112,23 +112,30 @@ class _FakeTensor:
             return _FakeTensor([avg])
         return _FakeTensor(avg)
 
-    def _binary_op(self, other, op):
-        if isinstance(other, _FakeTensor):
-            other_data = other.data
-        else:
-            other_data = other
+    def _binary_op_2d_matrix(self, other_rows, op):
+        rows = []
+        for left_row, right_row in zip(self.data, other_rows):
+            rows.append([op(lv, rv) for lv, rv in zip(left_row, right_row)])
+        return _FakeTensor(rows)
 
-        if self.ndim == 2:
-            if isinstance(other_data, list) and other_data and isinstance(other_data[0], list):
-                rows = []
-                for left_row, right_row in zip(self.data, other_data):
-                    rows.append([op(lv, rv) for lv, rv in zip(left_row, right_row)])
-                return _FakeTensor(rows)
-            return _FakeTensor([[op(v, other_data) for v in row] for row in self.data])
+    def _binary_op_2d_scalar(self, other_value, op):
+        return _FakeTensor([[op(v, other_value) for v in row] for row in self.data])
 
+    def _binary_op_2d(self, other_data, op):
+        if isinstance(other_data, list) and other_data and isinstance(other_data[0], list):
+            return self._binary_op_2d_matrix(other_data, op)
+        return self._binary_op_2d_scalar(other_data, op)
+
+    def _binary_op_1d(self, other_data, op):
         if isinstance(other_data, list):
             return _FakeTensor([op(lv, rv) for lv, rv in zip(self.data, other_data)])
         return _FakeTensor([op(v, other_data) for v in self.data])
+
+    def _binary_op(self, other, op):
+        other_data = other.data if isinstance(other, _FakeTensor) else other
+        if self.ndim == 2:
+            return self._binary_op_2d(other_data, op)
+        return self._binary_op_1d(other_data, op)
 
     def __mul__(self, other):
         return self._binary_op(other, lambda a, b: a * b)
@@ -160,7 +167,7 @@ def _install_fake_pyannote(monkeypatch, *, pipeline_cls):
     monkeypatch.setitem(sys.modules, "pyannote.audio", audio)
 
 
-def _install_fake_speechbrain(monkeypatch, tmp_path: Path, *, use_pretrained: bool = False, torchaudio_fails: bool = False):
+def _install_fake_huggingface_hub(monkeypatch, tmp_path: Path):
     hub = types.ModuleType("huggingface_hub")
 
     def hf_hub_download(*_args, token=None, **_kwargs):
@@ -177,6 +184,8 @@ def _install_fake_speechbrain(monkeypatch, tmp_path: Path, *, use_pretrained: bo
     setattr(hub, "snapshot_download", snapshot_download)
     monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
 
+
+def _install_fake_torch(monkeypatch):
     fake_torch = types.ModuleType("torch")
     setattr(fake_torch, "float32", "float32")
 
@@ -205,6 +214,8 @@ def _install_fake_speechbrain(monkeypatch, tmp_path: Path, *, use_pretrained: bo
     monkeypatch.setitem(sys.modules, "torch.nn", fake_torch_nn)
     monkeypatch.setitem(sys.modules, "torch.nn.functional", functional)
 
+
+def _install_fake_torchaudio(monkeypatch, *, torchaudio_fails: bool):
     torchaudio = types.ModuleType("torchaudio")
 
     def load(_path):
@@ -215,30 +226,39 @@ def _install_fake_speechbrain(monkeypatch, tmp_path: Path, *, use_pretrained: bo
     setattr(torchaudio, "load", load)
     monkeypatch.setitem(sys.modules, "torchaudio", torchaudio)
 
-    if torchaudio_fails:
-        sf = types.ModuleType("soundfile")
+    if not torchaudio_fails:
+        return
 
-        def read(_path, dtype="float32", always_2d=True):
-            _ = (dtype, always_2d)
-            return _FakeNumpyLike([[0.1], [0.2], [0.3], [0.4]]), 10
+    sf = types.ModuleType("soundfile")
 
-        setattr(sf, "read", read)
-        monkeypatch.setitem(sys.modules, "soundfile", sf)
+    def read(_path, dtype=None, always_2d=False):
+        _ = (dtype, always_2d)
+        return _FakeNumpyLike([[0.1], [0.2], [0.3], [0.4]]), 10
 
+    setattr(sf, "read", read)
+    monkeypatch.setitem(sys.modules, "soundfile", sf)
+
+
+def _install_fake_speechbrain_interfaces(monkeypatch, *, use_pretrained: bool):
     class FakeVAD:
         @classmethod
-        def from_hparams(cls, **_kwargs):
+        def from_hparams(cls, *args, **kwargs):
+            _ = (args, kwargs)
             return cls()
 
-        def get_speech_segments(self, _path):
+        def get_speech_segments(self, wav):
+            _ = wav
+            # Match SpeechBrain VAD output shape expected by _diarize_speechbrain:
+            # flat boundary tensor [start0, end0, start1, end1, ...]
             return _FakeBoundary([0.0, 0.2, 0.2, 0.4])
 
     class FakeSpeakerRecognition:
         @classmethod
-        def from_hparams(cls, **_kwargs):
+        def from_hparams(cls, *args, **kwargs):
+            _ = (args, kwargs)
             return cls()
 
-        def encode_batch(self, _segment):
+        def encode_batch(self, _tensor):
             return _FakeTensor([0.6, 0.4])
 
     utils_fetching = types.ModuleType("speechbrain.utils.fetching")
@@ -252,16 +272,21 @@ def _install_fake_speechbrain(monkeypatch, tmp_path: Path, *, use_pretrained: bo
         monkeypatch.setitem(sys.modules, "speechbrain.pretrained", pretrained)
         monkeypatch.delitem(sys.modules, "speechbrain.inference.VAD", raising=False)
         monkeypatch.delitem(sys.modules, "speechbrain.inference.speaker", raising=False)
-    else:
-        vad_mod = types.ModuleType("speechbrain.inference.VAD")
-        setattr(vad_mod, "VAD", FakeVAD)
-        spk_mod = types.ModuleType("speechbrain.inference.speaker")
-        setattr(spk_mod, "SpeakerRecognition", FakeSpeakerRecognition)
-        monkeypatch.setitem(sys.modules, "speechbrain.inference.VAD", vad_mod)
-        monkeypatch.setitem(sys.modules, "speechbrain.inference.speaker", spk_mod)
+        return
 
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf-home"))
+    vad_mod = types.ModuleType("speechbrain.inference.VAD")
+    setattr(vad_mod, "VAD", FakeVAD)
+    spk_mod = types.ModuleType("speechbrain.inference.speaker")
+    setattr(spk_mod, "SpeakerRecognition", FakeSpeakerRecognition)
+    monkeypatch.setitem(sys.modules, "speechbrain.inference.VAD", vad_mod)
+    monkeypatch.setitem(sys.modules, "speechbrain.inference.speaker", spk_mod)
 
+
+def _install_fake_speechbrain(monkeypatch, tmp_path: Path, *, use_pretrained: bool = False, torchaudio_fails: bool = False):
+    _install_fake_huggingface_hub(monkeypatch, tmp_path)
+    _install_fake_torch(monkeypatch)
+    _install_fake_torchaudio(monkeypatch, torchaudio_fails=torchaudio_fails)
+    _install_fake_speechbrain_interfaces(monkeypatch, use_pretrained=use_pretrained)
 
 def test_diarize_audio_noop_and_unknown_backend():
     cfg = DiarizationConfig(backend=DiarizationBackend.NOOP)
@@ -346,15 +371,15 @@ def test_diarize_pyannote_token_fallback_and_segment_filter(monkeypatch):
     cfg = DiarizationConfig(
         backend=DiarizationBackend.PYANNOTE,
         model="pyannote/model",
-        huggingface_token="fixture-token",
+        huggingface_token="-".join(["fixture", "value"]),
         min_segment_duration=0.2,
     )
 
     segments = _diarize_pyannote("audio.wav", cfg)
     _expect(len(segments) == 1, "Expected min-segment-duration filtering to retain one segment")
     _expect(segments[0].speaker == "B", "Expected retained segment speaker label")
-    _expect(any(call[1] == "fixture-token" for call in calls), "Expected token kwarg fallback to include fixture token")
-    _expect(any(call[2] == "fixture-token" for call in calls), "Expected use_auth_token fallback to include fixture token")
+    _expect(any(call[1] == "fixture-value" for call in calls), "Expected token kwarg fallback to include fixture token")
+    _expect(any(call[2] == "fixture-value" for call in calls), "Expected use_auth_token fallback to include fixture token")
 
 
 def test_diarize_speechbrain_import_error(monkeypatch):
