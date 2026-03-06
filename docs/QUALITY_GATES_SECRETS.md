@@ -1,6 +1,6 @@
 # Quality Gates Secrets Setup
 
-This repository now enforces fail-closed quality gates. Missing secrets or variables will fail PR/main checks.
+This repository now enforces fail-closed quality gates. Missing secrets or variables will fail PR/main checks. Semgrep is workflow-based and does not require a dedicated repository secret.
 
 ## Required GitHub Secrets
 
@@ -8,7 +8,6 @@ This repository now enforces fail-closed quality gates. Missing secrets or varia
 gh secret set SONAR_TOKEN --body '<token>'
 gh secret set CODACY_API_TOKEN --body '<token>'
 gh secret set CODECOV_TOKEN --body '<token>'
-gh secret set SNYK_TOKEN --body '<token>'
 gh secret set SENTRY_AUTH_TOKEN --body '<token>'
 gh secret set APPLITOOLS_API_KEY --body '<token>'
 gh secret set PERCY_TOKEN --body '<token>'

@@ -33,7 +33,7 @@ The `main` branch is the primary production branch and has the strictest protect
      - `SonarCloud Code Analysis` - SonarCloud quality gate signal
      - `Codacy Static Code Analysis` - Codacy static analysis signal
      - `DeepScan` - DeepScan static analysis signal
-     - `Snyk Zero` - Snyk OSS/Code/IaC zero-finding gate
+     - `Semgrep Zero` - Semgrep static security zero-finding gate
      - `Percy Visual` - Percy visual regression gate
      - `Applitools Visual` - Applitools Eyes visual regression gate
      - `BrowserStack E2E` - Cross-browser Playwright validation via BrowserStack

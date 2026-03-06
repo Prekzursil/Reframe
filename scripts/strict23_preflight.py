@@ -34,7 +34,7 @@ DEFAULT_CANONICAL_CONTEXTS = [
     "SonarCloud Code Analysis",
     "Codacy Static Code Analysis",
     "DeepScan",
-    "Snyk Zero",
+    "Semgrep Zero",
     "Percy Visual",
     "Applitools Visual",
     "BrowserStack E2E",
