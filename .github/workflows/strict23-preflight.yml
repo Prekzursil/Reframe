@@ -36,7 +36,7 @@ jobs:
           cat strict23-preflight/preflight.md
 
       - name: Upload strict-23 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: strict23-preflight
           path: strict23-preflight

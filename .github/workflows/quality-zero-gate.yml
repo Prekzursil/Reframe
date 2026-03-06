@@ -35,7 +35,7 @@ jobs:
             --out-md quality-secrets/secrets.md
       - name: Upload secrets preflight artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: quality-secrets
           path: quality-secrets
@@ -108,7 +108,7 @@ jobs:
 
       - name: Upload aggregate artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: quality-zero-gate
           path: quality-zero-gate
