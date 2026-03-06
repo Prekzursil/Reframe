@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Iterable, List, Sequence
 
@@ -295,7 +296,7 @@ def _diarize_speechbrain(audio_path: str | Path, config: DiarizationConfig) -> L
     for (start, end), cluster_idx in zip(speech_regions, assignments):
         speaker = f"SPEAKER_{cluster_idx:02d}"
         if segments and segments[-1].speaker == speaker and start <= (segments[-1].end + merge_gap_seconds):
-            segments[-1].end = max(segments[-1].end, end)
+            segments[-1] = replace(segments[-1], end=max(segments[-1].end, end))
             continue
         segments.append(SpeakerSegment(start=start, end=end, speaker=speaker))
 

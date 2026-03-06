@@ -14,7 +14,7 @@ def test_publish_adapters_and_task_complete_for_all_supported_providers(monkeypa
     media_root.mkdir(parents=True, exist_ok=True)
 
     db_path = tmp_path / "reframe-test.db"
-    db_url = f"sqlite:////{str(db_path).lstrip('/')}"
+    db_url = f"sqlite:///{db_path.as_posix()}"
     monkeypatch.setenv("DATABASE_URL", db_url)
     monkeypatch.setenv("REFRAME_MEDIA_ROOT", str(media_root))
 

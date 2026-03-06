@@ -251,6 +251,8 @@ def main(argv: list[str]) -> int:
             "owner": PYANNOTE_BLOCKER_OWNER,
             "recheck_date": PYANNOTE_BLOCKER_RECHECK_DATE,
         }
+    out_json.parent.mkdir(parents=True, exist_ok=True)
+    out_md.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     lines: list[str] = []

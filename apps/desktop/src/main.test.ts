@@ -23,12 +23,14 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: openUrlMock }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: relaunchMock }));
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: checkMock }));
 
-const UI_URL = "http://localhost:5173";
+const UI_URL = "http://localhost:8000";
 const RELEASES_URL = "https://github.com/Prekzursil/Reframe/releases";
+const DOCS_URL = "http://localhost:8000/docs";
 const LATEST_JSON_URL =
   "https://github.com/Prekzursil/Reframe/releases/latest/download/latest.json";
 
 const htmlFixture = `
+  <button id="btn-prepare">prepare</button>
   <button id="btn-up">up</button>
   <button id="btn-up-nobuild">up-nobuild</button>
   <button id="btn-down">down</button>
@@ -51,6 +53,9 @@ const htmlFixture = `
   <code id="app-version"></code>
   <code id="updater-manifest"></code>
   <code id="docker-version"></code>
+  <code id="step-runtime"></code>
+  <code id="step-api"></code>
+  <code id="step-worker"></code>
 `;
 
 type RuntimeState = {
@@ -69,6 +74,7 @@ const state: RuntimeState = {
   invokeValues: {
     compose_file_path: "/tmp/compose.yml",
     docker_version: "Docker 28.3.3",
+    runtime_prepare: "runtime ready",
     compose_ps: "api up\nworker up",
     compose_up: "compose up ok",
     compose_down: "compose down ok",
@@ -129,6 +135,7 @@ function resetState() {
   state.invokeValues = {
     compose_file_path: "/tmp/compose.yml",
     docker_version: "Docker 28.3.3",
+    runtime_prepare: "runtime ready",
     compose_ps: "api up\nworker up",
     compose_up: "compose up ok",
     compose_down: "compose down ok",
@@ -244,6 +251,7 @@ describe("desktop main app", () => {
     expect(document.getElementById("compose-path")?.textContent).toBe("/tmp/compose.yml");
     expect(document.getElementById("updater-manifest")?.textContent).toBe(LATEST_JSON_URL);
 
+    state.invokeValues.compose_ps = "api running (pid 42)\\nqueue mode: local";
     await click("btn-open-ui");
     await click("btn-latest-json");
     await click("btn-releases");
@@ -251,6 +259,16 @@ describe("desktop main app", () => {
     expect(openUrlMock).toHaveBeenCalledWith(UI_URL);
     expect(openUrlMock).toHaveBeenCalledWith(LATEST_JSON_URL);
     expect(openUrlMock).toHaveBeenCalledWith(RELEASES_URL);
+    state.invokeValues.compose_ps = "api up\\nworker up";
+    await appModule.__test.openProductExperience();
+    expect(invokeMock).toHaveBeenCalledWith("compose_up", { build: true });
+    state.invokeValues.compose_ps = "";
+    await appModule.__test.openProductExperience();
+
+    state.invokeFailures.add("compose_ps");
+    await appModule.__test.openProductExperience();
+    expect(openUrlMock).toHaveBeenCalledWith(DOCS_URL);
+    expect(document.getElementById("log")?.textContent ?? "").toContain("Unable to prepare Studio launch");
   });
 
   it("runs start/stop commands and click handlers", async () => {
@@ -276,6 +294,115 @@ describe("desktop main app", () => {
     expect(document.getElementById("log")?.textContent ?? "").toContain("compose_up failed");
     expect(document.getElementById("log")?.textContent ?? "").toContain("compose_down failed");
   });
+  it("handles runtime_prepare success and prepare button wiring", async () => {
+    await appModule.__test.prepareRuntime();
+    expect(document.getElementById("log")?.textContent ?? "").toContain("runtime ready");
+    expect(document.getElementById("step-runtime")?.textContent).toBe("ready");
+
+    await click("btn-prepare");
+    expect(invokeMock).toHaveBeenCalledWith("runtime_prepare");
+  });
+
+  it("handles runtime_prepare Error failures", async () => {
+    state.invokeFailures.add("runtime_prepare");
+    await appModule.__test.prepareRuntime();
+
+    expect(document.getElementById("step-runtime")?.textContent).toBe("failed");
+    expect(document.getElementById("log")?.textContent ?? "").toContain("runtime_prepare failed");
+  });
+
+  it("handles runtime_prepare blank output fallback message", async () => {
+    state.invokeValues.runtime_prepare = "   ";
+    await appModule.__test.prepareRuntime();
+
+    expect(document.getElementById("log")?.textContent ?? "").toContain(
+      "Runtime dependencies ready.",
+    );
+    expect(document.getElementById("step-runtime")?.textContent).toBe("ready");
+  });
+
+  it("handles runtime_prepare string-error branch", async () => {
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === "runtime_prepare") {
+        throw "prepare string failure";
+      }
+      return state.invokeValues[command] ?? "";
+    });
+
+    await appModule.__test.prepareRuntime();
+    expect(document.getElementById("step-runtime")?.textContent).toBe("failed");
+    expect(document.getElementById("log")?.textContent ?? "").toContain("prepare string failure");
+  });
+
+  it("covers non-Error and empty-output runtime branches", async () => {
+    const firstHandlers: Record<string, () => string | never> = {
+      docker_version: () => {
+        throw "docker unavailable";
+      },
+      compose_ps: () => {
+        throw "status unavailable";
+      },
+      compose_up: () => "   ",
+      compose_down: () => "",
+    };
+
+    invokeMock.mockImplementation(async (command: string) => {
+      const handler = firstHandlers[command];
+      if (handler) {
+        return handler();
+      }
+      return state.invokeValues[command] ?? "";
+    });
+
+    await appModule.__test.refresh();
+    expect(document.getElementById("docker-version")?.textContent).toBe("not available");
+    expect(document.getElementById("status")?.textContent).toBe("status unavailable");
+
+    await appModule.__test.start(true);
+    await appModule.__test.stop();
+
+    const log = document.getElementById("log")?.textContent ?? "";
+    expect(log).toContain("OK");
+
+    const secondHandlers: Record<string, () => string | never> = {
+      compose_up: () => {
+        throw "runtime failed";
+      },
+      compose_down: () => {
+        throw "runtime failed";
+      },
+    };
+
+    invokeMock.mockImplementation(async (command: string) => {
+      const handler = secondHandlers[command];
+      if (handler) {
+        return handler();
+      }
+      return state.invokeValues[command] ?? "";
+    });
+
+    await appModule.__test.start(true);
+    await appModule.__test.stop();
+    expect(document.getElementById("log")?.textContent ?? "").toContain("runtime failed");
+  });
+
+  it("handles updater started events with unknown content length", async () => {
+    checkMock.mockResolvedValueOnce({
+      currentVersion: "0.1.8",
+      version: "0.1.9",
+      downloadAndInstall: async (onEvent: (evt: any) => void) => {
+        onEvent({ event: "Started", data: {} });
+        onEvent({ event: "Finished", data: {} });
+      },
+    });
+    state.confirmQueue.push(true);
+
+    await appModule.__test.checkUpdates();
+
+    const log = document.getElementById("log")?.textContent ?? "";
+    expect(log).toContain("unknown bytes");
+    expect(log).toContain("Download finished.");
+  });
 
   it("falls back when refresh dependencies fail", async () => {
     state.invokeFailures.clear();
@@ -292,6 +419,44 @@ describe("desktop main app", () => {
     expect(document.getElementById("docker-version")?.textContent).toBe("not available");
     expect(document.getElementById("offline-mode")?.textContent).toBe("unknown");
     expect(document.getElementById("system-status")?.textContent).toContain("Diagnostics unavailable");
+  });
+
+  it("handles falsey diagnostics payload branches", async () => {
+    state.invokeValues.compose_ps = "   ";
+    state.invokeValues.docker_version = "  runtime  ";
+    getVersionMock.mockResolvedValueOnce("   ");
+    state.fetchQueue.push(
+      makeResponse(200, {
+        offline_mode: false,
+        storage_backend: null,
+        worker: {
+          ping_ok: false,
+          system_info: {
+            ffmpeg: {
+              present: false,
+            },
+          },
+        },
+      }),
+    );
+
+    await appModule.__test.refresh();
+
+    expect(document.getElementById("app-version")?.textContent).toBe("unknown");
+    expect(document.getElementById("worker-ping")?.textContent).toBe("no response");
+    expect(document.getElementById("ffmpeg")?.textContent).toBe("missing");
+    expect(document.getElementById("status")?.textContent).toContain("(no output)");
+    expect(document.getElementById("step-worker")?.textContent).toBe("no response");
+  });
+
+  it("tolerates missing onboarding chips when refreshing diagnostics", async () => {
+    document.getElementById("step-runtime")?.remove();
+    document.getElementById("step-api")?.remove();
+    document.getElementById("step-worker")?.remove();
+
+    await appModule.__test.refreshDiagnostics();
+
+    expect(document.getElementById("offline-mode")?.textContent).toBe("true");
   });
 
   it("handles updater paths: no-update, cancel, install, and failure", async () => {
@@ -364,6 +529,134 @@ describe("desktop main app", () => {
     expect(promptMock).toHaveBeenCalled();
 
     await click("btn-copy-debug");
+  });
+
+
+  it("covers collectDebugInfo unknown fallbacks and empty-ui branches", async () => {
+    state.updateMode = "none";
+    await appModule.__test.checkUpdates();
+    await appModule.__test.refreshDiagnostics();
+
+    document.getElementById("status")!.textContent = "   ";
+    document.getElementById("log")!.textContent = "   ";
+
+    getNameMock.mockResolvedValueOnce("   ");
+    getVersionMock.mockResolvedValueOnce("   ");
+    getTauriVersionMock.mockResolvedValueOnce("   ");
+    getIdentifierMock.mockResolvedValueOnce("   ");
+    state.invokeValues.compose_ps = "   ";
+
+    state.fetchQueue.push(makeResponse(503, { message: "not-ok" }, "Service Unavailable"));
+
+    const debug = await appModule.__test.collectDebugInfo();
+    expect(debug).toContain("app_name: unknown");
+    expect(debug).toContain("app_version: unknown");
+    expect(debug).toContain("tauri_version: unknown");
+    expect(debug).toContain("identifier: unknown");
+    expect(debug).toContain("compose_ps: (empty)");
+    expect(debug).toContain("system_status_http: 503 Service Unavailable");
+    expect(debug).not.toContain("last_updater_error:");
+    expect(debug).not.toContain("last_diagnostics_error:");
+    expect(debug).not.toContain("ui_compose_status:");
+    expect(debug).not.toContain("ui_log:");
+  });
+
+  it("covers refresh diagnostics nullish paths and string throw branches", async () => {
+    state.fetchQueue.push(makeResponse(200, { offline_mode: false, storage_backend: "local" }));
+    await appModule.__test.refreshDiagnostics();
+    expect(document.getElementById("worker-ping")?.textContent).toBe("no response");
+    expect(document.getElementById("ffmpeg")?.textContent).toBe("missing");
+
+    state.fetchQueue.push(
+      makeResponse(200, {
+        offline_mode: true,
+        storage_backend: "s3",
+        worker: {
+          ping_ok: true,
+          system_info: {
+            ffmpeg: {
+              present: true,
+            },
+          },
+        },
+      }),
+    );
+    await appModule.__test.refreshDiagnostics();
+    expect(document.getElementById("ffmpeg")?.textContent).toBe("ok");
+
+    getVersionMock.mockImplementationOnce(async () => {
+      throw "version string error";
+    });
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === "compose_file_path") {
+        throw "compose path string error";
+      }
+      return state.invokeValues[command] ?? "";
+    });
+
+    document.getElementById("log")!.textContent = null;
+    await appModule.__test.refresh();
+    const log = document.getElementById("log")?.textContent ?? "";
+    expect(log).toContain("version string error");
+    expect(log).toContain("compose path string error");
+  });
+
+  it("covers updater callback branch for unknown events", async () => {
+    checkMock.mockResolvedValueOnce({
+      currentVersion: "0.1.8",
+      version: "0.1.9",
+      downloadAndInstall: async (onEvent: (evt: any) => void) => {
+        onEvent({ event: "Started", data: { contentLength: 12 } });
+        onEvent({ event: "Progress", data: { chunkLength: 12 } });
+        onEvent({ event: "Custom", data: {} });
+        onEvent({ event: "Finished", data: {} });
+      },
+    });
+    state.confirmQueue.push(true);
+
+    await appModule.__test.checkUpdates();
+
+    const log = document.getElementById("log")?.textContent ?? "";
+    expect(log).toContain("Downloaded 12 bytes");
+    expect(log).toContain("Download finished.");
+  });
+
+
+  it("covers null textContent branches in append and debug collectors", async () => {
+    const logEl = document.getElementById("log") as HTMLPreElement;
+    const statusEl = document.getElementById("status") as HTMLPreElement;
+
+    let logStore: string | null = null;
+    let statusStore: string | null = null;
+
+    Object.defineProperty(logEl, "textContent", {
+      configurable: true,
+      get: () => logStore,
+      set: (value: string | null) => {
+        logStore = value;
+      },
+    });
+
+    Object.defineProperty(statusEl, "textContent", {
+      configurable: true,
+      get: () => statusStore,
+      set: (value: string | null) => {
+        statusStore = value;
+      },
+    });
+
+    await appModule.__test.start(true);
+
+    logStore = null;
+    statusStore = null;
+    const debug = await appModule.__test.collectDebugInfo();
+    expect(debug).not.toContain("ui_compose_status:");
+    expect(debug).not.toContain("ui_log:");
+
+    delete (logEl as any).textContent;
+    delete (statusEl as any).textContent;
+    logEl.textContent = "Ready.";
+    statusEl.textContent = "Loading…";
   });
 
   it("throws for missing required DOM elements", () => {

@@ -1,0 +1,31 @@
+{
+  "captured_at_utc": "2026-03-04T06:02:10.4850475Z",
+  "branch": "feat/coverage-truth-desktop-product-2026-03-04",
+  "head_sha": "4f7349caf2966f25902a72e8384cdd43a9b2a65e",
+  "pr": "https://github.com/Prekzursil/Reframe/pull/107",
+  "coverage": {
+    "python_percent": 63.92,
+    "web_percent": 65.85,
+    "desktop_ts_percent": 100.0,
+    "combined_percent": 64.82,
+    "expected_files": 83,
+    "missing_files": 5,
+    "uncovered_files": 58,
+    "source_md": "docs/plans/2026-03-04-coverage-truth-baseline.md",
+    "source_json": "docs/plans/2026-03-04-coverage-truth-baseline.json"
+  },
+  "release": {
+    "name": "Reframe Desktop v0.1.8",
+    "tag": "desktop-v0.1.8",
+    "prerelease": true,
+    "url": "https://github.com/Prekzursil/Reframe/releases/tag/desktop-v0.1.8",
+    "windows_assets": [
+      "Reframe_0.1.8_x64-setup.exe",
+      "Reframe_0.1.8_x64_en-US.msi"
+    ]
+  },
+  "notes": [
+    "Coverage denominator excludes were already tightened relative to pre-104 state.",
+    "Desktop remains local-runtime capable but UX still exposes operator-first terminology."
+  ]
+}

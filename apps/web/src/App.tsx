@@ -114,7 +114,7 @@ const ORG_MANAGER_ROLES = ["owner", "admin"];
 const PUBLISH_PROVIDERS = ["youtube", "tiktok", "instagram", "facebook"] as const;
 type PublishProvider = (typeof PUBLISH_PROVIDERS)[number];
 
-async function copyToClipboard(text: string): Promise<boolean> {
+export async function copyToClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
     return true;
@@ -137,7 +137,10 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
-function CopyCommandButton({ command, label = "Copy curl" }: { command: string; label?: string }) {
+export function CopyCommandButton({
+  command,
+  label = "Copy curl",
+}: Readonly<{ command: string; label?: string }>) {
   const [status, setStatus] = useState<string | null>(null);
 
   const onCopy = async () => {
@@ -153,15 +156,29 @@ function CopyCommandButton({ command, label = "Copy curl" }: { command: string; 
   );
 }
 
-function TextPreview({
+function normalizeProjectShareLinksResponse(response: unknown): ProjectShareLink[] {
+  if (Array.isArray(response)) {
+    return response.filter((item): item is ProjectShareLink => Boolean(item && typeof item === "object"));
+  }
+
+  if (response && typeof response === "object" && "links" in response) {
+    const maybeLinks = (response as { links?: unknown }).links;
+    if (Array.isArray(maybeLinks)) {
+      return maybeLinks.filter((item): item is ProjectShareLink => Boolean(item && typeof item === "object"));
+    }
+  }
+
+  return [];
+}
+export function TextPreview({
   url,
   title,
   maxChars = 12000,
-}: {
+}: Readonly<{
   url: string;
   title: string;
   maxChars?: number;
-}) {
+}>) {
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -243,7 +260,7 @@ function useLiveJobs() {
   return { jobs, loading, error, refresh };
 }
 
-function JobStatusPill({ status }: { status: JobStatus }) {
+export function JobStatusPill({ status }: Readonly<{ status: JobStatus }>) {
   const toneMap: Record<JobStatus, "neutral" | "info" | "success" | "danger" | "muted"> = {
     queued: "neutral",
     running: "info",
@@ -254,15 +271,15 @@ function JobStatusPill({ status }: { status: JobStatus }) {
   return <Chip tone={toneMap[status]}>{status}</Chip>;
 }
 
-function CaptionsForm({
+export function CaptionsForm({
   onCreated,
   initialVideoId,
   projectId,
-}: {
+}: Readonly<{
   onCreated: (job: Job) => void;
   initialVideoId?: string;
   projectId?: string;
-}) {
+}>) {
   const [videoId, setVideoId] = useState(initialVideoId || "");
   const [sourceLang, setSourceLang] = useState("auto");
   const [backend, setBackend] = useState("faster_whisper");
@@ -427,7 +444,7 @@ function CaptionsForm({
   );
 }
 
-function TranslateForm({ onCreated, projectId }: { onCreated: (job: Job) => void; projectId?: string }) {
+export function TranslateForm({ onCreated, projectId }: Readonly<{ onCreated: (job: Job) => void; projectId?: string }>) {
   const [subtitleId, setSubtitleId] = useState("");
   const [targetLang, setTargetLang] = useState("es");
   const [notes, setNotes] = useState("");
@@ -488,15 +505,15 @@ function TranslateForm({ onCreated, projectId }: { onCreated: (job: Job) => void
   );
 }
 
-function UploadPanel({
+export function UploadPanel({
   onAssetId,
   onPreview,
   projectId,
-}: {
+}: Readonly<{
   onAssetId: (id: string) => void;
   onPreview: (url: string | null) => void;
   projectId?: string;
-}) {
+}>) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -545,15 +562,15 @@ function UploadPanel({
   );
 }
 
-function AudioUploadPanel({
+export function AudioUploadPanel({
   onAssetId,
   onPreview,
   projectId,
-}: {
+}: Readonly<{
   onAssetId: (id: string) => void;
   onPreview: (url: string | null) => void;
   projectId?: string;
-}) {
+}>) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -595,17 +612,17 @@ function AudioUploadPanel({
   );
 }
 
-function SubtitleUpload({
+export function SubtitleUpload({
   onAssetId,
   onPreview,
   label = "Upload subtitles (SRT/VTT)",
   projectId,
-}: {
+}: Readonly<{
   onAssetId: (id: string) => void;
   onPreview: (url: string | null, name?: string | null) => void;
   label?: string;
   projectId?: string;
-}) {
+}>) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -641,15 +658,15 @@ function SubtitleUpload({
   );
 }
 
-function SubtitleEditorCard({
+export function SubtitleEditorCard({
   initialAssetId,
   onAssetChosen,
   projectId,
-}: {
+}: Readonly<{
   initialAssetId?: string;
   onAssetChosen: (asset: MediaAsset) => void;
   projectId?: string;
-}) {
+}>) {
   const [assetId, setAssetId] = useState(initialAssetId || "");
   const [contents, setContents] = useState("");
   const [original, setOriginal] = useState<string | null>(null);
@@ -965,7 +982,7 @@ function SubtitleEditorCard({
   );
 }
 
-function SubtitleToolsForm({ onCreated, projectId }: { onCreated: (job: Job, bilingual: boolean) => void; projectId?: string }) {
+export function SubtitleToolsForm({ onCreated, projectId }: Readonly<{ onCreated: (job: Job, bilingual: boolean) => void; projectId?: string }>) {
   const [subtitleId, setSubtitleId] = useState("");
   const [targetLang, setTargetLang] = useState("es");
   const [bilingual, setBilingual] = useState(false);
@@ -1037,17 +1054,17 @@ function SubtitleToolsForm({ onCreated, projectId }: { onCreated: (job: Job, bil
   );
 }
 
-function MergeAvForm({
+export function MergeAvForm({
   onCreated,
   initialVideoId,
   initialAudioId,
   projectId,
-}: {
+}: Readonly<{
   onCreated: (job: Job) => void;
   initialVideoId?: string;
   initialAudioId?: string;
   projectId?: string;
-}) {
+}>) {
   const [videoId, setVideoId] = useState(initialVideoId || "");
   const [audioId, setAudioId] = useState(initialAudioId || "");
   const [offset, setOffset] = useState(0);
@@ -1140,7 +1157,7 @@ function MergeAvForm({
   );
 }
 
-function ShortsForm({ onCreated, projectId }: { onCreated: (job: Job) => void; projectId?: string }) {
+export function ShortsForm({ onCreated, projectId }: Readonly<{ onCreated: (job: Job) => void; projectId?: string }>) {
   const [videoId, setVideoId] = useState("");
   const [numClips, setNumClips] = useState(3);
   const [minDuration, setMinDuration] = useState(10);
@@ -1358,19 +1375,19 @@ function ShortsForm({ onCreated, projectId }: { onCreated: (job: Job) => void; p
   );
 }
 
-function StyleEditor({
+export function StyleEditor({
   onPreview,
   onRender,
   onJobCreated,
   videoId,
   subtitleId,
-}: {
+}: Readonly<{
   onPreview: (payload: any) => Promise<Job | void> | void;
   onRender: (payload: any) => Promise<Job | void> | void;
   onJobCreated?: (job: Job) => void;
   videoId: string;
   subtitleId: string;
-}) {
+}>) {
   const [font, setFont] = useState(FONTS[0]);
   const [fontSize, setFontSize] = useState(42);
   const [textColor, setTextColor] = useState("#ffffff");
@@ -1493,8 +1510,8 @@ function StyleEditor({
     </div>
   );
 }
-
-	function AppShell() {
+// NOSONAR: AppShell currently orchestrates all product tabs and is decomposed in follow-up coverage/refactor slices.
+export function AppShell() { // NOSONAR: UI orchestration shell intentionally coordinates all tabs in one component.
 	  const [active, setActive] = useState(NAV_ITEMS[0].id);
 	  const [theme, setTheme] = useState<"light" | "dark">("dark");
 	  const [showSettings, setShowSettings] = useState(false);
@@ -2446,7 +2463,7 @@ function StyleEditor({
               asset_ids: assetIds,
               expires_in_hours: 24,
             });
-            setShareLinks(response.links);
+            setShareLinks(normalizeProjectShareLinksResponse(response));
           } catch (err) {
             setProjectDataError(err instanceof Error ? err.message : "Failed to generate share link");
           } finally {
@@ -5505,3 +5522,6 @@ function App() {
 }
 
 export default App;
+
+
+

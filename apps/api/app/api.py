@@ -11,28 +11,25 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any, List, Optional
-from uuid import uuid4
+from typing import Any, Iterable, List, Optional, Set
+from uuid import UUID, uuid4
 
-try:
-    from celery import Celery
-except ModuleNotFoundError:  # pragma: no cover - allows API tests without optional celery install
-    class Celery:  # type: ignore[override]
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def send_task(self, *_args, **_kwargs):
-            raise RuntimeError("Celery is not installed in this environment.")
-from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile, status, Response
-from uuid import UUID
-
+from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, Response, UploadFile, status
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlmodel import Field, Session, SQLModel, select
+from typing_extensions import Annotated
 
 from app.auth_api import PrincipalDep, ensure_default_plans
 from app.billing import get_plan_policy
-from app.database import get_session
 from app.config import get_settings
+from app.database import get_session
 from app.errors import ApiError, ErrorCode, ErrorResponse, conflict, not_found, quota_exceeded, server_error, unauthorized
+from app.local_queue import (
+    diagnostics as local_queue_diagnostics,
+    dispatch_task as dispatch_local_task,
+    is_local_queue_mode,
+    revoke_task as revoke_local_task,
+)
 from app.models import (
     Job,
     JobStatus,
@@ -52,10 +49,75 @@ from app.models import (
 )
 from app.rate_limit import enforce_rate_limit
 from app.security import AuthPrincipal
-from fastapi.responses import FileResponse, StreamingResponse
-
 from app.share_links import build_share_token_with_ttl, parse_and_validate_share_token
 from app.storage import LocalStorageBackend, get_storage, is_remote_uri
+
+try:
+    from celery import Celery as _RealCelery
+except ModuleNotFoundError:  # pragma: no cover - allows API tests without optional celery install
+    _RealCelery = None
+
+
+_MISSING_CELERY_MESSAGE = "Celery is not installed in this environment."
+
+
+class _MissingCeleryControl:
+    @staticmethod
+    def ping(*_args, **_kwargs):
+        raise RuntimeError(_MISSING_CELERY_MESSAGE)
+
+    @staticmethod
+    def revoke(*_args, **_kwargs):
+        raise RuntimeError(_MISSING_CELERY_MESSAGE)
+
+
+class _MissingCelery:
+    def __init__(self, *args, **kwargs):
+        self.control = _MissingCeleryControl()
+
+    @staticmethod
+    def send_task(*_args, **_kwargs):
+        raise RuntimeError(_MISSING_CELERY_MESSAGE)
+
+
+Celery = _RealCelery or _MissingCelery
+try:
+    from kombu.exceptions import OperationalError as _KombuOperationalError
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    _KombuOperationalError = RuntimeError
+
+try:
+    from redis.exceptions import ConnectionError as _RedisConnectionError
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    _RedisConnectionError = ConnectionError
+
+KombuOperationalError = _KombuOperationalError
+RedisConnectionError = _RedisConnectionError
+
+_CELERY_BOOTSTRAP_EXCEPTIONS = (
+    RuntimeError,
+    ValueError,
+    TypeError,
+    AttributeError,
+    OSError,
+    ImportError,
+    ModuleNotFoundError,
+    KombuOperationalError,
+    RedisConnectionError,
+    ConnectionError,
+)
+
+_CELERY_RUNTIME_EXCEPTIONS = (
+    RuntimeError,
+    TimeoutError,
+    ValueError,
+    TypeError,
+    AttributeError,
+    OSError,
+    KombuOperationalError,
+    RedisConnectionError,
+    ConnectionError,
+)
 
 router = APIRouter(prefix="/api/v1")
 logger = logging.getLogger("reframe.api")
@@ -66,9 +128,9 @@ SessionDep = Annotated[Session, Depends(get_session)]
 
 
 @lru_cache(maxsize=1)
-def get_celery_app() -> Celery:
+def get_celery_app() -> Any:
     settings = get_settings()
-    app = Celery("reframe_api", broker=settings.broker_url, backend=settings.result_backend)
+    app: Any = Celery("reframe_api", broker=settings.broker_url, backend=settings.result_backend)
     # Fail fast when broker/backend are unavailable so API diagnostics and tests do not hang.
     app.conf.broker_connection_retry_on_startup = False
     app.conf.broker_connection_max_retries = 0
@@ -126,6 +188,8 @@ def _resolve_task_queue(task_name: str, *args) -> str:
 def enqueue_job(job: Job, task_name: str, *args) -> str:
     try:
         queue = _resolve_task_queue(task_name, *args)
+        if is_local_queue_mode():
+            return dispatch_local_task(task_name, *args, queue=queue)
         result = get_celery_app().send_task(task_name, args=args, queue=queue)
         return result.id
     except Exception as exc:  # pragma: no cover - defensive
@@ -221,7 +285,15 @@ def _safe_redirect_url(url: str) -> str:
 
 def _safe_local_asset_path(*, media_root: str, uri: str) -> Path:
     media_root_path = Path(media_root).resolve()
-    candidate = LocalStorageBackend(media_root=media_root_path).resolve_local_path(uri or "")
+    try:
+        candidate = LocalStorageBackend(media_root=media_root_path).resolve_local_path(uri or "")
+    except ValueError as exc:
+        raise ApiError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code=ErrorCode.PERMISSION_DENIED,
+            message="Asset path escapes media root",
+            details={"uri": uri},
+        ) from exc
     resolved = candidate.resolve(strict=False)
     try:
         resolved.relative_to(media_root_path)
@@ -627,34 +699,70 @@ def _truthy_env(name: str) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _append_diag_error(existing: str | None, message: str) -> str:
+    return f"{existing}; {message}" if existing else message
+
+
+def _populate_worker_diag_local_queue(worker_diag: WorkerDiagnostics) -> None:
+    diag = local_queue_diagnostics()
+    worker_diag.ping_ok = bool(diag.get("ping_ok"))
+    worker_diag.workers = sorted({str(item) for item in (diag.get("workers") or []) if item})
+    worker_diag.system_info = diag.get("system_info")
+    worker_diag.error = str(diag.get("error")) if diag.get("error") else None
+
+
+def _iter_worker_pongs(pongs: object) -> Iterable[object]:
+    if isinstance(pongs, (list, tuple)):
+        return pongs
+    return ()
+
+
+def _collect_celery_worker_names(pongs: object) -> List[str]:
+    names: Set[str] = set()
+    for item in _iter_worker_pongs(pongs):
+        if isinstance(item, dict):
+            names.update(str(name) for name in item.keys() if name)
+    return sorted(names)
+
+
+def _populate_worker_diag_celery(worker_diag: WorkerDiagnostics) -> None:
+    try:
+        app = get_celery_app()
+    except _CELERY_BOOTSTRAP_EXCEPTIONS as exc:  # pragma: no cover - best effort
+        worker_diag.error = f"Celery unavailable: {exc}"
+        return
+
+    try:
+        pongs = app.control.ping(timeout=1.0)
+        worker_diag.workers = _collect_celery_worker_names(pongs)
+        worker_diag.ping_ok = bool(worker_diag.workers)
+    except _CELERY_RUNTIME_EXCEPTIONS as exc:
+        worker_diag.error = f"Worker ping failed: {exc}"
+        return
+
+    if not worker_diag.ping_ok:
+        return
+
+    try:
+        res = app.send_task("tasks.system_info")
+        worker_diag.system_info = res.get(timeout=3.0)
+    except _CELERY_RUNTIME_EXCEPTIONS as exc:
+        worker_diag.error = _append_diag_error(
+            worker_diag.error,
+            f"Worker diagnostics task failed: {exc}",
+        )
+
+
 @router.get("/system/status", response_model=SystemStatusResponse, tags=["System"])
 def system_status() -> SystemStatusResponse:
     settings = get_settings()
     storage = get_storage(media_root=settings.media_root)
 
     worker_diag = WorkerDiagnostics()
-    try:
-        app = get_celery_app()
-        try:
-            pongs = app.control.ping(timeout=1.0)
-            workers = []
-            for item in pongs or []:
-                if isinstance(item, dict):
-                    workers.extend(item.keys())
-            worker_diag.workers = sorted(set(workers))
-            worker_diag.ping_ok = bool(worker_diag.workers)
-        except Exception as exc:
-            worker_diag.error = f"Worker ping failed: {exc}"
-
-        if worker_diag.ping_ok:
-            try:
-                res = app.send_task("tasks.system_info")
-                worker_diag.system_info = res.get(timeout=3.0)
-            except Exception as exc:
-                msg = f"Worker diagnostics task failed: {exc}"
-                worker_diag.error = f"{worker_diag.error}; {msg}" if worker_diag.error else msg
-    except Exception as exc:  # pragma: no cover - best effort
-        worker_diag.error = f"Celery unavailable: {exc}"
+    if is_local_queue_mode():
+        _populate_worker_diag_local_queue(worker_diag)
+    else:
+        _populate_worker_diag_celery(worker_diag)
 
     return SystemStatusResponse(
         api_version=settings.api_version,
@@ -1628,8 +1736,11 @@ def create_workflow_run(payload: WorkflowRunCreateRequest, session: SessionDep, 
     session.commit()
 
     try:
-        result = get_celery_app().send_task("tasks.run_workflow_pipeline", args=[str(run.id)])
-        run.task_id = result.id
+        if is_local_queue_mode():
+            run.task_id = dispatch_local_task("tasks.run_workflow_pipeline", str(run.id), queue=_celery_queue_name("CPU"))
+        else:
+            result = get_celery_app().send_task("tasks.run_workflow_pipeline", args=[str(run.id)])
+            run.task_id = result.id
         session.add(run)
         session.commit()
         session.refresh(run)
@@ -1671,7 +1782,10 @@ def cancel_workflow_run(run_id: UUID, session: SessionDep, principal: PrincipalD
         session.add(run)
         if run.task_id:
             try:
-                get_celery_app().control.revoke(run.task_id, terminate=False)
+                if is_local_queue_mode():
+                    revoke_local_task(run.task_id)
+                else:
+                    get_celery_app().control.revoke(run.task_id, terminate=False)
             except Exception:
                 pass
         pending_steps = session.exec(
@@ -2857,6 +2971,7 @@ async def upload_asset(
     tmp_dir.mkdir(parents=True, exist_ok=True)
     tmp_path = tmp_dir / filename
     total = 0
+    exceeded = False
     with tmp_path.open("wb") as out:
         while True:
             chunk = await file.read(1024 * 1024)
@@ -2864,14 +2979,18 @@ async def upload_asset(
                 break
             total += len(chunk)
             if max_bytes and total > max_bytes:
-                tmp_path.unlink(missing_ok=True)
-                raise ApiError(
-                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-                    code=ErrorCode.VALIDATION_ERROR,
-                    message="Upload too large",
-                    details={"max_upload_bytes": max_bytes, "uploaded_bytes": total},
-                )
+                exceeded = True
+                break
             out.write(chunk)
+
+    if exceeded:
+        tmp_path.unlink(missing_ok=True)
+        raise ApiError(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Upload too large",
+            details={"max_upload_bytes": max_bytes, "uploaded_bytes": total},
+        )
 
     rel_dir = _scoped_tmp_rel_dir(storage, principal)
     uri = storage.write_file(rel_dir=rel_dir, filename=filename, source_path=tmp_path, content_type=file.content_type)
@@ -3015,3 +3134,4 @@ def download_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep)
 def list_style_presets(session: SessionDep, principal: PrincipalDep) -> List[SubtitleStylePreset]:
     presets = session.exec(select(SubtitleStylePreset)).all()
     return presets
+

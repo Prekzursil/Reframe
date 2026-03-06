@@ -1,0 +1,84 @@
+# Coverage 100 Gate
+
+- Status: `fail`
+- Timestamp (UTC): `2026-03-04T06:01:58.256856+00:00`
+
+## Components
+- `python`: `63.92%` (6627/10367) from `coverage\python-coverage.xml`
+- `web`: `65.85%` (1475/2240) from `apps\web\coverage\lcov.info`
+- `desktop-ts`: `100.00%` (197/197) from `apps\desktop\coverage\lcov.info`
+
+## Inventory
+- expected_files: `83`
+- missing_files: `5`
+- uncovered_files: `58`
+
+## Findings
+- python coverage below 100%: 63.92% (6627/10367)
+- web coverage below 100%: 65.85% (1475/2240)
+- combined coverage below 100%: 64.82% (8299/12804)
+- coverage inventory missing files: 5
+- missing: apps/api/app/__init__.py
+- missing: apps/desktop/src-tauri/src/lib.rs
+- missing: apps/desktop/src-tauri/src/main.rs
+- missing: packages/media-core/src/media_core/__init__.py
+- missing: services/worker/__init__.py
+- coverage inventory uncovered files: 58
+- uncovered: apps/api/app/api.py (997/1443, 69.09%)
+- uncovered: apps/api/app/auth_api.py (436/663, 65.76%)
+- uncovered: apps/api/app/billing.py (19/57, 33.33%)
+- uncovered: apps/api/app/billing_api.py (216/298, 72.48%)
+- uncovered: apps/api/app/cleanup.py (20/28, 71.43%)
+- uncovered: apps/api/app/collaboration_api.py (196/250, 78.40%)
+- uncovered: apps/api/app/errors.py (34/36, 94.44%)
+- uncovered: apps/api/app/identity_api.py (363/495, 73.33%)
+- uncovered: apps/api/app/local_queue.py (23/73, 31.51%)
+- uncovered: apps/api/app/logging_config.py (25/28, 89.29%)
+- uncovered: apps/api/app/main.py (58/63, 92.06%)
+- uncovered: apps/api/app/publish_api.py (185/212, 87.26%)
+- uncovered: apps/api/app/rate_limit.py (37/38, 97.37%)
+- uncovered: apps/api/app/security.py (61/77, 79.22%)
+- uncovered: apps/api/app/share_links.py (49/54, 90.74%)
+- uncovered: apps/api/app/storage.py (82/194, 42.27%)
+- uncovered: apps/web/src/App.tsx (1009/1755, 57.49%)
+- uncovered: apps/web/src/api/client.ts (212/231, 91.77%)
+- uncovered: packages/media-core/src/media_core/diarize/__init__.py (66/203, 32.51%)
+- uncovered: packages/media-core/src/media_core/segment/shorts.py (135/154, 87.66%)
+- uncovered: packages/media-core/src/media_core/subtitles/builder.py (160/193, 82.90%)
+- uncovered: packages/media-core/src/media_core/subtitles/styled.py (57/81, 70.37%)
+- uncovered: packages/media-core/src/media_core/subtitles/vtt.py (52/59, 88.14%)
+- uncovered: packages/media-core/src/media_core/transcribe/__main__.py (0/46, 0.00%)
+- uncovered: packages/media-core/src/media_core/transcribe/backends/faster_whisper.py (48/70, 68.57%)
+- uncovered: packages/media-core/src/media_core/transcribe/backends/openai_whisper.py (27/44, 61.36%)
+- uncovered: packages/media-core/src/media_core/transcribe/backends/whisper_cpp.py (34/54, 62.96%)
+- uncovered: packages/media-core/src/media_core/transcribe/backends/whisper_timestamped.py (27/41, 65.85%)
+- uncovered: packages/media-core/src/media_core/transcribe/models.py (36/41, 87.80%)
+- uncovered: packages/media-core/src/media_core/transcribe/path_guard.py (27/32, 84.38%)
+- uncovered: packages/media-core/src/media_core/translate/srt.py (47/52, 90.38%)
+- uncovered: packages/media-core/src/media_core/translate/translator.py (35/46, 76.09%)
+- uncovered: packages/media-core/src/media_core/video_edit/ffmpeg.py (104/130, 80.00%)
+- uncovered: scripts/audit_branch_protection.py (104/140, 74.29%)
+- uncovered: scripts/benchmark_diarization.py (0/119, 0.00%)
+- uncovered: scripts/desktop_updater_e2e.py (96/122, 78.69%)
+- uncovered: scripts/download_whispercpp_model.py (56/84, 66.67%)
+- uncovered: scripts/generate_benchmark_sample.py (44/46, 95.65%)
+- uncovered: scripts/generate_ops_digest.py (136/262, 51.91%)
+- uncovered: scripts/install_argos_pack.py (41/50, 82.00%)
+- uncovered: scripts/prefetch_whisper_model.py (25/28, 89.29%)
+- uncovered: scripts/quality/assert_coverage_100.py (125/314, 39.81%)
+- uncovered: scripts/quality/check_codacy_zero.py (97/150, 64.67%)
+- uncovered: scripts/quality/check_deepscan_zero.py (93/113, 82.30%)
+- uncovered: scripts/quality/check_quality_secrets.py (21/76, 27.63%)
+- uncovered: scripts/quality/check_required_checks.py (85/138, 61.59%)
+- uncovered: scripts/quality/check_sentry_zero.py (90/120, 75.00%)
+- uncovered: scripts/quality/check_sonar_zero.py (77/126, 61.11%)
+- uncovered: scripts/quality/check_visual_zero.py (121/163, 74.23%)
+- uncovered: scripts/quality/percy_auto_approve.py (83/129, 64.34%)
+- uncovered: scripts/release_readiness_report.py (39/219, 17.81%)
+- uncovered: scripts/security_helpers.py (25/30, 83.33%)
+- uncovered: scripts/strict23_preflight.py (128/196, 65.31%)
+- uncovered: scripts/upsert_ops_digest_issue.py (29/113, 25.66%)
+- uncovered: scripts/verify_desktop_updater_release.py (67/117, 57.26%)
+- uncovered: scripts/verify_hf_model_access.py (75/109, 68.81%)
+- uncovered: services/worker/groq_client.py (17/48, 35.42%)
+- uncovered: services/worker/worker.py (521/1324, 39.35%)

@@ -1,0 +1,343 @@
+{
+  "branch": "feat/coverage-truth-desktop-product-2026-03-04",
+  "coverage_baseline": {
+    "codecov_ignore": [
+      ".venv/**",
+      "**/__pycache__/**",
+      "**/*.pyc",
+      ".github/**",
+      "docs/**",
+      "infra/**",
+      "apps/web/e2e/**",
+      "apps/web/playwright.config.ts",
+      "apps/web/browserstack.yml",
+      "apps/web/src/test/**",
+      "apps/web/src/**/*.test.ts",
+      "apps/web/src/**/*.test.tsx",
+      "apps/desktop/src/**/*.test.ts",
+      "apps/desktop/vitest.config.ts"
+    ],
+    "desktop_has_100_thresholds": true,
+    "desktop_vitest_file": "apps/desktop/vitest.config.ts",
+    "web_has_100_thresholds": true,
+    "web_includes_all_src": true,
+    "web_vitest_file": "apps/web/vite.config.ts"
+  },
+  "desktop_release_baseline": {
+    "asset_count": 17,
+    "assets": [
+      {
+        "download_count": 0,
+        "name": "latest.json",
+        "size": 6543,
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/latest.json"
+      },
+      {
+        "download_count": 0,
+        "name": "Reframe-0.1.8-1.x86_64.rpm",
+        "size": 5697392,
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe-0.1.8-1.x86_64.rpm"
+      },
+      {
+        "download_count": 0,
+        "name": "Reframe-0.1.8-1.x86_64.rpm.sig",
+        "size": 416,
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe-0.1.8-1.x86_64.rpm.sig"
+      },
+      {
+        "download_count": 0,
+        "name": "Reframe_0.1.8_aarch64.dmg",
+        "size": 4611944,
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_aarch64.dmg"
+      },
+      {
+        "download_count": 0,
+        "name": "Reframe_0.1.8_amd64.AppImage",
+        "size": 82962936,
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_amd64.AppImage"
+      },
+      {
+        "download_count": 0,
+        "name": "Reframe_0.1.8_amd64.AppImage.sig",
+        "size": 420,
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_amd64.AppImage.sig"
+      },
+      {
+        "download_count": 0,
+        "name": "Reframe_0.1.8_amd64.deb",
+        "size": 5697476,
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_amd64.deb"
+      },
+      {
+        "download_count": 0,
+        "name": "Reframe_0.1.8_amd64.deb.sig",
+        "size": 412,
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_amd64.deb.sig"
+      },
+      {
+        "download_count": 1,
+        "name": "Reframe_0.1.8_x64-setup.exe",
+        "size": 2946411,
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_x64-setup.exe"
+      },
+      {
+        "download_count": 0,
+        "name": "Reframe_0.1.8_x64-setup.exe.sig",
+        "size": 416,
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_x64-setup.exe.sig"
+      },
+      {
+        "download_count": 0,
+        "name": "Reframe_0.1.8_x64.dmg",
+        "size": 4781642,
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_x64.dmg"
+      },
+      {
+        "download_count": 0,
+        "name": "Reframe_0.1.8_x64_en-US.msi",
+        "size": 4382720,
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_x64_en-US.msi"
+      },
+      {
+        "download_count": 0,
+        "name": "Reframe_0.1.8_x64_en-US.msi.sig",
+        "size": 416,
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_0.1.8_x64_en-US.msi.sig"
+      },
+      {
+        "download_count": 0,
+        "name": "Reframe_aarch64.app.tar.gz",
+        "size": 4654498,
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_aarch64.app.tar.gz"
+      },
+      {
+        "download_count": 0,
+        "name": "Reframe_aarch64.app.tar.gz.sig",
+        "size": 404,
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_aarch64.app.tar.gz.sig"
+      },
+      {
+        "download_count": 0,
+        "name": "Reframe_x64.app.tar.gz",
+        "size": 4785003,
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_x64.app.tar.gz"
+      },
+      {
+        "download_count": 0,
+        "name": "Reframe_x64.app.tar.gz.sig",
+        "size": 404,
+        "url": "https://github.com/Prekzursil/Reframe/releases/download/desktop-v0.1.8/Reframe_x64.app.tar.gz.sig"
+      }
+    ],
+    "is_prerelease": true,
+    "name": "Reframe Desktop v0.1.8",
+    "published_at": "2026-03-03T00:41:30Z",
+    "tag": "desktop-v0.1.8",
+    "url": "https://github.com/Prekzursil/Reframe/releases/tag/desktop-v0.1.8"
+  },
+  "head_sha": "a2af872d2f9a9bd9a143f753693b7f3730fb48b4",
+  "pr": {
+    "check_summary": {
+      "FAILURE": 3,
+      "NONE": 3,
+      "SUCCESS": 21
+    },
+    "checks": [
+      {
+        "conclusion": "FAILURE",
+        "name": "Codecov Analytics",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757675/job/65680193917",
+        "workflow": "Codecov Analytics"
+      },
+      {
+        "conclusion": "FAILURE",
+        "name": "Coverage 100 Gate",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757757/job/65680193766",
+        "workflow": "Coverage 100"
+      },
+      {
+        "conclusion": "FAILURE",
+        "name": "Sonar Zero",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757682/job/65680193783",
+        "workflow": "Sonar Zero"
+      },
+      {
+        "conclusion": "",
+        "name": "BrowserStack E2E",
+        "status": "IN_PROGRESS",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757656/job/65680193822",
+        "workflow": "BrowserStack E2E"
+      },
+      {
+        "conclusion": "",
+        "name": "Percy Visual",
+        "status": "IN_PROGRESS",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757659/job/65680194046",
+        "workflow": "Percy Visual"
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "Applitools Visual",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757738/job/65680193777",
+        "workflow": "Applitools Visual"
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "Python API & worker checks",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757662/job/65680194026",
+        "workflow": "CI"
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "Codacy Zero",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757667/job/65680193907",
+        "workflow": "Codacy Zero"
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "Analyze (actions)",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757708/job/65680193825",
+        "workflow": "CodeQL"
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "DeepScan Zero",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757704/job/65680193927",
+        "workflow": "DeepScan Zero"
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "Python dependency audit",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757680/job/65680193902",
+        "workflow": "Dependency Audit"
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "Quality Secrets Preflight",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757718/job/65680193926",
+        "workflow": "Quality Zero Gate"
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "Sentry Zero",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757668/job/65680193863",
+        "workflow": "Sentry Zero"
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "Snyk Zero",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757664/job/65680193797",
+        "workflow": "Snyk Zero"
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "preflight",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757670/job/65680193928",
+        "workflow": "strict-23 Preflight"
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "Analyze (javascript-typescript)",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757708/job/65680193820",
+        "workflow": "CodeQL"
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "Analyze (python)",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757708/job/65680193849",
+        "workflow": "CodeQL"
+      },
+      {
+        "conclusion": "",
+        "name": "Quality Zero Gate",
+        "status": "IN_PROGRESS",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757718/job/65680207233",
+        "workflow": "Quality Zero Gate"
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "Web build",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757662/job/65680194062",
+        "workflow": "CI"
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "Node dependency audit",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/actions/runs/22660757680/job/65680193892",
+        "workflow": "Dependency Audit"
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "Codacy Static Code Analysis",
+        "status": "COMPLETED",
+        "url": "https://app.codacy.com/gh/Prekzursil/Reframe/pull-requests/107",
+        "workflow": ""
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "CodeQL",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/runs/65680282135",
+        "workflow": ""
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "SonarCloud",
+        "status": "COMPLETED",
+        "url": "https://github.com/Prekzursil/Reframe/runs/65680534691",
+        "workflow": ""
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "CodeRabbit",
+        "status": "COMPLETED",
+        "url": "",
+        "workflow": "status-context"
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "DeepScan",
+        "status": "COMPLETED",
+        "url": "https://deepscan.io/dashboard/#view=project&tid=29074&pid=31131&bid=1008125&subview=pull-request&prid=2294585",
+        "workflow": "status-context"
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "SonarCloud Code Analysis",
+        "status": "COMPLETED",
+        "url": "https://sonarcloud.io",
+        "workflow": ""
+      },
+      {
+        "conclusion": "SUCCESS",
+        "name": "code/snyk (prekzursil1993)",
+        "status": "COMPLETED",
+        "url": "",
+        "workflow": "status-context"
+      }
+    ],
+    "head_ref": "feat/coverage-truth-desktop-product-2026-03-04",
+    "head_sha": "a2af872d2f9a9bd9a143f753693b7f3730fb48b4",
+    "number": 107,
+    "state": "OPEN",
+    "url": "https://github.com/Prekzursil/Reframe/pull/107"
+  },
+  "timestamp_utc": "2026-03-04T08:19:25.461993+00:00"
+}

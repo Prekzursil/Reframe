@@ -1,25 +1,83 @@
+from __future__ import division
+
 import logging
+import os
+import stat
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi import Request
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
-from app.config import get_settings
-from app.database import create_db_and_tables
 from app.api import router as api_router
 from app.auth_api import router as auth_router
 from app.billing_api import router as billing_router
-from app.collaboration_api import router as collaboration_router
-from app.identity_api import router as identity_router
-from app.publish_api import router as publish_router
-from app.errors import ApiError, ErrorResponse
 from app.cleanup import start_cleanup_loop
+from app.collaboration_api import router as collaboration_router
+from app.config import get_settings
+from app.database import create_db_and_tables
+from app.errors import ApiError, ErrorResponse
+from app.identity_api import router as identity_router
 from app.logging_config import setup_logging
+from app.publish_api import router as publish_router
+
+
+_RESERVED_DESKTOP_PREFIXES = (
+    "api",
+    "docs",
+    "openapi.json",
+    "redoc",
+    "media",
+    "health",
+    "healthz",
+)
+def _is_reserved_desktop_path(normalized: str) -> bool:
+    return any(
+        normalized == reserved or normalized.startswith(f"{reserved}/")
+        for reserved in _RESERVED_DESKTOP_PREFIXES
+    )
+
+
+def _has_path_traversal(normalized: str) -> bool:
+    segments = [part for part in normalized.replace("\\", "/").split("/") if part]
+    return any(part == ".." for part in segments)
+
+
+def _mount_desktop_web(api_app: FastAPI, desktop_web_dist: str) -> None:
+    raw = (desktop_web_dist or "").strip()
+    if not raw:
+        return
+
+    web_dist = Path(raw).resolve()
+    index_path = web_dist / "index.html"
+    if not os.path.isfile(index_path):
+        return
+    static_files = StaticFiles(directory=str(web_dist), check_dir=False)
+
+    @api_app.get("/", include_in_schema=False)
+    def desktop_index() -> FileResponse:
+        return FileResponse(index_path)
+
+    _ = desktop_index
+
+    @api_app.get("/{full_path:path}", include_in_schema=False, responses={404: {"description": "Not Found"}})
+    def desktop_spa(full_path: str) -> FileResponse:
+        normalized = (full_path or "").lstrip("/")
+        if _has_path_traversal(normalized) or _is_reserved_desktop_path(normalized):
+            raise HTTPException(status_code=404)
+
+        candidate, stat_result = static_files.lookup_path(normalized)
+        if stat_result is not None and stat.S_ISREG(stat_result.st_mode):
+            return FileResponse(candidate)
+        return FileResponse(index_path)
+
+    _ = desktop_spa
 
 
 def create_app() -> FastAPI:
@@ -109,6 +167,8 @@ def create_app() -> FastAPI:
     @app.get("/healthz", tags=["Health"])
     def health() -> dict[str, str]:
         return {"status": "ok", "version": settings.api_version}
+
+    _mount_desktop_web(app, settings.desktop_web_dist)
 
     return app
 

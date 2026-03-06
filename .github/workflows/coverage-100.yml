@@ -59,6 +59,7 @@ jobs:
             --cov=apps/api/app \
             --cov=services/worker \
             --cov=packages/media-core/src/media_core \
+            --cov=scripts \
             --cov-report=xml:coverage/python-coverage.xml \
             apps/api/tests services/worker packages/media-core/tests
 
@@ -82,8 +83,11 @@ jobs:
       - name: Enforce 100% coverage
         run: |
           .venv/bin/python scripts/quality/assert_coverage_100.py \
+            --xml "python=coverage/python-coverage.xml" \
             --lcov "web=apps/web/coverage/lcov.info" \
             --lcov "desktop-ts=apps/desktop/coverage/lcov.info" \
+            --lcov "desktop-rust=coverage/desktop-rust.lcov" \
+            --inventory-root . \
             --out-json "coverage-100/coverage.json" \
             --out-md "coverage-100/coverage.md"
 

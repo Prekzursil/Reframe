@@ -54,6 +54,7 @@ def _render_md(payload: dict) -> str:
         f"- Status: `{payload['status']}`",
         f"- Repo: `{payload.get('repo') or 'n/a'}`",
         f"- SHA: `{payload.get('sha') or 'n/a'}`",
+        f"- Source: `{payload.get('source') or 'n/a'}`",
         f"- Check conclusion: `{payload.get('check_conclusion') or 'n/a'}`",
         f"- New issues: `{payload.get('new_issues')}`",
         f"- Fixed issues: `{payload.get('fixed_issues')}`",
@@ -76,6 +77,40 @@ def extract_new_fixed_counts(summary: str) -> tuple[int | None, int | None]:
     new_issues = int(new_match.group(1)) if new_match else None
     fixed_issues = int(fixed_match.group(1)) if fixed_match else None
     return new_issues, fixed_issues
+
+
+def _latest_deepscan_check_run(check_runs: Any) -> dict[str, Any] | None:
+    if not isinstance(check_runs, list):
+        return None
+    deep_runs = [item for item in check_runs if isinstance(item, dict) and str(item.get("name") or "") == "DeepScan"]
+    deep_runs.sort(
+        key=lambda item: (
+            str(item.get("completed_at") or ""),
+            str(item.get("started_at") or ""),
+            int(item.get("id") or 0),
+        ),
+        reverse=True,
+    )
+    return deep_runs[0] if deep_runs else None
+
+
+def _latest_deepscan_status(statuses: Any) -> dict[str, Any] | None:
+    if not isinstance(statuses, list):
+        return None
+    deep_statuses = [
+        item
+        for item in statuses
+        if isinstance(item, dict) and str(item.get("context") or "") == "DeepScan"
+    ]
+    deep_statuses.sort(
+        key=lambda item: (
+            str(item.get("updated_at") or ""),
+            str(item.get("created_at") or ""),
+            int(item.get("id") or 0),
+        ),
+        reverse=True,
+    )
+    return deep_statuses[0] if deep_statuses else None
 
 
 def _safe_output_path(raw: str, fallback: str, base: Path | None = None) -> Path:
@@ -103,6 +138,7 @@ def main() -> int:
     details_url: str | None = None
     new_issues: int | None = None
     fixed_issues: int | None = None
+    source: str | None = None
 
     if not token:
         findings.append("GITHUB_TOKEN (or GH_TOKEN) is missing.")
@@ -120,35 +156,40 @@ def main() -> int:
         api_base = normalize_https_url(GITHUB_API_BASE, allowed_hosts={"api.github.com"}).rstrip("/")
 
         try:
-            payload = _request_json(f"{api_base}/repos/{owner}/{repo}/commits/{sha_safe}/check-runs", token)
-            runs = payload.get("check_runs")
-            if not isinstance(runs, list):
-                findings.append("GitHub check-runs payload is missing check_runs list.")
+            check_payload = _request_json(f"{api_base}/repos/{owner}/{repo}/commits/{sha_safe}/check-runs", token)
+            latest_check_run = _latest_deepscan_check_run(check_payload.get("check_runs"))
+
+            if latest_check_run is not None:
+                source = "check_run"
+                check_conclusion = str(latest_check_run.get("conclusion") or "")
+                details_url = str(latest_check_run.get("details_url") or "") or None
+                if check_conclusion != "success":
+                    findings.append(f"DeepScan check conclusion is {check_conclusion or 'unknown'} (expected success).")
+
+                output = latest_check_run.get("output") if isinstance(latest_check_run.get("output"), dict) else {}
+                summary = str(output.get("summary") or "")
+                new_issues, fixed_issues = extract_new_fixed_counts(summary)
             else:
-                deep_runs = [item for item in runs if isinstance(item, dict) and str(item.get("name") or "") == "DeepScan"]
-                deep_runs.sort(
-                    key=lambda item: (
-                        str(item.get("completed_at") or ""),
-                        str(item.get("started_at") or ""),
-                        int(item.get("id") or 0),
-                    ),
-                    reverse=True,
-                )
-                latest = deep_runs[0] if deep_runs else None
-                if latest is None:
-                    findings.append("DeepScan check context is missing for this commit.")
+                status_payload = _request_json(f"{api_base}/repos/{owner}/{repo}/commits/{sha_safe}/status", token)
+                latest_status = _latest_deepscan_status(status_payload.get("statuses"))
+                if latest_status is None:
+                    findings.append("DeepScan status context is missing for this commit.")
                 else:
-                    check_conclusion = str(latest.get("conclusion") or "")
-                    details_url = str(latest.get("details_url") or "") or None
-                    if check_conclusion != "success":
-                        findings.append(f"DeepScan check conclusion is {check_conclusion or 'unknown'} (expected success).")
-                    output = latest.get("output") if isinstance(latest.get("output"), dict) else {}
-                    summary = str(output.get("summary") or "")
+                    source = "status_context"
+                    state = str(latest_status.get("state") or "")
+                    check_conclusion = "success" if state == "success" else state
+                    details_url = str(latest_status.get("target_url") or "") or None
+                    if state != "success":
+                        findings.append(f"DeepScan status is {state or 'unknown'} (expected success).")
+
+                    summary = str(latest_status.get("description") or "")
                     new_issues, fixed_issues = extract_new_fixed_counts(summary)
-                    if new_issues is None:
-                        findings.append("DeepScan summary did not include a parseable 'new issues' count.")
-                    elif new_issues != 0:
-                        findings.append(f"DeepScan reports {new_issues} new issues (expected 0).")
+
+            if new_issues is None:
+                findings.append("DeepScan summary did not include a parseable 'new issues' count.")
+            elif new_issues != 0:
+                findings.append(f"DeepScan reports {new_issues} new issues (expected 0).")
+
             status = "pass" if not findings else "fail"
         except Exception as exc:  # pragma: no cover - network/runtime surface
             findings.append(f"GitHub API request failed: {exc}")
@@ -158,6 +199,7 @@ def main() -> int:
         "status": status,
         "repo": repo_slug,
         "sha": sha,
+        "source": source,
         "check_conclusion": check_conclusion,
         "details_url": details_url,
         "new_issues": new_issues,

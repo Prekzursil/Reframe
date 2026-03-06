@@ -48,7 +48,7 @@ def test_assert_coverage_100_parses_xml_and_lcov(tmp_path):
     _expect(xml_stats.percent == 100.0, "Expected XML coverage percent to be 100")
     _expect(lcov_stats.percent == 100.0, "Expected LCOV coverage percent to be 100")
 
-    status, findings = module.evaluate([xml_stats, lcov_stats])
+    status, findings, _metrics = module.evaluate([xml_stats, lcov_stats], expected_inventory=None)
     _expect(status == "pass", "Expected pass when all components are at 100%")
     _expect(findings == [], "Expected no findings for full coverage")
 
@@ -60,7 +60,7 @@ def test_assert_coverage_100_detects_below_target(tmp_path):
     lcov_path.write_text("TN:\nSF:file.ts\nLF:4\nLH:3\nend_of_record\n", encoding="utf-8")
     stats = module.parse_lcov("web", lcov_path)
 
-    status, findings = module.evaluate([stats])
+    status, findings, _metrics = module.evaluate([stats], expected_inventory=None)
     _expect(status == "fail", "Expected fail when a component is below 100%")
     _expect(any("below 100%" in item for item in findings), "Expected below-100 finding")
 
@@ -137,3 +137,49 @@ def test_sonar_evaluate_status_still_enforces_quality_gate():
     )
 
     _expect(any("quality gate" in item for item in findings), "Expected quality gate finding")
+
+
+def test_assert_coverage_inventory_skips_empty_files(tmp_path, monkeypatch):
+    module = _load_module("assert_coverage_100")
+
+    empty_init = tmp_path / "apps" / "api" / "app" / "__init__.py"
+    empty_init.parent.mkdir(parents=True, exist_ok=True)
+    empty_init.write_text("", encoding="utf-8")
+
+    main_py = empty_init.parent / "main.py"
+    main_py.write_text("print('ok')\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        module,
+        "_load_git_tracked_files",
+        lambda _root: ["apps/api/app/__init__.py", "apps/api/app/main.py"],
+    )
+
+    expected = module._collect_expected_inventory(tmp_path)
+
+    _expect("apps/api/app/main.py" in expected, "Expected non-empty tracked source file in inventory")
+    _expect("apps/api/app/__init__.py" not in expected, "Expected empty tracked file to be skipped")
+
+def test_assert_coverage_inventory_skips_python_metadata_only_file(tmp_path, monkeypatch):
+    module = _load_module("assert_coverage_100")
+
+    metadata_init = tmp_path / "packages" / "media-core" / "src" / "media_core" / "__init__.py"
+    metadata_init.parent.mkdir(parents=True, exist_ok=True)
+    metadata_init.write_text('"""pkg"""\n\n__all__ = []\n', encoding="utf-8")
+
+    logic_file = metadata_init.parent / "core.py"
+    logic_file.write_text("VALUE = 1\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        module,
+        "_load_git_tracked_files",
+        lambda _root: [
+            "packages/media-core/src/media_core/__init__.py",
+            "packages/media-core/src/media_core/core.py",
+        ],
+    )
+
+    expected = module._collect_expected_inventory(tmp_path)
+
+    _expect("packages/media-core/src/media_core/__init__.py" not in expected, "Expected metadata-only module file to be skipped")
+    _expect("packages/media-core/src/media_core/core.py" in expected, "Expected executable module file in inventory")

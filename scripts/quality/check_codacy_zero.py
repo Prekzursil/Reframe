@@ -84,6 +84,57 @@ def extract_total_open(payload: Any) -> int | None:
     return None
 
 
+_ACTIONABLE_DELTA_TYPES = {"added", "new", "introduced", "open", "unresolved"}
+_NON_ACTIONABLE_DELTA_TYPES = {"fixed", "resolved", "removed", "ignored"}
+
+
+def _count_actionable_pr_items(items: list[dict[str, Any]]) -> int:
+    total = 0
+    for item in items:
+        delta = str(item.get("deltaType") or "").strip().lower()
+        if not delta:
+            total += 1
+            continue
+        if delta in _NON_ACTIONABLE_DELTA_TYPES:
+            continue
+        if delta in _ACTIONABLE_DELTA_TYPES:
+            total += 1
+            continue
+        total += 1
+    return total
+
+
+def _fetch_codacy_pr_actionable_count(api_base: str, provider: str, owner: str, repo: str, pull_request: str, token: str) -> tuple[int, bool]:
+    pr_value = urllib.parse.quote(pull_request, safe="")
+    page = 1
+    total_rows = 0
+    actionable = 0
+    analysis_pending = False
+
+    while True:
+        query = urllib.parse.urlencode({"limit": "100", "page": str(page)})
+        url = (
+            f"{api_base}/api/v3/analysis/organizations/{provider}/"
+            f"{owner}/repositories/{repo}/pull-requests/{pr_value}/issues?{query}"
+        )
+        payload = _request_json(url, token, method="GET")
+        if payload.get("analyzed") is False:
+            analysis_pending = True
+
+        items = payload.get("data")
+        if not isinstance(items, list):
+            break
+        actionable += _count_actionable_pr_items(items)
+        total_rows += len(items)
+
+        total = int((payload.get("pagination") or {}).get("total") or total_rows)
+        if total_rows >= total or not items:
+            break
+        page += 1
+
+    return actionable, analysis_pending
+
+
 def _render_md(payload: dict) -> str:
     scope = payload.get("scope", "repository")
     lines = [
@@ -153,22 +204,24 @@ def main() -> int:
         query = urllib.parse.urlencode({"limit": "1", "page": "1"})
         try:
             if pull_request:
-                url = (
-                    f"{api_base}/api/v3/analysis/organizations/{provider}/"
-                    f"{owner}/repositories/{repo}/pull-requests/{urllib.parse.quote(pull_request, safe='')}/issues?{query}"
-                )
-                payload: dict[str, Any] = {}
                 for _ in range(30):
-                    payload = _request_json(url, token, method="GET")
-                    if payload.get("analyzed") is False:
+                    open_issues, analysis_pending = _fetch_codacy_pr_actionable_count(
+                        api_base=api_base,
+                        provider=provider,
+                        owner=owner,
+                        repo=repo,
+                        pull_request=pull_request,
+                        token=token,
+                    )
+                    if analysis_pending:
                         time.sleep(5)
                         continue
                     break
-                open_issues = int((payload.get("pagination") or {}).get("total") or 0)
-                if payload.get("analyzed") is False:
-                    analysis_pending = True
-                    if open_issues != 0:
-                        findings.append(f"Codacy PR {pull_request} is not analyzed yet and currently reports {open_issues} open issues.")
+
+                if analysis_pending and open_issues is not None and open_issues != 0:
+                    findings.append(
+                        f"Codacy PR {pull_request} is not analyzed yet and currently reports {open_issues} actionable open issues."
+                    )
             else:
                 url = (
                     f"{api_base}/api/v3/analysis/organizations/{provider}/"
@@ -181,7 +234,7 @@ def main() -> int:
 
             if open_issues is not None and open_issues != 0:
                 if pull_request:
-                    findings.append(f"Codacy reports {open_issues} open issues on PR #{pull_request} (expected 0).")
+                    findings.append(f"Codacy reports {open_issues} actionable open issues on PR #{pull_request} (expected 0).")
                 else:
                     findings.append(f"Codacy reports {open_issues} open issues (expected 0).")
             status = "pass" if not findings else "fail"

@@ -12,7 +12,8 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional, Tuple, TypeVar
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, Union
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 from sqlmodel import Session, create_engine, select
@@ -34,9 +35,10 @@ MEDIA_CORE_SRC = REPO_ROOT / "packages" / "media-core" / "src"
 if MEDIA_CORE_SRC.is_dir() and str(MEDIA_CORE_SRC) not in sys.path:
     sys.path.append(str(MEDIA_CORE_SRC))
 
-from app.config import get_settings
-from app.billing import get_plan_policy
-from app.models import (
+from app.config import get_settings  # noqa: E402
+from app.local_queue import dispatch_task as dispatch_local_task, is_local_queue_mode  # noqa: E402
+from app.billing import get_plan_policy  # noqa: E402
+from app.models import (  # noqa: E402
     AutomationRunEvent,
     Job,
     JobStatus,
@@ -52,15 +54,15 @@ from app.models import (
     WorkflowStepStatus,
     WorkflowTemplate,
 )
-from app.storage import LocalStorageBackend, get_storage, is_remote_uri
-from celery import Celery
-from kombu import Queue
+from app.storage import LocalStorageBackend, get_storage, is_remote_uri  # noqa: E402
+from celery import Celery  # noqa: E402
+from kombu import Queue  # noqa: E402
 
-from media_core.segment.shorts import HeuristicWeights, equal_splits, score_segments_heuristic, score_segments_llm, select_top
-from media_core.diarize import DiarizationBackend, DiarizationConfig, assign_speakers_to_lines, diarize_audio
-from media_core.subtitles.builder import GroupingConfig, SubtitleLine, group_words, to_ass, to_ass_karaoke, to_srt, to_vtt
-from media_core.subtitles.vtt import parse_vtt
-from media_core.transcribe import (
+from media_core.segment.shorts import HeuristicWeights, equal_splits, score_segments_heuristic, score_segments_llm, select_top  # noqa: E402
+from media_core.diarize import DiarizationBackend, DiarizationConfig, assign_speakers_to_lines, diarize_audio  # noqa: E402
+from media_core.subtitles.builder import GroupingConfig, SubtitleLine, group_words, to_ass, to_ass_karaoke, to_srt, to_vtt  # noqa: E402
+from media_core.subtitles.vtt import parse_vtt  # noqa: E402
+from media_core.transcribe import (  # noqa: E402
     TranscriptionBackend,
     TranscriptionConfig,
     transcribe_faster_whisper,
@@ -69,10 +71,10 @@ from media_core.transcribe import (
     transcribe_whisper_cpp,
     transcribe_whisper_timestamped,
 )
-from media_core.transcribe.models import Word
-from media_core.translate.srt import parse_srt, translate_srt, translate_srt_bilingual
-from media_core.translate.translator import CloudTranslator, LocalTranslator, NoOpTranslator
-from media_core.video_edit.ffmpeg import cut_clip, detect_silence, merge_video_audio as ffmpeg_merge_video_audio, probe_media
+from media_core.transcribe.models import Word  # noqa: E402
+from media_core.translate.srt import parse_srt, translate_srt, translate_srt_bilingual  # noqa: E402
+from media_core.translate.translator import CloudTranslator, LocalTranslator, NoOpTranslator  # noqa: E402
+from media_core.video_edit.ffmpeg import cut_clip, detect_silence, merge_video_audio as ffmpeg_merge_video_audio, probe_media  # noqa: E402
 
 try:
     from .groq_client import get_groq_chat_client_from_env
@@ -99,6 +101,16 @@ celery_app.conf.task_queues = (
     Queue(CPU_QUEUE),
     Queue(GPU_QUEUE),
 )
+
+
+TaskArg = Optional[Union[str, Dict[str, Any]]]
+
+
+def _dispatch_task(task_name: str, args: List[TaskArg], queue: str) -> SimpleNamespace:
+    if is_local_queue_mode():
+        task_id = dispatch_local_task(task_name, *args, queue=queue)
+        return SimpleNamespace(id=task_id)
+    return celery_app.send_task(task_name, args=args, queue=queue)
 
 logger = logging.getLogger(__name__)
 
@@ -839,24 +851,24 @@ def _dispatch_pipeline_step(
         raise ValueError(f"Workflow step `{step_type}` is missing input asset")
 
     if step_type == "captions":
-        result = celery_app.send_task("tasks.generate_captions", args=[str(job.id), str(input_asset_id), step_payload], queue=CPU_QUEUE)
+        result = _dispatch_task("tasks.generate_captions", args=[str(job.id), str(input_asset_id), step_payload], queue=CPU_QUEUE)
         return str(result.id)
     if step_type == "translate_subtitles":
-        result = celery_app.send_task("tasks.translate_subtitles", args=[str(job.id), str(input_asset_id), step_payload], queue=CPU_QUEUE)
+        result = _dispatch_task("tasks.translate_subtitles", args=[str(job.id), str(input_asset_id), step_payload], queue=CPU_QUEUE)
         return str(result.id)
     if step_type == "style_subtitles":
         video_asset_id = str(step_payload.get("video_asset_id") or run.input_asset_id or "")
         subtitle_asset_id = str(step_payload.get("subtitle_asset_id") or input_asset_id or "")
         style = step_payload.get("style") if isinstance(step_payload.get("style"), dict) else {}
         options = {"preview_seconds": step_payload.get("preview_seconds")}
-        result = celery_app.send_task(
+        result = _dispatch_task(
             "tasks.render_styled_subtitles",
             args=[str(job.id), video_asset_id, subtitle_asset_id, style, options],
             queue=CPU_QUEUE,
         )
         return str(result.id)
     if step_type == "shorts":
-        result = celery_app.send_task("tasks.generate_shorts", args=[str(job.id), str(input_asset_id), step_payload], queue=CPU_QUEUE)
+        result = _dispatch_task("tasks.generate_shorts", args=[str(job.id), str(input_asset_id), step_payload], queue=CPU_QUEUE)
         return str(result.id)
     if step_type in {"publish", "publish_youtube", "publish_tiktok", "publish_instagram", "publish_facebook"}:
         provider = _publish_provider_from_step(step_type, step_payload)
@@ -868,7 +880,7 @@ def _dispatch_pipeline_step(
             raise ValueError("Publish step requires an asset_id or workflow input asset")
         task_payload = dict(step_payload)
         task_payload.setdefault("source_workflow_job_id", str(job.id))
-        result = celery_app.send_task(
+        result = _dispatch_task(
             "tasks.publish_asset",
             args=[None, provider, connection_id, publish_asset_id, str(run.id), task_payload],
             queue=CPU_QUEUE,
@@ -2280,7 +2292,8 @@ def cleanup_retention(self) -> dict:
         "cleaned_assets": cleaned_assets,
         "timestamp": now.isoformat(),
     }
-    _progress(self, "completed", 1.0, **result)
+    progress_meta = {k: v for k, v in result.items() if k != "status"}
+    _progress(self, "completed", 1.0, **progress_meta)
     return result
 
 

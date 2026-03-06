@@ -23,13 +23,6 @@ export default defineConfig({
         "src/**/*.test.ts",
         "src/**/*.test.tsx",
         "e2e/**",
-        "src/main.tsx",
-        "src/App.tsx",
-        "src/api/client.ts",
-        "src/components/SettingsModal.tsx",
-        "src/components/ErrorBoundary.tsx",
-        "src/subtitles/**",
-        "src/shorts/**",
       ],
       thresholds: {
         lines: 100,
