@@ -17,8 +17,8 @@
     "react-dom": "^19.2.4"
   },
   "devDependencies": {
-    "@applitools/eyes-playwright": "^1.44.5",
-    "@percy/cli": "^1.31.8",
+    "@applitools/eyes-playwright": "^1.45.0",
+    "@percy/cli": "^1.31.9",
     "@percy/playwright": "^1.0.10",
     "@playwright/test": "^1.56.1",
     "@testing-library/jest-dom": "^6.9.1",
@@ -28,7 +28,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.4",
     "@vitest/coverage-v8": "^4.0.18",
-    "browserstack-node-sdk": "^1.37.6",
+    "browserstack-node-sdk": "^1.50.1",
     "jsdom": "^28.1.0",
     "typescript": "^5.4.5",
     "vite": "^7.3.1",
