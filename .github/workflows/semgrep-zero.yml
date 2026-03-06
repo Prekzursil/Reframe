@@ -50,10 +50,18 @@ jobs:
           if find . -type f \( -name '*.cs' -o -name '*.csproj' -o -name '*.sln' \) -print -quit | grep -q .; then
             echo p/csharp >> .tmp/semgrep-configs.txt
           fi
+      - name: Clear proxy environment for Semgrep
+        shell: bash
+        run: |
+          set -euo pipefail
+          for key in HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; do
+            echo "${key}=" >> "$GITHUB_ENV"
+          done
       - name: Run Semgrep JSON gate
         shell: bash
         run: |
           set -euo pipefail
+          unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
           mkdir -p semgrep-zero
           mapfile -t configs < .tmp/semgrep-configs.txt
           args=()
@@ -83,6 +91,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
           mkdir -p semgrep-zero
           mapfile -t configs < .tmp/semgrep-configs.txt
           args=()
