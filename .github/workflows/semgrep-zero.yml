@@ -29,60 +29,83 @@ jobs:
       - name: Install Semgrep
         run: python -m pip install --upgrade pip semgrep
       - name: Select Semgrep rules
-        id: rules
         shell: bash
         run: |
           set -euo pipefail
-          configs=(
-            p/default
-            p/secrets
-            p/github-actions
-          )
+          mkdir -p .tmp
+          cat > .tmp/semgrep-configs.txt <<'CONFIGS'
+          p/default
+          p/secrets
+          p/github-actions
+          CONFIGS
           if find . -type f \( -name '*.py' -o -name 'pyproject.toml' \) -print -quit | grep -q .; then
-            configs+=(p/python)
+            echo p/python >> .tmp/semgrep-configs.txt
           fi
           if find . -type f \( -name '*.js' -o -name '*.jsx' -o -name '*.ts' -o -name '*.tsx' -o -name 'package.json' \) -print -quit | grep -q .; then
-            configs+=(p/javascript)
+            echo p/javascript >> .tmp/semgrep-configs.txt
           fi
           if find . -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print -quit | grep -q .; then
-            configs+=(p/cpp)
+            echo p/cpp >> .tmp/semgrep-configs.txt
           fi
           if find . -type f \( -name '*.cs' -o -name '*.csproj' -o -name '*.sln' \) -print -quit | grep -q .; then
-            configs+=(p/csharp)
+            echo p/csharp >> .tmp/semgrep-configs.txt
           fi
-          {
-            echo 'configs<<EOF'
-            printf '%s
-' "${configs[@]}"
-            echo 'EOF'
-          } >> "$GITHUB_OUTPUT"
       - name: Run Semgrep JSON gate
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p semgrep-zero
-          mapfile -t configs < <(printf '%s
-' "${{ steps.rules.outputs.configs }}")
+          mapfile -t configs < .tmp/semgrep-configs.txt
           args=()
           for cfg in "${configs[@]}"; do
             [ -n "$cfg" ] || continue
             args+=(--config "$cfg")
           done
-          python -m semgrep scan             --error             --metrics=off             --json             --output semgrep-zero/semgrep.json             --exclude .git             --exclude .venv             --exclude venv             --exclude node_modules             --exclude dist             --exclude build             --exclude coverage             --exclude coverage-100             --exclude third_party             --exclude vendor             "${args[@]}"             "${SEMGREP_SRC_ROOT}"
+          python -m semgrep scan \
+            --error \
+            --metrics=off \
+            --json \
+            --output semgrep-zero/semgrep.json \
+            --exclude .git \
+            --exclude .venv \
+            --exclude venv \
+            --exclude node_modules \
+            --exclude dist \
+            --exclude build \
+            --exclude coverage \
+            --exclude coverage-100 \
+            --exclude third_party \
+            --exclude vendor \
+            "${args[@]}" \
+            "${SEMGREP_SRC_ROOT}"
       - name: Render SARIF artifact
         if: always()
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p semgrep-zero
-          mapfile -t configs < <(printf '%s
-' "${{ steps.rules.outputs.configs }}")
+          mapfile -t configs < .tmp/semgrep-configs.txt
           args=()
           for cfg in "${configs[@]}"; do
             [ -n "$cfg" ] || continue
             args+=(--config "$cfg")
           done
-          python -m semgrep scan             --metrics=off             --sarif             --output semgrep-zero/semgrep.sarif             --exclude .git             --exclude .venv             --exclude venv             --exclude node_modules             --exclude dist             --exclude build             --exclude coverage             --exclude coverage-100             --exclude third_party             --exclude vendor             "${args[@]}"             "${SEMGREP_SRC_ROOT}"
+          python -m semgrep scan \
+            --metrics=off \
+            --sarif \
+            --output semgrep-zero/semgrep.sarif \
+            --exclude .git \
+            --exclude .venv \
+            --exclude venv \
+            --exclude node_modules \
+            --exclude dist \
+            --exclude build \
+            --exclude coverage \
+            --exclude coverage-100 \
+            --exclude third_party \
+            --exclude vendor \
+            "${args[@]}" \
+            "${SEMGREP_SRC_ROOT}"
       - name: Upload Semgrep artifacts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
