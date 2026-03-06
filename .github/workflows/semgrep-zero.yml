@@ -61,7 +61,7 @@ jobs:
             [ -n "$cfg" ] || continue
             args+=(--config "$cfg")
           done
-          python -m semgrep scan \
+          semgrep scan \
             --error \
             --metrics=off \
             --json \
@@ -90,7 +90,7 @@ jobs:
             [ -n "$cfg" ] || continue
             args+=(--config "$cfg")
           done
-          python -m semgrep scan \
+          semgrep scan \
             --metrics=off \
             --sarif \
             --output semgrep-zero/semgrep.sarif \
