@@ -23,7 +23,9 @@ SONAR_API_BASE = "https://sonarcloud.io"
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Assert SonarCloud has zero actionable open issues.")
+    parser = argparse.ArgumentParser(
+        description="Assert SonarCloud has zero actionable open issues and zero open security hotspots."
+    )
     parser.add_argument("--project-key", required=True, help="Sonar project key")
     parser.add_argument("--token", default="", help="Sonar token (falls back to SONAR_TOKEN env)")
     parser.add_argument("--branch", default="", help="Optional branch scope")
@@ -76,7 +78,7 @@ def _query_sonar_status(
     project_key: str,
     branch: str,
     pull_request: str,
-) -> tuple[int, str]:
+) -> tuple[int, str, int]:
     issues_query = {
         "componentKeys": project_key,
         "resolved": "false",
@@ -101,12 +103,28 @@ def _query_sonar_status(
     gate_payload = _request_json(gate_url, auth)
     project_status = (gate_payload.get("projectStatus") or {})
     quality_gate = str(project_status.get("status") or "UNKNOWN")
-    return open_issues, quality_gate
+
+    hotspot_query = {
+        "projectKey": project_key,
+        "status": "TO_REVIEW",
+        "ps": "1",
+    }
+    if branch:
+        hotspot_query["branch"] = branch
+    if pull_request:
+        hotspot_query["pullRequest"] = pull_request
+    hotspot_url = f"{api_base}/api/hotspots/search?{urllib.parse.urlencode(hotspot_query)}"
+    hotspot_payload = _request_json(hotspot_url, auth)
+    hotspot_paging = hotspot_payload.get("paging") or {}
+    open_hotspots = int(hotspot_paging.get("total") or 0)
+
+    return open_issues, quality_gate, open_hotspots
 
 
 def evaluate_status(
     *,
     open_issues: int,
+    open_hotspots: int,
     quality_gate: str,
     require_quality_gate: bool,
     ignore_open_issues: bool,
@@ -114,6 +132,8 @@ def evaluate_status(
     findings: list[str] = []
     if not ignore_open_issues and open_issues != 0:
         findings.append(f"Sonar reports {open_issues} open issues (expected 0).")
+    if open_hotspots != 0:
+        findings.append(f"Sonar reports {open_hotspots} open security hotspots pending review (expected 0).")
     if require_quality_gate and quality_gate != "OK":
         findings.append(f"Sonar quality gate status is {quality_gate} (expected OK).")
     return findings
@@ -130,6 +150,7 @@ def _render_md(payload: dict) -> str:
         f"- Branch: `{payload.get('branch')}`",
         f"- Pull request: `{payload.get('pull_request')}`",
         f"- Open issues: `{payload.get('open_issues')}`",
+        f"- Open hotspots: `{payload.get('open_hotspots')}`",
         f"- Quality gate: `{payload.get('quality_gate')}`",
         f"- Timestamp (UTC): `{payload['timestamp_utc']}`",
         "",
@@ -170,6 +191,7 @@ def main() -> int:
         scope = "branch"
     findings: list[str] = []
     open_issues: int | None = None
+    open_hotspots: int | None = None
     quality_gate: str | None = None
 
     if not token:
@@ -178,7 +200,7 @@ def main() -> int:
     else:
         auth = _auth_header(token)
         try:
-            open_issues, quality_gate = _query_sonar_status(
+            open_issues, quality_gate, open_hotspots = _query_sonar_status(
                 api_base=api_base,
                 auth=auth,
                 project_key=args.project_key,
@@ -187,11 +209,11 @@ def main() -> int:
             )
             quality_gate = quality_gate or "UNKNOWN"
 
-            if args.pull_request and open_issues != 0 and args.wait_seconds > 0:
+            if args.pull_request and (open_issues != 0 or open_hotspots != 0) and args.wait_seconds > 0:
                 deadline = time.time() + max(0, args.wait_seconds)
-                while open_issues != 0 and time.time() < deadline:
+                while (open_issues != 0 or open_hotspots != 0) and time.time() < deadline:
                     time.sleep(10)
-                    open_issues, quality_gate = _query_sonar_status(
+                    open_issues, quality_gate, open_hotspots = _query_sonar_status(
                         api_base=api_base,
                         auth=auth,
                         project_key=args.project_key,
@@ -203,6 +225,7 @@ def main() -> int:
             findings.extend(
                 evaluate_status(
                     open_issues=open_issues,
+                    open_hotspots=open_hotspots,
                     quality_gate=quality_gate,
                     require_quality_gate=args.require_quality_gate,
                     ignore_open_issues=args.ignore_open_issues,
@@ -221,6 +244,7 @@ def main() -> int:
         "branch": args.branch or None,
         "pull_request": args.pull_request or None,
         "open_issues": open_issues,
+        "open_hotspots": open_hotspots,
         "quality_gate": quality_gate,
         "ignore_open_issues": bool(args.ignore_open_issues),
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),

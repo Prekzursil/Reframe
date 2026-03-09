@@ -118,6 +118,7 @@ def test_sonar_evaluate_status_ignores_open_issues_when_flag_set():
 
     findings = module.evaluate_status(
         open_issues=12,
+        open_hotspots=0,
         quality_gate="OK",
         require_quality_gate=True,
         ignore_open_issues=True,
@@ -131,9 +132,70 @@ def test_sonar_evaluate_status_still_enforces_quality_gate():
 
     findings = module.evaluate_status(
         open_issues=12,
+        open_hotspots=0,
         quality_gate="ERROR",
         require_quality_gate=True,
         ignore_open_issues=True,
     )
 
     _expect(any("quality gate" in item for item in findings), "Expected quality gate finding")
+
+
+def test_sonar_evaluate_status_enforces_open_hotspots():
+    module = _load_module("check_sonar_zero")
+
+    findings = module.evaluate_status(
+        open_issues=0,
+        open_hotspots=3,
+        quality_gate="OK",
+        require_quality_gate=False,
+        ignore_open_issues=True,
+    )
+
+    _expect(
+        any("security hotspots" in item for item in findings),
+        "Expected open hotspot finding even when open issues are ignored",
+    )
+
+
+def test_sonar_query_status_reads_hotspots(monkeypatch):
+    module = _load_module("check_sonar_zero")
+    responses = [
+        {"paging": {"total": 4}},
+        {"projectStatus": {"status": "OK"}},
+        {"paging": {"total": 2}},
+    ]
+    monkeypatch.setattr(module, "_request_json", lambda _url, _auth: responses.pop(0))
+
+    open_issues, quality_gate, open_hotspots = module._query_sonar_status(
+        api_base="https://sonarcloud.io",
+        auth="Basic abc",
+        project_key="Prekzursil_Reframe",
+        branch="main",
+        pull_request="",
+    )
+
+    _expect(open_issues == 4, "Expected open issues to be parsed")
+    _expect(quality_gate == "OK", "Expected quality gate to be parsed")
+    _expect(open_hotspots == 2, "Expected open hotspots to be parsed")
+
+
+def test_sonar_render_md_includes_open_hotspots():
+    module = _load_module("check_sonar_zero")
+
+    rendered = module._render_md(
+        {
+            "status": "fail",
+            "project_key": "Prekzursil_Reframe",
+            "scope": "branch",
+            "branch": "main",
+            "pull_request": None,
+            "open_issues": 0,
+            "open_hotspots": 5,
+            "quality_gate": "OK",
+            "timestamp_utc": "2026-03-09T00:00:00+00:00",
+            "findings": ["Sonar reports 5 open security hotspots pending review (expected 0)."],
+        }
+    )
+
+    _expect("- Open hotspots: `5`" in rendered, "Expected hotspot count in markdown output")

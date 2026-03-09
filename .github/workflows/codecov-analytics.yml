@@ -88,3 +88,33 @@ jobs:
           flags: api,worker,media-core,web,desktop-ts
           fail_ci_if_error: true
           verbose: true
+
+      - name: Upload coverage to Codacy
+        if: ${{ always() }}
+        env:
+          CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
+          CODACY_ORGANIZATION_PROVIDER: gh
+          CODACY_USERNAME: Prekzursil
+          CODACY_PROJECT_NAME: ${{ github.event.repository.name }}
+        run: |
+          if [ -z "${CODACY_API_TOKEN}" ]; then
+            echo "Missing CODACY_API_TOKEN" >&2
+            exit 1
+          fi
+
+          COVERAGE_REPORTS=(
+            "coverage/python-coverage.xml"
+            "apps/web/coverage/lcov.info"
+            "apps/desktop/coverage/lcov.info"
+          )
+          REPORT_ARGS=()
+          for report in "${COVERAGE_REPORTS[@]}"; do
+            if [ ! -f "${report}" ]; then
+              echo "Missing coverage report: ${report}" >&2
+              exit 1
+            fi
+            REPORT_ARGS+=(-r "${report}")
+          done
+
+          bash <(curl -Ls https://coverage.codacy.com/get.sh) report "${REPORT_ARGS[@]}" --partial
+          bash <(curl -Ls https://coverage.codacy.com/get.sh) final
