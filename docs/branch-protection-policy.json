@@ -16,9 +16,8 @@
     "Codacy Static Code Analysis",
     "DeepScan",
     "Semgrep Zero",
-    "Percy Visual",
+    "Chromatic Playwright",
     "Applitools Visual",
-    "BrowserStack E2E",
     "Sentry Zero"
   ],
   "strict23_supplemental_contexts": {
