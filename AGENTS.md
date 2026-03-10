@@ -29,10 +29,9 @@ See `README.md` for details on what this command does.
 - Avoid broad refactors without a dedicated task packet.
 - Preserve local-first behavior and deterministic tests.
 
-## Agent Queue Contract
-- Intake work via `.github/ISSUE_TEMPLATE/agent_task.yml`.
-- Queue with label `agent:ready`.
-- Queue workflow posts execution packet and notifies `@copilot`.
-
-## Queue Trigger Warning
-Applying label `agent:ready` triggers the queue workflow immediately.
+## Strict-Zero Platform Contract
+- This repository is governed by `quality-zero-platform`.
+- Wrapper workflows under `.github/workflows/quality-zero-*.yml` delegate to platform-managed reusable workflows.
+- Keep live rulesets and required-status enforcement deferred until repository contexts are observed and verified.
+- Do not push directly to the default branch from automation.
+- Platform-driven remediation and backlog branches must preserve monorepo slice ownership, evidence-first reporting, and explicit risk labels.

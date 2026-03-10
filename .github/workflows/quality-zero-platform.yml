@@ -1,4 +1,4 @@
-name: Quality Zero Gate
+name: Quality Zero Platform
 
 on:
   push:
@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  aggregate-gate:
-    uses: Prekzursil/quality-zero-platform/.github/workflows/reusable-quality-zero-gate.yml@main
+  shared-scanner-matrix:
+    uses: Prekzursil/quality-zero-platform/.github/workflows/reusable-scanner-matrix.yml@main
     with:
       repo_slug: ${{ github.repository }}
       event_name: ${{ github.event_name }}
