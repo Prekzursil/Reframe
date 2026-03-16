@@ -35,9 +35,8 @@ DEFAULT_CANONICAL_CONTEXTS = [
     "Codacy Static Code Analysis",
     "DeepScan",
     "Semgrep Zero",
-    "Percy Visual",
     "Applitools Visual",
-    "BrowserStack E2E",
+    "Chromatic Playwright",
     "Sentry Zero",
 ]
 
@@ -387,3 +386,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

@@ -14,9 +14,7 @@ DEFAULT_REQUIRED_SECRETS = [
     "CODECOV_TOKEN",
     "SENTRY_AUTH_TOKEN",
     "APPLITOOLS_API_KEY",
-    "PERCY_TOKEN",
-    "BROWSERSTACK_USERNAME",
-    "BROWSERSTACK_ACCESS_KEY",
+    "CHROMATIC_PROJECT_TOKEN",
 ]
 
 DEFAULT_REQUIRED_VARS = [
@@ -132,3 +130,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
