@@ -1,17 +1,23 @@
 name: Quality Zero Gate
 
+permissions:
+  contents: read
+
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
   aggregate-gate:
-    uses: Prekzursil/quality-zero-platform/.github/workflows/reusable-quality-zero-gate.yml@main
+    permissions:
+      contents: read
+    uses: Prekzursil/quality-zero-platform/.github/workflows/reusable-quality-zero-gate.yml@2be048255a27d55eb7be18b82091b57f29d34ee6
     with:
       repo_slug: ${{ github.repository }}
       event_name: ${{ github.event_name }}
       sha: ${{ github.event.pull_request.head.sha || github.sha }}
-    secrets: inherit
+      platform_repository: Prekzursil/quality-zero-platform
+      platform_ref: 2be048255a27d55eb7be18b82091b57f29d34ee6
