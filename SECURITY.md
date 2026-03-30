@@ -2,62 +2,32 @@
 
 ## Supported Versions
 
+Security fixes are applied to the `main` branch.
+
 | Version | Supported |
 | --- | --- |
-| `main` | Yes |
-| Tagged releases older than latest minor | No |
-| Archived snapshot branches (for example `archive/*`) | No |
-
-## Scope
-
-This policy applies to production code and automation in:
-
-- `apps/`
-- `services/`
-- `packages/`
-- `.github/workflows/`
-
-Legacy snapshot code kept only for reference is out of support and must not be deployed.
+| `main` | :white_check_mark: |
+| Other branches/tags | :x: |
 
 ## Reporting a Vulnerability
 
-Please use GitHub Security Advisories for private disclosure:
+Please do **not** open public GitHub issues for undisclosed security findings.
 
-1. Go to the repository **Security** tab.
-2. Click **Report a vulnerability**.
-3. Include reproduction steps, impact, and affected commit/tag.
+Use GitHub Private Vulnerability Reporting for this repository:
+<https://github.com/Prekzursil/Reframe/security/advisories/new>
 
-If GitHub private reporting is unavailable, open a private security contact through repository maintainers and include the same detail.
+If private advisory reporting is unavailable, contact the maintainer privately on GitHub (`@Prekzursil`).
 
-## Response Targets
+When reporting, include:
 
-- Initial acknowledgement: within 3 business days.
-- Triage and severity classification: within 7 business days.
-- Fix target:
-  - Critical/High: as soon as possible, target 14 days.
-  - Medium: target 30 days.
-  - Low: best effort in scheduled maintenance.
+- the affected component, file, workflow, or dependency
+- the exact commit, branch, or release if known
+- clear reproduction or proof-of-concept steps
+- impact details covering confidentiality, integrity, or availability
+- any suggested mitigation if known
 
-## Disclosure Process
+## Disclosure Expectations
 
-We follow coordinated disclosure:
-
-1. Confirm and triage.
-2. Prepare and validate fix.
-3. Publish patch/release notes.
-4. Publicly disclose advisory details after a fix is available.
-
-## Severity Guidance
-
-Severity is assessed by exploitability + impact:
-
-- Critical: remote compromise, data exfiltration, privilege escalation.
-- High: significant integrity/confidentiality risk requiring urgent patching.
-- Medium: bounded impact or mitigated by environment constraints.
-- Low: low-impact or defense-in-depth findings.
-
-## Dependency and Supply Chain Policy
-
-- Dependency updates are managed through Dependabot.
-- High and critical advisories are prioritized.
-- Unsupported archived code is isolated from `main` and excluded from active maintenance.
+- Initial acknowledgment: best effort within 3 business days.
+- Triage update: best effort within 7 business days.
+- Coordinated disclosure is expected; please allow time to investigate and patch before public disclosure.

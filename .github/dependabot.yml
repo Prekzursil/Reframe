@@ -1,27 +1,142 @@
 version: 2
 updates:
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
-
-  - package-ecosystem: "npm"
-    directory: "/apps/web"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
-    groups:
-      web-deps:
-        patterns:
-          - "*"
-
-  - package-ecosystem: "npm"
-    directory: "/apps/desktop"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
-    groups:
-      desktop-deps:
-        patterns:
-          - "*"
+- package-ecosystem: pip
+  directory: /apps/api
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 10
+  groups:
+    pip-apps-api-patch-minor:
+      patterns:
+      - '*'
+      update-types:
+      - patch
+      - minor
+  ignore:
+  - dependency-name: '*'
+    update-types:
+    - version-update:semver-major
+  labels:
+  - dependencies
+  - type:chore
+  - area:ci
+- package-ecosystem: pip
+  directory: /services/worker
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 10
+  groups:
+    pip-services-worker-patch-minor:
+      patterns:
+      - '*'
+      update-types:
+      - patch
+      - minor
+  ignore:
+  - dependency-name: '*'
+    update-types:
+    - version-update:semver-major
+  labels:
+  - dependencies
+  - type:chore
+  - area:ci
+- package-ecosystem: pip
+  directory: /packages/media-core
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 10
+  groups:
+    pip-packages-media-core-patch-minor:
+      patterns:
+      - '*'
+      update-types:
+      - patch
+      - minor
+  ignore:
+  - dependency-name: '*'
+    update-types:
+    - version-update:semver-major
+  labels:
+  - dependencies
+  - type:chore
+  - area:ci
+- package-ecosystem: npm
+  directory: /apps/web
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 10
+  groups:
+    npm-apps-web-patch-minor:
+      patterns:
+      - '*'
+      update-types:
+      - patch
+      - minor
+  ignore:
+  - dependency-name: '*'
+    update-types:
+    - version-update:semver-major
+  labels:
+  - dependencies
+  - type:chore
+  - area:ci
+- package-ecosystem: npm
+  directory: /apps/desktop
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 10
+  groups:
+    npm-apps-desktop-patch-minor:
+      patterns:
+      - '*'
+      update-types:
+      - patch
+      - minor
+  ignore:
+  - dependency-name: '*'
+    update-types:
+    - version-update:semver-major
+  labels:
+  - dependencies
+  - type:chore
+  - area:ci
+- package-ecosystem: cargo
+  directory: /apps/desktop/src-tauri
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 10
+  groups:
+    cargo-apps-desktop-src-tauri-patch-minor:
+      patterns:
+      - '*'
+      update-types:
+      - patch
+      - minor
+  ignore:
+  - dependency-name: '*'
+    update-types:
+    - version-update:semver-major
+  labels:
+  - dependencies
+  - type:chore
+  - area:ci
+- package-ecosystem: github-actions
+  directory: /
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 10
+  groups:
+    github-actions-root-patch-minor:
+      patterns:
+      - '*'
+      update-types:
+      - patch
+      - minor
+  ignore:
+  - dependency-name: '*'
+    update-types:
+    - version-update:semver-major
+  labels:
+  - dependencies
+  - type:chore
+  - area:ci

@@ -8,13 +8,15 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 jobs:
   aggregate-gate:
     permissions:
       contents: read
-    uses: Prekzursil/quality-zero-platform/.github/workflows/reusable-quality-zero-gate.yml@0e7482ede8d157d5183d41dfe2b575560fbea222
+    uses: Prekzursil/quality-zero-platform/.github/workflows/reusable-quality-zero-gate.yml@d7a94db4ab57df42940832cf67b730c673af7da6
     with:
       repo_slug: ${{ github.repository }}
       event_name: ${{ github.event_name }}
