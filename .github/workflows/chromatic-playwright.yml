@@ -82,7 +82,7 @@ jobs:
 
       - name: Upload to Chromatic (dependency/tooling auto-accept)
         if: ${{ env.HAS_CHROMATIC_TOKEN == 'true' && env.CHROMATIC_PR_ORIGIN == 'true' }}
-        uses: chromaui/action@5ec258af08deb3e8c36653bd618cb7fe52090031 # v15.2.0
+        uses: chromaui/action@eea1606238fd97a70b5af723d103953d1f40967b # v15.3.1
         with:
           projectToken: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
           playwright: true
@@ -93,7 +93,7 @@ jobs:
 
       - name: Upload to Chromatic
         if: ${{ env.HAS_CHROMATIC_TOKEN == 'true' && env.CHROMATIC_PR_ORIGIN != 'true' }}
-        uses: chromaui/action@5ec258af08deb3e8c36653bd618cb7fe52090031 # v15.2.0
+        uses: chromaui/action@eea1606238fd97a70b5af723d103953d1f40967b # v15.3.1
         with:
           projectToken: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
           playwright: true
