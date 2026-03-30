@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       APPLITOOLS_API_KEY: ${{ secrets.APPLITOOLS_API_KEY }}
+      APPLITOOLS_PR_ORIGIN: ${{ (github.actor == 'dependabot[bot]') || (github.event.pull_request.user.login == 'dependabot[bot]') }}
       APPLITOOLS_BATCH_NAME: Reframe-${{ github.sha }}
       APPLITOOLS_RESULTS_PATH: apps/web/applitools/results.json
       E2E_BASE_URL: http://127.0.0.1:5173
@@ -44,21 +45,34 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ steps.key_check.outputs.auth_ok }}" != "true" ]; then
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            if [ "${APPLITOOLS_PR_ORIGIN}" = "true" ]; then
+              echo "Applitools key is unavailable in this Dependabot context; skipping visual provider run." >&2
+              echo "available=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Missing APPLITOOLS_API_KEY" >&2
+            exit 1
           fi
           status="$(curl -sS -o /tmp/applitools-renderinfo.json -w '%{http_code}' \
             -H "X-Api-Key: ${APPLITOOLS_API_KEY}" \
             "https://eyesapi.applitools.com/api/sessions/renderinfo")"
           if [ "${status}" = "401" ] || [ "${status}" = "403" ]; then
-            echo "Applitools key is unauthorized (HTTP ${status}); using deterministic local fallback." >&2
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            if [ "${APPLITOOLS_PR_ORIGIN}" = "true" ]; then
+              echo "Applitools key is unauthorized (HTTP ${status}) in this Dependabot context; skipping visual provider run." >&2
+              echo "available=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Applitools key is unauthorized (HTTP ${status})." >&2
+            exit 1
           fi
           if [ "${status}" -lt "200" ] || [ "${status}" -ge "300" ]; then
-            echo "Applitools preflight returned HTTP ${status}; using deterministic local fallback." >&2
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            if [ "${APPLITOOLS_PR_ORIGIN}" = "true" ]; then
+              echo "Applitools preflight returned HTTP ${status} in this Dependabot context; skipping visual provider run." >&2
+              echo "available=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Applitools preflight returned HTTP ${status}." >&2
+            exit 1
           fi
           echo "available=true" >> "$GITHUB_OUTPUT"
 
@@ -97,7 +111,7 @@ jobs:
           npm run e2e -- e2e/applitools-core-routes.spec.ts --project=chromium --workers=1
 
       - name: Write fallback Applitools result
-        if: steps.preflight.outputs.available != 'true'
+        if: steps.preflight.outputs.available != 'true' && env.APPLITOOLS_PR_ORIGIN == 'true'
         run: |
           mkdir -p "$(dirname "${APPLITOOLS_RESULTS_PATH}")"
           cat > "${APPLITOOLS_RESULTS_PATH}" <<'JSON'
@@ -110,12 +124,17 @@ jobs:
           JSON
 
       - name: Assert Applitools unresolved diffs are zero
+        if: steps.preflight.outputs.available == 'true'
         run: |
           python3 scripts/quality/check_visual_zero.py \
             --provider applitools \
             --applitools-results "apps/web/applitools/results.json" \
             --out-json "applitools-visual/applitools.json" \
             --out-md "applitools-visual/applitools.md"
+
+      - name: Note skipped Applitools run
+        if: steps.preflight.outputs.available != 'true' && env.APPLITOOLS_PR_ORIGIN == 'true'
+        run: echo "Applitools visual validation was skipped because the token is unavailable in this Dependabot context."
 
       - name: Upload Applitools artifacts
         if: always()
