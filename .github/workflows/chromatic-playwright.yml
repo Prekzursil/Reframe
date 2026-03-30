@@ -1,0 +1,116 @@
+name: Chromatic Playwright
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chromatic-playwright-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chromatic:
+    name: Chromatic Playwright
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    env:
+      CHROMATIC_ARCHIVE_LOCATION: test-results
+      CHROMATIC_PR_ORIGIN: ${{ (github.actor == 'dependabot[bot]') || (github.event.pull_request.user.login == 'dependabot[bot]') }}
+      HAS_CHROMATIC_TOKEN: ${{ secrets.CHROMATIC_PROJECT_TOKEN != '' }}
+      E2E_BASE_URL: http://127.0.0.1:5173
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Fail when Chromatic token is missing for a maintained branch
+        if: ${{ env.HAS_CHROMATIC_TOKEN != 'true' && env.CHROMATIC_PR_ORIGIN != 'true' }}
+        run: |
+          echo "CHROMATIC_PROJECT_TOKEN is not configured for this repository."
+          exit 1
+
+      - name: Install dependencies
+        if: ${{ env.HAS_CHROMATIC_TOKEN == 'true' }}
+        run: npm ci
+
+      - name: Install Playwright browser
+        if: ${{ env.HAS_CHROMATIC_TOKEN == 'true' }}
+        run: npx playwright install --with-deps chromium
+
+      - name: Prepare env file
+        if: ${{ env.HAS_CHROMATIC_TOKEN == 'true' }}
+        working-directory: ${{ github.workspace }}
+        run: cp .env.example .env
+
+      - name: Start local stack
+        if: ${{ env.HAS_CHROMATIC_TOKEN == 'true' }}
+        working-directory: ${{ github.workspace }}
+        run: docker compose -f infra/docker-compose.yml up -d --build
+
+      - name: Wait for web
+        if: ${{ env.HAS_CHROMATIC_TOKEN == 'true' }}
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:5173 >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "web failed to start" >&2
+          exit 1
+
+      - name: Generate Playwright archives
+        if: ${{ env.HAS_CHROMATIC_TOKEN == 'true' }}
+        run: npm run e2e:chromatic
+
+      - name: Upload to Chromatic (dependency/tooling auto-accept)
+        if: ${{ env.HAS_CHROMATIC_TOKEN == 'true' && env.CHROMATIC_PR_ORIGIN == 'true' }}
+        uses: chromaui/action@5ec258af08deb3e8c36653bd618cb7fe52090031 # v15.2.0
+        with:
+          projectToken: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
+          playwright: true
+          workingDir: apps/web
+          autoAcceptChanges: true
+        env:
+          CHROMATIC_ARCHIVE_LOCATION: test-results
+
+      - name: Upload to Chromatic
+        if: ${{ env.HAS_CHROMATIC_TOKEN == 'true' && env.CHROMATIC_PR_ORIGIN != 'true' }}
+        uses: chromaui/action@5ec258af08deb3e8c36653bd618cb7fe52090031 # v15.2.0
+        with:
+          projectToken: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
+          playwright: true
+          workingDir: apps/web
+        env:
+          CHROMATIC_ARCHIVE_LOCATION: test-results
+
+      - name: Note skipped Chromatic run
+        if: ${{ env.HAS_CHROMATIC_TOKEN != 'true' && env.CHROMATIC_PR_ORIGIN == 'true' }}
+        run: echo "Chromatic Playwright was skipped because CHROMATIC_PROJECT_TOKEN is unavailable in this Dependabot context."
+
+      - name: Logs on failure
+        if: failure() && env.HAS_CHROMATIC_TOKEN == 'true'
+        working-directory: ${{ github.workspace }}
+        run: docker compose -f infra/docker-compose.yml logs --no-color --tail=200 || true
+
+      - name: Tear down
+        if: always() && env.HAS_CHROMATIC_TOKEN == 'true'
+        working-directory: ${{ github.workspace }}
+        run: docker compose -f infra/docker-compose.yml down -v || true

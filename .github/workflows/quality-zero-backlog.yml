@@ -1,0 +1,20 @@
+name: Quality Zero Backlog
+
+permissions: {}
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  backlog-sweep:
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: Prekzursil/quality-zero-platform/.github/workflows/reusable-backlog-sweep.yml@7268fee30f1cf796938d97fe460259f27386a8cd
+    with:
+      repo_slug: ${{ github.repository }}
+      lane: quality
+    secrets:
+      CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}

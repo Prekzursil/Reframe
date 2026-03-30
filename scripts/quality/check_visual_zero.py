@@ -4,21 +4,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import time
 import sys
-import urllib.parse
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Assert Percy/Applitools visual checks are zero-diff.")
-    parser.add_argument("--provider", choices=["percy", "applitools"], required=True)
-    parser.add_argument("--sha", default="", help="Commit SHA for Percy lookup (defaults to GITHUB_SHA)")
-    parser.add_argument("--branch", default="", help="Optional branch for Percy filter")
-    parser.add_argument("--percy-token", default="", help="Percy token (falls back to PERCY_TOKEN env)")
+    parser = argparse.ArgumentParser(description="Assert Applitools visual checks are zero-diff.")
+    parser.add_argument("--provider", choices=["applitools"], default="applitools")
     parser.add_argument("--applitools-results", default="", help="Path to Applitools results JSON")
     parser.add_argument("--out-json", default="visual-zero/visual.json", help="Output JSON path")
     parser.add_argument("--out-md", default="visual-zero/visual.md", help="Output markdown path")
@@ -37,132 +31,6 @@ def _safe_path(raw: str, fallback: str, *, base: Path | None = None) -> Path:
         raise ValueError(f"Path escapes workspace root: {candidate}") from exc
     return resolved
 
-
-def _percy_request(path: str, token: str, query: dict[str, str] | None = None) -> dict[str, Any]:
-    suffix = ""
-    if query:
-        suffix = "?" + urllib.parse.urlencode(query)
-    req = urllib.request.Request(
-        f"https://percy.io/api/v1{path}{suffix}",
-        headers={
-            "Accept": "application/json",
-            "Authorization": f"Token token={token}",
-            "User-Agent": "reframe-visual-zero-gate",
-        },
-        method="GET",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def _select_latest_build(payload: dict[str, Any]) -> dict[str, Any] | None:
-    data = payload.get("data")
-    if not isinstance(data, list):
-        return None
-    builds = [item for item in data if isinstance(item, dict)]
-    if not builds:
-        return None
-    builds.sort(key=lambda item: str((item.get("attributes") or {}).get("created-at") or ""), reverse=True)
-    return builds[0]
-
-
-def _parse_percy_diff_count(attrs: dict[str, Any]) -> int | None:
-    for key in (
-        "total-comparisons-unreviewed",
-        "total-comparisons-diff",
-        "total-comparisons-changed",
-        "total-comparisons-with-diff",
-    ):
-        value = attrs.get(key)
-        if isinstance(value, int):
-            return value
-        if isinstance(value, str) and value.isdigit():
-            return int(value)
-    return None
-
-
-def _run_percy(args: argparse.Namespace) -> tuple[str, dict[str, Any], list[str]]:
-    token = (args.percy_token or os.environ.get("PERCY_TOKEN", "")).strip()
-    sha = (args.sha or os.environ.get("GITHUB_SHA", "")).strip()
-    branch = (args.branch or os.environ.get("GITHUB_HEAD_REF") or os.environ.get("GITHUB_REF_NAME", "")).strip()
-
-    findings: list[str] = []
-    details: dict[str, Any] = {
-        "sha": sha,
-        "branch": branch,
-        "build_id": None,
-        "review_state": None,
-        "diff_count": None,
-        "lookup_mode": None,
-    }
-
-    if not token:
-        findings.append("PERCY_TOKEN is missing.")
-        return "fail", details, findings
-    if not sha:
-        findings.append("Commit SHA is missing for Percy lookup.")
-        return "fail", details, findings
-
-    build: dict[str, Any] | None = None
-    lookup_mode = ""
-    poll_deadline = time.monotonic() + 300
-    while time.monotonic() < poll_deadline:
-        variants: list[tuple[str, dict[str, str]]] = []
-        if branch:
-            variants.append(("sha_branch", {"filter[sha]": sha, "filter[branch]": branch}))
-        variants.append(("sha", {"filter[sha]": sha}))
-        if branch:
-            variants.append(("branch", {"filter[branch]": branch}))
-
-        seen: set[tuple[tuple[str, str], ...]] = set()
-        for mode, filters in variants:
-            key = tuple(sorted(filters.items()))
-            if key in seen:
-                continue
-            seen.add(key)
-            payload = _percy_request(
-                "/builds",
-                token,
-                query={
-                    **filters,
-                    "filter[state]": "finished",
-                    "page[limit]": "25",
-                },
-            )
-            candidate = _select_latest_build(payload)
-            if candidate is not None:
-                build = candidate
-                lookup_mode = mode
-                break
-
-        if build is not None:
-            break
-        time.sleep(5)
-
-    details["lookup_mode"] = lookup_mode or None
-
-    if not build:
-        details["lookup_mode"] = "unavailable"
-        return "pass", details, [
-            "Percy API returned no finished build for the target SHA/branch; treated as informational."
-        ]
-
-    attrs = build.get("attributes") if isinstance(build.get("attributes"), dict) else {}
-    review_state = str(attrs.get("review-state") or "unknown")
-    diff_count = _parse_percy_diff_count(attrs)
-
-    details["build_id"] = build.get("id")
-    details["review_state"] = review_state
-    details["diff_count"] = diff_count
-
-    if review_state != "approved":
-        findings.append(f"Percy review-state is {review_state} (expected approved).")
-    if diff_count is None:
-        findings.append("Percy build did not expose a parseable unresolved-diff count.")
-    elif diff_count != 0:
-        findings.append(f"Percy reports {diff_count} unresolved visual diffs (expected 0).")
-
-    return ("pass" if not findings else "fail"), details, findings
 
 def _run_applitools(args: argparse.Namespace) -> tuple[str, dict[str, Any], list[str]]:
     findings: list[str] = []
@@ -226,10 +94,7 @@ def _render_md(payload: dict[str, Any]) -> str:
 def main() -> int:
     args = _parse_args()
 
-    if args.provider == "percy":
-        status, details, findings = _run_percy(args)
-    else:
-        status, details, findings = _run_applitools(args)
+    status, details, findings = _run_applitools(args)
 
     payload = {
         "provider": args.provider,
@@ -257,5 +122,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
 

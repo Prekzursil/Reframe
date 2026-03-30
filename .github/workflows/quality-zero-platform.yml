@@ -1,0 +1,38 @@
+name: Quality Zero Platform
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  shared-scanner-matrix:
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    uses: Prekzursil/quality-zero-platform/.github/workflows/reusable-scanner-matrix.yml@0e7482ede8d157d5183d41dfe2b575560fbea222
+    with:
+      repo_slug: ${{ github.repository }}
+      event_name: ${{ github.event_name }}
+      branch_name: ${{ github.head_ref || github.ref_name }}
+      pull_request_number: ${{ github.event.pull_request.number || '' }}
+      pull_request_author: ${{ github.event.pull_request.user.login || '' }}
+      pull_request_head_ref: ${{ github.event.pull_request.head.ref || github.head_ref || '' }}
+      sha: ${{ github.event.pull_request.head.sha || github.sha }}
+      platform_repository: Prekzursil/quality-zero-platform
+      platform_ref: main
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      DEEPSCAN_API_TOKEN: ${{ secrets.DEEPSCAN_API_TOKEN }}
+      DEEPSOURCE_DSN: ${{ secrets.DEEPSOURCE_DSN }}

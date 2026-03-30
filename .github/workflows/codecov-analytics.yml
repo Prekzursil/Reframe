@@ -1,120 +1,27 @@
 name: Codecov Analytics
 
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
-
 permissions:
   contents: read
+  id-token: write
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
 
 jobs:
-  codecov-analytics:
-    name: Codecov Analytics
-    runs-on: ubuntu-latest
-    env:
+  shared-codecov-analytics:
+    permissions:
+      contents: read
+      id-token: write
+    uses: Prekzursil/quality-zero-platform/.github/workflows/reusable-codecov-analytics.yml@0e7482ede8d157d5183d41dfe2b575560fbea222
+    with:
+      repo_slug: ${{ github.repository }}
+      event_name: ${{ github.event_name }}
+      sha: ${{ github.event.pull_request.head.sha || github.sha }}
+      platform_repository: Prekzursil/quality-zero-platform
+      platform_ref: main
+    secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-      PYTHONPATH: .:apps/api:packages/media-core/src
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Validate Codecov token
-        run: |
-          if [ -z "${CODECOV_TOKEN}" ]; then
-            echo "Missing CODECOV_TOKEN" >&2
-            exit 1
-          fi
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - name: Set up Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: '20'
-
-      - name: Install Python deps
-        run: |
-          python -m venv .venv
-          .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/pip install -r apps/api/requirements.txt -r services/worker/requirements.txt
-          .venv/bin/pip install pytest pytest-cov
-
-      - name: Install web deps
-        working-directory: apps/web
-        run: npm ci
-
-      - name: Install desktop deps
-        working-directory: apps/desktop
-        run: npm ci
-
-      - name: Run python coverage
-        run: |
-          mkdir -p coverage
-          .venv/bin/python -m pytest \
-            --cov=apps/api/app \
-            --cov=services/worker \
-            --cov=packages/media-core/src/media_core \
-            --cov-report=xml:coverage/python-coverage.xml \
-            apps/api/tests services/worker packages/media-core/tests
-
-      - name: Run web coverage
-        working-directory: apps/web
-        run: |
-          npx vitest run --coverage \
-            --coverage.thresholds.lines=0 \
-            --coverage.thresholds.functions=0 \
-            --coverage.thresholds.branches=0 \
-            --coverage.thresholds.statements=0
-
-      - name: Run desktop TS coverage
-        working-directory: apps/desktop
-        run: |
-          npx vitest run --coverage \
-            --coverage.thresholds.lines=0 \
-            --coverage.thresholds.functions=0 \
-            --coverage.thresholds.branches=0 \
-            --coverage.thresholds.statements=0
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage/python-coverage.xml,apps/web/coverage/lcov.info,apps/desktop/coverage/lcov.info
-          flags: api,worker,media-core,web,desktop-ts
-          fail_ci_if_error: true
-          verbose: true
-
-      - name: Upload coverage to Codacy
-        if: ${{ always() }}
-        env:
-          CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
-          CODACY_ORGANIZATION_PROVIDER: gh
-          CODACY_USERNAME: Prekzursil
-          CODACY_PROJECT_NAME: ${{ github.event.repository.name }}
-        run: |
-          if [ -z "${CODACY_API_TOKEN}" ]; then
-            echo "Missing CODACY_API_TOKEN" >&2
-            exit 1
-          fi
-
-          COVERAGE_REPORTS=(
-            "coverage/python-coverage.xml"
-            "apps/web/coverage/lcov.info"
-            "apps/desktop/coverage/lcov.info"
-          )
-          REPORT_ARGS=()
-          for report in "${COVERAGE_REPORTS[@]}"; do
-            if [ ! -f "${report}" ]; then
-              echo "Missing coverage report: ${report}" >&2
-              exit 1
-            fi
-            REPORT_ARGS+=(-r "${report}")
-          done
-
-          bash <(curl -Ls https://coverage.codacy.com/get.sh) report "${REPORT_ARGS[@]}" --partial
-          bash <(curl -Ls https://coverage.codacy.com/get.sh) final

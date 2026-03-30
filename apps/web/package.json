@@ -10,6 +10,7 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "e2e": "playwright test",
+    "e2e:chromatic": "playwright test --config=playwright.chromatic.config.ts --project=chromium",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -18,8 +19,7 @@
   },
   "devDependencies": {
     "@applitools/eyes-playwright": "^1.45.0",
-    "@percy/cli": "^1.31.9",
-    "@percy/playwright": "^1.0.10",
+    "@chromatic-com/playwright": "^0.12.8",
     "@playwright/test": "^1.56.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -29,6 +29,7 @@
     "@vitejs/plugin-react": "^5.1.4",
     "@vitest/coverage-v8": "^4.0.18",
     "browserstack-node-sdk": "^1.50.1",
+    "chromatic": "^16.0.0",
     "jsdom": "^28.1.0",
     "typescript": "^5.4.5",
     "vite": "^7.3.1",

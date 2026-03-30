@@ -99,13 +99,6 @@ def test_required_context_evaluate_flags_missing_and_failed():
     _expect(any(item.startswith("B:") for item in failed), "Expected B to be reported as failed")
 
 
-def test_visual_percy_diff_parser_reads_numeric_values():
-    module = _load_module("check_visual_zero")
-
-    diff = module._parse_percy_diff_count({"total-comparisons-diff": "2"})
-    _expect(diff == 2, "Expected Percy diff parser to read string integer")
-
-
 def test_sentry_hits_from_headers_parses_integer():
     module = _load_module("check_sentry_zero")
 
