@@ -14,25 +14,25 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
   },
   "devDependencies": {
-    "@applitools/eyes-playwright": "^1.45.0",
-    "@chromatic-com/playwright": "^0.12.8",
-    "@playwright/test": "^1.56.1",
+    "@applitools/eyes-playwright": "^1.47.3",
+    "@chromatic-com/playwright": "^0.14.2",
+    "@playwright/test": "^1.60.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
-    "@types/react": "^19.2.14",
+    "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^5.1.4",
-    "@vitest/coverage-v8": "^4.0.18",
-    "browserstack-node-sdk": "^1.50.1",
-    "chromatic": "^16.0.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "@vitest/coverage-v8": "^4.1.7",
+    "browserstack-node-sdk": "^1.55.0",
+    "chromatic": "^16.10.1",
     "jsdom": "^28.1.0",
     "typescript": "^5.4.5",
-    "vite": "^7.3.1",
+    "vite": "^7.3.3",
     "vitest": "^4.0.18"
   },
   "overrides": {
