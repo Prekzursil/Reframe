@@ -1673,7 +1673,10 @@ def cancel_workflow_run(run_id: UUID, session: SessionDep, principal: PrincipalD
             try:
                 get_celery_app().control.revoke(run.task_id, terminate=False)
             except Exception:
-                pass
+                # Best-effort revoke: the broker may be unavailable or the task
+                # already finished. The run/steps are still marked cancelled below,
+                # so swallow the error and continue rather than failing the request.
+                logger.warning("Failed to revoke celery task %s", run.task_id, exc_info=True)
         pending_steps = session.exec(
             select(WorkflowRunStep).where(
                 (WorkflowRunStep.run_id == run.id)

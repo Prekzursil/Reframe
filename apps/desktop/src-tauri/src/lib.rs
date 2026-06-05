@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-fn find_compose_file() -> Result<PathBuf, String> {
-    let mut current = std::env::current_dir().map_err(|e| format!("Unable to read current dir: {e}"))?;
+fn find_compose_file_from(start: PathBuf) -> Result<PathBuf, String> {
+    let mut current = start;
     loop {
         let candidate = current.join("infra").join("docker-compose.yml");
         if candidate.is_file() {
@@ -13,6 +13,12 @@ fn find_compose_file() -> Result<PathBuf, String> {
         }
     }
     Err("Could not locate infra/docker-compose.yml; run the desktop app from inside the repo checkout.".to_string())
+}
+
+fn find_compose_file() -> Result<PathBuf, String> {
+    let current =
+        std::env::current_dir().map_err(|e| format!("Unable to read current dir: {e}"))?;
+    find_compose_file_from(current)
 }
 
 fn format_output(stdout: &[u8], stderr: &[u8]) -> String {
@@ -30,12 +36,18 @@ fn format_output(stdout: &[u8], stderr: &[u8]) -> String {
 }
 
 fn run_checked(mut cmd: Command) -> Result<String, String> {
-    let output = cmd.output().map_err(|e| format!("Command failed to start: {e}"))?;
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Command failed to start: {e}"))?;
     let rendered = format_output(&output.stdout, &output.stderr);
     if output.status.success() {
         return Ok(rendered);
     }
-    let code = output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "unknown".to_string());
+    let code = output
+        .status
+        .code()
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
     Err(format!("Command failed (exit {code})\n{rendered}"))
 }
 
@@ -73,7 +85,10 @@ fn run_compose(args: &[&str]) -> Result<String, String> {
             if is_not_found || docker_compose_unsupported(&err) {
                 run_checked({
                     let mut cmd = Command::new("docker-compose");
-                    cmd.current_dir(compose_dir).arg("-f").arg(&compose_path).args(args);
+                    cmd.current_dir(compose_dir)
+                        .arg("-f")
+                        .arg(&compose_path)
+                        .args(args);
                     cmd
                 })
             } else {
@@ -100,15 +115,19 @@ fn compose_ps() -> Result<String, String> {
     run_compose(&["ps"])
 }
 
-#[tauri::command]
-fn compose_up(build: Option<bool>) -> Result<String, String> {
+fn compose_up_args(build: Option<bool>) -> Vec<&'static str> {
     let mut args = vec!["up", "-d", "--remove-orphans"];
     if build.unwrap_or(true) {
         args.push("--build");
     } else {
         args.push("--no-build");
     }
-    run_compose(&args)
+    args
+}
+
+#[tauri::command]
+fn compose_up(build: Option<bool>) -> Result<String, String> {
+    run_compose(&compose_up_args(build))
 }
 
 #[tauri::command]
@@ -136,4 +155,123 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_output_empty_when_both_empty() {
+        assert_eq!(format_output(b"", b""), "");
+    }
+
+    #[test]
+    fn format_output_returns_stdout_only() {
+        assert_eq!(format_output(b"hello\n", b""), "hello");
+    }
+
+    #[test]
+    fn format_output_returns_stderr_only() {
+        assert_eq!(format_output(b"", b"boom\n"), "boom");
+    }
+
+    #[test]
+    fn format_output_joins_stdout_and_stderr_with_newline() {
+        // stdout has no trailing newline: a separator newline must be inserted.
+        assert_eq!(format_output(b"out", b"err"), "out\nerr");
+    }
+
+    #[test]
+    fn format_output_does_not_double_newline_when_stdout_ends_with_newline() {
+        // stdout already ends with a newline: no extra separator is added.
+        assert_eq!(format_output(b"out\n", b"err"), "out\nerr");
+    }
+
+    #[test]
+    fn docker_compose_unsupported_detects_each_known_phrase() {
+        assert!(docker_compose_unsupported(
+            "'compose' is not a docker command"
+        ));
+        assert!(docker_compose_unsupported(
+            "Error: unknown command \"compose\""
+        ));
+        assert!(docker_compose_unsupported("unknown shorthand flag: 'f'"));
+        assert!(docker_compose_unsupported("unknown flag: --no-build"));
+    }
+
+    #[test]
+    fn docker_compose_unsupported_is_case_insensitive() {
+        assert!(docker_compose_unsupported("UNKNOWN COMMAND"));
+    }
+
+    #[test]
+    fn docker_compose_unsupported_false_for_unrelated_error() {
+        assert!(!docker_compose_unsupported(
+            "network timeout while pulling image"
+        ));
+    }
+
+    #[test]
+    fn compose_up_args_defaults_to_build() {
+        assert_eq!(
+            compose_up_args(None),
+            vec!["up", "-d", "--remove-orphans", "--build"]
+        );
+    }
+
+    #[test]
+    fn compose_up_args_with_build_true() {
+        assert_eq!(
+            compose_up_args(Some(true)),
+            vec!["up", "-d", "--remove-orphans", "--build"]
+        );
+    }
+
+    #[test]
+    fn compose_up_args_with_build_false_uses_no_build() {
+        assert_eq!(
+            compose_up_args(Some(false)),
+            vec!["up", "-d", "--remove-orphans", "--no-build"]
+        );
+    }
+
+    fn unique_temp_dir(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("reframe_desktop_test_{tag}_{nanos}"));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    #[test]
+    fn find_compose_file_from_finds_file_in_ancestor() {
+        let root = unique_temp_dir("found");
+        let infra = root.join("infra");
+        std::fs::create_dir_all(&infra).expect("create infra dir");
+        let compose = infra.join("docker-compose.yml");
+        std::fs::write(&compose, b"services: {}\n").expect("write compose file");
+
+        let nested = root.join("apps").join("desktop");
+        std::fs::create_dir_all(&nested).expect("create nested dir");
+
+        let found = find_compose_file_from(nested).expect("compose file located");
+        assert_eq!(
+            found.canonicalize().expect("canonicalize found"),
+            compose.canonicalize().expect("canonicalize expected")
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn find_compose_file_from_errors_when_absent() {
+        let root = unique_temp_dir("absent");
+        let result = find_compose_file_from(root.clone());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Could not locate"));
+        std::fs::remove_dir_all(&root).ok();
+    }
 }

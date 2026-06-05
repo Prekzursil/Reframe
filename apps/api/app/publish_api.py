@@ -203,7 +203,7 @@ def list_publish_providers(session: SessionDep, principal: PrincipalDep) -> list
                 select(PublishConnection).where(
                     (PublishConnection.org_id == principal.org_id)
                     & (PublishConnection.provider == provider)
-                    & (PublishConnection.revoked_at == None)  # noqa: E711
+                    & (PublishConnection.revoked_at.is_(None))
                 )
             ).all()
         )
@@ -224,7 +224,7 @@ def list_publish_connections(provider: str, session: SessionDep, principal: Prin
         select(PublishConnection).where(
             (PublishConnection.org_id == principal.org_id)
             & (PublishConnection.provider == normalized)
-            & (PublishConnection.revoked_at == None)  # noqa: E711
+            & (PublishConnection.revoked_at.is_(None))
         )
     ).all()
     return [_serialize_connection(item) for item in rows]
