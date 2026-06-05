@@ -35,7 +35,7 @@ def test_project_collaboration_members_comments_approvals_and_activity(test_clie
     owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
     _set_seat_limit(owner["org_id"], 3)
 
-    collaborator = _register(client, email="editor-collab@test.dev", organization_name="Editor Personal")
+    _register(client, email="editor-collab@test.dev", organization_name="Editor Personal")
     outsider = _register(client, email="outsider-collab@test.dev", organization_name="Outsider Org")
     outsider_headers = {"Authorization": f"Bearer {outsider['access_token']}"}
 

@@ -7,11 +7,16 @@ updates:
   open-pull-requests-limit: 10
   groups:
     pip-apps-api-patch-minor:
+      applies-to: version-updates
       patterns:
       - '*'
       update-types:
       - patch
       - minor
+    pip-apps-api-security:
+      applies-to: security-updates
+      patterns:
+      - '*'
   ignore:
   - dependency-name: '*'
     update-types:
@@ -27,11 +32,16 @@ updates:
   open-pull-requests-limit: 10
   groups:
     pip-services-worker-patch-minor:
+      applies-to: version-updates
       patterns:
       - '*'
       update-types:
       - patch
       - minor
+    pip-services-worker-security:
+      applies-to: security-updates
+      patterns:
+      - '*'
   ignore:
   - dependency-name: '*'
     update-types:
@@ -47,11 +57,16 @@ updates:
   open-pull-requests-limit: 10
   groups:
     pip-packages-media-core-patch-minor:
+      applies-to: version-updates
       patterns:
       - '*'
       update-types:
       - patch
       - minor
+    pip-packages-media-core-security:
+      applies-to: security-updates
+      patterns:
+      - '*'
   ignore:
   - dependency-name: '*'
     update-types:
@@ -67,11 +82,16 @@ updates:
   open-pull-requests-limit: 10
   groups:
     npm-apps-web-patch-minor:
+      applies-to: version-updates
       patterns:
       - '*'
       update-types:
       - patch
       - minor
+    npm-apps-web-security:
+      applies-to: security-updates
+      patterns:
+      - '*'
   ignore:
   - dependency-name: '*'
     update-types:
@@ -87,11 +107,16 @@ updates:
   open-pull-requests-limit: 10
   groups:
     npm-apps-desktop-patch-minor:
+      applies-to: version-updates
       patterns:
       - '*'
       update-types:
       - patch
       - minor
+    npm-apps-desktop-security:
+      applies-to: security-updates
+      patterns:
+      - '*'
   ignore:
   - dependency-name: '*'
     update-types:
@@ -107,11 +132,16 @@ updates:
   open-pull-requests-limit: 10
   groups:
     cargo-apps-desktop-src-tauri-patch-minor:
+      applies-to: version-updates
       patterns:
       - '*'
       update-types:
       - patch
       - minor
+    cargo-apps-desktop-src-tauri-security:
+      applies-to: security-updates
+      patterns:
+      - '*'
   ignore:
   - dependency-name: '*'
     update-types:
@@ -127,11 +157,16 @@ updates:
   open-pull-requests-limit: 10
   groups:
     github-actions-root-patch-minor:
+      applies-to: version-updates
       patterns:
       - '*'
       update-types:
       - patch
       - minor
+    github-actions-root-security:
+      applies-to: security-updates
+      patterns:
+      - '*'
   ignore:
   - dependency-name: '*'
     update-types:
