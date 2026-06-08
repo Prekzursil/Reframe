@@ -5,6 +5,7 @@ This directory contains regression logs for each monorepo slice. Regressions are
 ## Structure
 
 Each slice maintains its own regression log:
+
 - `api-regressions.md` - Backend API slice
 - `web-regressions.md` - Frontend slice
 - `worker-regressions.md` - Background worker slice
@@ -67,6 +68,7 @@ Each slice maintains its own regression log:
 ## Prevention
 
 Lessons learned from regressions should be:
+
 - Added to test suite
 - Documented in architecture decisions
 - Shared in team retrospectives

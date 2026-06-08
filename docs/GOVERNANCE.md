@@ -5,9 +5,11 @@ This document provides an overview of all governance components in the Reframe r
 ## Core Governance Documents
 
 ### 1. [AGENTS.md](../AGENTS.md)
+
 **Purpose**: Defines the operating model for AI-assisted development.
 
 **Key Topics**:
+
 - Evidence-first workflow
 - Monorepo execution rules
 - Risk policy and merge strategy
@@ -15,15 +17,18 @@ This document provides an overview of all governance components in the Reframe r
 - Scope guardrails
 - Agent queue contract
 
-**When to Reference**: 
+**When to Reference**:
+
 - Setting up agent-assisted workflows
 - Understanding merge policies
 - Before starting any development work
 
 ### 2. [ARCHITECTURE.md](../ARCHITECTURE.md)
+
 **Purpose**: Documents system architecture and ownership.
 
 **Key Topics**:
+
 - High-level system overview
 - Directory layout and organization
 - Monorepo slice definitions
@@ -31,15 +36,18 @@ This document provides an overview of all governance components in the Reframe r
 - Cross-slice coordination
 
 **When to Reference**:
+
 - Planning new features
 - Understanding code organization
 - Determining which slice to modify
 - Coordinating multi-slice changes
 
 ### 3. [docs/BRANCH_PROTECTION.md](./BRANCH_PROTECTION.md)
+
 **Purpose**: Defines branch protection requirements and enforcement.
 
 **Key Topics**:
+
 - Protected branch rules
 - Required CI checks
 - Human approval requirements
@@ -48,15 +56,18 @@ This document provides an overview of all governance components in the Reframe r
 - Bypass process for emergencies
 
 **When to Reference**:
+
 - Setting up repository protection
 - Understanding merge requirements
 - Reviewing pull requests
 - Dealing with blocked PRs
 
 ### 4. [docs/KPI_METRICS.md](./KPI_METRICS.md)
+
 **Purpose**: Defines development metrics and targets.
 
 **Key Topics**:
+
 - Cycle time metrics
 - Lead time tracking
 - Rework and failure rates
@@ -65,6 +76,7 @@ This document provides an overview of all governance components in the Reframe r
 - Regression tracking methodology
 
 **When to Reference**:
+
 - Reviewing team performance
 - Setting improvement goals
 - Analyzing trends
@@ -73,38 +85,45 @@ This document provides an overview of all governance components in the Reframe r
 ## Operational Workflows
 
 ### 5. [.github/workflows/kpi-digest.yml](../.github/workflows/kpi-digest.yml)
+
 **Purpose**: Automated weekly KPI collection and reporting.
 
 **Runs**: Every Monday at 9:00 AM UTC (scheduled)
 
-**Outputs**: 
+**Outputs**:
+
 - Weekly KPI report JSON (`.github/kpi-reports/YYYY-WWW.json`)
 - Markdown summary in workflow logs
 
 **Testing**: See [KPI_DIGEST_TESTING.md](./KPI_DIGEST_TESTING.md)
 
 ### 6. [.github/workflows/ci.yml](../.github/workflows/ci.yml)
+
 **Purpose**: Continuous integration for quality assurance.
 
 **Runs**: On every push and pull request to main
 
 **Jobs**:
+
 - Python compilation and tests
 - Web application tests and build
 
 **Required For**: Merging to main branch
 
 ### 7. [.github/workflows/agent-task-queue.yml](../.github/workflows/agent-task-queue.yml)
+
 **Purpose**: Agent task intake and routing.
 
 **Triggers**: When `agent:ready` label is added to an issue
 
 **Actions**:
+
 - Updates issue status labels
 - Posts execution packet
 - Notifies @copilot
 
 ### 8. [.github/workflows/agent-label-sync.yml](../.github/workflows/agent-label-sync.yml)
+
 **Purpose**: Standardize repository labels.
 
 **Triggers**: Manual workflow dispatch
@@ -114,18 +133,22 @@ This document provides an overview of all governance components in the Reframe r
 ## Support Documentation
 
 ### 9. [docs/KPI_DIGEST_TESTING.md](./KPI_DIGEST_TESTING.md)
+
 **Purpose**: Testing guide for KPI digest workflow.
 
 **Covers**:
+
 - Test scenarios
 - Validation procedures
 - Edge cases
 - Troubleshooting
 
 ### 10. [docs/regressions/](./regressions/)
+
 **Purpose**: Regression tracking logs by slice.
 
 **Structure**:
+
 - `README.md` - Tracking process and guidelines
 - `api-regressions.md` - API slice regressions
 - `web-regressions.md` - Web slice regressions
@@ -138,9 +161,11 @@ This document provides an overview of all governance components in the Reframe r
 ## Baseline-Lite Package
 
 ### 11. [docs/BASELINE_LITE_PACKAGE.md](./BASELINE_LITE_PACKAGE.md)
+
 **Purpose**: Reusable governance bundle for new repositories.
 
 **Contains**:
+
 - Package component inventory
 - Deployment checklist
 - Customization guide
@@ -148,9 +173,11 @@ This document provides an overview of all governance components in the Reframe r
 - Exception handling patterns
 
 ### 12. [docs/BASELINE_LITE_QUICKSTART.md](./BASELINE_LITE_QUICKSTART.md)
+
 **Purpose**: Quick start guide for deploying Baseline-Lite.
 
 **Contains**:
+
 - 5-minute setup instructions
 - Component selection guide
 - Customization checklist
@@ -160,9 +187,11 @@ This document provides an overview of all governance components in the Reframe r
 ## Templates
 
 ### 13. [.github/pull_request_template.md](../.github/pull_request_template.md)
+
 **Purpose**: Standardized PR structure.
 
 **Sections**:
+
 - Summary
 - Risk assessment
 - Evidence of testing
@@ -170,9 +199,11 @@ This document provides an overview of all governance components in the Reframe r
 - Scope guard
 
 ### 14. [.github/ISSUE_TEMPLATE/agent_task.yml](../.github/ISSUE_TEMPLATE/agent_task.yml)
+
 **Purpose**: Structured task intake for agents.
 
 **Fields**:
+
 - Objective
 - Acceptance criteria
 - Slice ownership
@@ -182,18 +213,22 @@ This document provides an overview of all governance components in the Reframe r
 ## Development Tools
 
 ### 15. [Makefile](../Makefile)
+
 **Purpose**: Task automation for common development operations.
 
 **Key Targets**:
+
 - `make verify` - Run all quality checks (required before merge)
 - `make *-install` - Install dependencies per slice
 - `make *-dev` - Run development servers
 - `make *-test` - Run tests per slice
 
 ### 16. [.pre-commit-config.yaml](../.pre-commit-config.yaml)
+
 **Purpose**: Git pre-commit hooks for code quality.
 
 **Checks**:
+
 - Code formatting (black, prettier)
 - Linting (ruff, eslint)
 - File size limits
@@ -313,16 +348,19 @@ For repository administrators setting up governance:
 ## Maintenance
 
 ### Weekly
+
 - Review KPI digest output
 - Check for open regressions
 - Monitor CI failure trends
 
 ### Monthly
+
 - Review branch protection effectiveness
 - Audit bypassed merges (if any)
 - Update documentation as needed
 
 ### Quarterly
+
 - Comprehensive governance review
 - Update KPI targets based on data
 - Retrospective on what's working/not working

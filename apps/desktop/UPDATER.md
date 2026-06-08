@@ -69,7 +69,7 @@ Manual (if needed):
 
 Exact filenames differ by platform and bundler; use the files generated in `apps/desktop/src-tauri/target/release/bundle/`.
 
-3) Create and upload `latest.json` as a release asset with this shape:
+1) Create and upload `latest.json` as a release asset with this shape:
 
 ```json
 {
@@ -85,6 +85,7 @@ Exact filenames differ by platform and bundler; use the files generated in `apps
 ```
 
 Notes:
+
 - `signature` must be the **contents** of the generated `.sig` file (not a path/URL).
 - `url` should point to the updater bundle asset in the GitHub release.
 
@@ -149,6 +150,7 @@ For the “old” release in the checklist above, install it from GitHub Release
   - If Gatekeeper blocks the app, you may need to allow it in System Settings → Privacy & Security.
 
 Common failure modes:
+
 - “Signature verification failed” typically means `latest.json` points at the wrong asset or signature contents are incorrect.
 - “Update check failed” can be missing/invalid `latest.json` at the configured endpoint.
 

@@ -1,6 +1,7 @@
 # KPI Metrics for Reframe
 
 ## Overview
+
 This document defines the Key Performance Indicators (KPIs) for tracking development velocity, quality, and operational health in the Reframe monorepo.
 
 ## Metric Categories
@@ -67,21 +68,25 @@ This document defines the Key Performance Indicators (KPIs) for tracking develop
 ## Slice-Specific Metrics
 
 ### API Slice (`apps/api`)
+
 - API endpoint latency (p50, p95, p99)
 - API error rate by endpoint
 - Database query performance
 
 ### Web Slice (`apps/web`)
+
 - Bundle size (target: < 500KB gzipped)
 - First contentful paint (target: < 2s)
 - JavaScript error rate
 
 ### Worker Slice (`services/worker`)
+
 - Job processing time by job type
 - Job failure rate by type
 - Queue depth and wait time
 
 ### Core Library (`packages/media-core`)
+
 - Function execution time for media operations
 - Memory usage for large files
 - Algorithm accuracy metrics (transcription WER, etc.)
@@ -89,6 +94,7 @@ This document defines the Key Performance Indicators (KPIs) for tracking develop
 ## Regression Tracking
 
 ### Definition
+
 A regression is any decrease in quality, performance, or functionality introduced in a change.
 
 ### Tracking Methodology
@@ -120,6 +126,7 @@ A regression is any decrease in quality, performance, or functionality introduce
 ### Automated Collection
 
 KPI data is collected from:
+
 - GitHub API (PR and issue metadata)
 - GitHub Actions (CI/CD run data)
 - Code coverage tools (pytest-cov, vitest coverage)
@@ -141,6 +148,7 @@ KPI data is collected from:
 ### Weekly Ops Digest
 
 Generated every Monday via `Ops Weekly Digest` workflow:
+
 - Summary of key operational metrics vs. targets
 - Single rolling issue update (no repetitive issue spam)
 - Artifact upload (`digest.json`, `digest.md`, `upsert.json`) per run
@@ -155,22 +163,26 @@ Generated every Monday via `Ops Weekly Digest` workflow:
 ## Thresholds and Alerts
 
 ### Red Alerts (Immediate Action Required)
+
 - CI failure rate on main > 10%
 - Revert rate > 5%
 - P0 regression unresolved > 2 hours
 
 ### Yellow Alerts (Monitor Closely)
+
 - PR cycle time > 72 hours (3-day SLA breach)
 - Test coverage drop > 5%
 - Rework rate > 15%
 
 ### Green (Healthy)
+
 - All metrics within target ranges
 - Improving trends over last 4 weeks
 
 ## Continuous Improvement
 
 This KPI framework is reviewed quarterly and updated based on:
+
 - Team feedback and pain points
 - Industry benchmarks
 - Evolving project needs

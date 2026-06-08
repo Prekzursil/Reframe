@@ -1,6 +1,7 @@
 # Branch Protection Policy
 
 ## Overview
+
 This document defines the branch protection requirements for the Reframe repository to ensure code quality, prevent accidental commits, and enforce proper review processes.
 
 ## Protected Branches
@@ -74,6 +75,7 @@ The `main` branch is the primary production branch and has the strictest protect
 Feature branches follow a naming convention and have lighter protections:
 
 #### Naming Convention
+
 - `feature/*` - New features
 - `fix/*` - Bug fixes
 - `chore/*` - Maintenance tasks
@@ -81,6 +83,7 @@ Feature branches follow a naming convention and have lighter protections:
 - `copilot/*` - Agent-generated changes
 
 #### Protections
+
 - No direct protection rules
 - Expected to have passing CI before merge to main
 - Should be deleted after merge to keep repository clean
@@ -93,26 +96,32 @@ Feature branches follow a naming convention and have lighter protections:
 **Workflow**: `.github/workflows/ci.yml`
 
 **Steps**:
+
 1. Checkout code
 2. Set up Python 3.11
 3. Install dependencies from:
    - `apps/api/requirements.txt`
    - `services/worker/requirements.txt`
 4. Run syntax check:
+
    ```bash
    python -m compileall apps/api services/worker packages/media-core
    ```
+
 5. Run tests:
+
    ```bash
    PYTHONPATH=.:apps/api:packages/media-core/src python -m pytest apps/api/tests services/worker packages/media-core/tests
    ```
 
 **Success Criteria**:
+
 - All Python files compile without syntax errors
 - All tests pass
 - Exit code 0
 
 **Failure Handling**:
+
 - PR cannot be merged if this check fails
 - Must fix Python errors before approval
 
@@ -122,34 +131,43 @@ Feature branches follow a naming convention and have lighter protections:
 **Workflow**: `.github/workflows/ci.yml`
 
 **Steps**:
+
 1. Checkout code
 2. Set up Node.js 20
 3. Install dependencies:
+
    ```bash
    cd apps/web && npm ci
    ```
+
 4. Run tests:
+
    ```bash
    cd apps/web && npm test
    ```
+
 5. Build application:
+
    ```bash
    cd apps/web && npm run build
    ```
 
 **Success Criteria**:
+
 - Dependencies install successfully
 - All tests pass
 - Build completes without errors
 - Exit code 0
 
 **Failure Handling**:
+
 - PR cannot be merged if this check fails
 - Must fix build or test errors before approval
 
 ### 3. CodeQL
 
 **Job Names**:
+
 - `Analyze (actions)`
 - `Analyze (javascript-typescript)`
 - `Analyze (python)`
@@ -158,6 +176,7 @@ Feature branches follow a naming convention and have lighter protections:
 **Workflow**: `.github/workflows/codeql.yml`
 
 **Purpose**:
+
 - Run static security analysis over Actions, JavaScript/TypeScript, and Python code.
 - Block merges on unresolved high-signal analysis failures in required contexts.
 
@@ -166,6 +185,7 @@ Feature branches follow a naming convention and have lighter protections:
 **Job Name**: `CodeRabbit`
 
 **Purpose**:
+
 - Enforce configured automated review policy before merge to `main`.
 - Keep review automation as a required branch protection context.
 
@@ -174,6 +194,7 @@ Feature branches follow a naming convention and have lighter protections:
 ### Review Requirements
 
 All PRs to `main` require at least **1 approving review** from:
+
 - Repository maintainers
 - Users with write access
 - Designated reviewers (if CODEOWNERS is configured)
@@ -220,6 +241,7 @@ Reviewers should verify:
 ### Automated Enforcement
 
 GitHub branch protection rules are enforced automatically:
+
 - PRs without required checks cannot merge
 - PRs without approval cannot merge
 - Status badges on PRs show check status
@@ -244,6 +266,7 @@ GitHub branch protection rules are enforced automatically:
 ### When Bypass is Allowed
 
 In **emergency situations only**:
+
 - Critical security vulnerability hotfix
 - Production outage requiring immediate fix
 - Broken main branch blocking all development
@@ -259,6 +282,7 @@ In **emergency situations only**:
 ### Bypass Logging
 
 All bypasses are logged:
+
 - GitHub audit log tracks protection bypasses
 - Emergency issue documents the reason
 - Follow-up issue tracks remediation
@@ -294,6 +318,7 @@ To apply these protections to the repository:
 ### Weekly Reviews
 
 As part of the weekly KPI digest:
+
 - Track PRs merged without full review
 - Monitor branch protection bypass events
 - Review failed CI runs on main branch
@@ -301,6 +326,7 @@ As part of the weekly KPI digest:
 ### Quarterly Audits
 
 Every quarter:
+
 - Review branch protection settings
 - Verify required checks are still relevant
 - Update policy based on team feedback
@@ -308,12 +334,14 @@ Every quarter:
 ## Policy Updates
 
 This policy is reviewed and updated:
+
 - When new CI checks are added
 - When repository structure changes significantly
 - When team processes evolve
 - At least once per quarter
 
 Changes to this policy require:
+
 - Discussion in repository issues or discussions
 - Approval from repository maintainers
 - Documentation update before enforcement

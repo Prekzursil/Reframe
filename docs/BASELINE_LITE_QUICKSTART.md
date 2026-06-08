@@ -3,6 +3,7 @@
 ## What is Baseline-Lite?
 
 Baseline-Lite is a governance and infrastructure bundle extracted from the Reframe project. It provides battle-tested patterns for:
+
 - ✅ Code quality enforcement
 - ✅ Automated CI/CD pipelines
 - ✅ Development metrics tracking
@@ -86,12 +87,14 @@ gh pr create --title "Add Baseline-Lite governance" --body "Adds governance, CI/
 Not all projects need all components. Choose what fits your needs:
 
 ### Minimal Setup (All Projects)
+
 - ✅ `AGENTS.md` - Operating model
 - ✅ `.github/workflows/ci.yml` - Basic CI
 - ✅ `docs/BRANCH_PROTECTION.md` - Protection policy
 - ✅ `.github/pull_request_template.md` - PR template
 
 ### Standard Setup (Most Projects)
+
 - ✅ Everything from Minimal
 - ✅ `docs/KPI_METRICS.md` - Development metrics
 - ✅ `.github/workflows/kpi-digest.yml` - Metric tracking
@@ -99,6 +102,7 @@ Not all projects need all components. Choose what fits your needs:
 - ✅ `Makefile` - Task automation
 
 ### Full Setup (Monorepos & Large Teams)
+
 - ✅ Everything from Standard
 - ✅ `ARCHITECTURE.md` - Slice ownership
 - ✅ `docs/regressions/` - Regression tracking
@@ -110,33 +114,39 @@ Not all projects need all components. Choose what fits your needs:
 After copying files, customize these items:
 
 ### AGENTS.md
+
 - [ ] Update `make verify` command to match your project
 - [ ] Adjust slice definitions if not using monorepo
 - [ ] Modify risk policy if needed
 
 ### ARCHITECTURE.md
+
 - [ ] Replace directory structure with your layout
 - [ ] Define your project's slices
 - [ ] Document dependencies between components
 
 ### Makefile
+
 - [ ] Add install targets for your dependencies
 - [ ] Add dev server targets
 - [ ] Configure test runners
 - [ ] Update verify target
 
 ### .github/workflows/ci.yml
+
 - [ ] Adjust language versions (Python, Node, etc.)
 - [ ] Add or remove language-specific jobs
 - [ ] Configure required checks
 - [ ] Set up caching strategies
 
 ### docs/KPI_METRICS.md
+
 - [ ] Adjust target values for your team
 - [ ] Add project-specific metrics
 - [ ] Remove irrelevant metrics
 
 ### docs/BRANCH_PROTECTION.md
+
 - [ ] Verify required checks match your CI jobs
 - [ ] Adjust approval count if needed
 - [ ] Customize review checklist
@@ -144,6 +154,7 @@ After copying files, customize these items:
 ## Testing Your Setup
 
 ### 1. Test CI Pipeline
+
 ```bash
 # Create a test branch with a dummy change
 git checkout -b test-ci
@@ -160,6 +171,7 @@ gh pr checks
 ```
 
 ### 2. Test Branch Protection
+
 ```bash
 # Try to push directly to main (should fail)
 git checkout main
@@ -173,6 +185,7 @@ git push  # Should be rejected
 ```
 
 ### 3. Test Pre-commit Hooks
+
 ```bash
 # Install pre-commit
 pip install pre-commit
@@ -185,6 +198,7 @@ git commit -m "test"  # Hooks should run
 ```
 
 ### 4. Test KPI Digest (Manual Run)
+
 ```bash
 # Trigger workflow manually
 gh workflow run kpi-digest.yml
@@ -199,7 +213,9 @@ gh run view --log
 ## Common Customizations
 
 ### Python-Only Project
+
 Remove Node.js job from `ci.yml`:
+
 ```yaml
 jobs:
   python:
@@ -210,7 +226,9 @@ jobs:
 ```
 
 ### JavaScript-Only Project
+
 Remove Python job from `ci.yml`:
+
 ```yaml
 jobs:
   # python:
@@ -221,14 +239,18 @@ jobs:
 ```
 
 ### Microservices (Multiple Repos)
+
 For each service repo:
+
 1. Copy Minimal Setup components
 2. Skip `ARCHITECTURE.md` (not needed for single service)
 3. Simplify `Makefile` (no cross-slice targets needed)
 4. Use same branch protection and KPI setup
 
 ### Monorepo
+
 Use Full Setup:
+
 1. Document all slices in `ARCHITECTURE.md`
 2. Add path-based workflow triggers in `ci.yml`
 3. Track regressions per slice
@@ -250,7 +272,9 @@ After setup, verify these work:
 ## Troubleshooting
 
 ### CI doesn't run on PRs
+
 **Solution**: Check workflow trigger in `.github/workflows/ci.yml`:
+
 ```yaml
 on:
   pull_request:
@@ -258,20 +282,26 @@ on:
 ```
 
 ### Can still push to main despite protection
-**Solution**: 
+
+**Solution**:
+
 1. Verify branch protection is saved in GitHub settings
 2. Check "Include administrators" is enabled
 3. Confirm branch name exactly matches "main"
 
 ### Pre-commit hooks not running
+
 **Solution**:
+
 ```bash
 pre-commit install  # Re-install hooks
 pre-commit run --all-files  # Test manually
 ```
 
 ### KPI digest fails
+
 **Solution**:
+
 1. Check workflow has required permissions
 2. Verify GitHub token has access
 3. Ensure `.github/kpi-reports/` directory exists

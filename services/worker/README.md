@@ -11,6 +11,7 @@ celery -A worker.celery_app worker --loglevel=info
 ```
 
 Tasks available:
+
 - `tasks.ping`
 - `tasks.echo`
 - `tasks.cleanup_retention`
@@ -73,6 +74,7 @@ Job options (POST `/api/v1/captions/jobs`):
 - `min_segment_duration`: float seconds (default `0.0`)
 
 Notes:
+
 - Diarization is **offline-default** (`noop`). The `"pyannote"` and `"speechbrain"` backends are optional and heavy (pull `torch`).
 - If `REFRAME_OFFLINE_MODE=true`, the worker will refuse `"pyannote"` diarization (to avoid network downloads) and continue without speaker labels.
 - If `REFRAME_OFFLINE_MODE=true`, the worker will refuse `"speechbrain"` diarization (it may download models) and continue without speaker labels.
@@ -129,6 +131,7 @@ bash scripts/benchmark_diarization_docker.sh /path/to/video-or-audio.mp4 --backe
 ```
 
 Notes:
+
 - This is expected to be **heavy** (Torch + model downloads). Run it on the target machine you plan to deploy on.
 - `REFRAME_OFFLINE_MODE=true` is intended to disable network-backed providers; for pyannote benchmarks you’ll need network access for model download.
 - `scripts/benchmark_diarization.py` will also pick up `HF_TOKEN` / `HUGGINGFACE_TOKEN` from the repo `.env` if present.
@@ -203,6 +206,7 @@ run=1 duration_s=0.541 segments=0
 For best offline/free quality, prefer **Whisper Large v3** via the `faster_whisper` backend.
 
 In the web UI:
+
 - Backend: `faster_whisper`
 - Model: `whisper-large-v3` (alias; maps to `large-v3` internally)
 
@@ -241,6 +245,7 @@ docker compose -f infra/docker-compose.yml run --rm worker python /worker/script
 ```
 
 By default this writes to:
+
 - `${REFRAME_MEDIA_ROOT}/models/whispercpp` when `REFRAME_MEDIA_ROOT` exists (Docker Compose uses `/data/media`)
 - otherwise `.tools/models/whispercpp` in the repo
 
@@ -249,16 +254,19 @@ By default this writes to:
 By default, `tasks.translate_subtitles` uses **Argos Translate** (offline) when available, and falls back to **NoOp** when not.
 
 You can opt into **Groq** (OpenAI-compatible chat API) by setting `GROQ_API_KEY` and either:
+
 - passing `translator_backend: "groq"` in the job `options`, or
 - letting the worker auto-fallback to Groq when Argos isn’t installed.
 
 Env vars:
+
 - `GROQ_API_KEY` (required)
 - `GROQ_MODEL` (optional, default: `llama3-8b-8192`)
 - `GROQ_BASE_URL` (optional, default: `https://api.groq.com/openai/v1`)
 - `GROQ_TIMEOUT_SECONDS` (optional, default: `30`)
 
 Notes:
+
 - If `REFRAME_OFFLINE_MODE=true`, the worker will refuse Groq and fall back to offline/noop behavior.
 
 ### Install Argos language packs (offline translation)
@@ -271,6 +279,7 @@ docker compose -f infra/docker-compose.yml run --rm worker python /worker/script
 ```
 
 Recommended starting packs (pick what you actually need; packs are directional):
+
 - `en->es`, `es->en`
 - `en->fr`, `fr->en`
 - `en->de`, `de->en`
