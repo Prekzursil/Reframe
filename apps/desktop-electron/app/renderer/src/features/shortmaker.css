@@ -1,0 +1,130 @@
+/* shortmaker.css — the ShortMaker review loop, the STAR surface
+   (SURFACE GROUP B). Deepens the base pass in components/shell.css:
+   the preview floats like a phone on the reviewer's desk, ranked cards keep
+   a score-weighted type hierarchy (24px rank numeral > serif hook > quiet
+   mono times), approve stays the one amber action, discard recedes, and a
+   keyboard-hint footer documents the J/K/Space/A/X loop. Tokens only.
+   Class names / aria-labels / data-* attrs are test-pinned; restyle only. */
+
+/* ---- the phone-framed preview ---------------------------------------------- */
+
+.shortmaker .sm-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-6) var(--space-5) var(--space-4);
+}
+
+/* bezel = two shadow rings off the surface ladder + the overlay drop; the
+   well behind the footage stays the deepest tone on screen */
+.shortmaker .sm-phone {
+  position: relative;
+  width: min(248px, 100%);
+  border-radius: var(--radius-lg);
+  background: var(--surface-deep);
+  box-shadow:
+    0 0 0 6px var(--surface-raised),
+    0 0 0 7px var(--edge-strong),
+    var(--shadow-overlay);
+}
+
+/* 9:16 portrait stage — the shape the export actually ships */
+.shortmaker .sm-phone .player__video {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: none;
+  aspect-ratio: 9 / 16;
+  object-fit: contain;
+  border-radius: var(--radius-lg);
+  background: var(--surface-deep);
+}
+
+/* home indicator: pure chrome, never accent */
+.shortmaker .sm-phone::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-3);
+  transform: translateX(-50%);
+  width: 72px;
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--edge-strong);
+  pointer-events: none;
+}
+
+/* in/out timecodes hug the phone, amber because they ARE the active window */
+.shortmaker .sm-preview-markers {
+  width: min(248px, 100%);
+  padding: var(--space-3) 0 0;
+}
+
+/* ---- ranked cards: score-weighted hierarchy --------------------------------- */
+
+.shortmaker .sm-candidate {
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out),
+    filter var(--dur-base) var(--ease-out);
+}
+
+/* selected lifts toward the reviewer (rail + wash come from shell.css) */
+.shortmaker .sm-candidate.sm-selected {
+  transform: translateY(-1px);
+}
+
+/* discarded recedes: faded AND desaturated — clearly out of the running */
+.shortmaker .sm-candidate.sm-discarded {
+  filter: saturate(0.35);
+}
+
+/* the score earns a tracked-caps micro-label (CSS content: stays out of
+   textContent, so the test-pinned number is untouched) */
+.shortmaker .sm-score::before {
+  content: 'score';
+  margin-right: var(--space-2);
+  font-family: var(--font-ui);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* ---- keyboard-hint footer: the editing-room legend --------------------------- */
+
+.shortmaker .sm-review {
+  outline: none; /* focus ring is the shared double ring (shell.css) */
+}
+
+.shortmaker .sm-kbd-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  box-shadow: inset 0 1px 0 var(--edge); /* a seam, not a border */
+  color: var(--text-faint);
+  font-size: var(--type-caption-size);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+/* the legend brightens exactly while the keys are live */
+.shortmaker .sm-review:focus-within .sm-kbd-hints {
+  color: var(--text-muted);
+}
+
+.shortmaker .sm-kbd-hints kbd {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  padding: var(--space-1) var(--space-2);
+  margin-right: var(--space-1);
+  border-radius: var(--radius-xs);
+  background: var(--surface-raised);
+  box-shadow:
+    inset 0 0 0 1px var(--edge),
+    inset 0 -1px 0 var(--edge-strong); /* keycap bottom lip */
+  color: var(--text-secondary);
+}

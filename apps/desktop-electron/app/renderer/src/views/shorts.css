@@ -1,0 +1,371 @@
+/* shorts.css — the generated-shorts gallery (P4 §6 / C11).
+ *
+ * Extends the shell's dark-editorial language (styles/tokens.css): a card grid
+ * where the EXPORTED clip is the brightest thing (deep 9:16 well floats the
+ * footage), virality is the headline signal (the one accent-rationed number),
+ * and the title/template carry the supporting hierarchy. Hover lifts a card one
+ * tone + shadow (depth, not a border box); actions reveal a focused voice.
+ * Tokens only — no one-off colors. */
+
+.shorts {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+}
+
+.shorts__header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-6) var(--space-5);
+}
+
+/* Display-scale title: the one BIG thing on this view. */
+.shorts__title {
+  margin: 0;
+  font-size: var(--type-display-size);
+  font-weight: var(--type-display-weight);
+  letter-spacing: var(--type-display-tracking);
+  line-height: var(--type-display-leading);
+}
+
+.shorts__count {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.shorts__error {
+  margin: var(--space-4) var(--space-6);
+  padding: var(--space-4) var(--space-5);
+  border-left: 3px solid var(--status-error);
+  border-radius: var(--radius-sm);
+  color: var(--status-error);
+  background: var(--status-error-soft);
+}
+
+.shorts__loading {
+  padding: var(--space-8) var(--space-6);
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+}
+
+/* ---- empty state: a ghost portrait poster (echoes the real card well) ---- */
+
+.shorts__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-6) var(--space-6);
+  text-align: center;
+}
+
+.shorts__empty-poster {
+  position: relative;
+  width: 120px;
+  aspect-ratio: 9 / 16;
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--surface-deep);
+  box-shadow:
+    inset 0 0 0 1px var(--edge),
+    var(--shadow-raise);
+}
+
+.shorts__empty-poster::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  transform: translate(10px, -8px) rotate(3deg);
+}
+
+.shorts__empty-glyph {
+  font-size: 22px;
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.shorts__empty-title {
+  margin: var(--space-2) 0 0;
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+  color: var(--text-secondary);
+}
+
+.shorts__empty-hint {
+  margin: 0;
+  max-width: 42ch;
+  font-size: var(--type-body-size);
+  color: var(--text-muted);
+}
+
+/* ---- grid: portrait (9:16) cards ---- */
+
+.shorts__grid {
+  list-style: none;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-6) var(--space-7);
+  align-content: start;
+  overflow: auto;
+}
+
+.shorts__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+
+.shorts__card:hover {
+  background: var(--surface-hover);
+  box-shadow: var(--shadow-raise);
+  transform: translateY(-2px);
+}
+
+/* ---- thumbnail / inline player well (footage floats in black) ---- */
+
+.shorts__thumb {
+  position: relative;
+  aspect-ratio: 9 / 16;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface-deep);
+}
+
+.shorts__thumb-btn {
+  appearance: none;
+  border: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-deep);
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.shorts__thumb-btn:hover {
+  color: var(--accent);
+}
+
+.shorts__thumb-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.shorts__thumb-glyph {
+  font-size: 30px;
+  user-select: none;
+}
+
+.shorts__player {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--surface-deep);
+}
+
+/* Timecode badge: mono + tabular, the editing-room voice. */
+.shorts__thumb-duration {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--surface-deep);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--type-caption-leading);
+}
+
+/* Virality: the headline signal — the ONE accent on the card. */
+.shorts__virality {
+  position: absolute;
+  left: var(--space-2);
+  top: var(--space-2);
+  display: inline-flex;
+  align-items: baseline;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 800;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  box-shadow: var(--shadow-raise);
+}
+
+.shorts__virality-pct {
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 1px;
+}
+
+/* ---- meta ---- */
+
+.shorts__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.shorts__card-title {
+  font-weight: 650;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Template chip: quiet tracked caps, never the accent. */
+.shorts__template {
+  flex: none;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--surface-deep);
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+}
+
+/* The hook is the editorial pull-quote — the serif voice (as in ShortMaker). */
+.shorts__hook {
+  margin: 0;
+  font-family: var(--font-editorial);
+  font-size: 12px;
+  font-style: italic;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ---- actions: quiet ghost row; delete goes red on hover ---- */
+
+.shorts__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: auto;
+}
+
+.shorts__actions button {
+  appearance: none;
+  flex: 1 1 auto;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.shorts__actions button:hover {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.shorts__actions button:active {
+  transform: translateY(1px);
+}
+
+.shorts__actions .shorts__delete:hover {
+  background: var(--status-error-soft);
+  color: var(--status-error);
+}
+
+/* ---- P4 §7: gallery sort toggle (recency ↔ virality) ---------------------- */
+
+.shorts__sort {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.shorts__sort-label {
+  font-family: var(--font-ui);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.shorts__sort-btn {
+  appearance: none;
+  border: none;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-deep);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.shorts__sort-btn:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.shorts__sort-btn.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}

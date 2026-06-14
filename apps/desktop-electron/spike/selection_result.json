@@ -1,0 +1,47 @@
+[
+  {
+    "rank": 1,
+    "start": "01:37",
+    "end": "02:11",
+    "duration_sec": 34,
+    "hook": "As it turns out, there's a pattern",
+    "why": "Introduces the core concept of the golden circle",
+    "score": 95
+  },
+  {
+    "rank": 2,
+    "start": "03:19",
+    "end": "04:08",
+    "duration_sec": 49,
+    "hook": "I use Apple because they're easy to understand",
+    "why": "Contrasts Apple's inside-out communication with others",
+    "score": 92
+  },
+  {
+    "rank": 3,
+    "start": "08:14",
+    "end": "09:14",
+    "duration_sec": 60,
+    "hook": "Orville and Wilbur were driven by a cause",
+    "why": "Explains why Wright brothers succeeded vs. Langley",
+    "score": 93
+  },
+  {
+    "rank": 4,
+    "start": "14:14",
+    "end": "15:09",
+    "duration_sec": 55,
+    "hook": "They told us all what they had",
+    "why": "TiVo's failure vs. the importance of 'why'",
+    "score": 88
+  },
+  {
+    "rank": 5,
+    "start": "10:54",
+    "end": "11:17",
+    "duration_sec": 23,
+    "hook": "People don't buy what you do; they buy why you do it",
+    "why": "Most quotable line with clear payoff",
+    "score": 97
+  }
+]

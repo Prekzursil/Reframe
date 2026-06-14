@@ -1,0 +1,36 @@
+/* player.css — Player chrome (SURFACE GROUP B).
+   The footage is the brightest thing on screen; the controls overlay is a
+   tonal scrim rising from the bottom edge, not a gray bar. Chromium renders
+   the native controls in shadow DOM — the ::-webkit-media-controls hooks
+   below are best-effort tinting and degrade silently where unsupported.
+   Tokens only; alpha steps are color-mix derivations of the surface ladder. */
+
+.player__video {
+  /* keyboard seeks on the focused element get the shared double ring */
+  outline: none;
+}
+
+.player__video:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+/* controls panel: a deep-surface scrim so buttons float on the footage */
+video.player__video::-webkit-media-controls-panel {
+  background: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--surface-deep) 88%, transparent),
+    transparent
+  );
+}
+
+/* timecode readouts speak mono — the editing-room voice */
+video.player__video::-webkit-media-controls-current-time-display,
+video.player__video::-webkit-media-controls-time-remaining-display {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  text-shadow: none;
+}
+
+video.player__video::-webkit-media-controls-overlay-play-button {
+  opacity: 0.85;
+}

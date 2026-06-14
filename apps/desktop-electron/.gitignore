@@ -1,0 +1,45 @@
+# Node / Electron
+node_modules/
+app/dist/
+app/out/
+app/.vite/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+sidecar/.venv/
+.pytest_cache/
+*.egg-info/
+
+# App data / models / artifacts (never commit large binaries or models)
+models/
+*.gguf
+*.pt
+*.onnx
+*.safetensors
+out/
+clips/
+*.mp4
+*.mkv
+*.mov
+*.webm
+
+# but keep the spike's reference inputs
+!spike/talk.en.vtt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# secrets (cloud key lives in app settings/OS, never the repo)
+secrets.local.*
+*.secret
+
+# build artifacts (installer + unpacked) — never commit
+dist/
+
+# build inputs staged by build/python-embed-setup.ps1 (NOT committed — large binaries)
+build/python-embed/
+build/ffmpeg/

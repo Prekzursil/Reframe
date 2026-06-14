@@ -1,0 +1,62 @@
+/* captionOverlay.css — the LIVE caption overlay (P4 §5). A fast HTML/CSS
+   approximation of the exported caption look, floated over the preview <video>
+   inside .sm-phone (position: relative). Colours/fonts/position come from inline
+   styles driven by lib/captionTemplates.ts; this file owns only LAYOUT + the
+   shared chrome. Class names + data-* attrs are test-pinned; restyle only. */
+
+.caption-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none; /* never steal the player's controls */
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  z-index: 2;
+}
+
+/* the hook/title slot — pinned to the top of the stage */
+.caption-overlay__hook {
+  position: absolute;
+  top: 5%;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 90%;
+  text-align: center;
+  font-weight: 800;
+  font-size: clamp(0.9rem, 4.5cqw, 1.4rem);
+  line-height: 1.15;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.75);
+}
+
+/* the active caption line — placement (top/bottom/center) comes from inline
+   style; this rules the inner layout of the word run */
+.caption-overlay__line {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 92%;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.18em 0.3em;
+  text-align: center;
+  font-weight: 800;
+  font-size: clamp(0.95rem, 5cqw, 1.55rem);
+  line-height: 1.1;
+  padding: 0.12em 0.4em;
+  border-radius: var(--radius-sm);
+}
+
+/* center placement combines the horizontal + vertical translate */
+.caption-overlay__line[data-position='center'] {
+  transform: translate(-50%, -50%);
+}
+
+.caption-overlay__word {
+  border-radius: var(--radius-xs);
+  padding: 0 0.08em;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.caption-overlay__word.is-active {
+  font-weight: 900;
+}

@@ -1,0 +1,101 @@
+/* library-cards.css — T6 Library thumbnails: poster-frame video cards.
+ *
+ * Extends shell.css's .library__* base styles with the card GRID. Selectors
+ * carry the ul/li element tags for the extra specificity needed to override
+ * shell.css's flex-row list layout regardless of stylesheet import order.
+ * All values are tokens (styles/tokens.css); class names are test-pinned. */
+
+ul.library__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-6) var(--space-6);
+  align-content: start;
+}
+
+/* Card = raised surface, no border box; hover/focus lifts it one tone +
+   a shadow, so depth (not a blue outline) communicates interactivity. */
+li.library__item {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface-raised);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+
+li.library__item:hover {
+  background: var(--surface-hover);
+  box-shadow: var(--shadow-raise);
+  transform: translateY(-2px);
+}
+
+li.library__item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+li.library__item:active {
+  transform: translateY(0);
+  background: var(--surface-active);
+}
+
+li.library__item .library__item-meta {
+  justify-content: space-between;
+}
+
+/* ---- poster-frame thumbnail ---- */
+
+.library__thumb {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface-deep);
+}
+
+.library__thumb-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* the click target is the card, never the media element */
+  pointer-events: none;
+  transition: transform var(--dur-slow) var(--ease-out);
+}
+
+li.library__item:hover .library__thumb-video {
+  transform: scale(1.03);
+}
+
+.library__thumb-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  color: var(--text-faint);
+  background: var(--surface-deep);
+  user-select: none;
+}
+
+/* Timecode badge: mono + tabular, the editing-room voice. */
+.library__thumb-duration {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--surface-deep);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--type-caption-leading);
+}

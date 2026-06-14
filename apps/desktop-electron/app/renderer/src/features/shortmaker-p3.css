@@ -1,0 +1,411 @@
+/* shortmaker-p3.css — the P3 wave's additions to the ShortMaker surface:
+   the two pipeline toggles (hook title / remove fillers), the virality
+   numeral + expandable factor breakdown, the filler-removal note on exported
+   clips, and the taste-profile footer. Extends shortmaker.css; does NOT
+   restyle anything the design pass shipped. Tokens only — no one-off values.
+
+   Accent discipline (DESIGN-DIRECTION): amber appears ONLY on the expanded
+   factor toggle (an active state). Factor bars are data display, not
+   progress, so the fills stay tonal grays off the text ladder. */
+
+/* ---- the two pipeline toggles (ride the controls row) ----------------------- */
+
+.shortmaker .sm-toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.shortmaker .sm-toggle input[type='checkbox'] {
+  accent-color: var(--accent); /* checkboxes are the sanctioned accent use */
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
+/* "experimental" rides the label as a quiet caps chip — a warning-tinted
+   LABEL (warn rides on text per the direction), never a banner */
+.shortmaker .sm-tag-exp {
+  margin-left: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--status-warn-soft);
+  color: var(--status-warn);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+}
+
+/* ---- virality %: the card's second big numeral ------------------------------ */
+
+/* sits beside the 24px rank: smaller but still display-voice, mono tabular —
+   prominent without out-shouting the rank */
+.shortmaker .sm-virality {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 750;
+  letter-spacing: var(--type-display-tracking);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  cursor: help; /* the legacy score lives in the tooltip */
+}
+
+.shortmaker .sm-virality::before {
+  content: 'virality';
+  margin-right: var(--space-2);
+  font-family: var(--font-ui);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.shortmaker .sm-virality-pct {
+  font-size: var(--type-body-size);
+  font-weight: var(--type-caption-weight);
+  color: var(--text-muted);
+}
+
+/* ---- expandable factor breakdown -------------------------------------------- */
+
+.shortmaker .sm-factors-block {
+  margin: 0 0 var(--space-4);
+}
+
+/* tiny mono ghost, same voice as the nudge buttons */
+.shortmaker .sm-factors-toggle {
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius-xs);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.shortmaker .sm-factors-toggle:hover {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+/* expanded = an active state — the one sanctioned amber moment here */
+.shortmaker .sm-factors-toggle[aria-expanded='true'] {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.shortmaker .sm-factors {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  background: var(--surface-deep); /* a data well, one step down */
+  border-radius: var(--radius-sm);
+}
+
+.shortmaker .sm-factor {
+  display: grid;
+  grid-template-columns: 110px 28px 1fr;
+  grid-template-areas:
+    'label value bar'
+    'note note note';
+  align-items: center;
+  column-gap: var(--space-4);
+  row-gap: var(--space-1);
+}
+
+.shortmaker .sm-factor-label {
+  grid-area: label;
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.shortmaker .sm-factor-value {
+  grid-area: value;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+/* the bar: a deep pill track with a tonal fill — data, not progress, so no
+   amber; the fill brightens as a tone, exactly like the surface ladder */
+.shortmaker .sm-factor-bar {
+  grid-area: bar;
+  display: block;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+
+.shortmaker .sm-factor-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--text-muted);
+  transition: width var(--dur-base) var(--ease-out);
+}
+
+.shortmaker .sm-factor-note {
+  grid-area: note;
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-body-weight);
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text-faint);
+}
+
+/* ---- filler-removal note on exported clips ----------------------------------- */
+
+.shortmaker .sm-fillers {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- taste-profile footer (P3-D) ---------------------------------------------- */
+
+.shortmaker .sm-feedback-stats {
+  margin: var(--space-5) 0 0;
+  padding-top: var(--space-4);
+  box-shadow: inset 0 1px 0 var(--edge); /* a seam, not a border */
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shortmaker .sm-factor-fill,
+  .shortmaker .sm-factors-toggle {
+    transition: none;
+  }
+}
+
+/* ---- P4 §6 / C11: the produced-shorts grid (enriched exported clips) -------
+   The per-video gallery cards reuse views/shorts.css for the card/thumb/action
+   look; here we only set the section heading + a denser inline grid so the
+   cards sit comfortably inside the (narrower) ShortMaker panel column. */
+
+.shortmaker .sm-video-shorts {
+  margin: var(--space-5) 0;
+}
+
+.shortmaker .sm-video-shorts h3 {
+  margin: 0 0 var(--space-4);
+  font-size: var(--type-body-size);
+  color: var(--text-secondary);
+}
+
+.shortmaker .shorts__grid--inline {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  padding: 0;
+  overflow: visible;
+}
+
+/* ---- P4 §7: bolder virality headline + candidate sort toggle --------------- */
+
+/* §7 asks the virality % to read as the card's headline badge: bump it a notch
+   over the P3 numeral and give it the amber accent the design reserves for the
+   one "this is the number that matters" signal on the card. */
+.shortmaker .sm-virality {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--accent);
+}
+
+.shortmaker .sm-sort {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+}
+
+.shortmaker .sm-sort-label {
+  font-family: var(--font-ui);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.shortmaker .sm-sort-btn {
+  appearance: none;
+  border: none;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-deep);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.shortmaker .sm-sort-btn:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.shortmaker .sm-sort-btn.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ---- P4 §8c: platform presets + the batch "make N" button ------------------ */
+
+.shortmaker .sm-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+}
+
+.shortmaker .sm-presets-label {
+  font-family: var(--font-ui);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.shortmaker .sm-preset {
+  appearance: none;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.shortmaker .sm-preset:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.shortmaker .sm-preset:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---- P4 §8d: the brand-kit section ----------------------------------------- */
+
+.shortmaker .sm-brand {
+  margin: var(--space-4) 0;
+}
+
+.shortmaker .sm-brand-toggle {
+  appearance: none;
+  border: none;
+  padding: 3px 8px;
+  background: none;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.shortmaker .sm-brand-toggle:hover {
+  color: var(--text-primary);
+}
+
+.shortmaker .sm-brand-body {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-3) 0 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-deep);
+}
+
+.shortmaker .sm-brand-logo-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.shortmaker .sm-brand-logo-path {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+
+.shortmaker .sm-brand-logo-empty {
+  font-size: var(--type-caption-size);
+  color: var(--text-faint);
+}
+
+/* DATA ROOT: the relocatable data-folder section (mirrors the logo row's rhythm,
+   with a hint line above and an accent-soft restart banner below). */
+.shortmaker .sm-data-folder {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.shortmaker .sm-data-folder-hint {
+  margin: 0;
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+}
+
+.shortmaker .sm-data-folder-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.shortmaker .sm-data-folder-path {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+
+.shortmaker .sm-data-folder-loading,
+.shortmaker .sm-data-folder-empty {
+  font-size: var(--type-caption-size);
+  color: var(--text-faint);
+}
+
+.shortmaker .sm-data-folder-restart {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--type-caption-size);
+}

@@ -1,0 +1,56 @@
+{
+  "videoId": "adc4ac78c76f",
+  "transcribed": true,
+  "candidates": [
+    {
+      "rank": 1,
+      "start": 725.94,
+      "end": 785.58,
+      "durationSec": 59.64,
+      "hook": "People don't buy what you do, they buy why you do it.",
+      "why": "Central thesis repeated for emphasis, ties to belief-driven behavior.",
+      "score": 95,
+      "sourceStart": 726.0
+    },
+    {
+      "rank": 2,
+      "start": 920.953367,
+      "end": 979.938,
+      "durationSec": 58.985,
+      "hook": "250,000 people showed up for Dr. King's speech without invitations.",
+      "why": "Powerful example of belief-driven mass action vs. product-centric thinking.",
+      "score": 95,
+      "sourceStart": 921.0
+    },
+    {
+      "rank": 3,
+      "start": 133.34,
+      "end": 177.2,
+      "durationSec": 43.86,
+      "hook": "Why, how, what?",
+      "why": "Introduces the core concept of the golden circle, framing the talk's thesis.",
+      "score": 95,
+      "sourceStart": 131.0
+    },
+    {
+      "rank": 4,
+      "start": 820.82,
+      "end": 866.46,
+      "durationSec": 45.64,
+      "hook": "TiVo is a commercial failure despite being the best product.",
+      "why": "Contrast between product quality and market failure to highlight 'why' importance.",
+      "score": 90,
+      "sourceStart": 820.0
+    },
+    {
+      "rank": 5,
+      "start": 468.88,
+      "end": 494.627467,
+      "durationSec": 25.747,
+      "hook": "The goal is not just to sell people who need what you have",
+      "why": "Emphasizes the shift from transactional to belief-driven relationships, with a powerful closing line.",
+      "score": 90,
+      "sourceStart": 464.0
+    }
+  ]
+}
