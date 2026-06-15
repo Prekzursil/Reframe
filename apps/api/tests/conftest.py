@@ -33,6 +33,20 @@ def _set_test_security_secrets(monkeypatch: pytest.MonkeyPatch):
     get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiters():
+    """Isolate each test from the module-level rate-limiter singleton.
+
+    ``app.rate_limit.policy_limiters`` is built once at import and accumulates
+    hits across the whole session; without this reset, endpoints (e.g. uploads)
+    intermittently return 429 depending on test ordering/timing.
+    """
+    from app.rate_limit import reset_all_policy_limiters
+
+    reset_all_policy_limiters()
+    yield
+
+
 @pytest.fixture()
 def test_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     media_root = tmp_path / "media"
