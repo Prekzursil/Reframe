@@ -1,0 +1,19 @@
+# osv-scanner configuration for the lean dependency gate (pinned tool: osv-scanner 2.3.8).
+# The gate runs osv-scanner over the lockfiles and must report 0 known CVEs.
+#
+# POLICY: ignore entries are allowed ONLY for a genuinely-unfixable vuln, each with
+# a reason + reviewer note (greppable). We do NOT use a baseline file — clean-zero
+# is reached by upgrading the dependency, not by suppressing the finding.
+#
+# STATUS (2026-06-16): the gate currently reports known CVEs that require dependency
+# upgrades — several need SemVer-major bumps in the dev/visual-testing/E2E stack
+# (storybook, vitest, vite, esbuild) plus runtime bumps (pyjwt, python-multipart).
+# These are deliberately NOT suppressed here; resolving them is a follow-up decision
+# (upgrade vs. accept-with-reason). See QUALITY-CHARTER.md and the PR description.
+#
+# Example of a reasoned, per-vuln ignore (do not add without justification):
+#
+# [[IgnoredVulns]]
+# id = "GHSA-xxxx-xxxx-xxxx"
+# reason = "Dev-only transitive dep; no upstream fix; not reachable at runtime."
+# # ignoreUntil = "2026-09-01"  # optional review date

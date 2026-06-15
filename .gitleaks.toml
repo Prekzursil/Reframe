@@ -1,0 +1,42 @@
+# gitleaks configuration for the lean secrets gate (pinned tool: gitleaks 8.30.1).
+# The gate runs `gitleaks dir --no-git` over the working tree and must report 0.
+# Extends the upstream default ruleset; we only add path/match allowlists for
+# vendored dependencies and genuine, greppable test fixtures (no real secrets).
+title = "Reframe lean secrets gate"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Vendored deps, build output, and reasoned test fixtures (not real secrets)."
+
+# Never scan third-party / generated / local-tooling trees. These are not our
+# source and produce only upstream-example false positives.
+paths = [
+  '''(^|/)\.venv/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)\.tooling-bin/''',
+  '''(^|/)dist/''',
+  '''(^|/)build/''',
+  '''(^|/)coverage/''',
+  '''(^|/)\.git/''',
+  '''(^|/)Inspirations & Former Attempts/''',
+  # .env.example is a documentation template: every value is empty or an explicit
+  # "change-me-*"/"your-*-key" placeholder. It contains no real secrets by design.
+  '''(^|/)\.env\.example$''',
+]
+
+# Reasoned, greppable fixture allowlist. Each entry is a NON-secret:
+regexes = [
+  # Test-only idempotency request token (a dedup key, not a credential).
+  '''caption-idem-001''',
+]
+
+# start.sh declares OPTIONAL provider env-var NAMES with empty values
+# (e.g. `GROQ_API_KEY=`); these are placeholders, not assigned secrets.
+[[rules]]
+id = "generic-api-key"
+[rules.allowlist]
+description = "start.sh lists empty optional-provider env-var placeholders."
+paths = ['''(^|/)start\.sh$''']
+regexes = ['''(OPENAI_API_KEY|GROQ_API_KEY)=\s*$''']
