@@ -1,8 +1,13 @@
+"""Application settings loaded from environment variables and .env files."""
+
 from functools import lru_cache
 from pydantic import Field, AliasChoices
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
+    """Typed application configuration sourced from the environment."""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -17,11 +22,15 @@ class Settings(BaseSettings):
     )
     broker_url: str = Field(
         default="redis://redis:6379/0",
-        validation_alias=AliasChoices("BROKER_URL", "REFRAME_BROKER__BROKER_URL", "BROKER__BROKER_URL"),
+        validation_alias=AliasChoices(
+            "BROKER_URL", "REFRAME_BROKER__BROKER_URL", "BROKER__BROKER_URL"
+        ),
     )
     result_backend: str = Field(
         default="redis://redis:6379/0",
-        validation_alias=AliasChoices("RESULT_BACKEND", "REFRAME_BROKER__RESULT_BACKEND", "BROKER__RESULT_BACKEND"),
+        validation_alias=AliasChoices(
+            "RESULT_BACKEND", "REFRAME_BROKER__RESULT_BACKEND", "BROKER__RESULT_BACKEND"
+        ),
     )
     media_root: str = Field(
         default="./media",
@@ -35,19 +44,27 @@ class Settings(BaseSettings):
     rate_limit_window_seconds: int = Field(default=60)
     rate_limit_heavy_requests: int = Field(
         default=20,
-        validation_alias=AliasChoices("RATE_LIMIT_HEAVY_REQUESTS", "REFRAME_RATE_LIMIT_HEAVY_REQUESTS"),
+        validation_alias=AliasChoices(
+            "RATE_LIMIT_HEAVY_REQUESTS", "REFRAME_RATE_LIMIT_HEAVY_REQUESTS"
+        ),
     )
     rate_limit_heavy_window_seconds: int = Field(
         default=60,
-        validation_alias=AliasChoices("RATE_LIMIT_HEAVY_WINDOW_SECONDS", "REFRAME_RATE_LIMIT_HEAVY_WINDOW_SECONDS"),
+        validation_alias=AliasChoices(
+            "RATE_LIMIT_HEAVY_WINDOW_SECONDS", "REFRAME_RATE_LIMIT_HEAVY_WINDOW_SECONDS"
+        ),
     )
     rate_limit_upload_requests: int = Field(
         default=30,
-        validation_alias=AliasChoices("RATE_LIMIT_UPLOAD_REQUESTS", "REFRAME_RATE_LIMIT_UPLOAD_REQUESTS"),
+        validation_alias=AliasChoices(
+            "RATE_LIMIT_UPLOAD_REQUESTS", "REFRAME_RATE_LIMIT_UPLOAD_REQUESTS"
+        ),
     )
     rate_limit_upload_window_seconds: int = Field(
         default=60,
-        validation_alias=AliasChoices("RATE_LIMIT_UPLOAD_WINDOW_SECONDS", "REFRAME_RATE_LIMIT_UPLOAD_WINDOW_SECONDS"),
+        validation_alias=AliasChoices(
+            "RATE_LIMIT_UPLOAD_WINDOW_SECONDS", "REFRAME_RATE_LIMIT_UPLOAD_WINDOW_SECONDS"
+        ),
     )
     max_upload_bytes: int = Field(
         default=1_073_741_824,
@@ -61,7 +78,9 @@ class Settings(BaseSettings):
     )
     cleanup_interval_seconds: int = Field(
         default=3600,
-        validation_alias=AliasChoices("CLEANUP_INTERVAL_SECONDS", "REFRAME_CLEANUP_INTERVAL_SECONDS"),
+        validation_alias=AliasChoices(
+            "CLEANUP_INTERVAL_SECONDS", "REFRAME_CLEANUP_INTERVAL_SECONDS"
+        ),
         description="How often to run tmp cleanup (seconds).",
     )
     share_link_secret: str = Field(
@@ -121,7 +140,9 @@ class Settings(BaseSettings):
     )
     oauth_google_client_secret: str = Field(
         default="",
-        validation_alias=AliasChoices("OAUTH_GOOGLE_CLIENT_SECRET", "REFRAME_OAUTH_GOOGLE_CLIENT_SECRET"),
+        validation_alias=AliasChoices(
+            "OAUTH_GOOGLE_CLIENT_SECRET", "REFRAME_OAUTH_GOOGLE_CLIENT_SECRET"
+        ),
         description="Google OAuth client secret.",
     )
     oauth_github_client_id: str = Field(
@@ -131,7 +152,9 @@ class Settings(BaseSettings):
     )
     oauth_github_client_secret: str = Field(
         default="",
-        validation_alias=AliasChoices("OAUTH_GITHUB_CLIENT_SECRET", "REFRAME_OAUTH_GITHUB_CLIENT_SECRET"),
+        validation_alias=AliasChoices(
+            "OAUTH_GITHUB_CLIENT_SECRET", "REFRAME_OAUTH_GITHUB_CLIENT_SECRET"
+        ),
         description="GitHub OAuth client secret.",
     )
     oauth_state_secret: str = Field(
@@ -176,42 +199,58 @@ class Settings(BaseSettings):
     )
     publish_youtube_client_id: str = Field(
         default="",
-        validation_alias=AliasChoices("PUBLISH_YOUTUBE_CLIENT_ID", "REFRAME_PUBLISH_YOUTUBE_CLIENT_ID"),
+        validation_alias=AliasChoices(
+            "PUBLISH_YOUTUBE_CLIENT_ID", "REFRAME_PUBLISH_YOUTUBE_CLIENT_ID"
+        ),
         description="OAuth client id for YouTube publishing integration.",
     )
     publish_youtube_client_secret: str = Field(
         default="",
-        validation_alias=AliasChoices("PUBLISH_YOUTUBE_CLIENT_SECRET", "REFRAME_PUBLISH_YOUTUBE_CLIENT_SECRET"),
+        validation_alias=AliasChoices(
+            "PUBLISH_YOUTUBE_CLIENT_SECRET", "REFRAME_PUBLISH_YOUTUBE_CLIENT_SECRET"
+        ),
         description="OAuth client secret for YouTube publishing integration.",
     )
     publish_tiktok_client_id: str = Field(
         default="",
-        validation_alias=AliasChoices("PUBLISH_TIKTOK_CLIENT_ID", "REFRAME_PUBLISH_TIKTOK_CLIENT_ID"),
+        validation_alias=AliasChoices(
+            "PUBLISH_TIKTOK_CLIENT_ID", "REFRAME_PUBLISH_TIKTOK_CLIENT_ID"
+        ),
         description="OAuth client id for TikTok publishing integration.",
     )
     publish_tiktok_client_secret: str = Field(
         default="",
-        validation_alias=AliasChoices("PUBLISH_TIKTOK_CLIENT_SECRET", "REFRAME_PUBLISH_TIKTOK_CLIENT_SECRET"),
+        validation_alias=AliasChoices(
+            "PUBLISH_TIKTOK_CLIENT_SECRET", "REFRAME_PUBLISH_TIKTOK_CLIENT_SECRET"
+        ),
         description="OAuth client secret for TikTok publishing integration.",
     )
     publish_instagram_client_id: str = Field(
         default="",
-        validation_alias=AliasChoices("PUBLISH_INSTAGRAM_CLIENT_ID", "REFRAME_PUBLISH_INSTAGRAM_CLIENT_ID"),
+        validation_alias=AliasChoices(
+            "PUBLISH_INSTAGRAM_CLIENT_ID", "REFRAME_PUBLISH_INSTAGRAM_CLIENT_ID"
+        ),
         description="OAuth client id for Instagram publishing integration.",
     )
     publish_instagram_client_secret: str = Field(
         default="",
-        validation_alias=AliasChoices("PUBLISH_INSTAGRAM_CLIENT_SECRET", "REFRAME_PUBLISH_INSTAGRAM_CLIENT_SECRET"),
+        validation_alias=AliasChoices(
+            "PUBLISH_INSTAGRAM_CLIENT_SECRET", "REFRAME_PUBLISH_INSTAGRAM_CLIENT_SECRET"
+        ),
         description="OAuth client secret for Instagram publishing integration.",
     )
     publish_facebook_client_id: str = Field(
         default="",
-        validation_alias=AliasChoices("PUBLISH_FACEBOOK_CLIENT_ID", "REFRAME_PUBLISH_FACEBOOK_CLIENT_ID"),
+        validation_alias=AliasChoices(
+            "PUBLISH_FACEBOOK_CLIENT_ID", "REFRAME_PUBLISH_FACEBOOK_CLIENT_ID"
+        ),
         description="OAuth client id for Facebook publishing integration.",
     )
     publish_facebook_client_secret: str = Field(
         default="",
-        validation_alias=AliasChoices("PUBLISH_FACEBOOK_CLIENT_SECRET", "REFRAME_PUBLISH_FACEBOOK_CLIENT_SECRET"),
+        validation_alias=AliasChoices(
+            "PUBLISH_FACEBOOK_CLIENT_SECRET", "REFRAME_PUBLISH_FACEBOOK_CLIENT_SECRET"
+        ),
         description="OAuth client secret for Facebook publishing integration.",
     )
     stripe_secret_key: str = Field(
@@ -238,4 +277,5 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    """Return the cached application settings instance."""
     return Settings()

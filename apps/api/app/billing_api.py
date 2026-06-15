@@ -1,3 +1,5 @@
+"""Billing and Stripe API routes (plans, subscriptions, usage, seats, webhooks)."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -8,11 +10,25 @@ from fastapi import APIRouter, Depends, Header, Request, status
 from sqlmodel import Session, SQLModel, select
 
 from app.auth_api import PrincipalDep, ensure_default_plans
-from app.billing import build_checkout_session, build_customer_portal_session, get_plan_policy, update_subscription_seat_limit
+from app.billing import (
+    build_checkout_session,
+    build_customer_portal_session,
+    get_plan_policy,
+    update_subscription_seat_limit,
+)
 from app.config import get_settings
 from app.database import get_session
 from app.errors import ApiError, ErrorCode, ErrorResponse, not_found, unauthorized
-from app.models import InviteStatus, InvoiceSnapshot, OrgInvite, OrgMembership, Organization, Plan, Subscription, UsageEvent
+from app.models import (
+    InviteStatus,
+    InvoiceSnapshot,
+    OrgInvite,
+    OrgMembership,
+    Organization,
+    Plan,
+    Subscription,
+    UsageEvent,
+)
 
 router = APIRouter(prefix="/api/v1")
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -21,6 +37,8 @@ AUTHENTICATION_REQUIRED = "Authentication required"
 
 
 class PlanView(SQLModel):
+    """Public representation of a billing plan and its quotas."""
+
     code: str
     name: str
     max_concurrent_jobs: int
@@ -31,6 +49,8 @@ class PlanView(SQLModel):
 
 
 class SubscriptionView(SQLModel):
+    """Public representation of an organization's subscription state."""
+
     org_id: str
     plan_code: str
     status: str
@@ -42,6 +62,8 @@ class SubscriptionView(SQLModel):
 
 
 class UsageQuotaView(SQLModel):
+    """Current-period usage measured against plan quotas, with overage estimate."""
+
     org_id: str
     plan_code: str
     used_job_minutes: float
@@ -53,6 +75,8 @@ class UsageQuotaView(SQLModel):
 
 
 class CheckoutSessionRequest(SQLModel):
+    """Request body for creating a Stripe checkout session."""
+
     plan_code: str
     seat_limit: Optional[int] = None
     success_url: Optional[str] = None
@@ -60,15 +84,21 @@ class CheckoutSessionRequest(SQLModel):
 
 
 class PortalSessionRequest(SQLModel):
+    """Request body for creating a Stripe customer portal session."""
+
     return_url: Optional[str] = None
 
 
 class SessionResponse(SQLModel):
+    """Response carrying a Stripe-hosted session id and redirect URL."""
+
     id: str
     url: str
 
 
 class SeatUsageView(SQLModel):
+    """Seat allocation for an organization (active, pending, and available)."""
+
     org_id: str
     plan_code: str
     active_members: int
@@ -78,10 +108,14 @@ class SeatUsageView(SQLModel):
 
 
 class SeatLimitUpdateRequest(SQLModel):
+    """Request body for updating an organization's seat limit."""
+
     seat_limit: int
 
 
 class BillingMetricView(SQLModel):
+    """Description of a single billable metric in the cost model."""
+
     metric: str
     unit: str
     description: str
@@ -89,6 +123,8 @@ class BillingMetricView(SQLModel):
 
 
 class CostModelResponse(SQLModel):
+    """Cost model: billable metrics, available plans, and explanatory notes."""
+
     currency: str = "usd"
     billable_metrics: list[BillingMetricView]
     plans: list[PlanView]
@@ -126,8 +162,12 @@ def _unix_to_datetime(value: object) -> datetime | None:
 
 @router.get("/billing/plans", tags=["Billing"])
 def list_plans(session: SessionDep) -> list[PlanView]:
+    """Return all active billing plans, seeding defaults if none exist."""
     ensure_default_plans(session)
-    plans = session.exec(select(Plan).where(Plan.active == True)).all()  # noqa: E712
+    # `Plan.active` is a SQLAlchemy column; pylint sees the pydantic FieldInfo.
+    plans = session.exec(
+        select(Plan).where(Plan.active.is_(True))  # pylint: disable=no-member
+    ).all()
     return [
         PlanView(
             code=p.code,
@@ -144,6 +184,7 @@ def list_plans(session: SessionDep) -> list[PlanView]:
 
 @router.get("/billing/cost-model", tags=["Billing"])
 def get_cost_model(session: SessionDep) -> CostModelResponse:
+    """Return the billable-metric definitions alongside the active plans."""
     plans = list_plans(session)
     return CostModelResponse(
         currency="usd",
@@ -177,6 +218,7 @@ def get_cost_model(session: SessionDep) -> CostModelResponse:
 
 @router.get("/billing/subscription", tags=["Billing"], responses={401: {"model": ErrorResponse}})
 def get_subscription(session: SessionDep, principal: PrincipalDep) -> SubscriptionView:
+    """Return the caller's subscription, creating a free one if absent."""
     if not principal.org_id:
         raise unauthorized(AUTHENTICATION_REQUIRED)
     ensure_default_plans(session)
@@ -202,7 +244,9 @@ def _calc_usage_quota(session: Session, *, org_id, plan_code: str) -> UsageQuota
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     usage_events = session.exec(
-        select(UsageEvent).where((UsageEvent.org_id == org_id) & (UsageEvent.created_at >= month_start))
+        select(UsageEvent).where(
+            (UsageEvent.org_id == org_id) & (UsageEvent.created_at >= month_start)
+        )
     ).all()
     used_minutes = sum(float(e.quantity) for e in usage_events if e.metric == "job_minutes")
     storage_bytes = sum(float(e.quantity) for e in usage_events if e.metric == "storage_bytes")
@@ -231,7 +275,9 @@ def _pending_invites_count(session: Session, org_id: UUID) -> int:
     return len(
         session.exec(
             select(OrgInvite).where(
-                (OrgInvite.org_id == org_id) & (OrgInvite.status == InviteStatus.pending) & (OrgInvite.expires_at > now)
+                (OrgInvite.org_id == org_id)
+                & (OrgInvite.status == InviteStatus.pending)
+                & (OrgInvite.expires_at > now)
             )
         ).all()
     )
@@ -255,6 +301,7 @@ def _seat_usage(session: Session, *, org_id: UUID, plan_code: str) -> SeatUsageV
 
 @router.get("/billing/usage-summary", tags=["Billing"], responses={401: {"model": ErrorResponse}})
 def billing_usage_summary(session: SessionDep, principal: PrincipalDep) -> UsageQuotaView:
+    """Return current-period usage and quota figures for the caller's org."""
     if not principal.org_id:
         raise unauthorized(AUTHENTICATION_REQUIRED)
     sub = session.exec(select(Subscription).where(Subscription.org_id == principal.org_id)).first()
@@ -264,6 +311,7 @@ def billing_usage_summary(session: SessionDep, principal: PrincipalDep) -> Usage
 
 @router.get("/billing/seat-usage", tags=["Billing"], responses={401: {"model": ErrorResponse}})
 def billing_seat_usage(session: SessionDep, principal: PrincipalDep) -> SeatUsageView:
+    """Return seat allocation (active, pending, available) for the caller's org."""
     if not principal.org_id:
         raise unauthorized(AUTHENTICATION_REQUIRED)
     sub = session.exec(select(Subscription).where(Subscription.org_id == principal.org_id)).first()
@@ -274,13 +322,18 @@ def billing_seat_usage(session: SessionDep, principal: PrincipalDep) -> SeatUsag
 @router.patch(
     "/billing/seat-limit",
     tags=["Billing"],
-    responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+    responses={
+        400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
 )
 def update_billing_seat_limit(
     payload: SeatLimitUpdateRequest,
     session: SessionDep,
     principal: PrincipalDep,
 ) -> SeatUsageView:
+    """Update the org's Stripe seat quantity and persisted seat limit."""
     _require_billing_enabled()
     if not principal.org_id:
         raise unauthorized(AUTHENTICATION_REQUIRED)
@@ -320,7 +373,10 @@ def update_billing_seat_limit(
     tags=["Billing"],
     responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
 )
-def create_checkout(session: SessionDep, payload: CheckoutSessionRequest, principal: PrincipalDep) -> SessionResponse:
+def create_checkout(
+    session: SessionDep, payload: CheckoutSessionRequest, principal: PrincipalDep
+) -> SessionResponse:
+    """Create a Stripe checkout session for upgrading to a paid plan."""
     _require_billing_enabled()
     if not principal.org_id:
         raise unauthorized(AUTHENTICATION_REQUIRED)
@@ -351,8 +407,10 @@ def create_checkout(session: SessionDep, payload: CheckoutSessionRequest, princi
             details={"plan_code": plan_code},
         )
 
-    success_url = payload.success_url or f"{settings.app_base_url.rstrip('/')}/billing?checkout=success"
-    cancel_url = payload.cancel_url or f"{settings.app_base_url.rstrip('/')}/billing?checkout=cancel"
+    # `app_base_url` is a runtime ``str``; pylint sees the pydantic FieldInfo default.
+    base_url = settings.app_base_url.rstrip("/")  # pylint: disable=no-member
+    success_url = payload.success_url or f"{base_url}/billing?checkout=success"
+    cancel_url = payload.cancel_url or f"{base_url}/billing?checkout=cancel"
     active_members = _active_members_count(session, principal.org_id)
     policy = get_plan_policy(plan_code)
     requested_seat_limit = int(payload.seat_limit or policy.seat_limit)
@@ -363,7 +421,11 @@ def create_checkout(session: SessionDep, payload: CheckoutSessionRequest, princi
         quantity=quantity,
         success_url=success_url,
         cancel_url=cancel_url,
-        metadata={"org_id": str(principal.org_id), "plan_code": plan_code, "seat_limit": str(quantity)},
+        metadata={
+            "org_id": str(principal.org_id),
+            "plan_code": plan_code,
+            "seat_limit": str(quantity),
+        },
     )
     return SessionResponse(id=result["id"], url=result["url"])
 
@@ -373,7 +435,10 @@ def create_checkout(session: SessionDep, payload: CheckoutSessionRequest, princi
     tags=["Billing"],
     responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
 )
-def create_portal(session: SessionDep, payload: PortalSessionRequest, principal: PrincipalDep) -> SessionResponse:
+def create_portal(
+    session: SessionDep, payload: PortalSessionRequest, principal: PrincipalDep
+) -> SessionResponse:
+    """Create a Stripe customer portal session for managing billing."""
     _require_billing_enabled()
     if not principal.org_id:
         raise unauthorized(AUTHENTICATION_REQUIRED)
@@ -381,12 +446,18 @@ def create_portal(session: SessionDep, payload: PortalSessionRequest, principal:
     sub = session.exec(select(Subscription).where(Subscription.org_id == principal.org_id)).first()
     if not sub or not sub.stripe_customer_id:
         raise not_found("Stripe customer not found for organization")
-    return_url = payload.return_url or f"{settings.app_base_url.rstrip('/')}/billing"
-    result = build_customer_portal_session(customer_id=sub.stripe_customer_id, return_url=return_url)
+    # `app_base_url` is a runtime ``str``; pylint sees the pydantic FieldInfo default.
+    base_url = settings.app_base_url.rstrip("/")  # pylint: disable=no-member
+    return_url = payload.return_url or f"{base_url}/billing"
+    result = build_customer_portal_session(
+        customer_id=sub.stripe_customer_id, return_url=return_url
+    )
     return SessionResponse(id=result["id"], url=result["url"])
 
 
-async def _resolve_webhook_payload(request: Request, settings, stripe_signature: Optional[str]) -> dict:
+async def _resolve_webhook_payload(
+    request: Request, settings, stripe_signature: Optional[str]
+) -> dict:
     raw_body = await request.body()
     if not settings.stripe_webhook_secret:
         return await request.json()
@@ -397,7 +468,9 @@ async def _resolve_webhook_payload(request: Request, settings, stripe_signature:
             message="Missing Stripe-Signature header",
         )
     try:
-        import stripe  # type: ignore
+        # Imported lazily: stripe is an optional dependency only required when
+        # webhook signature verification is configured.
+        import stripe  # type: ignore  # pylint: disable=import-outside-toplevel
     except ImportError as exc:
         raise ApiError(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -406,7 +479,9 @@ async def _resolve_webhook_payload(request: Request, settings, stripe_signature:
         ) from exc
     stripe.api_key = settings.stripe_secret_key
     try:
-        return stripe.Webhook.construct_event(raw_body, stripe_signature, settings.stripe_webhook_secret)
+        return stripe.Webhook.construct_event(
+            raw_body, stripe_signature, settings.stripe_webhook_secret
+        )
     except Exception as exc:
         raise ApiError(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -437,7 +512,7 @@ def _handle_checkout_completed(session: Session, obj: dict) -> bool:
         return True
     try:
         org_id = UUID(str(org_id_raw))
-    except Exception:
+    except (ValueError, TypeError):
         org_id = None
     if not org_id:
         return False
@@ -468,7 +543,7 @@ def _handle_subscription_changed(session: Session, settings, obj: dict, sub: Sub
         sub.plan_code = _price_to_plan_code(price_id, settings)
     sub.current_period_start = _unix_to_datetime(obj.get("current_period_start"))
     sub.current_period_end = _unix_to_datetime(obj.get("current_period_end"))
-    sub.cancel_at_period_end = bool(obj.get("cancel_at_period_end") or False)
+    sub.cancel_at_period_end = bool(obj.get("cancel_at_period_end"))
     session.add(sub)
     _apply_seat_limit(session, session.get(Organization, sub.org_id), quantity)
     session.commit()
@@ -501,6 +576,7 @@ async def stripe_webhook(
     session: SessionDep,
     stripe_signature: Annotated[Optional[str], Header(alias="Stripe-Signature")] = None,
 ) -> None:
+    """Verify and dispatch incoming Stripe webhook events."""
     _require_billing_enabled()
     settings = get_settings()
     payload = await _resolve_webhook_payload(request, settings, stripe_signature)
@@ -515,7 +591,9 @@ async def stripe_webhook(
     customer_id = str(obj.get("customer") or "")
     if not customer_id:
         return None
-    sub = session.exec(select(Subscription).where(Subscription.stripe_customer_id == customer_id)).first()
+    sub = session.exec(
+        select(Subscription).where(Subscription.stripe_customer_id == customer_id)
+    ).first()
     if not sub:
         return None
 

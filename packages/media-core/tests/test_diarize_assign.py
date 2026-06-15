@@ -14,7 +14,7 @@ def test_assign_speakers_to_lines_prefers_overlap():
     ]
 
     out = assign_speakers_to_lines(lines, segments)
-    assert [l.speaker for l in out] == ["SPEAKER_01", "SPEAKER_02"]
+    assert [l.speaker for l in out] == ["SPEAKER_01", "SPEAKER_02"]  # noqa: E741
 
 
 def test_to_srt_prefixes_speaker_when_present():

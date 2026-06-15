@@ -1,3 +1,10 @@
+"""Speaker diarization backends and helpers for the media-core pipeline.
+
+Offline-first: the default NOOP backend returns no speaker labels. Optional
+pyannote and SpeechBrain backends are imported lazily so the package works
+without their heavy dependencies installed.
+"""
+
 from __future__ import annotations
 
 import os
@@ -24,11 +31,16 @@ def diarize_audio(audio_path: str | Path, config: DiarizationConfig) -> List[Spe
     raise ValueError(f"Unknown diarization backend: {config.backend}")
 
 
-def assign_speakers_to_lines(lines: Sequence[SubtitleLine], segments: Iterable[SpeakerSegment]) -> List[SubtitleLine]:
-    """Attach `speaker` labels to subtitle lines based on overlap with diarization segments."""
+def assign_speakers_to_lines(
+    lines: Sequence[SubtitleLine], segments: Iterable[SpeakerSegment]
+) -> List[SubtitleLine]:
+    """Attach `speaker` labels to subtitle lines based on overlap with segments."""
     segments_list = list(segments)
     if not segments_list:
-        return [SubtitleLine(start=l.start, end=l.end, words=l.words, speaker=l.speaker) for l in lines]
+        return [
+            SubtitleLine(start=l.start, end=l.end, words=l.words, speaker=l.speaker)
+            for l in lines  # noqa: E741
+        ]
 
     out: List[SubtitleLine] = []
     for line in lines:
@@ -39,7 +51,11 @@ def assign_speakers_to_lines(lines: Sequence[SubtitleLine], segments: Iterable[S
             if overlap > best_overlap:
                 best_overlap = overlap
                 best_speaker = seg.speaker
-        out.append(SubtitleLine(start=line.start, end=line.end, words=line.words, speaker=best_speaker))
+        out.append(
+            SubtitleLine(
+                start=line.start, end=line.end, words=line.words, speaker=best_speaker
+            )
+        )
     return out
 
 
@@ -71,6 +87,7 @@ def _iter_pyannote_tracks(diarization: Any) -> Iterator[tuple[Any, Any, Any]]:
 
 def _diarize_pyannote(audio_path: str | Path, config: DiarizationConfig) -> List[SpeakerSegment]:
     try:
+        # pylint: disable-next=import-outside-toplevel
         from pyannote.audio import Pipeline  # type: ignore
     except ImportError as exc:
         raise RuntimeError(
@@ -83,9 +100,13 @@ def _diarize_pyannote(audio_path: str | Path, config: DiarizationConfig) -> List
         if config.huggingface_token:
             # pyannote.audio switched from `use_auth_token=` to `token=` across versions.
             try:
-                pipeline = Pipeline.from_pretrained(config.model, token=config.huggingface_token)
+                pipeline = Pipeline.from_pretrained(
+                    config.model, token=config.huggingface_token
+                )
             except TypeError:
-                pipeline = Pipeline.from_pretrained(config.model, use_auth_token=config.huggingface_token)
+                pipeline = Pipeline.from_pretrained(
+                    config.model, use_auth_token=config.huggingface_token
+                )
         else:
             pipeline = Pipeline.from_pretrained(config.model)
     except Exception as exc:
@@ -120,6 +141,7 @@ def _install_hf_auth_token_compat() -> None:
     downloads keep working).
     """
     try:
+        # pylint: disable=import-outside-toplevel
         import inspect
 
         import huggingface_hub  # type: ignore
@@ -139,7 +161,9 @@ def _install_hf_auth_token_compat() -> None:
 
     original = hf_download
 
-    def _hf_hub_download_compat(*args, use_auth_token=None, token=None, **kwargs):  # type: ignore[no-redef]
+    def _hf_hub_download_compat(  # type: ignore[no-redef]
+        *args, use_auth_token=None, token=None, **kwargs
+    ):
         if token is None and use_auth_token is not None:
             token = use_auth_token
         return original(*args, token=token, **kwargs)
@@ -150,16 +174,18 @@ def _install_hf_auth_token_compat() -> None:
 def _import_speechbrain_classes() -> tuple[Any, Any]:
     """Return `(VAD, SpeakerRecognition)` classes across SpeechBrain versions."""
     try:
+        # pylint: disable=import-outside-toplevel
         from speechbrain.inference.VAD import VAD  # type: ignore
         from speechbrain.inference.speaker import SpeakerRecognition  # type: ignore
     except ImportError:
         # Older SpeechBrain versions expose these in `speechbrain.pretrained`.
         try:
+            # pylint: disable-next=import-outside-toplevel
             from speechbrain.pretrained import VAD, SpeakerRecognition  # type: ignore
-        except ImportError as exc:  # pragma: no cover - exercised when speechbrain isn't installed
+        except ImportError as exc:  # pragma: no cover - speechbrain not installed
             raise RuntimeError(
-                "speechbrain diarization backend selected but dependencies are not installed. "
-                "Install with: pip install 'media-core[diarize-speechbrain]'"
+                "speechbrain diarization backend selected but dependencies are not "
+                "installed. Install with: pip install 'media-core[diarize-speechbrain]'"
             ) from exc
     return VAD, SpeakerRecognition
 
@@ -177,15 +203,24 @@ def _ensure_local_hf_snapshot(repo_id: str, sb_cache_dir: Path) -> Path:
 
     if not (local_dir / "hyperparams.yaml").exists():
         try:
+            # pylint: disable-next=import-outside-toplevel
             from huggingface_hub import snapshot_download  # type: ignore
         except ImportError as exc:
-            raise RuntimeError("speechbrain diarization requires `huggingface_hub` for model downloads") from exc
+            raise RuntimeError(
+                "speechbrain diarization requires `huggingface_hub` for model downloads"
+            ) from exc
 
-        snapshot_download(repo_id=repo_id, local_dir=str(local_dir), local_dir_use_symlinks=False)
+        snapshot_download(
+            repo_id=repo_id, local_dir=str(local_dir), local_dir_use_symlinks=False
+        )
 
     custom_py = local_dir / "custom.py"
     if not custom_py.exists():
-        custom_py.write_text("# Auto-generated by Reframe (SpeechBrain models often don't ship custom.py)\n", encoding="utf-8")
+        custom_py.write_text(
+            "# Auto-generated by Reframe (SpeechBrain models often don't ship "
+            "custom.py)\n",
+            encoding="utf-8",
+        )
 
     return local_dir
 
@@ -194,13 +229,15 @@ def _load_mono_waveform(audio_path: str | Path, torch: Any, torchaudio: Any) -> 
     """Load `audio_path` as a mono (channels=1) waveform tensor and sample rate."""
     try:
         waveform, sample_rate = torchaudio.load(str(audio_path))
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
+        # torchaudio raises varied backend-specific errors; fall back for any.
         try:
+            # pylint: disable-next=import-outside-toplevel
             import soundfile as sf  # type: ignore
         except ImportError as exc:
             raise RuntimeError(
-                "Failed to load audio via torchaudio, and `soundfile` is not installed. "
-                "Install with: pip install soundfile"
+                "Failed to load audio via torchaudio, and `soundfile` is not "
+                "installed. Install with: pip install soundfile"
             ) from exc
 
         audio, sample_rate = sf.read(str(audio_path), dtype="float32", always_2d=True)
@@ -219,13 +256,13 @@ def _assign_centroid(
     centroids: list,
     centroid_counts: list,
     similarity_threshold: float,
-    F: Any,
+    functional: Any,
 ) -> int:
     """Assign `emb` to an existing centroid or create a new one; return its index."""
     best_idx = None
     best_sim = -1.0
     for idx, centroid in enumerate(centroids):
-        sim = float(F.cosine_similarity(emb, centroid, dim=0).item())
+        sim = float(functional.cosine_similarity(emb, centroid, dim=0).item())
         if sim > best_sim:
             best_sim = sim
             best_idx = idx
@@ -237,11 +274,13 @@ def _assign_centroid(
 
     centroid_counts[best_idx] += 1
     # Online centroid update + re-normalize.
-    updated = (centroids[best_idx] * (centroid_counts[best_idx] - 1) + emb) / float(centroid_counts[best_idx])
-    centroids[best_idx] = F.normalize(updated, dim=0)
+    count = float(centroid_counts[best_idx])
+    updated = (centroids[best_idx] * (centroid_counts[best_idx] - 1) + emb) / count
+    centroids[best_idx] = functional.normalize(updated, dim=0)
     return best_idx
 
 
+# pylint: disable-next=too-many-arguments,too-many-positional-arguments,too-many-locals
 def _cluster_speech_regions(
     boundaries_list: list,
     waveform: Any,
@@ -249,7 +288,7 @@ def _cluster_speech_regions(
     spk: Any,
     config: DiarizationConfig,
     torch: Any,
-    F: Any,
+    functional: Any,
 ) -> tuple[list[tuple[float, float]], list[int]]:
     """Greedy clustering in embedding space over VAD speech regions."""
     similarity_threshold = 0.65
@@ -280,9 +319,13 @@ def _cluster_speech_regions(
         emb = spk.encode_batch(segment_wav)
         if emb.ndim == 2:
             emb = emb[0]
-        emb = F.normalize(emb.to(torch.float32).detach(), dim=0)
+        emb = functional.normalize(emb.to(torch.float32).detach(), dim=0)
 
-        assignments.append(_assign_centroid(emb, centroids, centroid_counts, similarity_threshold, F))
+        assignments.append(
+            _assign_centroid(
+                emb, centroids, centroid_counts, similarity_threshold, functional
+            )
+        )
         speech_regions.append((start, end))
 
     return speech_regions, assignments
@@ -299,18 +342,27 @@ def _build_speaker_segments(
     segments: list[SpeakerSegment] = []
     for (start, end), cluster_idx in zip(speech_regions, assignments):
         speaker = f"SPEAKER_{cluster_idx:02d}"
-        if segments and segments[-1].speaker == speaker and start <= (segments[-1].end + merge_gap_seconds):
+        if (
+            segments
+            and segments[-1].speaker == speaker
+            and start <= (segments[-1].end + merge_gap_seconds)
+        ):
             segments[-1].end = max(segments[-1].end, end)
             continue
         segments.append(SpeakerSegment(start=start, end=end, speaker=speaker))
 
     if config.min_segment_duration:
-        segments = [s for s in segments if (s.end - s.start) >= config.min_segment_duration]
+        segments = [
+            s for s in segments if (s.end - s.start) >= config.min_segment_duration
+        ]
 
     return segments
 
 
-def _diarize_speechbrain(audio_path: str | Path, config: DiarizationConfig) -> List[SpeakerSegment]:
+# pylint: disable-next=too-many-locals
+def _diarize_speechbrain(
+    audio_path: str | Path, config: DiarizationConfig
+) -> List[SpeakerSegment]:
     """Basic SpeechBrain diarization (token-free).
 
     This is a pragmatic fallback when pyannote models are unavailable:
@@ -321,18 +373,23 @@ def _diarize_speechbrain(audio_path: str | Path, config: DiarizationConfig) -> L
     try:
         _install_hf_auth_token_compat()
 
+        # pylint: disable=import-outside-toplevel
         import torch
-        import torch.nn.functional as F
         import torchaudio
+        from torch.nn import functional
     except ImportError as exc:
         raise RuntimeError(
-            "speechbrain diarization backend selected but dependencies are not installed. "
-            "Install with: pip install 'media-core[diarize-speechbrain]'"
+            "speechbrain diarization backend selected but dependencies are not "
+            "installed. Install with: pip install 'media-core[diarize-speechbrain]'"
         ) from exc
 
-    VAD, SpeakerRecognition = _import_speechbrain_classes()
+    vad_cls, spkrec_cls = _import_speechbrain_classes()
 
-    base_cache_dir = Path(os.getenv("HF_HOME") or os.getenv("HUGGINGFACE_HUB_CACHE") or Path.home() / ".cache" / "reframe")
+    base_cache_dir = Path(
+        os.getenv("HF_HOME")
+        or os.getenv("HUGGINGFACE_HUB_CACHE")
+        or Path.home() / ".cache" / "reframe"
+    )
     sb_cache_dir = base_cache_dir / "speechbrain"
     vad_model_id = "speechbrain/vad-crdnn-libriparty"
     spk_model_id = config.model or "speechbrain/spkrec-ecapa-voxceleb"
@@ -340,24 +397,33 @@ def _diarize_speechbrain(audio_path: str | Path, config: DiarizationConfig) -> L
     vad_dir = _ensure_local_hf_snapshot(vad_model_id, sb_cache_dir)
     spk_dir = _ensure_local_hf_snapshot(spk_model_id, sb_cache_dir)
 
+    # pylint: disable-next=import-outside-toplevel,import-error
     from speechbrain.utils.fetching import LocalStrategy  # type: ignore
 
-    vad = VAD.from_hparams(source=str(vad_dir), savedir=str(vad_dir), local_strategy=LocalStrategy.NO_LINK)
-    spk = SpeakerRecognition.from_hparams(source=str(spk_dir), savedir=str(spk_dir), local_strategy=LocalStrategy.NO_LINK)
+    vad = vad_cls.from_hparams(
+        source=str(vad_dir), savedir=str(vad_dir), local_strategy=LocalStrategy.NO_LINK
+    )
+    spk = spkrec_cls.from_hparams(
+        source=str(spk_dir), savedir=str(spk_dir), local_strategy=LocalStrategy.NO_LINK
+    )
 
     # VAD boundaries are a 1D tensor: [start0, end0, start1, end1, ...]
     boundaries = vad.get_speech_segments(str(audio_path))
     if boundaries is None:
         return []
 
-    boundaries_list = boundaries.detach().cpu().tolist() if hasattr(boundaries, "detach") else list(boundaries)
+    boundaries_list = (
+        boundaries.detach().cpu().tolist()
+        if hasattr(boundaries, "detach")
+        else list(boundaries)
+    )
     if not boundaries_list:
         return []
 
     waveform, sample_rate = _load_mono_waveform(audio_path, torch, torchaudio)
 
     speech_regions, assignments = _cluster_speech_regions(
-        boundaries_list, waveform, sample_rate, spk, config, torch, F
+        boundaries_list, waveform, sample_rate, spk, config, torch, functional
     )
     if not speech_regions:
         return []

@@ -1,3 +1,5 @@
+"""Configuration models for speaker diarization."""
+
 from __future__ import annotations
 
 from enum import Enum
@@ -7,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class DiarizationBackend(str, Enum):
+    """Supported speaker diarization backends."""
+
     NOOP = "noop"
     PYANNOTE = "pyannote"
     SPEECHBRAIN = "speechbrain"

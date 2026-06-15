@@ -1,3 +1,5 @@
+"""API routes for project collaboration: members, comments, approvals, and activity."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -30,6 +32,8 @@ AUTHENTICATION_REQUIRED_MESSAGE = "Authentication required"
 
 
 class ProjectMemberView(SQLModel):
+    """Serialized view of a project member."""
+
     user_id: UUID
     email: str
     display_name: Optional[str] = None
@@ -38,16 +42,22 @@ class ProjectMemberView(SQLModel):
 
 
 class ProjectMemberUpsertRequest(SQLModel):
+    """Request body to add or update a project member."""
+
     user_id: Optional[UUID] = None
     email: Optional[str] = None
     role: str = "viewer"
 
 
 class ProjectMemberRoleUpdateRequest(SQLModel):
+    """Request body to update a project member's role."""
+
     role: str
 
 
 class ProjectCommentView(SQLModel):
+    """Serialized view of a project comment."""
+
     id: UUID
     project_id: UUID
     author_user_id: UUID
@@ -59,11 +69,15 @@ class ProjectCommentView(SQLModel):
 
 
 class ProjectCommentCreateRequest(SQLModel):
+    """Request body to create a project comment."""
+
     body: str
     parent_comment_id: Optional[UUID] = None
 
 
 class ProjectApprovalView(SQLModel):
+    """Serialized view of a project approval request."""
+
     id: UUID
     project_id: UUID
     status: str
@@ -76,10 +90,14 @@ class ProjectApprovalView(SQLModel):
 
 
 class ProjectApprovalCreateRequest(SQLModel):
+    """Request body to create a project approval request."""
+
     summary: Optional[str] = None
 
 
 class ProjectActivityView(SQLModel):
+    """Serialized view of a project activity event."""
+
     id: UUID
     project_id: UUID
     actor_user_id: Optional[UUID] = None
@@ -118,11 +136,16 @@ def _project_or_404(session: Session, project_id: UUID, principal) -> Project:
     return project
 
 
-def _project_membership(session: Session, project_id: UUID, user_id: UUID | None) -> ProjectMembership | None:
+def _project_membership(
+    session: Session, project_id: UUID, user_id: UUID | None
+) -> ProjectMembership | None:
     if not user_id:
         return None
     return session.exec(
-        select(ProjectMembership).where((ProjectMembership.project_id == project_id) & (ProjectMembership.user_id == user_id))
+        select(ProjectMembership).where(
+            (ProjectMembership.project_id == project_id)
+            & (ProjectMembership.user_id == user_id)
+        )
     ).first()
 
 
@@ -136,7 +159,10 @@ def _effective_project_role(session: Session, project: Project, principal) -> st
         return "owner"
     if principal.org_id and project.org_id == principal.org_id:
         org_membership = session.exec(
-            select(OrgMembership).where((OrgMembership.org_id == principal.org_id) & (OrgMembership.user_id == principal.user_id))
+            select(OrgMembership).where(
+                (OrgMembership.org_id == principal.org_id)
+                & (OrgMembership.user_id == principal.user_id)
+            )
         ).first()
         if org_membership and org_membership.role in {"owner", "admin"}:
             return "admin"
@@ -188,10 +214,15 @@ def _member_view(session: Session, membership: ProjectMembership) -> ProjectMemb
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-def list_project_members(project_id: UUID, session: SessionDep, principal: PrincipalDep) -> list[ProjectMemberView]:
+def list_project_members(
+    project_id: UUID, session: SessionDep, principal: PrincipalDep
+) -> list[ProjectMemberView]:
+    """List members of a project, falling back to the owner when none are stored."""
     project = _project_or_404(session, project_id, principal)
     _require_project_role(session, project, principal, "viewer")
-    memberships = session.exec(select(ProjectMembership).where(ProjectMembership.project_id == project_id)).all()
+    memberships = session.exec(
+        select(ProjectMembership).where(ProjectMembership.project_id == project_id)
+    ).all()
     views = [_member_view(session, item) for item in memberships]
     if not views and project.owner_user_id:
         owner = session.get(User, project.owner_user_id)
@@ -220,6 +251,7 @@ def add_project_member(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> ProjectMemberView:
+    """Add a user to a project or update their role if already a member."""
     project = _project_or_404(session, project_id, principal)
     _require_project_role(session, project, principal, "admin")
     role = _normalize_role(payload.role)
@@ -228,15 +260,29 @@ def add_project_member(
     if payload.user_id:
         user = session.get(User, payload.user_id)
     elif payload.email:
-        user = session.exec(select(User).where(User.email == payload.email.strip().lower())).first()
+        user = session.exec(
+            select(User).where(User.email == payload.email.strip().lower())
+        ).first()
     if not user:
-        raise not_found("User not found", {"user_id": str(payload.user_id) if payload.user_id else None, "email": payload.email})
+        raise not_found(
+            "User not found",
+            {
+                "user_id": str(payload.user_id) if payload.user_id else None,
+                "email": payload.email,
+            },
+        )
     if project.org_id:
         org_membership = session.exec(
-            select(OrgMembership).where((OrgMembership.org_id == project.org_id) & (OrgMembership.user_id == user.id))
+            select(OrgMembership).where(
+                (OrgMembership.org_id == project.org_id)
+                & (OrgMembership.user_id == user.id)
+            )
         ).first()
         if not org_membership:
-            raise conflict("User is not an organization member", details={"user_id": str(user.id), "project_id": str(project_id)})
+            raise conflict(
+                "User is not an organization member",
+                details={"user_id": str(user.id), "project_id": str(project_id)},
+            )
 
     membership = _project_membership(session, project_id, user.id)
     now = _now()
@@ -277,11 +323,15 @@ def update_project_member_role(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> ProjectMemberView:
+    """Update an existing project member's role."""
     project = _project_or_404(session, project_id, principal)
     _require_project_role(session, project, principal, "admin")
     membership = _project_membership(session, project_id, user_id)
     if not membership:
-        raise not_found("Project member not found", {"project_id": str(project_id), "user_id": str(user_id)})
+        raise not_found(
+            "Project member not found",
+            {"project_id": str(project_id), "user_id": str(user_id)},
+        )
     membership.role = _normalize_role(payload.role)
     membership.updated_at = _now()
     session.add(membership)
@@ -303,12 +353,18 @@ def update_project_member_role(
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-def remove_project_member(project_id: UUID, user_id: UUID, session: SessionDep, principal: PrincipalDep) -> Response:
+def remove_project_member(
+    project_id: UUID, user_id: UUID, session: SessionDep, principal: PrincipalDep
+) -> Response:
+    """Remove a member from a project."""
     project = _project_or_404(session, project_id, principal)
     _require_project_role(session, project, principal, "admin")
     membership = _project_membership(session, project_id, user_id)
     if not membership:
-        raise not_found("Project member not found", {"project_id": str(project_id), "user_id": str(user_id)})
+        raise not_found(
+            "Project member not found",
+            {"project_id": str(project_id), "user_id": str(user_id)},
+        )
     session.delete(membership)
     _emit_project_activity(
         session,
@@ -326,11 +382,17 @@ def remove_project_member(project_id: UUID, user_id: UUID, session: SessionDep, 
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-def list_project_comments(project_id: UUID, session: SessionDep, principal: PrincipalDep) -> list[ProjectCommentView]:
+def list_project_comments(
+    project_id: UUID, session: SessionDep, principal: PrincipalDep
+) -> list[ProjectCommentView]:
+    """List a project's comments ordered from oldest to newest."""
     project = _project_or_404(session, project_id, principal)
     _require_project_role(session, project, principal, "viewer")
     comments = session.exec(
-        select(ProjectComment).where(ProjectComment.project_id == project_id).order_by(ProjectComment.created_at.asc())
+        select(ProjectComment)
+        .where(ProjectComment.project_id == project_id)
+        # pylint: disable-next=no-member  # SQLModel column .asc() (FieldInfo false positive)
+        .order_by(ProjectComment.created_at.asc())
     ).all()
     views: list[ProjectCommentView] = []
     for comment in comments:
@@ -362,6 +424,7 @@ def create_project_comment(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> ProjectCommentView:
+    """Create a comment on a project, optionally as a reply to another comment."""
     project = _project_or_404(session, project_id, principal)
     _require_project_role(session, project, principal, "viewer")
     if not principal.user_id:
@@ -377,7 +440,10 @@ def create_project_comment(
     if payload.parent_comment_id:
         parent = session.get(ProjectComment, payload.parent_comment_id)
         if not parent or parent.project_id != project_id:
-            raise not_found("Parent comment not found", {"comment_id": str(payload.parent_comment_id)})
+            raise not_found(
+                "Parent comment not found",
+                {"comment_id": str(payload.parent_comment_id)},
+            )
     comment = ProjectComment(
         project_id=project_id,
         org_id=project.org_id,
@@ -393,7 +459,12 @@ def create_project_comment(
         project=project,
         actor_user_id=principal.user_id,
         event_type="project.comment_created",
-        payload={"comment_id": str(comment.id), "parent_comment_id": str(payload.parent_comment_id) if payload.parent_comment_id else None},
+        payload={
+            "comment_id": str(comment.id),
+            "parent_comment_id": (
+                str(payload.parent_comment_id) if payload.parent_comment_id else None
+            ),
+        },
     )
     session.commit()
     session.refresh(comment)
@@ -416,7 +487,10 @@ def create_project_comment(
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-def delete_project_comment(project_id: UUID, comment_id: UUID, session: SessionDep, principal: PrincipalDep) -> Response:
+def delete_project_comment(
+    project_id: UUID, comment_id: UUID, session: SessionDep, principal: PrincipalDep
+) -> Response:
+    """Delete a project comment (author or project admin only)."""
     project = _project_or_404(session, project_id, principal)
     role = _require_project_role(session, project, principal, "viewer")
     comment = session.get(ProjectComment, comment_id)
@@ -448,6 +522,7 @@ def request_project_approval(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> ProjectApprovalView:
+    """Create a pending approval request for a project."""
     project = _project_or_404(session, project_id, principal)
     _require_project_role(session, project, principal, "editor")
     if not principal.user_id:
@@ -501,7 +576,10 @@ def _resolve_project_approval(
         project=project,
         actor_user_id=principal.user_id,
         event_type=f"project.approval_{resolved_status}",
-        payload={"approval_id": str(approval.id), "requested_by_user_id": str(approval.requested_by_user_id)},
+        payload={
+            "approval_id": str(approval.id),
+            "requested_by_user_id": str(approval.requested_by_user_id),
+        },
     )
     session.commit()
     session.refresh(approval)
@@ -513,7 +591,10 @@ def _resolve_project_approval(
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-def approve_project_approval(project_id: UUID, approval_id: UUID, session: SessionDep, principal: PrincipalDep) -> ProjectApprovalView:
+def approve_project_approval(
+    project_id: UUID, approval_id: UUID, session: SessionDep, principal: PrincipalDep
+) -> ProjectApprovalView:
+    """Approve a pending project approval request."""
     return _resolve_project_approval(
         project_id=project_id,
         approval_id=approval_id,
@@ -528,7 +609,10 @@ def approve_project_approval(project_id: UUID, approval_id: UUID, session: Sessi
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-def reject_project_approval(project_id: UUID, approval_id: UUID, session: SessionDep, principal: PrincipalDep) -> ProjectApprovalView:
+def reject_project_approval(
+    project_id: UUID, approval_id: UUID, session: SessionDep, principal: PrincipalDep
+) -> ProjectApprovalView:
+    """Reject a pending project approval request."""
     return _resolve_project_approval(
         project_id=project_id,
         approval_id=approval_id,
@@ -543,13 +627,20 @@ def reject_project_approval(project_id: UUID, approval_id: UUID, session: Sessio
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-def list_project_activity(project_id: UUID, session: SessionDep, principal: PrincipalDep, limit: int = 100) -> list[ProjectActivityView]:
+def list_project_activity(
+    project_id: UUID,
+    session: SessionDep,
+    principal: PrincipalDep,
+    limit: int = 100,
+) -> list[ProjectActivityView]:
+    """List a project's activity events ordered from newest to oldest."""
     project = _project_or_404(session, project_id, principal)
     _require_project_role(session, project, principal, "viewer")
     clamped_limit = max(1, min(limit, 300))
     events = session.exec(
         select(ProjectActivityEvent)
         .where(ProjectActivityEvent.project_id == project_id)
+        # pylint: disable-next=no-member  # SQLModel column .desc() (FieldInfo false positive)
         .order_by(ProjectActivityEvent.created_at.desc())
         .limit(clamped_limit)
     ).all()

@@ -1,3 +1,11 @@
+"""Translator interface and built-in implementations.
+
+Provides an abstract :class:`Translator` plus a no-op fallback, a cloud-backed
+LLM translator, and an offline ``argostranslate`` implementation. Each concrete
+class intentionally exposes a single public ``translate_batch`` method as part
+of a strategy-style interface.
+"""
+
 from __future__ import annotations
 
 import os
@@ -6,6 +14,10 @@ from typing import Callable, List, Optional
 
 
 class Translator(ABC):
+    """Abstract base for translators that convert batches of strings."""
+
+    # pylint: disable=too-few-public-methods
+
     @abstractmethod
     def translate_batch(self, texts: List[str], src: str, tgt: str) -> List[str]:
         """Translate a batch of strings from src to tgt."""
@@ -15,7 +27,11 @@ class Translator(ABC):
 class NoOpTranslator(Translator):
     """Local fallback translator that returns the input unchanged."""
 
-    def translate_batch(self, texts: List[str], src: str, tgt: str) -> List[str]:  # pragma: no cover - trivial
+    # pylint: disable=too-few-public-methods
+
+    def translate_batch(
+        self, texts: List[str], src: str, tgt: str
+    ) -> List[str]:  # pragma: no cover - trivial
         return texts
 
 
@@ -26,6 +42,8 @@ class CloudTranslator(Translator):
     similar to OpenAI or Groq SDKs. Provide a pre-configured client instance to avoid
     importing optional dependencies directly from this package.
     """
+
+    # pylint: disable=too-few-public-methods
 
     def __init__(
         self,
@@ -55,7 +73,10 @@ class CloudTranslator(Translator):
                 {"role": "system", "content": self.system_prompt.format(src=src, tgt=tgt)},
                 {
                     "role": "user",
-                    "content": f"Translate this from {src} to {tgt}. Reply with translation only: {text}",
+                    "content": (
+                        f"Translate this from {src} to {tgt}. "
+                        f"Reply with translation only: {text}"
+                    ),
                 },
             ]
 
@@ -65,13 +86,15 @@ class CloudTranslator(Translator):
                     messages=messages,
                     temperature=self.temperature,
                 )
-                content = getattr(resp.choices[0].message, "content", "")  # type: ignore[attr-defined]
+                content = getattr(
+                    resp.choices[0].message, "content", ""
+                )  # type: ignore[attr-defined]
                 cleaned = content.strip() if content else text
                 if self.postprocess:
                     cleaned = self.postprocess(cleaned)
                 results.append(cleaned or text)
-            except Exception:
-                # Fallback to original text if the provider fails
+            except Exception:  # pylint: disable=broad-exception-caught
+                # Fallback to original text if the provider fails for any reason.
                 results.append(text)
         return results
 
@@ -79,15 +102,20 @@ class CloudTranslator(Translator):
 class LocalTranslator(Translator):
     """Offline translator using argostranslate if available."""
 
+    # pylint: disable=too-few-public-methods
+
     def __init__(self, src: str, tgt: str):
         try:
-            from argostranslate import translate  # type: ignore
+            # Imported lazily so the optional dependency is only required at runtime.
+            from argostranslate import translate  # type: ignore  # pylint: disable=import-outside-toplevel
         except ImportError as exc:  # pragma: no cover - optional dependency
-            raise RuntimeError("argostranslate is not installed; install extras 'translate-local'") from exc
+            raise RuntimeError(
+                "argostranslate is not installed; install extras 'translate-local'"
+            ) from exc
 
         languages = translate.get_installed_languages()
-        self._src_lang = next((l for l in languages if l.code == src), None)
-        self._tgt_lang = next((l for l in languages if l.code == tgt), None)
+        self._src_lang = next((l for l in languages if l.code == src), None)  # noqa: E741
+        self._tgt_lang = next((l for l in languages if l.code == tgt), None)  # noqa: E741
         if not self._src_lang or not self._tgt_lang:
             raise RuntimeError(f"argostranslate missing language pack for {src}->{tgt}")
         self._translator = self._src_lang.get_translation(self._tgt_lang)

@@ -1,3 +1,5 @@
+"""Configuration models for audio transcription backends."""
+
 from enum import Enum
 from typing import Optional
 
@@ -5,6 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class TranscriptionBackend(str, Enum):
+    """Supported transcription backend identifiers."""
+
     OPENAI_WHISPER = "openai_whisper"
     FASTER_WHISPER = "faster_whisper"
     WHISPER_CPP = "whisper_cpp"

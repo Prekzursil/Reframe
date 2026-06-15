@@ -1,3 +1,5 @@
+"""Minimal OpenAI-compatible Groq chat client used by the worker service."""
+
 from __future__ import annotations
 
 import json
@@ -8,18 +10,25 @@ from typing import Any, Optional
 
 
 def _truthy_env(name: str) -> bool:
+    """Return True when the named environment variable is a truthy flag."""
     value = os.getenv(name, "").strip().lower()
     return value in {"1", "true", "yes", "on"}
 
 
-class GroqChatClient:
+class GroqChatClient:  # pylint: disable=too-few-public-methods
     """Minimal OpenAI-compatible chat client for Groq.
 
     Exposes `chat.completions.create(model=..., messages=[...])` so it can be used with
     `media_core.translate.CloudTranslator` and `media_core.segment.shorts.score_segments_llm`.
     """
 
-    def __init__(self, *, api_key: str, base_url: str = "https://api.groq.com/openai/v1", timeout_seconds: float = 30.0) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str = "https://api.groq.com/openai/v1",
+        timeout_seconds: float = 30.0,
+    ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
@@ -37,6 +46,7 @@ class GroqChatClient:
         max_tokens: Optional[int] = None,
         response_format: Optional[dict[str, Any]] = None,
     ):
+        """Call Groq's chat completions endpoint and return an OpenAI-shaped response."""
         if _truthy_env("REFRAME_OFFLINE_MODE"):
             raise RuntimeError("REFRAME_OFFLINE_MODE is enabled; refusing to call Groq API.")
 
@@ -53,14 +63,17 @@ class GroqChatClient:
             method="POST",
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"},
         )
-        with urllib.request.urlopen(req, timeout=self.timeout_seconds) as resp:  # noqa: S310 - intended outbound request (gated)
+        # Intended outbound request (gated above by REFRAME_OFFLINE_MODE).
+        with urllib.request.urlopen(  # noqa: S310
+            req, timeout=self.timeout_seconds
+        ) as resp:
             data = resp.read()
 
         parsed = json.loads(data.decode("utf-8"))
         content = ""
         try:
             content = parsed["choices"][0]["message"]["content"]
-        except Exception:
+        except (KeyError, IndexError, TypeError):
             content = ""
 
         # Return a minimal object compatible with OpenAI SDK response shape used in this repo.
@@ -68,6 +81,7 @@ class GroqChatClient:
 
 
 def get_groq_chat_client_from_env() -> Optional[GroqChatClient]:
+    """Build a GroqChatClient from environment variables, or None when unavailable."""
     if _truthy_env("REFRAME_OFFLINE_MODE"):
         return None
     api_key = os.getenv("GROQ_API_KEY", "").strip()
@@ -80,4 +94,3 @@ def get_groq_chat_client_from_env() -> Optional[GroqChatClient]:
     except ValueError:
         timeout = 30.0
     return GroqChatClient(api_key=api_key, base_url=base_url, timeout_seconds=timeout)
-

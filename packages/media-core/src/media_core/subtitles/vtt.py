@@ -50,7 +50,7 @@ def parse_vtt(vtt_text: str) -> List[SubtitleLine]:
             cue_lines = []
             return
         start, end = _parse_timing(timing)
-        content = " ".join(l.strip() for l in cue_lines if l.strip()).strip()
+        content = " ".join(l.strip() for l in cue_lines if l.strip()).strip()  # noqa: E741
         if content:
             out.append(SubtitleLine(start=start, end=end, words=[Word(text=content, start=start, end=end)]))
         timing = None

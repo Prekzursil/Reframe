@@ -1,3 +1,5 @@
+"""FastAPI application factory and HTTP middleware wiring for the Reframe API."""
+
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -23,6 +25,7 @@ from app.logging_config import setup_logging
 
 
 def create_app() -> FastAPI:
+    """Build and configure the FastAPI application instance."""
     settings = get_settings()
     setup_logging(log_format=settings.log_format, log_level=settings.log_level)
     request_logger = logging.getLogger("reframe.request")
@@ -52,12 +55,17 @@ def create_app() -> FastAPI:
         )
         yield
 
-    app = FastAPI(title=settings.api_title, version=settings.api_version, openapi_tags=tags_metadata, lifespan=lifespan)
+    application = FastAPI(
+        title=settings.api_title,
+        version=settings.api_version,
+        openapi_tags=tags_metadata,
+        lifespan=lifespan,
+    )
 
     Path(settings.media_root).mkdir(parents=True, exist_ok=True)
-    app.mount("/media", StaticFiles(directory=settings.media_root), name="media")
+    application.mount("/media", StaticFiles(directory=settings.media_root), name="media")
 
-    @app.middleware("http")
+    @application.middleware("http")
     async def log_requests(request: Request, call_next):
         start = time.perf_counter()
         request_id = request.headers.get("x-request-id") or str(uuid4())
@@ -93,24 +101,24 @@ def create_app() -> FastAPI:
         response.headers["x-request-id"] = request_id
         return response
 
-    @app.exception_handler(ApiError)
+    @application.exception_handler(ApiError)
     async def api_error_handler(_, exc: ApiError):
         payload = ErrorResponse(code=exc.code, message=exc.message, details=exc.details)
         return JSONResponse(status_code=exc.status_code, content=payload.model_dump())
 
-    app.include_router(api_router)
-    app.include_router(auth_router)
-    app.include_router(identity_router)
-    app.include_router(collaboration_router)
-    app.include_router(publish_router)
-    app.include_router(billing_router)
+    application.include_router(api_router)
+    application.include_router(auth_router)
+    application.include_router(identity_router)
+    application.include_router(collaboration_router)
+    application.include_router(publish_router)
+    application.include_router(billing_router)
 
-    @app.get("/health", tags=["Health"])
-    @app.get("/healthz", tags=["Health"])
+    @application.get("/health", tags=["Health"])
+    @application.get("/healthz", tags=["Health"])
     def health() -> dict[str, str]:
         return {"status": "ok", "version": settings.api_version}
 
-    return app
+    return application
 
 
 app = create_app()

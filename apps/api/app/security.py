@@ -1,3 +1,5 @@
+"""Password hashing and JWT token helpers for authentication and OAuth state."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -26,12 +28,14 @@ def _now_utc() -> datetime:
 
 
 def hash_password(password: str) -> str:
+    """Return an Argon2 hash for the given non-empty password."""
     if not password:
         raise ValueError("Password is required")
     return _PASSWORD_HASHER.hash(password)
 
 
 def verify_password(password: str, hashed_password: str | None) -> bool:
+    """Return True if the password matches the stored Argon2 hash."""
     if not password or not hashed_password:
         return False
     if hashed_password.startswith("$argon2"):
@@ -43,20 +47,23 @@ def verify_password(password: str, hashed_password: str | None) -> bool:
 
 
 def create_access_token(*, user_id: UUID, org_id: Optional[UUID], role: str) -> str:
+    """Return a signed JWT access token for the given user, org, and role."""
     settings = get_settings()
     now = _now_utc()
+    access_ttl = timedelta(minutes=max(1, int(settings.jwt_access_ttl_minutes)))
     payload = {
         "sub": str(user_id),
         "org": str(org_id) if org_id else None,
         "role": role,
         "typ": "access",
         "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(minutes=max(1, int(settings.jwt_access_ttl_minutes)))).timestamp()),
+        "exp": int((now + access_ttl).timestamp()),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
 def create_refresh_token(*, user_id: UUID, org_id: Optional[UUID], role: str) -> str:
+    """Return a signed JWT refresh token for the given user, org, and role."""
     settings = get_settings()
     now = _now_utc()
     payload = {
@@ -71,6 +78,7 @@ def create_refresh_token(*, user_id: UUID, org_id: Optional[UUID], role: str) ->
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
+    """Decode and validate an access token, returning its claims payload."""
     settings = get_settings()
     payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
     if payload.get("typ") != "access":
@@ -79,6 +87,7 @@ def decode_access_token(token: str) -> dict[str, Any]:
 
 
 def decode_refresh_token(token: str) -> dict[str, Any]:
+    """Decode and validate a refresh token, returning its claims payload."""
     settings = get_settings()
     payload = jwt.decode(token, settings.jwt_refresh_secret, algorithms=["HS256"])
     if payload.get("typ") != "refresh":
@@ -86,7 +95,10 @@ def decode_refresh_token(token: str) -> dict[str, Any]:
     return payload
 
 
-def create_oauth_state(*, provider: str, redirect_to: str | None = None, ttl_minutes: int = 10) -> str:
+def create_oauth_state(
+    *, provider: str, redirect_to: str | None = None, ttl_minutes: int = 10
+) -> str:
+    """Return a signed JWT encoding the OAuth provider and redirect target."""
     settings = get_settings()
     issued = _now_utc()
     expires = issued + timedelta(minutes=max(1, ttl_minutes))
@@ -101,6 +113,7 @@ def create_oauth_state(*, provider: str, redirect_to: str | None = None, ttl_min
 
 
 def parse_oauth_state(state: str) -> tuple[str, Optional[str]]:
+    """Validate an OAuth state token and return its provider and redirect."""
     settings = get_settings()
     try:
         payload = jwt.decode(state, settings.oauth_state_secret, algorithms=["HS256"])
@@ -124,6 +137,8 @@ def parse_oauth_state(state: str) -> tuple[str, Optional[str]]:
 
 @dataclass
 class AuthPrincipal:
+    """Authenticated request context: user, organization, and role."""
+
     user_id: Optional[UUID] = None
     org_id: Optional[UUID] = None
     role: str = "owner"

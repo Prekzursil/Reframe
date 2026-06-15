@@ -1,3 +1,5 @@
+"""SQLModel ORM table definitions for the Reframe API domain model."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -15,10 +17,13 @@ FK_USER_ID = "user.id"
 
 
 def utcnow() -> datetime:
+    """Return the current time as a timezone-aware UTC datetime."""
     return datetime.now(timezone.utc)
 
 
 class Organization(SQLModel, table=True):
+    """A tenant organization that owns users, projects, and billing state."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     name: str
     slug: str = Field(index=True, unique=True)
@@ -29,6 +34,8 @@ class Organization(SQLModel, table=True):
 
 
 class User(SQLModel, table=True):
+    """An authenticated end user account."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     email: str = Field(index=True, unique=True)
     password_hash: Optional[str] = Field(default=None)
@@ -39,7 +46,11 @@ class User(SQLModel, table=True):
 
 
 class OrgMembership(SQLModel, table=True):
-    __table_args__ = (UniqueConstraint("org_id", "user_id", name="uq_org_membership_org_user"),)
+    """Association linking a user to an organization with a role."""
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "user_id", name="uq_org_membership_org_user"),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
@@ -50,7 +61,13 @@ class OrgMembership(SQLModel, table=True):
 
 
 class OAuthAccount(SQLModel, table=True):
-    __table_args__ = (UniqueConstraint("provider", "provider_subject", name="uq_oauth_provider_subject"),)
+    """A federated identity linking a user to an external OAuth provider."""
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider", "provider_subject", name="uq_oauth_provider_subject"
+        ),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     user_id: UUID = Field(foreign_key=FK_USER_ID, index=True)
@@ -62,6 +79,8 @@ class OAuthAccount(SQLModel, table=True):
 
 
 class Plan(SQLModel, table=True):
+    """A subscription plan defining quotas, limits, and overage pricing."""
+
     code: str = Field(primary_key=True, index=True)
     name: str
     max_concurrent_jobs: int = Field(default=1)
@@ -75,6 +94,8 @@ class Plan(SQLModel, table=True):
 
 
 class Subscription(SQLModel, table=True):
+    """An organization's active subscription to a billing plan."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True, unique=True)
     plan_code: str = Field(foreign_key="plan.code", default="free")
@@ -89,9 +110,13 @@ class Subscription(SQLModel, table=True):
 
 
 class InvoiceSnapshot(SQLModel, table=True):
+    """A point-in-time record of a billing invoice and its line items."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
-    subscription_id: Optional[UUID] = Field(default=None, foreign_key="subscription.id", index=True)
+    subscription_id: Optional[UUID] = Field(
+        default=None, foreign_key="subscription.id", index=True
+    )
     stripe_invoice_id: Optional[str] = Field(default=None, index=True)
     amount_cents: int = Field(default=0)
     currency: str = Field(default="usd")
@@ -104,6 +129,8 @@ class InvoiceSnapshot(SQLModel, table=True):
 
 
 class UsageEvent(SQLModel, table=True):
+    """A raw metered usage event emitted during job processing."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
     user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
@@ -115,7 +142,17 @@ class UsageEvent(SQLModel, table=True):
 
 
 class UsageAggregate(SQLModel, table=True):
-    __table_args__ = (UniqueConstraint("org_id", "metric", "period_start", "period_end", name="uq_usage_aggregate_bucket"),)
+    """A rolled-up usage total for an org/metric within a time bucket."""
+
+    __table_args__ = (
+        UniqueConstraint(
+            "org_id",
+            "metric",
+            "period_start",
+            "period_end",
+            name="uq_usage_aggregate_bucket",
+        ),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
@@ -127,7 +164,11 @@ class UsageAggregate(SQLModel, table=True):
 
 
 class ApiKey(SQLModel, table=True):
-    __table_args__ = (UniqueConstraint("org_id", "key_hash", name="uq_apikey_org_key_hash"),)
+    """A hashed API key granting programmatic access scoped to an org."""
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "key_hash", name="uq_apikey_org_key_hash"),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
@@ -143,9 +184,13 @@ class ApiKey(SQLModel, table=True):
 
 
 class AuditEvent(SQLModel, table=True):
+    """An immutable audit-log entry recording a security-relevant action."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
-    actor_user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
+    actor_user_id: Optional[UUID] = Field(
+        default=None, foreign_key=FK_USER_ID, index=True
+    )
     event_type: str = Field(index=True)
     entity_type: Optional[str] = Field(default=None, index=True)
     entity_id: Optional[str] = Field(default=None, index=True)
@@ -154,6 +199,10 @@ class AuditEvent(SQLModel, table=True):
 
 
 class WorkflowRunStatus(str, Enum):
+    """Lifecycle status of a workflow run."""
+
+    # Member names are the serialized string values; keep them lowercase.
+    # pylint: disable=invalid-name
     queued = "queued"
     running = "running"
     completed = "completed"
@@ -162,6 +211,10 @@ class WorkflowRunStatus(str, Enum):
 
 
 class WorkflowStepStatus(str, Enum):
+    """Lifecycle status of a single workflow step."""
+
+    # Member names are the serialized string values; keep them lowercase.
+    # pylint: disable=invalid-name
     queued = "queued"
     running = "running"
     completed = "completed"
@@ -170,6 +223,8 @@ class WorkflowStepStatus(str, Enum):
 
 
 class WorkflowTemplate(SQLModel, table=True):
+    """A reusable, ordered template describing a multi-step workflow."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     name: str
     description: Optional[str] = Field(default=None)
@@ -182,6 +237,8 @@ class WorkflowTemplate(SQLModel, table=True):
 
 
 class WorkflowRun(SQLModel, table=True):
+    """A concrete execution instance of a workflow template."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     template_id: UUID = Field(foreign_key="workflowtemplate.id", index=True)
     task_id: Optional[str] = Field(default=None, index=True)
@@ -196,7 +253,13 @@ class WorkflowRun(SQLModel, table=True):
 
 
 class WorkflowRunStep(SQLModel, table=True):
-    __table_args__ = (UniqueConstraint("run_id", "order_index", name="uq_workflow_run_step_order"),)
+    """A single ordered step within a workflow run."""
+
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "order_index", name="uq_workflow_run_step_order"
+        ),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     run_id: UUID = Field(foreign_key="workflowrun.id", index=True)
@@ -209,6 +272,8 @@ class WorkflowRunStep(SQLModel, table=True):
 
 
 class UsageLedgerEntry(SQLModel, table=True):
+    """An append-only ledger entry recording metered usage and its cost."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
     user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
@@ -222,7 +287,11 @@ class UsageLedgerEntry(SQLModel, table=True):
 
 
 class OrgBudgetPolicy(SQLModel, table=True):
-    __table_args__ = (UniqueConstraint("org_id", name="uq_org_budget_policy_org"),)
+    """Per-organization spend limits and hard-limit enforcement settings."""
+
+    __table_args__ = (
+        UniqueConstraint("org_id", name="uq_org_budget_policy_org"),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
@@ -235,7 +304,11 @@ class OrgBudgetPolicy(SQLModel, table=True):
 
 
 class SsoConnection(SQLModel, table=True):
-    __table_args__ = (UniqueConstraint("org_id", name="uq_sso_connection_org"),)
+    """Single sign-on (SSO) configuration for an organization."""
+
+    __table_args__ = (
+        UniqueConstraint("org_id", name="uq_sso_connection_org"),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
@@ -254,7 +327,11 @@ class SsoConnection(SQLModel, table=True):
 
 
 class ScimToken(SQLModel, table=True):
-    __table_args__ = (UniqueConstraint("org_id", "token_hash", name="uq_scim_token_org_hash"),)
+    """A hashed bearer token authorizing SCIM provisioning for an org."""
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "token_hash", name="uq_scim_token_org_hash"),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
@@ -269,7 +346,17 @@ class ScimToken(SQLModel, table=True):
 
 
 class ScimIdentity(SQLModel, table=True):
-    __table_args__ = (UniqueConstraint("org_id", "provider", "external_id", "resource_type", name="uq_scim_identity_external"),)
+    """A SCIM-provisioned identity mapped to a local user or group."""
+
+    __table_args__ = (
+        UniqueConstraint(
+            "org_id",
+            "provider",
+            "external_id",
+            "resource_type",
+            name="uq_scim_identity_external",
+        ),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
@@ -286,7 +373,16 @@ class ScimIdentity(SQLModel, table=True):
 
 
 class RoleMapping(SQLModel, table=True):
-    __table_args__ = (UniqueConstraint("org_id", "provider", "external_value", name="uq_role_mapping_external"),)
+    """Maps an external IdP group or attribute value to a local role."""
+
+    __table_args__ = (
+        UniqueConstraint(
+            "org_id",
+            "provider",
+            "external_value",
+            name="uq_role_mapping_external",
+        ),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
@@ -298,7 +394,15 @@ class RoleMapping(SQLModel, table=True):
 
 
 class ProjectMembership(SQLModel, table=True):
-    __table_args__ = (UniqueConstraint("project_id", "user_id", name="uq_project_membership_project_user"),)
+    """Association linking a user to a project with a role."""
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "user_id",
+            name="uq_project_membership_project_user",
+        ),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     project_id: UUID = Field(foreign_key=FK_PROJECT_ID, index=True)
@@ -310,40 +414,60 @@ class ProjectMembership(SQLModel, table=True):
 
 
 class ProjectComment(SQLModel, table=True):
+    """A threaded comment posted on a project."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     project_id: UUID = Field(foreign_key=FK_PROJECT_ID, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key=FK_ORGANIZATION_ID, index=True)
+    org_id: Optional[UUID] = Field(
+        default=None, foreign_key=FK_ORGANIZATION_ID, index=True
+    )
     author_user_id: UUID = Field(foreign_key=FK_USER_ID, index=True)
-    parent_comment_id: Optional[UUID] = Field(default=None, foreign_key="projectcomment.id", index=True)
+    parent_comment_id: Optional[UUID] = Field(
+        default=None, foreign_key="projectcomment.id", index=True
+    )
     body: str
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
 
 class ProjectApprovalRequest(SQLModel, table=True):
+    """A request for human approval of a project action or output."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     project_id: UUID = Field(foreign_key=FK_PROJECT_ID, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key=FK_ORGANIZATION_ID, index=True)
+    org_id: Optional[UUID] = Field(
+        default=None, foreign_key=FK_ORGANIZATION_ID, index=True
+    )
     requested_by_user_id: UUID = Field(foreign_key=FK_USER_ID, index=True)
     status: str = Field(default="pending", index=True)
     summary: Optional[str] = Field(default=None)
-    resolved_by_user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
+    resolved_by_user_id: Optional[UUID] = Field(
+        default=None, foreign_key=FK_USER_ID, index=True
+    )
     resolved_at: Optional[datetime] = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
 
 class ProjectActivityEvent(SQLModel, table=True):
+    """An activity-feed event describing something that happened in a project."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     project_id: UUID = Field(foreign_key=FK_PROJECT_ID, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key=FK_ORGANIZATION_ID, index=True)
-    actor_user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
+    org_id: Optional[UUID] = Field(
+        default=None, foreign_key=FK_ORGANIZATION_ID, index=True
+    )
+    actor_user_id: Optional[UUID] = Field(
+        default=None, foreign_key=FK_USER_ID, index=True
+    )
     event_type: str = Field(index=True)
     payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
 class PublishConnection(SQLModel, table=True):
+    """A connection to an external publishing destination (e.g. social account)."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
     user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
@@ -359,6 +483,8 @@ class PublishConnection(SQLModel, table=True):
 
 
 class PublishJob(SQLModel, table=True):
+    """A job that publishes a media asset to an external destination."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
     user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
@@ -377,10 +503,18 @@ class PublishJob(SQLModel, table=True):
 
 
 class AutomationRunEvent(SQLModel, table=True):
+    """An event recording progress of an automation run step."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key=FK_ORGANIZATION_ID, index=True)
-    workflow_run_id: Optional[UUID] = Field(default=None, foreign_key="workflowrun.id", index=True)
-    publish_job_id: Optional[UUID] = Field(default=None, foreign_key="publishjob.id", index=True)
+    org_id: Optional[UUID] = Field(
+        default=None, foreign_key=FK_ORGANIZATION_ID, index=True
+    )
+    workflow_run_id: Optional[UUID] = Field(
+        default=None, foreign_key="workflowrun.id", index=True
+    )
+    publish_job_id: Optional[UUID] = Field(
+        default=None, foreign_key="publishjob.id", index=True
+    )
     step_name: str = Field(index=True)
     status: str = Field(index=True)
     message: Optional[str] = Field(default=None)
@@ -389,6 +523,8 @@ class AutomationRunEvent(SQLModel, table=True):
 
 
 class MediaAsset(SQLModel, table=True):
+    """A stored media artifact such as a video, audio track, or subtitle."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     kind: str = Field(description="Type of asset, e.g., video, audio, subtitle")
     uri: Optional[str] = Field(default=None, description="Storage URI or path for the asset")
@@ -402,6 +538,10 @@ class MediaAsset(SQLModel, table=True):
 
 
 class JobStatus(str, Enum):
+    """Lifecycle status of a processing job."""
+
+    # Member names are the serialized string values; keep them lowercase.
+    # pylint: disable=invalid-name
     queued = "queued"
     running = "running"
     completed = "completed"
@@ -410,6 +550,10 @@ class JobStatus(str, Enum):
 
 
 class OrgRole(str, Enum):
+    """Role granted to a user within an organization."""
+
+    # Member names are the serialized string values; keep them lowercase.
+    # pylint: disable=invalid-name
     owner = "owner"
     admin = "admin"
     editor = "editor"
@@ -417,6 +561,10 @@ class OrgRole(str, Enum):
 
 
 class InviteStatus(str, Enum):
+    """Lifecycle status of an organization invite."""
+
+    # Member names are the serialized string values; keep them lowercase.
+    # pylint: disable=invalid-name
     pending = "pending"
     accepted = "accepted"
     revoked = "revoked"
@@ -424,13 +572,23 @@ class InviteStatus(str, Enum):
 
 
 class Job(SQLModel, table=True):
+    """An asynchronous media-processing job tracked through its lifecycle."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    job_type: str = Field(description="Pipeline type, e.g., transcribe, translate, shorts")
-    task_id: Optional[str] = Field(default=None, index=True, description="Celery task id for execution tracking")
+    job_type: str = Field(
+        description="Pipeline type, e.g., transcribe, translate, shorts"
+    )
+    task_id: Optional[str] = Field(
+        default=None, index=True, description="Celery task id for execution tracking"
+    )
     status: JobStatus = Field(default=JobStatus.queued, index=True)
     progress: float = Field(default=0.0, description="0-1.0 progress fraction")
     error: Optional[str] = Field(default=None, description="Error message if failed")
-    payload: dict = Field(default_factory=dict, sa_column=Column(JSON), description="Options or parameters for the job")
+    payload: dict = Field(
+        default_factory=dict,
+        sa_column=Column(JSON),
+        description="Options or parameters for the job",
+    )
 
     input_asset_id: Optional[UUID] = Field(default=None, foreign_key=FK_MEDIA_ASSET_ID)
     output_asset_id: Optional[UUID] = Field(default=None, foreign_key=FK_MEDIA_ASSET_ID)
@@ -444,15 +602,23 @@ class Job(SQLModel, table=True):
 
 
 class SubtitleStylePreset(SQLModel, table=True):
+    """A reusable named preset of subtitle styling options."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     name: str
     description: Optional[str] = Field(default=None)
-    style: dict = Field(default_factory=dict, sa_column=Column(JSON), description="Serialized style payload")
+    style: dict = Field(
+        default_factory=dict,
+        sa_column=Column(JSON),
+        description="Serialized style payload",
+    )
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
 
 class Project(SQLModel, table=True):
+    """A workspace grouping media assets and jobs under an organization."""
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     name: str
     description: Optional[str] = Field(default=None)
@@ -463,9 +629,13 @@ class Project(SQLModel, table=True):
 
 
 class OrgInvite(SQLModel, table=True):
+    """An invitation for a user to join an organization with a role."""
+
     __table_args__ = (
         UniqueConstraint("token_hash", name="uq_org_invite_token_hash"),
-        UniqueConstraint("org_id", "email", "status", name="uq_org_invite_org_email_status"),
+        UniqueConstraint(
+            "org_id", "email", "status", name="uq_org_invite_org_email_status"
+        ),
     )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)

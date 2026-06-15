@@ -1,7 +1,9 @@
+"""Parse and translate SubRip (SRT) subtitle text."""
+
 from __future__ import annotations
 
 import re
-from typing import Iterable, List, Tuple
+from typing import List
 
 from media_core.subtitles.builder import SubtitleLine, to_srt
 from media_core.transcribe.models import Word
@@ -22,6 +24,7 @@ def _parse_timestamp(ts: str) -> float:
 
 
 def parse_srt(srt_text: str) -> List[SubtitleLine]:
+    """Parse SRT text into a list of ``SubtitleLine`` objects."""
     lines: List[SubtitleLine] = []
     blocks = re.split(r"\n\s*\n", srt_text.strip(), flags=re.MULTILINE)
     for block in blocks:
@@ -47,6 +50,7 @@ def parse_srt(srt_text: str) -> List[SubtitleLine]:
 
 
 def translate_srt(srt_text: str, translator: Translator, src: str, tgt: str) -> str:
+    """Translate SRT text from ``src`` to ``tgt`` and return new SRT text."""
     lines = parse_srt(srt_text)
     texts = [line.text() for line in lines]
     translated = translator.translate_batch(texts, src, tgt)

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402  -- imports below intentionally follow a sys.path bootstrap
 from __future__ import annotations
 
 import argparse

@@ -1,3 +1,5 @@
+"""Sliding-window rate limiting and FastAPI enforcement dependencies."""
+
 from __future__ import annotations
 
 import time
@@ -10,13 +12,16 @@ from app.config import get_settings
 from app.errors import rate_limited
 
 
-class RateLimiter:
+class RateLimiter:  # pylint: disable=too-few-public-methods
+    """In-memory sliding-window rate limiter keyed by an arbitrary string."""
+
     def __init__(self, limit: int, window_seconds: int) -> None:
         self.limit = max(1, int(limit))
         self.window_seconds = max(1, int(window_seconds))
         self._hits: Dict[str, Deque[float]] = {}
 
     def allow(self, key: str) -> bool:
+        """Record a hit for ``key`` and report whether it is within the limit."""
         now = time.time()
         window_start = now - self.window_seconds
         bucket = self._hits.setdefault(key, deque())
@@ -34,9 +39,18 @@ class RateLimiter:
 def _build_policy_limiters() -> dict[str, RateLimiter]:
     settings = get_settings()
     return {
-        "default": RateLimiter(limit=settings.rate_limit_requests, window_seconds=settings.rate_limit_window_seconds),
-        "heavy_jobs": RateLimiter(limit=settings.rate_limit_heavy_requests, window_seconds=settings.rate_limit_heavy_window_seconds),
-        "uploads": RateLimiter(limit=settings.rate_limit_upload_requests, window_seconds=settings.rate_limit_upload_window_seconds),
+        "default": RateLimiter(
+            limit=settings.rate_limit_requests,
+            window_seconds=settings.rate_limit_window_seconds,
+        ),
+        "heavy_jobs": RateLimiter(
+            limit=settings.rate_limit_heavy_requests,
+            window_seconds=settings.rate_limit_heavy_window_seconds,
+        ),
+        "uploads": RateLimiter(
+            limit=settings.rate_limit_upload_requests,
+            window_seconds=settings.rate_limit_upload_window_seconds,
+        ),
     }
 
 
@@ -61,6 +75,8 @@ def _enforce_policy(request: Request, policy: str) -> None:
 
 
 def enforce_rate_limit(policy: str = "default"):
+    """Return a FastAPI dependency that enforces the given rate-limit policy."""
+
     async def _dependency(request: Request) -> None:
         _enforce_policy(request, policy)
 
@@ -68,4 +84,5 @@ def enforce_rate_limit(policy: str = "default"):
 
 
 async def enforce_default_rate_limit(request: Request) -> None:
+    """FastAPI dependency enforcing the default rate-limit policy."""
     _enforce_policy(request, "default")

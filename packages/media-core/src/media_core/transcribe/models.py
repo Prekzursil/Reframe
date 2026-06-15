@@ -1,3 +1,5 @@
+"""Pydantic models describing transcription words and results."""
+
 from __future__ import annotations
 
 from typing import Iterable, List, Optional
@@ -6,6 +8,8 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class Word(BaseModel):
+    """A single transcribed word with its timing and confidence."""
+
     text: str = Field(..., description="The transcribed word text.")
     start: float = Field(..., ge=0.0, description="Start time in seconds.")
     end: float = Field(..., gt=0.0, description="End time in seconds.")
@@ -19,16 +23,22 @@ class Word(BaseModel):
     @model_validator(mode="after")
     def _validate_order(self) -> "Word":
         if self.end <= self.start:
-            msg = f"Word '{self.text}' has non-positive duration: start={self.start}, end={self.end}"
+            msg = (
+                f"Word '{self.text}' has non-positive duration: "
+                f"start={self.start}, end={self.end}"
+            )
             raise ValueError(msg)
         return self
 
     @property
     def duration(self) -> float:
+        """Return the word's duration in seconds."""
         return self.end - self.start
 
 
 class TranscriptionResult(BaseModel):
+    """An ordered, validated collection of transcribed words with metadata."""
+
     words: List[Word] = Field(default_factory=list, description="Ordered list of words.")
     text: Optional[str] = Field(default=None, description="Full transcript if provided.")
     model: Optional[str] = Field(default=None, description="Model identifier.")
@@ -52,6 +62,7 @@ class TranscriptionResult(BaseModel):
 
     @property
     def duration(self) -> float:
+        """Return total duration from the first word's start to the last word's end."""
         if not self.words:
             return 0.0
         return self.words[-1].end - self.words[0].start

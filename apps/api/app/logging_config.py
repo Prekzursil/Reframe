@@ -1,3 +1,8 @@
+"""Logging configuration helpers for the Reframe API.
+
+Provides a JSON log formatter and a one-time logger setup routine.
+"""
+
 from __future__ import annotations
 
 import json
@@ -32,6 +37,8 @@ _RESERVED = {
 
 
 class JsonFormatter(logging.Formatter):
+    """Format log records as single-line JSON objects."""
+
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, object] = {
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -49,6 +56,7 @@ class JsonFormatter(logging.Formatter):
 
 
 def setup_logging(*, log_format: str = "json", log_level: str = "INFO") -> None:
+    """Configure the ``reframe`` logger once with the given format and level."""
     logger = logging.getLogger("reframe")
     if getattr(logger, "_reframe_configured", False):
         return
@@ -64,4 +72,3 @@ def setup_logging(*, log_format: str = "json", log_level: str = "INFO") -> None:
     logger.addHandler(handler)
     logger.propagate = False
     setattr(logger, "_reframe_configured", True)
-

@@ -114,6 +114,31 @@ const ORG_MANAGER_ROLES = new Set(["owner", "admin"]);
 const PUBLISH_PROVIDERS = ["youtube", "tiktok", "instagram", "facebook"] as const;
 type PublishProvider = (typeof PUBLISH_PROVIDERS)[number];
 
+type StyleActionPayload = {
+  video_asset_id: string;
+  subtitle_asset_id: string;
+  style: Record<string, unknown>;
+  preview_seconds?: number;
+};
+
+type RawClipPayload = {
+  id?: string;
+  asset_id?: string | null;
+  subtitle_asset_id?: string | null;
+  thumbnail_asset_id?: string | null;
+  styled_asset_id?: string | null;
+  styled_uri?: unknown;
+  style_preset?: unknown;
+  start?: number | null;
+  end?: number | null;
+  duration?: number | null;
+  score?: number | null;
+  uri?: unknown;
+  url?: unknown;
+  subtitle_uri?: unknown;
+  thumbnail_uri?: unknown;
+};
+
 async function copyToClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
@@ -1363,13 +1388,13 @@ function ShortsForm({ onCreated, projectId }: Readonly<{ onCreated: (job: Job) =
           </p>
         )}
       </label>
-	      {(useSubtitles || numClips > 6 || maxDuration > 60) && (
-	        <div className="field full">
-	          <p className="muted">
-	            Heads-up: generating many/long clips can take a while. For real per-clip subtitles, set a timed subtitle asset id (SRT/VTT) in Advanced selection.
-	          </p>
-	        </div>
-	      )}
+        {(useSubtitles || numClips > 6 || maxDuration > 60) && (
+          <div className="field full">
+            <p className="muted">
+              Heads-up: generating many/long clips can take a while. For real per-clip subtitles, set a timed subtitle asset id (SRT/VTT) in Advanced selection.
+            </p>
+          </div>
+        )}
       {error && <div className="error-inline">{error}</div>}
       <div className="actions-row">
         <CopyCommandButton command={curlCommand} />
@@ -1388,8 +1413,8 @@ function StyleEditor({
   videoId,
   subtitleId,
 }: Readonly<{
-  onPreview: (payload: any) => Promise<Job | void> | void;
-  onRender: (payload: any) => Promise<Job | void> | void;
+  onPreview: (payload: StyleActionPayload) => Promise<Job | void> | void;
+  onRender: (payload: StyleActionPayload) => Promise<Job | void> | void;
   onJobCreated?: (job: Job) => void;
   videoId: string;
   subtitleId: string;
@@ -1420,7 +1445,7 @@ function StyleEditor({
     position,
   };
 
-  const act = async (cb: (payload: any) => Promise<Job | void> | void, preview: boolean) => {
+  const act = async (cb: (payload: StyleActionPayload) => Promise<Job | void> | void, preview: boolean) => {
     setBusy(true);
     setMessage(null);
     try {
@@ -1517,43 +1542,43 @@ function StyleEditor({
   );
 }
 
-	function AppShell() {
-	  const [active, setActive] = useState(NAV_ITEMS[0].id);
-	  const [theme, setTheme] = useState<"light" | "dark">("dark");
-	  const [showSettings, setShowSettings] = useState(false);
-		  const { jobs, loading, error, refresh } = useLiveJobs();
-		  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
-		  const [inputAsset, setInputAsset] = useState<MediaAsset | null>(null);
-		  const [outputAsset, setOutputAsset] = useState<MediaAsset | null>(null);
-		  const [assetError, setAssetError] = useState<string | null>(null);
-		  const [assetLoading, setAssetLoading] = useState(false);
-		  const jobVideoRef = useRef<HTMLVideoElement | null>(null);
-		  const [transcriptCues, setTranscriptCues] = useState<SubtitleCue[]>([]);
-		  const [transcriptSearch, setTranscriptSearch] = useState("");
-		  const [transcriptError, setTranscriptError] = useState<string | null>(null);
-		  const [transcriptLoading, setTranscriptLoading] = useState(false);
-	  const [uploadedVideoId, setUploadedVideoId] = useState<string>("");
+  function AppShell() {
+    const [active, setActive] = useState(NAV_ITEMS[0].id);
+    const [theme, setTheme] = useState<"light" | "dark">("dark");
+    const [showSettings, setShowSettings] = useState(false);
+      const { jobs, loading, error, refresh } = useLiveJobs();
+      const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+      const [inputAsset, setInputAsset] = useState<MediaAsset | null>(null);
+      const [outputAsset, setOutputAsset] = useState<MediaAsset | null>(null);
+      const [assetError, setAssetError] = useState<string | null>(null);
+      const [assetLoading, setAssetLoading] = useState(false);
+      const jobVideoRef = useRef<HTMLVideoElement | null>(null);
+      const [transcriptCues, setTranscriptCues] = useState<SubtitleCue[]>([]);
+      const [transcriptSearch, setTranscriptSearch] = useState("");
+      const [transcriptError, setTranscriptError] = useState<string | null>(null);
+      const [transcriptLoading, setTranscriptLoading] = useState(false);
+    const [uploadedVideoId, setUploadedVideoId] = useState<string>("");
   const [uploadedPreview, setUploadedPreview] = useState<string | null>(null);
   const [subtitleAssetId, setSubtitleAssetId] = useState<string>("");
   const [subtitlePreview, setSubtitlePreview] = useState<string | null>(null);
   const [subtitleFileName, setSubtitleFileName] = useState<string | null>(null);
-			  const [captionJob, setCaptionJob] = useState<Job | null>(null);
+        const [captionJob, setCaptionJob] = useState<Job | null>(null);
   const [captionOutput, setCaptionOutput] = useState<MediaAsset | null>(null);
   const [translateJob, setTranslateJob] = useState<Job | null>(null);
   const [translateOutput, setTranslateOutput] = useState<MediaAsset | null>(null);
-				const [shortsClips, setShortsClips] = useState<
-			    ShortsClip[]
-			  >([]);
-		    const [editingClipId, setEditingClipId] = useState<string | null>(null);
-		    const [recutClipId, setRecutClipId] = useState<string | null>(null);
+        const [shortsClips, setShortsClips] = useState<
+          ShortsClip[]
+        >([]);
+        const [editingClipId, setEditingClipId] = useState<string | null>(null);
+        const [recutClipId, setRecutClipId] = useState<string | null>(null);
         const [styleClipId, setStyleClipId] = useState<string | null>(null);
-		    const [shortsEditError, setShortsEditError] = useState<string | null>(null);
+        const [shortsEditError, setShortsEditError] = useState<string | null>(null);
         const [shortsStyleError, setShortsStyleError] = useState<string | null>(null);
         const [shortsStylePresetAll, setShortsStylePresetAll] = useState(PRESETS[0]?.name ?? "TikTok Bold");
         const [shortsStyleAllBusy, setShortsStyleAllBusy] = useState(false);
-		    const [timelineFps, setTimelineFps] = useState(30);
-		    const [timelineIncludeAudio, setTimelineIncludeAudio] = useState(false);
-		    const [timelinePerClipReel, setTimelinePerClipReel] = useState(false);
+        const [timelineFps, setTimelineFps] = useState(30);
+        const [timelineIncludeAudio, setTimelineIncludeAudio] = useState(false);
+        const [timelinePerClipReel, setTimelinePerClipReel] = useState(false);
   const [shortsJob, setShortsJob] = useState<Job | null>(null);
   const [shortsStatusPolling, setShortsStatusPolling] = useState(false);
   const [subtitleToolsJob, setSubtitleToolsJob] = useState<Job | null>(null);
@@ -1568,17 +1593,17 @@ function StyleEditor({
   const [mergeVideoId, setMergeVideoId] = useState<string>("");
   const [mergeAudioId, setMergeAudioId] = useState<string>("");
   const [recentVideoAssets, setRecentVideoAssets] = useState<MediaAsset[]>([]);
-	  const [recentSubtitleAssets, setRecentSubtitleAssets] = useState<MediaAsset[]>([]);
-	  const [recentAssetsLoading, setRecentAssetsLoading] = useState(false);
-	  const [recentAssetsError, setRecentAssetsError] = useState<string | null>(null);
-		  const [jobsPageJobs, setJobsPageJobs] = useState<Job[]>([]);
-		  const [jobsPageLoading, setJobsPageLoading] = useState(false);
-		  const [jobsPageError, setJobsPageError] = useState<string | null>(null);
+    const [recentSubtitleAssets, setRecentSubtitleAssets] = useState<MediaAsset[]>([]);
+    const [recentAssetsLoading, setRecentAssetsLoading] = useState(false);
+    const [recentAssetsError, setRecentAssetsError] = useState<string | null>(null);
+      const [jobsPageJobs, setJobsPageJobs] = useState<Job[]>([]);
+      const [jobsPageLoading, setJobsPageLoading] = useState(false);
+      const [jobsPageError, setJobsPageError] = useState<string | null>(null);
     const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
     const [retryingJobId, setRetryingJobId] = useState<string | null>(null);
-		  const [jobsStatusFilter, setJobsStatusFilter] = useState<JobStatus | "">("");
-		  const [jobsTypeFilter, setJobsTypeFilter] = useState("");
-		  const [jobsDateFrom, setJobsDateFrom] = useState("");
+      const [jobsStatusFilter, setJobsStatusFilter] = useState<JobStatus | "">("");
+      const [jobsTypeFilter, setJobsTypeFilter] = useState("");
+      const [jobsDateFrom, setJobsDateFrom] = useState("");
   const [jobsDateTo, setJobsDateTo] = useState("");
     const [systemStatus, setSystemStatus] = useState<SystemStatusResponse | null>(null);
     const [systemLoading, setSystemLoading] = useState(false);
@@ -1689,7 +1714,7 @@ function StyleEditor({
     if (!uri) return null;
     return toSafeMediaUrl(apiClient.mediaUrl(uri));
   };
-  const triggerSafeDownload = (safeUrl: string | null, _filename?: string) => {
+  const triggerSafeDownload = (safeUrl: string | null) => {
     if (!safeUrl) return;
     let parsed: URL;
     try {
@@ -1761,48 +1786,48 @@ function StyleEditor({
     }
   };
 
-	  useEffect(() => {
-	    if (active === "subtitles") {
-	      void refreshRecentAssets();
-	    }
-	  }, [active, selectedProjectId]);
+    useEffect(() => {
+      if (active === "subtitles") {
+        void refreshRecentAssets();
+      }
+    }, [active, selectedProjectId]);
 
-		  const loadJobsPage = async () => {
-		    setJobsPageLoading(true);
-		    setJobsPageError(null);
-		    try {
-		      const data = await apiClient.listJobs({ project_id: selectedProjectId || undefined });
-		      setJobsPageJobs(data);
-		    } catch (err) {
-		      setJobsPageError(err instanceof Error ? err.message : "Failed to load jobs");
-		    } finally {
-		      setJobsPageLoading(false);
-		    }
-		  };
+      const loadJobsPage = async () => {
+        setJobsPageLoading(true);
+        setJobsPageError(null);
+        try {
+          const data = await apiClient.listJobs({ project_id: selectedProjectId || undefined });
+          setJobsPageJobs(data);
+        } catch (err) {
+          setJobsPageError(err instanceof Error ? err.message : "Failed to load jobs");
+        } finally {
+          setJobsPageLoading(false);
+        }
+      };
 
-		  const deleteJobAndRefresh = async (job: Job) => {
-		    const confirmed = globalThis.confirm(
-		      "Delete this job and its derived assets?\n\nThis removes generated files (clips/subtitles/manifests) stored under media/tmp. Input uploads are kept.",
-		    );
-		    if (!confirmed) return;
+      const deleteJobAndRefresh = async (job: Job) => {
+        const confirmed = globalThis.confirm(
+          "Delete this job and its derived assets?\n\nThis removes generated files (clips/subtitles/manifests) stored under media/tmp. Input uploads are kept.",
+        );
+        if (!confirmed) return;
 
-		    setJobsPageError(null);
-		    setDeletingJobId(job.id);
-		    try {
-		      await apiClient.deleteJob(job.id, { deleteAssets: true });
-		      if (selectedJob?.id === job.id) {
-		        setSelectedJob(null);
-		        setInputAsset(null);
-		        setOutputAsset(null);
-		      }
-		      await loadJobsPage();
-		      refresh();
-		    } catch (err) {
-		      setJobsPageError(err instanceof Error ? err.message : "Failed to delete job");
-		    } finally {
-		      setDeletingJobId(null);
-		    }
-		  };
+        setJobsPageError(null);
+        setDeletingJobId(job.id);
+        try {
+          await apiClient.deleteJob(job.id, { deleteAssets: true });
+          if (selectedJob?.id === job.id) {
+            setSelectedJob(null);
+            setInputAsset(null);
+            setOutputAsset(null);
+          }
+          await loadJobsPage();
+          refresh();
+        } catch (err) {
+          setJobsPageError(err instanceof Error ? err.message : "Failed to delete job");
+        } finally {
+          setDeletingJobId(null);
+        }
+      };
 
       const retryJobAndRefresh = async (job: Job) => {
         setJobsPageError(null);
@@ -1819,11 +1844,11 @@ function StyleEditor({
         }
       };
 
-		  useEffect(() => {
-		    if (active === "jobs") {
-		      void loadJobsPage();
-		    }
-		  }, [active, selectedProjectId]);
+      useEffect(() => {
+        if (active === "jobs") {
+          void loadJobsPage();
+        }
+      }, [active, selectedProjectId]);
 
     const loadSystemStatus = async () => {
       setSystemLoading(true);
@@ -1981,48 +2006,48 @@ function StyleEditor({
       setShareLinks([]);
     }, [selectedProjectId]);
 
-		  const formatTimestamp = (value?: string | null) => {
-		    if (!value) return "n/a";
-		    const date = new Date(value);
-		    if (Number.isNaN(date.getTime())) return value;
-		    return date.toLocaleString();
-		  };
+      const formatTimestamp = (value?: string | null) => {
+        if (!value) return "n/a";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return value;
+        return date.toLocaleString();
+      };
 
-		  const formatCueTime = (seconds: number) => {
-		    const total = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
-		    const h = Math.floor(total / 3600);
-		    const m = Math.floor((total % 3600) / 60);
-		    const s = total % 60;
-		    const pad2 = (v: number) => String(v).padStart(2, "0");
-		    return h > 0 ? `${h}:${pad2(m)}:${pad2(s)}` : `${m}:${pad2(s)}`;
-		  };
+      const formatCueTime = (seconds: number) => {
+        const total = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
+        const h = Math.floor(total / 3600);
+        const m = Math.floor((total % 3600) / 60);
+        const s = total % 60;
+        const pad2 = (v: number) => String(v).padStart(2, "0");
+        return h > 0 ? `${h}:${pad2(m)}:${pad2(s)}` : `${m}:${pad2(s)}`;
+      };
 
-		  const jobTypeOptions = useMemo(() => {
-		    const types = new Set(jobsPageJobs.map((job) => job.job_type).filter(Boolean));
-		    return Array.from(types).sort((a, b) => a.localeCompare(b));
-		  }, [jobsPageJobs]);
+      const jobTypeOptions = useMemo(() => {
+        const types = new Set(jobsPageJobs.map((job) => job.job_type).filter(Boolean));
+        return Array.from(types).sort((a, b) => a.localeCompare(b));
+      }, [jobsPageJobs]);
 
-	  const filteredJobs = useMemo(() => {
-	    const from = jobsDateFrom ? new Date(`${jobsDateFrom}T00:00:00`) : null;
-	    const to = jobsDateTo ? new Date(`${jobsDateTo}T23:59:59`) : null;
-	    return jobsPageJobs
-	      .filter((job) => (jobsStatusFilter ? job.status === jobsStatusFilter : true))
-	      .filter((job) => (jobsTypeFilter ? job.job_type === jobsTypeFilter : true))
-	      .filter((job) => {
-	        if (!from && !to) return true;
-	        if (!job.created_at) return false;
-	        const created = new Date(job.created_at);
-	        if (Number.isNaN(created.getTime())) return false;
-	        if (from && created < from) return false;
-	        if (to && created > to) return false;
-	        return true;
-	      })
-	      .sort((a, b) => {
-	        const aDate = a.created_at ? new Date(a.created_at).getTime() : 0;
-	        const bDate = b.created_at ? new Date(b.created_at).getTime() : 0;
-	        return bDate - aDate;
-	      });
-	  }, [jobsPageJobs, jobsDateFrom, jobsDateTo, jobsStatusFilter, jobsTypeFilter]);
+    const filteredJobs = useMemo(() => {
+      const from = jobsDateFrom ? new Date(`${jobsDateFrom}T00:00:00`) : null;
+      const to = jobsDateTo ? new Date(`${jobsDateTo}T23:59:59`) : null;
+      return jobsPageJobs
+        .filter((job) => (jobsStatusFilter ? job.status === jobsStatusFilter : true))
+        .filter((job) => (jobsTypeFilter ? job.job_type === jobsTypeFilter : true))
+        .filter((job) => {
+          if (!from && !to) return true;
+          if (!job.created_at) return false;
+          const created = new Date(job.created_at);
+          if (Number.isNaN(created.getTime())) return false;
+          if (from && created < from) return false;
+          if (to && created > to) return false;
+          return true;
+        })
+        .sort((a, b) => {
+          const aDate = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const bDate = b.created_at ? new Date(b.created_at).getTime() : 0;
+          return bDate - aDate;
+        });
+    }, [jobsPageJobs, jobsDateFrom, jobsDateTo, jobsStatusFilter, jobsTypeFilter]);
 
   const pollJob = (job: Job | null, onUpdate: (j: Job) => void, onAsset?: (a: MediaAsset | null) => void) => {
     if (!job || ["completed", "failed", "cancelled"].includes(job.status)) return () => {};
@@ -2047,16 +2072,17 @@ function StyleEditor({
         const refreshed = await apiClient.getJob(job.id);
         onUpdate(refreshed);
 
-        if (job.job_type === "shorts" && refreshed.payload && "clip_assets" in (refreshed.payload as any)) {
+        if (job.job_type === "shorts" && refreshed.payload && "clip_assets" in refreshed.payload) {
+          const shortsPayload = refreshed.payload as Record<string, unknown>;
           const resolveUri = (value: unknown): string | null => {
             if (!value || typeof value !== "string") return null;
             return toSafeMediaHref(value);
           };
           const defaultStylePreset =
-            typeof (refreshed.payload as any).style_preset === "string" && (refreshed.payload as any).style_preset.trim()
-              ? (refreshed.payload as any).style_preset.trim()
+            typeof shortsPayload.style_preset === "string" && shortsPayload.style_preset.trim()
+              ? shortsPayload.style_preset.trim()
               : PRESETS[0]?.name ?? "TikTok Bold";
-          const clips = ((refreshed.payload as any).clip_assets as any[]).map((c, i) => ({
+          const clips = (shortsPayload.clip_assets as RawClipPayload[]).map((c, i) => ({
             id: c.id || `${refreshed.id}-clip-${i + 1}`,
             asset_id: c.asset_id ?? null,
             subtitle_asset_id: c.subtitle_asset_id ?? null,
@@ -2201,156 +2227,160 @@ function StyleEditor({
     throw new Error("Timed out waiting for job output");
   };
 
-	  const ensureSubtitleAssetForStyling = async (): Promise<string> => {
-	    if (subtitleAssetId) return subtitleAssetId;
-	    if (captionOutput?.id) return captionOutput.id;
-	    if (!uploadedVideoId) throw new Error("Upload a video or provide a subtitle asset id first.");
-	    setCaptionOutput(null);
-	    setCaptionJob(null);
-	    const job = await apiClient.createCaptionJob({
+    const ensureSubtitleAssetForStyling = async (): Promise<string> => {
+      if (subtitleAssetId) return subtitleAssetId;
+      if (captionOutput?.id) return captionOutput.id;
+      if (!uploadedVideoId) throw new Error("Upload a video or provide a subtitle asset id first.");
+      setCaptionOutput(null);
+      setCaptionJob(null);
+      const job = await apiClient.createCaptionJob({
         video_asset_id: uploadedVideoId,
         project_id: selectedProjectId || undefined,
         options: {},
       });
-	    setCaptionJob(job);
-	    const { job: finished, asset } = await waitForJobAsset(job.id);
-	    setCaptionJob(finished);
-	    if (asset?.id) {
-	      setCaptionOutput(asset);
-	      setSubtitleAssetId(asset.id);
-	      return asset.id;
-	    }
-	    throw new Error("Captions did not produce an output asset.");
-	  };
+      setCaptionJob(job);
+      const { job: finished, asset } = await waitForJobAsset(job.id);
+      setCaptionJob(finished);
+      if (asset?.id) {
+        setCaptionOutput(asset);
+        setSubtitleAssetId(asset.id);
+        return asset.id;
+      }
+      throw new Error("Captions did not produce an output asset.");
+    };
 
-		  const selectJobAndAssets = async (job: Job) => {
-		    setSelectedJob(job);
-		    setInputAsset(null);
-		    setOutputAsset(null);
-		    setAssetError(null);
-		    setAssetLoading(true);
-		    try {
-	      const refreshed = await apiClient.getJob(job.id);
-	      setSelectedJob(refreshed);
+      const selectJobAndAssets = async (job: Job) => {
+        setSelectedJob(job);
+        setInputAsset(null);
+        setOutputAsset(null);
+        setAssetError(null);
+        setAssetLoading(true);
+        try {
+        const refreshed = await apiClient.getJob(job.id);
+        setSelectedJob(refreshed);
 
-	      const inputId = refreshed.input_asset_id;
-	      const outputId = refreshed.output_asset_id;
-	      const [input, output] = await Promise.all([
-	        inputId ? apiClient.getAsset(inputId).catch(() => null) : Promise.resolve(null),
-	        outputId ? apiClient.getAsset(outputId).catch(() => null) : Promise.resolve(null),
-	      ]);
-	      setInputAsset(input);
-	      setOutputAsset(output);
-	    } catch (err) {
-	      setAssetError(err instanceof Error ? err.message : "Failed to fetch job details");
-	    } finally {
-	      setAssetLoading(false);
-		    }
-		  };
+        const inputId = refreshed.input_asset_id;
+        const outputId = refreshed.output_asset_id;
+        const [input, output] = await Promise.all([
+          inputId ? apiClient.getAsset(inputId).catch(() => null) : Promise.resolve(null),
+          outputId ? apiClient.getAsset(outputId).catch(() => null) : Promise.resolve(null),
+        ]);
+        setInputAsset(input);
+        setOutputAsset(output);
+      } catch (err) {
+        setAssetError(err instanceof Error ? err.message : "Failed to fetch job details");
+      } finally {
+        setAssetLoading(false);
+        }
+      };
 
-		  useEffect(() => {
-		    setTranscriptCues([]);
-		    setTranscriptError(null);
-		    setTranscriptLoading(false);
-		    setTranscriptSearch("");
+      useEffect(() => {
+        setTranscriptCues([]);
+        setTranscriptError(null);
+        setTranscriptLoading(false);
+        setTranscriptSearch("");
 
-		    if (!selectedJob || outputAsset?.kind !== "subtitle" || !outputAsset?.uri) return;
+        if (!selectedJob || outputAsset?.kind !== "subtitle" || !outputAsset?.uri) return;
 
-		    let cancelled = false;
-			    const load = async () => {
-			      setTranscriptLoading(true);
-			      try {
-			        const url = toSafeMediaHref(outputAsset.uri);
+        let cancelled = false;
+          const load = async () => {
+            setTranscriptLoading(true);
+            try {
+              const url = toSafeMediaHref(outputAsset.uri);
               if (!url) {
                 throw new Error("Unsafe subtitle preview URL");
               }
-			        const resp = await fetch(url);
-			        const text = await resp.text();
-		        const { cues } = subtitlesToCues(text);
-		        if (!cancelled) setTranscriptCues(cues);
-		      } catch (err) {
-		        if (!cancelled) setTranscriptError(err instanceof Error ? err.message : "Failed to load transcript");
-		      } finally {
-		        if (!cancelled) setTranscriptLoading(false);
-		      }
-		    };
+              const resp = await fetch(url);
+              const text = await resp.text();
+            const { cues } = subtitlesToCues(text);
+            if (!cancelled) setTranscriptCues(cues);
+          } catch (err) {
+            if (!cancelled) setTranscriptError(err instanceof Error ? err.message : "Failed to load transcript");
+          } finally {
+            if (!cancelled) setTranscriptLoading(false);
+          }
+        };
 
-		    void load();
-		    return () => {
-		      cancelled = true;
-		    };
-		  }, [selectedJob?.id, outputAsset?.uri]);
+        void load();
+        return () => {
+          cancelled = true;
+        };
+      }, [selectedJob?.id, outputAsset?.uri]);
 
-		  const recentStatuses = useMemo(
-		    () => ({
-		      completed: jobs.filter((j) => j.status === "completed").length,
-		      running: jobs.filter((j) => j.status === "running").length,
-		      queued: jobs.filter((j) => j.status === "queued").length,
-		    }),
-		    [jobs]
-		  );
+      const recentStatuses = useMemo(
+        () => ({
+          completed: jobs.filter((j) => j.status === "completed").length,
+          running: jobs.filter((j) => j.status === "running").length,
+          queued: jobs.filter((j) => j.status === "queued").length,
+        }),
+        [jobs]
+      );
 
-		  const moveShortsClip = (clipId: string, delta: -1 | 1) => {
-		    setShortsClips((prev) => {
-		      const idx = prev.findIndex((c) => c.id === clipId);
-		      if (idx < 0) return prev;
-		      const nextIdx = idx + delta;
-		      if (nextIdx < 0 || nextIdx >= prev.length) return prev;
-		      const next = [...prev];
-		      const [item] = next.splice(idx, 1);
-		      next.splice(nextIdx, 0, item!);
-		      return next;
-		    });
-		  };
+      const moveShortsClip = (clipId: string, delta: -1 | 1) => {
+        setShortsClips((prev) => {
+          const idx = prev.findIndex((c) => c.id === clipId);
+          if (idx < 0) return prev;
+          const nextIdx = idx + delta;
+          if (nextIdx < 0 || nextIdx >= prev.length) return prev;
+          const next = [...prev];
+          const [item] = next.splice(idx, 1);
+          next.splice(nextIdx, 0, item!);
+          return next;
+        });
+      };
 
-			  const recutShortsClip = async (clip: ShortsClip) => {
-			    setShortsEditError(null);
-			    if (!uploadedVideoId) {
-			      setShortsEditError("Upload a source video first.");
-			      return;
-		    }
-		    const start = Number(clip.start ?? 0);
-		    const end = Number(clip.end ?? start);
-		    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
-		      setShortsEditError("Start/end must be valid numbers and end must be greater than start.");
-		      return;
-		    }
+        const recutShortsClip = async (clip: ShortsClip) => {
+          setShortsEditError(null);
+          if (!uploadedVideoId) {
+            setShortsEditError("Upload a source video first.");
+            return;
+        }
+        const start = Number(clip.start ?? 0);
+        const end = Number(clip.end ?? start);
+        if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+          setShortsEditError("Start/end must be valid numbers and end must be greater than start.");
+          return;
+        }
 
-		    setRecutClipId(clip.id);
-		    try {
-		      const job = await apiClient.createCutClipJob({
+        setRecutClipId(clip.id);
+        try {
+          const job = await apiClient.createCutClipJob({
             video_asset_id: uploadedVideoId,
             project_id: selectedProjectId || undefined,
             start,
             end,
           });
-		      const { job: finished, asset } = await waitForJobAsset(job.id);
-		      if (!asset?.uri) throw new Error("Cut-clip job did not produce an output asset.");
-		      const payload = (finished.payload || {}) as any;
+          const { job: finished, asset } = await waitForJobAsset(job.id);
+          if (!asset?.uri) throw new Error("Cut-clip job did not produce an output asset.");
+          const payload = (finished.payload || {}) as {
+            thumbnail_asset_id?: string | null;
+            thumbnail_uri?: string | null;
+            duration?: number | null;
+          };
 
-			      setShortsClips((prev) =>
-			        prev.map((c) =>
-			          c.id === clip.id
-			            ? {
-			                ...c,
+            setShortsClips((prev) =>
+              prev.map((c) =>
+                c.id === clip.id
+                  ? {
+                      ...c,
                       asset_id: asset.id,
-			                uri: asset.uri,
+                      uri: asset.uri,
                       styled_asset_id: null,
                       styled_uri: null,
                       thumbnail_asset_id: payload.thumbnail_asset_id ?? c.thumbnail_asset_id ?? null,
-			                thumbnail_uri: payload.thumbnail_uri ?? c.thumbnail_uri,
-			                duration: payload.duration ?? Math.max(0, end - start),
-			              }
-			            : c,
-			        ),
-			      );
-		      refresh();
-		    } catch (err) {
-		      setShortsEditError(err instanceof Error ? err.message : "Failed to re-cut clip");
-			    } finally {
-			      setRecutClipId(null);
-			    }
-			  };
+                      thumbnail_uri: payload.thumbnail_uri ?? c.thumbnail_uri,
+                      duration: payload.duration ?? Math.max(0, end - start),
+                    }
+                  : c,
+              ),
+            );
+          refresh();
+        } catch (err) {
+          setShortsEditError(err instanceof Error ? err.message : "Failed to re-cut clip");
+          } finally {
+            setRecutClipId(null);
+          }
+        };
 
         const resolveStylePreset = (name: string | null | undefined) => {
           const presetName = String(name || "").trim();
@@ -2753,8 +2783,7 @@ function StyleEditor({
           if (!orgInfo || !apiClient.accessToken) return;
           const role = String(orgInfo.role || "").toLowerCase();
           if (!ORG_MANAGER_ROLES.has(role)) return;
-          const clientAny = apiClient as any;
-          if (typeof clientAny.getOrgSsoConfig !== "function") return;
+          if (typeof apiClient.getOrgSsoConfig !== "function") return;
           setSsoLoading(true);
           setSsoError(null);
           try {
@@ -2842,8 +2871,7 @@ function StyleEditor({
 
         const loadProjectCollaboration = async (projectId: string) => {
           if (!projectId || !apiClient.accessToken) return;
-          const clientAny = apiClient as any;
-          if (typeof clientAny.listProjectMembers !== "function") return;
+          if (typeof apiClient.listProjectMembers !== "function") return;
           setProjectCollabLoading(true);
           setProjectCollabError(null);
           try {
@@ -2976,8 +3004,7 @@ function StyleEditor({
 
         const loadPublishAutomation = async () => {
           if (!apiClient.accessToken) return;
-          const clientAny = apiClient as any;
-          if (typeof clientAny.listPublishProviders !== "function") return;
+          if (typeof apiClient.listPublishProviders !== "function") return;
           setPublishLoading(true);
           setPublishError(null);
           try {
@@ -3128,9 +3155,9 @@ function StyleEditor({
           }
         }, [shareSourceAssetId, publishAssetIdDraft]);
 
-		  return (
-		    <div className="layout">
-	      <aside className="sidebar">
+      return (
+        <div className="layout">
+        <aside className="sidebar">
         <div className="brand">
           <span className="dot" />
           <div>
@@ -3229,15 +3256,15 @@ function StyleEditor({
             {error && <div className="error-inline">{error}</div>}
             {!loading && !error && jobs.length === 0 && <p className="muted">No jobs yet.</p>}
             {!loading &&
-	              jobs.map((job) => (
-	                <button key={job.id} className="job-row selectable" onClick={() => void selectJobAndAssets(job)}>
-	                  <div>
-	                    <p className="metric-label">{job.job_type}</p>
-	                    <p className="metric-value">{job.id}</p>
-	                  </div>
-	                  <JobStatusPill status={job.status} />
-	                </button>
-	              ))}
+                jobs.map((job) => (
+                  <button key={job.id} className="job-row selectable" onClick={() => void selectJobAndAssets(job)}>
+                    <div>
+                      <p className="metric-label">{job.job_type}</p>
+                      <p className="metric-value">{job.id}</p>
+                    </div>
+                    <JobStatusPill status={job.status} />
+                  </button>
+                ))}
           </Card>
 
           <Card title="Status snapshot">
@@ -3289,8 +3316,8 @@ function StyleEditor({
           </Card>
         </section>
 
-	        {active === "shorts" && (
-	          <section className="grid two-col">
+          {active === "shorts" && (
+            <section className="grid two-col">
             <Card title="Upload or link video">
               <UploadPanel
                 projectId={selectedProjectId || undefined}
@@ -3310,9 +3337,9 @@ function StyleEditor({
                 }}
               />
             </Card>
-	          <Card title="Progress">
-	            {shortsJob ? (
-	              <div className="snapshot">
+            <Card title="Progress">
+              {shortsJob ? (
+                <div className="snapshot">
                 <div>
                   <p className="metric-label">Job</p>
                   <p className="metric-value">{shortsJob.id}</p>
@@ -3329,17 +3356,17 @@ function StyleEditor({
                 </div>
                 <p className="muted">Steps: transcribe → segment → render</p>
                 {shortsStatusPolling && <Spinner label="Polling job status..." />}
-	                {(shortsOutput?.uri || shortsClips.length > 0) && (
-	                  <div className="actions-row">
-		                    {toSafeMediaHref(shortsOutput?.uri) && (
-		                      <Button
+                  {(shortsOutput?.uri || shortsClips.length > 0) && (
+                    <div className="actions-row">
+                        {toSafeMediaHref(shortsOutput?.uri) && (
+                          <Button
                               type="button"
                               variant="secondary"
-                              onClick={() => triggerSafeDownload(toSafeMediaHref(shortsOutput?.uri), "shorts_manifest.json")}
+                              onClick={() => triggerSafeDownload(toSafeMediaHref(shortsOutput?.uri))}
                             >
-		                        Download manifest
-		                      </Button>
-		                    )}
+                            Download manifest
+                          </Button>
+                        )}
                       {shortsClips.length > 0 && (
                         <>
                           <label className="field" style={{ margin: 0 }}>
@@ -3402,21 +3429,21 @@ function StyleEditor({
                           </Button>
                         </>
                       )}
-	                    </div>
-	                  )}
-	                </div>
-	              ) : (
-	                <p className="muted">Create a shorts job to view progress.</p>
-	              )}
-	            </Card>
-	          <Card title="Results">
-	            {shortsClips.length === 0 && (
-	              <p className="muted">
-	                {shortsJob && ["running", "queued"].includes(shortsJob.status)
-	                  ? "Waiting for clips from backend..."
-	                  : "No clips yet."}
-	              </p>
-	            )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="muted">Create a shorts job to view progress.</p>
+                )}
+              </Card>
+            <Card title="Results">
+              {shortsClips.length === 0 && (
+                <p className="muted">
+                  {shortsJob && ["running", "queued"].includes(shortsJob.status)
+                    ? "Waiting for clips from backend..."
+                    : "No clips yet."}
+                </p>
+              )}
               {shortsStyleError && <div className="error-inline">{shortsStyleError}</div>}
               {shortsClips.length > 0 && (
                 <div className="actions-row">
@@ -3442,11 +3469,11 @@ function StyleEditor({
                   </Button>
                 </div>
               )}
-		            <div className="clip-grid">
-			              {shortsClips.map((clip, idx) => (
-			                <div key={clip.id} className="clip-card">
-				                  <div className="clip-thumb">
-			                    {toSafeMediaUrl(clip.thumbnail_uri) ? (
+                <div className="clip-grid">
+                    {shortsClips.map((clip, idx) => (
+                      <div key={clip.id} className="clip-card">
+                          <div className="clip-thumb">
+                          {toSafeMediaUrl(clip.thumbnail_uri) ? (
                               <div
                                 className="placeholder-thumb"
                                 role="img"
@@ -3456,14 +3483,14 @@ function StyleEditor({
                             ) : (
                               <div className="placeholder-thumb" />
                             )}
-			                  </div>
-	                  <p className="metric-value">{clip.duration ? `${clip.duration}s` : "?"}</p>
-	                  <p className="muted">Score: {clip.score ?? "?"}</p>
-		                  {clip.start != null && clip.end != null && (
-		                    <p className="muted">
-		                      Time: {formatCueTime(Number(clip.start))}–{formatCueTime(Number(clip.end))}
-		                    </p>
-		                  )}
+                        </div>
+                    <p className="metric-value">{clip.duration ? `${clip.duration}s` : "?"}</p>
+                    <p className="muted">Score: {clip.score ?? "?"}</p>
+                      {clip.start != null && clip.end != null && (
+                        <p className="muted">
+                          Time: {formatCueTime(Number(clip.start))}–{formatCueTime(Number(clip.end))}
+                        </p>
+                      )}
                       {clip.subtitle_asset_id && (
                         <label className="field">
                           <span className="muted">Subtitle style</span>
@@ -3546,75 +3573,75 @@ function StyleEditor({
                           </Button>
                         </div>
                       )}
-		                  <div className="actions-row">
-		                    <Button type="button" variant="ghost" disabled={idx === 0} onClick={() => moveShortsClip(clip.id, -1)}>
-		                      Up
-		                    </Button>
-	                    <Button
-	                      type="button"
-	                      variant="ghost"
-	                      disabled={idx === shortsClips.length - 1}
-	                      onClick={() => moveShortsClip(clip.id, 1)}
-	                    >
-	                      Down
-	                    </Button>
-	                    <Button
-	                      type="button"
-	                      variant="ghost"
-	                      onClick={() => {
-	                        setShortsEditError(null);
-	                        setEditingClipId((prev) => (prev === clip.id ? null : clip.id));
-	                      }}
-	                    >
-	                      {editingClipId === clip.id ? "Close editor" : "Edit"}
-	                    </Button>
-	                  </div>
+                      <div className="actions-row">
+                        <Button type="button" variant="ghost" disabled={idx === 0} onClick={() => moveShortsClip(clip.id, -1)}>
+                          Up
+                        </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        disabled={idx === shortsClips.length - 1}
+                        onClick={() => moveShortsClip(clip.id, 1)}
+                      >
+                        Down
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => {
+                          setShortsEditError(null);
+                          setEditingClipId((prev) => (prev === clip.id ? null : clip.id));
+                        }}
+                      >
+                        {editingClipId === clip.id ? "Close editor" : "Edit"}
+                      </Button>
+                    </div>
 
-	                  {editingClipId === clip.id && (
-	                    <>
-	                      {shortsEditError && <div className="error-inline">{shortsEditError}</div>}
-	                      <div className="form-grid">
-	                        <label className="field">
-	                          <span>Start (s)</span>
-	                          <Input
-	                            type="number"
-	                            step="0.1"
-	                            value={String(clip.start ?? 0)}
-	                            onChange={(e) => {
-	                              const nextStart = Number(e.target.value);
-	                              setShortsClips((prev) => prev.map((c) => (c.id === clip.id ? { ...c, start: nextStart } : c)));
-	                            }}
-	                          />
-	                        </label>
-	                        <label className="field">
-	                          <span>End (s)</span>
-	                          <Input
-	                            type="number"
-	                            step="0.1"
-	                            value={String(clip.end ?? 0)}
-	                            onChange={(e) => {
-	                              const nextEnd = Number(e.target.value);
-	                              setShortsClips((prev) => prev.map((c) => (c.id === clip.id ? { ...c, end: nextEnd } : c)));
-	                            }}
-	                          />
-	                        </label>
-	                      </div>
-	                      <div className="actions-row">
-	                        <Button
-	                          type="button"
-	                          variant="secondary"
-	                          disabled={recutClipId === clip.id}
-	                          onClick={() => void recutShortsClip(clip)}
-	                        >
-	                          {recutClipId === clip.id ? "Re-cutting..." : "Re-cut clip"}
-	                        </Button>
-	                      </div>
-	                    </>
-	                  )}
-	                </div>
-	                ))}
-	              </div>
-	            </Card>
+                    {editingClipId === clip.id && (
+                      <>
+                        {shortsEditError && <div className="error-inline">{shortsEditError}</div>}
+                        <div className="form-grid">
+                          <label className="field">
+                            <span>Start (s)</span>
+                            <Input
+                              type="number"
+                              step="0.1"
+                              value={String(clip.start ?? 0)}
+                              onChange={(e) => {
+                                const nextStart = Number(e.target.value);
+                                setShortsClips((prev) => prev.map((c) => (c.id === clip.id ? { ...c, start: nextStart } : c)));
+                              }}
+                            />
+                          </label>
+                          <label className="field">
+                            <span>End (s)</span>
+                            <Input
+                              type="number"
+                              step="0.1"
+                              value={String(clip.end ?? 0)}
+                              onChange={(e) => {
+                                const nextEnd = Number(e.target.value);
+                                setShortsClips((prev) => prev.map((c) => (c.id === clip.id ? { ...c, end: nextEnd } : c)));
+                              }}
+                            />
+                          </label>
+                        </div>
+                        <div className="actions-row">
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            disabled={recutClipId === clip.id}
+                            onClick={() => void recutShortsClip(clip)}
+                          >
+                            {recutClipId === clip.id ? "Re-cutting..." : "Re-cut clip"}
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  ))}
+                </div>
+              </Card>
           </section>
         )}
 
@@ -3652,18 +3679,18 @@ function StyleEditor({
                 </div>
                 <div>
                   <p className="metric-label">Target language</p>
-                  <p className="metric-value">{(translateJob.payload as any)?.target_language ?? "n/a"}</p>
+                  <p className="metric-value">{(translateJob.payload as { target_language?: string } | undefined)?.target_language ?? "n/a"}</p>
                 </div>
               </div>
-	              {toSafeMediaHref(translateOutput?.uri) ? (
-	                <div className="actions-row">
-	                  <a className="btn btn-primary" href={toSafeMediaHref(translateOutput?.uri)!} download>
-	                    Download translated subtitles
-	                  </a>
-	                  <Button variant="ghost" onClick={() => setSubtitlePreview(toSafeMediaHref(translateOutput?.uri))}>
-	                    Preview
-	                  </Button>
-	                </div>
+                {toSafeMediaHref(translateOutput?.uri) ? (
+                  <div className="actions-row">
+                    <a className="btn btn-primary" href={toSafeMediaHref(translateOutput?.uri)!} download>
+                      Download translated subtitles
+                    </a>
+                    <Button variant="ghost" onClick={() => setSubtitlePreview(toSafeMediaHref(translateOutput?.uri))}>
+                      Preview
+                    </Button>
+                  </div>
               ) : (
                 <p className="muted">Waiting for translated subtitles...</p>
               )}
@@ -3673,52 +3700,52 @@ function StyleEditor({
       </section>
         )}
 
-		        {active === "subtitles" && (
-		          <section className="grid two-col">
-		            <Card title="Select assets">
-	              <label className="field">
-	                <span>Video asset ID</span>
-	                <Input value={uploadedVideoId} onChange={(e) => setUploadedVideoId(e.target.value)} />
-	              </label>
-	              <label className="field">
-	                <span>Or pick a recent video asset</span>
-	                <div className="actions-row">
-	                  <select
-	                    className="input"
-	                    value=""
-		                    onChange={(e) => {
-		                      const id = e.target.value;
-		                      if (!id) return;
-		                      const asset = recentVideoAssets.find((a) => a.id === id);
-		                      setUploadedVideoId(id);
-		                      setUploadedPreview(toSafeMediaHref(asset?.uri));
-		                    }}
-	                  >
-	                    <option value="">Select a video asset…</option>
-	                    {recentVideoAssets.map((asset) => (
-	                      <option key={asset.id} value={asset.id}>
-	                        {asset.id}
-	                      </option>
-	                    ))}
-	                  </select>
-	                  <Button type="button" variant="ghost" onClick={() => void refreshRecentAssets()} disabled={recentAssetsLoading}>
-	                    {recentAssetsLoading ? "Refreshing..." : "Refresh"}
-	                  </Button>
-	                </div>
-	                {recentAssetsError && <div className="error-inline">{recentAssetsError}</div>}
-	              </label>
-	              <label className="field">
-	                <span>Subtitle asset ID</span>
-	                <Input value={subtitleAssetId} onChange={(e) => setSubtitleAssetId(e.target.value)} />
-	              </label>
-	              <label className="field">
-	                <span>Or pick a recent subtitle asset</span>
-	                <div className="actions-row">
-	                  <select
-	                    className="input"
-	                    value=""
-	                    onChange={(e) => {
-	                      const id = e.target.value;
+            {active === "subtitles" && (
+              <section className="grid two-col">
+                <Card title="Select assets">
+                <label className="field">
+                  <span>Video asset ID</span>
+                  <Input value={uploadedVideoId} onChange={(e) => setUploadedVideoId(e.target.value)} />
+                </label>
+                <label className="field">
+                  <span>Or pick a recent video asset</span>
+                  <div className="actions-row">
+                    <select
+                      className="input"
+                      value=""
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          if (!id) return;
+                          const asset = recentVideoAssets.find((a) => a.id === id);
+                          setUploadedVideoId(id);
+                          setUploadedPreview(toSafeMediaHref(asset?.uri));
+                        }}
+                    >
+                      <option value="">Select a video asset…</option>
+                      {recentVideoAssets.map((asset) => (
+                        <option key={asset.id} value={asset.id}>
+                          {asset.id}
+                        </option>
+                      ))}
+                    </select>
+                    <Button type="button" variant="ghost" onClick={() => void refreshRecentAssets()} disabled={recentAssetsLoading}>
+                      {recentAssetsLoading ? "Refreshing..." : "Refresh"}
+                    </Button>
+                  </div>
+                  {recentAssetsError && <div className="error-inline">{recentAssetsError}</div>}
+                </label>
+                <label className="field">
+                  <span>Subtitle asset ID</span>
+                  <Input value={subtitleAssetId} onChange={(e) => setSubtitleAssetId(e.target.value)} />
+                </label>
+                <label className="field">
+                  <span>Or pick a recent subtitle asset</span>
+                  <div className="actions-row">
+                    <select
+                      className="input"
+                      value=""
+                      onChange={(e) => {
+                        const id = e.target.value;
                       if (!id) {
                         return;
                       }
@@ -3732,29 +3759,29 @@ function StyleEditor({
                         setSubtitlePreview(null);
                         setSubtitleFileName(null);
                       }
-	                    }}
-	                  >
-	                    <option value="">Select a subtitle asset…</option>
-	                    {recentSubtitleAssets.map((asset) => (
-	                      <option key={asset.id} value={asset.id}>
-	                        {asset.id}
-	                      </option>
-	                    ))}
-	                  </select>
-	                  <Button type="button" variant="ghost" onClick={() => void refreshRecentAssets()} disabled={recentAssetsLoading}>
-	                    {recentAssetsLoading ? "Refreshing..." : "Refresh"}
-	                  </Button>
-	                </div>
-	                {recentAssetsError && <div className="error-inline">{recentAssetsError}</div>}
-	              </label>
-		              <SubtitleUpload
+                      }}
+                    >
+                      <option value="">Select a subtitle asset…</option>
+                      {recentSubtitleAssets.map((asset) => (
+                        <option key={asset.id} value={asset.id}>
+                          {asset.id}
+                        </option>
+                      ))}
+                    </select>
+                    <Button type="button" variant="ghost" onClick={() => void refreshRecentAssets()} disabled={recentAssetsLoading}>
+                      {recentAssetsLoading ? "Refreshing..." : "Refresh"}
+                    </Button>
+                  </div>
+                  {recentAssetsError && <div className="error-inline">{recentAssetsError}</div>}
+                </label>
+                  <SubtitleUpload
                     projectId={selectedProjectId || undefined}
-		                onAssetId={(id) => setSubtitleAssetId(id)}
-		                onPreview={(url, name) => {
-		                  setSubtitlePreview(toSafeMediaUrl(url));
-	                  setSubtitleFileName(name || null);
-	                }}
-	              />
+                    onAssetId={(id) => setSubtitleAssetId(id)}
+                    onPreview={(url, name) => {
+                      setSubtitlePreview(toSafeMediaUrl(url));
+                    setSubtitleFileName(name || null);
+                  }}
+                />
               <div className="actions-row">
                 <Button
                   type="button"
@@ -3786,13 +3813,13 @@ function StyleEditor({
                 onPreview={(url) => setUploadedPreview(toSafeMediaUrl(url))}
               />
               {safeUploadedPreview && <video className="preview" controls src={safeUploadedPreview}><track kind="captions" /></video>}
-	              {subtitlePreviewUrl && (
-	                <div className="output-card">
+                {subtitlePreviewUrl && (
+                  <div className="output-card">
                     <TextPreview url={subtitlePreviewUrl} title={`Subtitle preview ${subtitleFileName ? "(" + subtitleFileName + ")" : ""}`} />
-	                </div>
-	              )}
+                  </div>
+                )}
             </Card>
-		            <Card title="Style editor">
+                <Card title="Style editor">
               <p className="muted">Tune subtitle styling; if no subtitles are set, we will auto-generate captions first.</p>
               <StyleEditor
                 videoId={uploadedVideoId}
@@ -3827,39 +3854,39 @@ function StyleEditor({
                   setStyleOutput(null);
                 }}
               />
-	              {styleJob && (
-	                <div className="output-card">
-	                  <p className="metric-label">Styling job {styleJob.id}</p>
-	                  <p className="muted">Status: {styleJob.status}</p>
-	                  {toSafeMediaHref(styleOutput?.uri) && (
-	                    <div className="actions-row">
-	                      <a className="btn btn-primary" href={toSafeMediaHref(styleOutput?.uri)!} download>
-	                        {styleJob.payload && (styleJob.payload as any).preview_seconds ? "Download preview" : "Download render"}
-	                      </a>
-	                    </div>
-	                  )}
-		                  {toSafeMediaHref(styleOutput?.uri) && styleOutput.mime_type?.includes("video") && (
-		                    <video className="preview" controls src={toSafeMediaHref(styleOutput?.uri)!}><track kind="captions" /></video>
-		                  )}
-	                </div>
-	              )}
-		            </Card>
-                <Card title="Subtitle editor">
-	                  <SubtitleEditorCard
-	                    initialAssetId={subtitleAssetId}
-                      projectId={selectedProjectId || undefined}
-	                    onAssetChosen={(asset) => {
-	                      setSubtitleAssetId(asset.id);
-	                      setSubtitlePreview(toSafeMediaHref(asset.uri));
-	                      setSubtitleFileName(asset.uri?.split("/").pop() || "edited.srt");
-	                    }}
-	                  />
+                {styleJob && (
+                  <div className="output-card">
+                    <p className="metric-label">Styling job {styleJob.id}</p>
+                    <p className="muted">Status: {styleJob.status}</p>
+                    {toSafeMediaHref(styleOutput?.uri) && (
+                      <div className="actions-row">
+                        <a className="btn btn-primary" href={toSafeMediaHref(styleOutput?.uri)!} download>
+                          {styleJob.payload && (styleJob.payload as Record<string, unknown>).preview_seconds ? "Download preview" : "Download render"}
+                        </a>
+                      </div>
+                    )}
+                      {toSafeMediaHref(styleOutput?.uri) && styleOutput.mime_type?.includes("video") && (
+                        <video className="preview" controls src={toSafeMediaHref(styleOutput?.uri)!}><track kind="captions" /></video>
+                      )}
+                  </div>
+                )}
                 </Card>
-		          </section>
-		        )}
+                <Card title="Subtitle editor">
+                    <SubtitleEditorCard
+                      initialAssetId={subtitleAssetId}
+                      projectId={selectedProjectId || undefined}
+                      onAssetChosen={(asset) => {
+                        setSubtitleAssetId(asset.id);
+                        setSubtitlePreview(toSafeMediaHref(asset.uri));
+                        setSubtitleFileName(asset.uri?.split("/").pop() || "edited.srt");
+                      }}
+                    />
+                </Card>
+              </section>
+            )}
 
-	        {active === "utilities" && (
-	          <section className="grid two-col">
+          {active === "utilities" && (
+            <section className="grid two-col">
             <Card title="Subtitle tools">
               <p className="muted">Upload or specify subtitle asset to translate; bilingual option available.</p>
               <SubtitleToolsForm
@@ -3875,10 +3902,10 @@ function StyleEditor({
                   <p className="muted">Status: {subtitleToolsJob.status}</p>
                   {["running", "queued"].includes(subtitleToolsJob.status) && <Spinner label="Polling job status..." />}
                   <div className="actions-row">
-	                    {toSafeMediaHref(subtitleToolsOutput?.uri) ? (
-	                      <a className="btn btn-primary" href={toSafeMediaHref(subtitleToolsOutput?.uri)!} download>
-	                        Download translated subtitles
-	                      </a>
+                      {toSafeMediaHref(subtitleToolsOutput?.uri) ? (
+                        <a className="btn btn-primary" href={toSafeMediaHref(subtitleToolsOutput?.uri)!} download>
+                          Download translated subtitles
+                        </a>
                     ) : (
                       <div className="muted">Waiting for translated subtitles...</div>
                     )}
@@ -3916,10 +3943,10 @@ function StyleEditor({
                   <p className="muted">Status: {mergeJob.status}</p>
                   {["running", "queued"].includes(mergeJob.status) && <Spinner label="Polling job status..." />}
                   <div className="actions-row">
-	                    {toSafeMediaHref(mergeOutput?.uri) ? (
-	                      <a className="btn btn-primary" href={toSafeMediaHref(mergeOutput?.uri)!} download>
-	                        Download merged output
-	                      </a>
+                      {toSafeMediaHref(mergeOutput?.uri) ? (
+                        <a className="btn btn-primary" href={toSafeMediaHref(mergeOutput?.uri)!} download>
+                          Download merged output
+                        </a>
                     ) : (
                       <div className="muted">Waiting for merged output...</div>
                     )}
@@ -3927,151 +3954,151 @@ function StyleEditor({
                 </div>
               )}
             </Card>
-	          </section>
-	        )}
+            </section>
+          )}
 
-	        {active === "jobs" && (
-	          <section className="grid two-col">
-		            <Card title="Jobs">
-		              <div className="form-grid">
-		                <label className="field">
-		                  <span>Status</span>
-		                  <select className="input" value={jobsStatusFilter} onChange={(e) => setJobsStatusFilter(e.target.value as JobStatus | "")}>
-		                    <option value="">All</option>
-		                    <option value="queued">Queued</option>
-		                    <option value="running">Running</option>
-		                    <option value="completed">Completed</option>
-		                    <option value="failed">Failed</option>
-		                    <option value="cancelled">Cancelled</option>
-		                  </select>
-		                </label>
-		                <label className="field">
-		                  <span>Type</span>
-		                  <select className="input" value={jobsTypeFilter} onChange={(e) => setJobsTypeFilter(e.target.value)}>
-		                    <option value="">All</option>
-		                    {jobTypeOptions.map((t) => (
-		                      <option key={t} value={t}>
-		                        {t}
-		                      </option>
-		                    ))}
-		                  </select>
-		                </label>
-		                <label className="field">
-		                  <span>From</span>
-		                  <Input type="date" value={jobsDateFrom} onChange={(e) => setJobsDateFrom(e.target.value)} />
-		                </label>
-		                <label className="field">
-		                  <span>To</span>
-		                  <Input type="date" value={jobsDateTo} onChange={(e) => setJobsDateTo(e.target.value)} />
-		                </label>
-		              </div>
-		              <div className="actions-row">
-		                <Button type="button" variant="ghost" onClick={() => void loadJobsPage()} disabled={jobsPageLoading}>
-		                  {jobsPageLoading ? "Refreshing..." : "Refresh"}
-		                </Button>
-		                <Button
-		                  type="button"
-		                  variant="ghost"
-		                  onClick={() => {
-		                    setJobsStatusFilter("");
-		                    setJobsTypeFilter("");
-		                    setJobsDateFrom("");
-		                    setJobsDateTo("");
-		                  }}
-		                >
-		                  Clear filters
-		                </Button>
-		              </div>
-	              {jobsPageError && <div className="error-inline">{jobsPageError}</div>}
-	              {jobsPageLoading && <Spinner label="Loading jobs..." />}
-	              {!jobsPageLoading && filteredJobs.length === 0 && <p className="muted">No jobs match the current filters.</p>}
-	              {!jobsPageLoading && filteredJobs.length > 0 && (
-	                <div className="table-scroll">
-	                  <table className="table">
-	                    <thead>
-	                      <tr>
-	                        <th>Type</th>
-	                        <th>Status</th>
-	                        <th>Progress</th>
-	                        <th>Created</th>
-	                        <th></th>
-	                      </tr>
-	                    </thead>
-	                    <tbody>
-	                      {filteredJobs.map((job) => (
-	                        <tr
-	                          key={job.id}
-	                          className={selectedJob?.id === job.id ? "row-selected" : undefined}
-	                          onClick={() => void selectJobAndAssets(job)}
-	                        >
-	                          <td>
-	                            <div className="metric-value">{job.job_type}</div>
-	                            <div className="muted mono">{job.id}</div>
-	                          </td>
-	                          <td>
-	                            <JobStatusPill status={job.status} />
-	                          </td>
-	                          <td>
-	                            <div className="progress-track">
-	                              <div className="progress-fill" style={{ width: `${Math.round((job.progress || 0) * 100)}%` }} />
-	                            </div>
-	                            <div className="muted">{Math.round((job.progress || 0) * 100)}%</div>
-	                          </td>
-	                          <td className="muted">{formatTimestamp(job.created_at)}</td>
-	                          <td>
-	                            <Button
-	                              type="button"
-	                              variant="ghost"
-	                              onClick={(e) => {
-	                                e.stopPropagation();
-	                                void selectJobAndAssets(job);
-	                              }}
-	                            >
-	                              View
-	                            </Button>
-	                          </td>
-	                        </tr>
-	                      ))}
-	                    </tbody>
-	                  </table>
-	                </div>
-	              )}
-	            </Card>
+          {active === "jobs" && (
+            <section className="grid two-col">
+                <Card title="Jobs">
+                  <div className="form-grid">
+                    <label className="field">
+                      <span>Status</span>
+                      <select className="input" value={jobsStatusFilter} onChange={(e) => setJobsStatusFilter(e.target.value as JobStatus | "")}>
+                        <option value="">All</option>
+                        <option value="queued">Queued</option>
+                        <option value="running">Running</option>
+                        <option value="completed">Completed</option>
+                        <option value="failed">Failed</option>
+                        <option value="cancelled">Cancelled</option>
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Type</span>
+                      <select className="input" value={jobsTypeFilter} onChange={(e) => setJobsTypeFilter(e.target.value)}>
+                        <option value="">All</option>
+                        {jobTypeOptions.map((t) => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>From</span>
+                      <Input type="date" value={jobsDateFrom} onChange={(e) => setJobsDateFrom(e.target.value)} />
+                    </label>
+                    <label className="field">
+                      <span>To</span>
+                      <Input type="date" value={jobsDateTo} onChange={(e) => setJobsDateTo(e.target.value)} />
+                    </label>
+                  </div>
+                  <div className="actions-row">
+                    <Button type="button" variant="ghost" onClick={() => void loadJobsPage()} disabled={jobsPageLoading}>
+                      {jobsPageLoading ? "Refreshing..." : "Refresh"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => {
+                        setJobsStatusFilter("");
+                        setJobsTypeFilter("");
+                        setJobsDateFrom("");
+                        setJobsDateTo("");
+                      }}
+                    >
+                      Clear filters
+                    </Button>
+                  </div>
+                {jobsPageError && <div className="error-inline">{jobsPageError}</div>}
+                {jobsPageLoading && <Spinner label="Loading jobs..." />}
+                {!jobsPageLoading && filteredJobs.length === 0 && <p className="muted">No jobs match the current filters.</p>}
+                {!jobsPageLoading && filteredJobs.length > 0 && (
+                  <div className="table-scroll">
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>Type</th>
+                          <th>Status</th>
+                          <th>Progress</th>
+                          <th>Created</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredJobs.map((job) => (
+                          <tr
+                            key={job.id}
+                            className={selectedJob?.id === job.id ? "row-selected" : undefined}
+                            onClick={() => void selectJobAndAssets(job)}
+                          >
+                            <td>
+                              <div className="metric-value">{job.job_type}</div>
+                              <div className="muted mono">{job.id}</div>
+                            </td>
+                            <td>
+                              <JobStatusPill status={job.status} />
+                            </td>
+                            <td>
+                              <div className="progress-track">
+                                <div className="progress-fill" style={{ width: `${Math.round((job.progress || 0) * 100)}%` }} />
+                              </div>
+                              <div className="muted">{Math.round((job.progress || 0) * 100)}%</div>
+                            </td>
+                            <td className="muted">{formatTimestamp(job.created_at)}</td>
+                            <td>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void selectJobAndAssets(job);
+                                }}
+                              >
+                                View
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Card>
 
-	            <Card title="Job detail">
-	              {!selectedJob && <p className="muted">Select a job to view details.</p>}
-	              {selectedJob && (
-	                <>
-		                  <div className="snapshot">
-		                    <div>
-		                      <p className="metric-label">Type</p>
-		                      <p className="metric-value">{selectedJob.job_type}</p>
-		                    </div>
-		                    <div>
-		                      <p className="metric-label">Status</p>
-		                      <JobStatusPill status={selectedJob.status} />
-		                    </div>
-		                    <div>
-		                      <p className="metric-label">Progress</p>
-		                      <p className="metric-value">{Math.round((selectedJob.progress || 0) * 100)}%</p>
-		                    </div>
-		                    {(() => {
-		                      const payload = (selectedJob.payload || {}) as any;
-		                      const attempt = payload.retry_attempt;
-		                      const max = payload.retry_max_attempts;
-		                      const step = payload.retry_step;
-		                      if (!attempt || !max) return null;
-		                      return (
-		                        <div>
-		                          <p className="metric-label">Retry</p>
-		                          <p className="metric-value">
-		                            {String(attempt)}/{String(max)}
-		                          </p>
-		                          {step && <p className="muted">{String(step)}</p>}
-		                        </div>
-		                      );
-		                    })()}
-		                  </div>
+              <Card title="Job detail">
+                {!selectedJob && <p className="muted">Select a job to view details.</p>}
+                {selectedJob && (
+                  <>
+                      <div className="snapshot">
+                        <div>
+                          <p className="metric-label">Type</p>
+                          <p className="metric-value">{selectedJob.job_type}</p>
+                        </div>
+                        <div>
+                          <p className="metric-label">Status</p>
+                          <JobStatusPill status={selectedJob.status} />
+                        </div>
+                        <div>
+                          <p className="metric-label">Progress</p>
+                          <p className="metric-value">{Math.round((selectedJob.progress || 0) * 100)}%</p>
+                        </div>
+                        {(() => {
+                          const payload = (selectedJob.payload || {}) as Record<string, unknown>;
+                          const attempt = payload.retry_attempt;
+                          const max = payload.retry_max_attempts;
+                          const step = payload.retry_step;
+                          if (!attempt || !max) return null;
+                          return (
+                            <div>
+                              <p className="metric-label">Retry</p>
+                              <p className="metric-value">
+                                {String(attempt)}/{String(max)}
+                              </p>
+                              {step && <p className="muted">{String(step)}</p>}
+                            </div>
+                          );
+                        })()}
+                      </div>
                   <div className="output-card">
                     <p className="metric-label">IDs</p>
                     <p className="muted mono">Job: {selectedJob.id}</p>
@@ -4086,32 +4113,32 @@ function StyleEditor({
                       </>
                     )}
                   </div>
-	                  {assetLoading && <Spinner label="Loading assets..." />}
-	                  {assetError && <div className="error-inline">{assetError}</div>}
+                    {assetLoading && <Spinner label="Loading assets..." />}
+                    {assetError && <div className="error-inline">{assetError}</div>}
 
-			                  <div className="actions-row">
-			                    <Button
-			                      type="button"
-			                      variant="ghost"
-			                      onClick={async () => {
-		                        try {
-		                          await navigator.clipboard.writeText(JSON.stringify(selectedJob, null, 2));
-		                        } catch {
-		                          /* ignore */
-		                        }
-		                      }}
-		                    >
-		                      Copy job JSON
-		                    </Button>
-			                    {toSafeExternalUrl(apiClient.jobBundleUrl(selectedJob.id)) && (
+                        <div className="actions-row">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(JSON.stringify(selectedJob, null, 2));
+                            } catch {
+                              /* ignore */
+                            }
+                          }}
+                        >
+                          Copy job JSON
+                        </Button>
+                          {toSafeExternalUrl(apiClient.jobBundleUrl(selectedJob.id)) && (
                             <Button
                               type="button"
                               variant="secondary"
                               onClick={() => triggerSafeDownload(toSafeExternalUrl(apiClient.jobBundleUrl(selectedJob.id)))}
                             >
-			                        Download bundle
-			                      </Button>
-			                    )}
+                              Download bundle
+                            </Button>
+                          )}
                     {toSafeMediaHref(outputAsset?.uri) && (
                       <a className="btn btn-secondary" href={toSafeMediaHref(outputAsset?.uri)!} target="_blank" rel="noreferrer">
                         Open output
@@ -4128,158 +4155,158 @@ function StyleEditor({
                     <Button
                       type="button"
                       variant="danger"
-			                      disabled={
-			                        deletingJobId === selectedJob.id ||
-			                        !["completed", "failed", "cancelled"].includes(selectedJob.status)
-			                      }
-			                      onClick={() => void deleteJobAndRefresh(selectedJob)}
-			                    >
-			                      {deletingJobId === selectedJob.id ? "Deleting..." : "Delete job"}
-			                    </Button>
-			                  </div>
+                            disabled={
+                              deletingJobId === selectedJob.id ||
+                              !["completed", "failed", "cancelled"].includes(selectedJob.status)
+                            }
+                            onClick={() => void deleteJobAndRefresh(selectedJob)}
+                          >
+                            {deletingJobId === selectedJob.id ? "Deleting..." : "Delete job"}
+                          </Button>
+                        </div>
 
-			                  {outputAsset?.kind === "subtitle" && (
-			                    <div className="output-card">
-			                      <p className="metric-label">Transcript viewer</p>
-				                      {inputAsset?.kind === "video" && toSafeMediaHref(inputAsset?.uri) && (
-				                        <video
-				                          ref={jobVideoRef}
-				                          className="video-preview"
-				                          controls
-				                          src={toSafeMediaHref(inputAsset?.uri)!}
-				                        >
-				                          <track kind="captions" />
-				                        </video>
-				                      )}
-			                      <div className="form-grid">
-			                        <label className="field">
-			                          <span>Search</span>
-			                          <Input
-			                            type="text"
-			                            value={transcriptSearch}
-			                            placeholder="Find text…"
-			                            onChange={(e) => setTranscriptSearch(e.target.value)}
-			                          />
-			                        </label>
-			                      </div>
-			                      {transcriptLoading && <Spinner label="Loading transcript..." />}
-			                      {transcriptError && <div className="error-inline">{transcriptError}</div>}
-			                      {!transcriptLoading && !transcriptError && transcriptCues.length === 0 && (
-			                        <p className="muted">No cues found for this output.</p>
-			                      )}
-			                      {!transcriptLoading && transcriptCues.length > 0 && (
-			                        <div className="table-scroll">
-			                          <table className="table">
-			                            <thead>
-			                              <tr>
-			                                <th>Time</th>
-			                                <th>Text</th>
-			                              </tr>
-			                            </thead>
-			                            <tbody>
-			                              {transcriptCues
-			                                .filter((cue) => {
-			                                  const q = transcriptSearch.trim().toLowerCase();
-			                                  if (!q) return true;
-			                                  return cue.text.toLowerCase().includes(q);
-			                                })
-			                                .map((cue, idx) => (
-			                                  <tr
-			                                    key={`${idx}-${cue.start}-${cue.end}`}
-			                                    className="row-clickable"
-			                                    onClick={() => {
-			                                      if (!jobVideoRef.current) return;
-			                                      jobVideoRef.current.currentTime = cue.start;
-			                                      void jobVideoRef.current.play().catch(() => {});
-			                                    }}
-			                                  >
-			                                    <td className="muted mono">
-			                                      {formatCueTime(cue.start)}–{formatCueTime(cue.end)}
-			                                    </td>
-			                                    <td>
-			                                      <pre className="code-block">{cue.text}</pre>
-			                                    </td>
-			                                  </tr>
-			                                ))}
-			                            </tbody>
-			                          </table>
-			                        </div>
-			                      )}
-			                    </div>
-			                  )}
+                        {outputAsset?.kind === "subtitle" && (
+                          <div className="output-card">
+                            <p className="metric-label">Transcript viewer</p>
+                              {inputAsset?.kind === "video" && toSafeMediaHref(inputAsset?.uri) && (
+                                <video
+                                  ref={jobVideoRef}
+                                  className="video-preview"
+                                  controls
+                                  src={toSafeMediaHref(inputAsset?.uri)!}
+                                >
+                                  <track kind="captions" />
+                                </video>
+                              )}
+                            <div className="form-grid">
+                              <label className="field">
+                                <span>Search</span>
+                                <Input
+                                  type="text"
+                                  value={transcriptSearch}
+                                  placeholder="Find text…"
+                                  onChange={(e) => setTranscriptSearch(e.target.value)}
+                                />
+                              </label>
+                            </div>
+                            {transcriptLoading && <Spinner label="Loading transcript..." />}
+                            {transcriptError && <div className="error-inline">{transcriptError}</div>}
+                            {!transcriptLoading && !transcriptError && transcriptCues.length === 0 && (
+                              <p className="muted">No cues found for this output.</p>
+                            )}
+                            {!transcriptLoading && transcriptCues.length > 0 && (
+                              <div className="table-scroll">
+                                <table className="table">
+                                  <thead>
+                                    <tr>
+                                      <th>Time</th>
+                                      <th>Text</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {transcriptCues
+                                      .filter((cue) => {
+                                        const q = transcriptSearch.trim().toLowerCase();
+                                        if (!q) return true;
+                                        return cue.text.toLowerCase().includes(q);
+                                      })
+                                      .map((cue, idx) => (
+                                        <tr
+                                          key={`${idx}-${cue.start}-${cue.end}`}
+                                          className="row-clickable"
+                                          onClick={() => {
+                                            if (!jobVideoRef.current) return;
+                                            jobVideoRef.current.currentTime = cue.start;
+                                            void jobVideoRef.current.play().catch(() => {});
+                                          }}
+                                        >
+                                          <td className="muted mono">
+                                            {formatCueTime(cue.start)}–{formatCueTime(cue.end)}
+                                          </td>
+                                          <td>
+                                            <pre className="code-block">{cue.text}</pre>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        )}
 
-		                  {selectedJob.error && (
-		                    <div className="output-card">
-		                      <p className="metric-label">Logs / error</p>
-		                      <pre className="code-block">{selectedJob.error}</pre>
-		                    </div>
-	                  )}
+                      {selectedJob.error && (
+                        <div className="output-card">
+                          <p className="metric-label">Logs / error</p>
+                          <pre className="code-block">{selectedJob.error}</pre>
+                        </div>
+                    )}
 
-	                  {(selectedJob.payload || inputAsset || outputAsset) && (
-	                    <div className="output-card">
-	                      <p className="metric-label">Inputs / outputs</p>
-	                      {inputAsset && (
-	                        <div className="output-card">
-	                          <p className="metric-label">Input asset</p>
-	                          <p className="muted mono">{inputAsset.id}</p>
-		                          {toSafeMediaHref(inputAsset?.uri) && (
-		                            <div className="actions-row">
-		                              <a className="btn btn-ghost" href={toSafeMediaHref(inputAsset?.uri)!} target="_blank" rel="noreferrer">
-		                                Open
-		                              </a>
-		                            </div>
-	                          )}
-	                        </div>
-	                      )}
-	                      {outputAsset && (
-	                        <div className="output-card">
-	                          <p className="metric-label">Output asset</p>
-	                          <p className="muted mono">{outputAsset.id}</p>
-	                          <p className="muted">{outputAsset.mime_type || outputAsset.kind}</p>
-		                          {outputAssetUrl && (
-		                            <div className="actions-row">
-		                              <a className="btn btn-primary" href={outputAssetUrl} download>
-		                                Download
-		                              </a>
-		                              {outputAsset.mime_type?.includes("text") && (
-		                                <Button
-		                                  type="button"
-		                                  variant="ghost"
-		                                  onClick={async () => {
-		                                    if (!outputAssetUrl) return;
-		                                    try {
-		                                      const resp = await fetch(outputAssetUrl);
-		                                      const text = await resp.text();
-		                                      await navigator.clipboard.writeText(text);
-		                                    } catch {
-		                                      /* ignore */
-		                                    }
-	                                  }}
-	                                >
-	                                  Copy output text
-	                                </Button>
-		                              )}
-		                            </div>
-		                          )}
-		                          {outputAssetUrl && outputAsset.mime_type?.includes("video") && (
-		                            <video className="preview" controls src={outputAssetUrl}><track kind="captions" /></video>
-		                          )}
-		                          {outputAssetUrl && outputAsset.mime_type?.includes("text") && <TextPreview url={outputAssetUrl} title="Job output preview" />}
-		                        </div>
-		                      )}
-	                      {selectedJob.payload && (
-	                        <div className="output-card">
-	                          <p className="metric-label">Payload</p>
-	                          <pre className="code-block">{JSON.stringify(selectedJob.payload, null, 2)}</pre>
-	                        </div>
-	                      )}
-	                    </div>
-	                  )}
-	                </>
-	              )}
-	            </Card>
-	          </section>
-	        )}
+                    {(selectedJob.payload || inputAsset || outputAsset) && (
+                      <div className="output-card">
+                        <p className="metric-label">Inputs / outputs</p>
+                        {inputAsset && (
+                          <div className="output-card">
+                            <p className="metric-label">Input asset</p>
+                            <p className="muted mono">{inputAsset.id}</p>
+                              {toSafeMediaHref(inputAsset?.uri) && (
+                                <div className="actions-row">
+                                  <a className="btn btn-ghost" href={toSafeMediaHref(inputAsset?.uri)!} target="_blank" rel="noreferrer">
+                                    Open
+                                  </a>
+                                </div>
+                            )}
+                          </div>
+                        )}
+                        {outputAsset && (
+                          <div className="output-card">
+                            <p className="metric-label">Output asset</p>
+                            <p className="muted mono">{outputAsset.id}</p>
+                            <p className="muted">{outputAsset.mime_type || outputAsset.kind}</p>
+                              {outputAssetUrl && (
+                                <div className="actions-row">
+                                  <a className="btn btn-primary" href={outputAssetUrl} download>
+                                    Download
+                                  </a>
+                                  {outputAsset.mime_type?.includes("text") && (
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      onClick={async () => {
+                                        if (!outputAssetUrl) return;
+                                        try {
+                                          const resp = await fetch(outputAssetUrl);
+                                          const text = await resp.text();
+                                          await navigator.clipboard.writeText(text);
+                                        } catch {
+                                          /* ignore */
+                                        }
+                                    }}
+                                  >
+                                    Copy output text
+                                  </Button>
+                                  )}
+                                </div>
+                              )}
+                              {outputAssetUrl && outputAsset.mime_type?.includes("video") && (
+                                <video className="preview" controls src={outputAssetUrl}><track kind="captions" /></video>
+                              )}
+                              {outputAssetUrl && outputAsset.mime_type?.includes("text") && <TextPreview url={outputAssetUrl} title="Job output preview" />}
+                            </div>
+                          )}
+                        {selectedJob.payload && (
+                          <div className="output-card">
+                            <p className="metric-label">Payload</p>
+                            <pre className="code-block">{JSON.stringify(selectedJob.payload, null, 2)}</pre>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+              </Card>
+            </section>
+          )}
 
           {active === "usage" && (
             <section className="grid two-col">
@@ -5497,8 +5524,8 @@ function StyleEditor({
             </section>
           )}
 
-	        {(active === "shorts" || active === "subtitles") && (
-	          <section className="grid two-col">
+          {(active === "shorts" || active === "subtitles") && (
+            <section className="grid two-col">
             <Card title="Preset styles">
               <ul className="preset-list">
                 {PRESETS.map((preset) => (

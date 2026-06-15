@@ -1,3 +1,5 @@
+"""Command-line entry point for transcribing an audio/video file."""
+
 from __future__ import annotations
 
 import argparse
@@ -18,16 +20,25 @@ from .path_guard import validate_media_input_path
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for the transcription CLI."""
     parser = argparse.ArgumentParser(description="Transcribe an audio/video file.")
     parser.add_argument("input", help="Path to the media file.")
     parser.add_argument("--language", help="ISO language code (optional).")
-    parser.add_argument("--backend", default=TranscriptionBackend.NOOP.value, help="Backend name (openai_whisper, faster_whisper, whisper_cpp, whisper_timestamped, noop).")
+    parser.add_argument(
+        "--backend",
+        default=TranscriptionBackend.NOOP.value,
+        help=(
+            "Backend name (openai_whisper, faster_whisper, whisper_cpp, "
+            "whisper_timestamped, noop)."
+        ),
+    )
     parser.add_argument("--model", default="whisper-1", help="Model name.")
     parser.add_argument("--device", help="Device hint (e.g., cpu, cuda).")
     return parser.parse_args()
 
 
 def main() -> int:
+    """Run the transcription CLI and return a process exit code."""
     args = parse_args()
     try:
         backend = TranscriptionBackend(args.backend)
@@ -35,10 +46,12 @@ def main() -> int:
         print(f"Unsupported backend: {args.backend}", file=sys.stderr)
         return 1
 
-    config = TranscriptionConfig(backend=backend, model=args.model, language=args.language, device=args.device)
+    config = TranscriptionConfig(
+        backend=backend, model=args.model, language=args.language, device=args.device
+    )
     try:
         input_path = validate_media_input_path(Path(args.input))
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         print(f"Invalid input path: {args.input} ({exc})", file=sys.stderr)
         return 1
 
@@ -53,7 +66,7 @@ def main() -> int:
             result = transcribe_whisper_timestamped(str(input_path), config)
         else:
             result = transcribe_noop(str(input_path), config)
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         print(f"Transcription failed: {exc}", file=sys.stderr)
         print("Tip: use backend 'noop' for an offline smoke test.", file=sys.stderr)
         return 1

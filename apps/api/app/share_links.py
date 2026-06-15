@@ -1,3 +1,5 @@
+"""HMAC-signed share token creation and validation for asset links."""
+
 from __future__ import annotations
 
 import base64
@@ -11,6 +13,8 @@ from uuid import UUID
 
 @dataclass(frozen=True)
 class ShareTokenPayload:
+    """Decoded contents of a validated share token."""
+
     asset_id: UUID
     project_id: UUID
     expires_at: datetime
@@ -38,7 +42,10 @@ def _to_utc(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
-def build_share_token(*, asset_id: UUID, project_id: UUID, expires_at: datetime, secret: str) -> str:
+def build_share_token(
+    *, asset_id: UUID, project_id: UUID, expires_at: datetime, secret: str
+) -> str:
+    """Build an HMAC-signed share token for the given asset and expiry."""
     exp = int(_to_utc(expires_at).timestamp())
     body = json.dumps(
         {
@@ -53,14 +60,22 @@ def build_share_token(*, asset_id: UUID, project_id: UUID, expires_at: datetime,
     return f"{_b64url_encode(body)}.{_b64url_encode(signature)}"
 
 
-def build_share_token_with_ttl(*, asset_id: UUID, project_id: UUID, ttl_hours: int, secret: str) -> tuple[str, datetime]:
+def build_share_token_with_ttl(
+    *, asset_id: UUID, project_id: UUID, ttl_hours: int, secret: str
+) -> tuple[str, datetime]:
+    """Build a share token expiring after a clamped TTL (1 hour to 30 days)."""
     hours = max(1, min(int(ttl_hours or 24), 24 * 30))
     expires_at = datetime.now(timezone.utc) + timedelta(hours=hours)
-    token = build_share_token(asset_id=asset_id, project_id=project_id, expires_at=expires_at, secret=secret)
+    token = build_share_token(
+        asset_id=asset_id, project_id=project_id, expires_at=expires_at, secret=secret
+    )
     return token, expires_at
 
 
-def parse_and_validate_share_token(token: str, *, secret: str, now: datetime | None = None) -> ShareTokenPayload:
+def parse_and_validate_share_token(
+    token: str, *, secret: str, now: datetime | None = None
+) -> ShareTokenPayload:
+    """Verify a share token's signature and expiry, returning its payload."""
     if not token or "." not in token:
         raise ValueError("Invalid token format")
 

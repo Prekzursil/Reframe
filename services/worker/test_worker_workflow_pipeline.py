@@ -1,17 +1,32 @@
+"""Integration test covering the worker workflow pipeline child-job dispatch."""
+
 from __future__ import annotations
 
 from pathlib import Path
 
 
-class _Result:
+class _Result:  # pylint: disable=too-few-public-methods
+    """Minimal Celery AsyncResult stand-in exposing only the task id."""
+
     def __init__(self, task_id: str):
         self.id = task_id
 
 
 def test_run_workflow_pipeline_dispatches_child_jobs(monkeypatch, tmp_path: Path):
+    """Running the pipeline should dispatch each template step as a child job."""
+    # Imports are intentionally function-local so monkeypatched env vars are set
+    # before modules that read settings at import time are loaded.
+    # pylint: disable=import-outside-toplevel,import-error,too-many-locals
     from app.config import get_settings
     from app.database import create_db_and_tables, get_engine
-    from app.models import MediaAsset, Organization, User, WorkflowRun, WorkflowRunStep, WorkflowTemplate
+    from app.models import (
+        MediaAsset,
+        Organization,
+        User,
+        WorkflowRun,
+        WorkflowRunStep,
+        WorkflowTemplate,
+    )
     from services.worker import worker
     from sqlmodel import Session
 
@@ -19,14 +34,14 @@ def test_run_workflow_pipeline_dispatches_child_jobs(monkeypatch, tmp_path: Path
     media_root.mkdir(parents=True, exist_ok=True)
 
     db_path = tmp_path / "reframe-test.db"
-    db_url = f"sqlite:////{str(db_path).lstrip('/')}"
+    db_url = "sqlite:///" + db_path.as_posix()
     monkeypatch.setenv("DATABASE_URL", db_url)
     monkeypatch.setenv("REFRAME_MEDIA_ROOT", str(media_root))
 
     get_settings.cache_clear()
     get_engine.cache_clear()
-    worker._engine = None
-    worker._media_tmp = None
+    worker._engine = None  # pylint: disable=protected-access
+    worker._media_tmp = None  # pylint: disable=protected-access
     create_db_and_tables()
 
     calls: list[dict] = []
@@ -82,8 +97,22 @@ def test_run_workflow_pipeline_dispatches_child_jobs(monkeypatch, tmp_path: Path
         session.commit()
         session.refresh(run)
 
-        session.add(WorkflowRunStep(run_id=run.id, order_index=0, step_type="captions", payload={"formats": ["srt"]}))
-        session.add(WorkflowRunStep(run_id=run.id, order_index=1, step_type="shorts", payload={"max_clips": 2}))
+        session.add(
+            WorkflowRunStep(
+                run_id=run.id,
+                order_index=0,
+                step_type="captions",
+                payload={"formats": ["srt"]},
+            )
+        )
+        session.add(
+            WorkflowRunStep(
+                run_id=run.id,
+                order_index=1,
+                step_type="shorts",
+                payload={"max_clips": 2},
+            )
+        )
         session.commit()
 
         run_id = str(run.id)

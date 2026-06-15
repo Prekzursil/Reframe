@@ -1,3 +1,5 @@
+"""Integration test covering worker asset fetch from a remote HTTP source."""
+
 from __future__ import annotations
 
 import threading
@@ -7,6 +9,10 @@ from pathlib import Path
 
 
 def test_fetch_asset_downloads_remote_http(monkeypatch, tmp_path: Path):
+    """fetch_asset should download a remote subtitle over HTTP to a local path."""
+    # Imports are intentionally function-local so monkeypatched env vars are set
+    # before modules that read settings at import time are loaded.
+    # pylint: disable=import-outside-toplevel,import-error,too-many-locals
     from app.config import get_settings
     from app.database import create_db_and_tables, get_engine
     from app.models import MediaAsset
@@ -17,14 +23,14 @@ def test_fetch_asset_downloads_remote_http(monkeypatch, tmp_path: Path):
     media_root.mkdir(parents=True, exist_ok=True)
 
     db_path = tmp_path / "reframe-test.db"
-    db_url = f"sqlite:////{str(db_path).lstrip('/')}"
+    db_url = "sqlite:///" + db_path.as_posix()
     monkeypatch.setenv("DATABASE_URL", db_url)
     monkeypatch.setenv("REFRAME_MEDIA_ROOT", str(media_root))
 
     get_settings.cache_clear()
     get_engine.cache_clear()
-    worker._engine = None
-    worker._media_tmp = None
+    worker._engine = None  # pylint: disable=protected-access
+    worker._media_tmp = None  # pylint: disable=protected-access
     create_db_and_tables()
 
     serve_dir = tmp_path / "serve"

@@ -1,9 +1,17 @@
+"""Integration test covering worker publish adapters for every supported provider."""
+
 from __future__ import annotations
 
 from pathlib import Path
 
 
-def test_publish_adapters_and_task_complete_for_all_supported_providers(monkeypatch, tmp_path: Path):
+def test_publish_adapters_and_task_complete_for_all_supported_providers(
+    monkeypatch, tmp_path: Path
+):
+    """Each provider's publish task should complete and persist a finished job."""
+    # Imports are intentionally function-local so monkeypatched env vars are set
+    # before modules that read settings at import time are loaded.
+    # pylint: disable=import-outside-toplevel,import-error,too-many-locals
     from app.config import get_settings
     from app.database import create_db_and_tables, get_engine
     from app.models import MediaAsset, Organization, PublishConnection, PublishJob, User
@@ -14,14 +22,14 @@ def test_publish_adapters_and_task_complete_for_all_supported_providers(monkeypa
     media_root.mkdir(parents=True, exist_ok=True)
 
     db_path = tmp_path / "reframe-test.db"
-    db_url = f"sqlite:////{str(db_path).lstrip('/')}"
+    db_url = "sqlite:///" + db_path.as_posix()
     monkeypatch.setenv("DATABASE_URL", db_url)
     monkeypatch.setenv("REFRAME_MEDIA_ROOT", str(media_root))
 
     get_settings.cache_clear()
     get_engine.cache_clear()
-    worker._engine = None
-    worker._media_tmp = None
+    worker._engine = None  # pylint: disable=protected-access
+    worker._media_tmp = None  # pylint: disable=protected-access
     create_db_and_tables()
 
     provider_rows: list[tuple[str, str, str]] = []

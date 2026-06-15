@@ -1,38 +1,72 @@
+"""HTTP API routes for jobs, media assets, projects, usage, and workflows."""
+
+# This module is an aggregate FastAPI router; its length reflects the breadth of
+# the public API surface rather than a single oversized unit of logic.
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
 import io
-import httpx
 import ipaddress
 import json
 import logging
 import os
 import urllib.parse
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, List, Optional
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+import httpx
 
 try:
     from celery import Celery
 except ModuleNotFoundError:  # pragma: no cover - allows API tests without optional celery install
+
     class Celery:  # type: ignore[override]
+        """Minimal stand-in for Celery used when the optional dependency is absent."""
+
+        # pylint: disable=too-few-public-methods
         def __init__(self, *args, **kwargs):
             """No-op stub constructor used when Celery is not installed."""
 
         def send_task(self, *_args, **_kwargs):
+            """Raise because task dispatch requires a real Celery installation."""
             raise RuntimeError("Celery is not installed in this environment.")
-from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile, status, Response
-from uuid import UUID
 
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    Header,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlmodel import Field, Session, SQLModel, select
 
 from app.auth_api import PrincipalDep, ensure_default_plans
 from app.billing import get_plan_policy
-from app.database import get_session
 from app.config import get_settings
-from app.errors import ApiError, ErrorCode, ErrorResponse, conflict, not_found, quota_exceeded, server_error, unauthorized
+from app.database import get_session
+from app.errors import (
+    ApiError,
+    ErrorCode,
+    ErrorResponse,
+    conflict,
+    not_found,
+    quota_exceeded,
+    server_error,
+    unauthorized,
+)
 from app.models import (
     Job,
     JobStatus,
@@ -52,8 +86,6 @@ from app.models import (
 )
 from app.rate_limit import enforce_rate_limit
 from app.security import AuthPrincipal
-from fastapi.responses import FileResponse, StreamingResponse
-
 from app.share_links import build_share_token_with_ttl, parse_and_validate_share_token
 from app.storage import LocalStorageBackend, get_storage, is_remote_uri
 
@@ -79,6 +111,7 @@ SessionDep = Annotated[Session, Depends(get_session)]
 
 @lru_cache(maxsize=1)
 def get_celery_app() -> Celery:
+    """Return a process-wide Celery client configured for the API."""
     settings = get_settings()
     app = Celery("reframe_api", broker=settings.broker_url, backend=settings.result_backend)
     # Fail fast when broker/backend are unavailable so API diagnostics and tests do not hang.
@@ -119,7 +152,12 @@ def _task_prefers_gpu(task_name: str, *args) -> bool:
     device = str(payload.get("device") or "").strip().lower()
     if device in {"cuda", "gpu"}:
         return True
-    if _env_truthy("ASSUME_GPU_FOR_TRANSCRIBE_BACKENDS") and backend in {"faster_whisper", "whisper_cpp", "whisper_timestamped", "whisperx"}:
+    if _env_truthy("ASSUME_GPU_FOR_TRANSCRIBE_BACKENDS") and backend in {
+        "faster_whisper",
+        "whisper_cpp",
+        "whisper_timestamped",
+        "whisperx",
+    }:
         return True
     return False
 
@@ -130,21 +168,32 @@ def _resolve_task_queue(task_name: str, *args) -> str:
         if gpu_enabled and _task_prefers_gpu(task_name, *args):
             return _celery_queue_name("GPU")
         return _celery_queue_name("CPU")
-    if task_name in {TASK_GENERATE_SHORTS, TASK_RENDER_STYLED_SUBTITLES, TASK_MERGE_VIDEO_AUDIO, TASK_CUT_CLIP, TASK_TRANSLATE_SUBTITLES}:
+    if task_name in {
+        TASK_GENERATE_SHORTS,
+        TASK_RENDER_STYLED_SUBTITLES,
+        TASK_MERGE_VIDEO_AUDIO,
+        TASK_CUT_CLIP,
+        TASK_TRANSLATE_SUBTITLES,
+    }:
         return _celery_queue_name("CPU")
     return _celery_queue_name("DEFAULT")
 
 
 def enqueue_job(job: Job, task_name: str, *args) -> str:
+    """Send ``task_name`` to Celery, raising a server error on dispatch failure."""
     try:
         queue = _resolve_task_queue(task_name, *args)
         result = get_celery_app().send_task(task_name, args=args, queue=queue)
         return result.id
     except Exception as exc:  # pragma: no cover - defensive
-        raise server_error("Failed to enqueue job", details={"job_id": str(job.id), "task": task_name, "error": str(exc)})
+        raise server_error(
+            "Failed to enqueue job",
+            details={"job_id": str(job.id), "task": task_name, "error": str(exc)},
+        ) from exc
 
 
 def save_and_dispatch(job: Job, session: Session, task_name: str, *args) -> Job:
+    """Persist a job, dispatch its task, and store the resulting task id."""
     session.add(job)
     session.commit()
     session.refresh(job)
@@ -162,7 +211,9 @@ def _scope_query_by_org(query, model, principal: AuthPrincipal):
     return query
 
 
-def _assert_org_access(*, principal: AuthPrincipal, entity_org_id: UUID | None, entity: str, entity_id: str) -> None:
+def _assert_org_access(
+    *, principal: AuthPrincipal, entity_org_id: UUID | None, entity: str, entity_id: str
+) -> None:
     if not principal.org_id:
         return
     if entity_org_id != principal.org_id:
@@ -202,12 +253,14 @@ def _is_forbidden_ip_host(hostname: str) -> bool:
         ip_value = ipaddress.ip_address(hostname)
     except ValueError:
         return False
-    return (
-        ip_value.is_private
-        or ip_value.is_loopback
-        or ip_value.is_link_local
-        or ip_value.is_reserved
-        or ip_value.is_multicast
+    return any(
+        (
+            ip_value.is_private,
+            ip_value.is_loopback,
+            ip_value.is_link_local,
+            ip_value.is_reserved,
+            ip_value.is_multicast,
+        )
     )
 
 
@@ -261,11 +314,16 @@ def _stream_local_file(*, file_path: Path, mime_type: str | None) -> StreamingRe
 
     file_name = file_path.name or "download"
     quoted = urllib.parse.quote(file_name)
-    headers = {"Content-Disposition": f'attachment; filename="{file_name}"; filename*=UTF-8\'\'{quoted}'}
-    return StreamingResponse(_iterator(), media_type=mime_type or _DEFAULT_BINARY_MEDIA_TYPE, headers=headers)
+    headers = {
+        "Content-Disposition": f"attachment; filename=\"{file_name}\"; filename*=UTF-8''{quoted}"
+    }
+    return StreamingResponse(
+        _iterator(), media_type=mime_type or _DEFAULT_BINARY_MEDIA_TYPE, headers=headers
+    )
 
 
 def _stream_remote_download(*, url: str, filename: str, mime_type: str | None) -> StreamingResponse:
+    """Proxy a validated remote URL back to the caller as a streaming attachment."""
     safe_url = _safe_redirect_url(url)
     client = httpx.Client(
         follow_redirects=True,
@@ -277,25 +335,35 @@ def _stream_remote_download(*, url: str, filename: str, mime_type: str | None) -
     )
     try:
         upstream = client.stream("GET", safe_url)
-        upstream.__enter__()
-        upstream.raise_for_status()
+        response = upstream.__enter__()
+        response.raise_for_status()
     except Exception as exc:  # pragma: no cover - upstream network surface
         client.close()
-        raise server_error("Remote download failed", details={"url": safe_url, "reason": str(exc)}) from exc
+        raise server_error(
+            "Remote download failed",
+            details={"url": safe_url, "reason": str(exc)},
+        ) from exc
 
     def _iterator():
         try:
-            for chunk in upstream.iter_bytes(chunk_size=64 * 1024):
+            for chunk in response.iter_bytes(chunk_size=64 * 1024):
                 if not chunk:
                     continue
                 yield chunk
         finally:
-            upstream.close()
+            upstream.__exit__(None, None, None)
             client.close()
 
-    response_media_type = mime_type or upstream.headers.get("content-type", "").split(";")[0] or _DEFAULT_BINARY_MEDIA_TYPE
+    response_media_type = (
+        mime_type
+        or response.headers.get("content-type", "").split(";")[0]
+        or _DEFAULT_BINARY_MEDIA_TYPE
+    )
     quoted = urllib.parse.quote(filename or "download")
-    headers = {"Content-Disposition": f'attachment; filename="{filename or "download"}"; filename*=UTF-8\'\'{quoted}'}
+    safe_name = filename or "download"
+    headers = {
+        "Content-Disposition": (f"attachment; filename=\"{safe_name}\"; filename*=UTF-8''{quoted}")
+    }
     return StreamingResponse(_iterator(), media_type=response_media_type, headers=headers)
 
 
@@ -313,7 +381,7 @@ def _find_existing_idempotent_job(
         query = query.where(Job.org_id == principal.org_id)
     if principal.user_id:
         query = query.where(Job.owner_user_id == principal.user_id)
-    query = query.order_by(Job.created_at.desc())
+    query = query.order_by(Job.created_at.desc())  # pylint: disable=no-member
     return session.exec(query).first()
 
 
@@ -333,14 +401,15 @@ def _current_month_estimated_cost_cents(session: Session, *, org_id: UUID) -> in
     month_start = _month_start_utc()
     entries = session.exec(
         select(UsageLedgerEntry).where(
-            (UsageLedgerEntry.org_id == org_id)
-            & (UsageLedgerEntry.created_at >= month_start)
+            (UsageLedgerEntry.org_id == org_id) & (UsageLedgerEntry.created_at >= month_start)
         )
     ).all()
     return sum(int(item.estimated_cost_cents or 0) for item in entries)
 
 
-def _estimate_job_submission_cost_cents(*, job_type: str | None, payload: dict[str, Any] | None) -> int:
+def _estimate_job_submission_cost_cents(
+    *, job_type: str | None, payload: dict[str, Any] | None
+) -> int:
     raw = payload or {}
     explicit = raw.get("estimated_cost_cents")
     if explicit is not None:
@@ -417,9 +486,9 @@ def _budget_projected_status(
     soft_limit: int | None,
     hard_limit: int | None,
 ) -> str:
-    if hard_limit is not None and hard_limit > 0 and current_month_estimated_cost_cents > hard_limit:
+    if hard_limit is not None and 0 < hard_limit < current_month_estimated_cost_cents:
         return "hard_limit_exceeded"
-    if soft_limit is not None and soft_limit > 0 and current_month_estimated_cost_cents > soft_limit:
+    if soft_limit is not None and 0 < soft_limit < current_month_estimated_cost_cents:
         return "soft_limit_exceeded"
     return "ok"
 
@@ -444,7 +513,7 @@ def _enforce_org_budget_policy(
     estimated_new_cost = _estimate_job_submission_cost_cents(job_type=job_type, payload=job_payload)
     projected_cost = current_cost + estimated_new_cost
     hard_limit = int(policy.monthly_hard_limit_cents or 0)
-    if bool(policy.enforce_hard_limit) and hard_limit > 0 and projected_cost > hard_limit:
+    if bool(policy.enforce_hard_limit) and 0 < hard_limit < projected_cost:
         raise quota_exceeded(
             "Monthly budget hard limit would be exceeded",
             details={
@@ -495,7 +564,9 @@ def _usage_metric_total(
     return sum(float(item.quantity or 0.0) for item in usage)
 
 
-def _enforce_monthly_minutes_limit(*, plan_code: str, monthly_limit: int, used_minutes: float) -> None:
+def _enforce_monthly_minutes_limit(
+    *, plan_code: str, monthly_limit: int, used_minutes: float
+) -> None:
     if monthly_limit <= 0 or used_minutes < float(monthly_limit):
         return
     raise quota_exceeded(
@@ -508,7 +579,9 @@ def _enforce_monthly_minutes_limit(*, plan_code: str, monthly_limit: int, used_m
     )
 
 
-def _enforce_storage_limit(*, plan_code: str, monthly_storage_gb: int, used_storage_bytes: float) -> None:
+def _enforce_storage_limit(
+    *, plan_code: str, monthly_storage_gb: int, used_storage_bytes: float
+) -> None:
     storage_quota_bytes = float(monthly_storage_gb) * float(1024**3)
     if storage_quota_bytes <= 0 or used_storage_bytes < storage_quota_bytes:
         return
@@ -551,7 +624,9 @@ def _enforce_org_quota(
         )
 
     month_start = _month_start_utc()
-    used_minutes = _usage_metric_total(session, org_id=org_id, metric="job_minutes", month_start=month_start)
+    used_minutes = _usage_metric_total(
+        session, org_id=org_id, metric="job_minutes", month_start=month_start
+    )
     _enforce_monthly_minutes_limit(
         plan_code=plan_code,
         monthly_limit=policy.monthly_job_minutes,
@@ -577,18 +652,32 @@ def _enforce_org_quota(
     )
 
 
-def _ensure_project_exists(session: Session, project_id: UUID | None, principal: AuthPrincipal | None = None) -> Project | None:
+def _ensure_project_exists(
+    session: Session, project_id: UUID | None, principal: AuthPrincipal | None = None
+) -> Project | None:
     if not project_id:
         return None
     project = session.get(Project, project_id)
     if not project:
         raise not_found("Project not found", details={"project_id": str(project_id)})
     if principal:
-        _assert_org_access(principal=principal, entity_org_id=project.org_id, entity="project", entity_id=str(project.id))
+        _assert_org_access(
+            principal=principal,
+            entity_org_id=project.org_id,
+            entity="project",
+            entity_id=str(project.id),
+        )
     return project
 
 
-def _ensure_asset_exists(session: Session, *, asset_id: UUID, principal: AuthPrincipal, kind: str | None = None, field: str = "asset_id") -> MediaAsset:
+def _ensure_asset_exists(
+    session: Session,
+    *,
+    asset_id: UUID,
+    principal: AuthPrincipal,
+    kind: str | None = None,
+    field: str = "asset_id",
+) -> MediaAsset:
     asset = session.get(MediaAsset, asset_id)
     if not asset:
         raise not_found(_ERR_ASSET_NOT_FOUND, details={field: str(asset_id)})
@@ -599,7 +688,9 @@ def _ensure_asset_exists(session: Session, *, asset_id: UUID, principal: AuthPri
             message=f"Invalid asset kind for {field}",
             details={"expected_kind": kind, "actual_kind": asset.kind, field: str(asset_id)},
         )
-    _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
+    _assert_org_access(
+        principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id)
+    )
     return asset
 
 
@@ -619,6 +710,8 @@ def _coerce_aware_datetime(value: datetime | None) -> datetime | None:
 
 
 class WorkerDiagnostics(SQLModel):
+    """Health snapshot of the Celery worker fleet for diagnostics."""
+
     ping_ok: bool = False
     workers: list[str] = []
     system_info: dict | None = None
@@ -626,6 +719,8 @@ class WorkerDiagnostics(SQLModel):
 
 
 class SystemStatusResponse(SQLModel):
+    """Aggregate system status payload returned by the status endpoint."""
+
     api_version: str
     offline_mode: bool
     storage_backend: str
@@ -641,6 +736,7 @@ def _truthy_env(name: str) -> bool:
 
 @router.get("/system/status", tags=["System"])
 def system_status() -> SystemStatusResponse:
+    """Return API, storage, and worker health for diagnostics."""
     settings = get_settings()
     storage = get_storage(media_root=settings.media_root)
 
@@ -655,16 +751,17 @@ def system_status() -> SystemStatusResponse:
                     workers.extend(item.keys())
             worker_diag.workers = sorted(set(workers))
             worker_diag.ping_ok = bool(worker_diag.workers)
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             worker_diag.error = f"Worker ping failed: {exc}"
 
         if worker_diag.ping_ok:
             try:
                 res = app.send_task("tasks.system_info")
                 worker_diag.system_info = res.get(timeout=3.0)
-            except Exception as exc:
+            except Exception as exc:  # pylint: disable=broad-exception-caught
                 msg = f"Worker diagnostics task failed: {exc}"
                 worker_diag.error = f"{worker_diag.error}; {msg}" if worker_diag.error else msg
+    # pylint: disable-next=broad-exception-caught
     except Exception as exc:  # pragma: no cover - best effort
         worker_diag.error = f"Celery unavailable: {exc}"
 
@@ -679,6 +776,8 @@ def system_status() -> SystemStatusResponse:
 
 
 class CaptionJobRequest(SQLModel):
+    """Request body for creating a caption-generation job."""
+
     video_asset_id: UUID
     options: Optional[dict] = None
     project_id: Optional[UUID] = None
@@ -688,13 +787,19 @@ class CaptionJobRequest(SQLModel):
         "json_schema_extra": {
             "example": {
                 "video_asset_id": "00000000-0000-0000-0000-000000000001",
-                "options": {"language": "en", "backend": "whisper", "subtitle_quality_profile": "balanced"},
+                "options": {
+                    "language": "en",
+                    "backend": "whisper",
+                    "subtitle_quality_profile": "balanced",
+                },
             }
         }
     }
 
 
 class TranslateJobRequest(SQLModel):
+    """Request body for creating a subtitle-translation job."""
+
     subtitle_asset_id: UUID
     target_language: str
     options: Optional[dict] = None
@@ -713,6 +818,8 @@ class TranslateJobRequest(SQLModel):
 
 
 class TranslateSubtitleToolRequest(SQLModel):
+    """Request body for the subtitle-translation tool endpoint."""
+
     subtitle_asset_id: UUID
     target_language: str
     bilingual: bool = False
@@ -733,6 +840,8 @@ class TranslateSubtitleToolRequest(SQLModel):
 
 
 class ShortsJobRequest(SQLModel):
+    """Request body for creating a short-form clip generation job."""
+
     video_asset_id: UUID
     max_clips: int = 3
     min_duration: float = 10.0
@@ -757,9 +866,14 @@ class ShortsJobRequest(SQLModel):
 
 
 class DownloadUrlResponse(SQLModel):
+    """Response wrapping a single download URL."""
+
     url: str
 
+
 class MergeAVRequest(SQLModel):
+    """Request body for merging a video and audio asset."""
+
     video_asset_id: UUID
     audio_asset_id: UUID
     offset: float = 0.0
@@ -784,6 +898,8 @@ class MergeAVRequest(SQLModel):
 
 
 class CutClipRequest(SQLModel):
+    """Request body for cutting a clip from a video asset."""
+
     video_asset_id: UUID
     start: float
     end: float
@@ -804,6 +920,8 @@ class CutClipRequest(SQLModel):
 
 
 class StyledSubtitleJobRequest(SQLModel):
+    """Request body for rendering styled subtitles onto a video."""
+
     video_asset_id: UUID
     subtitle_asset_id: UUID
     style: dict
@@ -824,6 +942,8 @@ class StyledSubtitleJobRequest(SQLModel):
 
 
 class UsageSummary(SQLModel):
+    """Summary of job activity and quota usage for an organization."""
+
     total_jobs: int = 0
     queued_jobs: int = 0
     running_jobs: int = 0
@@ -844,6 +964,8 @@ class UsageSummary(SQLModel):
 
 
 class UsageCostSummary(SQLModel):
+    """Summary of estimated usage costs for an organization."""
+
     currency: str = "usd"
     total_estimated_cost_cents: int = 0
     entries_count: int = 0
@@ -854,6 +976,8 @@ class UsageCostSummary(SQLModel):
 
 
 class BudgetPolicyView(SQLModel):
+    """Serialized view of an organization's budget policy and current spend."""
+
     org_id: UUID
     monthly_soft_limit_cents: Optional[int] = None
     monthly_hard_limit_cents: Optional[int] = None
@@ -864,12 +988,16 @@ class BudgetPolicyView(SQLModel):
 
 
 class BudgetPolicyUpdateRequest(SQLModel):
+    """Request body for updating an organization's budget policy."""
+
     monthly_soft_limit_cents: Optional[int] = Field(default=None, ge=0)
     monthly_hard_limit_cents: Optional[int] = Field(default=None, ge=0)
     enforce_hard_limit: bool = False
 
 
 class WorkflowTemplateCreateRequest(SQLModel):
+    """Request body for creating a workflow template."""
+
     name: str
     description: Optional[str] = None
     steps: list[dict]
@@ -877,6 +1005,8 @@ class WorkflowTemplateCreateRequest(SQLModel):
 
 
 class WorkflowTemplateView(SQLModel):
+    """Serialized view of a workflow template."""
+
     id: UUID
     name: str
     description: Optional[str] = None
@@ -887,6 +1017,8 @@ class WorkflowTemplateView(SQLModel):
 
 
 class WorkflowRunCreateRequest(SQLModel):
+    """Request body for starting a workflow run."""
+
     template_id: UUID
     video_asset_id: UUID
     options: Optional[dict] = None
@@ -894,6 +1026,8 @@ class WorkflowRunCreateRequest(SQLModel):
 
 
 class WorkflowRunStepView(SQLModel):
+    """Serialized view of a single workflow run step."""
+
     id: UUID
     order_index: int
     step_type: str
@@ -904,6 +1038,8 @@ class WorkflowRunStepView(SQLModel):
 
 
 class WorkflowRunView(SQLModel):
+    """Serialized view of a workflow run and its steps."""
+
     id: UUID
     template_id: UUID
     task_id: Optional[str] = None
@@ -917,26 +1053,36 @@ class WorkflowRunView(SQLModel):
 
 
 class ProjectCreateRequest(SQLModel):
+    """Request body for creating a project."""
+
     name: str
     description: Optional[str] = None
 
 
 class ProjectShareLinksRequest(SQLModel):
+    """Request body for generating shareable asset links."""
+
     asset_ids: list[UUID]
     expires_in_hours: int = 24
 
 
 class ProjectShareLink(SQLModel):
+    """A single shareable asset link with its expiry."""
+
     asset_id: UUID
     url: str
     expires_at: datetime
 
 
 class ProjectShareLinksResponse(SQLModel):
+    """Response containing generated shareable asset links."""
+
     links: list[ProjectShareLink]
 
 
 class UploadInitRequest(SQLModel):
+    """Request body for initializing a single-part upload."""
+
     kind: str = "video"
     filename: str
     mime_type: Optional[str] = None
@@ -945,6 +1091,8 @@ class UploadInitRequest(SQLModel):
 
 
 class UploadInitResponse(SQLModel):
+    """Response describing how to perform a single-part upload."""
+
     upload_id: str
     asset_id: Optional[UUID] = None
     upload_url: str
@@ -956,17 +1104,23 @@ class UploadInitResponse(SQLModel):
 
 
 class UploadCompleteRequest(SQLModel):
+    """Request body for completing a single-part upload."""
+
     upload_id: str
     asset_id: UUID
 
 
 class UploadCompleteResponse(SQLModel):
+    """Response confirming a completed single-part upload."""
+
     upload_id: str
     asset_id: UUID
     status: str = "completed"
 
 
 class MultipartUploadInitRequest(SQLModel):
+    """Request body for initializing a multipart upload."""
+
     kind: str = "video"
     filename: str
     mime_type: Optional[str] = None
@@ -974,6 +1128,8 @@ class MultipartUploadInitRequest(SQLModel):
 
 
 class MultipartUploadInitResponse(SQLModel):
+    """Response describing an initialized multipart upload."""
+
     upload_id: str
     asset_id: UUID
     strategy: str = "multipart_presigned"
@@ -982,6 +1138,8 @@ class MultipartUploadInitResponse(SQLModel):
 
 
 class MultipartUploadPartResponse(SQLModel):
+    """Response describing how to upload a single multipart part."""
+
     upload_id: str
     part_number: int
     upload_url: str
@@ -991,15 +1149,21 @@ class MultipartUploadPartResponse(SQLModel):
 
 
 class MultipartPart(SQLModel):
+    """An uploaded multipart part identified by number and ETag."""
+
     part_number: int
     etag: str
 
 
 class MultipartUploadCompleteRequest(SQLModel):
+    """Request body for completing a multipart upload."""
+
     parts: list[MultipartPart]
 
 
 class MultipartUploadAbortResponse(SQLModel):
+    """Response confirming an aborted multipart upload."""
+
     upload_id: str
     status: str = "aborted"
 
@@ -1015,7 +1179,13 @@ def _owner_fields(principal: AuthPrincipal) -> dict[str, UUID | None]:
 def _supports_presigned_uploads(storage: Any) -> bool:
     return all(
         hasattr(storage, name)
-        for name in ("create_presigned_upload", "create_multipart_upload", "sign_multipart_part", "complete_multipart_upload", "abort_multipart_upload")
+        for name in (
+            "create_presigned_upload",
+            "create_multipart_upload",
+            "sign_multipart_part",
+            "complete_multipart_upload",
+            "abort_multipart_upload",
+        )
     )
 
 
@@ -1025,56 +1195,57 @@ def _scoped_tmp_rel_dir(storage: Any, principal: AuthPrincipal) -> str:
     return "tmp"
 
 
+def _style_subtitles_dispatch_args(payload: dict) -> tuple:
+    subtitle_asset_id = str(payload.get("subtitle_asset_id") or "")
+    style = payload.get("style") if isinstance(payload.get("style"), dict) else {}
+    return (
+        subtitle_asset_id,
+        style,
+        {"preview_seconds": payload.get("preview_seconds")},
+    )
+
+
+def _merge_av_dispatch_args(payload: dict) -> tuple:
+    audio_asset_id = str(payload.get("audio_asset_id") or "")
+    return (audio_asset_id, payload)
+
+
+def _cut_clip_dispatch_args(payload: dict) -> tuple:
+    start = max(0.0, float(payload.get("start") or 0.0))
+    end = max(start, float(payload.get("end") or start))
+    return (start, end, payload)
+
+
+# Maps a retryable job type to its Celery task name and a builder that produces the
+# task-specific trailing arguments (the leading ``job_id``/``input_asset_id`` are common).
+_RETRY_DISPATCH: dict[str, tuple[str, Any]] = {
+    "captions": (TASK_GENERATE_CAPTIONS, lambda payload: (payload,)),
+    "translate_subtitles": (TASK_TRANSLATE_SUBTITLES, lambda payload: (payload,)),
+    "shorts": (TASK_GENERATE_SHORTS, lambda payload: (payload,)),
+    "style_subtitles": (TASK_RENDER_STYLED_SUBTITLES, _style_subtitles_dispatch_args),
+    "merge_av": (TASK_MERGE_VIDEO_AUDIO, _merge_av_dispatch_args),
+    "cut_clip": (TASK_CUT_CLIP, _cut_clip_dispatch_args),
+}
+
+
 def _dispatch_existing_job(job: Job, session: Session) -> Job:
     payload = job.payload or {}
-    if job.job_type == "captions":
-        return save_and_dispatch(job, session, TASK_GENERATE_CAPTIONS, str(job.id), str(job.input_asset_id), payload)
-    if job.job_type == "translate_subtitles":
-        return save_and_dispatch(job, session, TASK_TRANSLATE_SUBTITLES, str(job.id), str(job.input_asset_id), payload)
-    if job.job_type == "shorts":
-        return save_and_dispatch(job, session, TASK_GENERATE_SHORTS, str(job.id), str(job.input_asset_id), payload)
-    if job.job_type == "style_subtitles":
-        subtitle_asset_id = str(payload.get("subtitle_asset_id") or "")
-        style = payload.get("style") if isinstance(payload.get("style"), dict) else {}
-        return save_and_dispatch(
-            job,
-            session,
-            TASK_RENDER_STYLED_SUBTITLES,
-            str(job.id),
-            str(job.input_asset_id),
-            subtitle_asset_id,
-            style,
-            {"preview_seconds": payload.get("preview_seconds")},
+    dispatch = _RETRY_DISPATCH.get(job.job_type)
+    if dispatch is None:
+        raise ApiError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Job type does not support retry",
+            details={"job_type": job.job_type},
         )
-    if job.job_type == "merge_av":
-        audio_asset_id = str(payload.get("audio_asset_id") or "")
-        return save_and_dispatch(
-            job,
-            session,
-            TASK_MERGE_VIDEO_AUDIO,
-            str(job.id),
-            str(job.input_asset_id),
-            audio_asset_id,
-            payload,
-        )
-    if job.job_type == "cut_clip":
-        start = max(0.0, float(payload.get("start") or 0.0))
-        end = max(start, float(payload.get("end") or start))
-        return save_and_dispatch(
-            job,
-            session,
-            TASK_CUT_CLIP,
-            str(job.id),
-            str(job.input_asset_id),
-            start,
-            end,
-            payload,
-        )
-    raise ApiError(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        code=ErrorCode.VALIDATION_ERROR,
-        message="Job type does not support retry",
-        details={"job_type": job.job_type},
+    task_name, build_args = dispatch
+    return save_and_dispatch(
+        job,
+        session,
+        task_name,
+        str(job.id),
+        str(job.input_asset_id),
+        *build_args(payload),
     )
 
 
@@ -1127,7 +1298,9 @@ def _normalize_workflow_steps(steps: list[dict]) -> list[dict]:
 
 def _serialize_workflow_run(session: Session, run: WorkflowRun) -> WorkflowRunView:
     steps = session.exec(
-        select(WorkflowRunStep).where(WorkflowRunStep.run_id == run.id).order_by(WorkflowRunStep.order_index.asc())
+        select(WorkflowRunStep)
+        .where(WorkflowRunStep.run_id == run.id)
+        .order_by(WorkflowRunStep.order_index.asc())  # pylint: disable=no-member
     ).all()
     return WorkflowRunView(
         id=run.id,
@@ -1168,11 +1341,20 @@ def create_caption_job(
     response: Response,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> Job:
-    _ensure_asset_exists(session, asset_id=payload.video_asset_id, principal=principal, kind="video", field="video_asset_id")
+    """Create and dispatch a caption-generation job."""
+    _ensure_asset_exists(
+        session,
+        asset_id=payload.video_asset_id,
+        principal=principal,
+        kind="video",
+        field="video_asset_id",
+    )
     project = _ensure_project_exists(session, payload.project_id, principal)
     _enforce_org_quota(session, principal, job_type="captions", job_payload=payload.options or {})
     idem = _resolve_idempotency_key(payload.idempotency_key, idempotency_key)
-    existing = _find_existing_idempotent_job(session=session, principal=principal, job_type="captions", idempotency_key=idem)
+    existing = _find_existing_idempotent_job(
+        session=session, principal=principal, job_type="captions", idempotency_key=idem
+    )
     if existing:
         response.status_code = status.HTTP_200_OK
         return existing
@@ -1187,7 +1369,14 @@ def create_caption_job(
         idempotency_key=idem,
         **_owner_fields(principal),
     )
-    return save_and_dispatch(job, session, TASK_GENERATE_CAPTIONS, str(job.id), str(payload.video_asset_id), payload.options or {})
+    return save_and_dispatch(
+        job,
+        session,
+        TASK_GENERATE_CAPTIONS,
+        str(job.id),
+        str(payload.video_asset_id),
+        payload.options or {},
+    )
 
 
 @router.post(
@@ -1204,7 +1393,14 @@ def create_translate_job(
     response: Response,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> Job:
-    _ensure_asset_exists(session, asset_id=payload.subtitle_asset_id, principal=principal, kind="subtitle", field="subtitle_asset_id")
+    """Create and dispatch a subtitle-translation job."""
+    _ensure_asset_exists(
+        session,
+        asset_id=payload.subtitle_asset_id,
+        principal=principal,
+        kind="subtitle",
+        field="subtitle_asset_id",
+    )
     project = _ensure_project_exists(session, payload.project_id, principal)
     _enforce_org_quota(
         session,
@@ -1249,10 +1445,13 @@ def create_translate_job(
     responses={404: {"model": ErrorResponse}},
 )
 def get_job(job_id: UUID, session: SessionDep, principal: PrincipalDep) -> Job:
+    """Return a single job scoped to the caller's organization."""
     job = session.get(Job, job_id)
     if not job:
         raise not_found(_ERR_JOB_NOT_FOUND, details={"job_id": str(job_id)})
-    _assert_org_access(principal=principal, entity_org_id=job.org_id, entity="job", entity_id=str(job.id))
+    _assert_org_access(
+        principal=principal, entity_org_id=job.org_id, entity="job", entity_id=str(job.id)
+    )
     return job
 
 
@@ -1263,6 +1462,7 @@ def list_jobs(
     status_filter: Optional[JobStatus] = None,
     project_id: Optional[UUID] = None,
 ) -> List[Job]:
+    """List jobs visible to the caller, optionally filtered by status/project."""
     query = select(Job)
     query = _scope_query_by_org(query, Job, principal)
     if status_filter:
@@ -1279,7 +1479,9 @@ def _summarize_output_assets(session: Session, output_asset_ids: set[UUID]) -> t
     generated_bytes = 0
     if not output_asset_ids:
         return output_duration_seconds, generated_bytes
-    assets = session.exec(select(MediaAsset).where(MediaAsset.id.in_(output_asset_ids))).all()
+    assets = session.exec(
+        select(MediaAsset).where(MediaAsset.id.in_(output_asset_ids))  # pylint: disable=no-member
+    ).all()
     settings = get_settings()
     media_root = Path(settings.media_root)
     for asset in assets:
@@ -1296,7 +1498,9 @@ def _summarize_output_assets(session: Session, output_asset_ids: set[UUID]) -> t
 def _usage_plan_quota(session: Session, org_id) -> dict[str, Any]:
     plan_code = _resolve_plan_code(session, org_id=org_id)
     policy = get_plan_policy(plan_code)
-    month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_start = datetime.now(timezone.utc).replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
+    )
     usage_events = session.exec(
         select(UsageEvent).where(
             (UsageEvent.org_id == org_id)
@@ -1323,6 +1527,8 @@ def get_usage_summary(
     to_date: Annotated[Optional[datetime], Query(alias="to")] = None,
     project_id: Optional[UUID] = None,
 ) -> UsageSummary:
+    """Aggregate job counts, output stats, and plan quota usage for the caller."""
+    # pylint: disable=too-many-locals
     from_dt = _coerce_aware_datetime(from_date)
     to_dt = _coerce_aware_datetime(to_date)
 
@@ -1383,7 +1589,9 @@ def get_usage_summary(
         plan_code=plan_code,
         quota_job_minutes=quota_minutes,
         used_job_minutes=round(float(used_minutes), 3) if used_minutes is not None else None,
-        overage_job_minutes=round(float(overage_minutes), 3) if overage_minutes is not None else None,
+        overage_job_minutes=(
+            round(float(overage_minutes), 3) if overage_minutes is not None else None
+        ),
         max_concurrent_jobs=max_concurrent_jobs,
         from_date=from_dt,
         to_date=to_dt,
@@ -1398,6 +1606,7 @@ def get_usage_costs(
     to_date: Annotated[Optional[datetime], Query(alias="to")] = None,
     project_id: Optional[UUID] = None,
 ) -> UsageCostSummary:
+    """Return estimated usage costs for the caller's organization."""
     if not principal.org_id:
         return UsageCostSummary(from_date=from_date, to_date=to_date)
 
@@ -1414,12 +1623,16 @@ def get_usage_costs(
         _ensure_project_exists(session, project_id, principal)
         project_job_ids = list(
             session.exec(
-                select(Job.id).where((Job.org_id == principal.org_id) & (Job.project_id == project_id))
+                select(Job.id).where(
+                    (Job.org_id == principal.org_id) & (Job.project_id == project_id)
+                )
             ).all()
         )
         if not project_job_ids:
             return UsageCostSummary(from_date=from_dt, to_date=to_dt)
-        query = query.where(UsageLedgerEntry.job_id.in_(project_job_ids))
+        query = query.where(
+            UsageLedgerEntry.job_id.in_(project_job_ids)  # pylint: disable=no-member
+        )
 
     entries = session.exec(query).all()
 
@@ -1429,7 +1642,9 @@ def get_usage_costs(
     for entry in entries:
         metric = str(entry.metric or "unknown")
         by_metric[metric] = by_metric.get(metric, 0.0) + float(entry.quantity or 0.0)
-        by_metric_costs[metric] = by_metric_costs.get(metric, 0) + int(entry.estimated_cost_cents or 0)
+        by_metric_costs[metric] = by_metric_costs.get(metric, 0) + int(
+            entry.estimated_cost_cents or 0
+        )
         total_cost += int(entry.estimated_cost_cents or 0)
 
     return UsageCostSummary(
@@ -1444,11 +1659,16 @@ def get_usage_costs(
 
 @router.get("/usage/budget-policy", tags=["Usage"])
 def get_budget_policy(session: SessionDep, principal: PrincipalDep) -> BudgetPolicyView:
+    """Return the caller organization's budget policy and current spend."""
     if not principal.org_id:
         raise unauthorized("Organization context missing")
-    policy = session.exec(select(OrgBudgetPolicy).where(OrgBudgetPolicy.org_id == principal.org_id)).first()
+    policy = session.exec(
+        select(OrgBudgetPolicy).where(OrgBudgetPolicy.org_id == principal.org_id)
+    ).first()
     current_cost = _current_month_estimated_cost_cents(session, org_id=principal.org_id)
-    return _serialize_budget_policy(policy=policy, org_id=principal.org_id, current_month_estimated_cost_cents=current_cost)
+    return _serialize_budget_policy(
+        policy=policy, org_id=principal.org_id, current_month_estimated_cost_cents=current_cost
+    )
 
 
 @router.put("/usage/budget-policy", tags=["Usage"])
@@ -1457,6 +1677,7 @@ def update_budget_policy(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> BudgetPolicyView:
+    """Create or update the caller organization's budget policy."""
     if not principal.org_id:
         raise unauthorized("Organization context missing")
     _require_org_manager_role(principal)
@@ -1471,7 +1692,9 @@ def update_budget_policy(
             details={"monthly_soft_limit_cents": soft, "monthly_hard_limit_cents": hard},
         )
 
-    policy = session.exec(select(OrgBudgetPolicy).where(OrgBudgetPolicy.org_id == principal.org_id)).first()
+    policy = session.exec(
+        select(OrgBudgetPolicy).where(OrgBudgetPolicy.org_id == principal.org_id)
+    ).first()
     now = datetime.now(timezone.utc)
     if not policy:
         policy = OrgBudgetPolicy(
@@ -1494,7 +1717,9 @@ def update_budget_policy(
     session.refresh(policy)
 
     current_cost = _current_month_estimated_cost_cents(session, org_id=principal.org_id)
-    return _serialize_budget_policy(policy=policy, org_id=principal.org_id, current_month_estimated_cost_cents=current_cost)
+    return _serialize_budget_policy(
+        policy=policy, org_id=principal.org_id, current_month_estimated_cost_cents=current_cost
+    )
 
 
 @router.post(
@@ -1503,7 +1728,10 @@ def update_budget_policy(
     tags=["Projects"],
     responses={422: {"model": ErrorResponse}},
 )
-def create_project(payload: ProjectCreateRequest, session: SessionDep, principal: PrincipalDep) -> Project:
+def create_project(
+    payload: ProjectCreateRequest, session: SessionDep, principal: PrincipalDep
+) -> Project:
+    """Create a project and register the caller as its owner."""
     name = (payload.name or "").strip()
     if not name:
         raise ApiError(
@@ -1523,7 +1751,8 @@ def create_project(payload: ProjectCreateRequest, session: SessionDep, principal
     if principal.user_id:
         existing_membership = session.exec(
             select(ProjectMembership).where(
-                (ProjectMembership.project_id == project.id) & (ProjectMembership.user_id == principal.user_id)
+                (ProjectMembership.project_id == project.id)
+                & (ProjectMembership.user_id == principal.user_id)
             )
         ).first()
         if not existing_membership:
@@ -1544,7 +1773,8 @@ def create_project(payload: ProjectCreateRequest, session: SessionDep, principal
 
 @router.get("/projects", tags=["Projects"])
 def list_projects(session: SessionDep, principal: PrincipalDep) -> list[Project]:
-    query = select(Project).order_by(Project.created_at.desc())
+    """List projects visible to the caller."""
+    query = select(Project).order_by(Project.created_at.desc())  # pylint: disable=no-member
     query = _scope_query_by_org(query, Project, principal)
     return session.exec(query).all()
 
@@ -1555,7 +1785,10 @@ def list_projects(session: SessionDep, principal: PrincipalDep) -> list[Project]
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
 )
-def create_workflow_template(payload: WorkflowTemplateCreateRequest, session: SessionDep, principal: PrincipalDep) -> WorkflowTemplateView:
+def create_workflow_template(
+    payload: WorkflowTemplateCreateRequest, session: SessionDep, principal: PrincipalDep
+) -> WorkflowTemplateView:
+    """Create a workflow template for the caller's organization."""
     if not principal.org_id:
         raise unauthorized("Authentication required")
     name = (payload.name or "").strip()
@@ -1588,10 +1821,18 @@ def create_workflow_template(payload: WorkflowTemplateCreateRequest, session: Se
 
 
 @router.get("/workflows/templates", tags=["Projects"])
-def list_workflow_templates(session: SessionDep, principal: PrincipalDep, include_inactive: bool = False) -> list[WorkflowTemplateView]:
-    query = select(WorkflowTemplate).order_by(WorkflowTemplate.created_at.desc())
+def list_workflow_templates(
+    session: SessionDep, principal: PrincipalDep, include_inactive: bool = False
+) -> list[WorkflowTemplateView]:
+    """List workflow templates for the caller's organization."""
+    query = select(WorkflowTemplate).order_by(
+        WorkflowTemplate.created_at.desc()  # pylint: disable=no-member
+    )
     query = _scope_query_by_org(query, WorkflowTemplate, principal)
     if not include_inactive:
+        # SQLAlchemy boolean filter: ``== True`` emits ``= true`` SQL; ``is True``
+        # would change the generated query, so the comparison is intentional.
+        # pylint: disable-next=singleton-comparison
         query = query.where(WorkflowTemplate.active == True)  # noqa: E712
     templates = session.exec(query).all()
     return [
@@ -1614,13 +1855,21 @@ def list_workflow_templates(session: SessionDep, principal: PrincipalDep, includ
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-def create_workflow_run(payload: WorkflowRunCreateRequest, session: SessionDep, principal: PrincipalDep) -> WorkflowRunView:
+def create_workflow_run(
+    payload: WorkflowRunCreateRequest, session: SessionDep, principal: PrincipalDep
+) -> WorkflowRunView:
+    """Start a workflow run from a template and dispatch its pipeline."""
     if not principal.org_id:
         raise unauthorized("Authentication required")
     template = session.get(WorkflowTemplate, payload.template_id)
     if not template:
         raise not_found("Workflow template not found", {"template_id": str(payload.template_id)})
-    _assert_org_access(principal=principal, entity_org_id=template.org_id, entity="workflow_template", entity_id=str(template.id))
+    _assert_org_access(
+        principal=principal,
+        entity_org_id=template.org_id,
+        entity="workflow_template",
+        entity_id=str(template.id),
+    )
     if not template.active:
         raise ApiError(
             status_code=status.HTTP_409_CONFLICT,
@@ -1628,7 +1877,13 @@ def create_workflow_run(payload: WorkflowRunCreateRequest, session: SessionDep, 
             message="Workflow template is inactive",
             details={"template_id": str(template.id)},
         )
-    _ensure_asset_exists(session, asset_id=payload.video_asset_id, principal=principal, kind="video", field="video_asset_id")
+    _ensure_asset_exists(
+        session,
+        asset_id=payload.video_asset_id,
+        principal=principal,
+        kind="video",
+        field="video_asset_id",
+    )
     project = _ensure_project_exists(session, payload.project_id, principal)
 
     run = WorkflowRun(
@@ -1661,9 +1916,13 @@ def create_workflow_run(payload: WorkflowRunCreateRequest, session: SessionDep, 
         session.add(run)
         session.commit()
         session.refresh(run)
+    # pylint: disable-next=broad-exception-caught
     except Exception as exc:  # pragma: no cover - defensive
         run.status = WorkflowRunStatus.failed
-        run.payload = {**(run.payload or {}), "error": f"Failed to dispatch workflow pipeline: {exc}"}
+        run.payload = {
+            **(run.payload or {}),
+            "error": f"Failed to dispatch workflow pipeline: {exc}",
+        }
         session.add(run)
         session.commit()
 
@@ -1676,10 +1935,13 @@ def create_workflow_run(payload: WorkflowRunCreateRequest, session: SessionDep, 
     responses={404: {"model": ErrorResponse}},
 )
 def get_workflow_run(run_id: UUID, session: SessionDep, principal: PrincipalDep) -> WorkflowRunView:
+    """Return a single workflow run scoped to the caller's organization."""
     run = session.get(WorkflowRun, run_id)
     if not run:
         raise not_found("Workflow run not found", {"run_id": str(run_id)})
-    _assert_org_access(principal=principal, entity_org_id=run.org_id, entity="workflow_run", entity_id=str(run.id))
+    _assert_org_access(
+        principal=principal, entity_org_id=run.org_id, entity="workflow_run", entity_id=str(run.id)
+    )
     return _serialize_workflow_run(session, run)
 
 
@@ -1688,24 +1950,36 @@ def get_workflow_run(run_id: UUID, session: SessionDep, principal: PrincipalDep)
     tags=["Projects"],
     responses={404: {"model": ErrorResponse}},
 )
-def cancel_workflow_run(run_id: UUID, session: SessionDep, principal: PrincipalDep) -> WorkflowRunView:
+def cancel_workflow_run(
+    run_id: UUID, session: SessionDep, principal: PrincipalDep
+) -> WorkflowRunView:
+    """Cancel a workflow run and its pending steps."""
     run = session.get(WorkflowRun, run_id)
     if not run:
         raise not_found("Workflow run not found", {"run_id": str(run_id)})
-    _assert_org_access(principal=principal, entity_org_id=run.org_id, entity="workflow_run", entity_id=str(run.id))
-    if run.status not in {WorkflowRunStatus.completed, WorkflowRunStatus.failed, WorkflowRunStatus.cancelled}:
+    _assert_org_access(
+        principal=principal, entity_org_id=run.org_id, entity="workflow_run", entity_id=str(run.id)
+    )
+    if run.status not in {
+        WorkflowRunStatus.completed,
+        WorkflowRunStatus.failed,
+        WorkflowRunStatus.cancelled,
+    }:
         run.status = WorkflowRunStatus.cancelled
         run.updated_at = datetime.now(timezone.utc)
         session.add(run)
         if run.task_id:
             try:
                 get_celery_app().control.revoke(run.task_id, terminate=False)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 pass
         pending_steps = session.exec(
             select(WorkflowRunStep).where(
                 (WorkflowRunStep.run_id == run.id)
-                & WorkflowRunStep.status.in_([WorkflowStepStatus.queued, WorkflowStepStatus.running])
+                # pylint: disable-next=no-member
+                & WorkflowRunStep.status.in_(
+                    [WorkflowStepStatus.queued, WorkflowStepStatus.running]
+                )
             )
         ).all()
         for step in pending_steps:
@@ -1723,10 +1997,16 @@ def cancel_workflow_run(run_id: UUID, session: SessionDep, principal: PrincipalD
     responses={404: {"model": ErrorResponse}},
 )
 def get_project(project_id: UUID, session: SessionDep, principal: PrincipalDep) -> Project:
+    """Return a single project scoped to the caller's organization."""
     project = session.get(Project, project_id)
     if not project:
         raise not_found("Project not found", details={"project_id": str(project_id)})
-    _assert_org_access(principal=principal, entity_org_id=project.org_id, entity="project", entity_id=str(project.id))
+    _assert_org_access(
+        principal=principal,
+        entity_org_id=project.org_id,
+        entity="project",
+        entity_id=str(project.id),
+    )
     return project
 
 
@@ -1741,8 +2021,13 @@ def list_project_jobs(
     principal: PrincipalDep,
     status_filter: Optional[JobStatus] = None,
 ) -> list[Job]:
+    """List jobs belonging to a project."""
     _ensure_project_exists(session, project_id, principal)
-    query = select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc())
+    query = (
+        select(Job)
+        .where(Job.project_id == project_id)
+        .order_by(Job.created_at.desc())  # pylint: disable=no-member
+    )
     query = _scope_query_by_org(query, Job, principal)
     if status_filter:
         query = query.where(Job.status == status_filter)
@@ -1761,13 +2046,14 @@ def list_project_assets(
     kind: Optional[str] = None,
     limit: int = 50,
 ) -> list[MediaAsset]:
+    """List media assets belonging to a project."""
     _ensure_project_exists(session, project_id, principal)
     limit = max(1, min(limit, 200))
     query = select(MediaAsset).where(MediaAsset.project_id == project_id)
     query = _scope_query_by_org(query, MediaAsset, principal)
     if kind:
         query = query.where(MediaAsset.kind == kind)
-    query = query.order_by(MediaAsset.created_at.desc()).limit(limit)
+    query = query.order_by(MediaAsset.created_at.desc()).limit(limit)  # pylint: disable=no-member
     return session.exec(query).all()
 
 
@@ -1783,6 +2069,7 @@ def create_project_share_links(
     request: Request,
     principal: PrincipalDep,
 ) -> ProjectShareLinksResponse:
+    """Generate time-limited shareable links for project assets."""
     project = _ensure_project_exists(session, project_id, principal)
     assert project is not None  # for typing
 
@@ -1794,7 +2081,9 @@ def create_project_share_links(
         asset = session.get(MediaAsset, asset_id)
         if not asset:
             raise not_found(_ERR_ASSET_NOT_FOUND, details={"asset_id": str(asset_id)})
-        _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
+        _assert_org_access(
+            principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id)
+        )
         if asset.project_id != project.id:
             raise conflict(
                 "Asset does not belong to project",
@@ -1808,7 +2097,9 @@ def create_project_share_links(
             ttl_hours=expires_in_hours,
         )
         path = request.url_for("download_shared_asset", asset_id=str(asset.id))
-        links.append(ProjectShareLink(asset_id=asset.id, url=f"{path}?token={token}", expires_at=expires_at))
+        links.append(
+            ProjectShareLink(asset_id=asset.id, url=f"{path}?token={token}", expires_at=expires_at)
+        )
 
     return ProjectShareLinksResponse(links=links)
 
@@ -1821,6 +2112,7 @@ def create_project_share_links(
     name="download_shared_asset",
 )
 def download_shared_asset(asset_id: UUID, token: str, session: SessionDep):
+    """Stream a shared asset after validating its share token."""
     settings = get_settings()
     try:
         token_payload = parse_and_validate_share_token(token, secret=settings.share_link_secret)
@@ -1862,8 +2154,12 @@ def download_shared_asset(asset_id: UUID, token: str, session: SessionDep):
         storage = get_storage(media_root=settings.media_root)
         remote_url = storage.get_download_url(asset.uri)
         if not remote_url:
-            raise not_found("Asset download URL is unavailable", details={"asset_id": str(asset_id)})
-        return _stream_remote_download(url=remote_url, filename=Path(asset.uri).name or "asset.bin", mime_type=asset.mime_type)
+            raise not_found(
+                "Asset download URL is unavailable", details={"asset_id": str(asset_id)}
+            )
+        return _stream_remote_download(
+            url=remote_url, filename=Path(asset.uri).name or "asset.bin", mime_type=asset.mime_type
+        )
 
     file_path = _safe_local_asset_path(media_root=settings.media_root, uri=asset.uri or "")
     return _stream_local_file(file_path=file_path, mime_type=asset.mime_type)
@@ -1875,10 +2171,13 @@ def download_shared_asset(asset_id: UUID, token: str, session: SessionDep):
     responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
 def cancel_job(job_id: UUID, session: SessionDep, principal: PrincipalDep) -> Job:
+    """Cancel an active job."""
     job = session.get(Job, job_id)
     if not job:
         raise not_found(_ERR_JOB_NOT_FOUND, details={"job_id": str(job_id)})
-    _assert_org_access(principal=principal, entity_org_id=job.org_id, entity="job", entity_id=str(job.id))
+    _assert_org_access(
+        principal=principal, entity_org_id=job.org_id, entity="job", entity_id=str(job.id)
+    )
 
     if job.status in {JobStatus.completed, JobStatus.failed, JobStatus.cancelled}:
         raise conflict("Job already finished", details={"status": job.status})
@@ -1895,7 +2194,11 @@ def cancel_job(job_id: UUID, session: SessionDep, principal: PrincipalDep) -> Jo
     "/jobs/{job_id}/retry",
     status_code=status.HTTP_201_CREATED,
     tags=["Jobs"],
-    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+    responses={
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+    },
 )
 def retry_job(
     job_id: UUID,
@@ -1904,12 +2207,17 @@ def retry_job(
     response: Response,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> Job:
+    """Re-queue a failed or cancelled job as a new job."""
     source = session.get(Job, job_id)
     if not source:
         raise not_found(_ERR_JOB_NOT_FOUND, details={"job_id": str(job_id)})
-    _assert_org_access(principal=principal, entity_org_id=source.org_id, entity="job", entity_id=str(source.id))
+    _assert_org_access(
+        principal=principal, entity_org_id=source.org_id, entity="job", entity_id=str(source.id)
+    )
     if source.status not in {JobStatus.failed, JobStatus.cancelled}:
-        raise conflict("Only failed/cancelled jobs can be retried", details={"status": source.status})
+        raise conflict(
+            "Only failed/cancelled jobs can be retried", details={"status": source.status}
+        )
     if not source.input_asset_id:
         raise ApiError(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1925,13 +2233,19 @@ def retry_job(
         job_payload=(source.payload if isinstance(source.payload, dict) else {}),
     )
     original_payload = source.payload or {}
-    retry_attempt = int(original_payload.get("retry_attempt") or 0) + 1 if isinstance(original_payload, dict) else 1
+    retry_attempt = (
+        int(original_payload.get("retry_attempt") or 0) + 1
+        if isinstance(original_payload, dict)
+        else 1
+    )
     retry_payload = {**(original_payload if isinstance(original_payload, dict) else {})}
     retry_payload.update({"retry_of": str(source.id), "retry_attempt": retry_attempt})
 
     idem = _resolve_idempotency_key(None, idempotency_key)
     if idem:
-        existing = _find_existing_idempotent_job(session=session, principal=principal, job_type=source.job_type, idempotency_key=idem)
+        existing = _find_existing_idempotent_job(
+            session=session, principal=principal, job_type=source.job_type, idempotency_key=idem
+        )
         if existing:
             response.status_code = status.HTTP_200_OK
             return existing
@@ -1956,14 +2270,21 @@ def retry_job(
     tags=["Jobs"],
     responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
-def delete_job(job_id: UUID, session: SessionDep, principal: PrincipalDep, delete_assets: bool = False) -> Response:
+def delete_job(
+    job_id: UUID, session: SessionDep, principal: PrincipalDep, delete_assets: bool = False
+) -> Response:
+    """Delete a finished job and optionally its derived assets."""
     job = session.get(Job, job_id)
     if not job:
         raise not_found(_ERR_JOB_NOT_FOUND, details={"job_id": str(job_id)})
-    _assert_org_access(principal=principal, entity_org_id=job.org_id, entity="job", entity_id=str(job.id))
+    _assert_org_access(
+        principal=principal, entity_org_id=job.org_id, entity="job", entity_id=str(job.id)
+    )
 
     if job.status not in {JobStatus.completed, JobStatus.failed, JobStatus.cancelled}:
-        raise conflict("Job is still active; cancel it before deleting", details={"status": job.status})
+        raise conflict(
+            "Job is still active; cancel it before deleting", details={"status": job.status}
+        )
 
     derived_asset_ids = _collect_job_output_asset_ids(job) if delete_assets else set()
 
@@ -1977,111 +2298,165 @@ def delete_job(job_id: UUID, session: SessionDep, principal: PrincipalDep, delet
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get(
-    "/jobs/{job_id}/bundle",
-    response_class=StreamingResponse,
-    tags=["Jobs"],
-    responses={404: {"model": ErrorResponse}},
-)
-def download_job_bundle(job_id: UUID, session: SessionDep, principal: PrincipalDep) -> StreamingResponse:
-    job = session.get(Job, job_id)
-    if not job:
-        raise not_found(_ERR_JOB_NOT_FOUND, details={"job_id": str(job_id)})
-    _assert_org_access(principal=principal, entity_org_id=job.org_id, entity="job", entity_id=str(job.id))
+@dataclass(frozen=True)
+class _BundleContext:
+    """Shared state for assembling a job's downloadable bundle."""
 
-    settings = get_settings()
-    media_root = Path(settings.media_root)
-    storage = get_storage(media_root=settings.media_root)
+    session: Session
+    storage: Any
+    media_root: Path
+    job: Job
+    zf: zipfile.ZipFile
 
-    def resolve_asset_path(asset: MediaAsset) -> Path:
-        uri = asset.uri or ""
-        if is_remote_uri(uri):
-            return Path(uri)
-        uri_path = Path(uri.lstrip("/"))
-        if uri_path.parts and uri_path.parts[0] == "media":
-            uri_path = Path(*uri_path.parts[1:])
-        return media_root / uri_path
 
-    def add_asset_to_zip(*, asset: MediaAsset, base_name: str, zf: zipfile.ZipFile) -> Optional[str]:
-        """Add an asset's metadata + local file (if available) to the zip.
+def _bundle_resolve_asset_path(ctx: _BundleContext, asset: MediaAsset) -> Path:
+    uri = asset.uri or ""
+    if is_remote_uri(uri):
+        return Path(uri)
+    uri_path = Path(uri.lstrip("/"))
+    if uri_path.parts and uri_path.parts[0] == "media":
+        uri_path = Path(*uri_path.parts[1:])
+    return ctx.media_root / uri_path
 
-        Returns the relative file path inside the zip when the local file is included.
-        """
-        zf.writestr(f"{base_name}_meta.json", json.dumps(asset.model_dump(), default=str, indent=2))
-        uri = asset.uri or ""
-        if not uri:
-            return None
 
-        if is_remote_uri(uri):
-            resolved = storage.get_download_url(uri) or uri
-            zf.writestr(f"{base_name}_uri.txt", resolved)
-            return f"{base_name}_uri.txt"
+def _bundle_add_asset(
+    ctx: _BundleContext, *, asset: MediaAsset, base_name: str
+) -> Optional[str]:
+    """Add an asset's metadata + local file (if available) to the zip.
 
-        path = resolve_asset_path(asset)
-        if path.is_file():
-            suffix = path.suffix or Path(uri).suffix or ""
-            rel_path = f"{base_name}{suffix}"
-            zf.write(path, arcname=rel_path)
-            return rel_path
-
-        zf.writestr(f"{base_name}_file_missing.txt", f"Asset file missing at {path} (uri={uri})")
+    Returns the relative file path inside the zip when the local file is included.
+    """
+    zf = ctx.zf
+    zf.writestr(f"{base_name}_meta.json", json.dumps(asset.model_dump(), default=str, indent=2))
+    uri = asset.uri or ""
+    if not uri:
         return None
 
-    def add_asset_by_id(*, asset_id: UUID, base_name: str, zf: zipfile.ZipFile) -> Optional[str]:
-        asset = session.get(MediaAsset, asset_id)
-        if not asset:
-            zf.writestr(f"{base_name}_missing.txt", f"Asset {asset_id} missing from database")
-            return None
-        return add_asset_to_zip(asset=asset, base_name=base_name, zf=zf)
+    if is_remote_uri(uri):
+        resolved = ctx.storage.get_download_url(uri) or uri
+        zf.writestr(f"{base_name}_uri.txt", resolved)
+        return f"{base_name}_uri.txt"
 
-    def add_clip_asset(*, clip: dict, key: str, clip_dir: str, name: str, zf: zipfile.ZipFile) -> Optional[str]:
-        asset_id = clip.get(key)
-        if not asset_id:
-            return None
-        try:
-            return add_asset_by_id(asset_id=UUID(str(asset_id)), base_name=f"{clip_dir}/{name}", zf=zf)
-        except Exception:
-            return None
+    path = _bundle_resolve_asset_path(ctx, asset)
+    if path.is_file():
+        suffix = path.suffix or Path(uri).suffix or ""
+        rel_path = f"{base_name}{suffix}"
+        zf.write(path, arcname=rel_path)
+        return rel_path
 
-    def build_clip_entry(*, idx: int, clip: dict, clip_dir: str, zf: zipfile.ZipFile) -> dict:
-        video_file = add_clip_asset(clip=clip, key="asset_id", clip_dir=clip_dir, name="video", zf=zf)
-        thumb_file = add_clip_asset(clip=clip, key="thumbnail_asset_id", clip_dir=clip_dir, name="thumbnail", zf=zf)
-        subs_file = add_clip_asset(clip=clip, key="subtitle_asset_id", clip_dir=clip_dir, name="subtitles", zf=zf)
-        styled_file = add_clip_asset(clip=clip, key="styled_asset_id", clip_dir=clip_dir, name="video_styled", zf=zf)
+    zf.writestr(f"{base_name}_file_missing.txt", f"Asset file missing at {path} (uri={uri})")
+    return None
 
-        clip_title = f"Reframe Clip {idx + 1}"
-        if isinstance(job.payload.get("prompt"), str) and job.payload["prompt"].strip():
-            prompt = job.payload["prompt"].strip()
-            clip_title = f"{prompt[:80]} (Clip {idx + 1})"
 
-        return {
-            "index": idx + 1,
-            "id": clip.get("id"),
-            "start": clip.get("start"),
-            "end": clip.get("end"),
-            "duration": clip.get("duration"),
-            "score": clip.get("score"),
-            "files": {
-                "video": video_file,
-                "video_styled": styled_file,
-                "thumbnail": thumb_file,
-                "subtitles": subs_file,
-            },
-            "suggested": {
-                "title": clip_title,
-                "description": f"Generated by Reframe from job {job.id}.",
-                "tags": ["reframe", "shorts"],
-            },
-            "source_uris": {
-                "video": clip.get("uri"),
-                "video_styled": clip.get("styled_uri"),
-                "thumbnail": clip.get("thumbnail_uri"),
-                "subtitles": clip.get("subtitle_uri"),
-            },
-        }
+def _bundle_add_asset_by_id(
+    ctx: _BundleContext, *, asset_id: UUID, base_name: str
+) -> Optional[str]:
+    asset = ctx.session.get(MediaAsset, asset_id)
+    if not asset:
+        ctx.zf.writestr(f"{base_name}_missing.txt", f"Asset {asset_id} missing from database")
+        return None
+    return _bundle_add_asset(ctx, asset=asset, base_name=base_name)
 
+
+def _bundle_add_clip_asset(
+    ctx: _BundleContext, *, clip: dict, key: str, base_name: str
+) -> Optional[str]:
+    asset_id = clip.get(key)
+    if not asset_id:
+        return None
+    try:
+        return _bundle_add_asset_by_id(ctx, asset_id=UUID(str(asset_id)), base_name=base_name)
+    except Exception:  # pylint: disable=broad-exception-caught
+        return None
+
+
+def _bundle_clip_title(job: Job, idx: int) -> str:
+    if isinstance(job.payload.get("prompt"), str) and job.payload["prompt"].strip():
+        prompt = job.payload["prompt"].strip()
+        return f"{prompt[:80]} (Clip {idx + 1})"
+    return f"Reframe Clip {idx + 1}"
+
+
+def _bundle_build_clip_entry(
+    ctx: _BundleContext, *, idx: int, clip: dict, clip_dir: str
+) -> dict:
+    video_file = _bundle_add_clip_asset(
+        ctx, clip=clip, key="asset_id", base_name=f"{clip_dir}/video"
+    )
+    thumb_file = _bundle_add_clip_asset(
+        ctx, clip=clip, key="thumbnail_asset_id", base_name=f"{clip_dir}/thumbnail"
+    )
+    subs_file = _bundle_add_clip_asset(
+        ctx, clip=clip, key="subtitle_asset_id", base_name=f"{clip_dir}/subtitles"
+    )
+    styled_file = _bundle_add_clip_asset(
+        ctx, clip=clip, key="styled_asset_id", base_name=f"{clip_dir}/video_styled"
+    )
+
+    return {
+        "index": idx + 1,
+        "id": clip.get("id"),
+        "start": clip.get("start"),
+        "end": clip.get("end"),
+        "duration": clip.get("duration"),
+        "score": clip.get("score"),
+        "files": {
+            "video": video_file,
+            "video_styled": styled_file,
+            "thumbnail": thumb_file,
+            "subtitles": subs_file,
+        },
+        "suggested": {
+            "title": _bundle_clip_title(ctx.job, idx),
+            "description": f"Generated by Reframe from job {ctx.job.id}.",
+            "tags": ["reframe", "shorts"],
+        },
+        "source_uris": {
+            "video": clip.get("uri"),
+            "video_styled": clip.get("styled_uri"),
+            "thumbnail": clip.get("thumbnail_uri"),
+            "subtitles": clip.get("subtitle_uri"),
+        },
+    }
+
+
+def _bundle_write_shorts_package(ctx: _BundleContext) -> None:
+    job = ctx.job
+    if job.job_type != "shorts" or not isinstance(job.payload, dict):
+        return
+    raw_clips = job.payload.get("clip_assets")
+    if not isinstance(raw_clips, list):
+        return
+
+    upload_package: dict = {
+        "version": 1,
+        "job_id": str(job.id),
+        "job_type": job.job_type,
+        "note": "Edit the suggested titles/descriptions/tags before uploading.",
+        "prompt": job.payload.get("prompt"),
+        "clips": [],
+    }
+
+    for idx, clip in enumerate(raw_clips):
+        if not isinstance(clip, dict):
+            continue
+        clip_dir = f"clips/clip_{idx + 1:02d}"
+        ctx.zf.writestr(f"{clip_dir}/clip.json", json.dumps(clip, default=str, indent=2))
+        upload_package["clips"].append(
+            _bundle_build_clip_entry(ctx, idx=idx, clip=clip, clip_dir=clip_dir)
+        )
+
+    ctx.zf.writestr("upload_package.json", json.dumps(upload_package, default=str, indent=2))
+
+
+def _build_job_bundle_zip(
+    *, session: Session, storage: Any, media_root: Path, job: Job
+) -> io.BytesIO:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        ctx = _BundleContext(
+            session=session, storage=storage, media_root=media_root, job=job, zf=zf
+        )
         zf.writestr("job.json", json.dumps(job.model_dump(), default=str, indent=2))
         if job.error:
             zf.writestr("error.txt", job.error)
@@ -2089,33 +2464,39 @@ def download_job_bundle(job_id: UUID, session: SessionDep, principal: PrincipalD
         for label, asset_id in (("input", job.input_asset_id), ("output", job.output_asset_id)):
             if not asset_id:
                 continue
-            add_asset_by_id(asset_id=asset_id, base_name=f"{label}_asset", zf=zf)
+            _bundle_add_asset_by_id(ctx, asset_id=asset_id, base_name=f"{label}_asset")
 
-        if job.job_type == "shorts" and isinstance(job.payload, dict):
-            raw_clips = job.payload.get("clip_assets")
-            if isinstance(raw_clips, list):
-                upload_package: dict = {
-                    "version": 1,
-                    "job_id": str(job.id),
-                    "job_type": job.job_type,
-                    "note": "Edit the suggested titles/descriptions/tags before uploading.",
-                    "prompt": job.payload.get("prompt"),
-                    "clips": [],
-                }
-
-                for idx, clip in enumerate(raw_clips):
-                    if not isinstance(clip, dict):
-                        continue
-                    clip_dir = f"clips/clip_{idx + 1:02d}"
-                    zf.writestr(f"{clip_dir}/clip.json", json.dumps(clip, default=str, indent=2))
-                    upload_package["clips"].append(
-                        build_clip_entry(idx=idx, clip=clip, clip_dir=clip_dir, zf=zf)
-                    )
-
-                zf.writestr("upload_package.json", json.dumps(upload_package, default=str, indent=2))
+        _bundle_write_shorts_package(ctx)
 
     buffer.seek(0)
-    headers = {"Content-Disposition": f'attachment; filename=\"job_{job_id}.zip\"'}
+    return buffer
+
+
+@router.get(
+    "/jobs/{job_id}/bundle",
+    response_class=StreamingResponse,
+    tags=["Jobs"],
+    responses={404: {"model": ErrorResponse}},
+)
+def download_job_bundle(
+    job_id: UUID, session: SessionDep, principal: PrincipalDep
+) -> StreamingResponse:
+    """Stream a zip archive of a job's output assets and metadata to the caller."""
+    job = session.get(Job, job_id)
+    if not job:
+        raise not_found(_ERR_JOB_NOT_FOUND, details={"job_id": str(job_id)})
+    _assert_org_access(
+        principal=principal, entity_org_id=job.org_id, entity="job", entity_id=str(job.id)
+    )
+
+    settings = get_settings()
+    buffer = _build_job_bundle_zip(
+        session=session,
+        storage=get_storage(media_root=settings.media_root),
+        media_root=Path(settings.media_root),
+        job=job,
+    )
+    headers = {"Content-Disposition": f'attachment; filename="job_{job_id}.zip"'}
     return StreamingResponse(buffer, media_type="application/zip", headers=headers)
 
 
@@ -2132,7 +2513,14 @@ def create_shorts_job(
     response: Response,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> Job:
-    _ensure_asset_exists(session, asset_id=payload.video_asset_id, principal=principal, kind="video", field="video_asset_id")
+    """Create and dispatch a short-form clip generation job."""
+    _ensure_asset_exists(
+        session,
+        asset_id=payload.video_asset_id,
+        principal=principal,
+        kind="video",
+        field="video_asset_id",
+    )
     project = _ensure_project_exists(session, payload.project_id, principal)
     _enforce_org_quota(
         session,
@@ -2147,7 +2535,9 @@ def create_shorts_job(
         },
     )
     idem = _resolve_idempotency_key(payload.idempotency_key, idempotency_key)
-    existing = _find_existing_idempotent_job(session=session, principal=principal, job_type="shorts", idempotency_key=idem)
+    existing = _find_existing_idempotent_job(
+        session=session, principal=principal, job_type="shorts", idempotency_key=idem
+    )
     if existing:
         response.status_code = status.HTTP_200_OK
         return existing
@@ -2191,8 +2581,21 @@ def create_style_job(
     response: Response,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> Job:
-    _ensure_asset_exists(session, asset_id=payload.video_asset_id, principal=principal, kind="video", field="video_asset_id")
-    _ensure_asset_exists(session, asset_id=payload.subtitle_asset_id, principal=principal, kind="subtitle", field="subtitle_asset_id")
+    """Create and dispatch a styled-subtitle rendering job."""
+    _ensure_asset_exists(
+        session,
+        asset_id=payload.video_asset_id,
+        principal=principal,
+        kind="video",
+        field="video_asset_id",
+    )
+    _ensure_asset_exists(
+        session,
+        asset_id=payload.subtitle_asset_id,
+        principal=principal,
+        kind="subtitle",
+        field="subtitle_asset_id",
+    )
     project = _ensure_project_exists(session, payload.project_id, principal)
     _enforce_org_quota(
         session,
@@ -2250,8 +2653,21 @@ def create_merge_job(
     response: Response,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> Job:
-    _ensure_asset_exists(session, asset_id=payload.video_asset_id, principal=principal, kind="video", field="video_asset_id")
-    _ensure_asset_exists(session, asset_id=payload.audio_asset_id, principal=principal, kind="audio", field="audio_asset_id")
+    """Create and dispatch a video/audio merge job."""
+    _ensure_asset_exists(
+        session,
+        asset_id=payload.video_asset_id,
+        principal=principal,
+        kind="video",
+        field="video_asset_id",
+    )
+    _ensure_asset_exists(
+        session,
+        asset_id=payload.audio_asset_id,
+        principal=principal,
+        kind="audio",
+        field="audio_asset_id",
+    )
     project = _ensure_project_exists(session, payload.project_id, principal)
     _enforce_org_quota(
         session,
@@ -2265,7 +2681,9 @@ def create_merge_job(
         },
     )
     idem = _resolve_idempotency_key(payload.idempotency_key, idempotency_key)
-    existing = _find_existing_idempotent_job(session=session, principal=principal, job_type="merge_av", idempotency_key=idem)
+    existing = _find_existing_idempotent_job(
+        session=session, principal=principal, job_type="merge_av", idempotency_key=idem
+    )
     if existing:
         response.status_code = status.HTTP_200_OK
         return existing
@@ -2310,7 +2728,14 @@ def cut_clip_tool(
     response: Response,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> Job:
-    _ensure_asset_exists(session, asset_id=payload.video_asset_id, principal=principal, kind="video", field="video_asset_id")
+    """Create and dispatch a clip-cutting job."""
+    _ensure_asset_exists(
+        session,
+        asset_id=payload.video_asset_id,
+        principal=principal,
+        kind="video",
+        field="video_asset_id",
+    )
     project = _ensure_project_exists(session, payload.project_id, principal)
     _enforce_org_quota(
         session,
@@ -2321,7 +2746,9 @@ def cut_clip_tool(
     start = max(0.0, float(payload.start or 0.0))
     end = max(start, float(payload.end or start))
     idem = _resolve_idempotency_key(payload.idempotency_key, idempotency_key)
-    existing = _find_existing_idempotent_job(session=session, principal=principal, job_type="cut_clip", idempotency_key=idem)
+    existing = _find_existing_idempotent_job(
+        session=session, principal=principal, job_type="cut_clip", idempotency_key=idem
+    )
     if existing:
         response.status_code = status.HTTP_200_OK
         return existing
@@ -2365,7 +2792,14 @@ def translate_subtitle_tool(
     response: Response,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> Job:
-    _ensure_asset_exists(session, asset_id=payload.subtitle_asset_id, principal=principal, kind="subtitle", field="subtitle_asset_id")
+    """Create and dispatch a subtitle-translation tool job."""
+    _ensure_asset_exists(
+        session,
+        asset_id=payload.subtitle_asset_id,
+        principal=principal,
+        kind="subtitle",
+        field="subtitle_asset_id",
+    )
     project = _ensure_project_exists(session, payload.project_id, principal)
     _enforce_org_quota(
         session,
@@ -2464,7 +2898,7 @@ def _coerce_uuid(value: object) -> UUID | None:
         return None
     try:
         return UUID(str(value))
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         return None
 
 
@@ -2495,7 +2929,11 @@ def _collect_job_output_asset_ids(job: Job) -> set[UUID]:
 
 
 def _asset_is_referenced(session: Session, asset_id: UUID) -> bool:
-    query = select(Job).where((Job.input_asset_id == asset_id) | (Job.output_asset_id == asset_id)).limit(1)
+    query = (
+        select(Job)
+        .where((Job.input_asset_id == asset_id) | (Job.output_asset_id == asset_id))
+        .limit(1)
+    )
     return session.exec(query).first() is not None
 
 
@@ -2512,7 +2950,8 @@ def _delete_asset_if_unreferenced(session: Session, asset_id: UUID) -> None:
         storage = get_storage(media_root=settings.media_root)
         try:
             storage.delete_uri(uri)
-        except Exception:  # pragma: no cover - best effort deletion path
+        # pylint: disable-next=broad-exception-caught
+        except Exception:  # pragma: no cover - best effort
             # Storage cleanup is best effort; DB delete should still succeed.
             pass
 
@@ -2520,22 +2959,28 @@ def _delete_asset_if_unreferenced(session: Session, asset_id: UUID) -> None:
     session.commit()
 
 
-def _init_presigned_single_part_upload(
-    *,
-    session: Session,
-    principal: AuthPrincipal,
-    payload: UploadInitRequest,
-    project,
-    storage,
-    kind: str,
-    upload_id: str,
-    expires_at: datetime,
-    pending_entry: dict[str, object],
-) -> UploadInitResponse:
-    rel_dir = _scoped_tmp_rel_dir(storage, principal)
+@dataclass(frozen=True)
+class _PresignedUploadInit:
+    """Context required to initialize a presigned single-part upload."""
+
+    session: Session
+    principal: AuthPrincipal
+    payload: UploadInitRequest
+    project: Any
+    storage: Any
+    kind: str
+    upload_id: str
+    expires_at: datetime
+    pending_entry: dict[str, object]
+
+
+def _init_presigned_single_part_upload(ctx: _PresignedUploadInit) -> UploadInitResponse:
+    """Create a presigned single-part upload and register the pending asset."""
+    payload = ctx.payload
+    rel_dir = _scoped_tmp_rel_dir(ctx.storage, ctx.principal)
     suffix = Path(payload.filename or "").suffix
     storage_filename = f"{uuid4()}{suffix}"
-    presigned = storage.create_presigned_upload(
+    presigned = ctx.storage.create_presigned_upload(
         rel_dir=rel_dir,
         filename=storage_filename,
         content_type=payload.mime_type,
@@ -2545,28 +2990,28 @@ def _init_presigned_single_part_upload(
     if not uri:
         raise server_error("Storage backend failed to provide upload URI")
     asset = MediaAsset(
-        kind=kind,
+        kind=ctx.kind,
         uri=uri,
         mime_type=payload.mime_type,
-        project_id=project.id if project else payload.project_id,
-        **_owner_fields(principal),
+        project_id=ctx.project.id if ctx.project else payload.project_id,
+        **_owner_fields(ctx.principal),
     )
-    session.add(asset)
-    session.commit()
-    session.refresh(asset)
-    pending_entry["strategy"] = "single_part_presigned"
-    pending_entry["asset_id"] = str(asset.id)
-    _pending_uploads[upload_id] = pending_entry
+    ctx.session.add(asset)
+    ctx.session.commit()
+    ctx.session.refresh(asset)
+    ctx.pending_entry["strategy"] = "single_part_presigned"
+    ctx.pending_entry["asset_id"] = str(asset.id)
+    _pending_uploads[ctx.upload_id] = ctx.pending_entry
     headers = presigned.get("headers")
     form_fields = presigned.get("form_fields")
     return UploadInitResponse(
-        upload_id=upload_id,
+        upload_id=ctx.upload_id,
         asset_id=asset.id,
         upload_url=str(presigned.get("upload_url") or ""),
         method=str(presigned.get("method") or "PUT"),
         headers=headers if isinstance(headers, dict) else {},
         form_fields=form_fields if isinstance(form_fields, dict) else {},
-        expires_at=expires_at,
+        expires_at=ctx.expires_at,
         strategy="single_part_presigned",
     )
 
@@ -2582,6 +3027,7 @@ def init_asset_upload(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> UploadInitResponse:
+    """Initialize an asset upload and return upload instructions."""
     settings = get_settings()
     storage = get_storage(media_root=settings.media_root)
     kind = (payload.kind or "").strip().lower() or "video"
@@ -2601,15 +3047,17 @@ def init_asset_upload(
 
     if _supports_presigned_uploads(storage) and not isinstance(storage, LocalStorageBackend):
         return _init_presigned_single_part_upload(
-            session=session,
-            principal=principal,
-            payload=payload,
-            project=project,
-            storage=storage,
-            kind=kind,
-            upload_id=upload_id,
-            expires_at=expires_at,
-            pending_entry=pending_entry,
+            _PresignedUploadInit(
+                session=session,
+                principal=principal,
+                payload=payload,
+                project=project,
+                storage=storage,
+                kind=kind,
+                upload_id=upload_id,
+                expires_at=expires_at,
+                pending_entry=pending_entry,
+            )
         )
 
     _pending_uploads[upload_id] = pending_entry
@@ -2638,6 +3086,7 @@ def complete_asset_upload(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> UploadCompleteResponse:
+    """Finalize a previously initialized asset upload."""
     entry = _pending_uploads.get(payload.upload_id)
     if not entry:
         raise not_found("Upload session not found", details={"upload_id": payload.upload_id})
@@ -2657,7 +3106,9 @@ def complete_asset_upload(
     asset = session.get(MediaAsset, payload.asset_id)
     if not asset:
         raise not_found(_ERR_ASSET_NOT_FOUND, details={"asset_id": str(payload.asset_id)})
-    _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
+    _assert_org_access(
+        principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id)
+    )
 
     expected_project_raw = entry.get("project_id")
     expected_project = UUID(str(expected_project_raw)) if expected_project_raw else None
@@ -2690,6 +3141,7 @@ def init_multipart_asset_upload(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> MultipartUploadInitResponse:
+    """Initialize a multipart asset upload."""
     settings = get_settings()
     storage = get_storage(media_root=settings.media_root)
     if not _supports_presigned_uploads(storage) or isinstance(storage, LocalStorageBackend):
@@ -2706,7 +3158,9 @@ def init_multipart_asset_upload(
     rel_dir = _scoped_tmp_rel_dir(storage, principal)
     suffix = Path(payload.filename or "").suffix
     storage_filename = f"{uuid4()}{suffix}"
-    provider_session = storage.create_multipart_upload(rel_dir=rel_dir, filename=storage_filename, content_type=payload.mime_type)
+    provider_session = storage.create_multipart_upload(
+        rel_dir=rel_dir, filename=storage_filename, content_type=payload.mime_type
+    )
 
     asset = MediaAsset(
         kind=kind,
@@ -2730,7 +3184,9 @@ def init_multipart_asset_upload(
         "owner_user_id": str(principal.user_id) if principal.user_id else None,
         "expires_at": expires_at,
     }
-    return MultipartUploadInitResponse(upload_id=upload_id, asset_id=asset.id, expires_at=expires_at)
+    return MultipartUploadInitResponse(
+        upload_id=upload_id, asset_id=asset.id, expires_at=expires_at
+    )
 
 
 @router.post(
@@ -2744,6 +3200,7 @@ def sign_multipart_upload_part(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> MultipartUploadPartResponse:
+    """Return a presigned URL for uploading a multipart part."""
     _ = session  # request-scoped dependency keeps db/session lifecycle consistent for auth context
     entry = _pending_multipart_uploads.get(upload_id)
     if not entry:
@@ -2755,7 +3212,9 @@ def sign_multipart_upload_part(
 
     expected_org_raw = entry.get("org_id")
     expected_org = UUID(str(expected_org_raw)) if expected_org_raw else None
-    _assert_org_access(principal=principal, entity_org_id=expected_org, entity="upload", entity_id=upload_id)
+    _assert_org_access(
+        principal=principal, entity_org_id=expected_org, entity="upload", entity_id=upload_id
+    )
 
     if part_number < 1:
         raise ApiError(
@@ -2773,7 +3232,9 @@ def sign_multipart_upload_part(
         part_number=part_number,
         expires_seconds=15 * 60,
     )
-    signed_expires = datetime.now(timezone.utc) + timedelta(seconds=int(signed.get("expires_in_seconds") or 15 * 60))
+    signed_expires = datetime.now(timezone.utc) + timedelta(
+        seconds=int(signed.get("expires_in_seconds") or 15 * 60)
+    )
     return MultipartUploadPartResponse(
         upload_id=upload_id,
         part_number=part_number,
@@ -2795,6 +3256,7 @@ def complete_multipart_asset_upload(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> UploadCompleteResponse:
+    """Finalize a multipart asset upload from its parts."""
     entry = _pending_multipart_uploads.get(upload_id)
     if not entry:
         raise not_found(_ERR_MULTIPART_SESSION_NOT_FOUND, details={"upload_id": upload_id})
@@ -2808,7 +3270,9 @@ def complete_multipart_asset_upload(
     if not asset:
         _pending_multipart_uploads.pop(upload_id, None)
         raise not_found(_ERR_ASSET_NOT_FOUND, details={"asset_id": str(asset_id)})
-    _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
+    _assert_org_access(
+        principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id)
+    )
 
     settings = get_settings()
     storage = get_storage(media_root=settings.media_root)
@@ -2831,6 +3295,7 @@ def abort_multipart_asset_upload(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> MultipartUploadAbortResponse:
+    """Abort an in-progress multipart asset upload."""
     entry = _pending_multipart_uploads.get(upload_id)
     if not entry:
         raise not_found(_ERR_MULTIPART_SESSION_NOT_FOUND, details={"upload_id": upload_id})
@@ -2838,7 +3303,9 @@ def abort_multipart_asset_upload(
     asset_id = UUID(str(entry["asset_id"]))
     asset = session.get(MediaAsset, asset_id)
     if asset:
-        _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
+        _assert_org_access(
+            principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id)
+        )
 
     settings = get_settings()
     storage = get_storage(media_root=settings.media_root)
@@ -2867,6 +3334,8 @@ async def upload_asset(
     kind: Annotated[str, Form()] = "video",
     project_id: Annotated[Optional[UUID], Form()] = None,
 ) -> MediaAsset:
+    """Persist an uploaded media file and return its registered asset record."""
+    # pylint: disable=too-many-locals
     settings = get_settings()
     storage = get_storage(media_root=settings.media_root)
     kind = (kind or "").strip().lower()
@@ -2898,7 +3367,9 @@ async def upload_asset(
             out.write(chunk)
 
     rel_dir = _scoped_tmp_rel_dir(storage, principal)
-    uri = storage.write_file(rel_dir=rel_dir, filename=filename, source_path=tmp_path, content_type=file.content_type)
+    uri = storage.write_file(
+        rel_dir=rel_dir, filename=filename, source_path=tmp_path, content_type=file.content_type
+    )
     if not isinstance(storage, LocalStorageBackend):
         tmp_path.unlink(missing_ok=True)
 
@@ -2926,6 +3397,7 @@ def list_assets(
     limit: int = 25,
     project_id: Optional[UUID] = None,
 ) -> List[MediaAsset]:
+    """List media assets visible to the caller."""
     limit = max(1, min(limit, 200))
     query = select(MediaAsset)
     query = _scope_query_by_org(query, MediaAsset, principal)
@@ -2934,7 +3406,7 @@ def list_assets(
     if project_id:
         _ensure_project_exists(session, project_id, principal)
         query = query.where(MediaAsset.project_id == project_id)
-    query = query.order_by(MediaAsset.created_at.desc()).limit(limit)
+    query = query.order_by(MediaAsset.created_at.desc()).limit(limit)  # pylint: disable=no-member
     return session.exec(query).all()
 
 
@@ -2944,10 +3416,13 @@ def list_assets(
     responses={404: {"model": ErrorResponse}},
 )
 def get_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep) -> MediaAsset:
+    """Return a single media asset scoped to the caller's organization."""
     asset = session.get(MediaAsset, asset_id)
     if not asset:
         raise not_found(_ERR_ASSET_NOT_FOUND, details={"asset_id": str(asset_id)})
-    _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
+    _assert_org_access(
+        principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id)
+    )
     return asset
 
 
@@ -2958,12 +3433,17 @@ def get_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep) -> M
     responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
 def delete_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep) -> Response:
+    """Delete a media asset and its backing storage object."""
     asset = session.get(MediaAsset, asset_id)
     if not asset:
         raise not_found(_ERR_ASSET_NOT_FOUND, details={"asset_id": str(asset_id)})
-    _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
+    _assert_org_access(
+        principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id)
+    )
 
-    refs_query = select(Job.id).where((Job.input_asset_id == asset_id) | (Job.output_asset_id == asset_id))
+    refs_query = select(Job.id).where(
+        (Job.input_asset_id == asset_id) | (Job.output_asset_id == asset_id)
+    )
     refs_query = _scope_query_by_org(refs_query, Job, principal)
     refs = session.exec(refs_query).all()
     if refs:
@@ -2978,7 +3458,8 @@ def delete_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep) -
         storage = get_storage(media_root=settings.media_root)
         try:
             storage.delete_uri(uri)
-        except Exception:  # pragma: no cover - best effort deletion path
+        # pylint: disable-next=broad-exception-caught
+        except Exception:  # pragma: no cover - best effort
             # Storage cleanup is best effort; DB delete should still succeed.
             pass
 
@@ -2992,11 +3473,16 @@ def delete_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep) -
     tags=["Assets"],
     responses={404: {"model": ErrorResponse}},
 )
-def get_asset_download_url(asset_id: UUID, session: SessionDep, principal: PrincipalDep, presign: bool = True) -> DownloadUrlResponse:
+def get_asset_download_url(
+    asset_id: UUID, session: SessionDep, principal: PrincipalDep, presign: bool = True
+) -> DownloadUrlResponse:
+    """Return a download URL for a media asset."""
     asset = session.get(MediaAsset, asset_id)
     if not asset:
         raise not_found(_ERR_ASSET_NOT_FOUND, details={"asset_id": str(asset_id)})
-    _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
+    _assert_org_access(
+        principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id)
+    )
     if not asset.uri:
         raise not_found("Asset has no URI", details={"asset_id": str(asset_id)})
     settings = get_settings()
@@ -3015,24 +3501,36 @@ def get_asset_download_url(asset_id: UUID, session: SessionDep, principal: Princ
     tags=["Assets"],
     responses={404: {"model": ErrorResponse}},
 )
-def download_asset(asset_id: UUID, session: SessionDep, principal: PrincipalDep) -> StreamingResponse:
+def download_asset(
+    asset_id: UUID, session: SessionDep, principal: PrincipalDep
+) -> StreamingResponse:
+    """Stream a media asset (local or proxied remote) to the caller."""
     asset = session.get(MediaAsset, asset_id)
     if not asset:
         raise not_found(_ERR_ASSET_NOT_FOUND, details={"asset_id": str(asset_id)})
-    _assert_org_access(principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id))
+    _assert_org_access(
+        principal=principal, entity_org_id=asset.org_id, entity="asset", entity_id=str(asset.id)
+    )
     settings = get_settings()
     if asset.uri and is_remote_uri(asset.uri):
         storage = get_storage(media_root=settings.media_root)
         remote_url = storage.get_download_url(asset.uri)
         if not remote_url:
-            raise not_found("Asset download URL is unavailable", details={"asset_id": str(asset_id)})
-        return _stream_remote_download(url=remote_url, filename=Path(asset.uri).name or "asset.bin", mime_type=asset.mime_type)
+            raise not_found(
+                "Asset download URL is unavailable", details={"asset_id": str(asset_id)}
+            )
+        return _stream_remote_download(
+            url=remote_url, filename=Path(asset.uri).name or "asset.bin", mime_type=asset.mime_type
+        )
 
     file_path = _safe_local_asset_path(media_root=settings.media_root, uri=asset.uri or "")
     return _stream_local_file(file_path=file_path, mime_type=asset.mime_type)
 
 
 @router.get("/presets/styles", tags=["Presets"])
-def list_style_presets(session: SessionDep, principal: PrincipalDep) -> List[SubtitleStylePreset]:
-    presets = session.exec(select(SubtitleStylePreset)).all()
-    return presets
+def list_style_presets(
+    session: SessionDep,
+    principal: PrincipalDep,  # pylint: disable=unused-argument  # enforces authentication
+) -> List[SubtitleStylePreset]:
+    """Return all available subtitle style presets for authenticated callers."""
+    return session.exec(select(SubtitleStylePreset)).all()

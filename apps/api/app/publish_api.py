@@ -1,3 +1,4 @@
+"""FastAPI routes for managing social publish connections and publish jobs."""
 from __future__ import annotations
 
 import hashlib
@@ -9,12 +10,15 @@ from uuid import UUID
 try:
     from celery import Celery
 except ModuleNotFoundError:  # pragma: no cover
-    class Celery:  # type: ignore[override]
+    class Celery:  # type: ignore[override]  # pylint: disable=too-few-public-methods
+        """Minimal stand-in for Celery used when the package is unavailable."""
+
         def __init__(self, *args, **kwargs):
             # No-op fallback used when Celery is not installed.
             pass
 
         def send_task(self, *_args, **_kwargs):
+            """Raise because task dispatch requires a real Celery install."""
             raise RuntimeError("Celery is not installed in this environment.")
 
 from fastapi import APIRouter, Depends, Query, Response, status
@@ -35,12 +39,16 @@ PUBLISH_JOB_TERMINAL = {"completed", "failed", "cancelled"}
 
 
 class PublishProviderView(SQLModel):
+    """Provider summary including how many connections an org has."""
+
     provider: str
     display_name: str
     connected_count: int
 
 
 class PublishConnectionView(SQLModel):
+    """Serialized view of a stored publish connection."""
+
     id: UUID
     provider: str
     account_label: Optional[str] = None
@@ -51,6 +59,8 @@ class PublishConnectionView(SQLModel):
 
 
 class PublishConnectStartResponse(SQLModel):
+    """Response returned when starting an OAuth connection flow."""
+
     provider: str
     authorize_url: str
     state: str
@@ -58,6 +68,8 @@ class PublishConnectStartResponse(SQLModel):
 
 
 class PublishJobCreateRequest(SQLModel):
+    """Request body for creating a new publish job."""
+
     provider: str
     connection_id: UUID
     asset_id: UUID
@@ -69,6 +81,8 @@ class PublishJobCreateRequest(SQLModel):
 
 
 class PublishJobView(SQLModel):
+    """Serialized view of a publish job and its current status."""
+
     id: UUID
     provider: str
     connection_id: UUID
@@ -145,7 +159,7 @@ def _serialize_publish_job(job: PublishJob) -> PublishJobView:
     )
 
 
-def _emit_automation_event(
+def _emit_automation_event(  # pylint: disable=too-many-arguments
     session: Session,
     *,
     org_id: UUID | None,
@@ -156,6 +170,7 @@ def _emit_automation_event(
     message: str | None = None,
     payload: dict[str, Any] | None = None,
 ) -> None:
+    """Persist an :class:`AutomationRunEvent` row for the given step."""
     session.add(
         AutomationRunEvent(
             org_id=org_id,
@@ -194,7 +209,10 @@ def _require_hosted_principal(principal) -> None:
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}},
 )
-def list_publish_providers(session: SessionDep, principal: PrincipalDep) -> list[PublishProviderView]:
+def list_publish_providers(
+    session: SessionDep, principal: PrincipalDep
+) -> list[PublishProviderView]:
+    """Return supported providers with the org's active connection counts."""
     _require_hosted_principal(principal)
     rows = []
     for provider in SUPPORTED_PUBLISH_PROVIDERS:
@@ -203,11 +221,17 @@ def list_publish_providers(session: SessionDep, principal: PrincipalDep) -> list
                 select(PublishConnection).where(
                     (PublishConnection.org_id == principal.org_id)
                     & (PublishConnection.provider == provider)
-                    & (PublishConnection.revoked_at == None)  # noqa: E711
+                    & (PublishConnection.revoked_at.is_(None))  # pylint: disable=no-member
                 )
             ).all()
         )
-        rows.append(PublishProviderView(provider=provider, display_name=_provider_display(provider), connected_count=count))
+        rows.append(
+            PublishProviderView(
+                provider=provider,
+                display_name=_provider_display(provider),
+                connected_count=count,
+            )
+        )
     return rows
 
 
@@ -216,14 +240,17 @@ def list_publish_providers(session: SessionDep, principal: PrincipalDep) -> list
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}},
 )
-def list_publish_connections(provider: str, session: SessionDep, principal: PrincipalDep) -> list[PublishConnectionView]:
+def list_publish_connections(
+    provider: str, session: SessionDep, principal: PrincipalDep
+) -> list[PublishConnectionView]:
+    """Return active connections for the org and requested provider."""
     _require_hosted_principal(principal)
     normalized = _validate_provider(provider)
     rows = session.exec(
         select(PublishConnection).where(
             (PublishConnection.org_id == principal.org_id)
             & (PublishConnection.provider == normalized)
-            & (PublishConnection.revoked_at == None)  # noqa: E711
+            & (PublishConnection.revoked_at.is_(None))  # pylint: disable=no-member
         )
     ).all()
     return [_serialize_connection(item) for item in rows]
@@ -234,19 +261,24 @@ def list_publish_connections(provider: str, session: SessionDep, principal: Prin
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}},
 )
-def start_publish_connection(
+def start_publish_connection(  # pylint: disable=unused-argument
     provider: str,
     session: SessionDep,
     principal: PrincipalDep,
     redirect_to: Annotated[str | None, Query()] = None,
 ) -> PublishConnectStartResponse:
+    """Begin an OAuth flow and return the authorize URL and state token."""
     _require_hosted_principal(principal)
     normalized = _validate_provider(provider)
-    state = create_oauth_state(provider=f"publish:{normalized}:{principal.org_id}", redirect_to=redirect_to)
+    state = create_oauth_state(
+        provider=f"publish:{normalized}:{principal.org_id}", redirect_to=redirect_to
+    )
     settings = get_settings()
-    redirect_uri = f"{settings.api_base_url.rstrip('/')}/api/v1/publish/{normalized}/connect/callback"
+    api_base = settings.api_base_url.rstrip("/")  # pylint: disable=no-member
+    app_base = settings.app_base_url.rstrip("/")  # pylint: disable=no-member
+    redirect_uri = f"{api_base}/api/v1/publish/{normalized}/connect/callback"
     authorize_url = (
-        f"{settings.app_base_url.rstrip('/')}/mock-oauth/{normalized}"
+        f"{app_base}/mock-oauth/{normalized}"
         f"?state={state}"
         f"&redirect_uri={redirect_uri}"
     )
@@ -263,7 +295,7 @@ def start_publish_connection(
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-def complete_publish_connection(
+def complete_publish_connection(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     provider: str,
     state: str,
     session: SessionDep,
@@ -273,6 +305,7 @@ def complete_publish_connection(
     account_id: Annotated[str | None, Query()] = None,
     account_label: Annotated[str | None, Query()] = None,
 ) -> PublishConnectionView:
+    """Finish the OAuth callback and persist a new publish connection."""
     _require_hosted_principal(principal)
     normalized = _validate_provider(provider)
     state_provider, _ = parse_oauth_state(state)
@@ -322,11 +355,18 @@ def revoke_publish_connection(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> Response:
+    """Mark a publish connection as revoked for the requesting org."""
     _require_hosted_principal(principal)
     normalized = _validate_provider(provider)
     connection = session.get(PublishConnection, connection_id)
-    if not connection or connection.provider != normalized or connection.org_id != principal.org_id:
-        raise not_found("Publish connection not found", {"connection_id": str(connection_id)})
+    if (
+        not connection
+        or connection.provider != normalized
+        or connection.org_id != principal.org_id
+    ):
+        raise not_found(
+            "Publish connection not found", {"connection_id": str(connection_id)}
+        )
     connection.revoked_at = _now()
     connection.updated_at = _now()
     session.add(connection)
@@ -347,14 +387,29 @@ def revoke_publish_connection(
     "/publish/jobs",
     status_code=status.HTTP_201_CREATED,
     tags=["Projects"],
-    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+    responses={
+        401: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+    },
 )
-def create_publish_job(payload: PublishJobCreateRequest, session: SessionDep, principal: PrincipalDep) -> PublishJobView:
+def create_publish_job(
+    payload: PublishJobCreateRequest, session: SessionDep, principal: PrincipalDep
+) -> PublishJobView:
+    """Create a publish job and dispatch it to the worker queue."""
     _require_hosted_principal(principal)
     provider = _validate_provider(payload.provider)
     connection = session.get(PublishConnection, payload.connection_id)
-    if not connection or connection.org_id != principal.org_id or connection.provider != provider or connection.revoked_at is not None:
-        raise not_found("Publish connection not found", {"connection_id": str(payload.connection_id)})
+    if (
+        not connection
+        or connection.org_id != principal.org_id
+        or connection.provider != provider
+        or connection.revoked_at is not None
+    ):
+        raise not_found(
+            "Publish connection not found",
+            {"connection_id": str(payload.connection_id)},
+        )
     asset = session.get(MediaAsset, payload.asset_id)
     if not asset or asset.org_id != principal.org_id:
         raise not_found("Media asset not found", {"asset_id": str(payload.asset_id)})
@@ -383,7 +438,7 @@ def create_publish_job(payload: PublishJobCreateRequest, session: SessionDep, pr
 
     try:
         job.task_id = _dispatch_publish_task(job)
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # pragma: no cover  # pylint: disable=broad-exception-caught
         job.status = "failed"
         job.error = str(exc)
     job.updated_at = _now()
@@ -413,8 +468,13 @@ def list_publish_jobs(
     provider: Optional[str] = None,
     status_filter: Annotated[Optional[str], Query(alias="status")] = None,
 ) -> list[PublishJobView]:
+    """Return publish jobs for the org, filtered by provider and status."""
     _require_hosted_principal(principal)
-    query = select(PublishJob).where(PublishJob.org_id == principal.org_id).order_by(PublishJob.created_at.desc())
+    query = (
+        select(PublishJob)
+        .where(PublishJob.org_id == principal.org_id)
+        .order_by(PublishJob.created_at.desc())  # pylint: disable=no-member
+    )
     if provider:
         query = query.where(PublishJob.provider == _validate_provider(provider))
     if status_filter:
@@ -428,7 +488,10 @@ def list_publish_jobs(
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-def get_publish_job(job_id: UUID, session: SessionDep, principal: PrincipalDep) -> PublishJobView:
+def get_publish_job(
+    job_id: UUID, session: SessionDep, principal: PrincipalDep
+) -> PublishJobView:
+    """Return a single publish job owned by the requesting org."""
     _require_hosted_principal(principal)
     job = session.get(PublishJob, job_id)
     if not job or job.org_id != principal.org_id:
@@ -439,9 +502,16 @@ def get_publish_job(job_id: UUID, session: SessionDep, principal: PrincipalDep) 
 @router.post(
     "/publish/jobs/{job_id}/retry",
     tags=["Projects"],
-    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+    responses={
+        401: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+    },
 )
-def retry_publish_job(job_id: UUID, session: SessionDep, principal: PrincipalDep) -> PublishJobView:
+def retry_publish_job(
+    job_id: UUID, session: SessionDep, principal: PrincipalDep
+) -> PublishJobView:
+    """Re-queue a failed or cancelled publish job and dispatch it again."""
     _require_hosted_principal(principal)
     job = session.get(PublishJob, job_id)
     if not job or job.org_id != principal.org_id:
@@ -453,7 +523,7 @@ def retry_publish_job(job_id: UUID, session: SessionDep, principal: PrincipalDep
     job.retry_count = int(job.retry_count or 0) + 1
     try:
         job.task_id = _dispatch_publish_task(job)
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # pragma: no cover  # pylint: disable=broad-exception-caught
         job.status = "failed"
         job.error = str(exc)
     job.updated_at = _now()

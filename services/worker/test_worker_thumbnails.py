@@ -1,30 +1,30 @@
+"""Tests for the worker thumbnail-asset creation helper."""
+
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID
+
+from services.worker import worker  # pylint: disable=import-error
 
 
 def test_create_thumbnail_asset_falls_back_when_ffmpeg_missing(monkeypatch, tmp_path):
-    from services.worker import worker
-
+    """When ffmpeg is unavailable, a PNG placeholder asset is created."""
     calls = []
 
-    def fake_create_asset(*, kind, mime_type, suffix, contents=b"", source_path=None, project_id=None):
+    def fake_create_asset(**kwargs):
         calls.append(
             {
-                "kind": kind,
-                "mime_type": mime_type,
-                "suffix": suffix,
-                "contents": contents,
-                "source_path": source_path,
-                "project_id": project_id,
+                "kind": kwargs.get("kind"),
+                "mime_type": kwargs.get("mime_type"),
+                "suffix": kwargs.get("suffix"),
+                "contents": kwargs.get("contents", b""),
+                "source_path": kwargs.get("source_path"),
+                "project_id": kwargs.get("project_id"),
             }
         )
-
-        class DummyAsset:
-            uri = "/media/tmp/fallback.png"
-
-        return DummyAsset()
+        return SimpleNamespace(uri="/media/tmp/fallback.png")
 
     monkeypatch.setattr(worker, "create_asset", fake_create_asset)
     monkeypatch.setattr(worker.shutil, "which", lambda name: None)
@@ -37,8 +37,7 @@ def test_create_thumbnail_asset_falls_back_when_ffmpeg_missing(monkeypatch, tmp_
 
 
 def test_create_thumbnail_asset_uses_ffmpeg_when_available(monkeypatch, tmp_path):
-    from services.worker import worker
-
+    """When ffmpeg is available, it is invoked to render the thumbnail."""
     video = tmp_path / "video.mp4"
     video.write_bytes(b"fake-video")
 
@@ -48,36 +47,26 @@ def test_create_thumbnail_asset_uses_ffmpeg_when_available(monkeypatch, tmp_path
 
     runner_calls = []
 
-    def fake_runner(cmd, check=True, capture_output=True):
+    def fake_runner(cmd, check=True, capture_output=True):  # pylint: disable=unused-argument
         runner_calls.append(cmd)
         output = Path(cmd[-1])
         output.write_bytes(b"png")
-
-        class DummyCompleted:
-            returncode = 0
-            stdout = b""
-            stderr = b""
-
-        return DummyCompleted()
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
 
     created = []
 
-    def fake_create_asset(*, kind, mime_type, suffix, contents=b"", source_path=None, project_id=None):
+    def fake_create_asset(**kwargs):
         created.append(
             {
-                "kind": kind,
-                "mime_type": mime_type,
-                "suffix": suffix,
-                "contents": contents,
-                "source_path": source_path,
-                "project_id": project_id,
+                "kind": kwargs.get("kind"),
+                "mime_type": kwargs.get("mime_type"),
+                "suffix": kwargs.get("suffix"),
+                "contents": kwargs.get("contents", b""),
+                "source_path": kwargs.get("source_path"),
+                "project_id": kwargs.get("project_id"),
             }
         )
-
-        class DummyAsset:
-            uri = "/media/tmp/thumb.png"
-
-        return DummyAsset()
+        return SimpleNamespace(uri="/media/tmp/thumb.png")
 
     monkeypatch.setattr(worker, "create_asset", fake_create_asset)
 

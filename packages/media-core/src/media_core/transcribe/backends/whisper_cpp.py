@@ -1,3 +1,4 @@
+"""whisper.cpp transcription backend with graceful fallbacks."""
 from __future__ import annotations
 
 import logging
@@ -11,13 +12,13 @@ from media_core.transcribe.path_guard import validate_media_input_path
 logger = logging.getLogger(__name__)
 
 
-class _TokenLike(Protocol):
+class _TokenLike(Protocol):  # pylint: disable=too-few-public-methods
     text: str
     t_start: float
     t_end: float
 
 
-class _SegmentLike(Protocol):
+class _SegmentLike(Protocol):  # pylint: disable=too-few-public-methods
     text: str
     t_start: float
     t_end: float
@@ -26,7 +27,7 @@ class _SegmentLike(Protocol):
 
 def _ensure_whispercpp():
     try:
-        import whispercpp  # type: ignore
+        import whispercpp  # type: ignore  # pylint: disable=import-outside-toplevel
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError(
             "whispercpp package is required. Install with `pip install whispercpp`."
@@ -43,7 +44,7 @@ def _parse_token_word(tok: Any) -> Word | None:
         start = float(getattr(tok, "t_start", tok.get("t_start")))
         end = float(getattr(tok, "t_end", tok.get("t_end")))
         text = str(getattr(tok, "text", tok.get("text"))).strip()
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:  # pragma: no cover - defensive  # pylint: disable=broad-exception-caught
         logger.debug("Skipping malformed token: %s (%s)", tok, exc)
         return None
     return Word(text=text, start=start, end=end, probability=None)
@@ -54,7 +55,7 @@ def _parse_segment_word(seg: Any) -> Word | None:
         start = float(getattr(seg, "t_start", seg.get("t_start")))
         end = float(getattr(seg, "t_end", seg.get("t_end")))
         text = str(getattr(seg, "text", seg.get("text"))).strip()
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         return None
     if not text:
         return None
@@ -72,7 +73,7 @@ def _segment_words(seg: Any) -> list[Word]:
 def _join_segment_text(segments: Iterable[Any]) -> Optional[str]:
     try:
         return " ".join(getattr(s, "text", s.get("text", "")).strip() for s in segments) or None
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         return None
 
 
@@ -103,8 +104,11 @@ def transcribe_whisper_cpp(path: str | Path, config: TranscriptionConfig) -> Tra
         model = whispercpp.Whisper(model_name)
         segments = list(model.transcribe(media_path))
         return normalize_whisper_cpp(segments, model=model_name, language=config.language)
+    # pylint: disable=broad-exception-caught
     except Exception as exc:  # pragma: no cover - optional dependency or runtime failure
         logger.warning("whispercpp unavailable or failed (%s); returning stub result", exc)
         return TranscriptionResult.from_iterable(
-            [Word(text=media_path.name, start=0.0, end=1.0)], model="whisper_cpp_stub", language=config.language
+            [Word(text=media_path.name, start=0.0, end=1.0)],
+            model="whisper_cpp_stub",
+            language=config.language,
         )

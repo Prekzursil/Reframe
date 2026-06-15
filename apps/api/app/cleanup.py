@@ -1,3 +1,5 @@
+"""Background cleanup of stale temporary files."""
+
 from __future__ import annotations
 
 import threading
@@ -17,12 +19,15 @@ def _remove_old_files(directory: Path, older_than: timedelta) -> None:
                 mtime = datetime.fromtimestamp(entry.stat().st_mtime, tz=timezone.utc)
                 if mtime < cutoff:
                     entry.unlink(missing_ok=True)
-        except Exception:
+        except OSError:
             # best-effort cleanup
             continue
 
 
-def start_cleanup_loop(root: str, interval_seconds: int = 3600, ttl_hours: int = 24) -> Optional[threading.Thread]:
+def start_cleanup_loop(
+    root: str, interval_seconds: int = 3600, ttl_hours: int = 24
+) -> Optional[threading.Thread]:
+    """Start a daemon thread that periodically removes stale temp files."""
     target_dir = Path(root) / "tmp"
     target_dir.mkdir(parents=True, exist_ok=True)
 

@@ -1,3 +1,5 @@
+"""FastAPI routes for organization SSO (Okta), SCIM provisioning, and identity tokens."""
+# pylint: disable=too-many-lines
 from __future__ import annotations
 
 import hashlib
@@ -24,7 +26,12 @@ from app.models import (
     SsoConnection,
     User,
 )
-from app.security import create_access_token, create_oauth_state, create_refresh_token, parse_oauth_state
+from app.security import (
+    create_access_token,
+    create_oauth_state,
+    create_refresh_token,
+    parse_oauth_state,
+)
 
 router = APIRouter(prefix="/api/v1")
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -38,6 +45,8 @@ ORG_NOT_FOUND_MESSAGE = "Organization not found"
 
 
 class SsoConfigView(SQLModel):
+    """Serialized SSO connection configuration returned to org managers."""
+
     org_id: UUID
     provider: str
     enabled: bool
@@ -52,6 +61,8 @@ class SsoConfigView(SQLModel):
 
 
 class SsoConfigUpdateRequest(SQLModel):
+    """Request body for creating or updating an org SSO connection."""
+
     enabled: bool = False
     issuer_url: Optional[str] = None
     client_id: Optional[str] = None
@@ -64,10 +75,14 @@ class SsoConfigUpdateRequest(SQLModel):
 
 
 class ScimTokenCreateRequest(SQLModel):
+    """Request body for minting a new SCIM bearer token."""
+
     scopes: list[str] = SCIM_SCOPE_DEFAULTS
 
 
 class ScimTokenView(SQLModel):
+    """Serialized SCIM token; the raw secret is only present on creation."""
+
     id: UUID
     org_id: UUID
     token_hint: str
@@ -79,6 +94,8 @@ class ScimTokenView(SQLModel):
 
 
 class SsoStartResponse(SQLModel):
+    """Response describing the Okta authorize URL and OAuth state."""
+
     provider: str
     authorize_url: str
     state: str
@@ -104,7 +121,7 @@ def _hash_token(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _emit_audit(
+def _emit_audit(  # pylint: disable=too-many-arguments
     session: Session,
     *,
     org_id: UUID,
@@ -130,7 +147,9 @@ def _require_org_manager(session: Session, principal, org_id: UUID) -> OrgMember
     if not principal.user_id or principal.org_id != org_id:
         raise unauthorized("Owner or admin role is required")
     membership = session.exec(
-        select(OrgMembership).where((OrgMembership.org_id == org_id) & (OrgMembership.user_id == principal.user_id))
+        select(OrgMembership).where(
+            (OrgMembership.org_id == org_id) & (OrgMembership.user_id == principal.user_id)
+        )
     ).first()
     if not membership or membership.role not in ORG_MANAGER_ROLES:
         raise unauthorized("Owner or admin role is required")
@@ -169,7 +188,9 @@ def _serialize_sso_config(connection: SsoConnection | None, org_id: UUID) -> Sso
     )
 
 
-def _build_sso_connection(org_id: UUID, payload: SsoConfigUpdateRequest, now: datetime) -> SsoConnection:
+def _build_sso_connection(
+    org_id: UUID, payload: SsoConfigUpdateRequest, now: datetime
+) -> SsoConnection:
     return SsoConnection(
         org_id=org_id,
         provider="okta",
@@ -187,7 +208,9 @@ def _build_sso_connection(org_id: UUID, payload: SsoConfigUpdateRequest, now: da
     )
 
 
-def _apply_sso_connection_update(connection: SsoConnection, payload: SsoConfigUpdateRequest, now: datetime) -> None:
+def _apply_sso_connection_update(
+    connection: SsoConnection, payload: SsoConfigUpdateRequest, now: datetime
+) -> None:
     connection.enabled = bool(payload.enabled)
     connection.issuer_url = (payload.issuer_url or "").strip() or None
     connection.client_id = (payload.client_id or "").strip() or None
@@ -202,8 +225,12 @@ def _apply_sso_connection_update(connection: SsoConnection, payload: SsoConfigUp
     connection.updated_at = now
 
 
-def _upsert_sso_connection(session: Session, org_id: UUID, payload: SsoConfigUpdateRequest) -> SsoConnection:
-    connection = session.exec(select(SsoConnection).where(SsoConnection.org_id == org_id)).first()
+def _upsert_sso_connection(
+    session: Session, org_id: UUID, payload: SsoConfigUpdateRequest
+) -> SsoConnection:
+    connection = session.exec(
+        select(SsoConnection).where(SsoConnection.org_id == org_id)
+    ).first()
     now = _now()
     if connection is None:
         connection = _build_sso_connection(org_id, payload, now)
@@ -275,14 +302,21 @@ def _ensure_org_seat_available(session: Session, org_id: UUID) -> None:
         raise conflict("Seat limit reached", details={"seat_limit": seat_limit})
 
 
-def _role_for_groups(session: Session, org_id: UUID, groups: list[str], default_role: str) -> str:
+def _role_for_groups(
+    session: Session, org_id: UUID, groups: list[str], default_role: str
+) -> str:
     normalized = {(group or "").strip() for group in groups if (group or "").strip()}
     if not normalized:
         return default_role
-    mappings = session.exec(select(RoleMapping).where((RoleMapping.org_id == org_id) & (RoleMapping.provider == "okta"))).all()
+    mappings = session.exec(
+        select(RoleMapping).where(
+            (RoleMapping.org_id == org_id) & (RoleMapping.provider == "okta")
+        )
+    ).all()
     for mapping in mappings:
-        if mapping.external_value in normalized and (mapping.role or "").strip().lower() in ROLE_VALUES:
-            return mapping.role.strip().lower()
+        role = (mapping.role or "").strip().lower()
+        if mapping.external_value in normalized and role in ROLE_VALUES:
+            return role
     return default_role
 
 
@@ -350,11 +384,14 @@ def _issue_tokens(*, user_id: UUID, org_id: UUID, role: str) -> dict[str, Any]:
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
 def get_org_sso_config(org_id: UUID, session: SessionDep, principal: PrincipalDep) -> SsoConfigView:
+    """Return the current SSO connection config for an organization."""
     _require_org_manager(session, principal, org_id)
     org = session.get(Organization, org_id)
     if not org:
         raise not_found(ORG_NOT_FOUND_MESSAGE, {"org_id": str(org_id)})
-    connection = session.exec(select(SsoConnection).where(SsoConnection.org_id == org_id)).first()
+    connection = session.exec(
+        select(SsoConnection).where(SsoConnection.org_id == org_id)
+    ).first()
     return _serialize_sso_config(connection, org_id)
 
 
@@ -363,7 +400,13 @@ def get_org_sso_config(org_id: UUID, session: SessionDep, principal: PrincipalDe
     tags=["Auth"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-def update_org_sso_config(org_id: UUID, payload: SsoConfigUpdateRequest, session: SessionDep, principal: PrincipalDep) -> SsoConfigView:
+def update_org_sso_config(
+    org_id: UUID,
+    payload: SsoConfigUpdateRequest,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> SsoConfigView:
+    """Create or update the org SSO connection and emit an audit event."""
     _require_org_manager(session, principal, org_id)
     if not session.get(Organization, org_id):
         raise not_found(ORG_NOT_FOUND_MESSAGE, {"org_id": str(org_id)})
@@ -399,6 +442,7 @@ def create_org_scim_token(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> ScimTokenView:
+    """Mint a new SCIM bearer token for the org and return its raw secret once."""
     _require_org_manager(session, principal, org_id)
     if not session.get(Organization, org_id):
         raise not_found(ORG_NOT_FOUND_MESSAGE, {"org_id": str(org_id)})
@@ -433,7 +477,10 @@ def create_org_scim_token(
     tags=["Auth"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-def revoke_org_scim_token(org_id: UUID, token_id: UUID, session: SessionDep, principal: PrincipalDep) -> Response:
+def revoke_org_scim_token(
+    org_id: UUID, token_id: UUID, session: SessionDep, principal: PrincipalDep
+) -> Response:
+    """Revoke a SCIM token for the org and emit an audit event."""
     _require_org_manager(session, principal, org_id)
     token = session.get(ScimToken, token_id)
     if not token or token.org_id != org_id:
@@ -464,12 +511,15 @@ def start_okta_sso(
     principal: PrincipalDep,
     redirect_to: Annotated[str | None, Query()] = None,
 ) -> SsoStartResponse:
+    """Build the Okta authorize URL and OAuth state for the principal's org."""
     if not principal.org_id:
         raise unauthorized("Organization authentication is required")
     org = session.get(Organization, principal.org_id)
     if not org:
         raise not_found(ORG_NOT_FOUND_MESSAGE, {"org_id": str(principal.org_id)})
-    connection = session.exec(select(SsoConnection).where(SsoConnection.org_id == principal.org_id)).first()
+    connection = session.exec(
+        select(SsoConnection).where(SsoConnection.org_id == principal.org_id)
+    ).first()
     if not connection or not connection.enabled:
         raise conflict("Okta SSO is not enabled for this organization")
 
@@ -477,11 +527,15 @@ def start_okta_sso(
     issuer = (connection.issuer_url or settings.okta_issuer_url or "").rstrip("/")
     client_id = (connection.client_id or settings.okta_client_id or "").strip()
     if not issuer or not client_id:
-        raise conflict("Okta configuration is incomplete", details={"issuer_url": bool(issuer), "client_id": bool(client_id)})
+        raise conflict(
+            "Okta configuration is incomplete",
+            details={"issuer_url": bool(issuer), "client_id": bool(client_id)},
+        )
 
     provider = f"okta:{principal.org_id}"
     state = create_oauth_state(provider=provider, redirect_to=redirect_to)
-    redirect_uri = f"{settings.api_base_url.rstrip('/')}/api/v1/auth/sso/okta/callback"
+    base_url = settings.api_base_url.rstrip("/")  # pylint: disable=no-member
+    redirect_uri = f"{base_url}/api/v1/auth/sso/okta/callback"
     authorize_url = (
         f"{issuer}/v1/authorize"
         f"?client_id={client_id}"
@@ -499,13 +553,23 @@ def start_okta_sso(
     )
 
 
-def _upsert_okta_membership(session: Session, org_id: UUID, user: User, desired_role: str) -> OrgMembership:
+def _upsert_okta_membership(
+    session: Session, org_id: UUID, user: User, desired_role: str
+) -> OrgMembership:
     membership = session.exec(
-        select(OrgMembership).where((OrgMembership.org_id == org_id) & (OrgMembership.user_id == user.id))
+        select(OrgMembership).where(
+            (OrgMembership.org_id == org_id) & (OrgMembership.user_id == user.id)
+        )
     ).first()
     if membership is None:
         _ensure_org_seat_available(session, org_id)
-        membership = OrgMembership(org_id=org_id, user_id=user.id, role=desired_role, created_at=_now(), updated_at=_now())
+        membership = OrgMembership(
+            org_id=org_id,
+            user_id=user.id,
+            role=desired_role,
+            created_at=_now(),
+            updated_at=_now(),
+        )
         session.add(membership)
     elif desired_role in ROLE_VALUES and membership.role != desired_role:
         membership.role = desired_role
@@ -516,7 +580,9 @@ def _upsert_okta_membership(session: Session, org_id: UUID, user: User, desired_
 
 def _upsert_okta_oauth_account(session: Session, user: User, provider_subject: str) -> None:
     oauth_account = session.exec(
-        select(OAuthAccount).where((OAuthAccount.provider == "okta") & (OAuthAccount.user_id == user.id))
+        select(OAuthAccount).where(
+            (OAuthAccount.provider == "okta") & (OAuthAccount.user_id == user.id)
+        )
     ).first()
     if oauth_account is None:
         oauth_account = OAuthAccount(
@@ -534,7 +600,9 @@ def _upsert_okta_oauth_account(session: Session, user: User, provider_subject: s
     session.add(oauth_account)
 
 
-def _upsert_okta_user_identity(session: Session, org_id: UUID, user: User, provider_subject: str) -> None:
+def _upsert_okta_user_identity(
+    session: Session, org_id: UUID, user: User, provider_subject: str
+) -> None:
     identity = session.exec(
         select(ScimIdentity).where(
             (ScimIdentity.org_id == org_id)
@@ -566,9 +634,13 @@ def _upsert_okta_user_identity(session: Session, org_id: UUID, user: User, provi
 @router.get(
     "/auth/sso/okta/callback",
     tags=["Auth"],
-    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+    responses={
+        401: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+    },
 )
-def okta_sso_callback(
+def okta_sso_callback(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     state: str,
     session: SessionDep,
     code: Annotated[str | None, Query()] = None,
@@ -577,6 +649,7 @@ def okta_sso_callback(
     groups: Annotated[str | None, Query()] = None,
     error: Annotated[str | None, Query()] = None,
 ) -> dict[str, Any]:
+    """Handle the Okta OAuth callback: resolve/JIT-provision the user and issue tokens."""
     if error:
         raise unauthorized("Okta authentication failed", details={"error": error})
     provider, _redirect = parse_oauth_state(state)
@@ -587,7 +660,9 @@ def okta_sso_callback(
     if not org:
         raise not_found(ORG_NOT_FOUND_MESSAGE, {"org_id": str(org_id)})
 
-    connection = session.exec(select(SsoConnection).where(SsoConnection.org_id == org_id)).first()
+    connection = session.exec(
+        select(SsoConnection).where(SsoConnection.org_id == org_id)
+    ).first()
     if not connection or not connection.enabled:
         raise conflict("Okta SSO is not enabled for this organization")
 
@@ -601,12 +676,20 @@ def okta_sso_callback(
     if user is None:
         if not connection.jit_enabled:
             raise unauthorized("JIT provisioning is disabled for this organization")
-        user = User(email=effective_email, display_name=effective_email.split("@")[0], is_active=True, created_at=_now(), updated_at=_now())
+        user = User(
+            email=effective_email,
+            display_name=effective_email.split("@")[0],
+            is_active=True,
+            created_at=_now(),
+            updated_at=_now(),
+        )
         session.add(user)
         session.commit()
         session.refresh(user)
 
-    group_values = [item.strip() for item in (groups or "").split(",") if item.strip()]
+    group_values = [
+        item.strip() for item in (groups or "").split(",") if item.strip()
+    ]
     desired_role = _role_for_groups(session, org_id, group_values, connection.default_role)
     membership = _upsert_okta_membership(session, org_id, user, desired_role)
 
@@ -632,10 +715,13 @@ def okta_sso_callback(
 def scim_list_users(
     session: SessionDep,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
-    filter: Annotated[str | None, Query()] = None,
+    filter: Annotated[str | None, Query()] = None,  # pylint: disable=redefined-builtin
 ) -> dict[str, Any]:
+    """List SCIM users for the token's org, optionally filtered by userName."""
     token = _resolve_scim_token(session, _parse_scim_bearer(authorization))
-    memberships = session.exec(select(OrgMembership).where(OrgMembership.org_id == token.org_id)).all()
+    memberships = session.exec(
+        select(OrgMembership).where(OrgMembership.org_id == token.org_id)
+    ).all()
     users: list[dict[str, Any]] = []
     for membership in memberships:
         user = session.get(User, membership.user_id)
@@ -646,7 +732,11 @@ def scim_list_users(
             if _normalize_email(needle) != _normalize_email(user.email):
                 continue
         users.append(_scim_user_resource(user, membership))
-    return {"schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"], "totalResults": len(users), "Resources": users}
+    return {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+        "totalResults": len(users),
+        "Resources": users,
+    }
 
 
 @router.post("/scim/v2/Users", tags=["Auth"], status_code=status.HTTP_201_CREATED)
@@ -655,6 +745,7 @@ def scim_create_user(
     session: SessionDep,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> dict[str, Any]:
+    """Create or update a SCIM user (and its org membership/identity) for the token's org."""
     token = _resolve_scim_token(session, _parse_scim_bearer(authorization))
     email = _extract_scim_email(payload)
     if not email:
@@ -666,7 +757,13 @@ def scim_create_user(
     display_name = _extract_scim_display_name(payload)
     user = session.exec(select(User).where(User.email == email)).first()
     if user is None:
-        user = User(email=email, display_name=display_name, is_active=True, created_at=_now(), updated_at=_now())
+        user = User(
+            email=email,
+            display_name=display_name,
+            is_active=True,
+            created_at=_now(),
+            updated_at=_now(),
+        )
         session.add(user)
         session.commit()
         session.refresh(user)
@@ -676,11 +773,19 @@ def scim_create_user(
         session.add(user)
 
     membership = session.exec(
-        select(OrgMembership).where((OrgMembership.org_id == token.org_id) & (OrgMembership.user_id == user.id))
+        select(OrgMembership).where(
+            (OrgMembership.org_id == token.org_id) & (OrgMembership.user_id == user.id)
+        )
     ).first()
     if membership is None:
         _ensure_org_seat_available(session, token.org_id)
-        membership = OrgMembership(org_id=token.org_id, user_id=user.id, role="viewer", created_at=_now(), updated_at=_now())
+        membership = OrgMembership(
+            org_id=token.org_id,
+            user_id=user.id,
+            role="viewer",
+            created_at=_now(),
+            updated_at=_now(),
+        )
         session.add(membership)
 
     external_id = str(payload.get("externalId") or payload.get("id") or user.id)
@@ -735,7 +840,8 @@ def _apply_scim_user_operation(
     op = str(operation.get("op") or "").strip().lower()
     path = str(operation.get("path") or "").strip().lower()
     value = operation.get("value")
-    if op in {"replace", "add"} and path in {"active", "urn:ietf:params:scim:schemas:core:2.0:user:active"}:
+    active_paths = {"active", "urn:ietf:params:scim:schemas:core:2.0:user:active"}
+    if op in {"replace", "add"} and path in active_paths:
         is_active = bool(value)
         user.is_active = is_active
         user.updated_at = _now()
@@ -744,7 +850,13 @@ def _apply_scim_user_operation(
             membership = None
         elif is_active and membership is None:
             _ensure_org_seat_available(session, org_id)
-            membership = OrgMembership(org_id=org_id, user_id=user.id, role="viewer", created_at=_now(), updated_at=_now())
+            membership = OrgMembership(
+                org_id=org_id,
+                user_id=user.id,
+                role="viewer",
+                created_at=_now(),
+                updated_at=_now(),
+            )
             session.add(membership)
     elif op in {"replace", "add"} and path in {"username", "userName".lower()}:
         maybe_email = _normalize_email(str(value or ""))
@@ -766,24 +878,32 @@ def scim_patch_user(
     session: SessionDep,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> dict[str, Any]:
+    """Apply SCIM PATCH operations to a user and return the updated resource."""
     token = _resolve_scim_token(session, _parse_scim_bearer(authorization))
     user = session.get(User, user_id)
     membership = session.exec(
-        select(OrgMembership).where((OrgMembership.org_id == token.org_id) & (OrgMembership.user_id == user_id))
+        select(OrgMembership).where(
+            (OrgMembership.org_id == token.org_id) & (OrgMembership.user_id == user_id)
+        )
     ).first()
     if not user or not membership:
         raise not_found("SCIM user not found", {"user_id": str(user_id)})
 
-    operations = payload.get("Operations") if isinstance(payload.get("Operations"), list) else []
+    raw_ops = payload.get("Operations")
+    operations = raw_ops if isinstance(raw_ops, list) else []
     for operation in operations:
         if not isinstance(operation, dict):
             continue
-        membership = _apply_scim_user_operation(session, token.org_id, user, membership, operation)
+        membership = _apply_scim_user_operation(
+            session, token.org_id, user, membership, operation
+        )
 
     session.add(user)
     session.commit()
     current_membership = session.exec(
-        select(OrgMembership).where((OrgMembership.org_id == token.org_id) & (OrgMembership.user_id == user.id))
+        select(OrgMembership).where(
+            (OrgMembership.org_id == token.org_id) & (OrgMembership.user_id == user.id)
+        )
     ).first()
     return _scim_user_resource(user, current_membership)
 
@@ -794,15 +914,20 @@ def scim_delete_user(
     session: SessionDep,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> Response:
+    """Delete a SCIM user: remove its org membership and deactivate identities."""
     token = _resolve_scim_token(session, _parse_scim_bearer(authorization))
     membership = session.exec(
-        select(OrgMembership).where((OrgMembership.org_id == token.org_id) & (OrgMembership.user_id == user_id))
+        select(OrgMembership).where(
+            (OrgMembership.org_id == token.org_id) & (OrgMembership.user_id == user_id)
+        )
     ).first()
     if membership:
         session.delete(membership)
     identities = session.exec(
         select(ScimIdentity).where(
-            (ScimIdentity.org_id == token.org_id) & (ScimIdentity.user_id == user_id) & (ScimIdentity.resource_type == "user")
+            (ScimIdentity.org_id == token.org_id)
+            & (ScimIdentity.user_id == user_id)
+            & (ScimIdentity.resource_type == "user")
         )
     ).all()
     for identity in identities:
@@ -827,17 +952,27 @@ def scim_list_groups(
     session: SessionDep,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> dict[str, Any]:
+    """List SCIM groups (role mappings) for the token's org with their members."""
     token = _resolve_scim_token(session, _parse_scim_bearer(authorization))
     mappings = session.exec(
-        select(RoleMapping).where((RoleMapping.org_id == token.org_id) & (RoleMapping.provider == "okta")).order_by(RoleMapping.external_value.asc())
+        select(RoleMapping)
+        .where((RoleMapping.org_id == token.org_id) & (RoleMapping.provider == "okta"))
+        .order_by(RoleMapping.external_value.asc())  # pylint: disable=no-member
     ).all()
     resources = []
     for mapping in mappings:
         members = session.exec(
-            select(OrgMembership).where((OrgMembership.org_id == token.org_id) & (OrgMembership.role == mapping.role))
+            select(OrgMembership).where(
+                (OrgMembership.org_id == token.org_id) & (OrgMembership.role == mapping.role)
+            )
         ).all()
-        resources.append(_scim_group_resource(mapping, members=[str(item.user_id) for item in members]))
-    return {"schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"], "totalResults": len(resources), "Resources": resources}
+        member_ids = [str(item.user_id) for item in members]
+        resources.append(_scim_group_resource(mapping, members=member_ids))
+    return {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+        "totalResults": len(resources),
+        "Resources": resources,
+    }
 
 
 @router.post("/scim/v2/Groups", tags=["Auth"], status_code=status.HTTP_201_CREATED)
@@ -846,6 +981,7 @@ def scim_create_group(
     session: SessionDep,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> dict[str, Any]:
+    """Create or update a SCIM group (role mapping) and its identity for the org."""
     token = _resolve_scim_token(session, _parse_scim_bearer(authorization))
     display_name = (str(payload.get("displayName") or "")).strip()
     if not display_name:
@@ -861,12 +997,21 @@ def scim_create_group(
 
     mapping = session.exec(
         select(RoleMapping).where(
-            (RoleMapping.org_id == token.org_id) & (RoleMapping.provider == "okta") & (RoleMapping.external_value == display_name)
+            (RoleMapping.org_id == token.org_id)
+            & (RoleMapping.provider == "okta")
+            & (RoleMapping.external_value == display_name)
         )
     ).first()
     now = _now()
     if mapping is None:
-        mapping = RoleMapping(org_id=token.org_id, provider="okta", external_value=display_name, role=desired_role, created_at=now, updated_at=now)
+        mapping = RoleMapping(
+            org_id=token.org_id,
+            provider="okta",
+            external_value=display_name,
+            role=desired_role,
+            created_at=now,
+            updated_at=now,
+        )
     else:
         mapping.role = desired_role
         mapping.updated_at = now
@@ -904,7 +1049,9 @@ def scim_create_group(
     return _scim_group_resource(mapping)
 
 
-def _apply_scim_group_members(session: Session, org_id: UUID, mapping: RoleMapping, value: Any) -> None:
+def _apply_scim_group_members(
+    session: Session, org_id: UUID, mapping: RoleMapping, value: Any
+) -> None:
     if not isinstance(value, list):
         return
     for item in value:
@@ -918,7 +1065,9 @@ def _apply_scim_group_members(session: Session, org_id: UUID, mapping: RoleMappi
         except ValueError:
             continue
         membership = session.exec(
-            select(OrgMembership).where((OrgMembership.org_id == org_id) & (OrgMembership.user_id == member_uuid))
+            select(OrgMembership).where(
+                (OrgMembership.org_id == org_id) & (OrgMembership.user_id == member_uuid)
+            )
         ).first()
         if membership:
             membership.role = mapping.role
@@ -926,7 +1075,9 @@ def _apply_scim_group_members(session: Session, org_id: UUID, mapping: RoleMappi
             session.add(membership)
 
 
-def _apply_scim_group_operation(session: Session, org_id: UUID, mapping: RoleMapping, operation: dict[str, Any]) -> None:
+def _apply_scim_group_operation(
+    session: Session, org_id: UUID, mapping: RoleMapping, operation: dict[str, Any]
+) -> None:
     path = str(operation.get("path") or "").strip().lower()
     value = operation.get("value")
     if path in {"displayname", "displayName".lower()}:
@@ -948,12 +1099,14 @@ def scim_patch_group(
     session: SessionDep,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> dict[str, Any]:
+    """Apply SCIM PATCH operations to a group (role mapping) and return it."""
     token = _resolve_scim_token(session, _parse_scim_bearer(authorization))
     mapping = session.get(RoleMapping, group_id)
     if not mapping or mapping.org_id != token.org_id:
         raise not_found("SCIM group not found", {"group_id": str(group_id)})
 
-    operations = payload.get("Operations") if isinstance(payload.get("Operations"), list) else []
+    raw_ops = payload.get("Operations")
+    operations = raw_ops if isinstance(raw_ops, list) else []
     for operation in operations:
         if not isinstance(operation, dict):
             continue
@@ -974,6 +1127,7 @@ def scim_delete_group(
     session: SessionDep,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> Response:
+    """Delete a SCIM group (role mapping) and deactivate its group identities."""
     token = _resolve_scim_token(session, _parse_scim_bearer(authorization))
     mapping = session.get(RoleMapping, group_id)
     if not mapping or mapping.org_id != token.org_id:
@@ -981,7 +1135,9 @@ def scim_delete_group(
     session.delete(mapping)
     identities = session.exec(
         select(ScimIdentity).where(
-            (ScimIdentity.org_id == token.org_id) & (ScimIdentity.resource_type == "group") & (ScimIdentity.group_name == mapping.external_value)
+            (ScimIdentity.org_id == token.org_id)
+            & (ScimIdentity.resource_type == "group")
+            & (ScimIdentity.group_name == mapping.external_value)
         )
     ).all()
     for identity in identities:

@@ -28,8 +28,15 @@ __all__ = [
 ]
 
 
-def transcribe_noop(path: str | Path, config: TranscriptionConfig | None = None) -> TranscriptionResult:
+def transcribe_noop(
+    path: str | Path, config: TranscriptionConfig | None = None
+) -> TranscriptionResult:
     """Lightweight fallback used by CLI when no backend is available."""
     name = Path(path).name
     word = Word(text=name or "noop", start=0.0, end=1.0)
-    return TranscriptionResult(words=[word], text=name, model=(config.model if config else "noop"), language=getattr(config, "language", None))
+    return TranscriptionResult(
+        words=[word],
+        text=name,
+        model=(config.model if config else "noop"),
+        language=getattr(config, "language", None),
+    )

@@ -1,3 +1,5 @@
+"""Storage backends (local filesystem and S3/R2) for media assets."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,15 +13,22 @@ _MULTIPART_UNSUPPORTED_MSG = "Multipart uploads are not supported for local stor
 
 
 def is_remote_uri(uri: str) -> bool:
+    """Return True if the URI points at a remote (http/s3/gs) location."""
     lowered = (uri or "").strip().lower()
     return lowered.startswith(("http://", "https://", "s3://", "gs://"))
 
 
 class StorageBackend(Protocol):
-    def write_bytes(self, *, rel_dir: str, filename: str, data: bytes, content_type: str | None = None) -> str:
+    """Protocol describing the storage operations every backend must provide."""
+
+    def write_bytes(
+        self, *, rel_dir: str, filename: str, data: bytes, content_type: str | None = None
+    ) -> str:
         """Store bytes and return a URI suitable for clients."""
 
-    def write_file(self, *, rel_dir: str, filename: str, source_path: Path, content_type: str | None = None) -> str:
+    def write_file(
+        self, *, rel_dir: str, filename: str, source_path: Path, content_type: str | None = None
+    ) -> str:
         """Store a file and return a URI suitable for clients."""
 
     def resolve_local_path(self, uri: str) -> Path:
@@ -41,7 +50,9 @@ class StorageBackend(Protocol):
     ) -> dict[str, Any]:
         """Create a single-part direct upload target."""
 
-    def create_multipart_upload(self, *, rel_dir: str, filename: str, content_type: str | None) -> dict[str, str]:
+    def create_multipart_upload(
+        self, *, rel_dir: str, filename: str, content_type: str | None
+    ) -> dict[str, str]:
         """Initialize multipart upload and return provider upload id and URI metadata."""
 
     def sign_multipart_part(
@@ -54,7 +65,9 @@ class StorageBackend(Protocol):
     ) -> dict[str, Any]:
         """Return upload URL metadata for a multipart part."""
 
-    def complete_multipart_upload(self, *, key: str, provider_upload_id: str, parts: list[dict[str, Any]]) -> None:
+    def complete_multipart_upload(
+        self, *, key: str, provider_upload_id: str, parts: list[dict[str, Any]]
+    ) -> None:
         """Complete multipart upload with uploaded parts metadata."""
 
     def abort_multipart_upload(self, *, key: str, provider_upload_id: str) -> None:
@@ -63,10 +76,15 @@ class StorageBackend(Protocol):
 
 @dataclass(frozen=True)
 class LocalStorageBackend:
+    """Storage backend that writes media to the local filesystem."""
+
     media_root: Path
     public_prefix: str = "/media"
 
-    def write_bytes(self, *, rel_dir: str, filename: str, data: bytes, content_type: str | None = None) -> str:
+    def write_bytes(  # pylint: disable=unused-argument
+        self, *, rel_dir: str, filename: str, data: bytes, content_type: str | None = None
+    ) -> str:
+        """Store bytes locally and return the public media URI."""
         rel_dir = rel_dir.strip("/") if rel_dir else ""
         target_dir = self.media_root / rel_dir if rel_dir else self.media_root
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -75,7 +93,10 @@ class LocalStorageBackend:
         prefix = self.public_prefix.rstrip("/")
         return f"{prefix}/{rel_dir}/{filename}" if rel_dir else f"{prefix}/{filename}"
 
-    def write_file(self, *, rel_dir: str, filename: str, source_path: Path, content_type: str | None = None) -> str:
+    def write_file(  # pylint: disable=unused-argument
+        self, *, rel_dir: str, filename: str, source_path: Path, content_type: str | None = None
+    ) -> str:
+        """Copy a file into local storage and return the public media URI."""
         rel_dir = rel_dir.strip("/") if rel_dir else ""
         target_dir = self.media_root / rel_dir if rel_dir else self.media_root
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -86,6 +107,7 @@ class LocalStorageBackend:
         return f"{prefix}/{rel_dir}/{filename}" if rel_dir else f"{prefix}/{filename}"
 
     def resolve_local_path(self, uri: str) -> Path:
+        """Resolve a media URI to an absolute path within the media root."""
         if is_remote_uri(uri):
             raise ValueError(f"Cannot resolve remote uri: {uri}")
         uri_path = Path((uri or "").lstrip("/"))
@@ -100,9 +122,11 @@ class LocalStorageBackend:
         return candidate
 
     def get_download_url(self, uri: str) -> str | None:
+        """Return the URI itself as the download URL for local storage."""
         return uri or None
 
     def delete_uri(self, uri: str) -> None:
+        """Delete the local file backing the given URI if it exists."""
         if not uri:
             return
         path = self.resolve_local_path(uri)
@@ -116,9 +140,13 @@ class LocalStorageBackend:
         content_type: str | None,
         expires_seconds: int,
     ) -> dict[str, Any]:
+        """Local storage does not support presigned uploads."""
         raise ValueError("Direct presigned uploads are not supported for local storage backend.")
 
-    def create_multipart_upload(self, *, rel_dir: str, filename: str, content_type: str | None) -> dict[str, str]:
+    def create_multipart_upload(
+        self, *, rel_dir: str, filename: str, content_type: str | None
+    ) -> dict[str, str]:
+        """Local storage does not support multipart uploads."""
         raise ValueError(_MULTIPART_UNSUPPORTED_MSG)
 
     def sign_multipart_part(
@@ -129,12 +157,17 @@ class LocalStorageBackend:
         part_number: int,
         expires_seconds: int,
     ) -> dict[str, Any]:
+        """Local storage does not support multipart uploads."""
         raise ValueError(_MULTIPART_UNSUPPORTED_MSG)
 
-    def complete_multipart_upload(self, *, key: str, provider_upload_id: str, parts: list[dict[str, Any]]) -> None:
+    def complete_multipart_upload(
+        self, *, key: str, provider_upload_id: str, parts: list[dict[str, Any]]
+    ) -> None:
+        """Local storage does not support multipart uploads."""
         raise ValueError(_MULTIPART_UNSUPPORTED_MSG)
 
     def abort_multipart_upload(self, *, key: str, provider_upload_id: str) -> None:
+        """Local storage does not support multipart uploads."""
         raise ValueError(_MULTIPART_UNSUPPORTED_MSG)
 
 
@@ -148,10 +181,13 @@ def _env(name: str) -> str:
 
 
 def _ensure_boto3():
+    """Import and return the optional boto3 dependency, or raise if missing."""
     try:
-        import boto3  # type: ignore
+        import boto3  # type: ignore  # pylint: disable=import-outside-toplevel
     except ImportError as exc:  # pragma: no cover - optional dependency
-        raise RuntimeError("boto3 is required for S3 storage. Install with: pip install boto3") from exc
+        raise RuntimeError(
+            "boto3 is required for S3 storage. Install with: pip install boto3"
+        ) from exc
     return boto3
 
 
@@ -161,7 +197,9 @@ def _join_key(*parts: str) -> str:
 
 
 class S3StorageBackend:
-    def __init__(
+    """Storage backend backed by an S3-compatible object store (S3/R2)."""
+
+    def __init__(  # pylint: disable=too-many-arguments
         self,
         *,
         bucket: str,
@@ -183,12 +221,20 @@ class S3StorageBackend:
         boto3 = _ensure_boto3()
         access_key = _env("S3_ACCESS_KEY_ID") or os.getenv("AWS_ACCESS_KEY_ID", "").strip()
         secret_key = _env("S3_SECRET_ACCESS_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY", "").strip()
-        session_token = _env("S3_SESSION_TOKEN") or os.getenv("AWS_SESSION_TOKEN", "").strip() or None
+        session_token = (
+            _env("S3_SESSION_TOKEN") or os.getenv("AWS_SESSION_TOKEN", "").strip() or None
+        )
         if access_key and secret_key:
-            session = boto3.session.Session(aws_access_key_id=access_key, aws_secret_access_key=secret_key, aws_session_token=session_token)
+            session = boto3.session.Session(
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                aws_session_token=session_token,
+            )
         else:
             session = boto3.session.Session()
-        self.client = session.client("s3", region_name=region or None, endpoint_url=endpoint_url or None)
+        self.client = session.client(
+            "s3", region_name=region or None, endpoint_url=endpoint_url or None
+        )
 
     def _make_key(self, *, rel_dir: str, filename: str) -> str:
         return _join_key(self.prefix, rel_dir, filename)
@@ -215,7 +261,10 @@ class S3StorageBackend:
             return remainder or None
         return None
 
-    def write_bytes(self, *, rel_dir: str, filename: str, data: bytes, content_type: str | None = None) -> str:
+    def write_bytes(
+        self, *, rel_dir: str, filename: str, data: bytes, content_type: str | None = None
+    ) -> str:
+        """Upload bytes to S3 and return the s3:// URI."""
         key = self._make_key(rel_dir=rel_dir, filename=filename)
         kwargs = {"Bucket": self.bucket, "Key": key, "Body": data}
         if content_type:
@@ -223,7 +272,10 @@ class S3StorageBackend:
         self.client.put_object(**kwargs)
         return self._make_uri(key=key)
 
-    def write_file(self, *, rel_dir: str, filename: str, source_path: Path, content_type: str | None = None) -> str:
+    def write_file(
+        self, *, rel_dir: str, filename: str, source_path: Path, content_type: str | None = None
+    ) -> str:
+        """Upload a file to S3 and return the s3:// URI."""
         key = self._make_key(rel_dir=rel_dir, filename=filename)
         extra_args = {"ContentType": content_type} if content_type else None
         if extra_args:
@@ -233,9 +285,11 @@ class S3StorageBackend:
         return self._make_uri(key=key)
 
     def resolve_local_path(self, uri: str) -> Path:
+        """S3 storage cannot resolve a local filesystem path."""
         raise ValueError("S3 storage does not support resolving a local path.")
 
     def get_download_url(self, uri: str) -> str | None:
+        """Return a public or presigned GET URL for the stored object."""
         key = self._key_from_uri(uri)
         if not key:
             return None
@@ -250,6 +304,7 @@ class S3StorageBackend:
         )
 
     def delete_uri(self, uri: str) -> None:
+        """Delete the S3 object backing the given URI if it exists."""
         key = self._key_from_uri(uri)
         if not key:
             return
@@ -263,6 +318,7 @@ class S3StorageBackend:
         content_type: str | None,
         expires_seconds: int,
     ) -> dict[str, Any]:
+        """Create a presigned single-part PUT upload target."""
         key = self._make_key(rel_dir=rel_dir, filename=filename)
         params = {"Bucket": self.bucket, "Key": key}
         if content_type:
@@ -284,7 +340,10 @@ class S3StorageBackend:
             "expires_in_seconds": max(60, int(expires_seconds)),
         }
 
-    def create_multipart_upload(self, *, rel_dir: str, filename: str, content_type: str | None) -> dict[str, str]:
+    def create_multipart_upload(
+        self, *, rel_dir: str, filename: str, content_type: str | None
+    ) -> dict[str, str]:
+        """Initialize an S3 multipart upload and return its metadata."""
         key = self._make_key(rel_dir=rel_dir, filename=filename)
         kwargs: dict[str, Any] = {"Bucket": self.bucket, "Key": key}
         if content_type:
@@ -304,6 +363,7 @@ class S3StorageBackend:
         part_number: int,
         expires_seconds: int,
     ) -> dict[str, Any]:
+        """Return a presigned PUT URL for a single multipart part."""
         upload_url = self.client.generate_presigned_url(
             "upload_part",
             Params={
@@ -321,7 +381,10 @@ class S3StorageBackend:
             "expires_in_seconds": max(60, int(expires_seconds)),
         }
 
-    def complete_multipart_upload(self, *, key: str, provider_upload_id: str, parts: list[dict[str, Any]]) -> None:
+    def complete_multipart_upload(
+        self, *, key: str, provider_upload_id: str, parts: list[dict[str, Any]]
+    ) -> None:
+        """Complete an S3 multipart upload from the uploaded parts metadata."""
         normalized_parts: list[dict[str, Any]] = []
         for part in parts:
             etag = str(part.get("etag") or "").strip()
@@ -340,6 +403,7 @@ class S3StorageBackend:
         )
 
     def abort_multipart_upload(self, *, key: str, provider_upload_id: str) -> None:
+        """Abort an in-progress S3 multipart upload."""
         self.client.abort_multipart_upload(
             Bucket=self.bucket,
             Key=key,
@@ -348,9 +412,12 @@ class S3StorageBackend:
 
 
 def get_storage(*, media_root: str | Path) -> StorageBackend:
+    """Construct the configured storage backend (local or S3/R2)."""
     backend = _env("STORAGE_BACKEND").lower() or "local"
     if _truthy_env("OFFLINE_MODE") and backend not in {"local", "filesystem", "fs"}:
-        raise RuntimeError("REFRAME_OFFLINE_MODE is enabled; refusing to use remote storage backend.")
+        raise RuntimeError(
+            "REFRAME_OFFLINE_MODE is enabled; refusing to use remote storage backend."
+        )
 
     if backend in {"local", "filesystem", "fs"}:
         return LocalStorageBackend(media_root=Path(media_root))
@@ -359,7 +426,12 @@ def get_storage(*, media_root: str | Path) -> StorageBackend:
         return S3StorageBackend(
             bucket=_env("S3_BUCKET"),
             prefix=_env("S3_PREFIX"),
-            region=_env("S3_REGION") or os.getenv("AWS_REGION", "").strip() or os.getenv("AWS_DEFAULT_REGION", "").strip() or None,
+            region=(
+                _env("S3_REGION")
+                or os.getenv("AWS_REGION", "").strip()
+                or os.getenv("AWS_DEFAULT_REGION", "").strip()
+                or None
+            ),
             endpoint_url=_env("S3_ENDPOINT_URL") or None,
             public_base_url=_env("S3_PUBLIC_BASE_URL") or None,
             public_downloads=_truthy_env("S3_PUBLIC_DOWNLOADS"),

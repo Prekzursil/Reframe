@@ -1,3 +1,5 @@
+"""Billing helpers: plan policies and Stripe checkout/subscription operations."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,6 +10,8 @@ from app.config import get_settings
 
 @dataclass(frozen=True)
 class PlanPolicy:
+    """Immutable quota/limit policy for a billing plan."""
+
     code: str
     max_concurrent_jobs: int
     monthly_job_minutes: int
@@ -49,18 +53,19 @@ DEFAULT_PLAN_POLICIES: dict[str, PlanPolicy] = {
 
 
 def get_plan_policy(code: str) -> PlanPolicy:
+    """Return the plan policy for ``code``, falling back to the free plan."""
     return DEFAULT_PLAN_POLICIES.get((code or "").strip().lower(), DEFAULT_PLAN_POLICIES["free"])
 
 
 def _get_stripe():
     try:
-        import stripe  # type: ignore
+        import stripe  # type: ignore  # pylint: disable=import-outside-toplevel
     except ImportError as exc:
         raise RuntimeError("stripe is not installed; install with `pip install stripe`") from exc
     return stripe
 
 
-def build_checkout_session(
+def build_checkout_session(  # pylint: disable=too-many-arguments
     *,
     customer_id: Optional[str],
     price_id: str,
@@ -69,6 +74,7 @@ def build_checkout_session(
     cancel_url: str,
     metadata: Optional[dict[str, str]] = None,
 ) -> dict:
+    """Create a Stripe subscription checkout session and return its id/url."""
     settings = get_settings()
     if not settings.enable_billing:
         raise RuntimeError(BILLING_DISABLED_MESSAGE)
@@ -92,6 +98,7 @@ def build_checkout_session(
 
 
 def update_subscription_seat_limit(*, subscription_id: str, quantity: int) -> None:
+    """Update the seat (item) quantity of an existing Stripe subscription."""
     settings = get_settings()
     if not settings.enable_billing:
         raise RuntimeError(BILLING_DISABLED_MESSAGE)
@@ -104,6 +111,7 @@ def update_subscription_seat_limit(*, subscription_id: str, quantity: int) -> No
 
 
 def build_customer_portal_session(*, customer_id: str, return_url: str) -> dict:
+    """Create a Stripe billing portal session and return its id/url."""
     settings = get_settings()
     if not settings.enable_billing:
         raise RuntimeError(BILLING_DISABLED_MESSAGE)

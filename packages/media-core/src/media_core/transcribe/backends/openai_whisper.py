@@ -1,3 +1,5 @@
+"""OpenAI Whisper transcription backend."""
+
 from __future__ import annotations
 
 import io
@@ -15,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 def _ensure_openai():
     try:
-        import openai
+        import openai  # pylint: disable=import-outside-toplevel
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError(
             "openai package is required for the OpenAI Whisper backend. "
@@ -56,7 +58,9 @@ def normalize_verbose_json(
 def transcribe_openai_file(path: str | Path, config: TranscriptionConfig) -> TranscriptionResult:
     """Transcribe a media file using OpenAI Whisper."""
     if os.getenv("REFRAME_OFFLINE_MODE", "").strip().lower() in {"1", "true", "yes", "on"}:
-        raise RuntimeError("REFRAME_OFFLINE_MODE is enabled; refusing to call OpenAI transcription API.")
+        raise RuntimeError(
+            "REFRAME_OFFLINE_MODE is enabled; refusing to call OpenAI transcription API."
+        )
     openai = _ensure_openai()
     client = openai.OpenAI()
     media_path = validate_media_input_path(path)

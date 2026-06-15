@@ -59,7 +59,7 @@ describe("minimal e2e flow", () => {
   it("upload → caption job → download from Jobs", async () => {
     const user = userEvent.setup();
 
-    const jobs: any[] = [];
+    const jobs: Array<Record<string, unknown>> = [];
 
     apiClientMock.listJobs.mockImplementation(async () => jobs);
 
@@ -70,7 +70,7 @@ describe("minimal e2e flow", () => {
       mime_type: "video/mp4",
     });
 
-    apiClientMock.createCaptionJob.mockImplementation(async (payload: any) => {
+    apiClientMock.createCaptionJob.mockImplementation(async (payload: Record<string, unknown>) => {
       const job = {
         id: "job-1",
         job_type: "captions",
@@ -112,7 +112,7 @@ describe("minimal e2e flow", () => {
     const dropzone = uploadLabel.closest("div");
     expect(dropzone).toBeTruthy();
 
-    const fileInput = dropzone!.querySelector('input[type=\"file\"]') as HTMLInputElement | null;
+    const fileInput = dropzone!.querySelector('input[type="file"]') as HTMLInputElement | null;
     expect(fileInput).toBeTruthy();
 
     const file = new File([new Uint8Array([1, 2, 3])], "sample.mp4", { type: "video/mp4" });

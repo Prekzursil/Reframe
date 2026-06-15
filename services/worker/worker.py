@@ -1,3 +1,19 @@
+"""Celery worker tasks for transcription, captions, shorts, rendering, and publishing."""
+
+# The imports below are intentionally placed after the sys.path bootstrap so the shared
+# `app` and `media_core` packages resolve when the worker runs from services/.
+# pylint: disable=wrong-import-position
+# Broad exception handling is deliberate throughout: these tasks degrade gracefully
+# (fall back to noop, best-effort cleanup) rather than crash the worker.
+# pylint: disable=broad-exception-caught
+# Celery task signatures and the public asset/job helpers expose many parameters by
+# design; refactoring them would change the task call contract.
+# pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+# pylint: disable=too-many-statements,too-many-return-statements,too-many-lines
+# Module-level lazy singletons (`_engine`, `_media_tmp`) require the global statement
+# and intentionally use lower-case names referenced by tests.
+# pylint: disable=global-statement,invalid-name
+
 import base64
 import json
 import logging
@@ -10,12 +26,14 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional, Tuple, TypeVar
 from uuid import UUID, uuid4
 
 from sqlmodel import Session, create_engine, select
+
 
 # Ensure app package is importable for shared models/config when running from services/.
 def _find_repo_root(start: Path) -> Path:
@@ -34,6 +52,8 @@ MEDIA_CORE_SRC = REPO_ROOT / "packages" / "media-core" / "src"
 if MEDIA_CORE_SRC.is_dir() and str(MEDIA_CORE_SRC) not in sys.path:
     sys.path.append(str(MEDIA_CORE_SRC))
 
+# ruff: noqa: E402 -- the app.* imports below intentionally run AFTER the sys.path
+# bootstrap above so they resolve; this is a deliberate module-load order.
 from app.config import get_settings
 from app.billing import get_plan_policy
 from app.models import (
@@ -56,9 +76,28 @@ from app.storage import LocalStorageBackend, get_storage, is_remote_uri
 from celery import Celery
 from kombu import Queue
 
-from media_core.segment.shorts import HeuristicWeights, equal_splits, score_segments_heuristic, score_segments_llm, select_top
-from media_core.diarize import DiarizationBackend, DiarizationConfig, assign_speakers_to_lines, diarize_audio
-from media_core.subtitles.builder import GroupingConfig, SubtitleLine, group_words, to_ass, to_ass_karaoke, to_srt, to_vtt
+from media_core.segment.shorts import (
+    HeuristicWeights,
+    equal_splits,
+    score_segments_heuristic,
+    score_segments_llm,
+    select_top,
+)
+from media_core.diarize import (
+    DiarizationBackend,
+    DiarizationConfig,
+    assign_speakers_to_lines,
+    diarize_audio,
+)
+from media_core.subtitles.builder import (
+    GroupingConfig,
+    SubtitleLine,
+    group_words,
+    to_ass,
+    to_ass_karaoke,
+    to_srt,
+    to_vtt,
+)
 from media_core.subtitles.vtt import parse_vtt
 from media_core.transcribe import (
     TranscriptionBackend,
@@ -71,8 +110,17 @@ from media_core.transcribe import (
 )
 from media_core.transcribe.models import Word
 from media_core.translate.srt import parse_srt, translate_srt, translate_srt_bilingual
-from media_core.translate.translator import CloudTranslator, LocalTranslator, NoOpTranslator
-from media_core.video_edit.ffmpeg import cut_clip, detect_silence, merge_video_audio as ffmpeg_merge_video_audio, probe_media
+from media_core.translate.translator import (
+    CloudTranslator,
+    LocalTranslator,
+    NoOpTranslator,
+)
+from media_core.video_edit.ffmpeg import (
+    cut_clip,
+    detect_silence,
+    merge_video_audio as ffmpeg_merge_video_audio,
+    probe_media,
+)
 
 try:
     from .groq_client import get_groq_chat_client_from_env
@@ -92,7 +140,9 @@ def _env_truthy(name: str) -> bool:
 
 CPU_QUEUE = (os.getenv("REFRAME_CELERY_QUEUE_CPU") or "cpu").strip() or "cpu"
 GPU_QUEUE = (os.getenv("REFRAME_CELERY_QUEUE_GPU") or "gpu").strip() or "gpu"
-DEFAULT_QUEUE = (os.getenv("REFRAME_CELERY_QUEUE_DEFAULT") or "default").strip() or "default"
+DEFAULT_QUEUE = (
+    os.getenv("REFRAME_CELERY_QUEUE_DEFAULT") or "default"
+).strip() or "default"
 celery_app.conf.task_default_queue = CPU_QUEUE
 celery_app.conf.task_queues = (
     Queue(DEFAULT_QUEUE),
@@ -154,9 +204,19 @@ def _retry_base_delay_seconds() -> float:
 
 
 def _record_ffmpeg_retry(
-    *, job_id: str, step: str, attempt: int, max_attempts: int, delay: float, exc: subprocess.CalledProcessError
+    *,
+    job_id: str,
+    step: str,
+    attempt: int,
+    max_attempts: int,
+    delay: float,
+    exc: subprocess.CalledProcessError,
 ) -> None:
-    stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, (bytes, bytearray)) else str(exc.stderr or "")
+    stderr = (
+        exc.stderr.decode(errors="replace")
+        if isinstance(exc.stderr, (bytes, bytearray))
+        else str(exc.stderr or "")
+    )
     update_job(
         job_id,
         payload={
@@ -185,7 +245,12 @@ def _run_ffmpeg_with_retries(*, job_id: str, step: str, fn: Callable[[], T]) -> 
                 raise
             delay = base_delay * (2 ** (attempt - 1))
             _record_ffmpeg_retry(
-                job_id=job_id, step=step, attempt=attempt, max_attempts=max_attempts, delay=delay, exc=exc
+                job_id=job_id,
+                step=step,
+                attempt=attempt,
+                max_attempts=max_attempts,
+                delay=delay,
+                exc=exc,
             )
 
     # Should not reach here.
@@ -193,22 +258,26 @@ def _run_ffmpeg_with_retries(*, job_id: str, step: str, fn: Callable[[], T]) -> 
         raise last_exc
     raise RuntimeError("Retry loop failed without an exception")
 
+
 _FALLBACK_THUMBNAIL_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
 )
 
 
 def get_engine():
+    """Return the lazily-created SQLModel engine, building it on first use."""
     global _engine
     if _engine is None:
         settings = get_settings()
         url = settings.database_url
+        # pylint: disable-next=no-member  # SQLModel field resolves to str at runtime
         connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
         _engine = create_engine(url, echo=False, connect_args=connect_args)
     return _engine
 
 
 def get_media_tmp() -> Path:
+    """Return the worker's temporary media directory, creating it on first use."""
     global _media_tmp
     if _media_tmp is None:
         settings = get_settings()
@@ -240,6 +309,7 @@ def create_asset(
     org_id: UUID | None = None,
     owner_user_id: UUID | None = None,
 ) -> MediaAsset:
+    """Create a MediaAsset from inline contents or a source file, persisting it."""
     storage = _worker_storage()
     tmp = get_media_tmp()
     filename = f"{uuid4()}{suffix}"
@@ -250,7 +320,9 @@ def create_asset(
         data = contents.encode() if isinstance(contents, str) else contents
         target.write_bytes(data)
     rel_dir = _worker_rel_dir(storage=storage, org_id=org_id)
-    uri = storage.write_file(rel_dir=rel_dir, filename=filename, source_path=target, content_type=mime_type)
+    uri = storage.write_file(
+        rel_dir=rel_dir, filename=filename, source_path=target, content_type=mime_type
+    )
     asset = MediaAsset(
         kind=kind,
         uri=uri,
@@ -275,15 +347,21 @@ def create_asset_for_existing_file(
     org_id: UUID | None = None,
     owner_user_id: UUID | None = None,
 ) -> MediaAsset:
+    """Register an existing tmp file as a MediaAsset, persisting it to storage."""
     storage = _worker_storage()
     tmp = get_media_tmp()
     resolved = file_path.resolve()
     try:
         resolved.relative_to(tmp.resolve())
-    except Exception:
-        raise ValueError(f"file_path must be under {tmp}, got {file_path}")
+    except ValueError as exc:
+        raise ValueError(f"file_path must be under {tmp}, got {file_path}") from exc
     rel_dir = _worker_rel_dir(storage=storage, org_id=org_id)
-    uri = storage.write_file(rel_dir=rel_dir, filename=file_path.name, source_path=file_path, content_type=mime_type)
+    uri = storage.write_file(
+        rel_dir=rel_dir,
+        filename=file_path.name,
+        source_path=file_path,
+        content_type=mime_type,
+    )
     asset = MediaAsset(
         kind=kind,
         uri=uri,
@@ -300,6 +378,7 @@ def create_asset_for_existing_file(
 
 
 def new_tmp_file(suffix: str) -> Path:
+    """Return a unique path inside the worker tmp dir with the given suffix."""
     tmp = get_media_tmp()
     if suffix and not suffix.startswith("."):
         suffix = f".{suffix}"
@@ -311,6 +390,7 @@ def _truthy_env(name: str) -> bool:
 
 
 def offline_mode_enabled() -> bool:
+    """Return True when the worker is configured to refuse remote network calls."""
     return _truthy_env("REFRAME_OFFLINE_MODE")
 
 
@@ -358,7 +438,9 @@ def _is_http_uri(uri: str) -> bool:
 
 def _download_remote_uri_to_tmp(*, uri: str, mime_type: str | None = None) -> Path:
     if offline_mode_enabled():
-        raise RuntimeError("REFRAME_OFFLINE_MODE is enabled; refusing to download remote assets.")
+        raise RuntimeError(
+            "REFRAME_OFFLINE_MODE is enabled; refusing to download remote assets."
+        )
 
     uri = (uri or "").strip()
     if not _is_http_uri(uri):
@@ -373,7 +455,9 @@ def _download_remote_uri_to_tmp(*, uri: str, mime_type: str | None = None) -> Pa
 
     dest = new_tmp_file(suffix)
     request = urllib.request.Request(uri, headers={"User-Agent": "reframe-worker"})
-    with urllib.request.urlopen(request, timeout=60) as response, dest.open("wb") as f:  # noqa: S310 - intended outbound request (gated)
+    with urllib.request.urlopen(request, timeout=60) as response, dest.open(
+        "wb"
+    ) as f:  # noqa: S310 - intended outbound request (gated)
         shutil.copyfileobj(response, f)
 
     if not dest.exists() or dest.stat().st_size <= 0:
@@ -385,22 +469,31 @@ def _transcribe_media(path: Path, config: TranscriptionConfig, *, warnings: list
     try:
         if config.backend == TranscriptionBackend.OPENAI_WHISPER:
             if offline_mode_enabled():
-                warnings.append("Offline mode enabled; refusing openai_whisper and falling back to noop.")
+                warnings.append(
+                    "Offline mode enabled; refusing openai_whisper and falling back to noop."
+                )
                 return transcribe_noop(str(path), config)
             return transcribe_openai_file(str(path), config)
         if config.backend == TranscriptionBackend.FASTER_WHISPER:
             return transcribe_faster_whisper(str(path), config)
         if config.backend == TranscriptionBackend.WHISPER_CPP:
             return transcribe_whisper_cpp(str(path), config)
-        if config.backend in {TranscriptionBackend.WHISPER_TIMESTAMPED, TranscriptionBackend.WHISPERX}:
+        if config.backend in {
+            TranscriptionBackend.WHISPER_TIMESTAMPED,
+            TranscriptionBackend.WHISPERX,
+        }:
             return transcribe_whisper_timestamped(str(path), config)
         return transcribe_noop(str(path), config)
     except Exception as exc:
-        warnings.append(f"Transcription backend {config.backend.value} failed; falling back to noop ({exc}).")
+        warnings.append(
+            f"Transcription backend {config.backend.value} failed; falling back to noop ({exc})."
+        )
         return transcribe_noop(str(path), config)
 
 
-def _extract_audio_wav_for_diarization(video_path: Path, output_path: Path, runner=None) -> None:
+def _extract_audio_wav_for_diarization(
+    video_path: Path, output_path: Path, runner=None
+) -> None:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise FileNotFoundError("ffmpeg not found in PATH")
@@ -431,6 +524,7 @@ def create_thumbnail_asset(
     org_id: UUID | None = None,
     owner_user_id: UUID | None = None,
 ) -> MediaAsset:
+    """Create a thumbnail MediaAsset for a video, falling back to a placeholder image."""
     asset_kwargs: dict[str, UUID] = {}
     if project_id is not None:
         asset_kwargs["project_id"] = project_id
@@ -505,6 +599,7 @@ def create_thumbnail_asset(
 
 
 def fetch_asset(asset_id: str) -> Tuple[Optional[MediaAsset], Optional[Path]]:
+    """Look up a MediaAsset and resolve a local file path, downloading remotes if needed."""
     try:
         uuid = UUID(asset_id)
     except Exception:
@@ -521,10 +616,16 @@ def fetch_asset(asset_id: str) -> Tuple[Optional[MediaAsset], Optional[Path]]:
                 if not _is_http_uri(download_uri):
                     resolved = storage.get_download_url(download_uri)
                     if not resolved:
-                        logger.warning("Could not resolve remote download URL for asset %s (%s)", asset.id, asset.uri)
+                        logger.warning(
+                            "Could not resolve remote download URL for asset %s (%s)",
+                            asset.id,
+                            asset.uri,
+                        )
                         return asset, None
                     download_uri = resolved
-                return asset, _download_remote_uri_to_tmp(uri=download_uri, mime_type=asset.mime_type)
+                return asset, _download_remote_uri_to_tmp(
+                    uri=download_uri, mime_type=asset.mime_type
+                )
             except Exception as exc:  # pragma: no cover - optional best-effort behavior
                 logger.warning("Failed to download remote asset %s: %s", asset.uri, exc)
                 return asset, None
@@ -548,7 +649,9 @@ def _record_usage_event(
     if not org_id:
         return
     plan_code = "free"
-    sub = session.exec(select(Subscription).where(Subscription.org_id == org_id)).first()
+    sub = session.exec(
+        select(Subscription).where(Subscription.org_id == org_id)
+    ).first()
     if sub and sub.plan_code:
         plan_code = sub.plan_code
     policy = get_plan_policy(plan_code)
@@ -557,7 +660,9 @@ def _record_usage_event(
     unit = "count"
     if metric == "job_minutes":
         unit = "minute"
-        estimated_cost_cents = int(round(float(quantity) * float(policy.overage_per_minute_cents)))
+        estimated_cost_cents = int(
+            round(float(quantity) * float(policy.overage_per_minute_cents))
+        )
     elif metric == "storage_bytes":
         unit = "byte"
     elif metric == "jobs_completed":
@@ -610,7 +715,11 @@ _RETENTION_DAYS_BY_PLAN: dict[str, int] = {
 def _retention_days_for_plan(plan_code: str) -> int:
     normalized = (plan_code or "").strip().lower()
     base = _RETENTION_DAYS_BY_PLAN.get(normalized, _RETENTION_DAYS_BY_PLAN["free"])
-    env_key = f"REFRAME_RETENTION_{normalized.upper()}_DAYS" if normalized else "REFRAME_RETENTION_FREE_DAYS"
+    env_key = (
+        f"REFRAME_RETENTION_{normalized.upper()}_DAYS"
+        if normalized
+        else "REFRAME_RETENTION_FREE_DAYS"
+    )
     raw = (os.getenv(env_key) or "").strip()
     if raw:
         try:
@@ -620,7 +729,9 @@ def _retention_days_for_plan(plan_code: str) -> int:
     return base
 
 
-def _is_older_than_retention(*, created_at: datetime | None, plan_code: str, now: datetime | None = None) -> bool:
+def _is_older_than_retention(
+    *, created_at: datetime | None, plan_code: str, now: datetime | None = None
+) -> bool:
     if created_at is None:
         return False
     now = now or datetime.now(timezone.utc)
@@ -632,7 +743,12 @@ def _is_older_than_retention(*, created_at: datetime | None, plan_code: str, now
     return created_at < cutoff
 
 
-_CLIP_ASSET_ID_KEYS = ("asset_id", "thumbnail_asset_id", "subtitle_asset_id", "styled_asset_id")
+_CLIP_ASSET_ID_KEYS = (
+    "asset_id",
+    "thumbnail_asset_id",
+    "subtitle_asset_id",
+    "styled_asset_id",
+)
 
 
 def _clip_asset_ids(item: Any) -> set[UUID]:
@@ -665,7 +781,11 @@ def _job_related_asset_ids(job: Job) -> set[UUID]:
 
 
 def _asset_referenced_by_jobs(session: Session, asset_id: UUID) -> bool:
-    query = select(Job.id).where((Job.input_asset_id == asset_id) | (Job.output_asset_id == asset_id)).limit(1)
+    query = (
+        select(Job.id)
+        .where((Job.input_asset_id == asset_id) | (Job.output_asset_id == asset_id))
+        .limit(1)
+    )
     return session.exec(query).first() is not None
 
 
@@ -729,6 +849,7 @@ def update_job(
     payload: dict | None = None,
     output_asset_id: str | None = None,
 ) -> None:
+    """Update a Job's status/progress/payload and record usage on completion."""
     try:
         with Session(get_engine()) as session:
             job = session.get(Job, UUID(job_id))
@@ -748,7 +869,10 @@ def update_job(
             if output_asset_id:
                 job.output_asset_id = UUID(output_asset_id) if output_asset_id else None
 
-            if job.status == JobStatus.completed and previous_status != JobStatus.completed:
+            if (
+                job.status == JobStatus.completed
+                and previous_status != JobStatus.completed
+            ):
                 _record_job_completion_usage(session, job)
             session.add(job)
             session.commit()
@@ -757,6 +881,7 @@ def update_job(
 
 
 def get_job_context(job_id: str) -> dict[str, UUID | None]:
+    """Return the project/org/owner identifiers associated with a job id."""
     try:
         with Session(get_engine()) as session:
             job = session.get(Job, UUID(job_id))
@@ -772,6 +897,7 @@ def get_job_context(job_id: str) -> dict[str, UUID | None]:
 
 
 def get_job_project_id(job_id: str) -> UUID | None:
+    """Return the project id for a job, or None if it cannot be resolved."""
     return get_job_context(job_id).get("project_id")
 
 
@@ -828,9 +954,10 @@ def _publish_result_for_provider(
             "title": title or "Untitled upload",
         }
     if provider == "tiktok":
+        handle = (connection.account_label or "creator").replace(" ", "").lower()
         return {
             "external_post_id": base_external,
-            "published_url": f"https://www.tiktok.com/@{(connection.account_label or 'creator').replace(' ', '').lower()}/video/{base_external}",
+            "published_url": f"https://www.tiktok.com/@{handle}/video/{base_external}",
             "status": "published",
             "provider_status": "post_live",
             "title": title or "TikTok upload",
@@ -844,9 +971,10 @@ def _publish_result_for_provider(
             "title": title or "Instagram upload",
         }
     if provider == "facebook":
+        page = connection.external_account_id or "reframe"
         return {
             "external_post_id": base_external,
-            "published_url": f"https://www.facebook.com/{(connection.external_account_id or 'reframe')}/posts/{base_external}",
+            "published_url": f"https://www.facebook.com/{page}/posts/{base_external}",
             "status": "published",
             "provider_status": "post_published",
             "title": title or "Facebook upload",
@@ -854,10 +982,16 @@ def _publish_result_for_provider(
     raise ValueError(f"Unsupported publish provider: {provider}")
 
 
-def _dispatch_style_subtitles_step(*, job: Job, run: WorkflowRun, input_asset_id: UUID | None, step_payload: dict) -> str:
+def _dispatch_style_subtitles_step(
+    *, job: Job, run: WorkflowRun, input_asset_id: UUID | None, step_payload: dict
+) -> str:
     video_asset_id = str(step_payload.get("video_asset_id") or run.input_asset_id or "")
-    subtitle_asset_id = str(step_payload.get("subtitle_asset_id") or input_asset_id or "")
-    style = step_payload.get("style") if isinstance(step_payload.get("style"), dict) else {}
+    subtitle_asset_id = str(
+        step_payload.get("subtitle_asset_id") or input_asset_id or ""
+    )
+    style = (
+        step_payload.get("style") if isinstance(step_payload.get("style"), dict) else {}
+    )
     options = {"preview_seconds": step_payload.get("preview_seconds")}
     result = celery_app.send_task(
         "tasks.render_styled_subtitles",
@@ -867,7 +1001,14 @@ def _dispatch_style_subtitles_step(*, job: Job, run: WorkflowRun, input_asset_id
     return str(result.id)
 
 
-def _dispatch_publish_step(*, job: Job, run: WorkflowRun, step_type: str, input_asset_id: UUID | None, step_payload: dict) -> str:
+def _dispatch_publish_step(
+    *,
+    job: Job,
+    run: WorkflowRun,
+    step_type: str,
+    input_asset_id: UUID | None,
+    step_payload: dict,
+) -> str:
     provider = _publish_provider_from_step(step_type, step_payload)
     connection_id = str(step_payload.get("connection_id") or "").strip()
     if not connection_id:
@@ -879,13 +1020,26 @@ def _dispatch_publish_step(*, job: Job, run: WorkflowRun, step_type: str, input_
     task_payload.setdefault("source_workflow_job_id", str(job.id))
     result = celery_app.send_task(
         "tasks.publish_asset",
-        args=[None, provider, connection_id, publish_asset_id, str(run.id), task_payload],
+        args=[
+            None,
+            provider,
+            connection_id,
+            publish_asset_id,
+            str(run.id),
+            task_payload,
+        ],
         queue=CPU_QUEUE,
     )
     return str(result.id)
 
 
-_PUBLISH_STEP_TYPES = {"publish", "publish_youtube", "publish_tiktok", "publish_instagram", "publish_facebook"}
+_PUBLISH_STEP_TYPES = {
+    "publish",
+    "publish_youtube",
+    "publish_tiktok",
+    "publish_instagram",
+    "publish_facebook",
+}
 
 
 def _dispatch_pipeline_step(
@@ -896,27 +1050,56 @@ def _dispatch_pipeline_step(
     input_asset_id: UUID | None,
     step_payload: dict,
 ) -> str:
-    if not input_asset_id and step_type in {"captions", "shorts", "translate_subtitles"}:
+    if not input_asset_id and step_type in {
+        "captions",
+        "shorts",
+        "translate_subtitles",
+    }:
         raise ValueError(f"Workflow step `{step_type}` is missing input asset")
 
     if step_type == "captions":
-        result = celery_app.send_task("tasks.generate_captions", args=[str(job.id), str(input_asset_id), step_payload], queue=CPU_QUEUE)
+        result = celery_app.send_task(
+            "tasks.generate_captions",
+            args=[str(job.id), str(input_asset_id), step_payload],
+            queue=CPU_QUEUE,
+        )
         return str(result.id)
     if step_type == "translate_subtitles":
-        result = celery_app.send_task("tasks.translate_subtitles", args=[str(job.id), str(input_asset_id), step_payload], queue=CPU_QUEUE)
+        result = celery_app.send_task(
+            "tasks.translate_subtitles",
+            args=[str(job.id), str(input_asset_id), step_payload],
+            queue=CPU_QUEUE,
+        )
         return str(result.id)
     if step_type == "style_subtitles":
-        return _dispatch_style_subtitles_step(job=job, run=run, input_asset_id=input_asset_id, step_payload=step_payload)
+        return _dispatch_style_subtitles_step(
+            job=job, run=run, input_asset_id=input_asset_id, step_payload=step_payload
+        )
     if step_type == "shorts":
-        result = celery_app.send_task("tasks.generate_shorts", args=[str(job.id), str(input_asset_id), step_payload], queue=CPU_QUEUE)
+        result = celery_app.send_task(
+            "tasks.generate_shorts",
+            args=[str(job.id), str(input_asset_id), step_payload],
+            queue=CPU_QUEUE,
+        )
         return str(result.id)
     if step_type in _PUBLISH_STEP_TYPES:
-        return _dispatch_publish_step(job=job, run=run, step_type=step_type, input_asset_id=input_asset_id, step_payload=step_payload)
+        return _dispatch_publish_step(
+            job=job,
+            run=run,
+            step_type=step_type,
+            input_asset_id=input_asset_id,
+            step_payload=step_payload,
+        )
     raise ValueError(f"Unsupported workflow step type: {step_type}")
 
 
 def _publish_run_event(
-    *, job: PublishJob, workflow_uuid: UUID | None, status: str, message: str | None, payload: dict
+    *,
+    job: PublishJob,
+    workflow_uuid: UUID | None,
+    status: str,
+    message: str | None,
+    payload: dict,
 ) -> AutomationRunEvent:
     return AutomationRunEvent(
         org_id=job.org_id,
@@ -941,12 +1124,21 @@ def _create_publish_job_from_args(
     now: datetime,
 ) -> Tuple[PublishJob | None, dict | None]:
     if not provider or not connection_id or not asset_id:
-        return None, {"status": "failed", "error": "provider, connection_id, and asset_id are required when publish_job_id is omitted"}
+        return None, {
+            "status": "failed",
+            "error": (
+                "provider, connection_id, and asset_id are required "
+                "when publish_job_id is omitted"
+            ),
+        }
     try:
         connection_uuid = UUID(connection_id)
         asset_uuid = UUID(asset_id)
     except Exception:
-        return None, {"status": "failed", "error": "connection_id and asset_id must be valid UUIDs"}
+        return None, {
+            "status": "failed",
+            "error": "connection_id and asset_id must be valid UUIDs",
+        }
 
     connection = session.get(PublishConnection, connection_uuid)
     asset = session.get(MediaAsset, asset_uuid)
@@ -956,7 +1148,10 @@ def _create_publish_job_from_args(
         return None, {"status": "failed", "error": "asset_missing"}
     provider_normalized = str(provider).strip().lower()
     if provider_normalized not in SUPPORTED_PUBLISH_PROVIDERS:
-        return None, {"status": "failed", "error": f"unsupported_provider:{provider_normalized}"}
+        return None, {
+            "status": "failed",
+            "error": f"unsupported_provider:{provider_normalized}",
+        }
 
     job = PublishJob(
         org_id=connection.org_id,
@@ -965,7 +1160,10 @@ def _create_publish_job_from_args(
         connection_id=connection.id,
         asset_id=asset.id,
         status="queued",
-        payload={**details, "workflow_run_id": str(workflow_uuid) if workflow_uuid else None},
+        payload={
+            **details,
+            "workflow_run_id": str(workflow_uuid) if workflow_uuid else None,
+        },
         retry_count=0,
         created_at=now,
         updated_at=now,
@@ -991,7 +1189,10 @@ def _resolve_publish_job(
         try:
             job = session.get(PublishJob, UUID(publish_job_id))
         except Exception:
-            return None, {"status": "invalid_publish_job_id", "publish_job_id": publish_job_id}
+            return None, {
+                "status": "invalid_publish_job_id",
+                "publish_job_id": publish_job_id,
+            }
         if not job:
             return None, {"status": "missing", "publish_job_id": publish_job_id}
         return job, None
@@ -1015,7 +1216,12 @@ def _execute_publish(
     workflow_uuid: UUID | None,
 ) -> dict:
     try:
-        result = _publish_result_for_provider(provider=job.provider, connection=connection, asset=asset, payload=dict(job.payload or {}))
+        result = _publish_result_for_provider(
+            provider=job.provider,
+            connection=connection,
+            asset=asset,
+            payload=dict(job.payload or {}),
+        )
         job.status = "completed"
         job.error = None
         job.external_post_id = result.get("external_post_id")
@@ -1024,7 +1230,11 @@ def _execute_publish(
         session.add(job)
         session.add(
             _publish_run_event(
-                job=job, workflow_uuid=workflow_uuid, status="completed", message=result.get("provider_status"), payload=result
+                job=job,
+                workflow_uuid=workflow_uuid,
+                status="completed",
+                message=result.get("provider_status"),
+                payload=result,
             )
         )
         session.commit()
@@ -1041,7 +1251,13 @@ def _execute_publish(
         job.updated_at = datetime.now(timezone.utc)
         session.add(job)
         session.add(
-            _publish_run_event(job=job, workflow_uuid=workflow_uuid, status="failed", message=str(exc), payload={})
+            _publish_run_event(
+                job=job,
+                workflow_uuid=workflow_uuid,
+                status="failed",
+                message=str(exc),
+                payload={},
+            )
         )
         session.commit()
         return {"status": "failed", "publish_job_id": str(job.id), "error": str(exc)}
@@ -1057,6 +1273,7 @@ def publish_asset(
     workflow_run_id: str | None = None,
     payload: dict | None = None,
 ) -> dict:
+    """Publish an asset to a social provider, resolving or creating the publish job."""
     now = datetime.now(timezone.utc)
     details = dict(payload or {})
 
@@ -1090,18 +1307,30 @@ def publish_asset(
             session.add(job)
             session.add(
                 _publish_run_event(
-                    job=job, workflow_uuid=workflow_uuid, status="failed", message="connection_missing_or_revoked", payload={}
+                    job=job,
+                    workflow_uuid=workflow_uuid,
+                    status="failed",
+                    message="connection_missing_or_revoked",
+                    payload={},
                 )
             )
             session.commit()
-            return {"status": "failed", "publish_job_id": str(job.id), "error": job.error}
+            return {
+                "status": "failed",
+                "publish_job_id": str(job.id),
+                "error": job.error,
+            }
         if not asset:
             job.status = "failed"
             job.error = "publish_asset_missing"
             job.updated_at = datetime.now(timezone.utc)
             session.add(job)
             session.commit()
-            return {"status": "failed", "publish_job_id": str(job.id), "error": job.error}
+            return {
+                "status": "failed",
+                "publish_job_id": str(job.id),
+                "error": job.error,
+            }
 
         task_id = str(getattr(self.request, "id", "") or "").strip() or None
         if task_id:
@@ -1110,15 +1339,29 @@ def publish_asset(
         job.updated_at = datetime.now(timezone.utc)
         session.add(job)
         session.add(
-            _publish_run_event(job=job, workflow_uuid=workflow_uuid, status="running", message=None, payload={"task_id": task_id})
+            _publish_run_event(
+                job=job,
+                workflow_uuid=workflow_uuid,
+                status="running",
+                message=None,
+                payload={"task_id": task_id},
+            )
         )
         session.commit()
 
-        return _execute_publish(session, job=job, connection=connection, asset=asset, workflow_uuid=workflow_uuid)
+        return _execute_publish(
+            session,
+            job=job,
+            connection=connection,
+            asset=asset,
+            workflow_uuid=workflow_uuid,
+        )
 
 
 @celery_app.task(bind=True, name="tasks.run_workflow_pipeline")
+# pylint: disable-next=unused-argument
 def run_workflow_pipeline(self, workflow_run_id: str) -> dict:
+    """Execute each step of a workflow run, dispatching per-step worker tasks."""
     try:
         run_uuid = UUID(workflow_run_id)
     except Exception:
@@ -1136,10 +1379,17 @@ def run_workflow_pipeline(self, workflow_run_id: str) -> dict:
         if not template:
             run.status = WorkflowRunStatus.failed
             run.updated_at = now
-            run.payload = {**(run.payload or {}), "error": "Workflow template not found"}
+            run.payload = {
+                **(run.payload or {}),
+                "error": "Workflow template not found",
+            }
             session.add(run)
             session.commit()
-            return {"status": "failed", "workflow_run_id": workflow_run_id, "error": "template_missing"}
+            return {
+                "status": "failed",
+                "workflow_run_id": workflow_run_id,
+                "error": "template_missing",
+            }
 
         run.status = WorkflowRunStatus.running
         run.updated_at = now
@@ -1147,7 +1397,9 @@ def run_workflow_pipeline(self, workflow_run_id: str) -> dict:
         session.commit()
 
         steps = session.exec(
-            select(WorkflowRunStep).where(WorkflowRunStep.run_id == run.id).order_by(WorkflowRunStep.order_index.asc())
+            select(WorkflowRunStep).where(WorkflowRunStep.run_id == run.id)
+            # pylint: disable-next=no-member  # SQLModel column .asc() (FieldInfo false positive)
+            .order_by(WorkflowRunStep.order_index.asc())
         ).all()
         current_input_asset_id = run.input_asset_id
         dispatched_jobs: list[dict[str, str]] = []
@@ -1194,11 +1446,21 @@ def run_workflow_pipeline(self, workflow_run_id: str) -> dict:
 
                 step.status = WorkflowStepStatus.completed
                 step.updated_at = datetime.now(timezone.utc)
-                step.payload = {**step_payload, "job_id": str(job.id), "task_id": task_id}
+                step.payload = {
+                    **step_payload,
+                    "job_id": str(job.id),
+                    "task_id": task_id,
+                }
                 session.add(step)
                 session.commit()
 
-                dispatched_jobs.append({"step_type": step.step_type, "job_id": str(job.id), "task_id": task_id})
+                dispatched_jobs.append(
+                    {
+                        "step_type": step.step_type,
+                        "job_id": str(job.id),
+                        "task_id": task_id,
+                    }
+                )
             except Exception as exc:
                 step.status = WorkflowStepStatus.failed
                 step.updated_at = datetime.now(timezone.utc)
@@ -1206,7 +1468,10 @@ def run_workflow_pipeline(self, workflow_run_id: str) -> dict:
                 session.add(step)
                 run.status = WorkflowRunStatus.failed
                 run.updated_at = datetime.now(timezone.utc)
-                run.payload = {**(run.payload or {}), "error": f"Step `{step.step_type}` failed to dispatch: {exc}"}
+                run.payload = {
+                    **(run.payload or {}),
+                    "error": f"Step `{step.step_type}` failed to dispatch: {exc}",
+                }
                 session.add(run)
                 session.commit()
                 return {
@@ -1222,17 +1487,23 @@ def run_workflow_pipeline(self, workflow_run_id: str) -> dict:
         session.add(run)
         session.commit()
 
-        return {"status": "completed", "workflow_run_id": workflow_run_id, "dispatched_jobs": dispatched_jobs}
+        return {
+            "status": "completed",
+            "workflow_run_id": workflow_run_id,
+            "dispatched_jobs": dispatched_jobs,
+        }
 
 
 @celery_app.task(bind=True, name="tasks.ping")
 def ping(self) -> str:
+    """Health-check task that emits progress and returns ``pong``."""
     _progress(self, "started", 0.0)
     return "pong"
 
 
 @celery_app.task(bind=True, name="tasks.echo")
 def echo(self, message: str) -> str:
+    """Diagnostic task that echoes the supplied message back to the caller."""
     _progress(self, "started", 0.0, message=message)
     return message
 
@@ -1254,7 +1525,9 @@ def system_info(self) -> dict:
     ffmpeg_version = None
     if ffmpeg:
         try:
-            out = subprocess.check_output([ffmpeg, "-version"], text=True, stderr=subprocess.STDOUT)
+            out = subprocess.check_output(
+                [ffmpeg, "-version"], text=True, stderr=subprocess.STDOUT
+            )
             ffmpeg_version = (out.splitlines()[0] if out else "").strip() or None
         except Exception:
             ffmpeg_version = None
@@ -1266,7 +1539,9 @@ def system_info(self) -> dict:
         "env": {
             "offline_mode": offline_mode_enabled(),
             "media_root": str(get_settings().media_root),
-            "hf_token_set": bool(os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")),
+            "hf_token_set": bool(
+                os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
+            ),
         },
         "ffmpeg": {
             "present": bool(ffmpeg and ffprobe),
@@ -1291,7 +1566,9 @@ def system_info(self) -> dict:
     return info
 
 
-def _resolve_transcribe_video_backend(backend_raw: str, *, warnings: list[str]) -> TranscriptionBackend:
+def _resolve_transcribe_video_backend(
+    backend_raw: str, *, warnings: list[str]
+) -> TranscriptionBackend:
     if backend_raw == "whisper":
         backend_raw = "faster_whisper"
     try:
@@ -1306,7 +1583,10 @@ def _resolve_transcribe_video_backend(backend_raw: str, *, warnings: list[str]) 
 
 
 @celery_app.task(bind=True, name="tasks.transcribe_video")
-def transcribe_video(self, job_id: str, video_asset_id: str, config: dict | None = None) -> dict:
+def transcribe_video(
+    self, job_id: str, video_asset_id: str, config: dict | None = None
+) -> dict:
+    """Transcribe a video asset to a plain-text transcript asset."""
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id)
     asset_kwargs = _job_asset_kwargs(job_id)
@@ -1330,18 +1610,26 @@ def transcribe_video(self, job_id: str, video_asset_id: str, config: dict | None
         device=str(opts.get("device")) if opts.get("device") else None,
     )
     transcription = _transcribe_media(src_path, cfg, warnings=warnings)
-    words = sorted(getattr(transcription, "words", []) or [], key=lambda w: (w.start, w.end))  # type: ignore[attr-defined]
+    words = sorted(
+        getattr(transcription, "words", []) or [],  # type: ignore[attr-defined]
+        key=lambda w: (w.start, w.end),
+    )
     if not words:
         warnings.append("Transcription returned no words; falling back to noop output.")
         transcription = transcribe_noop(str(src_path), cfg)
         words = sorted(transcription.words or [], key=lambda w: (w.start, w.end))
 
-    transcript_lines = [
-        f"{w.start:.3f}\t{w.end:.3f}\t{w.text}".rstrip()
-        for w in words
-    ]
-    transcript_text = "\n".join(transcript_lines) if transcript_lines else "(no transcription words)"
-    asset = create_asset(kind="transcription", mime_type="text/plain", suffix=".txt", contents=transcript_text, **asset_kwargs)
+    transcript_lines = [f"{w.start:.3f}\t{w.end:.3f}\t{w.text}".rstrip() for w in words]
+    transcript_text = (
+        "\n".join(transcript_lines) if transcript_lines else "(no transcription words)"
+    )
+    asset = create_asset(
+        kind="transcription",
+        mime_type="text/plain",
+        suffix=".txt",
+        contents=transcript_text,
+        **asset_kwargs,
+    )
     result = {
         "video_asset_id": video_asset_id,
         "status": "transcribed",
@@ -1352,14 +1640,25 @@ def transcribe_video(self, job_id: str, video_asset_id: str, config: dict | None
         "model": cfg.model,
         "word_count": len(words),
     }
-    update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(asset.id))
+    update_job(
+        job_id,
+        status=JobStatus.completed,
+        progress=1.0,
+        payload=result,
+        output_asset_id=str(asset.id),
+    )
     _progress(self, "completed", 1.0, video_asset_id=video_asset_id)
     return result
 
 
-def _resolve_captions_backend(backend_raw: str, *, warnings: list[str]) -> TranscriptionBackend:
+def _resolve_captions_backend(
+    backend_raw: str, *, warnings: list[str]
+) -> TranscriptionBackend:
     if backend_raw == "whisper":
-        warnings.append("backend 'whisper' is ambiguous; using noop (offline-safe). Use 'faster_whisper' or 'whisper_cpp'.")
+        warnings.append(
+            "backend 'whisper' is ambiguous; using noop (offline-safe). "
+            "Use 'faster_whisper' or 'whisper_cpp'."
+        )
         return TranscriptionBackend.NOOP
     try:
         backend = TranscriptionBackend(backend_raw)
@@ -1379,12 +1678,30 @@ _CAPTIONS_DEFAULT_MODELS = {
 }
 
 
-def _build_caption_grouping(opts: dict, profile_defaults: dict[str, Any]) -> GroupingConfig:
+def _build_caption_grouping(
+    opts: dict, profile_defaults: dict[str, Any]
+) -> GroupingConfig:
     return GroupingConfig(
-        max_chars_per_line=int(opts.get("max_chars_per_line") or profile_defaults.get("max_chars_per_line") or GroupingConfig.max_chars_per_line),
-        max_words_per_line=int(opts.get("max_words_per_line") or profile_defaults.get("max_words_per_line") or GroupingConfig.max_words_per_line),
-        max_duration=float(opts.get("max_duration") or profile_defaults.get("max_duration") or GroupingConfig.max_duration),
-        max_gap=float(opts.get("max_gap") or profile_defaults.get("max_gap") or GroupingConfig.max_gap),
+        max_chars_per_line=int(
+            opts.get("max_chars_per_line")
+            or profile_defaults.get("max_chars_per_line")
+            or GroupingConfig.max_chars_per_line
+        ),
+        max_words_per_line=int(
+            opts.get("max_words_per_line")
+            or profile_defaults.get("max_words_per_line")
+            or GroupingConfig.max_words_per_line
+        ),
+        max_duration=float(
+            opts.get("max_duration")
+            or profile_defaults.get("max_duration")
+            or GroupingConfig.max_duration
+        ),
+        max_gap=float(
+            opts.get("max_gap")
+            or profile_defaults.get("max_gap")
+            or GroupingConfig.max_gap
+        ),
         max_chars_per_second=float(
             opts.get("max_chars_per_second")
             or profile_defaults.get("max_chars_per_second")
@@ -1392,25 +1709,40 @@ def _build_caption_grouping(opts: dict, profile_defaults: dict[str, Any]) -> Gro
         ),
         sentence_break_on_punctuation=_coerce_bool_with_default(
             opts.get("sentence_break_on_punctuation"),
-            bool(profile_defaults.get("sentence_break_on_punctuation", GroupingConfig.sentence_break_on_punctuation)),
+            bool(
+                profile_defaults.get(
+                    "sentence_break_on_punctuation",
+                    GroupingConfig.sentence_break_on_punctuation,
+                )
+            ),
         ),
         sentence_break_min_gap=float(
             opts.get("sentence_break_min_gap")
             or profile_defaults.get("sentence_break_min_gap")
             or GroupingConfig.sentence_break_min_gap
         ),
-        repair_overlaps=_coerce_bool_with_default(opts.get("repair_overlaps"), GroupingConfig.repair_overlaps),
+        repair_overlaps=_coerce_bool_with_default(
+            opts.get("repair_overlaps"), GroupingConfig.repair_overlaps
+        ),
     )
 
 
 def _build_diarization_config(opts: dict, *, warnings: list[str]) -> DiarizationConfig:
-    diarization_backend_raw = str(
-        opts.get("diarization_backend") or opts.get("speaker_diarization_backend") or DiarizationBackend.NOOP.value
-    ).strip().lower()
+    diarization_backend_raw = (
+        str(
+            opts.get("diarization_backend")
+            or opts.get("speaker_diarization_backend")
+            or DiarizationBackend.NOOP.value
+        )
+        .strip()
+        .lower()
+    )
     try:
         diarization_backend = DiarizationBackend(diarization_backend_raw)
     except ValueError:
-        warnings.append(f"Unknown diarization backend '{diarization_backend_raw}'; using noop.")
+        warnings.append(
+            f"Unknown diarization backend '{diarization_backend_raw}'; using noop."
+        )
         diarization_backend = DiarizationBackend.NOOP
 
     default_diarization_model = "pyannote/speaker-diarization-3.1"
@@ -1433,15 +1765,23 @@ def _build_diarization_config(opts: dict, *, warnings: list[str]) -> Diarization
 
 
 def _apply_diarization(
-    subtitle_lines: list[SubtitleLine], *, src_path: Path, diarization_config: DiarizationConfig, warnings: list[str]
+    subtitle_lines: list[SubtitleLine],
+    *,
+    src_path: Path,
+    diarization_config: DiarizationConfig,
+    warnings: list[str],
 ) -> list[SubtitleLine]:
     backend = diarization_config.backend
     if backend == DiarizationBackend.PYANNOTE and offline_mode_enabled():
-        warnings.append("Offline mode enabled; refusing pyannote diarization and continuing without speaker labels.")
+        warnings.append(
+            "Offline mode enabled; refusing pyannote diarization and "
+            "continuing without speaker labels."
+        )
         return subtitle_lines
     if backend == DiarizationBackend.SPEECHBRAIN and offline_mode_enabled():
         warnings.append(
-            "Offline mode enabled; refusing speechbrain diarization (may download models) and continuing without speaker labels."
+            "Offline mode enabled; refusing speechbrain diarization "
+            "(may download models) and continuing without speaker labels."
         )
         return subtitle_lines
 
@@ -1451,7 +1791,9 @@ def _apply_diarization(
         segments = diarize_audio(audio_wav, diarization_config)
         return assign_speakers_to_lines(subtitle_lines, segments)
     except Exception as exc:
-        warnings.append(f"Speaker diarization failed; continuing without speaker labels ({exc}).")
+        warnings.append(
+            f"Speaker diarization failed; continuing without speaker labels ({exc})."
+        )
         return subtitle_lines
     finally:
         try:
@@ -1462,7 +1804,9 @@ def _apply_diarization(
             logger.debug("Failed to remove diarization audio tmp: %s", audio_wav)
 
 
-def _serialize_subtitles(subtitle_lines: list[SubtitleLine], output_format: str) -> tuple[str, str, str]:
+def _serialize_subtitles(
+    subtitle_lines: list[SubtitleLine], output_format: str
+) -> tuple[str, str, str]:
     if output_format == "ass":
         return to_ass(subtitle_lines), "text/ass", ".ass"
     if output_format == "vtt":
@@ -1471,7 +1815,10 @@ def _serialize_subtitles(subtitle_lines: list[SubtitleLine], output_format: str)
 
 
 @celery_app.task(bind=True, name="tasks.generate_captions")
-def generate_captions(self, job_id: str, video_asset_id: str, options: dict | None = None) -> dict:
+def generate_captions(
+    self, job_id: str, video_asset_id: str, options: dict | None = None
+) -> dict:
+    """Generate subtitle captions (optionally diarized) for a video asset."""
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id)
     asset_kwargs = _job_asset_kwargs(job_id)
@@ -1487,13 +1834,19 @@ def generate_captions(self, job_id: str, video_asset_id: str, options: dict | No
 
     formats = opts.get("formats") if isinstance(opts, dict) else None
     requested = [str(f).lower() for f in formats] if isinstance(formats, list) else []
-    output_format = next((fmt for fmt in requested if fmt in {"srt", "vtt", "ass"}), "srt")
+    output_format = next(
+        (fmt for fmt in requested if fmt in {"srt", "vtt", "ass"}), "srt"
+    )
 
     backend_raw = str(opts.get("backend") or "noop").strip().lower()
     backend = _resolve_captions_backend(backend_raw, warnings=warnings)
 
     language_raw = opts.get("language") or opts.get("source_language") or None
-    language = None if not language_raw or str(language_raw).strip().lower() == "auto" else str(language_raw).strip()
+    language = (
+        None
+        if not language_raw or str(language_raw).strip().lower() == "auto"
+        else str(language_raw).strip()
+    )
 
     default_model = _CAPTIONS_DEFAULT_MODELS.get(backend, "whisper-1")
 
@@ -1504,39 +1857,56 @@ def generate_captions(self, job_id: str, video_asset_id: str, options: dict | No
         device=str(opts.get("device")) if opts.get("device") else None,
     )
     transcription = _transcribe_media(src_path, config, warnings=warnings)
-    words = sorted(getattr(transcription, "words", []) or [], key=lambda w: (w.start, w.end))  # type: ignore[attr-defined]
+    words = sorted(
+        getattr(transcription, "words", []) or [],  # type: ignore[attr-defined]
+        key=lambda w: (w.start, w.end),
+    )
     if not words:
         warnings.append("Transcription returned no words; falling back to noop output.")
         transcription = transcribe_noop(str(src_path), config)
         words = sorted(transcription.words or [], key=lambda w: (w.start, w.end))
 
-    quality_profile = str(opts.get("subtitle_quality_profile") or "balanced").strip().lower()
+    quality_profile = (
+        str(opts.get("subtitle_quality_profile") or "balanced").strip().lower()
+    )
     profile_defaults = CAPTION_QUALITY_PROFILES.get(quality_profile)
     if profile_defaults is None:
-        warnings.append(f"Unknown subtitle_quality_profile '{quality_profile}'; falling back to balanced.")
+        warnings.append(
+            f"Unknown subtitle_quality_profile '{quality_profile}'; falling back to balanced."
+        )
         quality_profile = "balanced"
         profile_defaults = CAPTION_QUALITY_PROFILES["balanced"]
 
     grouping = _build_caption_grouping(opts, profile_defaults)
     subtitle_lines = group_words(words, grouping)
 
-    speaker_labels = _coerce_bool(opts.get("speaker_labels") or opts.get("enable_speaker_labels") or opts.get("diarize"))
+    speaker_labels = _coerce_bool(
+        opts.get("speaker_labels")
+        or opts.get("enable_speaker_labels")
+        or opts.get("diarize")
+    )
     diarization_config = _build_diarization_config(opts, warnings=warnings)
 
     if speaker_labels and diarization_config.backend != DiarizationBackend.NOOP:
         subtitle_lines = _apply_diarization(
-            subtitle_lines, src_path=src_path, diarization_config=diarization_config, warnings=warnings
+            subtitle_lines,
+            src_path=src_path,
+            diarization_config=diarization_config,
+            warnings=warnings,
         )
 
     payload, mime, suffix = _serialize_subtitles(subtitle_lines, output_format)
 
-    asset = create_asset(kind="subtitle", mime_type=mime, suffix=suffix, contents=payload, **asset_kwargs)
+    asset = create_asset(
+        kind="subtitle", mime_type=mime, suffix=suffix, contents=payload, **asset_kwargs
+    )
     result = {
         "video_asset_id": video_asset_id,
         "status": "captions_generated",
         "options": opts,
         "transcription_backend": backend.value,
         "speaker_labels": speaker_labels,
+        # pylint: disable-next=no-member  # enum .value (FieldInfo false positive)
         "diarization_backend": diarization_config.backend.value,
         "diarization_model": diarization_config.model,
         "model": config.model,
@@ -1545,12 +1915,20 @@ def generate_captions(self, job_id: str, video_asset_id: str, options: dict | No
         "subtitle_quality_profile": quality_profile,
         "output_asset_id": str(asset.id),
     }
-    update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(asset.id))
+    update_job(
+        job_id,
+        status=JobStatus.completed,
+        progress=1.0,
+        payload=result,
+        output_asset_id=str(asset.id),
+    )
     _progress(self, "completed", 1.0, video_asset_id=video_asset_id)
     return result
 
 
-def _build_groq_translator(opts: dict, *, warnings: list[str]) -> CloudTranslator | None:
+def _build_groq_translator(
+    opts: dict, *, warnings: list[str]
+) -> CloudTranslator | None:
     if offline_mode_enabled():
         warnings.append("Offline mode enabled; refusing Groq translator.")
         return None
@@ -1558,15 +1936,23 @@ def _build_groq_translator(opts: dict, *, warnings: list[str]) -> CloudTranslato
     if not client:
         warnings.append("GROQ_API_KEY not set; Groq translator unavailable.")
         return None
-    model = str(opts.get("groq_model") or os.getenv("GROQ_MODEL") or "llama3-8b-8192").strip()
+    model = str(
+        opts.get("groq_model") or os.getenv("GROQ_MODEL") or "llama3-8b-8192"
+    ).strip()
     if not model:
         model = "llama3-8b-8192"
     warnings.append(f"Using Groq cloud translator model={model}.")
     return CloudTranslator(client=client, model=model)
 
 
-def _select_translator(opts: dict, *, src_language: str, target_language: str, warnings: list[str]):
-    translator_backend = str(opts.get("translator_backend") or opts.get("translator") or "").strip().lower()
+def _select_translator(
+    opts: dict, *, src_language: str, target_language: str, warnings: list[str]
+):
+    translator_backend = (
+        str(opts.get("translator_backend") or opts.get("translator") or "")
+        .strip()
+        .lower()
+    )
     if translator_backend == "noop":
         return NoOpTranslator()
     if translator_backend in {"groq", "cloud"}:
@@ -1579,7 +1965,10 @@ def _select_translator(opts: dict, *, src_language: str, target_language: str, w
 
 
 @celery_app.task(bind=True, name="tasks.translate_subtitles")
-def translate_subtitles(self, job_id: str, subtitle_asset_id: str, options: dict | None = None) -> dict:
+def translate_subtitles(
+    self, job_id: str, subtitle_asset_id: str, options: dict | None = None
+) -> dict:
+    """Translate an .srt/.vtt subtitle asset into the requested target language."""
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, subtitle_asset_id=subtitle_asset_id)
     asset_kwargs = _job_asset_kwargs(job_id)
@@ -1591,21 +1980,34 @@ def translate_subtitles(self, job_id: str, subtitle_asset_id: str, options: dict
         error = f"Subtitle asset file missing for {subtitle_asset_id}"
         update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
         _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
-        return {"subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+        return {
+            "subtitle_asset_id": subtitle_asset_id,
+            "status": "failed",
+            "error": error,
+        }
 
     target_language = str(opts.get("target_language") or "").strip()
     if not target_language:
         error = "Missing target_language"
         update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
         _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
-        return {"subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+        return {
+            "subtitle_asset_id": subtitle_asset_id,
+            "status": "failed",
+            "error": error,
+        }
 
     bilingual = _coerce_bool(opts.get("bilingual"))
     src_language = str(opts.get("source_language") or opts.get("src") or "en").strip()
     if not src_language or src_language.lower() == "auto":
         src_language = "en"
 
-    translator = _select_translator(opts, src_language=src_language, target_language=target_language, warnings=warnings)
+    translator = _select_translator(
+        opts,
+        src_language=src_language,
+        target_language=target_language,
+        warnings=warnings,
+    )
 
     text = src_path.read_text(encoding="utf-8", errors="replace")
     src_suffix = src_path.suffix.lower()
@@ -1615,26 +2017,51 @@ def translate_subtitles(self, job_id: str, subtitle_asset_id: str, options: dict
         except Exception as exc:
             error = f"Failed to parse VTT subtitles: {exc}"
             update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-            _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
-            return {"subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+            _progress(
+                self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id
+            )
+            return {
+                "subtitle_asset_id": subtitle_asset_id,
+                "status": "failed",
+                "error": error,
+            }
     elif src_suffix != ".srt":
-        error = f"Only .srt/.vtt subtitles are supported for translation currently (got {src_path.suffix or 'no extension'})."
+        error = (
+            "Only .srt/.vtt subtitles are supported for translation currently "
+            f"(got {src_path.suffix or 'no extension'})."
+        )
         update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
         _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
-        return {"subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+        return {
+            "subtitle_asset_id": subtitle_asset_id,
+            "status": "failed",
+            "error": error,
+        }
 
     try:
         if bilingual:
-            translated = translate_srt_bilingual(text, translator, src_language, target_language)
+            translated = translate_srt_bilingual(
+                text, translator, src_language, target_language
+            )
         else:
             translated = translate_srt(text, translator, src_language, target_language)
     except Exception as exc:
         error = f"Subtitle translation failed: {exc}"
         update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
         _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
-        return {"subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+        return {
+            "subtitle_asset_id": subtitle_asset_id,
+            "status": "failed",
+            "error": error,
+        }
 
-    asset = create_asset(kind="subtitle", mime_type="text/srt", suffix=".srt", contents=translated, **asset_kwargs)
+    asset = create_asset(
+        kind="subtitle",
+        mime_type="text/srt",
+        suffix=".srt",
+        contents=translated,
+        **asset_kwargs,
+    )
     result = {
         "subtitle_asset_id": subtitle_asset_id,
         "status": "translated",
@@ -1644,7 +2071,13 @@ def translate_subtitles(self, job_id: str, subtitle_asset_id: str, options: dict
         "warnings": warnings,
         "output_asset_id": str(asset.id),
     }
-    update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(asset.id))
+    update_job(
+        job_id,
+        status=JobStatus.completed,
+        progress=1.0,
+        payload=result,
+        output_asset_id=str(asset.id),
+    )
     _progress(self, "completed", 1.0, subtitle_asset_id=subtitle_asset_id)
     return result
 
@@ -1703,7 +2136,9 @@ def _resolve_style_from_options(opts: dict | None) -> dict[str, Any]:
     return dict(_SHORTS_STYLE_PRESETS[DEFAULT_SHORTS_STYLE_PRESET])
 
 
-def _shift_subtitle_words(words: list[Word] | None, *, start: float, clip_duration: float) -> list[Word]:
+def _shift_subtitle_words(
+    words: list[Word] | None, *, start: float, clip_duration: float
+) -> list[Word]:
     shifted_words: list[Word] = []
     for w in words or []:
         try:
@@ -1714,13 +2149,22 @@ def _shift_subtitle_words(words: list[Word] | None, *, start: float, clip_durati
         if we <= ws:
             continue
         try:
-            shifted_words.append(Word(text=w.text, start=ws, end=we, probability=getattr(w, "probability", None)))
+            shifted_words.append(
+                Word(
+                    text=w.text,
+                    start=ws,
+                    end=we,
+                    probability=getattr(w, "probability", None),
+                )
+            )
         except Exception:
             continue
     return shifted_words
 
 
-def _shift_subtitle_line(line: SubtitleLine, *, start: float, end: float, clip_duration: float) -> SubtitleLine | None:
+def _shift_subtitle_line(
+    line: SubtitleLine, *, start: float, end: float, clip_duration: float
+) -> SubtitleLine | None:
     if line.start >= end or line.end <= start:
         return None
 
@@ -1729,7 +2173,9 @@ def _shift_subtitle_line(line: SubtitleLine, *, start: float, end: float, clip_d
     if shifted_end <= shifted_start:
         return None
 
-    shifted_words = _shift_subtitle_words(line.words, start=start, clip_duration=clip_duration)
+    shifted_words = _shift_subtitle_words(
+        line.words, start=start, clip_duration=clip_duration
+    )
 
     if not shifted_words:
         # Preserve text even when word timings can't be shifted cleanly.
@@ -1742,15 +2188,21 @@ def _shift_subtitle_line(line: SubtitleLine, *, start: float, end: float, clip_d
 
     if not shifted_words:
         return None
-    return SubtitleLine(start=shifted_start, end=shifted_end, words=shifted_words, speaker=line.speaker)
+    return SubtitleLine(
+        start=shifted_start, end=shifted_end, words=shifted_words, speaker=line.speaker
+    )
 
 
-def _slice_subtitle_lines(lines: list[SubtitleLine], *, start: float, end: float) -> list[SubtitleLine]:
+def _slice_subtitle_lines(
+    lines: list[SubtitleLine], *, start: float, end: float
+) -> list[SubtitleLine]:
     """Extract and time-shift subtitle lines so the clip starts at 0s."""
     clip_duration = max(0.0, float(end) - float(start))
     out: list[SubtitleLine] = []
     for line in lines:
-        shifted = _shift_subtitle_line(line, start=start, end=end, clip_duration=clip_duration)
+        shifted = _shift_subtitle_line(
+            line, start=start, end=end, clip_duration=clip_duration
+        )
         if shifted is not None:
             out.append(shifted)
     return out
@@ -1759,11 +2211,18 @@ def _slice_subtitle_lines(lines: list[SubtitleLine], *, start: float, end: float
 def _prepare_ass_subtitle_path(subtitle_path: Path) -> Path:
     subtitle_suffix = subtitle_path.suffix.lower()
     if subtitle_suffix not in {".srt", ".vtt", ".ass"}:
-        raise ValueError(f"Only .srt/.vtt/.ass subtitles are supported (got {subtitle_path.suffix or 'no extension'}).")
+        raise ValueError(
+            "Only .srt/.vtt/.ass subtitles are supported "
+            f"(got {subtitle_path.suffix or 'no extension'})."
+        )
     if subtitle_suffix not in {".srt", ".vtt"}:
         return subtitle_path
     subtitle_text = subtitle_path.read_text(encoding="utf-8", errors="replace")
-    subtitle_lines = parse_srt(subtitle_text) if subtitle_suffix == ".srt" else parse_vtt(subtitle_text)
+    subtitle_lines = (
+        parse_srt(subtitle_text)
+        if subtitle_suffix == ".srt"
+        else parse_vtt(subtitle_text)
+    )
     karaoke_ass = to_ass_karaoke(subtitle_lines)
     subtitle_render_path = new_tmp_file(".ass")
     subtitle_render_path.write_text(karaoke_ass, encoding="utf-8")
@@ -1791,8 +2250,12 @@ def _build_ass_force_style(style: dict | None) -> str:
     shadow_strength = max(0, shadow_offset if shadow_enabled else 0)
 
     text_color = _hex_to_ass_color(style_dict.get("text_color"), default="&H00FFFFFF")
-    highlight_color = _hex_to_ass_color(style_dict.get("highlight_color"), default="&H0000FFFF")
-    outline_color = _hex_to_ass_color(style_dict.get("outline_color"), default="&H00000000")
+    highlight_color = _hex_to_ass_color(
+        style_dict.get("highlight_color"), default="&H0000FFFF"
+    )
+    outline_color = _hex_to_ass_color(
+        style_dict.get("outline_color"), default="&H00000000"
+    )
 
     position = str(style_dict.get("position") or "bottom").strip().lower()
     alignment = 2
@@ -1870,7 +2333,9 @@ def _render_styled_subtitles_to_file(
 
 def _parse_preview_seconds(raw_preview_seconds: Any) -> int | None:
     try:
-        preview_seconds = int(raw_preview_seconds) if raw_preview_seconds is not None else None
+        preview_seconds = (
+            int(raw_preview_seconds) if raw_preview_seconds is not None else None
+        )
     except (TypeError, ValueError):
         preview_seconds = None
     if preview_seconds is not None and preview_seconds <= 0:
@@ -1881,13 +2346,31 @@ def _parse_preview_seconds(raw_preview_seconds: Any) -> int | None:
 def _calledprocess_stderr_text(exc: Exception) -> str:
     if not isinstance(exc, subprocess.CalledProcessError):
         return ""
-    return exc.stderr.decode(errors="replace") if isinstance(exc.stderr, (bytes, bytearray)) else str(exc.stderr or "")
+    return (
+        exc.stderr.decode(errors="replace")
+        if isinstance(exc.stderr, (bytes, bytearray))
+        else str(exc.stderr or "")
+    )
 
 
 @celery_app.task(bind=True, name="tasks.render_styled_subtitles")
-def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_asset_id: str, style: dict | None = None, options: dict | None = None) -> dict:
+def render_styled_subtitles(
+    self,
+    job_id: str,
+    video_asset_id: str,
+    subtitle_asset_id: str,
+    style: dict | None = None,
+    options: dict | None = None,
+) -> dict:
+    """Burn styled karaoke subtitles onto a video and store the rendered result."""
     update_job(job_id, status=JobStatus.running, progress=0.1)
-    _progress(self, "started", 0.0, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
+    _progress(
+        self,
+        "started",
+        0.0,
+        video_asset_id=video_asset_id,
+        subtitle_asset_id=subtitle_asset_id,
+    )
     asset_kwargs = _job_asset_kwargs(job_id)
     opts = options or {}
     preview_seconds = _parse_preview_seconds(opts.get("preview_seconds"))
@@ -1898,14 +2381,38 @@ def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_ass
     if not video_path or not video_path.exists():
         error = f"Video asset file missing for {video_asset_id}"
         update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
-        return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+        _progress(
+            self,
+            "failed",
+            1.0,
+            error=error,
+            video_asset_id=video_asset_id,
+            subtitle_asset_id=subtitle_asset_id,
+        )
+        return {
+            "video_asset_id": video_asset_id,
+            "subtitle_asset_id": subtitle_asset_id,
+            "status": "failed",
+            "error": error,
+        }
 
     if not subtitle_path or not subtitle_path.exists():
         error = f"Subtitle asset file missing for {subtitle_asset_id}"
         update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
-        return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+        _progress(
+            self,
+            "failed",
+            1.0,
+            error=error,
+            video_asset_id=video_asset_id,
+            subtitle_asset_id=subtitle_asset_id,
+        )
+        return {
+            "video_asset_id": video_asset_id,
+            "subtitle_asset_id": subtitle_asset_id,
+            "status": "failed",
+            "error": error,
+        }
 
     style_dict = style if isinstance(style, dict) else {}
     try:
@@ -1921,11 +2428,27 @@ def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_ass
         stderr = _calledprocess_stderr_text(exc)
         error = f"Styled render failed: {stderr[-4000:] or exc}"
         update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
-        return {"video_asset_id": video_asset_id, "subtitle_asset_id": subtitle_asset_id, "status": "failed", "error": error}
+        _progress(
+            self,
+            "failed",
+            1.0,
+            error=error,
+            video_asset_id=video_asset_id,
+            subtitle_asset_id=subtitle_asset_id,
+        )
+        return {
+            "video_asset_id": video_asset_id,
+            "subtitle_asset_id": subtitle_asset_id,
+            "status": "failed",
+            "error": error,
+        }
 
-    mime_type = video_asset.mime_type if video_asset and video_asset.mime_type else MIME_MP4
-    asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=output_path, **asset_kwargs)
+    mime_type = (
+        video_asset.mime_type if video_asset and video_asset.mime_type else MIME_MP4
+    )
+    asset = create_asset_for_existing_file(
+        kind="video", mime_type=mime_type, file_path=output_path, **asset_kwargs
+    )
     result = {
         "video_asset_id": video_asset_id,
         "subtitle_asset_id": subtitle_asset_id,
@@ -1934,8 +2457,20 @@ def render_styled_subtitles(self, job_id: str, video_asset_id: str, subtitle_ass
         "status": "styled_render",
         "output_asset_id": str(asset.id),
     }
-    update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(asset.id))
-    _progress(self, "completed", 1.0, video_asset_id=video_asset_id, subtitle_asset_id=subtitle_asset_id)
+    update_job(
+        job_id,
+        status=JobStatus.completed,
+        progress=1.0,
+        payload=result,
+        output_asset_id=str(asset.id),
+    )
+    _progress(
+        self,
+        "completed",
+        1.0,
+        video_asset_id=video_asset_id,
+        subtitle_asset_id=subtitle_asset_id,
+    )
     return result
 
 
@@ -1955,23 +2490,37 @@ def _load_shorts_subtitle_source(
     if not use_subtitles:
         return None
     if not subtitle_asset_id:
-        warnings.append("use_subtitles enabled but no subtitle_asset_id provided; using placeholder subtitles per clip.")
+        warnings.append(
+            "use_subtitles enabled but no subtitle_asset_id provided; "
+            "using placeholder subtitles per clip."
+        )
         return None
     try:
         _, subs_path = fetch_asset(subtitle_asset_id)
         if not subs_path or not subs_path.exists():
-            warnings.append(f"subtitle_asset_id {subtitle_asset_id} missing on disk; using placeholder subtitles per clip.")
+            warnings.append(
+                f"subtitle_asset_id {subtitle_asset_id} missing on disk; "
+                "using placeholder subtitles per clip."
+            )
             return None
         lines = _parse_subtitle_lines_by_suffix(subs_path)
         if lines is None:
-            warnings.append(f"subtitle_asset_id must be .srt/.vtt for per-clip slicing (got {subs_path.suffix}); using placeholder subtitles per clip.")
+            warnings.append(
+                f"subtitle_asset_id must be .srt/.vtt for per-clip slicing "
+                f"(got {subs_path.suffix}); using placeholder subtitles per clip."
+            )
         return lines
     except Exception as exc:
-        warnings.append(f"Failed to load subtitle_asset_id {subtitle_asset_id}; using placeholder subtitles per clip ({exc}).")
+        warnings.append(
+            f"Failed to load subtitle_asset_id {subtitle_asset_id}; "
+            f"using placeholder subtitles per clip ({exc})."
+        )
         return None
 
 
-def _score_candidates_by_silence(candidates: list, *, src_path: Path, opts: dict, trim_silence: bool) -> None:
+def _score_candidates_by_silence(
+    candidates: list, *, src_path: Path, opts: dict, trim_silence: bool
+) -> None:
     if not trim_silence:
         for idx, cand in enumerate(candidates):
             cand.score = 1.0 - (idx * 0.01)
@@ -2002,19 +2551,29 @@ def _score_candidates_by_silence(candidates: list, *, src_path: Path, opts: dict
             cand.score = 1.0 - (idx * 0.01)
 
 
-def _apply_candidate_snippets(candidates: list, subtitle_lines: list[SubtitleLine]) -> None:
+def _apply_candidate_snippets(
+    candidates: list, subtitle_lines: list[SubtitleLine]
+) -> None:
     for cand in candidates:
-        parts = [line.text() for line in subtitle_lines if line.start < cand.end and line.end > cand.start and line.text()]
+        parts = [
+            line.text()
+            for line in subtitle_lines
+            if line.start < cand.end and line.end > cand.start and line.text()
+        ]
         snippet = " ".join(parts).strip()
         cand.snippet = snippet[:800] if snippet else None
 
 
 def _collect_shorts_keywords(prompt: str, opts: dict) -> list[str]:
     keywords: list[str] = []
-    keywords.extend(token for token in re.findall(r"[a-z0-9']+", prompt.lower()) if len(token) >= 3)
+    keywords.extend(
+        token for token in re.findall(r"[a-z0-9']+", prompt.lower()) if len(token) >= 3
+    )
     extra_keywords = opts.get("keywords")
     if isinstance(extra_keywords, list):
-        keywords.extend(str(item).strip().lower() for item in extra_keywords if str(item).strip())
+        keywords.extend(
+            str(item).strip().lower() for item in extra_keywords if str(item).strip()
+        )
     deduped_keywords: list[str] = []
     seen_kw: set[str] = set()
     for keyword in keywords:
@@ -2044,6 +2603,7 @@ def _parse_weight_overrides(opts: dict) -> dict[str, float]:
 
     parsed_weight_overrides: dict[str, float] = {}
     for key, value in weight_overrides.items():
+        # pylint: disable-next=no-member  # dataclass __dataclass_fields__ (false positive)
         if key not in HeuristicWeights.__dataclass_fields__:
             continue
         try:
@@ -2053,111 +2613,217 @@ def _parse_weight_overrides(opts: dict) -> dict[str, float]:
     return parsed_weight_overrides
 
 
-def _apply_groq_segment_scoring(
-    candidates: list, *, opts: dict, prompt: str, subtitle_asset_id: str, warnings: list[str]
-) -> None:
+def _groq_prerequisite_warning(
+    *, prompt: str, subtitle_asset_id: str
+) -> str | None:
+    """Return a skip warning if a Groq prerequisite is unmet, else ``None``."""
     if not prompt:
-        warnings.append("Groq scoring requested but no prompt was provided; falling back to heuristics.")
-        return
+        return "Groq scoring requested but no prompt was provided; falling back to heuristics."
     if offline_mode_enabled():
-        warnings.append("Groq scoring requested but offline mode is enabled; falling back to heuristics.")
-        return
+        return (
+            "Groq scoring requested but offline mode is enabled; falling back to heuristics."
+        )
     if not subtitle_asset_id:
-        warnings.append("Groq scoring requested but no subtitle_asset_id provided; falling back to heuristics.")
+        return (
+            "Groq scoring requested but no subtitle_asset_id provided; "
+            "falling back to heuristics."
+        )
+    return None
+
+
+def _groq_resolve_model(opts: dict) -> str:
+    model = str(
+        opts.get("groq_model") or os.getenv("GROQ_MODEL") or "llama3-8b-8192"
+    ).strip()
+    return model or "llama3-8b-8192"
+
+
+def _groq_score_candidates(
+    candidates: list,
+    *,
+    transcript: str,
+    prompt: str,
+    model: str,
+    client: Any,
+) -> None:
+    base_scores = {(c.start, c.end): float(c.score) for c in candidates}
+    score_prompt = (
+        "You are scoring candidate video segments for creating short clips.\n"
+        f"Goal: {prompt}\n\n"
+        "Return ONLY a JSON array. Each item must be an object:\n"
+        '{"start": number, "end": number, "score": number}\n'
+        "Score each candidate from 0.0 to 1.0 (higher is better)."
+    )
+    score_segments_llm(
+        transcript=transcript,
+        candidates=candidates,
+        prompt=score_prompt,
+        model=model,
+        client=client,
+    )
+    # Blend with existing heuristics (e.g., silence trimming) so we still
+    # down-rank silent segments.
+    for cand in candidates:
+        base = base_scores.get((cand.start, cand.end), 0.0)
+        cand.score = (0.2 * base) + (0.8 * float(cand.score))
+
+
+def _groq_load_subtitle_lines(
+    subtitle_asset_id: str, *, warnings: list[str]
+) -> list[SubtitleLine] | None:
+    """Load and validate subtitle lines for Groq scoring, warning on failure."""
+    _, subs_path = fetch_asset(subtitle_asset_id)
+    if not subs_path or not subs_path.exists():
+        warnings.append(
+            f"subtitle_asset_id {subtitle_asset_id} missing on disk; "
+            "falling back to heuristics."
+        )
+        return None
+    subtitle_lines = _parse_subtitle_lines_by_suffix(subs_path)
+    if subtitle_lines is None:
+        warnings.append(
+            f"subtitle_asset_id must be .srt/.vtt for Groq scoring "
+            f"(got {subs_path.suffix}); falling back to heuristics."
+        )
+    if not subtitle_lines:
+        raise ValueError("Subtitle parsing failed or unsupported subtitle format.")
+    return subtitle_lines
+
+
+def _apply_groq_segment_scoring(
+    candidates: list,
+    *,
+    opts: dict,
+    prompt: str,
+    subtitle_asset_id: str,
+    warnings: list[str],
+) -> None:
+    skip_warning = _groq_prerequisite_warning(
+        prompt=prompt, subtitle_asset_id=subtitle_asset_id
+    )
+    if skip_warning is not None:
+        warnings.append(skip_warning)
         return
     try:
-        _, subs_path = fetch_asset(subtitle_asset_id)
-        if not subs_path or not subs_path.exists():
-            warnings.append(f"subtitle_asset_id {subtitle_asset_id} missing on disk; falling back to heuristics.")
-            return
-        subtitle_lines = _parse_subtitle_lines_by_suffix(subs_path)
-        if subtitle_lines is None:
-            warnings.append(f"subtitle_asset_id must be .srt/.vtt for Groq scoring (got {subs_path.suffix}); falling back to heuristics.")
+        subtitle_lines = _groq_load_subtitle_lines(
+            subtitle_asset_id, warnings=warnings
+        )
         if not subtitle_lines:
-            raise ValueError("Subtitle parsing failed or unsupported subtitle format.")
+            return
 
-        transcript = "\n".join(l.text() for l in subtitle_lines if l.text())
+        transcript = "\n".join(line.text() for line in subtitle_lines if line.text())
         _apply_candidate_snippets(candidates, subtitle_lines)
 
         client = get_groq_chat_client_from_env()
         if not client:
-            warnings.append("Groq scoring requested but GROQ_API_KEY is not set; falling back to heuristics.")
+            warnings.append(
+                "Groq scoring requested but GROQ_API_KEY is not set; falling back to heuristics."
+            )
             return
-        model = str(opts.get("groq_model") or os.getenv("GROQ_MODEL") or "llama3-8b-8192").strip()
-        if not model:
-            model = "llama3-8b-8192"
-
-        base_scores = {(c.start, c.end): float(c.score) for c in candidates}
-        score_prompt = (
-            "You are scoring candidate video segments for creating short clips.\n"
-            f"Goal: {prompt}\n\n"
-            "Return ONLY a JSON array. Each item must be an object:\n"
-            '{\"start\": number, \"end\": number, \"score\": number}\n'
-            "Score each candidate from 0.0 to 1.0 (higher is better)."
+        model = _groq_resolve_model(opts)
+        _groq_score_candidates(
+            candidates,
+            transcript=transcript,
+            prompt=prompt,
+            model=model,
+            client=client,
         )
-        score_segments_llm(transcript=transcript, candidates=candidates, prompt=score_prompt, model=model, client=client)
-        # Blend with existing heuristics (e.g., silence trimming) so we still down-rank silent segments.
-        for cand in candidates:
-            base = base_scores.get((cand.start, cand.end), 0.0)
-            cand.score = (0.2 * base) + (0.8 * float(cand.score))
         warnings.append(f"Applied Groq segment scoring model={model}.")
     except Exception as exc:
         warnings.append(f"Groq scoring failed; falling back to heuristics ({exc}).")
 
 
+@dataclass(frozen=True)
+class ShortsClipContext:
+    """Per-shorts-job constants shared across every clip's processing."""
+
+    job_id: str
+    src_path: Path
+    mime_type: str
+    asset_kwargs: dict
+    use_subtitles: bool
+    style_preset: str | None
+    subtitles: "ShortsSubtitleContext"
+
+
+@dataclass(frozen=True)
+class ShortsSubtitleContext:
+    """Subtitle-specific inputs used when burning captions onto a clip."""
+
+    style_for_clip: dict
+    subtitle_source_lines: list[SubtitleLine] | None
+    warnings: list[str] = field(default_factory=list)
+
+
+def _build_clip_subtitle_file(ctx: ShortsClipContext, *, idx: int, seg) -> Path:
+    """Write a per-clip .vtt subtitle file (sliced source or placeholder)."""
+    subtitle_file = new_tmp_file(".vtt")
+    if ctx.subtitle_source_lines is not None:
+        sliced = _slice_subtitle_lines(
+            ctx.subtitle_source_lines, start=seg.start, end=seg.end
+        )
+        subtitle_contents = to_vtt(sliced)
+    else:
+        subtitle_contents = (
+            "WEBVTT\n\n"
+            "00:00:00.000 --> 00:00:02.000\n"
+            f"Clip {idx + 1} subtitle placeholder\n"
+        )
+    subtitle_file.write_text(subtitle_contents, encoding="utf-8")
+    return subtitle_file
+
+
+def _build_clip_styled_asset(
+    ctx: ShortsClipContext, *, idx: int, clip_path: Path, subtitle_file: Path
+) -> Any:
+    """Render a styled (burned-in) clip asset, returning ``None`` on failure."""
+    try:
+        styled_path = _render_styled_subtitles_to_file(
+            job_id=ctx.job_id,
+            step=f"render_shorts_clip:{idx + 1}",
+            video_path=clip_path,
+            subtitle_path=subtitle_file,
+            style=ctx.style_for_clip,
+            preview_seconds=None,
+        )
+        return create_asset_for_existing_file(
+            kind="video",
+            mime_type=ctx.mime_type,
+            file_path=styled_path,
+            **ctx.asset_kwargs,
+        )
+    except Exception as exc:
+        stderr = _calledprocess_stderr_text(exc)
+        ctx.warnings.append(
+            f"Clip {idx + 1}: styled render failed ({stderr[-4000:] or exc})."
+        )
+        return None
+
+
 def _build_clip_subtitle_assets(
-    *,
-    job_id: str,
-    idx: int,
-    seg,
-    clip_path: Path,
-    subtitle_source_lines: list[SubtitleLine] | None,
-    style_for_clip: dict,
-    mime_type: str,
-    asset_kwargs: dict,
-    warnings: list[str],
+    ctx: ShortsClipContext, *, idx: int, seg, clip_path: Path
 ) -> tuple[Any, Any]:
-    subtitle_asset = None
     subtitle_file: Path | None = None
     try:
-        subtitle_file = new_tmp_file(".vtt")
-        if subtitle_source_lines is not None:
-            sliced = _slice_subtitle_lines(subtitle_source_lines, start=seg.start, end=seg.end)
-            subtitle_contents = to_vtt(sliced)
-        else:
-            subtitle_contents = (
-                "WEBVTT\n\n"
-                "00:00:00.000 --> 00:00:02.000\n"
-                f"Clip {idx + 1} subtitle placeholder\n"
-            )
-        subtitle_file.write_text(subtitle_contents, encoding="utf-8")
+        subtitle_file = _build_clip_subtitle_file(ctx, idx=idx, seg=seg)
         subtitle_asset = create_asset_for_existing_file(
             kind="subtitle",
             mime_type="text/vtt",
             file_path=subtitle_file,
-            **asset_kwargs,
+            **ctx.asset_kwargs,
         )
     except Exception as exc:
-        warnings.append(f"Clip {idx + 1}: failed to build subtitles ({exc}); continuing without subtitles.")
+        ctx.warnings.append(
+            f"Clip {idx + 1}: failed to build subtitles ({exc}); continuing without subtitles."
+        )
         return None, None
 
     if not (subtitle_file and subtitle_asset):
         return subtitle_asset, None
 
-    try:
-        styled_path = _render_styled_subtitles_to_file(
-            job_id=job_id,
-            step=f"render_shorts_clip:{idx + 1}",
-            video_path=clip_path,
-            subtitle_path=subtitle_file,
-            style=style_for_clip,
-            preview_seconds=None,
-        )
-        styled_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=styled_path, **asset_kwargs)
-    except Exception as exc:
-        stderr = _calledprocess_stderr_text(exc)
-        warnings.append(f"Clip {idx + 1}: styled render failed ({stderr[-4000:] or exc}).")
-        styled_asset = None
+    styled_asset = _build_clip_styled_asset(
+        ctx, idx=idx, clip_path=clip_path, subtitle_file=subtitle_file
+    )
     return subtitle_asset, styled_asset
 
 
@@ -2166,141 +2832,198 @@ def _probe_media_duration(src_path: Path) -> float:
     return float(meta.get("duration") or 0.0)
 
 
-@celery_app.task(bind=True, name="tasks.generate_shorts")
-def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None = None) -> dict:
-    update_job(job_id, status=JobStatus.running, progress=0.1)
-    _progress(self, "started", 0.0, video_asset_id=video_asset_id)
-    asset_kwargs = _job_asset_kwargs(job_id)
-    opts = options or {}
-    warnings: list[str] = []
+def _fail_shorts_job(
+    task, *, job_id: str, video_asset_id: str, error: str
+) -> dict:
+    """Mark a shorts job failed and return the standard failure result dict."""
+    update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+    _progress(task, "failed", 1.0, error=error, video_asset_id=video_asset_id)
+    return {"video_asset_id": video_asset_id, "status": "failed", "error": error}
+
+
+def _select_shorts_candidates(
+    *, src_path: Path, opts: dict, subtitle_source_lines, warnings: list[str]
+) -> list:
+    """Build, score, and select the top candidate segments for shorts."""
+    duration = _probe_media_duration(src_path)
     max_clips = int(opts.get("max_clips") or 3)
-    min_duration = float(opts.get("min_duration") or 10.0)
-    max_duration = float(opts.get("max_duration") or 60.0)
-    use_subtitles = _coerce_bool(opts.get("use_subtitles"))
-    trim_silence = _coerce_bool(opts.get("trim_silence"))
-    subtitle_asset_id = str(opts.get("subtitle_asset_id") or "").strip()
-    style_for_clip = _resolve_style_from_options(opts) if use_subtitles else {}
-
-    subtitle_source_lines = _load_shorts_subtitle_source(
-        use_subtitles=use_subtitles, subtitle_asset_id=subtitle_asset_id, warnings=warnings
-    )
-
-    src_asset, src_path = fetch_asset(video_asset_id)
-    if not src_path or not src_path.exists():
-        error = f"Video asset file missing for {video_asset_id}"
-        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id)
-        return {"video_asset_id": video_asset_id, "status": "failed", "error": error}
-
-    try:
-        duration = _probe_media_duration(src_path)
-    except Exception as exc:
-        error = f"Failed to probe media: {exc}"
-        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id)
-        return {"video_asset_id": video_asset_id, "status": "failed", "error": error}
-
-    candidates = equal_splits(duration, clip_length=max_duration)
+    candidates = equal_splits(duration, clip_length=float(opts.get("max_duration") or 60.0))
     prompt = str(opts.get("prompt") or "").strip()
-    _score_candidates_by_silence(candidates, src_path=src_path, opts=opts, trim_silence=trim_silence)
+    _score_candidates_by_silence(
+        candidates,
+        src_path=src_path,
+        opts=opts,
+        trim_silence=_coerce_bool(opts.get("trim_silence")),
+    )
 
     if subtitle_source_lines:
         _apply_candidate_snippets(candidates, subtitle_source_lines)
 
-    deduped_keywords = _collect_shorts_keywords(prompt, opts)
     parsed_weight_overrides = _parse_weight_overrides(opts)
-
     score_segments_heuristic(
         candidates,
-        keywords=deduped_keywords,
-        weights=HeuristicWeights(**parsed_weight_overrides) if parsed_weight_overrides else None,
+        keywords=_collect_shorts_keywords(prompt, opts),
+        weights=(
+            HeuristicWeights(**parsed_weight_overrides)
+            if parsed_weight_overrides
+            else None
+        ),
     )
 
-    scoring_backend = str(opts.get("segment_scoring_backend") or opts.get("scoring_backend") or "").strip().lower()
+    scoring_backend = (
+        str(opts.get("segment_scoring_backend") or opts.get("scoring_backend") or "")
+        .strip()
+        .lower()
+    )
     if scoring_backend == "groq":
         _apply_groq_segment_scoring(
-            candidates, opts=opts, prompt=prompt, subtitle_asset_id=subtitle_asset_id, warnings=warnings
+            candidates,
+            opts=opts,
+            prompt=prompt,
+            subtitle_asset_id=str(opts.get("subtitle_asset_id") or "").strip(),
+            warnings=warnings,
         )
 
     selected = select_top(
         candidates,
         max_segments=max_clips,
-        min_duration=min_duration,
-        max_duration=max_duration,
+        min_duration=float(opts.get("min_duration") or 10.0),
+        max_duration=float(opts.get("max_duration") or 60.0),
         min_gap=float(opts.get("min_gap") or 0.0),
     )
-    if not selected:
-        selected = candidates[:max_clips]
+    return selected or candidates[:max_clips]
 
-    clips: list[dict] = []
-    for idx, seg in enumerate(selected):
-        update_job(job_id, progress=0.1 + (idx / max(1, len(selected))) * 0.8)
-        _progress(self, "processing", idx / max(1, len(selected)), clip_index=idx + 1)
 
-        clip_path = new_tmp_file(".mp4")
-        try:
-            _run_ffmpeg_with_retries(
-                job_id=job_id,
-                step=f"cut_clip:{idx + 1}",
-                fn=lambda seg=seg, clip_path=clip_path: cut_clip(src_path, seg.start, seg.end, clip_path),
-            )
-        except Exception as exc:
-            error = f"Failed to cut clip {idx + 1}: {exc}"
-            update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-            _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id)
-            return {"video_asset_id": video_asset_id, "status": "failed", "error": error}
+def _cut_shorts_clip(ctx: ShortsClipContext, *, idx: int, seg) -> Path:
+    """Cut a single source clip, returning its tmp path (raises on ffmpeg failure)."""
+    clip_path = new_tmp_file(".mp4")
+    _run_ffmpeg_with_retries(
+        job_id=ctx.job_id,
+        step=f"cut_clip:{idx + 1}",
+        fn=lambda: cut_clip(ctx.src_path, seg.start, seg.end, clip_path),
+    )
+    return clip_path
 
-        mime_type = src_asset.mime_type if src_asset and src_asset.mime_type else MIME_MP4
-        clip_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=clip_path, **asset_kwargs)
 
-        thumb_asset = create_thumbnail_asset(clip_path, **asset_kwargs)
+def _build_shorts_clip_entry(ctx: ShortsClipContext, *, idx: int, seg, clip_path: Path) -> dict:
+    """Create the clip/thumbnail/subtitle assets and assemble the clip manifest entry."""
+    clip_asset = create_asset_for_existing_file(
+        kind="video", mime_type=ctx.mime_type, file_path=clip_path, **ctx.asset_kwargs
+    )
+    thumb_asset = create_thumbnail_asset(clip_path, **ctx.asset_kwargs)
 
-        subtitle_asset = None
-        styled_asset = None
-        clip_style_preset = str(opts.get("style_preset") or "").strip() or None
-        if use_subtitles:
-            subtitle_asset, styled_asset = _build_clip_subtitle_assets(
-                job_id=job_id,
-                idx=idx,
-                seg=seg,
-                clip_path=clip_path,
-                subtitle_source_lines=subtitle_source_lines,
-                style_for_clip=style_for_clip,
-                mime_type=mime_type,
-                asset_kwargs=asset_kwargs,
-                warnings=warnings,
-            )
-
-        clips.append(
-            {
-                "id": f"{job_id}-clip-{idx + 1}",
-                "asset_id": str(clip_asset.id),
-                "style_preset": clip_style_preset,
-                "start": seg.start,
-                "end": seg.end,
-                "duration": round(seg.duration, 3),
-                "score": seg.score,
-                "uri": clip_asset.uri,
-                "styled_uri": styled_asset.uri if styled_asset else None,
-                "styled_asset_id": str(styled_asset.id) if styled_asset else None,
-                "thumbnail_asset_id": str(thumb_asset.id),
-                "subtitle_uri": subtitle_asset.uri if subtitle_asset else None,
-                "subtitle_asset_id": str(subtitle_asset.id) if subtitle_asset else None,
-                "thumbnail_uri": thumb_asset.uri,
-            }
+    subtitle_asset = None
+    styled_asset = None
+    if ctx.use_subtitles:
+        subtitle_asset, styled_asset = _build_clip_subtitle_assets(
+            ctx, idx=idx, seg=seg, clip_path=clip_path
         )
 
-    manifest = {
-        "video_asset_id": video_asset_id,
-        "options": opts,
-        "warnings": warnings,
-        "clip_assets": clips,
+    return {
+        "id": f"{ctx.job_id}-clip-{idx + 1}",
+        "asset_id": str(clip_asset.id),
+        "style_preset": ctx.style_preset,
+        "start": seg.start,
+        "end": seg.end,
+        "duration": round(seg.duration, 3),
+        "score": seg.score,
+        "uri": clip_asset.uri,
+        "styled_uri": styled_asset.uri if styled_asset else None,
+        "styled_asset_id": str(styled_asset.id) if styled_asset else None,
+        "thumbnail_asset_id": str(thumb_asset.id),
+        "subtitle_uri": subtitle_asset.uri if subtitle_asset else None,
+        "subtitle_asset_id": str(subtitle_asset.id) if subtitle_asset else None,
+        "thumbnail_uri": thumb_asset.uri,
     }
+
+
+@celery_app.task(bind=True, name="tasks.generate_shorts")
+def generate_shorts(
+    self, job_id: str, video_asset_id: str, options: dict | None = None
+) -> dict:
+    """Score, cut, and optionally caption short clips from a source video asset."""
+    update_job(job_id, status=JobStatus.running, progress=0.1)
+    _progress(self, "started", 0.0, video_asset_id=video_asset_id)
+    asset_kwargs = _job_asset_kwargs(job_id)
+    opts = options or {}
+    warnings: list[str] = []
+    use_subtitles = _coerce_bool(opts.get("use_subtitles"))
+
+    subtitle_source_lines = _load_shorts_subtitle_source(
+        use_subtitles=use_subtitles,
+        subtitle_asset_id=str(opts.get("subtitle_asset_id") or "").strip(),
+        warnings=warnings,
+    )
+
+    src_asset, src_path = fetch_asset(video_asset_id)
+    if not src_path or not src_path.exists():
+        return _fail_shorts_job(
+            self,
+            job_id=job_id,
+            video_asset_id=video_asset_id,
+            error=f"Video asset file missing for {video_asset_id}",
+        )
+
+    try:
+        selected = _select_shorts_candidates(
+            src_path=src_path,
+            opts=opts,
+            subtitle_source_lines=subtitle_source_lines,
+            warnings=warnings,
+        )
+    except Exception as exc:
+        return _fail_shorts_job(
+            self,
+            job_id=job_id,
+            video_asset_id=video_asset_id,
+            error=f"Failed to probe media: {exc}",
+        )
+
+    ctx = ShortsClipContext(
+        job_id=job_id,
+        mime_type=(
+            src_asset.mime_type if src_asset and src_asset.mime_type else MIME_MP4
+        ),
+        asset_kwargs=asset_kwargs,
+        style_for_clip=_resolve_style_from_options(opts) if use_subtitles else {},
+        subtitle_source_lines=subtitle_source_lines,
+        use_subtitles=use_subtitles,
+        src_path=src_path,
+        style_preset=str(opts.get("style_preset") or "").strip() or None,
+        warnings=warnings,
+    )
+
+    clips: list[dict] = []
+    total = max(1, len(selected))
+    for idx, seg in enumerate(selected):
+        update_job(job_id, progress=0.1 + (idx / total) * 0.8)
+        _progress(self, "processing", idx / total, clip_index=idx + 1)
+
+        try:
+            clip_path = _cut_shorts_clip(ctx, idx=idx, seg=seg)
+        except Exception as exc:
+            return _fail_shorts_job(
+                self,
+                job_id=job_id,
+                video_asset_id=video_asset_id,
+                error=f"Failed to cut clip {idx + 1}: {exc}",
+            )
+
+        clips.append(_build_shorts_clip_entry(ctx, idx=idx, seg=seg, clip_path=clip_path))
+
     manifest_asset = create_asset(
         kind="shorts_manifest",
         mime_type="application/json",
         suffix=".json",
-        contents=json.dumps(manifest, indent=2),
+        contents=json.dumps(
+            {
+                "video_asset_id": video_asset_id,
+                "options": opts,
+                "warnings": warnings,
+                "clip_assets": clips,
+            },
+            indent=2,
+        ),
         **asset_kwargs,
     )
 
@@ -2311,13 +3034,27 @@ def generate_shorts(self, job_id: str, video_asset_id: str, options: dict | None
         "clip_assets": clips,
         "output_asset_id": str(manifest_asset.id),
     }
-    update_job(job_id, status=JobStatus.completed, progress=1.0, payload={"clip_assets": clips, "warnings": warnings, **opts}, output_asset_id=str(manifest_asset.id))
+    update_job(
+        job_id,
+        status=JobStatus.completed,
+        progress=1.0,
+        payload={"clip_assets": clips, "warnings": warnings, **opts},
+        output_asset_id=str(manifest_asset.id),
+    )
     _progress(self, "completed", 1.0, video_asset_id=video_asset_id)
     return result
 
 
 @celery_app.task(bind=True, name="tasks.cut_clip")
-def cut_clip_asset(self, job_id: str, video_asset_id: str, start: float, end: float, options: dict | None = None) -> dict:
+def cut_clip_asset(
+    self,
+    job_id: str,
+    video_asset_id: str,
+    start: float,
+    end: float,
+    options: dict | None = None,
+) -> dict:
+    """Cut a single clip from a video asset between the given start and end times."""
     update_job(job_id, status=JobStatus.running, progress=0.1)
     _progress(self, "started", 0.0, video_asset_id=video_asset_id, start=start, end=end)
     asset_kwargs = _job_asset_kwargs(job_id)
@@ -2345,11 +3082,21 @@ def cut_clip_asset(self, job_id: str, video_asset_id: str, start: float, end: fl
     except Exception as exc:
         error = f"Cut clip failed: {exc}"
         update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, start=start_s, end=end_s)
+        _progress(
+            self,
+            "failed",
+            1.0,
+            error=error,
+            video_asset_id=video_asset_id,
+            start=start_s,
+            end=end_s,
+        )
         return {"video_asset_id": video_asset_id, "status": "failed", "error": error}
 
     mime_type = src_asset.mime_type if src_asset and src_asset.mime_type else MIME_MP4
-    clip_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=output_path, **asset_kwargs)
+    clip_asset = create_asset_for_existing_file(
+        kind="video", mime_type=mime_type, file_path=output_path, **asset_kwargs
+    )
     thumb_asset = create_thumbnail_asset(output_path, **asset_kwargs)
 
     result = {
@@ -2363,15 +3110,42 @@ def cut_clip_asset(self, job_id: str, video_asset_id: str, start: float, end: fl
         "thumbnail_uri": thumb_asset.uri,
         **opts,
     }
-    update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(clip_asset.id))
-    _progress(self, "completed", 1.0, video_asset_id=video_asset_id, start=start_s, end=end_s, output_asset_id=str(clip_asset.id))
+    update_job(
+        job_id,
+        status=JobStatus.completed,
+        progress=1.0,
+        payload=result,
+        output_asset_id=str(clip_asset.id),
+    )
+    _progress(
+        self,
+        "completed",
+        1.0,
+        video_asset_id=video_asset_id,
+        start=start_s,
+        end=end_s,
+        output_asset_id=str(clip_asset.id),
+    )
     return result
 
 
 @celery_app.task(bind=True, name="tasks.merge_video_audio")
-def merge_video_audio(self, job_id: str, video_asset_id: str, audio_asset_id: str, options: dict | None = None) -> dict:
+def merge_video_audio(
+    self,
+    job_id: str,
+    video_asset_id: str,
+    audio_asset_id: str,
+    options: dict | None = None,
+) -> dict:
+    """Merge a separate audio track onto a video asset and store the result."""
     update_job(job_id, status=JobStatus.running, progress=0.1)
-    _progress(self, "started", 0.0, video_asset_id=video_asset_id, audio_asset_id=audio_asset_id)
+    _progress(
+        self,
+        "started",
+        0.0,
+        video_asset_id=video_asset_id,
+        audio_asset_id=audio_asset_id,
+    )
     asset_kwargs = _job_asset_kwargs(job_id)
     opts = options or {}
     video_asset, video_path = fetch_asset(video_asset_id)
@@ -2381,13 +3155,23 @@ def merge_video_audio(self, job_id: str, video_asset_id: str, audio_asset_id: st
         error = f"Video asset file missing for {video_asset_id}"
         update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
         _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id)
-        return {"video_asset_id": video_asset_id, "audio_asset_id": audio_asset_id, "status": "failed", "error": error}
+        return {
+            "video_asset_id": video_asset_id,
+            "audio_asset_id": audio_asset_id,
+            "status": "failed",
+            "error": error,
+        }
 
     if not audio_path or not audio_path.exists():
         error = f"Audio asset file missing for {audio_asset_id}"
         update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
         _progress(self, "failed", 1.0, error=error, audio_asset_id=audio_asset_id)
-        return {"video_asset_id": video_asset_id, "audio_asset_id": audio_asset_id, "status": "failed", "error": error}
+        return {
+            "video_asset_id": video_asset_id,
+            "audio_asset_id": audio_asset_id,
+            "status": "failed",
+            "error": error,
+        }
 
     output_path = new_tmp_file(".mp4")
     try:
@@ -2406,11 +3190,27 @@ def merge_video_audio(self, job_id: str, video_asset_id: str, audio_asset_id: st
     except Exception as exc:
         error = f"Merge failed: {exc}"
         update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-        _progress(self, "failed", 1.0, error=error, video_asset_id=video_asset_id, audio_asset_id=audio_asset_id)
-        return {"video_asset_id": video_asset_id, "audio_asset_id": audio_asset_id, "status": "failed", "error": error}
+        _progress(
+            self,
+            "failed",
+            1.0,
+            error=error,
+            video_asset_id=video_asset_id,
+            audio_asset_id=audio_asset_id,
+        )
+        return {
+            "video_asset_id": video_asset_id,
+            "audio_asset_id": audio_asset_id,
+            "status": "failed",
+            "error": error,
+        }
 
-    mime_type = video_asset.mime_type if video_asset and video_asset.mime_type else MIME_MP4
-    merged_asset = create_asset_for_existing_file(kind="video", mime_type=mime_type, file_path=output_path, **asset_kwargs)
+    mime_type = (
+        video_asset.mime_type if video_asset and video_asset.mime_type else MIME_MP4
+    )
+    merged_asset = create_asset_for_existing_file(
+        kind="video", mime_type=mime_type, file_path=output_path, **asset_kwargs
+    )
 
     result = {
         "video_asset_id": video_asset_id,
@@ -2419,15 +3219,33 @@ def merge_video_audio(self, job_id: str, video_asset_id: str, audio_asset_id: st
         "status": "merged",
         "output_asset_id": str(merged_asset.id),
     }
-    update_job(job_id, status=JobStatus.completed, progress=1.0, payload=result, output_asset_id=str(merged_asset.id))
-    _progress(self, "completed", 1.0, video_asset_id=video_asset_id, audio_asset_id=audio_asset_id)
+    update_job(
+        job_id,
+        status=JobStatus.completed,
+        progress=1.0,
+        payload=result,
+        output_asset_id=str(merged_asset.id),
+    )
+    _progress(
+        self,
+        "completed",
+        1.0,
+        video_asset_id=video_asset_id,
+        audio_asset_id=audio_asset_id,
+    )
     return result
 
 
-def _cleanup_job_and_assets(session: Session, job: Job, *, plan_code: str, now: datetime) -> int:
+def _cleanup_job_and_assets(
+    session: Session, job: Job, *, plan_code: str, now: datetime
+) -> int:
     related_asset_ids = _job_related_asset_ids(job)
     payload = job.payload if isinstance(job.payload, dict) else {}
-    payload = {**payload, "retention_cleanup_at": now.isoformat(), "retention_plan_code": plan_code}
+    payload = {
+        **payload,
+        "retention_cleanup_at": now.isoformat(),
+        "retention_plan_code": plan_code,
+    }
     payload.pop("clip_assets", None)
     job.payload = payload
     job.output_asset_id = None
@@ -2448,6 +3266,7 @@ def _cleanup_job_and_assets(session: Session, job: Job, *, plan_code: str, now: 
 
 @celery_app.task(bind=True, name="tasks.cleanup_retention")
 def cleanup_retention(self) -> dict:
+    """Delete jobs and assets that have aged past their plan's retention window."""
     _progress(self, "started", 0.0)
     now = datetime.now(timezone.utc)
     cleaned_jobs = 0
@@ -2455,18 +3274,25 @@ def cleanup_retention(self) -> dict:
 
     with Session(get_engine()) as session:
         subs = session.exec(select(Subscription)).all()
-        plan_by_org: dict[UUID, str] = {sub.org_id: sub.plan_code for sub in subs if sub.org_id}
+        plan_by_org: dict[UUID, str] = {
+            sub.org_id: sub.plan_code for sub in subs if sub.org_id
+        }
 
         terminal_statuses = [JobStatus.completed, JobStatus.failed, JobStatus.cancelled]
+        # pylint: disable-next=no-member  # SQLModel column .in_ (FieldInfo false positive)
         jobs = session.exec(select(Job).where(Job.status.in_(terminal_statuses))).all()
         for idx, job in enumerate(jobs):
             if not job.org_id:
                 continue
             plan_code = plan_by_org.get(job.org_id, "free")
-            if not _is_older_than_retention(created_at=job.updated_at, plan_code=plan_code, now=now):
+            if not _is_older_than_retention(
+                created_at=job.updated_at, plan_code=plan_code, now=now
+            ):
                 continue
 
-            cleaned_assets += _cleanup_job_and_assets(session, job, plan_code=plan_code, now=now)
+            cleaned_assets += _cleanup_job_and_assets(
+                session, job, plan_code=plan_code, now=now
+            )
             cleaned_jobs += 1
             if jobs:
                 _progress(self, "running", min(0.99, (idx + 1) / max(1, len(jobs))))
@@ -2479,7 +3305,9 @@ def cleanup_retention(self) -> dict:
         "cleaned_assets": cleaned_assets,
         "timestamp": now.isoformat(),
     }
-    _progress(self, "completed", 1.0, **{k: v for k, v in result.items() if k != "status"})
+    _progress(
+        self, "completed", 1.0, **{k: v for k, v in result.items() if k != "status"}
+    )
     return result
 
 

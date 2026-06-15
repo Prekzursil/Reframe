@@ -1,3 +1,5 @@
+"""faster-whisper transcription backend and result normalization helpers."""
+
 from __future__ import annotations
 
 import logging
@@ -38,14 +40,14 @@ def _normalize_model_name(model: str) -> str:
     return _MODEL_ALIASES.get(lowered, raw)
 
 
-class _WordLike(Protocol):
+class _WordLike(Protocol):  # pylint: disable=too-few-public-methods
     word: str
     start: float
     end: float
     probability: Optional[float]
 
 
-class _SegmentLike(Protocol):
+class _SegmentLike(Protocol):  # pylint: disable=too-few-public-methods
     text: str
     start: float
     end: float
@@ -54,7 +56,7 @@ class _SegmentLike(Protocol):
 
 def _ensure_faster_whisper():
     try:
-        from faster_whisper import WhisperModel  # type: ignore
+        from faster_whisper import WhisperModel  # type: ignore  # pylint: disable=import-outside-toplevel
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError(
             "faster-whisper package is required. Install with `pip install faster-whisper`."
@@ -90,7 +92,7 @@ def _parse_word(w: _WordLike | dict[str, Any]) -> Optional[Word]:
             end = float(getattr(w, "end"))
             text = str(getattr(w, "word", "")).strip()
             prob = getattr(w, "probability", None)
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:  # pragma: no cover - defensive  # pylint: disable=broad-exception-caught
         logger.debug("Skipping malformed word payload: %s (%s)", w, exc)
         return None
     return Word(text=text, start=start, end=end, probability=_coerce_probability(prob))
