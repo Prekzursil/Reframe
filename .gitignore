@@ -32,3 +32,6 @@ reframe*.db
 
 # Local sample media
 samples/
+
+# Lean quality-gate local tooling (not committed)
+/.tooling-bin/

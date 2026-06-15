@@ -1,9 +1,9 @@
-.PHONY: help api-install worker-install web-install api-dev worker-dev web-dev web-build compose-up compose-down python-compile python-test web-test verify smoke-hosted smoke-local smoke-security smoke-workflows smoke-perf-cost release-readiness
+.PHONY: help api-install worker-install web-install api-dev worker-dev web-dev web-build compose-up compose-down python-compile python-test web-test verify smoke-hosted smoke-local smoke-security smoke-workflows smoke-perf-cost
 
 PYTHON ?= python
 
 help:
-	@echo "Targets: api-install, worker-install, web-install, api-dev, worker-dev, web-dev, web-build, compose-up, compose-down, verify, smoke-hosted, smoke-local, smoke-security, smoke-workflows, smoke-perf-cost, release-readiness"
+	@echo "Targets: api-install, worker-install, web-install, api-dev, worker-dev, web-dev, web-build, compose-up, compose-down, verify, smoke-hosted, smoke-local, smoke-security, smoke-workflows, smoke-perf-cost"
 
 api-install:
 	pip install -r apps/api/requirements.txt
@@ -51,23 +51,6 @@ smoke-workflows:
 
 smoke-perf-cost:
 	PYTHON=$(PYTHON) bash scripts/smoke_perf_cost.sh
-
-release-readiness:
-	@set -eu; \
-	STAMP="$$(date -u +%F)"; \
-	mkdir -p docs/plans; \
-	$(PYTHON) scripts/generate_benchmark_sample.py --out samples/sample.wav --duration 12 >/dev/null; \
-	set +e; \
-	PYTHON=$(PYTHON) $(MAKE) verify > "docs/plans/$$STAMP-make-verify.log" 2>&1; VERIFY_EXIT=$$?; \
-	PYTHON=$(PYTHON) $(MAKE) smoke-hosted > "docs/plans/$$STAMP-smoke-hosted.log" 2>&1; HOSTED_EXIT=$$?; \
-	PYTHON=$(PYTHON) $(MAKE) smoke-local > "docs/plans/$$STAMP-smoke-local.log" 2>&1; LOCAL_EXIT=$$?; \
-	PYTHON=$(PYTHON) $(MAKE) smoke-security > "docs/plans/$$STAMP-smoke-security.log" 2>&1; SECURITY_EXIT=$$?; \
-	PYTHON=$(PYTHON) $(MAKE) smoke-workflows > "docs/plans/$$STAMP-smoke-workflows.log" 2>&1; WORKFLOWS_EXIT=$$?; \
-	PYTHON=$(PYTHON) $(MAKE) smoke-perf-cost > "docs/plans/$$STAMP-smoke-perf-cost.log" 2>&1; PERF_COST_EXIT=$$?; \
-	if [ "$${CI:-}" = "true" ]; then REUSE_ARGS=""; else REUSE_ARGS="--reuse-existing"; fi; \
-	bash scripts/run_diarization_benchmarks.sh samples/sample.wav --stamp "$$STAMP" $$REUSE_ARGS > "docs/plans/$$STAMP-diarization-orchestrator.log" 2>&1; DIAR_EXIT=$$?; \
-	set -e; \
-	$(PYTHON) scripts/release_readiness_report.py --stamp "$$STAMP" --verify-exit "$$VERIFY_EXIT" --smoke-hosted-exit "$$HOSTED_EXIT" --smoke-local-exit "$$LOCAL_EXIT" --smoke-security-exit "$$SECURITY_EXIT" --smoke-workflows-exit "$$WORKFLOWS_EXIT" --smoke-perf-cost-exit "$$PERF_COST_EXIT" --diarization-exit "$$DIAR_EXIT"
 
 compose-up:
 	cd infra && docker compose up --build
