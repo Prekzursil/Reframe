@@ -1,0 +1,120 @@
+# Curated Python security rules (subset of p/python + p/r2c-security-audit).
+# opengrep/semgrep compatible. See README.md.
+rules:
+  - id: python-exec-use
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Use of exec() detected. Executing dynamically-built code is dangerous and
+      can lead to remote code execution. Avoid exec; use explicit dispatch.
+    metadata:
+      category: security
+      cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code"
+    patterns:
+      - pattern: exec(...)
+
+  - id: python-eval-use
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Use of eval() detected. eval on untrusted input enables code injection.
+      Use ast.literal_eval or an explicit parser instead.
+    metadata:
+      category: security
+      cwe: "CWE-95"
+    patterns:
+      - pattern: eval(...)
+
+  - id: python-subprocess-shell-true
+    languages: [python]
+    severity: ERROR
+    message: >-
+      subprocess called with shell=True. If any argument is attacker-influenced
+      this allows command injection. Pass an argument list and shell=False.
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.$F(..., shell=True, ...)
+          - pattern: subprocess.$F(..., shell=$X, ...)
+      - metavariable-pattern:
+          metavariable: $X
+          patterns:
+            - pattern: "True"
+
+  - id: python-os-system
+    languages: [python]
+    severity: ERROR
+    message: >-
+      os.system() invokes a shell and is prone to command injection. Use
+      subprocess with an argument list instead.
+    metadata:
+      category: security
+      cwe: "CWE-78"
+    patterns:
+      - pattern: os.system(...)
+
+  - id: python-yaml-unsafe-load
+    languages: [python]
+    severity: ERROR
+    message: >-
+      yaml.load without SafeLoader can construct arbitrary Python objects.
+      Use yaml.safe_load() or Loader=yaml.SafeLoader.
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+    patterns:
+      - pattern: yaml.load($X)
+
+  - id: python-pickle-loads
+    languages: [python]
+    severity: ERROR
+    message: >-
+      pickle deserialization of untrusted data enables arbitrary code execution.
+      Use a safe format (JSON) for untrusted input.
+    metadata:
+      category: security
+      cwe: "CWE-502"
+    patterns:
+      - pattern-either:
+          - pattern: pickle.loads(...)
+          - pattern: pickle.load(...)
+
+  - id: python-weak-hash-md5-sha1
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Weak hash algorithm (md5/sha1) used. For security contexts use sha256+.
+      If non-security (e.g. content hashing), pass usedforsecurity=False.
+    metadata:
+      category: security
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+    patterns:
+      - pattern-either:
+          - pattern: hashlib.md5($X)
+          - pattern: hashlib.sha1($X)
+
+  - id: python-requests-verify-false
+    languages: [python]
+    severity: ERROR
+    message: >-
+      TLS certificate verification disabled (verify=False). This permits
+      man-in-the-middle attacks. Keep verification enabled.
+    metadata:
+      category: security
+      cwe: "CWE-295: Improper Certificate Validation"
+    patterns:
+      - pattern: requests.$F(..., verify=False, ...)
+
+  - id: python-jwt-decode-verify-false
+    languages: [python]
+    severity: ERROR
+    message: >-
+      JWT decoded with signature verification disabled. Always verify signatures
+      on tokens you did not just mint.
+    metadata:
+      category: security
+      cwe: "CWE-347: Improper Verification of Cryptographic Signature"
+    patterns:
+      - pattern: jwt.decode(..., verify=False, ...)

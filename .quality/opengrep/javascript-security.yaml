@@ -1,0 +1,95 @@
+# Curated JS/TS security rules (subset of p/javascript + p/r2c-security-audit).
+# opengrep/semgrep compatible. See README.md.
+rules:
+  - id: js-eval-use
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Use of eval() detected. eval on untrusted input enables code injection.
+      Use a parser (e.g. JSON.parse) or explicit dispatch instead.
+    metadata:
+      category: security
+      cwe: "CWE-95"
+    patterns:
+      - pattern: eval(...)
+
+  - id: js-function-constructor
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      The Function constructor evaluates strings as code, equivalent to eval.
+      Avoid constructing functions from dynamic strings.
+    metadata:
+      category: security
+      cwe: "CWE-95"
+    patterns:
+      - pattern: new Function(...)
+
+  - id: js-dangerously-set-inner-html
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      dangerouslySetInnerHTML can introduce XSS if the HTML is not sanitized.
+      Sanitize with a vetted sanitizer or render as text.
+    metadata:
+      category: security
+      cwe: "CWE-79: Cross-site Scripting"
+    patterns:
+      - pattern: <$EL dangerouslySetInnerHTML={...} />
+
+  - id: js-document-write
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      document.write with dynamic content is an XSS sink. Build DOM nodes
+      explicitly or set textContent.
+    metadata:
+      category: security
+      cwe: "CWE-79"
+    patterns:
+      - pattern: document.write(...)
+
+  - id: js-inner-html-assignment
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Assigning to innerHTML with dynamic data is an XSS sink. Use textContent
+      or a sanitizer.
+    metadata:
+      category: security
+      cwe: "CWE-79"
+    patterns:
+      - pattern: $EL.innerHTML = $X
+      - pattern-not: $EL.innerHTML = "..."
+
+  - id: js-child-process-exec
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      child_process.exec runs a shell and is prone to command injection with
+      dynamic input. Use execFile/spawn with an argument array.
+    metadata:
+      category: security
+      cwe: "CWE-78"
+    patterns:
+      - pattern-either:
+          - pattern: child_process.exec($CMD, ...)
+          - pattern: cp.exec($CMD, ...)
+      - pattern-not: child_process.exec("...", ...)
+
+  - id: js-insecure-math-random-token
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Math.random() is not cryptographically secure. For tokens/IDs/secrets use
+      crypto.getRandomValues / crypto.randomUUID.
+    metadata:
+      category: security
+      cwe: "CWE-338: Use of Cryptographically Weak PRNG"
+    patterns:
+      - pattern: $X = Math.random()
+      - pattern-inside: |
+          function $F(...) { ... }
+      - metavariable-regex:
+          metavariable: $X
+          regex: "(?i).*(token|secret|key|nonce|salt|password).*"
