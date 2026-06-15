@@ -2960,6 +2960,7 @@ def _delete_asset_if_unreferenced(session: Session, asset_id: UUID) -> None:
 
 
 @dataclass(frozen=True)
+# pylint: disable-next=too-many-instance-attributes
 class _PresignedUploadInit:
     """Context required to initialize a presigned single-part upload."""
 

@@ -1183,7 +1183,9 @@ def create_org_invite(
 ) -> OrgInviteView:
     """Create a pending invite for the caller's organization."""
     manager = _require_org_manager(session, principal)
-    if not principal.org_id:
+    # _require_org_manager already raises when principal.org_id is missing; this guard is
+    # an unreachable defensive backstop.
+    if not principal.org_id:  # pragma: no cover - dead guard (manager check covers it)
         raise unauthorized(ERR_AUTH_REQUIRED)
     org = session.get(Organization, principal.org_id)
     if not org:
@@ -1261,7 +1263,8 @@ def create_org_invite(
 def list_org_invites(session: SessionDep, principal: PrincipalDep) -> list[OrgInviteView]:
     """List the caller's organization invites, expiring stale ones first."""
     _require_org_manager(session, principal)
-    if not principal.org_id:
+    # Unreachable defensive backstop: _require_org_manager already enforces org context.
+    if not principal.org_id:  # pragma: no cover - dead guard (manager check covers it)
         raise unauthorized(ERR_AUTH_REQUIRED)
     now = _now_utc()
     invites = session.exec(
@@ -1292,7 +1295,8 @@ def revoke_org_invite(
 ) -> OrgInviteView:
     """Revoke a pending invite for the caller's organization."""
     _require_org_manager(session, principal)
-    if not principal.org_id:
+    # Unreachable defensive backstop: _require_org_manager already enforces org context.
+    if not principal.org_id:  # pragma: no cover - dead guard (manager check covers it)
         raise unauthorized(ERR_AUTH_REQUIRED)
     invite = session.exec(
         select(OrgInvite).where(

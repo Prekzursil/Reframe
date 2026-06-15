@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Iterable, List, Sequence
 
@@ -347,7 +348,8 @@ def _build_speaker_segments(
             and segments[-1].speaker == speaker
             and start <= (segments[-1].end + merge_gap_seconds)
         ):
-            segments[-1].end = max(segments[-1].end, end)
+            # SpeakerSegment is frozen, so extend the merged span via replace().
+            segments[-1] = replace(segments[-1], end=max(segments[-1].end, end))
             continue
         segments.append(SpeakerSegment(start=start, end=end, speaker=speaker))
 

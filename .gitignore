@@ -37,8 +37,15 @@ _sonar-issues.json
 _sonar-issues-raw.json
 
 # assistant work files / measurement artifacts (never commit)
-_pylint.json
-_eslint.json
-_sonar-r2.json
-_sonar-r2-raw.json
+# All root-level scratch files/dirs are prefixed with a leading underscore.
+/_*
 _ccmeasure/
+
+# Local media scratch (never commit)
+/media/
+
+# qlty runtime artifacts (never commit; these are symlinks into the user cache)
+.qlty/logs
+.qlty/out
+.qlty/results
+.qlty/plugin_cachedir

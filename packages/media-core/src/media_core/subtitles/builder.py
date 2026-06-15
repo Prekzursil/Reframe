@@ -71,7 +71,10 @@ def group_words(words: Sequence[Word], config: GroupingConfig) -> List[SubtitleL
 
     def flush():
         nonlocal current_words, current_start, last_end
-        if current_words:
+        # Defensive guard: every flush() call site is preceded by an append, and the
+        # empty-input case returns early above, so current_words is never empty here.
+        if current_words:  # pragma: no branch
+
             lines.append(SubtitleLine(start=current_start, end=last_end, words=current_words.copy()))
         current_words = []
 

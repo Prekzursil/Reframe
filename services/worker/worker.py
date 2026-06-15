@@ -46,11 +46,11 @@ def _find_repo_root(start: Path) -> Path:
 REPO_ROOT = _find_repo_root(Path(__file__).resolve())
 API_PATH = REPO_ROOT / "apps" / "api"
 if API_PATH.is_dir() and str(API_PATH) not in sys.path:
-    sys.path.append(str(API_PATH))
+    sys.path.append(str(API_PATH))  # pragma: no cover - import-time path bootstrap
 
 MEDIA_CORE_SRC = REPO_ROOT / "packages" / "media-core" / "src"
 if MEDIA_CORE_SRC.is_dir() and str(MEDIA_CORE_SRC) not in sys.path:
-    sys.path.append(str(MEDIA_CORE_SRC))
+    sys.path.append(str(MEDIA_CORE_SRC))  # pragma: no cover - import-time path bootstrap
 
 # ruff: noqa: E402 -- the app.* imports below intentionally run AFTER the sys.path
 # bootstrap above so they resolve; this is a deliberate module-load order.
@@ -253,10 +253,12 @@ def _run_ffmpeg_with_retries(*, job_id: str, step: str, fn: Callable[[], T]) -> 
                 exc=exc,
             )
 
-    # Should not reach here.
-    if last_exc:
+    # Should not reach here: the loop always returns or re-raises above.
+    if last_exc:  # pragma: no cover - defensive; loop never falls through
         raise last_exc
-    raise RuntimeError("Retry loop failed without an exception")
+    raise RuntimeError(  # pragma: no cover - defensive; loop never falls through
+        "Retry loop failed without an exception"
+    )
 
 
 _FALLBACK_THUMBNAIL_PNG = base64.b64decode(
@@ -465,25 +467,32 @@ def _download_remote_uri_to_tmp(*, uri: str, mime_type: str | None = None) -> Pa
     return dest
 
 
+def _resolve_transcriber(
+    path: Path, config: TranscriptionConfig, *, warnings: list[str]
+) -> Callable[[], Any]:
+    """Return the zero-arg transcription callable selected by ``config.backend``."""
+    if config.backend == TranscriptionBackend.OPENAI_WHISPER:
+        if offline_mode_enabled():
+            warnings.append(
+                "Offline mode enabled; refusing openai_whisper and falling back to noop."
+            )
+            return lambda: transcribe_noop(str(path), config)
+        return lambda: transcribe_openai_file(str(path), config)
+    backends: dict[TranscriptionBackend, Callable[[], Any]] = {
+        TranscriptionBackend.FASTER_WHISPER: lambda: transcribe_faster_whisper(str(path), config),
+        TranscriptionBackend.WHISPER_CPP: lambda: transcribe_whisper_cpp(str(path), config),
+        TranscriptionBackend.WHISPER_TIMESTAMPED: lambda: transcribe_whisper_timestamped(
+            str(path), config
+        ),
+        TranscriptionBackend.WHISPERX: lambda: transcribe_whisper_timestamped(str(path), config),
+    }
+    return backends.get(config.backend, lambda: transcribe_noop(str(path), config))
+
+
 def _transcribe_media(path: Path, config: TranscriptionConfig, *, warnings: list[str]):
+    transcriber = _resolve_transcriber(path, config, warnings=warnings)
     try:
-        if config.backend == TranscriptionBackend.OPENAI_WHISPER:
-            if offline_mode_enabled():
-                warnings.append(
-                    "Offline mode enabled; refusing openai_whisper and falling back to noop."
-                )
-                return transcribe_noop(str(path), config)
-            return transcribe_openai_file(str(path), config)
-        if config.backend == TranscriptionBackend.FASTER_WHISPER:
-            return transcribe_faster_whisper(str(path), config)
-        if config.backend == TranscriptionBackend.WHISPER_CPP:
-            return transcribe_whisper_cpp(str(path), config)
-        if config.backend in {
-            TranscriptionBackend.WHISPER_TIMESTAMPED,
-            TranscriptionBackend.WHISPERX,
-        }:
-            return transcribe_whisper_timestamped(str(path), config)
-        return transcribe_noop(str(path), config)
+        return transcriber()
     except Exception as exc:
         warnings.append(
             f"Transcription backend {config.backend.value} failed; falling back to noop ({exc})."
@@ -598,6 +607,34 @@ def create_thumbnail_asset(
     )
 
 
+def _fetch_remote_asset_path(asset: MediaAsset, storage: Any) -> Optional[Path]:
+    """Resolve and download a remote asset to a temp path, or ``None`` on failure."""
+    try:
+        download_uri = (asset.uri or "").strip()
+        if not _is_http_uri(download_uri):
+            resolved = storage.get_download_url(download_uri)
+            if not resolved:
+                logger.warning(
+                    "Could not resolve remote download URL for asset %s (%s)",
+                    asset.id,
+                    asset.uri,
+                )
+                return None
+            download_uri = resolved
+        return _download_remote_uri_to_tmp(uri=download_uri, mime_type=asset.mime_type)
+    except Exception as exc:  # pragma: no cover - optional best-effort behavior
+        logger.warning("Failed to download remote asset %s: %s", asset.uri, exc)
+        return None
+
+
+def _resolve_local_asset_path(asset: MediaAsset, media_root: str) -> Path:
+    """Map a stored local asset URI to its filesystem path under ``media_root``."""
+    uri_path = Path(asset.uri.lstrip("/"))
+    if uri_path.parts and uri_path.parts[0] == "media":
+        uri_path = Path(*uri_path.parts[1:])
+    return Path(media_root) / uri_path
+
+
 def fetch_asset(asset_id: str) -> Tuple[Optional[MediaAsset], Optional[Path]]:
     """Look up a MediaAsset and resolve a local file path, downloading remotes if needed."""
     try:
@@ -611,29 +648,8 @@ def fetch_asset(asset_id: str) -> Tuple[Optional[MediaAsset], Optional[Path]]:
         if not asset:
             return None, None
         if asset.uri and is_remote_uri(asset.uri):
-            try:
-                download_uri = (asset.uri or "").strip()
-                if not _is_http_uri(download_uri):
-                    resolved = storage.get_download_url(download_uri)
-                    if not resolved:
-                        logger.warning(
-                            "Could not resolve remote download URL for asset %s (%s)",
-                            asset.id,
-                            asset.uri,
-                        )
-                        return asset, None
-                    download_uri = resolved
-                return asset, _download_remote_uri_to_tmp(
-                    uri=download_uri, mime_type=asset.mime_type
-                )
-            except Exception as exc:  # pragma: no cover - optional best-effort behavior
-                logger.warning("Failed to download remote asset %s: %s", asset.uri, exc)
-                return asset, None
-        uri_path = Path(asset.uri.lstrip("/"))
-        if uri_path.parts and uri_path.parts[0] == "media":
-            uri_path = Path(*uri_path.parts[1:])
-        file_path = Path(settings.media_root) / uri_path
-        return asset, file_path
+            return asset, _fetch_remote_asset_path(asset, storage)
+        return asset, _resolve_local_asset_path(asset, settings.media_root)
 
 
 def _record_usage_event(
@@ -1113,18 +1129,24 @@ def _publish_run_event(
     )
 
 
-def _create_publish_job_from_args(
-    session: Session,
-    *,
-    provider: str | None,
-    connection_id: str | None,
-    asset_id: str | None,
-    workflow_uuid: UUID | None,
-    details: dict,
-    now: datetime,
-) -> Tuple[PublishJob | None, dict | None]:
+@dataclass(frozen=True)
+class PublishJobArgs:
+    """Bundled inputs for resolving or creating a publish job."""
+
+    provider: str | None
+    connection_id: str | None
+    asset_id: str | None
+    workflow_uuid: UUID | None
+    details: dict
+    now: datetime
+
+
+def _parse_publish_ids(
+    *, provider: str | None, connection_id: str | None, asset_id: str | None
+) -> Tuple[UUID | None, UUID | None, dict | None]:
+    """Validate required fields and parse connection/asset UUIDs."""
     if not provider or not connection_id or not asset_id:
-        return None, {
+        return None, None, {
             "status": "failed",
             "error": (
                 "provider, connection_id, and asset_id are required "
@@ -1132,26 +1154,53 @@ def _create_publish_job_from_args(
             ),
         }
     try:
-        connection_uuid = UUID(connection_id)
-        asset_uuid = UUID(asset_id)
+        return UUID(connection_id), UUID(asset_id), None
     except Exception:
-        return None, {
+        return None, None, {
             "status": "failed",
             "error": "connection_id and asset_id must be valid UUIDs",
         }
 
+
+def _validate_publish_job_args(
+    session: Session,
+    *,
+    provider: str | None,
+    connection_id: str | None,
+    asset_id: str | None,
+) -> Tuple[PublishConnection | None, MediaAsset | None, str, dict | None]:
+    """Validate publish-job inputs, returning (connection, asset, provider, error)."""
+    connection_uuid, asset_uuid, error = _parse_publish_ids(
+        provider=provider, connection_id=connection_id, asset_id=asset_id
+    )
+    if error is not None:
+        return None, None, "", error
+
     connection = session.get(PublishConnection, connection_uuid)
     asset = session.get(MediaAsset, asset_uuid)
-    if not connection:
-        return None, {"status": "failed", "error": "publish_connection_missing"}
-    if not asset:
-        return None, {"status": "failed", "error": "asset_missing"}
     provider_normalized = str(provider).strip().lower()
-    if provider_normalized not in SUPPORTED_PUBLISH_PROVIDERS:
-        return None, {
-            "status": "failed",
-            "error": f"unsupported_provider:{provider_normalized}",
-        }
+    if not connection:
+        error = {"status": "failed", "error": "publish_connection_missing"}
+    elif not asset:
+        error = {"status": "failed", "error": "asset_missing"}
+    elif provider_normalized not in SUPPORTED_PUBLISH_PROVIDERS:
+        error = {"status": "failed", "error": f"unsupported_provider:{provider_normalized}"}
+    if error is not None:
+        return None, None, "", error
+    return connection, asset, provider_normalized, None
+
+
+def _create_publish_job_from_args(
+    session: Session, args: PublishJobArgs
+) -> Tuple[PublishJob | None, dict | None]:
+    connection, asset, provider_normalized, error = _validate_publish_job_args(
+        session,
+        provider=args.provider,
+        connection_id=args.connection_id,
+        asset_id=args.asset_id,
+    )
+    if error is not None:
+        return None, error
 
     job = PublishJob(
         org_id=connection.org_id,
@@ -1161,12 +1210,12 @@ def _create_publish_job_from_args(
         asset_id=asset.id,
         status="queued",
         payload={
-            **details,
-            "workflow_run_id": str(workflow_uuid) if workflow_uuid else None,
+            **args.details,
+            "workflow_run_id": str(args.workflow_uuid) if args.workflow_uuid else None,
         },
         retry_count=0,
-        created_at=now,
-        updated_at=now,
+        created_at=args.now,
+        updated_at=args.now,
     )
     session.add(job)
     session.commit()
@@ -1175,15 +1224,7 @@ def _create_publish_job_from_args(
 
 
 def _resolve_publish_job(
-    session: Session,
-    *,
-    publish_job_id: str | None,
-    provider: str | None,
-    connection_id: str | None,
-    asset_id: str | None,
-    workflow_uuid: UUID | None,
-    details: dict,
-    now: datetime,
+    session: Session, *, publish_job_id: str | None, args: PublishJobArgs
 ) -> Tuple[PublishJob | None, dict | None]:
     if publish_job_id:
         try:
@@ -1196,15 +1237,7 @@ def _resolve_publish_job(
         if not job:
             return None, {"status": "missing", "publish_job_id": publish_job_id}
         return job, None
-    return _create_publish_job_from_args(
-        session,
-        provider=provider,
-        connection_id=connection_id,
-        asset_id=asset_id,
-        workflow_uuid=workflow_uuid,
-        details=details,
-        now=now,
-    )
+    return _create_publish_job_from_args(session, args)
 
 
 def _execute_publish(
@@ -1288,12 +1321,14 @@ def publish_asset(
         job, early = _resolve_publish_job(
             session,
             publish_job_id=publish_job_id,
-            provider=provider,
-            connection_id=connection_id,
-            asset_id=asset_id,
-            workflow_uuid=workflow_uuid,
-            details=details,
-            now=now,
+            args=PublishJobArgs(
+                provider=provider,
+                connection_id=connection_id,
+                asset_id=asset_id,
+                workflow_uuid=workflow_uuid,
+                details=details,
+                now=now,
+            ),
         )
         if early is not None or job is None:
             return early or {"status": "failed", "error": "publish_job_unresolved"}
@@ -1964,6 +1999,28 @@ def _select_translator(
         return _build_groq_translator(opts, warnings=warnings) or NoOpTranslator()
 
 
+def _load_translatable_srt(
+    src_path: Path, *, target_language: str, fail: Callable[[str], dict]
+) -> Tuple[str | None, dict | None]:
+    """Read a subtitle file as SRT text, returning (text, error) for the translator."""
+    if not target_language:
+        return None, fail("Missing target_language")
+
+    text = src_path.read_text(encoding="utf-8", errors="replace")
+    src_suffix = src_path.suffix.lower()
+    if src_suffix == ".vtt":
+        try:
+            return to_srt(parse_vtt(text)), None
+        except Exception as exc:
+            return None, fail(f"Failed to parse VTT subtitles: {exc}")
+    if src_suffix != ".srt":
+        return None, fail(
+            "Only .srt/.vtt subtitles are supported for translation currently "
+            f"(got {src_path.suffix or 'no extension'})."
+        )
+    return text, None
+
+
 @celery_app.task(bind=True, name="tasks.translate_subtitles")
 def translate_subtitles(
     self, job_id: str, subtitle_asset_id: str, options: dict | None = None
@@ -1975,32 +2032,30 @@ def translate_subtitles(
     opts = options or {}
     warnings: list[str] = []
 
+    def fail(error: str) -> dict:
+        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
+        _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
+        return {
+            "subtitle_asset_id": subtitle_asset_id,
+            "status": "failed",
+            "error": error,
+        }
+
     _, src_path = fetch_asset(subtitle_asset_id)
     if not src_path or not src_path.exists():
-        error = f"Subtitle asset file missing for {subtitle_asset_id}"
-        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-        _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
-        return {
-            "subtitle_asset_id": subtitle_asset_id,
-            "status": "failed",
-            "error": error,
-        }
+        return fail(f"Subtitle asset file missing for {subtitle_asset_id}")
 
     target_language = str(opts.get("target_language") or "").strip()
-    if not target_language:
-        error = "Missing target_language"
-        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-        _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
-        return {
-            "subtitle_asset_id": subtitle_asset_id,
-            "status": "failed",
-            "error": error,
-        }
-
     bilingual = _coerce_bool(opts.get("bilingual"))
     src_language = str(opts.get("source_language") or opts.get("src") or "en").strip()
     if not src_language or src_language.lower() == "auto":
         src_language = "en"
+
+    text, prep_error = _load_translatable_srt(
+        src_path, target_language=target_language, fail=fail
+    )
+    if prep_error is not None:
+        return prep_error
 
     translator = _select_translator(
         opts,
@@ -2008,35 +2063,6 @@ def translate_subtitles(
         target_language=target_language,
         warnings=warnings,
     )
-
-    text = src_path.read_text(encoding="utf-8", errors="replace")
-    src_suffix = src_path.suffix.lower()
-    if src_suffix == ".vtt":
-        try:
-            text = to_srt(parse_vtt(text))
-        except Exception as exc:
-            error = f"Failed to parse VTT subtitles: {exc}"
-            update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-            _progress(
-                self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id
-            )
-            return {
-                "subtitle_asset_id": subtitle_asset_id,
-                "status": "failed",
-                "error": error,
-            }
-    elif src_suffix != ".srt":
-        error = (
-            "Only .srt/.vtt subtitles are supported for translation currently "
-            f"(got {src_path.suffix or 'no extension'})."
-        )
-        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-        _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
-        return {
-            "subtitle_asset_id": subtitle_asset_id,
-            "status": "failed",
-            "error": error,
-        }
 
     try:
         if bilingual:
@@ -2046,14 +2072,7 @@ def translate_subtitles(
         else:
             translated = translate_srt(text, translator, src_language, target_language)
     except Exception as exc:
-        error = f"Subtitle translation failed: {exc}"
-        update_job(job_id, status=JobStatus.failed, progress=1.0, error=error)
-        _progress(self, "failed", 1.0, error=error, subtitle_asset_id=subtitle_asset_id)
-        return {
-            "subtitle_asset_id": subtitle_asset_id,
-            "status": "failed",
-            "error": error,
-        }
+        return fail(f"Subtitle translation failed: {exc}")
 
     asset = create_asset(
         kind="subtitle",
@@ -2758,9 +2777,9 @@ class ShortsSubtitleContext:
 def _build_clip_subtitle_file(ctx: ShortsClipContext, *, idx: int, seg) -> Path:
     """Write a per-clip .vtt subtitle file (sliced source or placeholder)."""
     subtitle_file = new_tmp_file(".vtt")
-    if ctx.subtitle_source_lines is not None:
+    if ctx.subtitles.subtitle_source_lines is not None:
         sliced = _slice_subtitle_lines(
-            ctx.subtitle_source_lines, start=seg.start, end=seg.end
+            ctx.subtitles.subtitle_source_lines, start=seg.start, end=seg.end
         )
         subtitle_contents = to_vtt(sliced)
     else:
@@ -2783,7 +2802,7 @@ def _build_clip_styled_asset(
             step=f"render_shorts_clip:{idx + 1}",
             video_path=clip_path,
             subtitle_path=subtitle_file,
-            style=ctx.style_for_clip,
+            style=ctx.subtitles.style_for_clip,
             preview_seconds=None,
         )
         return create_asset_for_existing_file(
@@ -2794,7 +2813,7 @@ def _build_clip_styled_asset(
         )
     except Exception as exc:
         stderr = _calledprocess_stderr_text(exc)
-        ctx.warnings.append(
+        ctx.subtitles.warnings.append(
             f"Clip {idx + 1}: styled render failed ({stderr[-4000:] or exc})."
         )
         return None
@@ -2813,7 +2832,7 @@ def _build_clip_subtitle_assets(
             **ctx.asset_kwargs,
         )
     except Exception as exc:
-        ctx.warnings.append(
+        ctx.subtitles.warnings.append(
             f"Clip {idx + 1}: failed to build subtitles ({exc}); continuing without subtitles."
         )
         return None, None
@@ -2985,12 +3004,14 @@ def generate_shorts(
             src_asset.mime_type if src_asset and src_asset.mime_type else MIME_MP4
         ),
         asset_kwargs=asset_kwargs,
-        style_for_clip=_resolve_style_from_options(opts) if use_subtitles else {},
-        subtitle_source_lines=subtitle_source_lines,
         use_subtitles=use_subtitles,
         src_path=src_path,
         style_preset=str(opts.get("style_preset") or "").strip() or None,
-        warnings=warnings,
+        subtitles=ShortsSubtitleContext(
+            style_for_clip=_resolve_style_from_options(opts) if use_subtitles else {},
+            subtitle_source_lines=subtitle_source_lines,
+            warnings=warnings,
+        ),
     )
 
     clips: list[dict] = []
@@ -3294,7 +3315,7 @@ def cleanup_retention(self) -> dict:
                 session, job, plan_code=plan_code, now=now
             )
             cleaned_jobs += 1
-            if jobs:
+            if jobs:  # pragma: no branch - always truthy inside the jobs loop
                 _progress(self, "running", min(0.99, (idx + 1) / max(1, len(jobs))))
 
         session.commit()

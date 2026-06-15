@@ -17,7 +17,7 @@ def test_run_ffmpeg_with_retries_updates_job_payload(monkeypatch):
 
     def fake_update(_job_id: str, **kwargs):
         payload = kwargs.get("payload") or {}
-        if payload:
+        if payload:  # pragma: no branch - retry helper always sends a payload
             updates.append(payload)
 
     monkeypatch.setattr(worker, "update_job", fake_update)

@@ -34,7 +34,7 @@ def parse_srt(srt_text: str) -> List[SubtitleLine]:
         # Skip index line if present
         if re.match(r"^\d+$", parts[0].strip()):
             parts = parts[1:]
-        if not parts:
+        if not parts:  # pragma: no cover - unreachable: len(parts) >= 2 above, [1:] leaves >= 1
             continue
         timing = parts[0]
         content = " ".join(p.strip() for p in parts[1:])

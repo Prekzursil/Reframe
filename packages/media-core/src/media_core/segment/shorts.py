@@ -63,7 +63,7 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     if not a or not b:
         return 0.0
     union = a | b
-    if not union:
+    if not union:  # pragma: no cover - unreachable: a and b are both non-empty here
         return 0.0
     return len(a & b) / len(union)
 

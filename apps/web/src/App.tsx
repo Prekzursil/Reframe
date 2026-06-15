@@ -139,6 +139,25 @@ type RawClipPayload = {
   thumbnail_uri?: unknown;
 };
 
+function toSafeMediaHref(uri: string | null | undefined): string | null {
+  if (!uri) return null;
+  return toSafeMediaUrl(apiClient.mediaUrl(uri));
+}
+
+function triggerSafeDownload(safeUrl: string | null) {
+  if (!safeUrl) return;
+  let parsed: URL;
+  try {
+    parsed = new URL(safeUrl, globalThis.location.origin);
+  } catch {
+    return;
+  }
+  if (parsed.origin !== globalThis.location.origin) {
+    return;
+  }
+  globalThis.location.assign(parsed.toString());
+}
+
 async function copyToClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
@@ -994,7 +1013,7 @@ function SubtitleEditorCard({
               <a className="btn btn-secondary" href={savedOpenUrl} target="_blank" rel="noreferrer">
                 Open
               </a>
-              <Button type="button" variant="ghost" onClick={() => navigator.clipboard.writeText(saved.id).catch(() => {})}>
+              <Button type="button" variant="ghost" onClick={() => navigator.clipboard.writeText(saved.id).catch(() => { /* noop: clipboard rejection ignored */ })}>
                 Copy ID
               </Button>
             </div>
@@ -1710,23 +1729,6 @@ function StyleEditor({
     }
   });
 
-  const toSafeMediaHref = (uri: string | null | undefined): string | null => {
-    if (!uri) return null;
-    return toSafeMediaUrl(apiClient.mediaUrl(uri));
-  };
-  const triggerSafeDownload = (safeUrl: string | null) => {
-    if (!safeUrl) return;
-    let parsed: URL;
-    try {
-      parsed = new URL(safeUrl, globalThis.location.origin);
-    } catch {
-      return;
-    }
-    if (parsed.origin !== globalThis.location.origin) {
-      return;
-    }
-    globalThis.location.assign(parsed.toString());
-  };
   const outputAssetUrl = toSafeMediaHref(outputAsset?.uri);
   const subtitlePreviewUrl = toSafeMediaUrl(subtitlePreview);
   const safeUploadedPreview = toSafeMediaUrl(uploadedPreview);
@@ -2050,7 +2052,7 @@ function StyleEditor({
     }, [jobsPageJobs, jobsDateFrom, jobsDateTo, jobsStatusFilter, jobsTypeFilter]);
 
   const pollJob = (job: Job | null, onUpdate: (j: Job) => void, onAsset?: (a: MediaAsset | null) => void) => {
-    if (!job || ["completed", "failed", "cancelled"].includes(job.status)) return () => {};
+    if (!job || ["completed", "failed", "cancelled"].includes(job.status)) return () => { /* noop: nothing to cancel */ };
     let cancelled = false;
     let timer: number | null = null;
     let delayMs = 2000;
@@ -4217,7 +4219,7 @@ function StyleEditor({
                                           onClick={() => {
                                             if (!jobVideoRef.current) return;
                                             jobVideoRef.current.currentTime = cue.start;
-                                            void jobVideoRef.current.play().catch(() => {});
+                                            void jobVideoRef.current.play().catch(() => { /* noop: autoplay rejection ignored */ });
                                           }}
                                         >
                                           <td className="muted mono">
