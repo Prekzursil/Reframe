@@ -76,14 +76,26 @@ beforeEach(() => {
     to_date: null,
   });
 
-  apiClientMock.listProjects.mockResolvedValue([{ id: "proj-1", name: "Existing", description: null }]);
+  apiClientMock.listProjects.mockResolvedValue([
+    { id: "proj-1", name: "Existing", description: null },
+  ]);
   apiClientMock.listProjectJobs.mockResolvedValue([]);
   apiClientMock.listProjectAssets.mockResolvedValue([
     { id: "asset-1", kind: "subtitle", uri: "/media/tmp/captions.srt", mime_type: "text/plain" },
   ]);
-  apiClientMock.createProject.mockResolvedValue({ id: "proj-2", name: "Campaign B", description: "desc" });
+  apiClientMock.createProject.mockResolvedValue({
+    id: "proj-2",
+    name: "Campaign B",
+    description: "desc",
+  });
   apiClientMock.createProjectShareLinks.mockResolvedValue({
-    links: [{ asset_id: "asset-1", url: "http://localhost:8000/api/v1/share/assets/asset-1?token=t", expires_at: "2030-01-01T00:00:00Z" }],
+    links: [
+      {
+        asset_id: "asset-1",
+        url: "http://localhost:8000/api/v1/share/assets/asset-1?token=t",
+        expires_at: "2030-01-01T00:00:00Z",
+      },
+    ],
   });
 });
 
@@ -98,7 +110,10 @@ describe("projects page", () => {
     await user.type(screen.getByLabelText("Description"), "desc");
     await user.click(screen.getByRole("button", { name: "Create project" }));
 
-    expect(apiClientMock.createProject).toHaveBeenCalledWith({ name: "Campaign B", description: "desc" });
+    expect(apiClientMock.createProject).toHaveBeenCalledWith({
+      name: "Campaign B",
+      description: "desc",
+    });
 
     await user.selectOptions(screen.getByLabelText("Share source asset"), "asset-1");
     await user.click(screen.getByRole("button", { name: "Generate share link" }));

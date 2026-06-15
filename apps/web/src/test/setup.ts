@@ -16,4 +16,3 @@ if (!("clipboard" in navigator)) {
     configurable: true,
   });
 }
-

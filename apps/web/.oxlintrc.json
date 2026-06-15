@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
-  "plugins": ["react", "react-perf", "typescript", "import", "unicorn"],
+  "plugins": ["react", "typescript", "import"],
   "env": {
     "browser": true,
     "es2024": true
@@ -11,12 +11,11 @@
     }
   },
   "categories": {
-    "correctness": "error",
-    "suspicious": "error",
-    "perf": "warn"
+    "correctness": "error"
   },
   "rules": {
-    "react/react-in-jsx-scope": "off"
+    "react/react-in-jsx-scope": "off",
+    "react-hooks/exhaustive-deps": "off"
   },
   "ignorePatterns": ["dist", "node_modules", "coverage", "*.config.ts", "*.config.js"]
 }

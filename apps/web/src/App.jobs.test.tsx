@@ -82,9 +82,17 @@ describe("jobs page", () => {
     ];
 
     apiClientMock.listJobs.mockResolvedValue(jobs);
-    apiClientMock.getJob.mockImplementation(async (jobId: string) => jobs.find((j) => j.id === jobId));
+    apiClientMock.getJob.mockImplementation(async (jobId: string) =>
+      jobs.find((j) => j.id === jobId),
+    );
     apiClientMock.getAsset.mockImplementation(async (assetId: string) => {
-      if (assetId === "asset-out-1") return { id: "asset-out-1", kind: "subtitle", uri: "/media/tmp/out.srt", mime_type: "text/srt" };
+      if (assetId === "asset-out-1")
+        return {
+          id: "asset-out-1",
+          kind: "subtitle",
+          uri: "/media/tmp/out.srt",
+          mime_type: "text/srt",
+        };
       return { id: assetId, kind: "video", uri: "/media/tmp/in.mp4", mime_type: "video/mp4" };
     });
 
@@ -103,7 +111,9 @@ describe("jobs page", () => {
     expect(jobRow).toBeTruthy();
     await user.click(within(jobRow!).getByRole("button", { name: "View" }));
 
-    const jobDetailCard = screen.getByRole("heading", { name: "Job detail" }).closest(".card") as HTMLElement | null;
+    const jobDetailCard = screen
+      .getByRole("heading", { name: "Job detail" })
+      .closest(".card") as HTMLElement | null;
     expect(jobDetailCard).toBeTruthy();
 
     const download = await within(jobDetailCard!).findByRole("link", { name: "Download" });

@@ -17,13 +17,13 @@ describe("exportShortsTimelineCsv", () => {
     const out = exportShortsTimelineCsv([
       {
         id: "clip,1",
-        uri: "https://example.com/a\"b\".mp4",
+        uri: 'https://example.com/a"b".mp4',
         subtitle_uri: "line1\nline2",
       },
     ]);
-    expect(out).toContain("\"clip,1\"");
-    expect(out).toContain("\"https://example.com/a\"\"b\"\".mp4\"");
-    expect(out).toContain("\"line1\nline2\"");
+    expect(out).toContain('"clip,1"');
+    expect(out).toContain('"https://example.com/a""b"".mp4"');
+    expect(out).toContain('"line1\nline2"');
   });
 
   it("stringifies missing numeric fields as blanks", () => {
@@ -39,7 +39,7 @@ describe("exportShortsTimelineEdl", () => {
         { id: "clip-1", start: 4, end: 8, uri: "/media/a.mp4" },
         { id: "clip-2", start: 12, end: 14, uri: "/media/b.mp4" },
       ],
-      { fps: 30, title: "Test" }
+      { fps: 30, title: "Test" },
     );
     expect(out).toContain("TITLE: Test");
     expect(out).toContain("001");
@@ -55,7 +55,7 @@ describe("exportShortsTimelineEdl", () => {
         { id: "clip-1", start: 0, end: 2, uri: "/media/a.mp4" },
         { id: "clip-2", start: 2, end: 4, uri: "/media/b.mp4" },
       ],
-      { fps: 30, title: "Test", includeAudio: true, perClipReel: true }
+      { fps: 30, title: "Test", includeAudio: true, perClipReel: true },
     );
     expect(out).toContain("CLIP001");
     expect(out).toContain("CLIP002");
@@ -64,10 +64,8 @@ describe("exportShortsTimelineEdl", () => {
 
   it("normalizes invalid reel names and handles clips without uri", () => {
     const out = exportShortsTimelineEdl(
-      [
-        { id: "clip-1", reel_name: "!!!", start: undefined, end: undefined, uri: "" },
-      ],
-      { perClipReel: true }
+      [{ id: "clip-1", reel_name: "!!!", start: undefined, end: undefined, uri: "" }],
+      { perClipReel: true },
     );
     expect(out).toContain("CLIP001");
     expect(out).toContain("00:00:00:00 00:00:00:00");

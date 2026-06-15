@@ -98,7 +98,9 @@ beforeEach(() => {
     org_name: "Team Org",
     slug: "team-org",
     role: "owner",
-    members: [{ user_id: "user-owner", email: "owner@team.test", display_name: "Owner", role: "owner" }],
+    members: [
+      { user_id: "user-owner", email: "owner@team.test", display_name: "Owner", role: "owner" },
+    ],
   });
   apiClientMock.listOrgInvites.mockResolvedValue([]);
   apiClientMock.createOrgInvite.mockResolvedValue({
@@ -110,7 +112,17 @@ beforeEach(() => {
     expires_at: "2030-01-01T00:00:00Z",
   });
 
-  apiClientMock.listBillingPlans.mockResolvedValue([{ code: "pro", name: "Pro", max_concurrent_jobs: 3, monthly_job_minutes: 1200, monthly_storage_gb: 50, seat_limit: 5, overage_per_minute_cents: 2 }]);
+  apiClientMock.listBillingPlans.mockResolvedValue([
+    {
+      code: "pro",
+      name: "Pro",
+      max_concurrent_jobs: 3,
+      monthly_job_minutes: 1200,
+      monthly_storage_gb: 50,
+      seat_limit: 5,
+      overage_per_minute_cents: 2,
+    },
+  ]);
   apiClientMock.getBillingSubscription.mockResolvedValue({
     org_id: "org-1",
     plan_code: "pro",

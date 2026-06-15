@@ -1,7 +1,8 @@
 type SubtitleFormat = "srt" | "vtt";
 
 const SRT_TIMING_RE = /^(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})(.*)$/;
-const VTT_TIMING_RE = /^((?:\d{2}:)?\d{2}:\d{2}\.\d{3})\s*-->\s*((?:\d{2}:)?\d{2}:\d{2}\.\d{3})(.*)$/;
+const VTT_TIMING_RE =
+  /^((?:\d{2}:)?\d{2}:\d{2}\.\d{3})\s*-->\s*((?:\d{2}:)?\d{2}:\d{2}\.\d{3})(.*)$/;
 
 function clampTime(seconds: number): number {
   if (!Number.isFinite(seconds)) return 0;
@@ -87,7 +88,9 @@ export function shiftSubtitleTimings(text: string, offsetSeconds: number): strin
     if (srtMatch) {
       const start = clampTime(parseSrtTimestamp(srtMatch[1]!) + offsetSeconds);
       const end = clampTime(parseSrtTimestamp(srtMatch[2]!) + offsetSeconds);
-      out.push(`${formatSrtTimestamp(start)} --> ${formatSrtTimestamp(Math.max(end, start))}${srtMatch[3] ?? ""}`);
+      out.push(
+        `${formatSrtTimestamp(start)} --> ${formatSrtTimestamp(Math.max(end, start))}${srtMatch[3] ?? ""}`,
+      );
       continue;
     }
 
@@ -98,7 +101,9 @@ export function shiftSubtitleTimings(text: string, offsetSeconds: number): strin
       const includeHours = startParsed.includeHours || endParsed.includeHours;
       const start = clampTime(startParsed.seconds + offsetSeconds);
       const end = clampTime(endParsed.seconds + offsetSeconds);
-      out.push(`${formatVttTimestamp(start, includeHours)} --> ${formatVttTimestamp(Math.max(end, start), includeHours)}${vttMatch[3] ?? ""}`);
+      out.push(
+        `${formatVttTimestamp(start, includeHours)} --> ${formatVttTimestamp(Math.max(end, start), includeHours)}${vttMatch[3] ?? ""}`,
+      );
       continue;
     }
 

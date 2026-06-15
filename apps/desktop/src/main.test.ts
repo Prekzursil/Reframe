@@ -291,7 +291,9 @@ describe("desktop main app", () => {
     expect(document.getElementById("compose-path")?.textContent).toBe("not found");
     expect(document.getElementById("docker-version")?.textContent).toBe("not available");
     expect(document.getElementById("offline-mode")?.textContent).toBe("unknown");
-    expect(document.getElementById("system-status")?.textContent).toContain("Diagnostics unavailable");
+    expect(document.getElementById("system-status")?.textContent).toContain(
+      "Diagnostics unavailable",
+    );
   });
 
   it("handles updater paths: no-update, cancel, install, and failure", async () => {
@@ -367,6 +369,8 @@ describe("desktop main app", () => {
   });
 
   it("throws for missing required DOM elements", () => {
-    expect(() => appModule.__test.byId("does-not-exist")).toThrow("Missing element #does-not-exist");
+    expect(() => appModule.__test.byId("does-not-exist")).toThrow(
+      "Missing element #does-not-exist",
+    );
   });
 });

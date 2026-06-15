@@ -29,7 +29,16 @@ function secondsToTimecode(seconds: number, fps: number): string {
 }
 
 export function exportShortsTimelineCsv(clips: ShortsClip[]): string {
-  const header = ["clip_id", "start_seconds", "end_seconds", "duration_seconds", "score", "video_uri", "subtitle_uri", "thumbnail_uri"];
+  const header = [
+    "clip_id",
+    "start_seconds",
+    "end_seconds",
+    "duration_seconds",
+    "score",
+    "video_uri",
+    "subtitle_uri",
+    "thumbnail_uri",
+  ];
   const rows = clips.map((clip) => [
     clip.id,
     clip.start ?? "",
@@ -42,7 +51,8 @@ export function exportShortsTimelineCsv(clips: ShortsClip[]): string {
   ]);
   const escape = (value: unknown) => {
     const s = String(value ?? "");
-    if (s.includes(",") || s.includes("\"") || s.includes("\n")) return `"${s.replaceAll("\"", "\"\"")}"`;
+    if (s.includes(",") || s.includes('"') || s.includes("\n"))
+      return `"${s.replaceAll('"', '""')}"`;
     return s;
   };
   return [header, ...rows].map((row) => row.map(escape).join(",")).join("\n") + "\n";
@@ -50,13 +60,19 @@ export function exportShortsTimelineCsv(clips: ShortsClip[]): string {
 
 function deriveReelName(clip: ShortsClip, idx: number): string {
   const raw = (clip.reel_name || "").trim();
-  if (raw) return raw.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8) || `CLIP${String(idx + 1).padStart(3, "0")}`;
+  if (raw)
+    return (
+      raw
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, "")
+        .slice(0, 8) || `CLIP${String(idx + 1).padStart(3, "0")}`
+    );
   return `CLIP${String(idx + 1).padStart(3, "0")}`;
 }
 
 export function exportShortsTimelineEdl(
   clips: ShortsClip[],
-  opts?: { fps?: number; title?: string; includeAudio?: boolean; perClipReel?: boolean }
+  opts?: { fps?: number; title?: string; includeAudio?: boolean; perClipReel?: boolean },
 ): string {
   const fps = opts?.fps ?? 30;
   const title = opts?.title ?? "Reframe Shorts Timeline";
@@ -88,7 +104,9 @@ export function exportShortsTimelineEdl(
 
     const pushEvent = (track: string) => {
       const trackField = track.padEnd(4, " ").slice(0, 4);
-      lines.push(`${event}  ${reelField}  ${trackField}  ${transition}        ${srcIn} ${srcOut} ${recInTc} ${recOutTc}`);
+      lines.push(
+        `${event}  ${reelField}  ${trackField}  ${transition}        ${srcIn} ${srcOut} ${recInTc} ${recOutTc}`,
+      );
     };
 
     pushEvent("V");

@@ -85,7 +85,9 @@ describe("minimal e2e flow", () => {
       return job;
     });
 
-    apiClientMock.getJob.mockImplementation(async (jobId: string) => jobs.find((j) => j.id === jobId));
+    apiClientMock.getJob.mockImplementation(async (jobId: string) =>
+      jobs.find((j) => j.id === jobId),
+    );
 
     apiClientMock.getAsset.mockImplementation(async (assetId: string) => {
       if (assetId === "subtitle-1") {
@@ -112,7 +114,7 @@ describe("minimal e2e flow", () => {
     const dropzone = uploadLabel.closest("div");
     expect(dropzone).toBeTruthy();
 
-    const fileInput = dropzone!.querySelector('input[type=\"file\"]') as HTMLInputElement | null;
+    const fileInput = dropzone!.querySelector('input[type="file"]') as HTMLInputElement | null;
     expect(fileInput).toBeTruthy();
 
     const file = new File([new Uint8Array([1, 2, 3])], "sample.mp4", { type: "video/mp4" });
@@ -133,7 +135,9 @@ describe("minimal e2e flow", () => {
     expect(row).toBeTruthy();
     await user.click(within(row!).getByRole("button", { name: "View" }));
 
-    const jobDetailCard = screen.getByRole("heading", { name: "Job detail" }).closest(".card") as HTMLElement | null;
+    const jobDetailCard = screen
+      .getByRole("heading", { name: "Job detail" })
+      .closest(".card") as HTMLElement | null;
     expect(jobDetailCard).toBeTruthy();
 
     const download = await within(jobDetailCard!).findByRole("link", { name: "Download" });

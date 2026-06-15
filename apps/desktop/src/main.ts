@@ -254,7 +254,9 @@ async function checkUpdates() {
     }
 
     appendLog(`Update available: ${update.currentVersion} → ${update.version}`);
-    const ok = window.confirm(`Update available: ${update.currentVersion} → ${update.version}\n\nDownload and install now?`);
+    const ok = window.confirm(
+      `Update available: ${update.currentVersion} → ${update.version}\n\nDownload and install now?`,
+    );
     if (!ok) {
       appendLog("Update cancelled.");
       lastUpdaterError = null;

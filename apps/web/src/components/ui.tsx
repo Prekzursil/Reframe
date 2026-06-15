@@ -25,7 +25,10 @@ export function Card({ title, children }: PropsWithChildren<{ title: string }>) 
   );
 }
 
-export function Chip({ tone = "neutral", children }: PropsWithChildren<{ tone?: "neutral" | "info" | "success" | "danger" | "muted" }>) {
+export function Chip({
+  tone = "neutral",
+  children,
+}: PropsWithChildren<{ tone?: "neutral" | "info" | "success" | "danger" | "muted" }>) {
   return <span className={`chip chip-${tone}`}>{children}</span>;
 }
 

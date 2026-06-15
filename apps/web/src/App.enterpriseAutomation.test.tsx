@@ -121,7 +121,9 @@ beforeEach(() => {
     org_name: "Team Org",
     slug: "team-org",
     role: "owner",
-    members: [{ user_id: "user-owner", email: "owner@team.test", display_name: "Owner", role: "owner" }],
+    members: [
+      { user_id: "user-owner", email: "owner@team.test", display_name: "Owner", role: "owner" },
+    ],
   });
   apiClientMock.listOrgInvites.mockResolvedValue([]);
 
@@ -160,14 +162,32 @@ beforeEach(() => {
     token: "rscim_secret_once",
   });
 
-  apiClientMock.listProjects.mockResolvedValue([{ id: "proj-1", name: "Launch", description: "release" }]);
+  apiClientMock.listProjects.mockResolvedValue([
+    { id: "proj-1", name: "Launch", description: "release" },
+  ]);
   apiClientMock.listProjectJobs.mockResolvedValue([]);
-  apiClientMock.listProjectAssets.mockResolvedValue([{ id: "asset-1", kind: "video", uri: "/media/tmp/clip.mp4", mime_type: "video/mp4" }]);
+  apiClientMock.listProjectAssets.mockResolvedValue([
+    { id: "asset-1", kind: "video", uri: "/media/tmp/clip.mp4", mime_type: "video/mp4" },
+  ]);
 
-  apiClientMock.listProjectMembers.mockResolvedValue([{ user_id: "user-owner", email: "owner@team.test", display_name: "Owner", role: "owner", added_at: "2030-01-01T00:00:00Z" }]);
+  apiClientMock.listProjectMembers.mockResolvedValue([
+    {
+      user_id: "user-owner",
+      email: "owner@team.test",
+      display_name: "Owner",
+      role: "owner",
+      added_at: "2030-01-01T00:00:00Z",
+    },
+  ]);
   apiClientMock.listProjectComments.mockResolvedValue([]);
   apiClientMock.listProjectActivity.mockResolvedValue([]);
-  apiClientMock.addProjectMember.mockResolvedValue({ user_id: "user-editor", email: "editor@team.test", display_name: "Editor", role: "editor", added_at: "2030-01-01T00:00:00Z" });
+  apiClientMock.addProjectMember.mockResolvedValue({
+    user_id: "user-editor",
+    email: "editor@team.test",
+    display_name: "Editor",
+    role: "editor",
+    added_at: "2030-01-01T00:00:00Z",
+  });
   apiClientMock.createProjectComment.mockResolvedValue({
     id: "comment-1",
     project_id: "proj-1",
@@ -194,7 +214,14 @@ beforeEach(() => {
     { provider: "facebook", display_name: "Facebook", connected_count: 0 },
   ]);
   apiClientMock.listPublishConnections.mockResolvedValue([
-    { id: "conn-1", provider: "youtube", account_label: "Main channel", external_account_id: "yt-1", created_at: "2030-01-01T00:00:00Z", updated_at: "2030-01-01T00:00:00Z" },
+    {
+      id: "conn-1",
+      provider: "youtube",
+      account_label: "Main channel",
+      external_account_id: "yt-1",
+      created_at: "2030-01-01T00:00:00Z",
+      updated_at: "2030-01-01T00:00:00Z",
+    },
   ]);
   apiClientMock.listPublishJobs.mockResolvedValue([]);
   apiClientMock.startPublishConnection.mockResolvedValue({

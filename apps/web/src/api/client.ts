@@ -711,11 +711,17 @@ export class ApiClient {
   }
 
   addProjectMember(projectId: string, payload: { user_id?: string; email?: string; role: string }) {
-    return this.request<ProjectMember>(`/projects/${projectId}/members`, { method: "POST", body: JSON.stringify(payload) });
+    return this.request<ProjectMember>(`/projects/${projectId}/members`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
   updateProjectMemberRole(projectId: string, userId: string, payload: { role: string }) {
-    return this.request<ProjectMember>(`/projects/${projectId}/members/${userId}`, { method: "PATCH", body: JSON.stringify(payload) });
+    return this.request<ProjectMember>(`/projects/${projectId}/members/${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
   }
 
   async removeProjectMember(projectId: string, userId: string): Promise<void> {
@@ -734,7 +740,10 @@ export class ApiClient {
   }
 
   createProjectComment(projectId: string, payload: { body: string; parent_comment_id?: string }) {
-    return this.request<ProjectComment>(`/projects/${projectId}/comments`, { method: "POST", body: JSON.stringify(payload) });
+    return this.request<ProjectComment>(`/projects/${projectId}/comments`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
   async deleteProjectComment(projectId: string, commentId: string): Promise<void> {
@@ -756,18 +765,27 @@ export class ApiClient {
   }
 
   approveProjectApproval(projectId: string, approvalId: string) {
-    return this.request<ProjectApproval>(`/projects/${projectId}/approvals/${approvalId}/approve`, { method: "POST" });
+    return this.request<ProjectApproval>(`/projects/${projectId}/approvals/${approvalId}/approve`, {
+      method: "POST",
+    });
   }
 
   rejectProjectApproval(projectId: string, approvalId: string) {
-    return this.request<ProjectApproval>(`/projects/${projectId}/approvals/${approvalId}/reject`, { method: "POST" });
+    return this.request<ProjectApproval>(`/projects/${projectId}/approvals/${approvalId}/reject`, {
+      method: "POST",
+    });
   }
 
   listProjectActivity(projectId: string, limit = 100) {
-    return this.request<ProjectActivityEvent[]>(`/projects/${projectId}/activity?limit=${encodeURIComponent(String(limit))}`);
+    return this.request<ProjectActivityEvent[]>(
+      `/projects/${projectId}/activity?limit=${encodeURIComponent(String(limit))}`,
+    );
   }
 
-  createProjectShareLinks(projectId: string, payload: { asset_ids: string[]; expires_in_hours?: number }) {
+  createProjectShareLinks(
+    projectId: string,
+    payload: { asset_ids: string[]; expires_in_hours?: number },
+  ) {
     return this.request<ProjectShareLinksResponse>(`/projects/${projectId}/share-links`, {
       method: "POST",
       body: JSON.stringify(payload),
@@ -775,11 +793,17 @@ export class ApiClient {
   }
 
   initAssetUpload(payload: UploadInitRequest) {
-    return this.request<UploadInitResponse>("/assets/upload-init", { method: "POST", body: JSON.stringify(payload) });
+    return this.request<UploadInitResponse>("/assets/upload-init", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
   completeAssetUpload(payload: UploadCompleteRequest) {
-    return this.request<UploadCompleteResponse>("/assets/upload-complete", { method: "POST", body: JSON.stringify(payload) });
+    return this.request<UploadCompleteResponse>("/assets/upload-complete", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
   initMultipartAssetUpload(payload: MultipartUploadInitRequest) {
@@ -790,7 +814,10 @@ export class ApiClient {
   }
 
   signMultipartUploadPart(uploadId: string, partNumber: number) {
-    return this.request<MultipartUploadPartResponse>(`/assets/upload-multipart/${uploadId}/parts/${partNumber}`, { method: "POST" });
+    return this.request<MultipartUploadPartResponse>(
+      `/assets/upload-multipart/${uploadId}/parts/${partNumber}`,
+      { method: "POST" },
+    );
   }
 
   completeMultipartUpload(uploadId: string, payload: MultipartUploadCompleteRequest) {
@@ -801,19 +828,36 @@ export class ApiClient {
   }
 
   abortMultipartUpload(uploadId: string) {
-    return this.request<MultipartUploadAbortResponse>(`/assets/upload-multipart/${uploadId}/abort`, { method: "POST" });
+    return this.request<MultipartUploadAbortResponse>(
+      `/assets/upload-multipart/${uploadId}/abort`,
+      { method: "POST" },
+    );
   }
 
-  register(payload: { email: string; password: string; display_name?: string; organization_name?: string }) {
-    return this.request<AuthTokenResponse>("/auth/register", { method: "POST", body: JSON.stringify(payload) });
+  register(payload: {
+    email: string;
+    password: string;
+    display_name?: string;
+    organization_name?: string;
+  }) {
+    return this.request<AuthTokenResponse>("/auth/register", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
   login(payload: { email: string; password: string }) {
-    return this.request<AuthTokenResponse>("/auth/login", { method: "POST", body: JSON.stringify(payload) });
+    return this.request<AuthTokenResponse>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
   refreshToken(refresh_token: string) {
-    return this.request<AuthTokenResponse>("/auth/refresh", { method: "POST", body: JSON.stringify({ refresh_token }) });
+    return this.request<AuthTokenResponse>("/auth/refresh", {
+      method: "POST",
+      body: JSON.stringify({ refresh_token }),
+    });
   }
 
   logout() {
@@ -828,7 +872,9 @@ export class ApiClient {
     const search = new URLSearchParams();
     if (redirectTo) search.set("redirect_to", redirectTo);
     const query = search.toString();
-    return this.request<OAuthStartResponse>(`/auth/oauth/${provider}/start${query ? `?${query}` : ""}`);
+    return this.request<OAuthStartResponse>(
+      `/auth/oauth/${provider}/start${query ? `?${query}` : ""}`,
+    );
   }
 
   getOrgContext() {
@@ -861,7 +907,10 @@ export class ApiClient {
       config?: Record<string, unknown>;
     },
   ) {
-    return this.request<SsoConfig>(`/orgs/${orgId}/sso/config`, { method: "PUT", body: JSON.stringify(payload) });
+    return this.request<SsoConfig>(`/orgs/${orgId}/sso/config`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
   }
 
   createScimToken(orgId: string, payload?: { scopes?: string[] }) {
@@ -886,12 +935,22 @@ export class ApiClient {
     const search = new URLSearchParams();
     if (redirectTo) search.set("redirect_to", redirectTo);
     const query = search.toString();
-    return this.request<{ provider: string; authorize_url: string; state: string; redirect_uri: string; org_id: string }>(
-      `/auth/sso/okta/start${query ? `?${query}` : ""}`,
-    );
+    return this.request<{
+      provider: string;
+      authorize_url: string;
+      state: string;
+      redirect_uri: string;
+      org_id: string;
+    }>(`/auth/sso/okta/start${query ? `?${query}` : ""}`);
   }
 
-  completeOktaSso(params: { state: string; code?: string; email?: string; sub?: string; groups?: string }) {
+  completeOktaSso(params: {
+    state: string;
+    code?: string;
+    email?: string;
+    sub?: string;
+    groups?: string;
+  }) {
     const search = new URLSearchParams();
     search.set("state", params.state);
     if (params.code) search.set("code", params.code);
@@ -906,7 +965,10 @@ export class ApiClient {
   }
 
   createOrgInvite(payload: { email: string; role: string; expires_in_days: number }) {
-    return this.request<OrgInviteView>("/orgs/invites", { method: "POST", body: JSON.stringify(payload) });
+    return this.request<OrgInviteView>("/orgs/invites", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
   revokeOrgInvite(inviteId: string) {
@@ -919,15 +981,24 @@ export class ApiClient {
   }
 
   acceptOrgInvite(payload: { token: string }) {
-    return this.request<AuthTokenResponse>("/orgs/invites/accept", { method: "POST", body: JSON.stringify(payload) });
+    return this.request<AuthTokenResponse>("/orgs/invites/accept", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
   updateOrgMemberRole(userId: string, payload: { role: string }) {
-    return this.request<OrgMemberView>(`/orgs/members/${userId}/role`, { method: "PATCH", body: JSON.stringify(payload) });
+    return this.request<OrgMemberView>(`/orgs/members/${userId}/role`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
   }
 
   addOrgMember(orgId: string, payload: { email: string; role?: string }) {
-    return this.request<OrgMemberView>(`/orgs/${orgId}/members`, { method: "POST", body: JSON.stringify(payload) });
+    return this.request<OrgMemberView>(`/orgs/${orgId}/members`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
   async removeOrgMemberFromOrg(orgId: string, userId: string): Promise<void> {
@@ -953,7 +1024,9 @@ export class ApiClient {
   }
 
   listAuditEvents(limit = 50) {
-    return this.request<AuditEventView[]>(`/audit-events?limit=${encodeURIComponent(String(limit))}`);
+    return this.request<AuditEventView[]>(
+      `/audit-events?limit=${encodeURIComponent(String(limit))}`,
+    );
   }
 
   listApiKeys(orgId: string) {
@@ -961,7 +1034,10 @@ export class ApiClient {
   }
 
   createApiKey(orgId: string, payload: { name: string; scopes?: string[] }) {
-    return this.request<ApiKeyView>(`/orgs/${orgId}/api-keys`, { method: "POST", body: JSON.stringify(payload) });
+    return this.request<ApiKeyView>(`/orgs/${orgId}/api-keys`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
   async revokeApiKey(orgId: string, keyId: string): Promise<void> {
@@ -975,8 +1051,16 @@ export class ApiClient {
     }
   }
 
-  createWorkflowTemplate(payload: { name: string; description?: string; steps: Array<Record<string, unknown>>; active?: boolean }) {
-    return this.request<WorkflowTemplateView>("/workflows/templates", { method: "POST", body: JSON.stringify(payload) });
+  createWorkflowTemplate(payload: {
+    name: string;
+    description?: string;
+    steps: Array<Record<string, unknown>>;
+    active?: boolean;
+  }) {
+    return this.request<WorkflowTemplateView>("/workflows/templates", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
   listWorkflowTemplates(includeInactive = false) {
@@ -984,8 +1068,16 @@ export class ApiClient {
     return this.request<WorkflowTemplateView[]>(`/workflows/templates${query}`);
   }
 
-  createWorkflowRun(payload: { template_id: string; video_asset_id: string; options?: Record<string, unknown>; project_id?: string }) {
-    return this.request<WorkflowRunView>("/workflows/runs", { method: "POST", body: JSON.stringify(payload) });
+  createWorkflowRun(payload: {
+    template_id: string;
+    video_asset_id: string;
+    options?: Record<string, unknown>;
+    project_id?: string;
+  }) {
+    return this.request<WorkflowRunView>("/workflows/runs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
   getWorkflowRun(runId: string) {
@@ -1004,16 +1096,27 @@ export class ApiClient {
     return this.request<PublishConnectionView[]>(`/publish/${provider}/connections`);
   }
 
-  startPublishConnection(provider: "youtube" | "tiktok" | "instagram" | "facebook", redirectTo?: string) {
+  startPublishConnection(
+    provider: "youtube" | "tiktok" | "instagram" | "facebook",
+    redirectTo?: string,
+  ) {
     const search = new URLSearchParams();
     if (redirectTo) search.set("redirect_to", redirectTo);
     const query = search.toString();
-    return this.request<PublishConnectStartResponse>(`/publish/${provider}/connect/start${query ? `?${query}` : ""}`);
+    return this.request<PublishConnectStartResponse>(
+      `/publish/${provider}/connect/start${query ? `?${query}` : ""}`,
+    );
   }
 
   completePublishConnection(
     provider: "youtube" | "tiktok" | "instagram" | "facebook",
-    params: { state: string; code?: string; refresh_token?: string; account_id?: string; account_label?: string },
+    params: {
+      state: string;
+      code?: string;
+      refresh_token?: string;
+      account_id?: string;
+      account_label?: string;
+    },
   ) {
     const search = new URLSearchParams();
     search.set("state", params.state);
@@ -1021,14 +1124,22 @@ export class ApiClient {
     if (params.refresh_token) search.set("refresh_token", params.refresh_token);
     if (params.account_id) search.set("account_id", params.account_id);
     if (params.account_label) search.set("account_label", params.account_label);
-    return this.request<PublishConnectionView>(`/publish/${provider}/connect/callback?${search.toString()}`);
+    return this.request<PublishConnectionView>(
+      `/publish/${provider}/connect/callback?${search.toString()}`,
+    );
   }
 
-  async revokePublishConnection(provider: "youtube" | "tiktok" | "instagram" | "facebook", connectionId: string): Promise<void> {
-    const resp = await this.fetcher(`${this.baseUrl}/publish/${provider}/connections/${connectionId}`, {
-      method: "DELETE",
-      headers: this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : undefined,
-    });
+  async revokePublishConnection(
+    provider: "youtube" | "tiktok" | "instagram" | "facebook",
+    connectionId: string,
+  ): Promise<void> {
+    const resp = await this.fetcher(
+      `${this.baseUrl}/publish/${provider}/connections/${connectionId}`,
+      {
+        method: "DELETE",
+        headers: this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : undefined,
+      },
+    );
     if (!resp.ok) {
       const body = await resp.text().catch(() => resp.statusText);
       throw new Error(body || "Failed to revoke publish connection");
@@ -1045,10 +1156,16 @@ export class ApiClient {
     schedule_at?: string;
     workflow_run_id?: string;
   }) {
-    return this.request<PublishJobView>("/publish/jobs", { method: "POST", body: JSON.stringify(payload) });
+    return this.request<PublishJobView>("/publish/jobs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
-  listPublishJobs(params?: { provider?: "youtube" | "tiktok" | "instagram" | "facebook"; status?: string }) {
+  listPublishJobs(params?: {
+    provider?: "youtube" | "tiktok" | "instagram" | "facebook";
+    status?: string;
+  }) {
     const search = new URLSearchParams();
     if (params?.provider) search.set("provider", params.provider);
     if (params?.status) search.set("status", params.status);
@@ -1084,12 +1201,23 @@ export class ApiClient {
     return this.request<BillingCostModel>("/billing/cost-model");
   }
 
-  createBillingCheckoutSession(payload: { plan_code: string; seat_limit?: number; success_url?: string; cancel_url?: string }) {
-    return this.request<BillingSessionResponse>("/billing/checkout-session", { method: "POST", body: JSON.stringify(payload) });
+  createBillingCheckoutSession(payload: {
+    plan_code: string;
+    seat_limit?: number;
+    success_url?: string;
+    cancel_url?: string;
+  }) {
+    return this.request<BillingSessionResponse>("/billing/checkout-session", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
   updateBillingSeatLimit(payload: { seat_limit: number }) {
-    return this.request<BillingSeatUsage>("/billing/seat-limit", { method: "PATCH", body: JSON.stringify(payload) });
+    return this.request<BillingSeatUsage>("/billing/seat-limit", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
   }
 
   createBillingPortalSession(payload?: { return_url?: string }) {
@@ -1103,7 +1231,9 @@ export class ApiClient {
     const search = new URLSearchParams();
     if (options?.deleteAssets) search.set("delete_assets", "true");
     const query = search.toString();
-    const resp = await this.fetcher(`${this.baseUrl}/jobs/${jobId}${query ? `?${query}` : ""}`, { method: "DELETE" });
+    const resp = await this.fetcher(`${this.baseUrl}/jobs/${jobId}${query ? `?${query}` : ""}`, {
+      method: "DELETE",
+    });
     if (!resp.ok) {
       const msg = await resp.text().catch(() => resp.statusText);
       throw new Error(msg || "Delete job failed");

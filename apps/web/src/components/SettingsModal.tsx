@@ -30,7 +30,11 @@ export function SettingsModal({ onClose }: Props) {
           </label>
           <label className="field">
             <span>Language</span>
-            <Input value={language} onChange={(e) => setLanguage(e.target.value)} placeholder="auto" />
+            <Input
+              value={language}
+              onChange={(e) => setLanguage(e.target.value)}
+              placeholder="auto"
+            />
           </label>
           <label className="field">
             <span>Default output path</span>

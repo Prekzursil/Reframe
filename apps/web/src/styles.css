@@ -25,14 +25,16 @@
   --shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
 body {
   margin: 0;
   min-height: 100vh;
-  background: radial-gradient(circle at 20% 20%, rgba(56, 189, 248, 0.18), transparent 35%),
-    radial-gradient(circle at 80% 10%, rgba(251, 113, 133, 0.2), transparent 30%),
-    var(--bg);
+  background:
+    radial-gradient(circle at 20% 20%, rgba(56, 189, 248, 0.18), transparent 35%),
+    radial-gradient(circle at 80% 10%, rgba(251, 113, 133, 0.2), transparent 30%), var(--bg);
 }
 
 .layout {
@@ -131,7 +133,10 @@ h1 {
   font-size: 2.2rem;
 }
 
-h2, h3 { margin: 0; }
+h2,
+h3 {
+  margin: 0;
+}
 
 .lead {
   margin: 0;
@@ -176,7 +181,9 @@ h2, h3 { margin: 0; }
   gap: 12px;
 }
 
-.metric-row, .job-row, .snapshot {
+.metric-row,
+.job-row,
+.snapshot {
   display: flex;
   justify-content: space-between;
   gap: 12px;
@@ -237,7 +244,9 @@ h2, h3 { margin: 0; }
 }
 
 .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
   font-size: 0.85rem;
   word-break: break-all;
 }
@@ -249,7 +258,9 @@ h2, h3 { margin: 0; }
   border: 1px solid var(--border);
   background: var(--panel);
   overflow-x: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
   font-size: 0.85rem;
   line-height: 1.4;
   white-space: pre-wrap;
@@ -348,7 +359,9 @@ h2, h3 { margin: 0; }
   padding: 10px 14px;
   font-weight: 700;
   cursor: pointer;
-  transition: transform 120ms ease, box-shadow 120ms ease;
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .btn:hover {
@@ -388,13 +401,32 @@ h2, h3 { margin: 0; }
   border: 1px solid var(--border);
 }
 
-.chip-neutral { background: rgba(255, 255, 255, 0.04); color: var(--text); }
-.chip-info { background: rgba(56, 189, 248, 0.12); color: var(--accent-blue); border-color: transparent; }
-.chip-success { background: rgba(74, 222, 128, 0.14); color: var(--accent-mint); border-color: transparent; }
-.chip-danger { background: rgba(251, 113, 133, 0.14); color: var(--accent-coral); border-color: transparent; }
-.chip-muted { background: var(--panel-alt); color: var(--muted); }
+.chip-neutral {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+.chip-info {
+  background: rgba(56, 189, 248, 0.12);
+  color: var(--accent-blue);
+  border-color: transparent;
+}
+.chip-success {
+  background: rgba(74, 222, 128, 0.14);
+  color: var(--accent-mint);
+  border-color: transparent;
+}
+.chip-danger {
+  background: rgba(251, 113, 133, 0.14);
+  color: var(--accent-coral);
+  border-color: transparent;
+}
+.chip-muted {
+  background: var(--panel-alt);
+  color: var(--muted);
+}
 
-.input, .textarea {
+.input,
+.textarea {
   width: 100%;
   background: var(--panel-alt);
   border: 1px solid var(--border);
@@ -404,7 +436,9 @@ h2, h3 { margin: 0; }
   font-size: 1rem;
 }
 
-.textarea { min-height: 120px; }
+.textarea {
+  min-height: 120px;
+}
 
 .actions-row {
   display: flex;
@@ -533,8 +567,12 @@ h2, h3 { margin: 0; }
   animation: pulse 0.9s ease-in-out infinite;
 }
 
-.spinner-dot:nth-child(2) { animation-delay: 0.15s; }
-.spinner-dot:nth-child(3) { animation-delay: 0.3s; }
+.spinner-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.spinner-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
 
 .spinner-label {
   color: var(--muted);
@@ -542,9 +580,18 @@ h2, h3 { margin: 0; }
 }
 
 @keyframes pulse {
-  0% { transform: scale(0.8); opacity: 0.6; }
-  50% { transform: scale(1.1); opacity: 1; }
-  100% { transform: scale(0.8); opacity: 0.6; }
+  0% {
+    transform: scale(0.8);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.8);
+    opacity: 0.6;
+  }
 }
 
 .error-inline {
@@ -583,7 +630,8 @@ h2, h3 { margin: 0; }
   gap: 12px;
 }
 
-.modal-head, .modal-footer {
+.modal-head,
+.modal-footer {
   padding: 16px;
   display: flex;
   align-items: center;
