@@ -1,18 +1,32 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Annotated, Optional
+from datetime import UTC, datetime
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Request, status
 from sqlmodel import Session, SQLModel, select
 
 from app.auth_api import PrincipalDep, ensure_default_plans
-from app.billing import build_checkout_session, build_customer_portal_session, get_plan_policy, update_subscription_seat_limit
+from app.billing import (
+    build_checkout_session,
+    build_customer_portal_session,
+    get_plan_policy,
+    update_subscription_seat_limit,
+)
 from app.config import get_settings
 from app.database import get_session
 from app.errors import ApiError, ErrorCode, ErrorResponse, not_found, unauthorized
-from app.models import InviteStatus, InvoiceSnapshot, OrgInvite, OrgMembership, Organization, Plan, Subscription, UsageEvent
+from app.models import (
+    InviteStatus,
+    InvoiceSnapshot,
+    Organization,
+    OrgInvite,
+    OrgMembership,
+    Plan,
+    Subscription,
+    UsageEvent,
+)
 
 router = APIRouter(prefix="/api/v1")
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -32,10 +46,10 @@ class SubscriptionView(SQLModel):
     org_id: str
     plan_code: str
     status: str
-    stripe_customer_id: Optional[str] = None
-    stripe_subscription_id: Optional[str] = None
-    current_period_start: Optional[datetime] = None
-    current_period_end: Optional[datetime] = None
+    stripe_customer_id: str | None = None
+    stripe_subscription_id: str | None = None
+    current_period_start: datetime | None = None
+    current_period_end: datetime | None = None
     cancel_at_period_end: bool = False
 
 
@@ -52,13 +66,13 @@ class UsageQuotaView(SQLModel):
 
 class CheckoutSessionRequest(SQLModel):
     plan_code: str
-    seat_limit: Optional[int] = None
-    success_url: Optional[str] = None
-    cancel_url: Optional[str] = None
+    seat_limit: int | None = None
+    success_url: str | None = None
+    cancel_url: str | None = None
 
 
 class PortalSessionRequest(SQLModel):
-    return_url: Optional[str] = None
+    return_url: str | None = None
 
 
 class SessionResponse(SQLModel):
@@ -119,7 +133,7 @@ def _unix_to_datetime(value: object) -> datetime | None:
         return None
     if ts <= 0:
         return None
-    return datetime.fromtimestamp(ts, tz=timezone.utc)
+    return datetime.fromtimestamp(ts, tz=UTC)
 
 
 @router.get("/billing/plans", response_model=list[PlanView], tags=["Billing"])
@@ -173,7 +187,12 @@ def get_cost_model(session: SessionDep) -> CostModelResponse:
     )
 
 
-@router.get("/billing/subscription", response_model=SubscriptionView, tags=["Billing"], responses={401: {"model": ErrorResponse}})
+@router.get(
+    "/billing/subscription",
+    response_model=SubscriptionView,
+    tags=["Billing"],
+    responses={401: {"model": ErrorResponse}},
+)
 def get_subscription(session: SessionDep, principal: PrincipalDep) -> SubscriptionView:
     if not principal.org_id:
         raise unauthorized("Authentication required")
@@ -197,7 +216,7 @@ def get_subscription(session: SessionDep, principal: PrincipalDep) -> Subscripti
 
 
 def _calc_usage_quota(session: Session, *, org_id, plan_code: str) -> UsageQuotaView:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     usage_events = session.exec(
         select(UsageEvent).where((UsageEvent.org_id == org_id) & (UsageEvent.created_at >= month_start))
@@ -225,7 +244,7 @@ def _active_members_count(session: Session, org_id: UUID) -> int:
 
 
 def _pending_invites_count(session: Session, org_id: UUID) -> int:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return len(
         session.exec(
             select(OrgInvite).where(
@@ -251,7 +270,9 @@ def _seat_usage(session: Session, *, org_id: UUID, plan_code: str) -> SeatUsageV
     )
 
 
-@router.get("/billing/usage-summary", response_model=UsageQuotaView, tags=["Billing"], responses={401: {"model": ErrorResponse}})
+@router.get(
+    "/billing/usage-summary", response_model=UsageQuotaView, tags=["Billing"], responses={401: {"model": ErrorResponse}}
+)
 def billing_usage_summary(session: SessionDep, principal: PrincipalDep) -> UsageQuotaView:
     if not principal.org_id:
         raise unauthorized("Authentication required")
@@ -260,7 +281,9 @@ def billing_usage_summary(session: SessionDep, principal: PrincipalDep) -> Usage
     return _calc_usage_quota(session, org_id=principal.org_id, plan_code=plan_code)
 
 
-@router.get("/billing/seat-usage", response_model=SeatUsageView, tags=["Billing"], responses={401: {"model": ErrorResponse}})
+@router.get(
+    "/billing/seat-usage", response_model=SeatUsageView, tags=["Billing"], responses={401: {"model": ErrorResponse}}
+)
 def billing_seat_usage(session: SessionDep, principal: PrincipalDep) -> SeatUsageView:
     if not principal.org_id:
         raise unauthorized("Authentication required")
@@ -391,7 +414,7 @@ def create_portal(session: SessionDep, payload: PortalSessionRequest, principal:
 async def stripe_webhook(
     request: Request,
     session: SessionDep,
-    stripe_signature: Annotated[Optional[str], Header(alias="Stripe-Signature")] = None,
+    stripe_signature: Annotated[str | None, Header(alias="Stripe-Signature")] = None,
 ) -> None:
     _require_billing_enabled()
     settings = get_settings()

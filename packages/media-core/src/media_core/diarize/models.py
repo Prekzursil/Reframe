@@ -8,4 +8,3 @@ class SpeakerSegment:
     start: float
     end: float
     speaker: str
-

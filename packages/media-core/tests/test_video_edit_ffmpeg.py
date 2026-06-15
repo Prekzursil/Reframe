@@ -1,7 +1,3 @@
-import subprocess
-
-import pytest
-
 from media_core.video_edit.ffmpeg import (
     burn_subtitles,
     cut_clip,

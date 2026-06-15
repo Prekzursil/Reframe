@@ -5,9 +5,8 @@ Revises: 2026030201
 Create Date: 2026-03-02 21:30:00.000000
 """
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "2026030202"
@@ -166,8 +165,15 @@ def upgrade() -> None:
     op.create_index("ix_projectapprovalrequest_id", "projectapprovalrequest", ["id"], unique=False)
     op.create_index("ix_projectapprovalrequest_project_id", "projectapprovalrequest", ["project_id"], unique=False)
     op.create_index("ix_projectapprovalrequest_org_id", "projectapprovalrequest", ["org_id"], unique=False)
-    op.create_index("ix_projectapprovalrequest_requested_by_user_id", "projectapprovalrequest", ["requested_by_user_id"], unique=False)
-    op.create_index("ix_projectapprovalrequest_resolved_by_user_id", "projectapprovalrequest", ["resolved_by_user_id"], unique=False)
+    op.create_index(
+        "ix_projectapprovalrequest_requested_by_user_id",
+        "projectapprovalrequest",
+        ["requested_by_user_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_projectapprovalrequest_resolved_by_user_id", "projectapprovalrequest", ["resolved_by_user_id"], unique=False
+    )
     op.create_index("ix_projectapprovalrequest_status", "projectapprovalrequest", ["status"], unique=False)
 
     op.create_table(
@@ -211,7 +217,9 @@ def upgrade() -> None:
     op.create_index("ix_publishconnection_org_id", "publishconnection", ["org_id"], unique=False)
     op.create_index("ix_publishconnection_user_id", "publishconnection", ["user_id"], unique=False)
     op.create_index("ix_publishconnection_provider", "publishconnection", ["provider"], unique=False)
-    op.create_index("ix_publishconnection_external_account_id", "publishconnection", ["external_account_id"], unique=False)
+    op.create_index(
+        "ix_publishconnection_external_account_id", "publishconnection", ["external_account_id"], unique=False
+    )
 
     op.create_table(
         "publishjob",

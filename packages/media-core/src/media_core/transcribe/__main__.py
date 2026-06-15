@@ -21,7 +21,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Transcribe an audio/video file.")
     parser.add_argument("input", help="Path to the media file.")
     parser.add_argument("--language", help="ISO language code (optional).")
-    parser.add_argument("--backend", default=TranscriptionBackend.NOOP.value, help="Backend name (openai_whisper, faster_whisper, whisper_cpp, whisper_timestamped, noop).")
+    parser.add_argument(
+        "--backend",
+        default=TranscriptionBackend.NOOP.value,
+        help="Backend name (openai_whisper, faster_whisper, whisper_cpp, whisper_timestamped, noop).",
+    )
     parser.add_argument("--model", default="whisper-1", help="Model name.")
     parser.add_argument("--device", help="Device hint (e.g., cpu, cuda).")
     return parser.parse_args()

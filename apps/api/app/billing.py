@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from app.config import get_settings
 
@@ -58,12 +57,12 @@ def _get_stripe():
 
 def build_checkout_session(
     *,
-    customer_id: Optional[str],
+    customer_id: str | None,
     price_id: str,
     quantity: int = 1,
     success_url: str,
     cancel_url: str,
-    metadata: Optional[dict[str, str]] = None,
+    metadata: dict[str, str] | None = None,
 ) -> dict:
     settings = get_settings()
     if not settings.enable_billing:

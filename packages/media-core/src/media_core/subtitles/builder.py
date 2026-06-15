@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Iterable, List, Sequence
 
 from media_core.transcribe.models import Word
 
@@ -11,7 +11,7 @@ from media_core.transcribe.models import Word
 class SubtitleLine:
     start: float
     end: float
-    words: List[Word] = field(default_factory=list)
+    words: list[Word] = field(default_factory=list)
     speaker: str | None = None
 
     def text(self) -> str:
@@ -59,13 +59,13 @@ def _ends_sentence(text: str) -> bool:
     return bool(_SENTENCE_BREAK_RE.search((text or "").strip()))
 
 
-def group_words(words: Sequence[Word], config: GroupingConfig) -> List[SubtitleLine]:
-    lines: List[SubtitleLine] = []
+def group_words(words: Sequence[Word], config: GroupingConfig) -> list[SubtitleLine]:
+    lines: list[SubtitleLine] = []
     normalized_words = _normalize_words(words, config)
     if not normalized_words:
         return lines
 
-    current_words: List[Word] = []
+    current_words: list[Word] = []
     current_start = normalized_words[0].start
     last_end = normalized_words[0].end
 
@@ -142,7 +142,9 @@ def to_srt(lines: Iterable[SubtitleLine]) -> str:
 def to_vtt(lines: Iterable[SubtitleLine]) -> str:
     output = ["WEBVTT", ""]
     for line in lines:
-        output.append(f"{_format_timestamp(line.start).replace(',', '.')} --> {_format_timestamp(line.end).replace(',', '.')}")
+        output.append(
+            f"{_format_timestamp(line.start).replace(',', '.')} --> {_format_timestamp(line.end).replace(',', '.')}"
+        )
         text = line.text()
         if line.speaker:
             text = f"{line.speaker}: {text}" if text else line.speaker
@@ -159,11 +161,11 @@ def _format_ass_timestamp(seconds: float) -> str:
     return f"{hours:d}:{minutes:02d}:{secs:02d}.{cs:02d}"
 
 
-def _tokenize_for_karaoke(text: str) -> List[str]:
+def _tokenize_for_karaoke(text: str) -> list[str]:
     return re.findall(r"\S+", text.strip())
 
 
-def _allocate_karaoke_durations_cs(tokens: List[str], total_cs: int) -> List[int]:
+def _allocate_karaoke_durations_cs(tokens: list[str], total_cs: int) -> list[int]:
     if not tokens:
         return []
 
@@ -209,7 +211,7 @@ def _escape_ass_text(text: str) -> str:
 def _karaoke_text_for_line(line: SubtitleLine) -> str:
     # Prefer real word timings when available; otherwise synthesize timings per token.
     if line.words and len(line.words) > 1:
-        segments: List[tuple[str, int]] = []
+        segments: list[tuple[str, int]] = []
         for w in line.words:
             dur_cs = int(round(max(0.0, w.end - w.start) * 100))
             segments.append((w.text, max(1, dur_cs)))
@@ -219,7 +221,7 @@ def _karaoke_text_for_line(line: SubtitleLine) -> str:
     total_cs = int(round(max(0.01, line.duration) * 100))
     durations = _allocate_karaoke_durations_cs(tokens, total_cs)
     return " ".join(
-        f"{{\\k{dur}}}{_escape_ass_text(token)}" for token, dur in zip(tokens, durations) if token.strip()
+        f"{{\\k{dur}}}{_escape_ass_text(token)}" for token, dur in zip(tokens, durations, strict=False) if token.strip()
     )
 
 
@@ -242,7 +244,7 @@ def to_ass_karaoke(lines: Iterable[SubtitleLine]) -> str:
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
 
-    body: List[str] = []
+    body: list[str] = []
     for line in lines:
         name = (line.speaker or "").replace(",", " ")
         speaker_prefix = f"{_escape_ass_text(line.speaker)}: " if line.speaker else ""

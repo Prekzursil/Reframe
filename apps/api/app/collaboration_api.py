@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Annotated, Optional
+from datetime import UTC, datetime
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response, status
@@ -30,14 +30,14 @@ ROLE_RANK = {role: idx for idx, role in enumerate(ROLE_VALUES)}
 class ProjectMemberView(SQLModel):
     user_id: UUID
     email: str
-    display_name: Optional[str] = None
+    display_name: str | None = None
     role: str
     added_at: datetime
 
 
 class ProjectMemberUpsertRequest(SQLModel):
-    user_id: Optional[UUID] = None
-    email: Optional[str] = None
+    user_id: UUID | None = None
+    email: str | None = None
     role: str = "viewer"
 
 
@@ -49,8 +49,8 @@ class ProjectCommentView(SQLModel):
     id: UUID
     project_id: UUID
     author_user_id: UUID
-    author_email: Optional[str] = None
-    parent_comment_id: Optional[UUID] = None
+    author_email: str | None = None
+    parent_comment_id: UUID | None = None
     body: str
     created_at: datetime
     updated_at: datetime
@@ -58,36 +58,36 @@ class ProjectCommentView(SQLModel):
 
 class ProjectCommentCreateRequest(SQLModel):
     body: str
-    parent_comment_id: Optional[UUID] = None
+    parent_comment_id: UUID | None = None
 
 
 class ProjectApprovalView(SQLModel):
     id: UUID
     project_id: UUID
     status: str
-    summary: Optional[str] = None
+    summary: str | None = None
     requested_by_user_id: UUID
-    resolved_by_user_id: Optional[UUID] = None
-    resolved_at: Optional[datetime] = None
+    resolved_by_user_id: UUID | None = None
+    resolved_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
 
 class ProjectApprovalCreateRequest(SQLModel):
-    summary: Optional[str] = None
+    summary: str | None = None
 
 
 class ProjectActivityView(SQLModel):
     id: UUID
     project_id: UUID
-    actor_user_id: Optional[UUID] = None
+    actor_user_id: UUID | None = None
     event_type: str
     payload: dict
     created_at: datetime
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _normalize_role(role: str) -> str:
@@ -120,7 +120,9 @@ def _project_membership(session: Session, project_id: UUID, user_id: UUID | None
     if not user_id:
         return None
     return session.exec(
-        select(ProjectMembership).where((ProjectMembership.project_id == project_id) & (ProjectMembership.user_id == user_id))
+        select(ProjectMembership).where(
+            (ProjectMembership.project_id == project_id) & (ProjectMembership.user_id == user_id)
+        )
     ).first()
 
 
@@ -134,7 +136,9 @@ def _effective_project_role(session: Session, project: Project, principal) -> st
         return "owner"
     if principal.org_id and project.org_id == principal.org_id:
         org_membership = session.exec(
-            select(OrgMembership).where((OrgMembership.org_id == principal.org_id) & (OrgMembership.user_id == principal.user_id))
+            select(OrgMembership).where(
+                (OrgMembership.org_id == principal.org_id) & (OrgMembership.user_id == principal.user_id)
+            )
         ).first()
         if org_membership and org_membership.role in {"owner", "admin"}:
             return "admin"
@@ -230,13 +234,17 @@ def add_project_member(
     elif payload.email:
         user = session.exec(select(User).where(User.email == payload.email.strip().lower())).first()
     if not user:
-        raise not_found("User not found", {"user_id": str(payload.user_id) if payload.user_id else None, "email": payload.email})
+        raise not_found(
+            "User not found", {"user_id": str(payload.user_id) if payload.user_id else None, "email": payload.email}
+        )
     if project.org_id:
         org_membership = session.exec(
             select(OrgMembership).where((OrgMembership.org_id == project.org_id) & (OrgMembership.user_id == user.id))
         ).first()
         if not org_membership:
-            raise conflict("User is not an organization member", details={"user_id": str(user.id), "project_id": str(project_id)})
+            raise conflict(
+                "User is not an organization member", details={"user_id": str(user.id), "project_id": str(project_id)}
+            )
 
     membership = _project_membership(session, project_id, user.id)
     now = _now()
@@ -396,7 +404,10 @@ def create_project_comment(
         project=project,
         actor_user_id=principal.user_id,
         event_type="project.comment_created",
-        payload={"comment_id": str(comment.id), "parent_comment_id": str(payload.parent_comment_id) if payload.parent_comment_id else None},
+        payload={
+            "comment_id": str(comment.id),
+            "parent_comment_id": str(payload.parent_comment_id) if payload.parent_comment_id else None,
+        },
     )
     session.commit()
     session.refresh(comment)
@@ -419,7 +430,9 @@ def create_project_comment(
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-def delete_project_comment(project_id: UUID, comment_id: UUID, session: SessionDep, principal: PrincipalDep) -> Response:
+def delete_project_comment(
+    project_id: UUID, comment_id: UUID, session: SessionDep, principal: PrincipalDep
+) -> Response:
     project = _project_or_404(session, project_id, principal)
     role = _require_project_role(session, project, principal, "viewer")
     comment = session.get(ProjectComment, comment_id)
@@ -518,7 +531,9 @@ def _resolve_project_approval(
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-def approve_project_approval(project_id: UUID, approval_id: UUID, session: SessionDep, principal: PrincipalDep) -> ProjectApprovalView:
+def approve_project_approval(
+    project_id: UUID, approval_id: UUID, session: SessionDep, principal: PrincipalDep
+) -> ProjectApprovalView:
     return _resolve_project_approval(
         project_id=project_id,
         approval_id=approval_id,
@@ -534,7 +549,9 @@ def approve_project_approval(project_id: UUID, approval_id: UUID, session: Sessi
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-def reject_project_approval(project_id: UUID, approval_id: UUID, session: SessionDep, principal: PrincipalDep) -> ProjectApprovalView:
+def reject_project_approval(
+    project_id: UUID, approval_id: UUID, session: SessionDep, principal: PrincipalDep
+) -> ProjectApprovalView:
     return _resolve_project_approval(
         project_id=project_id,
         approval_id=approval_id,
@@ -550,7 +567,9 @@ def reject_project_approval(project_id: UUID, approval_id: UUID, session: Sessio
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-def list_project_activity(project_id: UUID, session: SessionDep, principal: PrincipalDep, limit: int = 100) -> list[ProjectActivityView]:
+def list_project_activity(
+    project_id: UUID, session: SessionDep, principal: PrincipalDep, limit: int = 100
+) -> list[ProjectActivityView]:
     project = _project_or_404(session, project_id, principal)
     _require_project_role(session, project, principal, "viewer")
     clamped_limit = max(1, min(limit, 300))

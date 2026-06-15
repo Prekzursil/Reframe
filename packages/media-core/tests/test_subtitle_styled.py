@@ -1,5 +1,4 @@
 import pytest
-
 from media_core.subtitles.builder import SubtitleLine
 from media_core.subtitles.styled import StyledSubtitleRenderer, SubtitleStyle, preset_styles
 from media_core.transcribe.models import Word

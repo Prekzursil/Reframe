@@ -33,4 +33,3 @@ def test_run_ffmpeg_with_retries_updates_job_payload(monkeypatch):
     assert updates[0]["retry_step"] == "cut_clip:1"
     assert updates[0]["retry_attempt"] == 1
     assert updates[0]["retry_max_attempts"] == 2
-

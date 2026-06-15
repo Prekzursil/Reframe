@@ -73,4 +73,3 @@ def test_delete_asset_conflicts_when_referenced_by_job(test_client):
 
     delete = client.delete(f"/api/v1/assets/{video['id']}")
     assert delete.status_code == 409, delete.text
-

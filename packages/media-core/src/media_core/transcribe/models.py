@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, List, Optional
+from collections.abc import Iterable
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -9,7 +9,7 @@ class Word(BaseModel):
     text: str = Field(..., description="The transcribed word text.")
     start: float = Field(..., ge=0.0, description="Start time in seconds.")
     end: float = Field(..., gt=0.0, description="End time in seconds.")
-    probability: Optional[float] = Field(
+    probability: float | None = Field(
         default=None,
         ge=0.0,
         le=1.0,
@@ -17,7 +17,7 @@ class Word(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _validate_order(self) -> "Word":
+    def _validate_order(self) -> Word:
         if self.end <= self.start:
             msg = f"Word '{self.text}' has non-positive duration: start={self.start}, end={self.end}"
             raise ValueError(msg)
@@ -29,17 +29,17 @@ class Word(BaseModel):
 
 
 class TranscriptionResult(BaseModel):
-    words: List[Word] = Field(default_factory=list, description="Ordered list of words.")
-    text: Optional[str] = Field(default=None, description="Full transcript if provided.")
-    model: Optional[str] = Field(default=None, description="Model identifier.")
-    language: Optional[str] = Field(default=None, description="Detected or provided language code.")
+    words: list[Word] = Field(default_factory=list, description="Ordered list of words.")
+    text: str | None = Field(default=None, description="Full transcript if provided.")
+    model: str | None = Field(default=None, description="Model identifier.")
+    language: str | None = Field(default=None, description="Detected or provided language code.")
 
     @model_validator(mode="after")
-    def _validate_monotonic(self) -> "TranscriptionResult":
+    def _validate_monotonic(self) -> TranscriptionResult:
         if not self.words:
             return self
         sorted_words = sorted(self.words, key=lambda w: w.start)
-        for prev, curr in zip(sorted_words, sorted_words[1:]):
+        for prev, curr in zip(sorted_words, sorted_words[1:], strict=False):
             if curr.start < prev.end:
                 msg = (
                     f"Words overlap: '{prev.text}' [{prev.start}, {prev.end}) "
@@ -57,6 +57,6 @@ class TranscriptionResult(BaseModel):
         return self.words[-1].end - self.words[0].start
 
     @classmethod
-    def from_iterable(cls, words: Iterable[Word], **metadata: object) -> "TranscriptionResult":
+    def from_iterable(cls, words: Iterable[Word], **metadata: object) -> TranscriptionResult:
         """Build a result from an iterable of words, sorting and validating."""
         return cls(words=list(words), **metadata)

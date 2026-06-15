@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlmodel import Session
-
 from app.database import get_engine
 from app.models import Job, JobStatus
+from sqlmodel import Session
 
 
 def _upload_fake_video(client, *, content: bytes = b"fake-video", filename: str = "sample.mp4") -> dict:
@@ -41,7 +40,9 @@ def test_retry_job_respects_idempotency_key(test_client):
     client, enqueued, _worker, _media_root = test_client
     video = _upload_fake_video(client)
 
-    created = client.post("/api/v1/captions/jobs", json={"video_asset_id": video["id"], "options": {"formats": ["srt"]}})
+    created = client.post(
+        "/api/v1/captions/jobs", json={"video_asset_id": video["id"], "options": {"formats": ["srt"]}}
+    )
     assert created.status_code == 201, created.text
     original_job = created.json()
 

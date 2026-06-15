@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
-from typing import Callable, List, Optional
+from collections.abc import Callable
 
 
 class Translator(ABC):
     @abstractmethod
-    def translate_batch(self, texts: List[str], src: str, tgt: str) -> List[str]:
+    def translate_batch(self, texts: list[str], src: str, tgt: str) -> list[str]:
         """Translate a batch of strings from src to tgt."""
         raise NotImplementedError
 
@@ -15,7 +15,7 @@ class Translator(ABC):
 class NoOpTranslator(Translator):
     """Local fallback translator that returns the input unchanged."""
 
-    def translate_batch(self, texts: List[str], src: str, tgt: str) -> List[str]:  # pragma: no cover - trivial
+    def translate_batch(self, texts: list[str], src: str, tgt: str) -> list[str]:  # pragma: no cover - trivial
         return texts
 
 
@@ -31,9 +31,9 @@ class CloudTranslator(Translator):
         self,
         client: object,
         model: str,
-        system_prompt: Optional[str] = None,
+        system_prompt: str | None = None,
         temperature: float = 0.0,
-        postprocess: Optional[Callable[[str], str]] = None,
+        postprocess: Callable[[str], str] | None = None,
     ) -> None:
         if client is None:
             raise ValueError("CloudTranslator requires a chat client instance")
@@ -46,10 +46,10 @@ class CloudTranslator(Translator):
         self.temperature = temperature
         self.postprocess = postprocess
 
-    def translate_batch(self, texts: List[str], src: str, tgt: str) -> List[str]:
+    def translate_batch(self, texts: list[str], src: str, tgt: str) -> list[str]:
         if os.getenv("REFRAME_OFFLINE_MODE", "").strip().lower() in {"1", "true", "yes", "on"}:
             raise RuntimeError("REFRAME_OFFLINE_MODE is enabled; refusing to use cloud translator.")
-        results: List[str] = []
+        results: list[str] = []
         for text in texts:
             messages = [
                 {"role": "system", "content": self.system_prompt.format(src=src, tgt=tgt)},
@@ -86,11 +86,11 @@ class LocalTranslator(Translator):
             raise RuntimeError("argostranslate is not installed; install extras 'translate-local'") from exc
 
         languages = translate.get_installed_languages()
-        self._src_lang = next((l for l in languages if l.code == src), None)
-        self._tgt_lang = next((l for l in languages if l.code == tgt), None)
+        self._src_lang = next((lang for lang in languages if lang.code == src), None)
+        self._tgt_lang = next((lang for lang in languages if lang.code == tgt), None)
         if not self._src_lang or not self._tgt_lang:
             raise RuntimeError(f"argostranslate missing language pack for {src}->{tgt}")
         self._translator = self._src_lang.get_translation(self._tgt_lang)
 
-    def translate_batch(self, texts: List[str], src: str, tgt: str) -> List[str]:
+    def translate_batch(self, texts: list[str], src: str, tgt: str) -> list[str]:
         return [self._translator.translate(text) for text in texts]

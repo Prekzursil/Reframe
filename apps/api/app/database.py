@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Generator
 from functools import lru_cache
-from typing import Generator
 
 from sqlmodel import Session, SQLModel, create_engine
 

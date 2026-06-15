@@ -82,4 +82,3 @@ def test_end_to_end_cut_clip_job(test_client, tmp_path: Path):
     out_path = media_root / Path(asset["uri"]).relative_to("/media")
     assert out_path.exists()
     assert out_path.stat().st_size > 0
-

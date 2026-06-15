@@ -1,8 +1,7 @@
 import pytest
-
 from media_core.transcribe import TranscriptionResult, Word
-from media_core.transcribe.backends.openai_whisper import normalize_verbose_json
 from media_core.transcribe.backends.faster_whisper import _normalize_model_name, normalize_faster_whisper
+from media_core.transcribe.backends.openai_whisper import normalize_verbose_json
 from media_core.transcribe.backends.whisper_cpp import normalize_whisper_cpp
 from media_core.transcribe.backends.whisper_timestamped import normalize_whisper_timestamped
 from pydantic import ValidationError

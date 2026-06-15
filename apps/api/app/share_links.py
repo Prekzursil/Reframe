@@ -5,7 +5,7 @@ import hashlib
 import hmac
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 
@@ -34,8 +34,8 @@ def _normalize_secret(secret: str) -> bytes:
 
 def _to_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def build_share_token(*, asset_id: UUID, project_id: UUID, expires_at: datetime, secret: str) -> str:
@@ -53,9 +53,11 @@ def build_share_token(*, asset_id: UUID, project_id: UUID, expires_at: datetime,
     return f"{_b64url_encode(body)}.{_b64url_encode(signature)}"
 
 
-def build_share_token_with_ttl(*, asset_id: UUID, project_id: UUID, ttl_hours: int, secret: str) -> tuple[str, datetime]:
+def build_share_token_with_ttl(
+    *, asset_id: UUID, project_id: UUID, ttl_hours: int, secret: str
+) -> tuple[str, datetime]:
     hours = max(1, min(int(ttl_hours or 24), 24 * 30))
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=hours)
+    expires_at = datetime.now(UTC) + timedelta(hours=hours)
     token = build_share_token(asset_id=asset_id, project_id=project_id, expires_at=expires_at, secret=secret)
     return token, expires_at
 
@@ -74,9 +76,9 @@ def parse_and_validate_share_token(token: str, *, secret: str, now: datetime | N
     payload = json.loads(body.decode("utf-8"))
     asset_id = UUID(str(payload["asset_id"]))
     project_id = UUID(str(payload["project_id"]))
-    expires_at = datetime.fromtimestamp(int(payload["exp"]), tz=timezone.utc)
+    expires_at = datetime.fromtimestamp(int(payload["exp"]), tz=UTC)
 
-    current = _to_utc(now or datetime.now(timezone.utc))
+    current = _to_utc(now or datetime.now(UTC))
     if expires_at < current:
         raise ValueError("Token expired")
 

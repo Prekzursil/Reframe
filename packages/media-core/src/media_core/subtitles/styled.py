@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
 
 from media_core.subtitles.builder import SubtitleLine
 
 logger = logging.getLogger(__name__)
 
-Color = Tuple[int, int, int]  # RGB 0-255
+Color = tuple[int, int, int]  # RGB 0-255
 
 
 @dataclass
@@ -20,12 +20,12 @@ class SubtitleStyle:
     stroke_color: Color = (0, 0, 0)
     stroke_width: int = 2
     shadow: bool = True
-    shadow_offset: Tuple[int, int] = (2, 2)
+    shadow_offset: tuple[int, int] = (2, 2)
     align: str = "center"  # center | left | right
     position: str = "bottom"  # bottom | top
 
 
-def preset_styles() -> List[SubtitleStyle]:
+def preset_styles() -> list[SubtitleStyle]:
     return [
         SubtitleStyle(),
         SubtitleStyle(
@@ -64,22 +64,20 @@ class StyledSubtitleRenderer:
     is deferred to runtime to avoid heavy dependencies during tests.
     """
 
-    def __init__(self, style: Optional[SubtitleStyle] = None):
+    def __init__(self, style: SubtitleStyle | None = None):
         self.style = style or SubtitleStyle()
 
     def render_preview(
         self,
         lines: Iterable[SubtitleLine],
         *,
-        size: Tuple[int, int] = (1080, 1920),
+        size: tuple[int, int] = (1080, 1920),
         background_color: Color = (0, 0, 0),
     ):
         try:
             from moviepy.editor import ColorClip  # type: ignore
         except ImportError as exc:  # pragma: no cover
-            raise RuntimeError(
-                "moviepy is required for rendering. Install with `pip install moviepy`."
-            ) from exc
+            raise RuntimeError("moviepy is required for rendering. Install with `pip install moviepy`.") from exc
 
         duration = max((line.end for line in lines), default=0.0)
         clip = ColorClip(size, color=background_color).set_duration(duration)
@@ -89,9 +87,9 @@ class StyledSubtitleRenderer:
         self,
         lines: Iterable[SubtitleLine],
         *,
-        size: Tuple[int, int] = (1080, 1920),
+        size: tuple[int, int] = (1080, 1920),
         orientation: str = "vertical",  # vertical 9:16 or horizontal 16:9
-    ) -> Dict[str, object]:
+    ) -> dict[str, object]:
         """Build a render plan with approximate positions and timings."""
         width, height = size
         padding_x = width * 0.1
@@ -100,8 +98,8 @@ class StyledSubtitleRenderer:
         y_base = height - padding_y if self.style.position == "bottom" else padding_y
         align = self.style.align
 
-        base_layers: List[Dict[str, object]] = []
-        word_layers: List[Dict[str, object]] = []
+        base_layers: list[dict[str, object]] = []
+        word_layers: list[dict[str, object]] = []
 
         def compute_x(text: str) -> float:
             approx_char_w = self.style.font_size * 0.6
@@ -156,7 +154,7 @@ class StyledSubtitleRenderer:
         self,
         lines: Iterable[SubtitleLine],
         *,
-        size: Tuple[int, int] = (1080, 1920),
+        size: tuple[int, int] = (1080, 1920),
         background_color: Color = (0, 0, 0),
     ):
         """Render subtitles with MoviePy text/highlight layers.
@@ -218,4 +216,4 @@ class StyledSubtitleRenderer:
 
 def _rgb_to_hex(color: Color) -> str:
     r, g, b = color
-    return "#{:02x}{:02x}{:02x}".format(r, g, b)
+    return f"#{r:02x}{g:02x}{b:02x}"

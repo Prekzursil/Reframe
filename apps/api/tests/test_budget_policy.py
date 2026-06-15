@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
-
-from sqlmodel import Session, select
 
 from app.config import get_settings
 from app.database import get_engine
 from app.models import OrgBudgetPolicy, UsageLedgerEntry
+from sqlmodel import Session, select
 
 
 def _expect(condition: bool, message: str) -> None:
@@ -42,7 +41,7 @@ def _set_billing_enabled(monkeypatch) -> None:
 
 def _seed_budget_policy_and_usage(*, org_id: str, hard_limit_cents: int, current_cost_cents: int) -> None:
     engine = get_engine()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with Session(engine) as session:
         policy = session.exec(select(OrgBudgetPolicy).where(OrgBudgetPolicy.org_id == UUID(org_id))).first()
         if policy is None:
@@ -132,4 +131,6 @@ def test_budget_policy_hard_limit_blocks_job_submission(test_client, monkeypatch
     _expect(payload["code"] == "QUOTA_EXCEEDED", "Expected QUOTA_EXCEEDED error code")
     details = payload.get("details") or {}
     _expect(details.get("monthly_hard_limit_cents") == 100, "Expected hard-limit details in quota response")
-    _expect(details.get("projected_month_estimated_cost_cents", 0) > 100, "Expected projected cost to exceed hard limit")
+    _expect(
+        details.get("projected_month_estimated_cost_cents", 0) > 100, "Expected projected cost to exceed hard limit"
+    )

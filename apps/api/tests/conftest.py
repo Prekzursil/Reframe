@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 _tools_bin = REPO_ROOT / ".tools" / "bin"
 if _tools_bin.is_dir():
@@ -18,8 +17,9 @@ API_ROOT = Path(__file__).resolve().parents[1]
 if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
 
+
 def _derived_test_secret(label: str) -> str:
-    return hashlib.sha256(f"reframe-test::{label}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"reframe-test::{label}".encode()).hexdigest()
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +53,9 @@ def test_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     media_root.mkdir(parents=True, exist_ok=True)
 
     db_path = tmp_path / "reframe-test.db"
-    db_url = f"sqlite:////{str(db_path).lstrip('/')}"
+    # Cross-platform SQLite URL: as_posix() yields sqlite:///C:/... on Windows
+    # and sqlite:////abs/path on POSIX, both valid.
+    db_url = f"sqlite:///{db_path.as_posix()}"
     monkeypatch.setenv("DATABASE_URL", db_url)
     monkeypatch.setenv("REFRAME_MEDIA_ROOT", str(media_root))
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import status
 from pydantic import BaseModel
@@ -20,11 +20,11 @@ class ErrorCode:
 class ErrorResponse(BaseModel):
     code: str
     message: str
-    details: Optional[Any] = None
+    details: Any | None = None
 
 
 class ApiError(Exception):
-    def __init__(self, *, status_code: int, code: str, message: str, details: Optional[Any] = None):
+    def __init__(self, *, status_code: int, code: str, message: str, details: Any | None = None):
         self.status_code = status_code
         self.code = code
         self.message = message
@@ -32,25 +32,33 @@ class ApiError(Exception):
         super().__init__(message)
 
 
-def not_found(message: str = "Resource not found", details: Optional[Any] = None) -> ApiError:
+def not_found(message: str = "Resource not found", details: Any | None = None) -> ApiError:
     return ApiError(status_code=status.HTTP_404_NOT_FOUND, code=ErrorCode.NOT_FOUND, message=message, details=details)
 
 
-def conflict(message: str = "Conflict", details: Optional[Any] = None) -> ApiError:
+def conflict(message: str = "Conflict", details: Any | None = None) -> ApiError:
     return ApiError(status_code=status.HTTP_409_CONFLICT, code=ErrorCode.CONFLICT, message=message, details=details)
 
 
-def unauthorized(message: str = "Unauthorized", details: Optional[Any] = None) -> ApiError:
-    return ApiError(status_code=status.HTTP_401_UNAUTHORIZED, code=ErrorCode.UNAUTHORIZED, message=message, details=details)
+def unauthorized(message: str = "Unauthorized", details: Any | None = None) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_401_UNAUTHORIZED, code=ErrorCode.UNAUTHORIZED, message=message, details=details
+    )
 
 
-def quota_exceeded(message: str = "Quota exceeded", details: Optional[Any] = None) -> ApiError:
-    return ApiError(status_code=status.HTTP_429_TOO_MANY_REQUESTS, code=ErrorCode.QUOTA_EXCEEDED, message=message, details=details)
+def quota_exceeded(message: str = "Quota exceeded", details: Any | None = None) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS, code=ErrorCode.QUOTA_EXCEEDED, message=message, details=details
+    )
 
 
-def server_error(message: str = "Server error", details: Optional[Any] = None) -> ApiError:
-    return ApiError(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, code=ErrorCode.SERVER_ERROR, message=message, details=details)
+def server_error(message: str = "Server error", details: Any | None = None) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, code=ErrorCode.SERVER_ERROR, message=message, details=details
+    )
 
 
-def rate_limited(message: str = "Rate limit exceeded", details: Optional[Any] = None) -> ApiError:
-    return ApiError(status_code=status.HTTP_429_TOO_MANY_REQUESTS, code=ErrorCode.RATE_LIMITED, message=message, details=details)
+def rate_limited(message: str = "Rate limit exceeded", details: Any | None = None) -> ApiError:
+    return ApiError(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS, code=ErrorCode.RATE_LIMITED, message=message, details=details
+    )

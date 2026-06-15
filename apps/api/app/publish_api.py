@@ -1,20 +1,22 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import lru_cache
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any
 from uuid import UUID
 
 try:
     from celery import Celery
 except ModuleNotFoundError:  # pragma: no cover
+
     class Celery:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
             pass
 
         def send_task(self, *_args, **_kwargs):
             raise RuntimeError("Celery is not installed in this environment.")
+
 
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlmodel import Session, SQLModel, select
@@ -42,11 +44,11 @@ class PublishProviderView(SQLModel):
 class PublishConnectionView(SQLModel):
     id: UUID
     provider: str
-    account_label: Optional[str] = None
-    external_account_id: Optional[str] = None
+    account_label: str | None = None
+    external_account_id: str | None = None
     created_at: datetime
     updated_at: datetime
-    revoked_at: Optional[datetime] = None
+    revoked_at: datetime | None = None
 
 
 class PublishConnectStartResponse(SQLModel):
@@ -60,11 +62,11 @@ class PublishJobCreateRequest(SQLModel):
     provider: str
     connection_id: UUID
     asset_id: UUID
-    title: Optional[str] = None
-    description: Optional[str] = None
+    title: str | None = None
+    description: str | None = None
     tags: list[str] = []
-    schedule_at: Optional[datetime] = None
-    workflow_run_id: Optional[UUID] = None
+    schedule_at: datetime | None = None
+    workflow_run_id: UUID | None = None
 
 
 class PublishJobView(SQLModel):
@@ -75,16 +77,16 @@ class PublishJobView(SQLModel):
     status: str
     retry_count: int
     payload: dict
-    error: Optional[str] = None
-    external_post_id: Optional[str] = None
-    published_url: Optional[str] = None
-    task_id: Optional[str] = None
+    error: str | None = None
+    external_post_id: str | None = None
+    published_url: str | None = None
+    task_id: str | None = None
     created_at: datetime
     updated_at: datetime
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _provider_display(provider: str) -> str:
@@ -207,7 +209,9 @@ def list_publish_providers(session: SessionDep, principal: PrincipalDep) -> list
                 )
             ).all()
         )
-        rows.append(PublishProviderView(provider=provider, display_name=_provider_display(provider), connected_count=count))
+        rows.append(
+            PublishProviderView(provider=provider, display_name=_provider_display(provider), connected_count=count)
+        )
     return rows
 
 
@@ -217,7 +221,9 @@ def list_publish_providers(session: SessionDep, principal: PrincipalDep) -> list
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}},
 )
-def list_publish_connections(provider: str, session: SessionDep, principal: PrincipalDep) -> list[PublishConnectionView]:
+def list_publish_connections(
+    provider: str, session: SessionDep, principal: PrincipalDep
+) -> list[PublishConnectionView]:
     _require_hosted_principal(principal)
     normalized = _validate_provider(provider)
     rows = session.exec(
@@ -248,9 +254,7 @@ def start_publish_connection(
     settings = get_settings()
     redirect_uri = f"{settings.api_base_url.rstrip('/')}/api/v1/publish/{normalized}/connect/callback"
     authorize_url = (
-        f"{settings.app_base_url.rstrip('/')}/mock-oauth/{normalized}"
-        f"?state={state}"
-        f"&redirect_uri={redirect_uri}"
+        f"{settings.app_base_url.rstrip('/')}/mock-oauth/{normalized}?state={state}&redirect_uri={redirect_uri}"
     )
     return PublishConnectStartResponse(
         provider=normalized,
@@ -353,11 +357,18 @@ def revoke_publish_connection(
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
 )
-def create_publish_job(payload: PublishJobCreateRequest, session: SessionDep, principal: PrincipalDep) -> PublishJobView:
+def create_publish_job(
+    payload: PublishJobCreateRequest, session: SessionDep, principal: PrincipalDep
+) -> PublishJobView:
     _require_hosted_principal(principal)
     provider = _validate_provider(payload.provider)
     connection = session.get(PublishConnection, payload.connection_id)
-    if not connection or connection.org_id != principal.org_id or connection.provider != provider or connection.revoked_at is not None:
+    if (
+        not connection
+        or connection.org_id != principal.org_id
+        or connection.provider != provider
+        or connection.revoked_at is not None
+    ):
         raise not_found("Publish connection not found", {"connection_id": str(payload.connection_id)})
     asset = session.get(MediaAsset, payload.asset_id)
     if not asset or asset.org_id != principal.org_id:
@@ -415,8 +426,8 @@ def create_publish_job(payload: PublishJobCreateRequest, session: SessionDep, pr
 def list_publish_jobs(
     session: SessionDep,
     principal: PrincipalDep,
-    provider: Optional[str] = None,
-    status_filter: Optional[str] = Query(default=None, alias="status"),
+    provider: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
 ) -> list[PublishJobView]:
     _require_hosted_principal(principal)
     query = select(PublishJob).where(PublishJob.org_id == principal.org_id).order_by(PublishJob.created_at.desc())

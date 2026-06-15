@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import re
-from typing import List
 
 from media_core.subtitles.builder import SubtitleLine
 from media_core.transcribe.models import Word
-
 
 _TIME_RE = re.compile(r"(?:(?P<h>\d{2}):)?(?P<m>\d{2}):(?P<s>\d{2})\.(?P<ms>\d{3})")
 
@@ -21,17 +19,17 @@ def _parse_timestamp(ts: str) -> float:
     return h * 3600 + m * 60 + s + ms / 1000.0
 
 
-def parse_vtt(vtt_text: str) -> List[SubtitleLine]:
+def parse_vtt(vtt_text: str) -> list[SubtitleLine]:
     """Parse a basic WebVTT string into SubtitleLine objects.
 
     This is intentionally minimal (supports the subset produced by `to_vtt`), but also
     tolerates cue identifiers and timing settings after the end timestamp.
     """
     text = vtt_text.lstrip("\ufeff")
-    out: List[SubtitleLine] = []
+    out: list[SubtitleLine] = []
 
     timing: str | None = None
-    cue_lines: List[str] = []
+    cue_lines: list[str] = []
     in_note = False
 
     def flush():
@@ -46,7 +44,7 @@ def parse_vtt(vtt_text: str) -> List[SubtitleLine]:
         except Exception as exc:
             raise ValueError(f"Invalid VTT timing line: {timing}") from exc
 
-        content = " ".join(l.strip() for l in cue_lines if l.strip()).strip()
+        content = " ".join(ln.strip() for ln in cue_lines if ln.strip()).strip()
         if content:
             out.append(SubtitleLine(start=start, end=end, words=[Word(text=content, start=start, end=end)]))
         timing = None

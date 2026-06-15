@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Optional
+from datetime import UTC, datetime
+from enum import StrEnum
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column, JSON, UniqueConstraint
+from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 FK_MEDIA_ASSET_ID = "mediaasset.id"
@@ -13,7 +12,7 @@ FK_PROJECT_ID = "project.id"
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Organization(SQLModel, table=True):
@@ -29,8 +28,8 @@ class Organization(SQLModel, table=True):
 class User(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     email: str = Field(index=True, unique=True)
-    password_hash: Optional[str] = Field(default=None)
-    display_name: Optional[str] = Field(default=None)
+    password_hash: str | None = Field(default=None)
+    display_name: str | None = Field(default=None)
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -54,7 +53,7 @@ class OAuthAccount(SQLModel, table=True):
     user_id: UUID = Field(foreign_key="user.id", index=True)
     provider: str = Field(index=True)
     provider_subject: str
-    email: Optional[str] = Field(default=None)
+    email: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -77,10 +76,10 @@ class Subscription(SQLModel, table=True):
     org_id: UUID = Field(foreign_key="organization.id", index=True, unique=True)
     plan_code: str = Field(foreign_key="plan.code", default="free")
     status: str = Field(default="active")
-    stripe_customer_id: Optional[str] = Field(default=None, index=True)
-    stripe_subscription_id: Optional[str] = Field(default=None, index=True)
-    current_period_start: Optional[datetime] = Field(default=None)
-    current_period_end: Optional[datetime] = Field(default=None)
+    stripe_customer_id: str | None = Field(default=None, index=True)
+    stripe_subscription_id: str | None = Field(default=None, index=True)
+    current_period_start: datetime | None = Field(default=None)
+    current_period_end: datetime | None = Field(default=None)
     cancel_at_period_end: bool = Field(default=False)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -89,13 +88,13 @@ class Subscription(SQLModel, table=True):
 class InvoiceSnapshot(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key="organization.id", index=True)
-    subscription_id: Optional[UUID] = Field(default=None, foreign_key="subscription.id", index=True)
-    stripe_invoice_id: Optional[str] = Field(default=None, index=True)
+    subscription_id: UUID | None = Field(default=None, foreign_key="subscription.id", index=True)
+    stripe_invoice_id: str | None = Field(default=None, index=True)
     amount_cents: int = Field(default=0)
     currency: str = Field(default="usd")
     status: str = Field(default="draft")
-    period_start: Optional[datetime] = Field(default=None)
-    period_end: Optional[datetime] = Field(default=None)
+    period_start: datetime | None = Field(default=None)
+    period_end: datetime | None = Field(default=None)
     payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -104,8 +103,8 @@ class InvoiceSnapshot(SQLModel, table=True):
 class UsageEvent(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key="organization.id", index=True)
-    user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
-    job_id: Optional[UUID] = Field(default=None, foreign_key="job.id", index=True)
+    user_id: UUID | None = Field(default=None, foreign_key="user.id", index=True)
+    job_id: UUID | None = Field(default=None, foreign_key="job.id", index=True)
     metric: str = Field(index=True)
     quantity: float = Field(default=0.0)
     details: dict = Field(default_factory=dict, sa_column=Column(JSON))
@@ -113,7 +112,9 @@ class UsageEvent(SQLModel, table=True):
 
 
 class UsageAggregate(SQLModel, table=True):
-    __table_args__ = (UniqueConstraint("org_id", "metric", "period_start", "period_end", name="uq_usage_aggregate_bucket"),)
+    __table_args__ = (
+        UniqueConstraint("org_id", "metric", "period_start", "period_end", name="uq_usage_aggregate_bucket"),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key="organization.id", index=True)
@@ -134,8 +135,8 @@ class ApiKey(SQLModel, table=True):
     key_prefix: str = Field(index=True)
     key_hash: str
     scopes: list[str] = Field(default_factory=list, sa_column=Column(JSON))
-    last_used_at: Optional[datetime] = Field(default=None)
-    revoked_at: Optional[datetime] = Field(default=None)
+    last_used_at: datetime | None = Field(default=None)
+    revoked_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -143,15 +144,15 @@ class ApiKey(SQLModel, table=True):
 class AuditEvent(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key="organization.id", index=True)
-    actor_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    actor_user_id: UUID | None = Field(default=None, foreign_key="user.id", index=True)
     event_type: str = Field(index=True)
-    entity_type: Optional[str] = Field(default=None, index=True)
-    entity_id: Optional[str] = Field(default=None, index=True)
+    entity_type: str | None = Field(default=None, index=True)
+    entity_id: str | None = Field(default=None, index=True)
     payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
-class WorkflowRunStatus(str, Enum):
+class WorkflowRunStatus(StrEnum):
     queued = "queued"
     running = "running"
     completed = "completed"
@@ -159,7 +160,7 @@ class WorkflowRunStatus(str, Enum):
     cancelled = "cancelled"
 
 
-class WorkflowStepStatus(str, Enum):
+class WorkflowStepStatus(StrEnum):
     queued = "queued"
     running = "running"
     completed = "completed"
@@ -170,11 +171,11 @@ class WorkflowStepStatus(str, Enum):
 class WorkflowTemplate(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     name: str
-    description: Optional[str] = Field(default=None)
+    description: str | None = Field(default=None)
     steps: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
     active: bool = Field(default=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
-    owner_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", index=True)
+    owner_user_id: UUID | None = Field(default=None, foreign_key="user.id", index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -182,13 +183,13 @@ class WorkflowTemplate(SQLModel, table=True):
 class WorkflowRun(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     template_id: UUID = Field(foreign_key="workflowtemplate.id", index=True)
-    task_id: Optional[str] = Field(default=None, index=True)
+    task_id: str | None = Field(default=None, index=True)
     status: WorkflowRunStatus = Field(default=WorkflowRunStatus.queued, index=True)
-    input_asset_id: Optional[UUID] = Field(default=None, foreign_key=FK_MEDIA_ASSET_ID, index=True)
+    input_asset_id: UUID | None = Field(default=None, foreign_key=FK_MEDIA_ASSET_ID, index=True)
     payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    project_id: Optional[UUID] = Field(default=None, foreign_key=FK_PROJECT_ID, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
-    owner_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    project_id: UUID | None = Field(default=None, foreign_key=FK_PROJECT_ID, index=True)
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", index=True)
+    owner_user_id: UUID | None = Field(default=None, foreign_key="user.id", index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -209,8 +210,8 @@ class WorkflowRunStep(SQLModel, table=True):
 class UsageLedgerEntry(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key="organization.id", index=True)
-    user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
-    job_id: Optional[UUID] = Field(default=None, foreign_key="job.id", index=True)
+    user_id: UUID | None = Field(default=None, foreign_key="user.id", index=True)
+    job_id: UUID | None = Field(default=None, foreign_key="job.id", index=True)
     metric: str = Field(index=True)
     unit: str = Field(default="count")
     quantity: float = Field(default=0.0)
@@ -224,10 +225,10 @@ class OrgBudgetPolicy(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key="organization.id", index=True)
-    monthly_soft_limit_cents: Optional[int] = Field(default=None)
-    monthly_hard_limit_cents: Optional[int] = Field(default=None)
+    monthly_soft_limit_cents: int | None = Field(default=None)
+    monthly_hard_limit_cents: int | None = Field(default=None)
     enforce_hard_limit: bool = Field(default=False)
-    updated_by_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    updated_by_user_id: UUID | None = Field(default=None, foreign_key="user.id", index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -239,10 +240,10 @@ class SsoConnection(SQLModel, table=True):
     org_id: UUID = Field(foreign_key="organization.id", index=True)
     provider: str = Field(default="okta", index=True)
     enabled: bool = Field(default=False)
-    issuer_url: Optional[str] = Field(default=None)
-    client_id: Optional[str] = Field(default=None)
-    client_secret_ref: Optional[str] = Field(default=None)
-    audience: Optional[str] = Field(default=None)
+    issuer_url: str | None = Field(default=None)
+    client_id: str | None = Field(default=None)
+    client_secret_ref: str | None = Field(default=None)
+    audience: str | None = Field(default=None)
     default_role: str = Field(default="viewer")
     jit_enabled: bool = Field(default=True)
     allow_email_link: bool = Field(default=True)
@@ -256,27 +257,29 @@ class ScimToken(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key="organization.id", index=True)
-    created_by_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    created_by_user_id: UUID | None = Field(default=None, foreign_key="user.id", index=True)
     token_hint: str = Field(index=True)
     token_hash: str
     scopes: list[str] = Field(default_factory=list, sa_column=Column(JSON))
-    last_used_at: Optional[datetime] = Field(default=None)
-    revoked_at: Optional[datetime] = Field(default=None)
+    last_used_at: datetime | None = Field(default=None)
+    revoked_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
 
 class ScimIdentity(SQLModel, table=True):
-    __table_args__ = (UniqueConstraint("org_id", "provider", "external_id", "resource_type", name="uq_scim_identity_external"),)
+    __table_args__ = (
+        UniqueConstraint("org_id", "provider", "external_id", "resource_type", name="uq_scim_identity_external"),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key="organization.id", index=True)
-    user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    user_id: UUID | None = Field(default=None, foreign_key="user.id", index=True)
     provider: str = Field(default="okta", index=True)
     external_id: str = Field(index=True)
     resource_type: str = Field(default="user", index=True)
-    email: Optional[str] = Field(default=None, index=True)
-    group_name: Optional[str] = Field(default=None, index=True)
+    email: str | None = Field(default=None, index=True)
+    group_name: str | None = Field(default=None, index=True)
     active: bool = Field(default=True)
     attributes: dict = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=utcnow)
@@ -300,7 +303,7 @@ class ProjectMembership(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     project_id: UUID = Field(foreign_key=FK_PROJECT_ID, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", index=True)
     user_id: UUID = Field(foreign_key="user.id", index=True)
     role: str = Field(default="viewer", index=True)
     created_at: datetime = Field(default_factory=utcnow)
@@ -310,9 +313,9 @@ class ProjectMembership(SQLModel, table=True):
 class ProjectComment(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     project_id: UUID = Field(foreign_key=FK_PROJECT_ID, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", index=True)
     author_user_id: UUID = Field(foreign_key="user.id", index=True)
-    parent_comment_id: Optional[UUID] = Field(default=None, foreign_key="projectcomment.id", index=True)
+    parent_comment_id: UUID | None = Field(default=None, foreign_key="projectcomment.id", index=True)
     body: str
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -321,12 +324,12 @@ class ProjectComment(SQLModel, table=True):
 class ProjectApprovalRequest(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     project_id: UUID = Field(foreign_key=FK_PROJECT_ID, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", index=True)
     requested_by_user_id: UUID = Field(foreign_key="user.id", index=True)
     status: str = Field(default="pending", index=True)
-    summary: Optional[str] = Field(default=None)
-    resolved_by_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
-    resolved_at: Optional[datetime] = Field(default=None)
+    summary: str | None = Field(default=None)
+    resolved_by_user_id: UUID | None = Field(default=None, foreign_key="user.id", index=True)
+    resolved_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -334,8 +337,8 @@ class ProjectApprovalRequest(SQLModel, table=True):
 class ProjectActivityEvent(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     project_id: UUID = Field(foreign_key=FK_PROJECT_ID, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
-    actor_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", index=True)
+    actor_user_id: UUID | None = Field(default=None, foreign_key="user.id", index=True)
     event_type: str = Field(index=True)
     payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=utcnow, index=True)
@@ -344,14 +347,14 @@ class ProjectActivityEvent(SQLModel, table=True):
 class PublishConnection(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key="organization.id", index=True)
-    user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    user_id: UUID | None = Field(default=None, foreign_key="user.id", index=True)
     provider: str = Field(index=True)
-    account_label: Optional[str] = Field(default=None)
-    external_account_id: Optional[str] = Field(default=None, index=True)
-    token_ref: Optional[str] = Field(default=None)
-    refresh_token_ref: Optional[str] = Field(default=None)
+    account_label: str | None = Field(default=None)
+    external_account_id: str | None = Field(default=None, index=True)
+    token_ref: str | None = Field(default=None)
+    refresh_token_ref: str | None = Field(default=None)
     connection_meta: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    revoked_at: Optional[datetime] = Field(default=None)
+    revoked_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -359,29 +362,29 @@ class PublishConnection(SQLModel, table=True):
 class PublishJob(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     org_id: UUID = Field(foreign_key="organization.id", index=True)
-    user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    user_id: UUID | None = Field(default=None, foreign_key="user.id", index=True)
     provider: str = Field(index=True)
     connection_id: UUID = Field(foreign_key="publishconnection.id", index=True)
     asset_id: UUID = Field(foreign_key=FK_MEDIA_ASSET_ID, index=True)
     status: str = Field(default="queued", index=True)
     payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
     retry_count: int = Field(default=0)
-    error: Optional[str] = Field(default=None)
-    external_post_id: Optional[str] = Field(default=None)
-    published_url: Optional[str] = Field(default=None)
-    task_id: Optional[str] = Field(default=None, index=True)
+    error: str | None = Field(default=None)
+    external_post_id: str | None = Field(default=None)
+    published_url: str | None = Field(default=None)
+    task_id: str | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
 
 class AutomationRunEvent(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
-    workflow_run_id: Optional[UUID] = Field(default=None, foreign_key="workflowrun.id", index=True)
-    publish_job_id: Optional[UUID] = Field(default=None, foreign_key="publishjob.id", index=True)
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", index=True)
+    workflow_run_id: UUID | None = Field(default=None, foreign_key="workflowrun.id", index=True)
+    publish_job_id: UUID | None = Field(default=None, foreign_key="publishjob.id", index=True)
     step_name: str = Field(index=True)
     status: str = Field(index=True)
-    message: Optional[str] = Field(default=None)
+    message: str | None = Field(default=None)
     payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
@@ -389,17 +392,17 @@ class AutomationRunEvent(SQLModel, table=True):
 class MediaAsset(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     kind: str = Field(description="Type of asset, e.g., video, audio, subtitle")
-    uri: Optional[str] = Field(default=None, description="Storage URI or path for the asset")
-    mime_type: Optional[str] = Field(default=None)
-    duration: Optional[float] = Field(default=None, description="Duration in seconds if known")
-    project_id: Optional[UUID] = Field(default=None, foreign_key=FK_PROJECT_ID, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
-    owner_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    uri: str | None = Field(default=None, description="Storage URI or path for the asset")
+    mime_type: str | None = Field(default=None)
+    duration: float | None = Field(default=None, description="Duration in seconds if known")
+    project_id: UUID | None = Field(default=None, foreign_key=FK_PROJECT_ID, index=True)
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", index=True)
+    owner_user_id: UUID | None = Field(default=None, foreign_key="user.id", index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
 
-class JobStatus(str, Enum):
+class JobStatus(StrEnum):
     queued = "queued"
     running = "running"
     completed = "completed"
@@ -407,14 +410,14 @@ class JobStatus(str, Enum):
     cancelled = "cancelled"
 
 
-class OrgRole(str, Enum):
+class OrgRole(StrEnum):
     owner = "owner"
     admin = "admin"
     editor = "editor"
     viewer = "viewer"
 
 
-class InviteStatus(str, Enum):
+class InviteStatus(StrEnum):
     pending = "pending"
     accepted = "accepted"
     revoked = "revoked"
@@ -424,18 +427,18 @@ class InviteStatus(str, Enum):
 class Job(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     job_type: str = Field(description="Pipeline type, e.g., transcribe, translate, shorts")
-    task_id: Optional[str] = Field(default=None, index=True, description="Celery task id for execution tracking")
+    task_id: str | None = Field(default=None, index=True, description="Celery task id for execution tracking")
     status: JobStatus = Field(default=JobStatus.queued, index=True)
     progress: float = Field(default=0.0, description="0-1.0 progress fraction")
-    error: Optional[str] = Field(default=None, description="Error message if failed")
+    error: str | None = Field(default=None, description="Error message if failed")
     payload: dict = Field(default_factory=dict, sa_column=Column(JSON), description="Options or parameters for the job")
 
-    input_asset_id: Optional[UUID] = Field(default=None, foreign_key=FK_MEDIA_ASSET_ID)
-    output_asset_id: Optional[UUID] = Field(default=None, foreign_key=FK_MEDIA_ASSET_ID)
-    project_id: Optional[UUID] = Field(default=None, foreign_key=FK_PROJECT_ID, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
-    owner_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
-    idempotency_key: Optional[str] = Field(default=None, index=True)
+    input_asset_id: UUID | None = Field(default=None, foreign_key=FK_MEDIA_ASSET_ID)
+    output_asset_id: UUID | None = Field(default=None, foreign_key=FK_MEDIA_ASSET_ID)
+    project_id: UUID | None = Field(default=None, foreign_key=FK_PROJECT_ID, index=True)
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", index=True)
+    owner_user_id: UUID | None = Field(default=None, foreign_key="user.id", index=True)
+    idempotency_key: str | None = Field(default=None, index=True)
 
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -444,7 +447,7 @@ class Job(SQLModel, table=True):
 class SubtitleStylePreset(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     name: str
-    description: Optional[str] = Field(default=None)
+    description: str | None = Field(default=None)
     style: dict = Field(default_factory=dict, sa_column=Column(JSON), description="Serialized style payload")
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -453,9 +456,9 @@ class SubtitleStylePreset(SQLModel, table=True):
 class Project(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     name: str
-    description: Optional[str] = Field(default=None)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
-    owner_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    description: str | None = Field(default=None)
+    org_id: UUID | None = Field(default=None, foreign_key="organization.id", index=True)
+    owner_user_id: UUID | None = Field(default=None, foreign_key="user.id", index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -472,8 +475,8 @@ class OrgInvite(SQLModel, table=True):
     role: str = Field(default="viewer")
     token_hash: str = Field(index=True)
     status: InviteStatus = Field(default=InviteStatus.pending, index=True)
-    invited_by_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
-    accepted_by_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    invited_by_user_id: UUID | None = Field(default=None, foreign_key="user.id", index=True)
+    accepted_by_user_id: UUID | None = Field(default=None, foreign_key="user.id", index=True)
     expires_at: datetime = Field(default_factory=utcnow, index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

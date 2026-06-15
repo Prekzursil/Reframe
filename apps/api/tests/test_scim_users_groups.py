@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlmodel import Session, select
-
 from app.database import get_engine
-from app.models import OrgMembership, Organization, RoleMapping
+from app.models import Organization, OrgMembership, RoleMapping
+from sqlmodel import Session, select
 
 
 def _register(client, *, email: str, password: str = "Password123!", organization_name: str | None = None) -> dict:
@@ -101,7 +100,9 @@ def test_scim_users_and_groups_lifecycle(test_client):
     engine = get_engine()
     with Session(engine) as session:
         membership = session.exec(
-            select(OrgMembership).where((OrgMembership.org_id == UUID(owner["org_id"])) & (OrgMembership.user_id == UUID(user_id)))
+            select(OrgMembership).where(
+                (OrgMembership.org_id == UUID(owner["org_id"])) & (OrgMembership.user_id == UUID(user_id))
+            )
         ).first()
         assert membership is not None
         assert membership.role == "editor"
@@ -125,6 +126,8 @@ def test_scim_users_and_groups_lifecycle(test_client):
 
     with Session(engine) as session:
         membership = session.exec(
-            select(OrgMembership).where((OrgMembership.org_id == UUID(owner["org_id"])) & (OrgMembership.user_id == UUID(user_id)))
+            select(OrgMembership).where(
+                (OrgMembership.org_id == UUID(owner["org_id"])) & (OrgMembership.user_id == UUID(user_id))
+            )
         ).first()
         assert membership is None

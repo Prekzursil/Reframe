@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlmodel import Session
-
 from app.database import get_engine
 from app.models import Organization
 from app.security import create_access_token
+from sqlmodel import Session
 
 
 def _register(client, *, email: str, password: str = "Password123!", organization_name: str | None = None) -> dict:
@@ -35,7 +34,7 @@ def test_project_collaboration_members_comments_approvals_and_activity(test_clie
     owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
     _set_seat_limit(owner["org_id"], 3)
 
-    collaborator = _register(client, email="editor-collab@test.dev", organization_name="Editor Personal")
+    _register(client, email="editor-collab@test.dev", organization_name="Editor Personal")
     outsider = _register(client, email="outsider-collab@test.dev", organization_name="Outsider Org")
     outsider_headers = {"Authorization": f"Bearer {outsider['access_token']}"}
 

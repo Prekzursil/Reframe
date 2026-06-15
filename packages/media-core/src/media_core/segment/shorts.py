@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from bisect import bisect_right
-from dataclasses import dataclass
-from typing import Dict, List, Optional
-
 import json
 import re
+from bisect import bisect_right
+from dataclasses import dataclass
 
 
 @dataclass
@@ -13,8 +11,8 @@ class SegmentCandidate:
     start: float
     end: float
     score: float = 0.0
-    reason: Optional[str] = None
-    snippet: Optional[str] = None
+    reason: str | None = None
+    snippet: str | None = None
 
     @property
     def duration(self) -> float:
@@ -39,7 +37,7 @@ def _clamp(value: float, minimum: float, maximum: float) -> float:
     return max(minimum, min(maximum, value))
 
 
-def _to_weights(raw: Optional[HeuristicWeights | dict]) -> HeuristicWeights:
+def _to_weights(raw: HeuristicWeights | dict | None) -> HeuristicWeights:
     if isinstance(raw, HeuristicWeights):
         return raw
     if not isinstance(raw, dict):
@@ -68,11 +66,11 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     return len(a & b) / len(union)
 
 
-def equal_splits(duration: float, clip_length: float) -> List[SegmentCandidate]:
+def equal_splits(duration: float, clip_length: float) -> list[SegmentCandidate]:
     """Produce naive equal splits across the duration."""
     if duration <= 0 or clip_length <= 0:
         return []
-    segments: List[SegmentCandidate] = []
+    segments: list[SegmentCandidate] = []
     t = 0.0
     while t < duration:
         end = min(duration, t + clip_length)
@@ -81,10 +79,10 @@ def equal_splits(duration: float, clip_length: float) -> List[SegmentCandidate]:
     return segments
 
 
-def sliding_window(duration: float, window: float, stride: float) -> List[SegmentCandidate]:
+def sliding_window(duration: float, window: float, stride: float) -> list[SegmentCandidate]:
     if duration <= 0 or window <= 0 or stride <= 0:
         return []
-    segments: List[SegmentCandidate] = []
+    segments: list[SegmentCandidate] = []
     t = 0.0
     while t < duration:
         end = min(duration, t + window)
@@ -94,21 +92,17 @@ def sliding_window(duration: float, window: float, stride: float) -> List[Segmen
 
 
 def select_top(
-    candidates: List[SegmentCandidate],
+    candidates: list[SegmentCandidate],
     max_segments: int,
     min_duration: float,
     max_duration: float,
     min_gap: float = 0.0,
-) -> List[SegmentCandidate]:
+) -> list[SegmentCandidate]:
     """Select top non-overlapping segments by score within duration bounds.
 
     If min_gap > 0, enforces a gap between selected segments.
     """
-    filtered = [
-        c
-        for c in candidates
-        if c.duration >= min_duration and c.duration <= max_duration and c.start < c.end
-    ]
+    filtered = [c for c in candidates if c.duration >= min_duration and c.duration <= max_duration and c.start < c.end]
     if max_segments <= 0 or not filtered:
         return []
 
@@ -117,8 +111,7 @@ def select_top(
     intervals = sorted(filtered, key=lambda c: (c.end, c.start))
     ends = [c.end for c in intervals]
     stable_scores = [
-        float(item.score) - (float(item.start) * 1e-6) - (idx * 1e-9)
-        for idx, item in enumerate(intervals)
+        float(item.score) - (float(item.start) * 1e-6) - (idx * 1e-9) for idx, item in enumerate(intervals)
     ]
 
     # p[i] = predecessor index (1-based) of interval i (1..n), 0 means none.
@@ -158,10 +151,10 @@ def select_top(
 
 
 def score_segments_heuristic(
-    candidates: List[SegmentCandidate],
-    keywords: Optional[List[str]] = None,
-    weights: Optional[HeuristicWeights | dict] = None,
-) -> List[SegmentCandidate]:
+    candidates: list[SegmentCandidate],
+    keywords: list[str] | None = None,
+    weights: HeuristicWeights | dict | None = None,
+) -> list[SegmentCandidate]:
     cfg = _to_weights(weights)
     keywords = [k.lower() for k in (keywords or []) if k]
     seen_tokens: list[set[str]] = []
@@ -180,7 +173,9 @@ def score_segments_heuristic(
         target_wps = 2.4
         speech_density = _clamp(1.0 - abs(wps - target_wps) / target_wps, 0.0, 1.0)
 
-        duration_bonus = 1.0 if 15.0 <= cand.duration <= 60.0 else _clamp(1.0 - abs(cand.duration - 30.0) / 30.0, 0.0, 1.0)
+        duration_bonus = (
+            1.0 if 15.0 <= cand.duration <= 60.0 else _clamp(1.0 - abs(cand.duration - 30.0) / 30.0, 0.0, 1.0)
+        )
         novelty_overlap = max((_jaccard(token_set, prev) for prev in seen_tokens), default=0.0)
 
         base_score = float(cand.score)
@@ -203,12 +198,12 @@ def score_segments_heuristic(
 
 def score_segments_llm(
     transcript: str,
-    candidates: List[SegmentCandidate],
+    candidates: list[SegmentCandidate],
     prompt: str,
     model: str,
-    client: Optional[object] = None,
+    client: object | None = None,
     provider: str = "openai",
-) -> List[SegmentCandidate]:
+) -> list[SegmentCandidate]:
     """Score segments using an LLM client.
 
     client must expose chat.completions.create(model=..., messages=[...]) similar to OpenAI.
@@ -218,10 +213,7 @@ def score_segments_llm(
     if client is None:
         raise RuntimeError("LLM client not provided; supply a compatible client")
 
-    payload = [
-        {"start": c.start, "end": c.end, "snippet": c.snippet or ""}
-        for c in candidates
-    ]
+    payload = [{"start": c.start, "end": c.end, "snippet": c.snippet or ""} for c in candidates]
     messages = [
         {"role": "system", "content": prompt},
         {
@@ -237,7 +229,7 @@ def score_segments_llm(
     except json.JSONDecodeError:
         return candidates
 
-    score_map: Dict[tuple, float] = {}
+    score_map: dict[tuple, float] = {}
     if isinstance(scores, list):
         for entry in scores:
             try:

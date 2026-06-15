@@ -1,0 +1,78 @@
+# Root tooling config for the lean quality gates.
+# Python packages keep their own build metadata (e.g. packages/media-core/pyproject.toml);
+# this file centralizes the shared Ruff + basedpyright gate configuration.
+
+[tool.ruff]
+# Pinned tool: ruff 0.15.17 (see QUALITY-CHARTER.md).
+target-version = "py311"
+line-length = 120
+extend-exclude = [
+  ".venv",
+  ".tooling-bin",
+  "node_modules",
+  "dist",
+  "build",
+  "Inspirations & Former Attempts",
+]
+
+[tool.ruff.lint]
+# Sane, deterministic rule set: pyflakes (F), pycodestyle (E/W), isort (I),
+# pep8-naming (N), pyupgrade (UP), flake8-bugbear (B), comprehensions (C4),
+# flake8-simplify (SIM). Auto-fixers run first; residuals are reported.
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
+ignore = [
+  "E501", # line length handled by the formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may use assert and shadow names freely; test doubles deliberately mirror
+# the lowercase attribute paths of the SDKs they stub (e.g. client.chat.completions).
+"**/tests/**" = ["N801", "N802", "N803", "N806"]
+# The worker wires up monorepo import roots via sys.path before importing the
+# app/* and media_core/* packages, so E402 (import-not-at-top) is expected here.
+"services/worker/worker.py" = ["E402"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI dependency markers are evaluated once at import and are the idiomatic
+# way to declare endpoint defaults; they are not mutable-default hazards.
+extend-immutable-calls = [
+  "fastapi.Depends",
+  "fastapi.Query",
+  "fastapi.Path",
+  "fastapi.Body",
+  "fastapi.Header",
+  "fastapi.Cookie",
+  "fastapi.Form",
+  "fastapi.File",
+  "fastapi.Security",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# basedpyright type gate (pinned: basedpyright 1.39.8).
+# typeCheckingMode = "standard" keeps "literal zero" achievable on partly-untyped code.
+[tool.basedpyright]
+typeCheckingMode = "standard"
+pythonVersion = "3.11"
+include = [
+  "apps/api/app",
+  "services/worker",
+  "packages/media-core/src",
+]
+exclude = [
+  "**/node_modules",
+  "**/__pycache__",
+  ".venv",
+  ".tooling-bin",
+  "**/tests",
+  "**/migrations",
+]
+# Resolve the monorepo import roots used by the test/runtime PYTHONPATH.
+extraPaths = [
+  "apps/api",
+  "packages/media-core/src",
+]
+reportMissingImports = "warning"
+reportMissingModuleSource = "none"

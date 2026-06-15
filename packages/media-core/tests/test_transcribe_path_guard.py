@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from media_core.transcribe.path_guard import validate_media_input_path
 
 

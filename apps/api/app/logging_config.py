@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
-
+from datetime import UTC, datetime
 
 _RESERVED = {
     "args",
@@ -34,7 +33,7 @@ _RESERVED = {
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, object] = {
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
@@ -63,5 +62,4 @@ def setup_logging(*, log_format: str = "json", log_level: str = "INFO") -> None:
 
     logger.addHandler(handler)
     logger.propagate = False
-    setattr(logger, "_reframe_configured", True)
-
+    logger._reframe_configured = True

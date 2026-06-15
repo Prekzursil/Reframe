@@ -4,22 +4,21 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI
-from fastapi import Request
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
-from app.config import get_settings
-from app.database import create_db_and_tables
 from app.api import router as api_router
 from app.auth_api import router as auth_router
 from app.billing_api import router as billing_router
-from app.collaboration_api import router as collaboration_router
-from app.identity_api import router as identity_router
-from app.publish_api import router as publish_router
-from app.errors import ApiError, ErrorResponse
 from app.cleanup import start_cleanup_loop
+from app.collaboration_api import router as collaboration_router
+from app.config import get_settings
+from app.database import create_db_and_tables
+from app.errors import ApiError, ErrorResponse
+from app.identity_api import router as identity_router
 from app.logging_config import setup_logging
+from app.publish_api import router as publish_router
 
 
 def create_app() -> FastAPI:

@@ -4,7 +4,7 @@ import json
 import os
 import urllib.request
 from types import SimpleNamespace
-from typing import Any, Optional
+from typing import Any
 
 
 def _truthy_env(name: str) -> bool:
@@ -19,7 +19,9 @@ class GroqChatClient:
     `media_core.translate.CloudTranslator` and `media_core.segment.shorts.score_segments_llm`.
     """
 
-    def __init__(self, *, api_key: str, base_url: str = "https://api.groq.com/openai/v1", timeout_seconds: float = 30.0) -> None:
+    def __init__(
+        self, *, api_key: str, base_url: str = "https://api.groq.com/openai/v1", timeout_seconds: float = 30.0
+    ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
@@ -34,8 +36,8 @@ class GroqChatClient:
         model: str,
         messages: list[dict[str, Any]],
         temperature: float = 0.0,
-        max_tokens: Optional[int] = None,
-        response_format: Optional[dict[str, Any]] = None,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
     ):
         if _truthy_env("REFRAME_OFFLINE_MODE"):
             raise RuntimeError("REFRAME_OFFLINE_MODE is enabled; refusing to call Groq API.")
@@ -67,7 +69,7 @@ class GroqChatClient:
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
 
 
-def get_groq_chat_client_from_env() -> Optional[GroqChatClient]:
+def get_groq_chat_client_from_env() -> GroqChatClient | None:
     if _truthy_env("REFRAME_OFFLINE_MODE"):
         return None
     api_key = os.getenv("GROQ_API_KEY", "").strip()
@@ -80,4 +82,3 @@ def get_groq_chat_client_from_env() -> Optional[GroqChatClient]:
     except ValueError:
         timeout = 30.0
     return GroqChatClient(api_key=api_key, base_url=base_url, timeout_seconds=timeout)
-

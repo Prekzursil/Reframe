@@ -5,9 +5,8 @@ import logging
 import re
 import shutil
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, List, Optional
-
 
 logger = logging.getLogger(__name__)
 
@@ -22,13 +21,17 @@ def _ensure_binary(name: str) -> str:
     return path
 
 
-def _run(cmd: List[str], runner=None) -> subprocess.CompletedProcess:
+def _run(cmd: list[str], runner=None) -> subprocess.CompletedProcess:
     runner = runner or subprocess.run
     try:
         return runner(cmd, check=True, capture_output=True)
     except subprocess.CalledProcessError as exc:
-        stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, (bytes, bytearray)) else str(exc.stderr or "")
-        stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, (bytes, bytearray)) else str(exc.stdout or "")
+        stderr = (
+            exc.stderr.decode(errors="replace") if isinstance(exc.stderr, (bytes, bytearray)) else str(exc.stderr or "")
+        )
+        stdout = (
+            exc.stdout.decode(errors="replace") if isinstance(exc.stdout, (bytes, bytearray)) else str(exc.stdout or "")
+        )
         logger.error(
             "ffmpeg command failed",
             extra={
@@ -102,7 +105,9 @@ def cut_clip(video_path: str | Path, start: float, end: float, output_path: str 
     _run(cmd, runner=runner)
 
 
-def reframe(video_path: str | Path, output_path: str | Path, aspect_ratio: str, strategy: str = "crop", runner=None) -> None:
+def reframe(
+    video_path: str | Path, output_path: str | Path, aspect_ratio: str, strategy: str = "crop", runner=None
+) -> None:
     ffmpeg = _ensure_binary("ffmpeg")
     if strategy == "crop":
         filter_chain = f"scale=-1:ih, crop=iw:iw/{aspect_ratio.replace(':', '/')}"
@@ -183,7 +188,7 @@ def burn_subtitles(
     video_path: str | Path,
     subs_path: str | Path,
     output_path: str | Path,
-    extra_filters: Optional[Iterable[str]] = None,
+    extra_filters: Iterable[str] | None = None,
     runner=None,
 ) -> None:
     ffmpeg = _ensure_binary("ffmpeg")

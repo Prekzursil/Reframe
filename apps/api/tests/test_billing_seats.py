@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlmodel import Session, select
-
 from app.config import get_settings
 from app.database import get_engine
 from app.models import Organization, Subscription
+from sqlmodel import Session, select
 
 
 def _register(client, *, email: str, password: str = "Password123!", organization_name: str | None = None) -> dict:

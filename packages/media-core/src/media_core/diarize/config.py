@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class DiarizationBackend(str, Enum):
+class DiarizationBackend(StrEnum):
     NOOP = "noop"
     PYANNOTE = "pyannote"
     SPEECHBRAIN = "speechbrain"
@@ -25,7 +24,7 @@ class DiarizationConfig(BaseModel):
         default="pyannote/speaker-diarization-3.1",
         description="Model/pipeline id for the selected backend.",
     )
-    huggingface_token: Optional[str] = Field(
+    huggingface_token: str | None = Field(
         default=None,
         description="Optional Hugging Face token for gated/private models (pyannote).",
     )

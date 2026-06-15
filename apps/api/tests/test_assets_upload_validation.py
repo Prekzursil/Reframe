@@ -37,4 +37,3 @@ def test_upload_enforces_max_upload_bytes(test_client, monkeypatch):
         data={"kind": "subtitle"},
     )
     assert resp.status_code == 413, resp.text
-

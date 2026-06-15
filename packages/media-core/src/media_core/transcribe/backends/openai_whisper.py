@@ -3,8 +3,9 @@ from __future__ import annotations
 import io
 import logging
 import os
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 
 from media_core.transcribe.config import TranscriptionConfig
 from media_core.transcribe.models import TranscriptionResult, Word
@@ -18,8 +19,7 @@ def _ensure_openai():
         import openai
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError(
-            "openai package is required for the OpenAI Whisper backend. "
-            "Install with `pip install openai`."
+            "openai package is required for the OpenAI Whisper backend. Install with `pip install openai`."
         ) from exc
     return openai
 
@@ -27,8 +27,8 @@ def _ensure_openai():
 def normalize_verbose_json(
     verbose_json: dict[str, Any],
     *,
-    model: Optional[str],
-    language: Optional[str],
+    model: str | None,
+    language: str | None,
 ) -> TranscriptionResult:
     """Normalize OpenAI verbose_json response to TranscriptionResult."""
     segments: Iterable[dict[str, Any]] = verbose_json.get("segments", []) or []

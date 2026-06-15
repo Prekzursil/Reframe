@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable, List, Tuple
 
 from media_core.subtitles.builder import SubtitleLine, to_srt
 from media_core.transcribe.models import Word
 from media_core.translate.translator import Translator
 
-
-_TIME_RE = re.compile(
-    r"(?P<h>\d{2}):(?P<m>\d{2}):(?P<s>\d{2}),(?P<ms>\d{3})"
-)
+_TIME_RE = re.compile(r"(?P<h>\d{2}):(?P<m>\d{2}):(?P<s>\d{2}),(?P<ms>\d{3})")
 
 
 def _parse_timestamp(ts: str) -> float:
@@ -21,8 +17,8 @@ def _parse_timestamp(ts: str) -> float:
     return h * 3600 + m * 60 + s + ms / 1000.0
 
 
-def parse_srt(srt_text: str) -> List[SubtitleLine]:
-    lines: List[SubtitleLine] = []
+def parse_srt(srt_text: str) -> list[SubtitleLine]:
+    lines: list[SubtitleLine] = []
     blocks = re.split(r"\n\s*\n", srt_text.strip(), flags=re.MULTILINE)
     for block in blocks:
         parts = block.strip().splitlines()
@@ -50,8 +46,8 @@ def translate_srt(srt_text: str, translator: Translator, src: str, tgt: str) -> 
     lines = parse_srt(srt_text)
     texts = [line.text() for line in lines]
     translated = translator.translate_batch(texts, src, tgt)
-    translated_lines: List[SubtitleLine] = []
-    for line, new_text in zip(lines, translated):
+    translated_lines: list[SubtitleLine] = []
+    for line, new_text in zip(lines, translated, strict=False):
         translated_lines.append(
             SubtitleLine(
                 start=line.start,
@@ -74,8 +70,8 @@ def translate_srt_bilingual(
     lines = parse_srt(srt_text)
     texts = [line.text() for line in lines]
     translated = translator.translate_batch(texts, src, tgt)
-    bilingual_lines: List[SubtitleLine] = []
-    for line, new_text in zip(lines, translated):
+    bilingual_lines: list[SubtitleLine] = []
+    for line, new_text in zip(lines, translated, strict=False):
         combined = f"{line.text()}{separator}{new_text}"
         bilingual_lines.append(
             SubtitleLine(

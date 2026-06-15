@@ -1,7 +1,6 @@
 import importlib.util
 
 import pytest
-
 from media_core.diarize import DiarizationBackend, DiarizationConfig, diarize_audio
 
 
@@ -15,4 +14,3 @@ def test_speechbrain_backend_requires_optional_deps(tmp_path):
     config = DiarizationConfig(backend=DiarizationBackend.SPEECHBRAIN, model="speechbrain/spkrec-ecapa-voxceleb")
     with pytest.raises(RuntimeError, match=r"speechbrain diarization backend selected"):
         diarize_audio(fake_audio, config)
-

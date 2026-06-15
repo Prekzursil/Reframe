@@ -3,8 +3,8 @@ from __future__ import annotations
 import hashlib
 import re
 import secrets
-from datetime import datetime, timedelta, timezone
-from typing import Annotated, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Annotated
 from uuid import UUID
 
 import httpx
@@ -14,8 +14,19 @@ from sqlmodel import Field, Session, SQLModel, select
 from app.billing import DEFAULT_PLAN_POLICIES
 from app.config import get_settings
 from app.database import get_session
-from app.errors import ErrorCode, ErrorResponse, ApiError, conflict, not_found, unauthorized
-from app.models import ApiKey, AuditEvent, InviteStatus, OAuthAccount, OrgInvite, OrgMembership, Organization, Plan, Subscription, User
+from app.errors import ApiError, ErrorCode, ErrorResponse, conflict, not_found, unauthorized
+from app.models import (
+    ApiKey,
+    AuditEvent,
+    InviteStatus,
+    OAuthAccount,
+    Organization,
+    OrgInvite,
+    OrgMembership,
+    Plan,
+    Subscription,
+    User,
+)
 from app.security import (
     AuthPrincipal,
     create_access_token,
@@ -35,8 +46,8 @@ SessionDep = Annotated[Session, Depends(get_session)]
 class AuthRegisterRequest(SQLModel):
     email: str
     password: str
-    display_name: Optional[str] = None
-    organization_name: Optional[str] = None
+    display_name: str | None = None
+    organization_name: str | None = None
 
 
 class AuthLoginRequest(SQLModel):
@@ -60,7 +71,7 @@ class AuthTokenResponse(SQLModel):
 class AuthMeResponse(SQLModel):
     user_id: UUID
     email: str
-    display_name: Optional[str] = None
+    display_name: str | None = None
     org_id: UUID
     org_name: str
     role: str
@@ -75,7 +86,7 @@ class OAuthStartResponse(SQLModel):
 class OrgMemberView(SQLModel):
     user_id: UUID
     email: str
-    display_name: Optional[str]
+    display_name: str | None
     role: str
 
 
@@ -98,8 +109,8 @@ class OrgView(SQLModel):
 
 class OrgCreateRequest(SQLModel):
     name: str
-    slug: Optional[str] = None
-    seat_limit: Optional[int] = None
+    slug: str | None = None
+    seat_limit: int | None = None
 
 
 class OrgInviteRequest(SQLModel):
@@ -119,7 +130,7 @@ class OrgInviteView(SQLModel):
     role: str
     status: str
     expires_at: datetime
-    invite_url: Optional[str] = None
+    invite_url: str | None = None
 
 
 class OrgInviteResolveResponse(SQLModel):
@@ -152,18 +163,18 @@ class ApiKeyView(SQLModel):
     key_prefix: str
     scopes: list[str]
     created_at: datetime
-    last_used_at: Optional[datetime] = None
-    revoked_at: Optional[datetime] = None
-    secret: Optional[str] = None
+    last_used_at: datetime | None = None
+    revoked_at: datetime | None = None
+    secret: str | None = None
 
 
 class AuditEventView(SQLModel):
     id: UUID
     org_id: UUID
-    actor_user_id: Optional[UUID] = None
+    actor_user_id: UUID | None = None
     event_type: str
-    entity_type: Optional[str] = None
-    entity_id: Optional[str] = None
+    entity_type: str | None = None
+    entity_id: str | None = None
     payload: dict
     created_at: datetime
 
@@ -185,13 +196,13 @@ ORG_MANAGER_ROLES = {"owner", "admin"}
 
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _hash_invite_token(token: str) -> str:
@@ -221,7 +232,9 @@ def _current_membership(session: Session, principal: AuthPrincipal) -> OrgMember
     if not principal.org_id or not principal.user_id:
         raise unauthorized("Authentication required")
     membership = session.exec(
-        select(OrgMembership).where((OrgMembership.org_id == principal.org_id) & (OrgMembership.user_id == principal.user_id))
+        select(OrgMembership).where(
+            (OrgMembership.org_id == principal.org_id) & (OrgMembership.user_id == principal.user_id)
+        )
     ).first()
     if not membership:
         raise unauthorized("Organization membership is required")
@@ -348,7 +361,9 @@ def _unique_org_slug(session: Session, name: str) -> str:
     return slug
 
 
-def ensure_personal_org(session: Session, user: User, organization_name: str | None = None) -> tuple[Organization, OrgMembership]:
+def ensure_personal_org(
+    session: Session, user: User, organization_name: str | None = None
+) -> tuple[Organization, OrgMembership]:
     existing = session.exec(select(OrgMembership).where(OrgMembership.user_id == user.id)).first()
     if existing:
         org = session.get(Organization, existing.org_id)
@@ -386,7 +401,7 @@ def _issue_tokens(*, user_id: UUID, org_id: UUID, role: str) -> AuthTokenRespons
 
 def get_principal(
     session: SessionDep,
-    authorization: Annotated[Optional[str], Header(alias="Authorization")] = None,
+    authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> AuthPrincipal:
     settings = get_settings()
     if not authorization:
@@ -480,7 +495,11 @@ def register(payload: AuthRegisterRequest, session: SessionDep) -> AuthTokenResp
     if session.exec(select(User).where(User.email == email)).first():
         raise conflict("Email is already registered", details={"email": email})
 
-    user = User(email=email, password_hash=hash_password(payload.password), display_name=(payload.display_name or "").strip() or None)
+    user = User(
+        email=email,
+        password_hash=hash_password(payload.password),
+        display_name=(payload.display_name or "").strip() or None,
+    )
     session.add(user)
     session.commit()
     session.refresh(user)
@@ -499,7 +518,9 @@ def login(payload: AuthLoginRequest, session: SessionDep) -> AuthTokenResponse:
     return _issue_tokens(user_id=user.id, org_id=org.id, role=membership.role)
 
 
-@router.post("/auth/refresh", response_model=AuthTokenResponse, tags=["Auth"], responses={401: {"model": ErrorResponse}})
+@router.post(
+    "/auth/refresh", response_model=AuthTokenResponse, tags=["Auth"], responses={401: {"model": ErrorResponse}}
+)
 def refresh_token(payload: TokenRefreshRequest, session: SessionDep) -> AuthTokenResponse:
     try:
         claims = decode_refresh_token(payload.refresh_token)
@@ -532,17 +553,30 @@ def me(session: SessionDep, principal: PrincipalDep) -> AuthMeResponse:
         select(OrgMembership).where((OrgMembership.org_id == org.id) & (OrgMembership.user_id == user.id))
     ).first()
     role = membership.role if membership else principal.role
-    return AuthMeResponse(user_id=user.id, email=user.email, display_name=user.display_name, org_id=org.id, org_name=org.name, role=role)
+    return AuthMeResponse(
+        user_id=user.id, email=user.email, display_name=user.display_name, org_id=org.id, org_name=org.name, role=role
+    )
 
 
-@router.get("/auth/oauth/{provider}/start", response_model=OAuthStartResponse, tags=["Auth"], responses={400: {"model": ErrorResponse}})
-def oauth_start(provider: str, redirect_to: Optional[str] = None) -> OAuthStartResponse:
+@router.get(
+    "/auth/oauth/{provider}/start",
+    response_model=OAuthStartResponse,
+    tags=["Auth"],
+    responses={400: {"model": ErrorResponse}},
+)
+def oauth_start(provider: str, redirect_to: str | None = None) -> OAuthStartResponse:
     settings = get_settings()
     if not settings.enable_oauth:
-        raise ApiError(status_code=status.HTTP_400_BAD_REQUEST, code=ErrorCode.VALIDATION_ERROR, message="OAuth is disabled")
+        raise ApiError(
+            status_code=status.HTTP_400_BAD_REQUEST, code=ErrorCode.VALIDATION_ERROR, message="OAuth is disabled"
+        )
     cfg = _oauth_provider_config(provider)
     if not cfg["client_id"] or not cfg["client_secret"]:
-        raise ApiError(status_code=status.HTTP_400_BAD_REQUEST, code=ErrorCode.VALIDATION_ERROR, message="OAuth provider is not configured")
+        raise ApiError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="OAuth provider is not configured",
+        )
 
     state = create_oauth_state(provider=cfg["provider"], redirect_to=redirect_to)
     callback = _oauth_callback_url(cfg["provider"])
@@ -565,14 +599,20 @@ def oauth_callback(
     code: str,
     state: str,
     session: SessionDep,
-    redirect_to: Optional[str] = Query(default=None),
+    redirect_to: str | None = Query(default=None),
 ) -> AuthTokenResponse:
     settings = get_settings()
     if not settings.enable_oauth:
-        raise ApiError(status_code=status.HTTP_400_BAD_REQUEST, code=ErrorCode.VALIDATION_ERROR, message="OAuth is disabled")
+        raise ApiError(
+            status_code=status.HTTP_400_BAD_REQUEST, code=ErrorCode.VALIDATION_ERROR, message="OAuth is disabled"
+        )
     cfg = _oauth_provider_config(provider)
     if not cfg["client_id"] or not cfg["client_secret"]:
-        raise ApiError(status_code=status.HTTP_400_BAD_REQUEST, code=ErrorCode.VALIDATION_ERROR, message="OAuth provider is not configured")
+        raise ApiError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="OAuth provider is not configured",
+        )
 
     state_provider, _state_redirect = parse_oauth_state(state)
     if state_provider != cfg["provider"]:
@@ -631,7 +671,9 @@ def oauth_callback(
         raise unauthorized("OAuth account is missing subject/email")
 
     oauth = session.exec(
-        select(OAuthAccount).where((OAuthAccount.provider == cfg["provider"]) & (OAuthAccount.provider_subject == provider_subject))
+        select(OAuthAccount).where(
+            (OAuthAccount.provider == cfg["provider"]) & (OAuthAccount.provider_subject == provider_subject)
+        )
     ).first()
     user: User | None = None
     if oauth:
@@ -670,7 +712,9 @@ def org_me(session: SessionDep, principal: PrincipalDep) -> OrgContextResponse:
     for m in memberships:
         user = session.get(User, m.user_id)
         if user:
-            members.append(OrgMemberView(user_id=user.id, email=user.email, display_name=user.display_name, role=m.role))
+            members.append(
+                OrgMemberView(user_id=user.id, email=user.email, display_name=user.display_name, role=m.role)
+            )
         if m.user_id == principal.user_id:
             role = m.role
 
@@ -762,7 +806,9 @@ def create_org(payload: OrgCreateRequest, session: SessionDep, principal: Princi
     tags=["Auth"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
-def add_org_member(org_id: UUID, payload: OrgMemberAddRequest, session: SessionDep, principal: PrincipalDep) -> OrgMemberView:
+def add_org_member(
+    org_id: UUID, payload: OrgMemberAddRequest, session: SessionDep, principal: PrincipalDep
+) -> OrgMemberView:
     manager = _require_org_manager_for(session, principal, org_id)
     org = session.get(Organization, org_id)
     if not org:
@@ -790,7 +836,9 @@ def add_org_member(org_id: UUID, payload: OrgMemberAddRequest, session: SessionD
     if not user:
         raise not_found(ERR_USER_NOT_FOUND, {"email": email})
 
-    existing = session.exec(select(OrgMembership).where((OrgMembership.org_id == org_id) & (OrgMembership.user_id == user.id))).first()
+    existing = session.exec(
+        select(OrgMembership).where((OrgMembership.org_id == org_id) & (OrgMembership.user_id == user.id))
+    ).first()
     if existing:
         raise conflict("User is already a member", details={"user_id": str(user.id)})
 
@@ -824,11 +872,15 @@ def add_org_member(org_id: UUID, payload: OrgMemberAddRequest, session: SessionD
 )
 def remove_org_member(org_id: UUID, user_id: UUID, session: SessionDep, principal: PrincipalDep) -> None:
     manager = _require_org_manager_for(session, principal, org_id)
-    membership = session.exec(select(OrgMembership).where((OrgMembership.org_id == org_id) & (OrgMembership.user_id == user_id))).first()
+    membership = session.exec(
+        select(OrgMembership).where((OrgMembership.org_id == org_id) & (OrgMembership.user_id == user_id))
+    ).first()
     if not membership:
         raise not_found(ERR_ORG_MEMBER_NOT_FOUND, {"user_id": str(user_id)})
     if membership.role == "owner":
-        owners = session.exec(select(OrgMembership).where((OrgMembership.org_id == org_id) & (OrgMembership.role == "owner"))).all()
+        owners = session.exec(
+            select(OrgMembership).where((OrgMembership.org_id == org_id) & (OrgMembership.role == "owner"))
+        ).all()
         if len(owners) <= 1:
             raise conflict("Cannot remove the last owner")
         if manager.role != "owner":
@@ -853,7 +905,9 @@ def remove_org_member(org_id: UUID, user_id: UUID, session: SessionDep, principa
     tags=["Auth"],
     responses={401: {"model": ErrorResponse}},
 )
-def create_api_key(org_id: UUID, payload: ApiKeyCreateRequest, session: SessionDep, principal: PrincipalDep) -> ApiKeyView:
+def create_api_key(
+    org_id: UUID, payload: ApiKeyCreateRequest, session: SessionDep, principal: PrincipalDep
+) -> ApiKeyView:
     _require_org_manager_for(session, principal, org_id)
     name = (payload.name or "").strip()
     if not name:
@@ -895,7 +949,12 @@ def list_api_keys(org_id: UUID, session: SessionDep, principal: PrincipalDep) ->
     return [_serialize_api_key(key) for key in keys]
 
 
-@router.delete("/orgs/{org_id}/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Auth"], responses={401: {"model": ErrorResponse}})
+@router.delete(
+    "/orgs/{org_id}/api-keys/{key_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Auth"],
+    responses={401: {"model": ErrorResponse}},
+)
 def revoke_api_key(org_id: UUID, key_id: UUID, session: SessionDep, principal: PrincipalDep) -> None:
     _require_org_manager_for(session, principal, org_id)
     key = session.exec(select(ApiKey).where((ApiKey.id == key_id) & (ApiKey.org_id == org_id))).first()
@@ -927,7 +986,10 @@ def list_audit_events(
     if not principal.org_id:
         raise unauthorized("Authentication required")
     events = session.exec(
-        select(AuditEvent).where(AuditEvent.org_id == principal.org_id).order_by(AuditEvent.created_at.desc()).limit(limit)
+        select(AuditEvent)
+        .where(AuditEvent.org_id == principal.org_id)
+        .order_by(AuditEvent.created_at.desc())
+        .limit(limit)
     ).all()
     return [
         AuditEventView(
@@ -1025,13 +1087,17 @@ def create_org_invite(payload: OrgInviteRequest, session: SessionDep, principal:
     return _serialize_invite(invite, include_token=token)
 
 
-@router.get("/orgs/invites", response_model=list[OrgInviteView], tags=["Auth"], responses={401: {"model": ErrorResponse}})
+@router.get(
+    "/orgs/invites", response_model=list[OrgInviteView], tags=["Auth"], responses={401: {"model": ErrorResponse}}
+)
 def list_org_invites(session: SessionDep, principal: PrincipalDep) -> list[OrgInviteView]:
     _require_org_manager(session, principal)
     if not principal.org_id:
         raise unauthorized("Authentication required")
     now = _now_utc()
-    invites = session.exec(select(OrgInvite).where(OrgInvite.org_id == principal.org_id).order_by(OrgInvite.created_at.desc())).all()
+    invites = session.exec(
+        select(OrgInvite).where(OrgInvite.org_id == principal.org_id).order_by(OrgInvite.created_at.desc())
+    ).all()
     changed = False
     for invite in invites:
         if invite.status == InviteStatus.pending and _as_utc(invite.expires_at) <= now:
@@ -1044,12 +1110,19 @@ def list_org_invites(session: SessionDep, principal: PrincipalDep) -> list[OrgIn
     return [_serialize_invite(invite) for invite in invites]
 
 
-@router.post("/orgs/invites/{invite_id}/revoke", response_model=OrgInviteView, tags=["Auth"], responses={401: {"model": ErrorResponse}})
+@router.post(
+    "/orgs/invites/{invite_id}/revoke",
+    response_model=OrgInviteView,
+    tags=["Auth"],
+    responses={401: {"model": ErrorResponse}},
+)
 def revoke_org_invite(invite_id: UUID, session: SessionDep, principal: PrincipalDep) -> OrgInviteView:
     _require_org_manager(session, principal)
     if not principal.org_id:
         raise unauthorized("Authentication required")
-    invite = session.exec(select(OrgInvite).where((OrgInvite.id == invite_id) & (OrgInvite.org_id == principal.org_id))).first()
+    invite = session.exec(
+        select(OrgInvite).where((OrgInvite.id == invite_id) & (OrgInvite.org_id == principal.org_id))
+    ).first()
     if not invite:
         raise not_found("Invite not found", {"invite_id": str(invite_id)})
     if invite.status == InviteStatus.pending:
@@ -1077,8 +1150,12 @@ def resolve_org_invite(token: str, session: SessionDep) -> OrgInviteResolveRespo
     )
 
 
-@router.post("/orgs/invites/accept", response_model=AuthTokenResponse, tags=["Auth"], responses={401: {"model": ErrorResponse}})
-def accept_org_invite(payload: OrgInviteResolveRequest, session: SessionDep, principal: PrincipalDep) -> AuthTokenResponse:
+@router.post(
+    "/orgs/invites/accept", response_model=AuthTokenResponse, tags=["Auth"], responses={401: {"model": ErrorResponse}}
+)
+def accept_org_invite(
+    payload: OrgInviteResolveRequest, session: SessionDep, principal: PrincipalDep
+) -> AuthTokenResponse:
     if not principal.user_id:
         raise unauthorized("Authentication required")
     user = session.get(User, principal.user_id)

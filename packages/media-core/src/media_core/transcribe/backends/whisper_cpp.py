@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable, Optional, Protocol
+from typing import Any, Protocol
 
 from media_core.transcribe.config import TranscriptionConfig
 from media_core.transcribe.models import TranscriptionResult, Word
@@ -28,17 +29,15 @@ def _ensure_whispercpp():
     try:
         import whispercpp  # type: ignore
     except ImportError as exc:  # pragma: no cover
-        raise RuntimeError(
-            "whispercpp package is required. Install with `pip install whispercpp`."
-        ) from exc
+        raise RuntimeError("whispercpp package is required. Install with `pip install whispercpp`.") from exc
     return whispercpp
 
 
 def normalize_whisper_cpp(
     segments: Iterable[_SegmentLike] | Iterable[dict[str, Any]],
     *,
-    model: Optional[str],
-    language: Optional[str],
+    model: str | None,
+    language: str | None,
 ) -> TranscriptionResult:
     """Normalize whisper.cpp-style segments into TranscriptionResult."""
     words: list[Word] = []

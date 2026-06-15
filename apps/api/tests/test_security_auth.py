@@ -5,7 +5,6 @@ import hashlib
 import os
 
 import pytest
-
 from app.security import create_oauth_state, hash_password, parse_oauth_state, verify_password
 
 

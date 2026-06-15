@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 
 def test_retention_days_differ_by_plan():
@@ -16,7 +16,7 @@ def test_retention_days_differ_by_plan():
 def test_asset_retention_eligibility_uses_plan_window():
     from services.worker import worker
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     old_free = now - timedelta(days=worker._retention_days_for_plan("free") + 1)
     old_enterprise = now - timedelta(days=worker._retention_days_for_plan("enterprise") - 1)
 

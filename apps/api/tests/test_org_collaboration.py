@@ -3,10 +3,9 @@ from __future__ import annotations
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
-from sqlmodel import Session
-
 from app.database import get_engine
 from app.models import Organization
+from sqlmodel import Session
 
 
 def _register(client, *, email: str, password: str = "Password123!", organization_name: str | None = None) -> dict:
@@ -90,7 +89,6 @@ def test_invite_lifecycle_create_list_resolve_accept_and_revoke(test_client):
     assert revoke_resp.status_code == 200, revoke_resp.text
 
 
-
 def test_seat_limit_blocks_invite_create_and_accept(test_client):
     client, _enqueued, _worker, _media_root = test_client
 
@@ -121,7 +119,6 @@ def test_seat_limit_blocks_invite_create_and_accept(test_client):
     _set_org_seat_limit(owner["org_id"], 1)
     denied = client.post("/api/v1/orgs/invites/accept", headers=invitee_headers, json={"token": token})
     assert denied.status_code in {409, 422}, denied.text
-
 
 
 def test_cannot_demote_or_remove_last_owner(test_client):

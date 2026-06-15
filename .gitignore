@@ -35,3 +35,6 @@ samples/
 
 # Lean quality-gate local tooling (not committed)
 /.tooling-bin/
+
+# Python build metadata
+*.egg-info/

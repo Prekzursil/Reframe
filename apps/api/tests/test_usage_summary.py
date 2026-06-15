@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+
 def _hosted_auth_headers(client) -> dict[str, str]:
     hosted_mode = os.getenv("REFRAME_HOSTED_MODE", "").strip().lower() == "true"
     if not hosted_mode:
@@ -50,7 +51,13 @@ def test_usage_summary_counts_jobs_and_outputs(test_client):
     second = client.post(
         "/api/v1/shorts/jobs",
         headers=headers,
-        json={"video_asset_id": video["id"], "max_clips": 1, "min_duration": 1, "max_duration": 2, "aspect_ratio": "9:16"},
+        json={
+            "video_asset_id": video["id"],
+            "max_clips": 1,
+            "min_duration": 1,
+            "max_duration": 2,
+            "aspect_ratio": "9:16",
+        },
     )
     assert second.status_code == 201, second.text
 

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 
 from media_core.transcribe.config import TranscriptionConfig
 from media_core.transcribe.models import TranscriptionResult, Word
@@ -14,8 +15,8 @@ logger = logging.getLogger(__name__)
 def normalize_whisper_timestamped(
     response: dict[str, Any] | Iterable[dict[str, Any]],
     *,
-    model: Optional[str],
-    language: Optional[str],
+    model: str | None,
+    language: str | None,
 ) -> TranscriptionResult:
     """Normalize whisper-timestamped / whisperX-like output into TranscriptionResult.
 

@@ -1,10 +1,9 @@
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class TranscriptionBackend(str, Enum):
+class TranscriptionBackend(StrEnum):
     OPENAI_WHISPER = "openai_whisper"
     FASTER_WHISPER = "faster_whisper"
     WHISPER_CPP = "whisper_cpp"
@@ -26,11 +25,11 @@ class TranscriptionConfig(BaseModel):
         default="whisper-1",
         description="Model name used by the selected backend.",
     )
-    language: Optional[str] = Field(
+    language: str | None = Field(
         default=None,
         description="Optional ISO language code. None means auto-detect.",
     )
-    device: Optional[str] = Field(
+    device: str | None = Field(
         default=None,
         description="Device hint for local backends (e.g., 'cpu', 'cuda').",
     )

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -182,7 +182,9 @@ class S3StorageBackend:
         secret_key = _env("S3_SECRET_ACCESS_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY", "").strip()
         session_token = _env("S3_SESSION_TOKEN") or os.getenv("AWS_SESSION_TOKEN", "").strip() or None
         if access_key and secret_key:
-            session = boto3.session.Session(aws_access_key_id=access_key, aws_secret_access_key=secret_key, aws_session_token=session_token)
+            session = boto3.session.Session(
+                aws_access_key_id=access_key, aws_secret_access_key=secret_key, aws_session_token=session_token
+            )
         else:
             session = boto3.session.Session()
         self.client = session.client("s3", region_name=region or None, endpoint_url=endpoint_url or None)
@@ -356,7 +358,10 @@ def get_storage(*, media_root: str | Path) -> StorageBackend:
         return S3StorageBackend(
             bucket=_env("S3_BUCKET"),
             prefix=_env("S3_PREFIX"),
-            region=_env("S3_REGION") or os.getenv("AWS_REGION", "").strip() or os.getenv("AWS_DEFAULT_REGION", "").strip() or None,
+            region=_env("S3_REGION")
+            or os.getenv("AWS_REGION", "").strip()
+            or os.getenv("AWS_DEFAULT_REGION", "").strip()
+            or None,
             endpoint_url=_env("S3_ENDPOINT_URL") or None,
             public_base_url=_env("S3_PUBLIC_BASE_URL") or None,
             public_downloads=_truthy_env("S3_PUBLIC_DOWNLOADS"),

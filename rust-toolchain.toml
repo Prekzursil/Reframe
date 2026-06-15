@@ -1,0 +1,6 @@
+# Pinned Rust toolchain for the lean quality gates (cargo fmt + clippy).
+# Channel pinned to the latest stable at build time: 1.96.0 (2026-05-28).
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

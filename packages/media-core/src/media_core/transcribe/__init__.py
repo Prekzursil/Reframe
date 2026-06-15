@@ -4,9 +4,9 @@ from pathlib import Path
 
 from .backends import (
     normalize_faster_whisper,
+    normalize_whisper_cpp,
     transcribe_faster_whisper,
     transcribe_openai_file,
-    normalize_whisper_cpp,
     transcribe_whisper_cpp,
     transcribe_whisper_timestamped,
 )
@@ -32,4 +32,6 @@ def transcribe_noop(path: str | Path, config: TranscriptionConfig | None = None)
     """Lightweight fallback used by CLI when no backend is available."""
     name = Path(path).name
     word = Word(text=name or "noop", start=0.0, end=1.0)
-    return TranscriptionResult(words=[word], text=name, model=(config.model if config else "noop"), language=getattr(config, "language", None))
+    return TranscriptionResult(
+        words=[word], text=name, model=(config.model if config else "noop"), language=getattr(config, "language", None)
+    )

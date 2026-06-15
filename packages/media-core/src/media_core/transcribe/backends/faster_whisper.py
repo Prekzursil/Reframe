@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable, Optional, Protocol
+from typing import Any, Protocol
 
 from media_core.transcribe.config import TranscriptionConfig
 from media_core.transcribe.models import TranscriptionResult, Word
@@ -42,7 +43,7 @@ class _WordLike(Protocol):
     word: str
     start: float
     end: float
-    probability: Optional[float]
+    probability: float | None
 
 
 class _SegmentLike(Protocol):
@@ -56,17 +57,15 @@ def _ensure_faster_whisper():
     try:
         from faster_whisper import WhisperModel  # type: ignore
     except ImportError as exc:  # pragma: no cover
-        raise RuntimeError(
-            "faster-whisper package is required. Install with `pip install faster-whisper`."
-        ) from exc
+        raise RuntimeError("faster-whisper package is required. Install with `pip install faster-whisper`.") from exc
     return WhisperModel
 
 
 def normalize_faster_whisper(
     segments: Iterable[_SegmentLike] | Iterable[dict[str, Any]],
     *,
-    model: Optional[str],
-    language: Optional[str],
+    model: str | None,
+    language: str | None,
 ) -> TranscriptionResult:
     """Normalize faster-whisper segments into TranscriptionResult."""
     words: list[Word] = []
@@ -91,8 +90,8 @@ def normalize_faster_whisper(
                     text = str(w.get("word", "")).strip()
                     prob = w.get("probability")
                 else:
-                    start = float(getattr(w, "start"))
-                    end = float(getattr(w, "end"))
+                    start = float(w.start)
+                    end = float(w.end)
                     text = str(getattr(w, "word", "")).strip()
                     prob = getattr(w, "probability", None)
             except Exception as exc:  # pragma: no cover - defensive
@@ -111,7 +110,7 @@ def normalize_faster_whisper(
 
 def transcribe_faster_whisper(path: str | Path, config: TranscriptionConfig) -> TranscriptionResult:
     """Transcribe a media file using faster-whisper."""
-    WhisperModel = _ensure_faster_whisper()
+    WhisperModel = _ensure_faster_whisper()  # noqa: N806 -- lazily imported class bound to a local
     media_path = validate_media_input_path(path)
 
     # Use model from config; device is optional.

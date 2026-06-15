@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from datetime import datetime, timezone
-from typing import Annotated, Any, Optional
+from datetime import UTC, datetime
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, Header, Query, Response, status
@@ -16,8 +16,8 @@ from app.errors import ApiError, ErrorCode, ErrorResponse, conflict, not_found, 
 from app.models import (
     AuditEvent,
     OAuthAccount,
-    OrgMembership,
     Organization,
+    OrgMembership,
     RoleMapping,
     ScimIdentity,
     ScimToken,
@@ -40,9 +40,9 @@ class SsoConfigView(SQLModel):
     org_id: UUID
     provider: str
     enabled: bool
-    issuer_url: Optional[str] = None
-    client_id: Optional[str] = None
-    audience: Optional[str] = None
+    issuer_url: str | None = None
+    client_id: str | None = None
+    audience: str | None = None
     default_role: str
     jit_enabled: bool
     allow_email_link: bool
@@ -52,10 +52,10 @@ class SsoConfigView(SQLModel):
 
 class SsoConfigUpdateRequest(SQLModel):
     enabled: bool = False
-    issuer_url: Optional[str] = None
-    client_id: Optional[str] = None
-    client_secret_ref: Optional[str] = None
-    audience: Optional[str] = None
+    issuer_url: str | None = None
+    client_id: str | None = None
+    client_secret_ref: str | None = None
+    audience: str | None = None
     default_role: str = "viewer"
     jit_enabled: bool = True
     allow_email_link: bool = True
@@ -72,9 +72,9 @@ class ScimTokenView(SQLModel):
     token_hint: str
     scopes: list[str]
     created_at: datetime
-    last_used_at: Optional[datetime] = None
-    revoked_at: Optional[datetime] = None
-    token: Optional[str] = None
+    last_used_at: datetime | None = None
+    revoked_at: datetime | None = None
+    token: str | None = None
 
 
 class SsoStartResponse(SQLModel):
@@ -86,7 +86,7 @@ class SsoStartResponse(SQLModel):
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _normalize_email(value: str | None) -> str:
@@ -270,7 +270,9 @@ def _role_for_groups(session: Session, org_id: UUID, groups: list[str], default_
     normalized = {(group or "").strip() for group in groups if (group or "").strip()}
     if not normalized:
         return default_role
-    mappings = session.exec(select(RoleMapping).where((RoleMapping.org_id == org_id) & (RoleMapping.provider == "okta"))).all()
+    mappings = session.exec(
+        select(RoleMapping).where((RoleMapping.org_id == org_id) & (RoleMapping.provider == "okta"))
+    ).all()
     for mapping in mappings:
         if mapping.external_value in normalized and (mapping.role or "").strip().lower() in ROLE_VALUES:
             return mapping.role.strip().lower()
@@ -356,7 +358,9 @@ def get_org_sso_config(org_id: UUID, session: SessionDep, principal: PrincipalDe
     tags=["Auth"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-def update_org_sso_config(org_id: UUID, payload: SsoConfigUpdateRequest, session: SessionDep, principal: PrincipalDep) -> SsoConfigView:
+def update_org_sso_config(
+    org_id: UUID, payload: SsoConfigUpdateRequest, session: SessionDep, principal: PrincipalDep
+) -> SsoConfigView:
     _require_org_manager(session, principal, org_id)
     if not session.get(Organization, org_id):
         raise not_found("Organization not found", {"org_id": str(org_id)})
@@ -472,7 +476,9 @@ def start_okta_sso(
     issuer = (connection.issuer_url or settings.okta_issuer_url or "").rstrip("/")
     client_id = (connection.client_id or settings.okta_client_id or "").strip()
     if not issuer or not client_id:
-        raise conflict("Okta configuration is incomplete", details={"issuer_url": bool(issuer), "client_id": bool(client_id)})
+        raise conflict(
+            "Okta configuration is incomplete", details={"issuer_url": bool(issuer), "client_id": bool(client_id)}
+        )
 
     provider = f"okta:{principal.org_id}"
     state = create_oauth_state(provider=provider, redirect_to=redirect_to)
@@ -532,7 +538,13 @@ def okta_sso_callback(
     if user is None:
         if not connection.jit_enabled:
             raise unauthorized("JIT provisioning is disabled for this organization")
-        user = User(email=effective_email, display_name=effective_email.split("@")[0], is_active=True, created_at=_now(), updated_at=_now())
+        user = User(
+            email=effective_email,
+            display_name=effective_email.split("@")[0],
+            is_active=True,
+            created_at=_now(),
+            updated_at=_now(),
+        )
         session.add(user)
         session.commit()
         session.refresh(user)
@@ -544,7 +556,9 @@ def okta_sso_callback(
     desired_role = _role_for_groups(session, org_id, group_values, connection.default_role)
     if membership is None:
         _ensure_org_seat_available(session, org_id)
-        membership = OrgMembership(org_id=org_id, user_id=user.id, role=desired_role, created_at=_now(), updated_at=_now())
+        membership = OrgMembership(
+            org_id=org_id, user_id=user.id, role=desired_role, created_at=_now(), updated_at=_now()
+        )
         session.add(membership)
     elif desired_role in ROLE_VALUES and membership.role != desired_role:
         membership.role = desired_role
@@ -629,7 +643,11 @@ def scim_list_users(
             if _normalize_email(needle) != _normalize_email(user.email):
                 continue
         users.append(_scim_user_resource(user, membership))
-    return {"schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"], "totalResults": len(users), "Resources": users}
+    return {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+        "totalResults": len(users),
+        "Resources": users,
+    }
 
 
 @router.post("/scim/v2/Users", tags=["Auth"], status_code=status.HTTP_201_CREATED)
@@ -663,7 +681,9 @@ def scim_create_user(
     ).first()
     if membership is None:
         _ensure_org_seat_available(session, token.org_id)
-        membership = OrgMembership(org_id=token.org_id, user_id=user.id, role="viewer", created_at=_now(), updated_at=_now())
+        membership = OrgMembership(
+            org_id=token.org_id, user_id=user.id, role="viewer", created_at=_now(), updated_at=_now()
+        )
         session.add(membership)
 
     external_id = str(payload.get("externalId") or payload.get("id") or user.id)
@@ -739,7 +759,9 @@ def scim_patch_user(
                 membership = None
             elif is_active and membership is None:
                 _ensure_org_seat_available(session, token.org_id)
-                membership = OrgMembership(org_id=token.org_id, user_id=user.id, role="viewer", created_at=_now(), updated_at=_now())
+                membership = OrgMembership(
+                    org_id=token.org_id, user_id=user.id, role="viewer", created_at=_now(), updated_at=_now()
+                )
                 session.add(membership)
         elif op in {"replace", "add"} and path in {"username", "userName".lower()}:
             maybe_email = _normalize_email(str(value or ""))
@@ -774,7 +796,9 @@ def scim_delete_user(
         session.delete(membership)
     identities = session.exec(
         select(ScimIdentity).where(
-            (ScimIdentity.org_id == token.org_id) & (ScimIdentity.user_id == user_id) & (ScimIdentity.resource_type == "user")
+            (ScimIdentity.org_id == token.org_id)
+            & (ScimIdentity.user_id == user_id)
+            & (ScimIdentity.resource_type == "user")
         )
     ).all()
     for identity in identities:
@@ -801,7 +825,9 @@ def scim_list_groups(
 ) -> dict[str, Any]:
     token = _resolve_scim_token(session, _parse_scim_bearer(authorization))
     mappings = session.exec(
-        select(RoleMapping).where((RoleMapping.org_id == token.org_id) & (RoleMapping.provider == "okta")).order_by(RoleMapping.external_value.asc())
+        select(RoleMapping)
+        .where((RoleMapping.org_id == token.org_id) & (RoleMapping.provider == "okta"))
+        .order_by(RoleMapping.external_value.asc())
     ).all()
     resources = []
     for mapping in mappings:
@@ -809,7 +835,11 @@ def scim_list_groups(
             select(OrgMembership).where((OrgMembership.org_id == token.org_id) & (OrgMembership.role == mapping.role))
         ).all()
         resources.append(_scim_group_resource(mapping, members=[str(item.user_id) for item in members]))
-    return {"schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"], "totalResults": len(resources), "Resources": resources}
+    return {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+        "totalResults": len(resources),
+        "Resources": resources,
+    }
 
 
 @router.post("/scim/v2/Groups", tags=["Auth"], status_code=status.HTTP_201_CREATED)
@@ -833,12 +863,21 @@ def scim_create_group(
 
     mapping = session.exec(
         select(RoleMapping).where(
-            (RoleMapping.org_id == token.org_id) & (RoleMapping.provider == "okta") & (RoleMapping.external_value == display_name)
+            (RoleMapping.org_id == token.org_id)
+            & (RoleMapping.provider == "okta")
+            & (RoleMapping.external_value == display_name)
         )
     ).first()
     now = _now()
     if mapping is None:
-        mapping = RoleMapping(org_id=token.org_id, provider="okta", external_value=display_name, role=desired_role, created_at=now, updated_at=now)
+        mapping = RoleMapping(
+            org_id=token.org_id,
+            provider="okta",
+            external_value=display_name,
+            role=desired_role,
+            created_at=now,
+            updated_at=now,
+        )
     else:
         mapping.role = desired_role
         mapping.updated_at = now
@@ -918,7 +957,9 @@ def scim_patch_group(
                     except ValueError:
                         continue
                     membership = session.exec(
-                        select(OrgMembership).where((OrgMembership.org_id == token.org_id) & (OrgMembership.user_id == member_uuid))
+                        select(OrgMembership).where(
+                            (OrgMembership.org_id == token.org_id) & (OrgMembership.user_id == member_uuid)
+                        )
                     ).first()
                     if membership:
                         membership.role = mapping.role
@@ -944,7 +985,9 @@ def scim_delete_group(
     session.delete(mapping)
     identities = session.exec(
         select(ScimIdentity).where(
-            (ScimIdentity.org_id == token.org_id) & (ScimIdentity.resource_type == "group") & (ScimIdentity.group_name == mapping.external_value)
+            (ScimIdentity.org_id == token.org_id)
+            & (ScimIdentity.resource_type == "group")
+            & (ScimIdentity.group_name == mapping.external_value)
         )
     ).all()
     for identity in identities:

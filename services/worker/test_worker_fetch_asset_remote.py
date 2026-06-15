@@ -10,14 +10,15 @@ def test_fetch_asset_downloads_remote_http(monkeypatch, tmp_path: Path):
     from app.config import get_settings
     from app.database import create_db_and_tables, get_engine
     from app.models import MediaAsset
-    from services.worker import worker
     from sqlmodel import Session
+
+    from services.worker import worker
 
     media_root = tmp_path / "media"
     media_root.mkdir(parents=True, exist_ok=True)
 
     db_path = tmp_path / "reframe-test.db"
-    db_url = f"sqlite:////{str(db_path).lstrip('/')}"
+    db_url = f"sqlite:///{db_path.as_posix()}"
     monkeypatch.setenv("DATABASE_URL", db_url)
     monkeypatch.setenv("REFRAME_MEDIA_ROOT", str(media_root))
 

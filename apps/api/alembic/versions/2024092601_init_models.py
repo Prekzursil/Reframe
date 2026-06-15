@@ -1,13 +1,12 @@
 """init models
 
 Revision ID: 2024092601
-Revises: 
+Revises:
 Create Date: 2024-09-26 00:00:00.000000
 """
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "2024092601"

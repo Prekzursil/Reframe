@@ -370,7 +370,13 @@ def test_end_to_end_video_audio_merge_job(test_client, tmp_path: Path):
 
     resp = client.post(
         "/api/v1/utilities/merge-av",
-        json={"video_asset_id": video["id"], "audio_asset_id": audio["id"], "offset": 0.0, "ducking": True, "normalize": True},
+        json={
+            "video_asset_id": video["id"],
+            "audio_asset_id": audio["id"],
+            "offset": 0.0,
+            "ducking": True,
+            "normalize": True,
+        },
     )
     assert resp.status_code == 201, resp.text
     job = resp.json()

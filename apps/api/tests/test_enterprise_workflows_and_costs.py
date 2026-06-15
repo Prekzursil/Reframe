@@ -3,10 +3,9 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlmodel import Session
-
 from app.database import get_engine
 from app.models import Organization
+from sqlmodel import Session
 
 
 class _FakeAsyncResult:
@@ -37,7 +36,9 @@ def _register(client, *, email: str, password: str = "Password123!", organizatio
     return resp.json()
 
 
-def _upload_fake_video(client, headers: dict[str, str], content: bytes = b"fake-video", filename: str = "sample.mp4") -> dict:
+def _upload_fake_video(
+    client, headers: dict[str, str], content: bytes = b"fake-video", filename: str = "sample.mp4"
+) -> dict:
     resp = client.post(
         "/api/v1/assets/upload",
         headers=headers,

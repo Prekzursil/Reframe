@@ -12,7 +12,9 @@ class FakeRemoteStorage:
     multipart_complete_calls: list[dict[str, Any]] = field(default_factory=list)
     multipart_abort_calls: list[dict[str, Any]] = field(default_factory=list)
 
-    def create_presigned_upload(self, *, rel_dir: str, filename: str, content_type: str | None, expires_seconds: int) -> dict[str, Any]:
+    def create_presigned_upload(
+        self, *, rel_dir: str, filename: str, content_type: str | None, expires_seconds: int
+    ) -> dict[str, Any]:
         self.single_part_calls.append(
             {
                 "rel_dir": rel_dir,
@@ -46,7 +48,9 @@ class FakeRemoteStorage:
             "uri": f"s3://tenant-bucket/{key}",
         }
 
-    def sign_multipart_part(self, *, key: str, provider_upload_id: str, part_number: int, expires_seconds: int) -> dict[str, Any]:
+    def sign_multipart_part(
+        self, *, key: str, provider_upload_id: str, part_number: int, expires_seconds: int
+    ) -> dict[str, Any]:
         self.multipart_sign_calls.append(
             {
                 "key": key,

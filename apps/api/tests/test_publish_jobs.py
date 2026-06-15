@@ -3,10 +3,9 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlmodel import Session
-
 from app.database import get_engine
 from app.models import PublishJob
+from sqlmodel import Session
 
 
 class _FakeResult:
@@ -32,7 +31,9 @@ def _register(client, *, email: str, password: str = "Password123!", organizatio
     return response.json()
 
 
-def _upload_fake_video(client, headers: dict[str, str], content: bytes = b"video", filename: str = "publish.mp4") -> dict:
+def _upload_fake_video(
+    client, headers: dict[str, str], content: bytes = b"video", filename: str = "publish.mp4"
+) -> dict:
     response = client.post(
         "/api/v1/assets/upload",
         headers=headers,
@@ -58,7 +59,12 @@ def test_publish_connection_and_job_lifecycle(test_client, monkeypatch):
     callback = client.get(
         "/api/v1/publish/youtube/connect/callback",
         headers=headers,
-        params={"state": state, "code": "oauth-code-123", "account_id": "yt-channel-1", "account_label": "Main Channel"},
+        params={
+            "state": state,
+            "code": "oauth-code-123",
+            "account_id": "yt-channel-1",
+            "account_label": "Main Channel",
+        },
     )
     assert callback.status_code == 200, callback.text
     connection = callback.json()

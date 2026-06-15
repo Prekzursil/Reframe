@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID
 
 import jwt
@@ -20,7 +20,7 @@ _PASSWORD_HASHER = PasswordHasher(
 
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def hash_password(password: str) -> str:
@@ -40,7 +40,7 @@ def verify_password(password: str, hashed_password: str | None) -> bool:
     return False
 
 
-def create_access_token(*, user_id: UUID, org_id: Optional[UUID], role: str) -> str:
+def create_access_token(*, user_id: UUID, org_id: UUID | None, role: str) -> str:
     settings = get_settings()
     now = _now_utc()
     payload = {
@@ -54,7 +54,7 @@ def create_access_token(*, user_id: UUID, org_id: Optional[UUID], role: str) -> 
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
-def create_refresh_token(*, user_id: UUID, org_id: Optional[UUID], role: str) -> str:
+def create_refresh_token(*, user_id: UUID, org_id: UUID | None, role: str) -> str:
     settings = get_settings()
     now = _now_utc()
     payload = {
@@ -98,7 +98,7 @@ def create_oauth_state(*, provider: str, redirect_to: str | None = None, ttl_min
     return jwt.encode(payload, settings.oauth_state_secret, algorithm="HS256")
 
 
-def parse_oauth_state(state: str) -> tuple[str, Optional[str]]:
+def parse_oauth_state(state: str) -> tuple[str, str | None]:
     settings = get_settings()
     try:
         payload = jwt.decode(state, settings.oauth_state_secret, algorithms=["HS256"])
@@ -122,6 +122,6 @@ def parse_oauth_state(state: str) -> tuple[str, Optional[str]]:
 
 @dataclass
 class AuthPrincipal:
-    user_id: Optional[UUID] = None
-    org_id: Optional[UUID] = None
+    user_id: UUID | None = None
+    org_id: UUID | None = None
     role: str = "owner"
