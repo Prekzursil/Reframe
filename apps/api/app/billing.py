@@ -16,6 +16,10 @@ class PlanPolicy:
     overage_per_minute_cents: int
 
 
+BILLING_DISABLED_MESSAGE = "Billing is disabled."
+STRIPE_SECRET_KEY_MISSING_MESSAGE = "STRIPE_SECRET_KEY is not configured."
+
+
 DEFAULT_PLAN_POLICIES: dict[str, PlanPolicy] = {
     "free": PlanPolicy(
         code="free",
@@ -67,9 +71,9 @@ def build_checkout_session(
 ) -> dict:
     settings = get_settings()
     if not settings.enable_billing:
-        raise RuntimeError("Billing is disabled.")
+        raise RuntimeError(BILLING_DISABLED_MESSAGE)
     if not settings.stripe_secret_key:
-        raise RuntimeError("STRIPE_SECRET_KEY is not configured.")
+        raise RuntimeError(STRIPE_SECRET_KEY_MISSING_MESSAGE)
     stripe = _get_stripe()
     stripe.api_key = settings.stripe_secret_key
     qty = max(1, int(quantity or 1))
@@ -90,9 +94,9 @@ def build_checkout_session(
 def update_subscription_seat_limit(*, subscription_id: str, quantity: int) -> None:
     settings = get_settings()
     if not settings.enable_billing:
-        raise RuntimeError("Billing is disabled.")
+        raise RuntimeError(BILLING_DISABLED_MESSAGE)
     if not settings.stripe_secret_key:
-        raise RuntimeError("STRIPE_SECRET_KEY is not configured.")
+        raise RuntimeError(STRIPE_SECRET_KEY_MISSING_MESSAGE)
     stripe = _get_stripe()
     stripe.api_key = settings.stripe_secret_key
     qty = max(1, int(quantity or 1))
@@ -102,9 +106,9 @@ def update_subscription_seat_limit(*, subscription_id: str, quantity: int) -> No
 def build_customer_portal_session(*, customer_id: str, return_url: str) -> dict:
     settings = get_settings()
     if not settings.enable_billing:
-        raise RuntimeError("Billing is disabled.")
+        raise RuntimeError(BILLING_DISABLED_MESSAGE)
     if not settings.stripe_secret_key:
-        raise RuntimeError("STRIPE_SECRET_KEY is not configured.")
+        raise RuntimeError(STRIPE_SECRET_KEY_MISSING_MESSAGE)
     stripe = _get_stripe()
     stripe.api_key = settings.stripe_secret_key
     session = stripe.billing_portal.Session.create(customer=customer_id, return_url=return_url)

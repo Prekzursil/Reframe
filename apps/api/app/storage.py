@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Any, Protocol
 
 
+_MULTIPART_UNSUPPORTED_MSG = "Multipart uploads are not supported for local storage backend."
+
+
 def is_remote_uri(uri: str) -> bool:
     lowered = (uri or "").strip().lower()
     return lowered.startswith(("http://", "https://", "s3://", "gs://"))
@@ -116,7 +119,7 @@ class LocalStorageBackend:
         raise ValueError("Direct presigned uploads are not supported for local storage backend.")
 
     def create_multipart_upload(self, *, rel_dir: str, filename: str, content_type: str | None) -> dict[str, str]:
-        raise ValueError("Multipart uploads are not supported for local storage backend.")
+        raise ValueError(_MULTIPART_UNSUPPORTED_MSG)
 
     def sign_multipart_part(
         self,
@@ -126,13 +129,13 @@ class LocalStorageBackend:
         part_number: int,
         expires_seconds: int,
     ) -> dict[str, Any]:
-        raise ValueError("Multipart uploads are not supported for local storage backend.")
+        raise ValueError(_MULTIPART_UNSUPPORTED_MSG)
 
     def complete_multipart_upload(self, *, key: str, provider_upload_id: str, parts: list[dict[str, Any]]) -> None:
-        raise ValueError("Multipart uploads are not supported for local storage backend.")
+        raise ValueError(_MULTIPART_UNSUPPORTED_MSG)
 
     def abort_multipart_upload(self, *, key: str, provider_upload_id: str) -> None:
-        raise ValueError("Multipart uploads are not supported for local storage backend.")
+        raise ValueError(_MULTIPART_UNSUPPORTED_MSG)
 
 
 def _truthy_env(name: str) -> bool:

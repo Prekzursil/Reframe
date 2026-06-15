@@ -144,7 +144,7 @@ async function copyDebugInfo() {
   } catch (err) {
     const msg = errToString(err);
     appendLog(`Clipboard copy failed: ${msg}`);
-    window.prompt("Copy debug info:", text);
+    globalThis.prompt("Copy debug info:", text);
   }
 }
 
@@ -157,7 +157,7 @@ async function refreshDiagnostics() {
     if (!resp.ok) {
       throw new Error(`API returned ${resp.status}`);
     }
-    const data = (await resp.json()) as any;
+    const data = await resp.json();
     const worker = data?.worker ?? {};
     const systemInfo = worker?.system_info ?? {};
     const ffmpeg = systemInfo?.ffmpeg ?? {};
@@ -165,10 +165,9 @@ async function refreshDiagnostics() {
     setText("offline-mode", data?.offline_mode ? "true" : "false");
     setText("storage-backend", String(data?.storage_backend ?? "unknown"));
     setText("worker-ping", worker?.ping_ok ? "ok" : "no response");
-    setText(
-      "ffmpeg",
-      ffmpeg?.present ? `ok${ffmpeg?.version ? ` (${ffmpeg.version})` : ""}` : "missing",
-    );
+    const ffmpegVersionSuffix = ffmpeg?.version ? ` (${ffmpeg.version})` : "";
+    const ffmpegStatus = ffmpeg?.present ? `ok${ffmpegVersionSuffix}` : "missing";
+    setText("ffmpeg", ffmpegStatus);
     setText("system-status", JSON.stringify(data, null, 2));
     lastDiagnosticsError = null;
   } catch (err) {
@@ -254,7 +253,7 @@ async function checkUpdates() {
     }
 
     appendLog(`Update available: ${update.currentVersion} → ${update.version}`);
-    const ok = window.confirm(`Update available: ${update.currentVersion} → ${update.version}\n\nDownload and install now?`);
+    const ok = globalThis.confirm(`Update available: ${update.currentVersion} → ${update.version}\n\nDownload and install now?`);
     if (!ok) {
       appendLog("Update cancelled.");
       lastUpdaterError = null;
@@ -281,7 +280,7 @@ async function checkUpdates() {
     const msg = errToString(err);
     lastUpdaterError = msg;
     appendLog(msg);
-    const openReleases = window.confirm("Update check failed. Open GitHub Releases page?");
+    const openReleases = globalThis.confirm("Update check failed. Open GitHub Releases page?");
     if (openReleases) {
       await openUrl(RELEASES_URL);
     }
@@ -299,7 +298,7 @@ export const __test = {
   checkUpdates,
 };
 
-window.addEventListener("DOMContentLoaded", () => {
+globalThis.addEventListener("DOMContentLoaded", () => {
   byId<HTMLButtonElement>("btn-up").addEventListener("click", () => start(true));
   byId<HTMLButtonElement>("btn-up-nobuild").addEventListener("click", () => start(false));
   byId<HTMLButtonElement>("btn-down").addEventListener("click", () => stop());

@@ -69,32 +69,35 @@ function formatVttTimestamp(seconds: number, includeHours: boolean): string {
   return `${pad2(m)}:${pad2(s)}.${pad3(ms)}`;
 }
 
+function parseTimingLine(format: SubtitleFormat, line: string): { start: number; end: number } | null {
+  const srtMatch = format === "srt" ? SRT_TIMING_RE.exec(line) : null;
+  if (srtMatch) {
+    return { start: parseSrtTimestamp(srtMatch[1]), end: parseSrtTimestamp(srtMatch[2]) };
+  }
+
+  const vttMatch = format === "vtt" ? VTT_TIMING_RE.exec(line) : null;
+  if (vttMatch) {
+    return { start: parseVttTimestamp(vttMatch[1]), end: parseVttTimestamp(vttMatch[2]) };
+  }
+
+  return null;
+}
+
 export function subtitlesToCues(text: string): { format: SubtitleFormat; cues: SubtitleCue[] } {
   const format = detectSubtitleFormat(text);
   if (!format) throw new Error("Unsupported subtitle format; expected SRT or VTT.");
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const lines = text.replaceAll("\r\n", "\n").split("\n");
 
   const cues: SubtitleCue[] = [];
   let i = 0;
 
   while (i < lines.length) {
     const line = (lines[i] ?? "").trimEnd();
-    const srtMatch = format === "srt" ? line.match(SRT_TIMING_RE) : null;
-    const vttMatch = format === "vtt" ? line.match(VTT_TIMING_RE) : null;
+    const timing = parseTimingLine(format, line);
 
-    if (!srtMatch && !vttMatch) {
+    if (!timing) {
       i += 1;
       continue;
-    }
-
-    let start = 0;
-    let end = 0;
-    if (srtMatch) {
-      start = parseSrtTimestamp(srtMatch[1]!);
-      end = parseSrtTimestamp(srtMatch[2]!);
-    } else if (vttMatch) {
-      start = parseVttTimestamp(vttMatch[1]!);
-      end = parseVttTimestamp(vttMatch[2]!);
     }
 
     i += 1;
@@ -106,7 +109,11 @@ export function subtitlesToCues(text: string): { format: SubtitleFormat; cues: S
       i += 1;
     }
 
-    cues.push({ start: clampTime(start), end: clampTime(Math.max(end, start)), text: textLines.join("\n").trimEnd() });
+    cues.push({
+      start: clampTime(timing.start),
+      end: clampTime(Math.max(timing.end, timing.start)),
+      text: textLines.join("\n").trimEnd(),
+    });
     while (i < lines.length && (lines[i] ?? "").trim() === "") i += 1;
   }
 
@@ -116,7 +123,7 @@ export function subtitlesToCues(text: string): { format: SubtitleFormat; cues: S
 export function validateCues(cues: SubtitleCue[]): string[] {
   const warnings: string[] = [];
   for (let idx = 0; idx < cues.length; idx += 1) {
-    const cue = cues[idx]!;
+    const cue = cues[idx];
     if (!Number.isFinite(cue.start) || cue.start < 0) warnings.push(`Cue ${idx + 1}: start time is invalid.`);
     if (!Number.isFinite(cue.end) || cue.end < 0) warnings.push(`Cue ${idx + 1}: end time is invalid.`);
     if (cue.end < cue.start) warnings.push(`Cue ${idx + 1}: end time is before start time.`);
@@ -124,8 +131,8 @@ export function validateCues(cues: SubtitleCue[]): string[] {
   }
 
   for (let idx = 1; idx < cues.length; idx += 1) {
-    const prev = cues[idx - 1]!;
-    const curr = cues[idx]!;
+    const prev = cues[idx - 1];
+    const curr = cues[idx];
     if (curr.start < prev.start) warnings.push("Cues are not sorted by start time.");
     if (curr.start < prev.end) warnings.push(`Cue ${idx + 1} overlaps cue ${idx}.`);
   }
@@ -141,10 +148,12 @@ export function cuesToSubtitles(format: SubtitleFormat, cues: SubtitleCue[]): st
   if (format === "srt") {
     const out: string[] = [];
     cues.forEach((cue, idx) => {
-      out.push(String(idx + 1));
-      out.push(`${formatSrtTimestamp(cue.start)} --> ${formatSrtTimestamp(Math.max(cue.end, cue.start))}`);
-      out.push(...cue.text.split("\n"));
-      out.push("");
+      out.push(
+        String(idx + 1),
+        `${formatSrtTimestamp(cue.start)} --> ${formatSrtTimestamp(Math.max(cue.end, cue.start))}`,
+        ...cue.text.split("\n"),
+        "",
+      );
     });
     return out.join("\n").trimEnd() + "\n";
   }
@@ -152,9 +161,11 @@ export function cuesToSubtitles(format: SubtitleFormat, cues: SubtitleCue[]): st
   const includeHours = cues.some((c) => c.start >= 3600 || c.end >= 3600);
   const out: string[] = ["WEBVTT", ""];
   cues.forEach((cue) => {
-    out.push(`${formatVttTimestamp(cue.start, includeHours)} --> ${formatVttTimestamp(Math.max(cue.end, cue.start), includeHours)}`);
-    out.push(...cue.text.split("\n"));
-    out.push("");
+    out.push(
+      `${formatVttTimestamp(cue.start, includeHours)} --> ${formatVttTimestamp(Math.max(cue.end, cue.start), includeHours)}`,
+      ...cue.text.split("\n"),
+      "",
+    );
   });
   return out.join("\n").trimEnd() + "\n";
 }

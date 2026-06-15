@@ -40,7 +40,7 @@ export function exportShortsTimelineCsv(clips: ShortsClip[]): string {
     clip.subtitle_uri ?? "",
     clip.thumbnail_uri ?? "",
   ]);
-  const escape = (value: unknown) => {
+  const escape = (value: string | number) => {
     const s = String(value ?? "");
     if (s.includes(",") || s.includes("\"") || s.includes("\n")) return `"${s.replaceAll("\"", "\"\"")}"`;
     return s;
@@ -50,7 +50,7 @@ export function exportShortsTimelineCsv(clips: ShortsClip[]): string {
 
 function deriveReelName(clip: ShortsClip, idx: number): string {
   const raw = (clip.reel_name || "").trim();
-  if (raw) return raw.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8) || `CLIP${String(idx + 1).padStart(3, "0")}`;
+  if (raw) return raw.toUpperCase().replaceAll(/[^A-Z0-9]/g, "").slice(0, 8) || `CLIP${String(idx + 1).padStart(3, "0")}`;
   return `CLIP${String(idx + 1).padStart(3, "0")}`;
 }
 
@@ -63,9 +63,7 @@ export function exportShortsTimelineEdl(
   const includeAudio = opts?.includeAudio ?? false;
   const perClipReel = opts?.perClipReel ?? false;
   const lines: string[] = [];
-  lines.push(`TITLE: ${title}`);
-  lines.push("FCM: NON-DROP FRAME");
-  lines.push("");
+  lines.push(`TITLE: ${title}`, "FCM: NON-DROP FRAME", "");
 
   let recordCursorSeconds = 0;
   clips.forEach((clip, idx) => {

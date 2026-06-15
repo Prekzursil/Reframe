@@ -110,7 +110,7 @@ const FONTS = ["Inter", "Space Grotesk", "Montserrat", "Open Sans"];
 const ASPECTS = ["9:16", "16:9", "1:1"];
 const LANGS = ["en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh"];
 const ORG_ROLE_OPTIONS = ["owner", "admin", "editor", "viewer"];
-const ORG_MANAGER_ROLES = ["owner", "admin"];
+const ORG_MANAGER_ROLES = new Set(["owner", "admin"]);
 const PUBLISH_PROVIDERS = ["youtube", "tiktok", "instagram", "facebook"] as const;
 type PublishProvider = (typeof PUBLISH_PROVIDERS)[number];
 
@@ -129,7 +129,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
       el.focus();
       el.select();
       const ok = document.execCommand("copy");
-      document.body.removeChild(el);
+      el.remove();
       return ok;
     } catch {
       return false;
@@ -137,13 +137,13 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
-function CopyCommandButton({ command, label = "Copy curl" }: { command: string; label?: string }) {
+function CopyCommandButton({ command, label = "Copy curl" }: Readonly<{ command: string; label?: string }>) {
   const [status, setStatus] = useState<string | null>(null);
 
   const onCopy = async () => {
     const ok = await copyToClipboard(command);
     setStatus(ok ? "Copied" : "Copy failed");
-    window.setTimeout(() => setStatus(null), 1500);
+    globalThis.setTimeout(() => setStatus(null), 1500);
   };
 
   return (
@@ -157,11 +157,11 @@ function TextPreview({
   url,
   title,
   maxChars = 12000,
-}: {
+}: Readonly<{
   url: string;
   title: string;
   maxChars?: number;
-}) {
+}>) {
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -243,7 +243,7 @@ function useLiveJobs() {
   return { jobs, loading, error, refresh };
 }
 
-function JobStatusPill({ status }: { status: JobStatus }) {
+function JobStatusPill({ status }: Readonly<{ status: JobStatus }>) {
   const toneMap: Record<JobStatus, "neutral" | "info" | "success" | "danger" | "muted"> = {
     queued: "neutral",
     running: "info",
@@ -258,11 +258,11 @@ function CaptionsForm({
   onCreated,
   initialVideoId,
   projectId,
-}: {
+}: Readonly<{
   onCreated: (job: Job) => void;
   initialVideoId?: string;
   projectId?: string;
-}) {
+}>) {
   const [videoId, setVideoId] = useState(initialVideoId || "");
   const [sourceLang, setSourceLang] = useState("auto");
   const [backend, setBackend] = useState("faster_whisper");
@@ -310,12 +310,14 @@ function CaptionsForm({
     }
   };
 
-  const backendHelp =
-    backend === "noop"
-      ? "No transcription runs; generates placeholder captions (offline-safe)."
-      : backend === "faster_whisper"
-      ? "Runs locally via faster-whisper. Long videos can take minutes on CPU; GPU recommended."
-      : "Runs locally via whisper.cpp (offline). Model download/setup required.";
+  let backendHelp: string;
+  if (backend === "noop") {
+    backendHelp = "No transcription runs; generates placeholder captions (offline-safe).";
+  } else if (backend === "faster_whisper") {
+    backendHelp = "Runs locally via faster-whisper. Long videos can take minutes on CPU; GPU recommended.";
+  } else {
+    backendHelp = "Runs locally via whisper.cpp (offline). Model download/setup required.";
+  }
 
   const curlCommand = useMemo(() => {
     const payload = {
@@ -331,7 +333,7 @@ function CaptionsForm({
         diarization_backend: diarizationBackend,
       },
     };
-    return `curl -sS -X POST \"${apiClient.baseUrl}/captions/jobs\" -H \"Content-Type: application/json\" -d '${JSON.stringify(payload)}'`;
+    return `curl -sS -X POST "${apiClient.baseUrl}/captions/jobs" -H "Content-Type: application/json" -d '${JSON.stringify(payload)}'`;
   }, [videoId, sourceLang, backend, model, qualityProfile, formats, diarizationBackend, speakerLabelsEnabled, projectId]);
 
   return (
@@ -427,7 +429,7 @@ function CaptionsForm({
   );
 }
 
-function TranslateForm({ onCreated, projectId }: { onCreated: (job: Job) => void; projectId?: string }) {
+function TranslateForm({ onCreated, projectId }: Readonly<{ onCreated: (job: Job) => void; projectId?: string }>) {
   const [subtitleId, setSubtitleId] = useState("");
   const [targetLang, setTargetLang] = useState("es");
   const [notes, setNotes] = useState("");
@@ -441,7 +443,7 @@ function TranslateForm({ onCreated, projectId }: { onCreated: (job: Job) => void
       ...(projectId ? { project_id: projectId } : {}),
       options: notes ? { notes } : {},
     };
-    return `curl -sS -X POST \"${apiClient.baseUrl}/subtitles/translate\" -H \"Content-Type: application/json\" -d '${JSON.stringify(payload)}'`;
+    return `curl -sS -X POST "${apiClient.baseUrl}/subtitles/translate" -H "Content-Type: application/json" -d '${JSON.stringify(payload)}'`;
   }, [subtitleId, targetLang, notes, projectId]);
 
   const submit = async (e: React.FormEvent) => {
@@ -492,11 +494,11 @@ function UploadPanel({
   onAssetId,
   onPreview,
   projectId,
-}: {
+}: Readonly<{
   onAssetId: (id: string) => void;
   onPreview: (url: string | null) => void;
   projectId?: string;
-}) {
+}>) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -526,9 +528,17 @@ function UploadPanel({
   return (
     <div
       className="dropzone"
+      role="button"
+      tabIndex={0}
       onDragOver={(e) => e.preventDefault()}
       onDrop={onDrop}
       onClick={() => inputRef.current?.click()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          inputRef.current?.click();
+        }
+      }}
     >
       <input
         type="file"
@@ -549,11 +559,11 @@ function AudioUploadPanel({
   onAssetId,
   onPreview,
   projectId,
-}: {
+}: Readonly<{
   onAssetId: (id: string) => void;
   onPreview: (url: string | null) => void;
   projectId?: string;
-}) {
+}>) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -576,7 +586,20 @@ function AudioUploadPanel({
   };
 
   return (
-    <div className="dropzone" onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleFiles(e.dataTransfer.files)} onClick={() => inputRef.current?.click()}>
+    <div
+      className="dropzone"
+      role="button"
+      tabIndex={0}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => void handleFiles(e.dataTransfer.files)}
+      onClick={() => inputRef.current?.click()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          inputRef.current?.click();
+        }
+      }}
+    >
       <input
         type="file"
         accept="audio/*"
@@ -600,12 +623,12 @@ function SubtitleUpload({
   onPreview,
   label = "Upload subtitles (SRT/VTT)",
   projectId,
-}: {
+}: Readonly<{
   onAssetId: (id: string) => void;
   onPreview: (url: string | null, name?: string | null) => void;
   label?: string;
   projectId?: string;
-}) {
+}>) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -645,11 +668,11 @@ function SubtitleEditorCard({
   initialAssetId,
   onAssetChosen,
   projectId,
-}: {
+}: Readonly<{
   initialAssetId?: string;
   onAssetChosen: (asset: MediaAsset) => void;
   projectId?: string;
-}) {
+}>) {
   const [assetId, setAssetId] = useState(initialAssetId || "");
   const [contents, setContents] = useState("");
   const [original, setOriginal] = useState<string | null>(null);
@@ -744,8 +767,8 @@ function SubtitleEditorCard({
     a.download = filename;
     document.body.appendChild(a);
     a.click();
-    document.body.removeChild(a);
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    a.remove();
+    globalThis.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const saveToBackend = async () => {
@@ -774,7 +797,7 @@ function SubtitleEditorCard({
   return (
     <div className="form-grid">
       <p className="muted">Edit subtitles inline and optionally shift all timings, then re-upload as a new subtitle asset.</p>
-      <label className="field">
+      <div className="field">
         <span>Subtitle asset ID</span>
         <div className="actions-row">
           <Input value={assetId} onChange={(e) => setAssetId(e.target.value)} placeholder="Paste an asset id or upload first" />
@@ -782,7 +805,7 @@ function SubtitleEditorCard({
             {busy ? "Loading..." : "Load"}
           </Button>
         </div>
-      </label>
+      </div>
       <label className="field">
         <span>Editor mode</span>
         <div className="actions-row">
@@ -821,7 +844,7 @@ function SubtitleEditorCard({
                 type="button"
                 variant="ghost"
                 onClick={() => {
-                  const last = cues[cues.length - 1];
+                  const last = cues.at(-1);
                   const start = last ? Math.max(0, Number(last.end) || 0) : 0;
                   setCuesAndRewriteText([...cues, { start, end: start + 1, text: "" }]);
                 }}
@@ -834,7 +857,7 @@ function SubtitleEditorCard({
         {cuesError && <div className="error-inline">{cuesError}</div>}
         {editorMode === "cues" && <p className="muted">Cue table mode rewrites the subtitle file; use raw mode for advanced VTT styling.</p>}
       </label>
-      <label className="field">
+      <div className="field">
         <span>Shift timings (seconds)</span>
         <div className="actions-row">
           <Input
@@ -851,7 +874,7 @@ function SubtitleEditorCard({
             Reset
           </Button>
         </div>
-      </label>
+      </div>
       {editorMode === "raw" ? (
         <label className="field full">
           <span>
@@ -965,7 +988,7 @@ function SubtitleEditorCard({
   );
 }
 
-function SubtitleToolsForm({ onCreated, projectId }: { onCreated: (job: Job, bilingual: boolean) => void; projectId?: string }) {
+function SubtitleToolsForm({ onCreated, projectId }: Readonly<{ onCreated: (job: Job, bilingual: boolean) => void; projectId?: string }>) {
   const [subtitleId, setSubtitleId] = useState("");
   const [targetLang, setTargetLang] = useState("es");
   const [bilingual, setBilingual] = useState(false);
@@ -1017,7 +1040,7 @@ function SubtitleToolsForm({ onCreated, projectId }: { onCreated: (job: Job, bil
           ))}
         </select>
       </label>
-      <label className="field">
+      <div className="field">
         <span>Bilingual output</span>
         <div className="checkbox-row">
           <label className="checkbox">
@@ -1025,8 +1048,8 @@ function SubtitleToolsForm({ onCreated, projectId }: { onCreated: (job: Job, bil
             <span>Include original + translated</span>
           </label>
         </div>
-      </label>
-      {safeUploadPreview && <TextPreview url={safeUploadPreview} title={`Uploaded subtitle preview ${uploadName ? `(${uploadName})` : ""}`} />}
+      </div>
+      {safeUploadPreview && <TextPreview url={safeUploadPreview} title={`Uploaded subtitle preview ${uploadName ? "(" + uploadName + ")" : ""}`} />}
       {error && <div className="error-inline">{error}</div>}
       <div className="actions-row">
         <Button type="submit" disabled={busy}>
@@ -1042,12 +1065,12 @@ function MergeAvForm({
   initialVideoId,
   initialAudioId,
   projectId,
-}: {
+}: Readonly<{
   onCreated: (job: Job) => void;
   initialVideoId?: string;
   initialAudioId?: string;
   projectId?: string;
-}) {
+}>) {
   const [videoId, setVideoId] = useState(initialVideoId || "");
   const [audioId, setAudioId] = useState(initialAudioId || "");
   const [offset, setOffset] = useState(0);
@@ -1065,7 +1088,7 @@ function MergeAvForm({
       ducking,
       normalize,
     };
-    return `curl -sS -X POST \"${apiClient.baseUrl}/utilities/merge-av\" -H \"Content-Type: application/json\" -d '${JSON.stringify(payload)}'`;
+    return `curl -sS -X POST "${apiClient.baseUrl}/utilities/merge-av" -H "Content-Type: application/json" -d '${JSON.stringify(payload)}'`;
   }, [videoId, audioId, offset, ducking, normalize, projectId]);
 
   useEffect(() => {
@@ -1111,7 +1134,7 @@ function MergeAvForm({
         <span>Offset (seconds)</span>
         <Input type="number" step="0.1" value={offset} onChange={(e) => setOffset(Number(e.target.value))} />
       </label>
-      <label className="field">
+      <div className="field">
         <span>Ducking</span>
         <div className="checkbox-row">
           <label className="checkbox">
@@ -1119,8 +1142,8 @@ function MergeAvForm({
             <span>Lower background audio under narration</span>
           </label>
         </div>
-      </label>
-      <label className="field">
+      </div>
+      <div className="field">
         <span>Normalize</span>
         <div className="checkbox-row">
           <label className="checkbox">
@@ -1128,7 +1151,7 @@ function MergeAvForm({
             <span>Normalize output loudness</span>
           </label>
         </div>
-      </label>
+      </div>
       {error && <div className="error-inline">{error}</div>}
       <div className="actions-row">
         <CopyCommandButton command={curlCommand} />
@@ -1140,7 +1163,7 @@ function MergeAvForm({
   );
 }
 
-function ShortsForm({ onCreated, projectId }: { onCreated: (job: Job) => void; projectId?: string }) {
+function ShortsForm({ onCreated, projectId }: Readonly<{ onCreated: (job: Job) => void; projectId?: string }>) {
   const [videoId, setVideoId] = useState("");
   const [numClips, setNumClips] = useState(3);
   const [minDuration, setMinDuration] = useState(10);
@@ -1175,7 +1198,7 @@ function ShortsForm({ onCreated, projectId }: { onCreated: (job: Job) => void; p
         prompt: prompt || undefined,
       },
     };
-    return `curl -sS -X POST \"${apiClient.baseUrl}/shorts/jobs\" -H \"Content-Type: application/json\" -d '${JSON.stringify(payload)}'`;
+    return `curl -sS -X POST "${apiClient.baseUrl}/shorts/jobs" -H "Content-Type: application/json" -d '${JSON.stringify(payload)}'`;
   }, [
     videoId,
     numClips,
@@ -1249,7 +1272,7 @@ function ShortsForm({ onCreated, projectId }: { onCreated: (job: Job) => void; p
           ))}
         </select>
       </label>
-      <label className="field">
+      <div className="field">
         <span>Use subtitles</span>
         <div className="checkbox-row">
           <label className="checkbox">
@@ -1257,11 +1280,11 @@ function ShortsForm({ onCreated, projectId }: { onCreated: (job: Job) => void; p
             <span>Attach styled subtitles</span>
           </label>
         </div>
-      </label>
+      </div>
       <details className="field full">
         <summary>Advanced selection</summary>
         <div className="form-grid" style={{ marginTop: 12 }}>
-          <label className="field">
+          <div className="field">
             <span>Trim silence</span>
             <div className="checkbox-row">
               <label className="checkbox">
@@ -1269,7 +1292,7 @@ function ShortsForm({ onCreated, projectId }: { onCreated: (job: Job) => void; p
                 <span>Prefer non-silent segments (experimental)</span>
               </label>
             </div>
-          </label>
+          </div>
           <label className="field" title="Silence threshold in dB. More negative = stricter (detects quieter audio as silence).">
             <span>Silence threshold (dB)</span>
             <Input
@@ -1311,7 +1334,7 @@ function ShortsForm({ onCreated, projectId }: { onCreated: (job: Job) => void; p
               Generate captions first, then paste the output subtitle asset id here.
             </p>
           </label>
-          <label className="field">
+          <div className="field">
             <span>Groq prompt scoring</span>
             <div className="checkbox-row">
               <label className="checkbox">
@@ -1319,7 +1342,7 @@ function ShortsForm({ onCreated, projectId }: { onCreated: (job: Job) => void; p
                 <span>Use Groq (requires GROQ_API_KEY on the worker)</span>
               </label>
             </div>
-          </label>
+          </div>
         </div>
       </details>
       <label className="field">
@@ -1364,13 +1387,13 @@ function StyleEditor({
   onJobCreated,
   videoId,
   subtitleId,
-}: {
+}: Readonly<{
   onPreview: (payload: any) => Promise<Job | void> | void;
   onRender: (payload: any) => Promise<Job | void> | void;
   onJobCreated?: (job: Job) => void;
   videoId: string;
   subtitleId: string;
-}) {
+}>) {
   const [font, setFont] = useState(FONTS[0]);
   const [fontSize, setFontSize] = useState(42);
   const [textColor, setTextColor] = useState("#ffffff");
@@ -1706,7 +1729,7 @@ function StyleEditor({
   const filteredProjectAssets = useMemo(() => {
     return projectAssets.filter((asset) => (projectAssetKindFilter ? asset.kind === projectAssetKindFilter : true));
   }, [projectAssets, projectAssetKindFilter]);
-  const projectAssetKinds = useMemo(() => Array.from(new Set(projectAssets.map((asset) => asset.kind))).sort(), [projectAssets]);
+  const projectAssetKinds = useMemo(() => Array.from(new Set(projectAssets.map((asset) => asset.kind))).sort((a, b) => a.localeCompare(b)), [projectAssets]);
 
   const dismissQuickStart = () => {
     setShowQuickStart(false);
@@ -1718,7 +1741,7 @@ function StyleEditor({
   };
 
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
+    document.documentElement.dataset.theme = theme;
   }, [theme]);
 
   const refreshRecentAssets = async () => {
@@ -1758,7 +1781,7 @@ function StyleEditor({
 		  };
 
 		  const deleteJobAndRefresh = async (job: Job) => {
-		    const confirmed = window.confirm(
+		    const confirmed = globalThis.confirm(
 		      "Delete this job and its derived assets?\n\nThis removes generated files (clips/subtitles/manifests) stored under media/tmp. Input uploads are kept.",
 		    );
 		    if (!confirmed) return;
@@ -1837,10 +1860,10 @@ function StyleEditor({
         setBudgetPolicy(budget);
         if (budget) {
           setBudgetSoftLimitDraft(
-            budget.monthly_soft_limit_cents != null ? String(budget.monthly_soft_limit_cents) : "",
+            budget.monthly_soft_limit_cents == null ? "" : String(budget.monthly_soft_limit_cents),
           );
           setBudgetHardLimitDraft(
-            budget.monthly_hard_limit_cents != null ? String(budget.monthly_hard_limit_cents) : "",
+            budget.monthly_hard_limit_cents == null ? "" : String(budget.monthly_hard_limit_cents),
           );
           setBudgetEnforceHardLimit(Boolean(budget.enforce_hard_limit));
         } else {
@@ -1877,8 +1900,8 @@ function StyleEditor({
           enforce_hard_limit: budgetEnforceHardLimit,
         });
         setBudgetPolicy(updated);
-        setBudgetSoftLimitDraft(updated.monthly_soft_limit_cents != null ? String(updated.monthly_soft_limit_cents) : "");
-        setBudgetHardLimitDraft(updated.monthly_hard_limit_cents != null ? String(updated.monthly_hard_limit_cents) : "");
+        setBudgetSoftLimitDraft(updated.monthly_soft_limit_cents == null ? "" : String(updated.monthly_soft_limit_cents));
+        setBudgetHardLimitDraft(updated.monthly_hard_limit_cents == null ? "" : String(updated.monthly_hard_limit_cents));
         setBudgetEnforceHardLimit(Boolean(updated.enforce_hard_limit));
       } catch (err) {
         setUsageError(err instanceof Error ? err.message : "Failed to save budget policy");
@@ -1976,7 +1999,7 @@ function StyleEditor({
 
 		  const jobTypeOptions = useMemo(() => {
 		    const types = new Set(jobsPageJobs.map((job) => job.job_type).filter(Boolean));
-		    return Array.from(types).sort();
+		    return Array.from(types).sort((a, b) => a.localeCompare(b));
 		  }, [jobsPageJobs]);
 
 	  const filteredJobs = useMemo(() => {
@@ -2013,7 +2036,7 @@ function StyleEditor({
 
     const schedule = (ms: number) => {
       if (cancelled) return;
-      timer = window.setTimeout(() => {
+      timer = globalThis.setTimeout(() => {
         void tick();
       }, ms);
     };
@@ -2231,7 +2254,7 @@ function StyleEditor({
 		    setTranscriptLoading(false);
 		    setTranscriptSearch("");
 
-		    if (!selectedJob || !outputAsset || outputAsset.kind !== "subtitle" || !outputAsset.uri) return;
+		    if (!selectedJob || outputAsset?.kind !== "subtitle" || !outputAsset?.uri) return;
 
 		    let cancelled = false;
 			    const load = async () => {
@@ -2437,7 +2460,8 @@ function StyleEditor({
 
         const createShareLink = async () => {
           if (!selectedProjectId) return;
-          const assetIds = selectedShareAssetIds.length ? selectedShareAssetIds : shareSourceAssetId ? [shareSourceAssetId] : [];
+          const fallbackAssetIds = shareSourceAssetId ? [shareSourceAssetId] : [];
+          const assetIds = selectedShareAssetIds.length ? selectedShareAssetIds : fallbackAssetIds;
           if (!assetIds.length) return;
           setShareBusy(true);
           setProjectDataError(null);
@@ -2473,7 +2497,7 @@ function StyleEditor({
 
         const loadOrgInvites = async (roleHint?: string) => {
           const normalizedRole = String(roleHint || orgInfo?.role || "").trim().toLowerCase();
-          if (!apiClient.accessToken || !ORG_MANAGER_ROLES.includes(normalizedRole)) {
+          if (!apiClient.accessToken || !ORG_MANAGER_ROLES.has(normalizedRole)) {
             setOrgInvites([]);
             return;
           }
@@ -2693,7 +2717,8 @@ function StyleEditor({
           const sorted = [...events].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
           for (const event of sorted) {
             const payload = (event.payload || {}) as Record<string, unknown>;
-            const approvalId = String(payload.approval_id || "").trim();
+            const rawApprovalId = payload.approval_id;
+            const approvalId = (typeof rawApprovalId === "string" || typeof rawApprovalId === "number" ? String(rawApprovalId) : "").trim();
             if (!approvalId) continue;
             const existing = byId.get(approvalId);
             if (event.event_type === "project.approval_requested") {
@@ -2702,7 +2727,7 @@ function StyleEditor({
                 project_id: event.project_id,
                 status: "pending",
                 summary: typeof payload.summary === "string" ? payload.summary : null,
-                requested_by_user_id: String(payload.requested_by_user_id || event.actor_user_id || ""),
+                requested_by_user_id: (typeof payload.requested_by_user_id === "string" && payload.requested_by_user_id) || event.actor_user_id || "",
                 resolved_by_user_id: null,
                 resolved_at: null,
                 created_at: event.created_at,
@@ -2727,7 +2752,7 @@ function StyleEditor({
         const loadSsoSecurityContext = async () => {
           if (!orgInfo || !apiClient.accessToken) return;
           const role = String(orgInfo.role || "").toLowerCase();
-          if (!ORG_MANAGER_ROLES.includes(role)) return;
+          if (!ORG_MANAGER_ROLES.has(role)) return;
           const clientAny = apiClient as any;
           if (typeof clientAny.getOrgSsoConfig !== "function") return;
           setSsoLoading(true);
@@ -2804,12 +2829,12 @@ function StyleEditor({
         const startOktaSsoFlow = async () => {
           setSsoError(null);
           try {
-            const start = await apiClient.startOktaSso(window.location.href);
+            const start = await apiClient.startOktaSso(globalThis.location.href);
             const safeUrl = toSafeExternalUrl(start.authorize_url);
             if (!safeUrl) {
               throw new Error("Rejected unsafe Okta authorize URL");
             }
-            window.location.href = safeUrl;
+            globalThis.location.href = safeUrl;
           } catch (err) {
             setSsoError(err instanceof Error ? err.message : "Failed to start Okta SSO flow");
           }
@@ -2976,7 +3001,7 @@ function StyleEditor({
           setPublishBusy(true);
           setPublishError(null);
           try {
-            const start = await apiClient.startPublishConnection(publishProvider, window.location.href);
+            const start = await apiClient.startPublishConnection(publishProvider, globalThis.location.href);
             await apiClient.completePublishConnection(publishProvider, {
               state: start.state,
               code: publishConnectCodeDraft.trim() || "dev-code",
@@ -3043,7 +3068,7 @@ function StyleEditor({
 
         useEffect(() => {
           try {
-            const params = new URLSearchParams(window.location.search);
+            const params = new URLSearchParams(globalThis.location.search);
             const token = params.get("token");
             if (token) {
               setInviteResolveToken(token);
@@ -3080,7 +3105,7 @@ function StyleEditor({
           if (active !== "account") return;
           if (!orgInfo) return;
           const role = String(orgInfo.role || "").toLowerCase();
-          if (!ORG_MANAGER_ROLES.includes(role)) return;
+          if (!ORG_MANAGER_ROLES.has(role)) return;
           void loadSsoSecurityContext();
         }, [active, orgInfo?.org_id, orgInfo?.role]);
 
@@ -3254,7 +3279,7 @@ function StyleEditor({
                       </div>
                     )}
                     {outputAssetUrl && outputAsset.mime_type?.includes("video") && (
-                      <video className="preview" controls src={outputAssetUrl} />
+                      <video className="preview" controls src={outputAssetUrl}><track kind="captions" /></video>
                     )}
                     {outputAssetUrl && outputAsset.mime_type?.includes("text") && <TextPreview url={outputAssetUrl} title="Subtitle preview" />}
                   </div>
@@ -3272,7 +3297,7 @@ function StyleEditor({
                 onAssetId={(id) => setUploadedVideoId(id)}
                 onPreview={(url) => setUploadedPreview(toSafeMediaUrl(url))}
               />
-              {safeUploadedPreview && <video className="preview" controls src={safeUploadedPreview} />}
+              {safeUploadedPreview && <video className="preview" controls src={safeUploadedPreview}><track kind="captions" /></video>}
             </Card>
             <Card title="Shorts maker">
               <ShortsForm
@@ -3346,8 +3371,8 @@ function StyleEditor({
                               a.download = "shorts_timeline.csv";
                               document.body.appendChild(a);
                               a.click();
-                              document.body.removeChild(a);
-                              window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+                              a.remove();
+                              globalThis.setTimeout(() => URL.revokeObjectURL(url), 1000);
                             }}
                           >
                             Download CSV
@@ -3369,8 +3394,8 @@ function StyleEditor({
                               a.download = "shorts_timeline.edl";
                               document.body.appendChild(a);
                               a.click();
-                              document.body.removeChild(a);
-                              window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+                              a.remove();
+                              globalThis.setTimeout(() => URL.revokeObjectURL(url), 1000);
                             }}
                           >
                             Download EDL
@@ -3601,7 +3626,7 @@ function StyleEditor({
                 onAssetId={(id) => setUploadedVideoId(id)}
                 onPreview={(url) => setUploadedPreview(toSafeMediaUrl(url))}
               />
-              {safeUploadedPreview && <video className="preview" controls src={safeUploadedPreview} />}
+              {safeUploadedPreview && <video className="preview" controls src={safeUploadedPreview}><track kind="captions" /></video>}
             </Card>
             <Card title="Captions & Translate">
               <p className="muted">Create caption jobs with backend/model and format options.</p>
@@ -3694,17 +3719,19 @@ function StyleEditor({
 	                    value=""
 	                    onChange={(e) => {
 	                      const id = e.target.value;
-	                      if (!id) return;
-		                      const asset = recentSubtitleAssets.find((a) => a.id === id);
-		                      setSubtitleAssetId(id);
-		                      if (asset?.uri) {
-		                        setSubtitlePreview(toSafeMediaHref(asset.uri));
-		                        const ext = asset.uri.split(".").pop();
-		                        setSubtitleFileName(ext ? `subtitles.${ext}` : "subtitles");
-		                      } else {
-	                        setSubtitlePreview(null);
-	                        setSubtitleFileName(null);
-	                      }
+                      if (!id) {
+                        return;
+                      }
+                      const asset = recentSubtitleAssets.find((a) => a.id === id);
+                      setSubtitleAssetId(id);
+                      if (asset?.uri) {
+                        setSubtitlePreview(toSafeMediaHref(asset.uri));
+                        const ext = asset.uri.split(".").pop();
+                        setSubtitleFileName(ext ? `subtitles.${ext}` : "subtitles");
+                      } else {
+                        setSubtitlePreview(null);
+                        setSubtitleFileName(null);
+                      }
 	                    }}
 	                  >
 	                    <option value="">Select a subtitle asset…</option>
@@ -3758,10 +3785,10 @@ function StyleEditor({
                 onAssetId={(id) => setUploadedVideoId(id)}
                 onPreview={(url) => setUploadedPreview(toSafeMediaUrl(url))}
               />
-              {safeUploadedPreview && <video className="preview" controls src={safeUploadedPreview} />}
+              {safeUploadedPreview && <video className="preview" controls src={safeUploadedPreview}><track kind="captions" /></video>}
 	              {subtitlePreviewUrl && (
 	                <div className="output-card">
-                    <TextPreview url={subtitlePreviewUrl} title={`Subtitle preview ${subtitleFileName ? `(${subtitleFileName})` : ""}`} />
+                    <TextPreview url={subtitlePreviewUrl} title={`Subtitle preview ${subtitleFileName ? "(" + subtitleFileName + ")" : ""}`} />
 	                </div>
 	              )}
             </Card>
@@ -3812,7 +3839,7 @@ function StyleEditor({
 	                    </div>
 	                  )}
 		                  {toSafeMediaHref(styleOutput?.uri) && styleOutput.mime_type?.includes("video") && (
-		                    <video className="preview" controls src={toSafeMediaHref(styleOutput?.uri)!} />
+		                    <video className="preview" controls src={toSafeMediaHref(styleOutput?.uri)!}><track kind="captions" /></video>
 		                  )}
 	                </div>
 	              )}
@@ -3867,13 +3894,13 @@ function StyleEditor({
                 onAssetId={(id) => setMergeVideoId(id)}
                 onPreview={(url) => setMergeVideoPreview(toSafeMediaUrl(url))}
               />
-              {safeMergeVideoPreview && <video className="preview" controls src={safeMergeVideoPreview} />}
+              {safeMergeVideoPreview && <video className="preview" controls src={safeMergeVideoPreview}><track kind="captions" /></video>}
               <AudioUploadPanel
                 projectId={selectedProjectId || undefined}
                 onAssetId={(id) => setMergeAudioId(id)}
                 onPreview={(url) => setMergeAudioPreview(toSafeMediaUrl(url))}
               />
-              {safeMergeAudioPreview && <audio controls src={safeMergeAudioPreview} />}
+              {safeMergeAudioPreview && <audio controls src={safeMergeAudioPreview}><track kind="captions" /></audio>}
               <MergeAvForm
                 projectId={selectedProjectId || undefined}
                 onCreated={(job) => {
@@ -4120,7 +4147,9 @@ function StyleEditor({
 				                          className="video-preview"
 				                          controls
 				                          src={toSafeMediaHref(inputAsset?.uri)!}
-				                        />
+				                        >
+				                          <track kind="captions" />
+				                        </video>
 				                      )}
 			                      <div className="form-grid">
 			                        <label className="field">
@@ -4233,7 +4262,7 @@ function StyleEditor({
 		                            </div>
 		                          )}
 		                          {outputAssetUrl && outputAsset.mime_type?.includes("video") && (
-		                            <video className="preview" controls src={outputAssetUrl} />
+		                            <video className="preview" controls src={outputAssetUrl}><track kind="captions" /></video>
 		                          )}
 		                          {outputAssetUrl && outputAsset.mime_type?.includes("text") && <TextPreview url={outputAssetUrl} title="Job output preview" />}
 		                        </div>
@@ -4518,6 +4547,9 @@ function StyleEditor({
                         </table>
                       </div>
                     )}
+                    {(() => {
+                      const shareLinkLabel = `Generate share link${selectedShareAssetIds.length ? "s" : ""}`;
+                      return (
                     <div className="actions-row">
                       <Button
                         type="button"
@@ -4525,9 +4557,11 @@ function StyleEditor({
                         onClick={() => void createShareLink()}
                         disabled={shareBusy || (selectedShareAssetIds.length === 0 && !shareSourceAssetId)}
                       >
-                        {shareBusy ? "Generating..." : `Generate share link${selectedShareAssetIds.length ? "s" : ""}`}
+                        {shareBusy ? "Generating..." : shareLinkLabel}
                       </Button>
                     </div>
+                      );
+                    })()}
                     {shareLinks.length > 0 && (
                       <div className="output-card">
                         {shareLinks.map((link) => {
@@ -4943,7 +4977,7 @@ function StyleEditor({
                             const data = await apiClient.oauthStart("google");
                             const url = toSafeExternalUrl(data.authorize_url);
                             if (url) {
-                              window.location.href = url;
+                              globalThis.location.href = url;
                             } else {
                               setAuthError("Unsafe OAuth redirect URL rejected.");
                             }
@@ -4962,7 +4996,7 @@ function StyleEditor({
                             const data = await apiClient.oauthStart("github");
                             const url = toSafeExternalUrl(data.authorize_url);
                             if (url) {
-                              window.location.href = url;
+                              globalThis.location.href = url;
                             } else {
                               setAuthError("Unsafe OAuth redirect URL rejected.");
                             }
@@ -5042,7 +5076,7 @@ function StyleEditor({
                         )}
                       </div>
                     )}
-                    {(ORG_MANAGER_ROLES.includes(String(orgInfo.role || "").toLowerCase()) || !orgInfo.role) && (
+                    {(ORG_MANAGER_ROLES.has(String(orgInfo.role || "").toLowerCase()) || !orgInfo.role) && (
                       <div className="output-card">
                         <p className="metric-label">Invite teammate</p>
                         {inviteError && <div className="error-inline">{inviteError}</div>}
@@ -5100,7 +5134,7 @@ function StyleEditor({
                           <tr key={member.user_id}>
                             <td>{member.email}</td>
                             <td>
-                              {ORG_MANAGER_ROLES.includes(String(orgInfo.role || "").toLowerCase()) ? (
+                              {ORG_MANAGER_ROLES.has(String(orgInfo.role || "").toLowerCase()) ? (
                                 <select
                                   className="input"
                                   value={member.role}
@@ -5118,7 +5152,7 @@ function StyleEditor({
                               )}
                             </td>
                             <td>
-                              {ORG_MANAGER_ROLES.includes(String(orgInfo.role || "").toLowerCase()) ? (
+                              {ORG_MANAGER_ROLES.has(String(orgInfo.role || "").toLowerCase()) ? (
                                 <Button type="button" variant="ghost" disabled={inviteBusy} onClick={() => void removeMember(member.user_id)}>
                                   Remove
                                 </Button>
@@ -5166,7 +5200,7 @@ function StyleEditor({
                                           Copy link
                                         </Button>
                                       )}
-                                      {invite.status === "pending" && ORG_MANAGER_ROLES.includes(String(orgInfo.role || "").toLowerCase()) && (
+                                      {invite.status === "pending" && ORG_MANAGER_ROLES.has(String(orgInfo.role || "").toLowerCase()) && (
                                         <Button type="button" variant="ghost" onClick={() => void revokeInvite(invite.id)} disabled={inviteBusy}>
                                           Revoke
                                         </Button>
@@ -5180,7 +5214,7 @@ function StyleEditor({
                         </table>
                       )}
                     </div>
-                    {ORG_MANAGER_ROLES.includes(String(orgInfo.role || "").toLowerCase()) && (
+                    {ORG_MANAGER_ROLES.has(String(orgInfo.role || "").toLowerCase()) && (
                       <div className="output-card">
                         <p className="metric-label">Enterprise security (Okta + SCIM)</p>
                         {ssoError && <div className="error-inline">{ssoError}</div>}
@@ -5272,12 +5306,12 @@ function StyleEditor({
                                     <td>{formatTimestamp(token.created_at)}</td>
                                     <td>{token.revoked_at ? "revoked" : "active"}</td>
                                     <td>
-                                      {!token.revoked_at ? (
+                                      {token.revoked_at ? (
+                                        <span className="muted">n/a</span>
+                                      ) : (
                                         <Button type="button" variant="ghost" onClick={() => void revokeScimToken(token.id)} disabled={scimCreateBusy}>
                                           Revoke
                                         </Button>
-                                      ) : (
-                                        <span className="muted">n/a</span>
                                       )}
                                     </td>
                                   </tr>

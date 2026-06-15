@@ -62,6 +62,40 @@ def _ensure_faster_whisper():
     return WhisperModel
 
 
+def _extract_segment_fields(seg: _SegmentLike | dict[str, Any]) -> tuple[str, Any]:
+    """Return the (text, words) pair from a segment that may be a dict or object."""
+    if isinstance(seg, dict):
+        return str(seg.get("text", "")).strip(), seg.get("words")
+    return str(getattr(seg, "text", "")).strip(), getattr(seg, "words", None)
+
+
+def _coerce_probability(prob: Any) -> Optional[float]:
+    """Coerce a probability value to float, returning None when not numeric."""
+    try:
+        return float(prob) if prob is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_word(w: _WordLike | dict[str, Any]) -> Optional[Word]:
+    """Parse a single word payload into a Word, or None when malformed."""
+    try:
+        if isinstance(w, dict):
+            start = float(w.get("start"))
+            end = float(w.get("end"))
+            text = str(w.get("word", "")).strip()
+            prob = w.get("probability")
+        else:
+            start = float(getattr(w, "start"))
+            end = float(getattr(w, "end"))
+            text = str(getattr(w, "word", "")).strip()
+            prob = getattr(w, "probability", None)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Skipping malformed word payload: %s (%s)", w, exc)
+        return None
+    return Word(text=text, start=start, end=end, probability=_coerce_probability(prob))
+
+
 def normalize_faster_whisper(
     segments: Iterable[_SegmentLike] | Iterable[dict[str, Any]],
     *,
@@ -72,37 +106,15 @@ def normalize_faster_whisper(
     words: list[Word] = []
     segment_texts: list[str] = []
     for seg in segments:
-        if isinstance(seg, dict):
-            seg_text = str(seg.get("text", "")).strip()
-            seg_words = seg.get("words")
-        else:
-            seg_text = str(getattr(seg, "text", "")).strip()
-            seg_words = getattr(seg, "words", None)
-
+        seg_text, seg_words = _extract_segment_fields(seg)
         if seg_text:
             segment_texts.append(seg_text)
         if not seg_words:
             continue
         for w in seg_words:
-            try:
-                if isinstance(w, dict):
-                    start = float(w.get("start"))
-                    end = float(w.get("end"))
-                    text = str(w.get("word", "")).strip()
-                    prob = w.get("probability")
-                else:
-                    start = float(getattr(w, "start"))
-                    end = float(getattr(w, "end"))
-                    text = str(getattr(w, "word", "")).strip()
-                    prob = getattr(w, "probability", None)
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("Skipping malformed word payload: %s (%s)", w, exc)
-                continue
-            try:
-                prob_val = float(prob) if prob is not None else None
-            except (TypeError, ValueError):
-                prob_val = None
-            words.append(Word(text=text, start=start, end=end, probability=prob_val))
+            parsed = _parse_word(w)
+            if parsed is not None:
+                words.append(parsed)
 
     text_field = " ".join(segment_texts) or None
 
@@ -111,7 +123,7 @@ def normalize_faster_whisper(
 
 def transcribe_faster_whisper(path: str | Path, config: TranscriptionConfig) -> TranscriptionResult:
     """Transcribe a media file using faster-whisper."""
-    WhisperModel = _ensure_faster_whisper()
+    whisper_model_cls = _ensure_faster_whisper()
     media_path = validate_media_input_path(path)
 
     # Use model from config; device is optional.
@@ -120,6 +132,6 @@ def transcribe_faster_whisper(path: str | Path, config: TranscriptionConfig) -> 
         model_kwargs["device"] = config.device
 
     model_name = _normalize_model_name(config.model)
-    model = WhisperModel(model_name, **model_kwargs)
+    model = whisper_model_cls(model_name, **model_kwargs)
     segments, _info = model.transcribe(str(media_path), language=config.language)
     return normalize_faster_whisper(segments, model=model_name, language=config.language)

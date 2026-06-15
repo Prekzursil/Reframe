@@ -32,3 +32,6 @@ reframe*.db
 
 # Local sample media
 samples/
+
+_sonar-issues.json
+_sonar-issues-raw.json

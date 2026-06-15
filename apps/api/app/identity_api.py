@@ -34,6 +34,7 @@ ORG_MANAGER_ROLES = {"owner", "admin"}
 SCIM_SCOPE_DEFAULTS = ["users:read", "users:write", "groups:read", "groups:write"]
 SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User"
 SCIM_GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group"
+ORG_NOT_FOUND_MESSAGE = "Organization not found"
 
 
 class SsoConfigView(SQLModel):
@@ -168,38 +169,46 @@ def _serialize_sso_config(connection: SsoConnection | None, org_id: UUID) -> Sso
     )
 
 
+def _build_sso_connection(org_id: UUID, payload: SsoConfigUpdateRequest, now: datetime) -> SsoConnection:
+    return SsoConnection(
+        org_id=org_id,
+        provider="okta",
+        enabled=bool(payload.enabled),
+        issuer_url=(payload.issuer_url or "").strip() or None,
+        client_id=(payload.client_id or "").strip() or None,
+        client_secret_ref=(payload.client_secret_ref or "").strip() or None,
+        audience=(payload.audience or "").strip() or None,
+        default_role=(payload.default_role or "viewer").strip().lower(),
+        jit_enabled=bool(payload.jit_enabled),
+        allow_email_link=bool(payload.allow_email_link),
+        config=dict(payload.config or {}),
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _apply_sso_connection_update(connection: SsoConnection, payload: SsoConfigUpdateRequest, now: datetime) -> None:
+    connection.enabled = bool(payload.enabled)
+    connection.issuer_url = (payload.issuer_url or "").strip() or None
+    connection.client_id = (payload.client_id or "").strip() or None
+    if payload.client_secret_ref is not None:
+        connection.client_secret_ref = (payload.client_secret_ref or "").strip() or None
+    connection.audience = (payload.audience or "").strip() or None
+    role = (payload.default_role or "viewer").strip().lower()
+    connection.default_role = role if role in ROLE_VALUES else "viewer"
+    connection.jit_enabled = bool(payload.jit_enabled)
+    connection.allow_email_link = bool(payload.allow_email_link)
+    connection.config = dict(payload.config or {})
+    connection.updated_at = now
+
+
 def _upsert_sso_connection(session: Session, org_id: UUID, payload: SsoConfigUpdateRequest) -> SsoConnection:
     connection = session.exec(select(SsoConnection).where(SsoConnection.org_id == org_id)).first()
     now = _now()
     if connection is None:
-        connection = SsoConnection(
-            org_id=org_id,
-            provider="okta",
-            enabled=bool(payload.enabled),
-            issuer_url=(payload.issuer_url or "").strip() or None,
-            client_id=(payload.client_id or "").strip() or None,
-            client_secret_ref=(payload.client_secret_ref or "").strip() or None,
-            audience=(payload.audience or "").strip() or None,
-            default_role=(payload.default_role or "viewer").strip().lower(),
-            jit_enabled=bool(payload.jit_enabled),
-            allow_email_link=bool(payload.allow_email_link),
-            config=dict(payload.config or {}),
-            created_at=now,
-            updated_at=now,
-        )
+        connection = _build_sso_connection(org_id, payload, now)
     else:
-        connection.enabled = bool(payload.enabled)
-        connection.issuer_url = (payload.issuer_url or "").strip() or None
-        connection.client_id = (payload.client_id or "").strip() or None
-        if payload.client_secret_ref is not None:
-            connection.client_secret_ref = (payload.client_secret_ref or "").strip() or None
-        connection.audience = (payload.audience or "").strip() or None
-        role = (payload.default_role or "viewer").strip().lower()
-        connection.default_role = role if role in ROLE_VALUES else "viewer"
-        connection.jit_enabled = bool(payload.jit_enabled)
-        connection.allow_email_link = bool(payload.allow_email_link)
-        connection.config = dict(payload.config or {})
-        connection.updated_at = now
+        _apply_sso_connection_update(connection, payload, now)
     if connection.default_role not in ROLE_VALUES:
         raise ApiError(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -260,7 +269,7 @@ def _active_membership_count(session: Session, org_id: UUID) -> int:
 def _ensure_org_seat_available(session: Session, org_id: UUID) -> None:
     org = session.get(Organization, org_id)
     if not org:
-        raise not_found("Organization not found", {"org_id": str(org_id)})
+        raise not_found(ORG_NOT_FOUND_MESSAGE, {"org_id": str(org_id)})
     seat_limit = max(1, int(org.seat_limit or 1))
     if _active_membership_count(session, org_id) >= seat_limit:
         raise conflict("Seat limit reached", details={"seat_limit": seat_limit})
@@ -337,7 +346,6 @@ def _issue_tokens(*, user_id: UUID, org_id: UUID, role: str) -> dict[str, Any]:
 
 @router.get(
     "/orgs/{org_id}/sso/config",
-    response_model=SsoConfigView,
     tags=["Auth"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
@@ -345,21 +353,20 @@ def get_org_sso_config(org_id: UUID, session: SessionDep, principal: PrincipalDe
     _require_org_manager(session, principal, org_id)
     org = session.get(Organization, org_id)
     if not org:
-        raise not_found("Organization not found", {"org_id": str(org_id)})
+        raise not_found(ORG_NOT_FOUND_MESSAGE, {"org_id": str(org_id)})
     connection = session.exec(select(SsoConnection).where(SsoConnection.org_id == org_id)).first()
     return _serialize_sso_config(connection, org_id)
 
 
 @router.put(
     "/orgs/{org_id}/sso/config",
-    response_model=SsoConfigView,
     tags=["Auth"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
 def update_org_sso_config(org_id: UUID, payload: SsoConfigUpdateRequest, session: SessionDep, principal: PrincipalDep) -> SsoConfigView:
     _require_org_manager(session, principal, org_id)
     if not session.get(Organization, org_id):
-        raise not_found("Organization not found", {"org_id": str(org_id)})
+        raise not_found(ORG_NOT_FOUND_MESSAGE, {"org_id": str(org_id)})
     connection = _upsert_sso_connection(session, org_id, payload)
     _emit_audit(
         session,
@@ -382,7 +389,6 @@ def update_org_sso_config(org_id: UUID, payload: SsoConfigUpdateRequest, session
 
 @router.post(
     "/orgs/{org_id}/sso/scim-tokens",
-    response_model=ScimTokenView,
     status_code=status.HTTP_201_CREATED,
     tags=["Auth"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
@@ -395,7 +401,7 @@ def create_org_scim_token(
 ) -> ScimTokenView:
     _require_org_manager(session, principal, org_id)
     if not session.get(Organization, org_id):
-        raise not_found("Organization not found", {"org_id": str(org_id)})
+        raise not_found(ORG_NOT_FOUND_MESSAGE, {"org_id": str(org_id)})
     raw = _create_scim_token_secret()
     token = ScimToken(
         org_id=org_id,
@@ -450,20 +456,19 @@ def revoke_org_scim_token(org_id: UUID, token_id: UUID, session: SessionDep, pri
 
 @router.get(
     "/auth/sso/okta/start",
-    response_model=SsoStartResponse,
     tags=["Auth"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
 def start_okta_sso(
     session: SessionDep,
     principal: PrincipalDep,
-    redirect_to: str | None = Query(default=None),
+    redirect_to: Annotated[str | None, Query()] = None,
 ) -> SsoStartResponse:
     if not principal.org_id:
         raise unauthorized("Organization authentication is required")
     org = session.get(Organization, principal.org_id)
     if not org:
-        raise not_found("Organization not found", {"org_id": str(principal.org_id)})
+        raise not_found(ORG_NOT_FOUND_MESSAGE, {"org_id": str(principal.org_id)})
     connection = session.exec(select(SsoConnection).where(SsoConnection.org_id == principal.org_id)).first()
     if not connection or not connection.enabled:
         raise conflict("Okta SSO is not enabled for this organization")
@@ -494,54 +499,10 @@ def start_okta_sso(
     )
 
 
-@router.get(
-    "/auth/sso/okta/callback",
-    tags=["Auth"],
-    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
-)
-def okta_sso_callback(
-    state: str,
-    session: SessionDep,
-    code: str | None = Query(default=None),
-    email: str | None = Query(default=None),
-    sub: str | None = Query(default=None),
-    groups: str | None = Query(default=None),
-    error: str | None = Query(default=None),
-) -> dict[str, Any]:
-    if error:
-        raise unauthorized("Okta authentication failed", details={"error": error})
-    provider, _redirect = parse_oauth_state(state)
-    if not provider.startswith("okta:"):
-        raise unauthorized("Invalid SSO state provider")
-    org_id = UUID(provider.split(":", 1)[1])
-    org = session.get(Organization, org_id)
-    if not org:
-        raise not_found("Organization not found", {"org_id": str(org_id)})
-
-    connection = session.exec(select(SsoConnection).where(SsoConnection.org_id == org_id)).first()
-    if not connection or not connection.enabled:
-        raise conflict("Okta SSO is not enabled for this organization")
-
-    effective_email = _normalize_email(email)
-    if not effective_email and code and code.startswith("dev-email:"):
-        effective_email = _normalize_email(code.split(":", 1)[1])
-    if not effective_email:
-        raise unauthorized("Unable to resolve user email from Okta callback")
-
-    user = session.exec(select(User).where(User.email == effective_email)).first()
-    if user is None:
-        if not connection.jit_enabled:
-            raise unauthorized("JIT provisioning is disabled for this organization")
-        user = User(email=effective_email, display_name=effective_email.split("@")[0], is_active=True, created_at=_now(), updated_at=_now())
-        session.add(user)
-        session.commit()
-        session.refresh(user)
-
+def _upsert_okta_membership(session: Session, org_id: UUID, user: User, desired_role: str) -> OrgMembership:
     membership = session.exec(
         select(OrgMembership).where((OrgMembership.org_id == org_id) & (OrgMembership.user_id == user.id))
     ).first()
-    group_values = [item.strip() for item in (groups or "").split(",") if item.strip()]
-    desired_role = _role_for_groups(session, org_id, group_values, connection.default_role)
     if membership is None:
         _ensure_org_seat_available(session, org_id)
         membership = OrgMembership(org_id=org_id, user_id=user.id, role=desired_role, created_at=_now(), updated_at=_now())
@@ -550,11 +511,13 @@ def okta_sso_callback(
         membership.role = desired_role
         membership.updated_at = _now()
         session.add(membership)
+    return membership
 
+
+def _upsert_okta_oauth_account(session: Session, user: User, provider_subject: str) -> None:
     oauth_account = session.exec(
         select(OAuthAccount).where((OAuthAccount.provider == "okta") & (OAuthAccount.user_id == user.id))
     ).first()
-    provider_subject = (sub or f"okta-{user.id}").strip()
     if oauth_account is None:
         oauth_account = OAuthAccount(
             user_id=user.id,
@@ -570,6 +533,8 @@ def okta_sso_callback(
         oauth_account.updated_at = _now()
     session.add(oauth_account)
 
+
+def _upsert_okta_user_identity(session: Session, org_id: UUID, user: User, provider_subject: str) -> None:
     identity = session.exec(
         select(ScimIdentity).where(
             (ScimIdentity.org_id == org_id)
@@ -597,6 +562,58 @@ def okta_sso_callback(
         identity.updated_at = _now()
     session.add(identity)
 
+
+@router.get(
+    "/auth/sso/okta/callback",
+    tags=["Auth"],
+    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+def okta_sso_callback(
+    state: str,
+    session: SessionDep,
+    code: Annotated[str | None, Query()] = None,
+    email: Annotated[str | None, Query()] = None,
+    sub: Annotated[str | None, Query()] = None,
+    groups: Annotated[str | None, Query()] = None,
+    error: Annotated[str | None, Query()] = None,
+) -> dict[str, Any]:
+    if error:
+        raise unauthorized("Okta authentication failed", details={"error": error})
+    provider, _redirect = parse_oauth_state(state)
+    if not provider.startswith("okta:"):
+        raise unauthorized("Invalid SSO state provider")
+    org_id = UUID(provider.split(":", 1)[1])
+    org = session.get(Organization, org_id)
+    if not org:
+        raise not_found(ORG_NOT_FOUND_MESSAGE, {"org_id": str(org_id)})
+
+    connection = session.exec(select(SsoConnection).where(SsoConnection.org_id == org_id)).first()
+    if not connection or not connection.enabled:
+        raise conflict("Okta SSO is not enabled for this organization")
+
+    effective_email = _normalize_email(email)
+    if not effective_email and code and code.startswith("dev-email:"):
+        effective_email = _normalize_email(code.split(":", 1)[1])
+    if not effective_email:
+        raise unauthorized("Unable to resolve user email from Okta callback")
+
+    user = session.exec(select(User).where(User.email == effective_email)).first()
+    if user is None:
+        if not connection.jit_enabled:
+            raise unauthorized("JIT provisioning is disabled for this organization")
+        user = User(email=effective_email, display_name=effective_email.split("@")[0], is_active=True, created_at=_now(), updated_at=_now())
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+
+    group_values = [item.strip() for item in (groups or "").split(",") if item.strip()]
+    desired_role = _role_for_groups(session, org_id, group_values, connection.default_role)
+    membership = _upsert_okta_membership(session, org_id, user, desired_role)
+
+    provider_subject = (sub or f"okta-{user.id}").strip()
+    _upsert_okta_oauth_account(session, user, provider_subject)
+    _upsert_okta_user_identity(session, org_id, user, provider_subject)
+
     _emit_audit(
         session,
         org_id=org_id,
@@ -615,7 +632,7 @@ def okta_sso_callback(
 def scim_list_users(
     session: SessionDep,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
-    filter: str | None = Query(default=None),
+    filter: Annotated[str | None, Query()] = None,
 ) -> dict[str, Any]:
     token = _resolve_scim_token(session, _parse_scim_bearer(authorization))
     memberships = session.exec(select(OrgMembership).where(OrgMembership.org_id == token.org_id)).all()
@@ -708,6 +725,40 @@ def scim_create_user(
     return _scim_user_resource(user, membership)
 
 
+def _apply_scim_user_operation(
+    session: Session,
+    org_id: UUID,
+    user: User,
+    membership: OrgMembership | None,
+    operation: dict[str, Any],
+) -> OrgMembership | None:
+    op = str(operation.get("op") or "").strip().lower()
+    path = str(operation.get("path") or "").strip().lower()
+    value = operation.get("value")
+    if op in {"replace", "add"} and path in {"active", "urn:ietf:params:scim:schemas:core:2.0:user:active"}:
+        is_active = bool(value)
+        user.is_active = is_active
+        user.updated_at = _now()
+        if not is_active and membership:
+            session.delete(membership)
+            membership = None
+        elif is_active and membership is None:
+            _ensure_org_seat_available(session, org_id)
+            membership = OrgMembership(org_id=org_id, user_id=user.id, role="viewer", created_at=_now(), updated_at=_now())
+            session.add(membership)
+    elif op in {"replace", "add"} and path in {"username", "userName".lower()}:
+        maybe_email = _normalize_email(str(value or ""))
+        if maybe_email:
+            user.email = maybe_email
+            user.updated_at = _now()
+    elif op in {"replace", "add"} and path in {"name.formatted", "displayname"}:
+        display_name = (str(value or "")).strip()
+        if display_name:
+            user.display_name = display_name
+            user.updated_at = _now()
+    return membership
+
+
 @router.patch("/scim/v2/Users/{user_id}", tags=["Auth"])
 def scim_patch_user(
     user_id: UUID,
@@ -727,30 +778,7 @@ def scim_patch_user(
     for operation in operations:
         if not isinstance(operation, dict):
             continue
-        op = str(operation.get("op") or "").strip().lower()
-        path = str(operation.get("path") or "").strip().lower()
-        value = operation.get("value")
-        if op in {"replace", "add"} and path in {"active", "urn:ietf:params:scim:schemas:core:2.0:user:active"}:
-            is_active = bool(value)
-            user.is_active = is_active
-            user.updated_at = _now()
-            if not is_active and membership:
-                session.delete(membership)
-                membership = None
-            elif is_active and membership is None:
-                _ensure_org_seat_available(session, token.org_id)
-                membership = OrgMembership(org_id=token.org_id, user_id=user.id, role="viewer", created_at=_now(), updated_at=_now())
-                session.add(membership)
-        elif op in {"replace", "add"} and path in {"username", "userName".lower()}:
-            maybe_email = _normalize_email(str(value or ""))
-            if maybe_email:
-                user.email = maybe_email
-                user.updated_at = _now()
-        elif op in {"replace", "add"} and path in {"name.formatted", "displayname"}:
-            display_name = (str(value or "")).strip()
-            if display_name:
-                user.display_name = display_name
-                user.updated_at = _now()
+        membership = _apply_scim_user_operation(session, token.org_id, user, membership, operation)
 
     session.add(user)
     session.commit()
@@ -876,6 +904,43 @@ def scim_create_group(
     return _scim_group_resource(mapping)
 
 
+def _apply_scim_group_members(session: Session, org_id: UUID, mapping: RoleMapping, value: Any) -> None:
+    if not isinstance(value, list):
+        return
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        user_id = item.get("value")
+        if not user_id:
+            continue
+        try:
+            member_uuid = UUID(str(user_id))
+        except ValueError:
+            continue
+        membership = session.exec(
+            select(OrgMembership).where((OrgMembership.org_id == org_id) & (OrgMembership.user_id == member_uuid))
+        ).first()
+        if membership:
+            membership.role = mapping.role
+            membership.updated_at = _now()
+            session.add(membership)
+
+
+def _apply_scim_group_operation(session: Session, org_id: UUID, mapping: RoleMapping, operation: dict[str, Any]) -> None:
+    path = str(operation.get("path") or "").strip().lower()
+    value = operation.get("value")
+    if path in {"displayname", "displayName".lower()}:
+        display_name = (str(value or "")).strip()
+        if display_name:
+            mapping.external_value = display_name
+    elif path == "role":
+        role = (str(value or "")).strip().lower()
+        if role in ROLE_VALUES:
+            mapping.role = role
+    elif path == "members":
+        _apply_scim_group_members(session, org_id, mapping, value)
+
+
 @router.patch("/scim/v2/Groups/{group_id}", tags=["Auth"])
 def scim_patch_group(
     group_id: UUID,
@@ -895,35 +960,7 @@ def scim_patch_group(
         op = str(operation.get("op") or "").strip().lower()
         if op not in {"add", "replace"}:
             continue
-        path = str(operation.get("path") or "").strip().lower()
-        value = operation.get("value")
-        if path in {"displayname", "displayName".lower()}:
-            display_name = (str(value or "")).strip()
-            if display_name:
-                mapping.external_value = display_name
-        elif path in {"role", "members"}:
-            if path == "role":
-                role = (str(value or "")).strip().lower()
-                if role in ROLE_VALUES:
-                    mapping.role = role
-            elif isinstance(value, list):
-                for item in value:
-                    if not isinstance(item, dict):
-                        continue
-                    user_id = item.get("value")
-                    if not user_id:
-                        continue
-                    try:
-                        member_uuid = UUID(str(user_id))
-                    except ValueError:
-                        continue
-                    membership = session.exec(
-                        select(OrgMembership).where((OrgMembership.org_id == token.org_id) & (OrgMembership.user_id == member_uuid))
-                    ).first()
-                    if membership:
-                        membership.role = mapping.role
-                        membership.updated_at = _now()
-                        session.add(membership)
+        _apply_scim_group_operation(session, token.org_id, mapping, operation)
     mapping.updated_at = _now()
     session.add(mapping)
     session.commit()

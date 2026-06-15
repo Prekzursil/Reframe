@@ -207,7 +207,6 @@ def score_segments_llm(
     prompt: str,
     model: str,
     client: Optional[object] = None,
-    provider: str = "openai",
 ) -> List[SegmentCandidate]:
     """Score segments using an LLM client.
 
@@ -235,7 +234,7 @@ def score_segments_llm(
     try:
         scores = json.loads(content)
     except json.JSONDecodeError:
-        return candidates
+        scores = None
 
     score_map: Dict[tuple, float] = {}
     if isinstance(scores, list):

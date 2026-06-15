@@ -43,7 +43,7 @@ def _build_policy_limiters() -> dict[str, RateLimiter]:
 policy_limiters: dict[str, RateLimiter] = _build_policy_limiters()
 
 
-async def _enforce_policy(request: Request, policy: str) -> None:
+def _enforce_policy(request: Request, policy: str) -> None:
     limiter = policy_limiters.get(policy) or policy_limiters["default"]
     client_ip = request.client.host if request.client else "anonymous"
     # Per-path keys avoid one noisy endpoint starving all others under the same policy bucket.
@@ -62,10 +62,10 @@ async def _enforce_policy(request: Request, policy: str) -> None:
 
 def enforce_rate_limit(policy: str = "default"):
     async def _dependency(request: Request) -> None:
-        await _enforce_policy(request, policy)
+        _enforce_policy(request, policy)
 
     return _dependency
 
 
 async def enforce_default_rate_limit(request: Request) -> None:
-    await _enforce_policy(request, "default")
+    _enforce_policy(request, "default")

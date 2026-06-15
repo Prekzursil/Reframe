@@ -26,6 +26,8 @@ SessionDep = Annotated[Session, Depends(get_session)]
 ROLE_VALUES = ("viewer", "editor", "admin", "owner")
 ROLE_RANK = {role: idx for idx, role in enumerate(ROLE_VALUES)}
 
+AUTHENTICATION_REQUIRED_MESSAGE = "Authentication required"
+
 
 class ProjectMemberView(SQLModel):
     user_id: UUID
@@ -183,7 +185,6 @@ def _member_view(session: Session, membership: ProjectMembership) -> ProjectMemb
 
 @router.get(
     "/projects/{project_id}/members",
-    response_model=list[ProjectMemberView],
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
@@ -209,7 +210,6 @@ def list_project_members(project_id: UUID, session: SessionDep, principal: Princ
 
 @router.post(
     "/projects/{project_id}/members",
-    response_model=ProjectMemberView,
     status_code=status.HTTP_201_CREATED,
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
@@ -267,7 +267,6 @@ def add_project_member(
 
 @router.patch(
     "/projects/{project_id}/members/{user_id}",
-    response_model=ProjectMemberView,
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
@@ -324,7 +323,6 @@ def remove_project_member(project_id: UUID, user_id: UUID, session: SessionDep, 
 
 @router.get(
     "/projects/{project_id}/comments",
-    response_model=list[ProjectCommentView],
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
@@ -354,7 +352,6 @@ def list_project_comments(project_id: UUID, session: SessionDep, principal: Prin
 
 @router.post(
     "/projects/{project_id}/comments",
-    response_model=ProjectCommentView,
     status_code=status.HTTP_201_CREATED,
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
@@ -368,7 +365,7 @@ def create_project_comment(
     project = _project_or_404(session, project_id, principal)
     _require_project_role(session, project, principal, "viewer")
     if not principal.user_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(AUTHENTICATION_REQUIRED_MESSAGE)
     body = (payload.body or "").strip()
     if not body:
         raise ApiError(
@@ -441,7 +438,6 @@ def delete_project_comment(project_id: UUID, comment_id: UUID, session: SessionD
 
 @router.post(
     "/projects/{project_id}/approvals/request",
-    response_model=ProjectApprovalView,
     status_code=status.HTTP_201_CREATED,
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
@@ -455,7 +451,7 @@ def request_project_approval(
     project = _project_or_404(session, project_id, principal)
     _require_project_role(session, project, principal, "editor")
     if not principal.user_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(AUTHENTICATION_REQUIRED_MESSAGE)
     approval = ProjectApprovalRequest(
         project_id=project_id,
         org_id=project.org_id,
@@ -489,7 +485,7 @@ def _resolve_project_approval(
     project = _project_or_404(session, project_id, principal)
     _require_project_role(session, project, principal, "admin")
     if not principal.user_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(AUTHENTICATION_REQUIRED_MESSAGE)
     approval = session.get(ProjectApprovalRequest, approval_id)
     if not approval or approval.project_id != project_id:
         raise not_found("Project approval request not found", {"approval_id": str(approval_id)})
@@ -514,7 +510,6 @@ def _resolve_project_approval(
 
 @router.post(
     "/projects/{project_id}/approvals/{approval_id}/approve",
-    response_model=ProjectApprovalView,
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
@@ -530,7 +525,6 @@ def approve_project_approval(project_id: UUID, approval_id: UUID, session: Sessi
 
 @router.post(
     "/projects/{project_id}/approvals/{approval_id}/reject",
-    response_model=ProjectApprovalView,
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
@@ -546,7 +540,6 @@ def reject_project_approval(project_id: UUID, approval_id: UUID, session: Sessio
 
 @router.get(
     "/projects/{project_id}/activity",
-    response_model=list[ProjectActivityView],
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )

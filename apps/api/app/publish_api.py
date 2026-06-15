@@ -11,6 +11,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     class Celery:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
+            # No-op fallback used when Celery is not installed.
             pass
 
         def send_task(self, *_args, **_kwargs):
@@ -190,7 +191,6 @@ def _require_hosted_principal(principal) -> None:
 
 @router.get(
     "/publish/providers",
-    response_model=list[PublishProviderView],
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}},
 )
@@ -213,7 +213,6 @@ def list_publish_providers(session: SessionDep, principal: PrincipalDep) -> list
 
 @router.get(
     "/publish/{provider}/connections",
-    response_model=list[PublishConnectionView],
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}},
 )
@@ -232,7 +231,6 @@ def list_publish_connections(provider: str, session: SessionDep, principal: Prin
 
 @router.get(
     "/publish/{provider}/connect/start",
-    response_model=PublishConnectStartResponse,
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}},
 )
@@ -240,7 +238,7 @@ def start_publish_connection(
     provider: str,
     session: SessionDep,
     principal: PrincipalDep,
-    redirect_to: str | None = Query(default=None),
+    redirect_to: Annotated[str | None, Query()] = None,
 ) -> PublishConnectStartResponse:
     _require_hosted_principal(principal)
     normalized = _validate_provider(provider)
@@ -262,7 +260,6 @@ def start_publish_connection(
 
 @router.get(
     "/publish/{provider}/connect/callback",
-    response_model=PublishConnectionView,
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
@@ -271,10 +268,10 @@ def complete_publish_connection(
     state: str,
     session: SessionDep,
     principal: PrincipalDep,
-    code: str | None = Query(default=None),
-    refresh_token: str | None = Query(default=None),
-    account_id: str | None = Query(default=None),
-    account_label: str | None = Query(default=None),
+    code: Annotated[str | None, Query()] = None,
+    refresh_token: Annotated[str | None, Query()] = None,
+    account_id: Annotated[str | None, Query()] = None,
+    account_label: Annotated[str | None, Query()] = None,
 ) -> PublishConnectionView:
     _require_hosted_principal(principal)
     normalized = _validate_provider(provider)
@@ -348,7 +345,6 @@ def revoke_publish_connection(
 
 @router.post(
     "/publish/jobs",
-    response_model=PublishJobView,
     status_code=status.HTTP_201_CREATED,
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
@@ -408,7 +404,6 @@ def create_publish_job(payload: PublishJobCreateRequest, session: SessionDep, pr
 
 @router.get(
     "/publish/jobs",
-    response_model=list[PublishJobView],
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}},
 )
@@ -416,7 +411,7 @@ def list_publish_jobs(
     session: SessionDep,
     principal: PrincipalDep,
     provider: Optional[str] = None,
-    status_filter: Optional[str] = Query(default=None, alias="status"),
+    status_filter: Annotated[Optional[str], Query(alias="status")] = None,
 ) -> list[PublishJobView]:
     _require_hosted_principal(principal)
     query = select(PublishJob).where(PublishJob.org_id == principal.org_id).order_by(PublishJob.created_at.desc())
@@ -430,7 +425,6 @@ def list_publish_jobs(
 
 @router.get(
     "/publish/jobs/{job_id}",
-    response_model=PublishJobView,
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
@@ -444,7 +438,6 @@ def get_publish_job(job_id: UUID, session: SessionDep, principal: PrincipalDep) 
 
 @router.post(
     "/publish/jobs/{job_id}/retry",
-    response_model=PublishJobView,
     tags=["Projects"],
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )

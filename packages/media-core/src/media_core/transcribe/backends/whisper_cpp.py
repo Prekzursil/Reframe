@@ -34,6 +34,48 @@ def _ensure_whispercpp():
     return whispercpp
 
 
+def _get_tokens(seg: Any) -> Any:
+    return getattr(seg, "tokens", None) or getattr(seg, "get", lambda k, d=None: d)("tokens", None)
+
+
+def _parse_token_word(tok: Any) -> Word | None:
+    try:
+        start = float(getattr(tok, "t_start", tok.get("t_start")))
+        end = float(getattr(tok, "t_end", tok.get("t_end")))
+        text = str(getattr(tok, "text", tok.get("text"))).strip()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Skipping malformed token: %s (%s)", tok, exc)
+        return None
+    return Word(text=text, start=start, end=end, probability=None)
+
+
+def _parse_segment_word(seg: Any) -> Word | None:
+    try:
+        start = float(getattr(seg, "t_start", seg.get("t_start")))
+        end = float(getattr(seg, "t_end", seg.get("t_end")))
+        text = str(getattr(seg, "text", seg.get("text"))).strip()
+    except Exception:
+        return None
+    if not text:
+        return None
+    return Word(text=text, start=start, end=end, probability=None)
+
+
+def _segment_words(seg: Any) -> list[Word]:
+    tokens = _get_tokens(seg)
+    if tokens:
+        return [w for tok in tokens if (w := _parse_token_word(tok)) is not None]
+    word = _parse_segment_word(seg)
+    return [word] if word is not None else []
+
+
+def _join_segment_text(segments: Iterable[Any]) -> Optional[str]:
+    try:
+        return " ".join(getattr(s, "text", s.get("text", "")).strip() for s in segments) or None
+    except Exception:
+        return None
+
+
 def normalize_whisper_cpp(
     segments: Iterable[_SegmentLike] | Iterable[dict[str, Any]],
     *,
@@ -43,32 +85,9 @@ def normalize_whisper_cpp(
     """Normalize whisper.cpp-style segments into TranscriptionResult."""
     words: list[Word] = []
     for seg in segments:
-        tokens = getattr(seg, "tokens", None) or getattr(seg, "get", lambda k, d=None: d)("tokens", None)
-        if tokens:
-            for tok in tokens:
-                try:
-                    start = float(getattr(tok, "t_start", tok.get("t_start")))
-                    end = float(getattr(tok, "t_end", tok.get("t_end")))
-                    text = str(getattr(tok, "text", tok.get("text"))).strip()
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.debug("Skipping malformed token: %s (%s)", tok, exc)
-                    continue
-                words.append(Word(text=text, start=start, end=end, probability=None))
-        else:
-            try:
-                start = float(getattr(seg, "t_start", seg.get("t_start")))
-                end = float(getattr(seg, "t_end", seg.get("t_end")))
-                text = str(getattr(seg, "text", seg.get("text"))).strip()
-            except Exception:
-                continue
-            if text:
-                words.append(Word(text=text, start=start, end=end, probability=None))
+        words.extend(_segment_words(seg))
 
-    text_field = None
-    try:
-        text_field = " ".join(getattr(s, "text", s.get("text", "")).strip() for s in segments) or None
-    except Exception:
-        text_field = None
+    text_field = _join_segment_text(segments)
 
     return TranscriptionResult(words=words, text=text_field, model=model, language=language)
 

@@ -396,8 +396,10 @@ export interface ProjectActivityEvent {
   created_at: string;
 }
 
+export type PublishProvider = "youtube" | "tiktok" | "instagram" | "facebook";
+
 export interface PublishProviderView {
-  provider: "youtube" | "tiktok" | "instagram" | "facebook";
+  provider: PublishProvider;
   display_name: string;
   connected_count: number;
 }
@@ -546,7 +548,7 @@ export class ApiClient {
     });
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
-      const message = (body as any)?.message || resp.statusText || "Request failed";
+      const message = body?.message || resp.statusText || "Request failed";
       throw new Error(message);
     }
     if (resp.status === 204) {
@@ -560,7 +562,8 @@ export class ApiClient {
     if (params?.status) search.set("status_filter", params.status);
     if (params?.project_id) search.set("project_id", params.project_id);
     const query = search.toString();
-    return this.request<Job[]>(`/jobs${query ? `?${query}` : ""}`);
+    const querySuffix = query ? `?${query}` : "";
+    return this.request<Job[]>(`/jobs${querySuffix}`);
   }
 
   getJob(jobId: string) {
@@ -577,7 +580,8 @@ export class ApiClient {
     if (params?.limit) search.set("limit", String(params.limit));
     if (params?.project_id) search.set("project_id", params.project_id);
     const query = search.toString();
-    return this.request<MediaAsset[]>(`/assets${query ? `?${query}` : ""}`);
+    const querySuffix = query ? `?${query}` : "";
+    return this.request<MediaAsset[]>(`/assets${querySuffix}`);
   }
 
   createCaptionJob(payload: CaptionJobRequest) {
@@ -703,7 +707,8 @@ export class ApiClient {
     if (params?.kind) search.set("kind", params.kind);
     if (params?.limit) search.set("limit", String(params.limit));
     const query = search.toString();
-    return this.request<MediaAsset[]>(`/projects/${projectId}/assets${query ? `?${query}` : ""}`);
+    const querySuffix = query ? `?${query}` : "";
+    return this.request<MediaAsset[]>(`/projects/${projectId}/assets${querySuffix}`);
   }
 
   listProjectMembers(projectId: string) {
@@ -828,7 +833,8 @@ export class ApiClient {
     const search = new URLSearchParams();
     if (redirectTo) search.set("redirect_to", redirectTo);
     const query = search.toString();
-    return this.request<OAuthStartResponse>(`/auth/oauth/${provider}/start${query ? `?${query}` : ""}`);
+    const querySuffix = query ? `?${query}` : "";
+    return this.request<OAuthStartResponse>(`/auth/oauth/${provider}/start${querySuffix}`);
   }
 
   getOrgContext() {
@@ -886,8 +892,9 @@ export class ApiClient {
     const search = new URLSearchParams();
     if (redirectTo) search.set("redirect_to", redirectTo);
     const query = search.toString();
+    const querySuffix = query ? `?${query}` : "";
     return this.request<{ provider: string; authorize_url: string; state: string; redirect_uri: string; org_id: string }>(
-      `/auth/sso/okta/start${query ? `?${query}` : ""}`,
+      `/auth/sso/okta/start${querySuffix}`,
     );
   }
 
@@ -1000,19 +1007,20 @@ export class ApiClient {
     return this.request<PublishProviderView[]>("/publish/providers");
   }
 
-  listPublishConnections(provider: "youtube" | "tiktok" | "instagram" | "facebook") {
+  listPublishConnections(provider: PublishProvider) {
     return this.request<PublishConnectionView[]>(`/publish/${provider}/connections`);
   }
 
-  startPublishConnection(provider: "youtube" | "tiktok" | "instagram" | "facebook", redirectTo?: string) {
+  startPublishConnection(provider: PublishProvider, redirectTo?: string) {
     const search = new URLSearchParams();
     if (redirectTo) search.set("redirect_to", redirectTo);
     const query = search.toString();
-    return this.request<PublishConnectStartResponse>(`/publish/${provider}/connect/start${query ? `?${query}` : ""}`);
+    const querySuffix = query ? `?${query}` : "";
+    return this.request<PublishConnectStartResponse>(`/publish/${provider}/connect/start${querySuffix}`);
   }
 
   completePublishConnection(
-    provider: "youtube" | "tiktok" | "instagram" | "facebook",
+    provider: PublishProvider,
     params: { state: string; code?: string; refresh_token?: string; account_id?: string; account_label?: string },
   ) {
     const search = new URLSearchParams();
@@ -1024,7 +1032,7 @@ export class ApiClient {
     return this.request<PublishConnectionView>(`/publish/${provider}/connect/callback?${search.toString()}`);
   }
 
-  async revokePublishConnection(provider: "youtube" | "tiktok" | "instagram" | "facebook", connectionId: string): Promise<void> {
+  async revokePublishConnection(provider: PublishProvider, connectionId: string): Promise<void> {
     const resp = await this.fetcher(`${this.baseUrl}/publish/${provider}/connections/${connectionId}`, {
       method: "DELETE",
       headers: this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : undefined,
@@ -1036,7 +1044,7 @@ export class ApiClient {
   }
 
   createPublishJob(payload: {
-    provider: "youtube" | "tiktok" | "instagram" | "facebook";
+    provider: PublishProvider;
     connection_id: string;
     asset_id: string;
     title?: string;
@@ -1048,12 +1056,13 @@ export class ApiClient {
     return this.request<PublishJobView>("/publish/jobs", { method: "POST", body: JSON.stringify(payload) });
   }
 
-  listPublishJobs(params?: { provider?: "youtube" | "tiktok" | "instagram" | "facebook"; status?: string }) {
+  listPublishJobs(params?: { provider?: PublishProvider; status?: string }) {
     const search = new URLSearchParams();
     if (params?.provider) search.set("provider", params.provider);
     if (params?.status) search.set("status", params.status);
     const query = search.toString();
-    return this.request<PublishJobView[]>(`/publish/jobs${query ? `?${query}` : ""}`);
+    const querySuffix = query ? `?${query}` : "";
+    return this.request<PublishJobView[]>(`/publish/jobs${querySuffix}`);
   }
 
   getPublishJob(jobId: string) {
@@ -1103,7 +1112,8 @@ export class ApiClient {
     const search = new URLSearchParams();
     if (options?.deleteAssets) search.set("delete_assets", "true");
     const query = search.toString();
-    const resp = await this.fetcher(`${this.baseUrl}/jobs/${jobId}${query ? `?${query}` : ""}`, { method: "DELETE" });
+    const querySuffix = query ? `?${query}` : "";
+    const resp = await this.fetcher(`${this.baseUrl}/jobs/${jobId}${querySuffix}`, { method: "DELETE" });
     if (!resp.ok) {
       const msg = await resp.text().catch(() => resp.statusText);
       throw new Error(msg || "Delete job failed");
@@ -1118,10 +1128,66 @@ export class ApiClient {
     }
   }
 
+  private resolveUploadMimeType(file: File, kind: string): string {
+    if (file.type) return file.type;
+    if (kind === "video") return "video/mp4";
+    if (kind === "audio") return "audio/mpeg";
+    return "text/plain";
+  }
+
+  private async uploadAssetViaPost(
+    file: File,
+    init: UploadInitResponse,
+    uploadHeaders: Headers,
+  ): Promise<MediaAsset> {
+    const form = new FormData();
+    Object.entries(init.form_fields || {}).forEach(([k, v]) => form.append(k, v));
+    form.append("file", file);
+    const localUploadUrl = init.upload_url || `${this.baseUrl}/assets/upload`;
+    const shouldAttachAuth = localUploadUrl.includes("/api/v1/");
+    if (shouldAttachAuth && this.accessToken) {
+      uploadHeaders.set("Authorization", `Bearer ${this.accessToken}`);
+    }
+    const resp = await this.fetcher(localUploadUrl, {
+      method: "POST",
+      headers: uploadHeaders,
+      body: form,
+    });
+    if (!resp.ok) {
+      const msg = await resp.text().catch(() => resp.statusText);
+      throw new Error(msg || "Upload failed");
+    }
+    const asset = (await resp.json()) as MediaAsset;
+    await this.completeAssetUpload({ upload_id: init.upload_id, asset_id: asset.id });
+    return asset;
+  }
+
+  private async uploadAssetViaPut(
+    file: File,
+    init: UploadInitResponse,
+    uploadHeaders: Headers,
+  ): Promise<MediaAsset> {
+    if (!uploadHeaders.has("Content-Type") && file.type) {
+      uploadHeaders.set("Content-Type", file.type);
+    }
+    const resp = await this.fetcher(init.upload_url, {
+      method: "PUT",
+      headers: uploadHeaders,
+      body: file,
+    });
+    if (!resp.ok) {
+      const msg = await resp.text().catch(() => resp.statusText);
+      throw new Error(msg || "Upload failed");
+    }
+    if (!init.asset_id) {
+      throw new Error("Upload session missing asset_id");
+    }
+    await this.completeAssetUpload({ upload_id: init.upload_id, asset_id: init.asset_id });
+    return this.getAsset(init.asset_id);
+  }
+
   async uploadAsset(file: File, kind = "video", projectId?: string): Promise<MediaAsset> {
-    const mimeType =
-      file.type ||
-      (kind === "video" ? "video/mp4" : kind === "audio" ? "audio/mpeg" : "text/plain");
+    const mimeType = this.resolveUploadMimeType(file, kind);
     const init = await this.initAssetUpload({
       filename: file.name,
       mime_type: mimeType,
@@ -1134,46 +1200,11 @@ export class ApiClient {
     const uploadHeaders = new Headers(init.headers || {});
 
     if (uploadMethod === "POST") {
-      const form = new FormData();
-      Object.entries(init.form_fields || {}).forEach(([k, v]) => form.append(k, v));
-      form.append("file", file);
-      const localUploadUrl = init.upload_url || `${this.baseUrl}/assets/upload`;
-      const shouldAttachAuth = localUploadUrl.includes("/api/v1/");
-      if (shouldAttachAuth && this.accessToken) {
-        uploadHeaders.set("Authorization", `Bearer ${this.accessToken}`);
-      }
-      const resp = await this.fetcher(localUploadUrl, {
-        method: "POST",
-        headers: uploadHeaders,
-        body: form,
-      });
-      if (!resp.ok) {
-        const msg = await resp.text().catch(() => resp.statusText);
-        throw new Error(msg || "Upload failed");
-      }
-      const asset = (await resp.json()) as MediaAsset;
-      await this.completeAssetUpload({ upload_id: init.upload_id, asset_id: asset.id });
-      return asset;
+      return this.uploadAssetViaPost(file, init, uploadHeaders);
     }
 
     if (uploadMethod === "PUT") {
-      if (!uploadHeaders.has("Content-Type") && file.type) {
-        uploadHeaders.set("Content-Type", file.type);
-      }
-      const resp = await this.fetcher(init.upload_url, {
-        method: "PUT",
-        headers: uploadHeaders,
-        body: file,
-      });
-      if (!resp.ok) {
-        const msg = await resp.text().catch(() => resp.statusText);
-        throw new Error(msg || "Upload failed");
-      }
-      if (!init.asset_id) {
-        throw new Error("Upload session missing asset_id");
-      }
-      await this.completeAssetUpload({ upload_id: init.upload_id, asset_id: init.asset_id });
-      return this.getAsset(init.asset_id);
+      return this.uploadAssetViaPut(file, init, uploadHeaders);
     }
 
     throw new Error(`Unsupported upload method: ${uploadMethod}`);
@@ -1185,7 +1216,7 @@ export class ApiClient {
       try {
         return new URL(this.baseUrl);
       } catch {
-        return new URL(this.baseUrl, window.location.origin);
+        return new URL(this.baseUrl, globalThis.location.origin);
       }
     })();
     return new URL(uri, base.origin).toString();

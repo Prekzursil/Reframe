@@ -17,6 +17,8 @@ from app.models import InviteStatus, InvoiceSnapshot, OrgInvite, OrgMembership, 
 router = APIRouter(prefix="/api/v1")
 SessionDep = Annotated[Session, Depends(get_session)]
 
+AUTHENTICATION_REQUIRED = "Authentication required"
+
 
 class PlanView(SQLModel):
     code: str
@@ -122,7 +124,7 @@ def _unix_to_datetime(value: object) -> datetime | None:
     return datetime.fromtimestamp(ts, tz=timezone.utc)
 
 
-@router.get("/billing/plans", response_model=list[PlanView], tags=["Billing"])
+@router.get("/billing/plans", tags=["Billing"])
 def list_plans(session: SessionDep) -> list[PlanView]:
     ensure_default_plans(session)
     plans = session.exec(select(Plan).where(Plan.active == True)).all()  # noqa: E712
@@ -140,7 +142,7 @@ def list_plans(session: SessionDep) -> list[PlanView]:
     ]
 
 
-@router.get("/billing/cost-model", response_model=CostModelResponse, tags=["Billing"])
+@router.get("/billing/cost-model", tags=["Billing"])
 def get_cost_model(session: SessionDep) -> CostModelResponse:
     plans = list_plans(session)
     return CostModelResponse(
@@ -173,10 +175,10 @@ def get_cost_model(session: SessionDep) -> CostModelResponse:
     )
 
 
-@router.get("/billing/subscription", response_model=SubscriptionView, tags=["Billing"], responses={401: {"model": ErrorResponse}})
+@router.get("/billing/subscription", tags=["Billing"], responses={401: {"model": ErrorResponse}})
 def get_subscription(session: SessionDep, principal: PrincipalDep) -> SubscriptionView:
     if not principal.org_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(AUTHENTICATION_REQUIRED)
     ensure_default_plans(session)
     sub = session.exec(select(Subscription).where(Subscription.org_id == principal.org_id)).first()
     if not sub:
@@ -251,19 +253,19 @@ def _seat_usage(session: Session, *, org_id: UUID, plan_code: str) -> SeatUsageV
     )
 
 
-@router.get("/billing/usage-summary", response_model=UsageQuotaView, tags=["Billing"], responses={401: {"model": ErrorResponse}})
+@router.get("/billing/usage-summary", tags=["Billing"], responses={401: {"model": ErrorResponse}})
 def billing_usage_summary(session: SessionDep, principal: PrincipalDep) -> UsageQuotaView:
     if not principal.org_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(AUTHENTICATION_REQUIRED)
     sub = session.exec(select(Subscription).where(Subscription.org_id == principal.org_id)).first()
     plan_code = sub.plan_code if sub else "free"
     return _calc_usage_quota(session, org_id=principal.org_id, plan_code=plan_code)
 
 
-@router.get("/billing/seat-usage", response_model=SeatUsageView, tags=["Billing"], responses={401: {"model": ErrorResponse}})
+@router.get("/billing/seat-usage", tags=["Billing"], responses={401: {"model": ErrorResponse}})
 def billing_seat_usage(session: SessionDep, principal: PrincipalDep) -> SeatUsageView:
     if not principal.org_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(AUTHENTICATION_REQUIRED)
     sub = session.exec(select(Subscription).where(Subscription.org_id == principal.org_id)).first()
     plan_code = sub.plan_code if sub else "free"
     return _seat_usage(session, org_id=principal.org_id, plan_code=plan_code)
@@ -271,7 +273,6 @@ def billing_seat_usage(session: SessionDep, principal: PrincipalDep) -> SeatUsag
 
 @router.patch(
     "/billing/seat-limit",
-    response_model=SeatUsageView,
     tags=["Billing"],
     responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
@@ -282,7 +283,7 @@ def update_billing_seat_limit(
 ) -> SeatUsageView:
     _require_billing_enabled()
     if not principal.org_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(AUTHENTICATION_REQUIRED)
     org = session.get(Organization, principal.org_id)
     if not org:
         raise not_found("Organization not found", {"org_id": str(principal.org_id)})
@@ -316,14 +317,13 @@ def update_billing_seat_limit(
 
 @router.post(
     "/billing/checkout-session",
-    response_model=SessionResponse,
     tags=["Billing"],
     responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
 )
 def create_checkout(session: SessionDep, payload: CheckoutSessionRequest, principal: PrincipalDep) -> SessionResponse:
     _require_billing_enabled()
     if not principal.org_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(AUTHENTICATION_REQUIRED)
     settings = get_settings()
 
     sub = session.exec(select(Subscription).where(Subscription.org_id == principal.org_id)).first()
@@ -370,14 +370,13 @@ def create_checkout(session: SessionDep, payload: CheckoutSessionRequest, princi
 
 @router.post(
     "/billing/portal-session",
-    response_model=SessionResponse,
     tags=["Billing"],
     responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
 )
 def create_portal(session: SessionDep, payload: PortalSessionRequest, principal: PrincipalDep) -> SessionResponse:
     _require_billing_enabled()
     if not principal.org_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(AUTHENTICATION_REQUIRED)
     settings = get_settings()
     sub = session.exec(select(Subscription).where(Subscription.org_id == principal.org_id)).first()
     if not sub or not sub.stripe_customer_id:
@@ -385,6 +384,115 @@ def create_portal(session: SessionDep, payload: PortalSessionRequest, principal:
     return_url = payload.return_url or f"{settings.app_base_url.rstrip('/')}/billing"
     result = build_customer_portal_session(customer_id=sub.stripe_customer_id, return_url=return_url)
     return SessionResponse(id=result["id"], url=result["url"])
+
+
+async def _resolve_webhook_payload(request: Request, settings, stripe_signature: Optional[str]) -> dict:
+    raw_body = await request.body()
+    if not settings.stripe_webhook_secret:
+        return await request.json()
+    if not stripe_signature:
+        raise ApiError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Missing Stripe-Signature header",
+        )
+    try:
+        import stripe  # type: ignore
+    except ImportError as exc:
+        raise ApiError(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            code=ErrorCode.SERVER_ERROR,
+            message="stripe package is required for webhook verification",
+        ) from exc
+    stripe.api_key = settings.stripe_secret_key
+    try:
+        return stripe.Webhook.construct_event(raw_body, stripe_signature, settings.stripe_webhook_secret)
+    except Exception as exc:
+        raise ApiError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Invalid Stripe webhook signature",
+            details={"reason": str(exc)},
+        ) from exc
+
+
+def _apply_seat_limit(session: Session, org: Optional[Organization], value: object) -> None:
+    if not org or value is None:
+        return
+    try:
+        org.seat_limit = max(1, int(value))  # type: ignore[arg-type]
+        session.add(org)
+    except (TypeError, ValueError):
+        # Provider payloads may omit/format the value unexpectedly; keep current value.
+        pass
+
+
+def _handle_checkout_completed(session: Session, obj: dict) -> bool:
+    """Process a completed checkout. Returns False to abort the webhook early."""
+    customer_id = str(obj.get("customer") or "")
+    metadata = obj.get("metadata") if isinstance(obj.get("metadata"), dict) else {}
+    metadata = metadata if isinstance(metadata, dict) else {}
+    org_id_raw = metadata.get("org_id")
+    if not (customer_id and org_id_raw):
+        return True
+    try:
+        org_id = UUID(str(org_id_raw))
+    except Exception:
+        org_id = None
+    if not org_id:
+        return False
+    plan_code_raw = str(metadata.get("plan_code") or "").strip().lower()
+    sub = session.exec(select(Subscription).where(Subscription.org_id == org_id)).first()
+    if not sub:
+        sub = Subscription(org_id=org_id, plan_code="free", status="active")
+    if plan_code_raw in {"pro", "enterprise"}:
+        sub.plan_code = plan_code_raw
+    sub.status = "active"
+    sub.stripe_customer_id = customer_id
+    session.add(sub)
+    _apply_seat_limit(session, session.get(Organization, org_id), metadata.get("seat_limit"))
+    session.commit()
+    return True
+
+
+def _handle_subscription_changed(session: Session, settings, obj: dict, sub: Subscription) -> None:
+    items = obj.get("items") if isinstance(obj.get("items"), dict) else {}
+    data_items = items.get("data") if isinstance(items, dict) else []
+    first_item = data_items[0] if isinstance(data_items, list) and data_items else {}
+    price = first_item.get("price") if isinstance(first_item, dict) else {}
+    quantity = first_item.get("quantity") if isinstance(first_item, dict) else None
+    price_id = str(price.get("id") or "")
+    sub.status = str(obj.get("status") or "active")
+    sub.stripe_subscription_id = str(obj.get("id") or sub.stripe_subscription_id or "")
+    if price_id:
+        sub.plan_code = _price_to_plan_code(price_id, settings)
+    sub.current_period_start = _unix_to_datetime(obj.get("current_period_start"))
+    sub.current_period_end = _unix_to_datetime(obj.get("current_period_end"))
+    sub.cancel_at_period_end = bool(obj.get("cancel_at_period_end") or False)
+    session.add(sub)
+    _apply_seat_limit(session, session.get(Organization, sub.org_id), quantity)
+    session.commit()
+
+
+def _handle_subscription_deleted(session: Session, sub: Subscription) -> None:
+    sub.status = "cancelled"
+    sub.cancel_at_period_end = False
+    session.add(sub)
+    session.commit()
+
+
+def _handle_invoice_event(session: Session, obj: dict, sub: Subscription, payload: dict) -> None:
+    invoice = InvoiceSnapshot(
+        org_id=sub.org_id,
+        subscription_id=sub.id,
+        stripe_invoice_id=str(obj.get("id") or ""),
+        amount_cents=int(obj.get("amount_due") or 0),
+        currency=str(obj.get("currency") or "usd"),
+        status=str(obj.get("status") or "draft"),
+        payload=payload,
+    )
+    session.add(invoice)
+    session.commit()
 
 
 @router.post("/billing/webhook", status_code=status.HTTP_204_NO_CONTENT, tags=["Billing"])
@@ -395,72 +503,14 @@ async def stripe_webhook(
 ) -> None:
     _require_billing_enabled()
     settings = get_settings()
-    raw_body = await request.body()
-    payload: dict
-    if settings.stripe_webhook_secret:
-        if not stripe_signature:
-            raise ApiError(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                code=ErrorCode.VALIDATION_ERROR,
-                message="Missing Stripe-Signature header",
-            )
-        try:
-            import stripe  # type: ignore
-        except ImportError as exc:
-            raise ApiError(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                code=ErrorCode.SERVER_ERROR,
-                message="stripe package is required for webhook verification",
-            ) from exc
-        stripe.api_key = settings.stripe_secret_key
-        try:
-            event = stripe.Webhook.construct_event(raw_body, stripe_signature, settings.stripe_webhook_secret)
-        except Exception as exc:
-            raise ApiError(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                code=ErrorCode.VALIDATION_ERROR,
-                message="Invalid Stripe webhook signature",
-                details={"reason": str(exc)},
-            ) from exc
-        payload = event
-    else:
-        payload = await request.json()
+    payload = await _resolve_webhook_payload(request, settings, stripe_signature)
 
     event_type = str(payload.get("type") or "")
     data = payload.get("data") if isinstance(payload, dict) else {}
     obj = data.get("object") if isinstance(data, dict) else {}
 
-    if event_type == "checkout.session.completed":
-        customer_id = str(obj.get("customer") or "")
-        metadata = obj.get("metadata") if isinstance(obj.get("metadata"), dict) else {}
-        metadata = metadata if isinstance(metadata, dict) else {}
-        org_id_raw = metadata.get("org_id")
-        plan_code_raw = str(metadata.get("plan_code") or "").strip().lower()
-        seat_limit_raw = metadata.get("seat_limit")
-        if customer_id and org_id_raw:
-            try:
-                org_id = UUID(str(org_id_raw))
-            except Exception:
-                org_id = None
-            if not org_id:
-                return None
-            sub = session.exec(select(Subscription).where(Subscription.org_id == org_id)).first()
-            if not sub:
-                sub = Subscription(org_id=org_id, plan_code="free", status="active")
-            if plan_code_raw in {"pro", "enterprise"}:
-                sub.plan_code = plan_code_raw
-            sub.status = "active"
-            sub.stripe_customer_id = customer_id
-            session.add(sub)
-            org = session.get(Organization, org_id)
-            if org and seat_limit_raw is not None:
-                try:
-                    org.seat_limit = max(1, int(seat_limit_raw))
-                    session.add(org)
-                except (TypeError, ValueError):
-                    # Webhook metadata can be missing/malformed; preserve existing seat limit.
-                    pass
-            session.commit()
+    if event_type == "checkout.session.completed" and not _handle_checkout_completed(session, obj):
+        return None
 
     customer_id = str(obj.get("customer") or "")
     if not customer_id:
@@ -470,47 +520,11 @@ async def stripe_webhook(
         return None
 
     if event_type in {"customer.subscription.updated", "customer.subscription.created"}:
-        status_value = str(obj.get("status") or "active")
-        items = obj.get("items") if isinstance(obj.get("items"), dict) else {}
-        data_items = items.get("data") if isinstance(items, dict) else []
-        first_item = data_items[0] if isinstance(data_items, list) and data_items else {}
-        price = first_item.get("price") if isinstance(first_item, dict) else {}
-        quantity = first_item.get("quantity") if isinstance(first_item, dict) else None
-        price_id = str(price.get("id") or "")
-        sub.status = status_value
-        sub.stripe_subscription_id = str(obj.get("id") or sub.stripe_subscription_id or "")
-        if price_id:
-            sub.plan_code = _price_to_plan_code(price_id, settings)
-        sub.current_period_start = _unix_to_datetime(obj.get("current_period_start"))
-        sub.current_period_end = _unix_to_datetime(obj.get("current_period_end"))
-        sub.cancel_at_period_end = bool(obj.get("cancel_at_period_end") or False)
-        session.add(sub)
-        org = session.get(Organization, sub.org_id)
-        if org and quantity is not None:
-            try:
-                org.seat_limit = max(1, int(quantity))
-                session.add(org)
-            except (TypeError, ValueError):
-                # Provider payloads may omit/format quantity unexpectedly; keep current value.
-                pass
-        session.commit()
+        _handle_subscription_changed(session, settings, obj, sub)
 
     if event_type == "customer.subscription.deleted":
-        sub.status = "cancelled"
-        sub.cancel_at_period_end = False
-        session.add(sub)
-        session.commit()
+        _handle_subscription_deleted(session, sub)
 
     if event_type in {"invoice.paid", "invoice.payment_failed", "invoice.finalized"}:
-        invoice = InvoiceSnapshot(
-            org_id=sub.org_id,
-            subscription_id=sub.id,
-            stripe_invoice_id=str(obj.get("id") or ""),
-            amount_cents=int(obj.get("amount_due") or 0),
-            currency=str(obj.get("currency") or "usd"),
-            status=str(obj.get("status") or "draft"),
-            payload=payload,
-        )
-        session.add(invoice)
-        session.commit()
+        _handle_invoice_event(session, obj, sub, payload)
     return None

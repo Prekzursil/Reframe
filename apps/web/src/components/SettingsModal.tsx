@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button, Input, TextArea } from "./ui";
 
 interface Props {
-  onClose: () => void;
+  readonly onClose: () => void;
 }
 
 export function SettingsModal({ onClose }: Props) {
@@ -12,7 +12,7 @@ export function SettingsModal({ onClose }: Props) {
   const [notes, setNotes] = useState("");
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
+    <dialog className="modal-backdrop" open aria-modal="true">
       <div className="modal">
         <header className="modal-head">
           <div>
@@ -50,6 +50,6 @@ export function SettingsModal({ onClose }: Props) {
           </Button>
         </footer>
       </div>
-    </div>
+    </dialog>
   );
 }

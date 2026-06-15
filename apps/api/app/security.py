@@ -18,6 +18,8 @@ _PASSWORD_HASHER = PasswordHasher(
     parallelism=2,
 )
 
+_INVALID_OAUTH_STATE_SIGNATURE = "Invalid OAuth state signature"
+
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -105,17 +107,17 @@ def parse_oauth_state(state: str) -> tuple[str, Optional[str]]:
     except ExpiredSignatureError as exc:
         raise ValueError("OAuth state expired") from exc
     except InvalidTokenError as exc:
-        raise ValueError("Invalid OAuth state signature") from exc
+        raise ValueError(_INVALID_OAUTH_STATE_SIGNATURE) from exc
 
     if payload.get("typ") != "oauth_state":
-        raise ValueError("Invalid OAuth state signature")
+        raise ValueError(_INVALID_OAUTH_STATE_SIGNATURE)
 
     provider = str(payload.get("provider") or "").strip().lower()
     if not provider:
-        raise ValueError("Invalid OAuth state signature")
+        raise ValueError(_INVALID_OAUTH_STATE_SIGNATURE)
     redirect_to_raw = payload.get("redirect_to")
     if redirect_to_raw is not None and not isinstance(redirect_to_raw, str):
-        raise ValueError("Invalid OAuth state signature")
+        raise ValueError(_INVALID_OAUTH_STATE_SIGNATURE)
     redirect_to = redirect_to_raw or ""
     return provider, (redirect_to or None)
 

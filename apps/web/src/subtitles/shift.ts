@@ -83,18 +83,18 @@ export function shiftSubtitleTimings(text: string, offsetSeconds: number): strin
   const out: string[] = [];
 
   for (const line of lines) {
-    const srtMatch = line.match(SRT_TIMING_RE);
+    const srtMatch = SRT_TIMING_RE.exec(line);
     if (srtMatch) {
-      const start = clampTime(parseSrtTimestamp(srtMatch[1]!) + offsetSeconds);
-      const end = clampTime(parseSrtTimestamp(srtMatch[2]!) + offsetSeconds);
+      const start = clampTime(parseSrtTimestamp(srtMatch[1]) + offsetSeconds);
+      const end = clampTime(parseSrtTimestamp(srtMatch[2]) + offsetSeconds);
       out.push(`${formatSrtTimestamp(start)} --> ${formatSrtTimestamp(Math.max(end, start))}${srtMatch[3] ?? ""}`);
       continue;
     }
 
-    const vttMatch = line.match(VTT_TIMING_RE);
+    const vttMatch = VTT_TIMING_RE.exec(line);
     if (vttMatch) {
-      const startParsed = parseVttTimestamp(vttMatch[1]!);
-      const endParsed = parseVttTimestamp(vttMatch[2]!);
+      const startParsed = parseVttTimestamp(vttMatch[1]);
+      const endParsed = parseVttTimestamp(vttMatch[2]);
       const includeHours = startParsed.includeHours || endParsed.includeHours;
       const start = clampTime(startParsed.seconds + offsetSeconds);
       const end = clampTime(endParsed.seconds + offsetSeconds);

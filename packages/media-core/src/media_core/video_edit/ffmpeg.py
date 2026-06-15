@@ -11,6 +11,11 @@ from typing import Iterable, List, Optional
 
 logger = logging.getLogger(__name__)
 
+_MAP_FLAG = "-map"
+_VIDEO_STREAM = "0:v:0"
+_FILTER_COMPLEX_FLAG = "-filter_complex"
+_AOUT = "[aout]"
+
 _SILENCE_START_RE = re.compile(r"silence_start:\s*(?P<value>\d+(\.\d+)?)")
 _SILENCE_END_RE = re.compile(r"silence_end:\s*(?P<value>\d+(\.\d+)?)")
 
@@ -169,11 +174,11 @@ def merge_video_audio(
         if normalize:
             filters.append("[aout]loudnorm[aout]")
         filter_complex = ";".join(filters)
-        cmd += ["-filter_complex", filter_complex, "-map", "0:v:0", "-map", "[aout]"]
+        cmd += [_FILTER_COMPLEX_FLAG, filter_complex, _MAP_FLAG, _VIDEO_STREAM, _MAP_FLAG, _AOUT]
     elif normalize:
-        cmd += ["-filter_complex", "[1:a]loudnorm[aout]", "-map", "0:v:0", "-map", "[aout]"]
+        cmd += [_FILTER_COMPLEX_FLAG, "[1:a]loudnorm[aout]", _MAP_FLAG, _VIDEO_STREAM, _MAP_FLAG, _AOUT]
     else:
-        cmd += ["-map", "0:v:0", "-map", "1:a:0"]
+        cmd += [_MAP_FLAG, _VIDEO_STREAM, _MAP_FLAG, "1:a:0"]
 
     cmd += ["-c:v", "copy", "-c:a", "aac", "-shortest", str(output_path)]
     _run(cmd, runner=runner)
@@ -201,6 +206,36 @@ def burn_subtitles(
         str(output_path),
     ]
     _run(cmd, runner=runner)
+
+
+def _match_value(line: str, pattern: re.Pattern[str]) -> float | None:
+    """Return the matched float value from ``line`` for ``pattern`` or ``None``."""
+    m = pattern.search(line)
+    if not m:
+        return None
+    try:
+        return float(m.group("value"))
+    except ValueError:
+        return None
+
+
+def _parse_silence_log(stderr: str) -> tuple[list[tuple[float, float]], float | None]:
+    """Parse silencedetect log lines into intervals plus any unclosed start."""
+    intervals: list[tuple[float, float]] = []
+    current_start: float | None = None
+
+    for line in stderr.splitlines():
+        if _SILENCE_START_RE.search(line):
+            current_start = _match_value(line, _SILENCE_START_RE)
+            continue
+
+        end_value = _match_value(line, _SILENCE_END_RE)
+        if end_value is not None and current_start is not None:
+            if end_value >= current_start:
+                intervals.append((current_start, end_value))
+            current_start = None
+
+    return intervals, current_start
 
 
 def detect_silence(
@@ -242,27 +277,7 @@ def detect_silence(
     completed = _run(cmd, runner=runner)
     stderr = completed.stderr.decode(errors="replace") if completed.stderr else ""
 
-    intervals: list[tuple[float, float]] = []
-    current_start: float | None = None
-
-    for line in stderr.splitlines():
-        m = _SILENCE_START_RE.search(line)
-        if m:
-            try:
-                current_start = float(m.group("value"))
-            except ValueError:
-                current_start = None
-            continue
-
-        m = _SILENCE_END_RE.search(line)
-        if m and current_start is not None:
-            try:
-                end = float(m.group("value"))
-            except ValueError:
-                continue
-            if end >= current_start:
-                intervals.append((current_start, end))
-            current_start = None
+    intervals, current_start = _parse_silence_log(stderr)
 
     if current_start is not None:
         try:

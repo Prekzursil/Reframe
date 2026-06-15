@@ -21,6 +21,16 @@ def _parse_timestamp(ts: str) -> float:
     return h * 3600 + m * 60 + s + ms / 1000.0
 
 
+def _parse_timing(timing: str) -> tuple[float, float]:
+    try:
+        start_raw, end_raw = timing.split("-->")
+        start = _parse_timestamp(start_raw.strip().split()[0])
+        end = _parse_timestamp(end_raw.strip().split()[0])
+    except Exception as exc:
+        raise ValueError(f"Invalid VTT timing line: {timing}") from exc
+    return start, end
+
+
 def parse_vtt(vtt_text: str) -> List[SubtitleLine]:
     """Parse a basic WebVTT string into SubtitleLine objects.
 
@@ -39,48 +49,40 @@ def parse_vtt(vtt_text: str) -> List[SubtitleLine]:
         if not timing:
             cue_lines = []
             return
-        try:
-            start_raw, end_raw = timing.split("-->")
-            start = _parse_timestamp(start_raw.strip().split()[0])
-            end = _parse_timestamp(end_raw.strip().split()[0])
-        except Exception as exc:
-            raise ValueError(f"Invalid VTT timing line: {timing}") from exc
-
+        start, end = _parse_timing(timing)
         content = " ".join(l.strip() for l in cue_lines if l.strip()).strip()
         if content:
             out.append(SubtitleLine(start=start, end=end, words=[Word(text=content, start=start, end=end)]))
         timing = None
         cue_lines = []
 
+    def handle_line(stripped: str) -> bool:
+        """Process a non-empty content line. Returns True if it was consumed as metadata."""
+        nonlocal timing, in_note
+        if stripped.startswith("WEBVTT"):
+            return True
+        if stripped.startswith("NOTE"):
+            in_note = True
+            return True
+        if in_note:
+            return True
+        if "-->" in stripped:
+            flush()
+            timing = stripped
+            return True
+        # Cue identifier or stray metadata line before any timing; ignore.
+        return timing is None
+
     for raw in text.splitlines():
-        line = raw.rstrip("\n")
-        stripped = line.strip()
+        stripped = raw.rstrip("\n").strip()
 
         if not stripped:
             flush()
             in_note = False
             continue
 
-        if stripped.startswith("WEBVTT"):
-            continue
-
-        if stripped.startswith("NOTE"):
-            in_note = True
-            continue
-
-        if in_note:
-            continue
-
-        if "-->" in stripped:
-            flush()
-            timing = stripped
-            continue
-
-        if timing is None:
-            # Cue identifier or stray metadata line; ignore.
-            continue
-
-        cue_lines.append(stripped)
+        if not handle_line(stripped):
+            cue_lines.append(stripped)
 
     flush()
     return out

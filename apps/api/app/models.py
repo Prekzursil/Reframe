@@ -10,6 +10,8 @@ from sqlmodel import Field, SQLModel
 
 FK_MEDIA_ASSET_ID = "mediaasset.id"
 FK_PROJECT_ID = "project.id"
+FK_ORGANIZATION_ID = "organization.id"
+FK_USER_ID = "user.id"
 
 
 def utcnow() -> datetime:
@@ -40,8 +42,8 @@ class OrgMembership(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("org_id", "user_id", name="uq_org_membership_org_user"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: UUID = Field(foreign_key="organization.id", index=True)
-    user_id: UUID = Field(foreign_key="user.id", index=True)
+    org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
+    user_id: UUID = Field(foreign_key=FK_USER_ID, index=True)
     role: str = Field(default="owner")
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -51,7 +53,7 @@ class OAuthAccount(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("provider", "provider_subject", name="uq_oauth_provider_subject"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    user_id: UUID = Field(foreign_key="user.id", index=True)
+    user_id: UUID = Field(foreign_key=FK_USER_ID, index=True)
     provider: str = Field(index=True)
     provider_subject: str
     email: Optional[str] = Field(default=None)
@@ -74,7 +76,7 @@ class Plan(SQLModel, table=True):
 
 class Subscription(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: UUID = Field(foreign_key="organization.id", index=True, unique=True)
+    org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True, unique=True)
     plan_code: str = Field(foreign_key="plan.code", default="free")
     status: str = Field(default="active")
     stripe_customer_id: Optional[str] = Field(default=None, index=True)
@@ -88,7 +90,7 @@ class Subscription(SQLModel, table=True):
 
 class InvoiceSnapshot(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: UUID = Field(foreign_key="organization.id", index=True)
+    org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
     subscription_id: Optional[UUID] = Field(default=None, foreign_key="subscription.id", index=True)
     stripe_invoice_id: Optional[str] = Field(default=None, index=True)
     amount_cents: int = Field(default=0)
@@ -103,8 +105,8 @@ class InvoiceSnapshot(SQLModel, table=True):
 
 class UsageEvent(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: UUID = Field(foreign_key="organization.id", index=True)
-    user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
+    user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
     job_id: Optional[UUID] = Field(default=None, foreign_key="job.id", index=True)
     metric: str = Field(index=True)
     quantity: float = Field(default=0.0)
@@ -116,7 +118,7 @@ class UsageAggregate(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("org_id", "metric", "period_start", "period_end", name="uq_usage_aggregate_bucket"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: UUID = Field(foreign_key="organization.id", index=True)
+    org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
     metric: str = Field(index=True)
     period_start: datetime = Field(default_factory=utcnow, index=True)
     period_end: datetime = Field(default_factory=utcnow, index=True)
@@ -128,8 +130,8 @@ class ApiKey(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("org_id", "key_hash", name="uq_apikey_org_key_hash"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: UUID = Field(foreign_key="organization.id", index=True)
-    created_by_user_id: UUID = Field(foreign_key="user.id", index=True)
+    org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
+    created_by_user_id: UUID = Field(foreign_key=FK_USER_ID, index=True)
     name: str
     key_prefix: str = Field(index=True)
     key_hash: str
@@ -142,8 +144,8 @@ class ApiKey(SQLModel, table=True):
 
 class AuditEvent(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: UUID = Field(foreign_key="organization.id", index=True)
-    actor_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
+    actor_user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
     event_type: str = Field(index=True)
     entity_type: Optional[str] = Field(default=None, index=True)
     entity_id: Optional[str] = Field(default=None, index=True)
@@ -173,8 +175,8 @@ class WorkflowTemplate(SQLModel, table=True):
     description: Optional[str] = Field(default=None)
     steps: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
     active: bool = Field(default=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
-    owner_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    org_id: Optional[UUID] = Field(default=None, foreign_key=FK_ORGANIZATION_ID, index=True)
+    owner_user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -187,8 +189,8 @@ class WorkflowRun(SQLModel, table=True):
     input_asset_id: Optional[UUID] = Field(default=None, foreign_key=FK_MEDIA_ASSET_ID, index=True)
     payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
     project_id: Optional[UUID] = Field(default=None, foreign_key=FK_PROJECT_ID, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
-    owner_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    org_id: Optional[UUID] = Field(default=None, foreign_key=FK_ORGANIZATION_ID, index=True)
+    owner_user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -208,8 +210,8 @@ class WorkflowRunStep(SQLModel, table=True):
 
 class UsageLedgerEntry(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: UUID = Field(foreign_key="organization.id", index=True)
-    user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
+    user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
     job_id: Optional[UUID] = Field(default=None, foreign_key="job.id", index=True)
     metric: str = Field(index=True)
     unit: str = Field(default="count")
@@ -223,11 +225,11 @@ class OrgBudgetPolicy(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("org_id", name="uq_org_budget_policy_org"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: UUID = Field(foreign_key="organization.id", index=True)
+    org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
     monthly_soft_limit_cents: Optional[int] = Field(default=None)
     monthly_hard_limit_cents: Optional[int] = Field(default=None)
     enforce_hard_limit: bool = Field(default=False)
-    updated_by_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    updated_by_user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -236,7 +238,7 @@ class SsoConnection(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("org_id", name="uq_sso_connection_org"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: UUID = Field(foreign_key="organization.id", index=True)
+    org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
     provider: str = Field(default="okta", index=True)
     enabled: bool = Field(default=False)
     issuer_url: Optional[str] = Field(default=None)
@@ -255,8 +257,8 @@ class ScimToken(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("org_id", "token_hash", name="uq_scim_token_org_hash"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: UUID = Field(foreign_key="organization.id", index=True)
-    created_by_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
+    created_by_user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
     token_hint: str = Field(index=True)
     token_hash: str
     scopes: list[str] = Field(default_factory=list, sa_column=Column(JSON))
@@ -270,8 +272,8 @@ class ScimIdentity(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("org_id", "provider", "external_id", "resource_type", name="uq_scim_identity_external"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: UUID = Field(foreign_key="organization.id", index=True)
-    user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
+    user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
     provider: str = Field(default="okta", index=True)
     external_id: str = Field(index=True)
     resource_type: str = Field(default="user", index=True)
@@ -287,7 +289,7 @@ class RoleMapping(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("org_id", "provider", "external_value", name="uq_role_mapping_external"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: UUID = Field(foreign_key="organization.id", index=True)
+    org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
     provider: str = Field(default="okta", index=True)
     external_value: str = Field(index=True)
     role: str = Field(default="viewer")
@@ -300,8 +302,8 @@ class ProjectMembership(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     project_id: UUID = Field(foreign_key=FK_PROJECT_ID, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
-    user_id: UUID = Field(foreign_key="user.id", index=True)
+    org_id: Optional[UUID] = Field(default=None, foreign_key=FK_ORGANIZATION_ID, index=True)
+    user_id: UUID = Field(foreign_key=FK_USER_ID, index=True)
     role: str = Field(default="viewer", index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -310,8 +312,8 @@ class ProjectMembership(SQLModel, table=True):
 class ProjectComment(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     project_id: UUID = Field(foreign_key=FK_PROJECT_ID, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
-    author_user_id: UUID = Field(foreign_key="user.id", index=True)
+    org_id: Optional[UUID] = Field(default=None, foreign_key=FK_ORGANIZATION_ID, index=True)
+    author_user_id: UUID = Field(foreign_key=FK_USER_ID, index=True)
     parent_comment_id: Optional[UUID] = Field(default=None, foreign_key="projectcomment.id", index=True)
     body: str
     created_at: datetime = Field(default_factory=utcnow)
@@ -321,11 +323,11 @@ class ProjectComment(SQLModel, table=True):
 class ProjectApprovalRequest(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     project_id: UUID = Field(foreign_key=FK_PROJECT_ID, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
-    requested_by_user_id: UUID = Field(foreign_key="user.id", index=True)
+    org_id: Optional[UUID] = Field(default=None, foreign_key=FK_ORGANIZATION_ID, index=True)
+    requested_by_user_id: UUID = Field(foreign_key=FK_USER_ID, index=True)
     status: str = Field(default="pending", index=True)
     summary: Optional[str] = Field(default=None)
-    resolved_by_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    resolved_by_user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
     resolved_at: Optional[datetime] = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -334,8 +336,8 @@ class ProjectApprovalRequest(SQLModel, table=True):
 class ProjectActivityEvent(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     project_id: UUID = Field(foreign_key=FK_PROJECT_ID, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
-    actor_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    org_id: Optional[UUID] = Field(default=None, foreign_key=FK_ORGANIZATION_ID, index=True)
+    actor_user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
     event_type: str = Field(index=True)
     payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=utcnow, index=True)
@@ -343,8 +345,8 @@ class ProjectActivityEvent(SQLModel, table=True):
 
 class PublishConnection(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: UUID = Field(foreign_key="organization.id", index=True)
-    user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
+    user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
     provider: str = Field(index=True)
     account_label: Optional[str] = Field(default=None)
     external_account_id: Optional[str] = Field(default=None, index=True)
@@ -358,8 +360,8 @@ class PublishConnection(SQLModel, table=True):
 
 class PublishJob(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: UUID = Field(foreign_key="organization.id", index=True)
-    user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
+    user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
     provider: str = Field(index=True)
     connection_id: UUID = Field(foreign_key="publishconnection.id", index=True)
     asset_id: UUID = Field(foreign_key=FK_MEDIA_ASSET_ID, index=True)
@@ -376,7 +378,7 @@ class PublishJob(SQLModel, table=True):
 
 class AutomationRunEvent(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
+    org_id: Optional[UUID] = Field(default=None, foreign_key=FK_ORGANIZATION_ID, index=True)
     workflow_run_id: Optional[UUID] = Field(default=None, foreign_key="workflowrun.id", index=True)
     publish_job_id: Optional[UUID] = Field(default=None, foreign_key="publishjob.id", index=True)
     step_name: str = Field(index=True)
@@ -393,8 +395,8 @@ class MediaAsset(SQLModel, table=True):
     mime_type: Optional[str] = Field(default=None)
     duration: Optional[float] = Field(default=None, description="Duration in seconds if known")
     project_id: Optional[UUID] = Field(default=None, foreign_key=FK_PROJECT_ID, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
-    owner_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    org_id: Optional[UUID] = Field(default=None, foreign_key=FK_ORGANIZATION_ID, index=True)
+    owner_user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -433,8 +435,8 @@ class Job(SQLModel, table=True):
     input_asset_id: Optional[UUID] = Field(default=None, foreign_key=FK_MEDIA_ASSET_ID)
     output_asset_id: Optional[UUID] = Field(default=None, foreign_key=FK_MEDIA_ASSET_ID)
     project_id: Optional[UUID] = Field(default=None, foreign_key=FK_PROJECT_ID, index=True)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
-    owner_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    org_id: Optional[UUID] = Field(default=None, foreign_key=FK_ORGANIZATION_ID, index=True)
+    owner_user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
     idempotency_key: Optional[str] = Field(default=None, index=True)
 
     created_at: datetime = Field(default_factory=utcnow)
@@ -454,8 +456,8 @@ class Project(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     name: str
     description: Optional[str] = Field(default=None)
-    org_id: Optional[UUID] = Field(default=None, foreign_key="organization.id", index=True)
-    owner_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    org_id: Optional[UUID] = Field(default=None, foreign_key=FK_ORGANIZATION_ID, index=True)
+    owner_user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -467,13 +469,13 @@ class OrgInvite(SQLModel, table=True):
     )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    org_id: UUID = Field(foreign_key="organization.id", index=True)
+    org_id: UUID = Field(foreign_key=FK_ORGANIZATION_ID, index=True)
     email: str = Field(index=True)
     role: str = Field(default="viewer")
     token_hash: str = Field(index=True)
     status: InviteStatus = Field(default=InviteStatus.pending, index=True)
-    invited_by_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
-    accepted_by_user_id: Optional[UUID] = Field(default=None, foreign_key="user.id", index=True)
+    invited_by_user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
+    accepted_by_user_id: Optional[UUID] = Field(default=None, foreign_key=FK_USER_ID, index=True)
     expires_at: datetime = Field(default_factory=utcnow, index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

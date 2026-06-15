@@ -6,7 +6,7 @@ function parseSafe(raw: string | null | undefined): URL | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   try {
-    return new URL(trimmed, window.location.origin);
+    return new URL(trimmed, globalThis.location.origin);
   } catch {
     return null;
   }

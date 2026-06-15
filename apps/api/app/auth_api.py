@@ -181,6 +181,9 @@ ORG_ROLES = {"owner", "admin", "editor", "viewer"}
 ERR_USER_NOT_FOUND = "User not found"
 ERR_UNSUPPORTED_ROLE = "Unsupported role"
 ERR_ORG_MEMBER_NOT_FOUND = "Organization member not found"
+ERR_AUTH_REQUIRED = "Authentication required"
+ERR_ORG_NOT_FOUND = "Organization not found"
+CONTENT_TYPE_JSON = "application/json"
 ORG_MANAGER_ROLES = {"owner", "admin"}
 
 
@@ -219,7 +222,7 @@ def _pending_invite_count(session: Session, org_id: UUID) -> int:
 
 def _current_membership(session: Session, principal: AuthPrincipal) -> OrgMembership:
     if not principal.org_id or not principal.user_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(ERR_AUTH_REQUIRED)
     membership = session.exec(
         select(OrgMembership).where((OrgMembership.org_id == principal.org_id) & (OrgMembership.user_id == principal.user_id))
     ).first()
@@ -237,7 +240,7 @@ def _require_org_manager(session: Session, principal: AuthPrincipal) -> OrgMembe
 
 def _require_org_manager_for(session: Session, principal: AuthPrincipal, org_id: UUID) -> OrgMembership:
     if not principal.user_id or not principal.org_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(ERR_AUTH_REQUIRED)
     if principal.org_id != org_id:
         raise unauthorized("Token organization does not match requested organization")
     return _require_org_manager(session, principal)
@@ -391,7 +394,7 @@ def get_principal(
     settings = get_settings()
     if not authorization:
         if settings.hosted_mode:
-            raise unauthorized("Authentication required")
+            raise unauthorized(ERR_AUTH_REQUIRED)
         return AuthPrincipal()
 
     scheme, _, token = authorization.partition(" ")
@@ -457,7 +460,6 @@ def _oauth_callback_url(provider: str) -> str:
 
 @router.post(
     "/auth/register",
-    response_model=AuthTokenResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["Auth"],
     responses={409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
@@ -489,7 +491,7 @@ def register(payload: AuthRegisterRequest, session: SessionDep) -> AuthTokenResp
     return _issue_tokens(user_id=user.id, org_id=org.id, role=membership.role)
 
 
-@router.post("/auth/login", response_model=AuthTokenResponse, tags=["Auth"], responses={401: {"model": ErrorResponse}})
+@router.post("/auth/login", tags=["Auth"], responses={401: {"model": ErrorResponse}})
 def login(payload: AuthLoginRequest, session: SessionDep) -> AuthTokenResponse:
     email = _normalize_email(payload.email)
     user = session.exec(select(User).where(User.email == email)).first()
@@ -499,7 +501,7 @@ def login(payload: AuthLoginRequest, session: SessionDep) -> AuthTokenResponse:
     return _issue_tokens(user_id=user.id, org_id=org.id, role=membership.role)
 
 
-@router.post("/auth/refresh", response_model=AuthTokenResponse, tags=["Auth"], responses={401: {"model": ErrorResponse}})
+@router.post("/auth/refresh", tags=["Auth"], responses={401: {"model": ErrorResponse}})
 def refresh_token(payload: TokenRefreshRequest, session: SessionDep) -> AuthTokenResponse:
     try:
         claims = decode_refresh_token(payload.refresh_token)
@@ -520,10 +522,10 @@ def logout() -> None:
     return None
 
 
-@router.get("/auth/me", response_model=AuthMeResponse, tags=["Auth"], responses={401: {"model": ErrorResponse}})
+@router.get("/auth/me", tags=["Auth"], responses={401: {"model": ErrorResponse}})
 def me(session: SessionDep, principal: PrincipalDep) -> AuthMeResponse:
     if not principal.user_id or not principal.org_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(ERR_AUTH_REQUIRED)
     user = session.get(User, principal.user_id)
     org = session.get(Organization, principal.org_id)
     if not user or not org:
@@ -535,7 +537,7 @@ def me(session: SessionDep, principal: PrincipalDep) -> AuthMeResponse:
     return AuthMeResponse(user_id=user.id, email=user.email, display_name=user.display_name, org_id=org.id, org_name=org.name, role=role)
 
 
-@router.get("/auth/oauth/{provider}/start", response_model=OAuthStartResponse, tags=["Auth"], responses={400: {"model": ErrorResponse}})
+@router.get("/auth/oauth/{provider}/start", tags=["Auth"], responses={400: {"model": ErrorResponse}})
 def oauth_start(provider: str, redirect_to: Optional[str] = None) -> OAuthStartResponse:
     settings = get_settings()
     if not settings.enable_oauth:
@@ -559,25 +561,17 @@ def oauth_start(provider: str, redirect_to: Optional[str] = None) -> OAuthStartR
     return OAuthStartResponse(provider=cfg["provider"], authorize_url=url, state=state)
 
 
-@router.get("/auth/oauth/{provider}/callback", response_model=AuthTokenResponse, tags=["Auth"])
-def oauth_callback(
-    provider: str,
-    code: str,
-    state: str,
-    session: SessionDep,
-    redirect_to: Optional[str] = Query(default=None),
-) -> AuthTokenResponse:
+def _require_oauth_config(provider: str) -> dict[str, str]:
     settings = get_settings()
     if not settings.enable_oauth:
         raise ApiError(status_code=status.HTTP_400_BAD_REQUEST, code=ErrorCode.VALIDATION_ERROR, message="OAuth is disabled")
     cfg = _oauth_provider_config(provider)
     if not cfg["client_id"] or not cfg["client_secret"]:
         raise ApiError(status_code=status.HTTP_400_BAD_REQUEST, code=ErrorCode.VALIDATION_ERROR, message="OAuth provider is not configured")
+    return cfg
 
-    state_provider, _state_redirect = parse_oauth_state(state)
-    if state_provider != cfg["provider"]:
-        raise unauthorized("OAuth state/provider mismatch")
 
+def _oauth_exchange_code(cfg: dict[str, str], code: str) -> tuple[str, dict]:
     callback = _oauth_callback_url(cfg["provider"])
     with httpx.Client(timeout=20.0) as client:
         token_resp = client.post(
@@ -589,11 +583,10 @@ def oauth_callback(
                 "redirect_uri": callback,
                 "grant_type": "authorization_code",
             },
-            headers={"Accept": "application/json"},
+            headers={"Accept": CONTENT_TYPE_JSON},
         )
         token_resp.raise_for_status()
-        token_payload = token_resp.json()
-        access_token = token_payload.get("access_token")
+        access_token = token_resp.json().get("access_token")
         if not access_token:
             raise unauthorized("OAuth token exchange failed")
 
@@ -601,41 +594,51 @@ def oauth_callback(
             cfg["userinfo_url"],
             headers={
                 "Authorization": f"Bearer {access_token}",
-                "Accept": "application/json",
+                "Accept": CONTENT_TYPE_JSON,
             },
         )
         user_resp.raise_for_status()
-        user_payload = user_resp.json()
+        return access_token, user_resp.json()
 
+
+def _fetch_github_primary_email(access_token: str) -> str:
+    with httpx.Client(timeout=20.0) as client:
+        email_resp = client.get(
+            "https://api.github.com/user/emails",
+            headers={"Authorization": f"Bearer {access_token}", "Accept": CONTENT_TYPE_JSON},
+        )
+    if not email_resp.is_success:
+        return ""
+    primary = next((item for item in email_resp.json() if item.get("primary")), None)
+    return _normalize_email(str(primary.get("email") or "")) if primary else ""
+
+
+def _extract_oauth_profile(cfg: dict[str, str], user_payload: dict, access_token: str) -> tuple[str, str, str | None]:
     if cfg["provider"] == "google":
         provider_subject = str(user_payload.get("sub") or "")
         email = _normalize_email(str(user_payload.get("email") or ""))
         display_name = str(user_payload.get("name") or "").strip() or None
-    else:
-        provider_subject = str(user_payload.get("id") or "")
-        email = _normalize_email(str(user_payload.get("email") or ""))
-        display_name = str(user_payload.get("name") or user_payload.get("login") or "").strip() or None
-        if not email:
-            with httpx.Client(timeout=20.0) as client:
-                email_resp = client.get(
-                    "https://api.github.com/user/emails",
-                    headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
-                )
-                if email_resp.is_success:
-                    email_items = email_resp.json()
-                    primary = next((item for item in email_items if item.get("primary")), None)
-                    if primary:
-                        email = _normalize_email(str(primary.get("email") or ""))
+        return provider_subject, email, display_name
 
-    if not provider_subject or not email:
-        raise unauthorized("OAuth account is missing subject/email")
+    provider_subject = str(user_payload.get("id") or "")
+    email = _normalize_email(str(user_payload.get("email") or ""))
+    display_name = str(user_payload.get("name") or user_payload.get("login") or "").strip() or None
+    if not email:
+        email = _fetch_github_primary_email(access_token)
+    return provider_subject, email, display_name
 
+
+def _resolve_oauth_user(
+    session: Session,
+    cfg: dict[str, str],
+    provider_subject: str,
+    email: str,
+    display_name: str | None,
+) -> User:
     oauth = session.exec(
         select(OAuthAccount).where((OAuthAccount.provider == cfg["provider"]) & (OAuthAccount.provider_subject == provider_subject))
     ).first()
-    user: User | None = None
-    if oauth:
-        user = session.get(User, oauth.user_id)
+    user: User | None = session.get(User, oauth.user_id) if oauth else None
 
     if not user:
         user = session.exec(select(User).where(User.email == email)).first()
@@ -651,18 +654,43 @@ def oauth_callback(
         session.add(oauth)
         session.commit()
 
+    return user
+
+
+@router.get("/auth/oauth/{provider}/callback", tags=["Auth"])
+def oauth_callback(
+    provider: str,
+    code: str,
+    state: str,
+    session: SessionDep,
+    redirect_to: Annotated[Optional[str], Query()] = None,
+) -> AuthTokenResponse:
+    cfg = _require_oauth_config(provider)
+
+    state_provider, _state_redirect = parse_oauth_state(state)
+    if state_provider != cfg["provider"]:
+        raise unauthorized("OAuth state/provider mismatch")
+
+    access_token, user_payload = _oauth_exchange_code(cfg, code)
+    provider_subject, email, display_name = _extract_oauth_profile(cfg, user_payload, access_token)
+
+    if not provider_subject or not email:
+        raise unauthorized("OAuth account is missing subject/email")
+
+    user = _resolve_oauth_user(session, cfg, provider_subject, email, display_name)
+
     org, membership = ensure_personal_org(session, user)
     _ = redirect_to  # reserved for frontend callback orchestration
     return _issue_tokens(user_id=user.id, org_id=org.id, role=membership.role)
 
 
-@router.get("/orgs/me", response_model=OrgContextResponse, tags=["Auth"], responses={401: {"model": ErrorResponse}})
+@router.get("/orgs/me", tags=["Auth"], responses={401: {"model": ErrorResponse}})
 def org_me(session: SessionDep, principal: PrincipalDep) -> OrgContextResponse:
     if not principal.org_id or not principal.user_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(ERR_AUTH_REQUIRED)
     org = session.get(Organization, principal.org_id)
     if not org:
-        raise not_found("Organization not found", {"org_id": str(principal.org_id)})
+        raise not_found(ERR_ORG_NOT_FOUND, {"org_id": str(principal.org_id)})
 
     memberships = session.exec(select(OrgMembership).where(OrgMembership.org_id == org.id)).all()
     members: list[OrgMemberView] = []
@@ -680,7 +708,7 @@ def org_me(session: SessionDep, principal: PrincipalDep) -> OrgContextResponse:
 @router.get("/orgs", tags=["Auth"], responses={401: {"model": ErrorResponse}})
 def list_orgs(session: SessionDep, principal: PrincipalDep) -> list[OrgView]:
     if not principal.user_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(ERR_AUTH_REQUIRED)
     memberships = session.exec(select(OrgMembership).where(OrgMembership.user_id == principal.user_id)).all()
     out: list[OrgView] = []
     for membership in memberships:
@@ -704,7 +732,7 @@ def list_orgs(session: SessionDep, principal: PrincipalDep) -> list[OrgView]:
 @router.post("/orgs", status_code=status.HTTP_201_CREATED, tags=["Auth"], responses={401: {"model": ErrorResponse}})
 def create_org(payload: OrgCreateRequest, session: SessionDep, principal: PrincipalDep) -> OrgView:
     if not principal.user_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(ERR_AUTH_REQUIRED)
     user = session.get(User, principal.user_id)
     if not user:
         raise unauthorized(ERR_USER_NOT_FOUND)
@@ -766,7 +794,7 @@ def add_org_member(org_id: UUID, payload: OrgMemberAddRequest, session: SessionD
     manager = _require_org_manager_for(session, principal, org_id)
     org = session.get(Organization, org_id)
     if not org:
-        raise not_found("Organization not found", {"org_id": str(org_id)})
+        raise not_found(ERR_ORG_NOT_FOUND, {"org_id": str(org_id)})
 
     email = _normalize_email(payload.email)
     if not email or "@" not in email:
@@ -925,7 +953,7 @@ def list_audit_events(
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> list[AuditEventView]:
     if not principal.org_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(ERR_AUTH_REQUIRED)
     events = session.exec(
         select(AuditEvent).where(AuditEvent.org_id == principal.org_id).order_by(AuditEvent.created_at.desc()).limit(limit)
     ).all()
@@ -946,7 +974,6 @@ def list_audit_events(
 
 @router.post(
     "/orgs/invites",
-    response_model=OrgInviteView,
     status_code=status.HTTP_201_CREATED,
     tags=["Auth"],
     responses={401: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
@@ -954,10 +981,10 @@ def list_audit_events(
 def create_org_invite(payload: OrgInviteRequest, session: SessionDep, principal: PrincipalDep) -> OrgInviteView:
     manager = _require_org_manager(session, principal)
     if not principal.org_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(ERR_AUTH_REQUIRED)
     org = session.get(Organization, principal.org_id)
     if not org:
-        raise not_found("Organization not found", {"org_id": str(principal.org_id)})
+        raise not_found(ERR_ORG_NOT_FOUND, {"org_id": str(principal.org_id)})
 
     email = _normalize_email(payload.email)
     if not email or "@" not in email:
@@ -1025,11 +1052,11 @@ def create_org_invite(payload: OrgInviteRequest, session: SessionDep, principal:
     return _serialize_invite(invite, include_token=token)
 
 
-@router.get("/orgs/invites", response_model=list[OrgInviteView], tags=["Auth"], responses={401: {"model": ErrorResponse}})
+@router.get("/orgs/invites", tags=["Auth"], responses={401: {"model": ErrorResponse}})
 def list_org_invites(session: SessionDep, principal: PrincipalDep) -> list[OrgInviteView]:
     _require_org_manager(session, principal)
     if not principal.org_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(ERR_AUTH_REQUIRED)
     now = _now_utc()
     invites = session.exec(select(OrgInvite).where(OrgInvite.org_id == principal.org_id).order_by(OrgInvite.created_at.desc())).all()
     changed = False
@@ -1044,11 +1071,11 @@ def list_org_invites(session: SessionDep, principal: PrincipalDep) -> list[OrgIn
     return [_serialize_invite(invite) for invite in invites]
 
 
-@router.post("/orgs/invites/{invite_id}/revoke", response_model=OrgInviteView, tags=["Auth"], responses={401: {"model": ErrorResponse}})
+@router.post("/orgs/invites/{invite_id}/revoke", tags=["Auth"], responses={401: {"model": ErrorResponse}})
 def revoke_org_invite(invite_id: UUID, session: SessionDep, principal: PrincipalDep) -> OrgInviteView:
     _require_org_manager(session, principal)
     if not principal.org_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(ERR_AUTH_REQUIRED)
     invite = session.exec(select(OrgInvite).where((OrgInvite.id == invite_id) & (OrgInvite.org_id == principal.org_id))).first()
     if not invite:
         raise not_found("Invite not found", {"invite_id": str(invite_id)})
@@ -1061,12 +1088,12 @@ def revoke_org_invite(invite_id: UUID, session: SessionDep, principal: Principal
     return _serialize_invite(invite)
 
 
-@router.get("/orgs/invites/resolve", response_model=OrgInviteResolveResponse, tags=["Auth"])
+@router.get("/orgs/invites/resolve", tags=["Auth"])
 def resolve_org_invite(token: str, session: SessionDep) -> OrgInviteResolveResponse:
     invite = _coerce_pending_invite(session, token)
     org = session.get(Organization, invite.org_id)
     if not org:
-        raise not_found("Organization not found", {"org_id": str(invite.org_id)})
+        raise not_found(ERR_ORG_NOT_FOUND, {"org_id": str(invite.org_id)})
     return OrgInviteResolveResponse(
         org_id=org.id,
         org_name=org.name,
@@ -1077,10 +1104,10 @@ def resolve_org_invite(token: str, session: SessionDep) -> OrgInviteResolveRespo
     )
 
 
-@router.post("/orgs/invites/accept", response_model=AuthTokenResponse, tags=["Auth"], responses={401: {"model": ErrorResponse}})
+@router.post("/orgs/invites/accept", tags=["Auth"], responses={401: {"model": ErrorResponse}})
 def accept_org_invite(payload: OrgInviteResolveRequest, session: SessionDep, principal: PrincipalDep) -> AuthTokenResponse:
     if not principal.user_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(ERR_AUTH_REQUIRED)
     user = session.get(User, principal.user_id)
     if not user:
         raise unauthorized(ERR_USER_NOT_FOUND)
@@ -1091,7 +1118,7 @@ def accept_org_invite(payload: OrgInviteResolveRequest, session: SessionDep, pri
 
     org = session.get(Organization, invite.org_id)
     if not org:
-        raise not_found("Organization not found", {"org_id": str(invite.org_id)})
+        raise not_found(ERR_ORG_NOT_FOUND, {"org_id": str(invite.org_id)})
 
     membership = session.exec(
         select(OrgMembership).where((OrgMembership.org_id == org.id) & (OrgMembership.user_id == user.id))
@@ -1118,7 +1145,6 @@ def accept_org_invite(payload: OrgInviteResolveRequest, session: SessionDep, pri
 
 @router.patch(
     "/orgs/members/{user_id}/role",
-    response_model=OrgMemberView,
     tags=["Auth"],
     responses={401: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
@@ -1130,7 +1156,7 @@ def update_member_role(
 ) -> OrgMemberView:
     manager = _require_org_manager(session, principal)
     if not principal.org_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(ERR_AUTH_REQUIRED)
     next_role = (payload.role or "").strip().lower()
     if next_role not in ORG_ROLES:
         raise ApiError(
@@ -1176,7 +1202,7 @@ def update_member_role(
 def remove_member(user_id: UUID, session: SessionDep, principal: PrincipalDep) -> None:
     manager = _require_org_manager(session, principal)
     if not principal.org_id:
-        raise unauthorized("Authentication required")
+        raise unauthorized(ERR_AUTH_REQUIRED)
     membership = session.exec(
         select(OrgMembership).where((OrgMembership.org_id == principal.org_id) & (OrgMembership.user_id == user_id))
     ).first()
