@@ -3,6 +3,25 @@ from __future__ import annotations
 import app.rate_limit as rate_limit_module
 
 
+def test_rate_limiter_reset_clears_recorded_hits():
+    limiter = rate_limit_module.RateLimiter(limit=1, window_seconds=60)
+    assert limiter.allow("k") is True
+    assert limiter.allow("k") is False
+    limiter.reset()
+    assert limiter.allow("k") is True
+
+
+def test_reset_all_policy_limiters_clears_every_policy(monkeypatch):
+    exhausted = rate_limit_module.RateLimiter(limit=1, window_seconds=60)
+    assert exhausted.allow("c") is True
+    assert exhausted.allow("c") is False
+    monkeypatch.setitem(rate_limit_module.policy_limiters, "uploads", exhausted)
+
+    rate_limit_module.reset_all_policy_limiters()
+
+    assert exhausted.allow("c") is True
+
+
 def test_heavy_job_endpoints_use_separate_limit_policy(test_client, monkeypatch):
     client, _, _, _ = test_client
 

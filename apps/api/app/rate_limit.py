@@ -11,10 +11,16 @@ from app.errors import rate_limited
 
 
 class RateLimiter:
+    """In-memory sliding-window rate limiter keyed by an arbitrary string."""
+
     def __init__(self, limit: int, window_seconds: int) -> None:
         self.limit = max(1, int(limit))
         self.window_seconds = max(1, int(window_seconds))
         self._hits: Dict[str, Deque[float]] = {}
+
+    def reset(self) -> None:
+        """Clear all recorded hits (used to isolate tests from shared state)."""
+        self._hits.clear()
 
     def allow(self, key: str) -> bool:
         now = time.time()
@@ -41,6 +47,17 @@ def _build_policy_limiters() -> dict[str, RateLimiter]:
 
 
 policy_limiters: dict[str, RateLimiter] = _build_policy_limiters()
+
+
+def reset_all_policy_limiters() -> None:
+    """Clear recorded hits for every policy limiter.
+
+    Intended for test isolation: the module-level ``policy_limiters`` singleton
+    otherwise accumulates hits across an entire test session, which can make
+    unrelated tests trip the limit non-deterministically.
+    """
+    for limiter in policy_limiters.values():
+        limiter.reset()
 
 
 async def _enforce_policy(request: Request, policy: str) -> None:
