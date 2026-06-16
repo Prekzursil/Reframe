@@ -201,6 +201,22 @@ def test_register_all_wires_captions_cues(tmp_path: Path) -> None:
     assert "captions.cues" in registered
 
 
+def test_register_all_wires_audio_stabilize_group(tmp_path: Path) -> None:
+    """audio-stabilize group: stabilize.run + audiomix.* + silence.trim wired."""
+    registered: dict[str, Any] = {}
+    handlers.register_all(
+        services=Services(data_dir=tmp_path / "d"),
+        register=lambda name, fn: registered.__setitem__(name, fn),
+    )
+    for method in (
+        "stabilize.run",
+        "audiomix.merge",
+        "audiomix.normalize",
+        "silence.trim",
+    ):
+        assert method in registered, f"{method} was not registered"
+
+
 def test_captions_cues_bound_to_shortmaker_context(services: Services, ctx: RpcContext, video_file: Path) -> None:
     """The registered captions.cues is bound to Services._shortmaker_context, so a
     transcribed video yields WORD-level cues from its persisted transcript (C7)."""
