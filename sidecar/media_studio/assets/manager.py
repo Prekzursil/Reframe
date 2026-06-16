@@ -323,6 +323,7 @@ class AssetManager:
         run_cmd: RunCmd | None = None,
         hf_fetch: HfFetch | None = None,
         python_exe: str | None = None,
+        chatterbox_python: Callable[[], str | None] | None = None,
         usage: Callable[[str], Any] | None = None,
         env_vars: Mapping[str, str] | None = None,
     ) -> None:
@@ -332,6 +333,10 @@ class AssetManager:
         self._run_cmd: RunCmd = run_cmd or _default_run_cmd
         self._hf_fetch: HfFetch = hf_fetch or _default_hf_fetch
         self._python_exe = python_exe or sys.executable
+        # Resolver for the dedicated py3.14 chatterbox interpreter; bound lazily
+        # in _install_env (to chatterbox.default_chatterbox_python) to avoid an
+        # import cycle (chatterbox imports assets.manifest). Tests inject a fake.
+        self._chatterbox_python = chatterbox_python
         self._usage = usage or shutil.disk_usage
         self._env_vars = env_vars
 
@@ -567,16 +572,37 @@ class AssetManager:
         log.info("hf snapshot for %s at %s", entry.name, path)
         on_frac(1.0, f"{entry.name}: downloaded")
 
+    def _resolve_env_python(self, entry: AssetEntry) -> str:
+        """The interpreter that installs ``entry`` (A7+ per-entry selection).
+
+        ``python_kind="chatterbox"`` routes to the dedicated py3.14 embeddable
+        (the only interpreter ``torch==2.10`` resolves under); anything else —
+        and a chatterbox entry on a box where that embed is not staged — falls
+        back to the manager-wide host python (an honest degradation: pip then
+        fails to resolve torch 2.10 under py3.12 and the env never registers).
+        """
+        if entry.python_kind == "chatterbox":
+            resolver = self._chatterbox_python
+            if resolver is None:
+                from ..features.tts.chatterbox import default_chatterbox_python  # noqa: PLC0415 - avoid cycle
+
+                resolver = default_chatterbox_python
+            return resolver() or self._python_exe
+        return self._python_exe
+
     def _install_env(self, entry: AssetEntry, *, on_frac: FracCb, should_cancel: CancelProbe) -> None:
         """Bootstrap a ``pip --target`` env under the assets root (A7).
 
         get-pip.py is fetched once (cached under ``<root>/tools/``), then the
         two pinned argv steps from :func:`build_env_install_argvs` run through
         the drained-subprocess seam. A success sentinel records the pins so
-        ``installed`` flips false again if the requirements change.
+        ``installed`` flips false again if the requirements change. The
+        interpreter is chosen per-entry via :meth:`_resolve_env_python` so the
+        chatterbox env installs with its dedicated py3.14 embeddable.
         """
         env_dir = self.resolve_dest(entry)
         env_dir.mkdir(parents=True, exist_ok=True)
+        python_exe = self._resolve_env_python(entry)
         get_pip = self.root / "tools" / "get-pip.py"
         if not get_pip.is_file():
             on_frac(0.01, f"{entry.name}: fetching get-pip.py")
@@ -587,7 +613,7 @@ class AssetManager:
                 should_cancel=should_cancel,
                 label="get-pip.py",
             )
-        steps = build_env_install_argvs(self._python_exe, get_pip, env_dir, entry.requirements)
+        steps = build_env_install_argvs(python_exe, get_pip, env_dir, entry.requirements)
         for index, step in enumerate(steps):
             if should_cancel():
                 raise JobCancelled(entry.name)

@@ -408,11 +408,63 @@ class TestChatterbox:
         assert entry is not None
         assert entry.kind == "env" and entry.installer == "env"
         assert entry.dest == cb.CHATTERBOX_ENV_DEST
+        # A4+: installs with the dedicated py3.14 interpreter (torch 2.10 only
+        # resolves there), not the host py3.12.
+        assert entry.python_kind == "chatterbox"
         # A6 lesson 5: every requirement is PINNED
         assert all("==" in req for req in entry.requirements)
         torch_pins = [r for r in entry.requirements if r.startswith("torch==")]
-        assert torch_pins and "+cu124" in torch_pins[0]
-        assert any(r.startswith("chatterbox-tts==") for r in entry.requirements)
+        assert torch_pins and "+cu128" in torch_pins[0]
+        assert any(r == "chatterbox-tts==0.1.7" for r in entry.requirements)
+        # ORDER MATTERS: the env sentinel compares the requirement LIST against
+        # this tuple, so chatterbox-tts/torch/torchaudio must stay at indices
+        # 0/1/2 (the same order requirements-chatterbox.txt mirrors).
+        assert entry.requirements[0].startswith("chatterbox-tts==")
+        assert entry.requirements[1] == "torch==2.10.0+cu128"
+        assert entry.requirements[2] == "torchaudio==2.10.0+cu128"
+
+    def test_default_chatterbox_python_resolves_staged_embed(self, tmp_path):
+        # The py3.12 embed sits at <res>/python/; the py3.14 chatterbox embed at
+        # the sibling <res>/python-chatterbox/. Given the resources dir, the
+        # resolver returns the py3.14 python.exe.
+        res = tmp_path / "resources"
+        (res / "python").mkdir(parents=True)
+        (res / "python" / "python.exe").write_text("", encoding="utf-8")
+        cb_dir = res / cb.CHATTERBOX_PYTHON_SUBDIR
+        cb_dir.mkdir(parents=True)
+        cb_py = cb_dir / "python.exe"
+        cb_py.write_text("", encoding="utf-8")
+        assert cb.default_chatterbox_python(str(res)) == str(cb_py)
+
+    def test_default_chatterbox_python_none_when_absent(self, tmp_path):
+        res = tmp_path / "resources"
+        (res / "python").mkdir(parents=True)
+        # No python-chatterbox sibling staged -> None (dev-box degradation).
+        assert cb.default_chatterbox_python(str(res)) is None
+
+    def test_engine_uses_dedicated_interpreter_when_present(self, tmp_path, monkeypatch):
+        env_dir = tmp_path / "env"
+        env_dir.mkdir()
+        sample = tmp_path / "s.wav"
+        sample.write_bytes(b"RIFF")
+        out_wav = tmp_path / "o.wav"
+        monkeypatch.setattr(cb, "default_chatterbox_python", lambda: "C:/py314/python.exe")
+        seen = {}
+
+        def fake_run_cmd(argv, extra_env=None):
+            seen["argv"] = list(argv)
+            Path(json.loads(Path(argv[-1]).read_text(encoding="utf-8"))["outWav"]).write_bytes(b"RIFF")
+            return 0, "ok"
+
+        engine = cb.ChatterboxEngine(env_dir=str(env_dir), run_cmd=fake_run_cmd)
+        assert engine.python_exe == "C:/py314/python.exe"
+        engine.synth(CUES, str(sample), "en", str(out_wav))
+        assert seen["argv"][0] == "C:/py314/python.exe"
+
+    def test_engine_falls_back_to_sys_executable(self, monkeypatch):
+        monkeypatch.setattr(cb, "default_chatterbox_python", lambda: None)
+        engine = cb.ChatterboxEngine(env_dir="X")
+        assert engine.python_exe == sys.executable
 
     def test_synth_argv_shape(self):
         argv = cb.build_synth_argv("C:/py dir/python.exe", "C:/jobs/job.json")

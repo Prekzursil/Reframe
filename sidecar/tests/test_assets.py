@@ -227,6 +227,29 @@ class TestManifest:
         )
         assert pinned.requirements == ("soundfile==0.12.1",)
 
+    def test_python_kind_defaults_to_host(self):
+        entry = manifest.AssetEntry(
+            name="host-env",
+            kind="env",
+            size_mb=10,
+            dest="envs/host",
+            installer="env",
+            requirements=["soundfile==0.12.1"],
+        )
+        assert entry.python_kind == "host"
+
+    def test_invalid_python_kind_rejected(self):
+        with pytest.raises(ValueError, match="python_kind must be one of"):
+            manifest.AssetEntry(
+                name="bad-kind-env",
+                kind="env",
+                size_mb=10,
+                dest="envs/bad",
+                installer="env",
+                requirements=["soundfile==0.12.1"],
+                python_kind="py99",
+            )
+
     def test_day1_whisper_entry(self):
         entry = manifest.get_asset(manifest.WHISPER_ASSET_NAME)
         assert entry is not None
@@ -612,6 +635,113 @@ class TestEnvInstaller:
         data = json.loads(sentinel.read_text(encoding="utf-8"))
         assert data["requirements"] == list(entry.requirements)
         assert mgr.installed_path(entry) == str(env_dir)
+
+    def test_install_env_uses_chatterbox_interpreter_for_chatterbox_kind(self, tmp_path):
+        calls: list[list[str]] = []
+
+        def run_cmd(argv, extra_env=None):
+            calls.append(list(argv))
+            return 0, "ok"
+
+        (tmp_path / "tools").mkdir(parents=True)
+        (tmp_path / "tools" / "get-pip.py").write_text("# get-pip", encoding="utf-8")
+        entry = manifest.register_asset(
+            name="chatter-env",
+            kind="env",
+            size_mb=300,
+            dest="envs/chatter-env",
+            installer="env",
+            requirements=("torch==2.10.0+cu128",),
+            python_kind="chatterbox",
+        )
+        mgr = AssetManager(
+            root=tmp_path,
+            run_cmd=run_cmd,
+            python_exe="C:/host/python.exe",
+            chatterbox_python=lambda: "C:/py314/python.exe",
+            usage=big_free_usage,
+            env_vars={},
+        )
+        mgr._install(entry, on_frac=lambda f, m="": None, should_cancel=lambda: False)
+        assert calls and calls[0][0] == "C:/py314/python.exe"
+        assert calls[1][0] == "C:/py314/python.exe"
+
+    def test_install_env_chatterbox_kind_falls_back_when_no_dedicated(self, tmp_path):
+        calls: list[list[str]] = []
+
+        def run_cmd(argv, extra_env=None):
+            calls.append(list(argv))
+            return 0, "ok"
+
+        (tmp_path / "tools").mkdir(parents=True)
+        (tmp_path / "tools" / "get-pip.py").write_text("# get-pip", encoding="utf-8")
+        entry = manifest.register_asset(
+            name="chatter-env-fallback",
+            kind="env",
+            size_mb=300,
+            dest="envs/chatter-env-fallback",
+            installer="env",
+            requirements=("torch==2.10.0+cu128",),
+            python_kind="chatterbox",
+        )
+        mgr = AssetManager(
+            root=tmp_path,
+            run_cmd=run_cmd,
+            python_exe="C:/host/python.exe",
+            chatterbox_python=lambda: None,  # py3.14 embed not staged
+            usage=big_free_usage,
+            env_vars={},
+        )
+        mgr._install(entry, on_frac=lambda f, m="": None, should_cancel=lambda: False)
+        assert calls and calls[0][0] == "C:/host/python.exe"
+
+    def test_install_env_host_kind_uses_host_interpreter(self, tmp_path):
+        calls: list[list[str]] = []
+
+        def run_cmd(argv, extra_env=None):
+            calls.append(list(argv))
+            return 0, "ok"
+
+        (tmp_path / "tools").mkdir(parents=True)
+        (tmp_path / "tools" / "get-pip.py").write_text("# get-pip", encoding="utf-8")
+        entry = env_entry("host-kind-env")  # default python_kind="host"
+        # chatterbox_python would raise if consulted — a host-kind entry must not.
+        mgr = AssetManager(
+            root=tmp_path,
+            run_cmd=run_cmd,
+            python_exe="C:/host/python.exe",
+            chatterbox_python=lambda: pytest.fail("host-kind must not consult chatterbox_python"),
+            usage=big_free_usage,
+            env_vars={},
+        )
+        mgr._install(entry, on_frac=lambda f, m="": None, should_cancel=lambda: False)
+        assert calls and calls[0][0] == "C:/host/python.exe"
+
+    def test_install_env_chatterbox_kind_uses_default_resolver_when_unset(self, tmp_path, monkeypatch):
+        # No chatterbox_python injected -> lazy-bind to chatterbox.default_chatterbox_python.
+        import media_studio.features.tts.chatterbox as cbmod
+
+        monkeypatch.setattr(cbmod, "default_chatterbox_python", lambda: "C:/auto314/python.exe")
+        calls: list[list[str]] = []
+
+        def run_cmd(argv, extra_env=None):
+            calls.append(list(argv))
+            return 0, "ok"
+
+        (tmp_path / "tools").mkdir(parents=True)
+        (tmp_path / "tools" / "get-pip.py").write_text("# get-pip", encoding="utf-8")
+        entry = manifest.register_asset(
+            name="chatter-env-default",
+            kind="env",
+            size_mb=300,
+            dest="envs/chatter-env-default",
+            installer="env",
+            requirements=("torch==2.10.0+cu128",),
+            python_kind="chatterbox",
+        )
+        mgr = AssetManager(root=tmp_path, run_cmd=run_cmd, usage=big_free_usage, env_vars={})
+        mgr._install(entry, on_frac=lambda f, m="": None, should_cancel=lambda: False)
+        assert calls and calls[0][0] == "C:/auto314/python.exe"
 
     def test_step_failure_raises_with_output_tail(self, tmp_path):
         def run_cmd(argv, extra_env=None):
