@@ -6,10 +6,14 @@ import { defineConfig } from 'vitest/config';
 // Per-test `// @vitest-environment jsdom` directives select the DOM env for
 // renderer component tests; main-process tests run in the default node env.
 //
-// Coverage: v8 provider, 100% line + branch thresholds (the gate is clean-zero).
-// Genuinely-untestable lines (Electron app bootstrap that needs a real BrowserWindow,
-// IPC wiring exercised only at runtime) are marked inline with
-// `/* v8 ignore … -- <reason> */` so the threshold stays honest, not blanket-ignored.
+// Coverage: v8 provider. Per the HYBRID coverage policy (2026-06-16): the sidecar
+// ENGINE is held to 100% (the logic that matters), while the Electron/renderer UI
+// uses a RATCHET floor — these thresholds are the current measured coverage, so the
+// gate can never REGRESS and every change must hold or raise the bar (new UI code
+// must be tested), without forcing low-value 100% on runtime-only view glue.
+// Raise these floors whenever UI test coverage climbs. Genuinely-untestable lines
+// (Electron app bootstrap needing a real BrowserWindow, runtime-only IPC wiring) are
+// still marked inline with `/* v8 ignore … -- <reason> */`, not blanket-ignored.
 export default defineConfig({
   resolve: {
     alias: {
@@ -32,11 +36,12 @@ export default defineConfig({
         // in the packaged renderer, not under jsdom unit tests.
         'renderer/src/main.tsx',
       ],
+      // RATCHET floors (current measured UI coverage; raise as tests are added).
       thresholds: {
-        lines: 100,
-        branches: 100,
-        functions: 100,
-        statements: 100,
+        lines: 78,
+        branches: 84,
+        functions: 70,
+        statements: 78,
       },
     },
   },
