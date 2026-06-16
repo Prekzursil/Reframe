@@ -283,11 +283,13 @@ class Recipes:
         results: list[Any] = []
         for index, step in enumerate(steps):
             job_ctx.raise_if_cancelled()
-            label = step.get("label") or step.get("method")
+            label = step.get("label") or step.get("method", "")
             base = index / total * 100.0
             span = 100.0 / total
 
-            def on_sub(pct: float, _msg: str = "", _b: float = base, _s: float = span, _i: int = index, _l: str = label) -> None:
+            def on_sub(
+                pct: float, _msg: str = "", _b: float = base, _s: float = span, _i: int = index, _l: str = label
+            ) -> None:
                 job_ctx.progress(_b + clamp(pct, 0.0, 100.0) / 100.0 * _s, f"step {_i + 1}/{total} · {_l}")
 
             on_sub(0.0)

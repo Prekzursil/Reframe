@@ -112,7 +112,7 @@ def sanitize_reel(name: str | None) -> str:
     :data:`DEFAULT_REEL` so every event always has a valid reel.
     """
     cleaned = re.sub(r"[^A-Za-z0-9]", "", str(name or "")).upper()
-    return (cleaned[:8] or DEFAULT_REEL)
+    return cleaned[:8] or DEFAULT_REEL
 
 
 def _clip_basename(path: str) -> str:
@@ -132,7 +132,8 @@ def _clip_window(clip: Clip) -> tuple[float, float, str, str]:
     dict. The source window is the candidate's ORIGINAL-video span
     (``sourceStart`` -> ``end``); ``durationSec`` backstops a missing ``end``.
     """
-    candidate = clip.get("candidate") if isinstance(clip.get("candidate"), dict) else clip
+    raw_candidate = clip.get("candidate")
+    candidate = raw_candidate if isinstance(raw_candidate, dict) else clip
     path = str(clip.get("path") or candidate.get("path") or "")
     source_in = float(candidate.get("sourceStart", candidate.get("start", 0.0)) or 0.0)
     end = candidate.get("end")
@@ -163,7 +164,8 @@ def clips_to_events(clips: Sequence[Clip], fps: Any) -> list[EDLEvent]:
         if not isinstance(clip, dict):
             continue
         source_in_sec, source_out_sec, path, hook = _clip_window(clip)
-        candidate = clip.get("candidate") if isinstance(clip.get("candidate"), dict) else clip
+        raw_candidate = clip.get("candidate")
+        candidate = raw_candidate if isinstance(raw_candidate, dict) else clip
         src_in_f = seconds_to_frames(source_in_sec, f)
         src_out_f = seconds_to_frames(source_out_sec, f)
         length_f = max(1, src_out_f - src_in_f)  # >=1 frame so the event is real

@@ -163,9 +163,7 @@ def build_transform_argv(
     """
     cfg = _stab_settings(settings)
     trf = str(trf_path).replace("\\", "/")
-    transform = (
-        f"{TRANSFORM_FILTER}=input={trf}:smoothing={cfg['smoothing']}:optzoom={cfg['optzoom']}"
-    )
+    transform = f"{TRANSFORM_FILTER}=input={trf}:smoothing={cfg['smoothing']}:optzoom={cfg['optzoom']}"
     return [
         ffmpeg.ffmpeg_path(settings),
         "-hide_banner",
@@ -301,7 +299,8 @@ class StabilizeEngine:
         def _half(lo: float, hi: float) -> Callable[[float, str], None] | None:
             if on_progress is None:
                 return None
-            return lambda pct, msg: on_progress(lo + (hi - lo) * (pct / 100.0), msg)
+            cb: Callable[[float, str], None] = on_progress
+            return lambda pct, msg: cb(lo + (hi - lo) * (pct / 100.0), msg)
 
         try:
             # PASS 1 — analyze.
