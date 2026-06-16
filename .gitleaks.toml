@@ -18,6 +18,7 @@ paths = [
   '''(^|/)\.tooling-bin/''',
   '''(^|/)dist/''',
   '''(^|/)build/''',
+  '''(^|/)target/''',
   '''(^|/)coverage/''',
   '''(^|/)\.git/''',
   '''(^|/)Inspirations & Former Attempts/''',
