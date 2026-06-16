@@ -98,13 +98,20 @@ jobs:
             --exclude .venv --exclude node_modules --exclude dist --exclude out \
             app sidecar
 
-      # gate:6 — deps (osv-scanner on the lockfiles, 0 known CVEs)
+      # gate:6 — deps (osv-scanner on the lockfiles, 0 actionable CVEs).
+      # --no-resolve: read the FLAT pinned lockfiles directly. The Python lock is a
+      # fully-resolved `uv pip compile` output (all transitives pinned), so no
+      # transitive re-resolution is needed; this also keeps the scan deterministic
+      # and offline-stable. Reasoned, dated per-CVE ignores for non-applicable
+      # findings live in osv-scanner.toml (auto-loaded from the repo root).
       - name: gate-deps osv-scanner
         run: |
           osv-scanner scan source \
+            --config=osv-scanner.toml \
+            --no-resolve \
             --lockfile=app/package-lock.json \
             --lockfile=app/render-cli/package-lock.json \
-            --lockfile=sidecar/pyproject.toml
+            --lockfile=sidecar/requirements.lock.txt
 
       # charter ↔ workflow consistency
       - name: charter-check
