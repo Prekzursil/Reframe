@@ -91,6 +91,9 @@ export function SystemHealth({ api }: SystemHealthProps): React.ReactElement {
   // Feature 2: the explicit offline switch. Persists via settings.set, then
   // re-runs the health check so every section reflects the new mode.
   const toggleOffline = useCallback(async (): Promise<void> => {
+    // defensive: the toggle button renders only when `report` exists and is
+    // `disabled={offlineBusy}`, so this guard is never reached via UI.
+    /* v8 ignore next */
     if (!report || offlineBusy) return;
     const next = !report.offline;
     setOfflineBusy(true);
@@ -105,6 +108,12 @@ export function SystemHealth({ api }: SystemHealthProps): React.ReactElement {
   }, [bridge, report, offlineBusy, refresh]);
 
   const summary = useMemo(() => (report ? backendSummary(report.backends) : null), [report]);
+  // The "(installed/total)" suffix on the ML-backends heading. The heading only
+  // renders inside `report && (...)`, where summary is always non-null, so the
+  // empty-string arm is defensive only.
+  const backendCountLabel =
+    /* v8 ignore next */
+    summary ? ` (${summary.installed}/${summary.total})` : '';
 
   return (
     <section className="feature-panel health-panel" aria-label="System Health">
@@ -158,7 +167,7 @@ export function SystemHealth({ api }: SystemHealthProps): React.ReactElement {
             ))}
           </ul>
 
-          <h3>ML backends{summary ? ` (${summary.installed}/${summary.total})` : ''}</h3>
+          <h3>ML backends{backendCountLabel}</h3>
           <ul className="health-list" data-section="backends">
             {report.backends.map((backend) => (
               <li key={backend.module} className="health-row" data-backend={backend.module}>

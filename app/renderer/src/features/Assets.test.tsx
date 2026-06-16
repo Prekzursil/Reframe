@@ -292,4 +292,175 @@ describe('<Assets />', () => {
     await mount(fake.api);
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('list blew up');
   });
+
+  it('shows a non-Error list rejection via String(err)', async () => {
+    const fake = makeFakeApi(TWO);
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw 'plain list error';
+    });
+    await mount(fake.api);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('plain list error');
+  });
+
+  it('coerces a non-array assets payload to an empty list', async () => {
+    const fake = makeFakeApi(TWO);
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ assets: 'nope' });
+    await mount(fake.api);
+    expect(container.querySelector('.asset-empty')).toBeTruthy();
+  });
+
+  it('refreshes from assets.list when the ensure job.done carries no asset list', async () => {
+    const fake = makeFakeApi(TWO);
+    let listCall = 0;
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(
+      async (method: string) => {
+        if (method === 'assets.list') {
+          listCall += 1;
+          // First list: original; after ensure, the refreshed list marks installed.
+          return { assets: listCall === 1 ? TWO : TWO.map((a) => ({ ...a, installed: true })) };
+        }
+        if (method === 'assets.ensure') return { jobId: 'job-1' };
+        return {};
+      },
+    );
+    await mount(fake.api);
+    const button = rowFor('whisper-large-v3-turbo')!.querySelector(
+      'button[data-action="install"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      button.click();
+    });
+    // job.done with NO assets list -> the panel calls refresh() to re-list.
+    await act(async () => {
+      fake.fireDone({ jobId: 'job-1', result: { installed: ['whisper-large-v3-turbo'] } });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(listCall).toBeGreaterThanOrEqual(2);
+    expect(rowFor('whisper-large-v3-turbo')?.textContent).toContain('Installed');
+  });
+
+  it('shows a non-Error ensure rejection via String(err)', async () => {
+    const fake = makeFakeApi(TWO);
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(async (method: string) => {
+      if (method === 'assets.list') return { assets: TWO };
+      throw 'plain ensure error';
+    });
+    await mount(fake.api);
+    const button = rowFor('whisper-large-v3-turbo')!.querySelector(
+      'button[data-action="install"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      button.click();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('plain ensure error');
+  });
+
+  it('ignores progress notifications for a different job', async () => {
+    const fake = makeFakeApi(TWO);
+    await mount(fake.api);
+    const button = rowFor('whisper-large-v3-turbo')!.querySelector(
+      'button[data-action="install"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      button.click();
+    });
+    await act(async () => {
+      fake.fireProgress({ jobId: 'job-1', pct: 25, message: 'mine' });
+    });
+    await act(async () => {
+      fake.fireProgress({ jobId: 'other', pct: 99, message: 'not mine' });
+    });
+    expect(container.querySelector('.progress')?.textContent).not.toContain('99%');
+    expect(container.querySelector('.progress')?.textContent).toContain('25%');
+  });
+
+  it('handles an ensure response with no jobId (no job.done wait)', async () => {
+    const fake = makeFakeApi(TWO);
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(async (method: string) => {
+      if (method === 'assets.list') return { assets: TWO };
+      if (method === 'assets.ensure') return {}; // no jobId
+      return {};
+    });
+    await mount(fake.api);
+    const button = rowFor('whisper-large-v3-turbo')!.querySelector(
+      'button[data-action="install"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      button.click();
+      await Promise.resolve();
+    });
+    // No crash, no error; result was null so nothing changed.
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('treats a null ensure job.done payload as a no-op (extract ?? null)', async () => {
+    const fake = makeFakeApi(TWO);
+    await mount(fake.api);
+    const button = rowFor('whisper-large-v3-turbo')!.querySelector(
+      'button[data-action="install"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      button.click();
+    });
+    let listCallsBefore = 0;
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mock.calls.forEach((c) => {
+      if (c[0] === 'assets.list') listCallsBefore += 1;
+    });
+    await act(async () => {
+      fake.fireDone({ jobId: 'job-1', result: undefined });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // A null payload -> refresh() re-lists (extractAssets null -> refresh branch).
+    let listCallsAfter = 0;
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mock.calls.forEach((c) => {
+      if (c[0] === 'assets.list') listCallsAfter += 1;
+    });
+    expect(listCallsAfter).toBeGreaterThan(listCallsBefore);
+  });
+
+  it('cancel swallows an assets.cancel rejection (best-effort) and shows Cancelling…', async () => {
+    const fake = makeFakeApi(TWO);
+    await mount(fake.api);
+    const button = rowFor('whisper-large-v3-turbo')!.querySelector(
+      'button[data-action="install"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      button.click();
+    });
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('already done'));
+    const cancelBtn = container.querySelector('button[data-action="cancel"]') as HTMLButtonElement;
+    await act(async () => {
+      cancelBtn.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector('.progress-message')?.textContent).toContain('Cancelling…');
+  });
+
+  it('the Refresh button re-lists the assets', async () => {
+    const fake = makeFakeApi(TWO);
+    await mount(fake.api);
+    const before = fake.calls.filter((c) => c.method === 'assets.list').length;
+    const refresh = container.querySelector('button[data-action="refresh"]') as HTMLButtonElement;
+    await act(async () => {
+      refresh.click();
+      await Promise.resolve();
+    });
+    expect(fake.calls.filter((c) => c.method === 'assets.list').length).toBe(before + 1);
+  });
+
+  it('falls back to the global window.api bridge when no api prop is given', async () => {
+    const fake = makeFakeApi(TWO);
+    (globalThis as { api?: unknown }).api = fake.api;
+    try {
+      await act(async () => {
+        root.render(<Assets />);
+      });
+      expect(rowFor('whisper-large-v3-turbo')).toBeTruthy();
+    } finally {
+      delete (globalThis as { api?: unknown }).api;
+    }
+  });
 });

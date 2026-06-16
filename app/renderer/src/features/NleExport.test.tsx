@@ -10,10 +10,11 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 const exportMock = vi.fn();
+let apiAvailable = true;
 
 vi.mock('../lib/rpc', () => ({
   client: { nle: { export: (...a: unknown[]) => exportMock(...a) } },
-  hasApi: () => true,
+  hasApi: () => apiAvailable,
 }));
 
 import { NleExport } from './NleExport';
@@ -26,6 +27,7 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   exportMock.mockReset();
+  apiAvailable = true;
 });
 
 afterEach(() => {
@@ -102,5 +104,35 @@ describe('NleExport', () => {
     await flush();
     const alert = container.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain('disk full');
+  });
+
+  it('surfaces a non-Error rejection via String(err)', async () => {
+    exportMock.mockRejectedValue('plain export error');
+    render();
+    click('Export timeline');
+    await flush();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('plain export error');
+  });
+
+  it('uses the singular "clip" wording for a single exported clip', async () => {
+    exportMock.mockResolvedValue({ path: '/exports/v1.edl', clipCount: 1 });
+    render();
+    click('Export timeline');
+    await flush();
+    expect(container.querySelector('.status')?.textContent).toContain('Exported 1 clip');
+    expect(container.querySelector('.status')?.textContent).not.toContain('clips');
+    // The saved-path line also uses the singular form.
+    expect(container.querySelector('.export-path')?.textContent).toContain('Saved 1 clip to');
+  });
+
+  it('reports "sidecar bridge is not available" when there is no api', async () => {
+    apiAvailable = false;
+    render();
+    click('Export timeline');
+    await flush();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'sidecar bridge is not available',
+    );
+    expect(exportMock).not.toHaveBeenCalled();
   });
 });
