@@ -52,24 +52,32 @@ class RecordingStages:
         snap_impl=None,
         reframe_impl=None,
         filler_impl=None,
+        trim_impl=None,
+        stabilize_impl=None,
     ):
         self.calls = calls
         self._select_return = select_return if select_return is not None else []
         self._snap_impl = snap_impl
         self._reframe_impl = reframe_impl
         self._filler_impl = filler_impl
+        self._trim_impl = trim_impl
+        self._stabilize_impl = stabilize_impl
         self.caption_kwargs: list[dict[str, Any]] = []
         self.cut_args: list[tuple] = []
         self.mux_kwargs: list[dict[str, Any]] = []
         self.filler_kwargs: list[dict[str, Any]] = []
         self.zoom_kwargs: list[dict[str, Any]] = []
         self.brand_kwargs: list[dict[str, Any]] = []
+        self.trim_args: list[tuple] = []
+        self.stabilize_args: list[tuple] = []
 
     def as_stages(self) -> sm.Stages:
         return sm.Stages(
             select_candidates=self.select_candidates,
             snap_candidates=self.snap_candidates,
             cut_clip=self.cut_clip,
+            trim_silence=self.trim_silence,
+            stabilize=self.stabilize,
             remove_fillers=self.remove_fillers,
             reframe=self.reframe,
             apply_zoom=self.apply_zoom,
@@ -78,6 +86,22 @@ class RecordingStages:
             brand_overlay=self.brand_overlay,
             mux_audio=self.mux_audio,
         )
+
+    # -- audio-stabilize group stages --------------------------------------
+    def trim_silence(self, in_path, out_path, *, settings=None):
+        self.calls.append("trim_silence")
+        self.trim_args.append((in_path, out_path))
+        if self._trim_impl is not None:
+            return self._trim_impl(in_path, out_path)
+        # Default stub: "removed 2.5s of dead air", returns the new path.
+        return out_path, 2.5
+
+    def stabilize(self, in_path, out_path, *, settings=None, on_notice=None):
+        self.calls.append("stabilize")
+        self.stabilize_args.append((in_path, out_path))
+        if self._stabilize_impl is not None:
+            return self._stabilize_impl(in_path, out_path, on_notice)
+        return out_path
 
     # -- SELECT phase ------------------------------------------------------
     def select_candidates(self, transcript, prompt, controls, *, settings=None):
@@ -696,6 +720,135 @@ def test_run_export_zoom_passes_cues_and_duration(transcript, tmp_path):
     assert z["duration_sec"] == pytest.approx(30.0)
     assert z["source_start"] == pytest.approx(10.0)
     assert isinstance(z["cues"], list)
+
+
+# ---------------------------------------------------------------------------
+# audio-stabilize group — silence-trim + stabilize pre-steps (after CUT)
+# ---------------------------------------------------------------------------
+def _stab_candidate() -> dict[str, Any]:
+    return {"rank": 1, "start": 0.0, "end": 30.0, "sourceStart": 0.0, "score": 9}
+
+
+def test_run_export_audio_stabilize_off_by_default(transcript, tmp_path):
+    """Neither toggle set: the pre-step stages never run; base order unchanged."""
+    calls: list[str] = []
+    rec = RecordingStages(calls)
+    sm.run_export(
+        make_ctx(),
+        video_id="v1",
+        candidates=[_stab_candidate()],
+        load_context=loader_for(str(tmp_path / "src.mp4"), transcript),
+        out_dir=str(tmp_path / "out"),
+        stages=rec.as_stages(),
+    )
+    assert "trim_silence" not in calls
+    assert "stabilize" not in calls
+    assert calls == ["cut", "reframe", "caption", "export"]
+
+
+def test_run_export_silence_trim_runs_after_cut(transcript, tmp_path):
+    """silenceTrim ON: trim runs on the cut clip, BEFORE reframe."""
+    calls: list[str] = []
+    rec = RecordingStages(calls)
+    out = sm.run_export(
+        make_ctx(),
+        video_id="v1",
+        candidates=[_stab_candidate()],
+        load_context=loader_for(str(tmp_path / "src.mp4"), transcript),
+        out_dir=str(tmp_path / "out"),
+        stages=rec.as_stages(),
+        settings={"silenceTrim": True},
+    )
+    assert calls == ["cut", "trim_silence", "reframe", "caption", "export"]
+    # The trimmed clip (not the raw cut) is what reframe receives.
+    trimmed_out = rec.trim_args[0][1]
+    # silenceRemovedSec is surfaced on the clip payload (default stub removed 2.5s).
+    assert out["items"][0]["silenceRemovedSec"] == pytest.approx(2.5)
+    assert trimmed_out.endswith(".trimmed.mp4")
+
+
+def test_run_export_stabilize_runs_after_cut_warp_only(transcript, tmp_path):
+    """stabilize ON: stabilize runs after CUT, BEFORE reframe; timeline unchanged."""
+    calls: list[str] = []
+    rec = RecordingStages(calls)
+    sm.run_export(
+        make_ctx(),
+        video_id="v1",
+        candidates=[_stab_candidate()],
+        load_context=loader_for(str(tmp_path / "src.mp4"), transcript),
+        out_dir=str(tmp_path / "out"),
+        stages=rec.as_stages(),
+        settings={"stabilize": True},
+    )
+    assert calls == ["cut", "stabilize", "reframe", "caption", "export"]
+    assert rec.stabilize_args[0][1].endswith(".stabilized.mp4")
+
+
+def test_run_export_trim_then_stabilize_compose(transcript, tmp_path):
+    """Both ON: trim FIRST (timeline edit), then stabilize (warp) on its output."""
+    calls: list[str] = []
+    rec = RecordingStages(calls)
+    sm.run_export(
+        make_ctx(),
+        video_id="v1",
+        candidates=[_stab_candidate()],
+        load_context=loader_for(str(tmp_path / "src.mp4"), transcript),
+        out_dir=str(tmp_path / "out"),
+        stages=rec.as_stages(),
+        settings={"silenceTrim": True, "stabilize": True},
+    )
+    assert calls == ["cut", "trim_silence", "stabilize", "reframe", "caption", "export"]
+    # Stabilize consumes the TRIMMED clip (composition), not the raw cut.
+    assert rec.stabilize_args[0][0] == rec.trim_args[0][1]
+
+
+def test_run_export_stabilize_unavailable_notice_surfaced(transcript, tmp_path):
+    """A missing libvidstab passes the clip through + surfaces the typed notice."""
+    calls: list[str] = []
+    progress: list[tuple[int, str]] = []
+
+    def passthrough(in_path, out_path, on_notice):
+        # Mimic stabilize_clip's unavailable branch: notify + return the input.
+        if on_notice is not None:
+            on_notice({"type": "stabilize.unavailable", "message": "no libvidstab — skipped"})
+        return in_path
+
+    rec = RecordingStages(calls, stabilize_impl=passthrough)
+    ctx = JobContext(
+        job_id="j1",
+        _cancel_event=threading.Event(),
+        _emit_progress=lambda jid, pct, msg: progress.append((pct, msg)),
+    )
+    sm.run_export(
+        ctx,
+        video_id="v1",
+        candidates=[_stab_candidate()],
+        load_context=loader_for(str(tmp_path / "src.mp4"), transcript),
+        out_dir=str(tmp_path / "out"),
+        stages=rec.as_stages(),
+        settings={"stabilize": True},
+    )
+    # The clip passed through unchanged (reframe got the raw cut), and the
+    # unavailable notice was surfaced via job.progress (never silently skipped).
+    assert "stabilize" in calls
+    assert any("libvidstab" in msg for _pct, msg in progress)
+
+
+def test_run_export_silence_trim_excludes_fillers(transcript, tmp_path):
+    """silenceTrim wins over removeFillers (mutually exclusive timeline edits)."""
+    calls: list[str] = []
+    rec = RecordingStages(calls)
+    sm.run_export(
+        make_ctx(),
+        video_id="v1",
+        candidates=[_stab_candidate()],
+        load_context=loader_for(str(tmp_path / "src.mp4"), transcript),
+        out_dir=str(tmp_path / "out"),
+        stages=rec.as_stages(),
+        settings={"silenceTrim": True, "removeFillers": True},
+    )
+    assert "trim_silence" in calls
+    assert "remove_fillers" not in calls
 
 
 # ---------------------------------------------------------------------------

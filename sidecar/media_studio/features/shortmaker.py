@@ -117,6 +117,13 @@ ExportStage = Callable[..., str]
 BrandOverlayStage = Callable[..., str]
 # mux_audio(clip_path, audio_track, out_path, *, start, end, settings) -> out_path
 MuxAudioStage = Callable[..., str]
+# stabilize(in_path, out_path, *, settings, on_notice) -> out_path|in_path
+#   (audio-stabilize group: ffmpeg vidstab 2-pass; pass-through when libvidstab
+#    is missing — the unavailable notice is surfaced via on_notice, never skipped)
+StabilizeStage = Callable[..., str]
+# trim_silence(in_path, out_path, *, settings) -> (out_path|in_path, removedSec)
+#   (audio-stabilize group: ffmpeg silencedetect -> dead-air re-cut)
+SilenceTrimStage = Callable[..., tuple[str, float]]
 
 
 # -- default stage adapters (bind to the real sibling APIs) -----------------
@@ -237,6 +244,31 @@ def _lazy_reframe(in_path, out_path, aspect, *, settings=None) -> str:
     # ("verthor" | "claudeshorts"); "auto" (direct callers) re-resolves here.
     engine, _notice = _reframe.get_engine((settings or {}).get("reframeEngine", "auto"), settings or {})
     return engine.reframe(in_path, out_path, aspect)
+
+
+def _lazy_stabilize(in_path, out_path, *, settings=None, on_notice=None) -> str:
+    """Camera-shake stabilization pre-step (audio-stabilize group).
+
+    Delegates to ``features.stabilize.stabilize_clip``: runs the vidstab 2-pass
+    flow when libvidstab is present, else returns ``in_path`` unchanged AND emits
+    the typed unavailable notice through ``on_notice`` (the orchestrator surfaces
+    it via job.progress — the "do NOT silently skip" contract).
+    """
+    from . import stabilize as _stabilize
+
+    return _stabilize.stabilize_clip(in_path, out_path, settings=settings, on_notice=on_notice)
+
+
+def _lazy_trim_silence(in_path, out_path, *, settings=None) -> tuple[str, float]:
+    """Dead-air removal pre-step (audio-stabilize group).
+
+    Delegates to ``features.silencetrim.trim_clip``: detects silent spans via
+    ffmpeg silencedetect, re-cuts the keeps, and returns ``(path, removedSec)``.
+    Returns ``(in_path, 0.0)`` unchanged when there is no dead air to remove.
+    """
+    from . import silencetrim as _silencetrim
+
+    return _silencetrim.trim_clip(in_path, out_path, settings=settings)
 
 
 def _lazy_zoom(in_path, out_path, cues, *, source_start, duration_sec, settings=None) -> str:
@@ -449,6 +481,8 @@ class Stages:
     select_candidates: SelectStage = _lazy_select
     snap_candidates: SnapStage = _lazy_snap
     cut_clip: CutStage = _lazy_cut
+    trim_silence: SilenceTrimStage = _lazy_trim_silence
+    stabilize: StabilizeStage = _lazy_stabilize
     remove_fillers: RemoveFillersStage = _lazy_remove_fillers
     reframe: ReframeStage = _lazy_reframe
     apply_zoom: ZoomStage = _lazy_zoom
@@ -787,12 +821,24 @@ def _export_one(
     audio_track: dict[str, Any] | None = None,
     video_id: str = "",
     source_title: str = "",
+    on_notice: Callable[[dict[str, str]], None] | None = None,
 ) -> dict[str, Any]:
-    """Run CUT (-> REMOVE-FILLERS) -> REFRAME -> CAPTION -> EXPORT (-> MUX-AUDIO).
+    """Run CUT (-> SILENCE-TRIM -> STABILIZE -> REMOVE-FILLERS) -> REFRAME -> CAPTION -> EXPORT (-> MUX-AUDIO).
 
     Returns ``{"candidate", "path"[, "fillersRemoved", "fillerSeconds"]}`` (the
     §3 Project.clips shape + the P3-B per-clip stats when filler removal ran).
     Each stage writes its own intermediate so a failure is localized.
+
+    audio-stabilize group (after the CUT, before REFRAME):
+      - ``settings["silenceTrim"]``: remove dead air (ffmpeg silencedetect ->
+        keep-span re-cut). This CHANGES the clip timeline, so it is mutually
+        exclusive with REMOVE-FILLERS (which derives clip-local cues from the
+        ORIGINAL timings) — when both are set, silence-trim wins and de-fill is
+        skipped (avoids a cue desync).
+      - ``settings["stabilize"]``: camera-shake stabilization (vidstab 2-pass).
+        Warp-only — it does NOT change the timeline, so it always composes with
+        the other stages. A missing libvidstab passes the clip through and emits
+        the typed notice via ``on_notice`` (never a silent skip).
 
     P3-B (``settings["removeFillers"]`` truthy): AFTER the CUT (which re-bases the
     clip to t=0 via ``-ss source_start``) the clip's words/cues are taken on the
@@ -806,6 +852,9 @@ def _export_one(
 
     When ``audio_track`` is given (A2 ``audioTrackId``), the chosen track's
     [sourceStart, end) window is muxed onto the exported clip as a final stage.
+
+    ``on_notice`` (optional): a sink for typed stage notices (e.g. the stabilize
+    libvidstab-unavailable notice) the orchestrator routes to ``job.progress``.
     """
     # CUT — frame-accurate carve; persist sourceStart on the clip record (§3).
     source_start = float(candidate.get("sourceStart", candidate.get("start", 0.0)))
@@ -820,16 +869,49 @@ def _export_one(
     caption_cues: list[Cue] = _cues_for_clip(transcript, candidate)
     caption_source_start = source_start
     filler_stats: dict[str, Any] | None = None
+    silence_removed: float = 0.0
 
-    # REMOVE-FILLERS (P3-B) — only when the toggle is ON. Runs on the cut clip
-    # (clip-local t=0) and produces a de-filled clip + remapped clip-local cues.
-    if (settings or {}).get("removeFillers"):
+    # SILENCE-TRIM (audio-stabilize group) — dead-air removal, ON when the
+    # ``silenceTrim`` toggle is set. Runs on the cut clip (clip-local t=0). It
+    # CHANGES the clip's timeline, so it is mutually exclusive with REMOVE-FILLERS
+    # (whose clip-local cues are derived from the ORIGINAL timings); when both are
+    # set, silence-trim wins and de-fill is skipped below. The base caption path
+    # re-bases from the ORIGINAL source_start, which still excludes the removed
+    # dead air because the trim only drops sub-threshold silence (no spoken cue
+    # falls inside it — cues for those silent gaps don't exist).
+    silence_trim_on = bool((settings or {}).get("silenceTrim"))
+    if silence_trim_on:
+        trimmed_path = str(out_dir / f"{stem}.trimmed.mp4")
+        stage_clip, silence_removed = stages.trim_silence(cut_path, trimmed_path, settings=settings)
+
+    # STABILIZE (audio-stabilize group, the DIFFERENTIATOR) — camera-shake
+    # stabilization via ffmpeg vidstab 2-pass, ON when the ``stabilize`` toggle is
+    # set. It does NOT change the timeline (warp only), so captions stay in sync
+    # and it can run on whatever the trim produced. When libvidstab is missing the
+    # stage passes the clip through unchanged and surfaces a typed notice via the
+    # ``on_notice`` sink (the orchestrator routes it to job.progress) — never a
+    # silent skip.
+    if (settings or {}).get("stabilize"):
+        stabilized_path = str(out_dir / f"{stem}.stabilized.mp4")
+        stage_clip = stages.stabilize(
+            stage_clip,
+            stabilized_path,
+            settings=settings,
+            on_notice=on_notice,
+        )
+
+    # REMOVE-FILLERS (P3-B) — only when the toggle is ON AND silence-trim did not
+    # already alter the timeline (mutually exclusive — see the silence-trim note
+    # above). Runs on the STAGED clip (so a prior stabilize composes — stabilize
+    # is warp-only and preserves the clip-local timeline the de-fill words assume)
+    # and produces a de-filled clip + remapped clip-local cues.
+    if (settings or {}).get("removeFillers") and not silence_trim_on:
         lang = (transcript or {}).get("language")
         local_words = _clip_local_words(transcript, source_start, end)
         local_cues = _rebase_cues(caption_cues, source_start)
         defilled_path = str(out_dir / f"{stem}.defilled.mp4")
         stage_clip, caption_cues, filler_stats = stages.remove_fillers(
-            cut_path,
+            stage_clip,
             defilled_path,
             local_words,
             local_cues,
@@ -950,6 +1032,11 @@ def _export_one(
     if filler_stats is not None:
         item["fillersRemoved"] = int(filler_stats.get("fillersRemoved", 0) or 0)
         item["fillerSeconds"] = float(filler_stats.get("fillerSeconds", 0.0) or 0.0)
+    # audio-stabilize group: surface the per-clip dead-air-removed seconds when
+    # silence-trim actually cut something (absent when the toggle was off or there
+    # was nothing to trim — mirrors the optional P3-B filler stats shape).
+    if silence_removed > 0.0:
+        item["silenceRemovedSec"] = round(float(silence_removed), 3)
     return item
 
 
@@ -1021,6 +1108,19 @@ def run_export(
     dest = Path(out_dir)
     dest.mkdir(parents=True, exist_ok=True)
 
+    # audio-stabilize group: a per-export sink for typed stage notices (e.g. the
+    # stabilize libvidstab-unavailable notice). Surfaced via job.progress and
+    # de-duplicated so the same notice across N clips is announced once (the skip
+    # is REPORTED, never silently swallowed — the "do NOT silently skip" rule).
+    _seen_notices: set[str] = set()
+
+    def _emit_notice(notice: dict[str, str]) -> None:
+        key = str(notice.get("type") or notice.get("message") or "")
+        if key in _seen_notices:
+            return
+        _seen_notices.add(key)
+        ctx.progress(4, notice.get("message", "stabilize: notice"))
+
     items: list[dict[str, Any]] = []
     total = len(candidates)
     for i, candidate in enumerate(candidates):
@@ -1041,6 +1141,7 @@ def run_export(
             audio_track=audio_track,
             video_id=video_id,
             source_title=source_title,
+            on_notice=_emit_notice,
         )
         items.append(item)
 
@@ -1129,7 +1230,15 @@ class ShortMaker:
         #             ["autoZoom"]). Absent -> OFF.
         # Booleans flow exactly like the string overrides above, but through a
         # dedicated extraction (a string loop would coerce/skip a real bool).
-        for key in ("hookTitle", "removeFillers", "emphasis", "autoZoom"):
+        #   silenceTrim (default false) -> audio-stabilize group: dead-air removal
+        #             pre-step (ffmpeg silencedetect -> keep-span re-cut), run on
+        #             each cut clip before reframe; mutually exclusive with
+        #             removeFillers (silence-trim wins).
+        #   stabilize (default false) -> audio-stabilize group: camera-shake
+        #             stabilization pre-step (ffmpeg vidstab 2-pass), warp-only so
+        #             it composes with every other stage; a missing libvidstab is
+        #             reported via job.progress, never silently skipped.
+        for key in ("hookTitle", "removeFillers", "emphasis", "autoZoom", "silenceTrim", "stabilize"):
             value = params.get(key)
             if isinstance(value, bool):
                 settings[key] = value

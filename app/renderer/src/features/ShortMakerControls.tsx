@@ -244,6 +244,28 @@ export function ShortMakerControls({
             onChange={(e) => setControl('autoZoom', e.target.checked)}
           />
         </label>
+
+        {/* audio-stabilize group: dead-air removal (default OFF). */}
+        <label className="sm-field sm-toggle">
+          <span>Trim silence</span>
+          <input
+            aria-label="Trim silence"
+            type="checkbox"
+            checked={controls.silenceTrim}
+            onChange={(e) => setControl('silenceTrim', e.target.checked)}
+          />
+        </label>
+
+        {/* audio-stabilize group: camera-shake stabilization (vidstab, default OFF). */}
+        <label className="sm-field sm-toggle">
+          <span>Stabilize</span>
+          <input
+            aria-label="Stabilize"
+            type="checkbox"
+            checked={controls.stabilize}
+            onChange={(e) => setControl('stabilize', e.target.checked)}
+          />
+        </label>
       </div>
 
       {/* P4 §8c: platform presets — one tap sets aspect/maxSec/count. */}

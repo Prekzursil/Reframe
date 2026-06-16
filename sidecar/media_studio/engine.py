@@ -1,24 +1,35 @@
 """Engine facade — one stable, transport-agnostic import surface for features.
 
 The feature modules under ``media_studio/features/`` are the real implementations;
-this module is a thin *facade* that re-exports their stable entry points under
-short, namespaced handles so callers (other features, scripts, future RPC
-wiring) depend on ONE place instead of reaching into individual feature modules.
+this module is a thin *facade* that re-exports their stable entry points so callers
+(other features, scripts, future RPC/SDK wiring) depend on ONE place instead of
+reaching into individual feature modules. A refactor inside a feature module never
+breaks a caller as long as the facade handle is preserved.
 
-It is deliberately import-light: only pure-logic feature modules are imported at
-module load (no faster-whisper / scenedetect / provider), matching the
-``handlers.py`` discipline. Heavy features stay behind their own lazy seams.
+Two complementary surfaces live here, both purely wiring (no behavior):
 
-Each facade namespace is a small ``@dataclass(frozen=True)`` of callables bound to
-the underlying feature functions, exposed as a module-level singleton::
+1. **Namespaced facades** — frozen ``@dataclass`` singletons grouping a feature's
+   stable callables under a short handle::
 
-    from media_studio import engine
-    track = engine.subtitles.stack_bilingual(orig, translated)
-    path  = engine.nle.export(clips, "out.edl", fmt="edl", fps=30)
-    res   = engine.package.package(clip, "bundle.zip", meta=meta)
+       from media_studio import engine
+       track = engine.subtitles.stack_bilingual(orig, translated)
+       path  = engine.nle.export(clips, "out.edl", fmt="edl", fps=30)
+       res   = engine.package.package(clip, "bundle.zip", meta=meta)
 
-Adding a feature to the facade = add its module import + a frozen namespace +
-re-export. No behavior lives here; it is purely a wiring/discoverability layer.
+2. **Flat re-exports** — the "audio-stabilize" group's stable entry points,
+   re-exported as top-level names:
+
+   * **Stabilization** (camera-shake, ffmpeg vidstab 2-pass):
+       ``stabilize_clip`` / ``StabilizeEngine`` / ``stabilize_available``
+   * **A/V merge + auto-duck + EBU R128 loudnorm**:
+       ``build_audio_mix_argv`` / ``AudioMix`` / ``build_loudnorm_argv``
+   * **Silence-trim / dead-air removal**:
+       ``trim_silence`` / ``detect_silence_spans`` / ``keep_spans``
+
+It is deliberately import-light: the feature modules keep ffmpeg / faster-whisper /
+scenedetect / provider deps behind their own lazy seams, so importing this facade is
+side-effect-free. Adding a feature = add its import + (a namespace or flat re-export)
++ its ``__all__`` entry. No behavior lives here; it is purely a wiring layer.
 """
 
 from __future__ import annotations
@@ -29,6 +40,40 @@ from typing import TYPE_CHECKING
 from .features import nle_export as _nle_export
 from .features import package_export as _package_export
 from .features import subtitles as _subtitles
+from .features.audiomix import (
+    AudioMix,
+    AudioMixError,
+)
+from .features.audiomix import (
+    build_loudnorm_argv as build_loudnorm_argv,
+)
+from .features.audiomix import (
+    build_mix_argv as build_audio_mix_argv,
+)
+from .features.audiomix import (
+    build_mix_filter as build_audio_mix_filter,
+)
+from .features.silencetrim import (
+    SilenceTrim,
+    SilenceTrimError,
+    detect_silence_spans,
+    keep_spans,
+    parse_silence_spans,
+    removed_seconds,
+)
+from .features.silencetrim import (
+    trim_clip as trim_silence,
+)
+from .features.stabilize import (
+    StabilizeEngine,
+    StabilizeError,
+    StabilizeService,
+    make_unavailable_notice,
+    stabilize_clip,
+)
+from .features.stabilize import (
+    vidstab_available as stabilize_available,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Callable
@@ -86,4 +131,30 @@ nle = _NleFacade()
 package = _PackageFacade()
 
 
-__all__ = ["nle", "package", "subtitles"]
+__all__ = [
+    # --- namespaced facades (captions-export group) ---
+    "nle",
+    "package",
+    "subtitles",
+    # --- stabilization (audio-stabilize group) ---
+    "StabilizeEngine",
+    "StabilizeError",
+    "StabilizeService",
+    "make_unavailable_notice",
+    "stabilize_available",
+    "stabilize_clip",
+    # --- audio mix / loudnorm ---
+    "AudioMix",
+    "AudioMixError",
+    "build_audio_mix_argv",
+    "build_audio_mix_filter",
+    "build_loudnorm_argv",
+    # --- silence trim ---
+    "SilenceTrim",
+    "SilenceTrimError",
+    "detect_silence_spans",
+    "keep_spans",
+    "parse_silence_spans",
+    "removed_seconds",
+    "trim_silence",
+]

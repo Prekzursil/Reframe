@@ -998,6 +998,43 @@ def register_all(
 
     _cues.register(load_context=svc._shortmaker_context, register_fn=reg)
 
+    # audio-stabilize group (NET-NEW): the three transport-agnostic engine
+    # features each own their own register() (mirrors shorts/tracks_audio):
+    #   stabilize.run        camera-shake stabilization (ffmpeg vidstab 2-pass)
+    #   audiomix.merge       A/V merge + sidechain DUCK + EBU R128 loudnorm
+    #   audiomix.normalize   EBU R128 loudnorm only (no bed)
+    #   silence.trim         dead-air removal (ffmpeg silencedetect -> re-cut)
+    # All resolve media via the library + write derivatives under the exports
+    # root, reusing the same injectable ffmpeg seams the sibling features use.
+    from .features import audiomix as _audiomix  # local: import-light
+    from .features import silencetrim as _silencetrim  # local: import-light
+    from .features import stabilize as _stabilize  # local: import-light
+
+    _stabilize.register(
+        resolver=svc._resolve_video_path,
+        out_dir=svc.exports_dir / "stabilized",
+        settings_provider=svc.settings.get,
+        run=svc._ffmpeg_run,  # None -> the real drained ffmpeg.run
+        duration=svc._ffprobe_duration,
+        register_fn=reg,
+    )
+    _audiomix.register(
+        resolver=svc._resolve_video_path,
+        out_dir=svc.exports_dir / "audiomix",
+        settings_provider=svc.settings.get,
+        run=svc._ffmpeg_run,
+        duration=svc._ffprobe_duration,
+        register_fn=reg,
+    )
+    _silencetrim.register(
+        resolver=svc._resolve_video_path,
+        out_dir=svc.exports_dir / "trimmed",
+        settings_provider=svc.settings.get,
+        run=svc._ffmpeg_run,
+        duration=svc._ffprobe_duration,
+        register_fn=reg,
+    )
+
     # assets.* (A2): registered via the assets package's own register() so the
     # manager binds to the services' data dir + settings (U4).
     from .assets import rpc as _assets_rpc  # local import keeps handlers import-light
