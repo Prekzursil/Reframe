@@ -466,8 +466,45 @@ def _has_cut_source(
     return not _offline.is_offline(settings_dict)
 
 
+# --------------------------------------------------------------------------- #
+# asset registration (mirrors diarize / parakeet_asr / ctc_align)
+# --------------------------------------------------------------------------- #
+#: pinned TransNetV2 commit (SOTA manifest #4).
+ASSET_REVISION: str = "85cef72"
+ASSET_SIZE_MB: int = 40
+
+
+def register_scene_transnet_assets() -> None:
+    """Register the TransNetV2 PyTorch weights as an on-demand asset (idempotent).
+
+    MIT (commercial OK), ~40 MB, fp16 <1 GB. The asset name matches
+    :data:`ASSET_NAME` (and ``system_advisor.ComponentSpec``'s ``scene_transnet``
+    lookup key) so :func:`default_models_present` detects an already-cached
+    snapshot. Identical re-registration is a no-op (module re-import safe).
+    """
+    from ..assets import manifest  # noqa: PLC0415 - lazy: avoids an import cycle
+
+    manifest.register_asset(
+        manifest.AssetEntry(
+            name=ASSET_NAME,
+            kind="model",
+            size_mb=ASSET_SIZE_MB,
+            label="TransNetV2 (scene-cut detection, MIT)",
+            installer="hf",
+            hf_repo=HF_REPO,
+            hf_revision=ASSET_REVISION,
+        )
+    )
+
+
+# Register the asset at import (mirrors diarize.register_diarize_assets()).
+register_scene_transnet_assets()
+
+
 __all__ = [
     "ASSET_NAME",
+    "ASSET_REVISION",
+    "ASSET_SIZE_MB",
     "DEFAULT_MERGE_EPS",
     "DEFAULT_THRESHOLD",
     "HF_REPO",
@@ -480,5 +517,6 @@ __all__ = [
     "emit_scene_signals",
     "merge_with_pyscenedetect",
     "predictions_to_cuts",
+    "register_scene_transnet_assets",
     "sample_windows",
 ]

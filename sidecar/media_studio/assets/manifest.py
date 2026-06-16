@@ -231,4 +231,54 @@ def _register_day1() -> None:
     )
 
 
+# --------------------------------------------------------------------------- #
+# Phase-8 optional-signal entries (SOTA manifest #8/#9) — emotion + OCR.
+# These two components are surfaced by ``system_advisor`` (the "Models & System"
+# UI enumerates them) but no feature module owns them yet (they ship "if a WU adds
+# emotion/OCR"). Registered HERE so the asset manager + advisor can enumerate +
+# offer them now, PINNED per the manifest (A6 lesson 5). Backed by an owning
+# module later, these move to that module's ``register_*_assets()``.
+# --------------------------------------------------------------------------- #
+HSEMOTION_ASSET_NAME = "hsemotion-onnx"
+#: PINNED HSEmotion enet_b0_8_best_vgaf ONNX (av-savchenko/hsemotion-onnx).
+HSEMOTION_URL = (
+    "https://github.com/av-savchenko/hsemotion-onnx/raw/main/models/affectnet_emotions/onnx/enet_b0_8_best_vgaf.onnx"
+)
+HSEMOTION_DEST = "models/hsemotion-enet-b0-8.onnx"
+HSEMOTION_SIZE_MB = 20
+
+RAPIDOCR_ASSET_NAME = "rapidocr-onnx"
+#: PINNED RapidOCR PP-OCRv5 detection ONNX (RapidAI/RapidOCR release assets).
+RAPIDOCR_URL = "https://github.com/RapidAI/RapidOCR/releases/download/v1.4.4/ch_PP-OCRv4_det_infer.onnx"
+RAPIDOCR_DEST = "models/rapidocr-ppocrv5-det.onnx"
+RAPIDOCR_SIZE_MB = 20
+
+
+def _register_phase8_optional() -> None:
+    """Register the optional Phase-8 emotion + OCR signal models (idempotent)."""
+    register_asset(
+        AssetEntry(
+            name=HSEMOTION_ASSET_NAME,
+            kind="model",
+            size_mb=HSEMOTION_SIZE_MB,
+            dest=HSEMOTION_DEST,
+            label="HSEmotion enet_b0_8 (facial emotion, Apache-2.0)",
+            installer="download",
+            url=HSEMOTION_URL,
+        )
+    )
+    register_asset(
+        AssetEntry(
+            name=RAPIDOCR_ASSET_NAME,
+            kind="model",
+            size_mb=RAPIDOCR_SIZE_MB,
+            dest=RAPIDOCR_DEST,
+            label="RapidOCR PP-OCRv5 (on-screen text, Apache-2.0)",
+            installer="download",
+            url=RAPIDOCR_URL,
+        )
+    )
+
+
 _register_day1()
+_register_phase8_optional()

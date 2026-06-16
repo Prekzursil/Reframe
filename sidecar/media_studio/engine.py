@@ -45,13 +45,29 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from .features import audio_saliency as _audio_saliency
+from .features import caption_polish as _caption_polish
+from .features import ctc_align as _ctc_align
 from .features import diarize as _diarize
+from .features import diversity as _diversity
 from .features import health as _health
+from .features import motion as _motion
 from .features import nle_export as _nle_export
 from .features import offline as _offline
 from .features import package_export as _package_export
+from .features import parakeet_asr as _parakeet
+from .features import pyannote_backend as _pyannote
+from .features import quality_gate as _quality_gate
+from .features import ranker as _ranker
 from .features import recipes as _recipes
+from .features import saliency as _saliency
+from .features import scene_transnet as _scene_transnet
+from .features import scorer as _scorer
+from .features import select as _select
 from .features import subtitles as _subtitles
+from .features import system_advisor as _system_advisor
+from .features import transcribe as _transcribe
+from .features import vlm_backbone as _vlm_backbone
 from .features.audiomix import (
     AudioMix,
     AudioMixError,
@@ -99,6 +115,7 @@ class _SubtitlesFacade:
     """Stable handles onto ``features.subtitles`` (the bilingual+export surface)."""
 
     generate: Callable = _subtitles.generate
+    generate_polished: Callable = _subtitles.generate_polished
     edit: Callable = _subtitles.edit
     translate: Callable = _subtitles.translate
     stack_bilingual: Callable = _subtitles.stack_bilingual
@@ -176,6 +193,76 @@ greedy_cluster = _diarize.greedy_cluster
 cosine_similarity = _diarize.cosine_similarity
 speaker_label = _diarize.speaker_label
 DIARIZE_REQUIRED_ASSETS = _diarize.REQUIRED_ASSETS
+# Phase-8: the opt-in pyannote 3.1 diarization backend (gated HF weights).
+PyannoteDiarizer = _pyannote.PyannoteDiarizer
+select_diarize_backend = _pyannote.select_backend_factory
+selected_diarize_backend = _pyannote.selected_backend_name
+
+# --------------------------------------------------------------------------- #
+# ASR engine selection (Phase-8 WU7) — whisper (default) | parakeet
+# --------------------------------------------------------------------------- #
+transcribe_file = _transcribe.transcribe_file
+transcribe_with_engine = _transcribe.transcribe_with_engine
+selected_asr_engine = _transcribe.selected_asr_engine
+ASR_ENGINES = _transcribe.ASR_ENGINES
+parakeet_transcribe = _parakeet.transcribe_file
+ParakeetLoader = _parakeet.ParakeetLoader
+
+# --------------------------------------------------------------------------- #
+# word-timing alignment (Phase-8 WU6 — ctc-forced-aligner)
+# --------------------------------------------------------------------------- #
+align_words = _ctc_align.align_words
+
+# --------------------------------------------------------------------------- #
+# caption polish (Phase-8 WU9 — Netflix CPS/CPL + punct/casing/emphasis/profanity)
+# --------------------------------------------------------------------------- #
+polish_cues = _caption_polish.polish_cues
+CAPTION_MAX_CPS = _caption_polish.MAX_CPS
+CAPTION_MAX_CPL = _caption_polish.MAX_CPL
+
+# --------------------------------------------------------------------------- #
+# unified tri-modal scorer (Phase-8 WU5 — select.select_unified + scorer fusion)
+# --------------------------------------------------------------------------- #
+select_unified = _select.select_unified
+window_interest_curve = _scorer.window_interest_curve
+clip_signal_map = _scorer.clip_signal_map
+
+
+# --------------------------------------------------------------------------- #
+# Phase-8 signals namespace (the Wave-1 signal-compute + selection primitives)
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class _SignalsFacade:
+    """Stable handles onto the Wave-1 signal modules + the selection primitives.
+
+    Groups the per-modality ``compute_*`` entry points (motion / saliency / audio /
+    scene-cut / SigLIP-2 backbone), the optional DOVER quality gate, and the
+    Tier-0 diversity + learned-ranker primitives under one short handle so callers
+    consume them from the facade instead of reaching into each feature module.
+    """
+
+    compute_motion_signals: Callable = _motion.compute_motion_signals
+    compute_saliency_signals: Callable = _saliency.compute_saliency_signals
+    compute_audio_signals: Callable = _audio_saliency.compute_audio_signals
+    compute_scene_signals: Callable = _scene_transnet.compute_scene_signals
+    compute_backbone_signals: Callable = _vlm_backbone.compute_backbone_signals
+    compute_quality_scores: Callable = _quality_gate.compute_quality_scores
+    apply_quality_gate: Callable = _quality_gate.apply_quality_gate
+    dedupe_candidates: Callable = _diversity.dedupe_candidates
+    rank: Callable = _ranker.rank
+    train_ranker: Callable = _ranker.train_ranker
+
+
+#: Module-level singleton — the Phase-8 signal/selection facade surface.
+signals = _SignalsFacade()
+
+
+# --------------------------------------------------------------------------- #
+# system advisor (Phase-8 — capability/preset advisor behind system.advisor)
+# --------------------------------------------------------------------------- #
+advise_for_hardware = _system_advisor.advise_for_hardware
+HardwareProbe = _system_advisor.HardwareProbe
+AdvisorReport = _system_advisor.AdvisorReport
 
 
 __all__ = [
@@ -222,8 +309,33 @@ __all__ = [
     # --- diarization (system-advanced) ---
     "DIARIZE_REQUIRED_ASSETS",
     "Diarize",
+    "PyannoteDiarizer",
     "cosine_similarity",
     "diarize_transcript",
     "greedy_cluster",
+    "select_diarize_backend",
+    "selected_diarize_backend",
     "speaker_label",
+    # --- ASR engine selection (Phase-8 WU7) ---
+    "ASR_ENGINES",
+    "ParakeetLoader",
+    "parakeet_transcribe",
+    "selected_asr_engine",
+    "transcribe_file",
+    "transcribe_with_engine",
+    # --- word-timing alignment (Phase-8 WU6) ---
+    "align_words",
+    # --- caption polish (Phase-8 WU9) ---
+    "CAPTION_MAX_CPL",
+    "CAPTION_MAX_CPS",
+    "polish_cues",
+    # --- unified tri-modal scorer (Phase-8 WU5) ---
+    "clip_signal_map",
+    "select_unified",
+    "window_interest_curve",
+    # --- Phase-8 signal/selection facade + system advisor ---
+    "AdvisorReport",
+    "HardwareProbe",
+    "advise_for_hardware",
+    "signals",
 ]

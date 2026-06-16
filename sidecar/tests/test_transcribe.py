@@ -598,3 +598,92 @@ def test_register_cuda_dll_dirs_is_idempotent(monkeypatch, tmp_path):
     monkeypatch.setattr(transcribe.os, "add_dll_directory", lambda d: added.append(d), raising=False)
     transcribe._register_cuda_dll_dirs()
     assert added == []  # the registered flag short-circuits
+
+
+# --------------------------------------------------------------------------- #
+# ASR-engine selection (WU7 wiring): whisper (default) | parakeet
+# --------------------------------------------------------------------------- #
+def test_selected_asr_engine_defaults_to_whisper():
+    assert transcribe.selected_asr_engine(None) == transcribe.WHISPER_ENGINE
+    assert transcribe.selected_asr_engine({}) == transcribe.WHISPER_ENGINE
+    # unknown / non-str values fall back to the safe default
+    assert transcribe.selected_asr_engine({"asrEngine": "whisperx"}) == transcribe.WHISPER_ENGINE
+    assert transcribe.selected_asr_engine({"asrEngine": 1}) == transcribe.WHISPER_ENGINE
+
+
+def test_selected_asr_engine_picks_parakeet_case_insensitive():
+    assert transcribe.selected_asr_engine({"asrEngine": "parakeet"}) == transcribe.PARAKEET_ENGINE
+    assert transcribe.selected_asr_engine({"asrEngine": "  Parakeet "}) == transcribe.PARAKEET_ENGINE
+
+
+def test_transcribe_with_engine_default_uses_whisper():
+    loader = FakeLoader(_two_segment_model())
+    t = transcribe.transcribe_with_engine("/v.mp4", loader=loader, settings={})
+    assert t["language"] == "en"
+    assert len(t["segments"]) == 2
+    # the parakeet seam was never touched (whisper loader did the work)
+    assert loader.loads
+
+
+def test_transcribe_with_engine_parakeet_runner_selected():
+    loader = FakeLoader(_two_segment_model())
+    calls: list[dict[str, Any]] = []
+
+    def fake_parakeet(audio_path: str, **kwargs: Any):
+        calls.append({"audio": audio_path, **kwargs})
+        return {
+            "language": "ro",
+            "segments": [{"start": 0.0, "end": 1.0, "text": "salut", "words": []}],
+            "durationSec": 1.0,
+        }
+
+    t = transcribe.transcribe_with_engine(
+        "/v.mp4",
+        loader=loader,
+        settings={"asrEngine": "parakeet"},
+        language="ro",
+        duration=42.0,
+        parakeet_runner=fake_parakeet,
+    )
+    assert t["language"] == "ro"
+    assert t["segments"][0]["text"] == "salut"
+    # the whisper loader was NOT consulted (parakeet handled it)
+    assert loader.loads == []
+    # the duration was forwarded so parakeet can chunk
+    assert calls[0]["duration"] == 42.0
+    assert calls[0]["language"] == "ro"
+
+
+def test_transcribe_with_engine_parakeet_empty_falls_back_to_whisper():
+    loader = FakeLoader(_two_segment_model())
+
+    def empty_parakeet(audio_path: str, **kwargs: Any):
+        # parakeet degraded (offline + weights missing) -> empty transcript
+        return {"language": "", "segments": [], "durationSec": 0.0}
+
+    t = transcribe.transcribe_with_engine(
+        "/v.mp4",
+        loader=loader,
+        settings={"asrEngine": "parakeet"},
+        parakeet_runner=empty_parakeet,
+    )
+    # fell back to whisper -> non-empty transcript
+    assert len(t["segments"]) == 2
+    assert loader.loads, "whisper fallback should have loaded a model"
+
+
+def test_default_parakeet_runner_delegates_to_real_module(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    def fake_transcribe_file(audio_path: str, **kwargs: Any):
+        captured["audio"] = audio_path
+        captured.update(kwargs)
+        return {"language": "ro", "segments": [], "durationSec": 0.0}
+
+    from media_studio.features import parakeet_asr
+
+    monkeypatch.setattr(parakeet_asr, "transcribe_file", fake_transcribe_file)
+    out = transcribe._default_parakeet_runner("/clip.mp4", language="ro")
+    assert out["language"] == "ro"
+    assert captured["audio"] == "/clip.mp4"
+    assert captured["language"] == "ro"

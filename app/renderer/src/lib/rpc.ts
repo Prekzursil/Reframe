@@ -208,6 +208,61 @@ export interface HealthReport {
   engines: { name: string; description: string; available: boolean; path: string }[];
 }
 
+// ---- Phase-8 System Advisor ("Models & System" panel) --------------------
+//
+// Wire shapes for `system.advisor` / `system.probe` / `asr.engines`. Field
+// names are FROZEN, identical to the sidecar `_advisor_report_to_wire` /
+// `system_probe` / `asr_engines` payloads (camelCase on the wire already — no
+// snake_case shim needed). Verdict semantics: `ok` -> "Will run" (green),
+// `degraded` -> "Tight" (amber), `unavailable` -> "Won't run" (red).
+
+/** A three-state capability verdict shared by components and tiers. */
+export type AdvisorVerdict = 'ok' | 'degraded' | 'unavailable';
+
+/** One model/component's quality-vs-cost verdict for the panel. */
+export interface ComponentStatus {
+  name: string;
+  present: boolean;
+  verdict: AdvisorVerdict;
+  /** Resident VRAM @ infer in MB, or null for CPU/no-model floors. */
+  vramMb: number | null;
+  licenseCommercialOk: boolean;
+  /** Grounded tooltip copy (improves / why-ok / why-blocked) from the manifest. */
+  reason: string;
+}
+
+/** One tier's rolled-up verdict + the component names it bundles. */
+export interface TierStatus {
+  tier: number;
+  label: string;
+  verdict: AdvisorVerdict;
+  components: string[];
+}
+
+/** The full `system.advisor` report — a JSON tree the panel renders 1:1. */
+export interface AdvisorReport {
+  components: ComponentStatus[];
+  tiers: TierStatus[];
+  recommendedPreset: string;
+  vramBudgetMb: number;
+  notes: string[];
+}
+
+/** Probed hardware facts (`system.probe`). Any field null when undetectable. */
+export interface HardwareInfo {
+  vramMb: number | null;
+  ramMb: number | null;
+  cpuCount: number | null;
+  gpuPresent: boolean;
+}
+
+/** One selectable ASR engine row (`asr.engines`). */
+export interface AsrEngine {
+  id: string;
+  label: string;
+  installed: boolean;
+}
+
 /**
  * system-advanced saved pipeline recipe — field names FROZEN, identical to the
  * sidecar `recipes.normalize_recipe` shape. A `Step` names an existing RPC
@@ -574,9 +629,23 @@ export const client = {
 
   // ---- system-advanced group ----------------------------------------------
 
-  /** `system.health` — the "is my setup OK?" diagnostic (direct-return). */
+  /** `system.*` — health diagnostic + Phase-8 hardware/advisor probes (direct). */
   system: {
     health: (): Promise<HealthReport> => rpc('system.health'),
+    /** `system.probe` — detected VRAM / RAM / CPU / GPU-present (cheap probe). */
+    probe: (): Promise<HardwareInfo> => rpc('system.probe'),
+    /**
+     * `system.advisor {commercial?}` — per-model + per-tier quality-vs-cost
+     * verdicts + recommended preset + VRAM budget + grounded notes. When
+     * `commercial` is true, non-commercial-licensed models flip to unavailable.
+     */
+    advisor: (opts?: { commercial?: boolean }): Promise<AdvisorReport> =>
+      rpc('system.advisor', opts?.commercial === undefined ? {} : { commercial: opts.commercial }),
+  },
+
+  /** `asr.engines` — selectable ASR engines (whisper / parakeet) + installed. */
+  asr: {
+    engines: (): Promise<{ engines: AsrEngine[] }> => rpc('asr.engines'),
   },
 
   /** `recipes.*` — saved multi-step pipelines run in one shot. */

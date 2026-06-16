@@ -554,3 +554,301 @@ def test_select_non_numeric_duration_total_is_ignored():
     cands = select(transcript, "x", {"count": 1}, provider)
     assert len(cands) == 1
     assert MIN_CLIP_SEC <= cands[0]["durationSec"] <= MAX_CLIP_SEC
+
+
+# ===========================================================================
+# select_unified() — the Wave-2 tri-modal scorer (ADDITIVE; backward compatible)
+# ===========================================================================
+
+from media_studio.features.motion import Signal, SignalTrack  # noqa: E402
+from media_studio.features.quality_gate import QualityScore  # noqa: E402
+from media_studio.features.select import select_unified  # noqa: E402
+
+
+def _grid_track(channel: str, per_window: list[float], *, present: bool = True) -> SignalTrack:
+    """A SignalTrack with one 1-second window per value (the shared grid)."""
+    sigs = tuple(Signal(channel=channel, start=float(i), end=float(i + 1), value=v) for i, v in enumerate(per_window))
+    return SignalTrack(channel=channel, signals=sigs, present=present)
+
+
+class FakeRanker:
+    """A fake ``RankerBackend`` whose ``predict`` is a simple linear scorer.
+
+    Scores each feature row by the sum of its columns, so a clip with stronger
+    signals re-ranks above a weaker one — deterministic, no lightgbm.
+    """
+
+    def __init__(self) -> None:
+        self.fit_called = False
+
+    def fit(self, x, y, groups) -> None:  # noqa: ANN001 - test fake
+        self.fit_called = True
+
+    def predict(self, x):  # noqa: ANN001 - test fake
+        return [float(sum(row)) for row in x]
+
+
+class FakeVlmReranker:
+    """A fake ``VlmReranker`` that reverses the top-K (records the call)."""
+
+    def __init__(self) -> None:
+        self.calls: list[int] = []
+
+    def rerank_top_k(self, cands, *, top_k):  # noqa: ANN001 - test fake
+        self.calls.append(top_k)
+        k = min(int(top_k), len(cands))
+        top = list(reversed([dict(c) for c in cands[:k]]))
+        return top + [dict(c) for c in cands[k:]]
+
+
+def _tracks() -> dict[str, SignalTrack]:
+    """A small present visual+audio track set over a 300s grid (sparse)."""
+    return {
+        "motion": _grid_track("motion", [0.5] * 300),
+        "saliency": _grid_track("saliency", [0.7] * 300),
+    }
+
+
+# --- backward compat: transcript path delegates to the unchanged select() --
+
+
+def test_select_unified_transcript_path_matches_select_ordering(good_clips):
+    provider = FakeProvider([_clips_json(good_clips)])
+    cands = select_unified(_short_transcript(), "make shorts", {"count": 2}, provider)
+    assert len(cands) == 2
+    # Every candidate carries the new Wave-2 stamps additively.
+    for c in cands:
+        assert "signals" in c
+        assert "signalScore" in c
+        assert "rankerScore" in c
+        assert "viralityPct" in c  # _finalize still stamps the batch percentile
+
+
+def test_select_unified_blends_signals_onto_candidates(good_clips):
+    provider = FakeProvider([_clips_json(good_clips)])
+    cands = select_unified(_short_transcript(), "x", {"count": 2}, provider, tracks=_tracks(), duration_total=300.0)
+    # signalScore is a 0..1 fusion of legacy score + the present-weighted boost.
+    for c in cands:
+        assert 0.0 <= c["signalScore"] <= 1.0
+        # present tracks pooled into the per-clip signal map.
+        assert set(c["signals"]).issubset({"motion", "saliency"})
+
+
+# --- the silent-video / no-LLM path (WU5 acceptance) ----------------------
+
+
+def test_select_unified_silent_video_path_no_transcript():
+    # No transcript -> visual-only peak-pick of the fused interest curve.
+    tracks = {"motion": _grid_track("motion", [0.0] * 300)}
+    curve_tracks = dict(tracks)
+    # make a clear peak so a candidate is produced.
+    sigs = list(curve_tracks["motion"].signals)
+    sigs[40] = Signal(channel="motion", start=40.0, end=41.0, value=1.0)
+    curve_tracks["motion"] = SignalTrack(channel="motion", signals=tuple(sigs), present=True)
+    cands = select_unified(None, "x", {"count": 1}, None, tracks=curve_tracks, duration_total=300.0)
+    assert len(cands) == 1
+    assert cands[0]["why"] == "visual interest peak"
+    assert "rankerScore" in cands[0]
+
+
+def test_select_unified_no_provider_uses_visual_path():
+    # A transcript is present but provider is None -> still the visual-only path.
+    tracks = {"motion": _grid_track("motion", [0.6] * 300)}
+    cands = select_unified(_short_transcript(), "x", {"count": 1}, None, tracks=tracks, duration_total=300.0)
+    assert len(cands) == 1
+    assert cands[0]["why"] == "visual interest peak"
+
+
+def test_select_unified_empty_transcript_segments_uses_visual_path():
+    # An empty-segments transcript counts as "no transcript".
+    tracks = {"motion": _grid_track("motion", [0.6] * 300)}
+    cands = select_unified(
+        {"segments": []}, "x", {"count": 1}, FakeProvider(["{}"]), tracks=tracks, duration_total=300.0
+    )
+    assert len(cands) == 1
+    assert cands[0]["why"] == "visual interest peak"
+
+
+def test_select_unified_returns_empty_when_no_candidates():
+    # No transcript + no tracks -> empty curve -> no candidates.
+    assert select_unified(None, "x", {"count": 3}, None, tracks={}, duration_total=0.0) == []
+
+
+def test_select_unified_returns_empty_when_llm_unparseable():
+    provider = FakeProvider(["no json at all"])
+    cands = select_unified(_short_transcript(), "x", {"count": 3}, provider, duration_total=300.0)
+    assert cands == []
+
+
+# --- Tier-0: learned re-rank + diversity (always on, zero downloads) -------
+
+
+def test_select_unified_tier0_uses_fallback_ranker_without_backend(good_clips):
+    provider = FakeProvider([_clips_json(good_clips)])
+    cands = select_unified(_short_transcript(), "x", {"count": 2}, provider, tier=0)
+    # No ranker backend -> factor-average fallback still stamps rankerScore.
+    assert all("rankerScore" in c for c in cands)
+
+
+def test_select_unified_uses_injected_ranker_backend(good_clips):
+    provider = FakeProvider([_clips_json(good_clips)])
+    fake = FakeRanker()
+    cands = select_unified(
+        _short_transcript(), "x", {"count": 2}, provider, tracks=_tracks(), ranker=fake, duration_total=300.0
+    )
+    assert fake.fit_called is False  # rank() only predicts; training is upstream
+    assert all("rankerScore" in c for c in cands)
+
+
+def test_select_unified_diversity_uses_supplied_embeddings(good_clips):
+    import numpy as np
+
+    provider = FakeProvider([_clips_json(good_clips)])
+    embeds = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=float)
+    cands = select_unified(_short_transcript(), "x", {"count": 2}, provider, embeddings=embeds, duration_total=300.0)
+    assert len(cands) == 2
+
+
+def test_select_unified_dpp_diversity_method(good_clips):
+    provider = FakeProvider([_clips_json(good_clips)])
+    cands = select_unified(
+        _short_transcript(),
+        "x",
+        {"count": 2, "diversityMethod": "dpp"},
+        provider,
+        tracks=_tracks(),
+        duration_total=300.0,
+    )
+    assert len(cands) <= 2
+
+
+# --- Tier-1: quality gate (optional; no-op when scores absent) -------------
+
+
+def test_select_unified_quality_gate_demotes_when_scores_present(good_clips):
+    provider = FakeProvider([_clips_json(good_clips)])
+    # A poor quality score on the (originally) top clip demotes it.
+    scores = [QualityScore(technical=0.0, aesthetic=0.0, overall=0.0), QualityScore(0.9, 0.9, 0.9)]
+    cands = select_unified(
+        _short_transcript(),
+        "x",
+        {"count": 2},
+        provider,
+        quality_scores=scores,
+        duration_total=300.0,
+    )
+    assert all("qualityScore" in c for c in cands)
+
+
+def test_select_unified_quality_gate_noop_when_scores_none(good_clips):
+    provider = FakeProvider([_clips_json(good_clips)])
+    cands = select_unified(_short_transcript(), "x", {"count": 2}, provider, quality_scores=None)
+    # No quality scores -> gate is a no-op -> no qualityScore stamped.
+    assert all("qualityScore" not in c for c in cands)
+
+
+# --- Tier-2: VLM re-rank (opt-in; off by default) -------------------------
+
+
+def test_select_unified_tier2_invokes_vlm_reranker(good_clips):
+    provider = FakeProvider([_clips_json(good_clips)])
+    fake = FakeVlmReranker()
+    select_unified(
+        _short_transcript(),
+        "x",
+        {"count": 2, "smolvlmTopK": 2},
+        provider,
+        vlm_reranker=fake,
+        tier=2,
+        duration_total=300.0,
+    )
+    assert fake.calls == [2]  # top_k read from settings
+
+
+def test_select_unified_tier1_skips_vlm_even_if_supplied(good_clips):
+    provider = FakeProvider([_clips_json(good_clips)])
+    fake = FakeVlmReranker()
+    select_unified(_short_transcript(), "x", {"count": 2}, provider, vlm_reranker=fake, tier=1)
+    assert fake.calls == []  # tier < 2 -> step 6 skipped
+
+
+def test_select_unified_tier2_no_reranker_is_noop(good_clips):
+    provider = FakeProvider([_clips_json(good_clips)])
+    cands = select_unified(_short_transcript(), "x", {"count": 2}, provider, vlm_reranker=None, tier=2)
+    assert len(cands) == 2
+
+
+# --- settings resolvers ----------------------------------------------------
+
+
+def test_select_unified_custom_alpha_changes_signal_score(good_clips):
+    provider = FakeProvider([_clips_json(good_clips)])
+    # alpha 0 -> signalScore is pure legacy score (95/100 = 0.95 for the top clip).
+    cands = select_unified(
+        _short_transcript(), "x", {"count": 2, "scorerAlpha": 0.0}, provider, tracks=_tracks(), duration_total=300.0
+    )
+    top = max(cands, key=lambda c: c["score"])
+    assert top["signalScore"] == pytest.approx(top["score"] / 100.0)
+
+
+def test_select_unified_invalid_alpha_falls_back_to_default(good_clips):
+    provider = FakeProvider([_clips_json(good_clips)])
+    cands = select_unified(
+        _short_transcript(), "x", {"count": 1, "scorerAlpha": "oops"}, provider, tracks=_tracks(), duration_total=300.0
+    )
+    assert 0.0 <= cands[0]["signalScore"] <= 1.0
+
+
+def test_select_unified_invalid_top_k_falls_back_to_default(good_clips):
+    provider = FakeProvider([_clips_json(good_clips)])
+    fake = FakeVlmReranker()
+    select_unified(
+        _short_transcript(),
+        "x",
+        {"count": 2, "smolvlmTopK": "nope"},
+        provider,
+        vlm_reranker=fake,
+        tier=2,
+    )
+    assert fake.calls == [10]  # invalid setting -> default top_k 10 passed through
+
+
+def test_select_unified_zero_top_k_falls_back_to_default(good_clips):
+    provider = FakeProvider([_clips_json(good_clips)])
+    fake = FakeVlmReranker()
+    select_unified(
+        _short_transcript(),
+        "x",
+        {"count": 2, "smolvlmTopK": 0},
+        provider,
+        vlm_reranker=fake,
+        tier=2,
+    )
+    assert fake.calls == [10]  # 0 -> default top_k 10 passed through
+
+
+def test_select_unified_resolves_duration_from_transcript_when_arg_omitted(good_clips):
+    # duration_total omitted -> falls back to transcript.durationSec (300s here).
+    provider = FakeProvider([_clips_json(good_clips)])
+    cands = select_unified(_short_transcript(), "x", {"count": 2}, provider)
+    assert all(c["end"] <= 300.0 for c in cands)
+
+
+def test_select_unified_non_mapping_controls_uses_defaults(good_clips):
+    provider = FakeProvider([_clips_json(good_clips)])
+    # controls=None -> default count 5, default settings (mmr, alpha 0.5).
+    cands = select_unified(_short_transcript(), "x", None, provider, tracks=_tracks(), duration_total=300.0)
+    assert len(cands) == 2  # only 2 clips returned by the fake provider
+
+
+def test_select_unified_non_numeric_transcript_duration_leaves_total_none(good_clips):
+    # duration_total omitted AND transcript.durationSec is non-numeric -> no source
+    # cap is resolved (total stays None), and selection still produces candidates.
+    transcript = {
+        "language": "en",
+        "durationSec": "not-a-number",
+        "segments": [{"start": 0.0, "end": 30.0, "text": "Opening hook line."}],
+    }
+    provider = FakeProvider([_clips_json(good_clips)])
+    cands = select_unified(transcript, "x", {"count": 2}, provider)
+    assert len(cands) == 2

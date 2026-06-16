@@ -26,7 +26,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from . import library as _library
 from . import protocol
@@ -87,6 +87,8 @@ class Services:
         silence_run: Callable[..., Any] | None = None,
         scene_detector: Callable[[str], Any] | None = None,
         provider: Any | None = None,
+        hardware_probe: Any | None = None,
+        phase8_runner: Callable[..., dict[str, Any]] | None = None,
     ) -> None:
         base = Path(data_dir) if data_dir is not None else default_config_dir()
         self.data_dir = base
@@ -103,6 +105,11 @@ class Services:
         self._silence_run = silence_run
         self._scene_detector = scene_detector
         self._provider = provider
+        # Phase-8 seams: a HardwareProbe (VRAM/RAM/CPU) for system.probe/advisor and
+        # a signal-compute runner for phase8.signals/select. Defaults are the real
+        # (heavy) impls, resolved lazily; tests inject fakes so no GPU / no torch.
+        self._hardware_probe = hardware_probe
+        self._phase8_runner = phase8_runner
 
         # T3: the shared llama.cpp ModelRunner (built lazily; model-identity-aware,
         # so the tiered translator can swap MT GGUFs on the one server lane).
@@ -245,7 +252,14 @@ class Services:
         transcript = project.data.get("transcript")
         if not transcript:
             raise _invalid(f"video {video_id} has no transcript yet (run transcribe.start first)")
-        track = _subtitles.generate(transcript)
+        # WU9 wiring: settings['captionPolish'] runs the Netflix CPS/CPL + punct/
+        # casing/emphasis/profanity polish over the cues (degrade-safe — model
+        # stages skip when their backends are absent). Off -> the plain generate.
+        settings = self.settings.get()
+        if settings.get("captionPolish"):
+            track = _subtitles.generate_polished(transcript, settings=settings)
+        else:
+            track = _subtitles.generate(transcript)
         _tracks.add_track(project.data, track)
         project.save()
         return {"track": track}
@@ -537,15 +551,22 @@ class Services:
         if not audio_path:
             raise _invalid(f"unknown video: {video_id}")
         loader = self._whisper_loader or _transcribe.FasterWhisperLoader()
+        # WU7 wiring: settings['asrEngine'] picks whisper (default) or parakeet;
+        # the duration probe lets parakeet chunk the audio (the hard 6 GB rule).
+        settings = self.settings.get()
+        probe = self._ffprobe_duration or _self_ffprobe()
 
         def job_body(job_ctx: Any) -> dict[str, Any]:
-            transcript = _transcribe.transcribe_file(
+            transcript = _transcribe.transcribe_with_engine(
                 audio_path,
                 loader=loader,
+                settings=settings,
                 language=language,
+                duration_probe=probe,
                 on_progress=lambda pct, msg: job_ctx.progress(pct, msg),
                 should_cancel=lambda: job_ctx.cancelled,
             )
+            transcript = self._maybe_align_words(transcript, audio_path, settings)
             if not job_ctx.cancelled:
                 # Persist the transcript onto the project + flip the library flag.
                 project = self._load_or_create_project(video_id)
@@ -559,6 +580,246 @@ class Services:
 
         job = ctx.jobs.start(job_body)
         return {"jobId": job.id}
+
+    def _diarize_backend_factory(self, settings: dict[str, Any]) -> Any:
+        """Phase-8: build the diarizer backend selected by settings['diarizeBackend'].
+
+        Delegates to ``pyannote_backend.select_backend_factory`` closed over the
+        SpeechBrain default factory: an unknown value keeps the safe speechbrain
+        default; ``"pyannote"`` validates the env HF token eagerly (typed refusal,
+        no deep 401) before any heavy import.
+        """
+        from .features import diarize as _diarize  # local: import-light
+        from .features import pyannote_backend as _pyannote  # local: import-light
+
+        return _pyannote.select_backend_factory(
+            settings,
+            speechbrain_factory=_diarize._default_backend_factory,
+        )
+
+    def _diarize_models_present(self, settings: dict[str, Any]) -> bool:
+        """Phase-8: probe the installed-state of whichever diarize backend is selected.
+
+        Pyannote checks its two gated repos; speechbrain checks the VAD + ECAPA
+        assets. Drives the offline gate so a missing-model download is refused for
+        the right backend.
+        """
+        from .features import diarize as _diarize  # local: import-light
+        from .features import pyannote_backend as _pyannote  # local: import-light
+
+        if _pyannote.selected_backend_name(settings) == _pyannote.PYANNOTE_BACKEND:
+            return _pyannote.default_models_present(settings)
+        return _diarize.default_models_present(settings)
+
+    def _maybe_align_words(
+        self,
+        transcript: dict[str, Any],
+        audio_path: str,
+        settings: dict[str, Any],
+    ) -> dict[str, Any]:
+        """WU6 wiring: refine word timings via ctc-forced-aligner when karaoke is on.
+
+        Runs the ctc-forced-aligner 2nd pass on the freshly produced transcript
+        when ``settings['karaoke']`` is truthy, giving karaoke-grade per-word
+        boundaries the caption builder consumes. ``ctc_align.align_words`` is
+        degrade-safe (returns the input unchanged when the model is unavailable
+        offline or any backend step fails), so this never crashes the transcribe
+        job. No-op (input returned unchanged) when karaoke is off.
+        """
+        if not settings.get("karaoke"):
+            return transcript
+        from .features import ctc_align as _ctc_align  # local: import-light seam
+
+        return _ctc_align.align_words(transcript, audio_path, settings=settings)
+
+    # ===================================================================== #
+    # system.* + phase8.* (Phase-8 moment-finding tier controls)
+    # ===================================================================== #
+    def system_probe(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``system.probe()`` -> ``{vramMb, ramMb, cpuCount, gpuPresent}``. Direct-return.
+
+        Probes the host hardware (GPU VRAM / RAM / CPU count) via the injectable
+        :class:`~media_studio.features.system_advisor.HardwareProbe` seam. Every
+        probe is fail-open (a missing dep degrades to ``None``), so this never
+        raises. The default seam lazily tries pynvml -> nvidia-smi -> torch.cuda
+        for VRAM and psutil -> os for RAM; tests inject a fake probe.
+        """
+        probe = self._hardware_probe or self._default_hardware_probe()
+        hw = probe.detect()
+        return {
+            "vramMb": hw.vram_mb,
+            "ramMb": hw.ram_mb,
+            "cpuCount": hw.cpu_count,
+            "gpuPresent": hw.gpu_present,
+        }
+
+    def system_advisor(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``system.advisor({commercial?})`` -> AdvisorReport JSON. Direct-return.
+
+        The "Models & System" panel brain: probes hardware + dependency
+        availability, checks which model weights are already installed (the asset
+        manager), and returns each component's quality-vs-cost verdict + the rolled
+        -up runnable tiers + the recommended preset. Honors Offline mode (a missing
+        weight that would need a download counts as unavailable). Pure decision
+        logic; nothing heavy is imported.
+        """
+        from .features import system_advisor as _sa  # local: import-light
+
+        settings = self.settings.get()
+        commercial = bool(params.get("commercial", settings.get("commercial")))
+        probe = self._hardware_probe or self._default_hardware_probe()
+        report = _sa.advise_for_hardware(
+            probe=probe,
+            commercial=commercial,
+            models_present=self._models_present_map(settings),
+            offline=_offline.is_offline(settings),
+        )
+        return _advisor_report_to_wire(report)
+
+    def asr_engines(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``asr.engines()`` -> ``{engines:[{id, label, installed}]}``. Direct-return.
+
+        Lists the selectable ASR engines (whisper default / parakeet opt-in) with
+        an installed flag per engine (drives the ASR picker UI). Whisper is treated
+        as always available (the always-installed default); parakeet's installed
+        flag reflects whether its weights are cached.
+        """
+        settings = self.settings.get()
+        installed = self._models_present_map(settings)
+        return {
+            "engines": [
+                {"id": "whisper", "label": "Whisper large-v3-turbo", "installed": True},
+                {
+                    "id": "parakeet",
+                    "label": "Parakeet-TDT-0.6b-v3 (multilingual)",
+                    "installed": bool(installed.get("parakeet", False)),
+                },
+            ]
+        }
+
+    def phase8_signals(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``phase8.signals({videoId, tier?})`` -> ``{jobId}``. Job-based.
+
+        Runs the enabled Wave-1 signal modules at the chosen tier over the video's
+        media and returns a per-channel summary + a present map. Heavy (loads ML
+        models), so it runs on ``ctx.jobs`` and the heavy compute lives behind the
+        injectable :func:`phase8_runner` seam (tests inject a fake that returns
+        canned tracks). ``job.done.result`` is ``{tracks, present}``.
+        """
+        if ctx.jobs is None:
+            raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+        video_id = _require_str(params, "videoId")
+        path = self._resolve_video_path(video_id)
+        if not path:
+            raise _invalid(f"unknown video: {video_id}")
+        settings = self.settings.get()
+        tier = _coerce_tier(params.get("tier"), settings)
+        runner = self._phase8_runner or self._default_phase8_runner()
+        probe = self._ffprobe_duration or _self_ffprobe()
+
+        def job_body(job_ctx: Any) -> dict[str, Any]:
+            tracks = runner(
+                path,
+                tier=tier,
+                settings=settings,
+                duration_probe=probe,
+                on_progress=lambda pct, msg: job_ctx.progress(pct, msg),
+                should_cancel=lambda: job_ctx.cancelled,
+            )
+            return _signals_summary(tracks)
+
+        job = ctx.jobs.start(job_body)
+        return {"jobId": job.id}
+
+    def phase8_select(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``phase8.select({videoId, prompt?, controls?, tier?})`` -> ``{jobId}``. Job-based.
+
+        The unified tri-modal selector: computes the Wave-1 signal tracks (via the
+        phase8 runner seam), then calls :func:`select.select_unified` with those
+        tracks + the persisted transcript + the chosen tier. Caches the resulting
+        candidates server-side (the same "rank@sourceStart" cache shortmaker.export
+        consults) and returns ``{candidates}`` on done. Coexists with the legacy
+        transcript-only ``shortmaker.select``.
+        """
+        if ctx.jobs is None:
+            raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+        video_id = _require_str(params, "videoId")
+        path = self._resolve_video_path(video_id)
+        if not path:
+            raise _invalid(f"unknown video: {video_id}")
+        settings = self.settings.get()
+        tier = _coerce_tier(params.get("tier"), settings)
+        prompt = str(params.get("prompt") or "")
+        controls = params.get("controls") or {}
+        transcript = self._load_or_create_project(video_id).data.get("transcript")
+        provider = self._provider
+        runner = self._phase8_runner or self._default_phase8_runner()
+        probe = self._ffprobe_duration or _self_ffprobe()
+
+        def job_body(job_ctx: Any) -> dict[str, Any]:
+            from .features import select as _select  # local: import-light
+
+            tracks = runner(
+                path,
+                tier=tier,
+                settings=settings,
+                duration_probe=probe,
+                on_progress=lambda pct, msg: job_ctx.progress(pct, msg),
+                should_cancel=lambda: job_ctx.cancelled,
+            )
+            candidates = _select.select_unified(
+                transcript,
+                prompt,
+                cast("Any", controls),
+                provider,
+                tracks=tracks,
+                tier=tier,
+            )
+            resolved = cast("list[Candidate]", list(candidates))
+            self._cache_candidates(video_id, resolved)
+            return {"candidates": resolved}
+
+        job = ctx.jobs.start(job_body)
+        return {"jobId": job.id}
+
+    def _models_present_map(self, settings: dict[str, Any]) -> dict[str, bool]:
+        """Map each model-backed advisor component -> is its weight installed.
+
+        Probes the asset manager for each Phase-8 component's pinned asset so the
+        advisor (and the ASR picker) can report installed-state + degrade an
+        offline-missing model. Components with no registered asset are omitted
+        (the advisor then treats them as not-installed). Fail-open: a probe error
+        for one component marks it absent, never crashes the report.
+        """
+        from .assets import manifest as _manifest  # local: import-light
+        from .assets.manager import AssetManager  # local: import-light
+
+        mgr = AssetManager(root=self.data_dir, settings_provider=lambda: settings)
+        present: dict[str, bool] = {}
+        for component, asset_name in _COMPONENT_ASSETS.items():
+            entry = _manifest.get_asset(asset_name)
+            if entry is None:
+                continue
+            try:
+                present[component] = mgr.installed_path(entry) is not None
+            except Exception:  # noqa: BLE001 - one bad probe must not sink the report
+                present[component] = False
+        return present
+
+    def _default_hardware_probe(self) -> Any:  # pragma: no cover - lazy heavy seam (pynvml/torch); tests inject a fake
+        """Build the real :class:`HardwareProbe` (lazy import; runtime only)."""
+        from .features import system_advisor as _sa  # noqa: PLC0415 - lazy
+
+        return _sa.HardwareProbe()
+
+    def _default_phase8_runner(self) -> Callable[..., dict[str, Any]]:
+        """Resolve the real Wave-1 signal-compute runner (lazy; runtime only).
+
+        Returns the module-level :func:`_run_phase8_signals` which loads + runs the
+        heavy Wave-1 signal modules. Kept behind a method so tests can inject a fake
+        ``phase8_runner`` instead and never touch torch / transformers / cv2.
+        """
+        return _run_phase8_signals
 
     # ===================================================================== #
     # shortmaker.* (both jobs — via ShortMaker with selection caching)
@@ -872,6 +1133,137 @@ def _js_number(value: Any) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Phase-8 wiring helpers (pure; the heavy runner stays pragma-excluded)
+# --------------------------------------------------------------------------- #
+#: advisor component name -> its registered manifest asset name (the installed
+#: -state probe key). Components with no own asset (motion/diversity/ranker are
+#: zero-download floors) are absent; ``aesthetic`` shares the SigLIP-2 backbone.
+_COMPONENT_ASSETS: dict[str, str] = {
+    "saliency": "vinet-s-saliency",
+    "audio_saliency": "panns-cnn14",
+    "scene_transnet": "transnetv2-pytorch",
+    "vlm_backbone": "siglip2-so400m",
+    "aesthetic": "siglip2-so400m",
+    "quality_gate": "dover-mobile-quality",
+    "emotion": "hsemotion-onnx",
+    "ocr": "rapidocr-onnx",
+    "parakeet": "parakeet-tdt-0.6b-v3",
+    "ctc_aligner": "ctc-forced-aligner-mms",
+    "pyannote": "pyannote-speaker-diarization-31",
+    "smolvlm2": "smolvlm2-2.2b",
+}
+
+#: settings key picking the Phase-8 moment-finding tier (0/1/2).
+PHASE8_TIER_KEY = "phase8Tier"
+
+
+def _coerce_tier(value: Any, settings: dict[str, Any]) -> int:
+    """Resolve the Phase-8 tier: explicit ``value`` wins, else settings, else 1.
+
+    Clamped to 0..2 (the three runnable presets). Any non-integer / out-of-range
+    input falls back to the Tier-1 default so a typo never breaks a select.
+    """
+    raw = value if value is not None else settings.get(PHASE8_TIER_KEY, 1)
+    try:
+        tier = int(raw)
+    except (TypeError, ValueError):
+        return 1
+    return min(2, max(0, tier))
+
+
+def _signals_summary(tracks: dict[str, Any]) -> dict[str, Any]:
+    """Summarize computed signal tracks -> ``{tracks:{ch:count}, present:{ch:bool}}``.
+
+    A JSON-safe digest of the per-channel :class:`SignalTrack` map (the heavy
+    runner's output): per-channel signal count + present flag. Keeps the wire
+    payload small (the raw signals stay server-side for the select path).
+    """
+    counts: dict[str, int] = {}
+    present: dict[str, bool] = {}
+    for channel, track in tracks.items():
+        counts[channel] = len(getattr(track, "signals", ()) or ())
+        present[channel] = bool(getattr(track, "present", False))
+    return {"tracks": counts, "present": present}
+
+
+def _advisor_report_to_wire(report: Any) -> dict[str, Any]:
+    """Convert an :class:`AdvisorReport` frozen tree to the camelCase wire dict.
+
+    Mirrors the renderer's ``AdvisorReport`` TS type (components/tiers/
+    recommendedPreset/vramBudgetMb/notes), so the panel maps it 1:1 without a
+    snake_case shim.
+    """
+    return {
+        "components": [
+            {
+                "name": c.name,
+                "present": c.present,
+                "verdict": c.verdict,
+                "vramMb": c.vram_mb,
+                "licenseCommercialOk": c.license_commercial_ok,
+                "reason": c.reason,
+            }
+            for c in report.components
+        ],
+        "tiers": [
+            {"tier": t.tier, "label": t.label, "verdict": t.verdict, "components": list(t.components)}
+            for t in report.tiers
+        ],
+        "recommendedPreset": report.recommended_preset,
+        "vramBudgetMb": report.vram_budget_mb,
+        "notes": list(report.notes),
+    }
+
+
+def _run_phase8_signals(  # pragma: no cover - heavy Wave-1 signal compute (torch/cv2/transformers); tests inject a fake runner
+    media_path: str,
+    *,
+    tier: int,
+    settings: dict[str, Any],
+    duration_probe: Callable[[str], float],
+    on_progress: Callable[[float, str], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+) -> dict[str, Any]:
+    """Run the enabled Wave-1 signal modules for ``media_path`` at ``tier``.
+
+    The real (heavy) signal-compute path: motion always (Tier-0 floor), plus the
+    Tier-1 visual/audio model tracks. Each module degrades to ``present=False``
+    when its weights are missing offline (the §-signal rule), so this returns a
+    partial map on any machine. Excluded from coverage — it imports the heavy ML
+    backends; the pure shaping (:func:`_signals_summary`) and the select wiring are
+    covered with an injected fake runner.
+    """
+    from .features import (  # noqa: PLC0415 - lazy heavy seam
+        audio_saliency as _audio_saliency,
+    )
+    from .features import (
+        motion as _motion,
+    )
+
+    duration = duration_probe(media_path)
+    tracks: dict[str, Any] = {}
+    # motion / saliency / scene_transnet each return a SINGLE SignalTrack (keyed by
+    # its ``.channel``); audio_saliency / vlm_backbone return a dict[channel,track].
+    motion_track = _motion.compute_motion_signals(media_path, duration, settings=settings)
+    tracks[motion_track.channel] = motion_track
+    if tier >= 1:
+        from .features import saliency as _saliency  # noqa: PLC0415
+        from .features import scene_transnet as _scene_transnet  # noqa: PLC0415
+        from .features import vlm_backbone as _vlm_backbone  # noqa: PLC0415
+
+        tracks.update(_audio_saliency.compute_audio_signals(media_path, duration, settings=settings))
+        sal = _saliency.compute_saliency_signals(media_path, duration, settings=settings)
+        tracks[sal.channel] = sal
+        scene = _scene_transnet.compute_scene_signals(media_path, duration, settings=settings)
+        tracks[scene.channel] = scene
+        tracks.update(_vlm_backbone.compute_backbone_signals(media_path, duration, settings=settings))
+    if on_progress is not None:
+        on_progress(100.0, "signals done")
+    _ = should_cancel
+    return tracks
+
+
+# --------------------------------------------------------------------------- #
 # registration
 # --------------------------------------------------------------------------- #
 def register_all(
@@ -919,6 +1311,15 @@ def register_all(
 
     reg("shortmaker.select", svc.shortmaker_select)
     reg("shortmaker.export", svc.shortmaker_export)
+
+    # Phase-8 moment-finding: system probe/advisor + ASR-engine list + the unified
+    # tri-modal signals/select. system.* + asr.engines are direct (cheap probes);
+    # phase8.* are long jobs (load heavy models behind the phase8 runner seam).
+    reg("system.probe", svc.system_probe)
+    reg("system.advisor", svc.system_advisor)
+    reg("asr.engines", svc.asr_engines)
+    reg("phase8.signals", svc.phase8_signals)
+    reg("phase8.select", svc.phase8_select)
 
     # captions-export: EDL/CSV NLE timeline export + ZIP package-for-upload.
     reg("nle.export", svc.nle_export)
@@ -1068,11 +1469,20 @@ def register_all(
 
     # diarize.start (feature 4): token-free speaker labelling. Reuses the same
     # project load/save helpers tracks_audio uses, plus the offline-gated assets.
+    #
+    # Phase-8 wiring: settings['diarizeBackend'] selects the SpeechBrain default
+    # OR the opt-in pyannote 3.1 backend (gated HF weights + env HF token). The
+    # selector validates the token eagerly (typed refusal, no deep 401) BEFORE any
+    # heavy import; an unknown value keeps the safe speechbrain default. The
+    # offline-gate models_present likewise checks whichever backend is selected.
+    # Both seams are bound Services methods (testable in isolation).
     _diarize.register(
         resolver=svc._resolve_video_path,
         load_project=_load_project_data,
         save_project=_save_project_data,
         settings_provider=svc.settings.get,
+        backend_factory=svc._diarize_backend_factory,
+        models_present=svc._diarize_models_present,
         register_fn=reg,
     )
 
@@ -1091,7 +1501,24 @@ def register_all(
     # RemotionCaptionEngine/STYLES), T5 (llama-server tool builds + the
     # resolve_tool() chains).
     from . import tools_resolver  # noqa: F401
-    from .features import caption_remotion  # noqa: F401
+
+    # Phase-8 model modules — imported for their asset-registration side effects
+    # (each registers its on-demand AssetEntry at import, mirroring diarize /
+    # tools_resolver). No new RPC methods: parakeet plugs into transcribe via the
+    # ASR-engine seam, ctc_align into the transcribe karaoke tail, caption_polish
+    # into subtitles.generate, pyannote into diarize's backend selector (above).
+    from .features import (
+        audio_saliency,  # noqa: F401
+        caption_polish,  # noqa: F401
+        caption_remotion,  # noqa: F401
+        ctc_align,  # noqa: F401
+        parakeet_asr,  # noqa: F401
+        quality_gate,  # noqa: F401
+        saliency,  # noqa: F401
+        scene_transnet,  # noqa: F401
+        smolvlm2,  # noqa: F401
+        vlm_backbone,  # noqa: F401
+    )
     from .models import translation as _translation_assets  # noqa: F401
 
     # job.list / job.retry (U5) are protocol.py built-ins — no wiring needed.

@@ -365,8 +365,13 @@ def test_compute_default_settings_none() -> None:
 # --------------------------------------------------------------------------- #
 # default_models_present (pure asset-manager check, no heavy import)
 # --------------------------------------------------------------------------- #
-def test_default_models_present_unregistered_asset_is_false() -> None:
-    # ASSET_NAME is not registered in the manifest by default -> False.
+def test_default_models_present_unregistered_asset_is_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    # When the manifest has no entry for ASSET_NAME, default_models_present is
+    # False (the entry-is-None degrade arc). The module now registers its asset at
+    # import (Wave-3 wiring), so force get_asset -> None to exercise this branch.
+    from media_studio.assets import manifest
+
+    monkeypatch.setattr(manifest, "get_asset", lambda _name: None)
     assert saliency.default_models_present({}) is False
 
 

@@ -459,9 +459,43 @@ def compute_backbone_signals(
     return tracks
 
 
+# --------------------------------------------------------------------------- #
+# asset registration (mirrors diarize / parakeet_asr / ctc_align)
+# --------------------------------------------------------------------------- #
+BACKBONE_SIZE_MB = 4540
+
+
+def register_backbone_assets() -> None:
+    """Register the SigLIP-2 SoViT-400M backbone as an on-demand asset (idempotent).
+
+    Apache-2.0 (commercial OK), ~4.54 GB on disk / ~2.3 GB fp16 resident — the
+    shared backbone serving aesthetic + zero-shot + novelty in one load. The asset
+    name matches :data:`BACKBONE_ASSET_NAME` (and ``system_advisor.ComponentSpec``'s
+    ``vlm_backbone`` lookup key) so :func:`_default_models_present` detects an
+    already-cached snapshot. Identical re-registration is a no-op (re-import safe).
+    """
+    from ..assets import manifest  # noqa: PLC0415 - lazy: avoids an import cycle
+
+    manifest.register_asset(
+        manifest.AssetEntry(
+            name=BACKBONE_ASSET_NAME,
+            kind="model",
+            size_mb=BACKBONE_SIZE_MB,
+            label="SigLIP-2 SoViT-400M (shared vision backbone, Apache-2.0)",
+            installer="hf",
+            hf_repo=SIGLIP2_MODEL_ID,
+        )
+    )
+
+
+# Register the asset at import (mirrors diarize.register_diarize_assets()).
+register_backbone_assets()
+
+
 __all__ = [
     "BACKBONE_ASSET_NAME",
     "BACKBONE_CHANNELS",
+    "BACKBONE_SIZE_MB",
     "BACKBONE_VRAM_MB",
     "CHANNEL_AESTHETIC",
     "CHANNEL_NOVELTY",
@@ -477,6 +511,7 @@ __all__ = [
     "aesthetic_score",
     "compute_backbone_signals",
     "novelty_scores",
+    "register_backbone_assets",
     "sample_windows",
     "zero_shot_interestingness",
 ]

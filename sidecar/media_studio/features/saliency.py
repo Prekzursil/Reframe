@@ -373,9 +373,52 @@ def _default_frame_loader(
     return frames
 
 
+# --------------------------------------------------------------------------- #
+# asset registration (mirrors diarize / parakeet_asr / ctc_align)
+# --------------------------------------------------------------------------- #
+#: pinned ViNet-S commit (SOTA manifest #1) — the GDrive-hosted ICASSP-2025 .pt.
+ASSET_REVISION = "d09066b"
+#: PINNED direct-download URL for the ~36 MB ViNet-S weight (A6 lesson 5).
+ASSET_URL = (
+    "https://drive.usercontent.google.com/download?id=1Tt5pPq4La8a-Nm5oN2g0K3sQ8aJpVfXk&export=download&confirm=t"
+)
+#: relative dest under the assets root (download installer needs a dest path).
+ASSET_DEST = "models/vinet-s-saliency.pt"
+
+
+def register_saliency_assets() -> None:
+    """Register the ViNet-S saliency weights as an on-demand asset (idempotent).
+
+    CC-BY-NC-SA 4.0 (non-commercial, local-only), ~36 MB. The asset name matches
+    :data:`ASSET_NAME` (and ``system_advisor.ComponentSpec``'s ``saliency`` lookup
+    key) so :func:`default_models_present` detects an already-downloaded weight.
+    Identical re-registration is a no-op (module re-import safe).
+    """
+    from ..assets import manifest  # noqa: PLC0415 - lazy: avoids an import cycle
+
+    manifest.register_asset(
+        manifest.AssetEntry(
+            name=ASSET_NAME,
+            kind="model",
+            size_mb=ASSET_SIZE_MB,
+            dest=ASSET_DEST,
+            label="ViNet-S (video saliency, CC-BY-NC-SA 4.0, local-only)",
+            installer="download",
+            url=ASSET_URL,
+        )
+    )
+
+
+# Register the asset at import (mirrors diarize.register_diarize_assets()).
+register_saliency_assets()
+
+
 __all__ = [
+    "ASSET_DEST",
     "ASSET_NAME",
+    "ASSET_REVISION",
     "ASSET_SIZE_MB",
+    "ASSET_URL",
     "CHANNEL",
     "DEFAULT_HOP_SEC",
     "DEFAULT_WIN_SEC",
@@ -390,5 +433,6 @@ __all__ = [
     "default_models_present",
     "interestingness_curve",
     "normalize_curve",
+    "register_saliency_assets",
     "sample_windows",
 ]

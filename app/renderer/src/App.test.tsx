@@ -74,6 +74,11 @@ vi.mock('./views/Shorts', () => ({
   },
 }));
 
+// Stub the lazy Phase-8 Models & System panel (it owns its own tests).
+vi.mock('./panels/ModelsSystemPanel', () => ({
+  default: () => <div data-testid="models" />,
+}));
+
 // Stub the always-mounted chrome so the test focuses on routing.
 vi.mock('./components/JobQueue', () => ({ JobQueue: () => <div /> }));
 vi.mock('./components/SidecarBanner', () => ({ SidecarBanner: () => <div /> }));
@@ -152,6 +157,22 @@ describe('App route switch', () => {
     expect(container.querySelector('[data-testid="library"]')).toBeNull();
     // the Shorts nav button is marked active.
     expect(nav('Shorts').classList.contains('is-active')).toBe(true);
+  });
+
+  it('navigates to the Models & System panel via the header nav', async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+
+    await act(async () => {
+      nav('Models & System').click();
+    });
+    await flush();
+
+    expect(container.querySelector('[data-testid="models"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="library"]')).toBeNull();
+    expect(nav('Models & System').classList.contains('is-active')).toBe(true);
   });
 
   it('opens a video into the Workspace and back via nav', async () => {

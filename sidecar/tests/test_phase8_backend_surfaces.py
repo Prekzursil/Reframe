@@ -22,3 +22,17 @@ def test_vlm_backbone_backend_surface_imports_light() -> None:
 
     assert be.RealBackboneBackend.__name__ == "RealBackboneBackend"
     assert "RealBackboneBackend" in be.__all__
+
+
+def test_ctc_align_backend_surface_imports_light() -> None:
+    import media_studio.features.ctc_align_backend as be
+
+    assert be.RealCtcAlignBackend.__name__ == "RealCtcAlignBackend"
+    assert "RealCtcAlignBackend" in be.__all__
+
+
+def test_smolvlm2_backend_surface_imports_light() -> None:
+    import media_studio.features.smolvlm2_backend as be
+
+    assert be.RealSmolVlmBackend.__name__ == "RealSmolVlmBackend"
+    assert "RealSmolVlmBackend" in be.__all__

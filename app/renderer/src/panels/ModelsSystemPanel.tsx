@@ -1,0 +1,402 @@
+// ModelsSystemPanel.tsx — the "Models & System" graphics-settings-style panel.
+//
+// Opt-in hardware analysis for the Phase-8 moment-finding pipeline: the user
+// runs "Analyze my system", which calls the cheap direct RPCs system.probe +
+// system.advisor (+ asr.engines + assets.list for download gating). It then
+// renders, in one graphics-settings surface:
+//   * a hardware header with VRAM / RAM availability BARS + CPU / GPU chips,
+//   * a recommended-preset banner with Apply,
+//   * a Tier-0/1/2 selector (radio cards with will-it-run verdicts),
+//   * a per-model grid (quality-vs-cost, VRAM, size, license, gated Download),
+//   * the advisor notes strip (verbatim manifest alerts),
+//   * an ASR + diarize backend selector,
+//   * a first-run 3-step onboarding overlay (a clear 101).
+//
+// Consumes the FROZEN window.api bridge through the typed `client`/`rpc` from
+// lib/rpc. All settings flow through settings.get/set — no new store.
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import '../features/panels.css';
+import './modelsSystem.css';
+import {
+  client,
+  type AdvisorReport,
+  type AsrEngine,
+  type AssetInfo,
+  type ComponentStatus,
+  type HardwareInfo,
+} from '../lib/rpc';
+import { componentAsset, presetLabel, presetTier } from '../components/advisorMeta';
+import { ResourceBar } from '../components/ResourceBar';
+import { TierCard } from '../components/TierCard';
+import { ModelCard } from '../components/ModelCard';
+import { ModelsOnboarding } from '../components/ModelsOnboarding';
+
+// --- pure helpers (exported for tests) -------------------------------------
+
+/** Error text from an unknown thrown value (mirrors the sibling panels). */
+export function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * The quality fraction (0..1) for a model card's quality mini-bar: which tier
+ * the component belongs to, normalized over the max tier. A higher-tier model
+ * contributes "more quality". Components not in any tier (speech extras) map to
+ * the mid value so the bar is never empty/misleading.
+ */
+export function qualityFraction(componentName: string, report: AdvisorReport): number {
+  const maxTier = report.tiers.reduce((m, t) => Math.max(m, t.tier), 0) || 1;
+  const owning = report.tiers.find((t) => t.components.includes(componentName));
+  if (!owning) return 0.5;
+  return owning.tier / maxTier;
+}
+
+/** Map asset name -> AssetInfo for O(1) size/installed lookup. */
+export function indexAssets(assets: AssetInfo[]): Record<string, AssetInfo> {
+  const out: Record<string, AssetInfo> = {};
+  for (const a of assets) out[a.name] = a;
+  return out;
+}
+
+/** Whether a model card's weights are installed (zero-download floors -> true). */
+export function isInstalled(
+  component: ComponentStatus,
+  byAsset: Record<string, AssetInfo>,
+): boolean {
+  const asset = componentAsset(component.name);
+  if (!asset) return true; // CPU floor — nothing to download.
+  return Boolean(byAsset[asset]?.installed);
+}
+
+/** The download size MB for a model card (null = zero-download floor / unknown). */
+export function sizeForComponent(
+  component: ComponentStatus,
+  byAsset: Record<string, AssetInfo>,
+): number | null {
+  const asset = componentAsset(component.name);
+  if (!asset) return null;
+  const info = byAsset[asset];
+  return info && Number.isFinite(info.sizeMB) ? info.sizeMB : null;
+}
+
+export interface ModelsSystemPanelProps {
+  /** Inject the typed client for tests; defaults to the real lib/rpc client. */
+  rpcClient?: typeof client;
+}
+
+interface SettingsShape {
+  phase8Tier?: number;
+  asrEngine?: string;
+  diarizeBackend?: string;
+  commercial?: boolean;
+  modelsOnboardingSeen?: boolean;
+}
+
+export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.ReactElement {
+  const api = useMemo(() => rpcClient ?? client, [rpcClient]);
+
+  const [hardware, setHardware] = useState<HardwareInfo | null>(null);
+  const [report, setReport] = useState<AdvisorReport | null>(null);
+  const [assets, setAssets] = useState<AssetInfo[]>([]);
+  const [engines, setEngines] = useState<AsrEngine[]>([]);
+  const [settings, setSettings] = useState<SettingsShape>({});
+  const [analyzed, setAnalyzed] = useState<boolean>(false);
+  const [busy, setBusy] = useState<boolean>(false);
+  const [error, setError] = useState<string>('');
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const [showTour, setShowTour] = useState<boolean>(false);
+
+  const byAsset = useMemo(() => indexAssets(assets), [assets]);
+
+  // Load persisted settings up-front (cheap) so the tier/ASR/commercial controls
+  // reflect saved choices even before the opt-in analysis runs.
+  useEffect(() => {
+    let alive = true;
+    api.settings
+      .get()
+      .then((s) => {
+        if (alive) setSettings((s ?? {}) as SettingsShape);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [api]);
+
+  // Opt-in analysis: probe hardware + advisor + asset/engine state in parallel.
+  const analyze = useCallback(async (): Promise<void> => {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const commercial = Boolean(settings.commercial);
+      const [hw, rep, assetRes, engineRes] = await Promise.all([
+        api.system.probe(),
+        api.system.advisor({ commercial }),
+        api.assets.list(),
+        api.asr.engines(),
+      ]);
+      setHardware(hw ?? null);
+      setReport(rep ?? null);
+      setAssets(Array.isArray(assetRes?.assets) ? assetRes.assets : []);
+      setEngines(Array.isArray(engineRes?.engines) ? engineRes.engines : []);
+      setAnalyzed(true);
+      // First-run tour: show once if the user hasn't seen it.
+      if (!settings.modelsOnboardingSeen) setShowTour(true);
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [api, busy, settings.commercial, settings.modelsOnboardingSeen]);
+
+  // Re-probe only the hardware (cheap), e.g. after plugging in a GPU.
+  const reprobe = useCallback(async (): Promise<void> => {
+    try {
+      const hw = await api.system.probe();
+      setHardware(hw ?? null);
+    } catch (err) {
+      setError(errText(err));
+    }
+  }, [api]);
+
+  // Persist a settings patch and reflect it locally (best-effort).
+  const patchSettings = useCallback(
+    async (patch: SettingsShape): Promise<void> => {
+      setSettings((prev) => ({ ...prev, ...patch }));
+      try {
+        await api.settings.set(patch as Record<string, unknown>);
+      } catch (err) {
+        setError(errText(err));
+      }
+    },
+    [api],
+  );
+
+  const selectTier = useCallback(
+    (tier: number) => void patchSettings({ phase8Tier: tier }),
+    [patchSettings],
+  );
+
+  const applyPreset = useCallback(() => {
+    if (!report) return;
+    void patchSettings({ phase8Tier: presetTier(report.recommendedPreset) });
+  }, [report, patchSettings]);
+
+  const toggleCommercial = useCallback(() => {
+    void patchSettings({ commercial: !settings.commercial });
+  }, [patchSettings, settings.commercial]);
+
+  const finishTour = useCallback(() => {
+    setShowTour(false);
+    void patchSettings({ modelsOnboardingSeen: true });
+  }, [patchSettings]);
+
+  // Download a single model (assets.ensure long job) then refresh asset state.
+  const download = useCallback(
+    async (componentName: string): Promise<void> => {
+      const asset = componentAsset(componentName);
+      if (!asset || downloading) return;
+      setDownloading(componentName);
+      setError('');
+      try {
+        await api.assets.ensure([asset]);
+        const res = await api.assets.list();
+        setAssets(Array.isArray(res?.assets) ? res.assets : []);
+        // Re-run the advisor so installed-state flips the verdicts/recommendation.
+        const rep = await api.system.advisor({ commercial: Boolean(settings.commercial) });
+        setReport(rep ?? null);
+      } catch (err) {
+        setError(errText(err));
+      } finally {
+        setDownloading(null);
+      }
+    },
+    [api, downloading, settings.commercial],
+  );
+
+  const currentTier = settings.phase8Tier ?? 1;
+  const recommendedTier = report ? presetTier(report.recommendedPreset) : 0;
+
+  return (
+    <section className="feature-panel models-system-panel" aria-label="Models and System">
+      <h2>Models &amp; System</h2>
+      <p className="assets-intro">
+        See what your machine can run, pick a quality tier for moment-finding, and download only the
+        models you need. Analysis is opt-in and runs locally — nothing is uploaded.
+      </p>
+
+      <div className="actions">
+        <button type="button" data-action="analyze" onClick={() => void analyze()} disabled={busy}>
+          {busy ? 'Analyzing…' : analyzed ? 'Re-analyze' : 'Analyze my system'}
+        </button>
+        {analyzed && (
+          <button
+            type="button"
+            data-action="tour"
+            className="secondary"
+            onClick={() => setShowTour(true)}
+          >
+            Show tour again
+          </button>
+        )}
+        <label className="commercial-toggle" title="Hide models with non-commercial licenses">
+          <input
+            type="checkbox"
+            data-action="commercial"
+            checked={Boolean(settings.commercial)}
+            onChange={toggleCommercial}
+          />
+          <span>Commercial use</span>
+        </label>
+      </div>
+
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+
+      {!analyzed && !busy && (
+        <p className="status" data-section="prompt">
+          Run “Analyze my system” to detect your hardware and see model recommendations.
+        </p>
+      )}
+
+      {analyzed && hardware && (
+        <div className="hardware-header" data-section="hardware">
+          <h3>Your hardware</h3>
+          <div className="hardware-header__bars">
+            <ResourceBar
+              label="VRAM budget"
+              used={report?.vramBudgetMb ?? hardware.vramMb}
+              total={hardware.vramMb}
+              hint="Each heavy model must fit under this on its own."
+            />
+            <ResourceBar label="System RAM" used={hardware.ramMb} total={hardware.ramMb} />
+          </div>
+          <div className="hardware-header__chips">
+            <span className="hw-chip" data-chip="cpu">
+              {hardware.cpuCount ? `${hardware.cpuCount} CPU cores` : 'CPU cores: unknown'}
+            </span>
+            <span className={`hw-chip${hardware.gpuPresent ? ' is-on' : ''}`} data-chip="gpu">
+              {hardware.gpuPresent ? 'GPU detected' : 'No GPU detected'}
+            </span>
+            <button
+              type="button"
+              data-action="reprobe"
+              className="secondary"
+              onClick={() => void reprobe()}
+            >
+              Re-probe
+            </button>
+          </div>
+        </div>
+      )}
+
+      {analyzed && report && (
+        <>
+          <div
+            className="preset-banner"
+            data-section="preset"
+            data-preset={report.recommendedPreset}
+          >
+            <div className="preset-banner__text">
+              <span className="preset-banner__eyebrow">Recommended for your machine</span>
+              <span className="preset-banner__name">{presetLabel(report.recommendedPreset)}</span>
+            </div>
+            <button type="button" data-action="apply-preset" onClick={applyPreset}>
+              Apply preset
+            </button>
+          </div>
+
+          <h3>Quality tier</h3>
+          <div className="tier-grid" data-section="tiers">
+            {report.tiers.map((tier) => (
+              <TierCard
+                key={tier.tier}
+                tier={tier}
+                selected={currentTier === tier.tier}
+                recommended={recommendedTier === tier.tier}
+                onSelect={selectTier}
+              />
+            ))}
+          </div>
+
+          <h3>Models</h3>
+          <ul className="model-grid" data-section="models">
+            {report.components.map((component) => (
+              <ModelCard
+                key={component.name}
+                component={component}
+                qualityFraction={qualityFraction(component.name, report)}
+                vramBudgetMb={report.vramBudgetMb}
+                installed={isInstalled(component, byAsset)}
+                sizeMb={sizeForComponent(component, byAsset)}
+                downloading={downloading === component.name}
+                onDownload={download}
+              />
+            ))}
+          </ul>
+
+          {report.notes.length > 0 && (
+            <div className="notes-strip" data-section="notes">
+              <h3>Notes</h3>
+              <ul className="notes-list">
+                {report.notes.map((note) => (
+                  <li key={note} className="notes-item">
+                    {note}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <h3>Speech &amp; diarization</h3>
+          <div className="speech-section" data-section="speech">
+            <div className="field">
+              <label htmlFor="asr-engine">ASR engine</label>
+              <select
+                id="asr-engine"
+                data-action="asr-engine"
+                value={settings.asrEngine ?? 'whisper'}
+                onChange={(e) => void patchSettings({ asrEngine: e.target.value })}
+              >
+                {(engines.length > 0
+                  ? engines
+                  : [{ id: 'whisper', label: 'Whisper', installed: true }]
+                ).map((engine) => (
+                  <option key={engine.id} value={engine.id}>
+                    {engine.label}
+                    {engine.installed ? '' : ' (not installed)'}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="diarize-backend">Diarization backend</label>
+              <select
+                id="diarize-backend"
+                data-action="diarize-backend"
+                value={settings.diarizeBackend ?? 'speechbrain'}
+                onChange={(e) => void patchSettings({ diarizeBackend: e.target.value })}
+              >
+                <option value="speechbrain">SpeechBrain (token-free, default)</option>
+                <option value="pyannote">pyannote 3.1 (needs HF token)</option>
+              </select>
+              {(settings.diarizeBackend ?? 'speechbrain') === 'pyannote' && (
+                <p className="field-hint" data-hint="pyannote">
+                  pyannote needs an HF token (HF_TOKEN) and both gated repos accepted.
+                </p>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {showTour && <ModelsOnboarding onDone={finishTour} />}
+    </section>
+  );
+}
+
+export default ModelsSystemPanel;

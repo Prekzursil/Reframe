@@ -175,9 +175,12 @@ class TestAs1d:
 # --------------------------------------------------------------------------- #
 class TestModelsPresent:
     def test_asset_machinery_failure_returns_false(self, monkeypatch):
-        # No transnet asset registered in Wave-1 -> get_asset returns None ->
-        # default_models_present is False (use the fallback). This is the real
-        # behaviour with no monkeypatch, asserted directly.
+        # get_asset returns None -> default_models_present is False (the entry-is
+        # -None degrade arc / use the fallback). The module now registers its asset
+        # at import (Wave-3 wiring), so force get_asset -> None to hit this branch.
+        import media_studio.assets.manifest as manifest_mod
+
+        monkeypatch.setattr(manifest_mod, "get_asset", lambda name: None)
         assert st.default_models_present({}) is False
 
     def test_installed_returns_true(self, monkeypatch):

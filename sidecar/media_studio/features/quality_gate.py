@@ -295,11 +295,46 @@ def _default_frame_loader(media_path: str, candidates: Sequence[Candidate]) -> l
     return load_clip_frames(media_path, candidates)
 
 
+# --------------------------------------------------------------------------- #
+# asset registration (mirrors diarize / parakeet_asr / ctc_align)
+# --------------------------------------------------------------------------- #
+#: pinned DOVER commit (SOTA manifest #5; DOVER-Mobile v0.5.0).
+DOVER_REVISION = "f1ddc96"
+
+
+def register_quality_gate_assets() -> None:
+    """Register the DOVER-Mobile quality weights as an on-demand asset (idempotent).
+
+    S-Lab License 1.0 (non-commercial, local-only), ~60 MB. The asset name matches
+    :data:`DOVER_ASSET_NAME` (and ``system_advisor.ComponentSpec``'s
+    ``quality_gate`` lookup key) so :func:`default_models_present` detects an
+    already-cached snapshot. Identical re-registration is a no-op (re-import safe).
+    """
+    from ..assets import manifest  # noqa: PLC0415 - lazy: avoids an import cycle
+
+    manifest.register_asset(
+        manifest.AssetEntry(
+            name=DOVER_ASSET_NAME,
+            kind="model",
+            size_mb=DOVER_SIZE_MB,
+            label="DOVER-Mobile (video quality assessment, S-Lab 1.0, local-only)",
+            installer="hf",
+            hf_repo=DOVER_HF_REPO,
+            hf_revision=DOVER_REVISION,
+        )
+    )
+
+
+# Register the asset at import (mirrors diarize.register_diarize_assets()).
+register_quality_gate_assets()
+
+
 __all__ = [
     "AESTHETIC_WEIGHT",
     "DEFAULT_FLOOR",
     "DOVER_ASSET_NAME",
     "DOVER_HF_REPO",
+    "DOVER_REVISION",
     "DOVER_SIZE_MB",
     "TECHNICAL_WEIGHT",
     "BackendFactory",
@@ -314,4 +349,5 @@ __all__ = [
     "default_models_present",
     "demote_factor",
     "make_quality_score",
+    "register_quality_gate_assets",
 ]

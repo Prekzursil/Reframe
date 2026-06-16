@@ -76,6 +76,14 @@ TAG_CHANNELS: tuple[str, ...] = ("audioSalience", "laughter", "applause", "music
 #: PANNs CNN14 expects 32 kHz mono (the checkpoint's training rate).
 TARGET_SR = 32000
 
+#: on-demand asset (SOTA manifest #6 — PANNs CNN14, MIT, ~300 MB, CPU-designed).
+#: name matches ``default_models_present`` + system_advisor's ``audio_saliency``.
+ASSET_NAME = "panns-cnn14"
+ASSET_SIZE_MB = 300
+#: PINNED PANNs CNN14 AudioSet checkpoint (the URL panns-inference resolves to).
+ASSET_URL = "https://zenodo.org/record/3987831/files/Cnn14_mAP%3D0.431.pth?download=1"
+ASSET_DEST = "models/panns-cnn14.pth"
+
 #: cooperative cancel probe + progress sink (match the rest of the codebase).
 CancelProbe = Callable[[], bool]
 ProgressCb = Callable[[float, str], None]
@@ -360,7 +368,7 @@ def default_models_present(settings: dict[str, Any]) -> bool:  # pragma: no cove
         from ..assets import manifest  # noqa: PLC0415
         from ..assets.manager import AssetManager  # noqa: PLC0415
 
-        entry = manifest.get_asset("panns-cnn14")
+        entry = manifest.get_asset(ASSET_NAME)
         if entry is None:
             return False
         mgr = AssetManager(settings_provider=lambda: settings)
@@ -475,7 +483,41 @@ def compute_audio_signals(
     return tracks
 
 
+# --------------------------------------------------------------------------- #
+# asset registration (mirrors diarize / parakeet_asr / ctc_align)
+# --------------------------------------------------------------------------- #
+def register_audio_saliency_assets() -> None:
+    """Register the PANNs CNN14 audio-tagging checkpoint as an on-demand asset.
+
+    MIT (commercial OK), ~300 MB, CPU-designed. The asset name matches
+    :data:`ASSET_NAME` (and ``system_advisor.ComponentSpec``'s ``audio_saliency``
+    lookup key) so :func:`default_models_present` detects an already-cached
+    checkpoint. Identical re-registration is a no-op (module re-import safe).
+    """
+    from ..assets import manifest  # noqa: PLC0415 - lazy: avoids an import cycle
+
+    manifest.register_asset(
+        manifest.AssetEntry(
+            name=ASSET_NAME,
+            kind="model",
+            size_mb=ASSET_SIZE_MB,
+            dest=ASSET_DEST,
+            label="PANNs CNN14 (audio tagging, MIT)",
+            installer="download",
+            url=ASSET_URL,
+        )
+    )
+
+
+# Register the asset at import (mirrors diarize.register_diarize_assets()).
+register_audio_saliency_assets()
+
+
 __all__ = [
+    "ASSET_DEST",
+    "ASSET_NAME",
+    "ASSET_SIZE_MB",
+    "ASSET_URL",
     "AUDIOSET_CLASS_INDEX",
     "AUDIO_CHANNELS",
     "TAG_CHANNELS",
@@ -490,5 +532,6 @@ __all__ = [
     "default_models_present",
     "loudness_curve",
     "peak_windows",
+    "register_audio_saliency_assets",
     "sample_windows",
 ]

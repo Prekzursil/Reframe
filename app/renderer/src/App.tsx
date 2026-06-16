@@ -6,11 +6,13 @@
 // settings.useCloud). It is a thin control that flips local vs cloud quality and
 // persists the choice through `settings.set` when the bridge is available; if no
 // bridge is present (e.g. early boot / tests) it degrades to local-only state.
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { Library } from './views/Library';
 import { Workspace } from './views/Workspace';
 import { Shorts } from './views/Shorts';
 import { SystemHealth } from './features/SystemHealth';
+// Phase-8 "Models & System" panel (lazy: it pulls the model-card grid + onboarding).
+const ModelsSystemPanel = lazy(() => import('./panels/ModelsSystemPanel'));
 import { client, hasApi, rpc, type ShortReexportHint, type Video } from './lib/rpc';
 import { ToastProvider } from './components/toast/ToastProvider';
 import { ToastHost } from './components/toast/ToastHost';
@@ -36,7 +38,9 @@ type Route =
   // P4 §6 / C11: the global generated-shorts gallery (across all videos).
   | { name: 'shorts' }
   // system-advanced: the app-global System Health diagnostic screen.
-  | { name: 'health' };
+  | { name: 'health' }
+  // Phase-8: the app-global "Models & System" graphics-settings panel.
+  | { name: 'models' };
 
 /** Local/Cloud quality toggle. Maps to settings.useCloud (CONTRACTS.md §2). */
 function QualityToggle({
@@ -120,6 +124,11 @@ export function App(): React.ReactElement {
     setRoute({ name: 'health' });
   }, []);
 
+  // Phase-8: the top-level "Models & System" nav.
+  const openModels = useCallback(() => {
+    setRoute({ name: 'models' });
+  }, []);
+
   // P4 §6: Re-export reopens the source video's Workspace (where the
   // Short-maker tab lives) so the user can replay the export. Resolve the
   // source Video by id via library.list, then navigate; fall back to the
@@ -146,6 +155,12 @@ export function App(): React.ReactElement {
         return <Shorts onReexport={(hint) => void handleReexport(hint)} />;
       case 'health':
         return <SystemHealth />;
+      case 'models':
+        return (
+          <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>
+            <ModelsSystemPanel />
+          </Suspense>
+        );
       case 'library':
       default:
         return <Library onOpen={openVideo} />;
@@ -182,6 +197,14 @@ export function App(): React.ReactElement {
               onClick={openHealth}
             >
               Health
+            </button>
+            <button
+              type="button"
+              className={`app__nav-btn${route.name === 'models' ? ' is-active' : ''}`}
+              aria-current={route.name === 'models' ? 'page' : undefined}
+              onClick={openModels}
+            >
+              Models &amp; System
             </button>
           </nav>
           <QualityToggle quality={quality} onChange={changeQuality} />
