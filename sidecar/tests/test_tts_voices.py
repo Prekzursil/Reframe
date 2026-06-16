@@ -71,6 +71,18 @@ class TestVoiceStore:
     def test_get_unknown_returns_none(self, store):
         assert store.get("nope") is None
 
+    def test_get_skips_non_matching_rows(self, store, tmp_path):
+        """get() iterates past non-matching rows to find the target (121->120)."""
+        first = tmp_path / "first.wav"
+        first.write_bytes(b"RIFF0000WAVEa")
+        second = tmp_path / "second.wav"
+        second.write_bytes(b"RIFF0000WAVEb")
+        s1 = store.add(str(first))
+        s2 = store.add(str(second))
+        # the SECOND id forces the loop to skip s1 before matching s2.
+        assert s1["id"] != s2["id"]
+        assert store.get(s2["id"])["path"] == s2["path"]
+
 
 # --------------------------------------------------------------------------- #
 # handlers
@@ -100,6 +112,24 @@ class TestHandlers:
         assert ("chatterbox", sample["id"]) in ids
         for row in result["voices"]:
             assert set(row) == {"id", "engine", "lang", "name"}
+
+    def test_one_failing_engine_does_not_hide_the_rest(self, store):
+        class BoomEngine(TtsEngine):
+            id = "boom"
+            label = "boom"
+
+            def synth(self, cues, voice, lang, out_wav, *, rate=1.0):  # pragma: no cover - unused
+                raise AssertionError("never synthesizes")
+
+            def voices(self):
+                raise RuntimeError("catalog backend down")
+
+        good_rows = [{"id": "af_x", "engine": "kokoro", "lang": "en-us", "name": "X"}]
+        handler = v.make_voices_handler([BoomEngine(), StaticEngine(good_rows)], store)
+        result = handler({}, ctx())
+        # the broken engine is skipped; the good engine's catalog still surfaces
+        ids = [row["id"] for row in result["voices"]]
+        assert "af_x" in ids
 
     def test_sample_add_handler_shape_and_validation(self, store, sample_file):
         handler = v.make_sample_add_handler(store)

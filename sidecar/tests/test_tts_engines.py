@@ -70,6 +70,84 @@ class TestEngineAbc:
     def test_wav_duration_unreadable_is_zero(self, tmp_path):
         assert eng.wav_duration_sec(str(tmp_path / "missing.wav")) == 0.0
 
+    def test_base_voices_default_empty(self):
+        """The ABC's default voices() returns an empty catalog."""
+
+        class _MinimalEngine(eng.TtsEngine):
+            id = "minimal"
+
+            def synth(self, cues, voice, lang, out_wav, *, rate=1.0):  # pragma: no cover - unused
+                return out_wav
+
+        assert _MinimalEngine().voices() == []
+
+    def test_cues_text_joins_and_strips(self):
+        assert (
+            eng.cues_text(
+                [
+                    {"text": "  Hello there.  "},
+                    {"text": "General Kenobi."},
+                    {"no_text": "skipped"},
+                ]
+            )
+            == "Hello there. General Kenobi."
+        )
+        assert eng.cues_text([]) == ""
+
+    def test_float_to_int16_numpy_fast_path(self):
+        """A numpy array takes the astype/tobytes fast path (clamped)."""
+        np = pytest.importorskip("numpy")
+        import struct
+
+        arr = np.asarray([0.0, 1.0, -1.0, 2.0, -2.0], dtype=np.float64)
+        data = eng.float_samples_to_int16_bytes(arr)
+        values = struct.unpack("<5h", data)
+        assert values[0] == 0
+        assert values[1] == 32767
+        assert values[2] == -32767
+        assert values[3] == 32767  # clamped from 2.0
+        assert values[4] == -32767  # clamped from -2.0
+
+    def test_float_to_int16_numpy_path_falls_back_on_error(self, monkeypatch):
+        """A broken astype fast path falls through to the pure loop."""
+        import struct
+
+        class _Weird:
+            """Exposes astype (entering the fast path) but breaks numpy ops."""
+
+            def astype(self, *_a, **_k):  # pragma: no cover - presence only
+                return self
+
+            def __iter__(self):
+                return iter([0.0, 1.0, -1.0])
+
+        # Force the numpy fast path to raise so we exercise the fall-through.
+        import numpy as np
+
+        monkeypatch.setattr(np, "asarray", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+        data = eng.float_samples_to_int16_bytes(_Weird())
+        values = struct.unpack("<3h", data)
+        assert values == (0, 32767, -32767)
+
+    def test_wav_duration_zero_framerate_is_zero(self, tmp_path, monkeypatch):
+        """A WAV whose framerate reads as <= 0 yields 0.0, not a divide error."""
+
+        class _ZeroRate:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def getframerate(self):
+                return 0
+
+            def getnframes(self):  # pragma: no cover - guarded out by rate<=0
+                return 10
+
+        monkeypatch.setattr(eng.wave, "open", lambda *a, **k: _ZeroRate())
+        assert eng.wav_duration_sec(str(tmp_path / "z.wav")) == 0.0
+
 
 # --------------------------------------------------------------------------- #
 # kokoro (default local — onnx weights as PINNED U4 assets)
@@ -138,6 +216,52 @@ class TestKokoro:
             engine.synth([], "af_sarah", "en-us", str(tmp_path / "o.wav"))
         with pytest.raises(eng.TtsError, match="voice"):
             engine.synth(CUES, "", "en-us", str(tmp_path / "o.wav"))
+
+    def _ready_engine(self, tmp_path, fake):
+        (tmp_path / kk.KOKORO_MODEL_DEST).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / kk.KOKORO_MODEL_DEST).write_bytes(b"onnx")
+        (tmp_path / kk.KOKORO_VOICES_DEST).write_bytes(b"voices")
+        return kk.KokoroEngine(assets_root=str(tmp_path), factory=lambda m, v: fake)
+
+    def test_session_is_cached_across_synths(self, tmp_path):
+        fake = FakeKokoro()
+        builds = []
+        engine = self._ready_engine(tmp_path, fake)
+        engine._factory = lambda m, v: builds.append((m, v)) or fake
+        engine.synth(CUES, "af_sarah", "en-us", str(tmp_path / "a.wav"))
+        engine.synth(CUES, "af_sarah", "en-us", str(tmp_path / "b.wav"))
+        assert len(builds) == 1  # session built once, reused on the second call
+
+    def test_factory_load_failure_is_typed(self, tmp_path):
+        def boom(model_path, voices_path):
+            raise RuntimeError("onnx load exploded")
+
+        engine = self._ready_engine(tmp_path, FakeKokoro())
+        engine._factory = boom
+        with pytest.raises(eng.TtsError, match="failed to load kokoro-onnx"):
+            engine.synth(CUES, "af_sarah", "en-us", str(tmp_path / "o.wav"))
+
+    def test_empty_cue_text_is_skipped(self, tmp_path):
+        fake = FakeKokoro()
+        engine = self._ready_engine(tmp_path, fake)
+        cues = [{"text": "  "}, {"text": "Real line."}, {"text": ""}]
+        engine.synth(cues, "af_sarah", "en-us", str(tmp_path / "o.wav"))
+        # only the one non-empty cue reached the model
+        assert [c["text"] for c in fake.calls] == ["Real line."]
+
+    def test_all_cue_text_empty_raises(self, tmp_path):
+        engine = self._ready_engine(tmp_path, FakeKokoro())
+        with pytest.raises(eng.TtsError, match="no speakable text"):
+            engine.synth([{"text": "   "}], "af_sarah", "en-us", str(tmp_path / "o.wav"))
+
+    def test_model_create_failure_is_typed(self, tmp_path):
+        class BoomKokoro:
+            def create(self, *a, **k):
+                raise RuntimeError("inference failed")
+
+        engine = self._ready_engine(tmp_path, BoomKokoro())
+        with pytest.raises(eng.TtsError, match="kokoro synthesis failed"):
+            engine.synth(CUES, "af_sarah", "en-us", str(tmp_path / "o.wav"))
 
 
 # --------------------------------------------------------------------------- #
@@ -219,6 +343,61 @@ class TestEdgeTts:
         with pytest.raises(eng.TtsError, match="voice"):
             engine.synth(CUES, "", "en", str(tmp_path / "o.wav"))
 
+    def test_no_speakable_text_raises(self, tmp_path):
+        engine = et.EdgeTtsEngine(communicate_factory=lambda t, v, r: FakeCommunicate({}))
+        with pytest.raises(eng.TtsError, match="no speakable text"):
+            engine.synth([{"text": "   "}], "v", "en", str(tmp_path / "o.wav"))
+
+    def test_network_failure_is_wrapped_as_tts_error(self, tmp_path):
+        class BoomCommunicate:
+            async def save(self, path):
+                raise RuntimeError("service 503")
+
+        engine = et.EdgeTtsEngine(communicate_factory=lambda t, v, r: BoomCommunicate())
+        with pytest.raises(eng.TtsError, match="edge-tts synthesis failed"):
+            engine.synth(CUES, "v", "en", str(tmp_path / "o.wav"))
+
+    def test_inner_tts_error_propagates_unwrapped(self, tmp_path):
+        def factory(t, v, r):
+            raise eng.TtsError("already typed")
+
+        engine = et.EdgeTtsEngine(communicate_factory=factory)
+        with pytest.raises(eng.TtsError, match="already typed"):
+            engine.synth(CUES, "v", "en", str(tmp_path / "o.wav"))
+
+    def test_no_audio_produced_raises(self, tmp_path):
+        class SilentCommunicate:
+            async def save(self, path):
+                return None  # writes nothing — mp3 file never appears
+
+        engine = et.EdgeTtsEngine(communicate_factory=lambda t, v, r: SilentCommunicate())
+        with pytest.raises(eng.TtsError, match="produced no audio"):
+            engine.synth(CUES, "v", "en", str(tmp_path / "o.wav"))
+
+    def test_settings_provider_failure_is_swallowed(self, tmp_path):
+        argvs = []
+
+        def fake_run(argv, **kw):
+            argvs.append(list(argv))
+            Path(argv[-1]).write_bytes(b"RIFFwav")
+            return 0
+
+        def boom_settings():
+            raise RuntimeError("settings unavailable")
+
+        engine = et.EdgeTtsEngine(
+            communicate_factory=lambda t, v, r: FakeCommunicate({}),
+            run=fake_run,
+            settings_provider=boom_settings,
+        )
+        out = engine.synth(CUES, "v", "en", str(tmp_path / "o.wav"))
+        assert out == str(tmp_path / "o.wav")
+        assert argvs  # the ffmpeg pass still ran (settings failure ignored)
+
+    def test_settings_provider_none_result_is_empty(self, tmp_path):
+        engine = et.EdgeTtsEngine(settings_provider=lambda: None)
+        assert engine._settings() == {}
+
 
 # --------------------------------------------------------------------------- #
 # chatterbox (voice clone — subprocess into the ISOLATED env)
@@ -251,6 +430,17 @@ class TestChatterbox:
         paths = env["PYTHONPATH"].split(os.pathsep)
         assert paths[0] == "D:/envs/chatterbox"
         assert paths[1] == cb.runner_dir()
+
+    def test_default_env_dir_uses_config_dir(self, monkeypatch):
+        from pathlib import Path
+
+        monkeypatch.setattr(cb, "default_config_dir", lambda: Path("C:/cfg"))
+        assert cb.default_env_dir() == str(Path("C:/cfg") / cb.CHATTERBOX_ENV_DEST)
+        assert cb.default_env_dir("D:/root") == str(Path("D:/root") / cb.CHATTERBOX_ENV_DEST)
+
+    def test_engine_has_no_static_voice_catalog(self):
+        # Voice-clone: catalog is the user's stored samples, surfaced elsewhere.
+        assert cb.ChatterboxEngine(env_dir="X").voices() == []
 
     def test_job_payload_shape(self):
         payload = cb.build_job_payload(CUES, "C:/voices/s.wav", "en", "C:/o.wav", 1.1)
@@ -307,6 +497,11 @@ class TestChatterbox:
         with pytest.raises(eng.TtsError, match="reference sample"):
             engine.synth(CUES, str(tmp_path / "ghost.wav"), "en", str(tmp_path / "o.wav"))
 
+    def test_no_cues_raises(self, tmp_path):
+        engine = cb.ChatterboxEngine(env_dir=str(tmp_path))
+        with pytest.raises(eng.TtsError, match="no cues"):
+            engine.synth([], str(tmp_path / "s.wav"), "en", str(tmp_path / "o.wav"))
+
     def test_runner_exited_zero_without_wav_raises(self, tmp_path):
         env_dir = tmp_path / "env"
         env_dir.mkdir()
@@ -351,3 +546,49 @@ class TestChatterboxRunner:
         bad = tmp_path / "bad.json"
         bad.write_text("{nope", encoding="utf-8")
         assert cbr.main([str(bad)]) == 2
+
+    def test_parse_job_rejects_non_dict_cue_entry(self):
+        with pytest.raises(ValueError, match="entries must be objects"):
+            cbr.parse_job(
+                {
+                    "cues": ["not a dict"],
+                    "samplePath": "s",
+                    "outWav": "o",
+                }
+            )
+
+    def test_parse_job_coerces_bad_rate_to_one(self):
+        job = cbr.parse_job(
+            {
+                "cues": [{"text": "x"}],
+                "samplePath": "s",
+                "outWav": "o",
+                "rate": "not-a-number",
+            }
+        )
+        assert job["rate"] == 1.0
+
+    def test_main_success_path_runs_synthesize_seam(self, tmp_path, monkeypatch):
+        """A valid job reaches _synthesize; with no torch env it exits 1."""
+        job_file = tmp_path / "job.json"
+        payload = cb.build_job_payload(CUES, "C:/s.wav", "en", str(tmp_path / "o.wav"), 1.0)
+        job_file.write_text(json.dumps(payload), encoding="utf-8")
+        calls = []
+
+        def fake_synth(job):
+            calls.append(job)
+
+        monkeypatch.setattr(cbr, "_synthesize", fake_synth)
+        assert cbr.main([str(job_file)]) == 0
+        assert calls and calls[0]["outWav"] == str(tmp_path / "o.wav")
+
+    def test_main_synthesize_failure_returns_one(self, tmp_path, monkeypatch):
+        job_file = tmp_path / "job.json"
+        payload = cb.build_job_payload(CUES, "C:/s.wav", "en", str(tmp_path / "o.wav"), 1.0)
+        job_file.write_text(json.dumps(payload), encoding="utf-8")
+
+        def boom(job):
+            raise RuntimeError("torch missing in this env")
+
+        monkeypatch.setattr(cbr, "_synthesize", boom)
+        assert cbr.main([str(job_file)]) == 1

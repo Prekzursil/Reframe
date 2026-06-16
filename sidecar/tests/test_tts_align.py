@@ -245,6 +245,39 @@ class TestAlignCueWav:
                 settings=SETTINGS,
             )
 
+    def test_garbage_resynth_take_falls_back_to_first(self, tmp_path):
+        """A re-synth that produces an empty/unreadable wav reverts to take 1."""
+        runs = []
+
+        def fake_duration(path):
+            from pathlib import Path as _P
+
+            # first take 13s (off-target -> asks re-synth); the re-synth take
+            # reads 0 (garbage) so the aligner must fall back to the first take.
+            return 0.0 if "resynth" in _P(str(path)).name else 13.0
+
+        def fake_resynth(rate, path):
+            # "produce" the file but it reads as 0s above.
+            return path
+
+        def fake_run(argv, **kw):
+            runs.append(list(argv))
+            return 0
+
+        result = align.align_cue_wav(
+            str(tmp_path / "raw.wav"),
+            10.0,
+            str(tmp_path / "out.wav"),
+            resynth=fake_resynth,
+            run=fake_run,
+            duration=fake_duration,
+            settings=SETTINGS,
+        )
+        # fell back to the 13s first take -> clamped at the +15% ceiling
+        assert result["plan"]["atempo"] == align.ATEMPO_MAX
+        # the aligned ffmpeg pass reads the ORIGINAL raw.wav, not the resynth one
+        assert any("raw.wav" in a for a in runs[-1])
+
 
 # --------------------------------------------------------------------------- #
 # timeline concat plan + stdlib wave concat
@@ -319,3 +352,33 @@ class TestConcatWavs:
     def test_unknown_cue_index_raises(self, tmp_path):
         with pytest.raises(align.AlignError):
             align.concat_wavs([{"type": "cue", "index": 3}], [], str(tmp_path / "out.wav"))
+
+    def test_zero_length_silence_segment_writes_nothing(self, tmp_path):
+        """A silence segment rounding to 0 frames is skipped (branch 301->303)."""
+        a = self._make_wav(tmp_path / "a.wav", 0.25)
+        # a 0.0s silence segment in front of the cue contributes no frames.
+        plan = [{"type": "silence", "sec": 0.0}, {"type": "cue", "index": 0}]
+        out = align.concat_wavs(plan, [a], str(tmp_path / "track.wav"))
+        with wave.open(out, "rb") as wf:
+            duration = wf.getnframes() / wf.getframerate()
+        assert duration == pytest.approx(0.25, abs=0.01)
+
+    def test_unreadable_cue_wav_raises(self, tmp_path):
+        """A cue path that exists but is not a valid WAV surfaces AlignError."""
+        bad = tmp_path / "bad.wav"
+        bad.write_bytes(b"not a wav at all")
+        plan = [{"type": "cue", "index": 0}]
+        with pytest.raises(align.AlignError, match="unreadable cue wav"):
+            align.concat_wavs(plan, [str(bad)], str(tmp_path / "out.wav"))
+
+
+class TestRemoveQuietly:
+    def test_removes_existing_file(self, tmp_path):
+        f = tmp_path / "tmp.wav"
+        f.write_bytes(b"x")
+        align.remove_quietly(str(f))
+        assert not f.exists()
+
+    def test_missing_file_does_not_raise(self, tmp_path):
+        # best-effort cleanup never raises on a missing path
+        align.remove_quietly(str(tmp_path / "never-existed.wav"))

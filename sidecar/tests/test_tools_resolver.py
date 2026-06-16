@@ -35,6 +35,13 @@ def isolated_dev_dir(tmp_path, monkeypatch):
     return dev
 
 
+def test_as_executable_dir_without_exe_returns_none(tmp_path):
+    # candidate is a directory that does NOT contain exe_name -> falls through to None (103->105).
+    empty = tmp_path / "emptydir"
+    empty.mkdir()
+    assert tr._as_executable(str(empty), "missing.exe") is None
+
+
 # --------------------------------------------------------------------------- #
 # llama-server chain
 # --------------------------------------------------------------------------- #
@@ -247,3 +254,9 @@ class TestDetectProbes:
         assert tr.detect_llama_cudart({}) is None
         dll = _touch(tmp_path / tr.TOOL_DIR_CUDA / "cudart64_12.dll")
         assert tr.detect_llama_cudart({}) == str(dll)
+
+    def test_detect_cudart_skips_non_file_glob_hit(self, tmp_path, monkeypatch, isolated_dev_dir):
+        # A directory matching the cudart glob is not a file -> it is skipped (333->332).
+        monkeypatch.setenv("MEDIA_STUDIO_CONFIG_DIR", str(tmp_path))
+        (tmp_path / tr.TOOL_DIR_CUDA / "cudart64_99.dll").mkdir(parents=True)
+        assert tr.detect_llama_cudart({}) is None
