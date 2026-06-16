@@ -59,6 +59,9 @@ function ToastCard({ toast, api }: ToastCardProps): React.ReactElement {
 export function ToastHost({ container }: ToastHostProps = {}): React.ReactElement | null {
   const api = useToastOptional();
   if (!api || api.toasts.length === 0) return null;
+  // document is always defined in the Electron renderer (and in jsdom under test),
+  // so the SSR-style `typeof document` guard's false arm is unreachable here.
+  /* v8 ignore next */
   const target = container ?? (typeof document !== 'undefined' ? document.body : null);
   if (!target) return null;
   return createPortal(
