@@ -507,6 +507,30 @@ def test_run_export_orders_cut_reframe_caption_export(transcript, tmp_path):
     assert out["clips"] == [{"path": str(tmp_path / "out" / "src-1.mp4")}]
 
 
+def _one_candidate() -> dict:
+    return {"rank": 1, "start": 10.0, "end": 40.0, "durationSec": 30.0, "hook": "h", "sourceStart": 10.0}
+
+
+def test_run_export_skips_notice_when_engine_resolves_clean(transcript, tmp_path, monkeypatch):
+    # resolve_engine_name's notice is OS-dependent (verthor/WSL availability), so
+    # pin it: no notice -> run_export takes the no-progress arc deterministically.
+    monkeypatch.setattr(
+        "media_studio.features.reframe.resolve_engine_name",
+        lambda _requested, _settings: ("verthor", None),
+    )
+    ctx = make_ctx()
+    out = sm.run_export(
+        ctx,
+        video_id="v1",
+        candidates=[_one_candidate()],
+        load_context=loader_for(str(tmp_path / "src.mp4"), transcript),
+        out_dir=str(tmp_path / "out"),
+        stages=RecordingStages([]).as_stages(),
+    )
+    assert out["clips"]
+    assert all("verthor" not in str(msg).lower() for _, _, msg in ctx.progress_log)
+
+
 def test_run_export_propagates_sourceStart_to_caption(transcript, tmp_path):
     """The candidate's sourceStart is handed to the caption stage (re-base seam)."""
     rec = RecordingStages([])
