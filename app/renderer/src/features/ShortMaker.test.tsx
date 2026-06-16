@@ -185,11 +185,12 @@ describe('sanitizeControls', () => {
     expect(c.captionStyle).toBe('bold');
   });
 
-  it('produces controls matching the §2 control field names exactly (+ T4b reframeEngine + P3 toggles + P4 §8a/§8b)', () => {
+  it('produces controls matching the §2 control field names exactly (+ T4b reframeEngine + P3 toggles + P4 §8a/§8b + audio-stabilize)', () => {
     // T4b extends the frozen §2 controls with the reframe engine override
     // (auto/verthor/claudeshorts); the P3 mini-contract adds the hookTitle and
     // removeFillers booleans; P4 §8a/§8b add the emphasis tri-state + autoZoom
-    // bool — see the CONTRACT-NOTE on ShortMakerControls.
+    // bool; the audio-stabilize group adds the silenceTrim + stabilize bools —
+    // see the CONTRACT-NOTE on ShortMakerControls.
     const c = sanitizeControls({});
     expect(Object.keys(c).sort()).toEqual(
       [
@@ -204,6 +205,8 @@ describe('sanitizeControls', () => {
         'minSec',
         'reframeEngine',
         'removeFillers',
+        'silenceTrim',
+        'stabilize',
       ].sort(),
     );
   });
@@ -806,6 +809,19 @@ describe('buildExportParams (P4 §8c / §2 export contract)', () => {
     expect(buildExportParams('v1', top, sanitizeControls({ emphasis: 'off' }), '')).toMatchObject({
       emphasis: false,
     });
+  });
+
+  it('always sends the audio-stabilize toggles (silenceTrim/stabilize, default OFF)', () => {
+    const top = [cand()];
+    const off = buildExportParams('v1', top, sanitizeControls({}), '');
+    expect(off).toMatchObject({ silenceTrim: false, stabilize: false });
+    const on = buildExportParams(
+      'v1',
+      top,
+      sanitizeControls({ silenceTrim: true, stabilize: true }),
+      '',
+    );
+    expect(on).toMatchObject({ silenceTrim: true, stabilize: true });
   });
 });
 

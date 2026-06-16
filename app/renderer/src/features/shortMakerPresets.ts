@@ -157,6 +157,12 @@ export function buildExportParams(
     hookTitle: controls.hookTitle,
     removeFillers: controls.removeFillers,
     autoZoom: controls.autoZoom,
+    // audio-stabilize group: dead-air removal + camera-shake stabilization
+    // pre-steps (both default OFF). They ALWAYS flow as bools — the sidecar
+    // gates each on its own toggle (silence-trim wins over removeFillers; a
+    // missing libvidstab reports the stabilize skip via job.progress).
+    silenceTrim: controls.silenceTrim,
+    stabilize: controls.stabilize,
     ...(controls.emphasis === 'default' ? {} : { emphasis: controls.emphasis === 'on' }),
     ...(audioTrackId ? { audioTrackId } : {}),
   };

@@ -74,6 +74,18 @@ export interface ShortMakerControls {
   emphasis: EmphasisChoice;
   /** P4 §8b: auto punch-in zoom on emphasis beats (default OFF). */
   autoZoom: boolean;
+  /**
+   * audio-stabilize group: dead-air removal pre-step (ffmpeg silencedetect ->
+   * keep-span re-cut), default OFF. Mutually exclusive with removeFillers on the
+   * sidecar (silence-trim wins — both edit the clip timeline).
+   */
+  silenceTrim: boolean;
+  /**
+   * audio-stabilize group: camera-shake stabilization pre-step (ffmpeg vidstab
+   * 2-pass), default OFF. Warp-only, so it composes with every other stage; a
+   * bundled ffmpeg without libvidstab reports the skip (never silent).
+   */
+  stabilize: boolean;
 }
 
 /** A3 AudioTrack (the subset the export picker needs — wire field names). */
@@ -222,6 +234,8 @@ export const DEFAULT_CONTROLS: ShortMakerControls = {
   removeFillers: false,
   emphasis: DEFAULT_EMPHASIS,
   autoZoom: false,
+  silenceTrim: false,
+  stabilize: false,
 };
 
 export const ASPECT_OPTIONS = ['9:16', '1:1', '4:5', '16:9'] as const;
@@ -244,6 +258,7 @@ export function clamp(n: number, lo: number, hi: number): number {
  * - hookTitle/removeFillers must be real booleans (else their defaults ON/OFF)
  * - emphasis must be 'default'|'on'|'off' (else the 'default' per-style mode)
  * - autoZoom must be a real boolean (else its default OFF)
+ * - silenceTrim/stabilize must be real booleans (else their defaults OFF)
  */
 export function sanitizeControls(raw: Partial<ShortMakerControls>): ShortMakerControls {
   const count = Math.max(1, Math.round(raw.count ?? DEFAULT_CONTROLS.count));
@@ -276,6 +291,9 @@ export function sanitizeControls(raw: Partial<ShortMakerControls>): ShortMakerCo
     ? (rawEmphasis as EmphasisChoice)
     : DEFAULT_CONTROLS.emphasis;
   const autoZoom = typeof raw.autoZoom === 'boolean' ? raw.autoZoom : DEFAULT_CONTROLS.autoZoom;
+  const silenceTrim =
+    typeof raw.silenceTrim === 'boolean' ? raw.silenceTrim : DEFAULT_CONTROLS.silenceTrim;
+  const stabilize = typeof raw.stabilize === 'boolean' ? raw.stabilize : DEFAULT_CONTROLS.stabilize;
   return {
     count,
     minSec,
@@ -288,6 +306,8 @@ export function sanitizeControls(raw: Partial<ShortMakerControls>): ShortMakerCo
     removeFillers,
     emphasis,
     autoZoom,
+    silenceTrim,
+    stabilize,
   };
 }
 
