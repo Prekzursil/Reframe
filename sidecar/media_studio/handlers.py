@@ -33,7 +33,10 @@ from . import protocol
 from .features import boundary as _boundary
 from .features import convert as _convert
 from .features import media_compat as _media_compat
+from .features import nle_export as _nle_export
+from .features import package_export as _package_export
 from .features import shortmaker as _shortmaker
+from .features import shorts as _shorts_meta
 from .features import subtitles as _subtitles
 from .features import timeline as _timeline
 from .features import tracks as _tracks
@@ -278,14 +281,24 @@ class Services:
         return {"path": path}
 
     def subtitles_translate(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
-        """``subtitles.translate({trackId, targetLang})`` -> ``{jobId}`` (§2).
+        """``subtitles.translate({trackId, targetLang, bilingual?, order?})`` -> ``{jobId}`` (§2).
 
         Long job: returns ``{jobId}``, streams ``job.progress``, and its
         ``job.done.result`` is ``{track}``. The pure ``translate`` is synchronous;
         we run it in a job so the contract's ``{jobId}`` + progress shape holds.
+
+        BILINGUAL (captions-export): when ``bilingual`` is truthy the translated
+        cues are STACKED with the originals into one track (original + translation
+        on two lines per cue, via :func:`subtitles.stack_bilingual`). ``order``
+        ("original-first" | "translation-first") picks which line sits on top. The
+        stacked track is added as a NEW track on the project (the source track is
+        left intact); a monolingual translate still replaces in place as before.
         """
         track_id = _require_str(params, "trackId")
         target_lang = _require_str(params, "targetLang")
+        bilingual = bool(params.get("bilingual"))
+        order = params.get("order")
+        order = order if order in _subtitles.BILINGUAL_ORDERS else "original-first"
         if ctx.jobs is None:
             raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
         project = self._find_project_for_track(track_id)
@@ -312,7 +325,14 @@ class Services:
                     progress=lambda pct, msg: job_ctx.progress(pct, msg),
                     cancelled=lambda: job_ctx.cancelled,
                 )
-            # Persist the translated track back onto the project.
+            if bilingual:
+                # Stack original + translation into a NEW track; keep the source.
+                stacked = _subtitles.stack_bilingual(track, translated, order=order)
+                _tracks.add_track(project.data, stacked)
+                if save_path is not None:
+                    project.save(save_path)
+                return {"track": stacked}
+            # Monolingual: replace the source track in place (legacy behaviour).
             project.data["tracks"] = [
                 translated if (isinstance(t, dict) and t.get("id") == track_id) else t
                 for t in project.data.get("tracks") or []
@@ -646,6 +666,86 @@ class Services:
         sm = self._shortmaker()
         return sm.export(params, ctx)
 
+    # ===================================================================== #
+    # nle.* — EDL / CSV timeline export (captions-export)
+    # ===================================================================== #
+    def _approved_clips(self, video_id: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        """Resolve the approved clips to export for ``video_id``.
+
+        Prefers an explicit ``clips`` array on ``params`` (so the UI can export the
+        just-produced batch before manifest persistence); otherwise reads the
+        project manifest's persisted ``clips`` (the ``{candidate, path}`` records
+        the short-maker export carved). Returns ``[]`` when neither has clips.
+        """
+        explicit = params.get("clips")
+        if isinstance(explicit, list) and explicit:
+            return [c for c in explicit if isinstance(c, dict)]
+        project = self._load_or_create_project(video_id)
+        return [c for c in (project.data.get("clips") or []) if isinstance(c, dict)]
+
+    def nle_export(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``nle.export({videoId, format?, fps?, title?, clips?})`` -> ``{path}`` (captions-export).
+
+        Export the approved clips of a video as an editable NLE timeline: a
+        CMX3600 ``.edl`` (default) or a ``.csv`` for Premiere / DaVinci Resolve.
+        ``fps`` is one of 24/25/30/60 (default 30); ``title`` names the sequence.
+        Per-clip reel names come from each candidate's optional ``reel``. Direct-
+        return ``{path}`` (the build is fast, pure-Python — no job needed).
+        """
+        video_id = _require_str(params, "videoId")
+        fmt = str(params.get("format") or "edl")
+        fps = params.get("fps", 30)
+        title = params.get("title")
+        if not isinstance(title, str) or not title:
+            video = self.library.get(video_id)
+            title = str((video or {}).get("title") or "Media Studio Timeline")
+        clips = self._approved_clips(video_id, params)
+        try:
+            out_path = self.exports_dir / f"{video_id}-timeline.{_nle_export.normalize_format(fmt)}"
+            path = _nle_export.export(clips, out_path, fmt=fmt, fps=fps, title=title)
+        except ValueError as exc:
+            raise _invalid(str(exc)) from exc
+        return {"path": path, "clipCount": len(clips)}
+
+    # ===================================================================== #
+    # package.* — ZIP "package for upload" (captions-export)
+    # ===================================================================== #
+    def package_export(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``package.export({path, suggestion?})`` -> ``{path, manifest}`` (captions-export).
+
+        Bundle ONE produced short (its rendered ``<clip>.mp4`` + thumbnail + a
+        suggested title/description/tags ``upload.json``) into a ``.zip`` for
+        manual posting. ``path`` is the exported clip; the clip's sidecar
+        ``<clip>.json`` metadata drives the suggested copy (an optional
+        ``suggestion`` override wins per-field). The clip MUST live inside the
+        exports root (path-traversal guard). Direct-return.
+        """
+        clip_path = _require_str(params, "path")
+        resolved = Path(clip_path).resolve()
+        root = self.exports_dir.resolve()
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            raise _invalid(f"path is outside the exports root: {clip_path}") from None
+        if not resolved.exists():
+            raise _invalid(f"short not found: {clip_path}")
+        meta = _shorts_meta.read_metadata(resolved) or {}
+        thumb = _shorts_meta.thumbnail_path(resolved)
+        suggestion = params.get("suggestion")
+        suggestion = suggestion if isinstance(suggestion, dict) else None
+        out_zip = resolved.with_name(resolved.stem + ".package.zip")
+        try:
+            result = _package_export.package(
+                resolved,
+                out_zip,
+                meta=meta,
+                thumbnail_path=thumb if thumb.exists() else None,
+                suggestion=suggestion,
+            )
+        except FileNotFoundError as exc:
+            raise _invalid(str(exc)) from exc
+        return result
+
     def _cache_candidates(self, video_id: str, candidates: list[Candidate]) -> None:
         """Cache select candidates keyed by "rank@sourceStart" (the UI's id form)."""
         by_id: dict[str, Candidate] = {}
@@ -814,6 +914,10 @@ def register_all(
 
     reg("shortmaker.select", svc.shortmaker_select)
     reg("shortmaker.export", svc.shortmaker_export)
+
+    # captions-export: EDL/CSV NLE timeline export + ZIP package-for-upload.
+    reg("nle.export", svc.nle_export)
+    reg("package.export", svc.package_export)
 
     # ---------------------------------------------------------------------- #
     # P2 addendum methods (A2) — feature modules ship their own register()
