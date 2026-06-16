@@ -10,6 +10,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Library } from './views/Library';
 import { Workspace } from './views/Workspace';
 import { Shorts } from './views/Shorts';
+import { SystemHealth } from './features/SystemHealth';
 import { client, hasApi, rpc, type ShortReexportHint, type Video } from './lib/rpc';
 import { ToastProvider } from './components/toast/ToastProvider';
 import { ToastHost } from './components/toast/ToastHost';
@@ -33,7 +34,9 @@ type Route =
   | { name: 'library' }
   | { name: 'workspace'; video: Video }
   // P4 §6 / C11: the global generated-shorts gallery (across all videos).
-  | { name: 'shorts' };
+  | { name: 'shorts' }
+  // system-advanced: the app-global System Health diagnostic screen.
+  | { name: 'health' };
 
 /** Local/Cloud quality toggle. Maps to settings.useCloud (CONTRACTS.md §2). */
 function QualityToggle({
@@ -112,6 +115,11 @@ export function App(): React.ReactElement {
     setRoute({ name: 'shorts' });
   }, []);
 
+  // system-advanced: the top-level System Health nav.
+  const openHealth = useCallback(() => {
+    setRoute({ name: 'health' });
+  }, []);
+
   // P4 §6: Re-export reopens the source video's Workspace (where the
   // Short-maker tab lives) so the user can replay the export. Resolve the
   // source Video by id via library.list, then navigate; fall back to the
@@ -136,6 +144,8 @@ export function App(): React.ReactElement {
         return <Workspace video={route.video} onBack={backToLibrary} />;
       case 'shorts':
         return <Shorts onReexport={(hint) => void handleReexport(hint)} />;
+      case 'health':
+        return <SystemHealth />;
       case 'library':
       default:
         return <Library onOpen={openVideo} />;
@@ -164,6 +174,14 @@ export function App(): React.ReactElement {
               onClick={openShorts}
             >
               Shorts
+            </button>
+            <button
+              type="button"
+              className={`app__nav-btn${route.name === 'health' ? ' is-active' : ''}`}
+              aria-current={route.name === 'health' ? 'page' : undefined}
+              onClick={openHealth}
+            >
+              Health
             </button>
           </nav>
           <QualityToggle quality={quality} onChange={changeQuality} />

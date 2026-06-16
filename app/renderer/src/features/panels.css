@@ -379,3 +379,96 @@
   align-items: center;
   gap: var(--space-3);
 }
+
+/* ---- system-advanced group: Health / Recipes / Diarize --------------------- */
+/* Shares the assets-panel state colours; row rhythm matches .asset-row. The
+   state pills reuse .asset-state for the same installed/missing voice. */
+
+.health-panel .asset-state.installed,
+.recipes-panel .asset-state.installed,
+.diarize-panel .asset-state.installed {
+  color: var(--status-success);
+}
+
+.health-panel .asset-state.missing,
+.recipes-panel .asset-state.missing,
+.diarize-panel .asset-state.missing {
+  color: var(--text-muted);
+}
+
+.health-verdict {
+  margin: var(--space-3) 0;
+  font-weight: var(--type-caption-weight);
+}
+
+.health-verdict.ok {
+  color: var(--status-success);
+}
+
+.health-verdict.bad {
+  color: var(--status-danger, var(--text-secondary));
+}
+
+.health-list,
+.recipe-list,
+.recipe-presets,
+.speaker-list {
+  list-style: none;
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.health-row,
+.recipe-row,
+.recipe-preset {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-2, 6px);
+  background: var(--surface-raised, transparent);
+}
+
+.health-row:hover,
+.recipe-row:hover,
+.recipe-preset:hover {
+  background: var(--surface-hover, var(--surface-raised, transparent));
+}
+
+.health-name,
+.recipe-name,
+.recipe-preset-name {
+  flex: 1 1 auto;
+  font-weight: var(--type-body-weight, 500);
+}
+
+.health-row code {
+  flex: 2 1 0;
+  text-align: left;
+}
+
+.recipe-steps,
+.recipe-preset-desc {
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+}
+
+.recipe-preset {
+  flex-wrap: wrap;
+}
+
+.recipe-preset-desc {
+  flex: 1 1 100%;
+}
+
+.speaker-row {
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+  border-radius: var(--radius-2, 6px);
+  background: var(--surface-raised, transparent);
+}

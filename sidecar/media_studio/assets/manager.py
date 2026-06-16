@@ -421,6 +421,14 @@ class AssetManager:
 
         todo = [e for e in entries if self.installed_path(e) is None]
 
+        # Offline gate: downloading a missing asset needs the network. Refuse
+        # (typed) when offline AND there is anything to fetch; an all-installed
+        # ensure is a no-op that stays allowed offline. Done before any bytes.
+        if todo:
+            from ..features.offline import guard_network  # noqa: PLC0415 - avoid cycle
+
+            guard_network(self._settings(), "downloading assets")
+
         for entry in todo:
             dest = self.resolve_dest(entry)
             target_dir = dest if entry.installer in ("hf", "env") else dest.parent
