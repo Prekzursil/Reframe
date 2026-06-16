@@ -37,6 +37,10 @@ clips/
 # but keep the spike's reference inputs
 !spike/talk.en.vtt
 
+# Local agent / orchestration state (never commit — machine-local recovery)
+.beads/
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db

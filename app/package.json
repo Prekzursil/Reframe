@@ -17,6 +17,7 @@
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest"
   },
   "dependencies": {
@@ -28,6 +29,7 @@
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "@vitest/coverage-v8": "^1.6.1",
     "electron": "^31.0.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^2.3.0",
