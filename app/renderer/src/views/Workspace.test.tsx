@@ -63,7 +63,7 @@ async function flush(): Promise<void> {
 }
 
 describe('Workspace', () => {
-  it('exposes the eight contract tabs in order (P2: +Timeline/Dub/Assets)', () => {
+  it('exposes the contract tabs in order (P2: +Timeline/Dub/Assets; captions-export: +Timeline export)', () => {
     expect(WORKSPACE_TABS.map((t) => t.label)).toEqual([
       'Transcribe',
       'Subtitles',
@@ -72,6 +72,7 @@ describe('Workspace', () => {
       'Short-maker',
       'Timeline',
       'Dub',
+      'Timeline export',
       'Assets',
     ]);
   });
@@ -84,7 +85,7 @@ describe('Workspace', () => {
 
     expect(rpcMock).toHaveBeenCalledWith('project.open', { id: 'v1' });
     expect(container.textContent).toContain('Talk');
-    expect(container.querySelectorAll('[role="tab"]').length).toBe(8);
+    expect(container.querySelectorAll('[role="tab"]').length).toBe(WORKSPACE_TABS.length);
   });
 
   it('mounts a feature panel slot (placeholder until the panel module exists)', async () => {

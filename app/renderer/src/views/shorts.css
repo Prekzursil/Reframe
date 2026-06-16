@@ -50,6 +50,22 @@
   background: var(--status-error-soft);
 }
 
+/* captions-export: package-for-upload confirmation note. */
+.shorts__note {
+  margin: var(--space-4) var(--space-6);
+  padding: var(--space-4) var(--space-5);
+  border-left: 3px solid var(--status-success);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: var(--surface-raised, var(--surface));
+  word-break: break-all;
+}
+
+.shorts__note code {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+}
+
 .shorts__loading {
   padding: var(--space-8) var(--space-6);
   color: var(--text-muted);

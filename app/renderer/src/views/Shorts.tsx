@@ -96,6 +96,10 @@ export function Shorts({ onReexport }: ShortsProps): React.ReactElement {
   const [playingId, setPlayingId] = useState<string | null>(null);
   // P4 §7: gallery ordering — newest-first (default) or by virality.
   const [sortMode, setSortMode] = useState<ShortsSort>('recent');
+  // captions-export: the path currently being packaged (null = none in flight).
+  const [packagingPath, setPackagingPath] = useState<string | null>(null);
+  // captions-export: the last produced package ZIP path (for a confirmation note).
+  const [packagedPath, setPackagedPath] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!hasApi()) {
@@ -153,6 +157,20 @@ export function Shorts({ onReexport }: ShortsProps): React.ReactElement {
     [onReexport],
   );
 
+  const handlePackage = useCallback(async (path: string) => {
+    setError(null);
+    setPackagedPath(null);
+    setPackagingPath(path);
+    try {
+      const res = await client.package.export(path);
+      setPackagedPath(res.path);
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setPackagingPath(null);
+    }
+  }, []);
+
   const handleDelete = useCallback(
     async (path: string) => {
       // Confirm before any destructive call (UI confirms first — §2 shorts.delete).
@@ -208,6 +226,12 @@ export function Shorts({ onReexport }: ShortsProps): React.ReactElement {
         </div>
       ) : null}
 
+      {packagedPath ? (
+        <div className="shorts__note" role="status">
+          Packaged for upload: <code>{packagedPath}</code>
+        </div>
+      ) : null}
+
       {loading ? (
         <div className="shorts__loading">Loading…</div>
       ) : shorts.length === 0 ? (
@@ -227,10 +251,12 @@ export function Shorts({ onReexport }: ShortsProps): React.ReactElement {
               key={short.id}
               short={short}
               playing={playingId === short.id}
+              packaging={packagingPath === short.path}
               onPlay={handlePlay}
               onOpenFolder={handleOpenFolder}
               onReexport={handleReexport}
               onDelete={handleDelete}
+              onPackage={handlePackage}
             />
           ))}
         </ul>
@@ -244,19 +270,23 @@ export function Shorts({ onReexport }: ShortsProps): React.ReactElement {
 interface ShortCardProps {
   short: ShortInfo;
   playing: boolean;
+  packaging: boolean;
   onPlay: (id: string) => void;
   onOpenFolder: (path: string) => void;
   onReexport: (path: string) => void;
   onDelete: (path: string) => void;
+  onPackage: (path: string) => void;
 }
 
 function ShortCard({
   short,
   playing,
+  packaging,
   onPlay,
   onOpenFolder,
   onReexport,
   onDelete,
+  onPackage,
 }: ShortCardProps): React.ReactElement {
   const title = short.sourceTitle || baseName(short.path);
   const virality = typeof short.viralityPct === 'number' ? short.viralityPct : null;
@@ -314,10 +344,12 @@ function ShortCard({
         path={short.path}
         label={title}
         playing={playing}
+        packaging={packaging}
         onPlay={() => onPlay(short.id)}
         onOpenFolder={onOpenFolder}
         onReexport={onReexport}
         onDelete={onDelete}
+        onPackage={onPackage}
       />
     </li>
   );

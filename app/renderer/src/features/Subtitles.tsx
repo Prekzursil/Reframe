@@ -62,6 +62,11 @@ export function Subtitles({
   const [exportFormat, setExportFormat] = useState<SubtitleFormat>('srt');
   const [lastExportPath, setLastExportPath] = useState<string>('');
 
+  // captions-export: bilingual stacked subtitles (original + translation).
+  const [bilingual, setBilingual] = useState<boolean>(false);
+  const [bilingualOrder, setBilingualOrder] =
+    useState<'original-first' | 'translation-first'>('original-first');
+
   useEffect(() => {
     if (!jobId) return;
     const off = getApi().onProgress((ev) => {
@@ -142,7 +147,9 @@ export function Subtitles({
       // ShortMaker.tsx pattern).
       const res = await getApi().rpc<{ jobId?: string; track?: SubtitleTrack }>(
         'subtitles.translate',
-        { trackId: track.id, targetLang },
+        bilingual
+          ? { trackId: track.id, targetLang, bilingual: true, order: bilingualOrder }
+          : { trackId: track.id, targetLang },
       );
       const id = extractJobId(res);
       if (id) setJobId(id);
@@ -162,7 +169,7 @@ export function Subtitles({
     } finally {
       setBusy('none');
     }
-  }, [track, targetLang, applyTrack]);
+  }, [track, targetLang, bilingual, bilingualOrder, applyTrack]);
 
   const exportTrack = useCallback(async () => {
     if (!track) return;
@@ -243,6 +250,32 @@ export function Subtitles({
               <button type="button" className="secondary" onClick={cancel}>
                 Cancel
               </button>
+            )}
+          </div>
+
+          {/* captions-export: bilingual stacked subtitles (original + translation). */}
+          <div className="field bilingual-row">
+            <label className="bilingual-toggle">
+              <input
+                type="checkbox"
+                checked={bilingual}
+                disabled={anyBusy}
+                onChange={(e) => setBilingual(e.target.checked)}
+              />
+              Bilingual (stack original + translation)
+            </label>
+            {bilingual && (
+              <select
+                aria-label="Bilingual line order"
+                value={bilingualOrder}
+                disabled={anyBusy}
+                onChange={(e) =>
+                  setBilingualOrder(e.target.value as 'original-first' | 'translation-first')
+                }
+              >
+                <option value="original-first">Original on top</option>
+                <option value="translation-first">Translation on top</option>
+              </select>
             )}
           </div>
 

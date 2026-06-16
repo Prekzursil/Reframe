@@ -16,6 +16,9 @@ const listMock = vi.fn();
 const deleteMock = vi.fn();
 const reexportMock = vi.fn();
 const thumbnailMock = vi.fn();
+// captions-export: the gallery now also offers a per-card "Package for upload"
+// action calling client.package.export — mock it so the wiring is exercisable.
+const packageMock = vi.fn();
 
 vi.mock('../lib/rpc', () => ({
   client: {
@@ -24,6 +27,9 @@ vi.mock('../lib/rpc', () => ({
       delete: (...a: unknown[]) => deleteMock(...a),
       reexport: (...a: unknown[]) => reexportMock(...a),
       thumbnail: (...a: unknown[]) => thumbnailMock(...a),
+    },
+    package: {
+      export: (...a: unknown[]) => packageMock(...a),
     },
   },
   hasApi: () => true,

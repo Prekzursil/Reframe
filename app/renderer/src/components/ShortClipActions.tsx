@@ -19,6 +19,14 @@ export interface ShortClipActionsProps {
   onOpenFolder: (path: string) => void;
   onReexport: (path: string) => void;
   onDelete: (path: string) => void;
+  /**
+   * captions-export: optional "Package for upload" action. When provided, a
+   * Package button is rendered (bundles the short + thumbnail + suggested
+   * title/description/tags into a ZIP). Omitted call sites are unaffected.
+   */
+  onPackage?: (path: string) => void;
+  /** True while this clip's package ZIP is being built (Package -> Packaging…). */
+  packaging?: boolean;
 }
 
 export function ShortClipActions({
@@ -29,6 +37,8 @@ export function ShortClipActions({
   onOpenFolder,
   onReexport,
   onDelete,
+  onPackage,
+  packaging = false,
 }: ShortClipActionsProps): React.ReactElement {
   return (
     <div className="shorts__actions">
@@ -45,6 +55,16 @@ export function ShortClipActions({
       <button type="button" aria-label={`Re-export ${label}`} onClick={() => onReexport(path)}>
         Re-export
       </button>
+      {onPackage ? (
+        <button
+          type="button"
+          aria-label={`Package ${label} for upload`}
+          disabled={packaging}
+          onClick={() => onPackage(path)}
+        >
+          {packaging ? 'Packaging…' : 'Package'}
+        </button>
+      ) : null}
       <button
         type="button"
         className="shorts__delete"

@@ -280,6 +280,83 @@ def translate(
 
 
 # --------------------------------------------------------------------------- #
+# bilingual stacked subtitles (original + translation in one cue)
+# --------------------------------------------------------------------------- #
+#: Default order of the two languages within a stacked bilingual cue.
+BILINGUAL_ORDERS: tuple[str, ...] = ("original-first", "translation-first")
+
+
+def stack_cue_text(original: str, translation: str, *, order: str = "original-first") -> str:
+    """Join two language lines into one stacked cue body (newline-separated).
+
+    The original and the translation share one cue (same timing); they are
+    stacked on two lines so a player renders both at once. ``order`` controls
+    which language is on top. A blank line is dropped so a missing translation
+    never leaves a dangling empty row.
+    """
+    top, bottom = (original, translation) if order != "translation-first" else (translation, original)
+    parts = [str(p).strip() for p in (top, bottom) if str(p).strip()]
+    return "\n".join(parts)
+
+
+def stack_bilingual(
+    original: SubtitleTrack,
+    translation: SubtitleTrack,
+    *,
+    order: str = "original-first",
+    name: str | None = None,
+    track_id: str | None = None,
+) -> SubtitleTrack:
+    """Combine an ``original`` track and its ``translation`` into ONE stacked track.
+
+    The two tracks are expected to share cue timings (the translation is produced
+    by :func:`translate`, which preserves timing/indices). Each output cue keeps
+    the original's timing and carries both lines stacked via :func:`stack_cue_text`.
+    Translation cues are matched by ``index`` first, falling back to positional
+    order, so a slight count mismatch degrades gracefully instead of raising.
+
+    The result ``lang`` is ``"<orig>+<trans>"`` to mark it bilingual, and its
+    ``name`` defaults to ``"Bilingual (<orig>/<trans>)"``. Immutable: neither
+    input track is mutated.
+    """
+    orig_cues = list(original.get("cues") or [])
+    trans_cues = list(translation.get("cues") or [])
+    by_index: dict[int, Cue] = {}
+    for c in trans_cues:
+        try:
+            by_index[int(c.get("index"))] = c
+        except (TypeError, ValueError):
+            continue
+
+    out_cues: list[Cue] = []
+    for pos, cue in enumerate(orig_cues):
+        idx = int(cue.get("index", pos + 1))
+        match = by_index.get(idx)
+        if match is None and pos < len(trans_cues):
+            match = trans_cues[pos]
+        translated_text = str(match.get("text", "")) if match else ""
+        out_cues.append(
+            make_cue(
+                idx,
+                float(cue.get("start", 0.0)),
+                float(cue.get("end", 0.0)),
+                stack_cue_text(str(cue.get("text", "")), translated_text, order=order),
+            )
+        )
+
+    orig_lang = str(original.get("lang") or "und")
+    trans_lang = str(translation.get("lang") or "und")
+    return new_track(
+        out_cues,
+        lang=f"{orig_lang}+{trans_lang}",
+        name=name or f"Bilingual ({orig_lang}/{trans_lang})",
+        fmt=str(original.get("format") or "srt"),
+        kind="soft",
+        track_id=track_id,
+    )
+
+
+# --------------------------------------------------------------------------- #
 # timestamp helpers
 # --------------------------------------------------------------------------- #
 def _split_seconds(seconds: float) -> tuple[int, int, int, int]:

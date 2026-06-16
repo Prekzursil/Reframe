@@ -26,6 +26,8 @@ const ShortMaker = lazy(() => import('../features/ShortMaker'));
 const TimelinePanel = lazy(() => import('../features/Timeline'));
 const Dub = lazy(() => import('../features/Dub'));
 const Assets = lazy(() => import('../features/Assets'));
+// captions-export: EDL/CSV NLE timeline export of approved clips.
+const NleExport = lazy(() => import('../features/NleExport'));
 
 export const WORKSPACE_TABS: TabDef[] = [
   { id: 'transcribe', label: 'Transcribe' },
@@ -35,6 +37,7 @@ export const WORKSPACE_TABS: TabDef[] = [
   { id: 'shortmaker', label: 'Short-maker' },
   { id: 'timeline', label: 'Timeline' },
   { id: 'dub', label: 'Dub' },
+  { id: 'nle', label: 'Timeline export' },
   { id: 'assets', label: 'Assets' },
 ];
 
@@ -119,6 +122,8 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
         );
       case 'dub':
         return <Dub videoId={video.id} />;
+      case 'nle':
+        return <NleExport videoId={video.id} />;
       case 'assets':
         return <Assets />;
       case 'transcribe':
