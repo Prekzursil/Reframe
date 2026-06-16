@@ -519,3 +519,278 @@ def test_get_engine_returns_constructed_instances(verthor_script):
     eng, notice = reframe.get_engine("claudeshorts", {}, probe_runner=_never_probe)
     assert isinstance(eng, ClaudeShortsReframeEngine)
     assert notice is None
+
+
+# --------------------------------------------------------------------------- #
+# build_crop_x_expr — keyframe ALREADY at t=0 (no synthetic t=0 prepend)
+# --------------------------------------------------------------------------- #
+def test_build_crop_x_expr_first_keyframe_at_zero_not_prepended():
+    # First keyframe already at t=0 -> the t=0-prepend branch is skipped; the
+    # expression still interpolates between the two real keyframes.
+    kfs = [{"t": 0.0, "x": 100}, {"t": 2.0, "x": 300}]
+    expr = cs.build_crop_x_expr(0, kfs)
+    assert expr.startswith("if(lt(t,2.000),")
+    assert "100+(300-100)*(t-0.000)/(2.000)" in expr
+    # exactly one segment (no extra prepended t=0 keyframe doubling it up)
+    assert expr.count("if(lt(t,") == 1
+
+
+# --------------------------------------------------------------------------- #
+# engine — defensive non-list argv guard (§A6.4: never a shell string)
+# --------------------------------------------------------------------------- #
+def test_engine_raises_typeerror_when_argv_not_a_list(fake_bins, monkeypatch):
+    eng, _runner = _engine(fake_bins, detector=lambda p, t: [])
+    monkeypatch.setattr(cs, "build_reframe_argv", lambda *a, **k: "ffmpeg -i in out")
+    with pytest.raises(TypeError, match="must be a list"):
+        eng.reframe("/in.mp4", "/out.mp4")
+
+
+# --------------------------------------------------------------------------- #
+# _make_face_finder — the haar (cv2) branch + the center (no-finder) branch.
+#
+# cv2 IS installed; the haar cascade ships with opencv, so the finder runs REAL
+# (deterministic) inference on synthetic frames — no network, no model download.
+# The mediapipe branch is reported for pragma (legacy mp.solutions API absent in
+# the installed mediapipe build; see the deliverable report).
+# --------------------------------------------------------------------------- #
+def test_make_face_finder_center_backend_returns_no_finder():
+    find, close = cs._make_face_finder("center")
+    assert find is None
+    close()  # the no-op closer is safely callable
+
+
+# --------------------------------------------------------------------------- #
+# _make_face_finder — the mediapipe branch (fake mediapipe module injected).
+#
+# The installed mediapipe build lacks the legacy ``mp.solutions`` API, so we
+# inject a fake ``mediapipe`` module exposing exactly the slice the engine uses
+# (solutions.face_detection.FaceDetection -> process(rgb).detections with a
+# relative_bounding_box). cv2 stays REAL (cvtColor on a numpy frame).
+# --------------------------------------------------------------------------- #
+def _fake_mediapipe(detections):
+    import sys
+    import types
+
+    captured: dict = {"closed": False}
+
+    class _Detector:
+        def process(self, rgb):
+            captured["rgb_shape"] = getattr(rgb, "shape", None)
+            return types.SimpleNamespace(detections=detections)
+
+        def close(self):
+            captured["closed"] = True
+
+    def _factory(*, model_selection, min_detection_confidence):
+        captured["model_selection"] = model_selection
+        return _Detector()
+
+    mod = types.ModuleType("mediapipe")
+    mod.solutions = types.SimpleNamespace(  # type: ignore[attr-defined]
+        face_detection=types.SimpleNamespace(FaceDetection=_factory)
+    )
+    sys.modules["mediapipe"] = mod
+    return mod, captured
+
+
+def _bbox(xmin, width, height):
+    import types
+
+    return types.SimpleNamespace(
+        location_data=types.SimpleNamespace(
+            relative_bounding_box=types.SimpleNamespace(xmin=xmin, width=width, height=height)
+        )
+    )
+
+
+def test_make_face_finder_mediapipe_returns_best_detection_center(monkeypatch):
+    import numpy as np
+
+    # Two detections; the larger-area one (0.4*0.4) wins over (0.2*0.2).
+    small = _bbox(0.0, 0.2, 0.2)
+    big = _bbox(0.5, 0.4, 0.4)
+    _mod, captured = _fake_mediapipe([small, big])
+    monkeypatch.setitem(__import__("sys").modules, "mediapipe", _mod)
+
+    find, close = cs._make_face_finder("mediapipe")
+    assert callable(find)
+    cx = find(np.zeros((90, 160, 3), dtype=np.uint8))
+    # best bbox center x = xmin + width/2 = 0.5 + 0.2 = 0.7
+    assert cx == pytest.approx(0.7)
+    assert captured["model_selection"] == 1
+    close()
+    assert captured["closed"] is True
+
+
+def test_make_face_finder_mediapipe_no_detection_returns_none(monkeypatch):
+    import numpy as np
+
+    _mod, _captured = _fake_mediapipe([])  # no detections
+    monkeypatch.setitem(__import__("sys").modules, "mediapipe", _mod)
+    find, _close = cs._make_face_finder("mediapipe")
+    assert find(np.zeros((50, 50, 3), dtype=np.uint8)) is None
+
+
+def test_make_face_finder_haar_returns_callable_finder():
+    import numpy as np
+
+    find, close = cs._make_face_finder("haar")
+    assert callable(find)
+    # A blank frame has no face -> the haar finder returns None (no detection).
+    blank = np.zeros((120, 240, 3), dtype=np.uint8)
+    assert find(blank) is None
+    close()
+
+
+def test_make_face_finder_haar_returns_normalized_center_on_detection(monkeypatch):
+    import cv2
+    import numpy as np
+
+    # Stub the cascade so detectMultiScale reports a face box; this drives the
+    # "largest face -> normalized horizontal center" return (lines 437-438).
+    class _FaceCascade:
+        def __init__(self, *_a):
+            pass
+
+        def empty(self):
+            return False
+
+        def detectMultiScale(self, gray, scaleFactor, minNeighbors):
+            # two boxes; the larger (by w*h) wins. frame width below is 200.
+            return [(10, 10, 20, 20), (100, 10, 40, 40)]  # second is larger
+
+    monkeypatch.setattr(cv2, "CascadeClassifier", _FaceCascade)
+    find, close = cs._make_face_finder("haar")
+    img = np.zeros((120, 200, 3), dtype=np.uint8)  # width 200
+    cx = find(img)
+    # largest face center x = 100 + 40/2 = 120; normalized = 120/200 = 0.6
+    assert cx == pytest.approx(0.6)
+    close()
+
+
+def test_make_face_finder_haar_no_faces_returns_none(monkeypatch):
+    import cv2
+    import numpy as np
+
+    class _NoFaceCascade:
+        def __init__(self, *_a):
+            pass
+
+        def empty(self):
+            return False
+
+        def detectMultiScale(self, gray, scaleFactor, minNeighbors):
+            return ()  # empty -> finder returns None
+
+    monkeypatch.setattr(cv2, "CascadeClassifier", _NoFaceCascade)
+    find, _close = cs._make_face_finder("haar")
+    assert find(np.zeros((50, 50, 3), dtype=np.uint8)) is None
+
+
+def test_make_face_finder_haar_missing_cascade_degrades_to_none(monkeypatch):
+    import cv2
+
+    # Force an EMPTY cascade (the "cascade file missing" branch) -> no finder.
+    class _EmptyCascade:
+        def __init__(self, *_a):
+            pass
+
+        def empty(self):
+            return True
+
+    monkeypatch.setattr(cv2, "CascadeClassifier", _EmptyCascade)
+    find, close = cs._make_face_finder("haar")
+    assert find is None
+    close()
+
+
+# --------------------------------------------------------------------------- #
+# detect_subject_centers — the non-center body (real cv2.imread of fake frames)
+# --------------------------------------------------------------------------- #
+def test_detect_subject_centers_haar_reads_extracted_frames():
+    import cv2
+    import numpy as np
+
+    # A frame_runner that writes a REAL (blank) jpeg to the requested path so
+    # cv2.imread succeeds; the haar finder finds no face -> no samples appended.
+    def frame_runner(argv, capture_output=True, check=False):
+        out_path = argv[-1]
+        cv2.imwrite(out_path, np.zeros((80, 160, 3), dtype=np.uint8))
+        return type("C", (), {"returncode": 0})()
+
+    samples = cs.detect_subject_centers("/in.mp4", [0.5, 1.5], frame_runner=frame_runner, backend="haar")
+    # blank frames -> haar finds nothing -> empty sample list, but the body ran
+    # (frames extracted + read) without spawning real ffmpeg/cv2 download.
+    assert samples == []
+
+
+def test_detect_subject_centers_skips_missing_and_unreadable_frames():
+    # A frame_runner that NEVER writes the frame file -> os.path.exists False ->
+    # the frame is skipped (the "frame not produced" continue branch).
+    def no_write_runner(argv, capture_output=True, check=False):
+        return type("C", (), {"returncode": 1})()
+
+    samples = cs.detect_subject_centers("/in.mp4", [0.5], frame_runner=no_write_runner, backend="haar")
+    assert samples == []
+
+
+def test_detect_subject_centers_skips_unreadable_frame(monkeypatch):
+    # The frame file EXISTS but cv2.imread can't decode it (None) -> skipped
+    # (the "img is None" continue branch, distinct from "file not produced").
+    import cv2
+
+    monkeypatch.setattr(cs, "_make_face_finder", lambda backend: (lambda img: 0.5, lambda: None))
+    monkeypatch.setattr(cv2, "imread", lambda path: None)  # always unreadable
+
+    def frame_runner(argv, capture_output=True, check=False):
+        # Write SOMETHING so os.path.exists is True, but imread (stubbed) -> None.
+        with open(argv[-1], "wb") as fh:
+            fh.write(b"not-a-real-jpeg")
+        return type("C", (), {"returncode": 0})()
+
+    samples = cs.detect_subject_centers("/in.mp4", [0.5], frame_runner=frame_runner, backend="haar")
+    assert samples == []
+
+
+def test_detect_subject_centers_no_finder_backend_returns_empty(monkeypatch):
+    # When _make_face_finder yields no finder (None) the body returns [] early.
+    monkeypatch.setattr(cs, "_make_face_finder", lambda backend: (None, lambda: None))
+
+    def boom(*a, **k):  # pragma: no cover - must never run (no finder -> no frames)
+        raise AssertionError("no frame extraction without a finder")
+
+    assert cs.detect_subject_centers("/in.mp4", [0.5], frame_runner=boom, backend="haar") == []
+
+
+def test_detect_subject_centers_collects_when_finder_returns_center(monkeypatch):
+    import cv2
+    import numpy as np
+
+    # Stub the finder to report a center for every frame so the sample-append
+    # branch (cx is not None) is exercised; cv2.imread reads a real jpeg.
+    monkeypatch.setattr(cs, "_make_face_finder", lambda backend: (lambda img: 0.42, lambda: None))
+
+    def frame_runner(argv, capture_output=True, check=False):
+        cv2.imwrite(argv[-1], np.zeros((60, 120, 3), dtype=np.uint8))
+        return type("C", (), {"returncode": 0})()
+
+    samples = cs.detect_subject_centers("/in.mp4", [0.5, 1.5], frame_runner=frame_runner, backend="haar")
+    assert samples == [(0.5, 0.42), (1.5, 0.42)]
+
+
+def test_detect_subject_centers_finder_close_failure_is_swallowed(monkeypatch):
+    import cv2
+    import numpy as np
+
+    def boom_close():
+        raise RuntimeError("close blew up")
+
+    monkeypatch.setattr(cs, "_make_face_finder", lambda backend: (lambda img: 0.5, boom_close))
+
+    def frame_runner(argv, capture_output=True, check=False):
+        cv2.imwrite(argv[-1], np.zeros((40, 80, 3), dtype=np.uint8))
+        return type("C", (), {"returncode": 0})()
+
+    # A failing close() must never mask the collected results (cleanup-swallow).
+    samples = cs.detect_subject_centers("/in.mp4", [0.5], frame_runner=frame_runner, backend="haar")
+    assert samples == [(0.5, 0.5)]

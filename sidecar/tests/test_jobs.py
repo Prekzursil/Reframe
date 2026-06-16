@@ -625,6 +625,151 @@ def test_job_retry_requires_jobid_and_registry(registry):
     assert ei.value.code == ErrorCode.INTERNAL_ERROR
 
 
+def test_pump_finishes_queued_job_whose_cancel_flag_was_set(emit_sinks, collected):
+    # A queued job whose cancel flag is set *directly* (not via registry.cancel,
+    # which removes it from the queue) is finished CANCELLED by _pump when a slot
+    # frees — exercising the queued-cancel branch (342-343) + the cancelled loop
+    # (356) inside _pump.
+    ep, ed = emit_sinks
+    reg = JobRegistry(ep, ed, max_workers=1)
+    started = threading.Event()
+    release = threading.Event()
+    blocker = reg.start(_blocker(started, release))
+    assert started.wait(timeout=5)
+
+    ran = threading.Event()
+    queued = reg.start(lambda ctx: ran.set())
+    assert queued.info()["status"] == "queued"
+    # Set the cancel flag WITHOUT going through registry.cancel(), so the job
+    # stays in the internal queue until _pump sweeps it on the next slot free.
+    queued.request_cancel()
+
+    release.set()  # blocker finishes -> _release_slot -> _pump runs
+    assert queued.wait(timeout=5)
+    assert queued.status is JobStatus.CANCELLED
+    assert not ran.is_set()  # never ran
+    assert blocker.wait(timeout=5)
+    # The cancelled-while-queued job emits no job.done (only the blocker does).
+    done_ids = [jid for k, (jid, _payload) in collected if k == "done"]
+    assert queued.id not in done_ids
+
+
+def test_join_returns_immediately_when_nothing_scheduled(registry):
+    # No scheduled jobs -> the while loop's `waiting` is empty on the first pass.
+    registry.create(lambda ctx: None)  # created but never started
+    registry.join(timeout=5)  # returns without blocking / error
+
+
+def test_join_with_deadline_waits_for_running_job(emit_sinks):
+    # join(timeout=...) with a real waiting job exercises remaining()'s
+    # deadline arithmetic (483) and the per-job wait with a positive budget.
+    ep, ed = emit_sinks
+    reg = JobRegistry(ep, ed)
+    started = threading.Event()
+    release = threading.Event()
+    job = reg.start(_blocker(started, release))
+    assert started.wait(timeout=5)
+    release.set()  # let it finish so join completes within the budget
+    reg.join(timeout=5)
+    assert job.finished
+
+
+def test_join_times_out_on_a_stuck_job(emit_sinks):
+    # A job that never finishes within the budget makes join hit the deadline and
+    # the timed-out per-job break (496). join must return (not hang) and leave the
+    # stuck job unfinished.
+    ep, ed = emit_sinks
+    reg = JobRegistry(ep, ed)
+    started = threading.Event()
+    release = threading.Event()
+    job = reg.start(_blocker(started, release))
+    assert started.wait(timeout=5)
+    try:
+        reg.join(timeout=0.05)  # far too short -> deadline hit, returns anyway
+        assert job.finished is False
+    finally:
+        release.set()
+        assert job.wait(timeout=5)
+
+
+def test_join_without_timeout_waits_on_a_running_job(emit_sinks):
+    # join() with NO timeout -> remaining() returns None (line 483) and the
+    # per-job wait blocks until the job actually finishes. A background thread
+    # releases the job so this terminates.
+    ep, ed = emit_sinks
+    reg = JobRegistry(ep, ed)
+    started = threading.Event()
+    release = threading.Event()
+    job = reg.start(_blocker(started, release))
+    assert started.wait(timeout=5)
+
+    def _release_soon():
+        time.sleep(0.02)
+        release.set()
+
+    releaser = threading.Thread(target=_release_soon, daemon=True)
+    releaser.start()
+    reg.join()  # no timeout -> deadline is None branch
+    releaser.join(timeout=5)
+    assert job.finished
+
+
+def test_join_breaks_when_deadline_already_passed(emit_sinks, monkeypatch):
+    # Force remaining() to report a non-positive budget so the `rem <= 0` break
+    # (line 493) fires deterministically while a job is still waiting.
+    ep, ed = emit_sinks
+    reg = JobRegistry(ep, ed)
+    started = threading.Event()
+    release = threading.Event()
+    job = reg.start(_blocker(started, release))
+    assert started.wait(timeout=5)
+
+    import media_studio.jobs as jobs_mod
+
+    # First monotonic() call sets the deadline; every later call (inside
+    # remaining()) returns a value far past it, so rem <= 0 on the first check.
+    calls = {"n": 0}
+    real_monotonic = jobs_mod.time.monotonic
+
+    def fake_monotonic():
+        calls["n"] += 1
+        base = real_monotonic()
+        return base if calls["n"] == 1 else base + 1000.0
+
+    monkeypatch.setattr(jobs_mod.time, "monotonic", fake_monotonic)
+    try:
+        reg.join(timeout=0.01)  # deadline immediately "in the past" -> 493 break
+        assert job.finished is False
+    finally:
+        monkeypatch.undo()
+        release.set()
+        assert job.wait(timeout=5)
+
+
+def test_join_deadline_expires_between_jobs(emit_sinks):
+    # First scheduled job finishes within budget (loop continues), but by the
+    # next iteration the deadline has already passed for the still-waiting second
+    # job -> the `rem <= 0` break (493) fires. remaining()'s deadline arithmetic
+    # (483) runs on every pass. Uses max_workers=1 so job 2 stays queued.
+    ep, ed = emit_sinks
+    reg = JobRegistry(ep, ed, max_workers=1)
+    s1 = threading.Event()
+    r1 = threading.Event()
+    s2 = threading.Event()
+    r2 = threading.Event()
+    first = reg.start(_blocker(s1, r1))
+    second = reg.start(_blocker(s2, r2))  # queued behind `first`
+    assert s1.wait(timeout=5)
+    try:
+        r1.set()  # let the first job finish so join loops to the second
+        assert first.wait(timeout=5)
+        reg.join(timeout=0.02)  # second still blocked -> deadline expires
+        assert second.finished is False
+    finally:
+        r2.set()
+        assert second.wait(timeout=5)
+
+
 def test_job_retry_propagates_handler_without_job_as_internal_error(registry):
     ctx = _rpc_ctx(registry)
     flip = {"first": True}

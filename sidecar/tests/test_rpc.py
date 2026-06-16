@@ -207,6 +207,57 @@ def test_job_status_unknown_job_raises():
     assert ei.value.code == ErrorCode.INVALID_PARAMS
 
 
+def test_method_decorator_rejects_duplicate_name():
+    # The @method decorator path (distinct from protocol.register) must also
+    # refuse a duplicate registration loudly at import time.
+    @protocol.method("test.decor.dup")
+    def _first(params, ctx):
+        return None
+
+    with pytest.raises(ValueError):
+
+        @protocol.method("test.decor.dup")
+        def _second(params, ctx):  # pragma: no cover - never registered
+            return None
+
+
+def test_dispatch_does_not_record_when_result_is_not_a_dict():
+    # _maybe_record_job_request short-circuits on a non-dict result (no jobId to
+    # record) — exercises the early return for a scalar handler result.
+    server = RpcServer()
+
+    @protocol.method("test.scalar")
+    def _scalar(params, ctx):
+        return "not-a-dict"
+
+    req = parse_request({"jsonrpc": "2.0", "id": 1, "method": "test.scalar"})
+    assert protocol.dispatch(req, server.ctx) == "not-a-dict"
+
+
+def test_job_cancel_without_registry_raises_internal_error():
+    ctx = RpcContext(emit_notification=lambda o: None, jobs=None)
+    req = parse_request({"jsonrpc": "2.0", "id": 1, "method": "job.cancel", "params": {"jobId": "j1"}})
+    with pytest.raises(RpcError) as ei:
+        protocol.dispatch(req, ctx)
+    assert ei.value.code == ErrorCode.INTERNAL_ERROR
+
+
+def test_job_status_requires_jobId():
+    server = RpcServer()
+    req = parse_request({"jsonrpc": "2.0", "id": 1, "method": "job.status", "params": {}})
+    with pytest.raises(RpcError) as ei:
+        protocol.dispatch(req, server.ctx)
+    assert ei.value.code == ErrorCode.INVALID_PARAMS
+
+
+def test_job_status_without_registry_raises_internal_error():
+    ctx = RpcContext(emit_notification=lambda o: None, jobs=None)
+    req = parse_request({"jsonrpc": "2.0", "id": 1, "method": "job.status", "params": {"jobId": "j1"}})
+    with pytest.raises(RpcError) as ei:
+        protocol.dispatch(req, ctx)
+    assert ei.value.code == ErrorCode.INTERNAL_ERROR
+
+
 # ===========================================================================
 # rpc.py — server framing over in-memory streams
 # ===========================================================================
@@ -406,3 +457,93 @@ def test_concurrent_job_writes_are_well_framed(make_streams):
     for raw in streams.outstream.getvalue().splitlines():
         if raw.strip():
             json.loads(raw)
+
+
+# ===========================================================================
+# rpc.py — notification error paths + build_server / main entry points
+# ===========================================================================
+
+
+def test_notification_handler_rpcerror_is_logged_not_written(make_streams):
+    # A *notification* (no id) whose handler raises RpcError produces NO response
+    # — the error is logged and the loop continues (rpc.py line 108).
+    @protocol.method("demo.note_rpcerror")
+    def _note(params, ctx):
+        raise RpcError("nope", ErrorCode.INVALID_PARAMS)
+
+    server, streams = _server_for(
+        make_streams,
+        [
+            {"jsonrpc": "2.0", "method": "demo.note_rpcerror"},  # notification
+            {"jsonrpc": "2.0", "id": 9, "method": "ping"},  # loop survives
+        ],
+    )
+    server.serve()
+    out = streams.output_objects()
+    # Only the ping response is written; the notification produced nothing.
+    assert [o.get("id") for o in out] == [9]
+
+
+def test_notification_handler_crash_is_swallowed(make_streams):
+    # A notification whose handler raises a NON-RpcError hits the generic
+    # except-Exception branch with is_notification True (112->115): no response.
+    @protocol.method("demo.note_crash")
+    def _note(params, ctx):
+        raise RuntimeError("boom")
+
+    server, streams = _server_for(
+        make_streams,
+        [
+            {"jsonrpc": "2.0", "method": "demo.note_crash"},  # notification
+            {"jsonrpc": "2.0", "id": 11, "method": "ping"},
+        ],
+    )
+    server.serve()
+    out = streams.output_objects()
+    assert [o.get("id") for o in out] == [11]
+
+
+def test_build_server_returns_rpcserver():
+    import io
+
+    from media_studio.rpc import build_server
+
+    instream = io.StringIO("")
+    outstream = io.StringIO()
+    server = build_server(instream=instream, outstream=outstream)
+    assert isinstance(server, RpcServer)
+    assert server._in is instream
+    assert server._out is outstream
+
+
+def test_main_serves_until_stdin_closes(monkeypatch):
+    # main() builds a server and serves until EOF, returning 0. build_server is
+    # stubbed so no real stdio is touched.
+    import io
+
+    from media_studio import rpc as rpc_mod
+
+    streams_in = io.StringIO('{"jsonrpc":"2.0","id":1,"method":"ping"}\n')
+    streams_out = io.StringIO()
+    built = RpcServer(instream=streams_in, outstream=streams_out)
+    monkeypatch.setattr(rpc_mod, "build_server", lambda: built)
+    assert rpc_mod.main() == 0
+    lines = [line for line in streams_out.getvalue().splitlines() if line.strip()]
+    assert len(lines) == 1
+    assert json.loads(lines[0])["result"]["pong"] is True
+
+
+def test_main_returns_130_on_keyboard_interrupt(monkeypatch):
+    import io
+
+    from media_studio import rpc as rpc_mod
+
+    class _Interrupting(RpcServer):
+        def serve(self) -> None:
+            raise KeyboardInterrupt
+
+    def _build():
+        return _Interrupting(instream=io.StringIO(""), outstream=io.StringIO())
+
+    monkeypatch.setattr(rpc_mod, "build_server", _build)
+    assert rpc_mod.main() == 130

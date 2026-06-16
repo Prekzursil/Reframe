@@ -487,3 +487,114 @@ def test_register_duplicate_raises():
     transcribe.register(lambda vid: "/m/v.mp4", loader=FakeLoader(_two_segment_model()))
     with pytest.raises(ValueError):
         transcribe.register(lambda vid: "/m/v.mp4", loader=FakeLoader(_two_segment_model()))
+
+
+# --------------------------------------------------------------------------- #
+# FasterWhisperLoader — the DEFAULT (production) loader seam
+#
+# The heavy ``faster_whisper`` import lives INSIDE FasterWhisperLoader.load(); we
+# stub the module in sys.modules so .load() builds a fake model (no download), and
+# assert the per-key cache + release() behaviour without any real model.
+# --------------------------------------------------------------------------- #
+import sys  # noqa: E402
+import types  # noqa: E402
+
+
+class _FakeFasterWhisperModel:
+    """Records the ctor args the loader passes through to WhisperModel(...)."""
+
+    instances: list[tuple[str, str, str]] = []
+
+    def __init__(self, model: str, *, device: str, compute_type: str):
+        self.model = model
+        self.device = device
+        self.compute_type = compute_type
+        _FakeFasterWhisperModel.instances.append((model, device, compute_type))
+
+
+@pytest.fixture()
+def _stub_faster_whisper(monkeypatch):
+    """Install a fake ``faster_whisper`` module so .load() never downloads."""
+    _FakeFasterWhisperModel.instances = []
+    fake_mod = types.ModuleType("faster_whisper")
+    fake_mod.WhisperModel = _FakeFasterWhisperModel  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake_mod)
+    # Don't let the Windows CUDA-DLL hook fire on real sys.path during this test.
+    monkeypatch.setattr(transcribe, "_register_cuda_dll_dirs", lambda: None)
+    return fake_mod
+
+
+def test_faster_whisper_loader_builds_and_caches(_stub_faster_whisper):
+    loader = transcribe.FasterWhisperLoader()
+    m1 = loader.load("large-v3-turbo", "cuda", "float16")
+    assert isinstance(m1, _FakeFasterWhisperModel)
+    assert (m1.model, m1.device, m1.compute_type) == ("large-v3-turbo", "cuda", "float16")
+    # Second call with the SAME key returns the cached instance (no rebuild).
+    m2 = loader.load("large-v3-turbo", "cuda", "float16")
+    assert m2 is m1
+    assert len(_FakeFasterWhisperModel.instances) == 1
+
+
+def test_faster_whisper_loader_distinct_keys_build_separate_models(_stub_faster_whisper):
+    loader = transcribe.FasterWhisperLoader()
+    cuda = loader.load("large-v3-turbo", "cuda", "float16")
+    cpu = loader.load("large-v3-turbo", "cpu", "int8")
+    assert cuda is not cpu
+    assert len(_FakeFasterWhisperModel.instances) == 2
+
+
+def test_faster_whisper_loader_release_drops_cache(_stub_faster_whisper):
+    loader = transcribe.FasterWhisperLoader()
+    first = loader.load("large-v3-turbo", "cuda", "float16")
+    loader.release()
+    # After release the next load rebuilds (a fresh instance is constructed).
+    rebuilt = loader.load("large-v3-turbo", "cuda", "float16")
+    assert rebuilt is not first
+    assert len(_FakeFasterWhisperModel.instances) == 2
+
+
+# --------------------------------------------------------------------------- #
+# _register_cuda_dll_dirs — the Windows pip-wheel CUDA DLL hook
+# --------------------------------------------------------------------------- #
+def test_register_cuda_dll_dirs_noop_off_windows(monkeypatch):
+    monkeypatch.setattr(transcribe, "_cuda_dirs_registered", False)
+    monkeypatch.setattr(transcribe.sys, "platform", "linux")
+    called: list[str] = []
+    monkeypatch.setattr(transcribe.os, "add_dll_directory", lambda d: called.append(d), raising=False)
+    transcribe._register_cuda_dll_dirs()
+    assert called == []  # off-Windows: hook is a no-op
+
+
+def test_register_cuda_dll_dirs_registers_wheel_bin_dirs(monkeypatch, tmp_path):
+    # A fake site-packages with an nvidia/<pkg>/bin layout the wheels create.
+    sp = tmp_path / "site-packages"
+    cublas_bin = sp / "nvidia" / "cublas" / "bin"
+    cudnn_bin = sp / "nvidia" / "cudnn" / "bin"
+    cublas_bin.mkdir(parents=True)
+    cudnn_bin.mkdir(parents=True)
+
+    monkeypatch.setattr(transcribe, "_cuda_dirs_registered", False)
+    monkeypatch.setattr(transcribe.sys, "platform", "win32")
+    monkeypatch.setattr(transcribe.sys, "path", [str(sp), str(tmp_path / "no-nvidia-here")])
+
+    added: list[str] = []
+    monkeypatch.setattr(transcribe.os, "add_dll_directory", lambda d: added.append(d), raising=False)
+    monkeypatch.setattr(transcribe.os, "environ", {"PATH": "existing"})
+
+    transcribe._register_cuda_dll_dirs()
+    assert str(cublas_bin) in added
+    assert str(cudnn_bin) in added
+    # PATH was prepended with the bin dirs.
+    assert "bin" in transcribe.os.environ["PATH"]
+
+
+def test_register_cuda_dll_dirs_is_idempotent(monkeypatch, tmp_path):
+    sp = tmp_path / "sp"
+    (sp / "nvidia" / "cublas" / "bin").mkdir(parents=True)
+    monkeypatch.setattr(transcribe, "_cuda_dirs_registered", True)  # already done
+    monkeypatch.setattr(transcribe.sys, "platform", "win32")
+    monkeypatch.setattr(transcribe.sys, "path", [str(sp)])
+    added: list[str] = []
+    monkeypatch.setattr(transcribe.os, "add_dll_directory", lambda d: added.append(d), raising=False)
+    transcribe._register_cuda_dll_dirs()
+    assert added == []  # the registered flag short-circuits

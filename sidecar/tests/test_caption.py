@@ -555,6 +555,15 @@ def test_wrap_hook_title_blank_is_empty():
     assert wrap_hook_title(None) == ""  # type: ignore[arg-type]
 
 
+def test_wrap_hook_title_exits_loop_naturally_when_chunks_below_max_lines():
+    # 5 words with max_lines=4 -> per_line=ceil(5/4)=2 -> 3 chunks (< max_lines),
+    # so the pack loop exhausts naturally without ever hitting the max_lines break
+    # (covers the for->return arc). `rest` stays empty throughout.
+    wrapped = wrap_hook_title("one two three four five", max_lines=4)
+    assert wrapped == r"one two\Nthree four\Nfive"
+    assert wrapped.count(r"\N") == 2  # three lines
+
+
 def test_build_ass_no_title_when_hook_absent():
     """Default (no hook_title) ASS has NO HookTitle style/event — byte-identical
     to the pre-P3 document."""

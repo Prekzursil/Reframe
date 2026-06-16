@@ -14,7 +14,11 @@ from typing import Any
 
 import pytest
 from media_studio.assets import manifest
-from media_studio.models.provider import ProviderError
+from media_studio.models.provider import (
+    CloudProvider,
+    LocalServerProvider,
+    ProviderError,
+)
 from media_studio.models.runner import ModelRunner
 from media_studio.models.translation import (
     DEFAULT_TIER,
@@ -29,6 +33,7 @@ from media_studio.models.translation import (
     TIER_LOCAL_HEAVY,
     TIERS,
     TieredTranslator,
+    TierUnavailable,
     TranslationError,
     build_messages,
     fallback_chain,
@@ -556,3 +561,63 @@ def test_mt_asset_detect_explicit_path(tmp_path):
     entry = manifest.get_asset(TIER2_ASSET_NAME)
     assert entry.detect({"translateTier2GgufPath": str(gguf)}) == str(gguf)
     assert entry.detect({"translateTier2GgufPath": str(tmp_path / "nope.gguf")}) is None
+
+
+# --------------------------------------------------------------------------- #
+# _tier_provider / _local_provider / _hosted_provider — direct branch coverage
+# --------------------------------------------------------------------------- #
+def test_tier_provider_unknown_tier_raises():
+    # An unrecognized tier matches neither hosted nor the two local tiers and
+    # raises TierUnavailable (line 415).
+    t = TieredTranslator(runner=FakeRunner(), settings=SETTINGS)
+    with pytest.raises(TierUnavailable):
+        t._tier_provider("tier-bogus")
+
+
+def test_local_provider_raises_when_no_gguf_configured():
+    # A runner is present but no GGUF can be resolved (no modelsDir / no override)
+    # -> _local_provider raises TierUnavailable (line 422).
+    t = TieredTranslator(runner=FakeRunner(), settings={})  # runner, but no gguf
+    with pytest.raises(TierUnavailable):
+        t._local_provider(TIER_LOCAL)
+
+
+def test_local_provider_builds_real_local_server_provider_without_factory():
+    # No local_provider_factory -> _local_provider constructs a real
+    # LocalServerProvider pointed at the configured base URL (line 433).
+    runner = FakeRunner()
+    t = TieredTranslator(
+        runner=runner,
+        settings={"modelsDir": "D:/models", "localBaseUrl": "http://127.0.0.1:9/v1"},
+    )
+    provider = t._local_provider(TIER_LOCAL)
+    assert isinstance(provider, LocalServerProvider)
+    assert provider.base_url == "http://127.0.0.1:9/v1"
+    # The runner was asked to serve the tier1 GGUF.
+    assert runner.calls[0]["gguf_path"] == TIER1_PATH
+
+
+def test_hosted_provider_builds_real_cloud_provider_without_factory():
+    # No hosted_provider_factory + a cloudApiKey present -> _hosted_provider
+    # constructs a real CloudProvider (line 448).
+    t = TieredTranslator(
+        runner=None,
+        settings={"cloudApiKey": "sk-key", "cloudBaseUrl": "https://api.example/v1"},
+    )
+    provider = t._hosted_provider()
+    assert isinstance(provider, CloudProvider)
+    assert provider.base_url == "https://api.example/v1"
+
+
+def test_line_translator_skips_unbindable_tier_then_uses_hosted():
+    # tier1/tier2 cannot even materialize a provider (no runner) -> the binding
+    # except in line_translator logs + records the failure + continues to the
+    # next tier (lines 344-347); tier3 hosted then serves the line.
+    hosted = FakeProvider(prefix="CLOUD")
+    t = TieredTranslator(
+        runner=None,  # both local tiers fail to bind
+        settings={},
+        hosted_provider_factory=lambda: hosted,
+    )
+    line = t.line_translator("es")  # tier1-routed lang
+    assert line("hello") == "CLOUD:hello"

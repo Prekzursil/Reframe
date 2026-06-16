@@ -443,3 +443,114 @@ def test_select_map_reduce_empty_when_no_shortlist():
     provider = FakeProvider(["no json", "no json", "no json", "no json"])
     cands = select(_long_transcript(600), "x", {"count": 5}, provider)
     assert cands == []
+
+
+# ---------------------------------------------------------------------------
+# _parse_ts — timestamp parsing edge cases (mm:ss / hh:mm:ss / bare / junk)
+# ---------------------------------------------------------------------------
+def test_parse_ts_numeric_and_string_forms():
+    assert sel._parse_ts(42) == pytest.approx(42.0)
+    assert sel._parse_ts(42.5) == pytest.approx(42.5)
+    assert sel._parse_ts("90") == pytest.approx(90.0)
+    assert sel._parse_ts("01:30") == pytest.approx(90.0)  # mm:ss
+    assert sel._parse_ts("01:02:03") == pytest.approx(3723.0)  # hh:mm:ss
+
+
+def test_parse_ts_returns_none_for_non_str_non_number():
+    # A list / dict / None is neither int/float nor str -> None (row skipped).
+    assert sel._parse_ts(["00:30"]) is None
+    assert sel._parse_ts(None) is None
+    assert sel._parse_ts({"t": 1}) is None
+
+
+def test_parse_ts_returns_none_for_blank_and_garbage():
+    assert sel._parse_ts("   ") is None  # blank
+    assert sel._parse_ts("ab:cd") is None  # colon form, non-numeric parts
+    assert sel._parse_ts("not-a-number") is None  # bare, non-numeric
+
+
+# ---------------------------------------------------------------------------
+# to_candidates — non-dict rows, end-only anchoring, start/end swap
+# ---------------------------------------------------------------------------
+def test_to_candidates_skips_non_dict_rows():
+    out = to_candidates(["junk", 42, None, {"start": "00:30", "end": "01:15", "score": 5}], 20.0, 60.0)
+    assert len(out) == 1  # only the real dict survived
+
+
+def test_to_candidates_end_only_anchors_min_length_window():
+    # Only an ``end`` given -> a min-length window ending there.
+    out = to_candidates([{"end": "01:00", "score": 7}], 20.0, 60.0)
+    assert len(out) == 1
+    c = out[0]
+    assert c["end"] == pytest.approx(60.0)
+    assert c["start"] == pytest.approx(40.0)  # 60 - minSec(20)
+    assert c["durationSec"] == pytest.approx(20.0)
+
+
+def test_to_candidates_start_only_extends_to_min_length():
+    # Only a ``start`` given (no end) -> end = start + minSec.
+    out = to_candidates([{"start": "00:10", "score": 6}], 20.0, 60.0)
+    assert len(out) == 1
+    c = out[0]
+    assert c["start"] == pytest.approx(10.0)
+    assert c["end"] == pytest.approx(30.0)  # 10 + minSec(20)
+    assert c["durationSec"] == pytest.approx(20.0)
+
+
+def test_to_candidates_swaps_inverted_start_end():
+    # end < start -> swapped so the window is well-ordered before clamping.
+    out = to_candidates([{"start": "01:00", "end": "00:30", "score": 3}], 20.0, 60.0)
+    assert len(out) == 1
+    c = out[0]
+    assert c["start"] <= c["end"]
+    assert 20.0 <= c["durationSec"] <= 60.0
+
+
+# ---------------------------------------------------------------------------
+# _resolve_controls — defaults, clamps, and the min>max swap
+# ---------------------------------------------------------------------------
+def test_resolve_controls_count_below_one_uses_default():
+    cfg = sel._resolve_controls({"count": 0})
+    assert cfg["count"] == sel.DEFAULT_COUNT
+
+
+def test_resolve_controls_non_numeric_min_max_fall_back_to_defaults():
+    cfg = sel._resolve_controls({"minSec": "oops", "maxSec": None})
+    assert cfg["min_sec"] == pytest.approx(MIN_CLIP_SEC)
+    assert cfg["max_sec"] == pytest.approx(MAX_CLIP_SEC)
+
+
+def test_resolve_controls_clamps_into_hard_envelope():
+    # Requests outside the hard 20-60 s envelope are clamped to it.
+    cfg = sel._resolve_controls({"minSec": 5.0, "maxSec": 999.0})
+    assert cfg["min_sec"] == pytest.approx(MIN_CLIP_SEC)
+    assert cfg["max_sec"] == pytest.approx(MAX_CLIP_SEC)
+
+
+def test_resolve_controls_swaps_when_min_exceeds_max():
+    # minSec > maxSec (both inside the envelope) -> swapped so min <= max.
+    cfg = sel._resolve_controls({"minSec": 50.0, "maxSec": 30.0})
+    assert cfg["min_sec"] <= cfg["max_sec"]
+    assert cfg["min_sec"] == pytest.approx(30.0)
+    assert cfg["max_sec"] == pytest.approx(50.0)
+
+
+# ---------------------------------------------------------------------------
+# select — non-numeric durationSec degrades to "no source-duration cap"
+# ---------------------------------------------------------------------------
+def test_select_non_numeric_duration_total_is_ignored():
+    # A transcript whose durationSec is non-numeric -> duration_total None (no
+    # source-length cap), and selection still produces clamped candidates.
+    transcript = {
+        "language": "en",
+        "durationSec": "not-a-number",
+        "segments": [
+            {"start": 0.0, "end": 30.0, "text": "Opening hook line."},
+            {"start": 30.0, "end": 75.0, "text": "The thesis payoff."},
+        ],
+    }
+    resp = _clips_json([{"start": "00:05", "end": "00:40", "score": 90, "hook": "h", "why": "w"}])
+    provider = FakeProvider([resp])
+    cands = select(transcript, "x", {"count": 1}, provider)
+    assert len(cands) == 1
+    assert MIN_CLIP_SEC <= cands[0]["durationSec"] <= MAX_CLIP_SEC

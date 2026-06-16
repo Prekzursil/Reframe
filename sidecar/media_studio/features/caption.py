@@ -151,7 +151,7 @@ def wrap_hook_title(text: str, max_lines: int = _HOOK_TITLE_MAX_LINES) -> str:
         if len(lines) == max_lines:
             # Anything left over is appended to the last line (libass wraps it).
             rest = words[i + per_line :]
-            if rest:
+            if rest:  # pragma: no cover - rest is always empty: max_lines*ceil(n/max_lines) >= n, so the last chunk consumes all words
                 lines[-1] = lines[-1] + " " + " ".join(rest)
             break
     return _ASS_NEWLINE.join(lines)

@@ -91,6 +91,26 @@ def test_missing_file_yields_empty(store):
     assert store.labels() == 0
 
 
+def test_entries_skip_blank_lines(store):
+    store.record("v", cand("good"), "approved")
+    with open(store.path, "a", encoding="utf-8") as fh:
+        fh.write("\n")  # a blank line must be skipped, not parsed
+        fh.write("   \n")
+    store.record("v", cand("also good"), "exported")
+    assert [e["candidate"]["hook"] for e in store.entries()] == ["good", "also good"]
+
+
+def test_entries_unreadable_file_yields_empty(store, monkeypatch):
+    store.record("v", cand("good"), "approved")
+
+    def boom(*a, **k):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(fb.Path, "read_text", boom)
+    # An OSError reading the store must degrade to [] (never fatal).
+    assert store.entries() == []
+
+
 def test_stats_payload_and_calibrated_flag(store):
     fill(store, 10)
     assert store.stats() == {"labels": 10, "calibrated": False}
@@ -258,3 +278,65 @@ def test_calibration_none_when_no_factor_bearing_labels(store):
     fill(store, 60)  # no factors anywhere
     assert store.calibration_table() is None
     assert store.calibrated_pct(50.0) is None
+
+
+def test_calibration_skips_candidates_with_malformed_factors(store):
+    # factors present-as-dict but a value is non-numeric / a key is missing ->
+    # _factor_average returns None and the entry is skipped from the table.
+    for i in range(30):
+        store.record("v", cand(f"good {i}", factors=factors(90)), "approved")
+    for i in range(20):
+        store.record(
+            "v",
+            cand(f"bad {i}", factors={"hookStrength": "nope", "emotionalFlow": 1}),
+            "discarded",
+        )
+    for i in range(10):
+        store.record("v", cand(f"partial {i}", factors={"hookStrength": 50}), "discarded")
+    # Only the 30 well-formed approved entries reach the table -> 100% in bin 4.
+    assert store.labels() == 60
+    assert store.calibrated_pct(95.0) == 100
+
+
+# ---------------------------------------------------------------------------
+# exemplar block — empty-side / one-sided / blank-hook edges
+# ---------------------------------------------------------------------------
+def test_exemplar_block_none_when_no_usable_hooks(store):
+    # Enough labels to pass the threshold, but every hook is blank -> both sides
+    # come back empty and the block is None.
+    for _ in range(fb.EXEMPLAR_MIN_LABELS):
+        store.record("v", cand(""), "approved")
+    assert store.exemplar_block() is None
+
+
+def test_exemplar_block_skips_blank_hooks_keeps_real_ones(store):
+    # Interleave blank-hook entries with real ones; the blank ones are skipped by
+    # _recent_hooks (the "not hook -> continue" branch) but the real ones remain.
+    for _ in range(fb.EXEMPLAR_MIN_LABELS):
+        store.record("v", cand(""), "approved")
+    store.record("v", cand("real approved hook"), "approved")
+    store.record("v", cand("real discarded hook"), "discarded")
+    block = store.exemplar_block()
+    assert block is not None
+    assert "+ real approved hook" in block
+    assert "- real discarded hook" in block
+
+
+def test_exemplar_block_discarded_only_omits_approved_section(store):
+    # Only discarded hooks exist -> the approved section is skipped entirely.
+    for i in range(fb.EXEMPLAR_MIN_LABELS + 1):
+        store.record("v", cand(f"discarded hook {i}"), "discarded")
+    block = store.exemplar_block()
+    assert block is not None
+    assert "Hooks they APPROVED:" not in block
+    assert "Hooks they DISCARDED:" in block
+
+
+def test_exemplar_block_stays_within_char_budget(store):
+    # With TOP_N=5 hooks/side capped at _HOOK_MAX_CHARS=120, the assembled block
+    # cannot exceed EXEMPLAR_MAX_CHARS (~1450 worst case < 1600) — the hard
+    # truncation at line 190 is defensive and unreachable under these constants.
+    for i in range(fb.EXEMPLAR_MIN_LABELS + 10):
+        store.record("v", cand(f"hook number {i:03d} " + "y" * 100), "approved")
+    block = store.exemplar_block()
+    assert len(block) <= fb.EXEMPLAR_MAX_CHARS

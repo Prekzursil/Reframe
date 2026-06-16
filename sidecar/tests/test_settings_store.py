@@ -7,6 +7,7 @@ no real per-user config file is ever touched.
 from __future__ import annotations
 
 import json
+import os as _real_os
 from pathlib import Path
 
 import pytest
@@ -90,3 +91,60 @@ def test_corrupt_file_falls_back_to_defaults(tmp_path: Path) -> None:
 def test_default_config_dir_honors_env_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MEDIA_STUDIO_CONFIG_DIR", str(tmp_path / "cfg"))
     assert default_config_dir() == tmp_path / "cfg"
+
+
+class _OsShim:
+    """A stand-in for the ``os`` module that overrides only ``name``.
+
+    Everything else (``environ``, ``path``, ...) delegates to the real ``os`` so
+    that ``pathlib.Path()`` — which reads the *real* ``os.name`` to pick its
+    flavor — is unaffected. This lets the POSIX/Windows branches of
+    ``default_config_dir`` be exercised on either host without forcing pathlib to
+    instantiate a foreign-flavor path (which raises on a mismatched OS).
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __getattr__(self, attr: str):  # delegate everything else to real os
+        return getattr(_real_os, attr)
+
+
+def test_default_config_dir_windows_uses_appdata(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Windows branch (os.name == "nt"): %APPDATA%/media-studio.
+    monkeypatch.delenv("MEDIA_STUDIO_CONFIG_DIR", raising=False)
+    monkeypatch.setattr("media_studio.settings_store.os", _OsShim("nt"))
+    monkeypatch.setenv("APPDATA", "/roaming")
+    out = default_config_dir()
+    assert out.parts[-2:] == ("roaming", "media-studio")
+
+
+def test_default_config_dir_windows_falls_back_to_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Windows branch with no APPDATA -> expanduser("~").
+    monkeypatch.delenv("MEDIA_STUDIO_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("APPDATA", raising=False)
+    shim = _OsShim("nt")
+    shim.path = type("P", (), {"expanduser": staticmethod(lambda _p: "/home/me")})()
+    monkeypatch.setattr("media_studio.settings_store.os", shim)
+    out = default_config_dir()
+    assert out.parts[-3:] == ("home", "me", "media-studio")
+
+
+def test_default_config_dir_posix_uses_xdg(monkeypatch: pytest.MonkeyPatch) -> None:
+    # POSIX branch with XDG_CONFIG_HOME set.
+    monkeypatch.delenv("MEDIA_STUDIO_CONFIG_DIR", raising=False)
+    monkeypatch.setattr("media_studio.settings_store.os", _OsShim("posix"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", "/xdg/config")
+    out = default_config_dir()
+    assert out.parts[-3:] == ("xdg", "config", "media-studio")
+
+
+def test_default_config_dir_posix_falls_back_to_dotconfig(monkeypatch: pytest.MonkeyPatch) -> None:
+    # POSIX branch with no XDG -> ~/.config/media-studio.
+    monkeypatch.delenv("MEDIA_STUDIO_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    shim = _OsShim("posix")
+    shim.path = type("P", (), {"expanduser": staticmethod(lambda _p: "/home/me")})()
+    monkeypatch.setattr("media_studio.settings_store.os", shim)
+    out = default_config_dir()
+    assert out.parts[-4:] == ("home", "me", ".config", "media-studio")

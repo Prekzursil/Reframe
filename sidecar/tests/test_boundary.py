@@ -590,3 +590,46 @@ class TestNumericalRobustness:
         cand = make_candidate(1.0, 30.0)
         res = snap_candidate(cand, words, bs)
         assert res.kept
+
+
+# --- internal helpers: the remaining defensive branches ----------------------
+class TestInternalHelpers:
+    def test_word_spans_skips_words_without_valid_timings(self) -> None:
+        # A word missing/invalid start or end is skipped (the 140->137 loop-back).
+        words = [
+            make_word("ok", 1.0, 2.0),
+            {"text": "no-end", "start": 3.0},  # missing end -> skipped
+            {"text": "bad", "start": "x", "end": "y"},  # non-numeric -> skipped
+            make_word("ok2", 5.0, 6.0),
+        ]
+        assert boundary._word_spans(words) == ((1.0, 2.0), (5.0, 6.0))
+
+    def test_nearest_valid_tie_break_prefers_smaller_when_seen_later(self) -> None:
+        # Targets handed in DESCENDING order: the equidistant SMALLER target is
+        # seen after the larger one, exercising the `t < best` tie-break (line 181).
+        got = boundary._nearest_valid(
+            10.0,
+            [11.0, 9.0],  # both distance 1.0; 9.0 < 11.0 and seen second
+            lower=0.0,
+            upper=100.0,
+            spans=(),
+        )
+        assert got == 9.0
+
+    def test_parse_silencedetect_skips_pair_when_end_not_after_start(self) -> None:
+        # A pair whose end <= start contributes no midpoint (the 469->468 skip).
+        stderr = (
+            "[silencedetect @ 0x1] silence_start: 12.0\n"
+            "[silencedetect @ 0x1] silence_end: 12.0 | silence_duration: 0.0\n"
+        )
+        assert boundary.parse_silencedetect(stderr) == ()
+
+    def test_detect_silences_returns_empty_when_ffmpeg_unresolvable(self, monkeypatch) -> None:
+        # ffmpeg_path raising (no resolvable binary) -> warn + return () (506-508).
+        import media_studio.ffmpeg as _ffmpeg
+
+        def boom(_settings):
+            raise _ffmpeg.FfmpegNotFound("ffmpeg")
+
+        monkeypatch.setattr(_ffmpeg, "ffmpeg_path", boom)
+        assert boundary.detect_silences("/v.mp4", settings={}, run=lambda *a, **k: None) == ()

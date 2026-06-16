@@ -82,6 +82,13 @@ def test_no_beats_for_empty_cues() -> None:
     assert zoom.sentence_start_beats([]) == []
 
 
+def test_non_numeric_cue_start_defaults_to_zero() -> None:
+    # A cue whose `start` can't be coerced to float falls back to local 0.0
+    # (the (TypeError, ValueError) guard) instead of crashing.
+    cues = [{"index": 1, "start": "oops", "end": 1.0, "text": "hello"}]
+    assert zoom.sentence_start_beats(cues) == [0.0]
+
+
 # --------------------------------------------------------------------------- #
 # build_zoom_expr — the z expression
 # --------------------------------------------------------------------------- #
@@ -121,6 +128,14 @@ def test_negative_beats_dropped() -> None:
     assert expr.count("gte(") == 1
 
 
+def test_non_numeric_beats_dropped() -> None:
+    # A beat that can't be coerced to float is skipped (the (TypeError, ValueError)
+    # guard) — only the one valid beat yields a punch gate.
+    expr = zoom.build_zoom_expr(duration_sec=10.0, beats=["bad", 3.0])  # type: ignore[list-item]
+    assert expr.count("gte(") == 1
+    assert "3.000" in expr
+
+
 # --------------------------------------------------------------------------- #
 # build_zoom_filter — the full zoompan=... string
 # --------------------------------------------------------------------------- #
@@ -156,6 +171,14 @@ def test_filter_derives_beats_from_cues_when_no_explicit_beats() -> None:
 def test_filter_rejects_non_positive_dimensions() -> None:
     with pytest.raises(ValueError):
         zoom.build_zoom_filter(width=0, height=100, duration_sec=10.0, cues=[])
+
+
+def test_filter_with_neither_beats_nor_cues_is_slow_push_only() -> None:
+    # Neither explicit beats nor cues -> resolved_beats = [] (the final else) ->
+    # just the subtle slow push, no punch gates.
+    vf = zoom.build_zoom_filter(width=1080, height=1920, duration_sec=30.0)
+    assert vf.startswith("zoompan=")
+    assert "gte(" not in vf
 
 
 # --------------------------------------------------------------------------- #

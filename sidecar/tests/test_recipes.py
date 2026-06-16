@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 from media_studio.features import recipes
-from media_studio.jobs import JobRegistry
+from media_studio.jobs import JobCancelled, JobRegistry
 from media_studio.protocol import RpcContext, RpcError
 
 
@@ -282,6 +282,174 @@ class TestRun:
         msgs = [e[3] for e in events if e[0] == "progress"]
         assert any("step 1/2 · First" in m for m in msgs)
         assert any("step 2/2 · b" in m for m in msgs)
+
+
+# --------------------------------------------------------------------------- #
+# resolve_refs: the list-index miss paths in _dotted_get
+# --------------------------------------------------------------------------- #
+class TestDottedGetListPaths:
+    def test_non_int_list_index_is_none(self):
+        # "$0.items.x" -> list indexed by a non-int part -> ValueError -> None.
+        prior = [{"items": [1, 2, 3]}]
+        assert recipes.resolve_refs({"v": "$0.items.x"}, prior)["v"] is None
+
+    def test_out_of_range_list_index_is_none(self):
+        # "$0.items.9" -> IndexError -> None.
+        prior = [{"items": [1, 2]}]
+        assert recipes.resolve_refs({"v": "$0.items.9"}, prior)["v"] is None
+
+    def test_path_through_scalar_is_none(self):
+        # Descending into a scalar (neither dict nor list) yields None.
+        prior = [{"n": 5}]
+        assert recipes.resolve_refs({"v": "$0.n.deeper"}, prior)["v"] is None
+
+
+# --------------------------------------------------------------------------- #
+# RecipeStore.save: the "keep an existing different-id recipe" branch
+# --------------------------------------------------------------------------- #
+def test_save_keeps_other_recipes_when_upserting(tmp_path):
+    store = recipes.RecipeStore(tmp_path / "r.json")
+    store.save({"id": "a", "name": "A", "steps": []})
+    store.save({"id": "b", "name": "B", "steps": []})  # different id -> appended
+    store.save({"id": "a", "name": "A2", "steps": []})  # upsert a; b untouched
+    by_id = {r["id"]: r["name"] for r in store.list()}
+    assert by_id == {"a": "A2", "b": "B"}
+
+
+# --------------------------------------------------------------------------- #
+# _await_subjob: the defensive / cancel / timeout branches (tested directly)
+# --------------------------------------------------------------------------- #
+class _FakeJobCtx:
+    """A minimal job_ctx for _await_subjob: tracks cancel + raise semantics."""
+
+    def __init__(self, cancelled: bool = False) -> None:
+        self.cancelled = cancelled
+
+    def raise_if_cancelled(self) -> None:
+        if self.cancelled:
+            raise JobCancelled()
+
+    def progress(self, *_a, **_k) -> None:  # pragma: no cover - unused here
+        pass
+
+
+class _FakeSub:
+    """A fake Job for the await loop: drives finished/pct/status/result."""
+
+    def __init__(self, *, status="done", pct=0, result=None, error=None, finish_after=0) -> None:
+        self._status = status
+        self.pct = pct
+        self.result = result
+        self.error = error
+        self._calls = 0
+        self._finish_after = finish_after
+
+    class _Status:
+        def __init__(self, value: str) -> None:
+            self.value = value
+
+    @property
+    def status(self):
+        return self._Status(self._status)
+
+    @property
+    def finished(self) -> bool:
+        # Finishes once wait() has been polled enough times.
+        return self._calls >= self._finish_after
+
+    def wait(self, _timeout=None) -> bool:
+        self._calls += 1
+        return self.finished
+
+
+class _FakeRegistry:
+    def __init__(self, sub) -> None:
+        self._sub = sub
+        self.cancelled: list[str] = []
+
+    def get(self, _sub_id):
+        return self._sub
+
+    def cancel(self, sub_id) -> None:
+        self.cancelled.append(sub_id)
+
+
+def _svc(tmp_path):
+    return recipes.Recipes(recipes.RecipeStore(tmp_path / "r.json"))
+
+
+def test_await_subjob_vanished_raises(tmp_path):
+    svc = _svc(tmp_path)
+    reg = _FakeRegistry(sub=None)
+    ctx = RpcContext(emit_notification=lambda *_: None, jobs=reg)
+    with pytest.raises(RpcError, match="sub-job vanished"):
+        svc._await_subjob("gone", _FakeJobCtx(), ctx, lambda *_: None)
+
+
+def test_await_subjob_cancel_cancels_sub_and_raises(tmp_path):
+    svc = _svc(tmp_path)
+    sub = _FakeSub(status="cancelled", finish_after=99)  # never finishes on its own
+    reg = _FakeRegistry(sub)
+    ctx = RpcContext(emit_notification=lambda *_: None, jobs=reg)
+    with pytest.raises(JobCancelled):
+        svc._await_subjob("s1", _FakeJobCtx(cancelled=True), ctx, lambda *_: None)
+    assert reg.cancelled == ["s1"]  # the running sub-job was cancelled too
+
+
+def test_await_subjob_relays_progress_and_returns_result(tmp_path):
+    svc = _svc(tmp_path)
+    sub = _FakeSub(status="done", pct=42, result={"ok": 1}, finish_after=1)
+    reg = _FakeRegistry(sub)
+    ctx = RpcContext(emit_notification=lambda *_: None, jobs=reg)
+    relayed: list[float] = []
+    out = svc._await_subjob("s1", _FakeJobCtx(), ctx, lambda pct, _m: relayed.append(pct))
+    assert out == {"ok": 1}
+    assert 42.0 in relayed  # the sub's pct was relayed (348-350)
+
+
+def test_await_subjob_skips_relay_when_pct_unchanged(tmp_path):
+    # pct starts at -1 internally; a sub at pct 0 across two polls relays once then
+    # takes the `pct == last_pct` no-relay edge (the 348->351 branch).
+    svc = _svc(tmp_path)
+    sub = _FakeSub(status="done", pct=0, result={"ok": 2}, finish_after=2)
+    reg = _FakeRegistry(sub)
+    ctx = RpcContext(emit_notification=lambda *_: None, jobs=reg)
+    relayed: list[float] = []
+    out = svc._await_subjob("s1", _FakeJobCtx(), ctx, lambda pct, _m: relayed.append(pct))
+    assert out == {"ok": 2}
+    assert relayed == [0.0]  # relayed once (pct changed -1->0), then skipped
+
+
+def test_await_subjob_timeout_raises(tmp_path, monkeypatch):
+    svc = _svc(tmp_path)
+    sub = _FakeSub(status="done", finish_after=99)  # would never finish in time
+    reg = _FakeRegistry(sub)
+    ctx = RpcContext(emit_notification=lambda *_: None, jobs=reg)
+    # Force an already-expired deadline so the timeout branch (351-352) fires.
+    monkeypatch.setattr(recipes, "SUBJOB_TIMEOUT", -1.0)
+    with pytest.raises(RpcError, match="timed out"):
+        svc._await_subjob("s1", _FakeJobCtx(), ctx, lambda *_: None)
+
+
+def test_await_subjob_cancelled_status_raises_if_parent_cancelled(tmp_path):
+    # A sub-job that FINISHED as cancelled, with the parent now cancelled too:
+    # exercises the `status == "cancelled"` -> raise_if_cancelled branch (358).
+    svc = _svc(tmp_path)
+    sub = _FakeSub(status="cancelled", finish_after=0)  # already finished
+    reg = _FakeRegistry(sub)
+    ctx = RpcContext(emit_notification=lambda *_: None, jobs=reg)
+    with pytest.raises(JobCancelled):
+        svc._await_subjob("s1", _FakeJobCtx(cancelled=True), ctx, lambda *_: None)
+
+
+def test_await_subjob_cancelled_status_returns_when_parent_not_cancelled(tmp_path):
+    # Same finished-cancelled sub, but the parent is NOT cancelled: the branch is
+    # entered, raise_if_cancelled is a no-op, and the (None) result is returned.
+    svc = _svc(tmp_path)
+    sub = _FakeSub(status="cancelled", finish_after=0, result=None)
+    reg = _FakeRegistry(sub)
+    ctx = RpcContext(emit_notification=lambda *_: None, jobs=reg)
+    assert svc._await_subjob("s1", _FakeJobCtx(cancelled=False), ctx, lambda *_: None) is None
 
 
 # --------------------------------------------------------------------------- #

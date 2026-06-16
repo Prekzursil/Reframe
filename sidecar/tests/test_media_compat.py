@@ -578,6 +578,87 @@ class TestProxyStart:
 
 
 # --------------------------------------------------------------------------- #
+# default_proxies_dir() + _settings() fallback + _build_derivative edges
+# --------------------------------------------------------------------------- #
+class TestProxiesDirAndSettings:
+    def test_default_proxies_dir_is_under_config_dir(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("MEDIA_STUDIO_CONFIG_DIR", str(tmp_path))
+        assert mc.default_proxies_dir() == tmp_path / "proxies"
+
+    def test_settings_provider_crash_falls_back_to_empty(self, tmp_path, direct_ctx):
+        src = tmp_path / "talk.mp4"
+        src.write_bytes(b"x")
+
+        def exploding_settings():
+            raise RuntimeError("settings backend down")
+
+        svc = mc.MediaCompat(
+            resolver=lambda vid: str(src),
+            settings_provider=exploding_settings,
+            proxies_dir=tmp_path / "proxies",
+            probe=lambda path, s: probe_payload(MP4_FAMILY, [vstream("h264"), astream("aac")]),
+        )
+        # A crashing settings provider must not break the verdict ({} is used).
+        assert svc.playable({"videoId": "v1"}, direct_ctx) == {"playable": True}
+
+
+class TestBuildDerivativeEdges:
+    def test_unreadable_source_in_job_surfaces_runtime_error(
+        self, tmp_path, settings, registry, collected, monkeypatch
+    ):
+        src = tmp_path / "talk.mkv"
+        src.write_bytes(b"x")
+        run = RecordingRun()
+        svc = make_service(
+            tmp_path,
+            settings,
+            {"v1": str(src)},
+            probe_payload(MKV_FAMILY, [vstream("hevc")]),
+            run=run,
+        )
+
+        # os.stat raising inside _build_derivative (source became unreadable after
+        # the up-front resolve) must surface as the job's RuntimeError, never a 500.
+        real_stat = os.stat
+
+        def boom_stat(path, *a, **k):
+            if str(path) == str(src):
+                raise OSError("device gone")
+            return real_stat(path, *a, **k)
+
+        monkeypatch.setattr(mc.os, "stat", boom_stat)
+        job = run_job(svc, registry)
+        assert job.status.value == "error"
+        done = [payload for kind, payload in collected if kind == "done"]
+        assert "not readable" in done[0][1]["error"]["message"]
+        assert run.calls == []  # never reached the ffmpeg run
+
+    def test_non_numeric_probe_duration_defaults_total_to_zero(self, tmp_path, settings, registry):
+        src = tmp_path / "talk.mkv"
+        src.write_bytes(b"x")
+
+        class TotalCapturingRun(RecordingRun):
+            def __init__(self):
+                super().__init__()
+                self.totals: list[float] = []
+
+            def __call__(self, argv, total_sec=0.0, on_progress=None, should_cancel=None, **kw):
+                self.totals.append(total_sec)
+                return super().__call__(argv, total_sec, on_progress, should_cancel, **kw)
+
+        run = TotalCapturingRun()
+        # A garbage (non-numeric) duration must coerce to 0.0, never crash.
+        bad_probe = {
+            "streams": [vstream("hevc"), astream("aac")],
+            "format": {"format_name": MKV_FAMILY, "duration": "not-a-number"},
+        }
+        svc = make_service(tmp_path, settings, {"v1": str(src)}, bad_probe, run=run)
+        job = run_job(svc, registry)
+        assert job.status.value == "done"
+        assert run.totals == [0.0]
+
+
+# --------------------------------------------------------------------------- #
 # register()
 # --------------------------------------------------------------------------- #
 class TestRegister:

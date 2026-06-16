@@ -133,6 +133,33 @@ def test_set_has_transcript_unknown_id_returns_none(lib: Library):
     assert lib.set_has_transcript("nope") is None
 
 
+def test_add_second_distinct_path_skips_non_matching_existing(lib: Library, tmp_path: Path):
+    # With one video already in the index, adding a DIFFERENT path walks past the
+    # non-matching existing row (137 -> 136 loop continue) and appends a new one.
+    first = tmp_path / "first.mp4"
+    first.write_bytes(b"a")
+    second = tmp_path / "second.mp4"
+    second.write_bytes(b"b")
+    v1 = lib.add(str(first))
+    v2 = lib.add(str(second))
+    assert v1["id"] != v2["id"]
+    assert {v["title"] for v in lib.list()} == {"first", "second"}
+
+
+def test_set_has_transcript_skips_non_matching_rows(lib: Library, tmp_path: Path):
+    # Two videos: marking one must skip the other in the loop (184 -> 183).
+    a = tmp_path / "a.mp4"
+    a.write_bytes(b"a")
+    b = tmp_path / "b.mp4"
+    b.write_bytes(b"b")
+    va = lib.add(str(a))
+    vb = lib.add(str(b))
+    updated = lib.set_has_transcript(vb["id"], True)
+    assert updated["id"] == vb["id"]
+    assert lib.get(va["id"])["hasTranscript"] is False
+    assert lib.get(vb["id"])["hasTranscript"] is True
+
+
 def test_normalize_backfills_legacy_entries(tmp_path: Path):
     idx = tmp_path / "idx.json"
     idx.write_text(json.dumps({"version": 1, "videos": [{"path": "/x.mp4"}]}), encoding="utf-8")
@@ -336,3 +363,59 @@ def test_consolidate_disambiguates_same_basename(tmp_path: Path):
     p.consolidate(out)
     names = sorted(x.name for x in (out / "assets").iterdir())
     assert names == ["clip-1.mp4", "clip.mp4"]
+
+
+def test_consolidate_disambiguates_three_same_basename(tmp_path: Path):
+    # Three files share a basename: "clip.mp4" then "clip-1.mp4" are taken, so
+    # _unique_name must advance i past 1 (the while-loop increment, line 333).
+    paths = []
+    for sub in ("a", "b", "c"):
+        f = tmp_path / sub / "clip.mp4"
+        f.parent.mkdir()
+        f.write_bytes(sub.encode())
+        paths.append(f)
+    p = Project.new(_video(str(paths[0])))
+    p.data["clips"] = [
+        {"candidate": {}, "path": str(paths[1])},
+        {"candidate": {}, "path": str(paths[2])},
+    ]
+    out = tmp_path / "c"
+    p.consolidate(out)
+    names = sorted(x.name for x in (out / "assets").iterdir())
+    assert names == ["clip-1.mp4", "clip-2.mp4", "clip.mp4"]
+
+
+# --------------------------------------------------------------------------- #
+# _ref_paths / consolidate — entries WITHOUT a usable path (branch coverage)
+# --------------------------------------------------------------------------- #
+def test_ref_paths_skips_entries_without_paths(tmp_path: Path):
+    # video has no path; clips/tracks include a non-dict and a dict with no path
+    # -> every "has-path" branch takes its false arm (260->262, 263->262, 266->265).
+    data = {
+        "id": "p",
+        "video": {},  # no "path"
+        "clips": ["not-a-dict", {"candidate": {}}],  # non-dict + dict w/o path
+        "tracks": [{"id": "t1"}],  # dict w/o path
+        "settings": {},
+    }
+    p = Project(data)
+    assert p.find_missing_sources() == []  # nothing referenced -> nothing missing
+
+
+def test_consolidate_skips_entries_without_paths(tmp_path: Path):
+    # Same shape through consolidate: the video/clip/track "has-path" guards all
+    # take their false arm (312->314, 315->314, 318->317) so nothing is copied.
+    data = {
+        "id": "p",
+        "video": {},  # no path
+        "clips": ["bad", {"candidate": {}}],  # non-dict + dict w/o path
+        "tracks": [{"id": "t1"}],  # dict w/o path
+        "settings": {},
+    }
+    p = Project(data)
+    out = tmp_path / "empty"
+    p.consolidate(out)
+    # assets dir exists but is empty (no refs had a copyable path)
+    assert (out / "assets").is_dir()
+    assert list((out / "assets").iterdir()) == []
+    assert (out / "project.json").exists()

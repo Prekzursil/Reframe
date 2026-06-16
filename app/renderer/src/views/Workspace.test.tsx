@@ -63,16 +63,18 @@ async function flush(): Promise<void> {
 }
 
 describe('Workspace', () => {
-  it('exposes the contract tabs in order (P2: +Timeline/Dub/Assets; captions-export: +Timeline export)', () => {
+  it('exposes the contract tabs in order (P2: +Timeline/Dub/Assets; captions-export: +Timeline export; system-advanced: +Diarize/Recipes)', () => {
     expect(WORKSPACE_TABS.map((t) => t.label)).toEqual([
       'Transcribe',
       'Subtitles',
+      'Diarize',
       'Tracks',
       'Convert',
       'Short-maker',
       'Timeline',
       'Dub',
       'Timeline export',
+      'Recipes',
       'Assets',
     ]);
   });

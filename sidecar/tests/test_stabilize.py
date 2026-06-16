@@ -178,6 +178,36 @@ class TestEngine:
             engine.stabilize("/in.mp4", out)
         assert not Path(out).with_suffix(".trf").exists()
 
+    def test_transform_failure_raises_after_detect_succeeds(self, settings, tmp_path):
+        # PASS 1 succeeds (code 0), PASS 2 fails (code 1) -> vidstabtransform error.
+        class TwoStageRun:
+            def __init__(self) -> None:
+                self.calls: list[list[str]] = []
+
+            def __call__(self, argv, *, total_sec=0.0, on_progress=None, should_cancel=None) -> int:
+                self.calls.append(list(argv))
+                return 0 if len(self.calls) == 1 else 1
+
+        run = TwoStageRun()
+        engine = st.StabilizeEngine(
+            settings, run=run, duration=lambda p, s=None: 1.0, probe_runner=probe_with(VIDSTAB_FILTERS)
+        )
+        out = str(tmp_path / "c.mp4")
+        with pytest.raises(st.StabilizeError, match="vidstabtransform"):
+            engine.stabilize("/in.mp4", out)
+        assert not Path(out).with_suffix(".trf").exists()
+
+    def test_duration_probe_failure_coarsens_progress(self, settings, tmp_path):
+        # A probe failure only coarsens progress (total_sec 0.0); both passes run.
+        def boom_duration(p, s=None):
+            raise OSError("ffprobe died")
+
+        run = RecordingRun()
+        engine = st.StabilizeEngine(settings, run=run, duration=boom_duration, probe_runner=probe_with(VIDSTAB_FILTERS))
+        out = str(tmp_path / "clip.stabilized.mp4")
+        assert engine.stabilize("/in.mp4", out) == out
+        assert len(run.calls) == 2
+
 
 # --------------------------------------------------------------------------- #
 # pipeline pre-step adapter
@@ -213,6 +243,19 @@ class TestStabilizeClip:
         assert result == out
         assert len(run.calls) == 2
 
+    def test_passthrough_without_on_notice_callback(self, settings, tmp_path):
+        # Unavailable AND no on_notice callback supplied (the `if on_notice is not
+        # None` false branch) -> still passes through the original input.
+        result = st.stabilize_clip(
+            "/in.mp4",
+            str(tmp_path / "o.mp4"),
+            settings=settings,
+            run=RecordingRun(),
+            duration=lambda p, s=None: 5.0,
+            probe_runner=probe_with(NO_VIDSTAB_FILTERS),
+        )
+        assert result == "/in.mp4"
+
 
 # --------------------------------------------------------------------------- #
 # the RPC service (stabilize.run -> job) — uses the shared conftest `registry`
@@ -247,6 +290,43 @@ class TestService:
         )
         with pytest.raises(RpcError, match="unknown video"):
             svc.run({"videoId": "ghost"}, _rpc_ctx(registry))
+
+    def test_run_missing_video_id_raises(self, settings, tmp_path, registry):
+        # Neither `path` nor a non-empty `videoId` -> _require_str raises.
+        svc = st.StabilizeService(
+            resolver=lambda vid: "/lib/in.mp4",
+            out_dir=tmp_path,
+            settings_provider=lambda: settings,
+        )
+        with pytest.raises(RpcError, match="videoId"):
+            svc.run({"videoId": ""}, _rpc_ctx(registry))
+
+    def test_run_settings_provider_raising_yields_empty(self, settings, tmp_path, registry):
+        def boom() -> dict[str, Any]:
+            raise RuntimeError("settings exploded")
+
+        svc = st.StabilizeService(
+            resolver=lambda vid: "/lib/in.mp4",
+            out_dir=tmp_path,
+            settings_provider=boom,
+            run=RecordingRun(),
+            probe_runner=probe_with(NO_VIDSTAB_FILTERS),
+        )
+        # _settings swallows the error -> {} -> the op still runs (here it reports
+        # unavailable because the empty-settings probe lists no vidstab filters).
+        out = svc.run({"videoId": "v1"}, _rpc_ctx(registry))
+        registry.get(out["jobId"]).wait(timeout=5)
+        assert registry.get(out["jobId"]).result["stabilized"] is False
+
+    def test_run_without_job_registry_raises(self, settings, tmp_path):
+        svc = st.StabilizeService(
+            resolver=lambda vid: "/lib/in.mp4",
+            out_dir=tmp_path,
+            settings_provider=lambda: settings,
+        )
+        c = RpcContext(emit_notification=lambda obj: None, jobs=None)
+        with pytest.raises(RpcError, match="no job registry"):
+            svc.run({"videoId": "v1"}, c)
 
     def test_run_unavailable_returns_source_with_notice(self, settings, tmp_path, registry):
         svc = st.StabilizeService(

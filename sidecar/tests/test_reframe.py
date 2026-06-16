@@ -308,3 +308,25 @@ def test_reframe_uses_subprocess_run_by_default(monkeypatch):
     assert out == "/out.mp4"
     assert recorded["argv"][0] == "wsl"
     assert recorded["kwargs"].get("shell") in (None, False)
+
+
+# --------------------------------------------------------------------------- #
+# to_wsl_path — the relative (drive-less) path branch
+# --------------------------------------------------------------------------- #
+def test_to_wsl_path_relative_no_drive_is_slash_normalized():
+    # A relative Windows path (no drive letter, not already POSIX) is just
+    # slash-normalized to a POSIX relative path — never gets a /mnt prefix.
+    assert reframe.to_wsl_path(r"clips\a b\v.mp4") == "clips/a b/v.mp4"
+    assert reframe.to_wsl_path("just_a_name.mp4") == "just_a_name.mp4"
+
+
+# --------------------------------------------------------------------------- #
+# ReframeEngine.reframe — defensive non-list argv guard
+# --------------------------------------------------------------------------- #
+def test_reframe_raises_typeerror_when_argv_not_a_list(monkeypatch):
+    # Defensive guard (§4: never a shell string): if argv construction ever
+    # yields a non-list, reframe refuses to invoke the runner.
+    monkeypatch.setattr(reframe, "build_reframe_argv", lambda *a, **k: "wsl bash script.sh")
+    engine = ReframeEngine(settings={"verthorScript": "/opt/verthor/reframe.sh"}, runner=_make_runner())
+    with pytest.raises(TypeError, match="must be a list"):
+        engine.reframe("/in.mp4", "/out.mp4")

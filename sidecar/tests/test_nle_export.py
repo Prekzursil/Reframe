@@ -129,6 +129,21 @@ def test_clips_to_events_flat_candidate_shape() -> None:
     assert events[0]["clipName"] == "x.mp4"
 
 
+def test_clips_to_events_empty_path_yields_blank_clipname() -> None:
+    # No path on the clip OR candidate -> _clip_basename("") returns "".
+    events = nle.clips_to_events([{"candidate": {"sourceStart": 1.0, "end": 2.0}}], 30)
+    assert events[0]["clipName"] == ""
+    assert events[0]["sourcePath"] == ""
+
+
+def test_clips_to_events_end_before_start_clamps_to_start() -> None:
+    # An inverted window (end < sourceStart) clamps source_out up to source_in
+    # (then the >=1-frame floor makes it a single-frame event).
+    events = nle.clips_to_events([{"candidate": {"sourceStart": 10.0, "end": 4.0}, "path": "/a.mp4"}], 30)
+    assert events[0]["sourceInFrames"] == 10 * 30
+    assert events[0]["sourceOutFrames"] == 10 * 30 + 1
+
+
 # --------------------------------------------------------------------------- #
 # EDL
 # --------------------------------------------------------------------------- #
@@ -157,6 +172,17 @@ def test_build_edl_event_line_columns() -> None:
 def test_build_edl_title_sanitizes_whitespace() -> None:
     edl = nle.build_edl([], title="line one\nline two\t  end")
     assert edl.splitlines()[0] == "TITLE: line one line two end"
+
+
+def test_build_edl_omits_comment_lines_when_clipname_and_hook_blank() -> None:
+    # A clip with neither a name nor a hook emits only the cut line — both the
+    # "* FROM CLIP NAME:" and "* COMMENT:" comment lines are skipped.
+    events = nle.clips_to_events([{"candidate": {"sourceStart": 1.0, "end": 2.0}}], 30)
+    edl = nle.build_edl(events, fps=30)
+    assert "* FROM CLIP NAME:" not in edl
+    assert "* COMMENT:" not in edl
+    cut_lines = [line for line in edl.splitlines() if line.startswith("001")]
+    assert len(cut_lines) == 1
 
 
 # --------------------------------------------------------------------------- #

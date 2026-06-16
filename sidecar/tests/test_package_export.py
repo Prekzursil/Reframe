@@ -73,6 +73,47 @@ def test_build_suggestion_title_truncated() -> None:
     assert len(sug["title"]) <= pkg.MAX_TITLE_LEN
 
 
+def test_build_suggestion_title_truncates_mid_word_when_no_good_boundary() -> None:
+    # A single long unbroken token (no late space) hits the no-word-trim branch:
+    # _truncate falls through to the hard cut at the limit.
+    long_hook = "x" * 200
+    sug = pkg.build_suggestion({"hook": long_hook})
+    assert sug["title"] == "x" * pkg.MAX_TITLE_LEN
+
+
+def test_build_suggestion_override_description_wins() -> None:
+    sug = pkg.build_suggestion(
+        {"hook": "Original hook", "sourceTitle": "Vid"},
+        override={"description": "A hand-written description."},
+    )
+    assert sug["description"] == "A hand-written description."
+
+
+def test_build_suggestion_override_tags_list() -> None:
+    # A list/tuple override goes through the list branch of _normalize_tag_list.
+    sug = pkg.build_suggestion({"hook": "x"}, override={"tags": ["#Fitness", "Gym", "Fitness"]})
+    assert sug["tags"] == ["fitness", "gym"]  # dedup + lower + leading-# stripped
+
+
+def test_build_suggestion_override_tags_non_list_string_is_empty() -> None:
+    # A non-(str/list/tuple) tags override -> the else branch returns []. The int
+    # is truthy so the override-tags branch is taken (slugify is NOT used).
+    sug = pkg.build_suggestion({"hook": "real hook words"}, override={"tags": 12345})
+    assert sug["tags"] == []
+
+
+def test_normalize_tag_list_skips_empty_tokens() -> None:
+    # An empty/whitespace-only token is skipped (the falsy-token continue branch).
+    sug = pkg.build_suggestion({"hook": "x"}, override={"tags": ["valid", "", "  ", "#"]})
+    assert sug["tags"] == ["valid"]
+
+
+def test_normalize_tag_list_caps_at_max_tags() -> None:
+    many = [f"tag{i}" for i in range(pkg.MAX_TAGS + 5)]
+    sug = pkg.build_suggestion({"hook": "x"}, override={"tags": many})
+    assert len(sug["tags"]) == pkg.MAX_TAGS
+
+
 # --------------------------------------------------------------------------- #
 # build_manifest
 # --------------------------------------------------------------------------- #

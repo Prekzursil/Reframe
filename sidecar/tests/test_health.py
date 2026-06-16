@@ -189,6 +189,27 @@ class TestReport:
 
 
 # --------------------------------------------------------------------------- #
+# _default_run (the real subprocess seam — exercised with a mocked subprocess)
+# --------------------------------------------------------------------------- #
+def test_default_run_invokes_subprocess_with_drained_argv(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = list(argv)
+        captured["kwargs"] = kwargs
+        return FakeCompleted(0, "ffmpeg version 6.1 Copyright")
+
+    monkeypatch.setattr(health.subprocess, "run", fake_run)
+    completed = health._default_run(["/bin/ffmpeg", "-version"])
+    assert completed.stdout.startswith("ffmpeg version")
+    assert captured["argv"] == ["/bin/ffmpeg", "-version"]
+    # argv list + drained pipes, shell never (A6 lesson 4)
+    assert captured["kwargs"]["capture_output"] is True
+    assert captured["kwargs"]["text"] is True
+    assert captured["kwargs"]["check"] is False
+
+
+# --------------------------------------------------------------------------- #
 # register
 # --------------------------------------------------------------------------- #
 def test_register_installs_system_health():

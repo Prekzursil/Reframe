@@ -409,3 +409,40 @@ def test_concrete_provider_satisfies_consumer_chat_signature():
     result = fake_select_ask(p, [{"role": "user", "content": "pick clips"}])
     assert result == '{"clips": []}'
     assert captured["body"]["temperature"] == 0.4
+
+
+# --------------------------------------------------------------------------- #
+# extra branch coverage: HTTPError body-read failure + the abstract chat body
+# --------------------------------------------------------------------------- #
+def test_urllib_post_json_httperror_body_read_failure_is_tolerated(monkeypatch):
+    # When reading the HTTPError body itself raises, the inner best-effort except
+    # swallows it and the error falls back to exc.reason (provider lines 104-105).
+    class _BadHTTPError(prov.urllib.error.HTTPError):
+        def __init__(self) -> None:
+            super().__init__(url="http://x", code=503, msg="unavail", hdrs=None, fp=None)
+
+        def read(self, *_a: Any, **_k: Any) -> bytes:
+            raise OSError("body stream broken")
+
+    def fake_urlopen(request, timeout):  # noqa: ANN001
+        raise _BadHTTPError()
+
+    monkeypatch.setattr(prov.urllib.request, "urlopen", fake_urlopen)
+    p = LocalServerProvider()
+    with pytest.raises(ProviderError) as ei:
+        p.chat([{"role": "user", "content": "q"}])
+    msg = str(ei.value)
+    assert "503" in msg
+    # Body was unreadable -> falls back to the reason string, not a body detail.
+    assert "unavail" in msg
+
+
+def test_abstract_chat_body_raises_not_implemented():
+    # A subclass that defers to Provider.chat reaches the abstract method body
+    # (the bare ``raise NotImplementedError`` on line 167).
+    class _PassThrough(Provider):
+        def chat(self, messages, *, temperature=0.4, max_tokens=4096, **kwargs):  # noqa: ANN001
+            return Provider.chat(self, messages, temperature=temperature, max_tokens=max_tokens, **kwargs)
+
+    with pytest.raises(NotImplementedError):
+        _PassThrough().chat([{"role": "user", "content": "q"}])

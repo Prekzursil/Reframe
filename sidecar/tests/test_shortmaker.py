@@ -2201,3 +2201,346 @@ class TestExportWritesShortMetadata:
         assert info["template"] == "hormozi"
         assert info["viralityPct"] == 87
         assert info["hook"] == "A bold hook"
+
+
+# ---------------------------------------------------------------------------
+# default stage adapters (_lazy_*) — the production seam bindings.
+#
+# Each default adapter binds to a sibling feature module / ffmpeg lazily. We
+# patch those collaborators (no provider / verthor / scenedetect / real ffmpeg)
+# and assert the adapter wires args through + returns the contract shape.
+# ---------------------------------------------------------------------------
+class TestLazySelectStage:
+    def test_builds_provider_and_normalizes_candidates_to_dicts(self, monkeypatch):
+        import media_studio.features.select as sel
+        from media_studio.models import provider as prov
+
+        seen: dict[str, Any] = {}
+        sentinel_provider = object()
+        monkeypatch.setattr(prov, "get_provider", lambda settings: sentinel_provider)
+
+        def fake_select(transcript, prompt, controls, provider):
+            seen["provider"] = provider
+            seen["prompt"] = prompt
+            # select returns its own TypedDict rows; the seam must dict()-copy them.
+            return [{"rank": 1, "start": 0.0, "end": 25.0, "score": 9}]
+
+        monkeypatch.setattr(sel, "select", fake_select)
+        out = sm._lazy_select({"segments": []}, "best", {"count": 1}, settings={"useCloud": False})
+        assert seen["provider"] is sentinel_provider
+        assert seen["prompt"] == "best"
+        assert out == [{"rank": 1, "start": 0.0, "end": 25.0, "score": 9}]
+        assert all(isinstance(c, dict) for c in out)
+
+    def test_settings_none_defaults_to_empty(self, monkeypatch):
+        import media_studio.features.select as sel
+        from media_studio.models import provider as prov
+
+        got_settings: dict[str, Any] = {}
+        monkeypatch.setattr(prov, "get_provider", lambda settings: got_settings.update(settings) or object())
+        monkeypatch.setattr(sel, "select", lambda *a, **k: [])
+        sm._lazy_select({"segments": []}, "p", {}, settings=None)
+        assert got_settings == {}  # None -> {}
+
+
+class TestLazySnapStage:
+    def test_flattens_words_and_passes_detectors(self, monkeypatch):
+        import media_studio.features.boundary as boundary
+
+        seen: dict[str, Any] = {}
+
+        def fake_snap(candidates, words, *, silences, scene_cuts):
+            seen.update(candidates=candidates, words=words, silences=silences, scene_cuts=scene_cuts)
+            return list(candidates), []
+
+        monkeypatch.setattr(boundary, "snap_from_lists", fake_snap)
+        transcript = {
+            "segments": [
+                {"words": [{"text": "a", "start": 0.0, "end": 1.0}]},
+                {"words": [{"text": "b", "start": 1.0, "end": 2.0}]},
+            ]
+        }
+        cands = [{"rank": 1, "start": 0.0, "end": 25.0}]
+        kept, dropped = sm._lazy_snap(cands, transcript, settings={"silences": [(1, 2)], "sceneCuts": [3.0]})
+        assert [w["text"] for w in seen["words"]] == ["a", "b"]
+        assert seen["silences"] == [(1, 2)]
+        assert seen["scene_cuts"] == [3.0]
+        assert kept == cands and dropped == []
+
+    def test_settings_none_passes_none_detectors(self, monkeypatch):
+        import media_studio.features.boundary as boundary
+
+        seen: dict[str, Any] = {}
+        monkeypatch.setattr(
+            boundary,
+            "snap_from_lists",
+            lambda c, w, *, silences, scene_cuts: seen.update(silences=silences, scene_cuts=scene_cuts) or (c, []),
+        )
+        sm._lazy_snap([], {"segments": []}, settings=None)
+        assert seen["silences"] is None and seen["scene_cuts"] is None
+
+
+class TestLazyCutStage:
+    def test_builds_frame_accurate_argv_and_runs(self, monkeypatch):
+        from media_studio import ffmpeg
+
+        ran: dict[str, Any] = {}
+        monkeypatch.setattr(ffmpeg, "ffmpeg_path", lambda settings=None: "/bin/ffmpeg")
+        monkeypatch.setattr(ffmpeg, "run", lambda argv, **kw: ran.setdefault("argv", argv) and 0 or 0)
+        out = sm._lazy_cut("/src.mp4", "/out.cut.mp4", 10.0, 40.0, settings={})
+        assert out == "/out.cut.mp4"
+        argv = ran["argv"]
+        assert argv[0] == "/bin/ffmpeg"
+        # accurate seek: -ss/-to AFTER -i (decode-then-trim).
+        assert argv.index("-i") < argv.index("-ss") < argv.index("-to")
+        assert argv[argv.index("-ss") + 1] == "10.000"
+        assert argv[argv.index("-to") + 1] == "40.000"
+        assert argv[argv.index("-c:v") + 1] == "libx264"
+        assert argv[-1] == "/out.cut.mp4"
+
+
+class TestLazyReframeStage:
+    def test_resolves_engine_and_reframes(self, monkeypatch):
+        import media_studio.features.reframe as reframe
+
+        class FakeEngine:
+            def __init__(self):
+                self.calls: list[tuple] = []
+
+            def reframe(self, in_path, out_path, aspect):
+                self.calls.append((in_path, out_path, aspect))
+                return out_path
+
+        engine = FakeEngine()
+        seen: dict[str, Any] = {}
+
+        def fake_get_engine(name, settings):
+            seen["name"] = name
+            return engine, None
+
+        monkeypatch.setattr(reframe, "get_engine", fake_get_engine)
+        out = sm._lazy_reframe("/in.mp4", "/out.reframed.mp4", "9:16", settings={"reframeEngine": "verthor"})
+        assert out == "/out.reframed.mp4"
+        assert seen["name"] == "verthor"
+        assert engine.calls == [("/in.mp4", "/out.reframed.mp4", "9:16")]
+
+    def test_defaults_to_auto_when_unset(self, monkeypatch):
+        import media_studio.features.reframe as reframe
+
+        seen: dict[str, Any] = {}
+
+        class _E:
+            def reframe(self, *a):
+                return a[1]
+
+        monkeypatch.setattr(reframe, "get_engine", lambda name, settings: seen.update(name=name) or (_E(), None))
+        sm._lazy_reframe("/in.mp4", "/out.mp4", "9:16", settings=None)
+        assert seen["name"] == "auto"
+
+
+class TestLazyStabilizeStage:
+    def test_delegates_to_stabilize_clip(self, monkeypatch):
+        import media_studio.features.stabilize as stabilize
+
+        seen: dict[str, Any] = {}
+
+        def fake(in_path, out_path, *, settings=None, on_notice=None):
+            seen.update(in_path=in_path, out_path=out_path, on_notice=on_notice)
+            return out_path
+
+        monkeypatch.setattr(stabilize, "stabilize_clip", fake)
+        notices: list = []
+        sentinel = lambda n: notices.append(n)  # noqa: E731 - stable identity for the assert
+        out = sm._lazy_stabilize("/in.mp4", "/out.stab.mp4", settings={}, on_notice=sentinel)
+        assert out == "/out.stab.mp4"
+        assert seen["on_notice"] is sentinel  # the on_notice sink is threaded through
+
+
+class TestLazyTrimSilenceStage:
+    def test_delegates_to_trim_clip(self, monkeypatch):
+        import media_studio.features.silencetrim as silencetrim
+
+        monkeypatch.setattr(silencetrim, "trim_clip", lambda i, o, *, settings=None: (o, 3.25))
+        out_path, removed = sm._lazy_trim_silence("/in.mp4", "/out.trim.mp4", settings={})
+        assert out_path == "/out.trim.mp4"
+        assert removed == pytest.approx(3.25)
+
+
+class TestLazyZoomStage:
+    def test_builds_zoom_argv_and_runs(self, monkeypatch):
+        from media_studio import ffmpeg
+        from media_studio.features import zoom
+
+        seen: dict[str, Any] = {}
+        monkeypatch.setattr(
+            zoom,
+            "build_zoom_argv",
+            lambda in_path, out_path, **kw: seen.update(kw, in_path=in_path, out_path=out_path) or ["ff", out_path],
+        )
+        monkeypatch.setattr(ffmpeg, "run", lambda argv, **kw: seen.setdefault("argv", argv) and 0 or 0)
+        cues = [{"index": 1, "start": 0.0, "end": 2.0, "text": "hi"}]
+        out = sm._lazy_zoom("/in.mp4", "/out.zoom.mp4", cues, source_start=5.0, duration_sec=30.0, settings={})
+        assert out == "/out.zoom.mp4"
+        assert seen["width"] == sm.OUT_WIDTH and seen["height"] == sm.OUT_HEIGHT
+        assert seen["duration_sec"] == pytest.approx(30.0)
+        assert seen["source_start"] == pytest.approx(5.0)
+        assert seen["cues"] == cues
+        assert seen["argv"][-1] == "/out.zoom.mp4"
+
+
+class TestLazyBrandOverlayStage:
+    def test_builds_overlay_argv_and_runs(self, monkeypatch):
+        from media_studio import ffmpeg
+        from media_studio.features import brandkit
+
+        seen: dict[str, Any] = {}
+        monkeypatch.setattr(
+            brandkit,
+            "build_logo_overlay_argv",
+            lambda in_path, logo, out_path, *, settings=None: (
+                seen.update(in_path=in_path, logo=logo, out_path=out_path) or ["ff", out_path]
+            ),
+        )
+        monkeypatch.setattr(ffmpeg, "run", lambda argv, **kw: seen.setdefault("argv", argv) and 0 or 0)
+        out = sm._lazy_brand_overlay("/in.mp4", "/out.brand.mp4", "/logo.png", settings={})
+        assert out == "/out.brand.mp4"
+        assert seen["logo"] == "/logo.png"
+        assert seen["argv"][-1] == "/out.brand.mp4"
+
+
+class TestLazyExportStage:
+    def test_builds_convert_argv_and_runs(self, monkeypatch):
+        from media_studio import ffmpeg
+
+        seen: dict[str, Any] = {}
+
+        def fake_convert(in_path, out_path, codecs, settings):
+            seen.update(in_path=in_path, out_path=out_path, codecs=codecs)
+            return ["ff", out_path]
+
+        monkeypatch.setattr(ffmpeg, "build_convert_argv", fake_convert)
+        monkeypatch.setattr(ffmpeg, "run", lambda argv, **kw: seen.setdefault("argv", argv) and 0 or 0)
+        out = sm._lazy_export("/in.mp4", "/final.mp4", settings={})
+        assert out == "/final.mp4"
+        assert seen["codecs"] == {"vcodec": "libx264", "acodec": "aac"}
+        assert seen["argv"][-1] == "/final.mp4"
+
+
+# ---------------------------------------------------------------------------
+# pure helper edge cases
+# ---------------------------------------------------------------------------
+def test_cues_for_clip_skips_blank_text_word_spans():
+    # A word span with only whitespace text is skipped (no cue produced).
+    transcript = {
+        "segments": [
+            {
+                "start": 0.0,
+                "end": 30.0,
+                "text": "seg",
+                "words": [
+                    {"text": "   ", "start": 5.0, "end": 6.0},  # blank -> skipped
+                    {"text": "real", "start": 7.0, "end": 8.0},
+                ],
+            }
+        ]
+    }
+    cues = sm._cues_for_clip(transcript, {"sourceStart": 0.0, "end": 30.0})
+    assert [c["text"] for c in cues] == ["real"]
+
+
+def test_clip_local_words_skips_untimed_words():
+    transcript = {
+        "segments": [
+            {
+                "words": [
+                    {"text": "ok", "start": 25.0, "end": 26.0},  # in window
+                    {"text": "untimed", "start": None, "end": None},  # skipped
+                    {"text": "early", "start": 1.0, "end": 2.0},  # before window
+                ]
+            }
+        ]
+    }
+    out = sm._clip_local_words(transcript, source_start=20.0, end=45.0)
+    assert [w["text"] for w in out] == ["ok"]
+    assert out[0]["start"] == pytest.approx(5.0)  # 25 - 20 (re-based)
+
+
+def test_rebase_cues_drops_cues_ending_before_in_point():
+    cues = [
+        {"start": 5.0, "end": 8.0, "text": "before"},  # wholly before in-point -> dropped
+        {"start": 25.0, "end": 28.0, "text": "kept"},
+    ]
+    out = sm._rebase_cues(cues, source_start=20.0)
+    assert [c["text"] for c in out] == ["kept"]
+    assert out[0]["index"] == 1  # renumbered from 1
+    assert out[0]["start"] == pytest.approx(5.0)  # 25 - 20
+
+
+def test_candidate_virality_non_numeric_returns_none():
+    # A non-numeric calibratedPct/viralityPct -> None (never crashes export).
+    assert sm._candidate_virality({"viralityPct": "junk"}) is None
+    assert sm._candidate_virality({"calibratedPct": object()}) is None
+    assert sm._candidate_virality({}) is None
+    assert sm._candidate_virality({"viralityPct": 42}) == 42
+
+
+# ---------------------------------------------------------------------------
+# run_export — reframe-engine fallback notice + per-export notice de-dup
+# ---------------------------------------------------------------------------
+def test_run_export_surfaces_reframe_fallback_notice(transcript, tmp_path, monkeypatch):
+    """A verthor->claudeshorts fallback notice is surfaced via job.progress."""
+    import media_studio.features.reframe as reframe_mod
+
+    notice = {"type": "reframe.fallback", "message": "verthor unavailable; using claudeshorts"}
+    monkeypatch.setattr(reframe_mod, "resolve_engine_name", lambda name, settings: ("claudeshorts", notice))
+
+    progress: list[tuple[int, str]] = []
+    ctx = JobContext(
+        job_id="j1",
+        _cancel_event=threading.Event(),
+        _emit_progress=lambda jid, pct, msg: progress.append((pct, msg)),
+    )
+    rec = RecordingStages([])
+    candidate = {"rank": 1, "start": 0.0, "end": 25.0, "sourceStart": 0.0, "score": 9}
+    sm.run_export(
+        ctx,
+        video_id="v1",
+        candidates=[candidate],
+        load_context=loader_for(str(tmp_path / "src.mp4"), transcript),
+        out_dir=str(tmp_path / "out"),
+        stages=rec.as_stages(),
+    )
+    assert any("claudeshorts" in msg for _pct, msg in progress)
+
+
+def test_run_export_dedupes_repeated_stabilize_notice(transcript, tmp_path):
+    """The same notice across N clips is announced ONCE (de-dup by type)."""
+    progress: list[tuple[int, str]] = []
+
+    def passthrough(in_path, out_path, on_notice):
+        if on_notice is not None:
+            on_notice({"type": "stabilize.unavailable", "message": "no libvidstab — skipped"})
+        return in_path
+
+    rec = RecordingStages([], stabilize_impl=passthrough)
+    ctx = JobContext(
+        job_id="j1",
+        _cancel_event=threading.Event(),
+        _emit_progress=lambda jid, pct, msg: progress.append((pct, msg)),
+    )
+    cands = [
+        {"rank": 1, "start": 0.0, "end": 25.0, "sourceStart": 0.0, "score": 9},
+        {"rank": 2, "start": 30.0, "end": 55.0, "sourceStart": 30.0, "score": 8},
+    ]
+    sm.run_export(
+        ctx,
+        video_id="v1",
+        candidates=cands,
+        load_context=loader_for(str(tmp_path / "src.mp4"), transcript),
+        out_dir=str(tmp_path / "out"),
+        stages=rec.as_stages(),
+        settings={"stabilize": True},
+    )
+    # Two clips both emit the same typed notice, but it is surfaced only once.
+    libvidstab_msgs = [msg for _pct, msg in progress if "libvidstab" in msg]
+    assert len(libvidstab_msgs) == 1

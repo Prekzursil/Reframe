@@ -585,3 +585,78 @@ def test_register_defaults_to_protocol_register(exports_dir):
     sh.register(exports_dir=exports_dir)
     for name in ("shorts.list", "shorts.thumbnail", "shorts.delete", "shorts.reexport"):
         assert name in protocol.METHODS
+
+
+# --------------------------------------------------------------------------- #
+# probe_dims — empty/non-list streams + non-numeric dims branches
+# --------------------------------------------------------------------------- #
+def test_probe_dims_zero_when_streams_empty_or_not_a_list(settings):
+    def empty_streams(argv, capture_output, text, check):
+        return type("C", (), {"returncode": 0, "stdout": '{"streams":[]}'})()
+
+    def non_list_streams(argv, capture_output, text, check):
+        return type("C", (), {"returncode": 0, "stdout": '{"streams":"oops"}'})()
+
+    assert sh.probe_dims("in.mp4", settings, runner=empty_streams) == (0, 0)
+    assert sh.probe_dims("in.mp4", settings, runner=non_list_streams) == (0, 0)
+
+
+def test_probe_dims_zero_when_dims_non_numeric(settings):
+    def bad_dims(argv, capture_output, text, check):
+        return type("C", (), {"returncode": 0, "stdout": '{"streams":[{"width":"x","height":"y"}]}'})()
+
+    assert sh.probe_dims("in.mp4", settings, runner=bad_dims) == (0, 0)
+
+
+def test_probe_dims_zero_when_first_stream_not_a_dict(settings):
+    def non_dict_first(argv, capture_output, text, check):
+        # streams[0] is not a dict -> first becomes {} -> width/height 0.
+        return type("C", (), {"returncode": 0, "stdout": '{"streams":["junk"]}'})()
+
+    assert sh.probe_dims("in.mp4", settings, runner=non_dict_first) == (0, 0)
+
+
+# --------------------------------------------------------------------------- #
+# short_info — non-numeric createdAt + stat() failure fallbacks
+# --------------------------------------------------------------------------- #
+def test_short_info_non_numeric_created_at_falls_back_to_mtime(tmp_path):
+    clip = make_clip(tmp_path, "src-1")
+    # A malformed createdAt in meta -> float() raises -> fall back to mtime.
+    info = sh.short_info(clip, {"createdAt": "not-a-number"})
+    assert info["createdAt"] > 0.0  # the file's real mtime
+
+
+def test_short_info_created_at_zero_when_stat_fails(monkeypatch):
+    # No real file on disk (path never created) AND meta has no createdAt: the
+    # p.stat() fallback raises OSError -> createdAt degrades to 0.0.
+    info = sh.short_info("Z:/does/not/exist/ghost.mp4", None)
+    assert info["createdAt"] == 0.0
+
+
+# --------------------------------------------------------------------------- #
+# Shorts._settings — a broken settings_provider must never break a listing
+# --------------------------------------------------------------------------- #
+def test_settings_provider_exception_degrades_to_empty(exports_dir):
+    def boom() -> dict[str, Any]:
+        raise RuntimeError("settings store down")
+
+    svc = sh.Shorts(exports_dir=exports_dir, settings_provider=boom)
+    assert svc._settings() == {}
+
+
+# --------------------------------------------------------------------------- #
+# Shorts._scan_dir — a probe failure during dims fallback is non-fatal
+# --------------------------------------------------------------------------- #
+def test_scan_dir_probe_failure_degrades_dims_to_zero(exports_dir):
+    # A clip with NO .json (so the dims fallback path runs) + a probe that
+    # raises -> the ShortInfo is still produced with width/height 0.
+    make_clip(exports_dir / "shorts-v1", "src-1")  # no meta -> triggers probe
+
+    def boom_probe(in_path, settings=None):
+        raise RuntimeError("ffprobe crashed")
+
+    svc = service(exports_dir, probe=boom_probe)
+    result = svc.list({"videoId": "v1"}, ctx())
+    assert len(result["shorts"]) == 1
+    info = result["shorts"][0]
+    assert info["width"] == 0 and info["height"] == 0

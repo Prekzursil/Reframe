@@ -72,9 +72,7 @@ class TestFilterGraph:
         assert flt.endswith("[out]")
 
     def test_tunables_flow_into_graph(self):
-        flt = am.build_mix_filter(
-            bg_gain_db=-6.0, duck_threshold=0.1, duck_ratio=12.0, loudness_target=-16.0
-        )
+        flt = am.build_mix_filter(bg_gain_db=-6.0, duck_threshold=0.1, duck_ratio=12.0, loudness_target=-16.0)
         assert "volume=-6.0dB" in flt
         assert "threshold=0.1" in flt
         assert "ratio=12.0" in flt
@@ -183,6 +181,94 @@ class TestMergeService:
         registry.get(out["jobId"]).wait(timeout=5)
         af = run.calls[0][run.calls[0].index("-af") + 1]
         assert af.startswith("loudnorm=")
+
+
+# --------------------------------------------------------------------------- #
+# param coercion + settings/job edge cases (branch coverage)
+# --------------------------------------------------------------------------- #
+class TestEdges:
+    def test_require_str_missing_bgpath_raises(self, settings, tmp_path, registry):
+        # videoId resolves, but bgPath is absent/empty -> _require_str raises.
+        svc = am.AudioMix(
+            resolver=lambda vid: "/lib/clip.mp4",
+            out_dir=tmp_path,
+            settings_provider=lambda: settings,
+        )
+        with pytest.raises(RpcError, match="bgPath"):
+            svc.merge({"videoId": "v1", "bgPath": ""}, _rpc_ctx(registry))
+
+    def test_float_garbage_falls_back_to_default(self, settings, tmp_path, bg_file, registry):
+        run = RecordingRun()
+        svc = am.AudioMix(
+            resolver=lambda vid: "/lib/clip.mp4",
+            out_dir=tmp_path,
+            settings_provider=lambda: settings,
+            run=run,
+            duration=lambda p, s=None: 1.0,
+        )
+        # A non-numeric tunable is coerced back to the default (no crash).
+        out = svc.merge({"videoId": "v1", "bgPath": bg_file, "duckRatio": "wat"}, _rpc_ctx(registry))
+        registry.get(out["jobId"]).wait(timeout=5)
+        flt = run.calls[0][run.calls[0].index("-filter_complex") + 1]
+        assert f"ratio={am.DEFAULT_DUCK_RATIO}" in flt
+
+    def test_settings_provider_raising_yields_empty(self, tmp_path, bg_file, registry):
+        run = RecordingRun()
+
+        def boom() -> dict[str, Any]:
+            raise RuntimeError("settings exploded")
+
+        svc = am.AudioMix(
+            resolver=lambda vid: "/lib/clip.mp4",
+            out_dir=tmp_path,
+            settings_provider=boom,
+            run=run,
+            duration=lambda p, s=None: 1.0,
+        )
+        # _settings swallows the error -> {} -> the op still runs.
+        out = svc.merge({"videoId": "v1", "bgPath": bg_file}, _rpc_ctx(registry))
+        registry.get(out["jobId"]).wait(timeout=5)
+        assert run.calls  # ffmpeg still invoked despite the bad settings provider
+
+    def test_duration_probe_failure_coarsens_progress(self, settings, tmp_path, bg_file, registry):
+        run = RecordingRun()
+
+        def boom_duration(path, s=None) -> float:
+            raise OSError("ffprobe died")
+
+        svc = am.AudioMix(
+            resolver=lambda vid: "/lib/clip.mp4",
+            out_dir=tmp_path,
+            settings_provider=lambda: settings,
+            run=run,
+            duration=boom_duration,
+        )
+        out = svc.merge({"videoId": "v1", "bgPath": bg_file}, _rpc_ctx(registry))
+        job = registry.get(out["jobId"])
+        job.wait(timeout=5)
+        # Probe failure only coarsens progress -> total_sec 0.0, job still succeeds.
+        assert job.result["path"].endswith(".mp4")
+        assert run.calls[0][run.calls[0].index("-progress") + 1] == "pipe:1"
+
+    def test_merge_without_job_registry_raises(self, settings, tmp_path, bg_file):
+        svc = am.AudioMix(
+            resolver=lambda vid: "/lib/clip.mp4",
+            out_dir=tmp_path,
+            settings_provider=lambda: settings,
+        )
+        ctx = RpcContext(emit_notification=lambda obj: None, jobs=None)
+        with pytest.raises(RpcError, match="no job registry"):
+            svc.merge({"videoId": "v1", "bgPath": bg_file}, ctx)
+
+    def test_normalize_without_job_registry_raises(self, settings, tmp_path):
+        svc = am.AudioMix(
+            resolver=lambda vid: "/lib/clip.mp4",
+            out_dir=tmp_path,
+            settings_provider=lambda: settings,
+        )
+        ctx = RpcContext(emit_notification=lambda obj: None, jobs=None)
+        with pytest.raises(RpcError, match="no job registry"):
+            svc.normalize({"path": "/x/clip.mp4"}, ctx)
 
 
 # --------------------------------------------------------------------------- #

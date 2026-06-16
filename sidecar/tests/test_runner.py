@@ -543,3 +543,108 @@ def test_normalize_model_path_helpers():
     assert rn._same_model("/m/a.gguf", "/m/b.gguf") is False
     assert rn._same_model(None, "/m/a.gguf") is False
     assert rn._same_model("/m/a.gguf", None) is False
+
+
+# --------------------------------------------------------------------------- #
+# extra branch coverage: free-hook default, evict failure, default server_path
+# resolution via tools_resolver, and the process helper error arms
+# --------------------------------------------------------------------------- #
+def test_noop_free_returns_none():
+    # The default free-hook is a literal no-op (line 68).
+    assert rn._noop_free() is None
+
+
+def test_evict_swallows_teardown_failure(monkeypatch):
+    # When the per-lane teardown raises, _evict logs and swallows it so a free
+    # failure cannot wedge the lane (lines 272->exit / 274-275).
+    r = _runner()
+
+    def boom() -> None:
+        raise RuntimeError("teardown exploded")
+
+    monkeypatch.setattr(r, "_stop_server_locked", boom)
+    r._evict(LANE_LLAMA)  # must not raise even though the inner teardown does
+
+
+def test_evict_unknown_lane_is_a_noop():
+    # An unrecognized lane matches neither branch -> nothing happens, no raise.
+    r = _runner()
+    r._evict("not-a-lane")
+
+
+def test_start_server_resolves_default_server_path_via_tools_resolver(monkeypatch):
+    # With the UNTOUCHED default server_path, start_server resolves the exe
+    # through tools_resolver.resolve_llama_server (lines 331->337).
+    from media_studio import tools_resolver
+
+    monkeypatch.setattr(tools_resolver, "resolve_llama_server", lambda _settings: "/resolved/llama-server")
+    popen = FakePopen()
+    r = ModelRunner(settings={"ggufPath": "/m/model.gguf"}, popen=popen)
+    assert r._server_path == rn.DEFAULT_LLAMA_SERVER  # untouched default
+    r.start_server()
+    assert popen.spawned[0][0] == "/resolved/llama-server"
+
+
+def test_start_server_default_server_path_resolver_miss_keeps_default(monkeypatch):
+    # If the resolver returns None, start_server keeps the default server path.
+    from media_studio import tools_resolver
+
+    monkeypatch.setattr(tools_resolver, "resolve_llama_server", lambda _settings: None)
+    popen = FakePopen()
+    r = ModelRunner(settings={"ggufPath": "/m/model.gguf"}, popen=popen)
+    r.start_server()
+    assert popen.spawned[0][0] == rn.DEFAULT_LLAMA_SERVER
+
+
+def test_start_server_explicit_server_path_skips_resolver(monkeypatch):
+    # An injected (non-default) server_path is used verbatim — the tools_resolver
+    # block is SKIPPED entirely (the 331->337 false arm). Resolver is set to a
+    # sentinel that would be wrong if it were ever consulted.
+    from media_studio import tools_resolver
+
+    def _should_not_run(_settings):  # pragma: no cover - asserts it is never called
+        raise AssertionError("resolver must not run for an explicit server_path")
+
+    monkeypatch.setattr(tools_resolver, "resolve_llama_server", _should_not_run)
+    popen = FakePopen()
+    r = ModelRunner(
+        settings={"ggufPath": "/m/model.gguf"},
+        popen=popen,
+        server_path="/opt/custom/llama-server",
+    )
+    r.start_server()
+    assert popen.spawned[0][0] == "/opt/custom/llama-server"
+
+
+def test_proc_exited_handles_flaky_poll():
+    # A poll() that raises must not crash status checks -> treated as "alive".
+    class FlakyPoll:
+        def poll(self):
+            raise RuntimeError("poll glitch")
+
+    assert rn._proc_exited(FlakyPoll()) is False  # lines 441-442
+
+
+def test_terminate_proc_swallows_terminate_failure():
+    # terminate() raising is swallowed (lines 449-450); wait still runs.
+    class TerminateRaises(FakeProc):
+        def terminate(self) -> None:
+            raise RuntimeError("cannot terminate")
+
+    proc = TerminateRaises(["x"])
+    rn._terminate_proc(proc)  # must not raise
+    assert proc.waited is True
+
+
+def test_terminate_proc_swallows_kill_failure():
+    # When wait() fails AND kill() also fails, both are swallowed (lines 456-457).
+    class WaitAndKillRaise(FakeProc):
+        def wait(self, timeout: float | None = None) -> int:
+            raise RuntimeError("still running")
+
+        def kill(self) -> None:
+            raise RuntimeError("cannot kill")
+
+    proc = WaitAndKillRaise(["x"])
+    rn._terminate_proc(proc)  # must not raise even though kill failed
+    assert proc.terminated is True
