@@ -33,7 +33,7 @@ from media_studio.models.translation import (
     TIER_LOCAL_HEAVY,
     TIERS,
     TieredTranslator,
-    TierUnavailable,
+    TierUnavailableError,
     TranslationError,
     build_messages,
     fallback_chain,
@@ -568,17 +568,17 @@ def test_mt_asset_detect_explicit_path(tmp_path):
 # --------------------------------------------------------------------------- #
 def test_tier_provider_unknown_tier_raises():
     # An unrecognized tier matches neither hosted nor the two local tiers and
-    # raises TierUnavailable (line 415).
+    # raises TierUnavailableError (line 415).
     t = TieredTranslator(runner=FakeRunner(), settings=SETTINGS)
-    with pytest.raises(TierUnavailable):
+    with pytest.raises(TierUnavailableError):
         t._tier_provider("tier-bogus")
 
 
 def test_local_provider_raises_when_no_gguf_configured():
     # A runner is present but no GGUF can be resolved (no modelsDir / no override)
-    # -> _local_provider raises TierUnavailable (line 422).
+    # -> _local_provider raises TierUnavailableError (line 422).
     t = TieredTranslator(runner=FakeRunner(), settings={})  # runner, but no gguf
-    with pytest.raises(TierUnavailable):
+    with pytest.raises(TierUnavailableError):
         t._local_provider(TIER_LOCAL)
 
 

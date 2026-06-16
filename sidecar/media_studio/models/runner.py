@@ -24,11 +24,14 @@ Everything heavy (the subprocess, the whisper model, the CUDA free-hook) is
 injected, so tests drive the full lifecycle without spawning a process, importing
 faster-whisper, or touching a GPU.
 """
+
 from __future__ import annotations
 
+import contextlib
 import subprocess
 import threading
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 from ..util import get_logger
 
@@ -79,7 +82,7 @@ def _normalize_model_path(path: str) -> str:
     return str(path).replace("\\", "/").casefold()
 
 
-def _same_model(current: Optional[str], requested: Optional[str]) -> bool:
+def _same_model(current: str | None, requested: str | None) -> bool:
     """True when ``requested`` names the model already serving (both non-None)."""
     if current is None or requested is None:
         return False
@@ -97,8 +100,8 @@ def build_server_argv(
     port: int = DEFAULT_PORT,
     ctx_size: int = DEFAULT_CTX_SIZE,
     gpu_layers: int = DEFAULT_GPU_LAYERS,
-    extra_args: Optional[List[str]] = None,
-) -> List[str]:
+    extra_args: list[str] | None = None,
+) -> list[str]:
     """Build the argv list to launch the llama.cpp server (CONTRACTS.md §7).
 
     Returns a **list** (never a shell string) so a GGUF path with spaces is safe.
@@ -107,13 +110,18 @@ def build_server_argv(
     """
     if not gguf_path:
         raise ValueError("gguf_path is required to launch the llama.cpp server")
-    argv: List[str] = [
+    argv: list[str] = [
         server_path,
-        "-m", gguf_path,
-        "--host", host,
-        "--port", str(int(port)),
-        "--ctx-size", str(int(ctx_size)),
-        "--n-gpu-layers", str(int(gpu_layers)),
+        "-m",
+        gguf_path,
+        "--host",
+        host,
+        "--port",
+        str(int(port)),
+        "--ctx-size",
+        str(int(ctx_size)),
+        "--n-gpu-layers",
+        str(int(gpu_layers)),
     ]
     if extra_args:
         argv += [str(a) for a in extra_args]
@@ -121,10 +129,10 @@ def build_server_argv(
 
 
 def resolve_gguf_path(
-    settings: Optional[Dict[str, Any]] = None,
+    settings: dict[str, Any] | None = None,
     *,
     default_name: str = DEFAULT_GGUF_NAME,
-) -> Optional[str]:
+) -> str | None:
     """Resolve the GGUF model path from ``settings`` (CONTRACTS.md §2).
 
     Order: explicit ``settings.ggufPath`` (a file) -> ``settings.modelsDir`` +
@@ -157,10 +165,10 @@ class LaneLock:
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._occupant: Optional[str] = None
+        self._occupant: str | None = None
 
     @property
-    def occupant(self) -> Optional[str]:
+    def occupant(self) -> str | None:
         """The lane currently resident in the heavy slot (or ``None``)."""
         with self._lock:
             return self._occupant
@@ -207,10 +215,10 @@ class ModelRunner:
 
     def __init__(
         self,
-        settings: Optional[Dict[str, Any]] = None,
+        settings: dict[str, Any] | None = None,
         *,
         popen: PopenLike = subprocess.Popen,
-        whisper_load: Optional[WhisperLoad] = None,
+        whisper_load: WhisperLoad | None = None,
         free_hook: FreeHook = _noop_free,
         server_path: str = DEFAULT_LLAMA_SERVER,
         host: str = DEFAULT_HOST,
@@ -225,9 +233,9 @@ class ModelRunner:
         self._port = port
 
         self._lane = LaneLock()
-        self._server_proc: Optional[Any] = None
-        self._server_model_path: Optional[str] = None
-        self._whisper_model: Optional[Any] = None
+        self._server_proc: Any | None = None
+        self._server_model_path: str | None = None
+        self._whisper_model: Any | None = None
         self._lock = threading.RLock()
 
     # -- introspection -----------------------------------------------------
@@ -244,7 +252,7 @@ class ModelRunner:
             return self._whisper_model is not None
 
     @property
-    def current_model_path(self) -> Optional[str]:
+    def current_model_path(self) -> str | None:
         """The GGUF path the live llama.cpp server was launched with (T3).
 
         ``None`` when no server has been started or after it was stopped. The
@@ -255,7 +263,7 @@ class ModelRunner:
             return self._server_model_path
 
     @property
-    def heavy_occupant(self) -> Optional[str]:
+    def heavy_occupant(self) -> str | None:
         """Which lane currently holds the single heavy slot (or ``None``)."""
         return self._lane.occupant
 
@@ -278,9 +286,9 @@ class ModelRunner:
     def start_server(
         self,
         *,
-        gguf_path: Optional[str] = None,
-        gpu_layers: Optional[int] = None,
-        extra_args: Optional[List[str]] = None,
+        gguf_path: str | None = None,
+        gpu_layers: int | None = None,
+        extra_args: list[str] | None = None,
     ) -> Any:
         """Start the llama.cpp server, claiming the heavy lane (evicts whisper).
 
@@ -309,17 +317,13 @@ class ModelRunner:
                     if requested is None or _same_model(self._server_model_path, requested):
                         return self._server_proc
                     # Different model requested: graceful stop, then relaunch.
-                    log.info(
-                        "model switch: %s -> %s", self._server_model_path, requested
-                    )
+                    log.info("model switch: %s -> %s", self._server_model_path, requested)
                     self._stop_server_locked()
                 else:
                     # Stale handle (the server crashed/exited on its own).
                     self._stop_server_locked()
             if not requested:
-                raise ValueError(
-                    "no GGUF model configured (set settings.ggufPath or settings.modelsDir)"
-                )
+                raise ValueError("no GGUF model configured (set settings.ggufPath or settings.modelsDir)")
             # Claim the heavy lane BEFORE spawning so whisper is freed first.
             self._lane.acquire(LANE_LLAMA, self._evict)
             # T5 (WIRING-T5 §3): an UNTOUCHED default resolves through the
@@ -331,9 +335,7 @@ class ModelRunner:
             if server_path == DEFAULT_LLAMA_SERVER:
                 from .. import tools_resolver  # local import: keeps module light
 
-                server_path = (
-                    tools_resolver.resolve_llama_server(self._settings) or server_path
-                )
+                server_path = tools_resolver.resolve_llama_server(self._settings) or server_path
             argv = build_server_argv(
                 requested,
                 server_path=server_path,
@@ -421,7 +423,7 @@ class ModelRunner:
             self._lane.release(LANE_WHISPER)
 
     # -- context-manager sugar (load-use-free ergonomics) ------------------
-    def __enter__(self) -> "ModelRunner":
+    def __enter__(self) -> ModelRunner:
         return self
 
     def __exit__(self, *_exc: Any) -> None:
@@ -444,14 +446,10 @@ def _proc_exited(proc: Any) -> bool:
 
 def _terminate_proc(proc: Any) -> None:
     """Cooperatively stop a process: terminate, wait, then kill if it lingers."""
-    try:
+    with contextlib.suppress(Exception):
         proc.terminate()
-    except Exception:  # noqa: BLE001
-        pass
     try:
         proc.wait(timeout=5)
     except Exception:  # noqa: BLE001
-        try:
+        with contextlib.suppress(Exception):
             proc.kill()
-        except Exception:  # noqa: BLE001
-            pass

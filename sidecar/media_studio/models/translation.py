@@ -40,10 +40,12 @@ NO new RPC methods are registered here (A2's method names are frozen;
 ``subtitles.translate`` already exists) — the handler wiring snippet lives in
 ``WIRING-T3.md``.
 """
+
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any
 
 from ..assets.manifest import AssetEntry, register_asset
 from ..util import get_logger
@@ -52,16 +54,16 @@ from . import provider as provider_mod
 log = get_logger("media_studio.models.translation")
 
 # Cue/SubtitleTrack are the frozen §3 dict shapes (same aliases subtitles.py uses).
-Cue = Dict[str, Any]
-SubtitleTrack = Dict[str, Any]
+Cue = dict[str, Any]
+SubtitleTrack = dict[str, Any]
 
 # --------------------------------------------------------------------------- #
 # Tiers (docs/research/MT-MODELS-2026.md §2)
 # --------------------------------------------------------------------------- #
-TIER_LOCAL: str = "tier1"        # TranslateGemma-4B Q4_K_M, fully resident
+TIER_LOCAL: str = "tier1"  # TranslateGemma-4B Q4_K_M, fully resident
 TIER_LOCAL_HEAVY: str = "tier2"  # TranslateGemma-12B Q4_K_M, partial offload, SLOW
-TIER_HOSTED: str = "tier3"       # hosted OpenAI-compatible provider
-TIERS: Tuple[str, ...] = (TIER_LOCAL, TIER_LOCAL_HEAVY, TIER_HOSTED)
+TIER_HOSTED: str = "tier3"  # hosted OpenAI-compatible provider
+TIERS: tuple[str, ...] = (TIER_LOCAL, TIER_LOCAL_HEAVY, TIER_HOSTED)
 
 #: The progress label the heavy tier carries (the T3 brief: "label SLOW").
 SLOW_LABEL: str = "SLOW"
@@ -69,15 +71,13 @@ SLOW_LABEL: str = "SLOW"
 # Pinned artifacts (survey §2). File names double as the modelsDir lookup names.
 TIER1_GGUF_NAME: str = "translategemma-4b-it.Q4_K_M.gguf"
 TIER1_GGUF_URL: str = (
-    "https://huggingface.co/mradermacher/translategemma-4b-it-GGUF/resolve/main/"
-    "translategemma-4b-it.Q4_K_M.gguf"
+    "https://huggingface.co/mradermacher/translategemma-4b-it-GGUF/resolve/main/translategemma-4b-it.Q4_K_M.gguf"
 )
 TIER1_SIZE_MB: int = 2550  # 2.49 GB
 
 TIER2_GGUF_NAME: str = "translategemma-12b-it.Q4_K_M.gguf"
 TIER2_GGUF_URL: str = (
-    "https://huggingface.co/mradermacher/translategemma-12b-it-GGUF/resolve/main/"
-    "translategemma-12b-it.Q4_K_M.gguf"
+    "https://huggingface.co/mradermacher/translategemma-12b-it-GGUF/resolve/main/translategemma-12b-it.Q4_K_M.gguf"
 )
 TIER2_SIZE_MB: int = 7580  # 7.4 GB
 
@@ -93,19 +93,53 @@ TIER2_ASSET_NAME: str = "translategemma-12b-gguf"
 # --------------------------------------------------------------------------- #
 TIER1_LANGS: frozenset = frozenset(
     {
-        "ar", "bg", "ca", "cs", "da", "de", "el", "en", "es", "et", "fa", "fi",
-        "fr", "he", "hi", "hr", "hu", "id", "it", "ja", "ko", "lt", "lv", "ms",
-        "nb", "nl", "no", "pl", "pt", "ro", "ru", "sk", "sl", "sr", "sv", "th",
-        "tr", "uk", "vi", "zh",
+        "ar",
+        "bg",
+        "ca",
+        "cs",
+        "da",
+        "de",
+        "el",
+        "en",
+        "es",
+        "et",
+        "fa",
+        "fi",
+        "fr",
+        "he",
+        "hi",
+        "hr",
+        "hu",
+        "id",
+        "it",
+        "ja",
+        "ko",
+        "lt",
+        "lv",
+        "ms",
+        "nb",
+        "nl",
+        "no",
+        "pl",
+        "pt",
+        "ro",
+        "ru",
+        "sk",
+        "sl",
+        "sr",
+        "sv",
+        "th",
+        "tr",
+        "uk",
+        "vi",
+        "zh",
     }
 )
-TIER2_LANGS: frozenset = frozenset(
-    {"bn", "gu", "is", "kn", "ml", "mr", "pa", "sw", "ta", "te", "ur", "zu"}
-)
+TIER2_LANGS: frozenset = frozenset({"bn", "gu", "is", "kn", "ml", "mr", "pa", "sw", "ta", "te", "ur", "zu"})
 
-ROUTING_TABLE: Dict[str, str] = {
-    **{code: TIER_LOCAL for code in TIER1_LANGS},
-    **{code: TIER_LOCAL_HEAVY for code in TIER2_LANGS},
+ROUTING_TABLE: dict[str, str] = {
+    **dict.fromkeys(TIER1_LANGS, TIER_LOCAL),
+    **dict.fromkeys(TIER2_LANGS, TIER_LOCAL_HEAVY),
 }
 
 #: Languages outside the table route hosted — the safe default for anything the
@@ -127,13 +161,13 @@ def normalize_lang(lang: str) -> str:
     return code
 
 
-def route(lang: str, table: Optional[Dict[str, str]] = None) -> str:
+def route(lang: str, table: dict[str, str] | None = None) -> str:
     """Map ``lang`` to its tier via the routing ``table`` (default survey table)."""
     routing = ROUTING_TABLE if table is None else table
     return routing.get(normalize_lang(lang), DEFAULT_TIER)
 
 
-def fallback_chain(lang: str, table: Optional[Dict[str, str]] = None) -> List[str]:
+def fallback_chain(lang: str, table: dict[str, str] | None = None) -> list[str]:
     """The tier order to attempt for ``lang``: routed tier first, then the rest.
 
     The remaining tiers follow in ascending order (tier1 -> tier2 -> tier3), so
@@ -151,7 +185,7 @@ class TranslationError(RuntimeError):
     """All tiers failed (or none were available). Surfaces via job.done (A6.3)."""
 
 
-class TierUnavailable(TranslationError):
+class TierUnavailableError(TranslationError):
     """A single tier cannot run (no runner / no GGUF configured / no cloud key).
 
     Internal to the fallback chain: the chain logs it and moves on; only when
@@ -175,9 +209,7 @@ _MT_SYSTEM = (
 # document for llama-cli/server use.
 
 
-def build_messages(
-    text: str, target_lang: str, source_lang: Optional[str] = None
-) -> List[Dict[str, str]]:
+def build_messages(text: str, target_lang: str, source_lang: str | None = None) -> list[dict[str, str]]:
     """Build the 2-message chat for one cue translation."""
     system = _MT_SYSTEM.format(target=target_lang)
     if source_lang:
@@ -226,11 +258,11 @@ class TieredTranslator:
     def __init__(
         self,
         *,
-        runner: Optional[Any] = None,
-        settings: Optional[Dict[str, Any]] = None,
-        local_provider_factory: Optional[ProviderFactory] = None,
-        hosted_provider_factory: Optional[ProviderFactory] = None,
-        routing: Optional[Dict[str, str]] = None,
+        runner: Any | None = None,
+        settings: dict[str, Any] | None = None,
+        local_provider_factory: ProviderFactory | None = None,
+        hosted_provider_factory: ProviderFactory | None = None,
+        routing: dict[str, str] | None = None,
         tier2_gpu_layers: int = TIER2_GPU_LAYERS,
     ) -> None:
         self._runner = runner
@@ -245,7 +277,7 @@ class TieredTranslator:
         """The tier this translator routes ``target_lang`` to."""
         return route(target_lang, self._routing)
 
-    def chain_for(self, target_lang: str) -> List[str]:
+    def chain_for(self, target_lang: str) -> list[str]:
         """The full fallback chain for ``target_lang`` (routed tier first)."""
         return fallback_chain(target_lang, self._routing)
 
@@ -255,10 +287,10 @@ class TieredTranslator:
         cues: Sequence[Cue],
         target_lang: str,
         *,
-        source_lang: Optional[str] = None,
-        progress: Optional[Callable[[int, str], None]] = None,
-        cancelled: Optional[Callable[[], bool]] = None,
-    ) -> List[Cue]:
+        source_lang: str | None = None,
+        progress: Callable[[int, str], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> list[Cue]:
         """Translate ``cues`` into ``target_lang`` — the ``translate(cues,
         targetLang)`` callable the T2 dub pipeline consumes.
 
@@ -273,28 +305,23 @@ class TieredTranslator:
         cue_list = list(cues or [])
         if not cue_list:
             return []
-        failures: List[str] = []
+        failures: list[str] = []
         for tier in self.chain_for(target_lang):
             try:
-                return self._translate_with_tier(
-                    tier, cue_list, target_lang, source_lang, progress, cancelled
-                )
+                return self._translate_with_tier(tier, cue_list, target_lang, source_lang, progress, cancelled)
             except Exception as exc:  # noqa: BLE001 - each tier failure feeds the chain
                 log.warning("translation %s failed for %r: %s", tier, target_lang, exc)
                 failures.append(f"{tier}: {exc}")
-        raise TranslationError(
-            f"all translation tiers failed for {target_lang!r} "
-            f"({'; '.join(failures)})"
-        )
+        raise TranslationError(f"all translation tiers failed for {target_lang!r} ({'; '.join(failures)})")
 
     def translate_track(
         self,
         track: SubtitleTrack,
         target_lang: str,
         *,
-        source_lang: Optional[str] = None,
-        progress: Optional[Callable[[int, str], None]] = None,
-        cancelled: Optional[Callable[[], bool]] = None,
+        source_lang: str | None = None,
+        progress: Callable[[int, str], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> SubtitleTrack:
         """``subtitles.translate`` job body: a NEW track, ``lang`` updated.
 
@@ -314,9 +341,7 @@ class TieredTranslator:
         return updated
 
     # -- the str -> str adapter (features.subtitles.translate translator=) --
-    def line_translator(
-        self, target_lang: str, *, source_lang: Optional[str] = None
-    ) -> Callable[[str], str]:
+    def line_translator(self, target_lang: str, *, source_lang: str | None = None) -> Callable[[str], str]:
         """A stateful one-line translator for the existing LineTranslator seam.
 
         Lazily binds the routed tier's provider on first use; a failing line
@@ -324,18 +349,17 @@ class TieredTranslator:
         tier thrash). Raises :class:`TranslationError` once the chain is spent.
         """
         chain = list(self.chain_for(target_lang))
-        state: Dict[str, Any] = {"provider": None, "label": ""}
+        state: dict[str, Any] = {"provider": None, "label": ""}
 
         def _translate(text: str) -> str:
             if _is_blank(text):
                 return text
-            failures: List[str] = []
+            failures: list[str] = []
             while True:
                 if state["provider"] is None:
                     if not chain:
                         raise TranslationError(
-                            f"all translation tiers failed for {target_lang!r} "
-                            f"({'; '.join(failures)})"
+                            f"all translation tiers failed for {target_lang!r} ({'; '.join(failures)})"
                         )
                     tier = chain.pop(0)
                     try:
@@ -346,9 +370,7 @@ class TieredTranslator:
                         failures.append(f"{tier}: {exc}")
                         continue
                 try:
-                    return self._chat_one(
-                        state["provider"], text, target_lang, source_lang
-                    )
+                    return self._chat_one(state["provider"], text, target_lang, source_lang)
                 except Exception as exc:  # noqa: BLE001 - escalate to next tier
                     log.warning("translation line failed on %s: %s", state["label"], exc)
                     failures.append(f"{state['label']}: {exc}")
@@ -366,26 +388,22 @@ class TieredTranslator:
     def _translate_with_tier(
         self,
         tier: str,
-        cues: List[Cue],
+        cues: list[Cue],
         target_lang: str,
-        source_lang: Optional[str],
-        progress: Optional[Callable[[int, str], None]],
-        cancelled: Optional[Callable[[], bool]],
-    ) -> List[Cue]:
+        source_lang: str | None,
+        progress: Callable[[int, str], None] | None,
+        cancelled: Callable[[], bool] | None,
+    ) -> list[Cue]:
         """Translate the whole batch on ONE tier (raises on any failure)."""
         provider = self._tier_provider(tier)
         label = self._tier_label(tier)
         total = len(cues)
-        out: List[Cue] = []
+        out: list[Cue] = []
         for i, cue in enumerate(cues):
             if cancelled is not None and cancelled():
                 break
             text = str(cue.get("text", ""))
-            new_text = (
-                text
-                if _is_blank(text)
-                else self._chat_one(provider, text, target_lang, source_lang)
-            )
+            new_text = text if _is_blank(text) else self._chat_one(provider, text, target_lang, source_lang)
             out.append(
                 _make_cue(
                     int(cue.get("index", i + 1)),
@@ -402,7 +420,7 @@ class TieredTranslator:
         return out
 
     def _tier_provider(self, tier: str) -> Any:
-        """Materialize the provider for ``tier`` (raises :class:`TierUnavailable`).
+        """Materialize the provider for ``tier`` (raises :class:`TierUnavailableError`).
 
         Local tiers ensure the llama.cpp server is serving the tier's GGUF
         first — ``ModelRunner.start_server`` reuses the live process for the
@@ -412,16 +430,15 @@ class TieredTranslator:
             return self._hosted_provider()
         if tier in (TIER_LOCAL, TIER_LOCAL_HEAVY):
             return self._local_provider(tier)
-        raise TierUnavailable(f"unknown translation tier: {tier!r}")
+        raise TierUnavailableError(f"unknown translation tier: {tier!r}")
 
     def _local_provider(self, tier: str) -> Any:
         if self._runner is None:
-            raise TierUnavailable(f"{tier} unavailable: no model runner")
+            raise TierUnavailableError(f"{tier} unavailable: no model runner")
         gguf = self.tier_gguf_path(tier)
         if not gguf:
-            raise TierUnavailable(
-                f"{tier} unavailable: no MT GGUF configured "
-                "(install the asset or set settings.modelsDir)"
+            raise TierUnavailableError(
+                f"{tier} unavailable: no MT GGUF configured (install the asset or set settings.modelsDir)"
             )
         if tier == TIER_LOCAL_HEAVY:
             # Partial offload: the 12B Q4 exceeds 6GB VRAM (survey §2) — SLOW.
@@ -431,39 +448,31 @@ class TieredTranslator:
         if self._local_factory is not None:
             return self._local_factory()
         return provider_mod.LocalServerProvider(
-            base_url=str(
-                self._settings.get("localBaseUrl") or provider_mod.DEFAULT_LOCAL_BASE_URL
-            )
+            base_url=str(self._settings.get("localBaseUrl") or provider_mod.DEFAULT_LOCAL_BASE_URL)
         )
 
     def _hosted_provider(self) -> Any:
         if self._hosted_factory is not None:
             provider = self._hosted_factory()
             if provider is None:
-                raise TierUnavailable("tier3 unavailable: hosted factory returned None")
+                raise TierUnavailableError("tier3 unavailable: hosted factory returned None")
             return provider
         api_key = self._settings.get("cloudApiKey") or ""
         if not api_key:
-            raise TierUnavailable("tier3 unavailable: no cloudApiKey configured")
+            raise TierUnavailableError("tier3 unavailable: no cloudApiKey configured")
         return provider_mod.CloudProvider(
             api_key=str(api_key),
-            base_url=str(
-                self._settings.get("cloudBaseUrl") or provider_mod.DEFAULT_CLOUD_BASE_URL
-            ),
-            model=str(
-                self._settings.get("cloudModel") or provider_mod.DEFAULT_CLOUD_MODEL
-            ),
+            base_url=str(self._settings.get("cloudBaseUrl") or provider_mod.DEFAULT_CLOUD_BASE_URL),
+            model=str(self._settings.get("cloudModel") or provider_mod.DEFAULT_CLOUD_MODEL),
         )
 
-    def _chat_one(
-        self, provider: Any, text: str, target_lang: str, source_lang: Optional[str]
-    ) -> str:
+    def _chat_one(self, provider: Any, text: str, target_lang: str, source_lang: str | None) -> str:
         """One cue through ``provider.chat`` -> stripped translation string."""
         reply = provider.chat(build_messages(text, target_lang, source_lang))
         return str(reply).strip()
 
     # -- gguf resolution ------------------------------------------------------
-    def tier_gguf_path(self, tier: str) -> Optional[str]:
+    def tier_gguf_path(self, tier: str) -> str | None:
         """Resolve the GGUF path for a local tier from settings.
 
         Order: explicit ``settings.translateGgufPath`` (tier1) /
@@ -494,9 +503,9 @@ class TieredTranslator:
 
 
 def get_translator(
-    settings: Optional[Dict[str, Any]] = None,
+    settings: dict[str, Any] | None = None,
     *,
-    runner: Optional[Any] = None,
+    runner: Any | None = None,
     **seams: Any,
 ) -> TieredTranslator:
     """Factory the wiring layer calls (mirrors ``provider.get_provider``)."""
@@ -506,10 +515,10 @@ def get_translator(
 # --------------------------------------------------------------------------- #
 # U4 manifest entries — the chosen MT GGUFs (PINNED urls; A6 lesson 5)
 # --------------------------------------------------------------------------- #
-def _detect_existing(explicit_key: str, name: str) -> Callable[[Dict[str, Any]], Optional[str]]:
+def _detect_existing(explicit_key: str, name: str) -> Callable[[dict[str, Any]], str | None]:
     """Build a settings-driven existing-path probe for one MT GGUF (U4 detect)."""
 
-    def _probe(settings: Dict[str, Any]) -> Optional[str]:
+    def _probe(settings: dict[str, Any]) -> str | None:
         settings = settings or {}
         explicit = settings.get(explicit_key)
         if explicit:

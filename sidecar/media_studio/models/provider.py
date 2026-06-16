@@ -26,20 +26,22 @@ CONTRACT-NOTE: §0 is explicit there is NO auth/keystore. ``CloudProvider`` is t
 ONLY place an API key is read, and only when ``settings.useCloud`` is true AND a
 key is present; the key is passed as a bearer header and never logged.
 """
+
 from __future__ import annotations
 
 import abc
 import json
 import urllib.error
 import urllib.request
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from ..util import get_logger
 
 log = get_logger("media_studio.models.provider")
 
 # A chat message is the OpenAI-style {"role": ..., "content": ...} dict.
-Message = Dict[str, str]
+Message = dict[str, str]
 
 # --------------------------------------------------------------------------- #
 # Defaults (CONTRACTS.md §2 settings.* / §7 stack choices)
@@ -65,7 +67,7 @@ DEFAULT_TIMEOUT: float = 600.0
 # A transport seam: given (url, json-body-dict, headers, timeout) it performs the
 # POST and returns the decoded JSON response dict. Injected in tests so no socket
 # is ever opened. The default implementation is :func:`_urllib_post_json`.
-Transport = Callable[[str, Dict[str, Any], Dict[str, str], float], Dict[str, Any]]
+Transport = Callable[[str, dict[str, Any], dict[str, str], float], dict[str, Any]]
 
 
 class ProviderError(RuntimeError):
@@ -79,9 +81,7 @@ class ProviderError(RuntimeError):
 # --------------------------------------------------------------------------- #
 # stdlib urllib transport (the only place a socket is opened)
 # --------------------------------------------------------------------------- #
-def _urllib_post_json(
-    url: str, body: Dict[str, Any], headers: Dict[str, str], timeout: float
-) -> Dict[str, Any]:
+def _urllib_post_json(url: str, body: dict[str, Any], headers: dict[str, str], timeout: float) -> dict[str, Any]:
     """POST ``body`` as JSON to ``url`` and decode the JSON response (stdlib only).
 
     Uses :mod:`urllib.request` so the sidecar has no hard HTTP dependency for the
@@ -115,7 +115,7 @@ def _urllib_post_json(
     return decoded
 
 
-def _extract_content(response: Dict[str, Any]) -> str:
+def _extract_content(response: dict[str, Any]) -> str:
     """Pull the assistant message content from an OpenAI-style chat response.
 
     Shape: ``{"choices":[{"message":{"role":"assistant","content":"..."}}]}``.
@@ -170,7 +170,7 @@ class Provider(abc.ABC):
         self,
         prompt: str,
         *,
-        system: Optional[str] = None,
+        system: str | None = None,
         temperature: float = DEFAULT_TEMPERATURE,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         **kwargs: Any,
@@ -180,13 +180,11 @@ class Provider(abc.ABC):
         This is the §4 ``complete`` half of the interface, implemented once here
         in terms of :meth:`chat` so subclasses only implement the transport.
         """
-        messages: List[Message] = []
+        messages: list[Message] = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        return self.chat(
-            messages, temperature=temperature, max_tokens=max_tokens, **kwargs
-        )
+        return self.chat(messages, temperature=temperature, max_tokens=max_tokens, **kwargs)
 
 
 class _OpenAICompatProvider(Provider):
@@ -202,9 +200,9 @@ class _OpenAICompatProvider(Provider):
         *,
         base_url: str,
         model: str,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         timeout: float = DEFAULT_TIMEOUT,
-        transport: Optional[Transport] = None,
+        transport: Transport | None = None,
     ) -> None:
         # Normalize a trailing slash so f-strings below never double it.
         self.base_url = base_url.rstrip("/")
@@ -214,9 +212,9 @@ class _OpenAICompatProvider(Provider):
         # Default to the stdlib urllib transport; tests inject a fake.
         self._transport: Transport = transport or _urllib_post_json
 
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         """Build request headers, adding a bearer token only when a key is set."""
-        headers: Dict[str, str] = {}
+        headers: dict[str, str] = {}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
         return headers
@@ -230,7 +228,7 @@ class _OpenAICompatProvider(Provider):
         **kwargs: Any,
     ) -> str:
         url = f"{self.base_url}/chat/completions"
-        body: Dict[str, Any] = {
+        body: dict[str, Any] = {
             "model": self.model,
             "messages": [dict(m) for m in messages],
             "temperature": temperature,
@@ -259,7 +257,7 @@ class LocalServerProvider(_OpenAICompatProvider):
         base_url: str = DEFAULT_LOCAL_BASE_URL,
         model: str = DEFAULT_LOCAL_MODEL,
         timeout: float = DEFAULT_TIMEOUT,
-        transport: Optional[Transport] = None,
+        transport: Transport | None = None,
     ) -> None:
         super().__init__(
             base_url=base_url,
@@ -285,7 +283,7 @@ class CloudProvider(_OpenAICompatProvider):
         base_url: str = DEFAULT_CLOUD_BASE_URL,
         model: str = DEFAULT_CLOUD_MODEL,
         timeout: float = DEFAULT_TIMEOUT,
-        transport: Optional[Transport] = None,
+        transport: Transport | None = None,
     ) -> None:
         if not api_key:
             raise ValueError("CloudProvider requires a non-empty api_key")
@@ -302,9 +300,9 @@ class CloudProvider(_OpenAICompatProvider):
 # Factory (CONTRACTS.md §2 settings.*)
 # --------------------------------------------------------------------------- #
 def get_provider(
-    settings: Optional[Dict[str, Any]] = None,
+    settings: dict[str, Any] | None = None,
     *,
-    transport: Optional[Transport] = None,
+    transport: Transport | None = None,
 ) -> Provider:
     """Return the right :class:`Provider` for ``settings`` (CONTRACTS.md §2).
 
