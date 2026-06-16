@@ -590,7 +590,10 @@ export const client = {
 
   /** `diarize.start` — token-free speaker labelling (long job -> {transcript}). */
   diarize: {
-    start: (videoId: string, threshold?: number): Promise<JobHandle & { transcript?: Transcript }> =>
+    start: (
+      videoId: string,
+      threshold?: number,
+    ): Promise<JobHandle & { transcript?: Transcript }> =>
       rpc('diarize.start', threshold === undefined ? { videoId } : { videoId, threshold }),
   },
 } as const;

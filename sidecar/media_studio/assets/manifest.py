@@ -96,7 +96,9 @@ class AssetEntry:
         elif self.installer == "hf":
             if not self.hf_repo:
                 raise ValueError(f"asset {self.name!r}: installer='hf' requires hf_repo")
-        elif self.installer == "env":  # pragma: no branch - installer validated in INSTALLERS above; the no-match arc to exit is unreachable
+        elif (
+            self.installer == "env"
+        ):  # pragma: no branch - installer validated in INSTALLERS above; the no-match arc to exit is unreachable
             if not self.dest:
                 raise ValueError(f"asset {self.name!r}: installer='env' requires a dest env dir")
             if not self.requirements:

@@ -217,7 +217,9 @@ def convert_batch(
             break
 
         def _item_progress(pct: float, message: str, _i: int = i) -> None:
-            if on_progress is None:  # pragma: no cover - closure is only passed to convert_one when on_progress is not None (see call site)
+            if (
+                on_progress is None
+            ):  # pragma: no cover - closure is only passed to convert_one when on_progress is not None (see call site)
                 return
             overall = (_i * 100.0 + max(0.0, min(100.0, pct))) / n if n else 100.0
             on_progress(overall, f"[{_i + 1}/{n}] {message}")

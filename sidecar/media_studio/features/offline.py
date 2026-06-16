@@ -117,8 +117,7 @@ def guard_network(
     """
     if is_offline(settings, env=env):
         raise OfflineError(
-            f"Offline mode is on — {operation} needs the network. "
-            "Turn off Offline mode in System Health to allow it."
+            f"Offline mode is on — {operation} needs the network. Turn off Offline mode in System Health to allow it."
         )
 
 

@@ -695,7 +695,9 @@ class RemotionCaptionEngine:
             code = -1
             ok_path: str | None = None
             stderr_tail: list[str] = []
-            for attempt in range(1, MAX_SUBPROCESS_ATTEMPTS + 1):  # pragma: no branch - every iteration returns/breaks/continues; the range never exhausts naturally
+            for attempt in range(
+                1, MAX_SUBPROCESS_ATTEMPTS + 1
+            ):  # pragma: no branch - every iteration returns/breaks/continues; the range never exhausts naturally
                 code, ok_path, stderr_tail = run_render(
                     argv,
                     env=spawn_env,

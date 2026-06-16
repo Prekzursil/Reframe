@@ -112,9 +112,7 @@ def _make_track(services: Services, ctx: RpcContext, video_file: Path) -> tuple[
 # --------------------------------------------------------------------------- #
 def test_translate_bilingual_adds_stacked_track(services: Services, ctx: RpcContext, video_file: Path) -> None:
     vid, track_id = _make_track(services, ctx, video_file)
-    res = services.subtitles_translate(
-        {"trackId": track_id, "targetLang": "es", "bilingual": True}, ctx
-    )
+    res = services.subtitles_translate({"trackId": track_id, "targetLang": "es", "bilingual": True}, ctx)
     assert "jobId" in res
     ctx.jobs.join(timeout=5)
     done = [e for e in ctx.events if e[0] == "done"]  # type: ignore[attr-defined]
@@ -155,7 +153,10 @@ def _seed_clips(services: Services, vid: str) -> None:
     project = services._load_or_create_project(vid)
     project.data["clips"] = [
         {"candidate": {"rank": 1, "sourceStart": 10.0, "end": 25.0, "hook": "Hook one"}, "path": "/f/a.mp4"},
-        {"candidate": {"rank": 2, "sourceStart": 40.0, "end": 52.0, "hook": "Hook two", "reel": "tape-02"}, "path": "/f/b.mp4"},
+        {
+            "candidate": {"rank": 2, "sourceStart": 40.0, "end": 52.0, "hook": "Hook two", "reel": "tape-02"},
+            "path": "/f/b.mp4",
+        },
     ]
     project.save()
 
@@ -211,7 +212,14 @@ def _seed_short(services: Services, vid: str) -> Path:
     clip.write_bytes(b"\x00mp4")
     _shorts.write_export_metadata(
         clip,
-        {"videoId": vid, "sourceTitle": "Talk", "template": "karaoke", "viralityPct": 80, "durationSec": 12.0, "hook": "Wow amazing trick"},
+        {
+            "videoId": vid,
+            "sourceTitle": "Talk",
+            "template": "karaoke",
+            "viralityPct": 80,
+            "durationSec": 12.0,
+            "hook": "Wow amazing trick",
+        },
     )
     _shorts.thumbnail_path(clip).write_bytes(b"\xff\xd8jpg")
     return clip

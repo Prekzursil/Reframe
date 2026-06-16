@@ -64,9 +64,8 @@ export function NleExport({ videoId }: NleExportProps): React.ReactElement {
     <section className="feature-panel nle-panel" aria-label="NLE timeline export">
       <h2>Editing timeline (EDL / CSV)</h2>
       <p className="nle-intro">
-        Export your approved clips as an editable timeline for Premiere or DaVinci
-        Resolve. The EDL relinks to your original footage; the CSV is a per-clip
-        spreadsheet.
+        Export your approved clips as an editable timeline for Premiere or DaVinci Resolve. The EDL
+        relinks to your original footage; the CSV is a per-clip spreadsheet.
       </p>
 
       <div className="field nle-format-row">

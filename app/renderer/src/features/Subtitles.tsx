@@ -64,8 +64,9 @@ export function Subtitles({
 
   // captions-export: bilingual stacked subtitles (original + translation).
   const [bilingual, setBilingual] = useState<boolean>(false);
-  const [bilingualOrder, setBilingualOrder] =
-    useState<'original-first' | 'translation-first'>('original-first');
+  const [bilingualOrder, setBilingualOrder] = useState<'original-first' | 'translation-first'>(
+    'original-first',
+  );
 
   useEffect(() => {
     if (!jobId) return;

@@ -186,7 +186,9 @@ class FeedbackStore:
             lines.extend(f"- {h}" for h in discarded)
         lines.append("Prefer clips in the spirit of the approved hooks; avoid the discarded kind.")
         block = "\n".join(lines)
-        if len(block) > EXEMPLAR_MAX_CHARS:  # pragma: no cover - unreachable: worst-case block ~1408 chars (<=5+5 hooks x 122 + labels) < 1600 budget
+        if (
+            len(block) > EXEMPLAR_MAX_CHARS
+        ):  # pragma: no cover - unreachable: worst-case block ~1408 chars (<=5+5 hooks x 122 + labels) < 1600 budget
             block = block[: EXEMPLAR_MAX_CHARS - 1].rstrip() + "…"
         return block
 

@@ -141,7 +141,8 @@ describe('<Recipes />', () => {
       addBtn.click();
     });
     const saveCall = fake.calls.find((c) => c.method === 'recipes.save');
-    const recipe = (saveCall?.params as { recipe: Recipe }).recipe;
+    if (!saveCall) throw new Error('expected recipes.save to be called');
+    const recipe = (saveCall.params as { recipe: Recipe }).recipe;
     expect(recipe.steps[0].params.videoId).toBe('vidZ');
   });
 

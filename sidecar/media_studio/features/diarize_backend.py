@@ -62,9 +62,7 @@ class SpeechBrainDiarizer:  # pragma: no cover - requires the heavy native stack
         device = self._device()
         run_opts = {"device": device}
         self._vad = VAD.from_hparams(source="speechbrain/vad-crdnn-libriparty", run_opts=run_opts)
-        self._encoder = EncoderClassifier.from_hparams(
-            source="speechbrain/spkrec-ecapa-voxceleb", run_opts=run_opts
-        )
+        self._encoder = EncoderClassifier.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb", run_opts=run_opts)
         log.info("speechbrain diarizer ready on %s", device)
 
     def detect_and_embed(
