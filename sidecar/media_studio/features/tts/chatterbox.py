@@ -17,11 +17,23 @@ env (A6 lesson 5). So this engine never imports it: synthesis is a
   internally — A6 lesson 2) and the call is an argv LIST (lesson 4).
 
 CONTRACT-NOTE (CUDA12 wheels): the manifest validator requires ``pkg==ver``
-pins; the ``+cu124`` local-version pins below satisfy that, but pip can only
+pins; the ``+cu128`` local-version pins below satisfy that, but pip can only
 resolve them with the PyTorch index available — the env install step needs
-``PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu124`` in the
+``PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu128`` in the
 process environment (the assets manager inherits ``os.environ``). See
 WIRING-T2.md for where the wiring agent sets it.
+
+CONTRACT-NOTE (dedicated Python 3.14 interpreter): chatterbox-tts 0.1.7 pins
+``torch==2.6.0`` for ``python_version<"3.14"`` and ``torch>=2.9.0`` for
+``python_version>="3.14"``. The main sidecar env is LOCKED to py3.12
+(kokoro-onnx needs <3.14), so ``torch==2.10.0`` is only HONESTLY installable
+on its own py3.14 interpreter. A second embeddable CPython 3.14 is staged at
+build prep (``build/python-embed-setup.ps1`` -> ``build/python-embed-314`` ->
+shipped to ``<resources>/python-chatterbox``); :func:`default_chatterbox_python`
+locates it at runtime and the engine runs the runner with THAT python (not
+``sys.executable``). Without the second interpreter, pinning torch 2.10 would
+be a manifest lie: pip would refuse to resolve it against chatterbox-tts's
+``torch==2.6.0`` py<3.14 constraint.
 
 CONTRACT-NOTE (voice): for a voice-clone engine the A4 ``voice`` parameter is
 the REFERENCE SAMPLE's wav path (``tts.dub.start``'s ``sampleId`` resolves to
@@ -52,18 +64,47 @@ log = get_logger("media_studio.tts.chatterbox")
 # --------------------------------------------------------------------------- #
 CHATTERBOX_ENV_ASSET = "chatterbox-env"
 CHATTERBOX_ENV_DEST = "envs/chatterbox"
-CHATTERBOX_ENV_SIZE_MB = 6500
+# Disk-preflight headroom only (NOT a correctness pin): torch 2.10 cu128 wheels
+# are materially larger than the old 2.6 cu124 pair. Conservative bump from
+# 6500; human confirms against the real on-disk env size on first GPU install.
+CHATTERBOX_ENV_SIZE_MB = 7500
 # PINNED requirements (manifest rejects loose specifiers). torch/torchaudio
-# carry the cu124 local version — CUDA 12 wheels off download.pytorch.org
-# (PIP_EXTRA_INDEX_URL needed at install time; see module docstring).
+# carry the cu128 local version — CUDA 12.8 wheels off download.pytorch.org
+# (PIP_EXTRA_INDEX_URL needed at install time; see module docstring). torch
+# 2.10.0 is only resolvable under the dedicated py3.14 interpreter (chatterbox
+# -tts 0.1.7 pins torch>=2.9.0 only for python_version>="3.14").
 CHATTERBOX_REQUIREMENTS: tuple[str, ...] = (
-    "chatterbox-tts==0.1.2",
-    "torch==2.6.0+cu124",
-    "torchaudio==2.6.0+cu124",
+    "chatterbox-tts==0.1.7",
+    "torch==2.10.0+cu128",
+    "torchaudio==2.10.0+cu128",
 )
-#: the index pip needs for the +cu124 wheels (wiring sets it; kept here so
+#: the index pip needs for the +cu128 wheels (wiring sets it; kept here so
 #: the value is pinned next to the requirements it serves).
-TORCH_EXTRA_INDEX_URL = "https://download.pytorch.org/whl/cu124"
+TORCH_EXTRA_INDEX_URL = "https://download.pytorch.org/whl/cu128"
+
+#: the extraResources ``to:`` target for the staged py3.14 embeddable (a
+#: SIBLING of the py3.12 embed dir under the packaged resources root). Kept in
+#: sync with runtime_setup.bootstrap.CHATTERBOX_EMBED_DIRNAME the same way the
+#: requirements tuple mirrors requirements-chatterbox.txt.
+CHATTERBOX_PYTHON_SUBDIR = "python-chatterbox"
+
+
+def default_chatterbox_python(resources_dir: str | None = None) -> str | None:
+    """Locate the dedicated py3.14 embeddable's ``python.exe``, or ``None``.
+
+    The py3.12 sidecar embed ships at ``<resources>/python/`` and the py3.14
+    chatterbox embed at the sibling ``<resources>/python-chatterbox/`` (the
+    ``electron-builder.yml`` ``to:`` targets). At runtime the resources root is
+    derived from the RUNNING interpreter's location
+    (``Path(sys.executable).parent.parent`` — the embed dir's parent), so this
+    has no import dependency on the packaging-layer ``runtime_setup`` module.
+
+    Returns the resolved path when the second embed is staged, else ``None``
+    (a dev box without it degrades to ``sys.executable`` — see ``__init__``).
+    """
+    base = Path(resources_dir) if resources_dir is not None else Path(sys.executable).parent.parent
+    candidate = base / CHATTERBOX_PYTHON_SUBDIR / "python.exe"
+    return str(candidate) if candidate.is_file() else None
 
 
 def _register_assets() -> None:
@@ -76,6 +117,9 @@ def _register_assets() -> None:
             label="Chatterbox voice-clone env (torch CUDA12, isolated)",
             installer="env",
             requirements=CHATTERBOX_REQUIREMENTS,
+            # A7+: this env installs with the dedicated py3.14 interpreter (the
+            # only one torch 2.10 resolves under), NOT the host py3.12.
+            python_kind="chatterbox",
         )
     )
 
@@ -178,9 +222,12 @@ class ChatterboxEngine(TtsEngine):
         assets_root: str | None = None,
     ) -> None:
         self.env_dir = env_dir or default_env_dir(assets_root)
-        # A7: the isolated env is pip --target packages run by the HOST
-        # python with PYTHONPATH pointing in — there is no second python.exe.
-        self.python_exe = python_exe or sys.executable
+        # A7+: the isolated env is pip --target packages run by the DEDICATED
+        # py3.14 embeddable (the only interpreter torch 2.10 resolves under),
+        # with PYTHONPATH pointing in. Falls back to sys.executable when that
+        # embed is not staged (dev box) — synth then fails honestly at install
+        # time rather than crashing (the env never registers as installed).
+        self.python_exe = python_exe or default_chatterbox_python() or sys.executable
         self._run_cmd: RunCmd = run_cmd or _default_run_cmd
 
     def voices(self) -> list[Voice]:
@@ -233,11 +280,13 @@ class ChatterboxEngine(TtsEngine):
 __all__ = [
     "CHATTERBOX_ENV_ASSET",
     "CHATTERBOX_ENV_DEST",
+    "CHATTERBOX_PYTHON_SUBDIR",
     "CHATTERBOX_REQUIREMENTS",
     "TORCH_EXTRA_INDEX_URL",
     "ChatterboxEngine",
     "build_job_payload",
     "build_synth_argv",
+    "default_chatterbox_python",
     "default_env_dir",
     "runner_dir",
     "runner_extra_env",

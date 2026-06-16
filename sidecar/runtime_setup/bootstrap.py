@@ -66,6 +66,16 @@ CHATTERBOX_REQUIREMENTS = HERE / "requirements-chatterbox.txt"
 SIDECAR_ENV_NAME = "sidecar"
 CHATTERBOX_ENV_NAME = "chatterbox"
 
+# Dedicated Python 3.14 for the ISOLATED chatterbox env (A4): chatterbox-tts
+# 0.1.7 only accepts torch>=2.9.0 (we pin 2.10.0) on python_version>="3.14",
+# while the sidecar env is LOCKED to py3.12 (kokoro-onnx needs <3.14). A second
+# embeddable is staged at build prep (build/python-embed-setup.ps1 ->
+# build/python-embed-314) and shipped to <resources>/python-chatterbox.
+CHATTERBOX_PYTHON_VERSION = "3.14.0"  # human verifies the exact patch on first GPU install
+#: the electron-builder.yml extraResources ``to:`` target (mirrors
+#: media_studio.features.tts.chatterbox.CHATTERBOX_PYTHON_SUBDIR — keep in sync).
+CHATTERBOX_EMBED_DIRNAME = "python-chatterbox"
+
 #: options a requirements file may carry besides pinned requirement lines
 ALLOWED_REQ_OPTIONS: tuple[str, ...] = ("--extra-index-url", "--index-url")
 
@@ -286,6 +296,26 @@ def ensure_get_pip(
 
 
 # --------------------------------------------------------------------------- #
+# dedicated py3.14 interpreter resolution (chatterbox env)
+# --------------------------------------------------------------------------- #
+def chatterbox_python_exe(resources_dir: Path | str | None = None) -> Path | None:
+    """Locate the dedicated py3.14 embeddable's ``python.exe``, or ``None``.
+
+    The py3.12 sidecar embed ships at ``<resources>/python/`` and the py3.14
+    chatterbox embed at the sibling ``<resources>/python-chatterbox/`` (the
+    ``electron-builder.yml`` ``to:`` targets). The resources root defaults to
+    the RUNNING interpreter's grandparent (``Path(sys.executable).parent.parent``
+    — the embed dir's parent), so a packaged first run finds the sibling without
+    any extra wiring. Returns ``None`` when the second embed is not staged (a
+    dev box) — the caller then falls back to the host interpreter (honest
+    degradation: pip cannot resolve torch 2.10 under py3.12, so it fails loudly).
+    """
+    base = Path(resources_dir) if resources_dir is not None else Path(sys.executable).parent.parent
+    candidate = base / CHATTERBOX_EMBED_DIRNAME / "python.exe"
+    return candidate if candidate.is_file() else None
+
+
+# --------------------------------------------------------------------------- #
 # env install (sidecar / chatterbox)
 # --------------------------------------------------------------------------- #
 def write_env_sentinel(env_dir: Path, name: str, reqs: Requirements) -> Path:
@@ -460,6 +490,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="the embeddable python.exe to install for (default: this interpreter)",
     )
     parser.add_argument(
+        "--chatterbox-python",
+        help=(
+            "the dedicated py3.14 embeddable for the --chatterbox env "
+            "(default: auto-resolve <resources>/python-chatterbox, else host)"
+        ),
+    )
+    parser.add_argument(
         "--requirements",
         help=f"override the sidecar requirements file (default: {SIDECAR_REQUIREMENTS.name})",
     )
@@ -500,6 +537,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _log(f"DRY-RUN argv: {step['argv']}")
             _log(f"DRY-RUN pins: {', '.join(reqs.pins)}")
             _log(f"DRY-RUN assets: {', '.join(args.assets or default_first_run_assets())}")
+            chatter_py = Path(args.chatterbox_python) if args.chatterbox_python else chatterbox_python_exe()
+            _log(f"DRY-RUN chatterbox python: {chatter_py if chatter_py is not None else '<host fallback>'}")
             print("SUCCESS:bootstrap dry-run")
             return 0
 
@@ -535,12 +574,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             extract_tool_archives(root)
 
         if args.chatterbox:
+            # The chatterbox env installs with the DEDICATED py3.14 interpreter
+            # (the only one torch 2.10 resolves under): explicit override ->
+            # auto-resolved <resources>/python-chatterbox -> host fallback. Its
+            # embed dir is the py3.14 dir (get-pip.py is staged beside it); the
+            # host fallback reuses the sidecar embed dir. A host fallback fails
+            # loudly at pip-resolve time (py3.12 cannot install torch 2.10) — by
+            # design, never a silent wrong-version install.
+            chatter_py = Path(args.chatterbox_python) if args.chatterbox_python else chatterbox_python_exe()
+            if chatter_py is not None:
+                chatter_embed: Path = Path(chatter_py).parent
+            else:
+                chatter_py, chatter_embed = python_exe, embed_dir
             install_env(
-                python_exe=python_exe,
+                python_exe=chatter_py,
                 root=root,
                 env_name=CHATTERBOX_ENV_NAME,
                 req_file=CHATTERBOX_REQUIREMENTS,
-                embed_dir=embed_dir,
+                embed_dir=chatter_embed,
             )
 
         print("SUCCESS:bootstrap first-run setup complete")

@@ -11,6 +11,7 @@ import io
 import json
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 from media_studio import tools_resolver as tr
@@ -79,9 +80,16 @@ class TestShippedRequirementFiles:
     def test_chatterbox_file_parses_with_torch_cu12(self):
         reqs = bs.load_requirements(bs.CHATTERBOX_REQUIREMENTS)
         pins = dict(p.split("==", 1) for p in reqs.pins)
-        assert any("cu12" in v for k, v in pins.items() if k == "torch")
-        assert "chatterbox-tts" in pins
-        assert any(opt.startswith("--extra-index-url") for opt in reqs.options)
+        # The new py3.14 trio (torch 2.10 cu128).
+        assert pins["torch"] == "2.10.0+cu128"
+        assert pins["torchaudio"] == "2.10.0+cu128"
+        assert pins["chatterbox-tts"] == "0.1.7"
+        assert reqs.options == ("--extra-index-url https://download.pytorch.org/whl/cu128",)
+        # ORDER MATTERS: mirror the CHATTERBOX_REQUIREMENTS tuple order so a
+        # bootstrap-built env registers as the installed asset (sentinel match).
+        assert reqs.pins[0].startswith("chatterbox-tts==")
+        assert reqs.pins[1] == "torch==2.10.0+cu128"
+        assert reqs.pins[2] == "torchaudio==2.10.0+cu128"
 
 
 # --------------------------------------------------------------------------- #
@@ -267,6 +275,25 @@ class TestInstallEnv:
 
 
 # --------------------------------------------------------------------------- #
+# dedicated py3.14 chatterbox interpreter resolution
+# --------------------------------------------------------------------------- #
+class TestChatterboxPythonExe:
+    def test_resolves_sibling_embed(self, tmp_path):
+        res = tmp_path / "resources"
+        (res / "python").mkdir(parents=True)
+        cb_dir = res / bs.CHATTERBOX_EMBED_DIRNAME
+        cb_dir.mkdir(parents=True)
+        cb_py = cb_dir / "python.exe"
+        cb_py.write_text("", encoding="utf-8")
+        assert bs.chatterbox_python_exe(res) == cb_py
+
+    def test_none_when_unstaged(self, tmp_path):
+        res = tmp_path / "resources"
+        (res / "python").mkdir(parents=True)
+        assert bs.chatterbox_python_exe(res) is None
+
+
+# --------------------------------------------------------------------------- #
 # tool-archive extraction (zip built in tmp; zip-slip guarded; exe hoisted)
 # --------------------------------------------------------------------------- #
 def _make_zip(path: Path, members: dict[str, bytes]) -> Path:
@@ -397,3 +424,94 @@ class TestMainOrdering:
 
         assert rc == 0
         assert order == ["pth", "install"], "._pth must be written before the pip install"
+
+
+class TestMainChatterbox:
+    """The --chatterbox env installs with the DEDICATED py3.14 interpreter."""
+
+    def _fake_host(self, tmp_path: Path) -> Path:
+        fake_py = tmp_path / "py" / "python.exe"
+        fake_py.parent.mkdir(parents=True)
+        fake_py.write_text("", encoding="utf-8")
+        return fake_py
+
+    def test_main_chatterbox_uses_dedicated_interpreter(self, tmp_path, monkeypatch):
+        captured: dict[str, Any] = {}
+
+        def fake_install(**kwargs):
+            captured.update(kwargs)
+            return tmp_path / "envs" / kwargs["env_name"]
+
+        monkeypatch.setattr(bs, "install_env", fake_install)
+        dedicated = tmp_path / "python-chatterbox" / "python.exe"
+        monkeypatch.setattr(bs, "chatterbox_python_exe", lambda *a, **k: dedicated)
+        fake_py = self._fake_host(tmp_path)
+
+        rc = bs.main(["--chatterbox", "--skip-env", "--skip-assets", "--root", str(tmp_path), "--python", str(fake_py)])
+        assert rc == 0
+        assert captured["python_exe"] == dedicated
+        assert captured["env_name"] == bs.CHATTERBOX_ENV_NAME
+        assert captured["embed_dir"] == dedicated.parent
+
+    def test_main_chatterbox_falls_back_to_host_when_unstaged(self, tmp_path, monkeypatch):
+        captured: dict[str, Any] = {}
+
+        def fake_install(**kwargs):
+            captured.update(kwargs)
+            return tmp_path / "envs" / kwargs["env_name"]
+
+        monkeypatch.setattr(bs, "install_env", fake_install)
+        monkeypatch.setattr(bs, "chatterbox_python_exe", lambda *a, **k: None)
+        fake_py = self._fake_host(tmp_path)
+
+        rc = bs.main(["--chatterbox", "--skip-env", "--skip-assets", "--root", str(tmp_path), "--python", str(fake_py)])
+        assert rc == 0
+        assert captured["python_exe"] == fake_py
+        assert captured["embed_dir"] == fake_py.parent
+
+    def test_main_chatterbox_explicit_override(self, tmp_path, monkeypatch):
+        captured: dict[str, Any] = {}
+
+        def fake_install(**kwargs):
+            captured.update(kwargs)
+            return tmp_path / "envs" / kwargs["env_name"]
+
+        monkeypatch.setattr(bs, "install_env", fake_install)
+        # chatterbox_python_exe must NOT be consulted when --chatterbox-python given.
+        monkeypatch.setattr(
+            bs, "chatterbox_python_exe", lambda *a, **k: pytest.fail("override must bypass auto-resolve")
+        )
+        fake_py = self._fake_host(tmp_path)
+        override = tmp_path / "custom314" / "python.exe"
+
+        rc = bs.main(
+            [
+                "--chatterbox",
+                "--chatterbox-python",
+                str(override),
+                "--skip-env",
+                "--skip-assets",
+                "--root",
+                str(tmp_path),
+                "--python",
+                str(fake_py),
+            ]
+        )
+        assert rc == 0
+        assert captured["python_exe"] == override
+        assert captured["embed_dir"] == override.parent
+
+    def test_dry_run_prints_chatterbox_interpreter(self, tmp_path, monkeypatch, capsys):
+        dedicated = tmp_path / "python-chatterbox" / "python.exe"
+        monkeypatch.setattr(bs, "chatterbox_python_exe", lambda *a, **k: dedicated)
+        code = bs.main(["--dry-run", "--root", str(tmp_path)])
+        assert code == 0
+        err = capsys.readouterr().err
+        assert "DRY-RUN chatterbox python" in err
+        assert str(dedicated) in err
+
+    def test_dry_run_chatterbox_host_fallback_label(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setattr(bs, "chatterbox_python_exe", lambda *a, **k: None)
+        code = bs.main(["--dry-run", "--root", str(tmp_path)])
+        assert code == 0
+        assert "<host fallback>" in capsys.readouterr().err

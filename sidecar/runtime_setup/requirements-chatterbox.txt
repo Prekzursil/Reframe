@@ -6,17 +6,20 @@
 #
 # pip reads the index option from THIS file, so the cu12 wheels resolve without
 # any CLI flag plumbing.
---extra-index-url https://download.pytorch.org/whl/cu124
+--extra-index-url https://download.pytorch.org/whl/cu128
 
-# CONTRACT-NOTE: pinned torch cu12 pair chosen to match chatterbox-tts 0.1.2's
-# declared torch requirement; cu124 is the newest cu12 index with 2.6.0 wheels.
-# Human verifies the trio on the first real install (no network in build
-# sessions) and bumps all three together if needed.
+# CONTRACT-NOTE: cu128 / torch 2.10.0 / py3.14 DEDICATED interpreter. chatterbox
+# -tts 0.1.7 pins torch==2.6.0 for python_version<"3.14" and torch>=2.9.0 for
+# python_version>="3.14", so torch 2.10.0 is ONLY installable under the dedicated
+# py3.14 embeddable this env is built with (bootstrap.chatterbox_python_exe ->
+# build/python-embed-314 -> <resources>/python-chatterbox). Human verifies the
+# trio AND that the py3.14 embed is staged on the first real GPU install (no
+# network in build sessions); bump all three together if the resolver needs it.
 #
 # ORDER MATTERS: these lines mirror tts/chatterbox.py's CHATTERBOX_REQUIREMENTS
 # tuple exactly — the asset manager's env sentinel compares the requirement
 # LIST, so a bootstrap-built env only counts as the installed "chatterbox-env"
 # asset when the pin order matches. Keep both in sync.
-chatterbox-tts==0.1.2
-torch==2.6.0+cu124
-torchaudio==2.6.0+cu124
+chatterbox-tts==0.1.7
+torch==2.10.0+cu128
+torchaudio==2.10.0+cu128

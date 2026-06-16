@@ -56,6 +56,11 @@ extraResources:
   # Embeddable CPython 3.12 (+ staged get-pip.py) — build/python-embed-setup.ps1
   - from: ../build/python-embed
     to: python
+  # Dedicated embeddable CPython 3.14 (+ staged get-pip.py) for the ISOLATED
+  # chatterbox voice-clone env — torch 2.10 only resolves on py3.14 (A4).
+  # ChatterboxEngine + bootstrap resolve <resources>/python-chatterbox/python.exe.
+  - from: ../build/python-embed-314
+    to: python-chatterbox
   # Bundled ffmpeg/ffprobe — resolved by ffmpeg.py via MEDIA_STUDIO_FFMPEG/FFPROBE
   # env injected by the supervisor (WIRING-T5.md) — build/python-embed-setup.ps1
   - from: ../build/ffmpeg
