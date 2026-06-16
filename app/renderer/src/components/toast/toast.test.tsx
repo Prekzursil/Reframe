@@ -219,6 +219,57 @@ describe('ToastProvider + ToastHost', () => {
     expect(bodyToasts()).toHaveLength(0);
   });
 
+  it('portals into an explicit container prop instead of document.body', () => {
+    const target = document.createElement('section');
+    target.id = 'custom-toast-target';
+    document.body.appendChild(target);
+    act(() => {
+      root.render(
+        <ToastProvider>
+          <Capture />
+          <ToastHost container={target} />
+        </ToastProvider>,
+      );
+    });
+    act(() => {
+      toast!.info('in custom target');
+    });
+    // The toast renders inside the explicit container, not loose in the body.
+    expect(target.querySelectorAll('.toast')).toHaveLength(1);
+    target.remove();
+  });
+
+  it('renders nothing when there is no portal target available', () => {
+    // Force the document.body fallback to null so the `if (!target)` guard
+    // (ToastHost.tsx:63) returns null even with live toasts queued.
+    const realBody = document.body;
+    Object.defineProperty(document, 'body', {
+      configurable: true,
+      get: () => null,
+    });
+    try {
+      act(() => {
+        root.render(
+          <ToastProvider>
+            <Capture />
+            <ToastHost container={null} />
+          </ToastProvider>,
+        );
+      });
+      act(() => {
+        toast!.info('nowhere to go');
+      });
+      // No portal target -> nothing rendered anywhere (no throw).
+      expect(realBody.querySelectorAll('.toast')).toHaveLength(0);
+    } finally {
+      Object.defineProperty(document, 'body', {
+        configurable: true,
+        value: realBody,
+        writable: true,
+      });
+    }
+  });
+
   it('renders the action button slot; clicking runs the action then dismisses', () => {
     mountHost();
     const onClick = vi.fn();

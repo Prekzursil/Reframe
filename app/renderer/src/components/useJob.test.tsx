@@ -161,6 +161,62 @@ describe('useJob', () => {
     expect(api!.state.running).toBe(false);
   });
 
+  it('start tolerates a result without a jobId (useJob.ts:265)', async () => {
+    rpcMock.mockResolvedValueOnce({ ok: true }); // no jobId field
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await act(async () => {
+      await api!.start('convert.start', { videoId: 'v1' });
+    });
+    await flush();
+    // The `?? null` fallback keeps jobId null while still marking it running.
+    expect(api!.state.jobId).toBeNull();
+    expect(api!.state.running).toBe(true);
+  });
+
+  it('start stringifies a non-Error rejection (useJob.ts:270-273 else)', async () => {
+    rpcMock.mockRejectedValueOnce('string-only failure');
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await act(async () => {
+      await api!.start('convert.start', { videoId: 'v1' }).catch(() => {});
+    });
+    expect(api!.state.error).toBe('string-only failure');
+    expect(api!.state.running).toBe(false);
+  });
+
+  it('cancel is a no-op when there is no active job (useJob.ts:288)', async () => {
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    // No start() yet -> activeJobId is null -> cancel returns before any rpc.
+    await act(async () => {
+      await api!.cancel();
+    });
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it('works without the onJobDone bridge (useJob.ts:67 no-op subscription)', async () => {
+    // Replace the bridge with one that has NO onJobDone -> onJobDoneBridge takes
+    // its early no-op return; the hook still starts/tracks jobs via job.progress.
+    (window as unknown as { api?: unknown }).api = {};
+    rpcMock.mockResolvedValueOnce({ jobId: 'no-bridge' });
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await act(async () => {
+      await api!.start('convert.start', { videoId: 'v1' });
+    });
+    await flush();
+    expect(api!.state.jobId).toBe('no-bridge');
+    await act(async () => {
+      progressCb!({ jobId: 'no-bridge', pct: 30, message: 'go' });
+    });
+    expect(api!.state.pct).toBe(30);
+  });
+
   it('finish marks the job complete at 100%', async () => {
     rpcMock.mockResolvedValueOnce({ jobId: 'j3' });
     await act(async () => {
@@ -323,6 +379,100 @@ describe('useJob × job.done error surface (P2 U3)', () => {
       progressCb!({ jobId: 'j2', pct: 25, message: 'retrying' });
     });
     expect(api!.state.pct).toBe(25);
+  });
+
+  it('a Retry that resolves without a jobId leaves jobId null (useJob.ts:216)', async () => {
+    const retry = vi.fn().mockResolvedValue({ ok: true }); // no jobId field
+    registerJobRetry(retry);
+    rpcMock.mockResolvedValueOnce({ jobId: 'j1' });
+    await renderWithToasts();
+    await act(async () => {
+      await api!.start('convert.start', { videoId: 'v1' });
+    });
+    await act(async () => {
+      doneCb!({ jobId: 'j1', result: { error: { message: 'boom', type: 'X' } } });
+    });
+    const btn = document.body.querySelector('.toast__action') as HTMLButtonElement | null;
+    await act(async () => {
+      btn!.click();
+    });
+    await flush();
+    expect(retry).toHaveBeenCalledWith('j1');
+    expect(api!.state.running).toBe(true);
+    expect(api!.state.jobId).toBeNull(); // `?? null` fallback path
+  });
+
+  it('a rejected Retry surfaces the error on state (useJob.ts:220-222)', async () => {
+    const retry = vi.fn().mockRejectedValue(new Error('retry sidecar gone'));
+    registerJobRetry(retry);
+    rpcMock.mockResolvedValueOnce({ jobId: 'j1' });
+    await renderWithToasts();
+    await act(async () => {
+      await api!.start('convert.start', { videoId: 'v1' });
+    });
+    await act(async () => {
+      doneCb!({
+        jobId: 'j1',
+        result: { error: { message: 'ffmpeg exited 1', type: 'CalledProcessError' } },
+      });
+    });
+
+    const btn = document.body.querySelector('.toast__action') as HTMLButtonElement | null;
+    expect(btn).not.toBeNull();
+    await act(async () => {
+      btn!.click();
+    });
+    await flush();
+
+    expect(retry).toHaveBeenCalledWith('j1');
+    // The .catch() records the failure and stops running.
+    expect(api!.state.running).toBe(false);
+    expect(api!.state.error).toBe('retry sidecar gone');
+  });
+
+  it('a rejected Retry stringifies a non-Error rejection (useJob.ts:221 else)', async () => {
+    const retry = vi.fn().mockRejectedValue('plain string boom');
+    registerJobRetry(retry);
+    rpcMock.mockResolvedValueOnce({ jobId: 'j1' });
+    await renderWithToasts();
+    await act(async () => {
+      await api!.start('convert.start', { videoId: 'v1' });
+    });
+    await act(async () => {
+      doneCb!({ jobId: 'j1', result: { error: { message: 'x', type: 'Y' } } });
+    });
+
+    const btn = document.body.querySelector('.toast__action') as HTMLButtonElement | null;
+    await act(async () => {
+      btn!.click();
+    });
+    await flush();
+    expect(api!.state.error).toBe('plain string boom');
+  });
+
+  it('reset() clears state back to idle and stops tracking (useJob.ts:297-299)', async () => {
+    rpcMock.mockResolvedValueOnce({ jobId: 'j-reset' });
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await act(async () => {
+      await api!.start('convert.start', { videoId: 'v1' });
+    });
+    await flush();
+    expect(api!.state.running).toBe(true);
+    expect(api!.state.jobId).toBe('j-reset');
+
+    act(() => api!.reset());
+    expect(api!.state.running).toBe(false);
+    expect(api!.state.jobId).toBeNull();
+    expect(api!.state.pct).toBe(0);
+    expect(api!.state.error).toBeNull();
+
+    // After reset, a progress event for the old job is ignored (tracking cleared).
+    await act(async () => {
+      progressCb!({ jobId: 'j-reset', pct: 80, message: 'stale' });
+    });
+    expect(api!.state.pct).toBe(0);
   });
 
   it('a start() rejection also flows through onError (with the feature label)', async () => {

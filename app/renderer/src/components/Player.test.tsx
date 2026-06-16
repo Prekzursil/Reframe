@@ -189,6 +189,13 @@ describe('Player rendering', () => {
     expect(video.muted).toBe(true);
   });
 
+  it('omits the src attribute entirely when neither videoId nor src is given', () => {
+    // resolveSrc returns '' -> `src={resolvedSrc || undefined}` (Player.tsx:236)
+    // drops the attribute rather than setting src="".
+    const video = render({});
+    expect(video.hasAttribute('src')).toBe(false);
+  });
+
   it('does not set the autoplay attribute in window mode (plays after the seek)', () => {
     const video = render({
       videoId: 'vid-1',
@@ -209,6 +216,23 @@ describe('Player window mode', () => {
       video.dispatchEvent(new Event('loadedmetadata'));
     });
     expect(video.currentTime).toBe(12.5);
+  });
+
+  it('seeks to the window start only once even if loadedmetadata fires twice', () => {
+    // The `done` guard (Player.tsx:164) means a second loadedmetadata is a no-op:
+    // a user seek between the two events must not be clobbered by a re-seek.
+    const video = render({ videoId: 'vid-1', window: win });
+    act(() => {
+      video.dispatchEvent(new Event('loadedmetadata'));
+    });
+    expect(video.currentTime).toBe(12.5);
+
+    // Simulate the user scrubbing away, then a duplicate metadata event.
+    act(() => {
+      video.currentTime = 18;
+      video.dispatchEvent(new Event('loadedmetadata'));
+    });
+    expect(video.currentTime).toBe(18); // not re-snapped to the window start
   });
 
   it('seeks immediately when metadata is already available', () => {
@@ -329,5 +353,18 @@ describe('Player imperative handle', () => {
     expect(ref.current!.isPlaying()).toBe(false);
     pausedStates.set(video, false);
     expect(ref.current!.isPlaying()).toBe(true);
+  });
+
+  it('swallows a synchronous play() throw (detached/jsdom element)', () => {
+    // safePlay()'s try/catch (Player.tsx:124-128) guards the rare case where
+    // video.play() throws synchronously rather than returning a promise — the UI
+    // must not crash. Make play() throw for this single call.
+    const ref = React.createRef<PlayerHandle>();
+    render({ videoId: 'vid-1' }, ref);
+    playMock.mockImplementationOnce(() => {
+      throw new Error('synchronous play boom');
+    });
+    expect(() => ref.current!.play()).not.toThrow();
+    expect(playMock).toHaveBeenCalledTimes(1);
   });
 });

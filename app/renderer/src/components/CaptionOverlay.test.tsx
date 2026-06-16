@@ -146,6 +146,13 @@ describe('wordColor', () => {
   it('uses textColor for upcoming words', () => {
     expect(wordColor(base({}), visual)).toBe(visual.textColor);
   });
+
+  it('falls back to textColor for spoken words when spokenColor is empty', () => {
+    // A template whose spokenColor is falsy must fall through to textColor so the
+    // karaoke fill never renders an empty/blank colour (CaptionOverlay.tsx:137).
+    const noSpoken = { ...visual, spokenColor: '', textColor: '#ABCDEF' };
+    expect(wordColor(base({ spoken: true }), noSpoken)).toBe('#ABCDEF');
+  });
 });
 
 // ---------------------------------------------------------------------------

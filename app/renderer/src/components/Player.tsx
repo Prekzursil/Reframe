@@ -177,6 +177,9 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
   // Single listener pass: report time, enforce the window end (stop or loop).
   useEffect(() => {
     const video = videoRef.current;
+    // defensive: the <video> ref is always attached before this mount-effect runs
+    // (React sets refs before effects), so `video` is never null here.
+    /* v8 ignore next */
     if (!video) return undefined;
     const handleTimeUpdate = (): void => {
       const t = video.currentTime;
@@ -219,6 +222,9 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
         const video = videoRef.current;
         if (video) video.currentTime = clampToWindow(timeSec, winRef.current);
       },
+      // the `?? 0` only fires if the ref is null, which the imperative handle can
+      // never observe (it is callable only while the component is mounted).
+      /* v8 ignore next */
       currentTime: () => videoRef.current?.currentTime ?? 0,
       isPlaying: () => {
         const video = videoRef.current;

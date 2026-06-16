@@ -35,6 +35,56 @@ function clickLabel(label: string): void {
 const noop = () => {};
 
 describe('ShortClipActions', () => {
+  it('fires Play/Open folder/Re-export/Delete with the clip path', () => {
+    const onPlay = vi.fn();
+    const onOpenFolder = vi.fn();
+    const onReexport = vi.fn();
+    const onDelete = vi.fn();
+    act(() => {
+      root.render(
+        <ShortClipActions
+          path="/clip.mp4"
+          label="Clip"
+          playing={false}
+          onPlay={onPlay}
+          onOpenFolder={onOpenFolder}
+          onReexport={onReexport}
+          onDelete={onDelete}
+        />,
+      );
+    });
+
+    clickLabel('Play Clip');
+    clickLabel('Open folder for Clip');
+    clickLabel('Re-export Clip');
+    clickLabel('Delete Clip');
+
+    expect(onPlay).toHaveBeenCalledWith('/clip.mp4');
+    expect(onOpenFolder).toHaveBeenCalledWith('/clip.mp4');
+    expect(onReexport).toHaveBeenCalledWith('/clip.mp4');
+    expect(onDelete).toHaveBeenCalledWith('/clip.mp4');
+  });
+
+  it('labels the play button Stop while the inline preview is playing', () => {
+    act(() => {
+      root.render(
+        <ShortClipActions
+          path="/clip.mp4"
+          label="Clip"
+          playing
+          onPlay={noop}
+          onOpenFolder={noop}
+          onReexport={noop}
+          onDelete={noop}
+        />,
+      );
+    });
+    const playBtn = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.getAttribute('aria-label') === 'Play Clip',
+    ) as HTMLButtonElement;
+    expect(playBtn.textContent).toBe('Stop');
+  });
+
   it('omits the Package button when onPackage is not provided', () => {
     act(() => {
       root.render(
