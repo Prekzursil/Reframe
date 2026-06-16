@@ -7,6 +7,7 @@ import {
   type ProgressEvent,
   extractJobId,
   fmtSeconds,
+  getApi,
   pickField,
   waitForJobDone,
 } from './_api';
@@ -84,6 +85,23 @@ describe('pickField', () => {
     expect(pickField<string>({ other: 1 }, 'path')).toBeNull();
     expect(pickField<string>(null, 'path')).toBeNull();
     expect(pickField<string>('nope', 'path')).toBeNull();
+  });
+
+  it('coerces a present-but-nullish field value to null (?? branch)', () => {
+    expect(pickField<string>({ path: null }, 'path')).toBeNull();
+    expect(pickField<string>({ path: undefined }, 'path')).toBeNull();
+  });
+});
+
+describe('getApi', () => {
+  it('returns the window.api bridge installed on globalThis', () => {
+    const fake = { rpc: async () => ({}), onProgress: () => () => undefined };
+    (globalThis as { api?: unknown }).api = fake;
+    try {
+      expect(getApi()).toBe(fake);
+    } finally {
+      delete (globalThis as { api?: unknown }).api;
+    }
   });
 });
 

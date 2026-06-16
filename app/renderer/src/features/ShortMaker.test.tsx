@@ -15,6 +15,7 @@ import ShortMaker, {
   Candidate,
   Api,
   JobDone,
+  JobProgress,
   MIN_CLIP_SEC,
   MAX_CLIP_SEC,
   DEFAULT_CONTROLS,
@@ -2214,5 +2215,792 @@ describe('<ShortMaker /> component', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(
       'Logo picker is unavailable',
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // Keyboard review (T6) — the handleReviewKeys handler.
+  // -------------------------------------------------------------------------
+
+  function key(init: KeyboardEventInit): void {
+    const group = container.querySelector('.sm-review') as HTMLElement;
+    act(() => {
+      group.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, ...init }));
+    });
+  }
+
+  async function loadThree(rpcOver?: Record<string, unknown>): Promise<Api['rpc'] & ReturnType<typeof vi.fn>> {
+    const rpc = rpcFake({ 'shortmaker.select': { candidates: THREE }, ...rpcOver });
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc })} />);
+    await submitForm();
+    return rpc;
+  }
+
+  it('J/K move the review selection (with sort order), wrapping at the ends', async () => {
+    await loadThree();
+    const selectedId = () =>
+      container.querySelector('.sm-candidate.sm-selected')?.getAttribute('data-id');
+    // Initial selection is the first row.
+    expect(selectedId()).toBe('1@97');
+    key({ key: 'j' });
+    expect(selectedId()).toBe('2@199');
+    key({ key: 'J' });
+    expect(selectedId()).toBe('3@494');
+    key({ key: 'j' }); // clamp at the bottom
+    expect(selectedId()).toBe('3@494');
+    key({ key: 'k' });
+    expect(selectedId()).toBe('2@199');
+    key({ key: 'K' });
+    expect(selectedId()).toBe('1@97');
+  });
+
+  it('Space toggles the preview player play/pause', async () => {
+    await loadThree();
+    playMock.mockClear();
+    pauseMock.mockClear();
+    // The Player starts paused -> Space plays.
+    key({ key: ' ' });
+    expect(playMock).toHaveBeenCalled();
+  });
+
+  it('Space pauses when the preview player is already playing', async () => {
+    await loadThree();
+    playMock.mockClear();
+    pauseMock.mockClear();
+    const video = container.querySelector('.sm-phone video') as HTMLVideoElement;
+    // Mark the element as playing so isPlaying() returns true -> Space pauses.
+    pausedStates.set(video, false);
+    key({ key: ' ' });
+    expect(pauseMock).toHaveBeenCalled();
+    pausedStates.delete(video);
+  });
+
+  it('A approves and X discards the selected candidate', async () => {
+    await loadThree();
+    key({ key: 'a' });
+    expect(
+      container.querySelector('.sm-candidate.sm-selected')?.querySelector('.sm-status-approved'),
+    ).toBeTruthy();
+    key({ key: 'x' });
+    expect(
+      container.querySelector('.sm-candidate.sm-selected')?.querySelector('.sm-status-discarded'),
+    ).toBeTruthy();
+  });
+
+  it('ArrowLeft/ArrowRight nudge the selected window (shift = fine step)', async () => {
+    const rpc = rpcFake({
+      'shortmaker.select': {
+        candidates: [cand({ rank: 1, start: 100, end: 140, durationSec: 40, sourceStart: 100 })],
+      },
+    });
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc })} />);
+    await submitForm();
+    key({ key: 'ArrowRight' });
+    expect(container.querySelector('.sm-nudged')).toBeTruthy();
+    key({ key: 'ArrowLeft', shiftKey: true });
+    // Still nudged (coarse +1 then fine -0.2 => +0.8 window shift).
+    expect(container.querySelector('.sm-nudged')).toBeTruthy();
+  });
+
+  it('ignores review keys with a modifier or from a text-entry target', async () => {
+    await loadThree();
+    const selectedId = () =>
+      container.querySelector('.sm-candidate.sm-selected')?.getAttribute('data-id');
+    expect(selectedId()).toBe('1@97');
+    // Ctrl/meta/alt chords are left alone.
+    key({ key: 'j', ctrlKey: true });
+    expect(selectedId()).toBe('1@97');
+    key({ key: 'j', metaKey: true });
+    expect(selectedId()).toBe('1@97');
+    key({ key: 'j', altKey: true });
+    expect(selectedId()).toBe('1@97');
+    // A keydown whose target is an INPUT/SELECT/TEXTAREA is ignored.
+    const group = container.querySelector('.sm-review') as HTMLElement;
+    const input = document.createElement('input');
+    group.appendChild(input);
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'j' }));
+    });
+    expect(selectedId()).toBe('1@97');
+    // An unhandled key is a no-op (default branch).
+    key({ key: 'z' });
+    expect(selectedId()).toBe('1@97');
+  });
+
+  // -------------------------------------------------------------------------
+  // DATA ROOT — changeDataFolder + the getDataFolder hydration effect.
+  // -------------------------------------------------------------------------
+
+  function openBrandKit(): void {
+    const toggle = [...container.querySelectorAll('.sm-brand-toggle')][0] as HTMLButtonElement;
+    act(() => toggle.click());
+  }
+
+  it('hydrates the data folder from the getDataFolder bridge', async () => {
+    const getDataFolder = vi.fn().mockResolvedValue('D:/data-root');
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc: rpcFake({}), getDataFolder })} />);
+    await flush();
+    openBrandKit();
+    expect(container.querySelector('.sm-data-folder-path')?.textContent).toBe('D:/data-root');
+  });
+
+  it('shows Unavailable when getDataFolder rejects', async () => {
+    const getDataFolder = vi.fn().mockRejectedValue(new Error('no bridge'));
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc: rpcFake({}), getDataFolder })} />);
+    await flush();
+    openBrandKit();
+    expect(container.querySelector('.sm-data-folder-empty')).toBeTruthy();
+  });
+
+  it('changeDataFolder errors when the picker bridge is unavailable', async () => {
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc: rpcFake({}) })} />);
+    await flush();
+    openBrandKit();
+    await act(async () => {
+      (byLabel('Change data folder') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Data-folder picker is unavailable',
+    );
+  });
+
+  it('changeDataFolder picks a folder, persists it and flags a restart', async () => {
+    const pickDataFolder = vi.fn().mockResolvedValue('E:/new-root');
+    const setDataFolder = vi.fn().mockResolvedValue({ ok: true });
+    const getDataFolder = vi.fn().mockResolvedValue('D:/old');
+    render(
+      <ShortMaker
+        videoId="v1"
+        api={makeApi({ rpc: rpcFake({}), pickDataFolder, setDataFolder, getDataFolder })}
+      />,
+    );
+    await flush();
+    openBrandKit();
+    await act(async () => {
+      (byLabel('Change data folder') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(setDataFolder).toHaveBeenCalledWith('E:/new-root');
+    expect(container.querySelector('.sm-data-folder-path')?.textContent).toBe('E:/new-root');
+    expect(container.querySelector('.sm-data-folder-restart')).toBeTruthy();
+  });
+
+  it('changeDataFolder is a no-op when the user cancels the picker', async () => {
+    const pickDataFolder = vi.fn().mockResolvedValue(null); // cancelled
+    const setDataFolder = vi.fn().mockResolvedValue({ ok: true });
+    render(
+      <ShortMaker
+        videoId="v1"
+        api={makeApi({ rpc: rpcFake({}), pickDataFolder, setDataFolder })}
+      />,
+    );
+    await flush();
+    openBrandKit();
+    await act(async () => {
+      (byLabel('Change data folder') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(setDataFolder).not.toHaveBeenCalled();
+    expect(container.querySelector('.sm-data-folder-restart')).toBeNull();
+  });
+
+  it('changeDataFolder surfaces a read-only setDataFolder result', async () => {
+    const pickDataFolder = vi.fn().mockResolvedValue('E:/new-root');
+    const setDataFolder = vi.fn().mockResolvedValue({ ok: false });
+    render(
+      <ShortMaker
+        videoId="v1"
+        api={makeApi({ rpc: rpcFake({}), pickDataFolder, setDataFolder })}
+      />,
+    );
+    await flush();
+    openBrandKit();
+    await act(async () => {
+      (byLabel('Change data folder') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Could not save');
+  });
+
+  it('changeDataFolder surfaces a picker exception', async () => {
+    const pickDataFolder = vi.fn().mockRejectedValue(new Error('picker crashed'));
+    const setDataFolder = vi.fn().mockResolvedValue({ ok: true });
+    render(
+      <ShortMaker
+        videoId="v1"
+        api={makeApi({ rpc: rpcFake({}), pickDataFolder, setDataFolder })}
+      />,
+    );
+    await flush();
+    openBrandKit();
+    await act(async () => {
+      (byLabel('Change data folder') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('picker crashed');
+  });
+
+  // -------------------------------------------------------------------------
+  // Export / batch deferred-job + error paths.
+  // -------------------------------------------------------------------------
+
+  it('resolves a deferred export job via job.done and shows the clips', async () => {
+    let doneCb: ((d: JobDone) => void) | null = null;
+    const rpc = vi.fn(async (method: string) => {
+      if (method === 'shortmaker.select') return { candidates: THREE };
+      if (method === 'shortmaker.export') return { jobId: 'exp-1' };
+      return {};
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    const api = makeApi({
+      rpc,
+      onJobDone: (fn) => {
+        doneCb = fn;
+        return () => {
+          doneCb = null;
+        };
+      },
+    });
+    render(<ShortMaker videoId="v1" api={api} />);
+    await submitForm();
+    const row = container.querySelector('.sm-candidate[data-id="1@97"]')!;
+    act(() => (row.querySelector('[aria-label="Approve"]') as HTMLButtonElement).click());
+    const exportBtn = [...container.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Export approved',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      exportBtn.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      doneCb!({ jobId: 'exp-1', result: { clips: [{ path: '/out/deferred.mp4' }] } });
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('.sm-exported')?.textContent).toContain('/out/deferred.mp4');
+  });
+
+  it('surfaces an export error', async () => {
+    const rpc = vi.fn(async (method: string) => {
+      if (method === 'shortmaker.select') return { candidates: THREE };
+      if (method === 'shortmaker.export') throw new Error('export blew up');
+      return {};
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc })} />);
+    await submitForm();
+    const row = container.querySelector('.sm-candidate[data-id="1@97"]')!;
+    act(() => (row.querySelector('[aria-label="Approve"]') as HTMLButtonElement).click());
+    await act(async () => {
+      ([...container.querySelectorAll('button')].find(
+        (b) => b.textContent === 'Export approved',
+      ) as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('export blew up');
+  });
+
+  it('surfaces a batch error', async () => {
+    const rpc = vi.fn(async (method: string) => {
+      if (method === 'shortmaker.select') throw new Error('batch select blew up');
+      return {};
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc })} initialControls={{ count: 2 }} />);
+    await act(async () => {
+      (byLabel('Make N shorts') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('batch select blew up');
+  });
+
+  it('shows a clip with fillersRemoved but no fillerSeconds (defaults the seconds)', async () => {
+    const rpc = rpcFake({
+      'shortmaker.select': { candidates: THREE },
+      'shortmaker.export': { clips: [{ path: '/out/1.mp4', fillersRemoved: 3 }] },
+    });
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc })} />);
+    await submitForm();
+    const row = container.querySelector('.sm-candidate[data-id="1@97"]')!;
+    act(() => (row.querySelector('[aria-label="Approve"]') as HTMLButtonElement).click());
+    await act(async () => {
+      ([...container.querySelectorAll('button')].find(
+        (b) => b.textContent === 'Export approved',
+      ) as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('.sm-fillers')?.textContent).toContain('removed 3 fillers (0.0s)');
+  });
+
+  it('renders progress with an empty message when the notification omits one', async () => {
+    let doneCb: ((d: JobDone) => void) | null = null;
+    let progressCb: ((p: JobProgress) => void) | null = null;
+    const rpc = vi.fn(async () => ({ jobId: 'sel-1' })) as unknown as Api['rpc'] &
+      ReturnType<typeof vi.fn>;
+    const api = makeApi({
+      rpc,
+      onProgress: (fn) => {
+        progressCb = fn;
+        return () => undefined;
+      },
+      onJobDone: (fn) => {
+        doneCb = fn;
+        return () => undefined;
+      },
+    });
+    render(<ShortMaker videoId="v1" api={api} />);
+    const form = container.querySelector('form')!;
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      progressCb!({ jobId: 'sel-1', pct: 50, message: '' as unknown as string });
+    });
+    expect(container.querySelector('.sm-progress')?.textContent).toContain('50%');
+    await act(async () => {
+      doneCb!({ jobId: 'sel-1', result: { candidates: [] } });
+      await Promise.resolve();
+    });
+    await flush();
+  });
+
+  // -------------------------------------------------------------------------
+  // Produced-shorts gallery actions (wired via useShortsGallery).
+  // -------------------------------------------------------------------------
+
+  async function loadGallery(shorts: unknown[], over: Partial<Api> = {}): Promise<{
+    rpc: Api['rpc'] & ReturnType<typeof vi.fn>;
+  }> {
+    const rpc = rpcFake({
+      'tracks.audio.list': { audioTracks: [] },
+      'shortmaker.select': { candidates: THREE },
+      'shortmaker.export': { clips: [{ path: '/out/1.mp4' }] },
+      'shorts.list': { shorts },
+      'shorts.reexport': {
+        videoId: 'v1',
+        candidate: { hook: 'h', template: 't', viralityPct: 50, durationSec: 30 },
+      },
+      'shorts.delete': { ok: true },
+    });
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc, ...over })} />);
+    await submitForm();
+    const row = container.querySelector('.sm-candidate[data-id="1@97"]')!;
+    act(() => (row.querySelector('[aria-label="Approve"]') as HTMLButtonElement).click());
+    await act(async () => {
+      ([...container.querySelectorAll('button')].find(
+        (b) => b.textContent === 'Export approved',
+      ) as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    return { rpc };
+  }
+
+  const SHORT = {
+    id: 'sid-1',
+    path: '/out/clip.mp4',
+    videoId: 'v1',
+    sourceTitle: 'Talk',
+    template: '',
+    viralityPct: null,
+    durationSec: 30,
+    width: 1080,
+    height: 1920,
+    createdAt: 0,
+    thumbnailPath: '',
+    hook: '',
+  };
+
+  it('open-folder uses the openInFolder bridge', async () => {
+    const openInFolder = vi.fn().mockResolvedValue(true);
+    await loadGallery([SHORT], { openInFolder });
+    await act(async () => {
+      (byLabel('Open folder for Talk') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(openInFolder).toHaveBeenCalledWith('/out/clip.mp4');
+  });
+
+  it('re-export forwards the hint to onReexport', async () => {
+    const onReexport = vi.fn();
+    const rpc = rpcFake({
+      'tracks.audio.list': { audioTracks: [] },
+      'shortmaker.select': { candidates: THREE },
+      'shortmaker.export': { clips: [{ path: '/out/1.mp4' }] },
+      'shorts.list': { shorts: [SHORT] },
+      'shorts.reexport': {
+        videoId: 'v1',
+        candidate: { hook: 'h', template: 't', viralityPct: 50, durationSec: 30 },
+      },
+    });
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc })} onReexport={onReexport} />);
+    await submitForm();
+    const row = container.querySelector('.sm-candidate[data-id="1@97"]')!;
+    act(() => (row.querySelector('[aria-label="Approve"]') as HTMLButtonElement).click());
+    await act(async () => {
+      ([...container.querySelectorAll('button')].find(
+        (b) => b.textContent === 'Export approved',
+      ) as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    await act(async () => {
+      (byLabel('Re-export Talk') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(onReexport).toHaveBeenCalledWith(expect.objectContaining({ videoId: 'v1' }));
+  });
+
+  it('delete confirms then removes the short and reloads the gallery', async () => {
+    const confirmSpy = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    const { rpc } = await loadGallery([SHORT]);
+    await act(async () => {
+      (byLabel('Delete Talk') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(rpc).toHaveBeenCalledWith('shorts.delete', { path: '/out/clip.mp4' });
+    confirmSpy.mockRestore();
+  });
+
+  it('play toggles inline playback of a produced short', async () => {
+    await loadGallery([SHORT]);
+    const playBtn = byLabel('Play Talk') as HTMLButtonElement;
+    act(() => playBtn.click());
+    // The inline <video> Player appears for the playing clip.
+    expect(container.querySelector('.shorts__player')).toBeTruthy();
+  });
+
+  // -------------------------------------------------------------------------
+  // Misc: getApi fallback, pickLogo throw, cancel, progress targeting.
+  // -------------------------------------------------------------------------
+
+  it('falls back to the global window.api bridge when no api prop is given', async () => {
+    const rpc = rpcFake({ 'shortmaker.select': { candidates: [] } });
+    (globalThis as { api?: unknown }).api = makeApi({ rpc });
+    try {
+      render(<ShortMaker videoId="v1" />);
+      await flush();
+      expect(rpc).toHaveBeenCalledWith('feedback.stats');
+    } finally {
+      delete (globalThis as { api?: unknown }).api;
+    }
+  });
+
+  it('surfaces a pickLogo exception from the bridge', async () => {
+    const rpc = rpcFake({ 'settings.get': {} });
+    const pickLogoFile = vi.fn().mockRejectedValue(new Error('picker exploded'));
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc, pickLogoFile })} />);
+    await flush();
+    const toggle = [...container.querySelectorAll('.sm-brand-toggle')][0] as HTMLButtonElement;
+    act(() => toggle.click());
+    await act(async () => {
+      (byLabel('Pick logo file') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('picker exploded');
+  });
+
+  it('Cancel calls job.cancel for the active (deferred) select job', async () => {
+    // select resolves with a {jobId} handle, then the panel awaits job.done — so
+    // activeJobRef stays set and busy, and the Cancel button is live.
+    const calls: Array<{ method: string; params?: unknown }> = [];
+    const rpc = vi.fn(async (method: string, params?: unknown) => {
+      calls.push({ method, params });
+      if (method === 'shortmaker.select') return { jobId: 'sel-1' };
+      return {};
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    const api = makeApi({
+      rpc,
+      // Never fire job.done -> the wait hangs, keeping the job active.
+      onJobDone: () => () => undefined,
+    });
+    render(<ShortMaker videoId="v1" api={api} />);
+    const form = container.querySelector('form')!;
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    const cancel = [...container.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Cancel',
+    ) as HTMLButtonElement;
+    expect(cancel).toBeTruthy();
+    await act(async () => {
+      cancel.click();
+      await Promise.resolve();
+    });
+    expect(calls.find((c) => c.method === 'job.cancel')?.params).toEqual({ jobId: 'sel-1' });
+  });
+
+  it('Cancel surfaces a job.cancel rejection', async () => {
+    const rpc = vi.fn(async (method: string) => {
+      if (method === 'shortmaker.select') return { jobId: 'sel-1' };
+      if (method === 'job.cancel') throw new Error('cancel failed');
+      return {};
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    const api = makeApi({ rpc, onJobDone: () => () => undefined });
+    render(<ShortMaker videoId="v1" api={api} />);
+    const form = container.querySelector('form')!;
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      ([...container.querySelectorAll('button')].find(
+        (b) => b.textContent === 'Cancel',
+      ) as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('cancel failed');
+  });
+
+  it('pickLogo is a no-op when the picker returns no path (user cancelled)', async () => {
+    const rpc = rpcFake({ 'settings.get': {} });
+    const pickLogoFile = vi.fn().mockResolvedValue(null);
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc, pickLogoFile })} />);
+    await flush();
+    const toggle = [...container.querySelectorAll('.sm-brand-toggle')][0] as HTMLButtonElement;
+    act(() => toggle.click());
+    await act(async () => {
+      (byLabel('Pick logo file') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(pickLogoFile).toHaveBeenCalled();
+    // No settings.set for the logo path (cancelled -> nothing persisted).
+    expect(
+      rpc.mock.calls.find(
+        (c) =>
+          c[0] === 'settings.set' &&
+          (c[1] as { brandLogoPath?: string }).brandLogoPath !== undefined &&
+          (c[1] as { brandLogoPath?: string }).brandLogoPath !== '',
+      ),
+    ).toBeUndefined();
+  });
+
+  it('skips the per-video effects (audio/cues/playable) when there is no videoId', async () => {
+    const rpc = rpcFake({});
+    render(<ShortMaker videoId="" api={makeApi({ rpc })} />);
+    await flush();
+    expect(rpc.mock.calls.find((c) => c[0] === 'tracks.audio.list')).toBeUndefined();
+    expect(rpc.mock.calls.find((c) => c[0] === 'captions.cues')).toBeUndefined();
+    expect(rpc.mock.calls.find((c) => c[0] === 'media.playable')).toBeUndefined();
+    // The feedback.stats + settings.get effects (no videoId dep) still run.
+    expect(rpc.mock.calls.find((c) => c[0] === 'feedback.stats')).toBeTruthy();
+  });
+
+  it('treats a null deferred select payload as an empty candidate list', async () => {
+    let doneCb: ((d: JobDone) => void) | null = null;
+    const rpc = vi.fn(async (method: string) => {
+      if (method === 'shortmaker.select') return { jobId: 'sel-1' };
+      return {};
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    const api = makeApi({
+      rpc,
+      onJobDone: (fn) => {
+        doneCb = fn;
+        return () => undefined;
+      },
+    });
+    render(<ShortMaker videoId="v1" api={api} />);
+    const form = container.querySelector('form')!;
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    // job.done with no candidates -> extract returns null -> [] (empty state).
+    await act(async () => {
+      doneCb!({ jobId: 'sel-1', result: {} });
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('.sm-empty')).toBeTruthy();
+  });
+
+  it('a deferred export job.done with no clips yields an empty exported list', async () => {
+    let doneCb: ((d: JobDone) => void) | null = null;
+    const rpc = vi.fn(async (method: string) => {
+      if (method === 'shortmaker.select') return { candidates: THREE };
+      if (method === 'shortmaker.export') return { jobId: 'exp-1' };
+      return {};
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    const api = makeApi({
+      rpc,
+      onJobDone: (fn) => {
+        doneCb = fn;
+        return () => undefined;
+      },
+    });
+    render(<ShortMaker videoId="v1" api={api} />);
+    await submitForm();
+    const row = container.querySelector('.sm-candidate[data-id="1@97"]')!;
+    act(() => (row.querySelector('[aria-label="Approve"]') as HTMLButtonElement).click());
+    await act(async () => {
+      ([...container.querySelectorAll('button')].find(
+        (b) => b.textContent === 'Export approved',
+      ) as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      doneCb!({ jobId: 'exp-1', result: {} }); // no clips
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('.sm-exported')?.textContent).toContain('Exported 0 clip(s)');
+  });
+
+  it('a batch whose export job.done carries no clips reports zero exported', async () => {
+    let doneCb: ((d: JobDone) => void) | null = null;
+    const rpc = vi.fn(async (method: string) => {
+      if (method === 'tracks.audio.list') return { audioTracks: [] };
+      if (method === 'shortmaker.select') {
+        return { candidates: [cand({ rank: 1, sourceStart: 1, viralityPct: 90 })] };
+      }
+      if (method === 'shortmaker.export') return { jobId: 'bexp-1' };
+      if (method === 'shorts.list') return { shorts: [] };
+      return {};
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    const api = makeApi({
+      rpc,
+      onJobDone: (fn) => {
+        doneCb = fn;
+        return () => undefined;
+      },
+    });
+    render(<ShortMaker videoId="v1" api={api} initialControls={{ count: 1 }} />);
+    await act(async () => {
+      (byLabel('Make N shorts') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      doneCb!({ jobId: 'bexp-1', result: {} }); // no clips
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('.sm-exported')?.textContent).toContain('Exported 0 clip(s)');
+  });
+
+  it('ignores progress notifications that do not match the active job', async () => {
+    let progressCb: ((p: JobProgress) => void) | null = null;
+    let resolveSelect: (v: unknown) => void = () => undefined;
+    const rpc = vi.fn(async (method: string) => {
+      if (method === 'shortmaker.select') {
+        return new Promise((res) => {
+          resolveSelect = res as (v: unknown) => void;
+        });
+      }
+      return {};
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    const api = makeApi({
+      rpc,
+      onProgress: (fn) => {
+        progressCb = fn;
+        return () => undefined;
+      },
+      onJobDone: () => () => undefined,
+    });
+    render(<ShortMaker videoId="v1" api={api} />);
+    const form = container.querySelector('form')!;
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      resolveSelect({ jobId: 'sel-1' }); // sets activeJobRef
+      await Promise.resolve();
+    });
+    // A progress event for a DIFFERENT job is ignored (no bar update).
+    await act(async () => {
+      progressCb!({ jobId: 'someone-else', pct: 77, message: 'not mine' });
+    });
+    expect(container.querySelector('.sm-progress')?.textContent ?? '').not.toContain('77%');
+  });
+
+  it('surfaces an error when persisting a brand edit fails', async () => {
+    const rpc = vi.fn(async (method: string) => {
+      if (method === 'settings.get') return {};
+      if (method === 'settings.set') throw new Error('settings store down');
+      if (method === 'feedback.stats') return {};
+      return {};
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc })} />);
+    await flush();
+    const toggle = [...container.querySelectorAll('.sm-brand-toggle')][0] as HTMLButtonElement;
+    act(() => toggle.click());
+    const font = byLabel('Default font family') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(font, 'Montserrat');
+      font.dispatchEvent(new Event('input', { bubbles: true }));
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('settings store down');
+  });
+
+  it('a batch whose deferred select resolves to nothing reports no candidates', async () => {
+    let doneCb: ((d: JobDone) => void) | null = null;
+    const rpc = vi.fn(async (method: string) => {
+      if (method === 'tracks.audio.list') return { audioTracks: [] };
+      if (method === 'shortmaker.select') return { jobId: 'bsel-1' }; // deferred
+      return {};
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    const api = makeApi({
+      rpc,
+      onJobDone: (fn) => {
+        doneCb = fn;
+        return () => undefined;
+      },
+    });
+    render(<ShortMaker videoId="v1" api={api} initialControls={{ count: 2 }} />);
+    await act(async () => {
+      (byLabel('Make N shorts') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    // The deferred select finishes with no candidates -> found is null -> [].
+    await act(async () => {
+      doneCb!({ jobId: 'bsel-1', result: {} });
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('No candidates');
+  });
+
+  it('treats an empty data-folder string from the bridge as no folder', async () => {
+    const getDataFolder = vi.fn().mockResolvedValue('');
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc: rpcFake({}), getDataFolder })} />);
+    await flush();
+    const toggle = [...container.querySelectorAll('.sm-brand-toggle')][0] as HTMLButtonElement;
+    act(() => toggle.click());
+    expect(container.querySelector('.sm-data-folder-empty')).toBeTruthy();
+  });
+
+  it('renders progress with a missing message field (?? "" fallback)', async () => {
+    let progressCb: ((p: JobProgress) => void) | null = null;
+    const rpc = vi.fn(async () => new Promise(() => {})) as unknown as Api['rpc'] &
+      ReturnType<typeof vi.fn>;
+    const api = makeApi({
+      rpc,
+      onProgress: (fn) => {
+        progressCb = fn;
+        return () => undefined;
+      },
+    });
+    render(<ShortMaker videoId="v1" api={api} />);
+    const form = container.querySelector('form')!;
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      // Omit `message` entirely so the `progress.message ?? ''` fallback runs.
+      progressCb!({ jobId: '', pct: 30 } as unknown as JobProgress);
+    });
+    expect(container.querySelector('.sm-progress')?.textContent).toContain('30%');
   });
 });

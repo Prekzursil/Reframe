@@ -113,6 +113,9 @@ export function Convert({ videoId, path, batchItems }: ConvertProps): React.Reac
   }, [beginRun, options, videoId, path]);
 
   const startBatch = useCallback(async () => {
+    // defensive: the batch button only renders when `canBatch` (batchItems
+    // present and non-empty), so this guard is never reached via UI.
+    /* v8 ignore next */
     if (!batchItems || batchItems.length === 0) return;
     beginRun();
     try {
@@ -144,6 +147,9 @@ export function Convert({ videoId, path, batchItems }: ConvertProps): React.Reac
   }, [beginRun, batchItems, options]);
 
   const cancel = useCallback(async () => {
+    // defensive: the Cancel button only renders while `running && jobId`, so
+    // cancel is never invoked with a null jobId via UI.
+    /* v8 ignore next */
     if (!jobId) return;
     try {
       await getApi().rpc('job.cancel', { jobId });

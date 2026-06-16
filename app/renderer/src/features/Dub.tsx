@@ -145,6 +145,9 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
   const [error, setError] = useState<string>('');
   const [result, setResult] = useState<DubDoneResult | null>(null);
 
+  // `engine` is only ever set from the engine <select> whose options ARE ENGINES,
+  // so the `?? ENGINES[0]` fallback is defensive.
+  /* v8 ignore next */
   const engineOption = useMemo(() => ENGINES.find((e) => e.id === engine) ?? ENGINES[0], [engine]);
   const engineVoices = useMemo(() => voicesForEngine(voices, engine), [voices, engine]);
 
@@ -192,6 +195,9 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
 
   const addSample = useCallback(async (): Promise<void> => {
     const path = samplePath.trim();
+    // The Add-sample button is disabled when the path is blank, so this guard is
+    // defensive.
+    /* v8 ignore next */
     if (!path) return;
     setSampleMessage('');
     try {
@@ -205,6 +211,9 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
   }, [bridge, samplePath, refresh]);
 
   const startDub = useCallback(async (): Promise<void> => {
+    // The Start-dub button is disabled while busy and without a video/track/voice,
+    // so this guard is defensive.
+    /* v8 ignore next */
     if (busy || !videoId || !trackId) return;
     setBusy(true);
     setError('');
@@ -247,6 +256,9 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
   }, [bridge, busy, engine, engineOption.voiceClone, refresh, targetLang, trackId, videoId, voice]);
 
   const cancel = useCallback(async (): Promise<void> => {
+    // The Cancel button renders only while `busy && jobId`, so this guard is
+    // defensive.
+    /* v8 ignore next */
     if (!jobId) return;
     try {
       await bridge.rpc('job.cancel', { jobId });
