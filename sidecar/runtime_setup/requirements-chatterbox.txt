@@ -17,6 +17,6 @@
 # tuple exactly — the asset manager's env sentinel compares the requirement
 # LIST, so a bootstrap-built env only counts as the installed "chatterbox-env"
 # asset when the pin order matches. Keep both in sync.
-chatterbox-tts==0.1.2
-torch==2.6.0+cu124
-torchaudio==2.6.0+cu124
+chatterbox-tts==0.1.7
+torch==2.12.0
+torchaudio==2.11.0
