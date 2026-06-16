@@ -263,6 +263,11 @@ export function Library({ onOpen, toast: externalToast }: LibraryProps): React.R
 
   /** "Add videos" button -> native multi-select picker via the preload bridge. */
   const handlePick = useCallback(async () => {
+    // Defensive re-entrancy guard. The Add button is bound `disabled={adding}`,
+    // so its onClick can never fire while `adding` is true (React does not
+    // dispatch onClick for a control it rendered disabled) — the guard is
+    // therefore unreachable via the UI but kept as defence-in-depth.
+    /* v8 ignore next */
     if (adding) return;
     const bridge = pickerBridge();
     if (!bridge || typeof bridge.openVideos !== 'function') {
