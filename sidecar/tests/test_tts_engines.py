@@ -426,9 +426,11 @@ class TestChatterbox:
     def test_runner_env_points_at_isolated_env_first(self):
         import os
 
-        env = cb.runner_extra_env("D:/envs/chatterbox")
+        # Use a colon-free path: os.pathsep is ':' on POSIX, so a Windows-drive
+        # path like "D:/..." would split apart on Linux CI.
+        env = cb.runner_extra_env("/opt/envs/chatterbox")
         paths = env["PYTHONPATH"].split(os.pathsep)
-        assert paths[0] == "D:/envs/chatterbox"
+        assert paths[0] == "/opt/envs/chatterbox"
         assert paths[1] == cb.runner_dir()
 
     def test_default_env_dir_uses_config_dir(self, monkeypatch):

@@ -48,7 +48,10 @@ jobs:
           # (sidecar/tests/conftest.py). Install the package itself only for its
           # pure-logic modules + the dev extras that the tests need.
           pip install -e "sidecar[dev]" --no-deps
-          pip install httpx
+          # httpx: provider tests. numpy + opencv-python-headless: the reframe/
+          # face-finder unit tests exercise real cv2 image ops (light, CI-friendly;
+          # NOT heavy ML like torch/faster-whisper which stay uninstalled).
+          pip install httpx numpy opencv-python-headless
 
       - name: Install app (renderer + main) deps
         working-directory: app

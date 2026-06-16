@@ -13,6 +13,8 @@ heavy-ML deps.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from media_studio.features import reframe
 from media_studio.features.reframe import ReframeEngine, ReframeError
@@ -108,8 +110,13 @@ def test_resolve_script_default(monkeypatch):
     # WSL /mnt path), not the old /opt/verthor placeholder that existed nowhere.
     monkeypatch.delenv("MEDIA_STUDIO_VERTHOR_SCRIPT", raising=False)
     got = reframe.resolve_script({})
-    assert got.startswith("/mnt/")
     assert got.endswith("media_studio/scripts/verthor_reframe.sh")
+    # On Windows the bundled drive path is translated to /mnt/<d>/...; on a POSIX
+    # host the package path is already /-rooted and returned verbatim (no /mnt).
+    if os.name == "nt":
+        assert got.startswith("/mnt/")
+    else:
+        assert got.startswith("/")
 
 
 def test_resolve_script_from_settings_translated_to_wsl(monkeypatch):

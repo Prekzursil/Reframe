@@ -32,7 +32,7 @@ from __future__ import annotations
 import os
 import subprocess
 from collections.abc import Callable
-from pathlib import Path, PurePath, PureWindowsPath
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from ..util import get_logger
@@ -144,8 +144,9 @@ def to_wsl_path(path: str) -> str:
         rel = win.parts[1:] if win.is_absolute() else win.parts
         rel_str = "/".join(rel)
         return f"/mnt/{letter}/{rel_str}" if rel_str else f"/mnt/{letter}"
-    # No drive letter — treat as a relative posix path.
-    return PurePath(s).as_posix()
+    # No drive letter — treat as a relative path, normalizing Windows-style
+    # separators to POSIX on ANY host (PurePath on a POSIX host keeps "\" verbatim).
+    return PureWindowsPath(s).as_posix()
 
 
 # --------------------------------------------------------------------------- #
