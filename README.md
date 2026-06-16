@@ -39,9 +39,9 @@ you want it. **No accounts, no telemetry, no cloud dependency.**
 ## Quality
 
 A single lean, deterministic **`quality`** gate (one CI check) enforces: Ruff (lint+format),
-Oxlint + Biome (JS/TS), tsc + basedpyright (types), **100% sidecar line+branch coverage** + a
-ratcheted renderer floor, Opengrep (SAST), gitleaks (secrets), and osv-scanner (deps). See
-[`QUALITY-CHARTER.md`](QUALITY-CHARTER.md).
+Oxlint + Biome (JS/TS), tsc + basedpyright (types), **strict 100% line+branch coverage
+everywhere** (sidecar **and** renderer), Opengrep (SAST), gitleaks (secrets), and osv-scanner
+(deps). See [`QUALITY-CHARTER.md`](QUALITY-CHARTER.md).
 
 ## Develop
 

@@ -491,6 +491,34 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('system.health', undefined);
   });
 
+  it('system.probe calls the bare method', async () => {
+    const r = installApi();
+    await client.system.probe();
+    expect(r).toHaveBeenCalledWith('system.probe', undefined);
+  });
+
+  it('system.advisor sends an empty params object when commercial is omitted', async () => {
+    const r = installApi();
+    await client.system.advisor();
+    expect(r).toHaveBeenCalledWith('system.advisor', {});
+    await client.system.advisor({});
+    expect(r).toHaveBeenCalledWith('system.advisor', {});
+  });
+
+  it('system.advisor forwards {commercial} when provided (both boolean values)', async () => {
+    const r = installApi();
+    await client.system.advisor({ commercial: true });
+    expect(r).toHaveBeenCalledWith('system.advisor', { commercial: true });
+    await client.system.advisor({ commercial: false });
+    expect(r).toHaveBeenCalledWith('system.advisor', { commercial: false });
+  });
+
+  it('asr.engines calls the bare method', async () => {
+    const r = installApi();
+    await client.asr.engines();
+    expect(r).toHaveBeenCalledWith('asr.engines', undefined);
+  });
+
   it('recipes.* forward their params', async () => {
     const r = installApi();
     const recipe: SavedRecipe = {

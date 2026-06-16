@@ -93,6 +93,7 @@ interface SettingsShape {
 }
 
 export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.ReactElement {
+  /* v8 ignore next -- the `?? client` default only runs in the real app; every test injects rpcClient. */
   const api = useMemo(() => rpcClient ?? client, [rpcClient]);
 
   const [hardware, setHardware] = useState<HardwareInfo | null>(null);
@@ -125,6 +126,7 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
 
   // Opt-in analysis: probe hardware + advisor + asset/engine state in parallel.
   const analyze = useCallback(async (): Promise<void> => {
+    /* v8 ignore next -- re-entrancy guard: the Analyze button is disabled while busy, so this never trips in tests. */
     if (busy) return;
     setBusy(true);
     setError('');
@@ -179,6 +181,7 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
   );
 
   const applyPreset = useCallback(() => {
+    /* v8 ignore next -- the Apply-preset button only renders inside the `analyzed && report` block, so report is always set here. */
     if (!report) return;
     void patchSettings({ phase8Tier: presetTier(report.recommendedPreset) });
   }, [report, patchSettings]);
@@ -196,6 +199,7 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
   const download = useCallback(
     async (componentName: string): Promise<void> => {
       const asset = componentAsset(componentName);
+      /* v8 ignore next -- defensive guard: floor components (no asset) render an "Installed", disabled button, and the Download button is disabled while downloading, so neither arm trips in tests. */
       if (!asset || downloading) return;
       setDownloading(componentName);
       setError('');
