@@ -33,6 +33,7 @@ from . import protocol
 from .features import boundary as _boundary
 from .features import convert as _convert
 from .features import media_compat as _media_compat
+from .features import offline as _offline
 from .features import shortmaker as _shortmaker
 from .features import subtitles as _subtitles
 from .features import timeline as _timeline
@@ -288,6 +289,11 @@ class Services:
         target_lang = _require_str(params, "targetLang")
         if ctx.jobs is None:
             raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+        # Offline gate: the cloud translation path goes to a remote API; refuse
+        # it (typed) when offline. Local (llama) translation stays offline-safe.
+        settings_now = self.settings.get()
+        if settings_now.get("useCloud"):
+            _offline.guard_network(settings_now, "cloud translation")
         project = self._find_project_for_track(track_id)
         track = _tracks.find_track(project.data, track_id)
         translator = self._get_translator()  # None -> legacy injected provider
@@ -894,6 +900,41 @@ def register_all(
     from .features import cues as _cues  # local: import-light
 
     _cues.register(load_context=svc._shortmaker_context, register_fn=reg)
+
+    # ---------------------------------------------------------------------- #
+    # system-advanced group (this build) — health / recipes / diarize.
+    # Each module owns its own register() (mirrors shorts / cues / assets).
+    # ---------------------------------------------------------------------- #
+    from .features import diarize as _diarize  # local: import-light
+    from .features import health as _health  # local: import-light
+    from .features import recipes as _recipes  # local: import-light
+
+    # system.health (feature 1): the single "is my setup OK?" diagnostic. Reads
+    # the same settings + tools_resolver chains the rest of the sidecar uses.
+    _health.register(
+        settings_provider=svc.settings.get,
+        root=svc.data_dir,
+        register_fn=reg,
+    )
+
+    # recipes.* (feature 3): saved multi-step pipelines run in one shot. The
+    # runner invokes the live METHODS registry, so it must register AFTER the
+    # methods its steps reference (transcribe/subtitles/shortmaker/etc.) — i.e.
+    # here, near the end of register_all.
+    _recipes.register(
+        path=svc.data_dir / "recipes.json",
+        register_fn=reg,
+    )
+
+    # diarize.start (feature 4): token-free speaker labelling. Reuses the same
+    # project load/save helpers tracks_audio uses, plus the offline-gated assets.
+    _diarize.register(
+        resolver=svc._resolve_video_path,
+        load_project=_load_project_data,
+        save_project=_save_project_data,
+        settings_provider=svc.settings.get,
+        register_fn=reg,
+    )
 
     # assets.* (A2): registered via the assets package's own register() so the
     # manager binds to the services' data dir + settings (U4).
