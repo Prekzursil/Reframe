@@ -45,6 +45,28 @@ export interface Cue {
 export type SubtitleFormat = 'srt' | 'ass' | 'vtt';
 export type TrackKind = 'soft' | 'hard';
 
+/** captions-export: which language sits on top in a stacked bilingual cue. */
+export type BilingualOrder = 'original-first' | 'translation-first';
+
+/** captions-export: NLE timeline export format + selectable frame rates. */
+export type NleFormat = 'edl' | 'csv';
+export type NleFps = 24 | 25 | 30 | 60;
+
+/** captions-export: the `upload.json` manifest inside a package ZIP. */
+export interface UploadManifest {
+  title: string;
+  description: string;
+  tags: string[];
+  source: {
+    videoId: string;
+    sourceTitle: string;
+    template: string;
+    viralityPct: number | null;
+    durationSec: number;
+    hook: string;
+  };
+}
+
 export interface SubtitleTrack {
   id: string;
   lang: string;
@@ -329,8 +351,10 @@ export const client = {
     translate: (
       trackId: string,
       targetLang: string,
+      // captions-export: bilingual stacks original+translation into a NEW track.
+      opts?: { bilingual?: boolean; order?: BilingualOrder },
     ): Promise<JobHandle & { track?: SubtitleTrack }> =>
-      rpc('subtitles.translate', { trackId, targetLang }),
+      rpc('subtitles.translate', { trackId, targetLang, ...(opts ?? {}) }),
     export: (trackId: string, format: SubtitleFormat): Promise<{ path: string }> =>
       rpc('subtitles.export', { trackId, format }),
   },
@@ -405,6 +429,36 @@ export const client = {
   captions: {
     /** `captions.cues {videoId}` — WORD-level cues (source-absolute seconds). */
     cues: (videoId: string): Promise<{ cues: Cue[] }> => rpc('captions.cues', { videoId }),
+  },
+
+  // ---- captions-export: NLE timeline export (EDL / CSV) -------------------
+
+  nle: {
+    /**
+     * `nle.export {videoId, format?, fps?, title?, clips?}` — export the video's
+     * approved clips as an editable timeline (CMX3600 EDL or CSV) for
+     * Premiere / DaVinci Resolve. `clips` overrides the persisted project clips.
+     */
+    export: (
+      videoId: string,
+      opts?: { format?: NleFormat; fps?: NleFps; title?: string; clips?: unknown[] },
+    ): Promise<{ path: string; clipCount: number }> =>
+      rpc('nle.export', { videoId, ...(opts ?? {}) }),
+  },
+
+  // ---- captions-export: package-for-upload ZIP ---------------------------
+
+  package: {
+    /**
+     * `package.export {path, suggestion?}` — bundle a produced short
+     * (mp4 + thumbnail + suggested title/description/tags upload.json) into a
+     * ZIP for manual posting. `path` is the exported clip (inside exports root).
+     */
+    export: (
+      path: string,
+      suggestion?: { title?: string; description?: string; tags?: string[] | string },
+    ): Promise<{ path: string; manifest: UploadManifest }> =>
+      rpc('package.export', suggestion ? { path, suggestion } : { path }),
   },
 
   // ---- P3-D feedback flywheel ---------------------------------------------
