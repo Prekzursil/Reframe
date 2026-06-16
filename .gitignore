@@ -23,6 +23,10 @@ coverage/
 
 # App data / models / artifacts (never commit large binaries or models)
 models/
+# ...but the Python SOURCE package media_studio/models/ is code, NOT a model
+# artifact — keep it tracked (artifact file types below are ignored regardless):
+!sidecar/media_studio/models/
+!sidecar/media_studio/models/*.py
 *.gguf
 *.pt
 *.onnx
