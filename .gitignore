@@ -58,3 +58,6 @@ dist/
 
 # Regenerable build binaries (staged by build/python-embed-setup.ps1 -WithFfmpeg)
 build/ffmpeg/
+
+# Runtime data root (models/exports/envs — relocatable via MEDIA_STUDIO_CONFIG_DIR)
+/data/
