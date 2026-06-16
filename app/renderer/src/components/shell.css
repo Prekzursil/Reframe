@@ -1,0 +1,1208 @@
+/* Shared UI styling for the media-studio shell (app chrome, Library, Workspace,
+   tabs, progress, feature panels, ShortMaker review, Timeline).
+   CONTRACT-NOTE: App.tsx (foundation) owns the top-level CSS import; tokens
+   come from styles/tokens.css (imported first in App.tsx). All values here are
+   tokens — no one-off colors. Class names are pinned by tests; restyle only. */
+
+/* ---- base ------------------------------------------------------------------ */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--surface-bg);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface-active);
+  border: 3px solid transparent;
+  border-radius: var(--radius-pill);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* One focus language everywhere: a double ring that reads on every surface. */
+:where(button, [role="button"], [role="tab"], input, select, textarea, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* ---- app chrome -------------------------------------------------------------- */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.app__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: 0 var(--space-5);
+  height: 46px;
+  flex: none;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raise);
+  position: relative;
+  z-index: 10;
+}
+
+/* Editorial wordmark: quiet tracked caps + an amber tick — the only place the
+   accent appears "at rest" (it marks the live tool, like a record lamp). */
+.app__brand {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* View nav: a quiet segmented control sitting next to the wordmark. The nav
+   carries the auto-margin so everything after it (Quality + Jobs) sits right. */
+.app__nav {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-right: auto;
+}
+
+.app__nav-btn {
+  appearance: none;
+  border: none;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.app__nav-btn:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.app__nav-btn.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.app__brand::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--accent);
+  flex: none;
+}
+
+/* Quality segmented control: a pill well with a raised active segment. */
+.quality-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.quality-toggle__label {
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.quality-toggle__btn {
+  appearance: none;
+  border: none;
+  padding: 5px 14px;
+  background: var(--surface-deep);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.quality-toggle__btn:first-of-type {
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+}
+
+.quality-toggle__btn:last-of-type {
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+}
+
+.quality-toggle__btn:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.quality-toggle__btn.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* .app__jobs-toggle lives in jobqueue.css; both consume the same tokens. */
+
+.app__main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app__main > * {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---- shared button voices ----------------------------------------------------
+   Ghost (default), raised (form controls), and accent (approve/primary). The
+   accent fill is rationed: add/submit/approve/export actions only. */
+
+button {
+  font-family: inherit;
+}
+
+.library__add-btn,
+.library__remove-btn,
+.workspace__back,
+.feature-panel button,
+.shortmaker button,
+.timeline__toolbar button {
+  appearance: none;
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.library__remove-btn:hover,
+.workspace__back:hover,
+.feature-panel button:hover:not(:disabled),
+.shortmaker button:hover:not(:disabled),
+.timeline__toolbar button:hover:not(:disabled) {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.library__remove-btn:active,
+.workspace__back:active,
+.feature-panel button:active:not(:disabled),
+.shortmaker button:active:not(:disabled),
+.timeline__toolbar button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.feature-panel button:disabled,
+.shortmaker button:disabled,
+.library__add-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Accent voice: the primary/approve actions ONLY (one per surface). */
+.library__add-btn,
+.feature-panel form button[type="submit"],
+.feature-panel .actions > button:first-child:not(.secondary),
+.shortmaker button[type="submit"],
+.sm-export button,
+.sm-row-decide button[aria-label="Approve"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+
+.library__add-btn:hover:not(:disabled),
+.feature-panel form button[type="submit"]:hover:not(:disabled),
+.feature-panel .actions > button:first-child:not(.secondary):hover:not(:disabled),
+.shortmaker button[type="submit"]:hover:not(:disabled),
+.sm-export button:hover:not(:disabled),
+.sm-row-decide button[aria-label="Approve"]:hover:not(:disabled) {
+  background: var(--accent-hover);
+  color: var(--accent-ink);
+}
+
+.library__add-btn:active:not(:disabled),
+.feature-panel form button[type="submit"]:active:not(:disabled),
+.feature-panel .actions > button:first-child:not(.secondary):active:not(:disabled),
+.shortmaker button[type="submit"]:active:not(:disabled),
+.sm-export button:active:not(:disabled),
+.sm-row-decide button[aria-label="Approve"]:active:not(:disabled) {
+  background: var(--accent-pressed);
+}
+
+/* Destructive ghost: remove/discard go quiet-red on hover, never filled. */
+.library__remove-btn:hover,
+.sm-row-decide button[aria-label="Discard"]:hover {
+  background: var(--status-error-soft);
+  color: var(--status-error);
+}
+
+/* ---- shared inputs ------------------------------------------------------------- */
+
+.library__add-input,
+.feature-panel input,
+.feature-panel select,
+.feature-panel textarea,
+.shortmaker input,
+.shortmaker select,
+.shortmaker textarea,
+.timeline__editor input,
+.timeline__editor textarea {
+  appearance: none;
+  padding: 7px 10px;
+  background: var(--surface-deep);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--type-body-size);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.feature-panel input:hover,
+.feature-panel select:hover,
+.feature-panel textarea:hover,
+.shortmaker input:hover,
+.shortmaker select:hover,
+.shortmaker textarea:hover {
+  border-color: var(--edge-strong);
+}
+
+/* ---- Library ------------------------------------------------------------------ */
+
+.library,
+.workspace {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+}
+
+.library__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-6) var(--space-5);
+}
+
+/* Display-scale title: the one BIG thing on the home view. */
+.library__title {
+  margin: 0;
+  font-size: var(--type-display-size);
+  font-weight: var(--type-display-weight);
+  letter-spacing: var(--type-display-tracking);
+  line-height: var(--type-display-leading);
+}
+
+.library__add {
+  display: flex;
+  gap: var(--space-3);
+  flex: 1;
+  max-width: 560px;
+}
+
+.library__add-input {
+  flex: 1;
+}
+
+/* Drag-over: the whole canvas becomes a drop target, marked by an inset accent
+   wash instead of a border box. */
+.library--dragover {
+  box-shadow: inset 0 0 0 2px var(--accent-edge);
+  background: var(--accent-soft);
+}
+
+.library__drophint {
+  margin: 0 var(--space-6);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+  text-align: center;
+}
+
+.library__error,
+.workspace__error {
+  margin: var(--space-4) var(--space-6);
+  padding: var(--space-4) var(--space-5);
+  border-left: 3px solid var(--status-error);
+  border-radius: var(--radius-sm);
+  color: var(--status-error);
+  background: var(--status-error-soft);
+}
+
+.library__loading {
+  padding: var(--space-8) var(--space-6);
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+}
+
+/* Empty state with character: a ghost poster that echoes the real card
+   anatomy (deep 16:9 well + play glyph + mono timecode badge), with a second
+   poster peeking out behind — the stack waiting to be filled. No accent here:
+   an empty library is not an active state. */
+.library__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-6) var(--space-6);
+  text-align: center;
+}
+
+.library__empty-poster {
+  position: relative;
+  width: 220px;
+  aspect-ratio: 16 / 9;
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+  box-shadow:
+    inset 0 0 0 1px var(--edge),
+    var(--shadow-raise);
+}
+
+.library__empty-poster::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  transform: translate(12px, -10px) rotate(2deg);
+}
+
+.library__empty-glyph {
+  font-size: 22px;
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.library__empty-timecode {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--surface-raised);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--type-caption-leading);
+}
+
+.library__empty-title {
+  margin: var(--space-2) 0 0;
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+  color: var(--text-secondary);
+}
+
+.library__empty-hint {
+  margin: 0;
+  font-size: var(--type-body-size);
+  color: var(--text-muted);
+}
+
+.library__list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-3);
+  overflow: auto;
+}
+
+/* Card body (grid layout + thumb treatment live in library-cards.css). */
+.library__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.library__item-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.library__item-title {
+  font-weight: 650;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.library__item-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.library__item-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--text-muted);
+}
+
+/* "Has transcript" mark: quiet success chip, not an accent grab. */
+.library__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-xs);
+  background: var(--status-success-soft);
+  color: var(--status-success);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* Library's inline fallback toast strip (when the app-level host is absent). */
+.library__toasts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: var(--space-4) var(--space-6) 0;
+}
+
+.library__toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface-overlay);
+  border-left: 3px solid var(--edge-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-overlay);
+}
+
+.library__toast--error {
+  border-left-color: var(--status-error);
+}
+
+.library__toast--success {
+  border-left-color: var(--status-success);
+}
+
+.library__toast-msg {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.library__toast-dismiss {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.library__toast-dismiss:hover {
+  color: var(--text-primary);
+}
+
+/* ---- Workspace ------------------------------------------------------------------ */
+
+.workspace__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-6);
+}
+
+.workspace__title {
+  margin: 0;
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+  line-height: var(--type-title-leading);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The player strip: footage floats in a deep well — the darkest surface. */
+.workspace__player {
+  margin: 0 var(--space-6) var(--space-4);
+  padding: var(--space-3);
+  background: var(--surface-deep);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-raise);
+  position: relative;
+}
+
+.player__video {
+  display: block;
+  width: 100%;
+  max-height: 280px;
+  border-radius: var(--radius-md);
+  background: var(--surface-deep);
+}
+
+.workspace__player-note {
+  position: absolute;
+  left: var(--space-5);
+  bottom: var(--space-5);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-xs);
+  background: var(--surface-overlay);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  box-shadow: var(--shadow-overlay);
+}
+
+.workspace__body {
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-6);
+}
+
+.panel--missing,
+.panel--loading {
+  padding: var(--space-6);
+  color: var(--text-muted);
+}
+
+/* ---- TabBar -----------------------------------------------------------------
+   Tracked-caps tabs; the active one earns the accent underline. The strip is a
+   tonal seam (raised -> bg), not a ruled border. */
+
+.tabbar {
+  display: flex;
+  gap: var(--space-2);
+  padding: 0 var(--space-5);
+  background: var(--surface-raised);
+  box-shadow: inset 0 -1px 0 var(--edge);
+}
+
+.tab {
+  appearance: none;
+  position: relative;
+  padding: 11px 14px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.tab::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.tab:hover {
+  color: var(--text-secondary);
+}
+
+.tab:hover::after {
+  background: var(--edge-strong);
+}
+
+.tab--active {
+  color: var(--text-primary);
+}
+
+.tab--active::after {
+  background: var(--accent);
+}
+
+/* ---- ProgressBar (component) ---------------------------------------------------- */
+
+.progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.progress__track {
+  flex: 1;
+  height: 6px;
+  background: var(--surface-deep);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.progress__fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  transition: width var(--dur-base) var(--ease-out);
+}
+
+.progress__label {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Native <progress> used inside feature panels: same accent language. */
+.feature-panel progress,
+.sm-progress progress {
+  appearance: none;
+  width: 220px;
+  height: 6px;
+  border: none;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  background: var(--surface-deep);
+}
+
+.feature-panel progress::-webkit-progress-bar,
+.sm-progress progress::-webkit-progress-bar {
+  background: var(--surface-deep);
+}
+
+.feature-panel progress::-webkit-progress-value,
+.sm-progress progress::-webkit-progress-value {
+  background: var(--accent);
+  transition: width var(--dur-base) var(--ease-out);
+}
+
+.progress-pct {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-message {
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+}
+
+/* ---- Feature panels (Transcribe / Subtitles / Tracks / Convert / Dub / Assets) -- */
+
+.feature-panel,
+.shortmaker,
+.timeline {
+  max-width: 920px;
+}
+
+.feature-panel h2,
+.shortmaker h2,
+.timeline__title {
+  margin: 0 0 var(--space-5);
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+}
+
+.feature-panel .field,
+.sm-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+}
+
+/* Field labels speak in quiet tracked caps. */
+.feature-panel .field > span,
+.feature-panel label > span,
+.sm-field > span {
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.feature-panel .checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+  accent-color: var(--accent);
+}
+
+.feature-panel .actions,
+.sm-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-5) 0;
+}
+
+.feature-panel .progress,
+.sm-progress {
+  margin: var(--space-4) 0;
+}
+
+.feature-panel .error,
+.sm-error,
+.timeline__error {
+  margin: var(--space-4) 0;
+  padding: var(--space-4) var(--space-5);
+  border-left: 3px solid var(--status-error);
+  border-radius: var(--radius-sm);
+  color: var(--status-error);
+  background: var(--status-error-soft);
+}
+
+.feature-panel .status,
+.timeline__status {
+  margin: var(--space-3) 0;
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+}
+
+.feature-panel .empty,
+.asset-empty,
+.audio-track-empty {
+  color: var(--text-muted);
+}
+
+.feature-panel .export-path,
+.dub-result-path {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+
+/* Generic row lists in panels (tracks, assets, audio tracks): raised rows. */
+.track-row,
+.asset-row,
+.audio-track-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  margin: 0 0 var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.track-row:hover,
+.asset-row:hover,
+.audio-track-row:hover {
+  background: var(--surface-hover);
+}
+
+.track-list,
+.asset-list,
+.audio-track-list,
+.cue-list,
+.transcript-segments {
+  list-style: none;
+  margin: var(--space-5) 0;
+  padding: 0;
+}
+
+.asset-kind,
+.audio-track-kind,
+.track-kind,
+.track-format {
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.seg-time,
+.cue-time {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- ShortMaker review ------------------------------------------------------- */
+
+.shortmaker-form .sm-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--space-4);
+  margin: var(--space-4) 0;
+}
+
+.sm-review {
+  margin: var(--space-5) 0;
+  border-radius: var(--radius-md);
+}
+
+.sm-preview {
+  padding: var(--space-3);
+  margin: 0 0 var(--space-5);
+  background: var(--surface-deep);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-raise);
+}
+
+.sm-preview-markers {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-2) var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.sm-candidates {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* Candidate card: raised surface; selection = accent rail + soft wash (the
+   accent only ever marks the ACTIVE candidate). */
+.sm-candidate {
+  position: relative;
+  padding: var(--space-5) var(--space-5) var(--space-4) var(--space-6);
+  background: var(--surface-raised);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+
+.sm-candidate::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+  background: transparent;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.sm-candidate:hover {
+  background: var(--surface-hover);
+}
+
+.sm-selected {
+  background: var(--surface-hover);
+  box-shadow: var(--shadow-raise);
+}
+
+.sm-selected::before {
+  background: var(--accent);
+}
+
+.sm-discarded {
+  opacity: 0.55;
+}
+
+.sm-approved::before {
+  background: var(--status-success);
+}
+
+.sm-rank-score {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+/* BIG number, quiet neighbors: rank is the display voice of this surface. */
+.sm-rank {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: var(--type-display-tracking);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.sm-score {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sm-status {
+  margin-left: auto;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  background: var(--surface-deep);
+  color: var(--text-muted);
+}
+
+.sm-status-approved {
+  background: var(--status-success-soft);
+  color: var(--status-success);
+}
+
+.sm-status-discarded {
+  background: var(--status-error-soft);
+  color: var(--status-error);
+}
+
+/* The hook is the editorial pull-quote — the serif voice, used nowhere else. */
+.sm-hook {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-editorial);
+  font-size: 15px;
+  font-style: italic;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+.sm-why {
+  margin: 0 0 var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--type-body-size);
+}
+
+.sm-times {
+  margin: 0 0 var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.sm-nudged {
+  color: var(--status-warn);
+}
+
+.sm-row-actions,
+.sm-row-decide {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.sm-row-actions {
+  margin-bottom: var(--space-3);
+}
+
+.sm-row-actions button {
+  padding: 3px 8px;
+  font-size: var(--type-caption-size);
+  font-family: var(--font-mono);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.sm-row-actions button:hover:not(:disabled) {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.sm-export {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  margin: var(--space-5) 0;
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface-raised);
+  border-radius: var(--radius-md);
+}
+
+.sm-export > span {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.sm-exported {
+  margin: var(--space-5) 0;
+  padding: var(--space-4) var(--space-5);
+  border-left: 3px solid var(--status-success);
+  border-radius: var(--radius-sm);
+  background: var(--status-success-soft);
+}
+
+.sm-exported h3 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--type-body-size);
+  color: var(--status-success);
+}
+
+.sm-exported ul {
+  margin: 0;
+  padding-left: var(--space-5);
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+}
+
+.sm-empty {
+  color: var(--text-muted);
+}
+
+/* ---- Timeline ------------------------------------------------------------------- */
+
+.timeline__lane {
+  position: relative;
+  padding: var(--space-3);
+  background: var(--surface-deep);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-raise);
+}
+
+.timeline__waveform {
+  display: block;
+  width: 100%;
+  border-radius: var(--radius-xs);
+}
+
+.timeline__cue {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-active);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.timeline__cue:hover {
+  background: var(--edge-strong);
+}
+
+.timeline__cue--selected {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-edge);
+}
+
+.timeline__edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.timeline__edge--start {
+  left: 0;
+}
+
+.timeline__edge--end {
+  right: 0;
+}
+
+.timeline__playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.timeline__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-4) 0;
+}
+
+.timeline__editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  margin: var(--space-4) 0;
+  background: var(--surface-raised);
+  border-radius: var(--radius-md);
+}

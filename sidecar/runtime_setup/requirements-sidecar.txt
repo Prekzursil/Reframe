@@ -1,0 +1,28 @@
+# requirements-sidecar.txt — the HEAVY sidecar deps installed on FIRST RUN into
+# %APPDATA%/media-studio/envs/sidecar via `pip install --target` (CONTRACTS.md A7).
+# NEVER shipped inside the installer (slim rule); NEVER torch (A6 lesson 5).
+#
+# A6 lesson 5: every line is PINNED. Pins mirror the dev venv (sidecar/.venv)
+# verified against its site-packages dist-info on 2026-06-12. Transitive deps
+# (certifi, tqdm, ...) resolve freely; every native-extension wheel is pinned
+# explicitly below so first-run installs are deterministic where it matters.
+
+faster-whisper==1.2.1
+ctranslate2==4.8.0
+scenedetect==0.7
+opencv-python==4.13.0.92
+httpx==0.28.1
+numpy==2.4.6
+av==17.1.0
+onnxruntime==1.26.0
+huggingface_hub==1.19.0
+tokenizers==0.23.1
+
+# TTS (kokoro default engine — the onnx build, NEVER the torch pip package; A4)
+# CONTRACT-NOTE: kokoro-onnx is not in the dev venv yet (T2 lane); 0.4.9 is the
+# pinned choice per the T5 brief ("latest pinned by exact version you choose").
+kokoro-onnx==0.4.9
+
+# CUDA runtime wheels for ctranslate2/onnxruntime GPU paths (pins = dev venv)
+nvidia-cublas-cu12==12.9.2.10
+nvidia-cudnn-cu12==9.23.1.3

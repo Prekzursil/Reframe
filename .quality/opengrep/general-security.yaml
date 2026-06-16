@@ -1,0 +1,37 @@
+# Curated language-agnostic security rules (subset of p/r2c-security-audit).
+# opengrep/semgrep compatible. See README.md.
+rules:
+  - id: generic-private-key-committed
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      A PEM private key block appears to be committed to source. Private keys
+      must never live in the repo; use a secret manager / env vars.
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+    paths:
+      exclude:
+        - "*.example"
+        - ".env.example"
+        - "**/tests/**"
+        - "**/fixtures/**"
+    patterns:
+      - pattern-regex: "-----BEGIN (RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----"
+
+  - id: generic-aws-access-key-id
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      A string matching an AWS Access Key ID was found. Rotate it and move
+      credentials to a secret manager / environment variables.
+    metadata:
+      category: security
+      cwe: "CWE-798"
+    paths:
+      exclude:
+        - "*.example"
+        - ".env.example"
+        - "**/tests/**"
+    patterns:
+      - pattern-regex: "\\b(AKIA|ASIA)[0-9A-Z]{16}\\b"

@@ -1,0 +1,521 @@
+"""Unit tests for the claudeshorts reframe engine (T4b) + the engine registry.
+
+NO mediapipe, NO cv2, NO wsl, NO real ffmpeg: every heavy seam (prober,
+detector, encode runner, wsl probe, importer) is injected. Coverage per the
+unit's DONE-WHEN:
+
+  * rect math — centered subject -> centered crop; moving subject -> smoothed
+    (eased) track that damps jitter;
+  * ffmpeg argv shape — ONE crop+scale pass, argv list, 1080x1920, progress
+    flags, dynamic x(t) only when the subject moves;
+  * fallback selection logic — reframe.get_engine / resolve_engine_name with a
+    MOCKED wsl probe (verthor available / wsl down / script missing).
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+from media_studio.features import reframe
+from media_studio.features import reframe_claudeshorts as cs
+from media_studio.features.reframe import ReframeEngine
+from media_studio.features.reframe_claudeshorts import (
+    ClaudeShortsReframeEngine,
+    ClaudeShortsReframeError,
+)
+
+
+# --------------------------------------------------------------------------- #
+# fakes / fixtures
+# --------------------------------------------------------------------------- #
+class _Completed:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _make_ff_runner(returncode=0):
+    """An ffmpeg.run-shaped fake that records every encode call."""
+    calls = []
+
+    def runner(argv, total_sec=0.0, on_progress=None, should_cancel=None, **kw):
+        calls.append({"argv": argv, "total_sec": total_sec, "kwargs": kw})
+        return returncode
+
+    runner.calls = calls
+    return runner
+
+
+@pytest.fixture
+def fake_bins(tmp_path):
+    """settings with a resolvable fake ffmpeg/ffprobe dir (no real binaries)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("ffmpeg", "ffmpeg.exe", "ffprobe", "ffprobe.exe"):
+        (bin_dir / name).write_text("")
+    return {"ffmpegPath": str(bin_dir)}
+
+
+def _vf_of(argv):
+    return argv[argv.index("-vf") + 1]
+
+
+def _engine(
+    fake_bins,
+    detector,
+    runner=None,
+    dims=(1280, 720, 8.0),
+):
+    runner = runner or _make_ff_runner(0)
+    eng = ClaudeShortsReframeEngine(
+        settings=fake_bins,
+        runner=runner,
+        prober=lambda _path: dims,
+        detector=detector,
+    )
+    return eng, runner
+
+
+# --------------------------------------------------------------------------- #
+# aspect / crop-rect math
+# --------------------------------------------------------------------------- #
+def test_output_dimensions_canonical_9_16():
+    assert cs.output_dimensions("9:16") == (1080, 1920)
+    assert cs.output_dimensions() == (1080, 1920)
+
+
+def test_output_dimensions_other_ratios_even():
+    w, h = cs.output_dimensions("3:4")
+    assert h == 1920 and w % 2 == 0
+    w, h = cs.output_dimensions("16:9")
+    assert w == 1920 and h % 2 == 0
+
+
+@pytest.mark.parametrize("bad", ["9", "a:b", "0:16", "9:0", ""])
+def test_parse_aspect_rejects_garbage(bad):
+    with pytest.raises(ValueError):
+        cs._parse_aspect(bad)
+
+
+def test_crop_size_landscape_to_9_16_is_route_a_rect():
+    # ENGINE1_BUILD_RECIPE: 1280x720 talking-head -> crop 405x720.
+    assert cs.crop_size(1280, 720, "9:16") == (405, 720)
+    assert cs.crop_size(1920, 1080, "9:16") == (608, 1080)
+
+
+def test_crop_size_portrait_source_crops_height():
+    w, h = cs.crop_size(1080, 1920, "16:9")
+    assert w == 1080
+    assert h == 608
+
+
+def test_crop_size_rejects_bad_dims():
+    with pytest.raises(ValueError):
+        cs.crop_size(0, 720)
+
+
+def test_centered_crop_centers_both_axes():
+    rect = cs.centered_crop(1280, 720, "9:16")
+    assert rect == {"x": 437, "y": 0, "w": 405, "h": 720}
+    rect = cs.centered_crop(1080, 1920, "16:9")
+    assert rect["y"] == (1920 - rect["h"]) // 2
+
+
+def test_crop_x_for_center_centered_subject_gives_centered_crop():
+    # The unit's headline rect-math assertion.
+    x = cs.crop_x_for_center(0.5, 405, 1280)
+    centered = (1280 - 405) // 2
+    assert abs(x - centered) <= 1
+
+
+def test_crop_x_for_center_clamps_to_frame():
+    assert cs.crop_x_for_center(0.0, 405, 1280) == 0
+    assert cs.crop_x_for_center(1.0, 405, 1280) == 1280 - 405
+    # crop as wide as the source: only x=0 fits.
+    assert cs.crop_x_for_center(0.9, 1280, 1280) == 0
+
+
+# --------------------------------------------------------------------------- #
+# smoothing / windows / keyframes
+# --------------------------------------------------------------------------- #
+def test_smooth_centers_constant_input_unchanged():
+    assert cs.smooth_centers([0.5, 0.5, 0.5]) == [0.5, 0.5, 0.5]
+
+
+def test_smooth_centers_eases_toward_a_step():
+    out = cs.smooth_centers([0.2, 0.8, 0.8, 0.8], alpha=0.35)
+    assert out[0] == pytest.approx(0.2)
+    # monotone approach toward 0.8, never overshooting
+    assert out[1] < out[2] < out[3] < 0.8
+    assert out[1] == pytest.approx(0.2 + 0.35 * 0.6)
+
+
+def test_smooth_centers_damps_jitter():
+    raw = [0.5, 0.9, 0.1, 0.9, 0.1]
+    out = cs.smooth_centers(raw)
+    raw_jump = max(abs(b - a) for a, b in zip(raw, raw[1:], strict=False))
+    out_jump = max(abs(b - a) for a, b in zip(out, out[1:], strict=False))
+    assert out_jump < raw_jump
+
+
+def test_window_timestamps_midpoints():
+    assert cs.window_timestamps(10.0, window_sec=2.0) == [1.0, 3.0, 5.0, 7.0, 9.0]
+
+
+def test_window_timestamps_caps_and_degenerates():
+    assert len(cs.window_timestamps(1000.0)) == cs.MAX_WINDOWS
+    assert cs.window_timestamps(0.0) == [0.0]
+    assert cs.window_timestamps(0.5) == [0.25]
+
+
+def test_dedupe_keyframes_drops_small_middle_moves():
+    kfs = cs.build_keyframes([1, 2, 3, 4, 5], [100, 101, 150, 151, 200])
+    out = cs.dedupe_keyframes(kfs, min_delta=8.1)
+    assert [k["x"] for k in out] == [100, 150, 200]
+    # first + last always survive
+    assert out[0]["t"] == 1 and out[-1]["t"] == 5
+
+
+def test_dedupe_keyframes_short_lists_untouched():
+    kfs = cs.build_keyframes([1, 2], [100, 500])
+    assert cs.dedupe_keyframes(kfs, min_delta=8.1) == kfs
+
+
+def test_is_static():
+    near = cs.build_keyframes([1, 2], [437, 439])
+    far = cs.build_keyframes([1, 2], [400, 500])
+    assert cs.is_static(near, epsilon=8.1) is True
+    assert cs.is_static(far, epsilon=8.1) is False
+    assert cs.is_static([], epsilon=8.1) is True
+
+
+# --------------------------------------------------------------------------- #
+# crop-x expression + ffmpeg argv shape
+# --------------------------------------------------------------------------- #
+def test_build_crop_x_expr_static():
+    assert cs.build_crop_x_expr(437, None) == "437"
+    assert cs.build_crop_x_expr(437, []) == "437"
+    one = cs.build_keyframes([2.0], [123])
+    assert cs.build_crop_x_expr(437, one) == "123"
+
+
+def test_build_crop_x_expr_piecewise_linear():
+    kfs = cs.build_keyframes([1.0, 3.0], [100, 300])
+    expr = cs.build_crop_x_expr(437, kfs)
+    # nested if() lerp segments, a t=0 hold prepended, last x held at the end
+    assert expr.startswith("if(lt(t,")
+    assert expr.count("if(") == 2  # [0->1 hold] + [1->3 lerp]
+    assert "(t-1.000)/(2.000)" in expr
+    assert expr.endswith("300))")
+    assert " " not in expr  # ffmpeg expression-safe
+
+
+def test_build_crop_x_expr_skips_duplicate_timestamps():
+    kfs = cs.build_keyframes([1.0, 1.0, 3.0], [100, 100, 300])
+    expr = cs.build_crop_x_expr(437, kfs)
+    assert "/(0.000)" not in expr  # no division-by-zero segment
+
+
+def test_build_reframe_argv_one_pass_shape(fake_bins):
+    crop = {"x": 437, "y": 0, "w": 405, "h": 720}
+    argv = cs.build_reframe_argv("C:\\in\\a clip.mp4", "C:\\out\\b clip.mp4", crop, None, "9:16", fake_bins)
+    assert isinstance(argv, list)
+    # ONE -vf with crop AND scale chained (the single ffmpeg pass)
+    assert argv.count("-vf") == 1
+    vf = _vf_of(argv)
+    assert vf.startswith("crop=405:720:'437':0,")
+    assert "scale=1080:1920:flags=lanczos" in vf
+    assert "setsar=1" in vf
+    # encode + progress flags for ffmpeg.run
+    assert "libx264" in argv and "yuv420p" in argv
+    assert argv[argv.index("-progress") + 1] == "pipe:1"
+    assert "-nostats" in argv and "-y" in argv and "-nostdin" in argv
+    # paths are single argv elements (spaces intact), in then out
+    assert "C:\\in\\a clip.mp4" in argv and argv[-1] == "C:\\out\\b clip.mp4"
+
+
+def test_build_reframe_argv_keyframed_x(fake_bins):
+    crop = {"x": 437, "y": 0, "w": 405, "h": 720}
+    kfs = cs.build_keyframes([1.0, 3.0], [100, 300])
+    vf = _vf_of(cs.build_reframe_argv("/in.mp4", "/out.mp4", crop, kfs, "9:16", fake_bins))
+    assert "crop=405:720:'if(lt(t," in vf  # quoted dynamic expression
+
+
+def test_build_frame_extract_argv(fake_bins):
+    argv = cs.build_frame_extract_argv("/in.mp4", 1.5, "/tmp/f.jpg", fake_bins)
+    assert argv[argv.index("-ss") + 1] == "1.500"
+    assert argv[argv.index("-frames:v") + 1] == "1"
+    assert argv[-1] == "/tmp/f.jpg"
+
+
+# --------------------------------------------------------------------------- #
+# probing
+# --------------------------------------------------------------------------- #
+def _probe_json(w=1280, h=720, fmt_duration="8.0", stream_duration=None):
+    stream = {"width": w, "height": h}
+    if stream_duration is not None:
+        stream["duration"] = stream_duration
+    data = {"streams": [stream]}
+    if fmt_duration is not None:
+        data["format"] = {"duration": fmt_duration}
+    return json.dumps(data)
+
+
+def test_probe_video_parses_geometry_and_duration(fake_bins):
+    runner = lambda argv, **kw: _Completed(stdout=_probe_json())  # noqa: E731
+    assert cs.probe_video("/in.mp4", fake_bins, runner=runner) == (1280, 720, 8.0)
+
+
+def test_probe_video_falls_back_to_stream_duration(fake_bins):
+    runner = lambda argv, **kw: _Completed(  # noqa: E731
+        stdout=_probe_json(fmt_duration=None, stream_duration="6.5")
+    )
+    assert cs.probe_video("/in.mp4", fake_bins, runner=runner)[2] == 6.5
+
+
+def test_probe_video_bad_duration_degrades_to_zero(fake_bins):
+    runner = lambda argv, **kw: _Completed(  # noqa: E731
+        stdout=_probe_json(fmt_duration="N/A")
+    )
+    assert cs.probe_video("/in.mp4", fake_bins, runner=runner)[2] == 0.0
+
+
+def test_probe_video_garbage_raises_typed_error(fake_bins):
+    runner = lambda argv, **kw: _Completed(stdout="not json")  # noqa: E731
+    with pytest.raises(ClaudeShortsReframeError):
+        cs.probe_video("/in.mp4", fake_bins, runner=runner)
+
+
+def test_probe_argv_uses_ffprobe_json(fake_bins):
+    argv = cs.build_probe_streams_argv("/in.mp4", fake_bins)
+    assert "ffprobe" in argv[0]
+    assert "-show_streams" in argv and "json" in argv
+    assert argv[-1] == "/in.mp4"
+
+
+# --------------------------------------------------------------------------- #
+# detection backend selection (importer mocked — no natives anywhere)
+# --------------------------------------------------------------------------- #
+def _importer(available):
+    def imp(name):
+        if name in available:
+            return object()
+        raise ImportError(name)
+
+    return imp
+
+
+def test_detect_backend_prefers_mediapipe_when_both_import():
+    assert cs.detect_backend(_importer({"mediapipe", "cv2"})) == "mediapipe"
+
+
+def test_detect_backend_haar_when_mediapipe_missing():
+    assert cs.detect_backend(_importer({"cv2"})) == "haar"
+
+
+def test_detect_backend_mediapipe_without_cv2_falls_to_center():
+    # mediapipe alone cannot decode frames; chain must not stop half-way.
+    assert cs.detect_backend(_importer({"mediapipe"})) == "center"
+
+
+def test_detect_backend_center_when_nothing_imports():
+    assert cs.detect_backend(_importer(set())) == "center"
+
+
+def test_detect_subject_centers_center_backend_short_circuits():
+    def boom(*a, **kw):  # pragma: no cover - must never run
+        raise AssertionError("no frame extraction for the center backend")
+
+    assert cs.detect_subject_centers("/in.mp4", [0.5], frame_runner=boom, backend="center") == []
+
+
+def test_native_preimport_flag_lists_mediapipe_and_cv2():
+    # A6 lesson 1 — the wiring agent consumes this (see WIRING-T4B.md).
+    assert set(cs.NATIVE_MODULES_FOR_PREIMPORT) == {"mediapipe", "cv2"}
+
+
+# --------------------------------------------------------------------------- #
+# engine end-to-end (fake prober/detector/runner)
+# --------------------------------------------------------------------------- #
+def test_engine_centered_subject_one_static_pass(fake_bins):
+    ts = cs.window_timestamps(8.0)
+    eng, runner = _engine(fake_bins, detector=lambda p, t: [(x, 0.5) for x in ts])
+    out = eng.reframe("C:\\in\\clip.mp4", "C:\\out\\clip.mp4", "9:16")
+    assert out == "C:\\out\\clip.mp4"
+    # ONE ffmpeg pass total
+    assert len(runner.calls) == 1
+    vf = _vf_of(runner.calls[0]["argv"])
+    # centered subject -> centered crop (static, no animated expression)
+    assert "if(" not in vf
+    x = int(vf.split(":'")[1].split("'")[0])
+    assert abs(x - 437) <= 1
+    assert "scale=1080:1920" in vf
+
+
+def test_engine_no_subject_center_crop(fake_bins):
+    eng, runner = _engine(fake_bins, detector=lambda p, t: [])
+    eng.reframe("/in.mp4", "/out.mp4")
+    vf = _vf_of(runner.calls[0]["argv"])
+    assert "crop=405:720:'437':0" in vf
+
+
+def test_engine_moving_subject_smoothed_keyframed_track(fake_bins):
+    moving = [(1.0, 0.1), (3.0, 0.3), (5.0, 0.5), (7.0, 0.9)]
+    eng, runner = _engine(fake_bins, detector=lambda p, t: moving)
+    crop, kfs, duration = eng.compute_plan("/in.mp4")
+    assert duration == 8.0
+    assert len(kfs) >= 2  # genuinely animated
+    # the track is SMOOTHED: eased x values lag the raw target, monotone here
+    xs = [k["x"] for k in kfs]
+    assert xs == sorted(xs)
+    raw_last = cs.crop_x_for_center(0.9, 405, 1280)
+    assert xs[-1] < raw_last  # easing lag — not a raw pass-through
+    # and the single encode pass uses the animated expression
+    eng.reframe("/in.mp4", "/out.mp4")
+    assert len(runner.calls) == 1
+    assert "if(lt(t," in _vf_of(runner.calls[0]["argv"])
+
+
+def test_engine_stable_subject_off_center_static_clamped(fake_bins):
+    eng, _ = _engine(fake_bins, detector=lambda p, t: [(1.0, 0.99), (3.0, 0.99)])
+    crop, kfs, _d = eng.compute_plan("/in.mp4")
+    assert kfs == []  # static
+    assert crop["x"] == 1280 - 405  # clamped to the frame edge
+
+
+def test_engine_detector_failure_degrades_to_center(fake_bins):
+    def broken(p, t):
+        raise RuntimeError("mediapipe exploded")
+
+    eng, runner = _engine(fake_bins, detector=broken)
+    out = eng.reframe("/in.mp4", "/out.mp4")
+    assert out == "/out.mp4"
+    assert "'437'" in _vf_of(runner.calls[0]["argv"])
+
+
+def test_engine_passes_total_sec_and_argv_list(fake_bins):
+    eng, runner = _engine(fake_bins, detector=lambda p, t: [])
+    eng.reframe("/in.mp4", "/out.mp4")
+    call = runner.calls[0]
+    assert isinstance(call["argv"], list)
+    assert call["total_sec"] == 8.0
+    assert "shell" not in call["kwargs"]
+
+
+def test_engine_nonzero_exit_raises_typed_error(fake_bins):
+    eng, _ = _engine(fake_bins, detector=lambda p, t: [], runner=_make_ff_runner(3))
+    with pytest.raises(ClaudeShortsReframeError) as exc:
+        eng.reframe("/in.mp4", "/out.mp4")
+    assert "exit 3" in str(exc.value)
+
+
+def test_engine_default_aspect_is_9_16(fake_bins):
+    eng, runner = _engine(fake_bins, detector=lambda p, t: [])
+    eng.reframe("/in.mp4", "/out.mp4")  # no aspect argument
+    assert "scale=1080:1920" in _vf_of(runner.calls[0]["argv"])
+
+
+# --------------------------------------------------------------------------- #
+# registry + automatic fallback (reframe.get_engine — MOCKED wsl probe)
+# --------------------------------------------------------------------------- #
+def _wsl_probe(returncode=0, exc=None):
+    calls = []
+
+    def probe(argv, **kwargs):
+        calls.append(argv)
+        if exc is not None:
+            raise exc
+        return _Completed(returncode=returncode)
+
+    probe.calls = calls
+    return probe
+
+
+def _never_probe(argv, **kwargs):  # pragma: no cover - must never run
+    raise AssertionError("probe must not run for an explicit claudeshorts request")
+
+
+@pytest.fixture
+def verthor_script(tmp_path, monkeypatch):
+    monkeypatch.delenv("MEDIA_STUDIO_VERTHOR_SCRIPT", raising=False)
+    script = tmp_path / "verthor_reframe.sh"
+    script.write_text("#!/bin/bash\n")
+    return {"verthorScript": str(script)}
+
+
+def test_engines_registry_has_exactly_the_two_a4_impls():
+    assert set(reframe.ENGINES) == {"verthor", "claudeshorts"}
+    assert reframe.ENGINES["verthor"] is ReframeEngine
+    assert reframe.ENGINES["claudeshorts"] is ClaudeShortsReframeEngine
+
+
+def test_wsl_available_probe_shapes():
+    ok = _wsl_probe(returncode=0)
+    assert reframe.wsl_available(ok) is True
+    assert ok.calls[0] == ["wsl", "--status"]
+    assert reframe.wsl_available(_wsl_probe(returncode=1)) is False
+    assert reframe.wsl_available(_wsl_probe(exc=FileNotFoundError("wsl"))) is False
+
+
+def test_script_present(verthor_script):
+    assert reframe.script_present(verthor_script) is True
+    assert reframe.script_present({"verthorScript": "definitely_missing/nope.sh"}) is False
+    # POSIX path lives inside WSL — not host-checkable, the wsl probe decides.
+    assert reframe.script_present({"verthorScript": "/opt/verthor/reframe.sh"}) is True
+
+
+def test_resolve_explicit_claudeshorts_never_probes():
+    name, notice = reframe.resolve_engine_name("claudeshorts", {}, probe_runner=_never_probe)
+    assert name == "claudeshorts"
+    assert notice is None
+
+
+@pytest.mark.parametrize("requested", ["auto", "verthor", "", None])
+def test_resolve_verthor_when_available(requested, verthor_script):
+    name, notice = reframe.resolve_engine_name(requested, verthor_script, probe_runner=_wsl_probe(returncode=0))
+    assert name == "verthor"
+    assert notice is None
+
+
+@pytest.mark.parametrize("requested", ["auto", "verthor"])
+def test_resolve_falls_back_when_wsl_probe_fails(requested, verthor_script):
+    name, notice = reframe.resolve_engine_name(requested, verthor_script, probe_runner=_wsl_probe(returncode=1))
+    assert name == "claudeshorts"
+    assert notice is not None
+    assert notice["type"] == "reframe.fallback"
+    assert notice["requested"] == requested
+    assert notice["engine"] == "claudeshorts"
+    assert "WSL" in notice["reason"]
+    assert "claudeshorts" in notice["message"]
+
+
+def test_resolve_falls_back_when_script_missing(monkeypatch):
+    monkeypatch.delenv("MEDIA_STUDIO_VERTHOR_SCRIPT", raising=False)
+    name, notice = reframe.resolve_engine_name(
+        "auto",
+        {"verthorScript": "definitely_missing/nope.sh"},
+        probe_runner=_never_probe,  # script check fails BEFORE any wsl probe
+    )
+    assert name == "claudeshorts"
+    assert "not found" in notice["reason"]
+
+
+def test_resolve_unknown_engine_raises():
+    with pytest.raises(ValueError):
+        reframe.resolve_engine_name("ffmpeg-magic", {})
+
+
+def test_get_engine_returns_constructed_instances(verthor_script):
+    eng, notice = reframe.get_engine("auto", verthor_script, probe_runner=_wsl_probe(returncode=0))
+    assert isinstance(eng, ReframeEngine)
+    assert notice is None
+
+    eng, notice = reframe.get_engine("auto", verthor_script, probe_runner=_wsl_probe(returncode=1))
+    assert isinstance(eng, ClaudeShortsReframeEngine)
+    assert notice is not None
+
+    eng, notice = reframe.get_engine("claudeshorts", {}, probe_runner=_never_probe)
+    assert isinstance(eng, ClaudeShortsReframeEngine)
+    assert notice is None

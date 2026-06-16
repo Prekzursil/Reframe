@@ -1,0 +1,102 @@
+# electron-builder.yml — two-stage Windows packaging (CONTRACTS.md A7 / PLAN-P2 T5).
+#
+# STAGE 1 (this config): a SLIM artifact (< ~700 MB; NSIS has a ~2 GB format
+# ceiling anyway): Electron app + render-cli + embeddable CPython 3.12 +
+# ffmpeg/ffprobe + the pre-built Remotion bundle + the sidecar SOURCE.
+# NO torch, NO heavy wheels, NO models — those install on first run
+# (resources/sidecar/runtime_setup/bootstrap.py -> %APPDATA%/media-studio).
+#
+# Build (human-run; agents never run installs/builds):
+#   1. build/python-embed-setup.ps1          # stages build/python-embed + build/ffmpeg (network)
+#   2. cd app && npm run build               # electron-vite -> app/out
+#   3. cd app/render-cli && npm run bundle   # T4a: writes render-cli/out/remotion-bundle
+#   4. cd app && npx electron-builder --config ../electron-builder.yml --win
+#   5. build/make-portable.ps1               # optional: zip + slim/size assertions
+#
+# Paths below are relative to the PROJECT dir (app/), because the build runs
+# from app/ with `--config ../electron-builder.yml`.
+
+appId: local.media-studio
+productName: Reframe - Media Studio
+# no publish/update/signing — local personal app (§0: no platform creep)
+publish: null
+
+directories:
+  output: ../dist
+  buildResources: ../build
+
+# Renderer + main are fully bundled by electron-vite into out/; app node_modules
+# are NOT shipped (react lands in the vite bundle). render-cli is its own
+# package (T4a) — it ships ENTIRELY via extraResources below (never in asar:
+# the sidecar spawns render.js + the native compositor from the real
+# filesystem at resources/render-cli/..., the paths WIRING-T4A injects).
+files:
+  - out/**/*
+  - package.json
+  - "!render-cli/**"
+  - "!node_modules/**"
+
+asar: true
+
+extraResources:
+  # Remotion render CLI (T4a) — layout mirrors the dev tree so the supervisor
+  # env vars are just process.resourcesPath + the same relative paths:
+  #   MEDIA_STUDIO_RENDER_JS       -> resources/render-cli/dist/render.js
+  #   MEDIA_STUDIO_REMOTION_BUNDLE -> resources/render-cli/out/remotion-bundle
+  # node_modules carries @remotion/renderer + its native compositor (A4:
+  # asar-free by construction here).
+  - from: render-cli/dist
+    to: render-cli/dist
+  - from: render-cli/out/remotion-bundle
+    to: render-cli/out/remotion-bundle
+  - from: render-cli/node_modules
+    to: render-cli/node_modules
+  - from: render-cli/package.json
+    to: render-cli/package.json
+  # Embeddable CPython 3.12 (+ staged get-pip.py) — build/python-embed-setup.ps1
+  - from: ../build/python-embed
+    to: python
+  # Bundled ffmpeg/ffprobe — resolved by ffmpeg.py via MEDIA_STUDIO_FFMPEG/FFPROBE
+  # env injected by the supervisor (WIRING-T5.md) — build/python-embed-setup.ps1
+  - from: ../build/ffmpeg
+    to: bin
+    filter:
+      - "ffmpeg.exe"
+      - "ffprobe.exe"
+      - "*.txt"
+  # The sidecar SOURCE (pure .py + the verthor WSL script + first-run setup).
+  # Python cannot import from asar; ships as plain files under resources/.
+  - from: ../sidecar/media_studio
+    to: sidecar/media_studio
+    filter:
+      - "**/*.py"
+      - "scripts/**"
+  - from: ../sidecar/runtime_setup
+    to: sidecar/runtime_setup
+    filter:
+      - "**/*.py"
+      - "requirements-*.txt"
+win:
+  # Two targets per T5: NSIS installer + portable zip (both slim).
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: zip
+      arch: [x64]
+  artifactName: ${name}-${version}-win-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  # First-run state lives in %APPDATA%/media-studio (envs/models/tools);
+  # uninstall keeps it so a reinstall needs no re-download.
+  deleteAppDataOnUninstall: false
+  shortcutName: Reframe - Media Studio
+
+# Nothing native to rebuild in the app package itself (natives live in
+# render-cli's own node_modules, shipped as-is, and in the first-run envs).
+npmRebuild: false
+nodeGypRebuild: false
+electronLanguages: [en-US]
+compression: normal

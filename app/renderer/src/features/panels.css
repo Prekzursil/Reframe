@@ -1,0 +1,351 @@
+/* panels.css — the six workspace feature panels (SURFACE GROUP B):
+   Transcribe / Subtitles / Tracks / Convert / Dub / Assets.
+   Deepens the shared base in components/shell.css. The voice is fixed:
+   quiet tracked-caps labels + subheads, mono for every number/path/timecode,
+   raised rows that tone-up on hover, status colors only where something IS a
+   status (done = success rail, never decorative green). Tokens only.
+   Class names are test-pinned; restyle only. */
+
+/* ---- shared panel voice ----------------------------------------------------- */
+
+/* section subheads speak caption-caps so the CONTENT carries the scale */
+.feature-panel h3 {
+  margin: var(--space-6) 0 var(--space-3);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* bare <label> field captions (label-for pattern) join the tracked-caps voice;
+   safe here because none of these labels wrap their inputs */
+.feature-panel .field > label {
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* paths and identifiers are mono, never headline material */
+.feature-panel code {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.feature-panel .dub-intro,
+.feature-panel .assets-intro {
+  margin: 0 0 var(--space-5);
+  max-width: 64ch;
+  color: var(--text-secondary);
+}
+
+/* ---- Transcribe -------------------------------------------------------------- */
+
+.transcribe-panel .transcript-summary > p {
+  color: var(--text-secondary);
+}
+
+/* the stats are the big numbers of this panel */
+.transcribe-panel .transcript-summary strong {
+  color: var(--text-primary);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.transcribe-panel .transcript-segments li {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.transcribe-panel .transcript-segments li:hover {
+  background: var(--surface-raised);
+}
+
+.transcribe-panel .seg-time {
+  margin-right: var(--space-3);
+}
+
+/* ---- Subtitles ---------------------------------------------------------------- */
+
+.subtitles-panel .track-meta {
+  margin: var(--space-4) 0 var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+}
+
+.subtitles-panel .track-meta strong {
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+/* translate / export become control rows, not stacked fields */
+.subtitles-panel .field.translate-row,
+.subtitles-panel .field.export-row {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.subtitles-panel .cue-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+}
+
+.subtitles-panel .cue-time {
+  flex: none;
+  min-width: 110px;
+}
+
+.subtitles-panel .cue-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- Tracks ------------------------------------------------------------------- */
+
+.tracks-panel .track-row {
+  flex-wrap: wrap;
+}
+
+.tracks-panel .track-fields {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.tracks-panel .track-name {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.tracks-panel .track-lang {
+  flex: none;
+  width: 72px;
+  text-align: center;
+  font-family: var(--font-mono);
+}
+
+.tracks-panel .track-ops {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.tracks-panel .available-tracks ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tracks-panel .available-tracks li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  margin: 0 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.tracks-panel .available-tracks li:hover {
+  background: var(--surface-hover);
+}
+
+/* ---- Convert ------------------------------------------------------------------- */
+
+.convert-panel .source-label {
+  margin: 0 0 var(--space-5);
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+}
+
+/* options sit in a compact grid — a control deck, not a form column */
+.convert-panel .convert-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--space-4);
+  align-items: end;
+}
+
+.convert-panel .convert-form .field {
+  margin: 0;
+}
+
+.convert-panel .convert-form .checkbox-field,
+.convert-panel .convert-form .actions {
+  grid-column: 1 / -1;
+}
+
+/* finished output is a DONE status: success rail, mono paths */
+.convert-panel .output-paths {
+  margin: var(--space-5) 0;
+  padding: var(--space-4) var(--space-5);
+  border-left: 3px solid var(--status-success);
+  border-radius: var(--radius-sm);
+  background: var(--status-success-soft);
+}
+
+.convert-panel .output-paths h3 {
+  margin: 0 0 var(--space-3);
+  color: var(--status-success);
+}
+
+.convert-panel .output-paths ul {
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+/* ---- Dub ---------------------------------------------------------------------- */
+
+.dub-panel .dub-pickers {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-4);
+  margin: 0 0 var(--space-4);
+}
+
+/* these labels WRAP their controls, so they get the quiet voice without
+   text-transform/tracking (which would leak into the control text) */
+.dub-panel .dub-pickers label,
+.dub-panel .dub-sample-upload label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  color: var(--text-muted);
+}
+
+.dub-panel .dub-pickers select,
+.dub-panel .dub-pickers input {
+  font-weight: var(--type-body-weight);
+}
+
+.dub-panel .dub-sample-upload {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.dub-panel .dub-sample-upload label {
+  flex: 1 1 260px;
+}
+
+.dub-panel .dub-sample-message {
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+}
+
+/* a finished dub is a DONE status: success rail + auditioning player */
+.dub-panel .dub-result {
+  margin: var(--space-5) 0;
+  padding: var(--space-4) var(--space-5);
+  border-left: 3px solid var(--status-success);
+  border-radius: var(--radius-sm);
+  background: var(--status-success-soft);
+}
+
+.dub-panel .dub-result h3 {
+  margin: 0 0 var(--space-2);
+  color: var(--status-success);
+}
+
+.dub-panel .dub-result audio {
+  width: 100%;
+  margin: var(--space-3) 0 var(--space-2);
+}
+
+.dub-panel .dub-result-name {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.dub-panel .audio-track-name {
+  flex: 1 1 160px;
+  min-width: 0;
+  font-weight: 650;
+}
+
+.dub-panel .audio-track-lang {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+}
+
+.dub-panel .audio-track-voice {
+  font-size: var(--type-caption-size);
+  color: var(--text-faint);
+}
+
+.dub-panel .audio-track-kind {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
+  background: var(--surface-deep);
+}
+
+/* a dub track is a produced artifact — quiet success chip (labels, not shouts) */
+.dub-panel .audio-track-kind--dub {
+  background: var(--status-success-soft);
+  color: var(--status-success);
+}
+
+/* ---- Assets ------------------------------------------------------------------- */
+
+.assets-panel .asset-row {
+  flex-wrap: wrap;
+}
+
+.assets-panel .asset-name {
+  flex: 1 1 160px;
+  min-width: 0;
+  font-weight: 650;
+}
+
+.assets-panel .asset-kind {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
+  background: var(--surface-deep);
+}
+
+.assets-panel .asset-size {
+  min-width: 64px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.assets-panel .asset-state {
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+}
+
+.assets-panel .asset-state.installed {
+  color: var(--status-success);
+}
+
+.assets-panel .asset-state.missing {
+  color: var(--text-muted);
+}

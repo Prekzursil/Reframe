@@ -1,0 +1,25 @@
+# gitleaks configuration for the lean secrets gate (pinned tool: gitleaks 8.30.1).
+# The gate runs via pre-commit over the working tree and must report 0.
+# Extends the upstream default ruleset; we only add path/match allowlists for
+# vendored dependencies and genuine, greppable test fixtures (no real secrets).
+title = "Media Studio lean secrets gate"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Vendored deps, build output, and reasoned test fixtures (not real secrets)."
+
+# Never scan third-party / generated / local-tooling trees. These are not our
+# source and produce only upstream-example false positives.
+paths = [
+  '''(^|/)\.venv/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)vendor/''',
+  '''(^|/)dist/''',
+  '''(^|/)build/''',
+  '''(^|/)out/''',
+  '''(^|/)\.git/''',
+  '''.*\.egg-info/''',
+  '''(^|/)Inspirations & Former Attempts/''',
+]

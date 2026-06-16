@@ -1,0 +1,94 @@
+# Root tooling config for the lean quality gates.
+# The Python sidecar keeps its own build metadata (sidecar/pyproject.toml);
+# this file centralizes the shared Ruff + basedpyright gate configuration so the
+# gate runs the same way locally and in CI.
+
+[tool.ruff]
+# Pinned tool: ruff 0.15.17 (see QUALITY-CHARTER.md).
+target-version = "py312"
+line-length = 120
+extend-exclude = [
+  ".venv",
+  "sidecar/.venv",
+  "node_modules",
+  "dist",
+  "build",
+  "out",
+  "vendor",
+  "Inspirations & Former Attempts",
+]
+
+[tool.ruff.lint]
+# Sane, deterministic rule set: pyflakes (F), pycodestyle (E/W), isort (I),
+# pep8-naming (N), pyupgrade (UP), flake8-bugbear (B), comprehensions (C4),
+# flake8-simplify (SIM). Auto-fixers run first; residuals are reported.
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
+ignore = [
+  "E501", # line length handled by the formatter
+]
+
+# Reasoned, greppable per-file suppressions (QUALITY-CHARTER §4). Each entry below
+# documents why the residual lint finding is intentional rather than a defect.
+[tool.ruff.lint.per-file-ignores]
+# Tests may use assert and shadow names freely; test doubles deliberately mirror
+# the lowercase attribute paths of the SDKs they stub.
+"sidecar/tests/**" = [
+  "N801",
+  "N802",
+  "N803",
+  "N806",
+  # Intentional test-local import aliases (`import subtitles as S`,
+  # `from pathlib import Path as _P`) used to disambiguate fixtures.
+  "N812",
+  "N814",
+]
+# __main__ binds Windows SetErrorMode flag CONSTANTS as locals; UPPER_CASE is the
+# correct, idiomatic spelling for these ctypes constants (N806 is a false positive
+# here). SIM105: a best-effort optional-native import probe that already carries an
+# inline `# noqa: BLE001` rationale; contextlib.suppress would drop that note.
+"sidecar/media_studio/__main__.py" = ["N806", "SIM105"]
+# Established public exception names (FfmpegNotFound / JobCancelled / ToolNotFound);
+# renaming for the N818 `Error` suffix would break the cross-module raise/except API.
+"sidecar/media_studio/ffmpeg.py" = ["N818"]
+"sidecar/media_studio/jobs.py" = ["N818"]
+"sidecar/media_studio/tools_resolver.py" = ["N818"]
+# Best-effort cleanup / fire-and-forget blocks whose `except: pass` already carries
+# an inline `# pragma: no cover` or rationale; contextlib.suppress would lose it.
+"sidecar/media_studio/features/caption_remotion.py" = ["SIM105"]
+"sidecar/media_studio/features/reframe_claudeshorts.py" = ["SIM105"]
+"sidecar/media_studio/features/timeline.py" = ["SIM105"]
+"sidecar/media_studio/features/tracks_audio.py" = ["SIM105"]
+# Mid-file `import re` placed after a long explanatory seam comment block by design.
+"sidecar/media_studio/features/boundary.py" = ["E402"]
+# F811: the `Project = dict[str, Any]` alias (used inside the class body as the
+# manifest annotation) collides with `class Project`. This is the SAME naming
+# collision that drives the open basedpyright `Project` errors in library.py /
+# handlers.py; resolving it is a design decision (rename the alias + update its
+# call sites), tracked as a NEEDS-DECISION item — not a mechanical lint fix.
+"sidecar/media_studio/library.py" = ["F811"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# basedpyright type gate (pinned: basedpyright 1.39.8).
+# typeCheckingMode = "standard" keeps "literal zero" achievable on partly-untyped code.
+[tool.basedpyright]
+typeCheckingMode = "standard"
+pythonVersion = "3.12"
+include = [
+  "sidecar/media_studio",
+]
+exclude = [
+  "**/node_modules",
+  "**/__pycache__",
+  ".venv",
+  "sidecar/.venv",
+  "**/tests",
+]
+# Resolve the sidecar import root (so `import media_studio.*` resolves).
+extraPaths = [
+  "sidecar",
+]
+reportMissingImports = "warning"
+reportMissingModuleSource = "none"

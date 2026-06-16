@@ -1,0 +1,40 @@
+{
+  // Single strict TS config covering all three electron-vite targets
+  // (main / preload / renderer). CONTRACT-NOTE (CONTRACTS.md §7): TypeScript
+  // strict is mandatory; this enables `strict` plus the extra safety flags so
+  // the renderer's `unknown`-narrowing helpers and the preload's typed bridge
+  // both compile cleanly. electron-vite drives the build; `tsc --noEmit` is the
+  // typecheck used by `npm run typecheck`/`npm run build`.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "useDefineForClassFields": true,
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": false,
+    "exactOptionalPropertyTypes": false,
+    "forceConsistentCasingInFileNames": true,
+
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+
+    "types": ["node"]
+  },
+  "include": [
+    "main/**/*.ts",
+    "renderer/src/**/*.ts",
+    "renderer/src/**/*.tsx",
+    "electron.vite.config.ts"
+  ],
+  "exclude": ["node_modules", "out", "dist"]
+}

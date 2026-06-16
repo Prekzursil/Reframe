@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- CONTRACT-NOTE (CONTRACTS.md §0): local app, no remote origins. CSP keeps
+         the renderer to its own bundle + inline styles only (Vite injects styles
+         as <style>); no external script/connect origins are needed because all
+         compute goes through the preload `window.api` bridge, never the network. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: mstream:; media-src 'self' data: blob: file: mstream:; connect-src 'self'; object-src 'none'; base-uri 'self'"
+    />
+    <title>media-studio</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

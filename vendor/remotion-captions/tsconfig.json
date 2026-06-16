@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "baseUrl": "../../app/render-cli/node_modules",
+    "typeRoots": ["../../app/render-cli/node_modules/@types"],
+    "paths": {
+      "react": ["@types/react"],
+      "react/jsx-runtime": ["@types/react/jsx-runtime"],
+      "react-dom": ["@types/react-dom"],
+      "*": ["*"]
+    }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "remotion.config.ts"]
+}

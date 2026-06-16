@@ -1,0 +1,101 @@
+"""RPC surface for the assets subsystem (CONTRACTS.md A2).
+
+Registers (imperatively, mirroring the other feature modules — the wiring
+agent calls :func:`register` from ``handlers.register_all``):
+
+  * ``assets.list()`` -> ``{assets: [AssetInfo]}``
+  * ``assets.ensure({names: [str]})`` -> ``{jobId}`` (long job: streams
+    ``job.progress``; ``job.done.result`` = ``{installed, assets}``)
+  * ``assets.cancel({jobId})`` -> ``{ok: true}``
+
+CONTRACT-NOTE: A2 freezes ``assets.list``/``assets.ensure``. ``assets.cancel``
+is a thin alias over the base contract's ``job.cancel`` (same semantics, same
+params) added per the U4 build brief so the Assets panel has a same-namespace
+cancel; ``job.cancel`` keeps working for these jobs too.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
+
+from .. import protocol
+from ..protocol import ErrorCode, RpcContext, RpcError
+from ..util import get_logger
+from . import manifest
+from .manager import AssetManager
+
+log = get_logger("media_studio.assets.rpc")
+
+
+def make_list_handler(manager: AssetManager):
+    """Build the ``assets.list`` handler (direct-return)."""
+
+    def handler(params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        return {"assets": manager.list_assets()}
+
+    return handler
+
+
+def make_ensure_handler(manager: AssetManager):
+    """Build the ``assets.ensure`` handler (long job, returns ``{jobId}``)."""
+
+    def handler(params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        names = params.get("names")
+        if not isinstance(names, list) or not names or not all(isinstance(n, str) and n for n in names):
+            raise RpcError("names (non-empty array of str) is required", ErrorCode.INVALID_PARAMS)
+        unknown = [n for n in names if manifest.get_asset(n) is None]
+        if unknown:
+            raise RpcError(f"unknown asset(s): {', '.join(unknown)}", ErrorCode.INVALID_PARAMS)
+        if ctx.jobs is None:
+            raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+
+        requested = list(names)
+
+        def job_body(job_ctx: Any) -> dict[str, Any]:
+            # Failures (disk preflight, HTTP errors, sha mismatch, env install)
+            # raise and surface via the job.done error payload (A6 lesson 3).
+            return manager.ensure(requested, job_ctx)
+
+        job = ctx.jobs.start(job_body)
+        return {"jobId": job.id}
+
+    return handler
+
+
+def make_cancel_handler():
+    """Build the ``assets.cancel`` handler (delegates to the job registry)."""
+
+    def handler(params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        job_id = params.get("jobId")
+        if not isinstance(job_id, str) or not job_id:
+            raise RpcError("jobId (str) is required", ErrorCode.INVALID_PARAMS)
+        if ctx.jobs is None:
+            raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+        # Same no-op-on-unknown semantics as job.cancel (§2).
+        ctx.jobs.cancel(job_id)
+        return {"ok": True}
+
+    return handler
+
+
+def register(
+    manager: AssetManager | None = None,
+    *,
+    root: Any | None = None,
+    settings_provider: Callable[[], dict[str, Any]] | None = None,
+    register_fn: Callable[[str, Any], None] | None = None,
+) -> AssetManager:
+    """Register the assets.* methods on the shared METHODS registry.
+
+    Called by the composition root (``handlers.register_all``) with the
+    services' data dir + settings getter; tests pass a prebuilt manager and/or
+    a fake ``register_fn``. Returns the manager so the caller can keep it.
+    """
+    mgr = manager or AssetManager(root=root, settings_provider=settings_provider)
+    reg = register_fn if register_fn is not None else protocol.register
+    reg("assets.list", make_list_handler(mgr))
+    reg("assets.ensure", make_ensure_handler(mgr))
+    reg("assets.cancel", make_cancel_handler())
+    log.info("registered assets.list / assets.ensure / assets.cancel")
+    return mgr

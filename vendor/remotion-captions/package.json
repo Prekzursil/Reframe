@@ -1,0 +1,10 @@
+{
+  "name": "@media-studio/remotion-captions",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vendored Remotion caption compositions (data-driven template registry). Bundled at app-build time by app/render-cli/src/bundle.ts; deps (remotion/react/zod + @types) are resolved from app/render-cli/node_modules. No own node_modules.",
+  "license": "UNLICENSED",
+  "scripts": {
+    "typecheck": "node ../../app/render-cli/node_modules/typescript/bin/tsc -p . --noEmit"
+  }
+}

@@ -1,0 +1,68 @@
+/* workspace.css — Workspace chrome + tab strip (SURFACE GROUP B).
+   Deepens the base pass in components/shell.css for the per-video workspace:
+   quiet content-forward tabs with an unmistakable active state, a ghost back
+   button, asymmetric breathing room. Tokens only (styles/tokens.css).
+   NOTE: this sheet executes BEFORE shell.css in the entry chunk, so every
+   override here is doubled-up (.workspace .x / .tabbar .tab) — specificity,
+   not source order, must win the ties. Class names are test-pinned; restyle
+   only. */
+
+/* ---- header: the title leads, the back control whispers ------------------- */
+
+.workspace .workspace__header {
+  /* asymmetric rhythm: breathe above, tuck toward the player well below */
+  padding: var(--space-5) var(--space-6) var(--space-3);
+}
+
+.workspace .workspace__back {
+  background: transparent;
+  color: var(--text-muted);
+  padding: 6px 10px;
+}
+
+.workspace .workspace__back:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* faint mono echo of where you are — the editing-room voice, not a heading */
+.workspace .workspace__title {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- tab strip: quiet caps, one amber underline --------------------------- */
+
+/* 8 tabs must survive narrow windows without wrapping the chrome */
+.workspace .tabbar {
+  overflow-x: auto;
+  flex: none;
+}
+
+.tabbar .tab {
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.tabbar .tab:active {
+  transform: translateY(1px);
+}
+
+/* ACTIVE = unmistakable: primary text + the 2px amber underline (shell) + a
+   soft amber floor wash rising out of the seam. The only amber in the chrome. */
+.tabbar .tab[aria-selected="true"] {
+  color: var(--text-primary);
+  background: linear-gradient(to top, var(--accent-soft), transparent 65%);
+  border-radius: var(--radius-xs) var(--radius-xs) 0 0;
+}
+
+.tabbar .tab[aria-selected="true"]::after {
+  background: var(--accent);
+}
+
+/* ---- body: panels breathe; the footage well stays the focus --------------- */
+
+.workspace .workspace__body {
+  padding: var(--space-6) var(--space-6) var(--space-8);
+}

@@ -1,0 +1,39 @@
+{
+  "name": "media-studio",
+  "version": "0.1.0",
+  "description": "Local personal video-manager desktop app (Electron + Python sidecar)",
+  "private": true,
+  "type": "module",
+  "main": "out/main/main.js",
+  "author": "media-studio",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "tsc --noEmit && electron-vite build && npm run build:remotion",
+    "build:remotion": "npm --prefix render-cli run bundle",
+    "render-cli:install": "npm --prefix render-cli install",
+    "render-cli:bundle": "npm --prefix render-cli run bundle",
+    "preview": "electron-vite preview",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "electron": "^31.0.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^2.3.0",
+    "jsdom": "^24.1.0",
+    "typescript": "^5.5.0",
+    "vite": "^5.3.0",
+    "vitest": "^1.6.0"
+  }
+}

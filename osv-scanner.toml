@@ -1,0 +1,18 @@
+# osv-scanner configuration for the lean dependency gate (pinned tool: osv-scanner 2.3.8).
+# The gate runs osv-scanner over the lockfiles and must report 0 known CVEs.
+#
+# POLICY: ignore entries are allowed ONLY for a genuinely-unfixable vuln, each with
+# a reason + reviewer note (greppable). We do NOT use a baseline file — clean-zero
+# is reached by upgrading the dependency, not by suppressing the finding.
+#
+# Lockfiles scanned (see .github/workflows/quality.yml gate-deps step):
+#   - app/package-lock.json            (Electron + renderer + main npm tree)
+#   - app/render-cli/package-lock.json (Remotion render CLI npm tree)
+#   - sidecar/pyproject.toml           (Python sidecar deps)
+#
+# Example of a reasoned, per-vuln ignore (do not add without justification):
+#
+# [[IgnoredVulns]]
+# id = "GHSA-xxxx-xxxx-xxxx"
+# reason = "Dev-only transitive dep; no upstream fix; not reachable at runtime."
+# # ignoreUntil = "2026-09-01"  # optional review date

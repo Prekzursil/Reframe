@@ -1,0 +1,27 @@
+{
+  "name": "@media-studio/render-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Remotion render CLI for media-studio premium captions. Self-contained workspace: compositions are bundled at APP-BUILD time (bundle.ts); at runtime the sidecar spawns render.js under the Electron exe with ELECTRON_RUN_AS_NODE=1 and a JSON job file. Do NOT merge these deps into app/package.json.",
+  "license": "UNLICENSED",
+  "main": "dist/render.js",
+  "scripts": {
+    "build": "tsc -p .",
+    "bundle": "npm run build && node dist/bundle.js",
+    "typecheck": "tsc -p . --noEmit"
+  },
+  "dependencies": {
+    "@remotion/captions": "4.0.422",
+    "@remotion/renderer": "4.0.422",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "remotion": "4.0.422",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@remotion/bundler": "4.0.422",
+    "@types/node": "20.14.2",
+    "@types/react": "19.0.0",
+    "typescript": "5.5.4"
+  }
+}

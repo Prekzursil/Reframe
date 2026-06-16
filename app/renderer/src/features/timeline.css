@@ -1,0 +1,149 @@
+/* timeline.css — Timeline lane + editor (SURFACE GROUP B).
+   The lane is a media well (--surface-deep, shell.css); the waveform and the
+   cue blocks speak entirely in tokens, and the SELECTED cue is the loudest
+   thing on the strip — accent means active, here as everywhere.
+   The --timeline-* custom properties below are token POINTERS, not new
+   colors: Timeline.tsx reads --timeline-wave off the canvas so even the
+   JS-drawn waveform consumes the same ladder. Class names + data-* attrs are
+   test-pinned; restyle only. */
+
+/* ---- the lane -------------------------------------------------------------- */
+
+.timeline .timeline__lane {
+  --timeline-wave: var(--text-faint); /* quiet bars: chrome, not content */
+
+  border-radius: var(--radius-lg); /* a well, like the player strip */
+  cursor: crosshair; /* the lane is a precision click-to-seek surface */
+}
+
+.timeline .timeline__waveform {
+  opacity: 0.9;
+}
+
+/* cue strip sits just under the waveform on the same time axis */
+.timeline .timeline__cues {
+  margin-top: var(--space-2);
+}
+
+/* cue blocks: tonal clips with a hairline, brightening under the pointer */
+.timeline .timeline__cue {
+  background: var(--surface-active);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.timeline .timeline__cue:hover {
+  background: var(--surface-hover);
+  box-shadow: inset 0 0 0 1px var(--edge-strong);
+}
+
+/* SELECTED cue pops: amber wash + amber hairline + a soft local glow */
+.timeline .timeline__cue--selected,
+.timeline .timeline__cue--selected:hover {
+  background: var(--accent-soft);
+  box-shadow:
+    inset 0 0 0 1px var(--accent-edge),
+    0 0 10px var(--accent-soft);
+  z-index: 1;
+}
+
+/* drag grips: the selected cue's edges grow visible amber pull-tabs */
+.timeline .timeline__edge::after {
+  content: "";
+  position: absolute;
+  top: 25%;
+  bottom: 25%;
+  width: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.timeline .timeline__edge--start::after {
+  left: var(--space-1);
+}
+
+.timeline .timeline__edge--end::after {
+  right: var(--space-1);
+}
+
+/* playhead: a hot amber filament over the footage axis */
+.timeline .timeline__playhead {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-edge);
+}
+
+/* ---- toolbar: Save is this surface's ONE accent action --------------------- */
+
+.timeline .timeline__toolbar {
+  margin: var(--space-5) 0 var(--space-4);
+}
+
+.timeline .timeline__toolbar button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.timeline .timeline__toolbar button[data-action="save"]:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+
+.timeline .timeline__toolbar button[data-action="save"]:hover:not(:disabled) {
+  background: var(--accent-hover);
+  color: var(--accent-ink);
+}
+
+.timeline .timeline__toolbar button[data-action="save"]:active:not(:disabled) {
+  background: var(--accent-pressed);
+}
+
+/* ---- cue editor: tracked-caps labels over deep-well inputs ----------------- */
+
+.timeline .timeline__editor {
+  box-shadow: var(--shadow-raise);
+}
+
+.timeline .timeline__editor label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* the caps voice must never leak into the cue text itself */
+.timeline .timeline__editor input,
+.timeline .timeline__editor textarea {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-weight);
+  color: var(--text-primary);
+}
+
+.timeline .timeline__editor textarea {
+  min-height: 64px;
+  resize: vertical;
+}
+
+/* times are numbers: mono, tabular, narrow */
+.timeline .timeline__editor input[type="number"] {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  max-width: 140px;
+}
+
+.timeline .timeline__editor button {
+  align-self: flex-start;
+}
+
+/* status whispers in mono next to the toolbar */
+.timeline .timeline__status {
+  font-family: var(--font-mono);
+}

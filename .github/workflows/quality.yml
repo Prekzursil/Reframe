@@ -1,0 +1,111 @@
+name: quality
+
+on:
+  push:
+    branches: [main, media-studio]
+  pull_request:
+    branches: [main, media-studio]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install Python tooling + sidecar (no heavy ML deps)
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            ruff==0.15.17 \
+            basedpyright==1.39.8 \
+            pre-commit==4.6.0 \
+            pytest pytest-cov
+          # The sidecar runtime deps (faster-whisper, scenedetect, torch, ...) are
+          # NOT installed in CI; the unit tests are deliberately heavy-ML-free
+          # (sidecar/tests/conftest.py). Install the package itself only for its
+          # pure-logic modules + the dev extras that the tests need.
+          pip install -e "sidecar[dev]" --no-deps
+          pip install httpx
+
+      - name: Install app (renderer + main) deps
+        working-directory: app
+        run: npm ci
+
+      - name: Install render-cli deps
+        working-directory: app/render-cli
+        run: npm ci
+
+      - name: Install opengrep + osv-scanner
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash -s -- -v 1.22.0
+          echo "$HOME/.opengrep/cli/latest" >> "$GITHUB_PATH"
+          curl -sSL -o /usr/local/bin/osv-scanner \
+            https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_linux_amd64
+          chmod +x /usr/local/bin/osv-scanner
+
+      # gate:1 + gate:5 — lint/format/sec-lint auto-fixers + secrets, verified via pre-commit
+      - name: gate-lint-format (pre-commit run --all-files)
+        run: pre-commit run --all-files --show-diff-on-failure
+
+      # gate:2 — types (tsc app + render-cli, basedpyright sidecar)
+      - name: gate-types tsc app
+        working-directory: app
+        run: npx tsc --noEmit
+      - name: gate-types tsc render-cli
+        working-directory: app/render-cli
+        run: npx tsc -p . --noEmit
+      - name: gate-types basedpyright
+        run: basedpyright
+
+      # gate:3 — tests + coverage (pytest branch 100%, vitest 100%)
+      - name: gate-tests-coverage pytest
+        working-directory: sidecar
+        run: |
+          python -m pytest \
+            --cov=media_studio \
+            --cov-branch --cov-fail-under=100
+      - name: gate-tests-coverage vitest app
+        working-directory: app
+        run: npx vitest run --coverage
+
+      # gate:4 — SAST (opengrep, curated in-repo ruleset, clean-zero)
+      - name: gate-sast opengrep
+        run: |
+          opengrep scan --config .quality/opengrep --error \
+            --exclude .venv --exclude node_modules --exclude dist --exclude out \
+            app sidecar
+
+      # gate:6 — deps (osv-scanner on the lockfiles, 0 known CVEs)
+      - name: gate-deps osv-scanner
+        run: |
+          osv-scanner scan source \
+            --lockfile=app/package-lock.json \
+            --lockfile=app/render-cli/package-lock.json \
+            --lockfile=sidecar/pyproject.toml
+
+      # charter ↔ workflow consistency
+      - name: charter-check
+        run: python .quality/charter_check.py

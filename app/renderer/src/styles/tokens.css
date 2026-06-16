@@ -1,0 +1,125 @@
+/* tokens.css — media-studio design tokens.
+ *
+ * DIRECTION: dark editorial for a video tool. Near-black layered surfaces keep
+ * the footage the brightest thing on screen; ONE semantic accent ("signal
+ * amber") is reserved for progress / active / approve; type contrast does the
+ * hierarchy work (big numbers + titles, quiet tracked caps for labels); depth
+ * comes from the surface ladder + shadow, not borders-everywhere.
+ *
+ * Rules of use (full rationale in docs/build/DESIGN-DIRECTION.md):
+ *   - Consume tokens only — no one-off hex values in component CSS.
+ *   - The accent is SEMANTIC. If an element is not in-progress, active/selected,
+ *     or an approve/primary action, it does not get amber.
+ *   - Every surface step up the ladder = closer to the user (bg -> raised ->
+ *     overlay). Media wells step DOWN (deep) so footage floats in black.
+ *
+ * CONTRACT-NOTE: App.tsx owns the top-level CSS import; this file is imported
+ * there FIRST so every other sheet can consume the custom properties. */
+
+:root {
+  color-scheme: dark;
+
+  /* ---- surface ladder (depth via tone, not borders) ---------------------- */
+  --surface-deep: #08090b; /* media wells: player strip, thumbs, timeline lane, progress tracks */
+  --surface-bg: #0e0f12; /* the app canvas */
+  --surface-raised: #16181d; /* cards, headers, panels — one step toward the user */
+  --surface-overlay: #1d2026; /* slide-overs, toasts, popovers — floats above everything */
+  --surface-hover: #22252d; /* interaction tint on raised surfaces */
+  --surface-active: #2a2e38; /* pressed tint */
+
+  /* ---- edges (used sparingly — hairlines, not boxes) ---------------------- */
+  --edge: rgba(255, 255, 255, 0.07);
+  --edge-strong: rgba(255, 255, 255, 0.15);
+
+  /* ---- text ladder (real contrast steps, not one gray) -------------------- */
+  --text-primary: #f4f5f7; /* titles, numbers, content */
+  --text-secondary: #b0b6c0; /* supporting copy, values */
+  --text-muted: #7d8390; /* labels, captions */
+  --text-faint: #50555f; /* timestamps, dividers, disabled */
+
+  /* ---- the ONE accent: signal amber (progress / active / approve only) ---- */
+  --accent: #f2a33c;
+  --accent-hover: #ffb554;
+  --accent-pressed: #d88a1f;
+  --accent-ink: #211404; /* text/icon color ON accent fills */
+  --accent-soft: rgba(242, 163, 60, 0.14); /* selection washes, soft chips */
+  --accent-edge: rgba(242, 163, 60, 0.5); /* focus ring, selected rails */
+
+  /* ---- status (semantic, never decorative) -------------------------------- */
+  --status-success: #46c483;
+  --status-success-soft: rgba(70, 196, 131, 0.12);
+  --status-error: #e5484d;
+  --status-error-soft: rgba(229, 72, 77, 0.1);
+  --status-warn: #e7c14b; /* yellow-leaning, distinct from the orange-leaning accent */
+  --status-warn-soft: rgba(231, 193, 75, 0.1);
+
+  /* ---- type ---------------------------------------------------------------
+   * Pairing: weighted system sans for UI, ui-monospace for timecode/numbers,
+   * a serif voice ONLY for editorial pull-quote moments (ShortMaker hooks). */
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+  --font-editorial: Georgia, "Iowan Old Style", "Times New Roman", serif;
+
+  /* scale: display / title / body / caption — big ends BIG, small ends quiet */
+  --type-display-size: 30px;
+  --type-display-weight: 750;
+  --type-display-tracking: -0.022em;
+  --type-display-leading: 1.1;
+
+  --type-title-size: 17px;
+  --type-title-weight: 650;
+  --type-title-tracking: -0.01em;
+  --type-title-leading: 1.25;
+
+  --type-body-size: 13px;
+  --type-body-weight: 400;
+  --type-body-leading: 1.5;
+
+  --type-caption-size: 11px;
+  --type-caption-weight: 600;
+  --type-caption-tracking: 0.08em; /* tracked CAPS — the label voice */
+  --type-caption-leading: 1.35;
+
+  /* ---- spacing rhythm (4px base, deliberately non-uniform use) ------------ */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 48px;
+
+  /* ---- radius scale -------------------------------------------------------- */
+  --radius-xs: 4px; /* chips, badges */
+  --radius-sm: 6px; /* buttons, inputs */
+  --radius-md: 10px; /* cards, panels */
+  --radius-lg: 14px; /* overlays, the player well */
+  --radius-pill: 999px; /* tracks, segmented controls */
+
+  /* ---- focus ring (double ring: canvas gap + accent edge) ------------------ */
+  --focus-ring: 0 0 0 2px var(--surface-bg), 0 0 0 4px var(--accent-edge);
+
+  /* ---- depth ---------------------------------------------------------------- */
+  --shadow-raise: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 6px 20px rgba(0, 0, 0, 0.35);
+  --shadow-overlay: 0 16px 48px rgba(0, 0, 0, 0.55);
+
+  /* ---- motion ---------------------------------------------------------------- */
+  --dur-fast: 120ms; /* hovers, color shifts */
+  --dur-base: 180ms; /* fills, slides, lifts */
+  --dur-slow: 260ms; /* overlays entering */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* ---- legacy aliases (pre-token variable names; keep consumers working) --- */
+  --bg: var(--surface-bg);
+  --bg-elev: var(--surface-raised);
+  --bg-hover: var(--surface-hover);
+  --fg: var(--text-primary);
+  --fg-dim: var(--text-secondary);
+  --border: var(--edge);
+  --danger: var(--status-error);
+  --ok: var(--status-success);
+  --success: var(--status-success);
+  --radius: var(--radius-sm);
+}
