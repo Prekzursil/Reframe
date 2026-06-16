@@ -15,7 +15,7 @@ import { SidecarBanner, type SidecarStatus } from './SidecarBanner';
 // ---- bridge fake ------------------------------------------------------------
 
 let statusCb: ((status: SidecarStatus) => void) | null = null;
-const restartSidecar = vi.fn<[], Promise<{ ok: boolean }>>();
+const restartSidecar = vi.fn<() => Promise<{ ok: boolean }>>();
 
 function installBridge(): void {
   (window as unknown as { api?: unknown }).api = {
