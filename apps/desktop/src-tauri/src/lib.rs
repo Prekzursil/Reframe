@@ -2,7 +2,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn find_compose_file() -> Result<PathBuf, String> {
-    let mut current = std::env::current_dir().map_err(|e| format!("Unable to read current dir: {e}"))?;
+    let mut current =
+        std::env::current_dir().map_err(|e| format!("Unable to read current dir: {e}"))?;
     loop {
         let candidate = current.join("infra").join("docker-compose.yml");
         if candidate.is_file() {
@@ -30,12 +31,18 @@ fn format_output(stdout: &[u8], stderr: &[u8]) -> String {
 }
 
 fn run_checked(mut cmd: Command) -> Result<String, String> {
-    let output = cmd.output().map_err(|e| format!("Command failed to start: {e}"))?;
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Command failed to start: {e}"))?;
     let rendered = format_output(&output.stdout, &output.stderr);
     if output.status.success() {
         return Ok(rendered);
     }
-    let code = output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "unknown".to_string());
+    let code = output
+        .status
+        .code()
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
     Err(format!("Command failed (exit {code})\n{rendered}"))
 }
 
@@ -73,7 +80,10 @@ fn run_compose(args: &[&str]) -> Result<String, String> {
             if is_not_found || docker_compose_unsupported(&err) {
                 run_checked({
                     let mut cmd = Command::new("docker-compose");
-                    cmd.current_dir(compose_dir).arg("-f").arg(&compose_path).args(args);
+                    cmd.current_dir(compose_dir)
+                        .arg("-f")
+                        .arg(&compose_path)
+                        .args(args);
                     cmd
                 })
             } else {
