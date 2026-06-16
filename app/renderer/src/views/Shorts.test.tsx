@@ -20,6 +20,9 @@ const thumbnailMock = vi.fn();
 // action calling client.package.export — mock it so the wiring is exercisable.
 const packageMock = vi.fn();
 
+// hasApi is controllable per-test (default true). A few branches only run when
+// the preload bridge is reported absent (refresh's early bail-out).
+let hasApiValue = true;
 vi.mock('../lib/rpc', () => ({
   client: {
     shorts: {
@@ -32,7 +35,7 @@ vi.mock('../lib/rpc', () => ({
       export: (...a: unknown[]) => packageMock(...a),
     },
   },
-  hasApi: () => true,
+  hasApi: () => hasApiValue,
 }));
 
 import { Shorts, sortByCreatedAt, sortShorts, formatShortDuration } from './Shorts';
@@ -126,6 +129,19 @@ describe('Shorts pure helpers', () => {
       'unscored',
     ]);
   });
+
+  it('sortShorts breaks equal-virality ties by newest createdAt', () => {
+    const older = makeShort({ id: 'older', createdAt: 100, viralityPct: 80 });
+    const newer = makeShort({ id: 'newer', createdAt: 500, viralityPct: 80 });
+    // same viralityPct -> the `d !== 0 ? d : b.createdAt - a.createdAt` tie-break runs
+    expect(sortShorts([older, newer], 'virality').map((s) => s.id)).toEqual(['newer', 'older']);
+  });
+
+  it('sortShorts treats a non-finite (NaN) viralityPct as unscored', () => {
+    const nan = makeShort({ id: 'nan', createdAt: 999, viralityPct: Number.NaN });
+    const scored = makeShort({ id: 'scored', createdAt: 100, viralityPct: 10 });
+    expect(sortShorts([nan, scored], 'virality').map((s) => s.id)).toEqual(['scored', 'nan']);
+  });
 });
 
 // ---- component -------------------------------------------------------------
@@ -138,8 +154,10 @@ beforeEach(() => {
   deleteMock.mockReset();
   reexportMock.mockReset();
   thumbnailMock.mockReset();
+  packageMock.mockReset();
   playMock.mockClear();
   pauseMock.mockClear();
+  hasApiValue = true;
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -417,5 +435,343 @@ describe('Shorts view', () => {
 
     expect(container.querySelector('.shorts__error')).not.toBeNull();
     expect(container.textContent).toContain('sidecar down');
+  });
+
+  it('stringifies a non-Error list rejection', async () => {
+    listMock.mockRejectedValue('raw failure');
+    await act(async () => {
+      root.render(<Shorts />);
+    });
+    await flush();
+    expect(container.querySelector('.shorts__error')?.textContent).toContain('raw failure');
+  });
+
+  it('bails out of refresh (no list call) when the preload bridge is absent', async () => {
+    hasApiValue = false;
+    await act(async () => {
+      root.render(<Shorts />);
+    });
+    await flush();
+
+    // refresh returns early -> no shorts.list call, loading cleared, empty state.
+    expect(listMock).not.toHaveBeenCalled();
+    expect(container.querySelector('.shorts__loading')).toBeNull();
+    expect(container.querySelector('.shorts__empty')).not.toBeNull();
+  });
+
+  it('shows an error when Open folder has no preload bridge wired', async () => {
+    listMock.mockResolvedValue({ shorts: [makeShort({ path: '/exports/a.mp4' })] });
+    // no window.api.openInFolder
+    const w = window as unknown as Record<string, unknown>;
+    w.api = {};
+
+    await act(async () => {
+      root.render(<Shorts />);
+    });
+    await flush();
+
+    const openBtn = container.querySelector<HTMLButtonElement>('button[aria-label^="Open folder"]');
+    await act(async () => {
+      openBtn!.click();
+    });
+    await flush();
+
+    expect(container.querySelector('.shorts__error')?.textContent).toContain(
+      'Open folder is unavailable',
+    );
+    w.api = undefined;
+  });
+
+  it('surfaces an error when the openInFolder bridge rejects', async () => {
+    listMock.mockResolvedValue({ shorts: [makeShort({ path: '/exports/a.mp4' })] });
+    const w = window as unknown as Record<string, unknown>;
+    w.api = { openInFolder: vi.fn().mockRejectedValue(new Error('explorer crashed')) };
+
+    await act(async () => {
+      root.render(<Shorts />);
+    });
+    await flush();
+
+    const openBtn = container.querySelector<HTMLButtonElement>('button[aria-label^="Open folder"]');
+    await act(async () => {
+      openBtn!.click();
+    });
+    await flush();
+
+    expect(container.querySelector('.shorts__error')?.textContent).toContain('explorer crashed');
+    w.api = undefined;
+  });
+
+  it('surfaces an error when shorts.reexport rejects', async () => {
+    listMock.mockResolvedValue({ shorts: [makeShort({ path: '/exports/a.mp4' })] });
+    reexportMock.mockRejectedValue(new Error('reexport boom'));
+    const onReexport = vi.fn();
+
+    await act(async () => {
+      root.render(<Shorts onReexport={onReexport} />);
+    });
+    await flush();
+
+    const reBtn = container.querySelector<HTMLButtonElement>('button[aria-label^="Re-export"]');
+    await act(async () => {
+      reBtn!.click();
+    });
+    await flush();
+
+    expect(onReexport).not.toHaveBeenCalled();
+    expect(container.querySelector('.shorts__error')?.textContent).toContain('reexport boom');
+  });
+
+  it('does not require an onReexport callback (optional-chaining) on re-export', async () => {
+    listMock.mockResolvedValue({ shorts: [makeShort({ path: '/exports/a.mp4', videoId: 'v9' })] });
+    reexportMock.mockResolvedValue({
+      videoId: 'v9',
+      candidate: { hook: 'h', template: 't', viralityPct: 5, durationSec: 10 },
+    });
+
+    // render WITHOUT onReexport -> the `onReexport?.(hint)` no-call branch runs.
+    await act(async () => {
+      root.render(<Shorts />);
+    });
+    await flush();
+
+    const reBtn = container.querySelector<HTMLButtonElement>('button[aria-label^="Re-export"]');
+    await act(async () => {
+      reBtn!.click();
+    });
+    await flush();
+
+    expect(reexportMock).toHaveBeenCalledWith('/exports/a.mp4');
+    expect(container.querySelector('.shorts__error')).toBeNull();
+  });
+
+  it('packages a clip for upload and shows the confirmation note', async () => {
+    listMock.mockResolvedValue({ shorts: [makeShort({ path: '/exports/a.mp4' })] });
+    packageMock.mockResolvedValue({ path: '/exports/a.zip', manifest: {} });
+
+    await act(async () => {
+      root.render(<Shorts />);
+    });
+    await flush();
+
+    const pkgBtn = container.querySelector<HTMLButtonElement>('button[aria-label^="Package"]');
+    expect(pkgBtn).not.toBeNull();
+    await act(async () => {
+      pkgBtn!.click();
+    });
+    await flush();
+
+    expect(packageMock).toHaveBeenCalledWith('/exports/a.mp4');
+    const note = container.querySelector('.shorts__note');
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain('/exports/a.zip');
+  });
+
+  it('surfaces an error when package.export rejects', async () => {
+    listMock.mockResolvedValue({ shorts: [makeShort({ path: '/exports/a.mp4' })] });
+    packageMock.mockRejectedValue(new Error('zip failed'));
+
+    await act(async () => {
+      root.render(<Shorts />);
+    });
+    await flush();
+
+    const pkgBtn = container.querySelector<HTMLButtonElement>('button[aria-label^="Package"]');
+    await act(async () => {
+      pkgBtn!.click();
+    });
+    await flush();
+
+    expect(container.querySelector('.shorts__error')?.textContent).toContain('zip failed');
+    expect(container.querySelector('.shorts__note')).toBeNull();
+  });
+
+  it('surfaces an error when shorts.delete rejects (after confirm)', async () => {
+    listMock.mockResolvedValue({ shorts: [makeShort({ path: '/exports/a.mp4' })] });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    deleteMock.mockRejectedValue(new Error('unlink failed'));
+
+    await act(async () => {
+      root.render(<Shorts />);
+    });
+    await flush();
+
+    const delBtn = container.querySelector<HTMLButtonElement>('button[aria-label^="Delete"]');
+    await act(async () => {
+      delBtn!.click();
+    });
+    await flush();
+
+    expect(deleteMock).toHaveBeenCalledWith('/exports/a.mp4');
+    expect(container.querySelector('.shorts__error')?.textContent).toContain('unlink failed');
+  });
+
+  it('toggling Play twice closes the inline preview (same id => null)', async () => {
+    listMock.mockResolvedValue({ shorts: [makeShort({ path: '/exports/a.mp4' })] });
+
+    await act(async () => {
+      root.render(<Shorts />);
+    });
+    await flush();
+
+    const playBtn = () => container.querySelector<HTMLButtonElement>('button[aria-label^="Play"]');
+    await act(async () => {
+      playBtn()!.click();
+    });
+    await flush();
+    expect(container.querySelector('video')).not.toBeNull();
+
+    // The ShortClipActions Play toggle (now visible) flips playingId back to null.
+    const toggle = container.querySelector<HTMLButtonElement>('button[aria-label^="Play"]');
+    await act(async () => {
+      toggle!.click();
+    });
+    await flush();
+    expect(container.querySelector('video')).toBeNull();
+  });
+
+  it('handles a clip with no source title (falls back to the file basename)', async () => {
+    listMock.mockResolvedValue({
+      shorts: [makeShort({ id: 'nt', sourceTitle: '', path: '/exports/shorts-v1/raw-clip.mp4' })],
+    });
+
+    await act(async () => {
+      root.render(<Shorts />);
+    });
+    await flush();
+
+    expect(container.querySelector('.shorts__card-title')?.textContent).toContain('raw-clip.mp4');
+  });
+
+  it('omits the virality badge / caption template / hook when those fields are blank', async () => {
+    listMock.mockResolvedValue({
+      shorts: [
+        makeShort({
+          id: 'bare',
+          viralityPct: null,
+          template: '',
+          hook: '',
+        }),
+      ],
+    });
+
+    await act(async () => {
+      root.render(<Shorts />);
+    });
+    await flush();
+
+    expect(container.querySelector('.shorts__virality')).toBeNull();
+    expect(container.querySelector('.shorts__template')).toBeNull();
+    expect(container.querySelector('.shorts__hook')).toBeNull();
+  });
+
+  it('treats a shorts.list result without a shorts field as an empty list', async () => {
+    // res.shorts is undefined -> the `res?.shorts ?? []` fallback runs.
+    listMock.mockResolvedValue({});
+
+    await act(async () => {
+      root.render(<Shorts />);
+    });
+    await flush();
+
+    expect(container.querySelector('.shorts__empty')).not.toBeNull();
+    expect(container.querySelectorAll('.shorts__card').length).toBe(0);
+  });
+
+  it('falls back to the full path basename when both title and last component are empty', async () => {
+    // sourceTitle '' + a path ending in a separator -> baseName's last component
+    // is empty, so the `parts[parts.length - 1] || p` fallback returns the path.
+    listMock.mockResolvedValue({
+      shorts: [makeShort({ id: 'slash', sourceTitle: '', path: '/exports/shorts-v1/' })],
+    });
+
+    await act(async () => {
+      root.render(<Shorts />);
+    });
+    await flush();
+
+    expect(container.querySelector('.shorts__card-title')?.textContent).toContain(
+      '/exports/shorts-v1/',
+    );
+  });
+
+  it('clicking Recent re-applies the recency order after Virality (sort onClick branch)', async () => {
+    listMock.mockResolvedValue({
+      shorts: [
+        makeShort({ id: 'low', createdAt: 300, viralityPct: 20 }),
+        makeShort({ id: 'high', createdAt: 100, viralityPct: 95 }),
+        makeShort({ id: 'mid', createdAt: 200, viralityPct: 60 }),
+      ],
+    });
+
+    await act(async () => {
+      root.render(<Shorts />);
+    });
+    await flush();
+
+    const btn = (label: string): HTMLButtonElement =>
+      [...container.querySelectorAll('[aria-label="Sort shorts"] button')].find(
+        (b) => b.textContent === label,
+      ) as HTMLButtonElement;
+
+    // Switch to virality first...
+    await act(async () => {
+      btn('Virality').click();
+    });
+    await flush();
+    expect(
+      [...container.querySelectorAll('.shorts__card')].map((c) => c.getAttribute('data-id')),
+    ).toEqual(['high', 'mid', 'low']);
+
+    // ...then click Recent -> the `() => setSortMode('recent')` onClick runs and
+    // the cards return to newest-first order.
+    await act(async () => {
+      btn('Recent').click();
+    });
+    await flush();
+    expect(
+      [...container.querySelectorAll('.shorts__card')].map((c) => c.getAttribute('data-id')),
+    ).toEqual(['low', 'mid', 'high']);
+    expect(btn('Recent').getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('a card renders with no live thumbnail client when hasApi() is false at render time', async () => {
+    // Load the gallery while the bridge is present (so cards exist)...
+    listMock.mockResolvedValue({
+      shorts: [makeShort({ id: 'sx', path: '/exports/a.mp4', thumbnailPath: '' })],
+    });
+    await act(async () => {
+      root.render(<Shorts />);
+    });
+    await flush();
+    expect(container.querySelectorAll('.shorts__card').length).toBe(1);
+    const thumbCalls = thumbnailMock.mock.calls.length;
+
+    // ...then drop the bridge and force a re-render via the sort toggle. The
+    // ShortCard re-evaluates `hasApi() ? client.shorts : null`, taking the
+    // `: null` arm so no thumbnail client is handed to the hook.
+    hasApiValue = false;
+    const recentBtn = [...container.querySelectorAll('[aria-label="Sort shorts"] button')].find(
+      (b) => b.textContent === 'Virality',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      recentBtn.click();
+    });
+    await flush();
+
+    // Card still present; no NEW thumbnail generation was triggered with a null client.
+    expect(container.querySelectorAll('.shorts__card').length).toBe(1);
+    expect(thumbnailMock.mock.calls.length).toBe(thumbCalls);
+  });
+
+  it('renders the singular "1 clip" count label for a single short', async () => {
+    listMock.mockResolvedValue({ shorts: [makeShort()] });
+
+    await act(async () => {
+      root.render(<Shorts />);
+    });
+    await flush();
+
+    expect(container.querySelector('[aria-label="Shorts count"]')?.textContent).toBe('1 clip');
   });
 });
