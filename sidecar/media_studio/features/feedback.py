@@ -100,11 +100,12 @@ class FeedbackStore:
         self.path = Path(path) if path is not None else default_feedback_path()
 
     # ------------------------------------------------------------------ I/O
-    def record(self, video_id: str, candidate: dict[str, Any], action: str) -> dict[str, Any]:
+    def record(self, video_id: str, candidate: Any, action: str) -> dict[str, Any]:
         """Append one labeled action; returns the stored entry.
 
-        Raises ``ValueError`` on a bad action / candidate so the RPC layer can
-        surface INVALID_PARAMS.
+        ``candidate`` is untyped on purpose: this is the validation boundary for
+        the raw RPC ``params.get("candidate")`` (``Any | None``); a non-dict
+        raises ``ValueError`` below so the RPC layer can surface INVALID_PARAMS.
         """
         if action not in ACTIONS:
             raise ValueError(f"action must be one of {list(ACTIONS)}, got {action!r}")

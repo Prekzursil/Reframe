@@ -87,7 +87,7 @@ def build_mp3_to_wav_argv(in_mp3: str, out_wav: str, settings: dict[str, Any] | 
 
 def _default_factory(text: str, voice: str, rate_str: str) -> Any:
     """The real edge-tts Communicate (LAZY import — network lib, runtime only)."""
-    import edge_tts  # noqa: PLC0415 - lazy: hosted engine, import on use
+    import edge_tts  # noqa: PLC0415 - lazy: hosted engine, import on use  # pyright: ignore[reportMissingImports]  # optional runtime dep
 
     return edge_tts.Communicate(text, voice, rate=rate_str)
 

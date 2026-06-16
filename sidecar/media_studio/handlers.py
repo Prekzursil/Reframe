@@ -45,7 +45,6 @@ from .util import get_logger
 log = get_logger("media_studio.handlers")
 
 Video = dict[str, Any]
-Project = dict[str, Any]
 SubtitleTrack = dict[str, Any]
 Candidate = dict[str, Any]
 

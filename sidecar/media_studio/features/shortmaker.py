@@ -146,7 +146,10 @@ def _lazy_select(transcript, prompt, controls, *, settings=None) -> list[Candida
     from . import select as _select  # local import keeps the seam mockable
 
     provider = _default_provider(settings or {})
-    return list(_select.select(transcript, prompt, controls, provider))
+    # select.select returns its own ``Candidate`` TypedDict; the shortmaker
+    # pipeline treats candidates as plain ``dict[str, Any]`` (see module alias),
+    # so normalize each row to a real dict at the seam.
+    return [dict(c) for c in _select.select(transcript, prompt, controls, provider)]
 
 
 def _lazy_snap(candidates, transcript, *, settings=None) -> tuple[list[Candidate], list[dict[str, Any]]]:
@@ -558,8 +561,10 @@ def _clip_local_words(transcript: Transcript | None, source_start: float, end: f
     out: list[dict[str, Any]] = []
     for w in _words_of(transcript):
         try:
-            ws = float(w.get("start"))
-            we = float(w.get("end"))
+            # float(None) deliberately raises TypeError -> skip untimed words
+            # (same idiom as fillers.py); the arg-type ignore documents intent.
+            ws = float(w.get("start"))  # type: ignore[arg-type]
+            we = float(w.get("end"))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             continue
         if we <= source_start or ws >= end:

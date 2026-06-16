@@ -398,7 +398,7 @@ def _make_face_finder(backend: str) -> tuple[Callable[[Any], float | None] | Non
     """Build ``(find(img_bgr) -> cx_norm|None, close())`` for ``backend``."""
     if backend == "mediapipe":
         import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
-        import mediapipe as mp  # noqa: PLC0415 - job-time native (pre-imported)
+        import mediapipe as mp  # noqa: PLC0415 - job-time native (pre-imported)  # pyright: ignore[reportMissingImports]  # optional runtime dep
 
         detector = mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
 
@@ -422,7 +422,8 @@ def _make_face_finder(backend: str) -> tuple[Callable[[Any], float | None] | Non
     if backend == "haar":
         import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
 
-        cascade_path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
+        # cv2.data is a real runtime submodule; the opencv type stubs omit it.
+        cascade_path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")  # pyright: ignore[reportAttributeAccessIssue]
         cascade = cv2.CascadeClassifier(cascade_path)
         if cascade.empty():
             _log.warning("haar cascade missing at %s; using center crop", cascade_path)

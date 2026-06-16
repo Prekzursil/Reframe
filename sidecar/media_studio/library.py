@@ -35,8 +35,11 @@ from typing import Any
 MANIFEST_VERSION = 1
 
 # Type aliases for clarity (matching CONTRACTS.md section 3 field names).
+# NOTE: the manifest *payload* alias is ``ProjectData`` (a plain dict), kept
+# distinct from the ``Project`` *class* below so the alias is not shadowed by
+# the class (that shadowing was the root of the basedpyright `Project` cascade).
 Video = dict[str, Any]
-Project = dict[str, Any]
+ProjectData = dict[str, Any]
 
 # A duration prober: (path) -> seconds. Injected so the ffprobe subprocess can be
 # mocked at the seam in tests (no ffmpeg import required for library tests).
@@ -200,7 +203,7 @@ class Project:
     self-contained and portable.
     """
 
-    def __init__(self, data: Project, manifest_path: str | os.PathLike | None = None):
+    def __init__(self, data: ProjectData, manifest_path: str | os.PathLike | None = None):
         self.data = data
         self.manifest_path = Path(manifest_path) if manifest_path else None
 
@@ -208,7 +211,7 @@ class Project:
     @classmethod
     def new(cls, video: Video, settings: dict[str, Any] | None = None) -> Project:
         """Create a fresh project around ``video`` with empty tracks/clips."""
-        data: Project = {
+        data: ProjectData = {
             "id": _new_id(),
             "video": dict(video),
             "tracks": [],
@@ -224,7 +227,7 @@ class Project:
         raw = _read_json(path)
         if not isinstance(raw, dict):
             raise ValueError(f"invalid project manifest: {manifest_path}")
-        data: Project = {
+        data: ProjectData = {
             "id": raw.get("id") or _new_id(),
             "video": raw.get("video") or {},
             "tracks": raw.get("tracks") or [],

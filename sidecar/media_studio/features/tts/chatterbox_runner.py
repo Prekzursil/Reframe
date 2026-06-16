@@ -63,9 +63,10 @@ def parse_job(raw: Any) -> dict[str, Any]:
 
 def _synthesize(job: dict[str, Any]) -> None:  # pragma: no cover - isolated env only
     """The heavy path — runs ONLY in the chatterbox env (torch present)."""
-    import torch  # noqa: PLC0415 - isolated-env import by design
-    import torchaudio  # noqa: PLC0415 - isolated-env import by design
-    from chatterbox.tts import ChatterboxTTS  # noqa: PLC0415 - isolated-env import
+    # optional runtime deps — present ONLY in the isolated chatterbox env
+    import torch  # noqa: PLC0415
+    import torchaudio  # noqa: PLC0415 # pyright: ignore[reportMissingImports]
+    from chatterbox.tts import ChatterboxTTS  # noqa: PLC0415 # pyright: ignore[reportMissingImports]
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = ChatterboxTTS.from_pretrained(device=device)

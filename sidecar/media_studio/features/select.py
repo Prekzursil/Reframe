@@ -29,8 +29,8 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Sequence
-from typing import Any, Protocol, TypedDict
+from collections.abc import Mapping, Sequence
+from typing import Any, NotRequired, Protocol, TypedDict
 
 # ---------------------------------------------------------------------------
 # Recipe constants (frozen — CONTRACTS.md §5). Centralized so the prompt text,
@@ -107,9 +107,12 @@ class Candidate(TypedDict):
     why: str
     score: int
     sourceStart: float
-    factors: dict[str, int]
-    factorNotes: dict[str, str]
-    viralityPct: int
+    # P3-C/P3-D: set AFTER construction (parse_factors / _finalize percentile),
+    # so they are NotRequired at build time — the Candidate ctor sets only the
+    # core §3 fields, then attaches these via item assignment.
+    factors: NotRequired[dict[str, int]]
+    factorNotes: NotRequired[dict[str, str]]
+    viralityPct: NotRequired[int]
 
 
 class Word(TypedDict, total=False):
@@ -389,7 +392,7 @@ def parse_factor_notes(clip: dict[str, Any]) -> dict[str, str]:
     return {name: str(raw.get(name, "") or "")[:_FACTOR_NOTE_MAX_CHARS] for name in FACTOR_NAMES}
 
 
-def factor_average(candidate: dict[str, Any]) -> float:
+def factor_average(candidate: Mapping[str, Any]) -> float:
     """Mean of the four factor scores (the raw virality value)."""
     factors = candidate.get("factors") or {}
     values = [_clamp_0_100(factors.get(name, 0)) for name in FACTOR_NAMES]

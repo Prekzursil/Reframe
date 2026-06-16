@@ -260,8 +260,10 @@ def normalize_spans(raw: Any, text_len: int | None = None) -> list[dict[str, Any
         if not isinstance(span, Mapping):
             continue
         try:
-            start = int(span.get("start"))
-            end = int(span.get("end"))
+            # int(None) deliberately raises TypeError -> skip (same idiom as
+            # fillers.py); the explicit arg-type ignore documents that intent.
+            start = int(span.get("start"))  # type: ignore[arg-type]
+            end = int(span.get("end"))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             continue
         if text_len is not None:

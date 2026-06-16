@@ -60,12 +60,10 @@ ignore = [
 "sidecar/media_studio/features/tracks_audio.py" = ["SIM105"]
 # Mid-file `import re` placed after a long explanatory seam comment block by design.
 "sidecar/media_studio/features/boundary.py" = ["E402"]
-# F811: the `Project = dict[str, Any]` alias (used inside the class body as the
-# manifest annotation) collides with `class Project`. This is the SAME naming
-# collision that drives the open basedpyright `Project` errors in library.py /
-# handlers.py; resolving it is a design decision (rename the alias + update its
-# call sites), tracked as a NEEDS-DECISION item — not a mechanical lint fix.
-"sidecar/media_studio/library.py" = ["F811"]
+# NOTE: the former library.py F811 ignore was retired once the `Project` dict
+# alias was renamed to `ProjectData` (it no longer collides with `class Project`),
+# which was also the root of the basedpyright `Project` cascade. No suppression
+# is needed now.
 
 [tool.ruff.format]
 quote-style = "double"

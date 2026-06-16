@@ -73,7 +73,9 @@ META_FIELDS = (
 
 # Injectable seams (mirrors media_compat): ProbeFn -> ffprobe dims; RunFn ->
 # ffmpeg.run(argv, total_sec, on_progress, should_cancel) -> int.
-ProbeFn = Callable[..., dict[str, Any]]
+# ProbeFn returns ``(width, height)`` (matches probe_dims); callers unpack the
+# 2-tuple, so the return type must be ``tuple[int, int]`` not a dict.
+ProbeFn = Callable[..., tuple[int, int]]
 RunFn = Callable[..., int]
 
 
@@ -223,7 +225,7 @@ def build_probe_dims_argv(in_path: str, settings: dict[str, Any] | None = None) 
 def probe_dims(
     in_path: str,
     settings: dict[str, Any] | None = None,
-    runner: Callable[..., Any] = None,
+    runner: Callable[..., Any] | None = None,
 ) -> tuple[int, int]:
     """Probe ``(width, height)`` for ``in_path`` (``(0, 0)`` on any failure).
 
@@ -271,7 +273,10 @@ def short_info(
     p = Path(clip_path)
     meta = meta or {}
     try:
-        created = float(meta.get("createdAt")) if meta.get("createdAt") else 0.0
+        # guarded by the truthy check so float(None) can't occur; meta.get is
+        # typed Any|None, so the arg-type ignore documents the guard (try/except
+        # also defends against a non-numeric createdAt).
+        created = float(meta.get("createdAt")) if meta.get("createdAt") else 0.0  # type: ignore[arg-type]
     except (TypeError, ValueError):
         created = 0.0
     if not created:

@@ -161,7 +161,8 @@ def resolve_model_paths(
 
 def _default_factory(model_path: str, voices_path: str) -> Any:
     """Build the real kokoro-onnx session (LAZY import — see module docstring)."""
-    from kokoro_onnx import Kokoro  # noqa: PLC0415 - lazy: onnxruntime native
+    # optional runtime dep (onnxruntime native); resolved only after asset install
+    from kokoro_onnx import Kokoro  # noqa: PLC0415 # pyright: ignore[reportMissingImports]
 
     return Kokoro(model_path, voices_path)
 

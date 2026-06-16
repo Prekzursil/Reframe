@@ -23,7 +23,7 @@ import shutil
 import subprocess
 import threading
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +45,7 @@ class FfmpegNotFound(RuntimeError):
     """Raised when neither a bundled nor a PATH ffmpeg/ffprobe could be found."""
 
 
-def resolve_binary(name: str, settings: dict[str, Any] | None = None) -> str:
+def resolve_binary(name: str, settings: Mapping[str, Any] | None = None) -> str:
     """Resolve an absolute path to ``name`` ("ffmpeg" or "ffprobe").
 
     Order: settings.ffmpegPath -> env override -> bundled -> PATH. Raises
@@ -92,12 +92,12 @@ def resolve_binary(name: str, settings: dict[str, Any] | None = None) -> str:
     raise FfmpegNotFound(f"{name} not found (set settings.ffmpegPath or PATH)")
 
 
-def ffmpeg_path(settings: dict[str, Any] | None = None) -> str:
+def ffmpeg_path(settings: Mapping[str, Any] | None = None) -> str:
     """Absolute path to the ffmpeg binary."""
     return resolve_binary("ffmpeg", settings)
 
 
-def ffprobe_path(settings: dict[str, Any] | None = None) -> str:
+def ffprobe_path(settings: Mapping[str, Any] | None = None) -> str:
     """Absolute path to the ffprobe binary."""
     return resolve_binary("ffprobe", settings)
 
