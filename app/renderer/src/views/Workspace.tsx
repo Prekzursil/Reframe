@@ -26,15 +26,20 @@ const ShortMaker = lazy(() => import('../features/ShortMaker'));
 const TimelinePanel = lazy(() => import('../features/Timeline'));
 const Dub = lazy(() => import('../features/Dub'));
 const Assets = lazy(() => import('../features/Assets'));
+// system-advanced group: per-video Diarize + Recipes panels.
+const Diarize = lazy(() => import('../features/Diarize'));
+const Recipes = lazy(() => import('../features/Recipes'));
 
 export const WORKSPACE_TABS: TabDef[] = [
   { id: 'transcribe', label: 'Transcribe' },
   { id: 'subtitles', label: 'Subtitles' },
+  { id: 'diarize', label: 'Diarize' },
   { id: 'tracks', label: 'Tracks' },
   { id: 'convert', label: 'Convert' },
   { id: 'shortmaker', label: 'Short-maker' },
   { id: 'timeline', label: 'Timeline' },
   { id: 'dub', label: 'Dub' },
+  { id: 'recipes', label: 'Recipes' },
   { id: 'assets', label: 'Assets' },
 ];
 
@@ -107,6 +112,8 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
     switch (active) {
       case 'subtitles':
         return <Subtitles videoId={video.id} initialTrack={tracks[0] ?? null} />;
+      case 'diarize':
+        return <Diarize videoId={video.id} />;
       case 'tracks':
         return <Tracks videoId={video.id} availableTracks={tracks} />;
       case 'convert':
@@ -119,6 +126,8 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
         );
       case 'dub':
         return <Dub videoId={video.id} />;
+      case 'recipes':
+        return <Recipes videoId={video.id} />;
       case 'assets':
         return <Assets />;
       case 'transcribe':

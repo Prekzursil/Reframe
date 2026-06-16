@@ -172,6 +172,37 @@ export interface AssetInfo {
   dest: string;
 }
 
+/**
+ * system-advanced `system.health` report — field names FROZEN, identical to the
+ * sidecar `Health.report` payload (`sidecar/media_studio/features/health.py`).
+ */
+export interface HealthReport {
+  ok: boolean;
+  offline: boolean;
+  platform: string;
+  tools: { name: string; present: boolean; path: string; version: string; hint: string }[];
+  backends: { label: string; module: string; installed: boolean; version: string }[];
+  modelPaths: { label: string; path: string; exists: boolean }[];
+  engines: { name: string; description: string; available: boolean; path: string }[];
+}
+
+/**
+ * system-advanced saved pipeline recipe — field names FROZEN, identical to the
+ * sidecar `recipes.normalize_recipe` shape. A `Step` names an existing RPC
+ * method + its params; param values may use the `"$N.key"` prior-step reference
+ * form the runner resolves.
+ */
+export interface RecipeStep {
+  method: string;
+  params: Record<string, unknown>;
+  label: string;
+}
+export interface SavedRecipe {
+  id: string;
+  name: string;
+  steps: RecipeStep[];
+}
+
 /** A3 VoiceSample — a stored voice-clone reference sample. */
 export interface VoiceSample {
   id: string;
@@ -485,6 +516,28 @@ export const client = {
     get: (): Promise<Record<string, unknown>> => rpc('settings.get'),
     set: (values: Record<string, unknown>): Promise<Record<string, unknown>> =>
       rpc('settings.set', values),
+  },
+
+  // ---- system-advanced group ----------------------------------------------
+
+  /** `system.health` — the "is my setup OK?" diagnostic (direct-return). */
+  system: {
+    health: (): Promise<HealthReport> => rpc('system.health'),
+  },
+
+  /** `recipes.*` — saved multi-step pipelines run in one shot. */
+  recipes: {
+    list: (): Promise<{ recipes: SavedRecipe[] }> => rpc('recipes.list'),
+    save: (recipe: SavedRecipe | Omit<SavedRecipe, 'id'>): Promise<{ recipe: SavedRecipe }> =>
+      rpc('recipes.save', { recipe }),
+    delete: (id: string): Promise<{ ok: boolean }> => rpc('recipes.delete', { id }),
+    run: (id: string): Promise<JobHandle> => rpc('recipes.run', { id }),
+  },
+
+  /** `diarize.start` — token-free speaker labelling (long job -> {transcript}). */
+  diarize: {
+    start: (videoId: string, threshold?: number): Promise<JobHandle & { transcript?: Transcript }> =>
+      rpc('diarize.start', threshold === undefined ? { videoId } : { videoId, threshold }),
   },
 } as const;
 
