@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -51,6 +52,38 @@ log = get_logger("media_studio.handlers")
 Video = dict[str, Any]
 SubtitleTrack = dict[str, Any]
 Candidate = dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _BudgetRequest:
+    """A wire-coerced budget request (satisfies ``budget.BudgetRequest`` duck-type).
+
+    ``target_size`` is the discrete output count (``None`` -> the budget default);
+    the two byte fields are the per-request egress split by data kind.
+    """
+
+    target_size: int | None
+    text_bytes: int
+    frame_bytes: int
+
+
+@dataclass(frozen=True)
+class _LocalPoolEntry:
+    """A single local backstop pool entry (satisfies ``budget.PoolEntry``)."""
+
+    provider: str = "local"
+    local: bool = True
+
+
+@dataclass(frozen=True)
+class _LocalOnlyPool:
+    """A local-only fallback pool used when the provider module is a test stub.
+
+    Satisfies :func:`budget.estimate`'s pool shape (``.entries`` of provider/local
+    items); the budget then reports local-only with zero cloud egress.
+    """
+
+    entries: tuple[_LocalPoolEntry, ...] = (_LocalPoolEntry(),)
 
 
 def _invalid(message: str) -> RpcError:
@@ -323,10 +356,10 @@ class Services:
         project = self._find_project_for_track(track_id)
         track = _tracks.find_track(project.data, track_id)
         translator = self._get_translator()  # None -> legacy injected provider
-        provider = self._provider if translator is None else None
+        legacy_provider = self._provider if translator is None else None
         save_path = project.manifest_path
 
-        def job_body(job_ctx: Any) -> dict[str, Any]:
+        def work(job_ctx: Any, _envelope: Any, provider: Any) -> dict[str, Any]:
             if translator is not None:
                 # T3 tiered path: language-aware tier routing + fallback chain;
                 # tier failures surface via job.done error payload (A6.3).
@@ -360,7 +393,20 @@ class Services:
                 project.save(save_path)
             return {"track": translated}
 
-        job = ctx.jobs.start(job_body)
+        # WU-envelope: subtitle translation rides the AiJob substrate (shared
+        # cancel-check + degrade-aware provider) while keeping the {jobId} shape
+        # and the {track} done payload. The legacy injected provider (tests) is
+        # passed through; the T3 tiered path ignores the work's provider arg.
+        job = self._run_ai_job(
+            ctx,
+            messages=[{"role": "user", "content": target_lang}],
+            model=str(settings_now.get("cloudModel") or ""),
+            provider=legacy_provider,
+            work=work,
+            feature="subtitles",
+            label="subtitles.translate",
+            videoId=None,
+        )
         return {"jobId": job.id}
 
     # ===================================================================== #
@@ -752,11 +798,10 @@ class Services:
         prompt = str(params.get("prompt") or "")
         controls = params.get("controls") or {}
         transcript = self._load_or_create_project(video_id).data.get("transcript")
-        provider = self._provider
         runner = self._phase8_runner or self._default_phase8_runner()
         probe = self._ffprobe_duration or _self_ffprobe()
 
-        def job_body(job_ctx: Any) -> dict[str, Any]:
+        def work(job_ctx: Any, _envelope: Any, provider: Any) -> dict[str, Any]:
             from .features import select as _select  # local: import-light
 
             tracks = runner(
@@ -779,7 +824,19 @@ class Services:
             self._cache_candidates(video_id, resolved)
             return {"candidates": resolved}
 
-        job = ctx.jobs.start(job_body)
+        # WU-envelope: the AI re-rank/select rides the AiJob substrate so it gets
+        # the shared cancel-check + degrade-aware provider + (later) cost/cache
+        # while preserving the {jobId} shape and the {candidates} done payload.
+        job = self._run_ai_job(
+            ctx,
+            messages=[{"role": "user", "content": prompt}],
+            model=str(settings.get("cloudModel") or ""),
+            provider=self._provider,
+            work=work,
+            feature="phase8",
+            label="phase8.select",
+            videoId=video_id,
+        )
         return {"jobId": job.id}
 
     def _models_present_map(self, settings: dict[str, Any]) -> dict[str, bool]:
@@ -1042,6 +1099,142 @@ class Services:
         from .models import provider as _provider_mod  # local import: heavy seam
 
         return _provider_mod.get_provider(self.settings.get())
+
+    def _ai_cache(self) -> Any:
+        """The shared AI-call content cache (WU-cache), under the data dir.
+
+        Honors ``settings.aiCacheDir`` (absolute path) when set, else
+        ``data_dir/ai-cache``. The cache is local-only; nothing leaves the box.
+        """
+        from .models.ai_cache import DEFAULT_CACHE_DIRNAME, AiCache  # local: import-light
+
+        configured = self.settings.get().get("aiCacheDir")
+        store_dir = Path(configured) if configured else self.data_dir / DEFAULT_CACHE_DIRNAME
+        return AiCache(store_dir=store_dir)
+
+    def _ai_pool(self) -> Any:
+        """Build the rotation pool (WU-pool) from settings for budget/route reads.
+
+        Returns an object whose ``.entries`` (each carrying ``.provider`` /
+        ``.local``) satisfy :func:`budget.estimate`'s pool shape. The real path
+        builds a :class:`RotatingProvider` with detection OFF (planning only reads
+        the catalog-shaped entries; skipping the live ``GET /models`` probe keeps
+        ai.planJob / the plan step socket-free — PLAN: ZERO provider calls). When
+        the provider module is a test stub WITHOUT ``build_pool_provider`` we fall
+        back to a local-only pool (the budget then reports local-only, no egress).
+        """
+        from .models import provider as _provider_mod  # local: heavy seam
+
+        builder = getattr(_provider_mod, "build_pool_provider", None)
+        if builder is None:
+            return _LocalOnlyPool()
+        return builder(self.settings.get(), detect_local=False)
+
+    def plan_ai_job_envelope(self, inputs: Any) -> Any:
+        """Assemble an :class:`ai_job.AiJob` envelope for ``inputs`` (PURE, no calls).
+
+        Shared by ``ai.planJob`` (pre-flight) and the AI-bearing job handlers so
+        cost/route/cacheKey are derived from ONE place. Performs ZERO provider
+        calls — the pool is built only to read its catalog-shaped ``.entries``.
+        """
+        from .models import ai_job as _ai_job  # local: import-light
+
+        return _ai_job.plan_ai_job(
+            inputs,
+            pool=self._ai_pool(),
+            catalog=_ai_job.CatalogFreeCapAdapter(),
+            cache=self._ai_cache(),
+        )
+
+    def _run_ai_job(
+        self,
+        ctx: RpcContext,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+        provider: Any,
+        work: Any,
+        feature: str,
+        label: str,
+        videoId: str | None = None,  # noqa: N803 - wire-name kwarg (matches JobRegistry)
+    ) -> Any:
+        """Plan + run an :class:`ai_job.AiJob` on ``ctx.jobs`` with a custom ``work``.
+
+        ``provider`` is the resolved provider the work consumes; when ``None`` the
+        pool-aware ``get_provider`` is built lazily (so rotation + degrade tracking
+        apply). The envelope's cost/route/cacheKey come from
+        :meth:`plan_ai_job_envelope`. Returns the created job (the ``{jobId}``
+        source). The work's own result dict is the ``job.done`` payload.
+        """
+        from .models import ai_job as _ai_job  # local: import-light
+
+        inputs = _ai_job.AiInputs(
+            messages=tuple({str(k): str(v) for k, v in m.items()} for m in messages),
+            model=model,
+        )
+        envelope = self.plan_ai_job_envelope(inputs)
+
+        def _factory() -> Any:
+            if provider is not None:
+                return provider
+            from .models import provider as _provider_mod  # local: heavy seam
+
+            return _provider_mod.get_provider(self.settings.get())
+
+        return _ai_job.run_ai_job(
+            envelope,
+            jobs=ctx.jobs,
+            provider_factory=_factory,
+            cache=self._ai_cache(),
+            work=work,
+            feature=feature,
+            label=label,
+            videoId=videoId,
+        )
+
+    def ai_plan_job(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``ai.planJob({messages?, model?, params?, request?, capability?})`` -> pre-flight.
+
+        Returns ``{route, costEst, cacheHit, willEgress, budget, preview, cacheKey}``
+        WITHOUT executing any AI call (PLAN acceptance: ZERO provider calls). The
+        request shape is the budget request (``target_size`` / ``text_bytes`` /
+        ``frame_bytes``); ``messages`` feed the cache key so the pre-flight knows
+        whether a real run would be a cache hit.
+        """
+        from .models import ai_job as _ai_job  # local: import-light
+
+        raw_messages = params.get("messages")
+        messages = tuple(
+            {str(k): str(v) for k, v in m.items()}
+            for m in raw_messages
+            if isinstance(m, dict)
+        ) if isinstance(raw_messages, list) else ()
+        request = self._budget_request(params.get("request"))
+        inputs = _ai_job.AiInputs(
+            messages=messages,
+            model=str(params.get("model") or ""),
+            params=dict(params.get("params") or {}),
+            request=request,
+            capability=str(params.get("capability") or "text"),
+        )
+        return self.plan_ai_job_envelope(inputs).planned()
+
+    @staticmethod
+    def _budget_request(raw: Any) -> Any:
+        """Coerce a wire ``request`` dict into a budget request (or ``None``).
+
+        The returned :class:`_BudgetRequest` satisfies the duck-typed
+        ``budget.BudgetRequest`` protocol (``target_size`` / ``text_bytes`` /
+        ``frame_bytes``). A non-dict ``raw`` yields ``None`` (an unsized request).
+        """
+        if not isinstance(raw, dict):
+            return None
+        size = raw.get("targetSize")
+        return _BudgetRequest(
+            target_size=int(size) if isinstance(size, int) else None,
+            text_bytes=int(raw.get("textBytes") or 0),
+            frame_bytes=int(raw.get("frameBytes") or 0),
+        )
 
     def _get_model_runner(self) -> Any:
         """The shared ModelRunner (lazily built from settings; T3)."""
@@ -1320,6 +1513,10 @@ def register_all(
     reg("asr.engines", svc.asr_engines)
     reg("phase8.signals", svc.phase8_signals)
     reg("phase8.select", svc.phase8_select)
+
+    # WU-envelope: AI-Job pre-flight. ai.planJob returns the route + cost/egress
+    # budget + cacheHit/willEgress with ZERO provider calls (the pure planner).
+    reg("ai.planJob", svc.ai_plan_job)
 
     # captions-export: EDL/CSV NLE timeline export + ZIP package-for-upload.
     reg("nle.export", svc.nle_export)

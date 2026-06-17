@@ -659,6 +659,7 @@ def build_pool_provider(
     *,
     transport: Transport | None = None,
     probe_transport: Transport | None = None,
+    detect_local: bool = True,
 ) -> RotatingProvider:
     """Build a :class:`RotatingProvider` from ``settings.providers`` + local detect.
 
@@ -666,10 +667,17 @@ def build_pool_provider(
     ``probe_transport``, default :func:`urllib_get_json`) and ALWAYS appends the
     llama.cpp local backstop last so an offline run still works. ``transport`` is
     the chat transport; ``probe_transport`` the GET detection transport.
+
+    ``detect_local=False`` SKIPS the live Ollama/LM-Studio ``GET /models`` probe
+    entirely (no socket): the budget/route planner (``ai_job.plan_ai_job``) only
+    needs the cloud providers + the llama backstop and must NOT open a socket, so
+    it builds the pool with detection off. The runtime execution path keeps the
+    default ``True`` so live local servers are still discovered when a call runs.
     """
     settings = settings or {}
     specs = _cloud_specs_from_settings(settings)
-    specs.extend(_detected_local_specs(settings, probe_transport=probe_transport))
+    if detect_local:
+        specs.extend(_detected_local_specs(settings, probe_transport=probe_transport))
     specs.append(_llama_backstop_spec(settings))
     return RotatingProvider(pool=specs, transport=transport)
 

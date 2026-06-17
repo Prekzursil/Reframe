@@ -256,6 +256,32 @@ def test_build_pool_provider_no_cloud_no_detect_is_local_only() -> None:
     assert p.chat([{"role": "user", "content": "q"}]) == "local"
 
 
+def test_build_pool_provider_detect_local_false_skips_probe() -> None:
+    # detect_local=False (the WU-envelope plan path) must NOT probe a local server:
+    # a probe transport that explodes if called proves the GET probe is skipped.
+    settings = {
+        "providers": [
+            {"id": "groq", "provider": "Groq", "baseUrl": "u", "model": "m", "apiKeys": ["k1"], "enabled": True}
+        ]
+    }
+
+    def exploding_probe(url, body, headers, timeout):  # noqa: ANN001 - must never be called
+        raise AssertionError("detect_local=False must not run a GET /models probe")
+
+    p = build_pool_provider(
+        settings,
+        transport=KeyTransport({"k1": [_ok("ok")]}),
+        probe_transport=exploding_probe,
+        detect_local=False,
+    )
+    # Cloud provider + the llama backstop only; no Ollama/LM-Studio entries.
+    providers = [e.provider for e in p.entries]
+    assert "Groq" in providers
+    assert "local" in providers
+    assert "ollama" not in providers
+    assert "lmstudio" not in providers
+
+
 # --------------------------------------------------------------------------- #
 # SECOND seam: TieredTranslator tier3 rotates through the SAME pool
 # --------------------------------------------------------------------------- #
