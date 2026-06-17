@@ -234,6 +234,45 @@ def test_captions_cues_bound_to_shortmaker_context(services: Services, ctx: RpcC
     assert out["cues"][0] == {"index": 1, "start": 0.0, "end": 1.0, "text": "Hello"}
 
 
+def test_captions_cues_empty_before_transcribe_nonempty_after(
+    services: Services, ctx: RpcContext, video_file: Path
+) -> None:
+    """G1 caption-PERSIST regression (the latent 2nd subtitle bug).
+
+    captions.cues is non-empty ONLY because the transcribe job PERSISTS the ASR
+    transcript onto the project manifest that ``_shortmaker_context`` reads. This
+    locks the cause->effect: a video that was added but NOT transcribed yields
+    ``{"cues": []}`` (no persisted transcript), and the SAME video yields
+    word-level cues immediately after a transcribe run persists onto the manifest
+    ``_shortmaker_context`` loads. If persistence ever regresses (e.g. the job
+    saves to a different path than _shortmaker_context reads), the second
+    assertion fails — the overlay would silently show no captions even though the
+    video plays.
+    """
+    registered: dict[str, Any] = {}
+    handlers.register_all(
+        services=services,
+        register=lambda name, fn: registered.__setitem__(name, fn),
+    )
+    vid = _add_video(services, video_file)
+    direct = RpcContext(emit_notification=lambda obj: None, jobs=None)
+
+    # No transcript persisted yet -> the context loader finds none -> empty cues.
+    before = registered["captions.cues"]({"videoId": vid}, direct)
+    assert before == {"cues": []}
+    # _shortmaker_context itself reports no transcript on the fresh manifest.
+    assert services._shortmaker_context(vid)["transcript"] is None
+
+    # Transcribe -> the job persists the transcript onto the project manifest.
+    _transcribe_sync(services, ctx, vid)
+
+    # The SAME context loader now finds the persisted transcript -> non-empty cues.
+    assert services._shortmaker_context(vid)["transcript"] is not None
+    after = registered["captions.cues"]({"videoId": vid}, direct)
+    assert after["cues"], "captions.cues empty AFTER transcribe -> transcript not persisted"
+    assert [c["text"] for c in after["cues"]] == ["Hello", "world."]
+
+
 # --------------------------------------------------------------------------- #
 # library.* / project.* / settings.*  (direct-return)
 # --------------------------------------------------------------------------- #

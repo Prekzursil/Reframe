@@ -35,6 +35,20 @@ export const MEDIA_SCHEME = 'mstream';
 export const MEDIA_HOST = 'media';
 
 /**
+ * Thrown by a {@link GetPathForVideoId} resolver when the BACKEND that would
+ * resolve the id is unavailable (e.g. the Python sidecar is down/restarting) —
+ * as opposed to the id being genuinely unknown. The handler maps this to HTTP
+ * 503 (transient — retry) instead of 404 (permanent — absent), so a dead sidecar
+ * is diagnosable in DevTools Network instead of looking like a missing video.
+ */
+export class SidecarUnavailableError extends Error {
+  constructor(message = 'sidecar unavailable') {
+    super(message);
+    this.name = 'SidecarUnavailableError';
+  }
+}
+
+/**
  * Resolve a library videoId to the absolute path of the file to stream, or
  * null/undefined when unknown. May be async (the wiring implementation asks
  * the sidecar). Returning the PLAYABLE path (original or cached proxy) is the
@@ -227,7 +241,13 @@ export function createMediaRequestHandler(
     let filePath: string | null | undefined;
     try {
       filePath = await getPathForVideoId(videoId);
-    } catch {
+    } catch (err) {
+      // A dead/throwing backend (sidecar down) is TRANSIENT -> 503 (retry),
+      // distinct from a genuinely-absent id -> 404. Any other resolver throw is
+      // treated conservatively as "could not resolve" -> 404 (unchanged).
+      if (err instanceof SidecarUnavailableError) {
+        return new Response(`sidecar unavailable: ${videoId}`, { status: 503 });
+      }
       filePath = null;
     }
     if (!filePath) {

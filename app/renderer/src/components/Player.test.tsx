@@ -24,9 +24,11 @@ import {
 // ---------------------------------------------------------------------------
 const playMock = vi.fn(() => Promise.resolve());
 const pauseMock = vi.fn();
+const loadMock = vi.fn();
 const currentTimes = new WeakMap<HTMLMediaElement, number>();
 const readyStates = new WeakMap<HTMLMediaElement, number>();
 const pausedStates = new WeakMap<HTMLMediaElement, boolean>();
+const errorStates = new WeakMap<HTMLMediaElement, { code: number } | null>();
 let defaultReadyState = 0;
 
 beforeAll(() => {
@@ -39,6 +41,17 @@ beforeAll(() => {
     configurable: true,
     writable: true,
     value: pauseMock,
+  });
+  Object.defineProperty(HTMLMediaElement.prototype, 'load', {
+    configurable: true,
+    writable: true,
+    value: loadMock,
+  });
+  Object.defineProperty(HTMLMediaElement.prototype, 'error', {
+    configurable: true,
+    get(this: HTMLMediaElement) {
+      return errorStates.get(this) ?? null;
+    },
   });
   Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', {
     configurable: true,
@@ -151,6 +164,7 @@ let root: Root;
 beforeEach(() => {
   playMock.mockClear();
   pauseMock.mockClear();
+  loadMock.mockClear();
   defaultReadyState = 0;
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -306,6 +320,76 @@ describe('Player window mode', () => {
       video.dispatchEvent(new Event('ended'));
     });
     expect(onEnded).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Player reloadToken (shake-free proxy swap)', () => {
+  it('does NOT reload on first mount even when a reloadToken is provided', () => {
+    render({ videoId: 'vid-1', reloadToken: 0 });
+    expect(loadMock).not.toHaveBeenCalled();
+  });
+
+  it('re-fetches the same src via video.load() WITHOUT remounting when the token changes', () => {
+    const video = render({ videoId: 'vid-1', reloadToken: 0 });
+    expect(loadMock).not.toHaveBeenCalled();
+    act(() => {
+      root.render(<Player videoId="vid-1" reloadToken={1} />);
+    });
+    // same element (no key remount) AND a load() was issued to pick up the proxy.
+    expect(container.querySelector('video')).toBe(video);
+    expect(loadMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reload when the token is unchanged across re-renders', () => {
+    render({ videoId: 'vid-1', reloadToken: 3 });
+    act(() => {
+      root.render(<Player videoId="vid-1" reloadToken={3} muted />);
+    });
+    expect(loadMock).not.toHaveBeenCalled();
+  });
+
+  it('re-seeks the window start after a reload (window mode proxy swap)', () => {
+    const win = { start: 12.5, end: 30 };
+    const video = render({ videoId: 'vid-1', window: win, reloadToken: 0 });
+    act(() => video.dispatchEvent(new Event('loadedmetadata')));
+    expect(video.currentTime).toBe(12.5);
+    // user scrubs away, then a proxy swap reloads -> re-seek to the window start.
+    act(() => {
+      video.currentTime = 20;
+    });
+    // Re-render with the bumped token (its effects flush at this act's end,
+    // re-binding a fresh loadedmetadata listener whose `done` guard is reset).
+    act(() => {
+      root.render(<Player videoId="vid-1" window={win} reloadToken={1} />);
+    });
+    expect(loadMock).toHaveBeenCalledTimes(1);
+    // The reload's loadedmetadata now re-seeks to the window start.
+    act(() => video.dispatchEvent(new Event('loadedmetadata')));
+    expect(video.currentTime).toBe(12.5);
+  });
+});
+
+describe('Player onError', () => {
+  it('reports a coded media error to onError', () => {
+    const onError = vi.fn();
+    const video = render({ videoId: 'vid-1', onError });
+    errorStates.set(video, { code: 4 });
+    act(() => video.dispatchEvent(new Event('error')));
+    expect(onError).toHaveBeenCalledWith('media error (code 4)');
+  });
+
+  it('reports a generic message when video.error is null (jsdom dispatch)', () => {
+    const onError = vi.fn();
+    const video = render({ videoId: 'vid-1', onError });
+    errorStates.set(video, null);
+    act(() => video.dispatchEvent(new Event('error')));
+    expect(onError).toHaveBeenCalledWith('media failed to load');
+  });
+
+  it('does not throw when an error fires with no onError handler', () => {
+    const video = render({ videoId: 'vid-1' });
+    errorStates.set(video, { code: 2 });
+    expect(() => act(() => video.dispatchEvent(new Event('error')))).not.toThrow();
   });
 });
 

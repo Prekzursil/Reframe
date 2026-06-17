@@ -19,6 +19,7 @@ vi.mock('electron', () => ({
 
 import {
   MEDIA_SCHEME,
+  SidecarUnavailableError,
   contentTypeFor,
   createMediaRequestHandler,
   parseRangeHeader,
@@ -248,10 +249,21 @@ describe('createMediaRequestHandler (end-to-end against a temp file)', () => {
     expect(res.status).toBe(404);
   });
 
-  it('responds 404 when the resolver throws (async failure surfaces, never hangs)', async () => {
+  it('responds 404 when the resolver throws a generic error (treated as unresolvable)', async () => {
     const throwing = createMediaRequestHandler(() => Promise.reject(new Error('sidecar down')));
     const res = await throwing(new Request('mstream://media/vid1'));
     expect(res.status).toBe(404);
+  });
+
+  it('responds 503 (not 404) when the resolver throws SidecarUnavailableError', async () => {
+    // G1 robustness: a dead/throwing sidecar is TRANSIENT (retry) and must be
+    // diagnosably distinct from a genuinely-absent id (404) in DevTools Network.
+    const down = createMediaRequestHandler(() =>
+      Promise.reject(new SidecarUnavailableError('sidecar restarting')),
+    );
+    const res = await down(new Request('mstream://media/vid1'));
+    expect(res.status).toBe(503);
+    expect(await res.text()).toContain('sidecar unavailable');
   });
 
   it('responds 400 for a URL without a videoId', async () => {
@@ -265,6 +277,19 @@ describe('createMediaRequestHandler (end-to-end against a temp file)', () => {
     );
     expect(res.status).toBe(206);
     expect(await res.text()).toBe(CONTENT);
+  });
+});
+
+describe('SidecarUnavailableError', () => {
+  it('defaults its message and carries its name', () => {
+    const e = new SidecarUnavailableError();
+    expect(e).toBeInstanceOf(Error);
+    expect(e.name).toBe('SidecarUnavailableError');
+    expect(e.message).toBe('sidecar unavailable');
+  });
+
+  it('accepts a custom message', () => {
+    expect(new SidecarUnavailableError('boom').message).toBe('boom');
   });
 });
 

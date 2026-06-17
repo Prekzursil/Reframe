@@ -1,7 +1,26 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+
+// jsdom does not implement HTMLMediaElement playback; the real <Player> the
+// Workspace mounts touches load()/play()/pause() (and reads error). Back them so
+// the proxy-swap reload (video.load() via reloadToken) does not warn/throw.
+const loadMock = vi.fn();
+beforeAll(() => {
+  Object.defineProperty(HTMLMediaElement.prototype, 'load', {
+    configurable: true,
+    value: loadMock,
+  });
+  Object.defineProperty(HTMLMediaElement.prototype, 'play', {
+    configurable: true,
+    value: vi.fn(() => Promise.resolve()),
+  });
+  Object.defineProperty(HTMLMediaElement.prototype, 'pause', {
+    configurable: true,
+    value: vi.fn(),
+  });
+});
 
 const rpcMock = vi.fn();
 vi.mock('../components/api', () => ({
@@ -274,9 +293,11 @@ describe('Workspace', () => {
     expect(rpcMock).toHaveBeenCalledWith('media.proxy.start', { videoId: 'v1' });
     expect(onJobDoneMock).toHaveBeenCalledTimes(1);
 
-    const playerBefore = container.querySelector(
-      '.workspace__player [data-testid], video, .player',
-    );
+    // G1 shake fix: capture the live <video> so we can prove it PERSISTS across
+    // the proxy swap (no key-remount). The element identity must be stable.
+    const videoBefore = container.querySelector('.workspace__player video');
+    expect(videoBefore).not.toBeNull();
+    loadMock.mockClear();
 
     // an unrelated job.done is ignored (no note clear)
     await act(async () => {
@@ -285,13 +306,60 @@ describe('Workspace', () => {
     await flush();
     expect(container.querySelector('.workspace__player-note')).not.toBeNull();
 
-    // our proxy job's done clears the note and bumps the Player epoch (remount)
+    // our proxy job's done clears the note and bumps the reloadToken: the SAME
+    // <video> stays mounted and is re-fetched via load() (shake-free), NOT
+    // remounted via a key change.
     await act(async () => {
       doneCb?.({ jobId: 'job-proxy-1' });
     });
     await flush();
     expect(container.querySelector('.workspace__player-note')).toBeNull();
-    void playerBefore;
+    const videoAfter = container.querySelector('.workspace__player video');
+    expect(videoAfter).toBe(videoBefore); // element persisted (no shake)
+    expect(loadMock).toHaveBeenCalledTimes(1); // proxy re-fetched in place
+  });
+
+  it('surfaces a <video> load error (onError) and clears it on the proxy-ready reload', async () => {
+    let doneCb: ((e: { jobId: string; result?: unknown }) => void) | null = null;
+    onJobDoneMock.mockImplementation((cb) => {
+      doneCb = cb;
+      return () => undefined;
+    });
+    rpcMock.mockReset();
+    rpcMock.mockImplementation((method: string) => {
+      switch (method) {
+        case 'project.open':
+          return Promise.resolve({ project });
+        case 'media.playable':
+          return Promise.resolve({ playable: false, reason: 'needs proxy' });
+        case 'media.proxy.start':
+          return Promise.resolve({ jobId: 'job-proxy-2' });
+        default:
+          return Promise.resolve({});
+      }
+    });
+
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} />);
+    });
+    await flush();
+
+    // the <video> fails to load (mstream 404 / undecodable) -> error surfaces.
+    const videoEl = container.querySelector('.workspace__player video') as HTMLVideoElement;
+    await act(async () => {
+      videoEl.dispatchEvent(new Event('error'));
+    });
+    await flush();
+    expect(container.querySelector('.workspace__player-error')?.textContent).toContain(
+      'media failed to load',
+    );
+
+    // once the proxy is ready, the job.done reload clears the stale error.
+    await act(async () => {
+      doneCb?.({ jobId: 'job-proxy-2' });
+    });
+    await flush();
+    expect(container.querySelector('.workspace__player-error')).toBeNull();
   });
 
   it('falls back to a default note when media.playable gives no reason', async () => {

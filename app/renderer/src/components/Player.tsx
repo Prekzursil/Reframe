@@ -74,10 +74,25 @@ export interface PlayerProps {
   controls?: boolean;
   muted?: boolean;
   className?: string;
+  /**
+   * Bump this to force the <video> to RE-FETCH the same `src` WITHOUT remounting
+   * the element (shake-free proxy swap). When the Workspace/ShortMaker proxy build
+   * finishes, the mstream URL is unchanged but now resolves to the cached proxy;
+   * incrementing `reloadToken` calls `video.load()` so Chromium re-requests it,
+   * keeping the element (and its listeners/handle) alive instead of a key-remount
+   * that visibly restarts the player.
+   */
+  reloadToken?: number;
   /** Fired on every timeupdate with the source-absolute position. */
   onTimeUpdate?: (timeSec: number) => void;
   /** Fired when playback ends — including a window-mode stop at `end`. */
   onEnded?: () => void;
+  /**
+   * Fired when the <video> raises a load/decode `error` (e.g. the mstream
+   * resolver 404s or Chromium cannot decode the source). Surfaces the failure to
+   * the caller so a blank frame is explained instead of silently shown.
+   */
+  onError?: (message: string) => void;
 }
 
 /** Build the playback URL for a library videoId (see mediaProtocol.ts). */
@@ -138,8 +153,10 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
     controls = true,
     muted = false,
     className,
+    reloadToken,
     onTimeUpdate,
     onEnded,
+    onError,
   } = props;
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -151,8 +168,8 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
   winRef.current = win;
   const loopRef = useRef(loop);
   loopRef.current = loop;
-  const callbacksRef = useRef({ onTimeUpdate, onEnded });
-  callbacksRef.current = { onTimeUpdate, onEnded };
+  const callbacksRef = useRef({ onTimeUpdate, onEnded, onError });
+  callbacksRef.current = { onTimeUpdate, onEnded, onError };
 
   // Window mode: position the playhead at the window start once metadata is
   // available (seeking before HAVE_METADATA is silently dropped by Chromium).
@@ -172,9 +189,12 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
     }
     video.addEventListener('loadedmetadata', seekToStart);
     return () => video.removeEventListener('loadedmetadata', seekToStart);
-  }, [win?.start, win?.end, resolvedSrc, autoPlay]); // eslint-disable-line react-hooks/exhaustive-deps
+    // `reloadToken` is a dep so a proxy-swap reload (video.load() re-fires
+    // loadedmetadata) re-seeks the window start instead of staying at t=0.
+  }, [win?.start, win?.end, resolvedSrc, autoPlay, reloadToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Single listener pass: report time, enforce the window end (stop or loop).
+  // Single listener pass: report time, enforce the window end (stop or loop),
+  // and surface a load/decode error so a blank frame is never silent.
   useEffect(() => {
     const video = videoRef.current;
     // defensive: the <video> ref is always attached before this mount-effect runs
@@ -198,13 +218,37 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
     const handleEnded = (): void => {
       callbacksRef.current.onEnded?.();
     };
+    const handleError = (): void => {
+      // video.error is a MediaError (code 1-4) in real Chromium; jsdom leaves it
+      // null when an `error` event is dispatched manually, so fall back to a
+      // generic message rather than dereferencing a null.
+      const code = video.error?.code;
+      callbacksRef.current.onError?.(code ? `media error (code ${code})` : 'media failed to load');
+    };
     video.addEventListener('timeupdate', handleTimeUpdate);
     video.addEventListener('ended', handleEnded);
+    video.addEventListener('error', handleError);
     return () => {
       video.removeEventListener('timeupdate', handleTimeUpdate);
       video.removeEventListener('ended', handleEnded);
+      video.removeEventListener('error', handleError);
     };
   }, []);
+
+  // Proxy-swap reload: when `reloadToken` CHANGES (not on first mount), re-fetch
+  // the same `src` via video.load() so the now-ready proxy is picked up WITHOUT
+  // remounting the element (shake-free). The window effect re-seeks to win.start
+  // after the reload's loadedmetadata, so candidate previews stay positioned.
+  const lastReloadToken = useRef(reloadToken);
+  useEffect(() => {
+    if (reloadToken === lastReloadToken.current) return;
+    lastReloadToken.current = reloadToken;
+    const video = videoRef.current;
+    // defensive: ref is attached before effects run; guarded for type-safety.
+    /* v8 ignore next */
+    if (!video) return;
+    video.load();
+  }, [reloadToken]);
 
   useImperativeHandle(
     ref,
