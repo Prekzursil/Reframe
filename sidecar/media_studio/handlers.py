@@ -135,6 +135,10 @@ class Services:
         phase8_runner: Callable[..., dict[str, Any]] | None = None,
         test_key_transport: Any | None = None,
         now: Callable[[], float] | None = None,
+        vlm_clip_frame_loader: Any | None = None,
+        vlm_frame_encoder: Any | None = None,
+        vlm_models_present: Callable[[dict[str, Any]], bool] | None = None,
+        vlm_chat_transport: Any | None = None,
     ) -> None:
         base = Path(data_dir) if data_dir is not None else default_config_dir()
         self.data_dir = base
@@ -163,6 +167,17 @@ class Services:
         # providers.usage rows. None -> real ``time.time``; tests inject a fake
         # clock so the >10-min stale threshold is deterministic.
         self._now: Callable[[], float] = now or time.time
+        # WU-vision: the Tier-2 re-rank seams. Defaults are the real (heavy) impls
+        # resolved lazily inside smolvlm2; tests inject fakes so no cv2 / no torch /
+        # no weights / no network is ever touched. ``vlm_models_present`` overrides
+        # the local-weight probe so the cloud-vs-local-vs-off decision is testable.
+        self._vlm_clip_frame_loader = vlm_clip_frame_loader
+        self._vlm_frame_encoder = vlm_frame_encoder
+        self._vlm_models_present = vlm_models_present
+        # WU-vision: the chat transport the vision rotation pool uses (the
+        # provider.py HTTP seam). None -> the real stdlib urllib transport; tests
+        # inject a fake so frame egress is observable without a socket.
+        self._vlm_chat_transport = vlm_chat_transport
 
         # T3: the shared llama.cpp ModelRunner (built lazily; model-identity-aware,
         # so the tiered translator can swap MT GGUFs on the one server lane).
@@ -575,6 +590,94 @@ class Services:
         return _translation_mod.get_translator(
             self.settings.get_raw(), runner=self._get_model_runner(), prefer=self._function_prefer(function)
         )
+
+    # ===================================================================== #
+    # WU-vision: Tier-2 vision re-rank resolution (cloud pool / local / off)
+    # ===================================================================== #
+    def _vision_pool(self, settings: dict[str, Any]) -> Any:
+        """Build the vision rotation pool honoring routing.perFunction["vision"].
+
+        FACTORY PATH (PLAN §WU-keys): RAW keys via the caller's ``get_raw()``
+        ``settings``. The routed vision provider is tried first; detection of local
+        Ollama/LM-Studio is OFF here (no socket — only the configured cloud vision
+        entries + the local backstop are needed). ``None`` when the provider module
+        is a test stub without ``build_pool_provider``.
+        """
+        from .models import provider as _provider_mod  # local: heavy seam
+
+        builder = getattr(_provider_mod, "build_pool_provider", None)
+        if builder is None:  # pragma: no cover -- only when provider is a stub w/o the pool builder
+            return None
+        return builder(
+            settings,
+            transport=self._vlm_chat_transport,
+            detect_local=False,
+            prefer=self._function_prefer("vision"),
+        )
+
+    def _vision_provider_for_consent(self, settings: dict[str, Any]) -> str | None:
+        """The provider NAME the vision pool would egress frames to (or ``None``).
+
+        Builds the routed vision pool and returns the first vision-capable CLOUD
+        entry's provider name — exactly the egress target whose FRAME consent must
+        be granted before a frame leaves the machine. ``None`` when no cloud entry
+        can serve vision (then the cloud path is never taken).
+        """
+        pool = self._vision_pool(settings)
+        if pool is None:  # pragma: no cover -- stub-provider guard (see _vision_pool)
+            return None
+        from .models.provider import DEFAULT_CAPABILITY  # local: import-light
+
+        _vision = "vision"
+        for entry in pool.entries:
+            if not entry.local and _vision in entry.capabilities and _vision != DEFAULT_CAPABILITY:
+                return entry.provider
+        return None
+
+    def _resolve_vlm_reranker(self, settings: dict[str, Any], *, media_path: str) -> Any:
+        """Resolve the Tier-2 ``vlm_reranker`` BEFORE any frame is sampled (WU-vision).
+
+        The frame-egress consent gate is the FIRST decision, so a no-consent run
+        never prepares a frame for egress. Decision tree (PLAN §WU-vision):
+
+        1. A cloud vision provider is routed AND its FRAME consent is granted ->
+           a :class:`SmolVlmReranker` whose backend factory is a CLOSURE building a
+           :class:`smolvlm2.CloudVlmBackend` over the vision pool (the
+           ``BackendFactory`` signature stays ``settings -> SmolVlmBackend``).
+        2. Else if the local SmolVLM2 weights are present -> the local reranker.
+        3. Else -> ``None`` (the existing transcript-only no-rerank path).
+        """
+        from .features import smolvlm2 as _sv  # local: import-light (no heavy import)
+        from .models import consent as _consent  # local: import-light pure gate
+
+        raw_settings = self.settings.get_raw()
+        vision_provider = self._vision_provider_for_consent(raw_settings)
+        if vision_provider is not None and _consent.frame_consent_granted(raw_settings, vision_provider):
+            pool = self._vision_pool(raw_settings)
+
+            def cloud_factory(backend_settings: Any) -> Any:
+                return _sv.CloudVlmBackend(
+                    pool=pool,
+                    settings=backend_settings,
+                    frame_encoder=self._vlm_frame_encoder,
+                )
+
+            return _sv.SmolVlmReranker(
+                settings=settings,
+                backend_factory=cloud_factory,
+                clip_frame_loader=self._vlm_clip_frame_loader,
+                media_path=media_path,
+            )
+
+        present = self._vlm_models_present or _sv.default_models_present
+        if present(settings):
+            return _sv.build_reranker(
+                settings=settings,
+                media_path=media_path,
+                clip_frame_loader=self._vlm_clip_frame_loader,
+                models_present=lambda _s: True,
+            )
+        return None
 
     # ===================================================================== #
     # subtitles.* (generate/edit/export direct; translate = job)
@@ -1114,6 +1217,13 @@ class Services:
         def work(job_ctx: Any, _envelope: Any, provider: Any) -> dict[str, Any]:
             from .features import select as _select  # local: import-light
 
+            # WU-vision: resolve the Tier-2 vlm_reranker FIRST — the frame-egress
+            # consent gate runs BEFORE any frame is sampled/encoded (a no-consent
+            # run never prepares a frame for egress). tier<2 skips the re-rank
+            # entirely (so no vision pool is built / no consent read). Cloud-vision
+            # + frame consent -> a CloudVlmBackend closure over the vision pool;
+            # else local weights -> the local reranker; else None (transcript-only).
+            vlm_reranker = self._resolve_vlm_reranker(settings, media_path=path) if tier >= 2 else None
             tracks = runner(
                 path,
                 tier=tier,
@@ -1129,6 +1239,7 @@ class Services:
                 provider,
                 tracks=tracks,
                 tier=tier,
+                vlm_reranker=vlm_reranker,
             )
             resolved = cast("list[Candidate]", list(candidates))
             self._cache_candidates(video_id, resolved)
