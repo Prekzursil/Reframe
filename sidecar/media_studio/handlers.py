@@ -282,6 +282,20 @@ class Services:
     # ===================================================================== #
     # providers.* (WU-keys: user-brings keys; RPC is key-free / redacted)
     # ===================================================================== #
+    def providers_catalog(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.catalog()`` -> the static curated model catalog (WU-catalog).
+
+        Returns :data:`catalog.CATALOG` as JSON: every provider/model with its
+        per-task tiers, privacy / train-on-input flags, unit, free limits, the
+        editorial top-pick per task, and the dated ``asOfDate`` stamp. PURE data —
+        NO API keys, URLs, or secrets ever appear in this payload (the catalog is
+        curated metadata; the user's keys live only in the redacted providers.list
+        view). The renderer reads the camelCase wire shape verbatim.
+        """
+        from .models import catalog as _catalog  # local: import-light pure data
+
+        return _catalog.catalog_to_json()
+
     def providers_list(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
         """``providers.list()`` -> ``{providers:[...redacted...]}`` (WU-keys).
 
@@ -524,6 +538,7 @@ class Services:
             feature="subtitles",
             label="subtitles.translate",
             videoId=None,
+            ack=params.get("confirmBudget") if isinstance(params.get("confirmBudget"), str) else None,
         )
         return {"jobId": job.id}
 
@@ -954,6 +969,7 @@ class Services:
             feature="phase8",
             label="phase8.select",
             videoId=video_id,
+            ack=params.get("confirmBudget") if isinstance(params.get("confirmBudget"), str) else None,
         )
         return {"jobId": job.id}
 
@@ -1280,6 +1296,7 @@ class Services:
         feature: str,
         label: str,
         videoId: str | None = None,  # noqa: N803 - wire-name kwarg (matches JobRegistry)
+        ack: str | None = None,
     ) -> Any:
         """Plan + run an :class:`ai_job.AiJob` on ``ctx.jobs`` with a custom ``work``.
 
@@ -1288,6 +1305,12 @@ class Services:
         apply). The envelope's cost/route/cacheKey come from
         :meth:`plan_ai_job_envelope`. Returns the created job (the ``{jobId}``
         source). The work's own result dict is the ``job.done`` payload.
+
+        WU-budget pre-flight gate: when ``settings['confirmCloudBudget']`` is on
+        AND the planned run WOULD egress, ``ack`` MUST equal the envelope's
+        ``cacheKey`` (the token ``ai.planJob`` returns), else the run is refused
+        with a typed error telling the client to pre-flight + acknowledge first.
+        A local-only / cache-hit run never egresses, so it is never gated.
         """
         from .models import ai_job as _ai_job  # local: import-light
 
@@ -1296,6 +1319,7 @@ class Services:
             model=model,
         )
         envelope = self.plan_ai_job_envelope(inputs)
+        self._enforce_cloud_budget_ack(envelope, ack)
 
         def _factory() -> Any:
             if provider is not None:
@@ -1314,6 +1338,27 @@ class Services:
             feature=feature,
             label=label,
             videoId=videoId,
+        )
+
+    def _enforce_cloud_budget_ack(self, envelope: Any, ack: str | None) -> None:
+        """Refuse a non-acknowledged cloud run when ``confirmCloudBudget`` is on.
+
+        The gate fires ONLY when both hold: the setting ``confirmCloudBudget`` is
+        truthy AND the planned envelope ``route.willEgress`` is True (a run that
+        sends bytes off the machine). In that case ``ack`` must equal the
+        envelope's ``cacheKey`` — the token ``ai.planJob`` returns — proving the
+        client previewed THIS exact request's cost/egress budget. A local-only or
+        cache-hit run never egresses, so it bypasses the gate entirely.
+        """
+        if not envelope.route.willEgress:
+            return
+        if not self.settings.get().get("confirmCloudBudget"):
+            return
+        if ack == envelope.cacheKey:
+            return
+        raise _invalid(
+            "cloud run requires budget acknowledgement: call ai.planJob and pass "
+            "its cacheKey as confirmBudget (or disable confirmCloudBudget)"
         )
 
     def ai_plan_job(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
@@ -1343,22 +1388,42 @@ class Services:
         )
         return self.plan_ai_job_envelope(inputs).planned()
 
-    @staticmethod
-    def _budget_request(raw: Any) -> Any:
+    def _budget_request(self, raw: Any) -> Any:
         """Coerce a wire ``request`` dict into a budget request (or ``None``).
 
         The returned :class:`_BudgetRequest` satisfies the duck-typed
         ``budget.BudgetRequest`` protocol (``target_size`` / ``text_bytes`` /
         ``frame_bytes``). A non-dict ``raw`` yields ``None`` (an unsized request).
+
+        WU-budget (P1 #6): when the wire request pins NO ``targetSize`` we resolve
+        the size to the user's ``defaultTargetJobSize`` setting, so the pre-flight
+        budget reflects the configured default job size (one source -> N shorts)
+        rather than only the module constant. A request that DOES pin a size keeps
+        it verbatim. A non-positive / non-int setting falls back to the budget
+        module's ``DEFAULT_TARGET_JOB_SIZE`` (the same fallback ``estimate`` uses).
         """
         if not isinstance(raw, dict):
             return None
         size = raw.get("targetSize")
         return _BudgetRequest(
-            target_size=int(size) if isinstance(size, int) else None,
+            target_size=int(size) if isinstance(size, int) else self._default_target_job_size(),
             text_bytes=int(raw.get("textBytes") or 0),
             frame_bytes=int(raw.get("frameBytes") or 0),
         )
+
+    def _default_target_job_size(self) -> int:
+        """The configured default job size, or the budget module's constant.
+
+        Reads ``settings['defaultTargetJobSize']`` (PLAN P1 #6); a missing /
+        non-int / non-positive value falls back to
+        :data:`budget.DEFAULT_TARGET_JOB_SIZE` so the estimate stays falsifiable.
+        """
+        from .models import budget as _budget_mod  # local: import-light pure
+
+        configured = self.settings.get().get("defaultTargetJobSize")
+        if isinstance(configured, int) and configured > 0:
+            return configured
+        return _budget_mod.DEFAULT_TARGET_JOB_SIZE
 
     def _get_model_runner(self) -> Any:
         """The shared ModelRunner (lazily built from settings; T3)."""
@@ -1647,6 +1712,9 @@ def register_all(
     # WU-keys: provider key management. Every read is REDACTED (last-4) — no RPC
     # method ever returns a full key; the FACTORY path reads RAW via get_raw().
     # Per-data-type (text vs frames) consent is SEPARATE + independently revocable.
+    # WU-catalog: the static curated model catalog (per-task tiers + privacy /
+    # train-on-input flags + asOfDate + unit) the UI renders. PURE data, no keys.
+    reg("providers.catalog", svc.providers_catalog)
     reg("providers.list", svc.providers_list)
     reg("providers.upsert", svc.providers_upsert)
     reg("providers.remove", svc.providers_remove)

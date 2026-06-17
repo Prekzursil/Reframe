@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .models import budget as _budget
 from .models.secrets import redact_keys
 from .util import get_logger
 
@@ -56,6 +57,16 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # (vision) are SEPARATE, independently-revocable opt-ins per provider.
     # consent.perProvider[<provider>] = {"text": bool, "frames": bool}.
     "consent": {"perProvider": {}},
+    # WU-budget pre-flight gate (PLAN §WU-budget): when True, a cloud run that
+    # WOULD egress must be acknowledged via ai.planJob first (the renderer shows
+    # the cost/egress budget and the user confirms). Default True = safe-by-
+    # default; the user opts out of the per-run confirmation explicitly.
+    "confirmCloudBudget": True,
+    # WU-budget default target-job-size (PLAN P1 #6, promoted to acceptance): the
+    # number of discrete outputs an unsized job produces, used by the budget
+    # estimate when the request pins no size. Mirrors budget.DEFAULT_TARGET_JOB_SIZE;
+    # a DOCUMENTED placeholder until the user pins N (one 60-min source -> N shorts).
+    "defaultTargetJobSize": _budget.DEFAULT_TARGET_JOB_SIZE,
 }
 
 # The config file name inside the resolved app config directory.

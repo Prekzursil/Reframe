@@ -433,6 +433,78 @@ TOP_PICKS: Mapping[Task, str] = {
 }
 
 
+def _entry_to_json(entry: CatalogEntry) -> dict[str, object]:
+    """Serialize ONE :class:`CatalogEntry` to its JSON wire shape (no secrets).
+
+    Enums are flattened to their string ``.value`` so the payload is plain JSON
+    the renderer reads verbatim. ``perTaskTier`` keys are the :class:`Task` values
+    (``moment_find`` / ``caption`` / …) and ``trainsOnInput`` is the bool or the
+    literal ``"conditional"`` string. There are NO keys, URLs, or runtime fields
+    here — the catalog is pure curated metadata.
+    """
+    return {
+        "id": entry.id,
+        "provider": entry.provider,
+        "model": entry.model,
+        "capabilities": [c.value for c in entry.capabilities],
+        "contextTokens": entry.context_tokens,
+        "perTaskTier": {task.value: entry.per_task_tier[task].value for task in Task},
+        "costClass": entry.cost_class.value,
+        "freeLimits": entry.free_limits,
+        "freeLimitScore": entry.free_limit_score,
+        "unit": entry.unit.value,
+        "trainsOnInput": entry.trains_on_input,
+        "privacyTier": entry.privacy_tier.value,
+        "recommendedFor": [t.value for t in entry.recommended_for],
+        "notes": entry.notes,
+        "asOfDate": entry.as_of_date,
+    }
+
+
+def catalog_to_json(
+    *,
+    catalog: Sequence[CatalogEntry] = CATALOG,
+) -> dict[str, object]:
+    """Serialize the whole catalog to the ``providers.catalog`` RPC payload.
+
+    PURE — no network, no secrets. The shape (PLAN §WU-catalog) is::
+
+        {asOfDate, unit, tasks, topPicks, providers:[entry, ...]}
+
+    * ``providers`` — every :class:`CatalogEntry` flattened via
+      :func:`_entry_to_json` (per-task tiers + privacy / train-on-input flags).
+    * ``tasks`` — the five Reframe task ids the tiers are keyed by, so the UI can
+      label the columns without hardcoding the enum.
+    * ``topPicks`` — the editorial best entry id per task (``Task.value -> id``).
+    * ``asOfDate`` / ``unit`` — top-level dated-guidance stamp + the set of units
+      the catalog denominates limits in (so the UI never sums across units).
+
+    The catalog is overridable for tests; it never carries an API key.
+    """
+    return {
+        "asOfDate": AS_OF_DATE,
+        "unit": [u.value for u in Unit],
+        "tasks": [t.value for t in Task],
+        "topPicks": _top_picks_json(catalog),
+        "providers": [_entry_to_json(e) for e in catalog],
+    }
+
+
+def _top_picks_json(catalog: Sequence[CatalogEntry]) -> dict[str, str]:
+    """The editorial top-pick id per task (tasks no entry can serve are omitted).
+
+    A task that no entry in ``catalog`` can serve (every entry graded ``NA``)
+    yields no pick rather than raising — so a partial/custom catalog still
+    serializes. The full :data:`CATALOG` serves every task, so the default
+    payload always carries all five picks.
+    """
+    picks: dict[str, str] = {}
+    for task in Task:
+        if any(e.grade_for(task) is not TierGrade.NA for e in catalog):
+            picks[task.value] = top_pick_for_task(task, catalog=catalog).id
+    return picks
+
+
 def top_pick_for_task(
     task: Task,
     *,
@@ -475,6 +547,7 @@ __all__ = [
     "TierGrade",
     "TrainsOnInput",
     "Unit",
+    "catalog_to_json",
     "filter_by_capability",
     "order_by",
     "top_pick_for_task",

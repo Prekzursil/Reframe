@@ -12,6 +12,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 from media_studio.models.catalog import (
+    AS_OF_DATE,
     CATALOG,
     Capability,
     CatalogEntry,
@@ -20,6 +21,7 @@ from media_studio.models.catalog import (
     Task,
     TierGrade,
     Unit,
+    catalog_to_json,
     filter_by_capability,
     order_by,
     top_pick_for_task,
@@ -293,3 +295,78 @@ def test_top_pick_raises_when_no_entry_can_serve_task() -> None:
     # Cloudflare is "na" for vision (task4) -> no eligible pick.
     with pytest.raises(ValueError, match="no catalog entry serves task"):
         top_pick_for_task(Task.VISION, catalog=text_only)
+
+
+# --------------------------------------------------------------------------- #
+# catalog_to_json — the providers.catalog wire payload
+# --------------------------------------------------------------------------- #
+def test_catalog_to_json_top_level_shape() -> None:
+    payload = catalog_to_json()
+    assert set(payload) == {"asOfDate", "unit", "tasks", "topPicks", "providers"}
+    assert payload["asOfDate"] == AS_OF_DATE
+    # unit lists both denominations so the UI never sums across REQ + TOKEN.
+    assert set(payload["unit"]) == {"req", "token"}
+    # all five Reframe tasks are advertised as tier columns.
+    assert payload["tasks"] == [t.value for t in Task]
+
+
+def test_catalog_to_json_spans_at_least_three_providers() -> None:
+    payload = catalog_to_json()
+    providers = payload["providers"]
+    assert len(providers) == len(CATALOG)
+    distinct = {p["provider"] for p in providers}
+    assert len(distinct) >= 3
+    assert {"Groq", "Cerebras", "Google AI Studio"} <= distinct
+
+
+def test_catalog_to_json_entry_has_five_task_tiers() -> None:
+    payload = catalog_to_json()
+    for entry in payload["providers"]:
+        # Acceptance: per-task tiers for all 5 tasks.
+        assert set(entry["perTaskTier"].keys()) == {t.value for t in Task}
+        assert "asOfDate" in entry
+        assert "trainsOnInput" in entry
+        assert "privacyTier" in entry
+        assert "unit" in entry
+
+
+def test_catalog_to_json_gemini_avoid_groq_safe_flags() -> None:
+    payload = catalog_to_json()
+    by_id = {e["id"]: e for e in payload["providers"]}
+    gemini = by_id["gemini-2.5-flash"]
+    assert gemini["trainsOnInput"] is True
+    assert gemini["privacyTier"] == "AVOID"
+    groq = by_id["groq-gpt-oss-120b"]
+    assert groq["trainsOnInput"] is False
+    assert groq["privacyTier"] == "SAFE"
+
+
+def test_catalog_to_json_top_picks_are_entry_ids() -> None:
+    payload = catalog_to_json()
+    ids = {e["id"] for e in payload["providers"]}
+    assert payload["topPicks"][Task.MOMENT_FIND.value] == "groq-gpt-oss-120b"
+    assert payload["topPicks"][Task.VISION.value] == "gemini-2.5-flash-lite"
+    assert all(pick_id in ids for pick_id in payload["topPicks"].values())
+
+
+def test_catalog_to_json_carries_no_secrets() -> None:
+    # No key/url/secret fields ever appear in the catalog payload.
+    import json
+
+    blob = json.dumps(catalog_to_json())
+    for forbidden in ("apiKey", "apiKeys", "Bearer", "baseUrl", "secret"):
+        assert forbidden not in blob
+
+
+def test_catalog_to_json_is_json_serializable() -> None:
+    import json
+
+    # Round-trips through json (all enums flattened to values).
+    assert json.loads(json.dumps(catalog_to_json()))["asOfDate"] == AS_OF_DATE
+
+
+def test_catalog_to_json_accepts_custom_catalog() -> None:
+    subset = (_by_id("groq-gpt-oss-120b"),)
+    payload = catalog_to_json(catalog=subset)
+    assert len(payload["providers"]) == 1
+    assert payload["providers"][0]["id"] == "groq-gpt-oss-120b"
