@@ -60,6 +60,12 @@ export function NleExport({ videoId }: NleExportProps): React.ReactElement {
     }
   }, [videoId, format, fps]);
 
+  // The "N clip(s) " prefix for the saved-path line. clipCount is always set
+  // alongside lastPath by runExport, so the null arm is defensive only.
+  const savedClipPrefix =
+    /* v8 ignore next */
+    clipCount !== null ? `${clipCount} clip${clipCount === 1 ? '' : 's'} ` : '';
+
   return (
     <section className="feature-panel nle-panel" aria-label="NLE timeline export">
       <h2>Editing timeline (EDL / CSV)</h2>
@@ -109,8 +115,7 @@ export function NleExport({ videoId }: NleExportProps): React.ReactElement {
       {status && !error && <p className="status">{status}</p>}
       {lastPath && (
         <p className="export-path">
-          Saved {clipCount !== null ? `${clipCount} clip${clipCount === 1 ? '' : 's'} ` : ''}to{' '}
-          <code>{lastPath}</code>
+          Saved {savedClipPrefix}to <code>{lastPath}</code>
         </p>
       )}
       {error && (

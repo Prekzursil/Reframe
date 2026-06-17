@@ -95,9 +95,15 @@ class WhisperModel(Protocol):
     ``language`` + ``duration`` and each segment carries ``start/end/text`` and
     (with ``word_timestamps=True``) a ``words`` list of objects with
     ``word/start/end``.
+
+    The signature is intentionally ``(*args, **kwargs)`` so the concrete
+    faster-whisper ``WhisperModel`` (whose ``transcribe`` declares many explicit
+    keyword params, not a ``**kwargs`` catch-all) is structurally assignable to
+    this Protocol when the package is installed — the wrapper only ever calls it
+    as ``transcribe(audio, language=..., word_timestamps=True)``.
     """
 
-    def transcribe(self, audio: str, **kwargs: Any) -> Any: ...  # pragma: no cover
+    def transcribe(self, *args: Any, **kwargs: Any) -> Any: ...  # pragma: no cover
 
 
 class WhisperLoader(Protocol):
@@ -273,6 +279,104 @@ def transcribe_file(
         "segments": segments,
         "durationSec": duration,
     }
+
+
+# --------------------------------------------------------------------------- #
+# ASR-engine selection (WU7 wiring) — whisper (default) | parakeet
+# --------------------------------------------------------------------------- #
+#: the settings key that picks the ASR engine (parakeet_asr's sibling seam).
+ASR_ENGINE_KEY = "asrEngine"
+#: the default ASR engine — faster-whisper large-v3-turbo (always installed).
+WHISPER_ENGINE = "whisper"
+#: the opt-in NVIDIA Parakeet-TDT-0.6b-v3 engine (multilingual; chunked).
+PARAKEET_ENGINE = "parakeet"
+#: the engines the handler may select between.
+ASR_ENGINES: tuple[str, ...] = (WHISPER_ENGINE, PARAKEET_ENGINE)
+
+#: a Parakeet runner seam matching ``parakeet_asr.transcribe_file``'s shape — a
+#: callable ``(audio_path, *, language, on_progress, should_cancel, ...) ->
+#: Transcript``. Injected in tests; the default lazily uses the real module.
+ParakeetRunner = Callable[..., Transcript]
+
+
+def selected_asr_engine(settings: dict[str, Any] | None) -> str:
+    """The chosen ASR engine from settings, defaulting to whisper.
+
+    Any value other than ``"parakeet"`` (case-insensitive, trimmed) resolves to
+    ``"whisper"`` so an unknown/typo'd setting never breaks transcription — it
+    just keeps the always-installed default engine. Mirrors
+    ``pyannote_backend.selected_backend_name``.
+    """
+    settings = settings or {}
+    value = settings.get(ASR_ENGINE_KEY)
+    if isinstance(value, str) and value.strip().lower() == PARAKEET_ENGINE:
+        return PARAKEET_ENGINE
+    return WHISPER_ENGINE
+
+
+def _default_parakeet_runner(audio_path: str, **kwargs: Any) -> Transcript:
+    """Delegate to the real Parakeet runner (LAZY import; runtime only).
+
+    The ``parakeet_asr`` module is import-light (no heavy ML at module load), but
+    keeping this behind a function lets tests inject a fake runner and keeps the
+    engine choice a pure seam swap.
+    """
+    from .parakeet_asr import transcribe_file as _parakeet_transcribe  # noqa: PLC0415
+
+    return _parakeet_transcribe(audio_path, **kwargs)
+
+
+def transcribe_with_engine(
+    audio_path: str,
+    *,
+    loader: WhisperLoader,
+    settings: dict[str, Any] | None = None,
+    language: str | None = None,
+    duration: float | None = None,
+    duration_probe: Callable[[str], float] | None = None,
+    parakeet_runner: ParakeetRunner | None = None,
+    on_progress: ProgressCb | None = None,
+    should_cancel: CancelProbe | None = None,
+) -> Transcript:
+    """Transcribe via the settings-selected ASR engine; whisper-fallback on empty.
+
+    Dispatches on ``settings['asrEngine']`` (:func:`selected_asr_engine`):
+
+      * ``"parakeet"`` -> run ``parakeet_asr.transcribe_file`` (chunked, CC-BY-4.0
+        multilingual). Parakeet *degrades to an EMPTY transcript* when its weights
+        are unavailable offline; in that case this falls back to the always-present
+        faster-whisper path so the user still gets a transcript. ``duration`` /
+        ``duration_probe`` are forwarded so Parakeet can chunk the audio (the hard
+        6 GB rule).
+      * anything else -> :func:`transcribe_file` (the byte-unchanged whisper path).
+
+    ``loader`` is the whisper loader seam (used for the default engine AND the
+    fallback). ``parakeet_runner`` is the injectable Parakeet seam (default lazily
+    delegates to the real module). The return is always a §3 :class:`Transcript`.
+    """
+    engine = selected_asr_engine(settings)
+    if engine == PARAKEET_ENGINE:
+        runner = parakeet_runner if parakeet_runner is not None else _default_parakeet_runner
+        result = runner(
+            audio_path,
+            language=language,
+            settings=settings or {},
+            duration=duration,
+            duration_probe=duration_probe,
+            on_progress=on_progress,
+            should_cancel=should_cancel,
+        )
+        if result.get("segments"):
+            return result
+        # Parakeet degraded (offline + weights missing) -> whisper fallback.
+        log.info("parakeet produced no segments; falling back to whisper")
+    return transcribe_file(
+        audio_path,
+        loader=loader,
+        language=language,
+        on_progress=on_progress,
+        should_cancel=should_cancel,
+    )
 
 
 # --------------------------------------------------------------------------- #

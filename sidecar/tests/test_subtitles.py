@@ -517,3 +517,57 @@ def test_full_pipeline_generate_translate_export(transcript, tmp_path: Path):
     cues = S.load(out)
     assert all(c["text"].startswith("[ES]") for c in cues)
     assert len(cues) == 3
+
+
+# --------------------------------------------------------------------------- #
+# generate_polished (WU9 wiring): caption-polish over a generated track
+# --------------------------------------------------------------------------- #
+def test_generate_polished_threads_cues_through_injected_polisher(transcript):
+    seen: dict[str, Any] = {}
+
+    def fake_polisher(cues, *, settings):
+        seen["cues"] = cues
+        seen["settings"] = settings
+        # Return cues with rewritten (polished) text.
+        return [{**c, "text": c["text"].upper()} for c in cues]
+
+    track = S.generate_polished(transcript, settings={"captionChildren": True}, polisher=fake_polisher)
+    # the polisher saw the generated cues + the settings
+    assert seen["settings"] == {"captionChildren": True}
+    assert seen["cues"], "polisher received no cues"
+    # polished text landed on the track (reindexed onto a fresh §3 track)
+    assert track["cues"][0]["text"] == "HELLO WORLD."
+    assert set(track.keys()) == {"id", "lang", "name", "format", "kind", "cues"}
+    assert track["lang"] == "en"
+    assert track["kind"] == "soft"
+    # cues are reindexed 1..N
+    assert [c["index"] for c in track["cues"]] == list(range(1, len(track["cues"]) + 1))
+
+
+def test_generate_polished_default_polisher_is_degrade_safe(transcript):
+    """The default polisher delegates to the real module; with no model backends
+    the timing/segmentation gate still runs and never raises (heavy-dep-free)."""
+    track = S.generate_polished(transcript)
+    assert track["cues"], "default polish produced no cues"
+    assert track["lang"] == "en"
+    # text is preserved (no punct/casing backend -> casing left as-is)
+    joined = " ".join(c["text"] for c in track["cues"])
+    assert "Hello world." in joined
+
+
+def test_default_caption_polisher_delegates(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    def fake_polish(cues, **kwargs):
+        captured["cues"] = cues
+        captured.update(kwargs)
+        return cues
+
+    from media_studio.features import caption_polish
+
+    monkeypatch.setattr(caption_polish, "polish_cues", fake_polish)
+    cues = [{"index": 1, "start": 0.0, "end": 1.0, "text": "hi"}]
+    out = S._default_caption_polisher(cues, settings={"x": 1})
+    assert out == cues
+    assert captured["cues"] == cues
+    assert captured["settings"] == {"x": 1}

@@ -129,6 +129,44 @@ describe('SidecarBanner', () => {
     expect(restartBtn()).not.toBeNull();
   });
 
+  it('re-offers Restart when restartSidecar rejects (SidecarBanner.tsx:62-63)', async () => {
+    restartSidecar.mockRejectedValueOnce(new Error('respawn failed'));
+    mount();
+    pushStatus('down');
+    await act(async () => {
+      restartBtn()!.click();
+      // let the rejected promise settle through the .catch()
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // The .catch() re-enables the button (failure not swallowed) — still 'down'.
+    expect(restartBtn()).not.toBeNull();
+    expect(banner()!.textContent).toContain('Sidecar stopped');
+  });
+
+  it('Restart no-ops when the bridge lacks restartSidecar (SidecarBanner.tsx:52)', () => {
+    // Bridge can push status (so the banner + button render on 'down') but has no
+    // restartSidecar callable -> onRestart returns early without flipping to busy.
+    (window as unknown as { api?: unknown }).api = {
+      onSidecarStatus: (cb: (status: SidecarStatus) => void) => {
+        statusCb = cb;
+        return () => {
+          statusCb = null;
+        };
+      },
+      // restartSidecar intentionally omitted
+    };
+    mount();
+    pushStatus('down');
+    expect(restartBtn()).not.toBeNull();
+    act(() => {
+      restartBtn()!.click();
+    });
+    // No restart fn -> the button stays offered (never went into "Restarting…").
+    expect(restartBtn()).not.toBeNull();
+    expect(banner()!.textContent).toContain('Sidecar stopped');
+  });
+
   it('degrades to inert when no bridge is present', () => {
     delete (window as unknown as { api?: unknown }).api;
     mount();

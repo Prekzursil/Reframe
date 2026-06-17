@@ -19,14 +19,19 @@ import {
   readFileSync,
   unlinkSync,
   writeFileSync,
+  promises as fsp,
 } from 'node:fs';
-import { dirname, join, resolve as resolvePath } from 'node:path';
-import { chooseDataRoot, DATA_DIR_MARKER } from './dataRoot';
+import { dirname, extname, join, resolve as resolvePath } from 'node:path';
+import { DATA_DIR_MARKER, resolveDataRootFrom } from './dataRoot';
 import { registerDataFolderIpc } from './dataFolderIpc';
 import { registerDialogIpc } from './dialogIpc';
 import { resolveScopedMediaPath } from './exportPath';
 import { registerIpc } from './ipc';
-import { registerMediaProtocol, registerMediaSchemePrivileges } from './mediaProtocol';
+import {
+  registerMediaProtocol,
+  registerMediaSchemePrivileges,
+  SidecarUnavailableError,
+} from './mediaProtocol';
 import { registerShellIpc } from './shellIpc';
 import { pthZipName, renderPthBody } from './pthActivation';
 import { Sidecar } from './sidecar';
@@ -75,11 +80,56 @@ function getResourcesPath(): string {
 // chrome) derives from the sidecar's settings_store.default_config_dir(), which
 // honors MEDIA_STUDIO_CONFIG_DIR first and otherwise falls back to
 // %APPDATA%/media-studio. We resolve the data root HERE (chooseDataRoot is the
-// pure part) and, in a packaged build, propagate it to the sidecar + first-run
-// bootstrap by setting process.env.MEDIA_STUDIO_CONFIG_DIR before either spawns
-// (both inherit process.env — buildSidecarEnv spreads it; bootstrap inherits it).
-// DEV stays byte-identical to the old behavior: only packaged builds consider the
-// exe-dir / marker, so a dev run still resolves %APPDATA%/media-studio.
+// pure part) and propagate it to the sidecar + first-run bootstrap by setting
+// process.env.MEDIA_STUDIO_CONFIG_DIR before either spawns (both inherit
+// process.env — buildSidecarEnv spreads it; bootstrap inherits it).
+//
+// BEHAVIOR CHANGE (G1 preview fix): dev now resolves the data root the SAME way
+// as a packaged build — it consults the exe-dir marker / <exeDir>/data BEFORE
+// falling back to %APPDATA%. The old code gated the marker/exe-dir on
+// app.isPackaged, so a dev run ALWAYS landed on %APPDATA%/media-studio (which has
+// no library.json), the library listed empty, getPathForVideoId returned null,
+// the mstream request 404'd, and the <video> never loaded — no playback, hence no
+// subtitles (subtitles are downstream of timeupdate). Treating dev like packaged
+// makes the dev app find the real data folder (e.g. D:\Reframe\data via the
+// marker) without needing a manual MEDIA_STUDIO_CONFIG_DIR. An explicit env
+// override still wins in both modes (chooseDataRoot priority order).
+
+/**
+ * Containers Chromium can decode (subset of mediaProtocol's MIME map limited to
+ * the formats <video>/<audio> can actually play). A cached proxy with any other
+ * extension is treated as not-playable so the resolver falls back to the source.
+ */
+const PLAYABLE_EXTENSIONS = new Set([
+  '.mp4',
+  '.m4v',
+  '.webm',
+  '.ogv',
+  '.mp3',
+  '.m4a',
+  '.aac',
+  '.wav',
+  '.flac',
+  '.ogg',
+  '.opus',
+]);
+
+/**
+ * True when `path` exists, is a regular file, and has a Chromium-decodable media
+ * extension. Guards `verdict.proxyPath` (G1 robustness): a stale/half-written
+ * proxy that no longer exists — or a non-decodable container — must NOT be
+ * returned (it would 404 or blank the player); the resolver falls back to the
+ * original library path instead. Any stat error -> false (treat as absent).
+ */
+async function isPlayableFile(path: string): Promise<boolean> {
+  if (!PLAYABLE_EXTENSIONS.has(extname(path).toLowerCase())) return false;
+  try {
+    const stat = await fsp.stat(path);
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+}
 
 /** Directory holding the running executable (where the marker file lives). */
 function exeDir(): string {
@@ -120,22 +170,20 @@ function isExeDataWritable(dir: string): boolean {
 
 /**
  * Resolve the data root to USE this session (IO wrapper over chooseDataRoot).
- * In a packaged build the exe-dir / marker are considered; in dev only the env
- * override + the %APPDATA% fallback are (so dev stays byte-identical).
+ *
+ * The exe-dir marker / <exeDir>/data are considered in BOTH dev and packaged
+ * builds (G1 preview fix — see the BEHAVIOR CHANGE note above): the env override
+ * still wins, then the marker, then a writable <exeDir>/data, then %APPDATA%.
+ * The pure priority logic lives in chooseDataRoot; this wrapper only does the IO
+ * (reading the marker, probing exe-dir writability, app.getPath).
  */
 function resolveDataRoot(): string {
-  const appDataRoot = join(app.getPath('appData'), 'media-studio');
-  const envOverride = process.env.MEDIA_STUDIO_CONFIG_DIR;
-  if (!app.isPackaged) {
-    return chooseDataRoot({ envOverride, appDataRoot });
-  }
-  const exeDataDir = join(exeDir(), 'data');
-  return chooseDataRoot({
-    envOverride,
-    markerContent: readDataDirMarker(),
-    exeDataDir,
-    exeDataWritable: isExeDataWritable(exeDataDir),
-    appDataRoot,
+  return resolveDataRootFrom({
+    envOverride: process.env.MEDIA_STUDIO_CONFIG_DIR,
+    exeDataDir: join(exeDir(), 'data'),
+    appDataRoot: join(app.getPath('appData'), 'media-studio'),
+    readMarker: readDataDirMarker,
+    isExeDataWritable,
   });
 }
 
@@ -148,12 +196,19 @@ const DATA_ROOT = resolveDataRoot();
  * Both inherit `process.env` (buildSidecarEnv spreads it; runFirstRunBootstrap's
  * spawn inherits it), so setting `MEDIA_STUDIO_CONFIG_DIR` here — BEFORE either
  * is spawned in bootstrap() — makes the sidecar's `settings_store` resolve the
- * SAME tree main joins for `short:`/`dub:`/the `._pth` env dir. Packaged-only and
- * never clobbers an explicit override (a power-user value wins), so dev stays
- * byte-identical (no env set; sidecar falls back to %APPDATA%/media-studio).
+ * SAME tree main joins for `short:`/`dub:`/the `._pth` env dir.
+ *
+ * BEHAVIOR CHANGE (G1 preview fix): this is NO LONGER packaged-only. In dev the
+ * Electron main process now resolves a real data root via the marker/exe-dir
+ * (see resolveDataRoot), but the Python SIDECAR is a separate process whose
+ * settings_store independently defaults to %APPDATA%/media-studio unless told
+ * otherwise. Without exporting the env in dev, main would read library.json from
+ * D:\Reframe\data while the sidecar read an empty %APPDATA% — the cross-process
+ * root would diverge and library.list/getPathForVideoId would still come back
+ * empty. Exporting DATA_ROOT in dev too keeps both processes on the SAME tree.
+ * Still never clobbers an explicit override (a power-user value wins).
  */
 function propagateDataRootEnv(): void {
-  if (!app.isPackaged) return;
   if (!process.env.MEDIA_STUDIO_CONFIG_DIR) {
     process.env.MEDIA_STUDIO_CONFIG_DIR = DATA_ROOT;
   }
@@ -392,30 +447,41 @@ function bootstrap(): void {
     // equal the sidecar's. The sidecar derives it from
     // `settings_store.default_config_dir()` + `/exports`
     // (handlers.Services.exports_dir). default_config_dir() honors
-    // MEDIA_STUDIO_CONFIG_DIR first; bootstrap() (packaged) sets that env var to
-    // DATA_ROOT before spawning the sidecar, and DATA_ROOT is exactly what we
-    // join here — so the two roots stay equal whether the data folder is the
-    // %APPDATA% default or a user-chosen location. If anyone changes how the
-    // sidecar resolves its root WITHOUT updating DATA_ROOT (or stops propagating
-    // the env), the roots diverge and every `short:` URL 404s silently.
+    // MEDIA_STUDIO_CONFIG_DIR first; bootstrap() sets that env var to DATA_ROOT
+    // before spawning the sidecar (in dev AND packaged — see propagateDataRootEnv),
+    // and DATA_ROOT is exactly what we join here — so the two roots stay equal
+    // whether the data folder is the %APPDATA% default or a user-chosen location.
+    // If anyone changes how the sidecar resolves its root WITHOUT updating
+    // DATA_ROOT (or stops propagating the env), the roots diverge and every
+    // `short:` URL 404s silently.
     if (videoId.startsWith('short:')) {
       const exportsRoot = resolvePath(DATA_ROOT, 'exports');
       return resolveScopedMediaPath(videoId, 'short:', exportsRoot);
     }
     if (!sc) return null;
+    // Distinguish a dead/throwing sidecar (transient -> SidecarUnavailableError ->
+    // 503) from a genuinely-absent id (-> null -> 404). Both `request` calls go to
+    // the sidecar, so any throw from them means the backend could not answer.
+    let verdict: { playable: boolean; proxyPath?: string };
+    let videos: { id: string; path: string }[];
     try {
-      const verdict = await sc.request<{ playable: boolean; proxyPath?: string }>(
-        'media.playable',
-        { videoId },
+      verdict = await sc.request<{ playable: boolean; proxyPath?: string }>('media.playable', {
+        videoId,
+      });
+      ({ videos } = await sc.request<{ videos: { id: string; path: string }[] }>('library.list'));
+    } catch (err) {
+      throw new SidecarUnavailableError(
+        `media resolve failed for ${videoId}: ${(err as Error).message}`,
       );
-      if (verdict.proxyPath) return verdict.proxyPath;
-      const { videos } = await sc.request<{ videos: { id: string; path: string }[] }>(
-        'library.list',
-      );
-      return videos.find((v) => v.id === videoId)?.path ?? null;
-    } catch {
-      return null; // resolver failure -> handler responds 404 (never hangs)
     }
+    // Prefer the cached proxy, but only if it ACTUALLY exists on disk + is a
+    // Chromium-decodable container; a stale/half-written verdict.proxyPath would
+    // otherwise 404 (or feed Chromium an undecodable file) and blank the player.
+    // Fall back to the original library path in that case.
+    if (verdict.proxyPath && (await isPlayableFile(verdict.proxyPath))) {
+      return verdict.proxyPath;
+    }
+    return videos.find((v) => v.id === videoId)?.path ?? null;
   });
 
   const win = createWindow();

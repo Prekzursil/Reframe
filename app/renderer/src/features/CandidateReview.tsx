@@ -97,12 +97,15 @@ export function CandidateReview({
           <div className="sm-phone">
             <Player
               ref={playerRef}
-              // P4 §5: the epoch in the key remounts this player when the
-              // (Workspace-built) proxy makes the source playable — the
-              // separate-instance remount bug fix.
-              key={`${videoId}:${preview.start}:${playerEpoch}`}
+              // key is the videoId ONLY: selecting another candidate changes the
+              // `window` prop (the Player re-seeks via its window effect) and a
+              // proxy swap rides `reloadToken` (a shake-free video.load()) — both
+              // REUSE the element instead of remounting it mid-load (the visible
+              // restart/shake bug). P4 §5's epoch is now the reload signal.
+              key={videoId}
               videoId={videoId}
               window={preview}
+              reloadToken={playerEpoch}
               onTimeUpdate={onTimeUpdate}
             />
             {/* P4 §5: live caption overlay — mirrors the selected template +

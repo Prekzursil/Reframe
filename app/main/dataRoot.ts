@@ -69,3 +69,42 @@ export function chooseDataRoot(input: ChooseDataRootInput): string {
 
   return input.appDataRoot;
 }
+
+/**
+ * The IO seam {@link resolveDataRootFrom} needs (so the data-root RESOLUTION
+ * policy is testable without Electron). main.ts provides the concrete impl
+ * (reading the marker, probing exe-dir writability, app.getPath('appData')).
+ */
+export interface DataRootIO {
+  /** `process.env.MEDIA_STUDIO_CONFIG_DIR` (or undefined). */
+  envOverride: string | undefined;
+  /** `<exeDir>/data` — the portable default location. */
+  exeDataDir: string;
+  /** `%APPDATA%/media-studio`. */
+  appDataRoot: string;
+  /** Read the marker file's trimmed contents, or undefined if absent/unreadable. */
+  readMarker: () => string | undefined;
+  /** True when `exeDataDir` is creatable/writable. */
+  isExeDataWritable: (dir: string) => boolean;
+}
+
+/**
+ * Resolve the ONE data root from an injected IO seam (G1 preview fix).
+ *
+ * IMPORTANT BEHAVIOR (regression-locked): the marker + exe-dir are consulted
+ * UNCONDITIONALLY — there is NO `isPackaged` switch. The previous main.ts gated
+ * them on `app.isPackaged`, so a DEV run ignored the marker and always landed on
+ * %APPDATA%/media-studio (which has no library.json) — the root cause of the
+ * "preview doesn't work at all -> no subtitles" failure. Now dev resolves the
+ * real data folder exactly like a packaged build. An explicit env override still
+ * wins (chooseDataRoot priority). Pure given the seam (the seam owns all IO).
+ */
+export function resolveDataRootFrom(io: DataRootIO): string {
+  return chooseDataRoot({
+    envOverride: io.envOverride,
+    markerContent: io.readMarker(),
+    exeDataDir: io.exeDataDir,
+    exeDataWritable: io.isExeDataWritable(io.exeDataDir),
+    appDataRoot: io.appDataRoot,
+  });
+}

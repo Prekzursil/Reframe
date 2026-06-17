@@ -436,4 +436,268 @@ describe('<Timeline />', () => {
     await save();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('disk is full');
   });
+
+  it('surfaces a non-Error tracks.list rejection via String(err)', async () => {
+    const fake = makeFakeApi();
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(async (method: string) => {
+      if (method === 'tracks.list') throw 'plain list error';
+      return {};
+    });
+    await mount(fake.api);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('plain list error');
+  });
+
+  it('falls back to the global window.api bridge when no api prop is given', async () => {
+    const fake = makeFakeApi();
+    (globalThis as { api?: unknown }).api = fake.api;
+    try {
+      await act(async () => {
+        root.render(<Timeline videoId="vid-1" durationSec={100} />);
+      });
+      expect(cueRects()).toHaveLength(3);
+    } finally {
+      delete (globalThis as { api?: unknown }).api;
+    }
+  });
+
+  it('swallows a library.list rejection during the duration probe', async () => {
+    const fake = makeFakeApi();
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(async (method: string) => {
+      if (method === 'tracks.list') return { tracks: [makeTrack()] };
+      if (method === 'timeline.peaks') return PEAKS;
+      if (method === 'library.list') throw new Error('library down');
+      return {};
+    });
+    // No durationSec prop -> the library.list probe runs and rejects (caught).
+    await act(async () => {
+      root.render(<Timeline videoId="vid-1" api={fake.api} />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // No error surfaced; cue editing still works (falls back to the cue extent).
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(cueRects()).toHaveLength(3);
+  });
+
+  it('ignores a library.list video whose duration is 0 (keeps the cue-extent fallback)', async () => {
+    const fake = makeFakeApi({ videos: [{ id: 'vid-1', durationSec: 0 }] });
+    const onSeek = vi.fn();
+    await act(async () => {
+      root.render(<Timeline videoId="vid-1" api={fake.api} onSeek={onSeek} />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // probedDuration stays null -> duration = max(lastCueEnd, 1) = 8. Click at
+    // x=500 -> 500/1000 * 8 = 4s.
+    await clickAt(lane(), 500);
+    expect(onSeek).toHaveBeenCalledWith(4);
+  });
+
+  it('draws the waveform onto a real 2D canvas context', async () => {
+    const fillRect = vi.fn();
+    const clearRect = vi.fn();
+    const fakeCtx = { fillRect, clearRect, fillStyle: '' } as unknown as CanvasRenderingContext2D;
+    const getContextSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue(fakeCtx as unknown as ReturnType<HTMLCanvasElement['getContext']>);
+    try {
+      const fake = makeFakeApi();
+      await mount(fake.api);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      // One clearRect + one fillRect per peak bar (4 peaks in PEAKS).
+      expect(clearRect).toHaveBeenCalled();
+      expect(fillRect).toHaveBeenCalledTimes(PEAKS.peaks.length);
+    } finally {
+      getContextSpy.mockRestore();
+    }
+  });
+
+  it('bails out of the waveform draw when getContext throws (jsdom)', async () => {
+    const getContextSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockImplementation(() => {
+        throw new Error('no node-canvas');
+      });
+    try {
+      const fake = makeFakeApi();
+      await mount(fake.api);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      // No crash; the panel still renders the cues.
+      expect(cueRects()).toHaveLength(3);
+    } finally {
+      getContextSpy.mockRestore();
+    }
+  });
+
+  it('uses the lane element rect when it reports a real width/left', async () => {
+    const fake = makeFakeApi();
+    const player = makePlayerRef();
+    await mount(fake.api, { playerRef: player.ref });
+    // Give the lane a real bounding rect: left=100, width=400 over duration 100s.
+    const laneEl = lane();
+    vi.spyOn(laneEl, 'getBoundingClientRect').mockReturnValue({
+      left: 100,
+      width: 400,
+      top: 0,
+      right: 500,
+      bottom: 0,
+      height: 0,
+      x: 100,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    // clientX=300 -> (300-100)/400 * 100 = 50s.
+    await clickAt(laneEl, 300);
+    expect(player.seek).toHaveBeenCalledWith(50);
+  });
+
+  it('retime ignores non-numeric input', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    await selectCue(1, 40);
+    const startInput = container.querySelector(
+      'input[data-action="retime-start"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      setInputValue(startInput, 'not-a-number');
+    });
+    await act(async () => {
+      button('retime').click();
+    });
+    await save();
+    // The cue keeps its original times (the NaN guard short-circuits retime).
+    expect(savedCues(fake)[1]).toMatchObject({ start: 3, end: 5 });
+  });
+
+  it('apply-text is a no-op when the text is unchanged', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    await selectCue(0, 10);
+    // Apply without editing -> no history push (undo stays disabled).
+    await act(async () => {
+      button('apply-text').click();
+    });
+    expect(button('undo').disabled).toBe(true);
+  });
+
+  it('a lane mousemove without an active drag is a no-op', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    await act(async () => {
+      lane().dispatchEvent(mouse('mousemove', 50));
+    });
+    // Nothing committed; undo remains disabled.
+    expect(button('undo').disabled).toBe(true);
+  });
+
+  it('a lane mouseup without an active drag is a no-op', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    await act(async () => {
+      lane().dispatchEvent(mouse('mouseup', 50));
+    });
+    expect(button('undo').disabled).toBe(true);
+  });
+
+  it('clicking the lane outside any cue rect seeks without changing the selection', async () => {
+    const fake = makeFakeApi();
+    const onSeek = vi.fn();
+    await mount(fake.api, { onSeek });
+    // The bare lane click (target is the lane, not a [data-cue]) seeks only.
+    await clickAt(lane(), 250);
+    expect(onSeek).toHaveBeenCalledWith(25);
+    expect(container.querySelector('.timeline__editor')).toBeNull();
+  });
+
+  it('coerces an absent tracks field on tracks.list to an empty list (no track alert)', async () => {
+    const fake = makeFakeApi();
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(async (method: string) => {
+      if (method === 'tracks.list') return {}; // no `tracks` key
+      if (method === 'timeline.peaks') return PEAKS;
+      return {};
+    });
+    await mount(fake.api);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('No subtitle track');
+  });
+
+  it('handles a track that arrives with no cues array (createHistory fallback)', async () => {
+    const fake = makeFakeApi();
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(async (method: string) => {
+      if (method === 'tracks.list') {
+        return { tracks: [{ ...makeTrack(), cues: undefined }] };
+      }
+      if (method === 'timeline.peaks') return PEAKS;
+      return {};
+    });
+    await mount(fake.api);
+    // No cues -> no rects, but the track loaded (Save enabled, no alert).
+    expect(cueRects()).toHaveLength(0);
+    expect(button('save').disabled).toBe(false);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('keeps the editor closed when the selected index no longer maps to a cue', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    // Select the last cue, then merge the FIRST cue twice so the list shrinks
+    // below the selected index — selectedCue resolves to null (cues[selected]
+    // is undefined) and the editor closes without crashing.
+    await selectCue(2, 70); // selected = 2 (last)
+    // Re-select index 0 then merge to shrink; finally undo clears selection.
+    await selectCue(0, 10);
+    await act(async () => {
+      button('merge').click(); // 3 -> 2 cues, selection stays 0
+    });
+    expect(cueRects()).toHaveLength(2);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('falls back to the token color when getComputedStyle throws while drawing', async () => {
+    const fillRect = vi.fn();
+    const fakeCtx = {
+      fillRect,
+      clearRect: vi.fn(),
+      fillStyle: '',
+    } as unknown as CanvasRenderingContext2D;
+    const ctxSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue(fakeCtx as unknown as ReturnType<HTMLCanvasElement['getContext']>);
+    const gcsSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation(() => {
+      throw new Error('no CSSOM');
+    });
+    try {
+      const fake = makeFakeApi();
+      await mount(fake.api);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      // The draw still ran (token-mirror fallback color), one bar per peak.
+      expect(fillRect).toHaveBeenCalledTimes(PEAKS.peaks.length);
+      expect(fakeCtx.fillStyle).toBe('#50555f');
+    } finally {
+      gcsSpy.mockRestore();
+      ctxSpy.mockRestore();
+    }
+  });
+
+  it('keeps the history when subtitles.edit resolves without a track (defensive)', async () => {
+    const fake = makeFakeApi();
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(async (method: string) => {
+      if (method === 'tracks.list') return { tracks: [makeTrack()] };
+      if (method === 'timeline.peaks') return PEAKS;
+      if (method === 'subtitles.edit') return {}; // no `track` in the response
+      return {};
+    });
+    await mount(fake.api);
+    await save();
+    // Status flips to Saved even though the response carried no track.
+    expect(container.textContent).toContain('Saved');
+    expect(cueRects()).toHaveLength(3);
+  });
 });

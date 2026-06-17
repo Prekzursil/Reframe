@@ -62,7 +62,12 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
   // U1: the workspace player strip + its imperative handle (Timeline seeks it).
   const playerRef = useRef<PlayerHandle | null>(null);
   const [playerNote, setPlayerNote] = useState<string | null>(null);
+  // `playerEpoch` is the proxy-swap signal: bumped on the job.done that makes the
+  // source playable. It drives the Player's `reloadToken` (a shake-free
+  // video.load() re-fetch) — NOT a key-remount, which would visibly restart the
+  // element mid-load (the "shakiness" bug).
   const [playerEpoch, setPlayerEpoch] = useState(0);
+  const [playerError, setPlayerError] = useState<string | null>(null);
 
   const reloadProject = useCallback(async () => {
     setError(null);
@@ -95,6 +100,9 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
           offDone = onJobDone((evt) => {
             if (evt.jobId !== job.jobId) return;
             setPlayerNote(null);
+            // Clear any prior load error: the reload below re-fetches the
+            // now-ready proxy, so the stale failure no longer applies.
+            setPlayerError(null);
             setPlayerEpoch((n) => n + 1);
           });
         });
@@ -153,8 +161,22 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
       </header>
 
       <div className="workspace__player">
-        <Player ref={playerRef} videoId={video.id} key={`${video.id}:${playerEpoch}`} />
+        {/* key is the videoId ONLY: switching videos remounts (a genuinely
+            different source), but a proxy swap for the SAME video reuses the
+            element via reloadToken (shake-free). */}
+        <Player
+          ref={playerRef}
+          videoId={video.id}
+          key={video.id}
+          reloadToken={playerEpoch}
+          onError={setPlayerError}
+        />
         {playerNote ? <div className="workspace__player-note">{playerNote}</div> : null}
+        {playerError ? (
+          <div className="workspace__player-error" role="alert">
+            {playerError}
+          </div>
+        ) : null}
       </div>
 
       <TabBar tabs={WORKSPACE_TABS} active={active} onSelect={setActive} />

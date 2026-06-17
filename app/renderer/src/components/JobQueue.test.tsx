@@ -191,6 +191,20 @@ describe('JobQueue', () => {
     expect(container.textContent).toContain('No jobs yet');
   });
 
+  it('treats a job.list result without a jobs array as empty (JobQueue.tsx:72)', async () => {
+    // result is non-null but has no `jobs` key -> the `?? []` fallback applies.
+    rpcMock.mockResolvedValue({});
+    await renderQueue(true);
+    expect(container.textContent).toContain('No jobs yet');
+    expect(container.querySelectorAll('li.jobqueue__item').length).toBe(0);
+  });
+
+  it('stringifies a non-Error rejection from job.list (errText else, JobQueue.tsx:55)', async () => {
+    rpcMock.mockRejectedValue('plain string failure');
+    await renderQueue(true);
+    expect(container.textContent).toContain('plain string failure');
+  });
+
   it('surfaces a job.list failure', async () => {
     rpcMock.mockRejectedValue(new Error('sidecar down'));
     await renderQueue(true);
@@ -227,6 +241,57 @@ describe('JobQueue', () => {
 
     expect(rpcMock).toHaveBeenCalledWith('job.retry', { jobId: 'err-1' });
     expect(listCalls()).toBe(before + 1);
+  });
+
+  it('surfaces a job.cancel failure and still refreshes (JobQueue.tsx:100-103)', async () => {
+    // Initial list serves one cancellable job; once Cancel is clicked, BOTH
+    // job.cancel and the following refresh fail — so the catch-set error persists
+    // (refresh's success would otherwise clear it) and the alert stays visible.
+    let cancelled = false;
+    rpcMock.mockImplementation(async (method: string) => {
+      if (method === 'job.cancel') {
+        cancelled = true;
+        throw new Error('cancel blew up');
+      }
+      if (method === 'job.list') {
+        if (cancelled) throw new Error('list down after cancel');
+        return { jobs: [makeJob({ jobId: 'run-1', status: 'running' })] };
+      }
+      return {};
+    });
+    await renderQueue(true);
+
+    const before = listCalls();
+    await click('.jobqueue__cancel');
+
+    // The catch ran (cancel was attempted) and a refresh still followed it.
+    expect(rpcMock).toHaveBeenCalledWith('job.cancel', { jobId: 'run-1' });
+    expect(listCalls()).toBe(before + 1);
+    // An error alert is shown (the failure was surfaced, never swallowed).
+    expect(container.querySelector('.jobqueue__error')).not.toBeNull();
+  });
+
+  it('surfaces a job.retry failure and still refreshes (JobQueue.tsx:112-115)', async () => {
+    let retried = false;
+    rpcMock.mockImplementation(async (method: string) => {
+      if (method === 'job.retry') {
+        retried = true;
+        throw new Error('retry blew up');
+      }
+      if (method === 'job.list') {
+        if (retried) throw new Error('list down after retry');
+        return { jobs: [makeJob({ jobId: 'err-1', status: 'error', pct: 0 })] };
+      }
+      return {};
+    });
+    await renderQueue(true);
+
+    const before = listCalls();
+    await click('.jobqueue__retry');
+
+    expect(rpcMock).toHaveBeenCalledWith('job.retry', { jobId: 'err-1' });
+    expect(listCalls()).toBe(before + 1);
+    expect(container.querySelector('.jobqueue__error')).not.toBeNull();
   });
 
   it('live-updates pct from job.progress while open', async () => {

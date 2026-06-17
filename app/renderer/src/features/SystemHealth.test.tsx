@@ -152,4 +152,118 @@ describe('<SystemHealth />', () => {
     await mount(fake.api);
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('sidecar gone');
   });
+
+  it('renders the opposite state for each section (missing tool / installed backend / available engine / empty path) + bad verdict', async () => {
+    const fake = makeFakeApi(
+      report({
+        ok: false,
+        tools: [{ name: 'ffmpeg', present: false, path: '', version: '', hint: 'install it' }],
+        backends: [
+          // installed but with NO version -> exercises `version || 'installed'`.
+          { label: 'torch', module: 'torch', installed: true, version: '' },
+        ],
+        engines: [
+          { name: 'llama-server', description: 'LLM', available: true, path: '/bin/llama' },
+        ],
+        modelPaths: [{ label: 'Cache', path: 'C:/cache', exists: false }],
+      }),
+    );
+    await mount(fake.api);
+    expect(container.querySelector('li[data-tool="ffmpeg"]')?.textContent).toContain('missing');
+    expect(container.querySelector('li[data-backend="torch"]')?.textContent).toContain('installed');
+    expect(container.querySelector('li[data-engine="llama-server"]')?.textContent).toContain(
+      'available',
+    );
+    expect(container.querySelector('li[data-path="Cache"]')?.textContent).toContain('empty');
+    // The verdict line takes the "bad" class when ok is false.
+    expect(container.querySelector('.health-verdict.bad')).toBeTruthy();
+    expect(container.querySelector('.health-verdict')?.textContent).toContain('needs attention');
+  });
+
+  it('renders a tool present with no version (unknown version fallback)', async () => {
+    const fake = makeFakeApi(
+      report({
+        tools: [{ name: 'ffmpeg', present: true, path: '/bin/ffmpeg', version: '', hint: '' }],
+      }),
+    );
+    await mount(fake.api);
+    expect(container.querySelector('li[data-tool="ffmpeg"]')?.textContent).toContain(
+      'unknown version',
+    );
+  });
+
+  it('coerces a null system.health response to no report', async () => {
+    const fake = makeFakeApi(report());
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+    await mount(fake.api);
+    // No report -> no verdict, no sections rendered.
+    expect(container.querySelector('.health-verdict')).toBeNull();
+    expect(container.querySelector('[data-section="tools"]')).toBeNull();
+  });
+
+  it('uses String(err) when system.health rejects with a non-Error value', async () => {
+    const fake = makeFakeApi(report());
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValue('plain health error');
+    await mount(fake.api);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('plain health error');
+  });
+
+  it('surfaces an error when toggling offline fails (and re-enables the toggle)', async () => {
+    const fake = makeFakeApi(report({ offline: false }));
+    await mount(fake.api);
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('settings store down'),
+    );
+    const toggle = container.querySelector(
+      'button[data-action="toggle-offline"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      toggle.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('settings store down');
+    expect(
+      (container.querySelector('button[data-action="toggle-offline"]') as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
+  it('uses String(err) when toggling offline rejects with a non-Error value', async () => {
+    const fake = makeFakeApi(report({ offline: false }));
+    await mount(fake.api);
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce('plain toggle error');
+    const toggle = container.querySelector(
+      'button[data-action="toggle-offline"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      toggle.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('plain toggle error');
+  });
+
+  it('the Re-check button re-runs system.health', async () => {
+    const fake = makeFakeApi(report());
+    await mount(fake.api);
+    const before = fake.calls.filter((c) => c.method === 'system.health').length;
+    const recheck = container.querySelector('button[data-action="refresh"]') as HTMLButtonElement;
+    await act(async () => {
+      recheck.click();
+      await Promise.resolve();
+    });
+    expect(fake.calls.filter((c) => c.method === 'system.health').length).toBe(before + 1);
+  });
+
+  it('falls back to the global window.api bridge when no api prop is given', async () => {
+    const fake = makeFakeApi(report());
+    (globalThis as { api?: unknown }).api = fake.api;
+    try {
+      await act(async () => {
+        root.render(<SystemHealth />);
+      });
+      expect(container.querySelector('.health-verdict')?.textContent).toBe('Setup OK');
+    } finally {
+      delete (globalThis as { api?: unknown }).api;
+    }
+  });
 });

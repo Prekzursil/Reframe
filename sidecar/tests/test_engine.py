@@ -10,15 +10,20 @@ from __future__ import annotations
 from media_studio import engine
 from media_studio.features import (
     audiomix,
+    caption_polish,
+    ctc_align,
     diarize,
     health,
     nle_export,
     offline,
     package_export,
+    parakeet_asr,
+    pyannote_backend,
     recipes,
     silencetrim,
     stabilize,
     subtitles,
+    transcribe,
 )
 
 
@@ -31,6 +36,7 @@ def test_all_names_resolve() -> None:
 
 def test_subtitles_namespace_binds_features() -> None:
     assert engine.subtitles.generate is subtitles.generate
+    assert engine.subtitles.generate_polished is subtitles.generate_polished
     assert engine.subtitles.edit is subtitles.edit
     assert engine.subtitles.translate is subtitles.translate
     assert engine.subtitles.stack_bilingual is subtitles.stack_bilingual
@@ -97,3 +103,23 @@ def test_system_advanced_flat_reexports() -> None:
     assert engine.cosine_similarity is diarize.cosine_similarity
     assert engine.speaker_label is diarize.speaker_label
     assert engine.DIARIZE_REQUIRED_ASSETS is diarize.REQUIRED_ASSETS
+
+
+def test_phase8_flat_reexports() -> None:
+    # diarize 2nd backend (opt-in pyannote)
+    assert engine.PyannoteDiarizer is pyannote_backend.PyannoteDiarizer
+    assert engine.select_diarize_backend is pyannote_backend.select_backend_factory
+    assert engine.selected_diarize_backend is pyannote_backend.selected_backend_name
+    # ASR engine selection (WU7)
+    assert engine.transcribe_file is transcribe.transcribe_file
+    assert engine.transcribe_with_engine is transcribe.transcribe_with_engine
+    assert engine.selected_asr_engine is transcribe.selected_asr_engine
+    assert engine.ASR_ENGINES is transcribe.ASR_ENGINES
+    assert engine.parakeet_transcribe is parakeet_asr.transcribe_file
+    assert engine.ParakeetLoader is parakeet_asr.ParakeetLoader
+    # word-timing alignment (WU6)
+    assert engine.align_words is ctc_align.align_words
+    # caption polish (WU9)
+    assert engine.polish_cues is caption_polish.polish_cues
+    assert engine.CAPTION_MAX_CPS == caption_polish.MAX_CPS
+    assert engine.CAPTION_MAX_CPL == caption_polish.MAX_CPL

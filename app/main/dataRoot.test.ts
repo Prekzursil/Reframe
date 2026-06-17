@@ -4,8 +4,14 @@
 // proxies/peaks/dubs/voices/feedback. These cover every branch of the priority
 // order (env > marker > writable exe-data > appData) plus whitespace/empty
 // rejection at each tier, so a blank marker or env can never beat a real path.
-import { describe, it, expect } from 'vitest';
-import { chooseDataRoot, DATA_DIR_MARKER, type ChooseDataRootInput } from './dataRoot';
+import { describe, it, expect, vi } from 'vitest';
+import {
+  chooseDataRoot,
+  DATA_DIR_MARKER,
+  resolveDataRootFrom,
+  type ChooseDataRootInput,
+  type DataRootIO,
+} from './dataRoot';
 
 const APPDATA = 'C:\\Users\\me\\AppData\\Roaming\\media-studio';
 const EXE_DATA = 'C:\\Apps\\Reframe\\data';
@@ -90,5 +96,49 @@ describe('chooseDataRoot — whitespace / empty candidates are ignored', () => {
   it('trims surrounding whitespace from the chosen value', () => {
     expect(chooseDataRoot(base({ envOverride: `  ${ENV_PATH}  ` }))).toBe(ENV_PATH);
     expect(chooseDataRoot(base({ markerContent: `\t${MARKER_PATH}\n` }))).toBe(MARKER_PATH);
+  });
+});
+
+// --------------------------------------------------------------------------- #
+// resolveDataRootFrom — the IO-seam resolver (G1 preview fix regression lock)
+// --------------------------------------------------------------------------- #
+function io(overrides: Partial<DataRootIO> = {}): DataRootIO {
+  return {
+    envOverride: undefined,
+    exeDataDir: EXE_DATA,
+    appDataRoot: APPDATA,
+    readMarker: () => undefined,
+    isExeDataWritable: () => false,
+    ...overrides,
+  };
+}
+
+describe('resolveDataRootFrom — marker/exe-dir are consulted UNCONDITIONALLY', () => {
+  // G1 REGRESSION (was: the old main.ts gated marker/exe-dir on app.isPackaged,
+  // so a DEV run ignored the marker and always resolved %APPDATA% — the empty
+  // data folder with no library.json that broke preview + subtitles). There is
+  // now NO isPackaged switch: dev resolves the marker root exactly like packaged.
+  it('resolves the MARKER root (like packaged) — the dev-now-works fix', () => {
+    expect(resolveDataRootFrom(io({ readMarker: () => MARKER_PATH }))).toBe(MARKER_PATH);
+  });
+
+  it('resolves a writable exe-data dir when there is no marker', () => {
+    expect(resolveDataRootFrom(io({ isExeDataWritable: () => true }))).toBe(EXE_DATA);
+  });
+
+  it('falls back to appData only when neither marker nor writable exe-dir exists', () => {
+    expect(resolveDataRootFrom(io())).toBe(APPDATA);
+  });
+
+  it('lets an explicit env override win over the marker (power-user escape hatch)', () => {
+    expect(resolveDataRootFrom(io({ envOverride: ENV_PATH, readMarker: () => MARKER_PATH }))).toBe(
+      ENV_PATH,
+    );
+  });
+
+  it('probes writability against the exe-data dir it was given', () => {
+    const isExeDataWritable = vi.fn(() => true);
+    expect(resolveDataRootFrom(io({ isExeDataWritable }))).toBe(EXE_DATA);
+    expect(isExeDataWritable).toHaveBeenCalledWith(EXE_DATA);
   });
 });

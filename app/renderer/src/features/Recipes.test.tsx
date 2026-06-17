@@ -87,6 +87,21 @@ describe('buildRecipeFromPreset', () => {
     const translate = recipe.steps.find((s) => s.method === 'subtitles.translate')!;
     expect(translate.params.trackId).toBe('$1.track.id');
   });
+
+  it('builds every preset with the active videoId stamped in (covers all builders)', () => {
+    for (const preset of RECIPE_PRESETS) {
+      const steps = preset.build('vidY');
+      expect(steps.length).toBeGreaterThan(0);
+      // The first step always targets the video.
+      expect(steps[0].params.videoId).toBe('vidY');
+    }
+    // The subtitles preset specifically builds transcribe + subtitles.generate.
+    const subs = RECIPE_PRESETS.find((p) => p.id === 'transcribe-subtitles')!;
+    expect(subs.build('vidY').map((s) => s.method)).toEqual([
+      'transcribe.start',
+      'subtitles.generate',
+    ]);
+  });
 });
 
 describe('doneErrorMessage', () => {
@@ -203,5 +218,246 @@ describe('<Recipes />', () => {
     const fake = makeFakeApi([]);
     await mount(fake.api);
     expect(container.querySelector('.asset-empty')?.textContent).toContain('No recipes yet');
+  });
+
+  it('coerces a non-array recipes payload to an empty list', async () => {
+    const fake = makeFakeApi(SAVED);
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ recipes: 'nope' });
+    await mount(fake.api);
+    expect(container.querySelector('.asset-empty')).toBeTruthy();
+  });
+
+  it('surfaces a recipes.list rejection (and a non-Error via String)', async () => {
+    const fake = makeFakeApi(SAVED);
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce('plain list error');
+    await mount(fake.api);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('plain list error');
+  });
+
+  it('surfaces an Error recipes.list rejection via its message', async () => {
+    const fake = makeFakeApi(SAVED);
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('list error obj'));
+    await mount(fake.api);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('list error obj');
+  });
+
+  it('surfaces a save error', async () => {
+    const fake = makeFakeApi([]);
+    await mount(fake.api);
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('save failed'));
+    const addBtn = container.querySelector(
+      'li[data-preset] button[data-action="add-preset"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      addBtn.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('save failed');
+  });
+
+  it('surfaces a delete error (non-Error via String)', async () => {
+    const fake = makeFakeApi(SAVED);
+    await mount(fake.api);
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce('delete boom');
+    const delBtn = container.querySelector(
+      'button[data-action="delete"][data-recipe="r1"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      delBtn.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('delete boom');
+  });
+
+  it('surfaces an Error delete rejection via its message', async () => {
+    const fake = makeFakeApi(SAVED);
+    await mount(fake.api);
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('delete error obj'));
+    const delBtn = container.querySelector(
+      'button[data-action="delete"][data-recipe="r1"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      delBtn.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('delete error obj');
+  });
+
+  it('surfaces a non-Error save rejection via String(err)', async () => {
+    const fake = makeFakeApi([]);
+    await mount(fake.api);
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce('save boom');
+    const addBtn = container.querySelector(
+      'li[data-preset] button[data-action="add-preset"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      addBtn.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('save boom');
+  });
+
+  it('surfaces a non-Error run rejection via String(err)', async () => {
+    const fake = makeFakeApi(SAVED);
+    await mount(fake.api);
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce('run boom');
+    await act(async () => {
+      (
+        container.querySelector('button[data-action="run"][data-recipe="r1"]') as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('run boom');
+  });
+
+  it('ignores progress for a different job', async () => {
+    const fake = makeFakeApi(SAVED);
+    await mount(fake.api);
+    await act(async () => {
+      (
+        container.querySelector('button[data-action="run"][data-recipe="r1"]') as HTMLButtonElement
+      ).click();
+    });
+    await act(async () => {
+      fake.fireProgress({ jobId: 'job-9', pct: 20, message: 'mine' });
+    });
+    await act(async () => {
+      fake.fireProgress({ jobId: 'other', pct: 99, message: 'not mine' });
+    });
+    expect(container.querySelector('.progress')?.textContent).not.toContain('99%');
+    expect(container.querySelector('.progress')?.textContent).toContain('20%');
+  });
+
+  it('Run is re-entrant-safe: a second Run while one is active is ignored', async () => {
+    const fake = makeFakeApi(SAVED);
+    const rpcMock = fake.api.rpc as ReturnType<typeof vi.fn>;
+    // Hang the run so the panel stays "running".
+    let release: (v: { jobId: string }) => void = () => undefined;
+    rpcMock.mockImplementation((method: string, params?: Record<string, unknown>) => {
+      fake.calls.push({ method, params });
+      if (method === 'recipes.list') return Promise.resolve({ recipes: SAVED });
+      if (method === 'recipes.run') {
+        return new Promise((res) => {
+          release = res as (v: { jobId: string }) => void;
+        });
+      }
+      return Promise.resolve({});
+    });
+    await mount(fake.api);
+    const runBtn = container.querySelector(
+      'button[data-action="run"][data-recipe="r1"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      runBtn.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      runBtn.click(); // second click while running -> guard returns early
+      await Promise.resolve();
+    });
+    expect(rpcMock.mock.calls.filter((c) => c[0] === 'recipes.run').length).toBe(1);
+    await act(async () => {
+      release({ jobId: 'job-9' });
+      await Promise.resolve();
+    });
+  });
+
+  it('handles a run response with no jobId (no job.done wait)', async () => {
+    const fake = makeFakeApi(SAVED);
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(async (method: string) => {
+      if (method === 'recipes.list') return { recipes: SAVED };
+      if (method === 'recipes.run') return {}; // no jobId
+      return {};
+    });
+    await mount(fake.api);
+    await act(async () => {
+      (
+        container.querySelector('button[data-action="run"][data-recipe="r1"]') as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('treats a null job.done result as success (no error)', async () => {
+    const fake = makeFakeApi(SAVED);
+    await mount(fake.api);
+    await act(async () => {
+      (
+        container.querySelector('button[data-action="run"][data-recipe="r1"]') as HTMLButtonElement
+      ).click();
+    });
+    await act(async () => {
+      fake.fireDone({ jobId: 'job-9', result: undefined });
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('surfaces a run rpc rejection', async () => {
+    const fake = makeFakeApi(SAVED);
+    await mount(fake.api);
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('run blew up'));
+    await act(async () => {
+      (
+        container.querySelector('button[data-action="run"][data-recipe="r1"]') as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('run blew up');
+  });
+
+  it('Cancel calls job.cancel for the active run', async () => {
+    const fake = makeFakeApi(SAVED);
+    await mount(fake.api);
+    await act(async () => {
+      (
+        container.querySelector('button[data-action="run"][data-recipe="r1"]') as HTMLButtonElement
+      ).click();
+    });
+    // A progress event reveals the run UI with the live jobId -> Cancel shows.
+    await act(async () => {
+      fake.fireProgress({ jobId: 'job-9', pct: 10, message: 'go' });
+    });
+    const cancel = container.querySelector('button[data-action="cancel"]') as HTMLButtonElement;
+    expect(cancel).toBeTruthy();
+    await act(async () => {
+      cancel.click();
+      await Promise.resolve();
+    });
+    expect(fake.calls.find((c) => c.method === 'job.cancel')?.params).toEqual({ jobId: 'job-9' });
+    expect(container.querySelector('.progress-message')?.textContent).toContain('Cancelling…');
+  });
+
+  it('Cancel swallows a job.cancel rejection (best-effort)', async () => {
+    const fake = makeFakeApi(SAVED);
+    await mount(fake.api);
+    await act(async () => {
+      (
+        container.querySelector('button[data-action="run"][data-recipe="r1"]') as HTMLButtonElement
+      ).click();
+    });
+    await act(async () => {
+      fake.fireProgress({ jobId: 'job-9', pct: 10, message: 'go' });
+    });
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('already done'));
+    await act(async () => {
+      (container.querySelector('button[data-action="cancel"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('falls back to the global window.api bridge when no api prop is given', async () => {
+    const fake = makeFakeApi(SAVED);
+    (globalThis as { api?: unknown }).api = fake.api;
+    try {
+      await act(async () => {
+        root.render(<Recipes videoId="v1" />);
+      });
+      expect(container.querySelector('li[data-recipe="r1"]')).toBeTruthy();
+    } finally {
+      delete (globalThis as { api?: unknown }).api;
+    }
   });
 });

@@ -30,7 +30,14 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping, Sequence
-from typing import Any, NotRequired, Protocol, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, Protocol, TypedDict, cast
+
+if TYPE_CHECKING:  # pragma: no cover - typing-only imports (heavy/seam types)
+    import numpy as np
+
+    from .quality_gate import QualityScore
+    from .ranker import RankerBackend, SignalMap
+    from .scorer import VlmReranker
 
 # ---------------------------------------------------------------------------
 # Recipe constants (frozen — CONTRACTS.md §5). Centralized so the prompt text,
@@ -113,6 +120,16 @@ class Candidate(TypedDict):
     factors: NotRequired[dict[str, int]]
     factorNotes: NotRequired[dict[str, str]]
     viralityPct: NotRequired[int]
+    # Wave-2 unified-scorer additions (set by select_unified, NOT by select()):
+    # the per-clip pooled signal map (persisted for the feedback flywheel), the
+    # fused LLM+signal working relevance, the learned-ranker score, and the
+    # quality-gate / VLM re-rank stamps. All NotRequired so the frozen transcript
+    # path never sets them (backward compatible).
+    signals: NotRequired[dict[str, float]]
+    signalScore: NotRequired[float]
+    rankerScore: NotRequired[float]
+    qualityScore: NotRequired[float]
+    vlmScore: NotRequired[float]
 
 
 class Word(TypedDict, total=False):
@@ -667,3 +684,164 @@ def select(
         ),
         count,
     )
+
+
+# ---------------------------------------------------------------------------
+# Unified tri-modal scorer entry point (Wave-2, ADDITIVE — see scorer.py)
+# ---------------------------------------------------------------------------
+
+
+def _has_segments(transcript: Transcript | None) -> bool:
+    """True when ``transcript`` carries at least one non-empty segment.
+
+    The transcript+LLM path is taken only when there is real text to select from
+    AND a provider to call; otherwise :func:`select_unified` falls back to the
+    visual-only :func:`~media_studio.features.scorer.candidates_from_curve` path.
+    """
+    if not transcript:
+        return False
+    segments = transcript.get("segments")
+    return bool(segments)
+
+
+def select_unified(
+    transcript: Transcript | None,
+    prompt: str,
+    controls: Controls | None,
+    provider: Provider | None,
+    *,
+    tracks: Mapping[str, Any] | None = None,
+    duration_total: float | None = None,
+    embeddings: np.ndarray | None = None,
+    ranker: RankerBackend | None = None,
+    quality_scores: Sequence[QualityScore] | None = None,
+    vlm_reranker: VlmReranker | None = None,
+    tier: int = 1,
+    feedback: FeedbackSeam | None = None,
+) -> list[Candidate]:
+    """The Wave-2 unified tri-modal selector (ADDITIVE — wraps :func:`select`).
+
+    Layers the Phase-8 multimodal signals on top of the frozen transcript/LLM
+    path. The transcript path itself is the UNCHANGED :func:`select` call; this
+    function only adds the signal blend, learned re-rank, diversity, quality gate,
+    and the optional Tier-2 VLM re-rank around it, then finalizes. Backward
+    compatible: every existing transcript-only caller keeps using :func:`select`.
+
+    Pipeline (graceful-degrade at every step — see ``scorer`` for the §-signal
+    re-normalization rule that makes a silent clip / no-model machine degrade
+    cleanly rather than score on fabricated zeros):
+
+    1. **Candidate generation.** Transcript + provider present ->
+       :func:`select` (the unchanged LLM path). Otherwise ->
+       :func:`~media_studio.features.scorer.candidates_from_curve` over the fused
+       visual+audio interest curve (the silent-video / no-LLM path).
+    2. **Signal blend.** Each candidate gets a per-clip pooled ``signals`` map and
+       a ``signalScore`` = :func:`~media_studio.features.scorer.fuse_score` of its
+       legacy LLM score with the present-weighted signal boost (legacy ``score``
+       stays frozen). The ``signals`` map is persisted so the feedback flywheel /
+       ranker can read it back exactly as ``training_rows_from_feedback`` expects.
+    3. **Learned re-rank (Tier-0 always).** :func:`ranker.rank` — the trained
+       ``LGBMRanker`` when present, else the deterministic factor-average fallback
+       (zero downloads). Stamps ``rankerScore``.
+    4. **Diversity / dedup (Tier-0 always).** :func:`diversity.dedupe_candidates`
+       over the WU4 ``embeddings`` when supplied, else a zero-model signal-vector
+       matrix (:func:`~media_studio.features.scorer.fallback_embeddings`).
+    5. **Quality gate (Tier-1, optional).** :func:`quality_gate.apply_quality_gate`
+       — a multiplicative demotion of shaky/blurry clips; a NO-OP when
+       ``quality_scores`` is missing/empty (DOVER offline/absent).
+    6. **Tier-2 VLM re-rank (opt-in).** When ``tier >= 2`` and a ``vlm_reranker``
+       is injected, reorder only the top-K (SmolVLM2 loaded alone). Off by default.
+    7. **Finalize.** :func:`_finalize` (trim to count + stamp ``viralityPct`` over
+       the returned set) — ``viralityPct`` semantics unchanged.
+    """
+    from . import diversity as _diversity  # noqa: PLC0415 - sibling pure modules, lazy to avoid cycle
+    from . import ranker as _ranker  # noqa: PLC0415
+    from . import scorer as _scorer  # noqa: PLC0415
+    from .quality_gate import apply_quality_gate  # noqa: PLC0415
+
+    settings: Mapping[str, Any] = (controls or {}) if isinstance(controls, Mapping) else {}
+    cfg = _resolve_controls(controls)
+    count = cfg["count"]
+    tracks_map: Mapping[str, Any] = tracks or {}
+
+    # Resolve the source duration: explicit arg wins, else the transcript's.
+    total = duration_total
+    if total is None and transcript is not None:
+        t_dur = transcript.get("durationSec")
+        if isinstance(t_dur, (int, float)):
+            total = float(t_dur)
+
+    # --- 1. Candidate generation -----------------------------------------
+    if _has_segments(transcript) and provider is not None:
+        cands: list[dict[str, Any]] = [dict(c) for c in select(transcript or {}, prompt, controls, provider)]
+    else:
+        curve = _scorer.window_interest_curve(tracks_map, total or 0.0)
+        cands = list(_scorer.candidates_from_curve(curve, total or 0.0, controls, tracks_map))
+
+    if not cands:
+        return []
+
+    # --- 2. Signal blend onto the working relevance ----------------------
+    alpha = _fuse_alpha(settings)
+    blended: list[dict[str, Any]] = []
+    for cand in cands:
+        sig: SignalMap = cand.get("signals") or _scorer.clip_signal_map(
+            tracks_map, float(cand.get("start", 0.0) or 0.0), float(cand.get("end", 0.0) or 0.0)
+        )
+        boost = _scorer.signal_boost_for_clip(
+            tracks_map, float(cand.get("start", 0.0) or 0.0), float(cand.get("end", 0.0) or 0.0)
+        )
+        new_cand: dict[str, Any] = dict(cand)
+        new_cand["signals"] = dict(sig)
+        new_cand["signalScore"] = _scorer.fuse_score(int(cand.get("score", 0)), boost, alpha)
+        blended.append(new_cand)
+
+    # --- 3. Learned re-rank (Tier-0 always) ------------------------------
+    def _signals_for(candidate: Mapping[str, Any]) -> SignalMap | None:
+        value = candidate.get("signals")
+        return value if isinstance(value, Mapping) else None
+
+    ranked = _ranker.rank(blended, ranker=ranker, signals_for=_signals_for)
+
+    # --- 4. Diversity / dedup (Tier-0 always) ----------------------------
+    embeds = embeddings if embeddings is not None else _scorer.fallback_embeddings(ranked, tracks_map)
+    method = _diversity_method(settings)
+    deduped = list(_diversity.dedupe_candidates(list(ranked), embeds, method=method, k=count))
+
+    # --- 5. Quality gate (Tier-1, optional; no-op when scores absent) -----
+    gated = list(apply_quality_gate(deduped, list(quality_scores or [])))
+
+    # --- 6. Tier-2 VLM re-rank (opt-in; off by default) -------------------
+    if tier >= 2 and vlm_reranker is not None:
+        gated = list(vlm_reranker.rerank_top_k(gated, top_k=_smolvlm_top_k(settings)))
+
+    _ = feedback  # the flywheel store is consumed upstream (handler trains the ranker)
+    # --- 7. Finalize (trim + stamp viralityPct over the returned set) ----
+    result = cast("list[Candidate]", list(gated))
+    return _finalize(result, count)
+
+
+def _fuse_alpha(settings: Mapping[str, Any]) -> float:
+    """Resolve the signal/LLM blend factor from ``settings`` (default 0.5)."""
+    from .scorer import DEFAULT_FUSE_ALPHA  # noqa: PLC0415
+
+    raw = settings.get("scorerAlpha", DEFAULT_FUSE_ALPHA)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_FUSE_ALPHA
+
+
+def _diversity_method(settings: Mapping[str, Any]) -> Literal["mmr", "dpp"]:
+    """Resolve the diversity method ('mmr' default, 'dpp' opt-in) from settings."""
+    return "dpp" if settings.get("diversityMethod") == "dpp" else "mmr"
+
+
+def _smolvlm_top_k(settings: Mapping[str, Any]) -> int:
+    """Resolve the Tier-2 re-rank top-K from settings (default 10)."""
+    raw = settings.get("smolvlmTopK", 10)
+    try:
+        k = int(raw)
+    except (TypeError, ValueError):
+        return 10
+    return k if k > 0 else 10

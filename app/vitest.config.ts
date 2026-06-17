@@ -6,14 +6,18 @@ import { defineConfig } from 'vitest/config';
 // Per-test `// @vitest-environment jsdom` directives select the DOM env for
 // renderer component tests; main-process tests run in the default node env.
 //
-// Coverage: v8 provider. Per the HYBRID coverage policy (2026-06-16): the sidecar
-// ENGINE is held to 100% (the logic that matters), while the Electron/renderer UI
-// uses a RATCHET floor — these thresholds are the current measured coverage, so the
-// gate can never REGRESS and every change must hold or raise the bar (new UI code
-// must be tested), without forcing low-value 100% on runtime-only view glue.
-// Raise these floors whenever UI test coverage climbs. Genuinely-untestable lines
-// (Electron app bootstrap needing a real BrowserWindow, runtime-only IPC wiring) are
-// still marked inline with `/* v8 ignore … -- <reason> */`, not blanket-ignored.
+// Coverage: v8 provider, STRICT 100% line + branch + function + statement
+// thresholds for the renderer (the gate is clean-zero everywhere — sidecar AND
+// renderer; see QUALITY-CHARTER.md gate:3). The HYBRID/ratchet floor policy that
+// briefly governed the UI has been retired: every renderer source file is held to
+// 100%. Genuinely-untestable lines (the few runtime-only defensive guards) are
+// marked inline with `/* v8 ignore … -- <reason> */` so the threshold stays
+// honest, never blanket-ignored.
+//
+// Coverage scope is the renderer (`renderer/src/**`). The Electron MAIN process
+// (`main/**`) is bootstrap/IPC wiring that only exercises against a real
+// BrowserWindow at runtime; its unit tests still RUN (see test.include below) but
+// it is not part of the renderer's 100% coverage gate.
 export default defineConfig({
   resolve: {
     alias: {
@@ -26,7 +30,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'text-summary'],
-      include: ['main/**/*.{ts,tsx}', 'renderer/src/**/*.{ts,tsx}'],
+      include: ['renderer/src/**/*.{ts,tsx}'],
       exclude: [
         '**/*.test.{ts,tsx}',
         '**/*.d.ts',
@@ -36,22 +40,12 @@ export default defineConfig({
         // in the packaged renderer, not under jsdom unit tests.
         'renderer/src/main.tsx',
       ],
-      // RATCHET floors (current measured UI coverage; raise as tests are added).
-      // Re-baselined 2026-06-16 for the vitest 1.6 -> 3.2.6 security upgrade
-      // (fixes GHSA-5xrq-8626-4rwp + the transitive esbuild/vite CVEs that the
-      // old vitest 1.6 dep tree dragged in). vitest 3's v8 provider attributes
-      // lines more accurately, so the SAME 565 passing tests now measure ~74%
-      // lines/statements (observed range 73.9-75.0% across runs; v8 has ~1pt
-      // run-to-run jitter) instead of the old ~78%. NO test was removed or
-      // weakened — only the coverage measurement got more precise. Lines/
-      // statements floors sit just below the observed minimum so the gate is
-      // deterministic; branches/functions are unchanged (still comfortably met).
-      // Raise these floors again as UI test coverage climbs.
+      // STRICT 100% — the renderer is fully covered.
       thresholds: {
-        lines: 73,
-        branches: 84,
-        functions: 70,
-        statements: 73,
+        lines: 100,
+        branches: 100,
+        functions: 100,
+        statements: 100,
       },
     },
   },

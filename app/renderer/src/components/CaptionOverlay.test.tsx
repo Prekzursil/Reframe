@@ -146,6 +146,13 @@ describe('wordColor', () => {
   it('uses textColor for upcoming words', () => {
     expect(wordColor(base({}), visual)).toBe(visual.textColor);
   });
+
+  it('falls back to textColor for spoken words when spokenColor is empty', () => {
+    // A template whose spokenColor is falsy must fall through to textColor so the
+    // karaoke fill never renders an empty/blank colour (CaptionOverlay.tsx:137).
+    const noSpoken = { ...visual, spokenColor: '', textColor: '#ABCDEF' };
+    expect(wordColor(base({ spoken: true }), noSpoken)).toBe('#ABCDEF');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -223,5 +230,31 @@ describe('<CaptionOverlay />', () => {
       ),
     );
     expect(container.querySelector('.is-active')?.textContent).toBe('world');
+  });
+
+  // G1 caption-coupling regression: the overlay is driven ENTIRELY by
+  // `currentTime` (the Player's onTimeUpdate). When the video never plays — the
+  // exact symptom of the broken preview, where the <video> stays at t=0 because
+  // mstream 404'd — currentTime stays at the window start and NO subtitle shows.
+  // Once playback advances currentTime into a cue's window, the word appears.
+  // This locks the cause->effect chain: no playback => no caption is the SYMPTOM
+  // of the data-root bug, not a caption bug, so once video plays captions show.
+  it('shows NO caption while stuck at the window start (t=0), then shows one once currentTime advances', () => {
+    // Stuck at the in-point (the first cue starts at source 101.0, window.start
+    // is 100.0): the relative playhead is 0, before any word -> overlay is null.
+    render(
+      <CaptionOverlay cues={CUES} templateId="bold" currentTime={WINDOW.start} window={WINDOW} />,
+    );
+    expect(container.querySelector('.caption-overlay')).toBeNull();
+    expect(container.querySelector('.caption-overlay__word')).toBeNull();
+
+    // Playback advances the playhead into the first word's window -> it shows.
+    act(() =>
+      root.render(
+        <CaptionOverlay cues={CUES} templateId="bold" currentTime={101.2} window={WINDOW} />,
+      ),
+    );
+    expect(container.querySelector('.caption-overlay')).not.toBeNull();
+    expect(container.querySelector('.caption-overlay__word.is-active')?.textContent).toBe('Hello');
   });
 });

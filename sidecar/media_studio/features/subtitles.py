@@ -191,6 +191,57 @@ def generate(
     return new_track(cues, lang=lang, name=name, fmt=fmt, kind="soft", track_id=track_id)
 
 
+# A caption-polish seam matching ``caption_polish.polish_cues``'s shape:
+# ``(cues, *, settings) -> cues``. Injected in tests; the default lazily delegates
+# to the real (degrade-safe) module so this stays import-light + heavy-dep-free.
+CaptionPolisher = Callable[..., list["Cue"]]
+
+
+def _default_caption_polisher(cues: list[Cue], **kwargs: Any) -> list[Cue]:
+    """Delegate to the real caption-polish pass (LAZY import; runtime only).
+
+    ``caption_polish`` is import-light (its heavy backends are behind seams that
+    default to ``None`` -> skipped), so the timing/segmentation gate always runs
+    and the model stages degrade gracefully when their backends are absent.
+    """
+    from .caption_polish import polish_cues as _polish  # noqa: PLC0415
+
+    return _polish(cues, **kwargs)
+
+
+def generate_polished(
+    transcript: Transcript,
+    *,
+    name: str = "Subtitles",
+    fmt: str = "srt",
+    track_id: str | None = None,
+    settings: dict[str, Any] | None = None,
+    polisher: CaptionPolisher | None = None,
+) -> SubtitleTrack:
+    """Generate a soft SubtitleTrack, then run the WU9 caption-polish pass on its cues.
+
+    Additive sibling of :func:`generate` (which is left byte-unchanged). After the
+    standard cue derivation it threads the cues through ``caption_polish.polish_cues``
+    (the Netflix CPS/CPL/min-gap timing+segmentation gate, plus optional punct/casing,
+    emphasis-keyword, and profanity-masking model stages — each skipped when its
+    backend is absent). The polished cues are reindexed onto the track via
+    :func:`new_track`. ``polisher`` is the injectable seam (default lazily delegates
+    to the real, degrade-safe module). ``settings`` selects the adult/children CPS
+    limit + the model backends.
+    """
+    polish = polisher if polisher is not None else _default_caption_polisher
+    base = generate(transcript, name=name, fmt=fmt, track_id=track_id)
+    polished = polish(list(base.get("cues") or []), settings=settings or {})
+    return new_track(
+        polished,
+        lang=str(base.get("lang") or "und"),
+        name=name,
+        fmt=fmt,
+        kind="soft",
+        track_id=base.get("id"),
+    )
+
+
 # --------------------------------------------------------------------------- #
 # edit: replace cues on a track (immutable — returns a new track)
 # --------------------------------------------------------------------------- #

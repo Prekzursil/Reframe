@@ -234,6 +234,45 @@ def test_captions_cues_bound_to_shortmaker_context(services: Services, ctx: RpcC
     assert out["cues"][0] == {"index": 1, "start": 0.0, "end": 1.0, "text": "Hello"}
 
 
+def test_captions_cues_empty_before_transcribe_nonempty_after(
+    services: Services, ctx: RpcContext, video_file: Path
+) -> None:
+    """G1 caption-PERSIST regression (the latent 2nd subtitle bug).
+
+    captions.cues is non-empty ONLY because the transcribe job PERSISTS the ASR
+    transcript onto the project manifest that ``_shortmaker_context`` reads. This
+    locks the cause->effect: a video that was added but NOT transcribed yields
+    ``{"cues": []}`` (no persisted transcript), and the SAME video yields
+    word-level cues immediately after a transcribe run persists onto the manifest
+    ``_shortmaker_context`` loads. If persistence ever regresses (e.g. the job
+    saves to a different path than _shortmaker_context reads), the second
+    assertion fails — the overlay would silently show no captions even though the
+    video plays.
+    """
+    registered: dict[str, Any] = {}
+    handlers.register_all(
+        services=services,
+        register=lambda name, fn: registered.__setitem__(name, fn),
+    )
+    vid = _add_video(services, video_file)
+    direct = RpcContext(emit_notification=lambda obj: None, jobs=None)
+
+    # No transcript persisted yet -> the context loader finds none -> empty cues.
+    before = registered["captions.cues"]({"videoId": vid}, direct)
+    assert before == {"cues": []}
+    # _shortmaker_context itself reports no transcript on the fresh manifest.
+    assert services._shortmaker_context(vid)["transcript"] is None
+
+    # Transcribe -> the job persists the transcript onto the project manifest.
+    _transcribe_sync(services, ctx, vid)
+
+    # The SAME context loader now finds the persisted transcript -> non-empty cues.
+    assert services._shortmaker_context(vid)["transcript"] is not None
+    after = registered["captions.cues"]({"videoId": vid}, direct)
+    assert after["cues"], "captions.cues empty AFTER transcribe -> transcript not persisted"
+    assert [c["text"] for c in after["cues"]] == ["Hello", "world."]
+
+
 # --------------------------------------------------------------------------- #
 # library.* / project.* / settings.*  (direct-return)
 # --------------------------------------------------------------------------- #
@@ -337,6 +376,107 @@ def test_subtitles_generate_without_transcript_errors(services: Services, ctx: R
     with pytest.raises(RpcError) as ei:
         services.subtitles_generate({"videoId": vid}, ctx)
     assert ei.value.code == ErrorCode.INVALID_PARAMS
+
+
+# --------------------------------------------------------------------------- #
+# Phase-8 wiring: caption polish / ctc karaoke / parakeet ASR / pyannote diarize
+# --------------------------------------------------------------------------- #
+def test_subtitles_generate_uses_polish_when_setting_enabled(
+    services: Services, ctx: RpcContext, video_file: Path
+) -> None:
+    """WU9 wiring: settings['captionPolish'] routes through generate_polished
+    (the degrade-safe Netflix CPS/CPL gate runs with no model backends)."""
+    vid = _add_video(services, video_file)
+    _transcribe_sync(services, ctx, vid)
+    services.settings.set({"captionPolish": True})
+    gen = services.subtitles_generate({"videoId": vid}, ctx)
+    assert gen["track"]["cues"], "polished generate produced no cues"
+    # the captions text survives the polish gate
+    assert "Hello world." in " ".join(c["text"] for c in gen["track"]["cues"])
+
+
+def test_transcribe_start_karaoke_runs_ctc_align(
+    services: Services, ctx: RpcContext, video_file: Path, monkeypatch
+) -> None:
+    """WU6 wiring: settings['karaoke'] runs the ctc-forced-aligner 2nd pass on the
+    transcript tail (mocked seam — no torch/aligner)."""
+    from media_studio.features import ctc_align
+
+    called: dict[str, Any] = {}
+
+    def fake_align(transcript, audio_path, *, settings=None, **kwargs):
+        called["audio"] = audio_path
+        return {**transcript, "aligned": True}
+
+    monkeypatch.setattr(ctc_align, "align_words", fake_align)
+    vid = _add_video(services, video_file)
+    services.settings.set({"karaoke": True})
+    services.transcribe_start({"videoId": vid}, ctx)
+    ctx.jobs.join(timeout=5)
+    done = [e for e in ctx.events if e[0] == "done"]  # type: ignore[attr-defined]
+    assert done[-1][2]["transcript"]["aligned"] is True
+    assert called["audio"]
+
+
+def test_transcribe_start_parakeet_engine_falls_back_to_whisper_offline(
+    services: Services, ctx: RpcContext, video_file: Path
+) -> None:
+    """WU7 wiring: settings['asrEngine']='parakeet' is selected, but offline +
+    no weights degrades parakeet to empty -> whisper fallback still transcribes."""
+    vid = _add_video(services, video_file)
+    services.settings.set({"asrEngine": "parakeet", "offline": True})
+    services.transcribe_start({"videoId": vid}, ctx)
+    ctx.jobs.join(timeout=5)
+    done = [e for e in ctx.events if e[0] == "done"]  # type: ignore[attr-defined]
+    transcript = done[-1][2]["transcript"]
+    # whisper fallback produced the english transcript
+    assert transcript["language"] == "en"
+    assert transcript["segments"]
+
+
+def test_maybe_align_words_noop_when_karaoke_off(services: Services) -> None:
+    t = {"language": "en", "segments": [], "durationSec": 0.0}
+    assert services._maybe_align_words(t, "/x.mp4", {}) is t
+
+
+def test_register_all_wires_diarize_backend_selector(tmp_path: Path) -> None:
+    """Phase-8: diarize.start is registered with the pyannote-aware selector seams."""
+    registered: dict[str, Any] = {}
+    svc = handlers.register_all(
+        services=Services(data_dir=tmp_path / "d"),
+        register=lambda name, fn: registered.__setitem__(name, fn),
+    )
+    assert "diarize.start" in registered
+    assert isinstance(svc, Services)
+
+
+def test_diarize_backend_factory_speechbrain_default(services: Services, monkeypatch) -> None:
+    """The default (no setting) builds the SpeechBrain backend via its factory."""
+    from media_studio.features import diarize as _diarize
+
+    sentinel = object()
+    monkeypatch.setattr(_diarize, "_default_backend_factory", lambda s: sentinel)
+    assert services._diarize_backend_factory({}) is sentinel
+
+
+def test_diarize_backend_factory_pyannote_requires_token(services: Services, monkeypatch) -> None:
+    """Selecting pyannote validates the env HF token eagerly (typed refusal)."""
+    from media_studio.features import pyannote_backend as _pyannote
+
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HUGGING_FACE_HUB_TOKEN", raising=False)
+    with pytest.raises(_pyannote.PyannoteConfigError):
+        services._diarize_backend_factory({"diarizeBackend": "pyannote"})
+
+
+def test_diarize_models_present_routes_by_backend(services: Services, monkeypatch) -> None:
+    from media_studio.features import diarize as _diarize
+    from media_studio.features import pyannote_backend as _pyannote
+
+    monkeypatch.setattr(_diarize, "default_models_present", lambda s: "speechbrain-probe")
+    monkeypatch.setattr(_pyannote, "default_models_present", lambda s: "pyannote-probe")
+    assert services._diarize_models_present({}) == "speechbrain-probe"
+    assert services._diarize_models_present({"diarizeBackend": "pyannote"}) == "pyannote-probe"
 
 
 def test_subtitles_translate_is_a_job_resolving_to_track(services: Services, ctx: RpcContext, video_file: Path) -> None:

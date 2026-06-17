@@ -345,6 +345,333 @@ describe('Library', () => {
     await renderLibrary();
     expect(container.textContent).toContain('sidecar down');
   });
+
+  it('stringifies a non-Error list rejection', async () => {
+    rpcMock.mockRejectedValueOnce('plain string failure');
+    await renderLibrary();
+    expect(container.querySelector('.library__error')?.textContent).toContain(
+      'plain string failure',
+    );
+  });
+
+  it('emits a typed error toast when library.add returns no video', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [] });
+    await renderLibrary();
+
+    openVideosMock.mockResolvedValueOnce(['/clips/empty.mp4']);
+    // add resolves but with no `video` field
+    rpcMock.mockResolvedValueOnce({});
+    await clickAdd();
+
+    const errors = errorToasts().join(' ');
+    expect(errors).toContain('empty.mp4');
+    expect(errors).toContain('returned no video');
+    // no success toast because nothing was actually added
+    expect(container.textContent).not.toContain('Added');
+  });
+
+  it('shows an error toast when the picker (openVideos) itself rejects', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [] });
+    await renderLibrary();
+
+    openVideosMock.mockRejectedValueOnce(new Error('dialog crashed'));
+    await clickAdd();
+
+    expect(errorToasts().join(' ')).toContain('dialog crashed');
+  });
+
+  it('ignores a second Add click while a batch is already adding', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [] });
+    await renderLibrary();
+
+    // First click: picker returns a path; hold library.add unresolved so `adding`
+    // stays true across the second click.
+    let resolveAdd: (v: unknown) => void = () => {};
+    openVideosMock.mockResolvedValueOnce(['/clips/slow.mp4']);
+    rpcMock.mockImplementationOnce(
+      () =>
+        new Promise((res) => {
+          resolveAdd = res;
+        }),
+    );
+
+    await act(async () => {
+      addButton().dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+    // mid-flight: button is disabled / labelled "Adding…"
+    expect(addButton().disabled).toBe(true);
+
+    // A second click while adding must be a no-op (handlePick early-returns).
+    await act(async () => {
+      addButton().dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+    expect(openVideosMock).toHaveBeenCalledTimes(1);
+
+    // finish the in-flight add
+    await act(async () => {
+      resolveAdd({ video: makeVideo({ id: 'slow', title: 'Slow', path: '/clips/slow.mp4' }) });
+    });
+    await flush();
+    expect(container.textContent).toContain('Slow');
+  });
+
+  it('shows a typed error toast when pickerBridge is absent (no window.api)', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [] });
+    await renderLibrary();
+    // Remove the bridge entirely so pickerBridge() returns null.
+    delete (window as { api?: unknown }).api;
+
+    await clickAdd();
+
+    expect(errorToasts().join(' ')).toContain('Native file picker unavailable');
+  });
+
+  it('falls back to legacy File.path when pathForFile throws', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [] });
+    await renderLibrary();
+
+    // pathForFile is wired but throws -> the catch falls through to legacy .path.
+    pathForFileMock.mockImplementation(() => {
+      throw new Error('bridge boom');
+    });
+    const file = new File(['x'], 'thrown.mp4');
+    Object.defineProperty(file, 'path', { value: '/legacy/thrown.mp4' });
+    rpcMock.mockResolvedValueOnce({
+      video: makeVideo({ id: 't', title: 'Thrown', path: '/legacy/thrown.mp4' }),
+    });
+
+    await dropFiles([file]);
+
+    expect(rpcMock).toHaveBeenCalledWith('library.add', { path: '/legacy/thrown.mp4' });
+    expect(container.textContent).toContain('Thrown');
+  });
+
+  it('treats an empty-string pathForFile result as no path (legacy fallback)', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [] });
+    await renderLibrary();
+
+    // pathForFile returns '' -> not accepted; no legacy .path either -> error toast.
+    pathForFileMock.mockReturnValue('');
+    await dropFiles([new File(['x'], 'blank.mp4')]);
+
+    expect(errorToasts().join(' ')).toContain('blank.mp4');
+    expect(errorToasts().join(' ')).toContain('no filesystem path');
+  });
+
+  it('is a no-op when a drop carries no files', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [] });
+    await renderLibrary();
+
+    await dropFiles([]);
+    // only the initial list — no add, no toasts.
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+    expect(container.querySelectorAll('.library__toast').length).toBe(0);
+  });
+
+  it('shows and clears the drag-over drop hint on dragover/dragleave', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [] });
+    await renderLibrary();
+
+    const lib = container.querySelector('div.library') as HTMLDivElement;
+    const dragOver = new Event('dragover', { bubbles: true, cancelable: true });
+    Object.defineProperty(dragOver, 'dataTransfer', { value: { dropEffect: '' } });
+    await act(async () => {
+      lib.dispatchEvent(dragOver);
+    });
+    await flush();
+    expect(container.querySelector('.library__drophint')).not.toBeNull();
+    expect(lib.className).toContain('library--dragover');
+
+    await act(async () => {
+      lib.dispatchEvent(new Event('dragleave', { bubbles: true }));
+    });
+    await flush();
+    expect(container.querySelector('.library__drophint')).toBeNull();
+    expect(lib.className).not.toContain('library--dragover');
+  });
+
+  it('tolerates a dragover with no dataTransfer (sets the hint anyway)', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [] });
+    await renderLibrary();
+
+    const lib = container.querySelector('div.library') as HTMLDivElement;
+    // No dataTransfer property -> the `if (event.dataTransfer)` guard is false.
+    await act(async () => {
+      lib.dispatchEvent(new Event('dragover', { bubbles: true, cancelable: true }));
+    });
+    await flush();
+    expect(container.querySelector('.library__drophint')).not.toBeNull();
+  });
+
+  it('restores the list and surfaces an error when library.remove fails', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    await renderLibrary();
+    expect(container.textContent).toContain('Talk');
+
+    rpcMock.mockRejectedValueOnce(new Error('delete failed'));
+    const removeBtn = container.querySelector('button.library__remove-btn') as HTMLButtonElement;
+    await act(async () => {
+      removeBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+
+    // optimistic removal rolled back -> the video is back
+    expect(container.textContent).toContain('Talk');
+    expect(container.querySelector('.library__error')?.textContent).toContain('delete failed');
+  });
+
+  it('opens a video via the keyboard (Enter and Space)', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    const onOpen = vi.fn();
+    await renderLibrary(onOpen);
+
+    const item = container.querySelector('li.library__item') as HTMLLIElement;
+    await act(async () => {
+      item.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    await act(async () => {
+      item.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    });
+    expect(onOpen).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores non-activation keys on a library item', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    const onOpen = vi.fn();
+    await renderLibrary(onOpen);
+
+    const item = container.querySelector('li.library__item') as HTMLLIElement;
+    await act(async () => {
+      item.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      item.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+    });
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('renders the transcript badge only for videos that have a transcript', async () => {
+    rpcMock.mockResolvedValueOnce({
+      videos: [
+        makeVideo({ id: 'with', title: 'WithT', hasTranscript: true }),
+        makeVideo({ id: 'without', title: 'NoT', hasTranscript: false }),
+      ],
+    });
+    await renderLibrary();
+
+    const badges = container.querySelectorAll('.library__badge');
+    expect(badges.length).toBe(1);
+    expect(badges[0].textContent).toContain('T');
+  });
+
+  it('renders the placeholder duration badge for an unknown duration', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo({ durationSec: 0 })] });
+    await renderLibrary();
+    expect(container.querySelector('.library__thumb-duration')?.textContent).toBe('--:--');
+  });
+
+  it('uses the whole path as the baseName when it ends in a separator (toast text)', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [] });
+    await renderLibrary();
+
+    // Path ending in a slash -> baseName's last component is empty -> falls back
+    // to the full path. The add fails so the toast text carries that baseName.
+    openVideosMock.mockResolvedValueOnce(['/clips/folder/']);
+    rpcMock.mockRejectedValueOnce(new Error('is a directory'));
+    await clickAdd();
+
+    expect(errorToasts().join(' ')).toContain('/clips/folder/');
+    expect(errorToasts().join(' ')).toContain('is a directory');
+  });
+
+  it('dismisses a fallback toast when its × button is clicked', async () => {
+    installBridge({ openVideos: undefined });
+    rpcMock.mockResolvedValueOnce({ videos: [] });
+    await renderLibrary();
+
+    await clickAdd(); // produces a "Native file picker unavailable" error toast
+    expect(container.querySelectorAll('.library__toast').length).toBe(1);
+
+    const dismiss = container.querySelector('button.library__toast-dismiss') as HTMLButtonElement;
+    await act(async () => {
+      dismiss.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+    expect(container.querySelectorAll('.library__toast').length).toBe(0);
+  });
+
+  it('treats a library.list result without a videos field as an empty list', async () => {
+    // result.videos is undefined -> the `result?.videos ?? []` fallback runs.
+    rpcMock.mockResolvedValueOnce({});
+    await renderLibrary();
+    expect(container.textContent).toContain('No videos yet');
+    expect(container.querySelectorAll('li.library__item').length).toBe(0);
+  });
+
+  it('treats a non-array openVideos result as an empty pick (no add)', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [] });
+    await renderLibrary();
+
+    // openVideos resolves a non-array -> `Array.isArray(paths) ? paths : []`
+    // takes the `: []` arm, so addPaths gets [] and short-circuits.
+    openVideosMock.mockResolvedValueOnce(null as unknown as string[]);
+    await clickAdd();
+
+    expect(openVideosMock).toHaveBeenCalledTimes(1);
+    // Only the initial library.list — no library.add for a non-array pick.
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+    expect(container.querySelectorAll('.library__toast').length).toBe(0);
+  });
+
+  it('tolerates a drop event with no dataTransfer at all', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [] });
+    await renderLibrary();
+
+    // No dataTransfer property -> `event.dataTransfer?.files ?? []` yields [].
+    const target = container.querySelector('div.library') as HTMLDivElement;
+    await act(async () => {
+      target.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    // No add, no toasts, no crash.
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+    expect(container.querySelectorAll('.library__toast').length).toBe(0);
+  });
+
+  it('auto-expires a fallback toast after its TTL and clears timers on unmount', async () => {
+    vi.useFakeTimers();
+    try {
+      // Build directly (renderLibrary uses real microtask flushing which is fine
+      // under fake timers, but keep this self-contained).
+      installBridge({ openVideos: undefined });
+      rpcMock.mockResolvedValue({ videos: [] });
+      await act(async () => {
+        root.render(<Library onOpen={() => {}} />);
+      });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        addButton().dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(container.querySelectorAll('.library__toast').length).toBe(1);
+
+      // Advance past TOAST_TTL_MS (6000ms) -> the expiry timer removes it.
+      await act(async () => {
+        vi.advanceTimersByTime(6001);
+      });
+      expect(container.querySelectorAll('.library__toast').length).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -423,6 +750,25 @@ describe('Library thumbnails (T6)', () => {
     });
 
     expect(video.currentTime).toBeCloseTo(60.5); // 10% of 605
+  });
+
+  it('falls back to the placeholder when seeking the poster frame throws', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    await renderLibrary();
+
+    const video = thumbVideo();
+    // Make pause() throw so the onLoadedMetadata try/catch flips `failed`.
+    pauseMock.mockImplementationOnce(() => {
+      throw new Error('pause not allowed');
+    });
+    await act(async () => {
+      video.dispatchEvent(new Event('loadedmetadata'));
+    });
+
+    expect(container.querySelector('video.library__thumb-video')).toBeNull();
+    expect(container.querySelector('.library__thumb-fallback')).not.toBeNull();
+    // duration badge still renders from durationSec
+    expect(container.querySelector('.library__thumb-duration')?.textContent).toBe('10:05');
   });
 
   it('replaces the video with a placeholder on media error, keeping the badge', async () => {
