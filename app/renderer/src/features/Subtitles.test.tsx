@@ -94,7 +94,11 @@ describe('<Subtitles />', () => {
 
   async function mount(
     fake: FakeApi,
-    props: { videoId?: string; initialTrack?: SubtitleTrack | null; onTrackChange?: (t: SubtitleTrack) => void } = {},
+    props: {
+      videoId?: string;
+      initialTrack?: SubtitleTrack | null;
+      onTrackChange?: (t: SubtitleTrack) => void;
+    } = {},
   ) {
     (globalThis as { api?: unknown }).api = fake.api;
     await act(async () => {
@@ -226,7 +230,9 @@ describe('<Subtitles />', () => {
       bilingual.click();
     });
     // The order select appears only when bilingual is on.
-    const order = container.querySelector('[aria-label="Bilingual line order"]') as HTMLSelectElement;
+    const order = container.querySelector(
+      '[aria-label="Bilingual line order"]',
+    ) as HTMLSelectElement;
     expect(order).toBeTruthy();
     await act(async () => {
       order.value = 'translation-first';
@@ -332,7 +338,9 @@ describe('<Subtitles />', () => {
       genBtn().click();
       await Promise.resolve();
     });
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('plain generate error');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'plain generate error',
+    );
   });
 
   it('uses Error.message when subtitles.edit rejects with an Error instance', async () => {
@@ -358,7 +366,9 @@ describe('<Subtitles />', () => {
       translateBtn.click();
       await Promise.resolve();
     });
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('plain translate error');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'plain translate error',
+    );
   });
 
   it('uses Error.message when export rejects with an Error instance', async () => {
@@ -431,13 +441,12 @@ describe('<Subtitles />', () => {
   it('shows the in-flight "Generating…" label while generate is running', async () => {
     const fake = makeFakeApi();
     let resolveGen: (v: { track: SubtitleTrack }) => void = () => undefined;
-    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(
-      (method: string) =>
-        method === 'subtitles.generate'
-          ? new Promise((res) => {
-              resolveGen = res as (v: { track: SubtitleTrack }) => void;
-            })
-          : Promise.resolve({}),
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation((method: string) =>
+      method === 'subtitles.generate'
+        ? new Promise((res) => {
+            resolveGen = res as (v: { track: SubtitleTrack }) => void;
+          })
+        : Promise.resolve({}),
     );
     await mount(fake);
     await act(async () => {
@@ -455,13 +464,12 @@ describe('<Subtitles />', () => {
     const fake = makeFakeApi();
     let resolveExp: (v: { path: string }) => void = () => undefined;
     await mount(fake, { initialTrack: track() });
-    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(
-      (method: string) =>
-        method === 'subtitles.export'
-          ? new Promise((res) => {
-              resolveExp = res as (v: { path: string }) => void;
-            })
-          : Promise.resolve({}),
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation((method: string) =>
+      method === 'subtitles.export'
+        ? new Promise((res) => {
+            resolveExp = res as (v: { path: string }) => void;
+          })
+        : Promise.resolve({}),
     );
     const exportBtn = [...container.querySelectorAll('.export-row button')].find(
       (b) => b.textContent === 'Export',

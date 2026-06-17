@@ -327,9 +327,11 @@ describe('<Dub />', () => {
     const setter = Object.getOwnPropertyDescriptor(proto, 'value')!.set!;
     act(() => {
       setter.call(el, value);
-      el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? 'change' : 'input', {
-        bubbles: true,
-      }));
+      el.dispatchEvent(
+        new Event(el instanceof HTMLSelectElement ? 'change' : 'input', {
+          bubbles: true,
+        }),
+      );
     });
   }
 
@@ -639,7 +641,9 @@ describe('<Dub />', () => {
       await Promise.resolve();
     });
     await flush();
-    expect(container.querySelector('.dub-sample-message')?.textContent).toContain('bad sample file');
+    expect(container.querySelector('.dub-sample-message')?.textContent).toContain(
+      'bad sample file',
+    );
   });
 
   it('adds a voice sample through tts.sample.add', async () => {

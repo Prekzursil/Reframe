@@ -115,8 +115,7 @@ export function NleExport({ videoId }: NleExportProps): React.ReactElement {
       {status && !error && <p className="status">{status}</p>}
       {lastPath && (
         <p className="export-path">
-          Saved {savedClipPrefix}to{' '}
-          <code>{lastPath}</code>
+          Saved {savedClipPrefix}to <code>{lastPath}</code>
         </p>
       )}
       {error && (

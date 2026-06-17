@@ -2228,7 +2228,9 @@ describe('<ShortMaker /> component', () => {
     });
   }
 
-  async function loadThree(rpcOver?: Record<string, unknown>): Promise<Api['rpc'] & ReturnType<typeof vi.fn>> {
+  async function loadThree(
+    rpcOver?: Record<string, unknown>,
+  ): Promise<Api['rpc'] & ReturnType<typeof vi.fn>> {
     const rpc = rpcFake({ 'shortmaker.select': { candidates: THREE }, ...rpcOver });
     render(<ShortMaker videoId="v1" api={makeApi({ rpc })} />);
     await submitForm();
@@ -2491,9 +2493,11 @@ describe('<ShortMaker /> component', () => {
     const row = container.querySelector('.sm-candidate[data-id="1@97"]')!;
     act(() => (row.querySelector('[aria-label="Approve"]') as HTMLButtonElement).click());
     await act(async () => {
-      ([...container.querySelectorAll('button')].find(
-        (b) => b.textContent === 'Export approved',
-      ) as HTMLButtonElement).click();
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'Export approved',
+        ) as HTMLButtonElement
+      ).click();
       await Promise.resolve();
     });
     await flush();
@@ -2511,7 +2515,9 @@ describe('<ShortMaker /> component', () => {
       await Promise.resolve();
     });
     await flush();
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('batch select blew up');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'batch select blew up',
+    );
   });
 
   it('shows a clip with fillersRemoved but no fillerSeconds (defaults the seconds)', async () => {
@@ -2524,13 +2530,17 @@ describe('<ShortMaker /> component', () => {
     const row = container.querySelector('.sm-candidate[data-id="1@97"]')!;
     act(() => (row.querySelector('[aria-label="Approve"]') as HTMLButtonElement).click());
     await act(async () => {
-      ([...container.querySelectorAll('button')].find(
-        (b) => b.textContent === 'Export approved',
-      ) as HTMLButtonElement).click();
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'Export approved',
+        ) as HTMLButtonElement
+      ).click();
       await Promise.resolve();
     });
     await flush();
-    expect(container.querySelector('.sm-fillers')?.textContent).toContain('removed 3 fillers (0.0s)');
+    expect(container.querySelector('.sm-fillers')?.textContent).toContain(
+      'removed 3 fillers (0.0s)',
+    );
   });
 
   it('renders progress with an empty message when the notification omits one', async () => {
@@ -2570,7 +2580,10 @@ describe('<ShortMaker /> component', () => {
   // Produced-shorts gallery actions (wired via useShortsGallery).
   // -------------------------------------------------------------------------
 
-  async function loadGallery(shorts: unknown[], over: Partial<Api> = {}): Promise<{
+  async function loadGallery(
+    shorts: unknown[],
+    over: Partial<Api> = {},
+  ): Promise<{
     rpc: Api['rpc'] & ReturnType<typeof vi.fn>;
   }> {
     const rpc = rpcFake({
@@ -2589,9 +2602,11 @@ describe('<ShortMaker /> component', () => {
     const row = container.querySelector('.sm-candidate[data-id="1@97"]')!;
     act(() => (row.querySelector('[aria-label="Approve"]') as HTMLButtonElement).click());
     await act(async () => {
-      ([...container.querySelectorAll('button')].find(
-        (b) => b.textContent === 'Export approved',
-      ) as HTMLButtonElement).click();
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'Export approved',
+        ) as HTMLButtonElement
+      ).click();
       await Promise.resolve();
     });
     await flush();
@@ -2640,9 +2655,11 @@ describe('<ShortMaker /> component', () => {
     const row = container.querySelector('.sm-candidate[data-id="1@97"]')!;
     act(() => (row.querySelector('[aria-label="Approve"]') as HTMLButtonElement).click());
     await act(async () => {
-      ([...container.querySelectorAll('button')].find(
-        (b) => b.textContent === 'Export approved',
-      ) as HTMLButtonElement).click();
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'Export approved',
+        ) as HTMLButtonElement
+      ).click();
       await Promise.resolve();
     });
     await flush();
@@ -2750,9 +2767,11 @@ describe('<ShortMaker /> component', () => {
       await Promise.resolve();
     });
     await act(async () => {
-      ([...container.querySelectorAll('button')].find(
-        (b) => b.textContent === 'Cancel',
-      ) as HTMLButtonElement).click();
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'Cancel',
+        ) as HTMLButtonElement
+      ).click();
       await Promise.resolve();
     });
     await flush();
@@ -2841,9 +2860,11 @@ describe('<ShortMaker /> component', () => {
     const row = container.querySelector('.sm-candidate[data-id="1@97"]')!;
     act(() => (row.querySelector('[aria-label="Approve"]') as HTMLButtonElement).click());
     await act(async () => {
-      ([...container.querySelectorAll('button')].find(
-        (b) => b.textContent === 'Export approved',
-      ) as HTMLButtonElement).click();
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'Export approved',
+        ) as HTMLButtonElement
+      ).click();
       await Promise.resolve();
     });
     await act(async () => {

@@ -312,17 +312,15 @@ describe('<Assets />', () => {
   it('refreshes from assets.list when the ensure job.done carries no asset list', async () => {
     const fake = makeFakeApi(TWO);
     let listCall = 0;
-    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(
-      async (method: string) => {
-        if (method === 'assets.list') {
-          listCall += 1;
-          // First list: original; after ensure, the refreshed list marks installed.
-          return { assets: listCall === 1 ? TWO : TWO.map((a) => ({ ...a, installed: true })) };
-        }
-        if (method === 'assets.ensure') return { jobId: 'job-1' };
-        return {};
-      },
-    );
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(async (method: string) => {
+      if (method === 'assets.list') {
+        listCall += 1;
+        // First list: original; after ensure, the refreshed list marks installed.
+        return { assets: listCall === 1 ? TWO : TWO.map((a) => ({ ...a, installed: true })) };
+      }
+      if (method === 'assets.ensure') return { jobId: 'job-1' };
+      return {};
+    });
     await mount(fake.api);
     const button = rowFor('whisper-large-v3-turbo')!.querySelector(
       'button[data-action="install"]',

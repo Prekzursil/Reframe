@@ -364,13 +364,11 @@ describe('<Recipes />', () => {
 
   it('handles a run response with no jobId (no job.done wait)', async () => {
     const fake = makeFakeApi(SAVED);
-    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(
-      async (method: string) => {
-        if (method === 'recipes.list') return { recipes: SAVED };
-        if (method === 'recipes.run') return {}; // no jobId
-        return {};
-      },
-    );
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(async (method: string) => {
+      if (method === 'recipes.list') return { recipes: SAVED };
+      if (method === 'recipes.run') return {}; // no jobId
+      return {};
+    });
     await mount(fake.api);
     await act(async () => {
       (

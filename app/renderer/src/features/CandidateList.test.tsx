@@ -9,12 +9,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 import { CandidateList, CandidateRow, NUDGE_STEP } from './CandidateList';
-import {
-  type Candidate,
-  type ReviewItem,
-  type ReviewStatus,
-  candidateId,
-} from './shortMakerLogic';
+import { type Candidate, type ReviewItem, type ReviewStatus, candidateId } from './shortMakerLogic';
 
 function cand(over: Partial<Candidate> = {}): Candidate {
   return {
@@ -61,7 +56,11 @@ describe('<CandidateList />', () => {
     };
   }
 
-  function mount(items: ReviewItem[], s: ReturnType<typeof spies>, selectedId: string | null = null) {
+  function mount(
+    items: ReviewItem[],
+    s: ReturnType<typeof spies>,
+    selectedId: string | null = null,
+  ) {
     act(() => {
       root.render(
         <CandidateList

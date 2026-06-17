@@ -276,13 +276,12 @@ describe('<Transcribe />', () => {
     const fake = makeFakeApi();
     // Make transcribe.start hang so the panel is "running" but jobId is still null.
     let resolveStart: (v: { jobId: string }) => void = () => undefined;
-    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(
-      (method: string) =>
-        method === 'transcribe.start'
-          ? new Promise((res) => {
-              resolveStart = res as (v: { jobId: string }) => void;
-            })
-          : Promise.resolve({}),
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation((method: string) =>
+      method === 'transcribe.start'
+        ? new Promise((res) => {
+            resolveStart = res as (v: { jobId: string }) => void;
+          })
+        : Promise.resolve({}),
     );
     install(fake);
     await mount('v1');

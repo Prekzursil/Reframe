@@ -35,13 +35,15 @@ describe('<ShortMakerBrandKit />', () => {
     container.remove();
   });
 
-  function mount(over: {
-    brand?: Partial<BrandSettings>;
-    open?: boolean;
-    dataFolder?: string | null;
-    dataFolderLoaded?: boolean;
-    dataFolderPendingRestart?: boolean;
-  } = {}) {
+  function mount(
+    over: {
+      brand?: Partial<BrandSettings>;
+      open?: boolean;
+      dataFolder?: string | null;
+      dataFolderLoaded?: boolean;
+      dataFolderPendingRestart?: boolean;
+    } = {},
+  ) {
     const brand: BrandSettings = { ...EMPTY_BRAND_SETTINGS, ...over.brand };
     act(() => {
       root.render(
@@ -112,7 +114,9 @@ describe('<ShortMakerBrandKit />', () => {
 
   it('shows the resolved data-folder path once loaded', () => {
     mount({ dataFolderLoaded: true, dataFolder: 'D:/MediaStudio/data' });
-    expect(container.querySelector('.sm-data-folder-path')?.textContent).toBe('D:/MediaStudio/data');
+    expect(container.querySelector('.sm-data-folder-path')?.textContent).toBe(
+      'D:/MediaStudio/data',
+    );
   });
 
   it('shows "Unavailable" when loaded with no data folder', () => {

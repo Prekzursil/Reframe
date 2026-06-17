@@ -101,9 +101,7 @@ describe('<ProducedShorts />', () => {
     mount([short({ sourceTitle: '', hook: 'Hook only' })]);
     expect(container.querySelector('[aria-label="Play preview of Hook only"]')).toBeTruthy();
     mount([short({ sourceTitle: '', hook: '' })]);
-    expect(
-      container.querySelector('[aria-label="Play preview of /out/clip-1.mp4"]'),
-    ).toBeTruthy();
+    expect(container.querySelector('[aria-label="Play preview of /out/clip-1.mp4"]')).toBeTruthy();
   });
 
   it('clicking the thumb preview button fires onPlay with the path', () => {

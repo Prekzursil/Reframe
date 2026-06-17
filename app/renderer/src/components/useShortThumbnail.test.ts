@@ -69,7 +69,11 @@ describe('useShortThumbnail (hook)', () => {
 
   it('serves an existing poster path immediately without an RPC call', async () => {
     const rpc: ThumbnailRpc = { thumbnail: vi.fn() };
-    await render({ rpc, clipPath: '/exports/v1/clip.mp4', thumbnailPath: '/exports/v1/a.thumb.jpg' });
+    await render({
+      rpc,
+      clipPath: '/exports/v1/clip.mp4',
+      thumbnailPath: '/exports/v1/a.thumb.jpg',
+    });
     expect(resolved).toBe(thumbnailSrc('/exports/v1/a.thumb.jpg'));
     expect(rpc.thumbnail).not.toHaveBeenCalled();
   });

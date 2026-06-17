@@ -162,7 +162,9 @@ describe('<SystemHealth />', () => {
           // installed but with NO version -> exercises `version || 'installed'`.
           { label: 'torch', module: 'torch', installed: true, version: '' },
         ],
-        engines: [{ name: 'llama-server', description: 'LLM', available: true, path: '/bin/llama' }],
+        engines: [
+          { name: 'llama-server', description: 'LLM', available: true, path: '/bin/llama' },
+        ],
         modelPaths: [{ label: 'Cache', path: 'C:/cache', exists: false }],
       }),
     );
@@ -209,7 +211,9 @@ describe('<SystemHealth />', () => {
   it('surfaces an error when toggling offline fails (and re-enables the toggle)', async () => {
     const fake = makeFakeApi(report({ offline: false }));
     await mount(fake.api);
-    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('settings store down'));
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('settings store down'),
+    );
     const toggle = container.querySelector(
       'button[data-action="toggle-offline"]',
     ) as HTMLButtonElement;

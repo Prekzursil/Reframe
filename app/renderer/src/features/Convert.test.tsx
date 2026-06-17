@@ -21,9 +21,7 @@ interface FakeApi {
   fireDone: (ev: DoneEvent) => void;
 }
 
-function makeFakeApi(
-  opts: { startInline?: string; batchInline?: string[] } = {},
-): FakeApi {
+function makeFakeApi(opts: { startInline?: string; batchInline?: string[] } = {}): FakeApi {
   const calls: FakeApi['calls'] = [];
   let progressCbs: Array<(ev: ProgressEvent) => void> = [];
   let doneCbs: Array<(ev: DoneEvent) => void> = [];
@@ -222,7 +220,9 @@ describe('<Convert />', () => {
     const fake = makeFakeApi();
     await mount(fake, { videoId: 'v1' });
     expect(
-      [...container.querySelectorAll('button')].find((b) => /Convert batch/.test(b.textContent ?? '')),
+      [...container.querySelectorAll('button')].find((b) =>
+        /Convert batch/.test(b.textContent ?? ''),
+      ),
     ).toBeUndefined();
   });
 

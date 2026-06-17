@@ -77,10 +77,15 @@ describe('<Tracks />', () => {
     vi.restoreAllMocks();
   });
 
-  async function mount(fake: FakeApi, props: { videoId?: string; availableTracks?: SubtitleTrack[] } = {}) {
+  async function mount(
+    fake: FakeApi,
+    props: { videoId?: string; availableTracks?: SubtitleTrack[] } = {},
+  ) {
     (globalThis as { api?: unknown }).api = fake.api;
     await act(async () => {
-      root.render(<Tracks videoId={props.videoId ?? 'v1'} availableTracks={props.availableTracks} />);
+      root.render(
+        <Tracks videoId={props.videoId ?? 'v1'} availableTracks={props.availableTracks} />,
+      );
     });
     await act(async () => {
       await Promise.resolve();
@@ -95,7 +100,9 @@ describe('<Tracks />', () => {
   });
 
   it('renders a row per track with name/lang/kind/format', async () => {
-    const fake = makeFakeApi({ tracks: [track(), track({ id: 't2', lang: 'es', name: 'Spanish' })] });
+    const fake = makeFakeApi({
+      tracks: [track(), track({ id: 't2', lang: 'es', name: 'Spanish' })],
+    });
     await mount(fake);
     expect(container.querySelectorAll('.track-row').length).toBe(2);
     expect(container.querySelector('.track-format')?.textContent).toBe('SRT');

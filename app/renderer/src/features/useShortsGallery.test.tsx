@@ -52,7 +52,9 @@ describe('useShortsGallery', () => {
   function mount(api: Api, videoId = 'v1', onReexport?: (h: ShortReexportHint) => void) {
     function Harness() {
       gallery = useShortsGallery({ resolvedApi: api, videoId, setError, onReexport });
-      return <div data-playing={gallery.playingShortPath} data-count={gallery.videoShorts.length} />;
+      return (
+        <div data-playing={gallery.playingShortPath} data-count={gallery.videoShorts.length} />
+      );
     }
     act(() => {
       root.render(<Harness />);
