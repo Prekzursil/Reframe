@@ -594,6 +594,33 @@ class Services:
     # ===================================================================== #
     # WU-vision: Tier-2 vision re-rank resolution (cloud pool / local / off)
     # ===================================================================== #
+    def _frame_consented_vision_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
+        """Return ``settings`` with ``providers`` filtered to FRAME-consented entries.
+
+        CRITICAL PRIVACY INVARIANT (PLAN §WU-vision acceptance (a): "NO frame
+        egressed without that provider's frame consent"): the rotation pool that
+        backs :class:`CloudVlmBackend` rotates across EVERY vision-capable cloud
+        entry on a 429, so consent must be enforced PER-ENTRY at pool-construction
+        time — not once against the first provider. Any cloud provider whose FRAME
+        consent (``consent.perProvider[<provider>].frames``) is not explicitly
+        granted is DROPPED from ``providers`` before the pool is built, so a 429
+        failover can NEVER reach a non-consented target. Local-backstop entries
+        (added inside ``build_pool_provider``, no key) are unaffected — they never
+        egress. PURE: returns a new settings dict; the original is never mutated.
+        """
+        from .models import consent as _consent  # local: import-light pure gate
+
+        providers = settings.get("providers")
+        if not isinstance(providers, list):
+            return settings
+        kept = [
+            p
+            for p in providers
+            if isinstance(p, dict)
+            and _consent.frame_consent_granted(settings, str(p.get("provider") or p.get("id") or "cloud"))
+        ]
+        return {**settings, "providers": kept}
+
     def _vision_pool(self, settings: dict[str, Any]) -> Any:
         """Build the vision rotation pool honoring routing.perFunction["vision"].
 
@@ -602,6 +629,10 @@ class Services:
         Ollama/LM-Studio is OFF here (no socket — only the configured cloud vision
         entries + the local backstop are needed). ``None`` when the provider module
         is a test stub without ``build_pool_provider``.
+
+        SECURITY: callers building the cloud egress pool MUST pass settings already
+        filtered through :meth:`_frame_consented_vision_settings`, so every
+        cloud slot the pool may rotate to is frame-consented (no rotation bypass).
         """
         from .models import provider as _provider_mod  # local: heavy seam
 
@@ -616,14 +647,16 @@ class Services:
         )
 
     def _vision_provider_for_consent(self, settings: dict[str, Any]) -> str | None:
-        """The provider NAME the vision pool would egress frames to (or ``None``).
+        """The provider NAME a frame-consented vision pool would egress frames to.
 
-        Builds the routed vision pool and returns the first vision-capable CLOUD
-        entry's provider name — exactly the egress target whose FRAME consent must
-        be granted before a frame leaves the machine. ``None`` when no cloud entry
-        can serve vision (then the cloud path is never taken).
+        Builds the routed vision pool over the FRAME-CONSENT-FILTERED providers and
+        returns the first vision-capable CLOUD entry's provider name — exactly the
+        egress target. Because the input is already consent-filtered, ANY cloud
+        entry it returns is one whose FRAME consent is granted; ``None`` when no
+        consented cloud entry can serve vision (then the cloud path is never taken,
+        so no frame is ever prepared for egress).
         """
-        pool = self._vision_pool(settings)
+        pool = self._vision_pool(self._frame_consented_vision_settings(settings))
         if pool is None:  # pragma: no cover -- stub-provider guard (see _vision_pool)
             return None
         from .models.provider import DEFAULT_CAPABILITY  # local: import-light
@@ -640,20 +673,24 @@ class Services:
         The frame-egress consent gate is the FIRST decision, so a no-consent run
         never prepares a frame for egress. Decision tree (PLAN §WU-vision):
 
-        1. A cloud vision provider is routed AND its FRAME consent is granted ->
+        1. At least one cloud vision provider is routed AND frame-consented ->
            a :class:`SmolVlmReranker` whose backend factory is a CLOSURE building a
-           :class:`smolvlm2.CloudVlmBackend` over the vision pool (the
-           ``BackendFactory`` signature stays ``settings -> SmolVlmBackend``).
+           :class:`smolvlm2.CloudVlmBackend` over a pool filtered to ONLY
+           frame-consented cloud entries (the ``BackendFactory`` signature stays
+           ``settings -> SmolVlmBackend``). The pool can therefore only ever rotate
+           to a consented provider on a 429 — no rotation bypass.
         2. Else if the local SmolVLM2 weights are present -> the local reranker.
         3. Else -> ``None`` (the existing transcript-only no-rerank path).
         """
         from .features import smolvlm2 as _sv  # local: import-light (no heavy import)
-        from .models import consent as _consent  # local: import-light pure gate
 
         raw_settings = self.settings.get_raw()
         vision_provider = self._vision_provider_for_consent(raw_settings)
-        if vision_provider is not None and _consent.frame_consent_granted(raw_settings, vision_provider):
-            pool = self._vision_pool(raw_settings)
+        if vision_provider is not None:
+            # SECURITY: the pool is built over ONLY frame-consented cloud entries,
+            # so RotatingProvider.chat(capability="vision") can never fail over to a
+            # provider whose frame consent was not granted (PLAN §WU-vision (a)).
+            pool = self._vision_pool(self._frame_consented_vision_settings(raw_settings))
 
             def cloud_factory(backend_settings: Any) -> Any:
                 return _sv.CloudVlmBackend(
