@@ -77,9 +77,7 @@ def _first_model_id(response: dict[str, Any]) -> str | None:
     return model_id
 
 
-def _probe_server(
-    *, kind: str, base_url: str, transport: Transport
-) -> PoolEntry | None:
+def _probe_server(*, kind: str, base_url: str, transport: Transport) -> PoolEntry | None:
     """Probe one local server's ``GET /models`` endpoint; build a :class:`PoolEntry`.
 
     Returns ``None`` (and logs at debug) when the server is absent, errors, or

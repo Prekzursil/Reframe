@@ -104,8 +104,7 @@ def test_usage_folds_cached_numbers_over_freshly_zeroed_pool(tmp_path: Path) -> 
         {
             "usageCache": {
                 "rows": [
-                    {"provider": "Groq", "key": redacted, "used": 983, "max": 1000,
-                     "unit": "token", "resetAt": 6030.0}
+                    {"provider": "Groq", "key": redacted, "used": 983, "max": 1000, "unit": "token", "resetAt": 6030.0}
                 ],
                 "checkedAt": {f"Groq\x00{redacted}": 6000.0},
                 "savedAt": 6000.0,
@@ -129,8 +128,9 @@ def test_usage_flags_stale_rows_with_fake_clock(tmp_path: Path) -> None:
     svc.settings.set(
         {
             "usageCache": {
-                "rows": [{"provider": "Groq", "key": redacted, "used": 12, "max": 1000,
-                          "unit": "token", "resetAt": None}],
+                "rows": [
+                    {"provider": "Groq", "key": redacted, "used": 12, "max": 1000, "unit": "token", "resetAt": None}
+                ],
                 "checkedAt": {f"Groq\x00{redacted}": old},
                 "savedAt": old,
             }

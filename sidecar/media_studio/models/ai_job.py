@@ -183,9 +183,7 @@ def _default_request(inputs: AiInputs) -> _budget.BudgetRequest:
     """
     if inputs.request is not None:
         return inputs.request
-    text_bytes = sum(
-        len(str(m.get("content", "")).encode("utf-8")) for m in inputs.messages
-    )
+    text_bytes = sum(len(str(m.get("content", "")).encode("utf-8")) for m in inputs.messages)
     return _TextRequest(target_size=1, text_bytes=text_bytes, frame_bytes=0)
 
 

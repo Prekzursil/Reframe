@@ -168,9 +168,7 @@ def test_estimate_providers_excludes_local_backstop() -> None:
 
 
 def test_estimate_providers_deduped() -> None:
-    pool = FakePool(
-        [FakeEntry("groq"), FakeEntry("groq"), FakeEntry("local", local=True)]
-    )
+    pool = FakePool([FakeEntry("groq"), FakeEntry("groq"), FakeEntry("local", local=True)])
     req = FakeRequest(target_size=1, text_bytes=1)
     b = estimate(req, pool, FakeCatalog({}))
     assert b.providers == ("groq",)  # second key = failover, not extra provider
@@ -241,9 +239,7 @@ def test_degrade_chain_orders_cloud_then_local() -> None:
 
 
 def test_degrade_chain_dedupes_same_provider_keys() -> None:
-    pool = FakePool(
-        [FakeEntry("groq"), FakeEntry("groq"), FakeEntry("cerebras"), FakeEntry("x", local=True)]
-    )
+    pool = FakePool([FakeEntry("groq"), FakeEntry("groq"), FakeEntry("cerebras"), FakeEntry("x", local=True)])
     assert degrade_chain(pool) == ["groq", "cerebras", "local"]
 
 
@@ -273,9 +269,7 @@ def test_request_count_independent_of_provider_count() -> None:
     # Same target size; one pool has many cloud keys, one has few. The request
     # COUNT must be identical (requests are not multiplied by providers/keys).
     req = FakeRequest(target_size=4, text_bytes=1)
-    many = FakePool(
-        [FakeEntry("a"), FakeEntry("b"), FakeEntry("c"), FakeEntry("l", local=True)]
-    )
+    many = FakePool([FakeEntry("a"), FakeEntry("b"), FakeEntry("c"), FakeEntry("l", local=True)])
     few = FakePool([FakeEntry("a"), FakeEntry("l", local=True)])
     cat = FakeCatalog({"a": 1000, "b": 1000, "c": 1000})
     assert estimate(req, many, cat).requests == 4

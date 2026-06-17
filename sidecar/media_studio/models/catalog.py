@@ -259,8 +259,7 @@ CATALOG: tuple[CatalogEntry, ...] = (
         trains_on_input=True,
         privacy_tier=PrivacyTier.AVOID,
         recommended_for=(Task.VISION,),
-        notes="FREE tier TRAINS (outside EEA/UK/CH), human review possible — "
-        "AVOID for private/PII data.",
+        notes="FREE tier TRAINS (outside EEA/UK/CH), human review possible — AVOID for private/PII data.",
     ),
     CatalogEntry(
         id="gemini-2.5-flash-lite",
@@ -310,8 +309,7 @@ CATALOG: tuple[CatalogEntry, ...] = (
         trains_on_input="conditional",
         privacy_tier=PrivacyTier.CONDITIONAL,
         recommended_for=(Task.TRANSLATION,),
-        notes="Trains by DEFAULT; opt-out toggle — flip it first. Strong EU "
-        "translation quality.",
+        notes="Trains by DEFAULT; opt-out toggle — flip it first. Strong EU translation quality.",
     ),
     CatalogEntry(
         id="cloudflare-workers-ai",

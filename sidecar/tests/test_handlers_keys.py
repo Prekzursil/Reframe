@@ -170,9 +170,7 @@ def test_test_key_failure_scrubs_key(tmp_path: Path) -> None:
         raise ProviderError(f"LLM HTTP 401: invalid key {LIVE_KEY}")
 
     svc = _services(tmp_path, test_key_transport=transport)
-    out = svc.providers_test_key(
-        {"baseUrl": "https://api.groq.com/openai/v1", "apiKey": LIVE_KEY}, _ctx()
-    )
+    out = svc.providers_test_key({"baseUrl": "https://api.groq.com/openai/v1", "apiKey": LIVE_KEY}, _ctx())
     assert out["ok"] is False
     assert LIVE_KEY not in out["error"]
     assert LIVE_KEY not in json.dumps(out)

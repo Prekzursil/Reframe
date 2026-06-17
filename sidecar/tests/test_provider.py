@@ -453,13 +453,7 @@ def test_forced_429_error_body_scrubs_live_key(monkeypatch):
         def read(self, *_a: Any, **_k: Any) -> bytes:
             # The server echoes our Authorization header (and the bare key) back
             # in its 429 body — exactly the leak the scrub must close.
-            body = (
-                '{"error":"rate_limited","seen":"Authorization: Bearer '
-                + live_key
-                + '","raw":"'
-                + live_key
-                + '"}'
-            )
+            body = '{"error":"rate_limited","seen":"Authorization: Bearer ' + live_key + '","raw":"' + live_key + '"}'
             return body.encode("utf-8")
 
     def fake_urlopen(request, timeout):  # noqa: ANN001

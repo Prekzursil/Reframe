@@ -235,9 +235,7 @@ def test_plan_within_free_limits_false_over_cap(tmp_path: Any) -> None:
         model="m",
         request=FakeRequest(target_size=10, text_bytes=1, frame_bytes=0),
     )
-    env = plan_ai_job(
-        inputs, pool=_cloud_pool(), catalog=FakeCatalog({"Groq": 5}), cache=AiCache(store_dir=tmp_path)
-    )
+    env = plan_ai_job(inputs, pool=_cloud_pool(), catalog=FakeCatalog({"Groq": 5}), cache=AiCache(store_dir=tmp_path))
     assert env.costEst.withinFreeLimits is False
 
 

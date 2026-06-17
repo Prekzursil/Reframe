@@ -50,9 +50,7 @@ class MappingTransport:
         self.errors = errors or {}
         self.calls: list[dict[str, Any]] = []
 
-    def __call__(
-        self, url: str, body: dict[str, Any], headers: dict[str, str], timeout: float
-    ) -> dict[str, Any]:
+    def __call__(self, url: str, body: dict[str, Any], headers: dict[str, str], timeout: float) -> dict[str, Any]:
         self.calls.append({"url": url, "body": body, "headers": headers, "timeout": timeout})
         if url in self.errors:
             raise self.errors[url]
@@ -191,9 +189,7 @@ def test_first_model_entry_not_a_dict_skips_server() -> None:
 def test_settings_override_base_urls() -> None:
     custom_ollama = "http://127.0.0.1:9999/v1"
     transport = MappingTransport(responses={f"{custom_ollama}/models": _models_response("m")})
-    entries = detect_local_servers(
-        {"ollamaBaseUrl": custom_ollama}, transport=transport
-    )
+    entries = detect_local_servers({"ollamaBaseUrl": custom_ollama}, transport=transport)
     assert [e["base_url"] for e in entries] == [custom_ollama]
 
 
@@ -206,9 +202,7 @@ def test_none_settings_uses_defaults() -> None:
 def test_blank_settings_override_falls_back_to_default() -> None:
     # An explicitly-empty override string must not blank out the probe URL.
     transport = MappingTransport(responses={_lmstudio_url(): _models_response("m")})
-    entries = detect_local_servers(
-        {"lmStudioBaseUrl": ""}, transport=transport
-    )
+    entries = detect_local_servers({"lmStudioBaseUrl": ""}, transport=transport)
     assert [e["kind"] for e in entries] == ["lmstudio"]
 
 

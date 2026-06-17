@@ -57,9 +57,7 @@ class ScriptedTransport:
         self.by_key = by_key
         self.calls: list[dict[str, Any]] = []
 
-    def __call__(
-        self, url: str, body: dict[str, Any], headers: dict[str, str], timeout: float
-    ) -> dict[str, Any]:
+    def __call__(self, url: str, body: dict[str, Any], headers: dict[str, str], timeout: float) -> dict[str, Any]:
         auth = headers.get("Authorization", "")
         key = auth[len("Bearer ") :] if auth.startswith("Bearer ") else None
         self.calls.append({"url": url, "headers": headers, "key": key, "body": body})
@@ -394,9 +392,7 @@ def test_key_never_in_log_lines(caplog: pytest.LogCaptureFixture) -> None:
 
 
 def test_key_never_in_aggregate_error_message() -> None:
-    transport = ScriptedTransport(
-        {"sk-live-secret": [ProviderError("LLM HTTP 429: forbidden sk-live-secret leaked")]}
-    )
+    transport = ScriptedTransport({"sk-live-secret": [ProviderError("LLM HTTP 429: forbidden sk-live-secret leaked")]})
     rp = _build([_spec(keys=["sk-live-secret"])], transport)
     with pytest.raises(ProviderError) as ei:
         rp.chat([{"role": "user", "content": "q"}])
@@ -456,9 +452,7 @@ def test_local_backstop_is_a_local_server_provider_under_the_hood() -> None:
 
 def test_rotation_event_carries_redacted_keys() -> None:
     events: list[RotationEvent] = []
-    transport = ScriptedTransport(
-        {"sk-from-secret": [ProviderError("LLM HTTP 429: x")], "sk-to-secret": [_ok("ok")]}
-    )
+    transport = ScriptedTransport({"sk-from-secret": [ProviderError("LLM HTTP 429: x")], "sk-to-secret": [_ok("ok")]})
     rp = _build([_spec(keys=["sk-from-secret", "sk-to-secret"])], transport)
     rp.on_rotation(events.append)
     rp.chat([{"role": "user", "content": "q"}])

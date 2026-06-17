@@ -38,10 +38,10 @@ def test_usage_unit_coerce_maps_token_and_falls_back_to_req() -> None:
 # --------------------------------------------------------------------------- #
 # merge_usage_cache
 # --------------------------------------------------------------------------- #
-def _row(provider: str, key: str, *, used: int = 0, max_: int | None = None,
-         unit: str = "req", reset_at: float | None = None) -> dict[str, object]:
-    return {"provider": provider, "key": key, "used": used, "max": max_,
-            "unit": unit, "resetAt": reset_at}
+def _row(
+    provider: str, key: str, *, used: int = 0, max_: int | None = None, unit: str = "req", reset_at: float | None = None
+) -> dict[str, object]:
+    return {"provider": provider, "key": key, "used": used, "max": max_, "unit": unit, "resetAt": reset_at}
 
 
 def test_merge_keeps_cached_numbers_when_live_pool_is_freshly_zeroed() -> None:
