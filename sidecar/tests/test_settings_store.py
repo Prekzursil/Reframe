@@ -148,3 +148,70 @@ def test_default_config_dir_posix_falls_back_to_dotconfig(monkeypatch: pytest.Mo
     monkeypatch.setattr("media_studio.settings_store.os", shim)
     out = default_config_dir()
     assert out.parts[-4:] == ("home", "me", ".config", "media-studio")
+
+
+# --------------------------------------------------------------------------- #
+# WU-keys: providers/consent defaults + RAW-vs-REDACTED split
+# --------------------------------------------------------------------------- #
+def test_provider_hub_defaults_present(store: SettingsStore) -> None:
+    out = store.get()
+    assert out["providers"] == []
+    assert out["consent"] == {"perProvider": {}}
+
+
+def test_get_redacts_provider_api_keys(store: SettingsStore) -> None:
+    store.set(
+        {
+            "providers": [
+                {"id": "groq", "provider": "Groq", "apiKeys": ["gsk-secret-WXYZ", "gsk-second-7890"]},
+            ]
+        }
+    )
+    redacted = store.get()["providers"]
+    assert redacted[0]["apiKeys"] == ["…WXYZ", "…7890"]
+    # No full key crosses the RPC-facing get().
+    blob = json.dumps(store.get())
+    assert "gsk-secret-WXYZ" not in blob
+    assert "gsk-second-7890" not in blob
+
+
+def test_get_raw_returns_full_provider_keys(store: SettingsStore) -> None:
+    store.set({"providers": [{"id": "groq", "apiKeys": ["gsk-full-raw-KEY1"]}]})
+    raw = store.get_raw()["providers"]
+    assert raw[0]["apiKeys"] == ["gsk-full-raw-KEY1"]
+    # get() (redacted) and get_raw() (full) genuinely differ.
+    assert store.get()["providers"][0]["apiKeys"] != raw[0]["apiKeys"]
+
+
+def test_get_raw_persists_to_disk_unredacted(store: SettingsStore, tmp_path: Path) -> None:
+    store.set({"providers": [{"id": "groq", "apiKeys": ["gsk-on-disk-RAW7"]}]})
+    on_disk = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    # The persisted store is RAW (the factory reads it via get_raw); only get() redacts.
+    assert on_disk["providers"][0]["apiKeys"] == ["gsk-on-disk-RAW7"]
+
+
+def test_get_redaction_does_not_corrupt_other_fields(store: SettingsStore) -> None:
+    store.set(
+        {
+            "providers": [
+                {"id": "groq", "provider": "Groq", "baseUrl": "https://x/v1", "apiKeys": ["abcdEFGH"], "enabled": True}
+            ],
+            "consent": {"perProvider": {"Groq": {"text": True, "frames": False}}},
+        }
+    )
+    out = store.get()
+    p = out["providers"][0]
+    assert p["provider"] == "Groq"
+    assert p["baseUrl"] == "https://x/v1"
+    assert p["enabled"] is True
+    assert out["consent"] == {"perProvider": {"Groq": {"text": True, "frames": False}}}
+
+
+def test_get_tolerates_non_list_providers(tmp_path: Path) -> None:
+    # A corrupt/hand-edited settings file with a non-list providers value must
+    # not crash the redacting get(): the redaction step is skipped and the bad
+    # value is passed through (the false arm of the isinstance guard).
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"providers": "not-a-list"}), encoding="utf-8")
+    store = SettingsStore(path)
+    assert store.get()["providers"] == "not-a-list"

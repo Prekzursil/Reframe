@@ -270,6 +270,379 @@ def test_phase8_select_runs_job_and_caches(tmp_path: Path, video_file: Path) -> 
     assert vid in svc._selection_cache  # cached for a later shortmaker.export
 
 
+# --------------------------------------------------------------------------- #
+# phase8.select WU-vision wiring — frame-egress consent gate + cloud/local/off
+# vlm_reranker resolution. A FAKE vision transport (the rotation pool's HTTP seam)
+# proves frames egress ONLY with consent. No real model / no network.
+# --------------------------------------------------------------------------- #
+def _vision_chat_envelope(content: str = "0") -> dict[str, Any]:
+    """An OpenAI-style chat-completions success envelope (a clip ranking reply)."""
+    return {"choices": [{"message": {"role": "assistant", "content": content}}]}
+
+
+class VisionTransport:
+    """A fake chat transport the vision pool calls; records every request body.
+
+    ``saw_base64`` is set True the first time a request carries an ``image_url``
+    data-URI part, proving a FRAME left the machine. ``calls`` counts invocations
+    so a no-consent run can assert it was NEVER touched.
+    """
+
+    def __init__(self, content: str = "0") -> None:
+        self.content = content
+        self.calls: list[dict[str, Any]] = []
+        self.saw_base64 = False
+
+    def __call__(self, url: str, body: dict[str, Any], headers: dict[str, str], timeout: float) -> dict[str, Any]:
+        self.calls.append({"url": url, "body": body, "headers": headers})
+        for msg in body.get("messages", []):
+            content = msg.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "image_url":
+                        url_val = str(part.get("image_url", {}).get("url", ""))
+                        if "base64," in url_val:
+                            self.saw_base64 = True
+        return _vision_chat_envelope(self.content)
+
+
+def _fake_clip_loader(path: str, spans: Any) -> list[Any]:
+    """One synthetic frame stack per span (no cv2)."""
+    return [[f"frame@{lo}-{hi}"] for lo, hi in spans]
+
+
+def _vision_provider_settings(*, with_consent: bool) -> dict[str, Any]:
+    """Settings wiring a vision-capable cloud provider + routing + optional consent."""
+    consent_frames = with_consent
+    return {
+        # the text-egress budget ack gate (WU-budget) is orthogonal to the frame
+        # consent under test here; disable it so the run proceeds to the re-rank.
+        "confirmCloudBudget": False,
+        "providers": [
+            {
+                "id": "gemini",
+                "provider": "Gemini",
+                "kind": "cloud",
+                "baseUrl": "https://example/v1",
+                "model": "gemini-flash",
+                "apiKeys": ["sk-vision-key-9999"],
+                "enabled": True,
+                "capabilities": ["text", "vision"],
+                "unit": "req",
+            }
+        ],
+        "routing": {"perFunction": {"vision": {"provider": "gemini", "fallback": []}}},
+        "consent": {"perProvider": {"Gemini": {"frames": consent_frames}}},
+    }
+
+
+def _run_select_with_vision(
+    tmp_path: Path,
+    video_file: Path,
+    *,
+    settings_patch: dict[str, Any],
+    transport: Any | None = None,
+    models_present: Any | None = None,
+) -> tuple[Services, RpcContext, str]:
+    """Wire a Services for a vision select run with the injected seams, run it.
+
+    The TEXT select path uses the injected FakeProvider (returns ``"[]"`` — no
+    socket); the independent VISION pool uses the fake ``vlm_chat_transport`` so
+    frame egress is observable. The two paths are separate by design (WU-vision).
+    """
+    svc = _phase8_services(
+        tmp_path,
+        provider=FakeProvider(),  # text select path; vision uses the vlm transport
+        vlm_clip_frame_loader=_fake_clip_loader,
+        vlm_frame_encoder=lambda frame: f"ENC<{frame}>",
+        vlm_models_present=models_present if models_present is not None else (lambda s: False),
+        vlm_chat_transport=transport,
+    )
+    ctx = _phase8_ctx()
+    vid = _add_video(svc, video_file)
+    _transcribe_sync(svc, ctx, vid)
+    svc.settings.set(settings_patch)
+    out = svc.phase8_select({"videoId": vid, "prompt": "best", "controls": {}, "tier": 2}, ctx)
+    assert "jobId" in out
+    ctx.jobs.join(timeout=5)
+    return svc, ctx, vid
+
+
+def test_phase8_select_no_vision_provider_passes_none(tmp_path: Path, video_file: Path) -> None:
+    # No vision provider configured + no local weights -> vlm_reranker=None (the
+    # existing transcript-only path). The select job still completes + caches.
+    svc = _phase8_services(tmp_path, vlm_models_present=lambda s: False)
+    ctx = _phase8_ctx()
+    vid = _add_video(svc, video_file)
+    _transcribe_sync(svc, ctx, vid)
+    assert svc._resolve_vlm_reranker(svc.settings.get(), media_path="/v.mp4") is None
+    svc.phase8_select({"videoId": vid, "prompt": "best", "controls": {}, "tier": 2}, ctx)
+    ctx.jobs.join(timeout=5)
+    done = [e for e in ctx.events if e[0] == "done"]  # type: ignore[attr-defined]
+    assert "candidates" in done[-1][2]
+
+
+def test_phase8_select_cloud_vision_with_consent_egresses_frames(tmp_path: Path, video_file: Path) -> None:
+    # End-to-end through phase8.select: the run completes, then we PROVE the
+    # resolved cloud reranker egresses base64 frames when actually invoked (the
+    # short fixture transcript may yield <2 candidates, so re-ranking is a no-op
+    # in the job; the egress invariant is asserted on the resolved reranker).
+    transport = VisionTransport(content="0")
+    svc, ctx, vid = _run_select_with_vision(
+        tmp_path,
+        video_file,
+        settings_patch=_vision_provider_settings(with_consent=True),
+        transport=transport,
+    )
+    selects = [e for e in ctx.events if e[0] == "done" and "candidates" in e[2]]  # type: ignore[attr-defined]
+    assert selects, "select job did not complete"
+    # the resolved reranker is the cloud closure -> invoking it egresses frames.
+    rr = svc._resolve_vlm_reranker(svc.settings.get(), media_path=str(video_file))
+    from media_studio.features import smolvlm2 as sv
+
+    assert isinstance(rr, sv.SmolVlmReranker)
+    rr.rerank_top_k([{"start": 0.0, "end": 1.0, "hook": "a"}, {"start": 1.0, "end": 2.0, "hook": "b"}], top_k=2)
+    assert transport.calls, "cloud vision pool was never called"
+    assert transport.saw_base64 is True
+
+
+def test_phase8_select_cloud_vision_without_consent_no_frame_egress(tmp_path: Path, video_file: Path) -> None:
+    transport = VisionTransport(content="0")
+    svc, ctx, vid = _run_select_with_vision(
+        tmp_path,
+        video_file,
+        settings_patch=_vision_provider_settings(with_consent=False),
+        transport=transport,
+        models_present=lambda s: False,
+    )
+    # NO frame consent -> cloud path refused; the fake vision transport NEVER touched.
+    assert transport.calls == [], "frames egressed without consent"
+    assert transport.saw_base64 is False
+    selects = [e for e in ctx.events if e[0] == "done" and "candidates" in e[2]]  # type: ignore[attr-defined]
+    assert selects, "select job did not complete (degraded to transcript-only)"
+    # and the resolved reranker is NOT a cloud closure (no vision pool reachable).
+    assert svc._resolve_vlm_reranker(svc.settings.get(), media_path=str(video_file)) is None
+
+
+def test_resolve_vlm_reranker_cloud_when_consent_granted(tmp_path: Path) -> None:
+    svc = _phase8_services(
+        tmp_path,
+        provider=None,
+        vlm_clip_frame_loader=_fake_clip_loader,
+        vlm_frame_encoder=lambda f: "b",
+        vlm_models_present=lambda s: False,
+    )
+    svc.settings.set(_vision_provider_settings(with_consent=True))
+    rr = svc._resolve_vlm_reranker(svc.settings.get(), media_path="/v.mp4")
+    from media_studio.features import smolvlm2 as sv
+
+    assert isinstance(rr, sv.SmolVlmReranker)
+    backend = rr._factory(svc.settings.get())  # the closure builds the cloud backend
+    assert isinstance(backend, sv.CloudVlmBackend)
+
+
+def test_resolve_vlm_reranker_local_when_no_cloud_but_weights_present(tmp_path: Path) -> None:
+    svc = _phase8_services(
+        tmp_path,
+        provider=None,
+        vlm_clip_frame_loader=_fake_clip_loader,
+        vlm_models_present=lambda s: True,  # local weights present
+    )
+    rr = svc._resolve_vlm_reranker(svc.settings.get(), media_path="/v.mp4")
+    from media_studio.features import smolvlm2 as sv
+
+    assert isinstance(rr, sv.SmolVlmReranker)
+    # local path -> the backend factory is smolvlm2's default (NOT a cloud closure)
+    assert rr._factory is sv._default_backend_factory
+
+
+def test_resolve_vlm_reranker_off_when_no_cloud_no_weights(tmp_path: Path) -> None:
+    svc = _phase8_services(tmp_path, provider=None, vlm_models_present=lambda s: False)
+    assert svc._resolve_vlm_reranker(svc.settings.get(), media_path="/v.mp4") is None
+
+
+def test_resolve_vlm_reranker_cloud_selected_but_no_consent_falls_through(tmp_path: Path) -> None:
+    # Cloud vision is routed but frames consent is absent -> NOT cloud; with local
+    # weights present it falls through to the local reranker.
+    svc = _phase8_services(
+        tmp_path,
+        provider=None,
+        vlm_clip_frame_loader=_fake_clip_loader,
+        vlm_models_present=lambda s: True,
+    )
+    svc.settings.set(_vision_provider_settings(with_consent=False))
+    rr = svc._resolve_vlm_reranker(svc.settings.get(), media_path="/v.mp4")
+    from media_studio.features import smolvlm2 as sv
+
+    assert isinstance(rr, sv.SmolVlmReranker)
+    assert rr._factory is sv._default_backend_factory  # local, not cloud
+
+
+def test_vision_provider_for_consent_returns_first_vision_cloud_name(tmp_path: Path) -> None:
+    svc = _phase8_services(tmp_path, provider=None)
+    svc.settings.set(_vision_provider_settings(with_consent=True))
+    name = svc._vision_provider_for_consent(svc.settings.get_raw())
+    assert name == "Gemini"
+
+
+def _two_vision_provider_settings(*, first_consent: bool, second_consent: bool) -> dict[str, Any]:
+    """Two vision-capable cloud providers, each with its OWN frame-consent flag.
+
+    The FIRST (Gemini, routed first) and the SECOND (OpenAI) are both
+    vision-capable. The regression case: first frame-consented but it 429s, second
+    NOT frame-consented — proving rotation can never reach the non-consented one.
+    """
+    return {
+        "confirmCloudBudget": False,
+        "providers": [
+            {
+                "id": "gemini",
+                "provider": "Gemini",
+                "kind": "cloud",
+                "baseUrl": "https://gemini.example/v1",
+                "model": "gemini-flash",
+                "apiKeys": ["sk-gemini-1111"],
+                "enabled": True,
+                "capabilities": ["text", "vision"],
+                "unit": "req",
+            },
+            {
+                "id": "openai",
+                "provider": "OpenAI",
+                "kind": "cloud",
+                "baseUrl": "https://openai.example/v1",
+                "model": "gpt-4o-mini",
+                "apiKeys": ["sk-openai-2222"],
+                "enabled": True,
+                "capabilities": ["text", "vision"],
+                "unit": "req",
+            },
+        ],
+        "routing": {"perFunction": {"vision": {"provider": "gemini", "fallback": []}}},
+        "consent": {
+            "perProvider": {
+                "Gemini": {"frames": first_consent},
+                "OpenAI": {"frames": second_consent},
+            }
+        },
+    }
+
+
+class RotatingVisionTransport:
+    """Fake chat transport that 429s the consented provider and records ALL targets.
+
+    Raises ``ProviderError("LLM HTTP 429: ...")`` for any request to ``fail_host``
+    (forcing the pool to rotate). For every request it records the target host and
+    whether the body carried base64 frames, so a test can assert a non-consented
+    host was NEVER reached with frames.
+    """
+
+    def __init__(self, *, fail_host: str) -> None:
+        self._fail_host = fail_host
+        self.hosts: list[str] = []
+        self.frame_hosts: list[str] = []
+
+    def __call__(self, url: str, body: dict[str, Any], headers: dict[str, str], timeout: float) -> dict[str, Any]:
+        self.hosts.append(url)
+        saw_base64 = any(
+            isinstance(part, dict)
+            and part.get("type") == "image_url"
+            and "base64," in str(part.get("image_url", {}).get("url", ""))
+            for msg in body.get("messages", [])
+            if isinstance(msg.get("content"), list)
+            for part in msg["content"]
+        )
+        if saw_base64:
+            self.frame_hosts.append(url)
+        if self._fail_host in url:
+            from media_studio.models.provider import ProviderError
+
+            raise ProviderError("LLM HTTP 429: rate limited; retry-after=60")
+        return _vision_chat_envelope("0")
+
+
+def test_phase8_vision_rotation_never_egresses_to_non_consented_provider(tmp_path: Path) -> None:
+    # REGRESSION (privacy CRITICAL): two vision-capable cloud providers — Gemini
+    # (routed first, frame-consented) and OpenAI (vision-capable, NO frame
+    # consent). Gemini 429s; the pool must NOT fail over to OpenAI with frames,
+    # because OpenAI's frame consent was never granted. The consented pool is
+    # filtered to Gemini only, so OpenAI is never even a rotation candidate.
+    transport = RotatingVisionTransport(fail_host="gemini.example")
+    svc = _phase8_services(
+        tmp_path,
+        provider=None,
+        vlm_clip_frame_loader=_fake_clip_loader,
+        vlm_frame_encoder=lambda frame: f"ENC<{frame}>",
+        vlm_models_present=lambda s: False,
+        vlm_chat_transport=transport,
+    )
+    svc.settings.set(_two_vision_provider_settings(first_consent=True, second_consent=False))
+
+    rr = svc._resolve_vlm_reranker(svc.settings.get(), media_path="/v.mp4")
+    from media_studio.features import smolvlm2 as sv
+
+    assert isinstance(rr, sv.SmolVlmReranker)
+    # invoking the reranker drives the vision pool; Gemini 429s, then exhausts
+    # (no eligible consented fallback) — the input order is kept (no-op re-rank).
+    cands = [{"start": 0.0, "end": 1.0, "hook": "a"}, {"start": 1.0, "end": 2.0, "hook": "b"}]
+    out = rr.rerank_top_k(cands, top_k=2)
+
+    assert [c["hook"] for c in out] == ["a", "b"], "degraded to input order on pool exhaustion"
+    # the non-consented provider (OpenAI) was NEVER reached at all, with or w/o frames.
+    assert not any("openai.example" in h for h in transport.hosts), "rotated to a non-consented provider"
+    assert all("gemini.example" in h for h in transport.frame_hosts), "frame egress reached a non-consented host"
+    # and the consented Gemini WAS attempted (the leak path is otherwise vacuous).
+    assert any("gemini.example" in h for h in transport.frame_hosts), "consented provider was never tried"
+
+
+def test_phase8_vision_pool_contains_only_frame_consented_cloud_entries(tmp_path: Path) -> None:
+    # Direct assertion on the filtered pool: with Gemini consented and OpenAI not,
+    # the cloud egress pool's vision-capable CLOUD entries are EXACTLY {Gemini}.
+    svc = _phase8_services(tmp_path, provider=None, vlm_chat_transport=RotatingVisionTransport(fail_host="none"))
+    svc.settings.set(_two_vision_provider_settings(first_consent=True, second_consent=False))
+    raw = svc.settings.get_raw()
+    pool = svc._vision_pool(svc._frame_consented_vision_settings(raw))
+    cloud_vision = [e.provider for e in pool.entries if not e.local and "vision" in e.capabilities]
+    assert cloud_vision == ["Gemini"], "non-consented vision provider leaked into the pool"
+
+
+def test_frame_consented_vision_settings_drops_non_consented(tmp_path: Path) -> None:
+    # The pure filter: only frame-consented providers survive; original untouched.
+    svc = _phase8_services(tmp_path, provider=None)
+    raw = _two_vision_provider_settings(first_consent=False, second_consent=True)
+    filtered = svc._frame_consented_vision_settings(raw)
+    assert [p["provider"] for p in filtered["providers"]] == ["OpenAI"]
+    assert len(raw["providers"]) == 2, "input settings were mutated"
+
+
+def test_frame_consented_vision_settings_no_providers_passthrough(tmp_path: Path) -> None:
+    # No providers list -> settings returned unchanged (the branch with no list).
+    svc = _phase8_services(tmp_path, provider=None)
+    assert svc._frame_consented_vision_settings({"foo": 1}) == {"foo": 1}
+
+
+def test_vision_provider_for_consent_none_when_no_vision_cloud(tmp_path: Path) -> None:
+    svc = _phase8_services(tmp_path, provider=None)
+    # only a TEXT provider configured -> no vision egress target
+    svc.settings.set(
+        {
+            "providers": [
+                {
+                    "id": "groq",
+                    "provider": "Groq",
+                    "baseUrl": "https://example/v1",
+                    "model": "m",
+                    "apiKeys": ["k"],
+                    "enabled": True,
+                    "capabilities": ["text"],
+                }
+            ],
+            "routing": {"perFunction": {"vision": {"provider": "groq"}}},
+        }
+    )
+    assert svc._vision_provider_for_consent(svc.settings.get_raw()) is None
+
+
 def test_phase8_select_requires_known_video(tmp_path: Path) -> None:
     svc = _phase8_services(tmp_path)
     ctx = _phase8_ctx()

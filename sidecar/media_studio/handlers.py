@@ -24,7 +24,9 @@ The transcribe/select/translate handlers reach those only inside a job body.
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -53,6 +55,38 @@ SubtitleTrack = dict[str, Any]
 Candidate = dict[str, Any]
 
 
+@dataclass(frozen=True)
+class _BudgetRequest:
+    """A wire-coerced budget request (satisfies ``budget.BudgetRequest`` duck-type).
+
+    ``target_size`` is the discrete output count (``None`` -> the budget default);
+    the two byte fields are the per-request egress split by data kind.
+    """
+
+    target_size: int | None
+    text_bytes: int
+    frame_bytes: int
+
+
+@dataclass(frozen=True)
+class _LocalPoolEntry:
+    """A single local backstop pool entry (satisfies ``budget.PoolEntry``)."""
+
+    provider: str = "local"
+    local: bool = True
+
+
+@dataclass(frozen=True)
+class _LocalOnlyPool:
+    """A local-only fallback pool used when the provider module is a test stub.
+
+    Satisfies :func:`budget.estimate`'s pool shape (``.entries`` of provider/local
+    items); the budget then reports local-only with zero cloud egress.
+    """
+
+    entries: tuple[_LocalPoolEntry, ...] = (_LocalPoolEntry(),)
+
+
 def _invalid(message: str) -> RpcError:
     return RpcError(message, ErrorCode.INVALID_PARAMS)
 
@@ -62,6 +96,16 @@ def _require_str(params: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value:
         raise _invalid(f"{key} (str) is required")
     return value
+
+
+def _routing_block(routing: dict[str, Any]) -> dict[str, Any]:
+    """Extract the persistable ``{perFunction}`` block from a preset routing.
+
+    ``presets.apply_preset`` returns ``{activePreset, perFunction}``; the settings
+    ``routing`` key stores only the ``{perFunction}`` map (``activePreset`` is its
+    own settings key), so this drops the redundant ``activePreset`` field.
+    """
+    return {"perFunction": routing["perFunction"]}
 
 
 class Services:
@@ -89,6 +133,12 @@ class Services:
         provider: Any | None = None,
         hardware_probe: Any | None = None,
         phase8_runner: Callable[..., dict[str, Any]] | None = None,
+        test_key_transport: Any | None = None,
+        now: Callable[[], float] | None = None,
+        vlm_clip_frame_loader: Any | None = None,
+        vlm_frame_encoder: Any | None = None,
+        vlm_models_present: Callable[[dict[str, Any]], bool] | None = None,
+        vlm_chat_transport: Any | None = None,
     ) -> None:
         base = Path(data_dir) if data_dir is not None else default_config_dir()
         self.data_dir = base
@@ -110,6 +160,24 @@ class Services:
         # (heavy) impls, resolved lazily; tests inject fakes so no GPU / no torch.
         self._hardware_probe = hardware_probe
         self._phase8_runner = phase8_runner
+        # WU-keys: the transport providers.testKey uses for its validation ping.
+        # None -> the real stdlib urllib transport; tests inject a fake.
+        self._test_key_transport = test_key_transport
+        # WU-usage-ui: the wall-clock seam used to stamp + stale-flag the cached
+        # providers.usage rows. None -> real ``time.time``; tests inject a fake
+        # clock so the >10-min stale threshold is deterministic.
+        self._now: Callable[[], float] = now or time.time
+        # WU-vision: the Tier-2 re-rank seams. Defaults are the real (heavy) impls
+        # resolved lazily inside smolvlm2; tests inject fakes so no cv2 / no torch /
+        # no weights / no network is ever touched. ``vlm_models_present`` overrides
+        # the local-weight probe so the cloud-vs-local-vs-off decision is testable.
+        self._vlm_clip_frame_loader = vlm_clip_frame_loader
+        self._vlm_frame_encoder = vlm_frame_encoder
+        self._vlm_models_present = vlm_models_present
+        # WU-vision: the chat transport the vision rotation pool uses (the
+        # provider.py HTTP seam). None -> the real stdlib urllib transport; tests
+        # inject a fake so frame egress is observable without a socket.
+        self._vlm_chat_transport = vlm_chat_transport
 
         # T3: the shared llama.cpp ModelRunner (built lazily; model-identity-aware,
         # so the tiered translator can swap MT GGUFs on the one server lane).
@@ -234,8 +302,419 @@ class Services:
         return self.settings.get()
 
     def settings_set(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
-        """``settings.set({...})`` -> merged §2 settings object. Direct-return."""
+        """``settings.set({...})`` -> merged §2 settings object. Direct-return.
+
+        CONTRACT-NOTE (WU-keys): ``settings.set`` returns ``self.settings.set``'s
+        REDACTED merged view (``SettingsStore.set`` backfills + redacts the same
+        way ``get`` does), so the round-tripped response never echoes a full key.
+        """
         return self.settings.set(dict(params))
+
+    # ===================================================================== #
+    # providers.* (WU-keys: user-brings keys; RPC is key-free / redacted)
+    # ===================================================================== #
+    def providers_catalog(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.catalog()`` -> the static curated model catalog (WU-catalog).
+
+        Returns :data:`catalog.CATALOG` as JSON: every provider/model with its
+        per-task tiers, privacy / train-on-input flags, unit, free limits, the
+        editorial top-pick per task, and the dated ``asOfDate`` stamp. PURE data —
+        NO API keys, URLs, or secrets ever appear in this payload (the catalog is
+        curated metadata; the user's keys live only in the redacted providers.list
+        view). The renderer reads the camelCase wire shape verbatim.
+        """
+        from .models import catalog as _catalog  # local: import-light pure data
+
+        return _catalog.catalog_to_json()
+
+    def providers_list(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.list()`` -> ``{providers:[...redacted...]}`` (WU-keys).
+
+        Returns the configured pool with every ``apiKeys`` entry REDACTED to
+        last-4 — the RPC layer NEVER returns a full key. Sourced from the
+        already-redacting :meth:`SettingsStore.get`.
+        """
+        providers = self.settings.get().get("providers")
+        return {"providers": providers if isinstance(providers, list) else []}
+
+    def providers_upsert(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.upsert({id, provider?, kind?, baseUrl?, model?, apiKeys?, enabled?,
+        capabilities?, unit?})`` -> ``{providers:[...redacted...]}`` (WU-keys).
+
+        Inserts a new provider entry or merges into the existing one with the same
+        ``id`` (RAW keys are stored). The returned providers list is REDACTED.
+        Adding more keys to the SAME provider is failover-only (never N x quota,
+        SE2) — that semantics lives in the rotation pool; here we just store them.
+        """
+        nested = params.get("provider")
+        entry: dict[str, Any] = nested if isinstance(nested, dict) else params
+        provider_id = entry.get("id")
+        if not isinstance(provider_id, str) or not provider_id:
+            raise _invalid("providers.upsert requires a provider id")
+        existing = list(self.settings.get_raw().get("providers") or [])
+        merged: list[dict[str, Any]] = []
+        found = False
+        for raw in existing:
+            if isinstance(raw, dict) and raw.get("id") == provider_id:
+                patch = {k: v for k, v in entry.items() if k != "id"}
+                merged.append({**raw, **patch, "id": provider_id})
+                found = True
+            elif isinstance(raw, dict):
+                merged.append(raw)
+        if not found:
+            merged.append(dict(entry))
+        self.settings.set({"providers": merged})
+        return self.providers_list(params, ctx)
+
+    def providers_remove(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.remove({id})`` -> ``{providers:[...redacted...]}`` (WU-keys).
+
+        Drops the provider entry with the given ``id``; returns the REDACTED
+        remaining list. Removing an absent id is a no-op (idempotent).
+        """
+        provider_id = _require_str(params, "id")
+        existing = list(self.settings.get_raw().get("providers") or [])
+        remaining = [raw for raw in existing if not (isinstance(raw, dict) and raw.get("id") == provider_id)]
+        self.settings.set({"providers": remaining})
+        return self.providers_list(params, ctx)
+
+    def providers_test_key(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.testKey({baseUrl, model?, apiKey})`` -> ``{ok, capabilities?, error?}``.
+
+        Validates a key by issuing ONE minimal completion through the provider
+        seam (a fake transport in tests). NEVER echoes the key back: the response
+        carries only ``ok`` + the declared ``capabilities`` + a SCRUBBED ``error``
+        string on failure (the live key is stripped at the provider construction
+        site, so a 4xx error body never leaks the key over RPC).
+        """
+        base_url = _require_str(params, "baseUrl")
+        api_key = params.get("apiKey")
+        if not isinstance(api_key, str) or not api_key:
+            raise _invalid("providers.testKey requires an apiKey")
+        capabilities = [str(c) for c in (params.get("capabilities") or ["text"])]
+        from .models import provider as _provider_mod  # local: heavy seam
+
+        prov = _provider_mod.CloudProvider(
+            api_key=api_key,
+            base_url=base_url,
+            model=str(params.get("model") or _provider_mod.DEFAULT_CLOUD_MODEL),
+            transport=self._test_key_transport,
+        )
+        try:
+            prov.chat([{"role": "user", "content": "ping"}], max_tokens=1)
+        except _provider_mod.ProviderError as exc:
+            # The message is already scrubbed at the construction site; do NOT add
+            # the key back. Defensively scrub again in case a caller-side detail
+            # carried it.
+            from .models.secrets import scrub_error_body
+
+            return {"ok": False, "error": scrub_error_body(str(exc), [api_key])}
+        return {"ok": True, "capabilities": capabilities}
+
+    def providers_set_consent(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.setConsent({provider, text?, frames?})`` -> ``{consent}`` (WU-keys / SE1).
+
+        TEXT (transcripts) and FRAMES (vision) consent are SEPARATE and
+        independently revocable: only the keys present in the request are changed,
+        so revoking ``frames`` leaves ``text`` intact and vice-versa. Returns the
+        full consent block (no secrets — consent carries booleans only).
+        """
+        provider_name = _require_str(params, "provider")
+        raw = self.settings.get_raw()
+        consent = dict(raw.get("consent") or {})
+        per_provider = dict(consent.get("perProvider") or {})
+        current = dict(per_provider.get(provider_name) or {})
+        if "text" in params:
+            current["text"] = bool(params.get("text"))
+        if "frames" in params:
+            current["frames"] = bool(params.get("frames"))
+        per_provider[provider_name] = current
+        consent["perProvider"] = per_provider
+        self.settings.set({"consent": consent})
+        return {"consent": consent}
+
+    def providers_usage(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.usage()`` -> ``{usage:[...]}`` per-key live usage (WU-usage-ui).
+
+        Surfaces the rotation pool's per-key accounting
+        ``{provider, key(redacted), used, max, unit, resetAt}`` — already produced
+        from optimistic decrement + parsed 429/``X-RateLimit-*`` headers, so this
+        is NOT a poller (no background loop, no per-call burst: the pool is built
+        with ``detect_local=False`` so no ``GET /models`` socket is opened).
+
+        The pool's in-memory counters reset each process, so the last-known numbers
+        are PERSISTED (timestamped) in ``settings.usageCache`` and folded back in
+        on read (DESIGN §15-Q1): the UI shows immediately on launch without
+        re-polling, and rows older than the >10-min threshold are flagged ``stale``
+        (the renderer desaturates them + shows "last checked Xm ago"). The ``key``
+        field is ALWAYS the redacted last-4 (the pool never carries a live key into
+        this row), so no full key crosses RPC.
+        """
+        from .models.usage import flag_stale, merge_usage_cache
+
+        live_rows: list[dict[str, Any]] = list(self._ai_pool().usage())
+        raw_cache = self.settings.get_raw().get("usageCache")
+        cache: dict[str, Any] = raw_cache if isinstance(raw_cache, dict) else {}
+        raw_rows = cache.get("rows")
+        cached_rows: list[dict[str, Any]] = raw_rows if isinstance(raw_rows, list) else []
+        raw_checked = cache.get("checkedAt")
+        checked_at: dict[str, Any] = raw_checked if isinstance(raw_checked, dict) else {}
+
+        merged = merge_usage_cache(live_rows, cached_rows)
+        now = self._now()
+        # A row that carries real data this call is freshly checked NOW; one that
+        # only survived from the persisted cache keeps its previous timestamp so
+        # its age (and stale flag) keep counting up across reads.
+        next_checked: dict[str, float] = {}
+        for live in live_rows:
+            ident = "\x00".join((str(live.get("provider", "")), str(live.get("key", ""))))
+            used = live.get("used")
+            fresh = (isinstance(used, (int, float)) and used > 0) or live.get("max") is not None
+            next_checked[ident] = now if fresh else float(checked_at.get(ident, now))
+
+        stamped = flag_stale(merged, now=now, checked_at=next_checked)
+        # Persist the merged snapshot so the next launch shows it without polling.
+        self.settings.set({"usageCache": {"rows": merged, "checkedAt": next_checked, "savedAt": now}})
+        return {"usage": stamped}
+
+    # ===================================================================== #
+    # providers.* presets + per-function routing (WU-presets / PH3)
+    # ===================================================================== #
+    def providers_apply_preset(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.applyPreset({name})`` -> ``{activePreset, routing}`` (WU-presets).
+
+        Resolves one of the smart presets (``privacy`` / ``bestFreeCloud`` /
+        ``balanced``) into a concrete ``routing.perFunction`` map over the REAL
+        curated catalog (via :class:`presets.CatalogAdapter`) and PERSISTS it. The
+        ``privacy`` preset routes every function to local (zero cloud egress);
+        ``bestFreeCloud`` picks the catalog's per-task top model with a local
+        backstop; ``balanced`` mixes cloud text with local vision.
+        """
+        name = _require_str(params, "name")
+        from .models import presets as _presets  # local: import-light pure seam
+
+        try:
+            routing = _presets.apply_preset(name, self.settings.get(), _presets.CatalogAdapter())
+        except ValueError as exc:
+            raise _invalid(str(exc)) from exc
+        self.settings.set({"activePreset": routing["activePreset"], "routing": _routing_block(routing)})
+        return {"activePreset": routing["activePreset"], "routing": _routing_block(routing)}
+
+    def providers_set_function_model(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.setFunctionModel({function, provider})`` -> ``{activePreset, routing}``.
+
+        Overrides ONE function's routed provider (a catalog model-id or the
+        :data:`presets.LOCAL` sentinel), leaving the other slots untouched, and
+        flips ``activePreset`` to ``"custom"`` so the UI reflects the hand-edit.
+        An unknown function or a missing provider is a typed invalid-params error.
+        """
+        from .models import presets as _presets  # local: import-light pure seam
+
+        function = _require_str(params, "function")
+        if function not in _presets.FUNCTIONS:
+            raise _invalid(f"unknown function: {function!r}")
+        provider_id = _require_str(params, "provider")
+        routing = dict(self.settings.get().get("routing") or {})
+        per_function = dict(routing.get("perFunction") or {})
+        per_function[function] = {"provider": provider_id, "fallback": []}
+        new_routing = {"perFunction": per_function}
+        self.settings.set({"activePreset": "custom", "routing": new_routing})
+        return {"activePreset": "custom", "routing": new_routing}
+
+    def providers_first_run(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.firstRun({choice?})`` -> the first-run local-vs-cloud chooser (P1 #6).
+
+        With NO ``choice`` it is a READ: returns ``{firstRunChoiceMade, default}``
+        where ``default`` is the local-safe :func:`presets.first_run_default`
+        (``"privacy"`` until the user picks). With a ``choice`` (``"privacy"`` or
+        any preset name) it APPLIES that preset, sets ``firstRunChoiceMade=True``,
+        and returns ``{firstRunChoiceMade, activePreset, routing}`` — so a cloud
+        choice flips the routing while a local choice keeps the all-local default.
+        """
+        from .models import presets as _presets  # local: import-light pure seam
+
+        choice = params.get("choice")
+        if choice is None:
+            return {
+                "firstRunChoiceMade": bool(self.settings.get().get("firstRunChoiceMade")),
+                "default": _presets.first_run_default(self.settings.get()),
+            }
+        if not isinstance(choice, str) or choice not in _presets.PRESETS:
+            raise _invalid(f"unknown first-run choice: {choice!r}")
+        try:
+            routing = _presets.apply_preset(choice, self.settings.get(), _presets.CatalogAdapter())
+        except ValueError as exc:  # pragma: no cover -- choice is guarded against PRESETS above
+            raise _invalid(str(exc)) from exc
+        block = _routing_block(routing)
+        self.settings.set({"firstRunChoiceMade": True, "activePreset": routing["activePreset"], "routing": block})
+        return {"firstRunChoiceMade": True, "activePreset": routing["activePreset"], "routing": block}
+
+    # -- per-function routing resolution (the seam wiring) ------------------ #
+    def _function_prefer(self, function: str) -> str | None:
+        """Return the configured provider id the ``function`` seam should prefer.
+
+        Reads ``routing.perFunction[function].provider`` (a catalog model-id, the
+        :data:`presets.LOCAL` sentinel, or unset). The sentinel maps to
+        :data:`provider.LOCAL_PROVIDER_ID` (a local-only route); an unset slot
+        returns ``None`` (the pool keeps its configured order). The provider id is
+        threaded into ``get_provider``/``get_translator`` as ``prefer=`` so the
+        seam tries that provider first (PLAN §WU-presets acceptance (b)).
+        """
+        routing = self.settings.get().get("routing")
+        if not isinstance(routing, dict):
+            return None
+        per_function = routing.get("perFunction")
+        if not isinstance(per_function, dict):
+            return None
+        slot = per_function.get(function)
+        if not isinstance(slot, dict):
+            return None
+        provider_id = slot.get("provider")
+        return provider_id if isinstance(provider_id, str) and provider_id else None
+
+    def _provider_for_function(self, function: str) -> Any:
+        """Build the LLM provider the ``function`` seam uses, honoring routing.
+
+        FACTORY PATH (PLAN §WU-keys): RAW keys via ``get_raw()``. The routed
+        provider (``_function_prefer``) is tried first; the rest of the pool is
+        failover with the local backstop last (or local-only when routed to LOCAL).
+        """
+        from .models import provider as _provider_mod  # local: heavy seam
+
+        return _provider_mod.get_provider(self.settings.get_raw(), prefer=self._function_prefer(function))
+
+    def _translator_for_function(self, function: str) -> Any:
+        """Build the TieredTranslator whose tier3 hosted pool honors routing."""
+        from .models import translation as _translation_mod  # local: heavy seam
+
+        return _translation_mod.get_translator(
+            self.settings.get_raw(), runner=self._get_model_runner(), prefer=self._function_prefer(function)
+        )
+
+    # ===================================================================== #
+    # WU-vision: Tier-2 vision re-rank resolution (cloud pool / local / off)
+    # ===================================================================== #
+    def _frame_consented_vision_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
+        """Return ``settings`` with ``providers`` filtered to FRAME-consented entries.
+
+        CRITICAL PRIVACY INVARIANT (PLAN §WU-vision acceptance (a): "NO frame
+        egressed without that provider's frame consent"): the rotation pool that
+        backs :class:`CloudVlmBackend` rotates across EVERY vision-capable cloud
+        entry on a 429, so consent must be enforced PER-ENTRY at pool-construction
+        time — not once against the first provider. Any cloud provider whose FRAME
+        consent (``consent.perProvider[<provider>].frames``) is not explicitly
+        granted is DROPPED from ``providers`` before the pool is built, so a 429
+        failover can NEVER reach a non-consented target. Local-backstop entries
+        (added inside ``build_pool_provider``, no key) are unaffected — they never
+        egress. PURE: returns a new settings dict; the original is never mutated.
+        """
+        from .models import consent as _consent  # local: import-light pure gate
+
+        providers = settings.get("providers")
+        if not isinstance(providers, list):
+            return settings
+        kept = [
+            p
+            for p in providers
+            if isinstance(p, dict)
+            and _consent.frame_consent_granted(settings, str(p.get("provider") or p.get("id") or "cloud"))
+        ]
+        return {**settings, "providers": kept}
+
+    def _vision_pool(self, settings: dict[str, Any]) -> Any:
+        """Build the vision rotation pool honoring routing.perFunction["vision"].
+
+        FACTORY PATH (PLAN §WU-keys): RAW keys via the caller's ``get_raw()``
+        ``settings``. The routed vision provider is tried first; detection of local
+        Ollama/LM-Studio is OFF here (no socket — only the configured cloud vision
+        entries + the local backstop are needed). ``None`` when the provider module
+        is a test stub without ``build_pool_provider``.
+
+        SECURITY: callers building the cloud egress pool MUST pass settings already
+        filtered through :meth:`_frame_consented_vision_settings`, so every
+        cloud slot the pool may rotate to is frame-consented (no rotation bypass).
+        """
+        from .models import provider as _provider_mod  # local: heavy seam
+
+        builder = getattr(_provider_mod, "build_pool_provider", None)
+        if builder is None:  # pragma: no cover -- only when provider is a stub w/o the pool builder
+            return None
+        return builder(
+            settings,
+            transport=self._vlm_chat_transport,
+            detect_local=False,
+            prefer=self._function_prefer("vision"),
+        )
+
+    def _vision_provider_for_consent(self, settings: dict[str, Any]) -> str | None:
+        """The provider NAME a frame-consented vision pool would egress frames to.
+
+        Builds the routed vision pool over the FRAME-CONSENT-FILTERED providers and
+        returns the first vision-capable CLOUD entry's provider name — exactly the
+        egress target. Because the input is already consent-filtered, ANY cloud
+        entry it returns is one whose FRAME consent is granted; ``None`` when no
+        consented cloud entry can serve vision (then the cloud path is never taken,
+        so no frame is ever prepared for egress).
+        """
+        pool = self._vision_pool(self._frame_consented_vision_settings(settings))
+        if pool is None:  # pragma: no cover -- stub-provider guard (see _vision_pool)
+            return None
+        from .models.provider import DEFAULT_CAPABILITY  # local: import-light
+
+        _vision = "vision"
+        for entry in pool.entries:
+            if not entry.local and _vision in entry.capabilities and _vision != DEFAULT_CAPABILITY:
+                return entry.provider
+        return None
+
+    def _resolve_vlm_reranker(self, settings: dict[str, Any], *, media_path: str) -> Any:
+        """Resolve the Tier-2 ``vlm_reranker`` BEFORE any frame is sampled (WU-vision).
+
+        The frame-egress consent gate is the FIRST decision, so a no-consent run
+        never prepares a frame for egress. Decision tree (PLAN §WU-vision):
+
+        1. At least one cloud vision provider is routed AND frame-consented ->
+           a :class:`SmolVlmReranker` whose backend factory is a CLOSURE building a
+           :class:`smolvlm2.CloudVlmBackend` over a pool filtered to ONLY
+           frame-consented cloud entries (the ``BackendFactory`` signature stays
+           ``settings -> SmolVlmBackend``). The pool can therefore only ever rotate
+           to a consented provider on a 429 — no rotation bypass.
+        2. Else if the local SmolVLM2 weights are present -> the local reranker.
+        3. Else -> ``None`` (the existing transcript-only no-rerank path).
+        """
+        from .features import smolvlm2 as _sv  # local: import-light (no heavy import)
+
+        raw_settings = self.settings.get_raw()
+        vision_provider = self._vision_provider_for_consent(raw_settings)
+        if vision_provider is not None:
+            # SECURITY: the pool is built over ONLY frame-consented cloud entries,
+            # so RotatingProvider.chat(capability="vision") can never fail over to a
+            # provider whose frame consent was not granted (PLAN §WU-vision (a)).
+            pool = self._vision_pool(self._frame_consented_vision_settings(raw_settings))
+
+            def cloud_factory(backend_settings: Any) -> Any:
+                return _sv.CloudVlmBackend(
+                    pool=pool,
+                    settings=backend_settings,
+                    frame_encoder=self._vlm_frame_encoder,
+                )
+
+            return _sv.SmolVlmReranker(
+                settings=settings,
+                backend_factory=cloud_factory,
+                clip_frame_loader=self._vlm_clip_frame_loader,
+                media_path=media_path,
+            )
+
+        present = self._vlm_models_present or _sv.default_models_present
+        if present(settings):
+            return _sv.build_reranker(
+                settings=settings,
+                media_path=media_path,
+                clip_frame_loader=self._vlm_clip_frame_loader,
+                models_present=lambda _s: True,
+            )
+        return None
 
     # ===================================================================== #
     # subtitles.* (generate/edit/export direct; translate = job)
@@ -322,11 +801,14 @@ class Services:
             _offline.guard_network(settings_now, "cloud translation")
         project = self._find_project_for_track(track_id)
         track = _tracks.find_track(project.data, track_id)
-        translator = self._get_translator()  # None -> legacy injected provider
-        provider = self._provider if translator is None else None
+        # WU-presets: the translation seam honors routing.perFunction["translation"]
+        # (its tier3 hosted pool tries the routed provider first); falls back to the
+        # legacy injected provider when one is set (existing tests).
+        translator = None if self._provider is not None else self._translator_for_function("translation")
+        legacy_provider = self._provider if translator is None else None
         save_path = project.manifest_path
 
-        def job_body(job_ctx: Any) -> dict[str, Any]:
+        def work(job_ctx: Any, _envelope: Any, provider: Any) -> dict[str, Any]:
             if translator is not None:
                 # T3 tiered path: language-aware tier routing + fallback chain;
                 # tier failures surface via job.done error payload (A6.3).
@@ -360,7 +842,21 @@ class Services:
                 project.save(save_path)
             return {"track": translated}
 
-        job = ctx.jobs.start(job_body)
+        # WU-envelope: subtitle translation rides the AiJob substrate (shared
+        # cancel-check + degrade-aware provider) while keeping the {jobId} shape
+        # and the {track} done payload. The legacy injected provider (tests) is
+        # passed through; the T3 tiered path ignores the work's provider arg.
+        job = self._run_ai_job(
+            ctx,
+            messages=[{"role": "user", "content": target_lang}],
+            model=str(settings_now.get("cloudModel") or ""),
+            provider=legacy_provider,
+            work=work,
+            feature="subtitles",
+            label="subtitles.translate",
+            videoId=None,
+            ack=params.get("confirmBudget") if isinstance(params.get("confirmBudget"), str) else None,
+        )
         return {"jobId": job.id}
 
     # ===================================================================== #
@@ -752,13 +1248,19 @@ class Services:
         prompt = str(params.get("prompt") or "")
         controls = params.get("controls") or {}
         transcript = self._load_or_create_project(video_id).data.get("transcript")
-        provider = self._provider
         runner = self._phase8_runner or self._default_phase8_runner()
         probe = self._ffprobe_duration or _self_ffprobe()
 
-        def job_body(job_ctx: Any) -> dict[str, Any]:
+        def work(job_ctx: Any, _envelope: Any, provider: Any) -> dict[str, Any]:
             from .features import select as _select  # local: import-light
 
+            # WU-vision: resolve the Tier-2 vlm_reranker FIRST — the frame-egress
+            # consent gate runs BEFORE any frame is sampled/encoded (a no-consent
+            # run never prepares a frame for egress). tier<2 skips the re-rank
+            # entirely (so no vision pool is built / no consent read). Cloud-vision
+            # + frame consent -> a CloudVlmBackend closure over the vision pool;
+            # else local weights -> the local reranker; else None (transcript-only).
+            vlm_reranker = self._resolve_vlm_reranker(settings, media_path=path) if tier >= 2 else None
             tracks = runner(
                 path,
                 tier=tier,
@@ -774,12 +1276,30 @@ class Services:
                 provider,
                 tracks=tracks,
                 tier=tier,
+                vlm_reranker=vlm_reranker,
             )
             resolved = cast("list[Candidate]", list(candidates))
             self._cache_candidates(video_id, resolved)
             return {"candidates": resolved}
 
-        job = ctx.jobs.start(job_body)
+        # WU-envelope: the AI re-rank/select rides the AiJob substrate so it gets
+        # the shared cancel-check + degrade-aware provider + (later) cost/cache
+        # while preserving the {jobId} shape and the {candidates} done payload.
+        # WU-presets: the select seam honors routing.perFunction["select"] — its
+        # rotation pool tries the routed provider first (local-only when routed to
+        # LOCAL). A legacy injected provider (tests) still wins.
+        select_provider = self._provider if self._provider is not None else self._provider_for_function("select")
+        job = self._run_ai_job(
+            ctx,
+            messages=[{"role": "user", "content": prompt}],
+            model=str(settings.get("cloudModel") or ""),
+            provider=select_provider,
+            work=work,
+            feature="phase8",
+            label="phase8.select",
+            videoId=video_id,
+            ack=params.get("confirmBudget") if isinstance(params.get("confirmBudget"), str) else None,
+        )
         return {"jobId": job.id}
 
     def _models_present_map(self, settings: dict[str, Any]) -> dict[str, bool]:
@@ -1036,12 +1556,203 @@ class Services:
     # provider seam
     # ===================================================================== #
     def _get_provider(self) -> Any:
-        """Return the LLM provider for translation (cached test seam or real)."""
+        """Return the LLM provider for translation (cached test seam or real).
+
+        FACTORY PATH (PLAN §WU-keys): builds from RAW keys via ``get_raw()`` — the
+        provider must carry the live key; only RPC reads return redacted.
+        """
         if self._provider is not None:
             return self._provider
         from .models import provider as _provider_mod  # local import: heavy seam
 
-        return _provider_mod.get_provider(self.settings.get())
+        return _provider_mod.get_provider(self.settings.get_raw())
+
+    def _ai_cache(self) -> Any:
+        """The shared AI-call content cache (WU-cache), under the data dir.
+
+        Honors ``settings.aiCacheDir`` (absolute path) when set, else
+        ``data_dir/ai-cache``. The cache is local-only; nothing leaves the box.
+        """
+        from .models.ai_cache import DEFAULT_CACHE_DIRNAME, AiCache  # local: import-light
+
+        configured = self.settings.get().get("aiCacheDir")
+        store_dir = Path(configured) if configured else self.data_dir / DEFAULT_CACHE_DIRNAME
+        return AiCache(store_dir=store_dir)
+
+    def _ai_pool(self) -> Any:
+        """Build the rotation pool (WU-pool) from settings for budget/route reads.
+
+        Returns an object whose ``.entries`` (each carrying ``.provider`` /
+        ``.local``) satisfy :func:`budget.estimate`'s pool shape. The real path
+        builds a :class:`RotatingProvider` with detection OFF (planning only reads
+        the catalog-shaped entries; skipping the live ``GET /models`` probe keeps
+        ai.planJob / the plan step socket-free — PLAN: ZERO provider calls). When
+        the provider module is a test stub WITHOUT ``build_pool_provider`` we fall
+        back to a local-only pool (the budget then reports local-only, no egress).
+        """
+        from .models import provider as _provider_mod  # local: heavy seam
+
+        builder = getattr(_provider_mod, "build_pool_provider", None)
+        if builder is None:
+            return _LocalOnlyPool()
+        # FACTORY PATH (PLAN §WU-keys): the pool is built from RAW keys.
+        return builder(self.settings.get_raw(), detect_local=False)
+
+    def plan_ai_job_envelope(self, inputs: Any) -> Any:
+        """Assemble an :class:`ai_job.AiJob` envelope for ``inputs`` (PURE, no calls).
+
+        Shared by ``ai.planJob`` (pre-flight) and the AI-bearing job handlers so
+        cost/route/cacheKey are derived from ONE place. Performs ZERO provider
+        calls — the pool is built only to read its catalog-shaped ``.entries``.
+        """
+        from .models import ai_job as _ai_job  # local: import-light
+
+        return _ai_job.plan_ai_job(
+            inputs,
+            pool=self._ai_pool(),
+            catalog=_ai_job.CatalogFreeCapAdapter(),
+            cache=self._ai_cache(),
+        )
+
+    def _run_ai_job(
+        self,
+        ctx: RpcContext,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+        provider: Any,
+        work: Any,
+        feature: str,
+        label: str,
+        videoId: str | None = None,  # noqa: N803 - wire-name kwarg (matches JobRegistry)
+        ack: str | None = None,
+    ) -> Any:
+        """Plan + run an :class:`ai_job.AiJob` on ``ctx.jobs`` with a custom ``work``.
+
+        ``provider`` is the resolved provider the work consumes; when ``None`` the
+        pool-aware ``get_provider`` is built lazily (so rotation + degrade tracking
+        apply). The envelope's cost/route/cacheKey come from
+        :meth:`plan_ai_job_envelope`. Returns the created job (the ``{jobId}``
+        source). The work's own result dict is the ``job.done`` payload.
+
+        WU-budget pre-flight gate: when ``settings['confirmCloudBudget']`` is on
+        AND the planned run WOULD egress, ``ack`` MUST equal the envelope's
+        ``cacheKey`` (the token ``ai.planJob`` returns), else the run is refused
+        with a typed error telling the client to pre-flight + acknowledge first.
+        A local-only / cache-hit run never egresses, so it is never gated.
+        """
+        from .models import ai_job as _ai_job  # local: import-light
+
+        inputs = _ai_job.AiInputs(
+            messages=tuple({str(k): str(v) for k, v in m.items()} for m in messages),
+            model=model,
+        )
+        envelope = self.plan_ai_job_envelope(inputs)
+        self._enforce_cloud_budget_ack(envelope, ack)
+
+        def _factory() -> Any:
+            if provider is not None:
+                return provider
+            from .models import provider as _provider_mod  # local: heavy seam
+
+            # FACTORY PATH (PLAN §WU-keys): the run provider carries RAW keys.
+            return _provider_mod.get_provider(self.settings.get_raw())
+
+        return _ai_job.run_ai_job(
+            envelope,
+            jobs=ctx.jobs,
+            provider_factory=_factory,
+            cache=self._ai_cache(),
+            work=work,
+            feature=feature,
+            label=label,
+            videoId=videoId,
+        )
+
+    def _enforce_cloud_budget_ack(self, envelope: Any, ack: str | None) -> None:
+        """Refuse a non-acknowledged cloud run when ``confirmCloudBudget`` is on.
+
+        The gate fires ONLY when both hold: the setting ``confirmCloudBudget`` is
+        truthy AND the planned envelope ``route.willEgress`` is True (a run that
+        sends bytes off the machine). In that case ``ack`` must equal the
+        envelope's ``cacheKey`` — the token ``ai.planJob`` returns — proving the
+        client previewed THIS exact request's cost/egress budget. A local-only or
+        cache-hit run never egresses, so it bypasses the gate entirely.
+        """
+        if not envelope.route.willEgress:
+            return
+        if not self.settings.get().get("confirmCloudBudget"):
+            return
+        if ack == envelope.cacheKey:
+            return
+        raise _invalid(
+            "cloud run requires budget acknowledgement: call ai.planJob and pass "
+            "its cacheKey as confirmBudget (or disable confirmCloudBudget)"
+        )
+
+    def ai_plan_job(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``ai.planJob({messages?, model?, params?, request?, capability?})`` -> pre-flight.
+
+        Returns ``{route, costEst, cacheHit, willEgress, budget, preview, cacheKey}``
+        WITHOUT executing any AI call (PLAN acceptance: ZERO provider calls). The
+        request shape is the budget request (``target_size`` / ``text_bytes`` /
+        ``frame_bytes``); ``messages`` feed the cache key so the pre-flight knows
+        whether a real run would be a cache hit.
+        """
+        from .models import ai_job as _ai_job  # local: import-light
+
+        raw_messages = params.get("messages")
+        messages = (
+            tuple({str(k): str(v) for k, v in m.items()} for m in raw_messages if isinstance(m, dict))
+            if isinstance(raw_messages, list)
+            else ()
+        )
+        request = self._budget_request(params.get("request"))
+        inputs = _ai_job.AiInputs(
+            messages=messages,
+            model=str(params.get("model") or ""),
+            params=dict(params.get("params") or {}),
+            request=request,
+            capability=str(params.get("capability") or "text"),
+        )
+        return self.plan_ai_job_envelope(inputs).planned()
+
+    def _budget_request(self, raw: Any) -> Any:
+        """Coerce a wire ``request`` dict into a budget request (or ``None``).
+
+        The returned :class:`_BudgetRequest` satisfies the duck-typed
+        ``budget.BudgetRequest`` protocol (``target_size`` / ``text_bytes`` /
+        ``frame_bytes``). A non-dict ``raw`` yields ``None`` (an unsized request).
+
+        WU-budget (P1 #6): when the wire request pins NO ``targetSize`` we resolve
+        the size to the user's ``defaultTargetJobSize`` setting, so the pre-flight
+        budget reflects the configured default job size (one source -> N shorts)
+        rather than only the module constant. A request that DOES pin a size keeps
+        it verbatim. A non-positive / non-int setting falls back to the budget
+        module's ``DEFAULT_TARGET_JOB_SIZE`` (the same fallback ``estimate`` uses).
+        """
+        if not isinstance(raw, dict):
+            return None
+        size = raw.get("targetSize")
+        return _BudgetRequest(
+            target_size=int(size) if isinstance(size, int) else self._default_target_job_size(),
+            text_bytes=int(raw.get("textBytes") or 0),
+            frame_bytes=int(raw.get("frameBytes") or 0),
+        )
+
+    def _default_target_job_size(self) -> int:
+        """The configured default job size, or the budget module's constant.
+
+        Reads ``settings['defaultTargetJobSize']`` (PLAN P1 #6); a missing /
+        non-int / non-positive value falls back to
+        :data:`budget.DEFAULT_TARGET_JOB_SIZE` so the estimate stays falsifiable.
+        """
+        from .models import budget as _budget_mod  # local: import-light pure
+
+        configured = self.settings.get().get("defaultTargetJobSize")
+        if isinstance(configured, int) and configured > 0:
+            return configured
+        return _budget_mod.DEFAULT_TARGET_JOB_SIZE
 
     def _get_model_runner(self) -> Any:
         """The shared ModelRunner (lazily built from settings; T3)."""
@@ -1062,7 +1773,8 @@ class Services:
             return None
         from .models import translation as _translation_mod  # local import
 
-        return _translation_mod.get_translator(self.settings.get(), runner=self._get_model_runner())
+        # FACTORY PATH (PLAN §WU-keys): the tier3 hosted provider is built from RAW keys.
+        return _translation_mod.get_translator(self.settings.get_raw(), runner=self._get_model_runner())
 
     def _dub_translator(self) -> Any:
         """Adapt T3's TieredTranslator to dub's text-based Translator seam.
@@ -1077,7 +1789,8 @@ class Services:
         from .models import translation as _translation_mod  # local: heavy seam
 
         runner = self._get_model_runner()
-        tiered = _translation_mod.get_translator(self.settings.get(), runner=runner)
+        # FACTORY PATH (PLAN §WU-keys): the dub translator's tier3 carries RAW keys.
+        tiered = _translation_mod.get_translator(self.settings.get_raw(), runner=runner)
 
         class _DubTranslator:
             def translate(
@@ -1320,6 +2033,33 @@ def register_all(
     reg("asr.engines", svc.asr_engines)
     reg("phase8.signals", svc.phase8_signals)
     reg("phase8.select", svc.phase8_select)
+
+    # WU-envelope: AI-Job pre-flight. ai.planJob returns the route + cost/egress
+    # budget + cacheHit/willEgress with ZERO provider calls (the pure planner).
+    reg("ai.planJob", svc.ai_plan_job)
+
+    # WU-keys: provider key management. Every read is REDACTED (last-4) — no RPC
+    # method ever returns a full key; the FACTORY path reads RAW via get_raw().
+    # Per-data-type (text vs frames) consent is SEPARATE + independently revocable.
+    # WU-catalog: the static curated model catalog (per-task tiers + privacy /
+    # train-on-input flags + asOfDate + unit) the UI renders. PURE data, no keys.
+    reg("providers.catalog", svc.providers_catalog)
+    reg("providers.list", svc.providers_list)
+    reg("providers.upsert", svc.providers_upsert)
+    reg("providers.remove", svc.providers_remove)
+    reg("providers.testKey", svc.providers_test_key)
+    reg("providers.setConsent", svc.providers_set_consent)
+    # WU-usage-ui: per-key live usage (cached, persisted, stale-flagged; no poll
+    # burst). The rotation pool already accounts usage from optimistic decrement +
+    # parsed 429/X-RateLimit-* headers — this RPC just surfaces it, redacted.
+    reg("providers.usage", svc.providers_usage)
+    # WU-presets (PH3): smart presets + per-function override + first-run chooser.
+    # applyPreset resolves a preset over the curated catalog into routing.perFunction;
+    # setFunctionModel overrides one slot; firstRun is the local-vs-cloud chooser
+    # (local-safe default pre-choice, flips routing + firstRunChoiceMade on choice).
+    reg("providers.applyPreset", svc.providers_apply_preset)
+    reg("providers.setFunctionModel", svc.providers_set_function_model)
+    reg("providers.firstRun", svc.providers_first_run)
 
     # captions-export: EDL/CSV NLE timeline export + ZIP package-for-upload.
     reg("nle.export", svc.nle_export)
