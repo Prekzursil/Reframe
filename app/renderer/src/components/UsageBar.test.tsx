@@ -82,9 +82,9 @@ function row(p: Partial<UsageRow> & Pick<UsageRow, 'provider' | 'unit'>): UsageR
 // --------------------------------------------------------------------------- //
 describe('usage helpers', () => {
   it('remainingFraction: known max', () => {
-    expect(remainingFraction(row({ provider: 'A', unit: 'req', used: 250, max: 1000 }))).toBeCloseTo(
-      0.75,
-    );
+    expect(
+      remainingFraction(row({ provider: 'A', unit: 'req', used: 250, max: 1000 })),
+    ).toBeCloseTo(0.75);
   });
 
   it('remainingFraction: unknown/zero max reads as fully healthy', () => {
@@ -259,13 +259,17 @@ describe('<UsageBars />', () => {
 
   it('reduced-motion disables the fill transition', async () => {
     setReducedMotion(true);
-    await render(<UsageBars rows={[row({ provider: 'Groq', unit: 'req', used: 100, max: 1000 })]} />);
+    await render(
+      <UsageBars rows={[row({ provider: 'Groq', unit: 'req', used: 100, max: 1000 })]} />,
+    );
     expect(container.querySelector('.usage-bar.is-reduced-motion')).not.toBeNull();
   });
 
   it('does NOT add the reduced-motion class when motion is allowed', async () => {
     setReducedMotion(false);
-    await render(<UsageBars rows={[row({ provider: 'Groq', unit: 'req', used: 100, max: 1000 })]} />);
+    await render(
+      <UsageBars rows={[row({ provider: 'Groq', unit: 'req', used: 100, max: 1000 })]} />,
+    );
     expect(container.querySelector('.usage-bar.is-reduced-motion')).toBeNull();
   });
 
@@ -315,7 +319,14 @@ describe('<UsageBars />', () => {
     await render(
       <UsageBars
         rows={[
-          row({ provider: 'Groq', unit: 'req', used: 100, max: 1000, stale: true, lastCheckedAt: 9000 - 120 }),
+          row({
+            provider: 'Groq',
+            unit: 'req',
+            used: 100,
+            max: 1000,
+            stale: true,
+            lastCheckedAt: 9000 - 120,
+          }),
         ]}
       />,
     );

@@ -103,15 +103,15 @@
   transition: width var(--dur-base) var(--ease-out);
 }
 
-.usage-bar__fill[data-zone='healthy'] {
+.usage-bar__fill[data-zone="healthy"] {
   background: var(--status-success);
 }
 
-.usage-bar__fill[data-zone='warn'] {
+.usage-bar__fill[data-zone="warn"] {
   background: var(--status-warn);
 }
 
-.usage-bar__fill[data-zone='critical'] {
+.usage-bar__fill[data-zone="critical"] {
   background: var(--status-error);
 }
 

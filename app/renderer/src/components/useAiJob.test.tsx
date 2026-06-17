@@ -70,7 +70,12 @@ async function flush(): Promise<void> {
 
 function aPlan(overrides?: Partial<AiPlan>): AiPlan {
   return {
-    route: { providers: ['Groq'], degradeChain: ['Groq', 'local'], cacheHit: false, willEgress: true },
+    route: {
+      providers: ['Groq'],
+      degradeChain: ['Groq', 'local'],
+      cacheHit: false,
+      willEgress: true,
+    },
     costEst: {
       requests: 1,
       providers: ['Groq'],
@@ -144,7 +149,12 @@ describe('useAiJob', () => {
       aPlan({
         cacheHit: true,
         willEgress: false,
-        route: { providers: ['Groq'], degradeChain: ['Groq', 'local'], cacheHit: true, willEgress: false },
+        route: {
+          providers: ['Groq'],
+          degradeChain: ['Groq', 'local'],
+          cacheHit: true,
+          willEgress: false,
+        },
         preview: 'Cached — returns instantly, sends nothing.',
       }),
     );

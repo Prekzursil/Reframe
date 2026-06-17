@@ -49,11 +49,7 @@ export function ConsentToggle({
   return (
     <fieldset className="consent-toggle" data-provider={providerId}>
       <legend className="consent-toggle__legend">Data sharing consent</legend>
-      <p
-        className="consent-toggle__disclosure"
-        data-trains={String(trainsOnInput)}
-        role="note"
-      >
+      <p className="consent-toggle__disclosure" data-trains={String(trainsOnInput)} role="note">
         {disclosureText(trainsOnInput)}
       </p>
       <label className="consent-toggle__option" data-consent="text">

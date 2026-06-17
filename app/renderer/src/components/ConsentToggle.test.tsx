@@ -29,10 +29,7 @@ function checkbox(consent: 'text' | 'frames'): HTMLInputElement {
 
 /** Flip a controlled checkbox the way React's synthetic onChange expects. */
 function toggle(el: HTMLInputElement, value: boolean): void {
-  const setter = Object.getOwnPropertyDescriptor(
-    window.HTMLInputElement.prototype,
-    'checked',
-  )?.set;
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked')?.set;
   setter?.call(el, value);
   act(() => el.dispatchEvent(new Event('click', { bubbles: true })));
 }

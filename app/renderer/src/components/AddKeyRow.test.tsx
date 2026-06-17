@@ -28,10 +28,7 @@ function addBtn(): HTMLButtonElement {
 }
 function typeValue(value: string): void {
   const el = input();
-  const setter = Object.getOwnPropertyDescriptor(
-    window.HTMLInputElement.prototype,
-    'value',
-  )?.set;
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
   setter?.call(el, value);
   act(() => el.dispatchEvent(new Event('input', { bubbles: true })));
 }
