@@ -364,6 +364,154 @@ class TestDefaultModelsPresent:
 
 
 # --------------------------------------------------------------------------- #
+# CloudVlmBackend (WU-vision) — offloads the Tier-2 re-rank to a vision-capable
+# rotation pool. The pool arrives via CLOSURE (BackendFactory signature is
+# unchanged); a FAKE pool returns a canned ranking reply. base64 frame encoding
+# is behind an injectable seam so no cv2/PIL is imported under the gate.
+# --------------------------------------------------------------------------- #
+class FakePool:
+    """A duck-typed rotation pool whose ``chat`` returns a canned reply.
+
+    ``reply`` may be a string (returned verbatim) or a callable
+    ``(messages, **kwargs) -> str``. ``calls`` records every chat invocation so a
+    test can assert the capability filter + that base64 frames reached the pool.
+    """
+
+    def __init__(self, reply: Any) -> None:
+        self._reply = reply
+        self.calls: list[dict[str, Any]] = []
+
+    def chat(self, messages: Any, **kwargs: Any) -> str:
+        msgs = [dict(m) for m in messages]
+        self.calls.append({"messages": msgs, "kwargs": kwargs})
+        if callable(self._reply):
+            return str(self._reply(msgs, **kwargs))
+        return str(self._reply)
+
+
+class RaisingPool:
+    """A pool whose ``chat`` always raises (the failure-degrade path)."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def chat(self, messages: Any, **kwargs: Any) -> str:
+        self.calls.append({"messages": list(messages)})
+        raise RuntimeError("pool exhausted")
+
+
+def _img_parts(call: dict[str, Any]) -> list[dict[str, Any]]:
+    """Pull the image_url content parts out of a recorded FakePool chat call."""
+    content = call["messages"][-1]["content"]
+    return [p for p in content if isinstance(p, dict) and p.get("type") == "image_url"]
+
+
+class TestScoresFromOrder:
+    def test_descending_scores_reproduce_order(self) -> None:
+        # order [2,0,1] -> idx2 best (1.0), idx0 mid (0.5), idx1 worst (0.0)
+        scores = sv._scores_from_order([2, 0, 1], 3)
+        assert scores == [0.5, 0.0, 1.0]
+        # feeding back through _order_from_scores reproduces the input order
+        assert sv._order_from_scores(scores) == [2, 0, 1]
+
+    def test_single_clip_is_one(self) -> None:
+        assert sv._scores_from_order([0], 1) == [1.0]
+
+    def test_n_le_zero_is_empty(self) -> None:
+        assert sv._scores_from_order([], 0) == []
+        assert sv._scores_from_order([0], -1) == []
+
+    def test_out_of_range_index_skipped(self) -> None:
+        # a defensively out-of-range index leaves its (absent) slot untouched.
+        scores = sv._scores_from_order([5, 0], 2)
+        assert scores[0] == 0.0  # position 1 -> (1-1)/1 = 0.0
+        assert scores[1] == 0.0  # idx 5 ignored; slot 1 never written
+
+
+class TestCloudVlmBackend:
+    def test_ranks_clips_into_scores_descending_by_reply_order(self) -> None:
+        # The cloud VLM says clip 2 is best, then 0, then 1.
+        pool = FakePool("2,0,1")
+        backend = sv.CloudVlmBackend(pool=pool, settings={}, frame_encoder=lambda f: f"b64:{f}")
+        scores = backend.rank_clips([["fA"], ["fB"], ["fC"]], "rank these")
+        assert len(scores) == 3
+        # best (idx 2) > then idx 0 > then idx 1
+        assert scores[2] > scores[0] > scores[1]
+
+    def test_sends_base64_frames_through_vision_capability(self) -> None:
+        pool = FakePool("0,1")
+        backend = sv.CloudVlmBackend(pool=pool, settings={}, frame_encoder=lambda f: f"ENC<{f}>")
+        backend.rank_clips([["x"], ["y", "z"]], "prompt text")
+        assert len(pool.calls) == 1
+        call = pool.calls[0]
+        assert call["kwargs"]["capability"] == "vision"
+        # the prompt text rode along as a text part
+        text_parts = [p for p in call["messages"][-1]["content"] if p.get("type") == "text"]
+        assert any("prompt text" in p["text"] for p in text_parts)
+        # every sampled frame was base64-encoded into an image_url data part
+        images = _img_parts(call)
+        assert len(images) == 3  # 1 + 2 frames
+        assert all("ENC<" in img["image_url"]["url"] for img in images)
+
+    def test_empty_clips_returns_empty_without_calling_pool(self) -> None:
+        pool = FakePool("0")
+        backend = sv.CloudVlmBackend(pool=pool, settings={}, frame_encoder=lambda f: "b")
+        assert backend.rank_clips([], "p") == []
+        assert pool.calls == []
+
+    def test_pool_failure_propagates_for_reranker_noop(self) -> None:
+        # CloudVlmBackend does NOT swallow; SmolVlmReranker's try/except degrades to
+        # identity order (so a cloud failure leaves the order unchanged).
+        backend = sv.CloudVlmBackend(pool=RaisingPool(), settings={}, frame_encoder=lambda f: "b")
+        with pytest.raises(RuntimeError):
+            backend.rank_clips([["a"], ["b"]], "p")
+
+    def test_reranker_uses_cloud_backend_to_reorder(self) -> None:
+        # End-to-end: a cloud backend injected via the factory reorders the top slice.
+        pool = FakePool("1,0")  # clip 1 best
+        cands = [cand(hook="a"), cand(hook="b"), cand(hook="c")]
+        rr = sv.SmolVlmReranker(
+            backend_factory=lambda settings: sv.CloudVlmBackend(
+                pool=pool, settings=settings, frame_encoder=lambda f: "b"
+            ),
+            clip_frame_loader=fake_loader(),
+        )
+        out = rr.rerank_top_k(cands, top_k=2)
+        assert [c["hook"] for c in out] == ["b", "a", "c"]  # tail c untouched
+
+    def test_n_mismatch_reply_degrades_to_identity(self) -> None:
+        # A reply naming only out-of-range / no valid indices yields identity order;
+        # SmolVlmReranker then keeps the input order (no-op).
+        pool = FakePool("no valid indices here")
+        cands = [cand(hook="a"), cand(hook="b")]
+        rr = sv.SmolVlmReranker(
+            backend_factory=lambda settings: sv.CloudVlmBackend(
+                pool=pool, settings=settings, frame_encoder=lambda f: "b"
+            ),
+            clip_frame_loader=fake_loader(),
+        )
+        # identity order -> scores descending by index -> same order kept
+        assert [c["hook"] for c in rr.rerank_top_k(cands, top_k=2)] == ["a", "b"]
+
+    def test_honors_model_and_sampling_settings(self) -> None:
+        record: dict[str, Any] = {}
+
+        def reply(messages: Any, **kwargs: Any) -> str:
+            record.update(kwargs)
+            return "0,1"
+
+        pool = FakePool(reply)
+        backend = sv.CloudVlmBackend(
+            pool=pool,
+            settings={"visionModel": "gemini-flash", "visionMaxTokens": 256},
+            frame_encoder=lambda f: "b",
+        )
+        backend.rank_clips([["a"], ["b"]], "p")
+        assert record["capability"] == "vision"
+        assert record["max_tokens"] == 256
+
+
+# --------------------------------------------------------------------------- #
 # module surface
 # --------------------------------------------------------------------------- #
 def test_constants_and_exports():

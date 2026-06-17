@@ -502,13 +502,63 @@ class TieredTranslator:
         return None
 
 
+def _default_hosted_factory(
+    settings: dict[str, Any] | None,
+    *,
+    transport: Any | None,
+    prefer: str | None = None,
+) -> ProviderFactory:
+    """Build the tier3 hosted-provider factory shared with the general LLM seam.
+
+    The tier3 (``TIER_HOSTED``) provider resolves through the SAME
+    :func:`~media_studio.models.provider.get_provider` factory the general LLM
+    seam uses (WU-pool: BOTH seams), so a hosted translation call rotates/fails-
+    over identically when ``settings.providers`` is configured and otherwise
+    follows the legacy cloud/local routing. The factory raises
+    :class:`TierUnavailableError` (not the generic local fall-through) when there
+    is no pool AND no ``cloudApiKey`` — tier3 is an EXPLICIT hosted decision, so a
+    bare local server is not a valid tier3 provider.
+    """
+    settings = settings or {}
+
+    def _factory() -> Any:
+        # WU-presets: when the translation function routes to LOCAL, the tier3
+        # hosted provider IS the local backstop pool (an explicit local choice,
+        # never the no-pool failure) so a privacy-routed translation never egresses.
+        if prefer == provider_mod.LOCAL_PROVIDER_ID:
+            return provider_mod.get_provider(settings, transport=transport, prefer=prefer)
+        has_pool = bool(provider_mod._cloud_specs_from_settings(settings))
+        has_cloud_key = bool(settings.get("cloudApiKey"))
+        if not has_pool and not has_cloud_key:
+            raise TierUnavailableError("tier3 unavailable: no provider pool and no cloudApiKey configured")
+        merged = dict(settings)
+        if has_cloud_key:
+            # The legacy single-cloud path expects useCloud to gate CloudProvider.
+            merged.setdefault("useCloud", True)
+        return provider_mod.get_provider(merged, transport=transport, prefer=prefer)
+
+    return _factory
+
+
 def get_translator(
     settings: dict[str, Any] | None = None,
     *,
     runner: Any | None = None,
+    transport: Any | None = None,
+    prefer: str | None = None,
     **seams: Any,
 ) -> TieredTranslator:
-    """Factory the wiring layer calls (mirrors ``provider.get_provider``)."""
+    """Factory the wiring layer calls (mirrors ``provider.get_provider``).
+
+    The tier3 hosted provider resolves through the SAME rotation pool / cloud
+    factory as the general LLM seam (WU-pool). ``prefer`` (WU-presets) is the
+    configured provider id the translation function prefers; it is threaded into
+    the hosted factory so the tier3 pool tries that provider first
+    (``LOCAL_PROVIDER_ID`` -> a local-only hosted pool). An explicit
+    ``hosted_provider_factory`` in ``seams`` still wins (tests / overrides).
+    """
+    if "hosted_provider_factory" not in seams:
+        seams["hosted_provider_factory"] = _default_hosted_factory(settings, transport=transport, prefer=prefer)
     return TieredTranslator(runner=runner, settings=settings, **seams)
 
 

@@ -22,14 +22,20 @@ import {
   type AdvisorReport,
   type AsrEngine,
   type AssetInfo,
+  type CatalogResponse,
   type ComponentStatus,
   type HardwareInfo,
+  type RoutingBlock,
+  type UsageRow,
 } from '../lib/rpc';
 import { componentAsset, presetLabel, presetTier } from '../components/advisorMeta';
 import { ResourceBar } from '../components/ResourceBar';
 import { TierCard } from '../components/TierCard';
 import { ModelCard } from '../components/ModelCard';
 import { ModelsOnboarding } from '../components/ModelsOnboarding';
+import { UsageBars } from '../components/UsageBar';
+import { PresetPicker } from '../components/PresetPicker';
+import { FirstRunChooser } from '../components/FirstRunChooser';
 
 // --- pure helpers (exported for tests) -------------------------------------
 
@@ -90,6 +96,9 @@ interface SettingsShape {
   diarizeBackend?: string;
   commercial?: boolean;
   modelsOnboardingSeen?: boolean;
+  activePreset?: string;
+  routing?: RoutingBlock;
+  firstRunChoiceMade?: boolean;
 }
 
 export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.ReactElement {
@@ -106,6 +115,9 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
   const [error, setError] = useState<string>('');
   const [downloading, setDownloading] = useState<string | null>(null);
   const [showTour, setShowTour] = useState<boolean>(false);
+  const [usage, setUsage] = useState<UsageRow[]>([]);
+  const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
+  const [presetBusy, setPresetBusy] = useState<boolean>(false);
 
   const byAsset = useMemo(() => indexAssets(assets), [assets]);
 
@@ -132,16 +144,20 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
     setError('');
     try {
       const commercial = Boolean(settings.commercial);
-      const [hw, rep, assetRes, engineRes] = await Promise.all([
+      const [hw, rep, assetRes, engineRes, usageRes, catalogRes] = await Promise.all([
         api.system.probe(),
         api.system.advisor({ commercial }),
         api.assets.list(),
         api.asr.engines(),
+        api.providers.usage(),
+        api.providers.catalog(),
       ]);
       setHardware(hw ?? null);
       setReport(rep ?? null);
       setAssets(Array.isArray(assetRes?.assets) ? assetRes.assets : []);
       setEngines(Array.isArray(engineRes?.engines) ? engineRes.engines : []);
+      setUsage(Array.isArray(usageRes?.usage) ? usageRes.usage : []);
+      setCatalog(catalogRes ?? null);
       setAnalyzed(true);
       // First-run tour: show once if the user hasn't seen it.
       if (!settings.modelsOnboardingSeen) setShowTour(true);
@@ -157,6 +173,16 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
     try {
       const hw = await api.system.probe();
       setHardware(hw ?? null);
+    } catch (err) {
+      setError(errText(err));
+    }
+  }, [api]);
+
+  // Refresh per-key usage on demand (cached on the sidecar; no poll burst).
+  const refreshUsage = useCallback(async (): Promise<void> => {
+    try {
+      const res = await api.providers.usage();
+      setUsage(Array.isArray(res?.usage) ? res.usage : []);
     } catch (err) {
       setError(errText(err));
     }
@@ -178,6 +204,63 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
   const selectTier = useCallback(
     (tier: number) => void patchSettings({ phase8Tier: tier }),
     [patchSettings],
+  );
+
+  // WU-presets: apply a smart preset -> server resolves routing.perFunction.
+  const applyAiPreset = useCallback(
+    async (name: string): Promise<void> => {
+      setPresetBusy(true);
+      setError('');
+      try {
+        const res = await api.providers.applyPreset(name);
+        setSettings((prev) => ({ ...prev, activePreset: res.activePreset, routing: res.routing }));
+      } catch (err) {
+        setError(errText(err));
+      } finally {
+        setPresetBusy(false);
+      }
+    },
+    [api],
+  );
+
+  // WU-presets: override one function's routed provider.
+  const setFunctionModel = useCallback(
+    async (function_: string, provider: string): Promise<void> => {
+      setPresetBusy(true);
+      setError('');
+      try {
+        const res = await api.providers.setFunctionModel(function_, provider);
+        setSettings((prev) => ({ ...prev, activePreset: res.activePreset, routing: res.routing }));
+      } catch (err) {
+        setError(errText(err));
+      } finally {
+        setPresetBusy(false);
+      }
+    },
+    [api],
+  );
+
+  // WU-presets P1 #6: the first-run local-vs-cloud choice flips routing + sets
+  // firstRunChoiceMade so the chooser never shows again.
+  const chooseFirstRun = useCallback(
+    async (choice: 'privacy' | 'bestFreeCloud'): Promise<void> => {
+      setPresetBusy(true);
+      setError('');
+      try {
+        const res = await api.providers.firstRun(choice);
+        setSettings((prev) => ({
+          ...prev,
+          firstRunChoiceMade: res.firstRunChoiceMade,
+          activePreset: res.activePreset ?? prev.activePreset,
+          routing: res.routing ?? prev.routing,
+        }));
+      } catch (err) {
+        setError(errText(err));
+      } finally {
+        setPresetBusy(false);
+      }
+    },
+    [api],
   );
 
   const applyPreset = useCallback(() => {
@@ -395,7 +478,43 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
               )}
             </div>
           </div>
+
+          <div className="usage-section" data-section="usage">
+            <div className="usage-section__head">
+              <h3>Provider usage</h3>
+              <button
+                type="button"
+                data-action="refresh-usage"
+                className="secondary"
+                onClick={() => void refreshUsage()}
+              >
+                Refresh usage
+              </button>
+            </div>
+            <p className="usage-section__intro">
+              Live per-key quota from your loaded providers — request- and token-limited keys are
+              shown separately and never combined. Updated from response headers, not a poller.
+            </p>
+            <UsageBars rows={usage} />
+          </div>
+
+          {catalog && (
+            <div className="presets-section" data-section="presets-section">
+              <PresetPicker
+                catalog={catalog}
+                routing={settings.routing ?? { perFunction: {} }}
+                activePreset={settings.activePreset ?? ''}
+                onApplyPreset={(name) => void applyAiPreset(name)}
+                onSetFunction={(fn, provider) => void setFunctionModel(fn, provider)}
+                busy={presetBusy}
+              />
+            </div>
+          )}
         </>
+      )}
+
+      {!settings.firstRunChoiceMade && (
+        <FirstRunChooser onChoose={(choice) => void chooseFirstRun(choice)} busy={presetBusy} />
       )}
 
       {showTour && <ModelsOnboarding onDone={finishTour} />}

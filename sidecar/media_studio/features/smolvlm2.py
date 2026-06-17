@@ -202,6 +202,127 @@ def _order_from_scores(scores: Sequence[float]) -> list[int]:
     return [i for i, _s in sorted(enumerate(scores), key=lambda iv: (-float(iv[1]), iv[0]))]
 
 
+def _scores_from_order(order: Sequence[int], n: int) -> list[float]:
+    """Turn a best-first index ``order`` (length ``n``) into per-clip scores in [0,1].
+
+    The inverse of :func:`_order_from_scores`: the clip ranked first gets the
+    highest score, the last the lowest, so feeding the result back through the
+    re-ranker reproduces ``order``. ``order`` is a full permutation of
+    ``range(n)`` (as :func:`parse_rerank_order` guarantees). With one clip the
+    single score is ``1.0``; ``n <= 0`` -> ``[]``.
+    """
+    if n <= 0:
+        return []
+    scores = [0.0] * n
+    last = max(1, n - 1)
+    for position, idx in enumerate(order):
+        if 0 <= idx < n:
+            # rank 0 -> 1.0, rank n-1 -> 0.0 (descending by reply position).
+            scores[idx] = (last - position) / last
+    return scores
+
+
+# --------------------------------------------------------------------------- #
+# Cloud (multi-provider) Tier-2 backend (WU-vision) — offloads the re-rank to a
+# vision-capable rotation pool. The pool arrives via a CLOSURE the handler builds
+# (the ``BackendFactory`` signature stays ``settings -> SmolVlmBackend``), so this
+# class satisfies the SAME :class:`SmolVlmBackend` Protocol as the local model.
+# --------------------------------------------------------------------------- #
+#: A frame -> base64 string encoder seam. The default (PNG via cv2) is runtime-only
+#: and coverage-excluded; tests inject a trivial encoder so no native image lib is
+#: imported under the gate.
+FrameEncoder = Callable[[Any], str]
+#: Default vision sampling cap (kept small for the free-tier per-request limits).
+VISION_MAX_TOKENS_DEFAULT = 64
+
+
+def _default_frame_encoder(frame: Any) -> str:  # pragma: no cover - prod seam (PNG-encodes a numpy frame with cv2)
+    """Encode one RGB frame array to a base64 PNG string (LAZY native import).
+
+    ``cv2`` / ``base64`` are imported INSIDE the function so importing this module
+    never drags in OpenCV; tests inject a fake encoder, so this body is runtime-only
+    and coverage-excluded (mirrors :func:`_default_clip_frame_loader`).
+    """
+    import base64  # noqa: PLC0415
+
+    import cv2  # noqa: PLC0415 - job-time native
+
+    bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+    ok, buf = cv2.imencode(".png", bgr)
+    if not ok:
+        raise RuntimeError("frame PNG encode failed")
+    return base64.b64encode(buf.tobytes()).decode("ascii")
+
+
+class CloudVlmBackend:
+    """A :class:`SmolVlmBackend` that scores clips via a vision rotation pool.
+
+    Implements ``rank_clips(frames_per_clip, prompt) -> list[float]`` by
+    base64-encoding the sampled frame stacks into an OpenAI-style multimodal
+    message and sending it through the injected ``pool`` filtered to
+    ``capability="vision"`` (so only vision-capable providers are tried, and the
+    pool rotates across them on a 429). The model's reply is parsed into a 0-based
+    order (the pure :func:`parse_rerank_order`) and turned back into per-clip
+    scores, so the surrounding :class:`SmolVlmReranker` reorders identically to
+    the local path — and its n-mismatch / failure guards still degrade cleanly.
+
+    The pool arrives via a CLOSURE the handler builds (the ``BackendFactory``
+    signature is UNCHANGED: ``settings -> SmolVlmBackend``). This backend never
+    swallows a pool failure — that is the reranker's job (so a cloud outage leaves
+    the input order unchanged), keeping a single degrade point.
+    """
+
+    def __init__(
+        self,
+        *,
+        pool: Any,
+        settings: Mapping[str, Any] | None = None,
+        frame_encoder: FrameEncoder | None = None,
+        capability: str = "vision",
+    ) -> None:
+        self._pool = pool
+        self._settings = dict(settings or {})
+        self._encode = frame_encoder or _default_frame_encoder
+        self._capability = capability
+
+    def _image_part(self, frame: Any) -> dict[str, Any]:
+        """One OpenAI ``image_url`` content part for a base64-encoded frame."""
+        return {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{self._encode(frame)}"}}
+
+    def _build_message(self, frames_per_clip: Sequence[Any], prompt: str) -> list[dict[str, Any]]:
+        """A single user message: the text prompt followed by every clip's frames.
+
+        Each clip's frame stack is flattened into ``image_url`` parts; the model
+        sees the prompt (numbered clip hooks) alongside the images so it can map a
+        ranking back onto clip indices.
+        """
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for stack in frames_per_clip:
+            for frame in stack:
+                content.append(self._image_part(frame))
+        return [{"role": "user", "content": content}]
+
+    def rank_clips(self, frames_per_clip: Sequence[Any], prompt: str) -> list[float]:
+        """Score each clip via the vision pool; higher = more relevant.
+
+        Returns ``[]`` for no clips (the pool is never called). Otherwise builds
+        the multimodal message, sends it through the vision-capable pool, parses
+        the reply into a full index permutation, and converts that order into
+        per-clip scores. A pool failure propagates (the reranker degrades to the
+        input order); a malformed reply yields the identity order via the pure
+        parser, which the reranker then treats as a no-op.
+        """
+        clips = list(frames_per_clip)
+        n = len(clips)
+        if n == 0:
+            return []
+        messages = self._build_message(clips, prompt)
+        max_tokens = int(self._settings.get("visionMaxTokens") or VISION_MAX_TOKENS_DEFAULT)
+        reply = self._pool.chat(messages, capability=self._capability, max_tokens=max_tokens)
+        order = parse_rerank_order(str(reply), n)
+        return _scores_from_order(order, n)
+
+
 # --------------------------------------------------------------------------- #
 # default heavy seams (lazy real impls; tests inject fakes)
 # --------------------------------------------------------------------------- #
@@ -422,8 +543,11 @@ __all__ = [
     "SCORE_FIELD",
     "SMOLVLM_VRAM_MB",
     "TOP_K_DEFAULT",
+    "VISION_MAX_TOKENS_DEFAULT",
     "BackendFactory",
     "ClipFrameLoader",
+    "CloudVlmBackend",
+    "FrameEncoder",
     "ModelsPresent",
     "SmolVlmBackend",
     "SmolVlmReranker",

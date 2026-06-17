@@ -18,6 +18,7 @@ real module. No global state (env vars, cwd, registry) leaks.
 
 from __future__ import annotations
 
+import threading
 import types
 from pathlib import Path
 from typing import Any
@@ -467,14 +468,20 @@ def test_transcribe_start_bad_language_type(services: Services, ctx: RpcContext,
 def test_transcribe_start_cancelled_skips_persist(services: Services, ctx: RpcContext, video_file: Path) -> None:
     """A job cancelled mid-transcribe skips the persist branch (549->558).
 
-    The whisper loader's transcribe honours should_cancel; we cancel the job
-    immediately so transcribe_file returns and ``job_ctx.cancelled`` is True, so
-    the transcript is NOT persisted (hasTranscript stays False, no project saved).
+    DETERMINISTIC (no race): the fake model blocks inside ``transcribe`` until the
+    test has cancelled the job, so ``job_ctx.cancelled`` is guaranteed True by the
+    time the body reaches the persist check -> the transcript is NOT persisted
+    (hasTranscript stays False, no project saved). Previously this raced the empty
+    transcribe against the cancel and flaked ~1/3 of runs.
     """
     vid = _add_video(services, video_file)
+    started = threading.Event()
+    released = threading.Event()
 
     class CancellingModel:
         def transcribe(self, audio: str, **_k: Any) -> tuple[Any, dict[str, Any]]:
+            started.set()  # the job body is now inside transcribe
+            released.wait(timeout=5)  # block until the test has cancelled
             return iter([]), {"duration": 0.0, "language": "en"}
 
     class CancellingLoader:
@@ -483,8 +490,9 @@ def test_transcribe_start_cancelled_skips_persist(services: Services, ctx: RpcCo
 
     services._whisper_loader = CancellingLoader()
     res = services.transcribe_start({"videoId": vid}, ctx)
-    # Cancel as soon as the job exists, before the body finishes.
-    ctx.jobs.cancel(res["jobId"])
+    assert started.wait(timeout=5), "transcribe never entered the job body"
+    ctx.jobs.cancel(res["jobId"])  # cancel WHILE transcribe is blocked
+    released.set()  # let transcribe return; cancelled is already True
     ctx.jobs.join(timeout=5)
     # Cancelled -> transcript not persisted onto the library flag.
     assert services.library.get(vid).get("hasTranscript") in (False, None)
