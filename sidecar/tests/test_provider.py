@@ -437,6 +437,67 @@ def test_urllib_post_json_httperror_body_read_failure_is_tolerated(monkeypatch):
     assert "unavail" in msg
 
 
+# --------------------------------------------------------------------------- #
+# WU-keys ENFORCEABLE SCRUB: a forced provider 4xx whose error body echoes the
+# live key must NEVER carry that key in the resulting ProviderError. The scrub is
+# enforced at the construction site (provider threads secrets= into the default
+# _urllib_post_json), asserted DIRECTLY on the ProviderError — not via a log spy.
+# --------------------------------------------------------------------------- #
+def test_forced_429_error_body_scrubs_live_key(monkeypatch):
+    live_key = "sk-live-DEADBEEF1234"
+
+    class _KeyEchoHTTPError(prov.urllib.error.HTTPError):
+        def __init__(self) -> None:
+            super().__init__(url="http://x", code=429, msg="Too Many Requests", hdrs=None, fp=None)
+
+        def read(self, *_a: Any, **_k: Any) -> bytes:
+            # The server echoes our Authorization header (and the bare key) back
+            # in its 429 body — exactly the leak the scrub must close.
+            body = (
+                '{"error":"rate_limited","seen":"Authorization: Bearer '
+                + live_key
+                + '","raw":"'
+                + live_key
+                + '"}'
+            )
+            return body.encode("utf-8")
+
+    def fake_urlopen(request, timeout):  # noqa: ANN001
+        raise _KeyEchoHTTPError()
+
+    monkeypatch.setattr(prov.urllib.request, "urlopen", fake_urlopen)
+    # CloudProvider holds the key; its DEFAULT transport binds secrets=[key].
+    p = CloudProvider(api_key=live_key)
+    with pytest.raises(ProviderError) as ei:
+        p.chat([{"role": "user", "content": "q"}])
+    msg = str(ei.value)
+    assert "429" in msg
+    assert live_key not in msg  # the live key is gone — enforced at construction
+    assert "[REDACTED]" in msg  # and visibly scrubbed, not silently truncated
+
+
+def test_local_provider_no_secret_still_scrubs_bearer(monkeypatch):
+    # A keyless provider (no secrets to thread) still strips an echoed bearer
+    # token from the error body via scrub_error_body's bearer regex.
+    class _BearerEchoHTTPError(prov.urllib.error.HTTPError):
+        def __init__(self) -> None:
+            super().__init__(url="http://x", code=400, msg="bad", hdrs=None, fp=None)
+
+        def read(self, *_a: Any, **_k: Any) -> bytes:
+            return b"detail Authorization: Bearer leaked-upstream-token rest"
+
+    def fake_urlopen(request, timeout):  # noqa: ANN001
+        raise _BearerEchoHTTPError()
+
+    monkeypatch.setattr(prov.urllib.request, "urlopen", fake_urlopen)
+    p = LocalServerProvider()  # keyless; secrets=()
+    with pytest.raises(ProviderError) as ei:
+        p.chat([{"role": "user", "content": "q"}])
+    msg = str(ei.value)
+    assert "leaked-upstream-token" not in msg
+    assert "[REDACTED]" in msg
+
+
 def test_abstract_chat_body_raises_not_implemented():
     # A subclass that defers to Provider.chat reaches the abstract method body
     # (the bare ``raise NotImplementedError`` on line 167).

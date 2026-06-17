@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .models.secrets import redact_keys
 from .util import get_logger
 
 log = get_logger("media_studio.settings")
@@ -44,6 +45,17 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "brandLogoPath": "",
     "brandCaptionTemplate": "",
     "brandFontFamily": "",
+    # Provider Hub (WU-keys): the user-supplied rotation pool. Each entry is
+    # {id, provider, kind, baseUrl, model, apiKeys[], enabled, capabilities[],
+    # unit}. apiKeys are stored RAW in the per-user config file (never a project
+    # folder) but SettingsStore.get() redacts them to last-4 before they cross
+    # RPC — only SettingsStore.get_raw() (the factory path, never registered)
+    # returns the live keys.
+    "providers": [],
+    # Per-data-type consent (WU-keys / SE1): TEXT (transcripts) and FRAMES
+    # (vision) are SEPARATE, independently-revocable opt-ins per provider.
+    # consent.perProvider[<provider>] = {"text": bool, "frames": bool}.
+    "consent": {"perProvider": {}},
 }
 
 # The config file name inside the resolved app config directory.
@@ -102,7 +114,31 @@ class SettingsStore:
 
     # ---- public surface (matches settings.* methods) ----------------------
     def get(self) -> dict[str, Any]:
-        """Return the full §2 settings object (defaults backfilled)."""
+        """Return the REDACTED §2 settings object (defaults backfilled).
+
+        This is the RPC-facing view: ``settings.providers[].apiKeys`` are
+        redacted to last-4 via :func:`secrets.redact_keys` so NO full key ever
+        crosses the RPC boundary (PLAN §WU-keys security invariant). The
+        provider/translator FACTORY path must call :meth:`get_raw` instead — see
+        its docstring. ``cloudApiKey`` (the legacy single-cloud key) stays as-is:
+        it is not part of the pool and the §0 contract names it directly; the
+        Hub's redaction is scoped to the new ``providers`` pool only.
+        """
+        merged = self.get_raw()
+        providers = merged.get("providers")
+        if isinstance(providers, list):
+            merged["providers"] = redact_keys(providers)
+        return merged
+
+    def get_raw(self) -> dict[str, Any]:
+        """Return the full §2 settings object with RAW (unredacted) keys.
+
+        NEVER exposed over RPC — this is the provider/translator FACTORY path
+        ONLY (PLAN §WU-keys: ``get_provider``, ``TieredTranslator._hosted_provider``,
+        the ``RotatingProvider`` pool build, and the handler ``__init__`` /
+        ``_get_translator`` construction all consume RAW keys via this accessor).
+        Every settings read that crosses RPC must use :meth:`get` instead.
+        """
         merged = dict(DEFAULT_SETTINGS)
         merged.update(self._read())
         return merged
@@ -119,6 +155,7 @@ class SettingsStore:
         current = dict(self._read())
         current.update(values)
         self._write(current)
-        merged = dict(DEFAULT_SETTINGS)
-        merged.update(current)
-        return merged
+        # The on-disk store keeps RAW keys (the factory reads them via get_raw);
+        # the RPC-facing return MUST be redacted exactly like get() so the
+        # round-tripped settings.set response never echoes a full key (WU-keys).
+        return self.get()

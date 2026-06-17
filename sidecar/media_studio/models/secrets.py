@@ -19,7 +19,8 @@ hope. They do NOT cross-import any other ``models/`` module.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 #: Marker substituted in place of any stripped secret. Visible so a scrubbed
 #: body is recognizably scrubbed rather than silently truncated.
@@ -69,3 +70,28 @@ def scrub_error_body(text: str, keys: Sequence[str]) -> str:
             scrubbed = scrubbed.replace(key, REDACTION_PLACEHOLDER)
     scrubbed = _BEARER_RE.sub(rf"\1{REDACTION_PLACEHOLDER}", scrubbed)
     return scrubbed
+
+
+def redact_keys(providers: Iterable[Any]) -> list[dict[str, Any]]:
+    """Return a copy of ``providers`` with every ``apiKeys`` entry redacted to last-4.
+
+    This is the RPC-facing transform (PLAN §WU-keys): the persisted
+    ``settings.providers`` carries RAW keys, but anything that crosses RPC —
+    ``settings.get`` and ``providers.list`` — must replace each key with its
+    display-safe :func:`redact` form so NO full key ever leaves the sidecar.
+
+    Each provider dict is shallow-copied (never mutated in place — the caller's
+    RAW store stays intact) and its ``apiKeys`` list is rebuilt from
+    :func:`redact`. Non-dict entries and missing/non-list ``apiKeys`` are passed
+    through unchanged (defensive: a malformed settings file must not crash a read).
+    """
+    out: list[dict[str, Any]] = []
+    for raw in providers:
+        if not isinstance(raw, dict):
+            continue
+        entry = dict(raw)
+        keys = entry.get("apiKeys")
+        if isinstance(keys, list):
+            entry["apiKeys"] = [redact(str(k)) for k in keys]
+        out.append(entry)
+    return out

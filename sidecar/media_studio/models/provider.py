@@ -30,6 +30,7 @@ key is present; the key is passed as a bearer header and never logged.
 from __future__ import annotations
 
 import abc
+import functools
 import json
 import urllib.error
 import urllib.request
@@ -94,14 +95,17 @@ def _urllib_request_json(
     data: bytes | None,
     headers: dict[str, str],
     timeout: float,
+    secrets: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Issue one ``method`` request to ``url`` and decode the JSON response (stdlib).
 
     Shared core for both the chat POST (:func:`_urllib_post_json`) and the
     detection GET (:func:`urllib_get_json`). Raises :class:`ProviderError` on any
     network / decode failure so the caller sees one error type regardless of the
-    underlying urllib exception. The error body is best-effort scrubbed of any
-    leaked ``Authorization: Bearer`` token before it is surfaced.
+    underlying urllib exception. The error body is scrubbed ENFORCEABLY (PLAN
+    §WU-keys): every live key in ``secrets`` AND any leaked ``Authorization:
+    Bearer`` token is stripped at THIS construction site, so "no live key in any
+    :class:`ProviderError`" is an invariant, not a hope.
     """
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
@@ -120,10 +124,12 @@ def _urllib_request_json(
             detail = exc.read().decode("utf-8")
         except Exception:  # noqa: BLE001 - best-effort error body
             detail = ""
-        # Strip any leaked bearer token from the server's error body (the key is
-        # header-only on OUR side, but the server may echo an Authorization line).
-        safe_detail = scrub_error_body(detail, ()) if detail else ""
-        raise ProviderError(f"LLM HTTP {exc.code}: {safe_detail or exc.reason}") from exc
+        # ENFORCEABLE SCRUB (PLAN §WU-keys): strip every live key threaded in via
+        # ``secrets`` AND any echoed ``Authorization: Bearer`` token from the
+        # server's error body BEFORE it ever reaches a ProviderError / a log line.
+        safe_detail = scrub_error_body(detail, secrets) if detail else ""
+        reason = scrub_error_body(str(exc.reason), secrets)
+        raise ProviderError(f"LLM HTTP {exc.code}: {safe_detail or reason}") from exc
     except urllib.error.URLError as exc:  # connection refused / DNS / timeout
         raise ProviderError(f"LLM request failed: {exc.reason}") from exc
     try:
@@ -139,15 +145,27 @@ def _urllib_request_json(
     return decoded
 
 
-def _urllib_post_json(url: str, body: dict[str, Any], headers: dict[str, str], timeout: float) -> dict[str, Any]:
+def _urllib_post_json(
+    url: str,
+    body: dict[str, Any],
+    headers: dict[str, str],
+    timeout: float,
+    secrets: Sequence[str] = (),
+) -> dict[str, Any]:
     """POST ``body`` as JSON to ``url`` and decode the JSON response (stdlib only).
 
     Uses :mod:`urllib.request` so the sidecar has no hard HTTP dependency for the
     LLM path. The :class:`Transport` shape's ``body`` dict is serialized to JSON.
+    ``secrets`` is the provider's own key-set, threaded down so the error body is
+    scrubbed of every live key at the construction site (PLAN §WU-keys). It is a
+    keyword-only-in-practice extra arg — the 4-positional :data:`Transport` shape
+    a test injects is unaffected (those fakes never reach the scrub branch).
     """
     data = json.dumps(body).encode("utf-8")
     req_headers = {"Content-Type": "application/json", **headers}
-    return _urllib_request_json(url, method="POST", data=data, headers=req_headers, timeout=timeout)
+    return _urllib_request_json(
+        url, method="POST", data=data, headers=req_headers, timeout=timeout, secrets=secrets
+    )
 
 
 def urllib_get_json(url: str, body: dict[str, Any], headers: dict[str, str], timeout: float) -> dict[str, Any]:
@@ -256,8 +274,16 @@ class _OpenAICompatProvider(Provider):
         self.model = model
         self._api_key = api_key
         self.timeout = timeout
-        # Default to the stdlib urllib transport; tests inject a fake.
-        self._transport: Transport = transport or _urllib_post_json
+        # Default to the stdlib urllib transport; tests inject a fake. The default
+        # transport is bound to THIS provider's key-set so its error body is
+        # scrubbed of the live key at the construction site (PLAN §WU-keys
+        # ENFORCEABLE SCRUB); an injected fake keeps the plain 4-arg Transport
+        # shape (it never reaches the real scrub branch).
+        if transport is not None:
+            self._transport: Transport = transport
+        else:
+            secrets = (api_key,) if api_key else ()
+            self._transport = functools.partial(_urllib_post_json, secrets=secrets)
 
     def _headers(self) -> dict[str, str]:
         """Build request headers, adding a bearer token only when a key is set."""

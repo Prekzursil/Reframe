@@ -122,6 +122,7 @@ class Services:
         provider: Any | None = None,
         hardware_probe: Any | None = None,
         phase8_runner: Callable[..., dict[str, Any]] | None = None,
+        test_key_transport: Any | None = None,
     ) -> None:
         base = Path(data_dir) if data_dir is not None else default_config_dir()
         self.data_dir = base
@@ -143,6 +144,9 @@ class Services:
         # (heavy) impls, resolved lazily; tests inject fakes so no GPU / no torch.
         self._hardware_probe = hardware_probe
         self._phase8_runner = phase8_runner
+        # WU-keys: the transport providers.testKey uses for its validation ping.
+        # None -> the real stdlib urllib transport; tests inject a fake.
+        self._test_key_transport = test_key_transport
 
         # T3: the shared llama.cpp ModelRunner (built lazily; model-identity-aware,
         # so the tiered translator can swap MT GGUFs on the one server lane).
@@ -267,8 +271,122 @@ class Services:
         return self.settings.get()
 
     def settings_set(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
-        """``settings.set({...})`` -> merged §2 settings object. Direct-return."""
+        """``settings.set({...})`` -> merged §2 settings object. Direct-return.
+
+        CONTRACT-NOTE (WU-keys): ``settings.set`` returns ``self.settings.set``'s
+        REDACTED merged view (``SettingsStore.set`` backfills + redacts the same
+        way ``get`` does), so the round-tripped response never echoes a full key.
+        """
         return self.settings.set(dict(params))
+
+    # ===================================================================== #
+    # providers.* (WU-keys: user-brings keys; RPC is key-free / redacted)
+    # ===================================================================== #
+    def providers_list(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.list()`` -> ``{providers:[...redacted...]}`` (WU-keys).
+
+        Returns the configured pool with every ``apiKeys`` entry REDACTED to
+        last-4 — the RPC layer NEVER returns a full key. Sourced from the
+        already-redacting :meth:`SettingsStore.get`.
+        """
+        providers = self.settings.get().get("providers")
+        return {"providers": providers if isinstance(providers, list) else []}
+
+    def providers_upsert(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.upsert({id, provider?, kind?, baseUrl?, model?, apiKeys?, enabled?,
+        capabilities?, unit?})`` -> ``{providers:[...redacted...]}`` (WU-keys).
+
+        Inserts a new provider entry or merges into the existing one with the same
+        ``id`` (RAW keys are stored). The returned providers list is REDACTED.
+        Adding more keys to the SAME provider is failover-only (never N x quota,
+        SE2) — that semantics lives in the rotation pool; here we just store them.
+        """
+        nested = params.get("provider")
+        entry: dict[str, Any] = nested if isinstance(nested, dict) else params
+        provider_id = entry.get("id")
+        if not isinstance(provider_id, str) or not provider_id:
+            raise _invalid("providers.upsert requires a provider id")
+        existing = list(self.settings.get_raw().get("providers") or [])
+        merged: list[dict[str, Any]] = []
+        found = False
+        for raw in existing:
+            if isinstance(raw, dict) and raw.get("id") == provider_id:
+                patch = {k: v for k, v in entry.items() if k != "id"}
+                merged.append({**raw, **patch, "id": provider_id})
+                found = True
+            elif isinstance(raw, dict):
+                merged.append(raw)
+        if not found:
+            merged.append(dict(entry))
+        self.settings.set({"providers": merged})
+        return self.providers_list(params, ctx)
+
+    def providers_remove(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.remove({id})`` -> ``{providers:[...redacted...]}`` (WU-keys).
+
+        Drops the provider entry with the given ``id``; returns the REDACTED
+        remaining list. Removing an absent id is a no-op (idempotent).
+        """
+        provider_id = _require_str(params, "id")
+        existing = list(self.settings.get_raw().get("providers") or [])
+        remaining = [raw for raw in existing if not (isinstance(raw, dict) and raw.get("id") == provider_id)]
+        self.settings.set({"providers": remaining})
+        return self.providers_list(params, ctx)
+
+    def providers_test_key(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.testKey({baseUrl, model?, apiKey})`` -> ``{ok, capabilities?, error?}``.
+
+        Validates a key by issuing ONE minimal completion through the provider
+        seam (a fake transport in tests). NEVER echoes the key back: the response
+        carries only ``ok`` + the declared ``capabilities`` + a SCRUBBED ``error``
+        string on failure (the live key is stripped at the provider construction
+        site, so a 4xx error body never leaks the key over RPC).
+        """
+        base_url = _require_str(params, "baseUrl")
+        api_key = params.get("apiKey")
+        if not isinstance(api_key, str) or not api_key:
+            raise _invalid("providers.testKey requires an apiKey")
+        capabilities = [str(c) for c in (params.get("capabilities") or ["text"])]
+        from .models import provider as _provider_mod  # local: heavy seam
+
+        prov = _provider_mod.CloudProvider(
+            api_key=api_key,
+            base_url=base_url,
+            model=str(params.get("model") or _provider_mod.DEFAULT_CLOUD_MODEL),
+            transport=self._test_key_transport,
+        )
+        try:
+            prov.chat([{"role": "user", "content": "ping"}], max_tokens=1)
+        except _provider_mod.ProviderError as exc:
+            # The message is already scrubbed at the construction site; do NOT add
+            # the key back. Defensively scrub again in case a caller-side detail
+            # carried it.
+            from .models.secrets import scrub_error_body
+
+            return {"ok": False, "error": scrub_error_body(str(exc), [api_key])}
+        return {"ok": True, "capabilities": capabilities}
+
+    def providers_set_consent(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.setConsent({provider, text?, frames?})`` -> ``{consent}`` (WU-keys / SE1).
+
+        TEXT (transcripts) and FRAMES (vision) consent are SEPARATE and
+        independently revocable: only the keys present in the request are changed,
+        so revoking ``frames`` leaves ``text`` intact and vice-versa. Returns the
+        full consent block (no secrets — consent carries booleans only).
+        """
+        provider_name = _require_str(params, "provider")
+        raw = self.settings.get_raw()
+        consent = dict(raw.get("consent") or {})
+        per_provider = dict(consent.get("perProvider") or {})
+        current = dict(per_provider.get(provider_name) or {})
+        if "text" in params:
+            current["text"] = bool(params.get("text"))
+        if "frames" in params:
+            current["frames"] = bool(params.get("frames"))
+        per_provider[provider_name] = current
+        consent["perProvider"] = per_provider
+        self.settings.set({"consent": consent})
+        return {"consent": consent}
 
     # ===================================================================== #
     # subtitles.* (generate/edit/export direct; translate = job)
@@ -1093,12 +1211,16 @@ class Services:
     # provider seam
     # ===================================================================== #
     def _get_provider(self) -> Any:
-        """Return the LLM provider for translation (cached test seam or real)."""
+        """Return the LLM provider for translation (cached test seam or real).
+
+        FACTORY PATH (PLAN §WU-keys): builds from RAW keys via ``get_raw()`` — the
+        provider must carry the live key; only RPC reads return redacted.
+        """
         if self._provider is not None:
             return self._provider
         from .models import provider as _provider_mod  # local import: heavy seam
 
-        return _provider_mod.get_provider(self.settings.get())
+        return _provider_mod.get_provider(self.settings.get_raw())
 
     def _ai_cache(self) -> Any:
         """The shared AI-call content cache (WU-cache), under the data dir.
@@ -1128,7 +1250,8 @@ class Services:
         builder = getattr(_provider_mod, "build_pool_provider", None)
         if builder is None:
             return _LocalOnlyPool()
-        return builder(self.settings.get(), detect_local=False)
+        # FACTORY PATH (PLAN §WU-keys): the pool is built from RAW keys.
+        return builder(self.settings.get_raw(), detect_local=False)
 
     def plan_ai_job_envelope(self, inputs: Any) -> Any:
         """Assemble an :class:`ai_job.AiJob` envelope for ``inputs`` (PURE, no calls).
@@ -1179,7 +1302,8 @@ class Services:
                 return provider
             from .models import provider as _provider_mod  # local: heavy seam
 
-            return _provider_mod.get_provider(self.settings.get())
+            # FACTORY PATH (PLAN §WU-keys): the run provider carries RAW keys.
+            return _provider_mod.get_provider(self.settings.get_raw())
 
         return _ai_job.run_ai_job(
             envelope,
@@ -1255,7 +1379,8 @@ class Services:
             return None
         from .models import translation as _translation_mod  # local import
 
-        return _translation_mod.get_translator(self.settings.get(), runner=self._get_model_runner())
+        # FACTORY PATH (PLAN §WU-keys): the tier3 hosted provider is built from RAW keys.
+        return _translation_mod.get_translator(self.settings.get_raw(), runner=self._get_model_runner())
 
     def _dub_translator(self) -> Any:
         """Adapt T3's TieredTranslator to dub's text-based Translator seam.
@@ -1270,7 +1395,8 @@ class Services:
         from .models import translation as _translation_mod  # local: heavy seam
 
         runner = self._get_model_runner()
-        tiered = _translation_mod.get_translator(self.settings.get(), runner=runner)
+        # FACTORY PATH (PLAN §WU-keys): the dub translator's tier3 carries RAW keys.
+        tiered = _translation_mod.get_translator(self.settings.get_raw(), runner=runner)
 
         class _DubTranslator:
             def translate(
@@ -1517,6 +1643,15 @@ def register_all(
     # WU-envelope: AI-Job pre-flight. ai.planJob returns the route + cost/egress
     # budget + cacheHit/willEgress with ZERO provider calls (the pure planner).
     reg("ai.planJob", svc.ai_plan_job)
+
+    # WU-keys: provider key management. Every read is REDACTED (last-4) — no RPC
+    # method ever returns a full key; the FACTORY path reads RAW via get_raw().
+    # Per-data-type (text vs frames) consent is SEPARATE + independently revocable.
+    reg("providers.list", svc.providers_list)
+    reg("providers.upsert", svc.providers_upsert)
+    reg("providers.remove", svc.providers_remove)
+    reg("providers.testKey", svc.providers_test_key)
+    reg("providers.setConsent", svc.providers_set_consent)
 
     # captions-export: EDL/CSV NLE timeline export + ZIP package-for-upload.
     reg("nle.export", svc.nle_export)

@@ -142,3 +142,47 @@ def test_scrub_returns_redaction_placeholder_not_raw_gap() -> None:
     key = "sk-visible-marker-1"
     out = secrets.scrub_error_body(f"before {key} after", [key])
     assert secrets.REDACTION_PLACEHOLDER in out
+
+
+# --------------------------------------------------------------------------- #
+# redact_keys (the RPC-facing providers-list transform)
+# --------------------------------------------------------------------------- #
+def test_redact_keys_redacts_every_api_key_to_last_four() -> None:
+    providers = [
+        {"id": "groq", "apiKeys": ["sk-aaaaaaaaWXYZ", "gsk-bbbbbbbb7890"]},
+        {"id": "openai", "apiKeys": ["sk-proj-cccccccc4242"]},
+    ]
+    out = secrets.redact_keys(providers)
+    assert out[0]["apiKeys"] == ["…WXYZ", "…7890"]
+    assert out[1]["apiKeys"] == ["…4242"]
+    # No full key survives anywhere in the serialized result.
+    blob = repr(out)
+    for full in ("sk-aaaaaaaaWXYZ", "gsk-bbbbbbbb7890", "sk-proj-cccccccc4242"):
+        assert full not in blob
+
+
+def test_redact_keys_does_not_mutate_input() -> None:
+    providers = [{"id": "groq", "apiKeys": ["sk-original-KEY9"]}]
+    secrets.redact_keys(providers)
+    # The caller's RAW store is untouched (immutability — the factory still needs it).
+    assert providers[0]["apiKeys"] == ["sk-original-KEY9"]
+
+
+def test_redact_keys_passes_through_other_fields_and_missing_keys() -> None:
+    providers = [
+        {"id": "no-keys", "enabled": True},  # no apiKeys field
+        {"id": "bad-keys", "apiKeys": "not-a-list"},  # non-list -> untouched
+    ]
+    out = secrets.redact_keys(providers)
+    assert out[0] == {"id": "no-keys", "enabled": True}
+    assert out[1]["apiKeys"] == "not-a-list"
+
+
+def test_redact_keys_skips_non_dict_entries() -> None:
+    out = secrets.redact_keys(["garbage", 42, {"id": "ok", "apiKeys": ["abcdEFGH"]}])
+    assert len(out) == 1
+    assert out[0]["apiKeys"] == ["…EFGH"]
+
+
+def test_redact_keys_empty_is_empty() -> None:
+    assert secrets.redact_keys([]) == []
