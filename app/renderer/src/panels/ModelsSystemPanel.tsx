@@ -24,12 +24,14 @@ import {
   type AssetInfo,
   type ComponentStatus,
   type HardwareInfo,
+  type UsageRow,
 } from '../lib/rpc';
 import { componentAsset, presetLabel, presetTier } from '../components/advisorMeta';
 import { ResourceBar } from '../components/ResourceBar';
 import { TierCard } from '../components/TierCard';
 import { ModelCard } from '../components/ModelCard';
 import { ModelsOnboarding } from '../components/ModelsOnboarding';
+import { UsageBars } from '../components/UsageBar';
 
 // --- pure helpers (exported for tests) -------------------------------------
 
@@ -106,6 +108,7 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
   const [error, setError] = useState<string>('');
   const [downloading, setDownloading] = useState<string | null>(null);
   const [showTour, setShowTour] = useState<boolean>(false);
+  const [usage, setUsage] = useState<UsageRow[]>([]);
 
   const byAsset = useMemo(() => indexAssets(assets), [assets]);
 
@@ -132,16 +135,18 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
     setError('');
     try {
       const commercial = Boolean(settings.commercial);
-      const [hw, rep, assetRes, engineRes] = await Promise.all([
+      const [hw, rep, assetRes, engineRes, usageRes] = await Promise.all([
         api.system.probe(),
         api.system.advisor({ commercial }),
         api.assets.list(),
         api.asr.engines(),
+        api.providers.usage(),
       ]);
       setHardware(hw ?? null);
       setReport(rep ?? null);
       setAssets(Array.isArray(assetRes?.assets) ? assetRes.assets : []);
       setEngines(Array.isArray(engineRes?.engines) ? engineRes.engines : []);
+      setUsage(Array.isArray(usageRes?.usage) ? usageRes.usage : []);
       setAnalyzed(true);
       // First-run tour: show once if the user hasn't seen it.
       if (!settings.modelsOnboardingSeen) setShowTour(true);
@@ -157,6 +162,16 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
     try {
       const hw = await api.system.probe();
       setHardware(hw ?? null);
+    } catch (err) {
+      setError(errText(err));
+    }
+  }, [api]);
+
+  // Refresh per-key usage on demand (cached on the sidecar; no poll burst).
+  const refreshUsage = useCallback(async (): Promise<void> => {
+    try {
+      const res = await api.providers.usage();
+      setUsage(Array.isArray(res?.usage) ? res.usage : []);
     } catch (err) {
       setError(errText(err));
     }
@@ -394,6 +409,25 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
                 </p>
               )}
             </div>
+          </div>
+
+          <div className="usage-section" data-section="usage">
+            <div className="usage-section__head">
+              <h3>Provider usage</h3>
+              <button
+                type="button"
+                data-action="refresh-usage"
+                className="secondary"
+                onClick={() => void refreshUsage()}
+              >
+                Refresh usage
+              </button>
+            </div>
+            <p className="usage-section__intro">
+              Live per-key quota from your loaded providers — request- and token-limited keys are
+              shown separately and never combined. Updated from response headers, not a poller.
+            </p>
+            <UsageBars rows={usage} />
           </div>
         </>
       )}

@@ -20,6 +20,7 @@ import type {
   AssetInfo,
   ComponentStatus,
   HardwareInfo,
+  UsageRow,
   client as RealClient,
 } from '../lib/rpc';
 
@@ -115,8 +116,10 @@ function makeClient(
     advisor?: AdvisorReport;
     assets?: AssetInfo[];
     engines?: { id: string; label: string; installed: boolean }[];
+    usage?: UsageRow[];
     initialSettings?: Record<string, unknown>;
     rejectAnalyze?: boolean;
+    rejectUsage?: boolean;
   } = {},
 ): FakeClient {
   const calls: FakeClient['calls'] = [];
@@ -152,6 +155,13 @@ function makeClient(
             { id: 'parakeet', label: 'Parakeet', installed: false },
           ],
         };
+      }),
+    },
+    providers: {
+      usage: vi.fn(async () => {
+        calls.push({ method: 'providers.usage', args: [] });
+        if (over.rejectUsage) throw new Error('usage failed');
+        return { usage: over.usage ?? [] };
       }),
     },
     settings: {
@@ -566,5 +576,99 @@ describe('<ModelsSystemPanel />', () => {
     // analysis failed -> no preset banner / apply button rendered
     expect(container.querySelector('button[data-action="apply-preset"]')).toBeNull();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('advisor down');
+  });
+
+  // ---- WU-usage-ui: the loaded-providers usage section --------------------
+  it('renders the usage section after analysis with the loaded keys', async () => {
+    const usage: UsageRow[] = [
+      {
+        provider: 'Groq',
+        key: '…WXYZ',
+        used: 180,
+        max: 1000,
+        unit: 'req',
+        resetAt: null,
+        stale: false,
+        lastCheckedAt: null,
+      },
+      {
+        provider: 'OpenRouter',
+        key: '…ABCD',
+        used: 500_000,
+        max: 4_000_000,
+        unit: 'token',
+        resetAt: null,
+        stale: false,
+        lastCheckedAt: null,
+      },
+    ];
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true }, usage });
+    await mount(c);
+    await analyze();
+    expect(container.querySelector('[data-section="usage"]')).not.toBeNull();
+    // mixed req + token -> two separate grouped bars (never summed).
+    expect(container.querySelectorAll('.usage-group').length).toBe(2);
+    expect(c.calls.some((x) => x.method === 'providers.usage')).toBe(true);
+  });
+
+  it('Refresh usage re-fetches and updates the bars', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    await mount(c);
+    await analyze();
+    // initially empty.
+    expect(container.querySelector('[data-usage="empty"]')).not.toBeNull();
+    (c.client.providers.usage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      usage: [
+        {
+          provider: 'Groq',
+          key: '…WXYZ',
+          used: 10,
+          max: 1000,
+          unit: 'req',
+          resetAt: null,
+          stale: false,
+          lastCheckedAt: null,
+        },
+      ],
+    });
+    const btn = container.querySelector('button[data-action="refresh-usage"]') as HTMLButtonElement;
+    await act(async () => btn.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-usage="groups"]')).not.toBeNull();
+    expect(container.querySelector('[data-usage="empty"]')).toBeNull();
+  });
+
+  it('Refresh usage surfaces an error when the RPC rejects', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    await mount(c);
+    await analyze();
+    (c.client.providers.usage as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('usage boom'),
+    );
+    const btn = container.querySelector('button[data-action="refresh-usage"]') as HTMLButtonElement;
+    await act(async () => btn.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('usage boom');
+  });
+
+  it('non-array usage payloads coerce to an empty list (analyze + refresh paths)', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    (c.client.providers.usage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      usage: null as unknown as UsageRow[],
+    });
+    await mount(c);
+    await analyze();
+    expect(container.querySelector('[data-usage="empty"]')).not.toBeNull();
+    // Refresh also coerces a non-array payload to empty (the refresh ternary).
+    const btn = container.querySelector('button[data-action="refresh-usage"]') as HTMLButtonElement;
+    await act(async () => btn.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-usage="empty"]')).not.toBeNull();
   });
 });

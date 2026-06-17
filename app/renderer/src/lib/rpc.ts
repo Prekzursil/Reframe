@@ -264,6 +264,30 @@ export interface AsrEngine {
 }
 
 /**
+ * One per-key usage row from `providers.usage` (WU-usage-ui). The pool accounts
+ * usage from optimistic decrement + parsed 429 / X-RateLimit-* headers (NOT a
+ * poller). `key` is ALWAYS the REDACTED last-4 (no full key crosses RPC).
+ * `unit` is "req" (request-limited) or "token" (token-limited) — the two are
+ * NEVER summed. `stale`/`lastCheckedAt` come from the 10-min staleness flag.
+ */
+export interface UsageRow {
+  provider: string;
+  /** Redacted last-4 (e.g. "…WXYZ") — never a full key. */
+  key: string;
+  used: number;
+  /** The quota ceiling, or null when unknown (no rate-limit header yet). */
+  max: number | null;
+  /** "req" | "token" — the limit dimension; req and token are never summed. */
+  unit: string;
+  /** Epoch seconds the window resets, or null. */
+  resetAt: number | null;
+  /** True once the cached row is older than the 10-min staleness threshold. */
+  stale: boolean;
+  /** Epoch seconds this row was last observed (drives "last checked Xm ago"). */
+  lastCheckedAt: number | null;
+}
+
+/**
  * system-advanced saved pipeline recipe — field names FROZEN, identical to the
  * sidecar `recipes.normalize_recipe` shape. A `Step` names an existing RPC
  * method + its params; param values may use the `"$N.key"` prior-step reference
@@ -646,6 +670,15 @@ export const client = {
   /** `asr.engines` — selectable ASR engines (whisper / parakeet) + installed. */
   asr: {
     engines: (): Promise<{ engines: AsrEngine[] }> => rpc('asr.engines'),
+  },
+
+  /** `providers.*` — Hub key/usage reads (WU-usage-ui surfaces live usage here). */
+  providers: {
+    /**
+     * `providers.usage` — per-key live usage (cached, persisted, stale-flagged;
+     * NOT a poller). Keys are redacted; req/token units are returned distinctly.
+     */
+    usage: (): Promise<{ usage: UsageRow[] }> => rpc('providers.usage'),
   },
 
   /** `recipes.*` — saved multi-step pipelines run in one shot. */

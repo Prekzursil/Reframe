@@ -471,3 +471,22 @@
   justify-content: flex-end;
   gap: var(--space-3);
 }
+
+/* ---- WU-usage-ui: provider usage section ------------------------------------- */
+
+.usage-section {
+  margin-top: var(--space-5);
+}
+
+.usage-section__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.usage-section__intro {
+  margin: var(--space-2) 0 var(--space-4);
+  color: var(--text-secondary);
+  line-height: var(--type-body-leading);
+}

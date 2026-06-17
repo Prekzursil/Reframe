@@ -519,6 +519,12 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('asr.engines', undefined);
   });
 
+  it('providers.usage calls the bare method (WU-usage-ui)', async () => {
+    const r = installApi();
+    await client.providers.usage();
+    expect(r).toHaveBeenCalledWith('providers.usage', undefined);
+  });
+
   it('recipes.* forward their params', async () => {
     const r = installApi();
     const recipe: SavedRecipe = {

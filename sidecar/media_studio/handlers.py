@@ -24,6 +24,7 @@ The transcribe/select/translate handlers reach those only inside a job body.
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -123,6 +124,7 @@ class Services:
         hardware_probe: Any | None = None,
         phase8_runner: Callable[..., dict[str, Any]] | None = None,
         test_key_transport: Any | None = None,
+        now: Callable[[], float] | None = None,
     ) -> None:
         base = Path(data_dir) if data_dir is not None else default_config_dir()
         self.data_dir = base
@@ -147,6 +149,10 @@ class Services:
         # WU-keys: the transport providers.testKey uses for its validation ping.
         # None -> the real stdlib urllib transport; tests inject a fake.
         self._test_key_transport = test_key_transport
+        # WU-usage-ui: the wall-clock seam used to stamp + stale-flag the cached
+        # providers.usage rows. None -> real ``time.time``; tests inject a fake
+        # clock so the >10-min stale threshold is deterministic.
+        self._now: Callable[[], float] = now or time.time
 
         # T3: the shared llama.cpp ModelRunner (built lazily; model-identity-aware,
         # so the tiered translator can swap MT GGUFs on the one server lane).
@@ -401,6 +407,50 @@ class Services:
         consent["perProvider"] = per_provider
         self.settings.set({"consent": consent})
         return {"consent": consent}
+
+    def providers_usage(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.usage()`` -> ``{usage:[...]}`` per-key live usage (WU-usage-ui).
+
+        Surfaces the rotation pool's per-key accounting
+        ``{provider, key(redacted), used, max, unit, resetAt}`` — already produced
+        from optimistic decrement + parsed 429/``X-RateLimit-*`` headers, so this
+        is NOT a poller (no background loop, no per-call burst: the pool is built
+        with ``detect_local=False`` so no ``GET /models`` socket is opened).
+
+        The pool's in-memory counters reset each process, so the last-known numbers
+        are PERSISTED (timestamped) in ``settings.usageCache`` and folded back in
+        on read (DESIGN §15-Q1): the UI shows immediately on launch without
+        re-polling, and rows older than the >10-min threshold are flagged ``stale``
+        (the renderer desaturates them + shows "last checked Xm ago"). The ``key``
+        field is ALWAYS the redacted last-4 (the pool never carries a live key into
+        this row), so no full key crosses RPC.
+        """
+        from .models.usage import flag_stale, merge_usage_cache
+
+        live_rows: list[dict[str, Any]] = list(self._ai_pool().usage())
+        raw_cache = self.settings.get_raw().get("usageCache")
+        cache: dict[str, Any] = raw_cache if isinstance(raw_cache, dict) else {}
+        raw_rows = cache.get("rows")
+        cached_rows: list[dict[str, Any]] = raw_rows if isinstance(raw_rows, list) else []
+        raw_checked = cache.get("checkedAt")
+        checked_at: dict[str, Any] = raw_checked if isinstance(raw_checked, dict) else {}
+
+        merged = merge_usage_cache(live_rows, cached_rows)
+        now = self._now()
+        # A row that carries real data this call is freshly checked NOW; one that
+        # only survived from the persisted cache keeps its previous timestamp so
+        # its age (and stale flag) keep counting up across reads.
+        next_checked: dict[str, float] = {}
+        for live in live_rows:
+            ident = "\x00".join((str(live.get("provider", "")), str(live.get("key", ""))))
+            used = live.get("used")
+            fresh = (isinstance(used, (int, float)) and used > 0) or live.get("max") is not None
+            next_checked[ident] = now if fresh else float(checked_at.get(ident, now))
+
+        stamped = flag_stale(merged, now=now, checked_at=next_checked)
+        # Persist the merged snapshot so the next launch shows it without polling.
+        self.settings.set({"usageCache": {"rows": merged, "checkedAt": next_checked, "savedAt": now}})
+        return {"usage": stamped}
 
     # ===================================================================== #
     # subtitles.* (generate/edit/export direct; translate = job)
@@ -1720,6 +1770,10 @@ def register_all(
     reg("providers.remove", svc.providers_remove)
     reg("providers.testKey", svc.providers_test_key)
     reg("providers.setConsent", svc.providers_set_consent)
+    # WU-usage-ui: per-key live usage (cached, persisted, stale-flagged; no poll
+    # burst). The rotation pool already accounts usage from optimistic decrement +
+    # parsed 429/X-RateLimit-* headers — this RPC just surfaces it, redacted.
+    reg("providers.usage", svc.providers_usage)
 
     # captions-export: EDL/CSV NLE timeline export + ZIP package-for-upload.
     reg("nle.export", svc.nle_export)
