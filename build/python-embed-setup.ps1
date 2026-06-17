@@ -3,9 +3,12 @@
 # *** NETWORK SCRIPT — run MANUALLY at build prep, never from an agent session ***
 #
 # Stages the extraResources inputs electron-builder.yml expects:
-#   build/python-embed/   embeddable CPython 3.12 (+ a staged get-pip.py so the
-#                         first-run bootstrap works offline-after-install)
-#   build/ffmpeg/         ffmpeg.exe + ffprobe.exe   (with -WithFfmpeg)
+#   build/python-embed/      embeddable CPython 3.12 (+ a staged get-pip.py so the
+#                            first-run bootstrap works offline-after-install)
+#   build/python-embed-314/  embeddable CPython 3.14 (+ get-pip.py) — the DEDICATED
+#                            interpreter for the ISOLATED chatterbox voice-clone env
+#                            (torch 2.10 only resolves on py3.14; CONTRACTS.md A4)
+#   build/ffmpeg/            ffmpeg.exe + ffprobe.exe   (with -WithFfmpeg)
 #
 # Everything downloaded is PINNED by exact URL (A6 lesson 5). SHA-256 of each
 # download is printed (and optionally enforced) so the pins can be hardened:
@@ -13,12 +16,21 @@
 #
 # CONTRACT-NOTE: 3.12.10 is the FINAL 3.12 release that ships Windows binaries
 # (the branch is security-only afterwards) — the highest pinnable embed zip.
+# The chatterbox env needs py3.14 because chatterbox-tts 0.1.7 only accepts
+# torch>=2.9.0 (we pin 2.10.0) on python_version>="3.14"; py3.14 also ships a
+# Windows embed-amd64.zip (same URL shape as 3.12). The chatterbox embed's
+# python314._pth is left AS SHIPPED: that env is consumed purely via
+# PYTHONPATH/--target (never ._pth activation — it is not the sidecar runtime).
 
 [CmdletBinding()]
 param(
     [string]$PythonVersion = '3.12.10',
     [string]$Dest = (Join-Path $PSScriptRoot 'python-embed'),
     [string]$ExpectedPythonSha256 = '',   # fill in after the first verified run
+    # The dedicated py3.14 embed for the isolated chatterbox env (A4).
+    [string]$ChatterboxPythonVersion = '3.14.0',  # human pins the exact patch on first verified run
+    [string]$ChatterboxDest = (Join-Path $PSScriptRoot 'python-embed-314'),
+    [string]$ExpectedChatterboxPythonSha256 = '',  # fill in after the first verified run
     [switch]$WithFfmpeg,
     # Pinned ffmpeg build (gyan.dev essentials; ~80 MB zip). Verify on first run.
     [string]$FfmpegUrl = 'https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-7.1.1-essentials_build.zip',
@@ -71,6 +83,32 @@ try {
         Get-Download -Url $GetPipUrl -OutFile $getPip -ExpectedSha256 ''
     }
 
+    # -- dedicated embeddable CPython 3.14 (chatterbox env, A4) -----------------
+    if ((Test-Path (Join-Path $ChatterboxDest 'python.exe')) -and -not $Force) {
+        Write-Host "[embed-setup] $ChatterboxDest already staged (use -Force to redo)"
+    } else {
+        $cbUrl = "https://www.python.org/ftp/python/$ChatterboxPythonVersion/python-$ChatterboxPythonVersion-embed-amd64.zip"
+        $cbZip = Join-Path ([IO.Path]::GetTempPath()) "python-$ChatterboxPythonVersion-embed-amd64.zip"
+        Get-Download -Url $cbUrl -OutFile $cbZip -ExpectedSha256 $ExpectedChatterboxPythonSha256
+        if (Test-Path $ChatterboxDest) { Remove-Item $ChatterboxDest -Recurse -Force }
+        New-Item -ItemType Directory -Force -Path $ChatterboxDest | Out-Null
+        Expand-Archive -Path $cbZip -DestinationPath $ChatterboxDest -Force
+        Remove-Item $cbZip -Force
+        if (-not (Test-Path (Join-Path $ChatterboxDest 'python.exe'))) {
+            throw "chatterbox embed zip extracted but python.exe is missing in $ChatterboxDest"
+        }
+        # NOTE: python314._pth left AS SHIPPED — the chatterbox env is consumed via
+        # PYTHONPATH/--target only (never ._pth activation; it is not the runtime).
+    }
+
+    # -- staged get-pip.py beside the py3.14 embed (no ensurepip there either) --
+    $cbGetPip = Join-Path $ChatterboxDest 'get-pip.py'
+    if ((Test-Path $cbGetPip) -and -not $Force) {
+        Write-Host "[embed-setup] chatterbox get-pip.py already staged"
+    } else {
+        Get-Download -Url $GetPipUrl -OutFile $cbGetPip -ExpectedSha256 ''
+    }
+
     # -- ffmpeg/ffprobe ----------------------------------------------------------
     if ($WithFfmpeg) {
         if ((Test-Path (Join-Path $FfmpegDest 'ffmpeg.exe')) -and -not $Force) {
@@ -97,7 +135,7 @@ try {
         }
     }
 
-    Write-Host "SUCCESS:python-embed-setup staged python-embed$(if ($WithFfmpeg) { ' + ffmpeg' })"
+    Write-Host "SUCCESS:python-embed-setup staged python-embed + python-embed-314$(if ($WithFfmpeg) { ' + ffmpeg' })"
     exit 0
 } catch {
     Write-Host "FAILED:python-embed-setup $($_.Exception.Message)"

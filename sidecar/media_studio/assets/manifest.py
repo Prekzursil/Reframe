@@ -44,6 +44,13 @@ ASSET_KINDS: tuple[str, ...] = ("model", "env", "tool")
 #   "env"      — bootstrap a pip --target env under <root>/envs/<dest> (A7)
 INSTALLERS: tuple[str, ...] = ("download", "hf", "env")
 
+# Which interpreter an installer="env" entry installs with (the manager resolves
+# the marker to a concrete python). "host" = the manager-wide python (the py3.12
+# sidecar interpreter); "chatterbox" = the dedicated py3.14 embeddable (torch
+# 2.10 only resolves there). Paths are per-machine, so entries carry the MARKER,
+# never an absolute interpreter path.
+PYTHON_KINDS: tuple[str, ...] = ("host", "chatterbox")
+
 # A settings-driven existing-path probe: (settings dict) -> existing path | None.
 # Lets an entry count as installed when the user already has the artifact
 # somewhere else (e.g. the Qwen GGUF named by settings.ggufPath/modelsDir).
@@ -74,6 +81,9 @@ class AssetEntry:
     hf_revision: str | None = None
     # installer="env": PINNED "pkg==ver" requirement strings (A6 lesson 5).
     requirements: tuple[str, ...] = ()
+    # installer="env": which interpreter to install with (see PYTHON_KINDS).
+    # Default "host"; "chatterbox" routes to the dedicated py3.14 embeddable.
+    python_kind: str = "host"
     # Optional settings-driven probe for a pre-existing copy elsewhere.
     detect: DetectFn | None = field(default=None, compare=False)
 
@@ -86,6 +96,10 @@ class AssetEntry:
             raise ValueError(f"asset {self.name!r}: installer must be one of {INSTALLERS}, got {self.installer!r}")
         if not isinstance(self.size_mb, (int, float)) or self.size_mb < 0:
             raise ValueError(f"asset {self.name!r}: size_mb must be a number >= 0")
+        if self.python_kind not in PYTHON_KINDS:
+            raise ValueError(
+                f"asset {self.name!r}: python_kind must be one of {PYTHON_KINDS}, got {self.python_kind!r}"
+            )
         # Normalize requirements to a tuple (frozen dataclass => object.__setattr__).
         object.__setattr__(self, "requirements", tuple(self.requirements or ()))
         if self.installer == "download":

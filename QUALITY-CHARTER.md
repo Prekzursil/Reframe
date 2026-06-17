@@ -62,3 +62,10 @@ tree, and github-actions); that is supply-chain hygiene, not part of the 6-gate 
 - **Single oxlint config for the app.** Unlike the source repo's web/desktop split,
   Media Studio's TS lives in one tree (`app/`), so there is one `app/.oxlintrc.json`
   covering `main/`, `renderer/src/`, and `render-cli/src/`.
+- **Quality-Zero-Platform (QZP) governance is retired.** Reframe no longer runs the
+  legacy QZP control-plane machinery — the branch-protection audits, the "strict-23"
+  canonical-context rollout, the remediation loops, and the weekly ops digest. Those
+  bots auto-filed governance issues (e.g. "Branch protection audit", "strict-23 rollout
+  preflight", "Weekly Ops Digest") against this repo. There is no QZP workflow inside
+  Reframe; the single lean **`quality`** gate above is now the sole quality contract.
+  Any future QZP-style issue should be closed as retired.
