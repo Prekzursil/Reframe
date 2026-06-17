@@ -98,6 +98,16 @@ def _require_str(params: dict[str, Any], key: str) -> str:
     return value
 
 
+def _routing_block(routing: dict[str, Any]) -> dict[str, Any]:
+    """Extract the persistable ``{perFunction}`` block from a preset routing.
+
+    ``presets.apply_preset`` returns ``{activePreset, perFunction}``; the settings
+    ``routing`` key stores only the ``{perFunction}`` map (``activePreset`` is its
+    own settings key), so this drops the redundant ``activePreset`` field.
+    """
+    return {"perFunction": routing["perFunction"]}
+
+
 class Services:
     """The runtime services + per-method handlers (the composition root).
 
@@ -453,6 +463,120 @@ class Services:
         return {"usage": stamped}
 
     # ===================================================================== #
+    # providers.* presets + per-function routing (WU-presets / PH3)
+    # ===================================================================== #
+    def providers_apply_preset(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.applyPreset({name})`` -> ``{activePreset, routing}`` (WU-presets).
+
+        Resolves one of the smart presets (``privacy`` / ``bestFreeCloud`` /
+        ``balanced``) into a concrete ``routing.perFunction`` map over the REAL
+        curated catalog (via :class:`presets.CatalogAdapter`) and PERSISTS it. The
+        ``privacy`` preset routes every function to local (zero cloud egress);
+        ``bestFreeCloud`` picks the catalog's per-task top model with a local
+        backstop; ``balanced`` mixes cloud text with local vision.
+        """
+        name = _require_str(params, "name")
+        from .models import presets as _presets  # local: import-light pure seam
+
+        try:
+            routing = _presets.apply_preset(name, self.settings.get(), _presets.CatalogAdapter())
+        except ValueError as exc:
+            raise _invalid(str(exc)) from exc
+        self.settings.set({"activePreset": routing["activePreset"], "routing": _routing_block(routing)})
+        return {"activePreset": routing["activePreset"], "routing": _routing_block(routing)}
+
+    def providers_set_function_model(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.setFunctionModel({function, provider})`` -> ``{activePreset, routing}``.
+
+        Overrides ONE function's routed provider (a catalog model-id or the
+        :data:`presets.LOCAL` sentinel), leaving the other slots untouched, and
+        flips ``activePreset`` to ``"custom"`` so the UI reflects the hand-edit.
+        An unknown function or a missing provider is a typed invalid-params error.
+        """
+        from .models import presets as _presets  # local: import-light pure seam
+
+        function = _require_str(params, "function")
+        if function not in _presets.FUNCTIONS:
+            raise _invalid(f"unknown function: {function!r}")
+        provider_id = _require_str(params, "provider")
+        routing = dict(self.settings.get().get("routing") or {})
+        per_function = dict(routing.get("perFunction") or {})
+        per_function[function] = {"provider": provider_id, "fallback": []}
+        new_routing = {"perFunction": per_function}
+        self.settings.set({"activePreset": "custom", "routing": new_routing})
+        return {"activePreset": "custom", "routing": new_routing}
+
+    def providers_first_run(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.firstRun({choice?})`` -> the first-run local-vs-cloud chooser (P1 #6).
+
+        With NO ``choice`` it is a READ: returns ``{firstRunChoiceMade, default}``
+        where ``default`` is the local-safe :func:`presets.first_run_default`
+        (``"privacy"`` until the user picks). With a ``choice`` (``"privacy"`` or
+        any preset name) it APPLIES that preset, sets ``firstRunChoiceMade=True``,
+        and returns ``{firstRunChoiceMade, activePreset, routing}`` — so a cloud
+        choice flips the routing while a local choice keeps the all-local default.
+        """
+        from .models import presets as _presets  # local: import-light pure seam
+
+        choice = params.get("choice")
+        if choice is None:
+            return {
+                "firstRunChoiceMade": bool(self.settings.get().get("firstRunChoiceMade")),
+                "default": _presets.first_run_default(self.settings.get()),
+            }
+        if not isinstance(choice, str) or choice not in _presets.PRESETS:
+            raise _invalid(f"unknown first-run choice: {choice!r}")
+        try:
+            routing = _presets.apply_preset(choice, self.settings.get(), _presets.CatalogAdapter())
+        except ValueError as exc:  # pragma: no cover -- choice is guarded against PRESETS above
+            raise _invalid(str(exc)) from exc
+        block = _routing_block(routing)
+        self.settings.set({"firstRunChoiceMade": True, "activePreset": routing["activePreset"], "routing": block})
+        return {"firstRunChoiceMade": True, "activePreset": routing["activePreset"], "routing": block}
+
+    # -- per-function routing resolution (the seam wiring) ------------------ #
+    def _function_prefer(self, function: str) -> str | None:
+        """Return the configured provider id the ``function`` seam should prefer.
+
+        Reads ``routing.perFunction[function].provider`` (a catalog model-id, the
+        :data:`presets.LOCAL` sentinel, or unset). The sentinel maps to
+        :data:`provider.LOCAL_PROVIDER_ID` (a local-only route); an unset slot
+        returns ``None`` (the pool keeps its configured order). The provider id is
+        threaded into ``get_provider``/``get_translator`` as ``prefer=`` so the
+        seam tries that provider first (PLAN §WU-presets acceptance (b)).
+        """
+        routing = self.settings.get().get("routing")
+        if not isinstance(routing, dict):
+            return None
+        per_function = routing.get("perFunction")
+        if not isinstance(per_function, dict):
+            return None
+        slot = per_function.get(function)
+        if not isinstance(slot, dict):
+            return None
+        provider_id = slot.get("provider")
+        return provider_id if isinstance(provider_id, str) and provider_id else None
+
+    def _provider_for_function(self, function: str) -> Any:
+        """Build the LLM provider the ``function`` seam uses, honoring routing.
+
+        FACTORY PATH (PLAN §WU-keys): RAW keys via ``get_raw()``. The routed
+        provider (``_function_prefer``) is tried first; the rest of the pool is
+        failover with the local backstop last (or local-only when routed to LOCAL).
+        """
+        from .models import provider as _provider_mod  # local: heavy seam
+
+        return _provider_mod.get_provider(self.settings.get_raw(), prefer=self._function_prefer(function))
+
+    def _translator_for_function(self, function: str) -> Any:
+        """Build the TieredTranslator whose tier3 hosted pool honors routing."""
+        from .models import translation as _translation_mod  # local: heavy seam
+
+        return _translation_mod.get_translator(
+            self.settings.get_raw(), runner=self._get_model_runner(), prefer=self._function_prefer(function)
+        )
+
+    # ===================================================================== #
     # subtitles.* (generate/edit/export direct; translate = job)
     # ===================================================================== #
     def subtitles_generate(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
@@ -537,7 +661,10 @@ class Services:
             _offline.guard_network(settings_now, "cloud translation")
         project = self._find_project_for_track(track_id)
         track = _tracks.find_track(project.data, track_id)
-        translator = self._get_translator()  # None -> legacy injected provider
+        # WU-presets: the translation seam honors routing.perFunction["translation"]
+        # (its tier3 hosted pool tries the routed provider first); falls back to the
+        # legacy injected provider when one is set (existing tests).
+        translator = None if self._provider is not None else self._translator_for_function("translation")
         legacy_provider = self._provider if translator is None else None
         save_path = project.manifest_path
 
@@ -1010,11 +1137,15 @@ class Services:
         # WU-envelope: the AI re-rank/select rides the AiJob substrate so it gets
         # the shared cancel-check + degrade-aware provider + (later) cost/cache
         # while preserving the {jobId} shape and the {candidates} done payload.
+        # WU-presets: the select seam honors routing.perFunction["select"] — its
+        # rotation pool tries the routed provider first (local-only when routed to
+        # LOCAL). A legacy injected provider (tests) still wins.
+        select_provider = self._provider if self._provider is not None else self._provider_for_function("select")
         job = self._run_ai_job(
             ctx,
             messages=[{"role": "user", "content": prompt}],
             model=str(settings.get("cloudModel") or ""),
-            provider=self._provider,
+            provider=select_provider,
             work=work,
             feature="phase8",
             label="phase8.select",
@@ -1423,11 +1554,11 @@ class Services:
         from .models import ai_job as _ai_job  # local: import-light
 
         raw_messages = params.get("messages")
-        messages = tuple(
-            {str(k): str(v) for k, v in m.items()}
-            for m in raw_messages
-            if isinstance(m, dict)
-        ) if isinstance(raw_messages, list) else ()
+        messages = (
+            tuple({str(k): str(v) for k, v in m.items()} for m in raw_messages if isinstance(m, dict))
+            if isinstance(raw_messages, list)
+            else ()
+        )
         request = self._budget_request(params.get("request"))
         inputs = _ai_job.AiInputs(
             messages=messages,
@@ -1774,6 +1905,13 @@ def register_all(
     # burst). The rotation pool already accounts usage from optimistic decrement +
     # parsed 429/X-RateLimit-* headers — this RPC just surfaces it, redacted.
     reg("providers.usage", svc.providers_usage)
+    # WU-presets (PH3): smart presets + per-function override + first-run chooser.
+    # applyPreset resolves a preset over the curated catalog into routing.perFunction;
+    # setFunctionModel overrides one slot; firstRun is the local-vs-cloud chooser
+    # (local-safe default pre-choice, flips routing + firstRunChoiceMade on choice).
+    reg("providers.applyPreset", svc.providers_apply_preset)
+    reg("providers.setFunctionModel", svc.providers_set_function_model)
+    reg("providers.firstRun", svc.providers_first_run)
 
     # captions-export: EDL/CSV NLE timeline export + ZIP package-for-upload.
     reg("nle.export", svc.nle_export)

@@ -525,6 +525,24 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('providers.usage', undefined);
   });
 
+  it('providers.* presets forward their params (WU-presets)', async () => {
+    const r = installApi();
+    await client.providers.catalog();
+    expect(r).toHaveBeenCalledWith('providers.catalog', undefined);
+    await client.providers.applyPreset('privacy');
+    expect(r).toHaveBeenCalledWith('providers.applyPreset', { name: 'privacy' });
+    await client.providers.setFunctionModel('select', 'groq-x');
+    expect(r).toHaveBeenCalledWith('providers.setFunctionModel', {
+      function: 'select',
+      provider: 'groq-x',
+    });
+    // firstRun: bare READ vs choice-applied (the conditional-param branch).
+    await client.providers.firstRun();
+    expect(r).toHaveBeenCalledWith('providers.firstRun', {});
+    await client.providers.firstRun('bestFreeCloud');
+    expect(r).toHaveBeenCalledWith('providers.firstRun', { choice: 'bestFreeCloud' });
+  });
+
   it('recipes.* forward their params', async () => {
     const r = installApi();
     const recipe: SavedRecipe = {

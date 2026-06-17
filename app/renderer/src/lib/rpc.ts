@@ -288,6 +288,65 @@ export interface UsageRow {
 }
 
 /**
+ * One curated model row from `providers.catalog` (WU-catalog). PURE metadata —
+ * no keys/URLs. `perTaskTier` is keyed by the five task ids (moment_find /
+ * caption / translation / vision / edit_plan) -> grade string (S/A/B/C/na).
+ */
+export interface CatalogEntry {
+  id: string;
+  provider: string;
+  model: string;
+  capabilities: string[];
+  contextTokens: number;
+  perTaskTier: Record<string, string>;
+  costClass: string;
+  freeLimits: string;
+  freeLimitScore: number;
+  unit: string;
+  trainsOnInput: boolean | 'conditional';
+  privacyTier: string;
+  recommendedFor: string[];
+  notes: string;
+  asOfDate: string;
+}
+
+/** The `providers.catalog` payload (WU-catalog): dated curated catalog + picks. */
+export interface CatalogResponse {
+  asOfDate: string;
+  unit: string[];
+  tasks: string[];
+  topPicks: Record<string, string>;
+  providers: CatalogEntry[];
+}
+
+/** One per-function routing slot: the chosen provider id (or "local") + fallback. */
+export interface RoutingSlot {
+  provider: string;
+  fallback: string[];
+}
+
+/** The resolved per-function routing (WU-presets). */
+export interface RoutingBlock {
+  perFunction: Record<string, RoutingSlot>;
+}
+
+/** `providers.applyPreset` / `setFunctionModel` response (WU-presets). */
+export interface PresetResponse {
+  activePreset: string;
+  routing: RoutingBlock;
+}
+
+/** `providers.firstRun` response (WU-presets P1 #6 first-run chooser). */
+export interface FirstRunResponse {
+  firstRunChoiceMade: boolean;
+  /** Present on a READ (no choice): the local-safe default preset name. */
+  default?: string;
+  /** Present once a choice applied: the resolved preset + routing. */
+  activePreset?: string;
+  routing?: RoutingBlock;
+}
+
+/**
  * system-advanced saved pipeline recipe — field names FROZEN, identical to the
  * sidecar `recipes.normalize_recipe` shape. A `Step` names an existing RPC
  * method + its params; param values may use the `"$N.key"` prior-step reference
@@ -679,6 +738,19 @@ export const client = {
      * NOT a poller). Keys are redacted; req/token units are returned distinctly.
      */
     usage: (): Promise<{ usage: UsageRow[] }> => rpc('providers.usage'),
+    /** `providers.catalog` — the static curated model catalog (WU-catalog). */
+    catalog: (): Promise<CatalogResponse> => rpc('providers.catalog'),
+    /** `providers.applyPreset` — resolve a smart preset into routing (WU-presets). */
+    applyPreset: (name: string): Promise<PresetResponse> => rpc('providers.applyPreset', { name }),
+    /** `providers.setFunctionModel` — override one function's routed provider. */
+    setFunctionModel: (function_: string, provider: string): Promise<PresetResponse> =>
+      rpc('providers.setFunctionModel', { function: function_, provider }),
+    /**
+     * `providers.firstRun` — the local-vs-cloud chooser. No arg = READ (returns
+     * the local-safe default); a `choice` applies that preset + sets the flag.
+     */
+    firstRun: (choice?: string): Promise<FirstRunResponse> =>
+      rpc('providers.firstRun', choice === undefined ? {} : { choice }),
   },
 
   /** `recipes.*` — saved multi-step pipelines run in one shot. */

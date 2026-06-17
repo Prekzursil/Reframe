@@ -67,6 +67,16 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # estimate when the request pins no size. Mirrors budget.DEFAULT_TARGET_JOB_SIZE;
     # a DOCUMENTED placeholder until the user pins N (one 60-min source -> N shorts).
     "defaultTargetJobSize": _budget.DEFAULT_TARGET_JOB_SIZE,
+    # Provider Hub presets + per-function routing (WU-presets / PH3). ``routing``
+    # holds the resolved per-function provider choice; each function's seam prefers
+    # its configured provider (pool fallback). ``perFunction[<fn>]`` is a
+    # {provider, fallback[]} slot (provider is a catalog model-id or the LOCAL
+    # sentinel). ``activePreset`` is the last applied smart preset name.
+    "routing": {"perFunction": {}},
+    "activePreset": "",
+    # WU-presets first-run local-vs-cloud chooser (PLAN P1 #6): False until the
+    # user picks; while False the routing default is privacy/all-local (no egress).
+    "firstRunChoiceMade": False,
 }
 
 # The config file name inside the resolved app config directory.

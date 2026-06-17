@@ -18,6 +18,7 @@ import {
 import type {
   AdvisorReport,
   AssetInfo,
+  CatalogResponse,
   ComponentStatus,
   HardwareInfo,
   UsageRow,
@@ -110,6 +111,16 @@ interface FakeClient {
   settings: Record<string, unknown>;
 }
 
+function emptyCatalog(): CatalogResponse {
+  return {
+    asOfDate: '2026-06-16',
+    unit: ['req', 'token'],
+    tasks: ['moment_find', 'caption', 'translation', 'vision', 'edit_plan'],
+    topPicks: {},
+    providers: [],
+  };
+}
+
 function makeClient(
   over: {
     hardware?: HardwareInfo;
@@ -117,6 +128,7 @@ function makeClient(
     assets?: AssetInfo[];
     engines?: { id: string; label: string; installed: boolean }[];
     usage?: UsageRow[];
+    catalog?: CatalogResponse;
     initialSettings?: Record<string, unknown>;
     rejectAnalyze?: boolean;
     rejectUsage?: boolean;
@@ -162,6 +174,31 @@ function makeClient(
         calls.push({ method: 'providers.usage', args: [] });
         if (over.rejectUsage) throw new Error('usage failed');
         return { usage: over.usage ?? [] };
+      }),
+      catalog: vi.fn(async () => {
+        calls.push({ method: 'providers.catalog', args: [] });
+        return over.catalog ?? emptyCatalog();
+      }),
+      applyPreset: vi.fn(async (name: string) => {
+        calls.push({ method: 'providers.applyPreset', args: [name] });
+        const routing = { perFunction: { select: { provider: 'groq-x', fallback: ['local'] } } };
+        return { activePreset: name, routing };
+      }),
+      setFunctionModel: vi.fn(async (function_: string, provider: string) => {
+        calls.push({ method: 'providers.setFunctionModel', args: [function_, provider] });
+        const routing = { perFunction: { [function_]: { provider, fallback: [] } } };
+        return { activePreset: 'custom', routing };
+      }),
+      firstRun: vi.fn(async (choice?: string) => {
+        calls.push({ method: 'providers.firstRun', args: [choice] });
+        if (choice === undefined) return { firstRunChoiceMade: false, default: 'privacy' };
+        const routing = {
+          perFunction:
+            choice === 'privacy'
+              ? { select: { provider: 'local', fallback: [] } }
+              : { select: { provider: 'groq-x', fallback: ['local'] } },
+        };
+        return { firstRunChoiceMade: true, activePreset: choice, routing };
       }),
     },
     settings: {
@@ -670,5 +707,212 @@ describe('<ModelsSystemPanel />', () => {
       await Promise.resolve();
     });
     expect(container.querySelector('[data-usage="empty"]')).not.toBeNull();
+  });
+
+  // ---- WU-presets: first-run chooser + presets wiring --------------------
+
+  function presetCatalog(): CatalogResponse {
+    return {
+      ...emptyCatalog(),
+      providers: [
+        {
+          id: 'groq-x',
+          provider: 'Groq',
+          model: 'GPT-OSS-120B',
+          capabilities: ['text'],
+          contextTokens: 128000,
+          perTaskTier: {
+            moment_find: 'S',
+            caption: 'A',
+            translation: 'A',
+            vision: 'na',
+            edit_plan: 'S',
+          },
+          costClass: 'free',
+          freeLimits: '30 RPM',
+          freeLimitScore: 80,
+          unit: 'token',
+          trainsOnInput: false,
+          privacyTier: 'SAFE',
+          recommendedFor: ['moment_find'],
+          notes: 'safe',
+          asOfDate: '2026-06-16',
+        },
+      ],
+    };
+  }
+
+  it('shows the first-run chooser before a choice is made', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true, firstRunChoiceMade: false },
+    });
+    await mount(c);
+    expect(
+      container.querySelector('[role="dialog"][aria-label="Choose how Reframe runs AI"]'),
+    ).not.toBeNull();
+  });
+
+  it('hides the first-run chooser once a choice is recorded', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true, firstRunChoiceMade: true },
+    });
+    await mount(c);
+    expect(
+      container.querySelector('[role="dialog"][aria-label="Choose how Reframe runs AI"]'),
+    ).toBeNull();
+  });
+
+  it('choosing cloud on first run flips routing + hides the chooser', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true, firstRunChoiceMade: false },
+    });
+    await mount(c);
+    const btn = container.querySelector('[data-choice="bestFreeCloud"]') as HTMLButtonElement;
+    await act(async () => btn.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(c.client.providers.firstRun as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+      'bestFreeCloud',
+    );
+    // The chooser is gone once firstRunChoiceMade flipped true.
+    expect(container.querySelector('[data-choice="bestFreeCloud"]')).toBeNull();
+  });
+
+  it('a first-run error surfaces in the alert and keeps the chooser', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true, firstRunChoiceMade: false },
+    });
+    (c.client.providers.firstRun as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('fr boom'),
+    );
+    await mount(c);
+    const btn = container.querySelector('[data-choice="privacy"]') as HTMLButtonElement;
+    await act(async () => btn.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('fr boom');
+    expect(container.querySelector('[data-choice="privacy"]')).not.toBeNull();
+  });
+
+  it('renders the presets section after analysis with the catalog', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true, firstRunChoiceMade: true },
+      catalog: presetCatalog(),
+    });
+    await mount(c);
+    await analyze();
+    expect(container.querySelector('[data-section="presets"]')).not.toBeNull();
+    expect(container.querySelector('[data-preset="balanced"]')).not.toBeNull();
+  });
+
+  it('applying a preset calls providers.applyPreset', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true, firstRunChoiceMade: true },
+      catalog: presetCatalog(),
+    });
+    await mount(c);
+    await analyze();
+    const btn = container.querySelector('[data-preset="privacy"]') as HTMLButtonElement;
+    await act(async () => btn.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(c.client.providers.applyPreset as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+      'privacy',
+    );
+  });
+
+  it('overriding a function calls providers.setFunctionModel', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true, firstRunChoiceMade: true },
+      catalog: presetCatalog(),
+    });
+    await mount(c);
+    await analyze();
+    const sel = container.querySelector('select[data-function="select"]') as HTMLSelectElement;
+    sel.value = 'groq-x';
+    await act(async () => sel.dispatchEvent(new Event('change', { bubbles: true })));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(c.client.providers.setFunctionModel as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+      'select',
+      'groq-x',
+    );
+  });
+
+  it('an applyPreset error surfaces in the alert', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true, firstRunChoiceMade: true },
+      catalog: presetCatalog(),
+    });
+    (c.client.providers.applyPreset as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('preset boom'),
+    );
+    await mount(c);
+    await analyze();
+    const btn = container.querySelector('[data-preset="balanced"]') as HTMLButtonElement;
+    await act(async () => btn.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('preset boom');
+  });
+
+  it('a setFunctionModel error surfaces in the alert', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true, firstRunChoiceMade: true },
+      catalog: presetCatalog(),
+    });
+    (c.client.providers.setFunctionModel as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('fn boom'),
+    );
+    await mount(c);
+    await analyze();
+    const sel = container.querySelector('select[data-function="vision"]') as HTMLSelectElement;
+    sel.value = 'local';
+    await act(async () => sel.dispatchEvent(new Event('change', { bubbles: true })));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('fn boom');
+  });
+
+  it('a first-run response without routing keeps the prior preset/routing', async () => {
+    const c = makeClient({
+      initialSettings: {
+        modelsOnboardingSeen: true,
+        firstRunChoiceMade: false,
+        activePreset: 'balanced',
+        routing: { perFunction: { select: { provider: 'keep-me', fallback: [] } } },
+      },
+    });
+    // firstRun returns only the flag (no activePreset/routing) -> the ?? falls
+    // back to the previous settings values (the 254-255 fallback branch).
+    (c.client.providers.firstRun as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      firstRunChoiceMade: true,
+    });
+    await mount(c);
+    const btn = container.querySelector('[data-choice="privacy"]') as HTMLButtonElement;
+    await act(async () => btn.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // The chooser is gone (flag flipped) and no crash from the missing fields.
+    expect(container.querySelector('[data-choice="privacy"]')).toBeNull();
+  });
+
+  it('coerces a null catalog payload to no presets section', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true, firstRunChoiceMade: true },
+    });
+    (c.client.providers.catalog as ReturnType<typeof vi.fn>).mockResolvedValue(
+      null as unknown as CatalogResponse,
+    );
+    await mount(c);
+    await analyze();
+    expect(container.querySelector('[data-section="presets"]')).toBeNull();
   });
 });

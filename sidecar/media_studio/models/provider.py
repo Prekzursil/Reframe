@@ -115,9 +115,7 @@ def _urllib_request_json(
         with urllib.request.urlopen(request, timeout=timeout) as resp:  # noqa: S310
             raw = resp.read().decode("utf-8")
             raw_headers = getattr(resp, "headers", None)
-            resp_headers = (
-                {str(k): str(v) for k, v in raw_headers.items()} if raw_headers is not None else {}
-            )
+            resp_headers = {str(k): str(v) for k, v in raw_headers.items()} if raw_headers is not None else {}
     except urllib.error.HTTPError as exc:  # 4xx/5xx with a body
         detail = ""
         try:
@@ -163,9 +161,7 @@ def _urllib_post_json(
     """
     data = json.dumps(body).encode("utf-8")
     req_headers = {"Content-Type": "application/json", **headers}
-    return _urllib_request_json(
-        url, method="POST", data=data, headers=req_headers, timeout=timeout, secrets=secrets
-    )
+    return _urllib_request_json(url, method="POST", data=data, headers=req_headers, timeout=timeout, secrets=secrets)
 
 
 def urllib_get_json(url: str, body: dict[str, Any], headers: dict[str, str], timeout: float) -> dict[str, Any]:
@@ -408,6 +404,11 @@ DEFAULT_COOLDOWN_SECONDS: float = 60.0
 
 #: The default capability a chat request needs of a pool entry.
 DEFAULT_CAPABILITY: str = "text"
+
+#: The sentinel provider id meaning "the local backstop only" (matches
+#: ``presets.LOCAL``). When a per-function routing slot prefers this, the factory
+#: builds a local-only pool so the privacy/all-local route never egresses cloud.
+LOCAL_PROVIDER_ID: str = "local"
 
 
 def _default_now() -> float:
@@ -686,6 +687,7 @@ def build_pool_provider(
     transport: Transport | None = None,
     probe_transport: Transport | None = None,
     detect_local: bool = True,
+    prefer: str | None = None,
 ) -> RotatingProvider:
     """Build a :class:`RotatingProvider` from ``settings.providers`` + local detect.
 
@@ -699,13 +701,44 @@ def build_pool_provider(
     needs the cloud providers + the llama backstop and must NOT open a socket, so
     it builds the pool with detection off. The runtime execution path keeps the
     default ``True`` so live local servers are still discovered when a call runs.
+
+    ``prefer`` (WU-presets per-function routing): the configured provider ``id``
+    the active function prefers. The matching provider spec is moved to the FRONT
+    of the cloud pool (tried first), the rest kept as failover, the local backstop
+    still last. ``prefer == LOCAL_PROVIDER_ID`` yields a local-only pool (the
+    privacy/all-local route — NO cloud entry, so it never egresses). An unknown id
+    is a no-op (configured order kept), so a stale routing choice never breaks the
+    pool.
     """
     settings = settings or {}
-    specs = _cloud_specs_from_settings(settings)
+    if prefer == LOCAL_PROVIDER_ID:
+        # Privacy/all-local route: skip cloud specs entirely (zero cloud egress).
+        return RotatingProvider(pool=[_llama_backstop_spec(settings)], transport=transport)
+    specs = _cloud_specs_from_settings(_prefer_provider_first(settings, prefer))
     if detect_local:
         specs.extend(_detected_local_specs(settings, probe_transport=probe_transport))
     specs.append(_llama_backstop_spec(settings))
     return RotatingProvider(pool=specs, transport=transport)
+
+
+def _prefer_provider_first(settings: dict[str, Any], prefer: str | None) -> dict[str, Any]:
+    """Return ``settings`` with ``providers`` reordered so ``prefer`` (an id) is first.
+
+    PURE: a new settings dict with a reordered ``providers`` list (the original is
+    never mutated). ``prefer`` of ``None`` or an unknown id leaves the order
+    unchanged — the matching entry (by ``id``) is simply hoisted to the front so
+    the per-function preferred provider is tried before the rest of the pool.
+    """
+    if not prefer:
+        return settings
+    providers = settings.get("providers")
+    if not isinstance(providers, list):
+        return settings
+    preferred = [p for p in providers if isinstance(p, dict) and p.get("id") == prefer]
+    if not preferred:
+        return settings
+    rest = [p for p in providers if not (isinstance(p, dict) and p.get("id") == prefer)]
+    return {**settings, "providers": [*preferred, *rest]}
 
 
 def _cloud_specs_from_settings(settings: dict[str, Any]) -> list[PoolEntrySpec]:
@@ -734,9 +767,7 @@ def _cloud_specs_from_settings(settings: dict[str, Any]) -> list[PoolEntrySpec]:
     return specs
 
 
-def _detected_local_specs(
-    settings: dict[str, Any], *, probe_transport: Transport | None
-) -> list[PoolEntrySpec]:
+def _detected_local_specs(settings: dict[str, Any], *, probe_transport: Transport | None) -> list[PoolEntrySpec]:
     """Probe Ollama/LM Studio (best-effort) and turn live ones into pool specs."""
     from . import local_detect  # local import: avoids an import cycle at module load
 
@@ -778,6 +809,7 @@ def get_provider(
     settings: dict[str, Any] | None = None,
     *,
     transport: Transport | None = None,
+    prefer: str | None = None,
 ) -> Provider:
     """Return the right :class:`Provider` for ``settings`` (CONTRACTS.md §2).
 
@@ -788,6 +820,11 @@ def get_provider(
     else a :class:`LocalServerProvider` pointed at the local llama.cpp server.
     ``transport`` is forwarded so tests can inject a fake HTTP transport.
 
+    ``prefer`` (WU-presets) is the configured provider ``id`` the active function
+    prefers; it is threaded into :func:`build_pool_provider` so the per-function
+    seam tries that provider first (``LOCAL_PROVIDER_ID`` -> local-only). It only
+    applies on the pool path; the legacy single-provider fall-through ignores it.
+
     CONTRACT-NOTE: §2 names ``{useCloud, cloudApiKey?, modelsDir, ffmpegPath}``.
     Optional ``localBaseUrl`` / ``localModel`` / ``cloudBaseUrl`` / ``cloudModel``
     overrides are honored when present but are NOT required by the contract.
@@ -796,8 +833,9 @@ def get_provider(
 
     # WU-pool: a configured multi-provider pool takes precedence over the legacy
     # single-provider routing (which stays for back-compat when no pool is set).
-    if _cloud_specs_from_settings(settings):
-        return build_pool_provider(settings, transport=transport)
+    # A prefer==LOCAL route is honored even with cloud providers configured.
+    if prefer == LOCAL_PROVIDER_ID or _cloud_specs_from_settings(settings):
+        return build_pool_provider(settings, transport=transport, prefer=prefer)
 
     use_cloud = bool(settings.get("useCloud"))
     api_key = settings.get("cloudApiKey") or ""

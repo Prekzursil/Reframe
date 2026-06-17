@@ -15,12 +15,19 @@ tier (PLAN §WU-presets · CATALOG-SEED tasks 1..5):
   * ``vision``      — Vision / OCR           (task 4)
   * ``editPlan``    — Edit-Plan generation   (task 5)
 
-The catalog is **duck-typed** so this module never imports ``catalog.py`` (a
-separate WU). A catalog need only expose ``all() -> Iterable[entry]`` where each
+The catalog is **duck-typed** so the ranking logic never hard-depends on
+``catalog.py``. A catalog need only expose ``all() -> Iterable[entry]`` where each
 ``entry`` carries: ``id: str``, ``provider: str``, ``capabilities: Sequence[str]``
 (includes ``"vision"`` for multimodal models), ``per_task_tier: Mapping[str,str]``
 (per-function grade ``S``/``A``/``B``/``C``/``na``) and ``privacy_tier: str``
 (``SAFE``/``CONDITIONAL``/``AVOID``).
+
+The REAL :mod:`media_studio.models.catalog` keys ``per_task_tier`` by the
+:class:`catalog.Task` ENUM (not the function-name string) and exposes no
+``all()`` — so :class:`CatalogAdapter` (carryforward #1) is the thin, PURE bridge
+that re-exposes the curated catalog through this duck-typed surface. It imports
+the (equally pure, network-free) catalog module lazily so the ranking helpers
+above stay independent and 100%-testable against a fake catalog.
 
 Routing shape returned by :func:`apply_preset`::
 
@@ -137,8 +144,7 @@ def suggest_for_function(
     candidates = [
         entry
         for entry in catalog.all()
-        if _is_candidate(entry, function)
-        and not (require_safe and entry.privacy_tier == "AVOID")
+        if _is_candidate(entry, function) and not (require_safe and entry.privacy_tier == "AVOID")
     ]
     candidates.sort(key=lambda e: _GRADE_RANK[_grade_for(e, function)])
     return candidates
@@ -183,10 +189,7 @@ def apply_preset(
     descriptor = PRESETS.get(name)
     if descriptor is None:
         raise ValueError(f"unknown preset: {name!r}")
-    per_function = {
-        function: _resolve_slot(function, strategy, catalog)
-        for function, strategy in descriptor.items()
-    }
+    per_function = {function: _resolve_slot(function, strategy, catalog) for function, strategy in descriptor.items()}
     return {"activePreset": name, "perFunction": per_function}
 
 
@@ -209,3 +212,78 @@ def first_run_default(settings: Mapping[str, Any]) -> str:
     if active and active != "privacy":
         return "bestFreeCloud"
     return "privacy"
+
+
+# --------------------------------------------------------------------------- #
+# Catalog adapter (carryforward #1) — bridge the REAL catalog to this duck-type
+# --------------------------------------------------------------------------- #
+
+#: Map each Reframe FUNCTION (this module's seam name) to the catalog's ``Task``
+#: enum member name. Kept as a string-keyed dict of *enum member names* so this
+#: module imports nothing from ``catalog`` at module load; the adapter resolves
+#: the names to real enum members lazily. Built lazily/validated in the adapter.
+_FUNCTION_TASK_NAMES: dict[str, str] = {
+    "select": "MOMENT_FIND",
+    "subtitles": "CAPTION",
+    "translation": "TRANSLATION",
+    "vision": "VISION",
+    "editPlan": "EDIT_PLAN",
+}
+
+
+class _AdaptedEntry:
+    """One real :class:`catalog.CatalogEntry` re-exposed through the duck-type.
+
+    Flattens the catalog's enum-keyed ``per_task_tier`` into the FUNCTION-name ->
+    grade-string map the ranking helpers consume, and the ``Capability`` /
+    ``PrivacyTier`` enums into their plain ``.value`` strings. PURE — it only
+    re-reads already-loaded curated data.
+    """
+
+    __slots__ = ("id", "provider", "capabilities", "per_task_tier", "privacy_tier")
+
+    def __init__(self, entry: Any, function_tasks: Mapping[str, Any]) -> None:
+        self.id: str = entry.id
+        self.provider: str = entry.provider
+        self.capabilities: tuple[str, ...] = tuple(c.value for c in entry.capabilities)
+        # Typed as the invariant Mapping the CatalogEntryLike protocol declares so a
+        # structural check passes; the value is a plain dict at runtime.
+        self.per_task_tier: Mapping[str, str] = {
+            function: entry.per_task_tier[task].value for function, task in function_tasks.items()
+        }
+        self.privacy_tier: str = entry.privacy_tier.value
+
+
+class CatalogAdapter:
+    """Expose the REAL curated catalog through the :class:`CatalogLike` surface.
+
+    The constructor accepts an optional ``catalog`` tuple of real
+    :class:`catalog.CatalogEntry` rows (default: the shared ``catalog.CATALOG``)
+    so tests can pin a tiny subset. Each row is wrapped in :class:`_AdaptedEntry`
+    so ``apply_preset`` / ``suggest_for_function`` read FUNCTION-name-keyed grades
+    + plain-string capabilities/privacy and resolve real picks (carryforward #1 —
+    without this the function-name lookup would miss the enum keys and every grade
+    would fall to ``"na"``, collapsing every preset to local).
+    """
+
+    def __init__(self, *, catalog: Any | None = None) -> None:
+        from . import catalog as _catalog  # local: import-light pure data bridge
+
+        rows = catalog if catalog is not None else _catalog.CATALOG
+        function_tasks = {function: _catalog.Task[name] for function, name in _FUNCTION_TASK_NAMES.items()}
+        self._entries: tuple[_AdaptedEntry, ...] = tuple(_AdaptedEntry(row, function_tasks) for row in rows)
+
+    def all(self) -> tuple[CatalogEntryLike, ...]:
+        return self._entries
+
+
+def function_tasks() -> dict[str, Any]:
+    """Return the FUNCTION-name -> real ``catalog.Task`` map (resolved lazily).
+
+    Exposed for handlers/tests that need the function<->task correspondence (e.g.
+    to read the catalog's ``top_pick_for_task`` for a given seam). Importing the
+    catalog here keeps the ranking helpers above catalog-free.
+    """
+    from . import catalog as _catalog  # local: import-light pure data bridge
+
+    return {function: _catalog.Task[name] for function, name in _FUNCTION_TASK_NAMES.items()}
