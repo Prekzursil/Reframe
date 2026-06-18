@@ -44,7 +44,7 @@ Every capability below reuses already-shipped seams. Citations are `path:line` i
 - A preset precedent exists for *routing*: `providers.applyPreset` resolves a named preset and persists it (`handlers.py:483-501`); the shortmaker has UI-side presets (`app/renderer/src/features/shortMakerPresets.ts`).
 
 ### Availability indicators
-- **Models:** `assets.list` returns `AssetInfo {name, kind, sizeMB, installed, dest}` (`sidecar/media_studio/assets/manager.py:392-402`); `assets.ensure` downloads (`assets/rpc.py:40-63`); registered at `handlers.py:2233`. `installed_path` is the real probe (`manager.py:360-375`). Renderer `Assets.tsx` already renders install state + per-asset / install-all (`app/renderer/src/features/Assets.tsx:13-39`); `ModelCard.tsx` already renders a will-it-run badge + Installed/Download button (`ModelCard.tsx:18-107`).
+- **Models:** `assets.list` returns `AssetInfo {name, kind, sizeMB, installed, dest}` (`sidecar/media_studio/assets/manager.py:392-402`); `assets.ensure` downloads (`assets/rpc.py:40-63`); registered at `handlers.py:2233`. `installed_path` is the real probe (`manager.py:360-375`). Renderer `Assets.tsx` already renders install state + per-asset / install-all (`app/renderer/src/features/Assets.tsx:13-39`); `ModelCard.tsx` already renders a will-it-run badge (via the `VerdictBadge` component) + Installed/Download button (`app/renderer/src/components/ModelCard.tsx:18-107`).
 - **Features (tiers):** `system.advisor` returns per-component `present`/`verdict` + runnable tiers (`handlers.py:1152-1173`, wire shape `_advisor_report_to_wire` at `handlers.py:1902-1928`); `asr.engines` returns `[{id,label,installed}]` (`handlers.py:1175-1194`). `_models_present_map` (`handlers.py:1305-1327`) is the per-component installed probe.
 - **Providers:** `providers.list` (redacted keys, `handlers.py:330-338`), `providers.usage` (live + cached + stale-flagged, `handlers.py:436-478`), per-provider `consent.perProvider[].{text,frames}` (`handlers.py:414-434`). `routing.perFunction` says which provider each function prefers (`handlers.py:553-573`).
 - **Gap:** the three readiness sources (assets / advisor / providers) are surfaced by **three separate panels**; there is no single roll-up "is X ready, and if not, what's the one action to make it ready?" view.
@@ -87,6 +87,10 @@ Every capability below reuses already-shipped seams. Citations are `path:line` i
   - Add a **`JobStore`** (NEW module `sidecar/media_studio/job_store.py`) that the `JobRegistry` writes through: on `create` / `record_request` / status transitions it appends/updates a JSON-lines (or per-job JSON) record under `data_dir/jobs/` with `{jobId, feature, label, videoId, method, params, status, pct, startedAt, finishedAt}`. Reuses the atomic `_write_json` pattern (`library.py:74-79`).
   - On sidecar startup, `JobRegistry` **rehydrates** records: any job left in `running`/`queued` at last shutdown is marked `interrupted` (a NEW terminal-ish status) — it is NOT auto-restarted (that would silently re-spend a cloud budget). Its stored `{method, params}` remains available to `job.retry`.
   - `job.list` then includes interrupted jobs after restart; the user clicks "Resume" → `job.retry` (existing built-in, `protocol.py:13`) re-dispatches the stored request as a NEW job.
+  - **JobQueue rendering path for `interrupted` (a11y-critical — without this the Resume button never appears).** `JobQueue.tsx` gates ALL per-job actions on the outer predicate `canCancel(job) || canRetry(job)` (`app/renderer/src/components/JobQueue.tsx:163`), and `canRetry` matches **only** `status === 'error'` (`JobQueue.tsx:25-27`). An `interrupted` job matches neither, so today it would render no action button at all. The two exact change points are:
+    1. **NEW predicate** `canResume(job): boolean` in `JobQueue.tsx` returning `job.status === 'interrupted'` (a sibling of `canCancel`/`canRetry`, kept separate so the Resume affordance is distinct from Retry — see copy below). It MUST stay a separate predicate rather than folding `interrupted` into `canRetry`, because the two buttons carry different labels/tooltips.
+    2. **Extend the outer action-gate** at `JobQueue.tsx:163` to `canCancel(job) || canRetry(job) || canResume(job)`, and add a third conditional button inside the `jobqueue__actions` block (alongside Cancel/Retry) that renders when `canResume(job)` and calls the existing `handleRetry(job.jobId)` (`JobQueue.tsx:108-118`) — Resume reuses the `job.retry` re-dispatch; only the label/tooltip differ.
+    The `interrupted` status string already renders correctly in the status pill (`JobQueue.tsx:150-152` renders `job.status` as **text**, not color-only) and the `JobInfo` status union (`lib/rpc`) MUST be widened to include `'interrupted'`.
   - **Injectability:** `JobStore` is injected into `JobRegistry.__init__` (default = real disk store under `data_dir/jobs`; tests inject an in-memory fake), preserving the existing test pattern (every `Services` collaborator is injected — `handlers.py:121-180`).
 - **Why not mid-job checkpointing:** jobs are opaque `(JobContext)->result` bodies (`jobs.py:304-326`); there is no general resumable checkpoint. Re-dispatch from the stored request is the honest, contract-safe resume. **Named gap** (§5).
 
@@ -101,13 +105,20 @@ Every capability below reuses already-shipped seams. Citations are `path:line` i
   - Source 2 (assets sizes/installed): `assets.list` via the same `AssetManager` (`manager.py:402`).
   - Source 3 (providers/keys/consent): `providers.list` + `consent` + `routing.perFunction` (`handlers.py:330-434,553-573`).
   - Honors Offline mode (a missing weight that needs a download counts unavailable — same rule as `system.advisor`).
-- **REUSE renderer:** `ModelCard` badge styling + `Assets.tsx` ensure flow; new shared `ReadinessBadge` component consumed by the library home + model panel.
+- **REUSE renderer:** `Assets.tsx` ensure flow + the `verdict-badge` status-pill conventions; new shared `ReadinessBadge` component consumed by the library home + model panel.
+- **`ReadinessBadge` accessibility contract (a11y-critical — follow the `VerdictBadge` *component*, not loose CSS classes):** the real reusable status-pill primitive is `VerdictBadge.tsx` (`app/renderer/src/components/VerdictBadge.tsx:19-31`), which renders a **text label** (`verdictLabel`, `advisorMeta.ts:38-40`), `role="status"`, a status-modifier `data-*` attribute, and a descriptive `title` hint — so the status is conveyed by *text + role*, never hue alone. `ReadinessBadge` MUST mirror this exactly and MUST NOT reduce to color-only class reuse (that would fail WCAG 1.4.1 use-of-color and drop status semantics). Concretely:
+  - Render a **visible text label per status** (e.g. `ready → "Ready"`, `needsDownload → "Needs download"`, `needsKey → "Needs key"`, `needsConsent → "Needs consent"`, `unavailable → "Unavailable"`) — color is decorative reinforcement, never the sole carrier.
+  - Set `role="status"` so assistive tech announces it as a live status (same as `VerdictBadge.tsx:25`).
+  - Carry a `data-readiness="<status>"` attribute and a `title` that names the blocker + the fix action (mirrors `VerdictBadge`'s `data-verdict` + `title`).
+  - Reuse only the *pill geometry* CSS conventions (the `verdict-badge` base look), not its verdict-specific color map; add a parallel readiness-status label/class/hint map in a pure `readinessMeta.ts` helper (mirroring `advisorMeta.ts:17-50`) so the label/class/hint logic is test-pinned once and the component stays a thin render shell.
+- **Roll-up action affordance (a11y):** each item's `action` (`assets.ensure` / `openProviders` / `setConsent`) MUST render as a real `<button>` with an accessible name tying the action to its capability (e.g. `aria-label="Download {capability} model"` / `"Add a provider key"` / `"Grant consent for {provider}"`), never an icon-only control. The badge conveys *state*; the button conveys *the one fix action*.
+- **Empty / loading states:** while `readiness.summary` is in flight, reuse JobQueue's existing skeleton/empty conventions (`jobqueue__empty`, the progress bar pattern, `JobQueue.tsx:142-162`) for visual consistency rather than inventing new ones.
 
 ### 3.5 Preview thumbnails (REUSE the shorts poster engine)
 - **NEW RPC `library.thumbnail({videoId}) -> {thumbnailPath}`** — extracts a poster from the *source* video (not a clip) by **reusing `shorts.build_thumbnail_argv` / `thumbnail_path`** (`shorts.py:102,183`) against the resolved source path (`handlers.py:197-202`); persists `thumbnailPath` onto the Library Video and returns it. Idempotent (poster file is cached next to nothing user-owned → store under `data_dir/thumbnails/<videoId>.jpg`, inside the data root so the resolver can serve it).
 - **NEW (Video schema):** add optional `thumbnailPath` to `library._normalize` (`library.py:108-117`) — additive, backfilled to `""`; no migration.
 - **NEW (resolver):** a `thumb:` id branch for `mstream://` reusing `resolveScopedMediaPath` (`exportPath.ts:20`) rooted at `data_dir/thumbnails`. (Clips keep the existing `short:` resolver.)
-- **REUSE renderer:** new `useVideoThumbnail` hook = a near-clone of `useShortThumbnail` (`useShortThumbnail.ts:41-73`) pointed at `library.thumbnail` + the `thumb:` URL.
+- **REUSE renderer:** new `useVideoThumbnail` hook = a near-clone of `useShortThumbnail` (`useShortThumbnail.ts:41-73`) pointed at `library.thumbnail` + the `thumb:` URL. It MUST inherit `useShortThumbnail`'s proven graceful-degradation: a missing/failed poster falls back to the ▶ glyph and **never blocks the card** (`useShortThumbnail.ts:28-39` catch path), so a thumbnail-generation failure degrades silently instead of breaking the gallery. While generation is pending, show the same placeholder rather than a layout-shifting blank.
 
 ---
 
@@ -127,17 +138,23 @@ Every capability below reuses already-shipped seams. Citations are `path:line` i
 
 `job.list` / `job.retry` / `job.cancel` are **existing built-ins** (`protocol.py:13-14`) — resume reuses them; only the persistence-backed rehydrate is new. No new job-control RPC needed beyond the optional `jobs.history`.
 
+**Renderer type change for resume:** the `JobInfo` status union in `lib/rpc` MUST be widened to add `'interrupted'` (today: `queued`/`running`/`error`/done states). This unblocks the new `canResume` predicate (§3.2) and lets the status pill render the `interrupted` label as text (`JobQueue.tsx:150-152`). It is purely additive — no existing status is removed or renamed.
+
 ### 4.2 Main-process IPC (REUSE; no new channels required)
 - `dataFolder.get/pick/set` (`dataFolderIpc.ts`) — already cover changing the data root.
 - One **NEW** optional channel `paths.openFolder(path)` (shell-open, traversal-checked) if "Open folder" is in MVP; otherwise reuse the existing `shellIpc` channel referenced by `dataFolderIpc.ts:16`.
 
 ### 4.3 Renderer surface
 - `useVideoThumbnail` hook (clone of `useShortThumbnail.ts`).
-- `ReadinessBadge` shared component (reuses `ModelCard` badge classes).
-- `PathsPanel` section (wires `paths.describe` + `dataFolder.*`).
+- `ReadinessBadge` shared component (mirrors the `VerdictBadge` primitive — text label + `role="status"` + `data-readiness` + `title`; reuses only the `verdict-badge` pill geometry, not the verdict color map — see §3.4). Backed by a pure `readinessMeta.ts` label/class/hint map.
+- `PathsPanel` section (wires `paths.describe` + `dataFolder.*`). **a11y:** each path row is read-only but its "Open folder" control MUST be a real `<button>` with a per-row accessible name (e.g. `aria-label="Open {dirLabel} folder"`), keyboard-focusable in tab order; the path string itself is presented as selectable text, not an interactive-looking-but-inert element.
 - `SavePresetsControls` (wires `savePresets.*`, mirrors `PresetPicker.tsx`).
 - App-level: `lastOpenedVideoId` persist on `openVideo` + restore in the launch `settings.get` effect (`App.tsx:84-148`).
-- JobQueue: render the `interrupted` status + a "Resume" button → `job.retry` (extend `JobQueue.tsx`).
+- JobQueue: render the `interrupted` status + a **Resume** button → `job.retry` (extend `JobQueue.tsx` per the §3.2 two change points: new `canResume` predicate + widen the `JobQueue.tsx:163` action-gate).
+  - **Resume vs Retry — distinct affordance + user-facing copy (a11y/clarity-critical).** Both buttons re-dispatch via `job.retry`, but their UX intent differs (crash-recovery vs explicit failure-retry), so they MUST read differently and the Resume copy MUST set correct expectations about cost and progress:
+    - **Button label:** `Resume` (distinct from the `Retry` label on `error` jobs). Accessible name MUST disambiguate by job, e.g. `aria-label="Resume {label}"` (Retry stays `aria-label="Retry {label}"`).
+    - **Tooltip / microcopy (`title`):** convey full re-dispatch + budget re-prompt, e.g. *"Re-runs this interrupted job from the start (it restarts at 0%, not where it stopped). If it uses a cloud provider, you'll be asked to confirm the budget again before it runs."* This makes the §5 safety reality (full re-dispatch through `_run_ai_job` → `_enforce_cloud_budget_ack`, re-prompting on cloud egress) visible at the point of action so Resume is never a surprise spend.
+    - Optionally surface a short inline note on the `interrupted` item (e.g. "Interrupted by restart — Resume to re-run from the start") so the status reads as crash-recovery, not generic failure. This note is **text**, reinforcing the already-text status pill (`JobQueue.tsx:150-152`).
 
 ### 4.4 Storage + settings keys (all additive — `settings.set` blind-merges, `settings_store.py:167-182`)
 ```
