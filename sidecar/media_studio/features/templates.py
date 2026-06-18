@@ -86,6 +86,90 @@ def _normalize_default_controls(raw: Any) -> dict[str, Any]:
     return dict(raw)
 
 
+#: The method id whose ``exportTargets`` drive the per-preset fan-out (§5.1/§5.3).
+EXPORT_METHOD = "shortmaker.export"
+
+#: The :class:`export_presets.ExportPreset` controls fields merged onto a
+#: template's ``defaultControls`` for each fanned-out export step. ``id``/``label``
+#: are excluded (``id`` becomes ``presetId`` on the params; ``label`` only flavors
+#: the step label) — these are exactly the knobs ``shortmaker.export`` consumes
+#: (DESIGN §5.3: ``buildExportParams`` → ``ShortMaker.export``).
+PRESET_CONTROL_FIELDS: tuple[str, ...] = (
+    "aspect",
+    "minSec",
+    "maxSec",
+    "count",
+    "captionStyle",
+    "reframeEngine",
+)
+
+
+# --------------------------------------------------------------------------- #
+# pure: per-preset export-step fan-out (WU4 — no I/O, no provider)
+# --------------------------------------------------------------------------- #
+def expand_export_steps(
+    steps: list[dict[str, Any]],
+    controls: dict[str, Any],
+    presets: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Expand multi-target ``shortmaker.export`` steps into one step per preset.
+
+    DESIGN §5.1/§5.3: before a template runs, a single ``shortmaker.export`` step
+    whose ``params.exportTargets`` names multiple :class:`export_presets.ExportPreset`
+    ids is fanned out into one export call per resolved preset. Each fanned step's
+    params are the merge ``{**controls, **otherStepParams, **presetControls,
+    presetId}`` — the preset's clamped window/style/count/aspect OVERRIDE the
+    template's ``defaultControls`` (which override nothing the step itself set
+    besides the preset knobs), and the originating ``exportTargets`` control is
+    consumed (never forwarded to the export handler).
+
+    Pure + total: no I/O, no provider, no store. ``presets`` is an in-memory
+    ``{id: ExportPreset}`` map (the caller supplies it from the catalog). Rules:
+
+      * non-export steps pass through unchanged and in order;
+      * an export step with empty / absent ``exportTargets`` passes through
+        unchanged (the runner still runs it against ``defaultControls``);
+      * a target id absent from ``presets`` raises ``INVALID_PARAMS`` BEFORE any
+        output is appended (no partial expansion);
+      * the function is idempotent on already-flat step lists (single/no target).
+
+    Each fanned step carries ``params.presetId`` so the Shorts gallery can group
+    by platform, and a ``"<label> · <preset label>"`` step label for progress.
+    """
+    expanded: list[dict[str, Any]] = []
+    for step in steps:
+        targets = step.get("params", {}).get("exportTargets") if step.get("method") == EXPORT_METHOD else None
+        if not isinstance(targets, list) or not targets:
+            expanded.append(step)
+            continue
+        # Resolve every preset FIRST so an unknown id fails loud with no partial
+        # expansion of this step.
+        resolved = [(target, _resolve_preset(target, presets)) for target in targets]
+        base_label = step.get("label", EXPORT_METHOD)
+        base_params = {key: value for key, value in step["params"].items() if key != "exportTargets"}
+        for target_id, preset in resolved:
+            merged = {**controls, **base_params}
+            for field in PRESET_CONTROL_FIELDS:
+                if field in preset:
+                    merged[field] = preset[field]
+            merged["presetId"] = target_id
+            expanded.append(
+                {
+                    "method": EXPORT_METHOD,
+                    "params": merged,
+                    "label": f"{base_label} · {preset.get('label', target_id)}",
+                }
+            )
+    return expanded
+
+
+def _resolve_preset(target_id: str, presets: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    preset = presets.get(target_id)
+    if preset is None:
+        raise _invalid(f"export target not found in presets: {target_id!r}")
+    return preset
+
+
 # --------------------------------------------------------------------------- #
 # pure: template shaping (recipe core via import + additive fields + allowlist)
 # --------------------------------------------------------------------------- #
@@ -131,7 +215,10 @@ class TemplateStore(recipes.RecipeStore):
 __all__ = [
     "ALLOWED_METHOD_EXACT",
     "ALLOWED_METHOD_PREFIXES",
+    "EXPORT_METHOD",
+    "PRESET_CONTROL_FIELDS",
     "Template",
     "TemplateStore",
+    "expand_export_steps",
     "normalize_template",
 ]

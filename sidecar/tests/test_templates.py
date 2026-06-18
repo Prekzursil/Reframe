@@ -182,3 +182,160 @@ class TestTemplateStore:
         path = tmp_path / "templates.json"
         path.write_text("{ not json", encoding="utf-8")
         assert templates.TemplateStore(path).list() == []
+
+
+# --------------------------------------------------------------------------- #
+# pure: expand_export_steps (preset fan-out — WU4)
+# --------------------------------------------------------------------------- #
+def _preset(preset_id: str, **overrides: Any) -> dict[str, Any]:
+    """A minimal normalized-shape ExportPreset for fan-out tests (in-memory)."""
+    base: dict[str, Any] = {
+        "id": preset_id,
+        "label": preset_id.title(),
+        "aspect": "9:16",
+        "minSec": 20,
+        "maxSec": 60,
+        "count": 5,
+        "captionStyle": "libass",
+        "reframeEngine": "auto",
+    }
+    base.update(overrides)
+    return base
+
+
+def _presets(*items: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {p["id"]: p for p in items}
+
+
+class TestExpandExportSteps:
+    def test_single_target_yields_one_export_step(self):
+        steps = [{"method": "shortmaker.export", "params": {"exportTargets": ["tiktok"]}, "label": "Export"}]
+        out = templates.expand_export_steps(steps, {}, _presets(_preset("tiktok")))
+        assert len(out) == 1
+        assert out[0]["method"] == "shortmaker.export"
+
+    def test_three_targets_yield_three_export_steps_with_merged_fields(self):
+        steps = [{"method": "shortmaker.export", "params": {"exportTargets": ["tiktok", "reels", "shorts"]}}]
+        presets = _presets(
+            _preset("tiktok", maxSec=45, count=5, captionStyle="libass"),
+            _preset("reels", maxSec=30, count=3, captionStyle="none"),
+            _preset("shorts", maxSec=60, count=8, captionStyle="libass"),
+        )
+        out = templates.expand_export_steps(steps, {"language": "en"}, presets)
+        assert len(out) == 3
+        # Each fanned-out step carries the preset's controls merged onto defaults.
+        by_target = {s["params"]["presetId"]: s for s in out}
+        assert by_target["tiktok"]["params"]["aspect"] == "9:16"
+        assert by_target["tiktok"]["params"]["maxSec"] == 45
+        assert by_target["tiktok"]["params"]["captionStyle"] == "libass"
+        assert by_target["reels"]["params"]["maxSec"] == 30
+        assert by_target["reels"]["params"]["captionStyle"] == "none"
+        assert by_target["shorts"]["params"]["maxSec"] == 60
+        # defaultControls is the base for every fanned step.
+        assert all(s["params"]["language"] == "en" for s in out)
+
+    def test_preset_fields_override_default_controls(self):
+        steps = [{"method": "shortmaker.export", "params": {"exportTargets": ["tiktok"]}}]
+        controls = {"maxSec": 99, "captionStyle": "none", "count": 1}
+        out = templates.expand_export_steps(
+            steps, controls, _presets(_preset("tiktok", maxSec=45, captionStyle="libass", count=5))
+        )
+        assert out[0]["params"]["maxSec"] == 45
+        assert out[0]["params"]["captionStyle"] == "libass"
+        assert out[0]["params"]["count"] == 5
+
+    def test_window_clamp_from_preset_is_honored(self):
+        # The preset carries the already-clamped [20,60] window; expansion must
+        # surface those exact values (no re-derivation, no silent correction).
+        steps = [{"method": "shortmaker.export", "params": {"exportTargets": ["tiktok"]}}]
+        out = templates.expand_export_steps(steps, {}, _presets(_preset("tiktok", minSec=25, maxSec=55)))
+        assert out[0]["params"]["minSec"] == 25
+        assert out[0]["params"]["maxSec"] == 55
+
+    def test_preset_id_attached_for_gallery_grouping(self):
+        steps = [{"method": "shortmaker.export", "params": {"exportTargets": ["tiktok", "shorts"]}}]
+        out = templates.expand_export_steps(steps, {}, _presets(_preset("tiktok"), _preset("shorts")))
+        assert [s["params"]["presetId"] for s in out] == ["tiktok", "shorts"]
+
+    def test_unknown_target_id_raises_and_yields_no_partial_expansion(self):
+        steps = [{"method": "shortmaker.export", "params": {"exportTargets": ["tiktok", "__nope__"]}}]
+        with pytest.raises(RpcError):
+            templates.expand_export_steps(steps, {}, _presets(_preset("tiktok")))
+
+    def test_empty_export_targets_passthrough_drops_no_export_step(self):
+        # Documented rule: an export step with no targets passes through unchanged
+        # (the runner still runs it against the template's defaultControls).
+        steps = [{"method": "shortmaker.export", "params": {"exportTargets": []}, "label": "Export"}]
+        out = templates.expand_export_steps(steps, {"count": 3}, {})
+        assert out == steps
+
+    def test_export_step_without_export_targets_key_passthrough(self):
+        steps = [{"method": "shortmaker.export", "params": {"count": 3}}]
+        out = templates.expand_export_steps(steps, {}, {})
+        assert out == steps
+
+    def test_non_export_steps_pass_through_unchanged_and_in_order(self):
+        steps = [
+            {"method": "transcribe.start", "params": {"videoId": "v1"}, "label": "Transcribe"},
+            {"method": "phase8.select", "params": {}, "label": "Select"},
+            {"method": "shortmaker.export", "params": {"exportTargets": ["tiktok"]}, "label": "Export"},
+        ]
+        out = templates.expand_export_steps(steps, {}, _presets(_preset("tiktok")))
+        assert out[0] == steps[0]
+        assert out[1] == steps[1]
+        assert out[2]["method"] == "shortmaker.export"
+        assert out[2]["params"]["presetId"] == "tiktok"
+
+    def test_idempotent_on_already_flat_step_lists(self):
+        # A list with no fan-out (single/no target) is returned shape-stable.
+        steps = [{"method": "transcribe.start", "params": {}, "label": "T"}]
+        out = templates.expand_export_steps(steps, {}, {})
+        assert out == steps
+
+    def test_label_carries_preset_for_multi_target_steps(self):
+        steps = [{"method": "shortmaker.export", "params": {"exportTargets": ["tiktok", "shorts"]}, "label": "Export"}]
+        out = templates.expand_export_steps(
+            steps, {}, _presets(_preset("tiktok", label="TikTok"), _preset("shorts", label="Shorts"))
+        )
+        assert out[0]["label"] == "Export · TikTok"
+        assert out[1]["label"] == "Export · Shorts"
+
+    def test_export_targets_not_leaked_into_merged_params(self):
+        # The control field that drove the fan-out is consumed, not forwarded to
+        # the export handler (which has no use for it).
+        steps = [{"method": "shortmaker.export", "params": {"exportTargets": ["tiktok"]}}]
+        out = templates.expand_export_steps(steps, {}, _presets(_preset("tiktok")))
+        assert "exportTargets" not in out[0]["params"]
+
+    def test_multiple_export_steps_each_fan_out(self):
+        steps = [
+            {"method": "shortmaker.export", "params": {"exportTargets": ["tiktok", "shorts"]}, "label": "A"},
+            {"method": "shortmaker.export", "params": {"exportTargets": ["reels"]}, "label": "B"},
+        ]
+        presets = _presets(_preset("tiktok"), _preset("shorts"), _preset("reels"))
+        out = templates.expand_export_steps(steps, {}, presets)
+        assert len(out) == 3
+        assert [s["params"]["presetId"] for s in out] == ["tiktok", "shorts", "reels"]
+
+    def test_partial_preset_only_merges_present_fields(self):
+        # A preset missing a control field (e.g. reframeEngine) must NOT inject a
+        # key — only the fields actually present override defaultControls.
+        steps = [{"method": "shortmaker.export", "params": {"exportTargets": ["bare"]}}]
+        bare = {"id": "bare", "label": "Bare", "maxSec": 40}
+        out = templates.expand_export_steps(steps, {"reframeEngine": "auto"}, {"bare": bare})
+        assert out[0]["params"]["maxSec"] == 40
+        # reframeEngine stays the default-controls value (preset didn't carry one).
+        assert out[0]["params"]["reframeEngine"] == "auto"
+        assert "aspect" not in out[0]["params"]
+
+    def test_source_step_params_preserved_alongside_preset_merge(self):
+        # Non-fan-out params on the export step (e.g. a $N.key ref) survive.
+        steps = [
+            {
+                "method": "shortmaker.export",
+                "params": {"exportTargets": ["tiktok"], "videoId": "v1", "trackId": "$0.track.id"},
+            }
+        ]
+        out = templates.expand_export_steps(steps, {}, _presets(_preset("tiktok")))
+        assert out[0]["params"]["videoId"] == "v1"
+        assert out[0]["params"]["trackId"] == "$0.track.id"
