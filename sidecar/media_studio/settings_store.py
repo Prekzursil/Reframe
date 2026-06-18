@@ -77,6 +77,22 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # WU-presets first-run local-vs-cloud chooser (PLAN P1 #6): False until the
     # user picks; while False the routing default is privacy/all-local (no egress).
     "firstRunChoiceMade": False,
+    # ---- UX / QoL bundle (WU-0): additive foundation keys ------------------
+    # The renderer's last-opened source video, restored on launch (WU-13). Empty
+    # until the user opens a video; the restore path tolerates a stale/deleted id.
+    "lastOpenedVideoId": "",
+    # Workspace autosave (WU-11/§autosave): the renderer debounces ``project.save``
+    # while ``enabled``. Pure config — no sidecar behavior beyond this default key.
+    "autosave": {"enabled": True, "debounceMs": 1500},
+    # Export defaults (WU-11): the pre-selected subtitle/NLE formats + fps the
+    # export UI offers first. ``subtitleFormat`` in {srt,vtt,...}; ``nleFormat`` in
+    # {edl,fcpxml,...}; ``nleFps`` the timeline frame rate. Pure data.
+    "exportDefaults": {"subtitleFormat": "srt", "nleFormat": "edl", "nleFps": 30},
+    # Saved export/pipeline presets (WU-10/WU-11): ``presets`` is a name->preset
+    # map; ``active`` is the last-applied preset name. NOTE: ``settings.set`` is a
+    # SHALLOW top-level merge — writing ``savePresets`` REPLACES the whole block,
+    # so WU-10/WU-11 must read-modify-write the full block to preserve ``presets``.
+    "savePresets": {"presets": {}, "active": ""},
 }
 
 # The config file name inside the resolved app config directory.

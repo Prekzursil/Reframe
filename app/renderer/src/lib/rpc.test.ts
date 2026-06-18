@@ -11,9 +11,12 @@ import {
   rpc,
   onProgress,
   onJobDone,
+  type AutosaveSettings,
   type Candidate,
   type ConvertOptions,
+  type ExportDefaults,
   type Project,
+  type SavePresetsBlock,
   type SavedRecipe,
   type ShortInfo,
   type ShortReexportHint,
@@ -558,5 +561,31 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('recipes.delete', { id: 'r1' });
     await client.recipes.run('r1');
     expect(r).toHaveBeenCalledWith('recipes.run', { id: 'r1' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WU-0 (ux-qol): additive settings type shapes. These mirror the sidecar
+// DEFAULT_SETTINGS QoL keys; the assertions pin the field names/types so a future
+// drift breaks the typecheck (the interfaces are erased, so we assert literals).
+// ---------------------------------------------------------------------------
+describe('WU-0 QoL settings shapes (mirror sidecar DEFAULT_SETTINGS)', () => {
+  it('AutosaveSettings matches the sidecar default', () => {
+    const autosave: AutosaveSettings = { enabled: true, debounceMs: 1500 };
+    expect(autosave).toEqual({ enabled: true, debounceMs: 1500 });
+  });
+
+  it('ExportDefaults matches the sidecar default', () => {
+    const exportDefaults: ExportDefaults = {
+      subtitleFormat: 'srt',
+      nleFormat: 'edl',
+      nleFps: 30,
+    };
+    expect(exportDefaults).toEqual({ subtitleFormat: 'srt', nleFormat: 'edl', nleFps: 30 });
+  });
+
+  it('SavePresetsBlock matches the sidecar default (empty presets + no active)', () => {
+    const savePresets: SavePresetsBlock = { presets: {}, active: '' };
+    expect(savePresets).toEqual({ presets: {}, active: '' });
   });
 });

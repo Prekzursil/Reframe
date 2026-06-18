@@ -346,6 +346,36 @@ export interface FirstRunResponse {
   routing?: RoutingBlock;
 }
 
+// ---------------------------------------------------------------------------
+// UX / QoL bundle (WU-0): additive settings shapes downstream WUs consume.
+// These mirror the sidecar DEFAULT_SETTINGS QoL keys (settings_store.py) and are
+// purely additive — they never widen or break the existing settings surface.
+// ---------------------------------------------------------------------------
+
+/** Workspace autosave config (WU-11): the renderer debounces `project.save`. */
+export interface AutosaveSettings {
+  enabled: boolean;
+  debounceMs: number;
+}
+
+/** Pre-selected export formats the export UI offers first (WU-11). */
+export interface ExportDefaults {
+  subtitleFormat: string;
+  nleFormat: string;
+  nleFps: number;
+}
+
+/**
+ * Saved export/pipeline presets (WU-10/WU-11). `presets` is a name->preset map;
+ * `active` is the last-applied preset name. NOTE: the sidecar `settings.set` is a
+ * SHALLOW top-level merge — writing `savePresets` REPLACES the whole block, so a
+ * partial update must read-modify-write the full block to preserve `presets`.
+ */
+export interface SavePresetsBlock {
+  presets: Record<string, unknown>;
+  active: string;
+}
+
 /**
  * system-advanced saved pipeline recipe — field names FROZEN, identical to the
  * sidecar `recipes.normalize_recipe` shape. A `Step` names an existing RPC
