@@ -27,7 +27,7 @@ These were re-verified against the working tree on this branch so WUs build on f
 | Function routing + task tiers | **G-A2** | `FUNCTIONS=("select","subtitles","translation","vision","editPlan")` (`presets.py:59`); `_REQUIRED_CAPABILITY` defaults "text", vision="vision" (`presets.py:68-69`); `_FUNCTION_TASK_NAMES` maps each function→catalog `Task` (`presets.py:225-231`); `_function_prefer` reads `routing.perFunction[fn].provider` (`handlers.py:553-573`). Adding `"index"` requires a row in all three. |
 | Feature register pattern | — | Feature modules expose `register(*, ..., register_fn=None) -> Service`; `register_fn` defaults to `protocol.register`, tests inject a fake (e.g. `shorts.py:463`, `diarize.py:374`). `register_all` (`handlers.py:1982`) is the ONE call site. New modules follow this. |
 | Job-envelope wiring | — | `_run_ai_job` (`handlers.py:1617`) is the one place a handler plans+runs+budget-gates an envelope; `plan_ai_job_envelope` (`:1601`). Custom `work` body = `AiWork=Callable[[ctx,AiJob,provider],dict]` (`ai_job.py:261`, driven `:311`). |
-| Gate commands (CI = ground truth) | **G-GEN** | From `.github/workflows/quality.yml`: pre-commit (ruff+oxlint+biome+gitleaks) `pre-commit run --all-files`; tsc `cd app && npx tsc --noEmit`; basedpyright `basedpyright`; pytest `cd sidecar && python -m pytest --cov=media_studio --cov-branch --cov-fail-under=100`; vitest `cd app && npx vitest run --coverage` (thresholds:100 in vitest config); opengrep SAST. |
+| Gate commands (CI = ground truth) | **G-GEN** | From `.github/workflows/quality.yml`: pre-commit (ruff+oxlint+biome+gitleaks) `pre-commit run --all-files`; tsc `cd app && npx tsc --noEmit`; basedpyright `basedpyright`; pytest `cd sidecar && python -m pytest --cov=media_studio --cov-branch --cov-fail-under=100`; vitest `cd app && npx vitest run --coverage` (thresholds:100 in vitest config); opengrep SAST (gate:4); **osv-scanner deps (gate:6 — `osv-scanner scan source --config=osv-scanner.toml --no-resolve --lockfile=app/package-lock.json --lockfile=app/render-cli/package-lock.json --lockfile=sidecar/requirements.lock.txt`, `quality.yml:110-117`)**. |
 
 **Renderer note:** the renderer sources live at `app/renderer/src/...` but the
 Node toolchain root is `app/` (CI runs `npm ci`, `npx tsc`, `npx vitest` with
@@ -205,6 +205,14 @@ write the JPEG/PNG via `shorts.thumbnail_path`; record `thumbnailFrameSec`.
 `reg("thumbnail.select", ...)` in `register_all`), `sidecar/media_studio/features/
 shorts.py` (add `write_metadata`/`thumbnailFrameSec` if absent — verified absent §0),
 `sidecar/tests/test_handlers_thumbnail.py`, `sidecar/tests/test_shorts.py` (extend).
+**Scope note — `settings.autoThumbnail` (DESIGN §3.4).** DESIGN names an optional
+`settings.autoThumbnail` (bool) to auto-run best-frame at the end of
+`shortmaker.export`, **default off in MVP**. This bundle delivers ONLY the explicit
+per-clip `thumbnail.select` action (handler here + the WU-C4 button); the
+auto-on-export wiring is **explicitly OUT of this MVP bundle** (the setting would
+default off anyway, so it ships no user-visible behavior). Flagged follow-up: add
+the `settings.autoThumbnail` default + an opt-in hook in `shortmaker.export` to
+call `thumbnail.select` post-export. No PLAN WU implements it.
 **Reuse (the EXACT decision tree, DESIGN §3.2).** `_resolve_vlm_reranker`-style
 resolver (`handlers.py:670`): frame-consented cloud pool first
 (`_vision_pool(_frame_consented_vision_settings(...))` `:597/:624`) → local weights
@@ -312,29 +320,56 @@ provider transport).
 **Gate.** `cd sidecar && python -m pytest --cov=media_studio --cov-branch --cov-fail-under=100`.
 **Dep.** WU-0. (Parallelisable with WU-A1.)
 
-### WU-A3 — `"index"` function + EMBED task tier — resolves **G-A2** (+ G-A3 asset)
+### WU-A3 — `"index"` function + task-tier mapping — resolves **G-A2** (+ G-A3 asset)
 **Goal.** Make embeddings a first-class routable function and pin a local
 embedding asset.
+
+**DECISION (sizing the blast radius — this WU takes the smaller, buildable path).**
+The catalog `Task` enum has exactly five members (`catalog.py:36-40`:
+`MOMENT_FIND/CAPTION/TRANSLATION/VISION/EDIT_PLAN`) and `_tiers(t1..t5)` is a
+**positional 5-arg** builder (`catalog.py:135-149`) called by **all 13** frozen
+seed rows (`per_task_tier=_tiers(...)` ×13, `catalog.py`). The adapter resolves
+each function's task with a **bracket** lookup `entry.per_task_tier[task]`
+(`presets.py:252`, via `_catalog.Task[name]` `:273`) — NOT `.get` — so a brand-new
+`Task.EMBED` would `KeyError` at `_AdaptedEntry.__init__` (`presets.py:252`) for
+**every** row, breaking `apply_preset` for **all** presets, not just `index`.
+Adding a real `EMBED` tier would therefore require: extend `Task` (`:36`), extend
+`_tiers` to a 6th positional arg (`:135`), add an EMBED column + grade to **all 13**
+seed rows, and update `recommended_for`/`order_by`/serialization
+(`catalog.py:128,132,449`) + their tests. That is a multi-file catalog rewrite
+disproportionate to an MVP routing seam. **PLAN therefore reuses an EXISTING text
+task: `_FUNCTION_TASK_NAMES["index"] = "MOMENT_FIND"`** (the primary text-capable
+task; every text-capable seed row already grades it, so the bracket lookup
+resolves with zero catalog edits). This keeps `index` routable today; promoting it
+to a dedicated `EMBED` tier (better embedding-specific ranking) is a flagged
+post-MVP follow-up that owns the full catalog change above.
+
 **Files.** `sidecar/media_studio/models/presets.py` (add `"index"` to `FUNCTIONS`
 `:59`, `_REQUIRED_CAPABILITY["index"]="text"` `:68`, `_FUNCTION_TASK_NAMES["index"]
-="EMBED"` `:225`), `sidecar/media_studio/models/catalog.py` (new `EMBED` task tier
-— or reuse the text tier for MVP, decided here = **add EMBED**),
+="MOMENT_FIND"` `:225` — an EXISTING `Task`, so no `catalog.py` change is needed),
 `sidecar/media_studio/assets/manifest.py` (register a small local embedder
 `AssetEntry` via `register_asset` `:134`, mirroring whisper/qwen `:181/:188`),
-`sidecar/tests/test_presets.py`, `sidecar/tests/test_catalog.py`,
-`sidecar/tests/test_manifest.py` (extend each).
+`sidecar/tests/test_presets.py`, `sidecar/tests/test_manifest.py` (extend each).
+**NOT touched:** `catalog.py` (no new `Task`/`_tiers`/seed-row columns — see DECISION).
 **Reuse.** `register_asset`/`get_asset` (`manifest.py:134/156`); the existing
-`hf`/`download`/`env` installer machinery (no new installer type).
+`hf`/`download`/`env` installer machinery (no new installer type); the existing
+`Task.MOMENT_FIND` grades already present on all 13 seed rows.
 **Test strategy.** Assert `"index"` appears in `FUNCTIONS`, has required-capability
-"text", maps to the `EMBED` task; catalog ranks an embedding-capable entry under
-EMBED; the new asset is retrievable via `get_asset` with a pinned sha. All pure.
+"text", maps to the `MOMENT_FIND` task; `apply_preset` produces an `index` route
+for every preset (the bracket lookup at `presets.py:252` resolves because every
+text-capable row already grades `MOMENT_FIND` — this is the AC-(b) falsifier);
+the new asset is retrievable via `get_asset` with a pinned sha. All pure.
 **AC.**
-- (a) `presets.FUNCTIONS` contains `"index"` and `_FUNCTION_TASK_NAMES["index"]=="EMBED"` — FALSIFIABLE.
-- (b) `apply_preset` produces a `routing.perFunction["index"]` route for each preset (local under privacy).
+- (a) `presets.FUNCTIONS` contains `"index"` and `_FUNCTION_TASK_NAMES["index"]=="MOMENT_FIND"` (an existing `catalog.Task` member) — FALSIFIABLE.
+- (b) `apply_preset` produces a `routing.perFunction["index"]` route for **every** preset with NO `KeyError` at `_AdaptedEntry.__init__` (`presets.py:252`) — i.e. the chosen task resolves against all 13 seed rows' `per_task_tier` (local route under privacy). FALSIFIABLE: a missing/foreign `Task` raises and fails this.
 - (c) `get_asset(<embedder name>)` returns a registered `AssetEntry` with a non-empty sha + installer.
 - (d) 100% line+branch on the changed modules.
 **Gate.** `cd sidecar && python -m pytest --cov=media_studio --cov-branch --cov-fail-under=100`.
 **Dep.** WU-0. (Parallelisable with WU-A1/A2.)
+**Follow-up (flagged, out of bundle).** Dedicated `EMBED` task tier: extend
+`Task` (`catalog.py:36`), `_tiers` → 6th arg (`:135`), add an EMBED grade column to
+all 13 seed rows + update `best_grade_score`/`grade_for`/serialization
+(`:128,132,449`) and tests. Improves embedding-specific ranking; not required for MVP routing.
 
 ### WU-A4 — `features/semantic_index.py` (PURE core)
 **Goal.** Build the segment corpus from a `Transcript`; cosine top-K against a
@@ -367,12 +402,28 @@ text-consent seam + existing budget ack.
 **Decision (resolving DESIGN §1.4 deferral).** Vectors persist to a **sidecar
 file** `projects/<videoId>.index.json` (`{model,dim,builtAt,vectors:[...]}`), NOT
 the manifest body, to keep the manifest small.
+**Decision (resolving DESIGN §1.3 "direct-return vs job — decide in PLAN").**
+`index.build` is a **long job** (custom `work` body via `_run_ai_job`
+`handlers.py:1617`; `done.result = {segmentCount, model, builtAt, dim}`).
+`index.search` and `index.status` are **direct-return** RPCs (no job/envelope):
+`index.search` makes ONE short query-embedding call then a pure cosine over
+already-persisted vectors, so an inline cloud round-trip is acceptable and a job
+envelope would add latency for no cancel/degrade benefit; `index.status` is a pure
+file read. **Because `index.search`'s inline query embedding is itself a cloud
+egress when routed to cloud (DESIGN §1.3/§1.5), the direct-return path is NOT a
+silent provider call: it builds its embedder pool through `_text_consented_settings`
+(WU-A1) and routes the call through `_enforce_cloud_budget_ack`
+(`handlers.py:1672`) — the SAME text-consent + budget gate as `index.build`.**
 **Reuse.** `_run_ai_job` (`handlers.py:1617`) for `index.build`'s embedding call
 (`capability="text"`, custom `work` body); `_text_consented_settings` (WU-A1) at
 `index` pool build so transcript text drops non-consented entries per-entry;
-`_enforce_cloud_budget_ack` (`handlers.py:1672`) for the budget gate;
-`_ai_cache` (`handlers.py:1570`) for the query embedding; `_function_prefer
-("index")` (`:553`) for routing; transcript from `project.data["transcript"]`
+`_enforce_cloud_budget_ack` (`handlers.py:1672`) for the budget gate — applied to
+the `index.build` job AND to the direct-return `index.search` query embedding (per
+the §1.3 decision above); `_text_consented_settings` (WU-A1) at the `index.search`
+pool build too, so the inline query egress also drops non-consented entries
+per-entry (rotation-safe); `_ai_cache` (`handlers.py:1570`) for the query
+embedding; `_function_prefer("index")` (`:553`) for routing; transcript from
+`project.data["transcript"]`
 (`handlers.py:1069`); `semantic_index.search` (WU-A4) + `embedder.embed` (WU-A2).
 `index.search` over an unbuilt index returns a typed INVALID_PARAMS "build the
 index first" mirroring `subtitles_generate` (`handlers.py:733`).
@@ -380,13 +431,19 @@ index first" mirroring `subtitles_generate` (`handlers.py:733`).
 (consent on/off; cloud vs local route). Cover: build job happy path (vectors
 persisted, status reflects built), build with cloud route + text-consent denied
 → non-consented entry DROPPED (rotation-safe), build with budget-ack required,
-search built (top-K hits), search unbuilt (typed "build first"), search query
-embedding is a cache hit on repeat, status before/after build, idempotent rebuild
-overwrites. Persistence uses tmp_path (no real network).
+search built (top-K hits), **search with a cloud `index` route + text-consent
+DENIED → the query text never reaches the non-consented provider (per-entry filter
+on the search path)**, **search with a cloud route + `confirmCloudBudget` on and no
+ack → typed budget-ack error before any egress / with ack → proceeds**, search
+unbuilt (typed "build first"), search query embedding is a cache hit on repeat,
+status before/after build, idempotent rebuild overwrites. Persistence uses tmp_path
+(no real network).
 **AC.**
 - (a) `index.build`/`index.search`/`index.status` all registered in `register_all` — FALSIFIABLE via registry introspection.
 - (b) After `index.build`, `index.status` returns `{built:true, segmentCount==len(segments), model, builtAt, dim}` and the sidecar JSON exists — FALSIFIABLE.
-- (c) With a cloud `index` route and text consent DENIED for a provider, that provider never receives transcript text (per-entry filter from WU-A1) — FALSIFIABLE via spy.
+- (c) On the `index.build` path: with a cloud `index` route and text consent DENIED for a provider, that provider never receives transcript text (per-entry filter from WU-A1) — FALSIFIABLE via spy.
+- (c2) **On the `index.search` path (privacy-critical, G-A5): with a cloud `index` route and text consent DENIED for a provider, the inline query-embedding egress never delivers the query text to that non-consented provider** — FALSIFIABLE via a spy on the (fake) embedder/transport asserting the non-consented entry receives no call. (Mirrors (c) for the search egress DESIGN §1.3/§1.5 elevated to a named safety requirement.)
+- (c3) **On the `index.search` path: when `confirmCloudBudget` is on and the call lacks the `confirmCloudBudget`/`confirmBudget` ack, the query embedding does NOT egress and a typed budget-ack error is raised (via `_enforce_cloud_budget_ack` `handlers.py:1672`); with the ack present the search proceeds** — FALSIFIABLE: a fake provider asserts zero calls in the unacked case, ≥1 in the acked case.
 - (d) `index.search` on an unbuilt video returns the typed "build the index first" error (not an empty list, not a crash).
 - (e) A repeated identical `index.search` query embedding is served from cache (embedder embed-call count does not increase).
 - (f) Rebuild overwrites the sidecar (idempotent), `builtAt` advances.
@@ -425,17 +482,20 @@ built (CTA + disabled box), building (progress + disabled), built+results
 ---
 
 ## WU-FINAL — Full-bundle gate + docs
-**Goal.** One pass of every BLOCKING gate across the whole bundle; update any
+**Goal.** One pass of **every** BLOCKING gate across the whole bundle (all 6 CI
+gate groups in `.github/workflows/quality.yml` — gate:1+5 lint/format/secrets,
+gate:2 types, gate:3 tests+coverage, gate:4 SAST, gate:6 deps); update any
 user-facing docs (no feature code).
 **Test strategy.** Run the entire CI gate set locally (the §0 commands) green.
 **AC.**
-- (a) `pre-commit run --all-files` clean.
-- (b) `cd app && npx tsc --noEmit` + `cd app/render-cli && npx tsc -p . --noEmit` clean.
-- (c) `basedpyright` clean.
-- (d) `cd sidecar && python -m pytest --cov=media_studio --cov-branch --cov-fail-under=100` passes.
-- (e) `cd app && npx vitest run --coverage` passes (thresholds:100).
-- (f) `opengrep scan --config .quality/opengrep --error ... app sidecar` clean.
-**Gate.** all of the above (the §0 CI command set). NEVER `--no-verify`; NEVER `git add -A` (stage only the WU's declared files; verify `git diff --cached --name-only` before each commit).
+- (a) `pre-commit run --all-files` clean (gate:1 + gate:5 — ruff/oxlint/biome/gitleaks).
+- (b) `cd app && npx tsc --noEmit` + `cd app/render-cli && npx tsc -p . --noEmit` clean (gate:2).
+- (c) `basedpyright` clean (gate:2).
+- (d) `cd sidecar && python -m pytest --cov=media_studio --cov-branch --cov-fail-under=100` passes (gate:3).
+- (e) `cd app && npx vitest run --coverage` passes (thresholds:100) (gate:3).
+- (f) `opengrep scan --config .quality/opengrep --error ... app sidecar` clean (gate:4).
+- (g) **`osv-scanner scan source --config=osv-scanner.toml --no-resolve --lockfile=app/package-lock.json --lockfile=app/render-cli/package-lock.json --lockfile=sidecar/requirements.lock.txt` reports 0 actionable CVEs (gate:6 — `gate-deps osv-scanner`, `quality.yml:110-117`).** This bundle is docs-only on `feat/intelligence-design`; the BUILD branch adds NO new runtime dependency, so no lockfile changes are expected — but WU-FINAL still runs this gate to honor the "every BLOCKING gate" claim, and any incidental lockfile churn must pass it.
+**Gate.** all of (a)-(g) (the full CI command set — all 6 gate groups). NEVER `--no-verify`; NEVER `git add -A` (stage only the WU's declared files; verify `git diff --cached --name-only` before each commit).
 **Dep.** all WUs.
 
 ---
@@ -450,7 +510,7 @@ WU-0 (branch + green baseline)
  │
  └─ A  ── WU-A1 (text-consent seam, G-A5) ─┐
           WU-A2 (embedder seam, G-A1) ─────┤
-          WU-A3 ("index" fn + EMBED + asset)┤
+          WU-A3 ("index" fn + task map + asset)┤
           WU-A4 (semantic_index PURE) ──────┴── WU-A5 (index.* handlers + persistence) ── WU-A6 (renderer search)
                                                               ▲
                                           (A5 needs A1,A2,A3,A4)
@@ -472,8 +532,8 @@ Critical path (longest): `WU-0 → WU-A1/A2/A3/A4 (parallel) → WU-A5 → WU-A6
   register_all / rpc.ts edits and use scoped `git add <files>` (never `git add -A`);
   verify `git diff --cached --name-only` before every commit.
 - **Within Capability A, WU-A1/A2/A3/A4 are mutually independent** (consent.py /
-  embedder.py / presets+catalog+manifest / semantic_index.py — disjoint files) and
-  fan out 4-wide; they all converge at WU-A5.
+  embedder.py / presets+manifest / semantic_index.py — disjoint files; WU-A3 does
+  NOT touch catalog.py per its DECISION) and fan out 4-wide; they all converge at WU-A5.
 - **Renderer WUs (B3, C4, A6) can be authored in parallel with their sidecar
   handler WUs** against a mocked `rpc`, then integration-verified once the handler
   lands. They share only `rpc.ts` (serialize that one file's edits).
@@ -491,7 +551,8 @@ Critical path (longest): `WU-0 → WU-A1/A2/A3/A4 (parallel) → WU-A5 → WU-A6
 | Renderer types | `cd app && npx tsc --noEmit` (+ `cd app/render-cli && npx tsc -p . --noEmit`) |
 | Sidecar types | `basedpyright` |
 | Lint/format/secrets (ruff+oxlint+biome+gitleaks) | `pre-commit run --files <changed files>` (full: `pre-commit run --all-files`) |
-| SAST | `opengrep scan --config .quality/opengrep --error --exclude .venv --exclude node_modules --exclude dist --exclude out app sidecar` |
+| SAST (gate:4) | `opengrep scan --config .quality/opengrep --error --exclude .venv --exclude node_modules --exclude dist --exclude out app sidecar` |
+| Deps / CVEs (gate:6) | `osv-scanner scan source --config=osv-scanner.toml --no-resolve --lockfile=app/package-lock.json --lockfile=app/render-cli/package-lock.json --lockfile=sidecar/requirements.lock.txt` (run in WU-FINAL; docs-only bundle expects no lockfile changes) |
 
 Every COMMIT runs the lane-relevant subset; WU-FINAL runs the full set. Stage only
 the WU's declared files (`git add <paths>`); confirm `git diff --cached --name-only`
