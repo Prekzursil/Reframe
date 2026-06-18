@@ -310,6 +310,36 @@ class Services:
         """
         return self.settings.set(dict(params))
 
+    def paths_describe(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``paths.describe()`` -> the resolved on-disk data layout. Direct-return.
+
+        WU-1 (read-only): surfaces WHERE everything lives so the renderer can SHOW
+        the data layout (today it can only fetch the root via ``dataFolder.get``).
+        A PURE path-join: no I/O, nothing is created, nothing is read from disk, so
+        repeated calls are identical. Derives the dirs from
+        :attr:`data_dir`/:attr:`projects_dir`/:attr:`exports_dir` and the file
+        paths from the injected stores' own path attributes (robust to a custom
+        settings/library location). ``subDirs`` names the per-feature derivative
+        folders the sidecar writes into — ``dubs`` under the data dir; the
+        ffmpeg-derivative folders (``shorts``/``stabilized``/``audiomix``/``trimmed``)
+        under the exports root, matching ``register_all``'s wiring. NO key/secret
+        string ever appears in this payload (it is layout-only).
+        """
+        return {
+            "dataDir": str(self.data_dir),
+            "projectsDir": str(self.projects_dir),
+            "exportsDir": str(self.exports_dir),
+            "settingsPath": str(self.settings.config_path),
+            "libraryPath": str(self.library.index_path),
+            "subDirs": {
+                "dubs": str(self.data_dir / "dubs"),
+                "shorts": str(self.exports_dir / "shorts"),
+                "stabilized": str(self.exports_dir / "stabilized"),
+                "audiomix": str(self.exports_dir / "audiomix"),
+                "trimmed": str(self.exports_dir / "trimmed"),
+            },
+        }
+
     # ===================================================================== #
     # providers.* (WU-keys: user-brings keys; RPC is key-free / redacted)
     # ===================================================================== #
@@ -2003,6 +2033,9 @@ def register_all(
 
     reg("settings.get", svc.settings_get)
     reg("settings.set", svc.settings_set)
+
+    # WU-1: read-only data-layout describe (no I/O, no secrets, idempotent).
+    reg("paths.describe", svc.paths_describe)
 
     reg("transcribe.start", svc.transcribe_start)
 
