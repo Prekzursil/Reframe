@@ -259,6 +259,36 @@ class Services:
         ok = self.library.remove(video_id)
         return {"ok": bool(ok)}
 
+    def library_thumbnail(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``library.thumbnail({id})`` -> ``{thumbnailPath}``. Direct-return.
+
+        WU-2: extract a poster from a SOURCE library video by reusing the shorts
+        ffmpeg poster engine, persist ``thumbnailPath`` onto the Video, and return
+        it. Idempotent: an existing ``data_dir/thumbnails/<id>.jpg`` short-circuits
+        (the runner is NOT invoked again). The ffmpeg ``run`` seam is the SAME
+        injectable one ``shorts.thumbnail`` uses — never ``subprocess`` directly —
+        so tests fake it (no real ffmpeg).
+        """
+        video_id = _require_str(params, "id")
+        in_path = self._resolve_video_path(video_id)
+        if not in_path:
+            raise _invalid(f"unknown video: {video_id}")
+        out = self.data_dir / "thumbnails" / f"{video_id}.jpg"
+        if out.exists():
+            self.library.set_thumbnail(video_id, str(out))
+            return {"thumbnailPath": str(out)}
+        out.parent.mkdir(parents=True, exist_ok=True)
+        run = self._ffmpeg_run or _self_ffmpeg_run()
+        argv = _shorts_meta.build_thumbnail_argv(in_path, str(out), self.settings.get())
+        code = run(argv, total_sec=0.0)
+        if code != 0:
+            raise RpcError(
+                f"ffmpeg exited with code {code} extracting a thumbnail for {video_id}",
+                ErrorCode.INTERNAL_ERROR,
+            )
+        self.library.set_thumbnail(video_id, str(out))
+        return {"thumbnailPath": str(out)}
+
     # ===================================================================== #
     # project.*
     # ===================================================================== #
@@ -2028,6 +2058,7 @@ def register_all(
     reg("library.list", svc.library_list)
     reg("library.add", svc.library_add)
     reg("library.remove", svc.library_remove)
+    reg("library.thumbnail", svc.library_thumbnail)
 
     reg("project.open", svc.project_open)
     reg("project.save", svc.project_save)
