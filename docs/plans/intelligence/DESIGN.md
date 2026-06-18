@@ -35,7 +35,7 @@ bundle adds NO second AI path; it plugs into these exact seams:
 | Local-server detect | `models/local_detect.py:107` `detect_local_servers` (Ollama `:11434`, LM Studio `:1234` via `GET /models`) | what local engines are actually running |
 | Asset manifest | `assets/manifest.py:61` `AssetEntry`, `:134` `register_asset`, `:156` `get_asset`; day-1 `whisper-large-v3-turbo` `:181` + `qwen3-4b-gguf` `:188`; `hf`/`download`/`env` installers | how a new model weight is pinned + installed |
 | Transcript shape (the index source) | `features/transcribe.py:5-7` `Word={text,start,end}` · `Segment={start,end,text,words}` · `Transcript={language,segments,durationSec}`; persisted onto the project manifest at `handlers.py:1069` (`project.data["transcript"]`) | the text we embed |
-| Renderer RPC client + types | `app/renderer/src/lib/rpc.ts` (typed `rpc(method,…)`, `Transcript`/`Candidate`/`AdvisorReport` interfaces `:32/:87/:243`); panels `app/renderer/src/panels/ModelsSystemPanel.tsx`; features `app/renderer/src/features/ShortMaker.tsx`, `Workspace.tsx`, `Transcribe.tsx` | where the UI calls land |
+| Renderer RPC client + types | `app/renderer/src/lib/rpc.ts` (typed `rpc(method,…)`, `Transcript`/`Candidate`/`AdvisorReport` interfaces `:32/:87/:243`); panels `app/renderer/src/panels/ModelsSystemPanel.tsx`; views `app/renderer/src/views/Workspace.tsx`; features `app/renderer/src/features/ShortMaker.tsx`, `Transcribe.tsx`, `ProducedShorts.tsx` | where the UI calls land |
 
 ---
 
@@ -57,8 +57,9 @@ the existing short-maker: a semantic query becomes a candidate seed.
   model, builtAt}`.
 - Local-first: embeddings run on the **local** route by default (privacy preset),
   so the default install never egresses transcript text.
-- Renderer: a search box in `Workspace.tsx` (transcript view) that lists hits and
-  seeks the player on click.
+- Renderer: a search box in `Workspace.tsx`
+  (`app/renderer/src/views/Workspace.tsx`, transcript view) that lists hits.
+  Each hit is keyboard-activatable and seeks the player (see §1.6 a11y).
 
 **Explicitly OUT of MVP:** approximate-NN/FAISS (linear cosine is fine for a
 single video's few-thousand segments), cross-video search, embedding of
@@ -75,9 +76,22 @@ non-transcript media, query rewriting.
   added to `presets.FUNCTIONS` (`presets.py:59`) and `_REQUIRED_CAPABILITY`
   (`presets.py:68`) so the user can route embeddings to local / a cloud
   embeddings provider exactly like every other function.
-- Consent + budget: text-consent + `confirmCloudBudget` ack already gate any
-  cloud egress via `_enforce_cloud_budget_ack` (`handlers.py:1672`) — embeddings
-  ride it unchanged.
+- Budget: `confirmCloudBudget` ack already gates any cloud egress via
+  `_enforce_cloud_budget_ack` (`handlers.py:1672`) — embeddings ride the budget
+  pre-flight unchanged (the cost gate fires because `_ai_pool()` includes the
+  configured cloud providers, so `willEgress=bool(cost.providers)`).
+- Consent (NEW seam — see Gap G-A5): **the substrate does NOT yet privacy-gate
+  transcript-text egress.** `consent.text_consent_granted` (`consent.py:85`) and
+  `DATA_TYPE_TEXT` (`consent.py:37`) exist but are dead code — verified called
+  nowhere in `sidecar/` outside their own module + its tests; there is **no**
+  `require_text_consent` and **no** `_text_consented_settings` pool filter
+  analogous to the frame path (`handlers.py:597`
+  `_frame_consented_vision_settings` is the only consent-aware pool filter). So
+  the existing text-egress functions (translation/select/subtitles) are guarded
+  by the *cost* ack only, not by a privacy/consent gate. Embeddings of a full
+  transcript are the most sensitive bulk-PII egress in this bundle (a 90-min
+  transcript far exceeds 8 sampled frames), so this capability **adds the missing
+  seam** rather than inheriting a non-existent one (see Sec. 1.5 + G-A5).
 - The cosine primitive ALREADY exists: `features/diarize.py:75`
   `cosine_similarity(a,b)` (with length-mismatch guard). The search ranker reuses
   it directly rather than re-deriving.
@@ -98,7 +112,7 @@ non-transcript media, query rewriting.
   `Services` + their `reg(...)` lines in `register_all`.
 
 **NEW (renderer):** `app/renderer/src/features/SemanticSearch.tsx` (+ test) and a
-mount point in `Workspace.tsx`; `rpc.ts` gets `IndexHit` / `IndexStatus` types and
+mount point in `Workspace.tsx` (`app/renderer/src/views/Workspace.tsx`); `rpc.ts` gets `IndexHit` / `IndexStatus` types and
 the three method signatures.
 
 ### 1.3 RPC surface
@@ -107,8 +121,10 @@ New `index.*` methods, registered in `register_all` (`handlers.py:1982`):
   {segmentCount, model, builtAt}`.
 - `index.search({videoId, query, topK?=8})` → `{hits:[{segmentIndex, start, end,
   text, score}]}` — embeds the query (cache-keyed), cosine vs stored vectors,
-  returns top-K. Direct-return (one short embedding call; or job if a cloud
-  round-trip is undesirable inline — decide in PLAN).
+  returns top-K. The query embedding, when routed to cloud, is a (small) egress
+  and MUST pass the same text-consent + budget path as `index.build` (it is NOT a
+  silent direct provider call). Direct-return (one short embedding call; or job if
+  a cloud round-trip is undesirable inline — decide in PLAN).
 - `index.status({videoId})` → `{built, segmentCount, model, builtAt, dim}`.
 
 Renderer surface: `rpc('index.build'|'index.search'|'index.status', …)` via the
@@ -131,11 +147,63 @@ typed client (`rpc.ts`), progress via the existing `onProgress`/`onJobDone`.
 - Read-only over the transcript; building writes only the index sidecar (delete
   to revert; `index.build` is idempotent — rebuild overwrites).
 - Cloud egress (sending transcript text to a cloud embeddings API) is gated by
-  **text consent** per provider and `confirmCloudBudget` ack — same gate as
-  translation. Default privacy preset → local embeddings → zero egress.
+  TWO checks: (1) a **NEW per-entry text-consent filter** that this capability
+  introduces — `consent.require_text_consent` + a `_text_consented_settings`
+  pool filter (the text-side analog of `_frame_consented_vision_settings`,
+  `handlers.py:597`) that drops any non-text-consented provider entry **at pool
+  build time**, so a 429 failover can never rotate transcript text onto a
+  provider the user did not consent to; and (2) the existing `confirmCloudBudget`
+  ack via `_enforce_cloud_budget_ack` (`handlers.py:1672`). Honest substrate
+  state: the consent gate is NEW (G-A5) — `text_consent_granted` exists today
+  (`consent.py:85`) but is unused, so without this seam transcript text would
+  egress on any cloud route once a key is configured, defeating the
+  "default install never egresses transcript text" promise. The MVP MUST ship
+  this seam (or, per G-A5, route `index` local-only and document that cloud
+  `index` is unavailable until the seam lands) — it must NOT be hand-waved as
+  inherited. Default privacy preset → local embeddings → zero egress regardless.
+- `index.search`'s inline query embedding is itself a (small) cloud egress when
+  routed to cloud; it flows through the SAME text-consent + budget path described
+  above (not a silent direct provider call) — see §1.3.
 - `index.search` over a not-yet-built index returns a typed
   `INVALID_PARAMS`-style "build the index first" (mirrors
   `subtitles_generate`'s "no transcript yet", `handlers.py:733`).
+
+### 1.6 Accessibility + interaction contract (SemanticSearch surface)
+Mounts into `app/renderer/src/views/Workspace.tsx`, which already uses
+`role="alert"` for errors (`Workspace.tsx:176/185`) and `role="tabpanel"`
+(`:190`); the new surface MUST match these idioms (and the vitest
+`thresholds:100` gate means each attribute below is test-asserted).
+
+- **Search input.** A labelled control: `<label htmlFor="semantic-search-query">`
+  + `id` on the input (mirrors `Transcribe.tsx:114` `<label htmlFor>`), or an
+  `aria-label="Search the transcript"` if no visible label. Submit on Enter and
+  via an explicit search button (`type="submit"`, accessible name "Search").
+- **Results list = keyboard-operable (WCAG 2.1.1).** Each hit is a real
+  focusable control (`<button type="button">` rows inside a `<ul>`, or a
+  `role="listbox"`/`role="option"` set), NOT a click-only `<div>`. Activating a
+  hit with **Enter/Space OR click** seeks the player; on activation, move/return
+  focus deliberately (focus the player region, or keep focus on the hit and
+  announce the seek) so the jump-to-topic flow is reachable mouse-free. Each row's
+  accessible name includes the timestamp + snippet (e.g. "Seek to 12:04 — '…we
+  priced it at…'").
+- **Status announcements via `aria-live`.** A polite live region (mirroring
+  `Transcribe.tsx:141` `aria-live="polite"` and `Workspace`'s progress idiom)
+  announces: "Searching…" while `index.search` runs, the result count on
+  completion ("8 matches"), and "No matches" on an empty result. The progress
+  region mirrors `Transcribe.tsx:141` (`aria-live="polite"`); the error fallback
+  mirrors `Transcribe.tsx:149` (`role="alert"`).
+- **UX states (all three explicit):**
+  - *Not built yet* — `index.status.built === false`: the search box renders
+    disabled with an inline CTA "Build the search index" (a button that calls
+    `index.build`); the typed "build the index first" error (§1.5) is surfaced via
+    `role="alert"` only as a fallback if a search is attempted unbuilt.
+  - *Building* — `index.build` is a long job: show a progress region fed by the
+    existing `onProgress` (`rpc.ts:434`) with `aria-live="polite"`, and surface
+    completion via `onJobDone` (`rpc.ts:436`); the search box is disabled until
+    `index.status.built`.
+  - *Empty result* — a visible "No matches for '<query>'" message that is ALSO
+    announced (live region above), not a silent blank list.
+  - *Error* — `role="alert"` (mirroring `Workspace.tsx:176`).
 
 ---
 
@@ -212,6 +280,34 @@ consent, continuous background re-detection.
   is recommended only when not offline, and cloud routes are not proposed when the
   user is on the privacy default unless they opt in (mirrors
   `advise_for_hardware(offline=…)` at `handlers.py:1172`).
+
+### 2.6 Accessibility + interaction contract (Recommendation card)
+Mounts in `app/renderer/src/panels/ModelsSystemPanel.tsx`; must match the
+codebase's section/label idioms (`aria-label` on every `<section>`, `htmlFor`
+labels) and is covered by vitest `thresholds:100`.
+
+- **Card semantics + hierarchy.** The card is a `<section aria-labelledby=…>`
+  with a heading (`<h2>`/`<h3>` "Recommended for your machine") so it is a
+  navigable landmark; the rationale list renders as a real `<ul>`; the proposed
+  preset/routing/downloads are presented as labelled rows, not bare text, so the
+  information hierarchy (what changes vs why) is conveyed to assistive tech.
+- **Apply button.** `<button type="button">` with a clear accessible name
+  ("Apply recommended settings"). After Apply, announce the outcome via a polite
+  live region ("Applied: balanced preset, vision → local") so the one-click
+  result is perceivable without re-reading the panel; the button reflects a
+  pending state (`aria-busy` while `providers.applyPreset`/`setFunctionModel`
+  run) and a done state.
+- **UX states (explicit):**
+  - *Loading* — while `system.recommend` runs, show a polite "Analysing your
+    machine…" live region; the Apply button is disabled.
+  - *Empty / unavailable* — if probe data is unavailable (no GPU info / advisor
+    returns no actionable plan, G-B1), render a visible, announced "Could not
+    detect your hardware — pick a preset manually" with a link to the manual
+    routing controls, NOT a blank card.
+  - *Error* — `role="alert"` (matching the panel's existing error idiom).
+  - *Already optimal* — if the current settings already match the recommendation,
+    state it ("Your settings already match the recommendation") and present Apply
+    as a no-op / disabled with that reason as its accessible name.
 
 ---
 
@@ -303,6 +399,31 @@ re-ranking.
 - Reversible: re-running picks a fresh frame; the original clip is untouched (only
   the thumbnail file + the `thumbnailFrameSec` metadata change).
 
+### 3.6 Accessibility + interaction contract (Pick-best-frame action)
+Mounts in `app/renderer/src/features/ProducedShorts.tsx`, which already uses
+`aria-label` on its container and per-item controls (`ProducedShorts.tsx:41/57-60`)
+plus `aria-hidden` on decorative glyphs (`:63`); the new action MUST match and is
+covered by vitest `thresholds:100`.
+
+- **Action button.** A `<button type="button">` with a per-clip accessible name
+  ("Pick the best thumbnail frame for <title>"), mirroring the existing
+  `aria-label={`Play preview of ${title}`}` pattern (`ProducedShorts.tsx:60`).
+  While the job runs it reflects `aria-busy`/disabled.
+- **Thumbnail swap is announced.** When the chosen frame replaces the thumbnail,
+  a polite live region announces the change ("Thumbnail updated to the frame at
+  0:07") and the thumbnail `<img alt>` is updated, so a non-sighted user knows the
+  swap happened (a silent `src` change is invisible to AT).
+- **UX states (explicit):**
+  - *Running* — `thumbnail.select` is a job: progress via existing `onProgress`
+    (`rpc.ts:434`) in a polite live region; completion via `onJobDone`
+    (`rpc.ts:436`).
+  - *Degrade-to-midpoint (NOT silent).* §3.1/§3.5 fall back to the midpoint frame
+    when there is no consented cloud + no local weights. The user MUST be told:
+    surface a visible + announced note ("No vision model available — used the
+    middle frame") rather than silently swapping a possibly-worse thumbnail. This
+    keeps "never blocks export" honest without hiding *why* the result is generic.
+  - *Error* — `role="alert"` if the job fails for a non-degrade reason.
+
 ---
 
 ## 4. Capability Gaps (explicit — no fabrication)
@@ -313,6 +434,7 @@ re-ranking.
 | **G-A2** | The catalog's task tiers (`models/catalog.py`, via `presets._FUNCTION_TASK_NAMES` `presets.py:225`) have no `EMBED` task; `presets.FUNCTIONS` lacks `"index"`. | Embeddings can't be routed/ranked as a first-class function. | Add the `"index"` function + an `EMBED` catalog task (or reuse the text tier for MVP). Small, additive. |
 | **G-A3** | No embedding-model **asset** is registered (`assets/manifest.py` day-1 = whisper + qwen only, `:181/:188`). | A local embeddings model isn't installed/pinned. | Register an `AssetEntry` for a small local embedder (e.g. an ONNX/GGUF sentence model) via `register_asset`. Could also rely on Ollama/LM-Studio embeddings if detected (`local_detect`). |
 | **G-A4** | No vector index / ANN; cosine is O(n·dim) linear. | Fine for one video; would not scale to cross-video corpora. | MVP = linear cosine (reuse `diarize.cosine_similarity` `:75`). FAISS/ANN is a post-MVP refinement, OUT of scope. |
+| **G-A5** (privacy-critical) | **Transcript-text egress is NOT consent-gated in the substrate.** `consent.text_consent_granted` (`consent.py:85`) + `DATA_TYPE_TEXT` (`consent.py:37`) exist but are dead code (no caller in `sidecar/` outside their own module + tests); there is no `require_text_consent` and no `_text_consented_settings` pool filter (only `_frame_consented_vision_settings` `handlers.py:597` exists). The current text functions (translation/select/subtitles) egress on the *budget* ack alone. | Without a new seam, `index.build`/`index.search` would send a full transcript to any configured cloud provider with no privacy gate, breaking the "default install never egresses transcript text" promise (and a 429 could rotate it to an unconsented provider). | **BUILD MUST add the seam BEFORE any cloud `index` route ships:** (1) `consent.require_text_consent(settings, provider)` mirroring `require_frame_consent` (`consent.py:90`); (2) a `Services._text_consented_settings(settings)` pool filter mirroring `_frame_consented_vision_settings` (`handlers.py:597/620`), applied at `index` pool build so non-text-consented entries are dropped per-entry (rotation-safe). The same seam SHOULD be wired into the existing text functions in a follow-up (out of this bundle's scope, but flagged). **Alternative if descoped:** ship `index` local-only (privacy route) and document that cloud `index` is blocked until G-A5 lands — do NOT claim inherited text-consent. |
 | **G-C1** | The vision seam scores **clips** (`SmolVlmBackend.rank_clips` `smolvlm2.py:96`), not single frames for "best thumbnail". | Need a frame-level scorer + prompt. | NEW `best_frame.py` (prompt + parse, PURE) + a `score_frames` seam; can reuse `CloudVlmBackend` by treating each frame as a 1-frame clip. |
 | **G-C2** | No JPEG/PNG **write** of a chosen frame (the loader decodes; the encoder only base64s for egress). | Need to persist the picked frame as a thumbnail file. | Add a small cv2 `imwrite` at the (already coverage-excluded) native seam, mirroring `_default_frame_encoder` `smolvlm2.py:239`; output via `shorts.thumbnail_path`. |
 | **G-B1** | `advise_for_hardware` returns capability verdicts + a `recommended_preset`, but NOT an actionable download/route/ASR plan. | Recommender must compose, not invent. | NEW PURE `recommender.py` composing existing report + present-map + detected-local into `{preset,routing,asrEngine,downloads,rationale}`. No new probe. |
@@ -328,9 +450,12 @@ re-ranking.
 - **PURE core + injected seam** per existing feature modules (`smolvlm2.py`,
   `presets.py`, `system_advisor.py`): heavy deps (cv2/torch/sockets) live behind
   injectable seams defaulted to lazy `# pragma`-excluded impls; tests drive fakes.
-- **Consent + budget are non-bypassable** — text consent for embeddings, frame
-  consent (per-entry, rotation-safe) for best-frame, `confirmCloudBudget` ack for
-  any egress.
+- **Consent + budget are non-bypassable** — frame consent (per-entry,
+  rotation-safe) for best-frame is ALREADY enforced; text consent for embeddings
+  is a **NEW seam this bundle introduces** (`require_text_consent` +
+  `_text_consented_settings` pool filter — G-A5; today `text_consent_granted` is
+  dead code, so do NOT treat text-consent as inherited); `confirmCloudBudget` ack
+  for any egress is already enforced.
 - **Local-first defaults** — privacy preset routes all three to local; the cloud
   path is opt-in and previewed.
 - **Reversibility** — index = a deletable sidecar; recommendation = read-only +
