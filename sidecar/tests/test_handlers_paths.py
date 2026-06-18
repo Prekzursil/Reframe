@@ -57,7 +57,10 @@ def test_paths_describe_subdirs_cover_required_features(services: Services, ctx:
     assert sub["stabilized"] == str(services.exports_dir / "stabilized")
     assert sub["audiomix"] == str(services.exports_dir / "audiomix")
     assert sub["trimmed"] == str(services.exports_dir / "trimmed")
-    assert sub["shorts"] == str(services.exports_dir / "shorts")
+    # Shorts are written PER-VIDEO under exports as ``shorts-<videoId>`` (see
+    # register_all's ``out_dir_for=lambda vid: exports_dir / f"shorts-{vid}"``);
+    # there is no flat ``exports_dir/shorts`` dir, so report the honest pattern.
+    assert sub["shorts"] == str(services.exports_dir / "shorts-*")
 
 
 def test_paths_describe_leaks_no_secrets(services: Services, ctx: RpcContext) -> None:

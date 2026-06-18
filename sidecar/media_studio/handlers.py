@@ -321,8 +321,10 @@ class Services:
         paths from the injected stores' own path attributes (robust to a custom
         settings/library location). ``subDirs`` names the per-feature derivative
         folders the sidecar writes into — ``dubs`` under the data dir; the
-        ffmpeg-derivative folders (``shorts``/``stabilized``/``audiomix``/``trimmed``)
-        under the exports root, matching ``register_all``'s wiring. NO key/secret
+        ffmpeg-derivative folders (``stabilized``/``audiomix``/``trimmed``)
+        under the exports root, matching ``register_all``'s wiring. ``shorts`` is
+        written PER-VIDEO as ``exports/shorts-<videoId>``, so it is reported as the
+        honest ``shorts-*`` pattern (no flat ``exports/shorts`` dir exists). NO key/secret
         string ever appears in this payload (it is layout-only).
         """
         return {
@@ -333,7 +335,7 @@ class Services:
             "libraryPath": str(self.library.index_path),
             "subDirs": {
                 "dubs": str(self.data_dir / "dubs"),
-                "shorts": str(self.exports_dir / "shorts"),
+                "shorts": str(self.exports_dir / "shorts-*"),
                 "stabilized": str(self.exports_dir / "stabilized"),
                 "audiomix": str(self.exports_dir / "audiomix"),
                 "trimmed": str(self.exports_dir / "trimmed"),
