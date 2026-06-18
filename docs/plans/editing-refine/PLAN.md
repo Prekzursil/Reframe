@@ -81,7 +81,7 @@ bridge — NO real ffmpeg / model / network in any test.
 
 ### WU-1 — `refine.plan_refine` (pure span/stat unifier)  ⟂ parallelizable
 - **Goal:** NEW `features/refine.py` with a PURE
-  `plan_refine(words, lang, total_sec, silences, *, remove_fillers, remove_silence, merge_gap_ms, pad_sec) -> RefinePlan`.
+  `plan_refine(words, lang, total_sec, silences, *, remove_fillers, remove_silence, merge_gap_ms, pad_sec, filler_sets=None) -> RefinePlan`.
   It composes the EXISTING math only: filler keep-spans via
   `fillers.build_cutlist`/`build_cutlist_with_stats` (`fillers.py:284`/`:201`),
   silence keep-spans via `silencetrim.keep_spans` (`silencetrim.py:107`), unions
@@ -90,6 +90,16 @@ bridge — NO real ffmpeg / model / network in any test.
   No subprocess, no model, no I/O. Stats mirror the shipped per-clip stats
   (`shortmaker.py` `{fillersRemoved, fillerSeconds}`) + silence `removed_seconds`
   (`silencetrim.py:150`).
+  - **`filler_sets` threading (resolves the §4 `refine.fillerSets` setting — it must
+    actually change the cut math, not be read-and-dropped):** the optional
+    `filler_sets: Mapping[str, Mapping[str, frozenset]] | None` is passed straight to
+    the engine's `fillers=` kwarg —`build_cutlist`/`build_cutlist_with_stats` already
+    accept `fillers=` (default `DEFAULT_SETS`, `fillers.py:284`/`:201`, resolved per
+    `_lang_sets`, `fillers.py:94`). `plan_refine` calls
+    `build_cutlist_with_stats(words, lang, fillers=(filler_sets or fillers.DEFAULT_SETS), merge_gap_ms=...)`.
+    `None` ⇒ shipped `DEFAULT_SETS` (back-compat, incl. the bundled `ro` set); a
+    caller-supplied per-language override (e.g. an extended `ro`) genuinely changes
+    which words are cut. This is the value path WU-5 reads `refine.fillerSets` into.
 - **Files:** NEW `sidecar/media_studio/features/refine.py` (pure fns + `RefinePlan`
   typing + `__all__`); NEW `sidecar/tests/test_refine.py`.
 - **Test strategy (100% line+branch):** hand-built `words` lists (filler + non-filler,
@@ -98,7 +108,9 @@ bridge — NO real ffmpeg / model / network in any test.
   (4 combos incl. both-off → keeps == whole `[[0,total_sec]]`), empty words, empty
   silences, overlapping filler∩silence spans (union must not double-count
   `keptSec`/seconds), `lang` falling back to `en` (`fillers.py:94`), zero-length
-  total_sec edge. NO ffmpeg/model — `plan_refine` is pure.
+  total_sec edge. `filler_sets` branch: `None` (⇒ `DEFAULT_SETS`) vs a custom set —
+  a custom `ro` override that marks an EXTRA word as filler must change the cut-list
+  (proves the kwarg is threaded, not dropped). NO ffmpeg/model — `plan_refine` is pure.
 - **Acceptance (falsifiable):**
   1. `plan_refine(..., remove_fillers=False, remove_silence=False)` returns
      `keeps == [[0.0, total_sec]]` and all `stats.*Removed*`/seconds == 0.
@@ -108,7 +120,11 @@ bridge — NO real ffmpeg / model / network in any test.
      disjoint spans).
   3. Overlapping filler-inside-silence collapses to ONE removed region; summed
      removed ≤ total and `keptSec == total - removed`.
-  4. `pytest --cov=media_studio --cov-branch --cov-fail-under=100` green; ruff +
+  4. **filler-set override:** for `lang='ro'`, the SAME `words` with
+     `filler_sets=None` keeps a word W, but with a `filler_sets` that adds W to the
+     `ro` `standalone`/`always` set, `keeps` EXCLUDES W and `stats.fillersRemoved`
+     increases by 1 — proving `refine.fillerSets` reaches the cut math.
+  5. `pytest --cov=media_studio --cov-branch --cov-fail-under=100` green; ruff +
      basedpyright clean.
 - **Deps:** none (pure reuse of already-shipped modules). **Parallel with WU-3, WU-4.**
 
@@ -116,15 +132,23 @@ bridge — NO real ffmpeg / model / network in any test.
 
 ### WU-2 — `RefineService` (preview + apply) over injected seams
 - **Goal:** in `features/refine.py` add a `RefineService` whose `__init__` takes the
-  SAME injectable seams pattern as `SilenceTrim.__init__` (`silencetrim.py:257`):
-  `resolver`, `out_dir`, `settings_provider`, `run`, `duration`, `detect_run`.
+  SAME injectable seams pattern as `SilenceTrim.__init__` (`silencetrim.py:257`) —
+  `resolver`, `out_dir`, `settings_provider`, `run`, `duration`, `detect_run` —
+  PLUS the two project-store seams that the diarize feature already exposes and that
+  WU-5 will pass through `refine.register`: `load_project`/`save_project` (the same
+  callables `diarize.register` declares — `diarize.py:374` `load_project`/
+  `save_project`, wired in `register_all` to `_load_project_data`/`_save_project_data`
+  per the §0 anchor table). `preview`/`apply` read the transcript words via
+  `load_project` (no direct I/O in the service body — the seam is faked in tests).
   - `preview(params, ctx) -> {plan}`: resolve clip (`resolver`), run
     `silencetrim.detect_silence_spans` via the injected `detect_run` (`silencetrim.py:159`),
-    fetch transcript words from the project store, call `plan_refine` (WU-1).
+    fetch transcript words via the `load_project` seam, call `plan_refine` (WU-1) —
+    **threading `filler_sets=params.get("fillerSets")` straight into `plan_refine`'s
+    `filler_sets=` param** (the `refine.fillerSets` value path; `None` ⇒ `DEFAULT_SETS`).
     **NO encode, NO file write** (Descript "see before you cut").
   - `apply(params, ctx) -> {path, removedSec, stats, cues?}` as a JOB: take a plan
-    (or recompute via `plan_refine`), build argv with
-    `fillers.build_segment_cut_argv` (`fillers.py:351`), run through the injected
+    (or recompute via `plan_refine`, **passing the same `filler_sets`**), build argv
+    with `fillers.build_segment_cut_argv` (`fillers.py:351`), run through the injected
     `run` seam (= `ffmpeg.run`) inside `ctx.jobs.start` (mirror diarize/silencetrim
     job pattern), write a NEW file `out_dir/{stem}.refined.mp4` (original untouched),
     and re-time caption cues via `fillers.remap_cues` (`fillers.py:324`).
@@ -132,13 +156,14 @@ bridge — NO real ffmpeg / model / network in any test.
   `sidecar/tests/test_refine.py`.
 - **Test strategy (100%):** fake `resolver` (returns a path / returns None →
   not-found branch), fake `detect_run` returning canned silencedetect text, fake
-  `run` (records argv, no subprocess), fake `duration`, fake project store
-  (returns transcript with words). Branches: clip-not-found; nothing-to-cut →
-  pass-through path == original (matches `silencetrim.py:240-242` semantics);
-  fillers-only; silence-only; both; cues present vs absent (remap vs skip);
-  job cancellation path (`ctx.jobs` fake raising/cancelled). Assert
-  `build_segment_cut_argv` received the WU-1 keep-list and the OUTPUT path is the
-  `.refined.mp4` sibling, never the input.
+  `run` (records argv, no subprocess), fake `duration`, fake `load_project`/
+  `save_project` (returns transcript with words). Branches: clip-not-found;
+  nothing-to-cut → pass-through path == original (matches `silencetrim.py:240-242`
+  semantics); fillers-only; silence-only; both; cues present vs absent (remap vs
+  skip); `fillerSets` present vs absent in `params` (override forwarded to
+  `plan_refine` vs `DEFAULT_SETS`); job cancellation path (`ctx.jobs` fake
+  raising/cancelled). Assert `build_segment_cut_argv` received the WU-1 keep-list and
+  the OUTPUT path is the `.refined.mp4` sibling, never the input.
 - **Acceptance (falsifiable):**
   1. `preview` calls `detect_run` exactly once and `run` ZERO times (no encode);
      returns `{plan}` whose stats equal `plan_refine` on the same inputs.
@@ -146,7 +171,11 @@ bridge — NO real ffmpeg / model / network in any test.
      and `removedSec==0`, performing no re-encode (pass-through).
   3. `apply` with real cuts writes `*.refined.mp4` ≠ input path; returned `cues`
      equal `fillers.remap_cues(input_cues, keeps)`; `stats` equal the plan stats.
-  4. Full sidecar gate green.
+  4. `preview`/`apply` with `params["fillerSets"]` set forward that mapping to
+     `plan_refine(..., filler_sets=<mapping>)` (asserted via the recorded
+     `plan_refine` call or a stat delta vs the same params with no `fillerSets`);
+     absent ⇒ `plan_refine` receives `None`/`DEFAULT_SETS`.
+  5. Full sidecar gate green.
 - **Deps:** WU-1.
 
 ---
@@ -233,7 +262,14 @@ bridge — NO real ffmpeg / model / network in any test.
   - Read new settings keys with defaults: `refine.noiseDb`/`refine.minSilenceSec`/
     `refine.padSec` (reuse silencetrim defaults `silencetrim.py:57-60`),
     `refine.mergeGapMs` (`fillers.DEFAULT_MERGE_GAP_MS`, `fillers.py:44`),
-    `refine.fillerSets` (override `fillers.DEFAULT_SETS`, `fillers.py:60`).
+    `refine.fillerSets` (per-language filler-set override of `fillers.DEFAULT_SETS`,
+    `fillers.py:60`). **`refine.fillerSets` is not merely read — it is threaded into
+    the cut math:** `subtitles_generate`/the refine path put it into the service call
+    as `params["fillerSets"]`, which `RefineService` forwards to
+    `plan_refine(..., filler_sets=...)` (WU-1/WU-2). When absent it falls back to
+    `DEFAULT_SETS` (no behavior change). A WU-5 test asserts that a `refine.fillerSets`
+    value reaches `plan_refine` (not dropped) — i.e. the setting and the DESIGN §4
+    entry agree (this closes the prior plan↔DESIGN contradiction).
 - **Files:** EDIT `sidecar/media_studio/handlers.py`; EDIT the relevant
   `sidecar/tests/test_handlers*.py` (match existing handler-test module).
 - **Test strategy (100%):** fake `reg` registrar asserts the three new names
@@ -241,7 +277,9 @@ bridge — NO real ffmpeg / model / network in any test.
   duplicate-registration loudness preserved (`protocol.register` default). For
   `subtitles_generate`: settings `captionSpeakerLabels` True (prefix applied) vs
   False/absent (no prefix) — both branches; diarized vs non-diarized transcript.
-  Settings-default branches for each new `refine.*` key (present vs missing).
+  Settings-default branches for each new `refine.*` key (present vs missing),
+  including `refine.fillerSets` present → forwarded as `filler_sets` to `plan_refine`
+  (asserted on a recorded service/`plan_refine` call) vs missing → `DEFAULT_SETS`.
 - **Acceptance (falsifiable):**
   1. After `register_all`, the registrar received `refine.preview`, `refine.apply`,
      `diarize.rename` (and all pre-existing names still present — no displacement).
@@ -249,7 +287,9 @@ bridge — NO real ffmpeg / model / network in any test.
      returns cues whose text is speaker-prefixed; with the flag off/absent returns
      UNPREFIXED text identical to today (`{track}` shape unchanged).
   3. `refine.apply` is registered as a job, `refine.preview` as direct.
-  4. Full sidecar gate green at 100%.
+  4. A `refine.fillerSets` setting value reaches `plan_refine` as `filler_sets`
+     (asserted, not dropped); absent ⇒ `DEFAULT_SETS`.
+  5. Full sidecar gate green at 100%.
 - **Deps:** WU-2 (service), WU-3 (format_speaker_prefix), WU-4 (rename handler).
 
 ---
@@ -285,6 +325,49 @@ bridge — NO real ffmpeg / model / network in any test.
 
 ---
 
+### WU-6b — Mount `Refine.tsx` into the workspace (panel reachability)
+- **Goal:** make the panel from WU-6 ACTUALLY OPENABLE — without this the feature
+  ships dead-coded behind a green coverage gate (the DESIGN's headline "one Refine
+  renderer panel the user can open" is not delivered until the workspace mounts it).
+  Mirror EXACTLY how `Diarize` is wired in `app/renderer/src/views/Workspace.tsx`:
+  - add a STATIC lazy import next to the existing ones
+    (`const Refine = lazy(() => import('../features/Refine'));`, alongside
+    `Workspace.tsx:32` `const Diarize = lazy(...)`);
+  - add a `WORKSPACE_TABS` entry `{ id: 'refine', label: 'Refine' }`
+    (`Workspace.tsx:35-47` — the data-driven tab list; **panel registration is this
+    const array + the `renderPanel()` switch, NOT a CSS file** — `workspace.css`/
+    `shorts.css` carry no per-panel id, so NO `.css` edit is required);
+  - add a `case 'refine': return <Refine videoId={video.id} />;` to `renderPanel()`
+    (`Workspace.tsx:122-147` switch; matches the `case 'diarize'` shape at `:126-127`).
+  - Pick the tab position deliberately (e.g. directly after `'diarize'` in the
+    system-advanced group) and keep WU-8's docs in sync with the chosen order.
+- **Files:** EDIT `app/renderer/src/views/Workspace.tsx`; EDIT
+  `app/renderer/src/views/Workspace.test.tsx`.
+- **Test strategy (100% — Workspace.test.tsx already enforces vitest 100/100/100/100):**
+  the test file already (a) asserts the contract tab list in order
+  (`Workspace.test.tsx:122-126`) and (b) drives every `renderPanel()` case from a
+  per-id marker table (`Workspace.test.tsx:227-232`, each panel `vi.mock`-stubbed via
+  `stubPanel`, e.g. `:64` `vi.mock('../features/Diarize', ...)`). So this WU MUST:
+  add `vi.mock('../features/Refine', () => stubPanel('Refine'))`; add `'Refine'` to
+  the expected ordered-tabs assertion at the chosen position; add
+  `['refine', 'Refine']` to the per-case render table so the new switch branch is
+  covered. Without these three edits the new `case`/import/tab are uncovered lines →
+  the 100% gate FAILS (this is the lever that prevents shipping the panel dead-coded).
+- **Acceptance (falsifiable):**
+  1. `WORKSPACE_TABS` contains `{ id: 'refine', label: 'Refine' }` and the
+     ordered-tabs test asserts `'Refine'` at the chosen position.
+  2. Selecting the Refine tab in `Workspace` mounts the panel: the per-case render
+     test for `['refine','Refine']` finds the stubbed Refine marker after
+     `onSelect('refine')`, exercising the new `renderPanel()` branch.
+  3. `renderPanel()`'s new `case 'refine'` and the lazy import are covered (no new
+     uncovered lines); `npm run test:coverage` meets 100/100/100/100; oxlint +
+     biome + tsc clean.
+- **Deps:** WU-6 (the panel component exists). **Parallel with WU-7** (disjoint
+  files: WU-6b edits `Workspace.tsx`/`Workspace.test.tsx`; WU-7 edits `Diarize.tsx`/
+  `Diarize.test.tsx`).
+
+---
+
 ### WU-7 — `Diarize.tsx` speaker-rename block
 - **Goal:** EDIT `app/renderer/src/features/Diarize.tsx`: add a per-speaker rename
   row (a text input per `SPEAKER_NN` from the roster) → `diarize.rename` →
@@ -309,16 +392,21 @@ bridge — NO real ffmpeg / model / network in any test.
 ### WU-8 — Settings + docs reconciliation (close-out)
 - **Goal:** document the new settings keys (`captionSpeakerLabels`, `refine.noiseDb`,
   `refine.minSilenceSec`, `refine.padSec`, `refine.mergeGapMs`, `refine.fillerSets`)
-  in the settings/contracts doc(s) the repo already maintains; add the additive
-  optional `Cue.speaker?` + `RefinePlan` to CONTRACTS.md §3 (additive only — frozen
-  fields unchanged). No code behavior.
+  in the settings/contracts doc(s) the repo already maintains; document
+  `refine.fillerSets` as the per-language filler-set override that is THREADED into
+  `plan_refine`'s `filler_sets=` param (matching DESIGN §4 — call out that it changes
+  the cut math, not just config); record the chosen Refine workspace tab position
+  (the `WORKSPACE_TABS` order from WU-6b) wherever the tab contract is documented;
+  add the additive optional `Cue.speaker?` + `RefinePlan` to CONTRACTS.md §3
+  (additive only — frozen fields unchanged). No code behavior.
 - **Files:** EDIT the existing settings doc + CONTRACTS.md (whichever the repo uses;
   located at BUILD time — DESIGN cites CONTRACTS.md §2/§3).
 - **Test strategy:** none (docs); both gate suites must remain green at 100%.
 - **Acceptance (falsifiable):** every new settings key + new optional data field is
-  documented; `git grep` finds each key name in both code and docs; full sidecar +
-  renderer gates green (no regression).
-- **Deps:** WU-5, WU-6, WU-7 (final names settled).
+  documented; `refine.fillerSets`'s doc entry states it flows to `plan_refine`
+  (`filler_sets`); the Refine tab position is recorded; `git grep` finds each key
+  name in both code and docs; full sidecar + renderer gates green (no regression).
+- **Deps:** WU-5, WU-6, WU-6b, WU-7 (final names + tab order settled).
 
 ---
 
@@ -345,6 +433,9 @@ bridge — NO real ffmpeg / model / network in any test.
  WU-6          WU-7            (renderer — PARALLEL with each other)
  Refine.tsx    Diarize rename block
    |             |
+ WU-6b          |             (mount Refine into Workspace — depends on WU-6)
+ Workspace wire |
+   |             |
    +------+------+
           |
         WU-8  (settings + contracts docs close-out)
@@ -361,8 +452,11 @@ bridge — NO real ffmpeg / model / network in any test.
   `subtitles_generate` and depends on WU-2/WU-3/WU-4. It is the ONE shared file —
   give it a single owner; do not parallel-edit `handlers.py`.
 - **Wave C (parallel):** WU-6 and WU-7 are disjoint renderer files
-  (`Refine.tsx` new; `Diarize.tsx` edit) — parallel after WU-5.
-- **WU-8** last (needs final names).
+  (`Refine.tsx` new; `Diarize.tsx` edit) — parallel after WU-5. **WU-6b**
+  (mount `Refine.tsx` into `Workspace.tsx`/`Workspace.test.tsx`) runs after WU-6 and
+  is disjoint from WU-7, so WU-6b ∥ WU-7. WU-6b is what makes the panel reachable —
+  without it the Refine panel ships dead-coded behind the 100% gate.
+- **WU-8** last (needs final names; also records the chosen Refine tab position).
 - **AI (deferred):** the optional "smart refine"/caption-cleanup touchpoint is NOT
   a WU here. When built it adds exactly one path through `plan_ai_job`/`run_ai_job`
   (`models/ai_job.py`) gated by `handlers.plan_ai_job_envelope` (`handlers.py:1601`)
@@ -374,13 +468,15 @@ bridge — NO real ffmpeg / model / network in any test.
   `jobs.JobContext`, project store seams (`_load_project_data`/`_save_project_data`/
   `_resolve_video_path`/`_ffmpeg_run`/`_ffprobe_duration`), AI envelope +
   rotation pool (deferred AI only).
-- **NEW:** `features/refine.py` (`plan_refine` + `RefineService.preview/apply` +
-  `register`); `diarize.rename_speakers` + `diarize.rename` RPC; subtitles
-  speaker-carry edits + `format_speaker_prefix`; `Refine.tsx`; `Diarize.tsx`
-  rename block; settings `captionSpeakerLabels` + `refine.*`; optional
-  `Cue.speaker?` + `RefinePlan` contract additions.
-- **GAPS closed:** standalone previewable filler/silence RPC (WU-1/2/5);
-  speaker→caption plumbing (WU-3); speaker rename (WU-4). **GAPS deferred
+- **NEW:** `features/refine.py` (`plan_refine` with `filler_sets` threading +
+  `RefineService.preview/apply` + `register`); `diarize.rename_speakers` +
+  `diarize.rename` RPC; subtitles speaker-carry edits + `format_speaker_prefix`;
+  `Refine.tsx` + its `Workspace.tsx` mount wiring (lazy import + `WORKSPACE_TABS`
+  entry + `renderPanel()` `case`, WU-6b); `Diarize.tsx` rename block; settings
+  `captionSpeakerLabels` + `refine.*` (incl. `refine.fillerSets` threaded to the cut
+  math); optional `Cue.speaker?` + `RefinePlan` contract additions.
+- **GAPS closed:** standalone previewable filler/silence RPC (WU-1/2/5) reachable in
+  the UI (WU-6 + WU-6b mount); speaker→caption plumbing (WU-3); speaker rename (WU-4). **GAPS deferred
   (documented, unchanged):** word-level/waveform editor; per-speaker caption
   styling; overlapping-speaker diarization; auto filler-language expansion;
   semantic (vs amplitude) silence; smart-AI refine.
