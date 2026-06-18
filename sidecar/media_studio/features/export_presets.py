@@ -34,10 +34,12 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from ..protocol import ErrorCode, RpcError
+from .. import protocol
+from ..protocol import ErrorCode, RpcContext, RpcError
 from ..util import clamp, get_logger
 from . import caption_remotion
 
@@ -258,3 +260,63 @@ class PresetStore:
         seeded = seed_presets()
         self._write(seeded)
         return seeded
+
+
+# --------------------------------------------------------------------------- #
+# RPC service (WU2): direct-return CRUD over the catalog (mirrors Recipes)
+# --------------------------------------------------------------------------- #
+class ExportPresets:
+    """The ``exportPresets.*`` handler group — thin direct-return CRUD.
+
+    Each method validates the wire params and delegates to a :class:`PresetStore`;
+    no jobs, no notifications (storage-only), mirroring ``recipes.Recipes`` CRUD.
+    The ``ctx`` is part of the handler signature for registry uniformity but is
+    unused here (the catalog never emits progress).
+    """
+
+    def __init__(self, store: PresetStore) -> None:
+        self.store = store
+
+    def list(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``exportPresets.list()`` -> ``{presets:[ExportPreset]}`` (direct-return)."""
+        return {"presets": self.store.list()}
+
+    def save(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``exportPresets.save({preset})`` -> ``{preset}`` (direct-return; upsert).
+
+        The preset is normalized (window clamp + id guards) before any write, so a
+        bad ``captionStyle`` raises and the catalog stays intact.
+        """
+        raw = params.get("preset")
+        if not isinstance(raw, dict):
+            raise _invalid("preset (object) is required")
+        return {"preset": self.store.save(raw)}
+
+    def delete(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``exportPresets.delete({id})`` -> ``{ok}`` (direct-return)."""
+        preset_id = _require_str(params, "id")
+        return {"ok": self.store.delete(preset_id)}
+
+    def reset(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``exportPresets.reset()`` -> ``{presets}`` (restore the three seeds)."""
+        return {"presets": self.store.reset()}
+
+
+def register(
+    *,
+    path: str | os.PathLike[str],
+    register_fn: Callable[[str, Any], None] | None = None,
+) -> ExportPresets:
+    """Create an :class:`ExportPresets` over ``path`` and register the four methods.
+
+    ``register_fn`` defaults to :func:`protocol.register`; tests inject a fake
+    registrar + a tmp ``path``. Returns the service so the caller can hold it
+    (mirrors :func:`recipes.register`).
+    """
+    service = ExportPresets(PresetStore(path))
+    reg = register_fn if register_fn is not None else protocol.register
+    reg("exportPresets.list", service.list)
+    reg("exportPresets.save", service.save)
+    reg("exportPresets.delete", service.delete)
+    reg("exportPresets.reset", service.reset)
+    return service

@@ -2207,6 +2207,17 @@ def register_all(
         register_fn=reg,
     )
 
+    # exportPresets.* (repurpose WU2): server-persisted platform targets the
+    # templates/batch groups reference by id. Direct-return CRUD over a JSON
+    # catalog at data_dir/export-presets.json (atomic temp+rename, self-seeding).
+    # Storage-only — no provider/ML imports; the module owns its own register().
+    from .features import export_presets as _export_presets  # local: import-light
+
+    _export_presets.register(
+        path=svc.data_dir / "export-presets.json",
+        register_fn=reg,
+    )
+
     # diarize.start (feature 4): token-free speaker labelling. Reuses the same
     # project load/save helpers tracks_audio uses, plus the offline-gated assets.
     #

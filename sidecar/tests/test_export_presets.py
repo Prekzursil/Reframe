@@ -15,7 +15,12 @@ from typing import Any
 
 import pytest
 from media_studio.features import export_presets
-from media_studio.protocol import RpcError
+from media_studio.protocol import RpcContext, RpcError
+
+
+def _ctx() -> RpcContext:
+    """The ``test_recipes.py`` direct-return idiom: no job registry needed."""
+    return RpcContext(emit_notification=lambda *_: None, jobs=None)
 
 
 # --------------------------------------------------------------------------- #
@@ -301,3 +306,87 @@ class TestPresetStore:
             )
         # the original file is byte-for-byte intact (temp+rename never truncates it).
         assert path.read_text(encoding="utf-8") == before
+
+
+# --------------------------------------------------------------------------- #
+# ExportPresets — direct-return CRUD handlers (WU2 RPC surface)
+# --------------------------------------------------------------------------- #
+class TestExportPresetsHandlers:
+    def _svc(self, tmp_path) -> export_presets.ExportPresets:
+        return export_presets.ExportPresets(export_presets.PresetStore(tmp_path / "p.json"))
+
+    def test_list_returns_seeded_presets(self, tmp_path):
+        out = self._svc(tmp_path).list({}, _ctx())
+        assert {p["id"] for p in out["presets"]} == {"tiktok", "reels", "shorts"}
+
+    def test_save_returns_clamped_preset_and_list_reflects_it(self, tmp_path):
+        svc = self._svc(tmp_path)
+        out = svc.save(
+            {
+                "preset": {
+                    "id": "custom",
+                    "label": "C",
+                    "aspect": "9:16",
+                    "minSec": 30,
+                    "maxSec": 600,  # clamped to 60
+                    "count": 2,
+                    "captionStyle": "libass",
+                }
+            },
+            _ctx(),
+        )
+        assert out["preset"]["maxSec"] == 60  # clamped on save
+        listed = {p["id"] for p in svc.list({}, _ctx())["presets"]}
+        assert "custom" in listed
+
+    def test_save_requires_object(self, tmp_path):
+        svc = self._svc(tmp_path)
+        with pytest.raises(RpcError):
+            svc.save({"preset": "nope"}, _ctx())
+
+    def test_save_missing_preset_key_errors(self, tmp_path):
+        svc = self._svc(tmp_path)
+        with pytest.raises(RpcError):
+            svc.save({}, _ctx())
+
+    def test_delete_then_reset_restores_seed(self, tmp_path):
+        svc = self._svc(tmp_path)
+        assert svc.delete({"id": "tiktok"}, _ctx()) == {"ok": True}
+        assert "tiktok" not in {p["id"] for p in svc.list({}, _ctx())["presets"]}
+        restored = svc.reset({}, _ctx())
+        assert {p["id"] for p in restored["presets"]} == {"tiktok", "reels", "shorts"}
+        assert "tiktok" in {p["id"] for p in svc.list({}, _ctx())["presets"]}
+
+    def test_delete_unknown_reports_false(self, tmp_path):
+        svc = self._svc(tmp_path)
+        assert svc.delete({"id": "__nope__"}, _ctx()) == {"ok": False}
+
+    def test_delete_requires_id(self, tmp_path):
+        svc = self._svc(tmp_path)
+        with pytest.raises(RpcError):
+            svc.delete({}, _ctx())
+
+
+# --------------------------------------------------------------------------- #
+# register — the module owns its own register() (mirrors recipes.register)
+# --------------------------------------------------------------------------- #
+def test_register_installs_four_methods(tmp_path):
+    registered: dict[str, Any] = {}
+    export_presets.register(
+        path=tmp_path / "export-presets.json",
+        register_fn=lambda n, f: registered.__setitem__(n, f),
+    )
+    assert set(registered) == {
+        "exportPresets.list",
+        "exportPresets.save",
+        "exportPresets.delete",
+        "exportPresets.reset",
+    }
+
+
+def test_register_returns_service_bound_to_path(tmp_path):
+    path = tmp_path / "export-presets.json"
+    svc = export_presets.register(path=path, register_fn=lambda _n, _f: None)
+    # the returned service writes to the bound path on first list (self-seed).
+    svc.list({}, _ctx())
+    assert path.exists()
