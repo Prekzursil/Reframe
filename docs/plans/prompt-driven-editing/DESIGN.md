@@ -102,9 +102,11 @@ EditOp (tagged union; `kind` selects the variant)
   params        : Mapping[str, JSON]        # kind-specific, schema-validated
   reversible    : bool           # False ops are GATED (§5)
   rationale     : str            # model's reason (shown in the storyboard diff; NOT trusted as instruction)
+  status        : Literal["planned","applied","failed","dropped"]  # per-op lifecycle (§7.3); planner emits "planned"/"dropped", apply engine sets "applied"/"failed"
+  statusReason  : str | None     # typed reason: validation-drop cause (§2.1) or apply-failure message (§5); surfaced in the storyboard (§7.3), NOT trusted as instruction
 ```
 
-**Validation contract (NEW; `PLAN.md:230` D3, risk #3).** Before an EditPlan is ever returned, `director.plan` runs a **validate-and-reject** pass: every op's `span` is hard-checked against the real clip duration / track existence / preconditions; ops referencing impossible ranges or unknown tracks are **dropped** with a typed reason. This is also the **primary structural defense against prompt-injection** (§5): an op injected by on-screen/spoken text ("delete all clips") cannot apply if it fails validation, and the human confirm gate is the backstop, not the only defense.
+**Validation contract (NEW; `PLAN.md:230` D3, risk #3).** Before an EditPlan is ever returned, `director.plan` runs a **validate-and-reject** pass: every op's `span` is hard-checked against the real clip duration / track existence / preconditions; ops referencing impossible ranges or unknown tracks are **dropped** with a typed reason. Dropped ops are **not silently discarded** — they are returned in the EditPlan with `status="dropped"` + a typed `statusReason` (e.g. `span-exceeds-clip`, `unknown-track`, `precondition-unmet`) so the storyboard (§7.3) can show the user *exactly* what was rejected and why; the user otherwise silently gets less than they asked for. This is also the **primary structural defense against prompt-injection** (§5): an op injected by on-screen/spoken text ("delete all clips") cannot apply if it fails validation, and the human confirm gate is the backstop, not the only defense.
 
 **Q1 resolution (`FEATURE.md:45`):** a **new EditPlan DSL** layered *over* the existing track/cue schema — NOT a raw extension of the in-place timeline ops. Rationale: the existing handlers (`subtitles.edit` etc.) mutate `project.data` in place and `project.save()` (`handlers.py:746-761`), which has **no invert/undo contract**; the DSL is the reversibility layer the in-place handlers lack.
 
@@ -174,6 +176,11 @@ Output: `{score, deltas:{jerk, silenceRatio, cutRhythm}, beforeAfter}`. An **opt
 - Each `EditOp` carries `reversible`; `applyEngine` records the `inverse` op as it applies, so the whole EditPlan has a one-shot undo.
 - **Irreversible ops are GATED:** any op with `reversible=False` requires a second explicit confirm and is excluded from auto-iterate.
 
+**Mid-apply failure & partial-failure recovery (`director.apply`).** Because apply writes to a project COPY (never the source) and records `inverse` per-op as it goes, a failure at op #k of N is **never** a corrupt half-applied source. The defined behavior:
+- `applyEngine` applies ops in order; on the first op that throws/fails it **stops** (no further ops run), marks that op `status="failed"` + `statusReason=<engine message>`, and marks the not-yet-reached ops `status="planned"` (unattempted).
+- It then **auto-rolls-back the project COPY** by walking the recorded `inverse` of the ops that *did* apply, leaving the COPY equivalent to the pre-apply state — the source manifest was never touched, so "rollback" is just discarding/inverting the COPY. The source is the durable fallback if even the inverse walk fails.
+- The job ends `job.done` with the per-op statuses (applied / failed / planned) and the failed op's reason. The renderer surfaces these in the storyboard (§7.3); recovery for the user is to edit/disable the failing op and re-apply, or accept the rolled-back (no-op) result — the design's own undo engine *is* the recovery path, by construction. v1 default is **all-or-nothing auto-rollback** (stop-on-first-failure); a "best-effort partial keep" mode is deferred to PLAN.
+
 **Prompt-injection from media content (`PLAN.md:230/273` risk #3 — HIGH, unmitigated today).** Director feeds transcript text AND OCR'd on-screen text into the planner LLM. The existing `select.py` injects transcript+prompt into one chat with **no instruction/data separation** (`features/select.py:268`). Director's planner prompt MUST:
 1. **Structurally fence** all media-derived text (transcript, OCR) as *untrusted DATA*, never instructions, in the system prompt.
 2. **Validate-and-reject** every proposed op against real durations/preconditions (§2.1) — an injected `delete all clips` op that references impossible spans is dropped before it can reach apply.
@@ -214,23 +221,48 @@ All long ops return `{jobId}` + stream `job.progress`/`job.done` (the shipped bu
 
 ### 7.2 Renderer (new Director panel)
 
-Today only `app/renderer/src/panels/ModelsSystemPanel.tsx` exists (consumes the FROZEN `window.api` bridge via the typed `client`/`rpc` from `lib/rpc`, `ModelsSystemPanel.tsx:15-16, :88-106`). NEW `DirectorPanel.tsx` (same `panels/` dir, same `rpcClient` injection pattern for 100% vitest, `:88-106`):
+Today only `app/renderer/src/panels/ModelsSystemPanel.tsx` exists (consumes the FROZEN `window.api` bridge via the typed `client`/`rpc` from `lib/rpc`, `ModelsSystemPanel.tsx:15-16, :88-106`; it already sets `aria-label` on its root `<section>` `:309` and `role="alert"` on its error line `:342`, but has **no** `aria-live`/keyboard-nav patterns — DirectorPanel adds those, §7.4). NEW `DirectorPanel.tsx` (same `panels/` dir, same `rpcClient` injection pattern for 100% vitest, `:88-106`):
 - **Prompt box** → `director.plan`.
-- **Plan preview / confirm** — storyboard/diff of `editPlan.ops` (each op's `rationale` shown as *untrusted text*, not run); per-step edit/disable; **Q4 resolution (`FEATURE.md:48`):** storyboard diff over the timeline (not raw side-by-side player in v1).
-- **Cost/egress banner** — `director.previewCost`/`ai.planJob` `{costEst, willEgress, cacheHit}`; the **Apply** button echoes `cacheKey` as `confirmBudget` (mirrors `_enforce_cloud_budget_ack`).
-- **Eval / before-after view** — `director.evaluate` deltas + accept/iterate.
+- **Plan preview / confirm** — the storyboard/diff (full UX contract in §7.3); **Q4 resolution (`FEATURE.md:48`):** storyboard diff over the timeline (not raw side-by-side player in v1).
+- **Cost/egress banner** — per-data-type breakdown (full contract in §7.3, F3); the **Apply** button echoes `cacheKey` as `confirmBudget` (mirrors `_enforce_cloud_budget_ack`).
+- **Eval / before-after view** — `director.evaluate` deltas + accept / **re-prompt** (the iterate return edge, §7.3).
 Tests inject `rpcClient` (`ModelsSystemPanelProps.rpcClient`, `:88-90`) so the panel hits 100% with fakes.
+
+### 7.3 Storyboard/diff UX contract (preview surface)
+
+The review surface — not just the apply engine — must scale to the cost-stress case (a 50-op Q&A plan, example #2 `FEATURE.md:15`). The storyboard is the product's safety-critical legibility surface; its contract:
+
+**F1 — large-plan legibility (grouping + summary header).** The storyboard does **not** render 50 raw ops as a flat list. Top-level affordance is a **plain-language plan summary header** generated deterministically from `editPlan.ops` (no LLM) — e.g. *"3 trims, 1 reorder, 47 caption overlays · 2 dropped by validation"*. Below it, ops are **grouped by `kind`** into **collapsible** sections (collapsed by default for any group > a small threshold), with an **op-type filter**. The **per-op diff is drill-down** (expand a group → expand an op), so the default view is a few summary rows, not 50. The summary header counts include dropped ops so the user immediately sees the plan is smaller than requested.
+
+**F2 — per-op status in the storyboard.** Every op row shows its `status` (`planned` / `applied` / `failed` / `dropped`) and, for `failed`/`dropped`, the typed `statusReason` (§2.1, §5) as visible text. Validation-dropped ops are shown **struck-through with their reason** (never silently omitted); after apply, failed ops show the engine message and the recovery hint ("edit or disable, then re-apply"). This makes the validate-drop and mid-apply-failure paths legible at the point of decision.
+
+**F3 — per-data-type cost/egress breakdown (not one boolean).** The banner does **not** collapse egress to a single `willEgress` flag. Mirroring the **two independent consent gates** (§6: text-`editPlan` vs frame-`vision`/OCR), it shows a **per-data-type breakdown**, each tied to its own gate state, sourced from the `ai.planJob` route per function:
+  - **Text (editPlan)** → route + cost, and whether it egresses (consent: text gate).
+  - **Frames (OCR / vision)** → route + cost, and whether frames egress — flagged as the **heaviest cost+privacy item** (`PLAN.md:273`), with the frame-consent gate state shown explicitly ("frames → cloud vision: NOT consented / consented"). A user must never approve frame egress without seeing it called out separately from text egress.
+  Plus `cacheHit` per function (re-prompt-is-free signal, §6). The privacy/consent model is the product differentiator; the banner reflects both gates, not a blob. (Honesty note §6: N keys ≠ N× quota — the banner shows route+cost, never implies ×N capacity.)
+
+**F4 — `rationale` / model-text rendering contract (XSS surface).** Each op's `rationale` (and any model-authored `statusReason`) is model-authored text that may echo injected on-screen/spoken content. It is rendered as **plain text only**: React text nodes (`{op.rationale}`), **never** `dangerouslySetInnerHTML`, **no** markdown/rich-text rendering, **no** link auto-detection/auto-rendering. (Repo has zero `dangerouslySetInnerHTML` uses today — grep clean; DirectorPanel keeps it that way. Aligns with the web security rule on `dangerouslySetInnerHTML`.) This closes the renderer XSS surface the "untrusted text" claim (§2.1, §5) implies, and reinforces it is shown, never run.
+
+**F6 — iterate-the-prompt return edge.** The loop *is* the product (`FEATURE.md:23-24`: approve / edit / **re-prompt**). From both the Plan-preview and the Evaluate view, an **"Adjust & re-plan"** affordance carries the prior `goal` text forward (editable, pre-filled) into a fresh `director.plan` call; because cache keys on `(sourceHash, goal, model, params)` (§6), re-prompting the same source is free. The prior plan stays visible until the new one returns, so the user compares rather than loses context.
+
+### 7.4 Accessibility commitment (F5)
+
+The brief asks about a11y and v1 commits to (full WCAG specifics deferred to PLAN):
+- **Keyboard-complete plan review.** The storyboard is fully operable by keyboard: every op row is focusable; expand/collapse, **enable/disable per op**, and per-step edit are reachable via keyboard — **never drag-only** (any drag-reorder affordance has a keyboard equivalent, e.g. move-up/move-down buttons).
+- **Screen-reader-announced safety gates.** The cost/egress banner and the Apply/confirm gate are screen-reader announced; the **frame-egress warning must NOT be color-only or visual-only** — it carries a text label and is exposed to assistive tech (it is safety-critical). The **irreversible-op second-confirm** (§5) is keyboard-reachable and announced.
+- **`aria-live` job progress.** `job.progress`/`job.done` updates render into an `aria-live="polite"` region so progress and the final per-op status (applied/failed/dropped) are announced, not silent. (The sibling panel today has `role="alert"` only on errors `ModelsSystemPanel.tsx:342` and no live region — DirectorPanel adds the live region.)
+- **Inherited precedent.** `aria-label` on the panel root and `role="alert"` on error text follow the sibling panel (`ModelsSystemPanel.tsx:309,:342`). All of the above are covered by vitest (jsdom queries by role/label) toward the 100% renderer gate (`quality.yml:93-95`).
 
 ---
 
 ## 8. GAP summary (build order)
 
-1. **`applyEngine` (apply over a project COPY + invert/undo)** — FIRST; unretrofittable (`PLAN.md:272`).
+1. **`applyEngine` (apply over a project COPY + invert/undo + stop-on-first-failure auto-rollback, §5)** — FIRST; unretrofittable (`PLAN.md:272`).
 2. **`ocrExtractList`** — OCR engine over the registered-but-unbuilt RapidOCR asset (`assets/manifest.py:264`), routed through the existing `vision` consent gate (`handlers.py:670`).
 3. **`stitchPanorama`** + **`regenScroll`** — frame stitch + constant-speed regen (no code today).
-4. **EditPlan DSL + validate-and-reject** (D3, `PLAN.md:230`).
+4. **EditPlan DSL + validate-and-reject** (D3, `PLAN.md:230`) — incl. per-op `status`/`statusReason` (§2.1, surfaced in storyboard).
 5. **`director.evaluate`** objective metrics (D4 eval harness, `PLAN.md:230`).
-6. **`DirectorPanel.tsx`** storyboard/diff + cost banner.
+6. **`DirectorPanel.tsx`** — storyboard/diff with grouping + collapsible groups + plain-language summary header (§7.3 F1), per-op status rows incl. drop/failure reasons (F2), per-data-type cost/egress banner (F3), plain-text-only `rationale` rendering (F4), "Adjust & re-plan" iterate edge (F6), and the §7.4 accessibility commitments (F5: keyboard-complete review, SR-announced egress/confirm, `aria-live` progress).
 
 Each lands behind the proven `# pragma: no cover` real-impl-seam pattern (see `smolvlm2.py` `_default_backend_factory`, `provider.py` `_urllib_post_json`) with injected fakes, so the planner/validator/eval stay pure, fully-tested functions hitting `quality.yml` gate:3 (100% line+branch sidecar; 100% vitest renderer).
 
@@ -239,4 +271,5 @@ Each lands behind the proven `# pragma: no cover` real-impl-seam pattern (see `s
 ## 9. Open questions resolved here vs deferred to the gate
 
 - **Resolved:** Q1 (new DSL over track schema), Q2 (v1 op set), Q3 (objective metrics over LLM judge), Q4 (storyboard diff).
+- **Designer-gate blocking findings resolved (this revision):** F1 large-plan storyboard UX = grouping/collapsible + plain-language summary header, per-op diff as drill-down (§7.3); F2 apply error/partial-failure + validation-drop UX = per-op `status`/`statusReason` surfaced in the storyboard + stop-on-first-failure auto-rollback recovery (§2.1, §5, §7.3); F3 per-data-type cost/egress banner (text-editPlan vs frame-OCR, each tied to its gate) (§7.3); F4 `rationale`/model-text rendering contract = plain-text-only, no `dangerouslySetInnerHTML`/markdown/link auto-render (§7.3); F5 accessibility commitment = keyboard-complete review, SR-announced egress/confirm + irreversible second-confirm, `aria-live` progress (§7.4). (F6 iterate return edge + F7 RapidOCR v4/v5 label note also addressed: F6 in §7.3; F7 — the asset URL is `ch_PP-OCRv4_det_infer.onnx` while the label says PP-OCRv5 in `assets/manifest.py:264`; DESIGN cites the slot only and does not depend on the version, flagged so PLAN does not propagate the confusion into the OCR engine work.)
 - **Deferred to Design Review Gate:** Q5 dependency on Provider Hub — **already shipped** (the AI-Job envelope + pool exist on this branch), so Director can start; confirm sequencing at the gate. Exact EditPlan JSON schema, the regen/stitch backend choice, and whether `director.previewCost` is a distinct method or folded into `ai.planJob` go to PLAN.
