@@ -1,6 +1,6 @@
 # Repurpose Bundle — Design Doc
 
-**Status:** v1 — DESIGN (awaiting Design Review Gate)
+**Status:** v1 — DESIGN (design-gate blocking items resolved: BatchQueue live-status a11y model §7.1; concrete batch-consent surface + visible-skip §9.1; plus Designer non-blocking weaknesses — resume discoverability §7.2, curated-preset-first TemplateEditor §7, constrained edit-time caption-style select §7/§10.5, info hierarchy §7)
 **Date:** 2026-06-18
 **Owner:** Reframe Media Studio
 **Branch:** `feat/repurpose-design` (docs only — no feature code)
@@ -100,7 +100,7 @@ The runner is **unchanged from `recipes._run_steps`** (`recipes.py:279`): each s
 
 ### 5.2 Batch queue (`features/batch.py`)
 
-A **batch** = `{id, name, templateId, sourceVideoIds:[...], status, items:[BatchItem]}` where a `BatchItem` = `{videoId, status: "queued"|"running"|"done"|"error"|"cancelled", jobId?, error?, results?}`. It runs each source through the named template **as a nested recipe run**, so one batch = one parent job that drives N per-source recipe runs.
+A **batch** = `{id, name, templateId, sourceVideoIds:[...], status, items:[BatchItem]}` where a `BatchItem` = `{videoId, status: "queued"|"running"|"done"|"error"|"cancelled"|"skipped", jobId?, error?, skipReason?, results?}`. The `"skipped"` terminal state + `skipReason` carry the visible-skip contract (§9.1) so a source dropped by the consent gate is recorded and attributed, never silently absent. It runs each source through the named template **as a nested recipe run**, so one batch = one parent job that drives N per-source recipe runs.
 
 - **Execution shape** mirrors `convert_batch` (`convert.py:195-238`): iterate `sourceVideoIds`, spread the parent job's `[0,100]` progress across items, honor cancellation between items (`job_ctx.raise_if_cancelled`, `recipes.py:285`). Per-source isolation: a source whose template run errors is recorded `error` on its `BatchItem` and the batch **continues** (NOT the convert behavior, which aborts — this is the one deliberate divergence, §10.3).
 - **Per-source run** = invoke the template runner for that `videoId` (binding the template's steps to this source, e.g. `transcribe.start {videoId}` → … → `shortmaker.export`). Because the template runner returns `{jobId}`, the batch awaits it with the SAME `_await_subjob` relay (`recipes.py:323`) — no new waiting code.
@@ -146,7 +146,7 @@ All registered through the existing single composition root (`handlers.py:1982` 
 |--------|--------|--------|-------|
 | `batch.create` | `{name, templateId, sourceVideoIds}` | `{batch}` | persists a `BatchState` (queued items) — durable |
 | `batch.start` | `{id}` | `{jobId}` | the long parent job; per-source isolation; resumable |
-| `batch.status` | `{id}` | `{batch}` | aggregate + per-item status (read from store + live job) |
+| `batch.status` | `{id}` | `{batch}` | aggregate + per-item status (read from store + live job); includes `skipped` items with `skipReason` (§9.1) so the run/skip split is always explainable |
 | `batch.list` | — | `{batches:[BatchSummary]}` | including finished ones |
 | `batch.cancel` | `{id}` | `{ok}` | cancels the parent job (→ cooperative item cancel, `jobs.py:447`) |
 | `batch.resume` | `{id}` | `{jobId}` | re-enqueue not-yet-done items (§10.1) |
@@ -165,12 +165,39 @@ A new **Repurpose** view (tab in `TabBar.tsx` / `App.tsx`), composed of three pa
 - `client.batch.{create,start,status,list,cancel,resume,delete}`
 - New TS interfaces in `rpc.ts` (§3 schema block): `ExportPreset`, `Template`, `BatchItem`, `BatchState`, `BatchSummary` — field names identical to the sidecar (the house rule, `rpc.ts:17`).
 
+**Information hierarchy / progressive disclosure (UX clarity).** The view is NOT three equally-weighted config surfaces. The default landing panel is **BatchQueue** (the primary "folder → shorts" flow): a first-run user picks sources + a template and runs, without touching the other two panels. TemplateEditor and ExportPresetsPanel are secondary/collapsed config surfaces reached from BatchQueue (a "New template" / "Edit presets" affordance) — the happy path never requires opening them because the bundle ships **seeded presets** (tiktok/reels/shorts, §5.3) and the template picker offers **curated starter templates** (below) so day-one batch runs work with zero configuration. This mirrors `Recipes.tsx`, where curated `RECIPE_PRESETS` are the entry point and raw step editing is the advanced path.
+
 Panels (under `renderer/src/features/` and `renderer/src/views/`):
-1. **TemplateEditor** — pick steps (from a method allowlist), set `defaultControls` (REUSE `shortMakerLogic` `DEFAULT_CONTROLS`/`sanitizeControls` + `shortMakerPresets` `buildExportParams`), choose `exportTargets`. Save via `templates.save`.
-2. **ExportPresetsPanel** — table of presets, edit aspect/style/min-max-sec/count; REUSE `PLATFORM_PRESETS` as the seed view + `CAPTION_STYLE_OPTIONS` (`shortMakerLogic.ts:198`) for the style picker.
-3. **BatchQueue** — multi-select library videos (REUSE the native multi-picker `window.api.openVideos`, `rpc.ts:438`), pick a template, `batch.create` → `batch.start`. Live aggregate + per-source rows driven by `onProgress`/`onJobDone` (`rpc.ts:473,478`) and `batch.status` polling; a **Resume** button calls `batch.resume` for any batch left incomplete (visible on relaunch). REUSE the existing `JobQueue.tsx` / `ProgressBar.tsx` components for row rendering.
+1. **TemplateEditor** — REUSE the curated-preset-first pattern, NOT raw method ids. Step selection is offered as **human-labeled curated starter templates** (mirroring `Recipes.tsx`'s `RECIPE_PRESETS`, e.g. "Transcribe + label speakers") — the picker shows the friendly label, never the developer identifier (`shortmaker.select`, `phase8.select`). A creator assembles a template by picking labeled presets/steps from this curated catalog; the underlying method allowlist (§10.6) is an implementation detail the UI maps onto, so a non-technical creator is never shown raw `protocol.METHODS` names. Set `defaultControls` (REUSE `shortMakerLogic` `DEFAULT_CONTROLS`/`sanitizeControls` + `shortMakerPresets` `buildExportParams`), choose `exportTargets`. Save via `templates.save`. **Decision surfaced as a gate question (F-template-catalog):** the v1 curated starter set + label copy is itself a deliverable, not a free-form method dropdown.
+2. **ExportPresetsPanel** — table of presets, edit aspect/min-max-sec/count, and a **constrained `captionStyle` select seeded from `CAPTION_STYLE_OPTIONS`** (`shortMakerLogic.ts:198`): the edit-time control is a closed dropdown of valid style ids only, so an invalid id is *unselectable* and the save-time validation (§10.5) is a defense-in-depth backstop, not the primary UX. REUSE `PLATFORM_PRESETS` as the seed view. Aspect/duration fields show the §5.3 window clamp (20-60 s) inline so the user cannot author a preset the pipeline will silently correct.
+3. **BatchQueue** — multi-select library videos (REUSE the native multi-picker `window.api.openVideos`, `rpc.ts:438`), pick a template, review the **consent summary** (§9), `batch.create` → `batch.start`. Live aggregate + per-source rows driven by `onProgress`/`onJobDone` (`rpc.ts:473,478`) and `batch.status` polling; a **Resume** affordance (§7.2) for any batch left incomplete. REUSE the existing `JobQueue.tsx` / `ProgressBar.tsx` components for row rendering, plus the NEW per-source live-status announcer in §7.1.
 
 Progress relay: the parent batch job's `job.progress` carries `"source k/N · <title> · step j/M · <label>"` (extends the recipe runner's existing `"step k/N · <label>"` message, `recipes.py:293`).
+
+### 7.1 BatchQueue accessibility model — live per-source state (BLOCKING #1, resolved)
+
+The headline batch feature is glance-away / unattended use, so a sighted-and-screen-reader user must be **told** when a source completes or fails without watching the screen. The reused `JobQueue.tsx` does **not** carry an `aria-live` region (verified: it has only `role="alert"` on its error block, `JobQueue.tsx:137`) — so this is **net-new UX, not "reuse,"** and is specified here rather than deferred to BUILD.
+
+**The pattern is reused, the wiring is new.** The codebase already establishes the exact idiom for SR-announced progress: a polite live region, e.g. `ShortMaker.tsx:773` (`<div role="status" aria-live="polite">`) and the `progress` regions across `Convert.tsx:318`, `Recipes.tsx:239`, `Subtitles.tsx:342`, `Diarize.tsx:141`, `Dub.tsx:402`, `Assets.tsx:194`. BatchQueue adopts the SAME idiom; it does not invent a new one.
+
+Concrete a11y contract for the BatchQueue panel:
+
+- **Aggregate status region** — one `role="status" aria-live="polite"` region (matching `ShortMaker.tsx:773`) holding the aggregate batch message (`"source k/N · <title> · step j/M · <label>"`, §7) so continuous progress is announced politely without spamming on every percent tick (announce on **source transition**, not on every `onProgress` pct — debounce by re-rendering the region text only when `source k/N` or item status changes, so SR users hear "source 4 of 30 …", not 100 announcements per source).
+- **Per-source terminal-transition announcements** — when a `BatchItem` flips to a **terminal** state, append a discrete sentence to the SAME polite region (or a sibling `aria-live="polite"` log region): `"<title> — done"` on success and **`"<title> — failed: <reason>"`** on error. Errors use `aria-live="assertive"` / `role="alert"` (matching `SidecarBanner.tsx:72`) so a failed source interrupts and is not missed — this is the one transition important enough to be assertive. Queued→running transitions are NOT announced (too noisy); only terminal `done`/`error`/`cancelled` are.
+- **Per-row visual state is not color-only** — each source row carries a text/icon status token ("Done", "Failed", "Queued", "Running", "Skipped"), never color alone, reusing the PresetPicker discipline ("aria-pressed, not color alone … text, not color", `PresetPicker.tsx:6,11`). The `<ProgressBar>` per row keeps its `role="progressbar"` + `aria-valuenow` (`ProgressBar.tsx:25-28`).
+- **Tab inherits a11y for free** — the new Repurpose tab rides `TabBar.tsx`'s `role="tablist"`/`role="tab"`/`aria-selected` (`TabBar.tsx:17,24,25`), so keyboard/SR navigation to the surface needs no new code.
+
+This makes the core glance-away/SR experience a first-class part of the design, satisfying the design-gate blocking item. **GATE QUESTION (F-a11y-announce-granularity):** confirm "announce on source-transition + terminal-state only" (recommended) vs. announcing every step transition (richer but chattier for SR users).
+
+### 7.2 Resume discoverability — surfacing an interrupted batch BEFORE the user opens the tab
+
+`batch.resume` (§6, §10.1) restarts an incomplete batch, but after an app restart the user may not know a batch was interrupted if they never open the Repurpose tab. The Resume affordance must therefore be **discoverable from outside the panel**:
+
+- **Tab badge** — on launch the renderer calls `batch.list` (cheap, store-only read, §6) and, if any `BatchState.status` is `running`/`partial`/`queued` (i.e. not `done`/`cancelled`), renders a count badge on the Repurpose tab in `TabBar.tsx` (the tab already exists; the badge is additive text, not color-only — an "(N)" suffix in the tab label so it is SR-readable, consistent with the §7.1 not-color-only rule).
+- **Launch toast** — additionally surface a one-time, dismissible toast via the existing `ToastHost` (`ToastHost.tsx:68`, already `aria-live="polite"`) on first launch after an interrupted batch: `"A batch ('<name>') was interrupted — N of M sources left. Resume?"` with a Resume action that deep-links into BatchQueue. REUSE `ToastHost` rather than inventing a banner; it already carries the polite live region.
+- Inside the panel, incomplete batches sort to the top with a prominent **Resume** button calling `batch.resume`.
+
+This closes the clarity hole in G2 (the user is told an interrupted batch exists, by two independent channels, before they navigate). **GATE QUESTION (F-resume-surface):** tab badge + launch toast (recommended), tab badge only, or toast only.
 
 ---
 
@@ -200,9 +227,10 @@ Reuse the existing `defaultTargetJobSize` (`settings_store.py:69`, consumed by `
   "status": "running",          // queued|running|done|error|cancelled|partial
   "createdAt": 1781757400.0,
   "items": [
-    { "videoId": "vid-1", "status": "done",   "results": {...} },
-    { "videoId": "vid-2", "status": "error",  "error": "transcribe failed: ..." },
-    { "videoId": "vid-3", "status": "queued" }
+    { "videoId": "vid-1", "status": "done",    "results": {...} },
+    { "videoId": "vid-2", "status": "error",   "error": "transcribe failed: ..." },
+    { "videoId": "vid-3", "status": "queued" },
+    { "videoId": "vid-4", "status": "skipped", "skipReason": "would egress — not acknowledged" }
   ]
 }
 ```
@@ -214,8 +242,25 @@ Reuse the existing `defaultTargetJobSize` (`settings_store.py:69`, consumed by `
 - **Reversible by construction.** Templates and presets are JSON CRUD; deleting a batch never touches produced media (it lives under `exports/shorts-<videoId>`, owned by the existing shorts library, `handlers.py:2133`). `exportPresets.reset` restores seeds. No in-place edits to source media — every render writes a NEW derivative (the `ShortMaker.export` contract).
 - **Cancellation is cooperative + already proven.** `batch.cancel` sets the parent job's flag (`jobs.py:447`); the batch loop's `raise_if_cancelled` (`recipes.py:285`) stops between sources and cancels the in-flight sub-job (`_await_subjob`, `recipes.py:345-347`). No new cancellation machinery.
 - **AI consent + budget ride the Hub envelope, unchanged.** The batch never calls a provider directly. When a template step is `shortmaker.select`/`phase8.select`/`subtitles.translate`, those handlers already build the envelope via `_run_ai_job` (`handlers.py:1617`) and enforce the budget-ack gate `_enforce_cloud_budget_ack` (`handlers.py:1672`): if `confirmCloudBudget` is on and the run would egress, the step requires the `ai.planJob` `cacheKey` as `confirmBudget`.
-  - **Batch consequence (GAP §10.2):** a fully-unattended N-source batch can't interactively pre-flight each source's AI step. The envelope's `cacheKey` is per-request, so a batch-wide blanket ack would not match. **Design decision for the gate:** the batch surfaces a single **pre-run consent summary** (one `ai.planJob` per distinct step shape via the existing pure planner, ZERO provider calls — `handlers.py:1693`) and requires the user to acknowledge cloud egress for the whole batch ONCE; if `confirmCloudBudget` is on, the batch either (a) runs only sources whose AI steps are cache hits / local-only, or (b) is refused with the same typed message until the user disables the per-call gate or chooses an all-local routing preset. Frame/text consent (`providers.setConsent`, `handlers.py:414`) is unchanged and still enforced per-entry at pool construction (`handlers.py:597`). **GATE QUESTION (F-batch-consent):** confirm (a) skip-non-acked vs. (b) refuse-batch as the default.
+  - **Batch consequence (GAP §10.2):** a fully-unattended N-source batch can't interactively pre-flight each source's AI step. The envelope's `cacheKey` is per-request, so a batch-wide blanket ack would not match. **Design decision for the gate:** the batch surfaces a single **pre-run consent summary** (built from `ai.planJob`, the existing pure planner, ZERO provider calls — `handlers.py:1693`, which returns `{route, costEst, cacheHit, willEgress, budget, preview, cacheKey}`, `handlers.py:1696`) and requires the user to acknowledge cloud egress for the whole batch ONCE; if `confirmCloudBudget` is on, the batch either (a) runs only sources whose AI steps are cache hits / local-only and **visibly skips** the rest, or (b) is refused with the same typed message until the user disables the per-call gate or chooses an all-local routing preset. Frame/text consent (`providers.setConsent`, `handlers.py:414`) is unchanged and still enforced per-entry at pool construction (`handlers.py:597`). The concrete surface for this is specified in §9.1. **GATE QUESTION (F-batch-consent):** confirm (a) skip-non-acked vs. (b) refuse-batch as the default.
 - **No secrets in batch state.** `BatchState`/results store method results, never keys; the redaction invariants (`providers.list`, `handlers.py:330`) are untouched because the batch never reads raw provider config.
+
+### 9.1 Batch consent surface — concrete UX + visible skip (BLOCKING #2, resolved)
+
+The batch-wide consent gate is the most novel UX in the bundle, so its surface is specified here rather than left to the gate question. It is computed BEFORE `batch.start`, from pure `ai.planJob` plans only (no provider calls), and is rendered as a **pre-run consent summary card** in BatchQueue.
+
+**What the summary shows** (one card, derived from one `ai.planJob` per distinct step *shape* — sources sharing a template+size collapse to one plan, so the planner cost is bounded by step-shape count, not source count):
+- **Per-step shape** rows: the human step label ("Make 5 shorts", "Translate captions"), its route (`route` from the plan), and whether it would **egress** (`willEgress`) or stay local.
+- **Source count and split**: "**N of M sources will run**; K skipped" — and crucially, **which sources are local-only / cache-hit vs. egressing**, computed from each source's plan `willEgress`/`cacheHit`. Local-only and cache-hit sources run regardless; only sources with a `willEgress` step under an un-acked `confirmCloudBudget` are at risk.
+- **Estimated cost** (`costEst`) aggregated across the egressing sources, and the budget headroom (`budget` from the plan), so the single acknowledgement is informed.
+- **One acknowledgement control** — a single "Acknowledge cloud egress for this batch" action that records the user's consent for the whole run (the batch passes the per-step `cacheKey` from each plan as `confirmBudget` to the underlying handler, satisfying `_enforce_cloud_budget_ack`, `handlers.py:1672`, without changing the envelope). If `confirmCloudBudget` is OFF, the card is informational only (no ack required) and all sources run.
+
+**Making option (a) "skip" VISIBLE (the design-load-bearing part).** When the default is (a) skip-non-acked and `confirmCloudBudget` is on, a source whose AI step would egress and is not acknowledged is **never silently dropped**. It is surfaced through concrete channels so the user can always tell *why N of 30 didn't run*:
+1. **Pre-run, in the summary card**: the "K skipped" list names each skipped source with the reason token ("would egress — not acknowledged" / "no budget headroom"), so the user sees the skip *before* committing.
+2. **In the BatchItem model**: skipped sources get an explicit terminal status `status: "skipped"` with a `skipReason` field on the `BatchItem` (additive to the §5.2 shape, alongside `error`) — never `done`, never a silent absence. `BatchState` therefore records the full M sources with N run + K skipped, so `batch.status` and a later read always explain the gap.
+3. **In the live queue + a11y layer**: each skipped row renders a text "Skipped" status token (not color-only, §7.1) with the reason in a tooltip/detail, and the §7.1 polite live region announces `"<title> — skipped: <reason>"` so SR users are told too. A skipped source is thus *visible, attributed, and re-runnable* (acknowledge, then `batch.resume` re-evaluates skipped items).
+
+This converts a silently-skipped source — a clarity and accessibility trap — into an explicit, attributed, recoverable outcome. The chosen default (F-batch-consent) ships with this surfacing UX as a unit; whichever of (a)/(b) the gate picks, the skip/refusal reason is always shown.
 
 ---
 
@@ -254,7 +299,10 @@ Each work unit: TDD first; sidecar `pytest --cov-branch --cov-fail-under=100`; r
 ## 12. Open gate questions
 
 - **F-template-shape (§5.4):** new `templates.py` (recommended) vs. extend `recipes.normalize_recipe` in place.
-- **F-batch-consent (§9/§10.2):** default to (a) run-only-non-egressing under `confirmCloudBudget`, or (b) refuse-batch-until-acked.
+- **F-batch-consent (§9/§9.1/§10.2):** default to (a) run-only-non-egressing under `confirmCloudBudget` **with the visible-skip surface (§9.1)** (recommended), or (b) refuse-batch-until-acked. Either way the skip/refusal reason is shown — the surface (§9.1) is decided, only the policy default is open.
 - **F-resume-granularity (§10.1):** confirm source-level resume is acceptable for v1 (mid-pipeline checkpointing deferred).
 - **F-error-policy (§10.3):** confirm `batchContinueOnError` default `true`.
 - **F-youtube (§10.4):** include a seeded 16:9 `youtube` preset in v1, or vertical-only until landscape reframe is validated.
+- **F-a11y-announce-granularity (§7.1):** announce on source-transition + terminal-state only (recommended) vs. every step transition.
+- **F-resume-surface (§7.2):** tab badge + launch toast (recommended) vs. badge-only vs. toast-only for surfacing an interrupted batch.
+- **F-template-catalog (§7):** confirm the v1 curated starter-template set + label copy (curated-preset-first, no raw method ids exposed to the creator).
