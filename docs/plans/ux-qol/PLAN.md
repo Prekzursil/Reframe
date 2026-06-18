@@ -28,7 +28,7 @@ Companion: [`DESIGN.md`](./DESIGN.md) (committed `86e480a`). This PLAN decompose
 | **WU-3** | `thumb:` mstream resolver branch | main process | new resolver branch | WU-2 (shape only) |
 | **WU-4** | `useVideoThumbnail` hook | renderer | no | WU-2, WU-3 (URL shape) |
 | **WU-5** | `JobStore` + atomic disk persistence | sidecar | **YES — the load-bearing piece** | WU-0 |
-| **WU-6** | `JobRegistry` write-through + rehydrate + `INTERRUPTED` status | sidecar | extends jobs.py | WU-5 |
+| **WU-6** | `JobRegistry` write-through + rehydrate + `INTERRUPTED` status + composition-root store injection | sidecar (jobs.py + rpc.py + __main__.py) | extends jobs.py; injects store at the real composition root | WU-5 |
 | **WU-7** | `JobInfo` status widening + `canResume` + Resume button | renderer | no | WU-6 (status name) |
 | **WU-8** | `readiness.summary` RPC + `readinessMeta.ts` | sidecar RPC + pure helper | RPC + pure map | WU-0 |
 | **WU-9** | `ReadinessBadge` component | renderer | no | WU-8 |
@@ -176,28 +176,35 @@ Companion: [`DESIGN.md`](./DESIGN.md) (committed `86e480a`). This PLAN decompose
 
 ### WU-6 — `JobRegistry` write-through + rehydrate + `INTERRUPTED` status
 
-**Goal:** Wire `JobStore` into `JobRegistry` (write-through on create / `record_request` / status transitions); on startup, rehydrate records and mark any `running`/`queued` (PENDING) job as a NEW terminal-ish `INTERRUPTED` status — NOT auto-restarted (§5 safety: no silent re-spend).
+**Goal:** Wire `JobStore` into `JobRegistry` (write-through on create / `record_request` / status transitions via a single status choke-point); inject the store at the **real composition root** (`__main__.main()` → `RpcServer`/`JobRegistry`), since the registry is owned by `RpcServer` and `data_dir` lives in `Services` (see "Composition-root reality" below); on startup, rehydrate records and mark any `pending`/`running` job as a NEW terminal-ish `INTERRUPTED` status — NOT auto-restarted (§5 safety: no silent re-spend).
+
+**Composition-root reality (verified — read before designing the wiring):** the `JobRegistry` is NOT owned by `handlers.py`. It is constructed in `RpcServer.__init__` (`rpc.py:55`, verified: `self.jobs = JobRegistry(emit_progress=self._emit_progress, emit_done=self._emit_done)`), and handlers reach it only as `ctx.jobs` at call time (`protocol.py:RpcContext.jobs`, verified `protocol.py:59-68`). `register_all(services=None, *, register=None)` (`handlers.py:1982`, verified signature) builds a **separate** `Services` (which is what holds `data_dir`, `handlers.py:143-148`) and registers handlers — it never constructs or touches the registry. `RpcServer` takes only optional in/out streams (`rpc.py:48-56`, verified) and has **no `data_dir`**. The real entry point wires the two **independently** and discards the `Services`: `__main__.main()` (verified `__main__.py:74-79`) calls `handlers.register_all()` (return value ignored), then `rpc.main(argv)` → `rpc.build_server()` → `RpcServer()` (verified `rpc.py:130,136,142`), which constructs the registry afresh. **There is therefore no existing seam that flows `data_dir` into the registry.** WU-6 must create that seam at the real composition root; "construct the persistent registry in handlers.py" is not buildable as such.
 
 **Files:**
 - `sidecar/media_studio/jobs.py`:
-  - Add `INTERRUPTED = "interrupted"` to `JobStatus` (`jobs.py:46-64`). **CONTRACT-NOTE update required:** the enum's existing docstring (`jobs.py:53-60`, verified) pins the wire status set to exactly five values and the `Job.info()` mapping (`jobs.py:166`). Adding a sixth member MUST update that contract-note AND any P1 `job.status` test that asserts the value-set is exactly five (search `test_jobs*.py` for that assertion — it is a real pin per the docstring). `Job.info()` (`jobs.py:159-171`) needs no mapping change (INTERRUPTED is a real value, unlike PENDING→"queued").
-  - Inject `JobStore` into `JobRegistry.__init__` (`jobs.py:192-212`, verified signature) with default `= None` → a no-op/in-memory store so all existing `JobRegistry(...)` callers keep working (the existing every-collaborator-injected pattern, `handlers.py:121-180`).
-  - Write-through in `create` (`jobs.py:220-245`), `record_request` (`jobs.py:270-292`), and the status-transition points.
-  - `rehydrate()`: load records, recreate `Job` shells with stored `request`, map any non-terminal stored status to `INTERRUPTED`. Its `{method, params}` stays available to the existing built-in `job.retry` (`protocol.py:13`, verified).
-- `sidecar/media_studio/handlers.py` — construct the registry with a `DiskJobStore` rooted at `data_dir/jobs` (default real store) and call `rehydrate()` at sidecar startup.
-- Tests: extend `sidecar/tests/test_jobs.py` (+ a new `test_jobs_persistence.py`).
+  - Add `INTERRUPTED = "interrupted"` to `JobStatus`. **Enum members are `PENDING/RUNNING/DONE/ERROR/CANCELLED`** (verified `jobs.py:60-64`) — note the internal pre-run member is named `PENDING` (not `QUEUED`); add `INTERRUPTED` alongside those names. **CONTRACT-NOTE update required:** the enum docstring (verified `jobs.py:53-60`) pins the **wire** status set to exactly the five values `queued|running|done|error|cancelled` and explains the `PENDING→"queued"` map in `Job.info()` (verified `jobs.py:166`). Adding a sixth member MUST update that contract-note AND any P1 `job.status` test that asserts the value-set is exactly five (search `test_jobs*.py` for that assertion — it is a real pin per the docstring). `Job.info()` (verified `jobs.py:159-175`) needs **no mapping change** — `INTERRUPTED` is a real wire value (unlike `PENDING`, which is the only mapped member); the `info()` line `status = "queued" if self.status is JobStatus.PENDING else self.status.value` (verified `jobs.py:166`) emits `"interrupted"` unchanged.
+  - Inject `JobStore` into `JobRegistry.__init__` (verified signature `jobs.py:192-212`: `(emit_progress, emit_done, *, id_prefix="job", max_workers=2, max_gpu_workers=1)`) as a new keyword-only `store: JobStore | None = None` defaulting to `None` → behaves as no-op/in-memory so **every existing `JobRegistry(...)` caller keeps working** unchanged, incl. the `rpc.py:55` construction (back-compat).
+  - **Introduce a single status-transition choke-point** `_set_status(job, new_status)` and route the four existing direct assignments through it — verified sinks: `jobs.py:390` (`job.status = JobStatus.RUNNING`), `jobs.py:418` (`= JobStatus.DONE`), `jobs.py:426` (`= JobStatus.CANCELLED`), `jobs.py:434` (`= JobStatus.ERROR`). There is **no existing `set_status` method** (verified — status is mutated by direct assignment at those four lines only), so the write-through has no single seam today; WU-6 must add one (or, if a choke-point is rejected, enumerate and hook all four sinks). Write-through to `store.write(...)` happens inside the choke-point so no transition is silently missed.
+  - Write-through also in `create` (verified `jobs.py:220-261`). For `record_request` (verified `jobs.py:270-292`): note its **first-write-wins guard** — it returns early when `job.request is not None` (verified `jobs.py:282`). `rehydrate()` recreates `Job` shells with `request` already populated from the stored record, so a resumed-then-rebuilt job's `request` is non-`None`; the write-through must NOT re-record or be blocked by that guard for rehydrated jobs. Pin the interaction with a falsifiable test (see acceptance).
+  - `rehydrate()`: load `store.load_all()`, recreate `Job` shells with the stored `{method, params}` set as `job.request` (so the existing built-in `job.retry` — verified `protocol.py` dispatch records the new job — can re-dispatch them), and map any non-terminal stored status (`pending`/`running`) to `INTERRUPTED`; terminal statuses (`done`/`error`/`cancelled`) are kept verbatim.
+- `sidecar/media_studio/rpc.py` (**the registry owner — added to scope per the composition-root reality above**) — give `RpcServer.__init__` an optional `store: JobStore | None = None` (default `None` = today's in-memory behavior, back-compat) and pass it into the `JobRegistry(...)` it constructs at `rpc.py:55`; thread it through `build_server(...)` (`rpc.py:130-133`) and `rpc.main(...)` (`rpc.py:136-152`) so the entry point can supply it. Optionally call `server.jobs.rehydrate()` once after construction (or expose it for the entry point to call).
+- `sidecar/media_studio/__main__.py` (**the composition root — added to scope**) — this is where `data_dir` and the registry must meet. `main()` (verified `__main__.py:74-79`) currently calls `handlers.register_all()` then `rpc.main(argv)` with no shared state. Change it to (a) capture the `Services` that `register_all()` returns (it already returns `svc`, verified `handlers.py:1993,2267`) so its `svc.data_dir` is in hand, (b) build a `DiskJobStore(svc.data_dir / "jobs")`, and (c) pass that store into `rpc.main(argv, store=store)` (or `build_server(store=store)` then `serve()`), then call `rehydrate()` once at startup. This is the **only** place `data_dir` (Services-owned) and the registry (RpcServer-owned) are both visible, so it is the correct injection seam.
+- `sidecar/media_studio/handlers.py` — **no registry construction here.** If any handler needs to surface persistence (it does not for MVP — persistence is registry-internal), it uses `ctx.jobs` as today. `register_all` is unchanged except: it already returns `svc` (verified), which `__main__.main()` now consumes.
+- Tests: extend `sidecar/tests/test_jobs.py` (+ a new `test_jobs_persistence.py`); add a focused `RpcServer(store=...)` wiring test in `sidecar/tests/test_rpc.py` (the registry-owner seam) and a `__main__.main()` composition test (fake/patched `rpc.main` + `register_all`, asserting a `DiskJobStore` rooted at `svc.data_dir/jobs` is constructed and `rehydrate()` is called — no real stdio, no real serve loop).
 
-**Test strategy:** Inject `InMemoryJobStore` (from WU-5). Assert write-through fires on each lifecycle event. Simulate restart: build registry A, create/run jobs, then build registry B sharing the same store → `rehydrate()` marks the non-terminal ones `interrupted`, terminal ones keep their status. Assert a rehydrated job's `request` survives so `job.retry` re-dispatches it (re-dispatch flows back through the dispatch layer — `protocol.py` records the new job, verified `protocol.py:11-14`). NO real ffmpeg/model — job handlers are fakes.
+**Test strategy:** Inject `InMemoryJobStore` (from WU-5) directly into `JobRegistry(store=...)`. Assert write-through fires on `create`, the chosen `record_request` path, and each of the four status transitions (drive each transition and assert one `store.write` per transition). Simulate restart: build registry A with store S, create/run jobs, then build registry B with the same store S → `rehydrate()` marks the non-terminal ones `interrupted`, terminal ones keep their status, and a rehydrated job's `request` survives so `job.retry` re-dispatches it. For the seam: a `RpcServer(store=InMemoryJobStore())` test asserts `server.jobs` carries the store; a `__main__.main()` test (patching `register_all`→fake Services with a tmp `data_dir`, and `rpc.main`→capture kwargs) asserts a `DiskJobStore` at `data_dir/jobs` is passed and `rehydrate()` invoked. NO real ffmpeg/model/stdio — all seams faked.
 
 **Falsifiable acceptance:**
-- After "restart", a job that was `running` reads `interrupted`; a job that was `done` stays `done` (the rule is falsifiable per-status).
+- After "restart" (registry B over the same store), a job that was `running` reads `interrupted`; a job that was `done` stays `done` (falsifiable per-status).
 - An `interrupted` job is **never** auto-spawned on rehydrate (assert the pool's run-count stays 0 after rehydrate with no explicit start — the §5 no-silent-spend invariant).
 - `job.retry` on a rehydrated `interrupted` job creates a NEW job from the stored `{method, params}`.
-- Existing `JobRegistry(...)` callers (no store arg) still pass every prior `test_jobs.py` test (back-compat).
-- The P1 `job.status` value-set test is updated to six and passes; the enum docstring contract-note is updated.
-- 100% line+branch.
+- **The composition seam exists and carries `data_dir`:** `__main__.main()` constructs a `DiskJobStore` rooted at the `Services.data_dir/jobs` returned by `register_all()` and passes it into the registry the `RpcServer` builds; `rehydrate()` is called once at startup (assert via patched `rpc.main`/`build_server`).
+- **`record_request` × rehydrate:** a rehydrated job (whose `request` is already populated) is not re-recorded nor blocked by the first-write-wins guard (assert the stored `{method, params}` is intact and a subsequent in-process `record_request` for a genuinely new job still works) — the guard interaction is pinned, not assumed.
+- Existing `JobRegistry(...)` callers (no `store` arg) and `RpcServer()` (no `store` arg) still pass every prior `test_jobs.py` / `test_rpc.py` test (back-compat — default `store=None` ⇒ in-memory).
+- The P1 `job.status` value-set test is updated to six and passes; the enum docstring contract-note is updated to note `interrupted` is a real wire value (no `info()` mapping change).
+- 100% line+branch (write-through choke-point, all four transitions, rehydrate terminal/non-terminal branches, the seam, the no-store default branch).
 
-**Gate:** `cd sidecar && pytest --cov-branch --cov-fail-under=100 tests/test_jobs.py tests/test_jobs_persistence.py tests/test_handlers.py`.
+**Gate:** `cd sidecar && pytest --cov-branch --cov-fail-under=100 tests/test_jobs.py tests/test_jobs_persistence.py tests/test_rpc.py tests/test_handlers.py`.
 
 ---
 
@@ -344,8 +351,8 @@ Companion: [`DESIGN.md`](./DESIGN.md) (committed `86e480a`). This PLAN decompose
 
 **Files:**
 - `app/renderer/src/App.tsx`:
-  - On `openVideo` (`App.tsx:109-111`, verified), `settings.set({lastOpenedVideoId: id})`.
-  - In the launch `settings.get` effect (`App.tsx:84-99`, verified — already hydrates the quality toggle), read `lastOpenedVideoId`, resolve via `library.list` (the exact pattern of `handleReexport`, `App.tsx:136-148`, verified), navigate to workspace. Fall back to Library when the video is gone (same fallback as `handleReexport`, `App.tsx:144-148`).
+  - On `openVideo` (`App.tsx:109-111`, verified — note its signature is `openVideo = useCallback((video: Video) => ...)`, it receives a **`Video` object, not an id**), persist `settings.set({lastOpenedVideoId: video.id})` (use `video.id`, not a bare `id`).
+  - Restore: do NOT bolt this onto the existing launch `settings.get` effect's body — that effect's typed call is `rpc<{ useCloud?: boolean }>('settings.get')` (verified `App.tsx:87`) and its hydration is synchronous-ish; reading `lastOpenedVideoId` requires (a) **widening that typed shape** to `rpc<{ useCloud?: boolean; lastOpenedVideoId?: string }>('settings.get')` (or a shared typed settings interface from WU-0), and (b) an **async** resolve via `library.list` — which mirrors `handleReexport` (verified `App.tsx:136-148`, which `await client.library.list()` and `.find((v) => v.id === ...)`), NOT the sync quality-hydrate. Implement the restore as its own async path (a separate effect or an async branch that awaits `library.list`), navigate to workspace on a match, and fall back to Library when the video is gone (same fallback as `handleReexport`, `App.tsx:147`). The quality-toggle hydrate stays untouched.
 - Tests: extend `app/renderer/src/App.test.tsx` (if present; else new focused test).
 
 **Test strategy:** Fake rpc. Launch with `lastOpenedVideoId` present + in `library.list` → navigates to workspace for that id. Present but absent from list → stays on Library (best-effort fallback). Empty key → stays on Library (default `route='library'`, `App.tsx:77`). `openVideo` persists the key.
@@ -353,7 +360,7 @@ Companion: [`DESIGN.md`](./DESIGN.md) (committed `86e480a`). This PLAN decompose
 **Falsifiable acceptance:**
 - A valid `lastOpenedVideoId` → route becomes workspace for that id on launch.
 - A stale id (not in `library.list`) → route stays Library, no crash (the fallback invariant).
-- `openVideo(id)` triggers exactly one `settings.set({lastOpenedVideoId:id})`.
+- `openVideo(video)` triggers exactly one `settings.set({lastOpenedVideoId: video.id})` (the persisted value is `video.id`, derived from the `Video` arg).
 - 100% line+branch (restore-success, restore-fallback, empty-key branches).
 
 **Gate:** `cd app && npx vitest run --coverage app/renderer/src/App.test.tsx`.
@@ -405,7 +412,7 @@ After WU-0 lands (it touches shared files — `settings_store.py`, `rpc.ts` — 
 
 - **Track A — Save locations:** WU-1 → WU-12.
 - **Track B — Thumbnails:** WU-2 → WU-3 → WU-4 (→ WU-14).
-- **Track C — Resume (highest risk):** WU-5 → WU-6 → WU-7. Sequence strictly; do NOT parallelize within (each extends the same `jobs.py`).
+- **Track C — Resume (highest risk):** WU-5 → WU-6 → WU-7. Sequence strictly; do NOT parallelize within (each extends the same `jobs.py`). WU-6 additionally owns the composition-root seam (`rpc.py` + `__main__.py`) — those two files are touched by no other WU, so they carry no cross-track index hazard, but they ARE the load-bearing wiring (see WU-6 "Composition-root reality").
 - **Track D — Readiness:** WU-8 → WU-9 (→ WU-14).
 - **Track E — Save options:** WU-10 → WU-11; WU-13 is independent and can run any time after WU-0.
 
@@ -426,6 +433,9 @@ After WU-0 lands (it touches shared files — `settings_store.py`, `rpc.ts` — 
 | Resumed AI job silently re-spends cloud budget | WU-6/7 | Rehydrated jobs are `interrupted`, NEVER auto-spawned (assert run-count 0). `job.retry` re-flows through `_enforce_cloud_budget_ack` (`handlers.py:1672-1691`); stale `cacheKey` ≠ fresh → re-prompt. Resume copy states the re-prompt up front. |
 | `thumb:` becomes an arbitrary-disk read | WU-3 | Reuse `resolveScopedMediaPath` (`exportPath.ts:20`); traversal tests assert ANY path outside `data_dir/thumbnails` → `null`. |
 | Adding `INTERRUPTED` breaks the P1 `job.status` value-set pin | WU-6 | The enum docstring (`jobs.py:53-60`) pins five values; update the contract-note + the test asserting exactly-five. Falsifiable: the updated test passes at six. |
+| Store injected into the wrong object — registry is `RpcServer`-owned (`rpc.py:55`), not `handlers.py`; `RpcServer` has no `data_dir` | WU-6 | Inject `store` through `RpcServer`/`build_server`/`rpc.main` and build the `DiskJobStore(svc.data_dir/jobs)` at `__main__.main()` (the only place `data_dir` and the registry both exist). Falsifiable: a patched-`rpc.main` test asserts the `DiskJobStore` at `data_dir/jobs` is passed and `rehydrate()` is called at startup. |
+| `record_request` first-write-wins guard (`jobs.py:282`) collides with rehydrate (request pre-populated) | WU-6 | Write-through must not be blocked/double-recorded for rehydrated jobs; pin the guard×rehydrate interaction with a falsifiable test (stored `{method,params}` intact, new-job recording still works). |
+| Status write-through silently misses a transition (4 scattered direct assignments, no `set_status`) | WU-6 | Route all four sinks (`jobs.py:390,418,426,434`) through one `_set_status` choke-point; falsifiable: drive each transition, assert exactly one `store.write` per transition. |
 | `ReadinessBadge` regresses to color-only (WCAG 1.4.1) | WU-9 | Query by visible TEXT label, not class; assert `role="status"` + `data-readiness`. |
 | `readiness.summary` accidentally calls a provider / triggers a download | WU-8 | Assert fakes' provider/ensure call-counts are 0 (read-only invariant). |
 | Parallel agents contaminate `handlers.py`/`rpc.ts` index | all | Serialize `register_all` edits OR isolated worktrees + scoped adds; never `git add -A`. |
@@ -434,7 +444,7 @@ After WU-0 lands (it touches shared files — `settings_store.py`, `rpc.ts` — 
 
 ## 6. Capability gaps carried from DESIGN §6 (no fabrication)
 
-1. **No job persistence today** (`jobs.py:270-300`, verified zero file I/O) — WU-5/6 is the genuinely new substrate.
+1. **No job persistence today** (`jobs.py:270-300`, verified zero file I/O) — WU-5/6 is the genuinely new substrate. NOTE: the `JobRegistry` is owned by `RpcServer` (`rpc.py:55`), not `handlers.py`, and `RpcServer` has no `data_dir`; the only place `data_dir` (Services-owned) meets the registry is `__main__.main()` (`__main__.py:74-79`). WU-6 creates that injection seam there — see WU-6 "Composition-root reality".
 2. **No mid-job resume** — job bodies are opaque `(JobContext)->result` (`jobs.py:304-326`); Resume = full re-dispatch (a 90% transcribe restarts at 0%). Documented limitation; the Resume copy (WU-7) makes it visible. NOT solved here.
 3. **No source-video thumbnail** before WU-2 (`Video` has no `thumbnailPath`, `library.py:108-117`).
 4. **No unified readiness view** before WU-8 (split across `assets.list` / `system.advisor` / `providers.list`).
