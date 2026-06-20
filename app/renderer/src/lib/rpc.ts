@@ -363,6 +363,119 @@ export interface SavedRecipe {
   steps: RecipeStep[];
 }
 
+// ---- Repurpose bundle (WU11) — field names identical to the sidecar -------
+//
+// Wire schemas for the `exportPresets.*` / `templates.*` / `batch.*` groups
+// (DESIGN §7 / §8). Field names are FROZEN and identical to the Python side
+// (`export_presets.py`, `templates.py`, `batch.py`) — the §17 house rule.
+
+/**
+ * One server-persisted platform export preset (`export_presets.py`). `aspect` is
+ * a ratio string ("9:16"); `minSec`/`maxSec` are clamped into the hard 20-60 s
+ * window on save; `captionStyle`/`reframeEngine` are validated id sets.
+ */
+export interface ExportPreset {
+  id: string;
+  label: string;
+  aspect: string;
+  minSec: number;
+  maxSec: number;
+  count: number;
+  captionStyle: string;
+  reframeEngine: string;
+}
+
+/** One template step — a recipe step (`templates.py` reuses `normalize_recipe`). */
+export interface TemplateStep {
+  method: string;
+  params: Record<string, unknown>;
+  label: string;
+}
+
+/**
+ * A reusable edit template (`templates.py`): a recipe (`{id, name, steps}`) plus
+ * the additive `defaultControls` (shared knobs) and `exportTargets` (preset ids
+ * the export step fans out to).
+ */
+export interface Template {
+  id: string;
+  name: string;
+  steps: TemplateStep[];
+  defaultControls: Record<string, unknown>;
+  exportTargets: string[];
+}
+
+/** One source's terminal/transient status inside a batch (`batch.py`). */
+export type BatchItemStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled' | 'skipped';
+
+/**
+ * One source row of a batch (`batch.py`). `skipReason` carries the visible-skip
+ * contract (DESIGN §9.1) — a skipped source is attributed, never silently absent.
+ */
+export interface BatchItem {
+  videoId: string;
+  status: BatchItemStatus;
+  jobId?: string;
+  error?: string;
+  skipReason?: string;
+  results?: unknown;
+}
+
+/** Aggregate batch status (`batch.py` `derive_status`). */
+export type BatchStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled' | 'partial';
+
+/** A full durable batch record (`batch.py` `BatchState`). */
+export interface BatchState {
+  id: string;
+  name: string;
+  templateId: string;
+  status: BatchStatus;
+  createdAt: number;
+  items: BatchItem[];
+  /** Live-overlay `pct` while the parent job runs (`_merge_live_status`). */
+  pct?: number;
+}
+
+/** Per-status counts in a `BatchSummary` (`batch.py` `_summarize`). */
+export interface BatchCounts {
+  total: number;
+  done: number;
+  error: number;
+  skipped: number;
+  queued: number;
+  running: number;
+  cancelled: number;
+}
+
+/** A lightweight batch summary (heavy per-item data omitted) — `batch.list`. */
+export interface BatchSummary {
+  id: string;
+  name: string;
+  templateId: string;
+  status: BatchStatus;
+  createdAt: number;
+  counts: BatchCounts;
+}
+
+/** One per-source consent decision from `batch.start`'s `plan_consent` (§9.1). */
+export interface BatchConsentDecision {
+  videoId: string;
+  action: 'run' | 'skip';
+  skipReason: string | null;
+  confirmBudget: string | null;
+  willEgress: boolean;
+  cacheHit: boolean;
+}
+
+/** The pre-run consent surface (`batch.py` `plan_consent`, DESIGN §9.1). */
+export interface BatchConsent {
+  decisions: BatchConsentDecision[];
+  willRun: number;
+  willSkip: number;
+  costEst: Record<string, unknown>;
+  budget: Record<string, unknown>;
+}
+
 /** A3 VoiceSample — a stored voice-clone reference sample. */
 export interface VoiceSample {
   id: string;
@@ -760,6 +873,44 @@ export const client = {
       rpc('recipes.save', { recipe }),
     delete: (id: string): Promise<{ ok: boolean }> => rpc('recipes.delete', { id }),
     run: (id: string): Promise<JobHandle> => rpc('recipes.run', { id }),
+  },
+
+  /** `exportPresets.*` — server-persisted platform export presets (WU11). */
+  exportPresets: {
+    list: (): Promise<{ presets: ExportPreset[] }> => rpc('exportPresets.list'),
+    save: (preset: ExportPreset | Omit<ExportPreset, 'id'>): Promise<{ preset: ExportPreset }> =>
+      rpc('exportPresets.save', { preset }),
+    delete: (id: string): Promise<{ ok: boolean }> => rpc('exportPresets.delete', { id }),
+    reset: (): Promise<{ presets: ExportPreset[] }> => rpc('exportPresets.reset'),
+  },
+
+  /** `templates.*` — reusable edit templates (recipe + controls + targets). */
+  templates: {
+    list: (): Promise<{ templates: Template[] }> => rpc('templates.list'),
+    save: (template: Template | Omit<Template, 'id'>): Promise<{ template: Template }> =>
+      rpc('templates.save', { template }),
+    delete: (id: string): Promise<{ ok: boolean }> => rpc('templates.delete', { id }),
+    apply: (templateId: string, videoId: string): Promise<JobHandle> =>
+      rpc('templates.apply', { templateId, videoId }),
+  },
+
+  /** `batch.*` — durable, resumable many-source queue (WU11). */
+  batch: {
+    create: (
+      name: string,
+      templateId: string,
+      sourceVideoIds: string[],
+    ): Promise<{ batch: BatchState }> => rpc('batch.create', { name, templateId, sourceVideoIds }),
+    start: (
+      id: string,
+      opts?: { confirmCloudBudget?: boolean; acknowledged?: boolean },
+    ): Promise<JobHandle> => rpc('batch.start', { id, ...(opts ?? {}) }),
+    status: (id: string): Promise<{ batch: BatchState }> => rpc('batch.status', { id }),
+    list: (): Promise<{ batches: BatchSummary[] }> => rpc('batch.list'),
+    cancel: (id: string): Promise<{ ok: boolean }> => rpc('batch.cancel', { id }),
+    resume: (id: string): Promise<JobHandle & { status?: BatchStatus }> =>
+      rpc('batch.resume', { id }),
+    delete: (id: string): Promise<{ ok: boolean }> => rpc('batch.delete', { id }),
   },
 
   /** `diarize.start` — token-free speaker labelling (long job -> {transcript}). */
