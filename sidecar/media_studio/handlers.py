@@ -139,6 +139,7 @@ class Services:
         vlm_frame_encoder: Any | None = None,
         vlm_models_present: Callable[[dict[str, Any]], bool] | None = None,
         vlm_chat_transport: Any | None = None,
+        local_detector: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
     ) -> None:
         base = Path(data_dir) if data_dir is not None else default_config_dir()
         self.data_dir = base
@@ -178,6 +179,11 @@ class Services:
         # provider.py HTTP seam). None -> the real stdlib urllib transport; tests
         # inject a fake so frame egress is observable without a socket.
         self._vlm_chat_transport = vlm_chat_transport
+        # WU-B2: the local-server detector seam (system.recommend folds detected
+        # Ollama / LM Studio servers over the recommended routing). None -> the
+        # real detector over the stdlib urllib GET transport; tests inject a fake
+        # that returns canned PoolEntry dicts so no socket is opened.
+        self._local_detector = local_detector
 
         # T3: the shared llama.cpp ModelRunner (built lazily; model-identity-aware,
         # so the tiered translator can swap MT GGUFs on the one server lane).
@@ -1193,6 +1199,67 @@ class Services:
             ]
         }
 
+    def _detect_local_servers(self, settings: dict[str, Any]) -> list[dict[str, Any]]:
+        """Detect locally-running Ollama / LM Studio servers (fail-open).
+
+        Uses the injected ``local_detector`` seam when present (tests inject a fake
+        returning canned PoolEntry dicts); otherwise runs the real
+        :func:`local_detect.detect_local_servers` over the stdlib urllib GET
+        transport. Detection is best-effort: it returns ``[]`` (never raises) when
+        no local server answers.
+        """
+        if self._local_detector is not None:
+            return list(self._local_detector(settings))
+        from .models import local_detect as _local_detect  # local: import-light
+        from .models import provider as _provider_mod  # local: heavy seam
+
+        return cast(
+            "list[dict[str, Any]]",
+            list(_local_detect.detect_local_servers(settings, transport=_provider_mod.urllib_get_json)),
+        )
+
+    def system_recommend(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``system.recommend({commercial?})`` -> ``{recommendation:{...}}``. Direct-return.
+
+        The "Recommended for your machine" brain: composes the EXISTING cheap probes
+        — hardware advisor (:func:`system_advisor.advise_for_hardware`), the
+        installed-state map (:meth:`_models_present_map`), the detected local servers
+        (:func:`local_detect.detect_local_servers`), and the ASR-engine list — then
+        runs the PURE :func:`recommender.recommend` over them to produce an
+        actionable plan. Composes probes ONLY: NO provider/LLM call is ever made
+        here (it is a direct-return RPC, DESIGN §2.3). Honors Offline mode
+        (forwarded from :func:`offline.is_offline`) and the ``commercial`` flag.
+        A malformed/empty advisor report yields the G-B1 "unavailable"
+        recommendation (recommender's typed fallback), never an exception.
+        """
+        from .features import recommender as _recommender  # local: import-light pure
+        from .features import system_advisor as _sa  # local: import-light
+
+        settings = self.settings.get()
+        commercial = bool(params.get("commercial", settings.get("commercial")))
+        offline = _offline.is_offline(settings)
+        present = self._models_present_map(settings)
+        probe = self._hardware_probe or self._default_hardware_probe()
+        report = _advisor_report_to_wire(
+            _sa.advise_for_hardware(
+                probe=probe,
+                commercial=commercial,
+                models_present=present,
+                offline=offline,
+            )
+        )
+        detected_local = self._detect_local_servers(settings)
+        asr_engines = self.asr_engines(params, ctx)
+        recommendation = _recommender.recommend(
+            report,
+            present,
+            detected_local,
+            asr_engines,
+            offline=offline,
+            commercial=commercial,
+        )
+        return {"recommendation": recommendation}
+
     def phase8_signals(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
         """``phase8.signals({videoId, tier?})`` -> ``{jobId}``. Job-based.
 
@@ -2030,6 +2097,10 @@ def register_all(
     # phase8.* are long jobs (load heavy models behind the phase8 runner seam).
     reg("system.probe", svc.system_probe)
     reg("system.advisor", svc.system_advisor)
+    # WU-B2: device-aware auto-recommender. Direct-return; composes the cheap
+    # probes (advisor + present-map + local-server detect + asr engines) through
+    # the PURE recommender. Makes ZERO provider/LLM calls.
+    reg("system.recommend", svc.system_recommend)
     reg("asr.engines", svc.asr_engines)
     reg("phase8.signals", svc.phase8_signals)
     reg("phase8.select", svc.phase8_select)
