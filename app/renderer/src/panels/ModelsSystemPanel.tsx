@@ -37,6 +37,8 @@ import { ModelsOnboarding } from '../components/ModelsOnboarding';
 import { UsageBars } from '../components/UsageBar';
 import { PresetPicker } from '../components/PresetPicker';
 import { FirstRunChooser } from '../components/FirstRunChooser';
+import { ReadinessRollup } from '../components/ReadinessRollup';
+import type { ReadinessAction } from '../lib/rpc';
 
 // --- pure helpers (exported for tests) -------------------------------------
 
@@ -402,6 +404,28 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
     [api, downloading, settings.commercial],
   );
 
+  // WU-14: the readiness roll-up surfaces a fix action per not-ready capability.
+  // A `assets.ensure` action installs the named weights then re-lists assets +
+  // re-runs the advisor (same effect as a per-model Download). Key/consent
+  // actions are handled by the provider controls already on this panel, so the
+  // roll-up just announces them — no extra navigation needed here.
+  const handleReadinessAction = useCallback(
+    async (action: ReadinessAction): Promise<void> => {
+      if (action.kind !== 'assets.ensure' || !action.assets || action.assets.length === 0) return;
+      setError('');
+      try {
+        await api.assets.ensure(action.assets);
+        const res = await api.assets.list();
+        setAssets(Array.isArray(res?.assets) ? res.assets : []);
+        const rep = await api.system.advisor({ commercial: Boolean(settings.commercial) });
+        setReport(rep ?? null);
+      } catch (err) {
+        setError(errText(err));
+      }
+    },
+    [api, settings.commercial],
+  );
+
   const currentTier = settings.phase8Tier ?? 1;
   const recommendedTier = report ? presetTier(report.recommendedPreset) : 0;
   // WU-B3 derived card state (pure helpers; recomputed on settings/rec change).
@@ -427,6 +451,12 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
         See what your machine can run, pick a quality tier for moment-finding, and download only the
         models you need. Analysis is opt-in and runs locally — nothing is uploaded.
       </p>
+
+      <ReadinessRollup
+        rpcClient={api}
+        title="What works right now"
+        onAction={(action) => void handleReadinessAction(action)}
+      />
 
       <div className="actions">
         <button type="button" data-action="analyze" onClick={() => void analyze()} disabled={busy}>

@@ -15,6 +15,7 @@ import type { Video, ShortReexportHint } from './lib/rpc';
 // ---- mocks -----------------------------------------------------------------
 const rpcMock = vi.fn();
 const libraryListMock = vi.fn();
+const batchListMock = vi.fn((..._a: unknown[]) => Promise.resolve({ batches: [] as never[] }));
 // hasApi is controllable per test (the foundation of the bridge-present/absent
 // branches in the quality hydrate, changeQuality, and handleReexport guards).
 let hasApiValue = true;
@@ -24,12 +25,36 @@ vi.mock('./lib/rpc', () => ({
   hasApi: () => hasApiValue,
   client: {
     library: { list: (...a: unknown[]) => libraryListMock(...a) },
+    batch: { list: (...a: unknown[]) => batchListMock(...a) },
   },
+}));
+
+vi.mock('./views/Repurpose', () => ({
+  Repurpose: () => <div data-testid="repurpose" />,
 }));
 
 // Stub child views/chrome so the test focuses on App's own logic.
 vi.mock('./views/Library', () => ({
-  Library: () => <div data-testid="library" />,
+  Library: ({ onOpen }: { onOpen: (v: Video) => void }) => (
+    <div data-testid="library">
+      <button
+        type="button"
+        data-testid="open-video"
+        onClick={() =>
+          onOpen({
+            id: 'v1',
+            path: '/movies/talk.mp4',
+            title: 'Talk',
+            addedAt: '2026-06-11T00:00:00Z',
+            durationSec: 600,
+            hasTranscript: false,
+          })
+        }
+      >
+        open-video
+      </button>
+    </div>
+  ),
 }));
 vi.mock('./views/Workspace', () => ({
   Workspace: ({ video }: { video: Video }) => (
@@ -340,5 +365,30 @@ describe('App handleReexport guard branches', () => {
     expect(libraryListMock).toHaveBeenCalledTimes(1);
     expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="workspace"]')).toBeNull();
+  });
+});
+
+describe('App lastOpenedVideoId — bridge-absent branches (WU-13)', () => {
+  it('does NOT read settings.get on launch when no preload bridge is present', async () => {
+    hasApiValue = false;
+    await mount();
+    // The restore effect short-circuits before any RPC; stays on the Library.
+    expect(rpcMock).not.toHaveBeenCalledWith('settings.get');
+    expect(libraryListMock).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
+  });
+
+  it('does NOT persist lastOpenedVideoId when no preload bridge is present', async () => {
+    hasApiValue = false;
+    await mount();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="open-video"]')!.click();
+    });
+    await flush();
+    // openVideo still navigates in-memory but skips the settings.set persist.
+    expect(rpcMock).not.toHaveBeenCalledWith('settings.set', { lastOpenedVideoId: 'v1' });
+    expect(
+      container.querySelector('[data-testid="workspace"]')!.getAttribute('data-video-id'),
+    ).toBe('v1');
   });
 });

@@ -25,8 +25,10 @@ vi.mock('../lib/rpc', () => ({
 import {
   JobQueue,
   JOB_POLL_INTERVAL_MS,
+  RESUME_TITLE,
   applyProgress,
   canCancel,
+  canResume,
   canRetry,
   clampPct,
 } from './JobQueue';
@@ -116,6 +118,16 @@ describe('canCancel / canRetry', () => {
     expect(canRetry(makeJob({ status: 'error' }))).toBe(true);
     expect(canRetry(makeJob({ status: 'running' }))).toBe(false);
     expect(canRetry(makeJob({ status: 'done' }))).toBe(false);
+    expect(canRetry(makeJob({ status: 'interrupted' }))).toBe(false);
+  });
+
+  it('resume applies to interrupted only (table-test all six statuses)', () => {
+    expect(canResume(makeJob({ status: 'interrupted' }))).toBe(true);
+    expect(canResume(makeJob({ status: 'queued' }))).toBe(false);
+    expect(canResume(makeJob({ status: 'running' }))).toBe(false);
+    expect(canResume(makeJob({ status: 'done' }))).toBe(false);
+    expect(canResume(makeJob({ status: 'error' }))).toBe(false);
+    expect(canResume(makeJob({ status: 'cancelled' }))).toBe(false);
   });
 });
 
@@ -241,6 +253,46 @@ describe('JobQueue', () => {
 
     expect(rpcMock).toHaveBeenCalledWith('job.retry', { jobId: 'err-1' });
     expect(listCalls()).toBe(before + 1);
+  });
+
+  it('Resume shows for interrupted only, fires job.retry, and excludes Retry/Cancel', async () => {
+    serveJobs([makeJob({ jobId: 'int-1', status: 'interrupted', pct: 0 })]);
+    await renderQueue(true);
+
+    // Exactly one Resume button; no Retry, no Cancel (the §3.2 a11y bug — an
+    // interrupted job would otherwise render zero action buttons).
+    expect(container.querySelectorAll('.jobqueue__resume').length).toBe(1);
+    expect(container.querySelectorAll('.jobqueue__retry').length).toBe(0);
+    expect(container.querySelectorAll('.jobqueue__cancel').length).toBe(0);
+
+    const resume = container.querySelector('.jobqueue__resume') as HTMLButtonElement;
+    expect(resume.getAttribute('aria-label')).toBe('Resume Transcribe talk.mp4');
+    expect(resume.getAttribute('title')).toBe(RESUME_TITLE);
+    expect(resume.textContent).toBe('Resume');
+    // The status pill renders the interrupted label as text (not color-only).
+    expect(container.textContent).toContain('interrupted');
+    expect(container.querySelector('.jobqueue__status--interrupted')).not.toBeNull();
+
+    const before = listCalls();
+    await click('.jobqueue__resume');
+
+    // Resume re-dispatches via the existing job.retry re-dispatch.
+    expect(rpcMock).toHaveBeenCalledWith('job.retry', { jobId: 'int-1' });
+    expect(listCalls()).toBe(before + 1);
+  });
+
+  it('gives Resume and Retry distinct accessible names', async () => {
+    serveJobs([
+      makeJob({ jobId: 'int-1', label: 'Dub clip.mp4', status: 'interrupted', pct: 0 }),
+      makeJob({ jobId: 'err-1', label: 'Dub clip.mp4', status: 'error', pct: 0 }),
+    ]);
+    await renderQueue(true);
+
+    const resume = container.querySelector('.jobqueue__resume') as HTMLButtonElement;
+    const retry = container.querySelector('.jobqueue__retry') as HTMLButtonElement;
+    expect(resume.getAttribute('aria-label')).toBe('Resume Dub clip.mp4');
+    expect(retry.getAttribute('aria-label')).toBe('Retry Dub clip.mp4');
+    expect(resume.getAttribute('aria-label')).not.toBe(retry.getAttribute('aria-label'));
   });
 
   it('surfaces a job.cancel failure and still refreshes (JobQueue.tsx:100-103)', async () => {

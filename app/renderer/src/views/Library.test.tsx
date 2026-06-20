@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
@@ -11,40 +11,25 @@ vi.mock('../components/api', () => ({
   hasApi: () => true,
 }));
 
-import { Library, POSTER_SEEK_FRACTION, posterSeekTime } from './Library';
-import type { Video } from '../components/api';
-
-// ---------------------------------------------------------------------------
-// T6 thumbnails: jsdom does not implement HTMLMediaElement; back the bits the
-// poster thumbnail touches (pause/currentTime/duration) with deterministic
-// per-element stores so tests can drive them (same pattern as Player.test.tsx).
-// ---------------------------------------------------------------------------
-const pauseMock = vi.fn();
-const currentTimes = new WeakMap<HTMLMediaElement, number>();
-const durations = new WeakMap<HTMLMediaElement, number>();
-
-beforeAll(() => {
-  Object.defineProperty(HTMLMediaElement.prototype, 'pause', {
-    configurable: true,
-    writable: true,
-    value: pauseMock,
-  });
-  Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', {
-    configurable: true,
-    get(this: HTMLMediaElement) {
-      return currentTimes.get(this) ?? 0;
-    },
-    set(this: HTMLMediaElement, v: number) {
-      currentTimes.set(this, v);
-    },
-  });
-  Object.defineProperty(HTMLMediaElement.prototype, 'duration', {
-    configurable: true,
-    get(this: HTMLMediaElement) {
-      return durations.get(this) ?? Number.NaN;
-    },
-  });
+// WU-14: the library home renders <ReadinessRollup>, which loads
+// `readiness.summary` through the canonical lib/rpc `client`. Stub that client so
+// the roll-up resolves to an empty set in these tests (the roll-up has its own
+// dedicated suite); the rest of lib/rpc stays real for the type re-exports.
+const readinessSummaryMock = vi.fn(
+  async (): Promise<{ items: ReadinessItem[] }> => ({ items: [] }),
+);
+vi.mock('../lib/rpc', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/rpc')>();
+  return {
+    ...actual,
+    client: { ...actual.client, readiness: { summary: () => readinessSummaryMock() } },
+  };
 });
+
+import { Library } from './Library';
+import type { Video } from '../components/api';
+import type { ReadinessItem } from '../lib/rpc';
+import { videoThumbnailSrc } from '../components/useVideoThumbnail';
 
 function makeVideo(over: Partial<Video> = {}): Video {
   return {
@@ -54,6 +39,10 @@ function makeVideo(over: Partial<Video> = {}): Video {
     addedAt: '2026-06-11T00:00:00Z',
     durationSec: 605,
     hasTranscript: false,
+    // WU-14: an already-persisted poster path serves immediately via
+    // useVideoThumbnail (no on-demand `library.thumbnail` rpc), so the existing
+    // rpc-call-count assertions stay exact. Thumbnail-specific tests override it.
+    thumbnailPath: '/data/thumbnails/v1.jpg',
     ...over,
   };
 }
@@ -83,7 +72,8 @@ beforeEach(() => {
   rpcMock.mockReset();
   openVideosMock.mockReset();
   pathForFileMock.mockReset();
-  pauseMock.mockClear();
+  readinessSummaryMock.mockClear();
+  readinessSummaryMock.mockResolvedValue({ items: [] });
   installBridge();
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -675,43 +665,70 @@ describe('Library', () => {
 });
 
 // ---------------------------------------------------------------------------
-// T6: poster-frame thumbnails + duration badge
+// WU-14: poster-frame thumbnails (useVideoThumbnail) + the readiness roll-up
 // ---------------------------------------------------------------------------
 
-describe('posterSeekTime', () => {
-  it('is ~10% of the duration', () => {
-    expect(POSTER_SEEK_FRACTION).toBe(0.1);
-    expect(posterSeekTime(605)).toBeCloseTo(60.5);
-    expect(posterSeekTime(20)).toBeCloseTo(2);
-  });
-
-  it('is 0 for unknown/invalid durations', () => {
-    expect(posterSeekTime(0)).toBe(0);
-    expect(posterSeekTime(-3)).toBe(0);
-    expect(posterSeekTime(Number.NaN)).toBe(0);
-  });
-});
-
-describe('Library thumbnails (T6)', () => {
-  function thumbVideo(): HTMLVideoElement {
-    return container.querySelector('video.library__thumb-video') as HTMLVideoElement;
-  }
-
-  it('renders a muted metadata-only poster <video> on the mstream URL per card', async () => {
+describe('Library thumbnails (WU-14 useVideoThumbnail wiring)', () => {
+  it('renders the thumb: <img> poster per card when a thumbnailPath exists', async () => {
     rpcMock.mockResolvedValueOnce({
-      videos: [makeVideo(), makeVideo({ id: 'v 2', title: 'Second' })],
+      videos: [makeVideo(), makeVideo({ id: 'v2', title: 'Second' })],
     });
     await renderLibrary();
 
-    const thumbs = container.querySelectorAll('video.library__thumb-video');
-    expect(thumbs.length).toBe(2);
-    const first = thumbs[0] as HTMLVideoElement;
-    // Same URL convention as components/Player.tsx (id percent-encoded).
-    expect(first.getAttribute('src')).toBe('mstream://media/v1');
-    expect((thumbs[1] as HTMLVideoElement).getAttribute('src')).toBe('mstream://media/v%202');
-    expect(first.muted).toBe(true);
-    expect(first.getAttribute('preload')).toBe('metadata');
-    // jsdom never fires loadedmetadata on its own — no playback was requested.
+    const imgs = container.querySelectorAll('img.library__thumb-img');
+    expect(imgs.length).toBe(2);
+    // Served immediately through the thumb: mstream resolver (no on-demand rpc).
+    expect(imgs[0].getAttribute('src')).toBe(videoThumbnailSrc('/data/thumbnails/v1.jpg'));
+    // A persisted poster short-circuits the hook -> no library.thumbnail call.
+    expect(rpcMock).not.toHaveBeenCalledWith('library.thumbnail', expect.anything());
+    // No glyph fallback while the poster resolves.
+    expect(container.querySelector('.library__thumb-fallback')).toBeNull();
+  });
+
+  it('treats an absent thumbnailPath (undefined) as no poster -> generates on demand', async () => {
+    // thumbnailPath omitted entirely -> the `video.thumbnailPath ?? ''` fallback.
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo({ thumbnailPath: undefined })] });
+    rpcMock.mockResolvedValueOnce({ thumbnailPath: '/data/thumbnails/u.jpg' });
+    await renderLibrary();
+
+    expect(rpcMock).toHaveBeenCalledWith('library.thumbnail', { id: 'v1' });
+    const img = container.querySelector('img.library__thumb-img') as HTMLImageElement;
+    expect(img.getAttribute('src')).toBe(videoThumbnailSrc('/data/thumbnails/u.jpg'));
+  });
+
+  it('generates the poster on demand when a card has no thumbnailPath', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo({ thumbnailPath: '' })] });
+    rpcMock.mockResolvedValueOnce({ thumbnailPath: '/data/thumbnails/gen.jpg' });
+    await renderLibrary();
+
+    expect(rpcMock).toHaveBeenCalledWith('library.thumbnail', { id: 'v1' });
+    const img = container.querySelector('img.library__thumb-img') as HTMLImageElement;
+    expect(img.getAttribute('src')).toBe(videoThumbnailSrc('/data/thumbnails/gen.jpg'));
+  });
+
+  it('falls back to the glyph when on-demand generation yields no poster', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo({ thumbnailPath: '' })] });
+    rpcMock.mockRejectedValueOnce(new Error('no poster'));
+    await renderLibrary();
+
+    expect(container.querySelector('img.library__thumb-img')).toBeNull();
+    expect(container.querySelector('.library__thumb-fallback')).not.toBeNull();
+    // Duration badge still renders.
+    expect(container.querySelector('.library__thumb-duration')?.textContent).toBe('10:05');
+  });
+
+  it('falls back to the glyph when the poster <img> fails to load', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    await renderLibrary();
+
+    const img = container.querySelector('img.library__thumb-img') as HTMLImageElement;
+    await act(async () => {
+      img.dispatchEvent(new Event('error'));
+    });
+
+    expect(container.querySelector('img.library__thumb-img')).toBeNull();
+    expect(container.querySelector('.library__thumb-fallback')).not.toBeNull();
+    expect(container.querySelector('.library__thumb-duration')?.textContent).toBe('10:05');
   });
 
   it('shows a duration badge formatted mm:ss from durationSec', async () => {
@@ -725,63 +742,41 @@ describe('Library thumbnails (T6)', () => {
     );
     expect(badges).toEqual(['10:05', '1:02:05']); // 605s and 3725s
   });
+});
 
-  it('pauses immediately and seeks to ~10% of the element duration on loadedmetadata', async () => {
-    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+describe('Library readiness roll-up (WU-14)', () => {
+  it('renders the ReadinessRollup section on the library home', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
-
-    const video = thumbVideo();
-    durations.set(video, 200); // metadata-reported duration wins when finite
-    await act(async () => {
-      video.dispatchEvent(new Event('loadedmetadata'));
-    });
-
-    expect(pauseMock).toHaveBeenCalledTimes(1);
-    expect(video.currentTime).toBeCloseTo(20); // 10% of 200
+    expect(container.querySelector('.readiness-rollup')).not.toBeNull();
+    expect(readinessSummaryMock).toHaveBeenCalled();
   });
 
-  it('falls back to the library durationSec when the element duration is unknown', async () => {
-    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] }); // durationSec: 605
-    await renderLibrary();
-
-    const video = thumbVideo(); // stubbed duration stays NaN
+  it('forwards a roll-up action to the onReadinessAction prop', async () => {
+    readinessSummaryMock.mockResolvedValue({
+      items: [
+        {
+          capability: 'tr',
+          label: 'Translation',
+          status: 'needsKey',
+          blockedBy: 'no key',
+          action: { kind: 'openProviders' },
+        },
+      ],
+    });
+    rpcMock.mockResolvedValueOnce({ videos: [] });
+    const onReadinessAction = vi.fn();
     await act(async () => {
-      video.dispatchEvent(new Event('loadedmetadata'));
+      root.render(<Library onOpen={() => {}} onReadinessAction={onReadinessAction} />);
     });
+    await flush();
 
-    expect(video.currentTime).toBeCloseTo(60.5); // 10% of 605
-  });
-
-  it('falls back to the placeholder when seeking the poster frame throws', async () => {
-    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
-    await renderLibrary();
-
-    const video = thumbVideo();
-    // Make pause() throw so the onLoadedMetadata try/catch flips `failed`.
-    pauseMock.mockImplementationOnce(() => {
-      throw new Error('pause not allowed');
-    });
+    const btn = container.querySelector(
+      '.readiness-rollup button.readiness-badge__action',
+    ) as HTMLButtonElement;
     await act(async () => {
-      video.dispatchEvent(new Event('loadedmetadata'));
+      btn.click();
     });
-
-    expect(container.querySelector('video.library__thumb-video')).toBeNull();
-    expect(container.querySelector('.library__thumb-fallback')).not.toBeNull();
-    // duration badge still renders from durationSec
-    expect(container.querySelector('.library__thumb-duration')?.textContent).toBe('10:05');
-  });
-
-  it('replaces the video with a placeholder on media error, keeping the badge', async () => {
-    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
-    await renderLibrary();
-
-    const video = thumbVideo();
-    await act(async () => {
-      video.dispatchEvent(new Event('error'));
-    });
-
-    expect(container.querySelector('video.library__thumb-video')).toBeNull();
-    expect(container.querySelector('.library__thumb-fallback')).not.toBeNull();
-    expect(container.querySelector('.library__thumb-duration')?.textContent).toBe('10:05');
+    expect(onReadinessAction).toHaveBeenCalledWith({ kind: 'openProviders' });
   });
 });

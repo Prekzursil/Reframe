@@ -176,6 +176,25 @@ def roster(cluster_labels: Sequence[int]) -> list[str]:
     return [speaker_label(i) for i in sorted({int(c) for c in cluster_labels})]
 
 
+def rename_speakers(transcript: Transcript, mapping: dict[str, str]) -> Transcript:
+    """Rewrite speaker labels in a transcript via ``mapping`` (immutable).
+
+    ``mapping`` is ``{SPEAKER_NN: friendly}``. Every segment's ``speaker`` and the
+    top-level ``speakers`` roster are rewritten through it; labels not in the
+    mapping pass through unchanged. Returns a NEW transcript dict — the input is
+    never mutated (mirrors :func:`assign_speakers_to_segments`). Segments without
+    a ``speaker`` key are left as-is (no key is added).
+    """
+    segments: list[Segment] = []
+    for seg in transcript.get("segments") or []:
+        if "speaker" in seg:
+            segments.append({**seg, "speaker": mapping.get(seg["speaker"], seg["speaker"])})
+        else:
+            segments.append({**seg})
+    speakers = [mapping.get(s, s) for s in transcript.get("speakers") or []]
+    return {**transcript, "segments": segments, "speakers": speakers}
+
+
 def diarize_transcript(
     transcript: Transcript,
     regions: Sequence[dict[str, Any]],
@@ -317,6 +336,36 @@ class Diarize:
         job = ctx.jobs.start(job_body, feature="diarize", label="diarize", videoId=video_id, gpu=True)
         return {"jobId": job.id}
 
+    def rename(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``diarize.rename({videoId, mapping})`` -> ``{transcript}`` (direct).
+
+        Applies ``mapping`` (``{SPEAKER_NN: friendly}``) to the persisted
+        transcript via the pure :func:`rename_speakers`, saves it back onto a
+        fresh project load (so unrelated fields are preserved), and returns the
+        renamed transcript. Direct return — not a job.
+        """
+        del ctx  # no jobs/notifications needed for this synchronous rename
+        video_id = params.get("videoId")
+        if not isinstance(video_id, str) or not video_id:
+            raise RpcError("videoId (str) is required", ErrorCode.INVALID_PARAMS)
+        mapping = params.get("mapping")
+        if not isinstance(mapping, dict):
+            raise RpcError("mapping (dict) is required", ErrorCode.INVALID_PARAMS)
+
+        project = self._load_project(video_id)
+        transcript = project.get("transcript")
+        if not transcript:
+            raise RpcError(
+                f"video {video_id} has no transcript yet (run diarize.start first)",
+                ErrorCode.INVALID_PARAMS,
+            )
+
+        renamed = rename_speakers(transcript, {str(k): str(v) for k, v in mapping.items()})
+        fresh = self._load_project(video_id)
+        fresh["transcript"] = renamed
+        self._save_project(video_id, fresh)
+        return {"transcript": renamed}
+
 
 # --------------------------------------------------------------------------- #
 # default heavy seams (lazy real impls; tests inject fakes)
@@ -397,6 +446,7 @@ def register(
     )
     reg = register_fn if register_fn is not None else protocol.register
     reg("diarize.start", service.start)
+    reg("diarize.rename", service.rename)
     return service
 
 
@@ -423,6 +473,7 @@ __all__ = [
     "greedy_cluster",
     "register",
     "register_diarize_assets",
+    "rename_speakers",
     "roster",
     "speaker_label",
 ]

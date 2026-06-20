@@ -668,3 +668,145 @@ def test_shortmaker_select_requires_videoid(services: Services, ctx: RpcContext)
     with pytest.raises(RpcError) as ei:
         services.shortmaker_select({}, ctx)
     assert ei.value.code == ErrorCode.INVALID_PARAMS
+
+
+# --------------------------------------------------------------------------- #
+# WU-5: refine.* + diarize.rename registration + subtitles speaker gate
+# --------------------------------------------------------------------------- #
+def test_register_all_wires_refine_and_rename(tmp_path: Path) -> None:
+    """WU-5 acceptance 1: register_all wires refine.preview, refine.apply, and
+    diarize.rename exactly once, and leaves every pre-existing §2 name in place."""
+    registered: dict[str, Any] = {}
+    handlers.register_all(
+        services=Services(data_dir=tmp_path / "d"),
+        register=lambda name, fn: registered.__setitem__(name, fn),
+    )
+    for method in ("refine.preview", "refine.apply", "diarize.rename"):
+        assert method in registered, f"{method} was not registered"
+    # no displacement of the existing surface
+    for method in SECTION2_METHODS:
+        assert method in registered, f"{method} disappeared after WU-5 wiring"
+
+
+def test_refine_apply_is_job_preview_is_direct(
+    services: Services, ctx: RpcContext, video_file: Path, monkeypatch
+) -> None:
+    """WU-5 acceptance 3: refine.apply runs as a job (needs ctx.jobs), refine.preview
+    is a direct handler (works with no job registry)."""
+    from media_studio.features import refine as _refine
+    from media_studio.features import silencetrim as _silencetrim
+
+    monkeypatch.setattr(_silencetrim, "detect_silence_spans", lambda *a, **k: [])
+    registered: dict[str, Any] = {}
+    handlers.register_all(services=services, register=lambda name, fn: registered.__setitem__(name, fn))
+    vid = _add_video(services, video_file)
+    _transcribe_sync(services, ctx, vid)
+
+    # preview: direct (no job registry) returns {plan} immediately.
+    direct = RpcContext(emit_notification=lambda obj: None, jobs=None)
+    out = registered["refine.preview"]({"videoId": vid}, direct)
+    assert "plan" in out and "keeps" in out["plan"]
+
+    # apply: a job (returns {jobId}) over the real registry.
+    monkeypatch.setattr(_refine, "_default_run", lambda: fake_run)
+    res = registered["refine.apply"]({"videoId": vid}, ctx)
+    assert "jobId" in res
+    ctx.jobs.join(timeout=5)
+
+
+def test_refine_fillerSets_setting_reaches_plan_refine(
+    services: Services, ctx: RpcContext, video_file: Path, monkeypatch
+) -> None:
+    """WU-5 acceptance 4: a refine.fillerSets value reaches plan_refine as
+    filler_sets (not dropped); absent -> None (the DEFAULT_SETS fallback)."""
+    from media_studio.features import refine as _refine
+    from media_studio.features import silencetrim as _silencetrim
+
+    monkeypatch.setattr(_silencetrim, "detect_silence_spans", lambda *a, **k: [])
+    captured: dict[str, Any] = {}
+
+    def fake_plan_refine(words, lang, total, silences, **kwargs):
+        captured["filler_sets"] = kwargs.get("filler_sets")
+        return _refine.RefinePlan(keeps=[[0.0, total]], stats=_refine._zero_stats())
+
+    monkeypatch.setattr(_refine, "plan_refine", fake_plan_refine)
+    registered: dict[str, Any] = {}
+    handlers.register_all(services=services, register=lambda name, fn: registered.__setitem__(name, fn))
+    vid = _add_video(services, video_file)
+    _transcribe_sync(services, ctx, vid)
+    direct = RpcContext(emit_notification=lambda obj: None, jobs=None)
+
+    override = {"en": {"always": frozenset({"basically"})}}
+    registered["refine.preview"]({"videoId": vid, "fillerSets": override}, direct)
+    assert captured["filler_sets"] == override
+
+    captured.clear()
+    registered["refine.preview"]({"videoId": vid}, direct)
+    assert captured["filler_sets"] is None
+
+
+def _persist_diarized_transcript(services: Services, vid: str) -> None:
+    """Persist a two-segment transcript carrying a SPEAKER_00 label onto the project."""
+    project = services._load_or_create_project(vid)
+    project.data["transcript"] = {
+        "language": "en",
+        "durationSec": 4.0,
+        "speakers": ["SPEAKER_00"],
+        "segments": [
+            {"start": 0.0, "end": 2.0, "text": "Hello there.", "speaker": "SPEAKER_00"},
+            {"start": 2.0, "end": 4.0, "text": "General Kenobi.", "speaker": "SPEAKER_00"},
+        ],
+    }
+    project.save()
+
+
+def test_subtitles_generate_speaker_labels_on(services: Services, ctx: RpcContext, video_file: Path) -> None:
+    """WU-5 acceptance 2: captionSpeakerLabels=True on a diarized transcript
+    prefixes each speaker-bearing cue's text with '<speaker>: '."""
+    vid = _add_video(services, video_file)
+    _persist_diarized_transcript(services, vid)
+    services.settings.set({"captionSpeakerLabels": True})
+    gen = services.subtitles_generate({"videoId": vid}, ctx)
+    cues = gen["track"]["cues"]
+    assert cues, "generate produced no cues"
+    assert all(c["text"].startswith("SPEAKER_00: ") for c in cues)
+    # speaker carry survives onto the cues (WU-3 contract)
+    assert all(c.get("speaker") == "SPEAKER_00" for c in cues)
+
+
+def test_subtitles_generate_speaker_labels_off_unchanged(services: Services, ctx: RpcContext, video_file: Path) -> None:
+    """WU-5 acceptance 2: flag off/absent -> UNPREFIXED text (back-compat); {track}
+    shape unchanged."""
+    vid = _add_video(services, video_file)
+    _persist_diarized_transcript(services, vid)
+    gen = services.subtitles_generate({"videoId": vid}, ctx)
+    cues = gen["track"]["cues"]
+    assert cues
+    assert not any(c["text"].startswith("SPEAKER_00: ") for c in cues)
+    assert {"id", "lang", "name", "format", "kind", "cues"} <= set(gen["track"])
+
+
+def test_subtitles_generate_speaker_labels_on_non_diarized(
+    services: Services, ctx: RpcContext, video_file: Path
+) -> None:
+    """WU-5 acceptance 2: captionSpeakerLabels=True on a NON-diarized transcript is
+    a no-op (no speaker -> no prefix)."""
+    vid = _add_video(services, video_file)
+    _transcribe_sync(services, ctx, vid)
+    services.settings.set({"captionSpeakerLabels": True})
+    gen = services.subtitles_generate({"videoId": vid}, ctx)
+    cues = gen["track"]["cues"]
+    assert cues
+    assert not any(": " in c["text"] and c["text"].startswith("SPEAKER") for c in cues)
+    assert all("speaker" not in c for c in cues)
+
+
+def test_subtitles_generate_speaker_labels_with_polish(services: Services, ctx: RpcContext, video_file: Path) -> None:
+    """WU-5: the speaker gate composes with the captionPolish gate (both on)."""
+    vid = _add_video(services, video_file)
+    _persist_diarized_transcript(services, vid)
+    services.settings.set({"captionSpeakerLabels": True, "captionPolish": True})
+    gen = services.subtitles_generate({"videoId": vid}, ctx)
+    cues = gen["track"]["cues"]
+    assert cues
+    assert all(c["text"].startswith("SPEAKER_00: ") for c in cues)

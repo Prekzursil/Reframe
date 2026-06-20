@@ -62,6 +62,12 @@ export interface Video {
   addedAt: string;
   durationSec: number;
   hasTranscript: boolean;
+  /**
+   * WU-2/WU-4: persisted poster-frame path ("" / absent until generated). The
+   * library card serves it through the `thumb:` mstream resolver via
+   * `useVideoThumbnail`; additive + backfilled, so older payloads omit it.
+   */
+  thumbnailPath?: string;
 }
 
 export interface Project {

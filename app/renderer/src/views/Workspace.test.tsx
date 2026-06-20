@@ -62,6 +62,7 @@ vi.mock('../features/Dub', () => stubPanel('Dub'));
 vi.mock('../features/Assets', () => stubPanel('Assets'));
 vi.mock('../features/NleExport', () => stubPanel('NleExport'));
 vi.mock('../features/Diarize', () => stubPanel('Diarize'));
+vi.mock('../features/Refine', () => stubPanel('Refine'));
 vi.mock('../features/Recipes', () => stubPanel('Recipes'));
 vi.mock('../features/SemanticSearch', () => stubPanel('SemanticSearch'));
 
@@ -126,6 +127,7 @@ describe('Workspace', () => {
       'Search',
       'Subtitles',
       'Diarize',
+      'Refine',
       'Tracks',
       'Convert',
       'Short-maker',
@@ -233,6 +235,7 @@ describe('Workspace', () => {
     ['search', 'SemanticSearch'],
     ['subtitles', 'Subtitles'],
     ['diarize', 'Diarize'],
+    ['refine', 'Refine'],
     ['tracks', 'Tracks'],
     ['convert', 'Convert'],
     ['shortmaker', 'ShortMaker'],

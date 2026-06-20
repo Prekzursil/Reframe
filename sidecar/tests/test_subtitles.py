@@ -571,3 +571,127 @@ def test_default_caption_polisher_delegates(monkeypatch):
     assert out == cues
     assert captured["cues"] == cues
     assert captured["settings"] == {"x": 1}
+
+
+# --------------------------------------------------------------------------- #
+# WU-3 — diarized speaker-carry (GAP #2)
+# --------------------------------------------------------------------------- #
+def test_make_cue_without_speaker_omits_key():
+    # Back-compat: no speaker -> the §3 shape stays byte-identical (no key).
+    c = S.make_cue(1, 0.0, 1.0, "hi")
+    assert "speaker" not in c
+    assert c == {"index": 1, "start": 0.0, "end": 1.0, "text": "hi"}
+
+
+def test_make_cue_with_speaker_adds_key():
+    c = S.make_cue(1, 0.0, 1.0, "hi", speaker="SPEAKER_00")
+    assert c["speaker"] == "SPEAKER_00"
+    # frozen fields keep their names/order; speaker is additive.
+    assert c == {"index": 1, "start": 0.0, "end": 1.0, "text": "hi", "speaker": "SPEAKER_00"}
+
+
+def test_make_cue_empty_speaker_omits_key():
+    # Empty string is falsy -> treated as "no speaker" (no leakage).
+    c = S.make_cue(1, 0.0, 1.0, "hi", speaker="")
+    assert "speaker" not in c
+
+
+def test_make_cue_coerces_speaker_to_str():
+    c = S.make_cue(1, 0.0, 1.0, "hi", speaker=7)
+    assert c["speaker"] == "7"
+
+
+def test_reindex_preserves_speaker_when_present():
+    src = [
+        {"index": 9, "start": 0.0, "end": 1.0, "text": "a", "speaker": "SPEAKER_01"},
+        {"index": 4, "start": 1.0, "end": 2.0, "text": "b"},
+    ]
+    out = S.reindex(src)
+    assert [c["index"] for c in out] == [1, 2]
+    assert out[0]["speaker"] == "SPEAKER_01"
+    assert "speaker" not in out[1]  # absent -> no speaker:None leakage
+
+
+def test_cues_from_transcript_carries_speaker():
+    seg = {"start": 0.0, "end": 1.0, "text": "hi there", "speaker": "SPEAKER_00", "words": []}
+    cues = S.cues_from_transcript({"segments": [seg]})
+    assert len(cues) == 1
+    assert cues[0]["speaker"] == "SPEAKER_00"
+
+
+def test_cues_from_transcript_no_speaker_key_when_absent():
+    cues = S.cues_from_transcript({"segments": [_seg(0.0, 1.0, "hi")]})
+    assert "speaker" not in cues[0]
+
+
+def test_split_segment_inherits_speaker():
+    words = [
+        {"text": w, "start": i * 1.0, "end": i * 1.0 + 0.9}
+        for i, w in enumerate(["one", "two", "three", "four", "five", "six"])
+    ]
+    seg = {
+        "start": 0.0,
+        "end": 6.0,
+        "text": "one two three four five six",
+        "speaker": "SPEAKER_02",
+        "words": words,
+    }
+    cues = S.cues_from_transcript({"segments": [seg]}, max_chars=12, max_duration=2.0)
+    assert len(cues) >= 2
+    assert all(c["speaker"] == "SPEAKER_02" for c in cues)
+
+
+def test_split_segment_without_speaker_omits_key():
+    words = [
+        {"text": w, "start": i * 1.0, "end": i * 1.0 + 0.9}
+        for i, w in enumerate(["one", "two", "three", "four", "five", "six"])
+    ]
+    seg = _seg(0.0, 6.0, "one two three four five six", words=words)
+    cues = S.cues_from_transcript({"segments": [seg]}, max_chars=12, max_duration=2.0)
+    assert len(cues) >= 2
+    assert all("speaker" not in c for c in cues)
+
+
+def test_format_speaker_prefix_off_is_identity_on_text():
+    cues = [S.make_cue(1, 0.0, 1.0, "hi", speaker="SPEAKER_00")]
+    out = S.format_speaker_prefix(cues, on=False)
+    assert out[0]["text"] == "hi"
+    assert out[0]["speaker"] == "SPEAKER_00"
+    # immutable: fresh dict, input untouched.
+    assert out[0] is not cues[0]
+
+
+def test_format_speaker_prefix_on_prefixes_speaker_cue():
+    cues = [S.make_cue(1, 0.0, 1.0, "hi", speaker="SPEAKER_00")]
+    out = S.format_speaker_prefix(cues, on=True)
+    assert out[0]["text"] == "SPEAKER_00: hi"
+    # input not mutated
+    assert cues[0]["text"] == "hi"
+
+
+def test_format_speaker_prefix_on_skips_non_speaker_cue():
+    cues = [S.make_cue(1, 0.0, 1.0, "hi")]
+    out = S.format_speaker_prefix(cues, on=True)
+    assert out[0]["text"] == "hi"
+    assert "speaker" not in out[0]
+
+
+def test_format_speaker_prefix_off_non_speaker_cue():
+    cues = [S.make_cue(1, 0.0, 1.0, "hi")]
+    out = S.format_speaker_prefix(cues, on=False)
+    assert out[0]["text"] == "hi"
+
+
+def test_srt_back_compat_no_speaker_prefix_off():
+    # No-speaker, prefix-off path must serialize byte-identically to today.
+    cues = [S.make_cue(1, 0.0, 1.0, "hello"), S.make_cue(2, 1.0, 2.0, "world")]
+    plain = S.to_srt(cues)
+    passed = S.to_srt(S.format_speaker_prefix(cues, on=False))
+    assert passed == plain
+
+
+def test_vtt_ass_back_compat_no_speaker_prefix_off():
+    cues = [S.make_cue(1, 0.0, 1.0, "hello")]
+    no_prefix = S.format_speaker_prefix(cues, on=False)
+    assert S.to_vtt(no_prefix) == S.to_vtt(cues)
+    assert S.to_ass(no_prefix) == S.to_ass(cues)

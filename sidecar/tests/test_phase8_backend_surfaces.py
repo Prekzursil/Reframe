@@ -36,3 +36,10 @@ def test_smolvlm2_backend_surface_imports_light() -> None:
 
     assert be.RealSmolVlmBackend.__name__ == "RealSmolVlmBackend"
     assert "RealSmolVlmBackend" in be.__all__
+
+
+def test_ocr_list_backend_surface_imports_light() -> None:
+    import media_studio.features.ocr_list_backend as be
+
+    assert be.RealOcrBackend.__name__ == "RealOcrBackend"
+    assert "RealOcrBackend" in be.__all__

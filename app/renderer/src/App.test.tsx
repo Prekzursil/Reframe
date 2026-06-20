@@ -17,12 +17,14 @@ import type { Video, ShortReexportHint } from './lib/rpc';
 // controllable and no real bridge is needed.
 const rpcMock = vi.fn();
 const libraryListMock = vi.fn();
+const batchListMock = vi.fn();
 
 vi.mock('./lib/rpc', () => ({
   rpc: (...a: unknown[]) => rpcMock(...a),
   hasApi: () => true,
   client: {
     library: { list: (...a: unknown[]) => libraryListMock(...a) },
+    batch: { list: (...a: unknown[]) => batchListMock(...a) },
   },
 }));
 
@@ -79,6 +81,13 @@ vi.mock('./panels/ModelsSystemPanel', () => ({
   default: () => <div data-testid="models" />,
 }));
 
+// Stub the Repurpose view; expose the resumeId App wired in (it owns its tests).
+vi.mock('./views/Repurpose', () => ({
+  Repurpose: ({ resumeId }: { resumeId?: string }) => (
+    <div data-testid="repurpose" data-resume={resumeId ?? ''} />
+  ),
+}));
+
 // Stub the always-mounted chrome so the test focuses on routing.
 vi.mock('./components/JobQueue', () => ({ JobQueue: () => <div /> }));
 vi.mock('./components/SidecarBanner', () => ({ SidecarBanner: () => <div /> }));
@@ -104,6 +113,8 @@ beforeEach(() => {
   rpcMock.mockReset();
   rpcMock.mockResolvedValue({}); // settings.get / settings.set
   libraryListMock.mockReset();
+  batchListMock.mockReset();
+  batchListMock.mockResolvedValue({ batches: [] });
   openVideoSpy.mockReset();
   reexportSpy.mockReset();
   container = document.createElement('div');
@@ -245,5 +256,178 @@ describe('App route switch', () => {
 
     expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="workspace"]')).toBeNull();
+  });
+
+  it('navigates to the Repurpose view via the header nav (no badge when none incomplete)', async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+
+    expect(nav('Repurpose')).toBeTruthy();
+
+    await act(async () => {
+      nav('Repurpose').click();
+    });
+    await flush();
+
+    const view = container.querySelector('[data-testid="repurpose"]');
+    expect(view).not.toBeNull();
+    expect(view!.getAttribute('data-resume')).toBe('');
+    expect(nav('Repurpose').classList.contains('is-active')).toBe(true);
+    expect(container.querySelector('[data-testid="library"]')).toBeNull();
+  });
+
+  it('shows a (N) badge + a resume toast for an incomplete batch, deep-linking on Resume', async () => {
+    batchListMock.mockResolvedValue({
+      batches: [
+        {
+          id: 'b9',
+          name: 'Season 3',
+          templateId: 't1',
+          status: 'partial',
+          createdAt: 5,
+          counts: {
+            total: 30,
+            done: 12,
+            error: 0,
+            skipped: 2,
+            queued: 16,
+            running: 0,
+            cancelled: 0,
+          },
+        },
+      ],
+    });
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+
+    expect(nav('Repurpose (1)')).toBeTruthy();
+
+    expect(document.body.textContent).toContain("A batch ('Season 3') was interrupted");
+    expect(document.body.textContent).toContain('16 of 30 sources left');
+
+    const resumeBtn = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('.toast__action'),
+    ).find((b) => b.textContent === 'Resume');
+    expect(resumeBtn).toBeTruthy();
+    await act(async () => {
+      resumeBtn!.click();
+    });
+    await flush();
+
+    const view = container.querySelector('[data-testid="repurpose"]');
+    expect(view).not.toBeNull();
+    expect(view!.getAttribute('data-resume')).toBe('b9');
+  });
+
+  it('ignores a late batch.list result after the nav unmounts (cancelled guard)', async () => {
+    let resolveList: (v: { batches: never[] }) => void = () => {};
+    batchListMock.mockReturnValue(
+      new Promise((res) => {
+        resolveList = res;
+      }),
+    );
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    act(() => root.unmount());
+    await act(async () => {
+      resolveList({ batches: [] });
+      await Promise.resolve();
+    });
+    root = createRoot(container);
+  });
+});
+
+// WU-13: persist `lastOpenedVideoId` on openVideo + restore it on launch.
+describe('App lastOpenedVideoId persist + restore', () => {
+  it('restores the workspace for a valid persisted lastOpenedVideoId on launch', async () => {
+    rpcMock.mockImplementation((method: string) => {
+      if (method === 'settings.get') return Promise.resolve({ lastOpenedVideoId: 'v1' });
+      return Promise.resolve({});
+    });
+    libraryListMock.mockResolvedValue({ videos: [makeVideo({ id: 'v1', title: 'Restored' })] });
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+
+    expect(libraryListMock).toHaveBeenCalledTimes(1);
+    const ws = container.querySelector('[data-testid="workspace"]');
+    expect(ws).not.toBeNull();
+    expect(ws!.getAttribute('data-video-id')).toBe('v1');
+  });
+
+  it('stays on the Library when the persisted id is absent from library.list', async () => {
+    rpcMock.mockImplementation((method: string) => {
+      if (method === 'settings.get') return Promise.resolve({ lastOpenedVideoId: 'gone' });
+      return Promise.resolve({});
+    });
+    libraryListMock.mockResolvedValue({ videos: [makeVideo({ id: 'v1' })] });
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+
+    expect(libraryListMock).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="workspace"]')).toBeNull();
+  });
+
+  it('stays on the Library when no lastOpenedVideoId is persisted (empty key)', async () => {
+    rpcMock.mockImplementation((method: string) => {
+      if (method === 'settings.get') return Promise.resolve({ lastOpenedVideoId: '' });
+      return Promise.resolve({});
+    });
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+
+    // Empty key short-circuits before resolving the library.
+    expect(libraryListMock).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="workspace"]')).toBeNull();
+  });
+
+  it('stays on the Library when the restore path throws (best-effort)', async () => {
+    rpcMock.mockImplementation((method: string) => {
+      if (method === 'settings.get') return Promise.resolve({ lastOpenedVideoId: 'v1' });
+      return Promise.resolve({});
+    });
+    libraryListMock.mockRejectedValue(new Error('boom'));
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+
+    expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="workspace"]')).toBeNull();
+  });
+
+  it('persists lastOpenedVideoId via settings.set exactly once when a video is opened', async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+
+    const openBtn = container.querySelector<HTMLButtonElement>('[data-testid="library"] button');
+    await act(async () => {
+      openBtn!.click();
+    });
+    await flush();
+
+    const setCalls = rpcMock.mock.calls.filter(([method]) => method === 'settings.set');
+    expect(setCalls).toHaveLength(1);
+    expect(setCalls[0][1]).toEqual({ lastOpenedVideoId: 'v1' });
   });
 });

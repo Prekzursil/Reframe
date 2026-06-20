@@ -11,13 +11,18 @@ import {
   rpc,
   onProgress,
   onJobDone,
+  type AutosaveSettings,
   type Candidate,
   type ConvertOptions,
+  type ExportDefaults,
   type Project,
+  type SavePresetsBlock,
   type SavedRecipe,
   type ShortInfo,
   type ShortReexportHint,
   type Video,
+  type ExportPreset,
+  type Template,
 } from './rpc';
 
 // ---------------------------------------------------------------------------
@@ -247,7 +252,7 @@ describe('client.ping / library / project', () => {
     expect(r).toHaveBeenCalledWith('ping', undefined);
   });
 
-  it('library.list / add / remove forward their params', async () => {
+  it('library.list / add / remove / thumbnail forward their params', async () => {
     const r = installApi();
     await client.library.list();
     expect(r).toHaveBeenCalledWith('library.list', undefined);
@@ -255,6 +260,8 @@ describe('client.ping / library / project', () => {
     expect(r).toHaveBeenCalledWith('library.add', { path: '/a.mp4' });
     await client.library.remove('v1');
     expect(r).toHaveBeenCalledWith('library.remove', { id: 'v1' });
+    await client.library.thumbnail('v1');
+    expect(r).toHaveBeenCalledWith('library.thumbnail', { id: 'v1' });
   });
 
   it('project.open / save / consolidate forward their params', async () => {
@@ -594,6 +601,12 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('asr.engines', undefined);
   });
 
+  it('readiness.summary calls the bare method (WU-8 roll-up)', async () => {
+    const r = installApi();
+    await client.readiness.summary();
+    expect(r).toHaveBeenCalledWith('readiness.summary', undefined);
+  });
+
   it('providers.usage calls the bare method (WU-usage-ui)', async () => {
     const r = installApi();
     await client.providers.usage();
@@ -618,6 +631,29 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('providers.firstRun', { choice: 'bestFreeCloud' });
   });
 
+  it('savePresets.* forward their params (WU-10/WU-11)', async () => {
+    const r = installApi();
+    await client.savePresets.list();
+    expect(r).toHaveBeenCalledWith('savePresets.list', undefined);
+    await client.savePresets.apply('Fast export');
+    expect(r).toHaveBeenCalledWith('savePresets.apply', { name: 'Fast export' });
+    // upsert WITHOUT a bundle: the conditional-spread falls back to `{}`.
+    await client.savePresets.upsert('Bare');
+    expect(r).toHaveBeenCalledWith('savePresets.upsert', { name: 'Bare' });
+    // upsert WITH a bundle: both parts ride along.
+    await client.savePresets.upsert('Full', {
+      autosave: { enabled: true, debounceMs: 1500 },
+      exportDefaults: { subtitleFormat: 'srt', nleFormat: 'edl', nleFps: 30 },
+    });
+    expect(r).toHaveBeenCalledWith('savePresets.upsert', {
+      name: 'Full',
+      autosave: { enabled: true, debounceMs: 1500 },
+      exportDefaults: { subtitleFormat: 'srt', nleFormat: 'edl', nleFps: 30 },
+    });
+    await client.savePresets.remove('Bare');
+    expect(r).toHaveBeenCalledWith('savePresets.remove', { name: 'Bare' });
+  });
+
   it('recipes.* forward their params', async () => {
     const r = installApi();
     const recipe: SavedRecipe = {
@@ -633,5 +669,128 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('recipes.delete', { id: 'r1' });
     await client.recipes.run('r1');
     expect(r).toHaveBeenCalledWith('recipes.run', { id: 'r1' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WU-0 (ux-qol): additive settings type shapes. These mirror the sidecar
+// DEFAULT_SETTINGS QoL keys; the assertions pin the field names/types so a future
+// drift breaks the typecheck (the interfaces are erased, so we assert literals).
+// ---------------------------------------------------------------------------
+describe('WU-0 QoL settings shapes (mirror sidecar DEFAULT_SETTINGS)', () => {
+  it('AutosaveSettings matches the sidecar default', () => {
+    const autosave: AutosaveSettings = { enabled: true, debounceMs: 1500 };
+    expect(autosave).toEqual({ enabled: true, debounceMs: 1500 });
+  });
+
+  it('ExportDefaults matches the sidecar default', () => {
+    const exportDefaults: ExportDefaults = {
+      subtitleFormat: 'srt',
+      nleFormat: 'edl',
+      nleFps: 30,
+    };
+    expect(exportDefaults).toEqual({ subtitleFormat: 'srt', nleFormat: 'edl', nleFps: 30 });
+  });
+
+  it('SavePresetsBlock matches the sidecar default (empty presets + no active)', () => {
+    const savePresets: SavePresetsBlock = { presets: {}, active: '' };
+    expect(savePresets).toEqual({ presets: {}, active: '' });
+  });
+});
+
+describe('client.exportPresets / templates / batch (WU11)', () => {
+  const PRESET: ExportPreset = {
+    id: 'tiktok',
+    label: 'TikTok',
+    aspect: '9:16',
+    minSec: 20,
+    maxSec: 60,
+    count: 5,
+    captionStyle: 'tiktok',
+    reframeEngine: 'auto',
+  };
+
+  it('exportPresets.* forward their params', async () => {
+    const r = installApi();
+    await client.exportPresets.list();
+    expect(r).toHaveBeenCalledWith('exportPresets.list', undefined);
+    await client.exportPresets.save(PRESET);
+    expect(r).toHaveBeenCalledWith('exportPresets.save', { preset: PRESET });
+    await client.exportPresets.delete('tiktok');
+    expect(r).toHaveBeenCalledWith('exportPresets.delete', { id: 'tiktok' });
+    await client.exportPresets.reset();
+    expect(r).toHaveBeenCalledWith('exportPresets.reset', undefined);
+  });
+
+  it('templates.* forward their params', async () => {
+    const r = installApi();
+    const template: Template = {
+      id: 't1',
+      name: 'House style',
+      steps: [{ method: 'transcribe.start', params: { videoId: 'v1' }, label: 'Transcribe' }],
+      defaultControls: { count: 5 },
+      exportTargets: ['tiktok', 'shorts'],
+    };
+    await client.templates.list();
+    expect(r).toHaveBeenCalledWith('templates.list', undefined);
+    await client.templates.save(template);
+    expect(r).toHaveBeenCalledWith('templates.save', { template });
+    await client.templates.delete('t1');
+    expect(r).toHaveBeenCalledWith('templates.delete', { id: 't1' });
+    await client.templates.apply('t1', 'v1');
+    expect(r).toHaveBeenCalledWith('templates.apply', { templateId: 't1', videoId: 'v1' });
+  });
+
+  it('batch.* forward their params (start spreads opts; resume/cancel/delete keyed by id)', async () => {
+    const r = installApi();
+    await client.batch.create('Season 3', 't1', ['v1', 'v2']);
+    expect(r).toHaveBeenCalledWith('batch.create', {
+      name: 'Season 3',
+      templateId: 't1',
+      sourceVideoIds: ['v1', 'v2'],
+    });
+    await client.batch.start('b1');
+    expect(r).toHaveBeenCalledWith('batch.start', { id: 'b1' });
+    await client.batch.start('b1', { confirmCloudBudget: true, acknowledged: true });
+    expect(r).toHaveBeenCalledWith('batch.start', {
+      id: 'b1',
+      confirmCloudBudget: true,
+      acknowledged: true,
+    });
+    await client.batch.status('b1');
+    expect(r).toHaveBeenCalledWith('batch.status', { id: 'b1' });
+    await client.batch.list();
+    expect(r).toHaveBeenCalledWith('batch.list', undefined);
+    await client.batch.cancel('b1');
+    expect(r).toHaveBeenCalledWith('batch.cancel', { id: 'b1' });
+    await client.batch.resume('b1');
+    expect(r).toHaveBeenCalledWith('batch.resume', { id: 'b1' });
+    await client.batch.delete('b1');
+    expect(r).toHaveBeenCalledWith('batch.delete', { id: 'b1' });
+  });
+});
+
+describe('client.director (WU-panel — prompt-driven editing spine)', () => {
+  it('plan / previewCost / undo / evaluate forward their params', async () => {
+    const r = installApi();
+    await client.director.plan('v1', 'make it smooth');
+    expect(r).toHaveBeenCalledWith('director.plan', { videoId: 'v1', goal: 'make it smooth' });
+    await client.director.previewCost('plan-1');
+    expect(r).toHaveBeenCalledWith('director.previewCost', { planId: 'plan-1' });
+    await client.director.undo('plan-1');
+    expect(r).toHaveBeenCalledWith('director.undo', { planId: 'plan-1' });
+    await client.director.evaluate('plan-1');
+    expect(r).toHaveBeenCalledWith('director.evaluate', { planId: 'plan-1' });
+  });
+
+  it('apply omits confirmBudget when undefined, includes it when given (both arms)', async () => {
+    const r = installApi();
+    await client.director.apply('plan-1');
+    expect(r).toHaveBeenCalledWith('director.apply', { planId: 'plan-1' });
+    await client.director.apply('plan-1', 'CK-TEXT');
+    expect(r).toHaveBeenCalledWith('director.apply', {
+      planId: 'plan-1',
+      confirmBudget: 'CK-TEXT',
+    });
   });
 });

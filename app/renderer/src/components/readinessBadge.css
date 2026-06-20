@@ -1,0 +1,102 @@
+/* readinessBadge.css — the parallel color map for <ReadinessBadge /> (WU-9).
+ * The pill GEOMETRY is reused from `.verdict-badge` (modelsSystem.css); this file
+ * adds ONLY the readiness-specific tint per status (a distinct map from the
+ * verdict colors) plus the inline action button. Color is decorative — the status
+ * is always conveyed by the visible text label too (WCAG 1.4.1). */
+
+.readiness-badge-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.readiness-badge.is-ready {
+  color: var(--status-success);
+  background: var(--status-success-soft);
+}
+
+.readiness-badge.is-needs-download {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.readiness-badge.is-needs-key {
+  color: var(--status-warn);
+  background: var(--status-warn-soft);
+}
+
+.readiness-badge.is-needs-consent {
+  color: var(--status-warn);
+  background: var(--status-warn-soft);
+}
+
+.readiness-badge.is-unavailable {
+  color: var(--status-error);
+  background: var(--status-error-soft);
+}
+
+.readiness-badge__action {
+  appearance: none;
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--accent);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.readiness-badge__action:hover {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+
+.readiness-badge__action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ReadinessRollup (WU-14): the shared "what works right now" section, reused on
+ * the library home + the model panel. Layout only — the badge tint/geometry come
+ * from the rules above; the in-flight skeleton reuses `.jobqueue__empty`. */
+.readiness-rollup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.readiness-rollup__title {
+  margin: 0;
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.readiness-rollup__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.readiness-rollup__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.readiness-rollup__cap {
+  color: var(--text-primary);
+}
+
+.readiness-rollup__empty {
+  color: var(--text-faint);
+  font-size: var(--type-caption-size);
+}

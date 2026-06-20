@@ -28,8 +28,9 @@ const Dub = lazy(() => import('../features/Dub'));
 const Assets = lazy(() => import('../features/Assets'));
 // captions-export: EDL/CSV NLE timeline export of approved clips.
 const NleExport = lazy(() => import('../features/NleExport'));
-// system-advanced group: per-video Diarize + Recipes panels.
+// system-advanced group: per-video Diarize + Refine + Recipes panels.
 const Diarize = lazy(() => import('../features/Diarize'));
+const Refine = lazy(() => import('../features/Refine'));
 const Recipes = lazy(() => import('../features/Recipes'));
 // intelligence A: semantic transcript search (seeks the player on a hit).
 const SemanticSearch = lazy(() => import('../features/SemanticSearch'));
@@ -39,6 +40,7 @@ export const WORKSPACE_TABS: TabDef[] = [
   { id: 'search', label: 'Search' },
   { id: 'subtitles', label: 'Subtitles' },
   { id: 'diarize', label: 'Diarize' },
+  { id: 'refine', label: 'Refine' },
   { id: 'tracks', label: 'Tracks' },
   { id: 'convert', label: 'Convert' },
   { id: 'shortmaker', label: 'Short-maker' },
@@ -128,6 +130,8 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
         return <Subtitles videoId={video.id} initialTrack={tracks[0] ?? null} />;
       case 'diarize':
         return <Diarize videoId={video.id} />;
+      case 'refine':
+        return <Refine videoId={video.id} />;
       case 'tracks':
         return <Tracks videoId={video.id} availableTracks={tracks} />;
       case 'convert':

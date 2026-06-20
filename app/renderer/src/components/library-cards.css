@@ -58,7 +58,7 @@ li.library__item .library__item-meta {
   background: var(--surface-deep);
 }
 
-.library__thumb-video {
+.library__thumb-img {
   display: block;
   width: 100%;
   height: 100%;
@@ -68,7 +68,7 @@ li.library__item .library__item-meta {
   transition: transform var(--dur-slow) var(--ease-out);
 }
 
-li.library__item:hover .library__thumb-video {
+li.library__item:hover .library__thumb-img {
   transform: scale(1.03);
 }
 

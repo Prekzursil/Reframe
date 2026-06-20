@@ -142,3 +142,71 @@ describe('resolveDataRootFrom — marker/exe-dir are consulted UNCONDITIONALLY',
     expect(isExeDataWritable).toHaveBeenCalledWith(EXE_DATA);
   });
 });
+
+// --------------------------------------------------------------------------- #
+// DEV exe-dir TRAP (preview blocker root cause) — the writable <exeDir>/data
+// auto-pick is PORTABLE-INSTALL-ONLY. In `npm run dev`, process.execPath lives in
+// node_modules/electron/dist, so <exeDir>/data is a writable but EMPTY folder with
+// no library.json — picking it silently broke preview (empty library -> 404 ->
+// blank <video> -> no subtitles). The auto-pick is now gated on preferExeDataDir
+// (= app.isPackaged); env + marker stay UNCONDITIONAL so a dev power-user can
+// still point at their real data folder.
+// --------------------------------------------------------------------------- #
+describe('chooseDataRoot — exe-data auto-pick is gated on preferExeDataDir', () => {
+  it('uses a writable exe-data dir when preferExeDataDir is true (packaged portable)', () => {
+    expect(
+      chooseDataRoot(base({ exeDataDir: EXE_DATA, exeDataWritable: true, preferExeDataDir: true })),
+    ).toBe(EXE_DATA);
+  });
+
+  it('IGNORES a writable exe-data dir when preferExeDataDir is false (the dev trap)', () => {
+    // The regression: dev (preferExeDataDir=false) must NOT silently land on the
+    // empty node_modules/electron/dist/data — it falls through to appData.
+    expect(
+      chooseDataRoot(
+        base({ exeDataDir: EXE_DATA, exeDataWritable: true, preferExeDataDir: false }),
+      ),
+    ).toBe(APPDATA);
+  });
+
+  it('still honors an explicit env override in dev (preferExeDataDir false)', () => {
+    expect(
+      chooseDataRoot(
+        base({ envOverride: ENV_PATH, exeDataWritable: true, preferExeDataDir: false }),
+      ),
+    ).toBe(ENV_PATH);
+  });
+
+  it('still honors a marker in dev (preferExeDataDir false)', () => {
+    expect(
+      chooseDataRoot(
+        base({ markerContent: MARKER_PATH, exeDataWritable: true, preferExeDataDir: false }),
+      ),
+    ).toBe(MARKER_PATH);
+  });
+
+  it('defaults preferExeDataDir to true when omitted (backward compatible)', () => {
+    // Existing callers/tests that never pass the flag keep the portable behavior.
+    expect(chooseDataRoot(base({ exeDataDir: EXE_DATA, exeDataWritable: true }))).toBe(EXE_DATA);
+  });
+});
+
+describe('resolveDataRootFrom — threads preferExeDataDir through to chooseDataRoot', () => {
+  it('falls back to appData in dev even when the exe-dir is writable', () => {
+    // The end-to-end dev-trap lock at the IO seam: a writable exe-dir is NOT
+    // chosen when packaged=false (preferExeDataDir=false).
+    expect(
+      resolveDataRootFrom(io({ isExeDataWritable: () => true, preferExeDataDir: false })),
+    ).toBe(APPDATA);
+  });
+
+  it('chooses the writable exe-dir when packaged (preferExeDataDir true)', () => {
+    expect(resolveDataRootFrom(io({ isExeDataWritable: () => true, preferExeDataDir: true }))).toBe(
+      EXE_DATA,
+    );
+  });
+
+  it('defaults to portable (preferExeDataDir true) when the seam omits the flag', () => {
+    expect(resolveDataRootFrom(io({ isExeDataWritable: () => true }))).toBe(EXE_DATA);
+  });
+});

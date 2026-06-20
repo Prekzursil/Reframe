@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { rpc, type Video } from '../components/api';
-// T6 thumbnails: reuse the Player's frozen mstream:// URL convention (read-only
-// import of U1's exported pure helper — no new RPC methods involved).
-import { mediaUrl } from '../components/Player';
+import { useVideoThumbnail, type VideoThumbnailRpc } from '../components/useVideoThumbnail';
+import { ReadinessRollup } from '../components/ReadinessRollup';
+import type { ReadinessAction } from '../lib/rpc';
 import '../components/library-cards.css';
 
 // ---- Toasts (P2 U2) ---------------------------------------------------------
@@ -35,6 +35,13 @@ export interface LibraryProps {
    * fallback strip is not rendered.
    */
   toast?: (toast: ToastMessage) => void;
+  /**
+   * WU-14: fired when the library's readiness roll-up action button is clicked
+   * (e.g. download a model / add a provider key). The parent owns the routing
+   * to the providers/assets flows; absent -> the roll-up still renders, the
+   * action is simply a no-op.
+   */
+  onReadinessAction?: (action: ReadinessAction) => void;
 }
 
 interface ListResult {
@@ -104,61 +111,44 @@ function formatDuration(sec: number): string {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
-// ---- Poster-frame thumbnails (T6) -------------------------------------------
-
-/** Fraction of the duration the poster frame is seeked to (~10%). */
-export const POSTER_SEEK_FRACTION = 0.1;
-
-/** Source-absolute poster time: ~10% into the video (0 for unknown durations). */
-export function posterSeekTime(durationSec: number): number {
-  if (!Number.isFinite(durationSec) || durationSec <= 0) return 0;
-  return durationSec * POSTER_SEEK_FRACTION;
-}
+// ---- Poster-frame thumbnails (WU-4 wiring, WU-14) ---------------------------
 
 /**
- * Poster-frame thumbnail: a muted, metadata-only <video> on the SAME
- * `mstream://media/<id>` convention the Player uses, paused immediately and
- * seeked to ~10% of the duration so the held frame acts as the poster — no
- * new RPC methods, no frame-extraction pipeline. Falls back to a placeholder
- * div when the media errors (missing file, unsupported codec). The duration
- * badge always renders (mm:ss from the library's durationSec).
+ * `library.thumbnail({id})` adapter over the shared `rpc` bridge — the thin RPC
+ * slice `useVideoThumbnail` needs. Stable across renders so the hook's effect
+ * does not re-fire every card render.
+ */
+const thumbnailRpc: VideoThumbnailRpc = {
+  thumbnail: (videoId: string) =>
+    rpc<{ thumbnailPath: string }>('library.thumbnail', { id: videoId }),
+};
+
+/**
+ * Library-card poster: consumes `useVideoThumbnail` (WU-4) to serve the source
+ * video's `thumb:` poster as a real <img>, generating it on demand (idempotent
+ * server-side). Inherits WU-4's graceful degradation: a missing / failed poster
+ * (empty resolved URL, or an <img> load error) falls back to the ▶ glyph and
+ * NEVER blocks the gallery. The duration badge always renders (mm:ss).
  */
 function VideoThumb({ video }: { video: Video }): React.ReactElement {
-  const [failed, setFailed] = useState(false);
-
-  const handleLoadedMetadata = useCallback(
-    (event: React.SyntheticEvent<HTMLVideoElement>) => {
-      const el = event.currentTarget;
-      try {
-        el.pause(); // poster only — the element must never play
-        const duration =
-          Number.isFinite(el.duration) && el.duration > 0 ? el.duration : video.durationSec;
-        el.currentTime = posterSeekTime(duration);
-      } catch {
-        setFailed(true);
-      }
-    },
-    [video.durationSec],
-  );
+  const posterUrl = useVideoThumbnail(thumbnailRpc, video.id, video.thumbnailPath ?? '');
+  const [imgFailed, setImgFailed] = useState(false);
+  const showImg = posterUrl !== '' && !imgFailed;
 
   return (
     <div className="library__thumb">
-      {failed ? (
+      {showImg ? (
+        <img
+          className="library__thumb-img"
+          src={posterUrl}
+          alt=""
+          aria-hidden="true"
+          onError={() => setImgFailed(true)}
+        />
+      ) : (
         <div className="library__thumb-fallback" aria-hidden="true">
           ▶
         </div>
-      ) : (
-        <video
-          className="library__thumb-video"
-          src={mediaUrl(video.id)}
-          preload="metadata"
-          muted
-          playsInline
-          tabIndex={-1}
-          aria-hidden="true"
-          onLoadedMetadata={handleLoadedMetadata}
-          onError={() => setFailed(true)}
-        />
       )}
       <span className="library__thumb-duration">{formatDuration(video.durationSec)}</span>
     </div>
@@ -172,7 +162,11 @@ function VideoThumb({ video }: { video: Video }): React.ReactElement {
  * typed error toasts, de-dupe by id), removes (library.remove), and opens a
  * video into the Workspace on click.
  */
-export function Library({ onOpen, toast: externalToast }: LibraryProps): React.ReactElement {
+export function Library({
+  onOpen,
+  toast: externalToast,
+  onReadinessAction,
+}: LibraryProps): React.ReactElement {
   const [videos, setVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -349,6 +343,8 @@ export function Library({ onOpen, toast: externalToast }: LibraryProps): React.R
           {adding ? 'Adding…' : 'Add videos'}
         </button>
       </header>
+
+      <ReadinessRollup title="What works right now" onAction={onReadinessAction} />
 
       {dragOver ? (
         <div className="library__drophint" aria-hidden="true">

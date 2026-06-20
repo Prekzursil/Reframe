@@ -35,6 +35,7 @@ from . import library as _library
 from . import protocol
 from .features import boundary as _boundary
 from .features import convert as _convert
+from .features import director as _director
 from .features import media_compat as _media_compat
 from .features import nle_export as _nle_export
 from .features import offline as _offline
@@ -86,6 +87,20 @@ class _LocalOnlyPool:
     """
 
     entries: tuple[_LocalPoolEntry, ...] = (_LocalPoolEntry(),)
+
+
+@dataclass(frozen=True)
+class _DirectorPlanEntry:
+    """A stored Director plan (WU-plan-rpc): the validated EditPlan + its context.
+
+    ``video_id`` correlates the plan to its source for ``director.apply``;
+    ``messages`` is the planner chat (replayed by ``director.previewCost`` so the
+    pre-flight cache key matches the plan step exactly — ZERO new LLM calls).
+    """
+
+    plan: Any  # edit_plan.EditPlan (typed in the handler; Any here to keep imports light)
+    video_id: str
+    messages: tuple[dict[str, str], ...]
 
 
 def _invalid(message: str) -> RpcError:
@@ -225,6 +240,20 @@ class Services:
         # "candidates" map that _resolve_candidates already consults.
         self._selection_cache: dict[str, dict[str, Candidate]] = {}
 
+        # WU-plan-rpc: the Director plan store. ``director.plan`` stashes each
+        # validated EditPlan (+ the planner messages + the videoId it was planned
+        # against) under its ``planId`` so the follow-up ``director.previewCost`` /
+        # ``director.apply`` calls resolve the SAME plan without re-running the LLM.
+        # In-memory (per-session), mirroring the selection cache above.
+        self._director_plans: dict[str, _DirectorPlanEntry] = {}
+
+        # WU-undo: the recorded-inverse store. ``director.apply`` stashes the
+        # ``inverse_plan`` it recorded (newest-first ops) under the SAME ``planId``
+        # so ``director.undo`` can re-run those inverse ops over a fresh COPY for a
+        # one-shot reversal (DESIGN §5/§7.1). A plan that was never applied has no
+        # entry here, so ``director.undo`` rejects it (nothing to undo).
+        self._director_inverses: dict[str, Any] = {}  # planId -> edit_plan.EditPlan
+
     # ===================================================================== #
     # resolvers
     # ===================================================================== #
@@ -234,6 +263,18 @@ class Services:
         if video is None:
             return None
         return video.get("path") or None
+
+    def _video_title(self, video_id: str) -> str:
+        """videoId -> human title for a progress message (the id when unknown).
+
+        The batch runner's title seam (WU10): falls back to the ``videoId`` when
+        the library has no record or no ``title``, so a progress line is always
+        readable even for a stale id.
+        """
+        video = self.library.get(video_id)
+        if video is None:
+            return video_id
+        return str(video.get("title") or video_id)
 
     def _project_path(self, video_id: str) -> Path:
         """The manifest path for a video's project (one project per video)."""
@@ -293,6 +334,36 @@ class Services:
         ok = self.library.remove(video_id)
         return {"ok": bool(ok)}
 
+    def library_thumbnail(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``library.thumbnail({id})`` -> ``{thumbnailPath}``. Direct-return.
+
+        WU-2: extract a poster from a SOURCE library video by reusing the shorts
+        ffmpeg poster engine, persist ``thumbnailPath`` onto the Video, and return
+        it. Idempotent: an existing ``data_dir/thumbnails/<id>.jpg`` short-circuits
+        (the runner is NOT invoked again). The ffmpeg ``run`` seam is the SAME
+        injectable one ``shorts.thumbnail`` uses — never ``subprocess`` directly —
+        so tests fake it (no real ffmpeg).
+        """
+        video_id = _require_str(params, "id")
+        in_path = self._resolve_video_path(video_id)
+        if not in_path:
+            raise _invalid(f"unknown video: {video_id}")
+        out = self.data_dir / "thumbnails" / f"{video_id}.jpg"
+        if out.exists():
+            self.library.set_thumbnail(video_id, str(out))
+            return {"thumbnailPath": str(out)}
+        out.parent.mkdir(parents=True, exist_ok=True)
+        run = self._ffmpeg_run or _self_ffmpeg_run()
+        argv = _shorts_meta.build_thumbnail_argv(in_path, str(out), self.settings.get())
+        code = run(argv, total_sec=0.0)
+        if code != 0:
+            raise RpcError(
+                f"ffmpeg exited with code {code} extracting a thumbnail for {video_id}",
+                ErrorCode.INTERNAL_ERROR,
+            )
+        self.library.set_thumbnail(video_id, str(out))
+        return {"thumbnailPath": str(out)}
+
     # ===================================================================== #
     # project.*
     # ===================================================================== #
@@ -343,6 +414,72 @@ class Services:
         way ``get`` does), so the round-tripped response never echoes a full key.
         """
         return self.settings.set(dict(params))
+
+    def paths_describe(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``paths.describe()`` -> the resolved on-disk data layout. Direct-return.
+
+        WU-1 (read-only): surfaces WHERE everything lives so the renderer can SHOW
+        the data layout (today it can only fetch the root via ``dataFolder.get``).
+        A PURE path-join: no I/O, nothing is created, nothing is read from disk, so
+        repeated calls are identical. Derives the dirs from
+        :attr:`data_dir`/:attr:`projects_dir`/:attr:`exports_dir` and the file
+        paths from the injected stores' own path attributes (robust to a custom
+        settings/library location). ``subDirs`` names the per-feature derivative
+        folders the sidecar writes into — ``dubs`` under the data dir; the
+        ffmpeg-derivative folders (``stabilized``/``audiomix``/``trimmed``)
+        under the exports root, matching ``register_all``'s wiring. ``shorts`` is
+        written PER-VIDEO as ``exports/shorts-<videoId>``, so it is reported as the
+        honest ``shorts-*`` pattern (no flat ``exports/shorts`` dir exists). NO key/secret
+        string ever appears in this payload (it is layout-only).
+        """
+        return {
+            "dataDir": str(self.data_dir),
+            "projectsDir": str(self.projects_dir),
+            "exportsDir": str(self.exports_dir),
+            "settingsPath": str(self.settings.config_path),
+            "libraryPath": str(self.library.index_path),
+            "subDirs": {
+                "dubs": str(self.data_dir / "dubs"),
+                "shorts": str(self.exports_dir / "shorts-*"),
+                "stabilized": str(self.exports_dir / "stabilized"),
+                "audiomix": str(self.exports_dir / "audiomix"),
+                "trimmed": str(self.exports_dir / "trimmed"),
+            },
+        }
+
+    def readiness_summary(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``readiness.summary()`` -> ``{items:[ReadinessItem]}``. Direct-return.
+
+        WU-8 (read-only): rolls the three otherwise-split readiness sources into
+        ONE per-capability list the renderer can SHOW as a unified "what works
+        right now" view. Two capability families:
+
+          * **Model tiers** — each runnable tier (0/1/2) is ``ready`` when all its
+            model weights are installed; ``needsDownload`` when one is missing and
+            we are online (the action targets ``assets.ensure`` with the missing
+            asset names); ``unavailable`` when one is missing AND Offline mode is on
+            (the download is blocked — same rule ``system.advisor`` uses). Tier-0 is
+            the zero-download CPU floor and is always ``ready``.
+          * **AI functions** — each routed AI function (``select``/``subtitles``/
+            ``translation``/``vision``/``editPlan``) routed to a CLOUD provider is
+            ``needsKey`` (no key for that provider), then ``needsConsent`` (key
+            present but the data-type consent — TEXT for most, FRAMES for vision —
+            is not granted), then ``ready``. A function routed to LOCAL (or unrouted
+            -> the local-safe default) needs neither and is ``ready``.
+
+        STRICTLY READ-ONLY (§5): it derives everything from the installed-weight map
+        (the :meth:`_models_present_map` seam) + the redacted settings view, so it
+        performs ZERO network/provider calls and triggers NO ``assets.ensure``. No
+        full key ever rides this payload (it reads the already-redacted
+        :meth:`providers.list <providers_list>` view for key PRESENCE only).
+        """
+        settings = self.settings.get()
+        models_present = self._models_present_map(settings)
+        offline = _offline.is_offline(settings)
+        providers = self.providers_list(params, ctx)["providers"]
+        items = _tier_readiness_items(models_present, offline=offline)
+        items.extend(_function_readiness_items(settings, providers))
+        return {"items": items}
 
     # ===================================================================== #
     # providers.* (WU-keys: user-brings keys; RPC is key-free / redacted)
@@ -582,6 +719,84 @@ class Services:
         block = _routing_block(routing)
         self.settings.set({"firstRunChoiceMade": True, "activePreset": routing["activePreset"], "routing": block})
         return {"firstRunChoiceMade": True, "activePreset": routing["activePreset"], "routing": block}
+
+    # ===================================================================== #
+    # savePresets.* — named {autosave, exportDefaults} bundles (WU-10)
+    # ===================================================================== #
+    def _save_presets_block(self) -> dict[str, Any]:
+        """Return the current ``savePresets`` block as ``{presets, active}``.
+
+        ``settings.set`` is a SHALLOW top-level merge (``settings_store``: writing
+        ``savePresets`` REPLACES the whole block), so every mutating handler MUST
+        read this full block, modify it, and write it back whole — otherwise a
+        partial write would drop ``presets`` or ``active``. A corrupt (non-dict)
+        block, or non-dict ``presets``, is defensively treated as empty.
+        """
+        raw = self.settings.get().get("savePresets")
+        block = raw if isinstance(raw, dict) else {}
+        presets = block.get("presets")
+        active = block.get("active")
+        return {
+            "presets": dict(presets) if isinstance(presets, dict) else {},
+            "active": active if isinstance(active, str) else "",
+        }
+
+    def save_presets_list(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``savePresets.list()`` -> ``{presets, active}`` (WU-10).
+
+        READ-ONLY roll-up of the named ``{autosave, exportDefaults}`` bundles the
+        user has saved (``presets``) plus the last-applied bundle name (``active``).
+        Writes nothing.
+        """
+        return self._save_presets_block()
+
+    def save_presets_upsert(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``savePresets.upsert({name, autosave?, exportDefaults?})`` -> ``{presets}``.
+
+        Creates or replaces the named bundle. Omitted ``autosave`` / ``exportDefaults``
+        default to ``{}`` (the renderer fills them from live settings). The whole
+        ``savePresets`` block is read-modify-written so siblings (other presets +
+        ``active``) survive the shallow-merge replace.
+        """
+        name = _require_str(params, "name")
+        block = self._save_presets_block()
+        block["presets"][name] = {
+            "autosave": dict(params["autosave"]) if isinstance(params.get("autosave"), dict) else {},
+            "exportDefaults": dict(params["exportDefaults"]) if isinstance(params.get("exportDefaults"), dict) else {},
+        }
+        self.settings.set({"savePresets": block})
+        return {"presets": block["presets"]}
+
+    def save_presets_apply(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``savePresets.apply({name})`` -> ``{active, savePreset}`` (WU-10).
+
+        Marks ``name`` the active bundle (persisted) and echoes it back. An unknown
+        name is a typed invalid-params error (mirrors ``providers.applyPreset``'s
+        ``ValueError -> _invalid``) rather than a crash.
+        """
+        name = _require_str(params, "name")
+        block = self._save_presets_block()
+        if name not in block["presets"]:
+            raise _invalid(f"unknown save preset: {name!r}")
+        block["active"] = name
+        self.settings.set({"savePresets": block})
+        return {"active": name, "savePreset": block["presets"][name]}
+
+    def save_presets_remove(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``savePresets.remove({name})`` -> ``{presets, active}`` (WU-10).
+
+        Drops the named bundle. If it was the ``active`` one, ``active`` is reset to
+        ``""`` (no stale pointer). An unknown name is a typed invalid-params error.
+        """
+        name = _require_str(params, "name")
+        block = self._save_presets_block()
+        if name not in block["presets"]:
+            raise _invalid(f"unknown save preset: {name!r}")
+        del block["presets"][name]
+        if block["active"] == name:
+            block["active"] = ""
+        self.settings.set({"savePresets": block})
+        return {"presets": block["presets"], "active": block["active"]}
 
     # -- per-function routing resolution (the seam wiring) ------------------ #
     def _function_prefer(self, function: str) -> str | None:
@@ -1308,6 +1523,13 @@ class Services:
             track = _subtitles.generate_polished(transcript, settings=settings)
         else:
             track = _subtitles.generate(transcript)
+        # WU-5 wiring: settings['captionSpeakerLabels'] prefixes each diarized cue's
+        # text with "<speaker>: " (mirrors the captionPolish gate above). Off/absent
+        # -> the cues are unchanged (back-compat). Non-diarized cues carry no
+        # speaker, so the prefix is a no-op even when the flag is on.
+        if settings.get("captionSpeakerLabels"):
+            labelled = _subtitles.format_speaker_prefix(track.get("cues") or [], on=True)
+            track = _subtitles.edit(track, labelled)
         _tracks.add_track(project.data, track)
         project.save()
         return {"track": track}
@@ -2256,6 +2478,7 @@ class Services:
         label: str,
         videoId: str | None = None,  # noqa: N803 - wire-name kwarg (matches JobRegistry)
         ack: str | None = None,
+        enforce_budget: bool = True,
     ) -> Any:
         """Plan + run an :class:`ai_job.AiJob` on ``ctx.jobs`` with a custom ``work``.
 
@@ -2270,6 +2493,13 @@ class Services:
         ``cacheKey`` (the token ``ai.planJob`` returns), else the run is refused
         with a typed error telling the client to pre-flight + acknowledge first.
         A local-only / cache-hit run never egresses, so it is never gated.
+
+        ``enforce_budget=False`` skips the cloud-budget gate entirely — for a job
+        whose ``work`` provably makes NO provider call and therefore never egresses
+        (e.g. ``director.undo``: a pure LOCAL manifest reversal). Such a job rides
+        the same envelope/job path for uniformity but has no budget surface to
+        acknowledge, so gating it would refuse a non-egressing run with a token the
+        caller cannot supply.
         """
         from .models import ai_job as _ai_job  # local: import-light
 
@@ -2278,7 +2508,8 @@ class Services:
             model=model,
         )
         envelope = self.plan_ai_job_envelope(inputs)
-        self._enforce_cloud_budget_ack(envelope, ack)
+        if enforce_budget:
+            self._enforce_cloud_budget_ack(envelope, ack)
 
         def _factory() -> Any:
             if provider is not None:
@@ -2346,6 +2577,319 @@ class Services:
             capability=str(params.get("capability") or "text"),
         )
         return self.plan_ai_job_envelope(inputs).planned()
+
+    # ===================================================================== #
+    # director.* (WU-plan-rpc) — the RPC spine onto the shipped AI substrate.
+    # Every LLM call rides _run_ai_job + the pool; all three registered ONLY in
+    # register_all (no parallel AI path, DESIGN RAIL).
+    # ===================================================================== #
+    def _director_video_duration_ms(self, video_id: str) -> int:
+        """Probe the source video's duration in ms (validator clip bound)."""
+        path = self._resolve_video_path(video_id)
+        if not path:
+            raise _invalid(f"unknown video: {video_id}")
+        probe = self._ffprobe_duration or _self_ffprobe()
+        return int(round(probe(path) * 1000))
+
+    def _director_get_plan(self, plan_id: str) -> _DirectorPlanEntry:
+        """Resolve a stored plan entry by id (raises INVALID_PARAMS if absent)."""
+        entry = self._director_plans.get(plan_id)
+        if entry is None:
+            raise _invalid(f"unknown plan: {plan_id}")
+        return entry
+
+    def director_plan(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``director.plan({videoId, goal})`` -> ``{jobId}``. Job-based.
+
+        Understand -> editPlan LLM (via :meth:`_run_ai_job`, exactly the
+        ``phase8_select`` pattern) -> ``validate_and_reject`` -> store the typed
+        EditPlan under a fresh ``planId``. The ``job.done`` payload is
+        ``{planId, editPlan, preview}``. The media-derived understanding is fenced
+        as UNTRUSTED DATA by ``build_edit_plan_messages`` (injection mitigation #1);
+        the planner provider is the ``editPlan``-routed pool (no new AI path).
+        """
+        if ctx.jobs is None:
+            raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+        video_id = _require_str(params, "videoId")
+        goal = _require_str(params, "goal")
+        duration_ms = self._director_video_duration_ms(video_id)
+        path = cast("str", self._resolve_video_path(video_id))
+        project = self._load_or_create_project(video_id)
+        understanding, media = _director.build_understanding(project.data, duration_ms=duration_ms)
+        plan_id = _director.new_plan_id()
+        source = _director.source_hash(path, duration_ms)
+
+        from .features import edit_plan_prompt as _prompt  # local: import-light pure
+        from .features import edit_validate as _validate  # local: import-light pure
+
+        messages = _prompt.build_edit_plan_messages(goal, media)
+        plan_provider = self._provider if self._provider is not None else self._provider_for_function("editPlan")
+
+        def work(_job_ctx: Any, _envelope: Any, provider: Any) -> dict[str, Any]:
+            content = provider.chat(list(messages))
+            parsed = _prompt.parse_edit_plan(content, plan_id=plan_id, video_id=video_id, goal=goal, source_hash=source)
+            validated = _validate.validate_and_reject(parsed, understanding=understanding)
+            from .models.edit_plan import plan_to_dict, to_json  # local: import-light pure
+
+            self._director_plans[plan_id] = _DirectorPlanEntry(
+                plan=validated,
+                video_id=video_id,
+                messages=tuple(dict(m) for m in messages),
+            )
+            return {"planId": plan_id, "editPlan": plan_to_dict(validated), "preview": to_json(validated)}
+
+        job = self._run_ai_job(
+            ctx,
+            messages=messages,
+            model=str(self.settings.get().get("cloudModel") or ""),
+            provider=plan_provider,
+            work=work,
+            feature="director",
+            label="director.plan",
+            videoId=video_id,
+            ack=params.get("confirmBudget") if isinstance(params.get("confirmBudget"), str) else None,
+        )
+        return {"jobId": job.id}
+
+    def director_preview_cost(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:  # noqa: ARG002 - ctx parity
+        """``director.previewCost({planId})`` -> per-function cost/route preview.
+
+        A distinct ``director.*`` surface that is a PURE pass-through to
+        ``ai.planJob`` per data type (DECISION, DESIGN §7.1/§9): the ``editPlan``
+        text request + the frame ``vision`` request, each tied to its own consent
+        gate. Performs ZERO provider calls (the planner is pure). Returns
+        ``{perFunction:[{function, route, costEst, willEgress, cacheHit, cacheKey}]}``.
+        """
+        plan_id = _require_str(params, "planId")
+        entry = self._director_get_plan(plan_id)
+        messages = [dict(m) for m in entry.messages]
+        per_function: list[dict[str, Any]] = []
+        for function, capability in (("editPlan", "text"), ("vision", "vision")):
+            planned = self.ai_plan_job({"messages": messages, "capability": capability}, ctx)
+            per_function.append(
+                {
+                    "function": function,
+                    "route": planned["route"],
+                    "costEst": planned["costEst"],
+                    "willEgress": planned["willEgress"],
+                    "cacheHit": planned["cacheHit"],
+                    "cacheKey": planned["cacheKey"],
+                }
+            )
+        return {"perFunction": per_function}
+
+    def _director_engines(self) -> Any:  # pragma: no cover - real engine adapters wire in as the engine WUs land
+        """The op-kind -> engine dispatch table for ``director.apply`` (the seam).
+
+        Real impls are the shipped engine adapters (silencetrim/fillers/reframe/
+        ocr/stitch/regen), wired as those WUs land; tests inject a fake table. v1
+        ships an empty table (apply over a copy works; unmapped kinds report a
+        per-op ``failed`` with auto-rollback, never a crash).
+        """
+        return {}
+
+    def _director_inverse_engines(
+        self,
+    ) -> Any:  # pragma: no cover - defaults to the forward seam; tests inject a distinct table
+        """The op-kind -> engine table used to run RECORDED INVERSE ops (WU-undo).
+
+        ``director.undo`` walks the recorded inverse ops (from ``director.apply``);
+        each routes through this table. Defaults to the forward
+        :meth:`_director_engines` — a real engine's inverse is the same engine
+        running the inverse op — so v1 needs no separate wiring. A test injects a
+        distinct table to prove the undo path routes inverse ops independently.
+        """
+        return self._director_engines()
+
+    def _director_apply_ack(self, plan_id: str) -> str:
+        """The budget-ack token (``cacheKey``) ``director.apply`` would require.
+
+        Mirrors :meth:`_run_ai_job`'s gate: the plan's editPlan envelope cacheKey.
+        Exposed so a client (and the test) can echo it as ``confirmBudget``.
+        """
+        from .models import ai_job as _ai_job  # local: import-light
+
+        entry = self._director_get_plan(plan_id)
+        inputs = _ai_job.AiInputs(
+            messages=tuple({str(k): str(v) for k, v in m.items()} for m in entry.messages),
+            model=str(self.settings.get().get("cloudModel") or ""),
+        )
+        return self.plan_ai_job_envelope(inputs).cacheKey
+
+    def director_apply(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``director.apply({planId, confirmBudget?})`` -> ``{jobId}``. Job-based.
+
+        Copy the project -> walk the stored plan's ops over the COPY (recording an
+        inverse) via ``apply_plan`` (WU-apply), on ``ctx.jobs``. Enforces
+        ``_enforce_cloud_budget_ack`` (echo the planJob ``cacheKey`` as
+        ``confirmBudget``) so an egressing run is gated identically to the plan
+        step. The source manifest is NEVER mutated (apply writes to the COPY). The
+        ``job.done`` payload carries the per-op statuses + the COPY path.
+        """
+        if ctx.jobs is None:
+            raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+        plan_id = _require_str(params, "planId")
+        entry = self._director_get_plan(plan_id)
+        ack = params.get("confirmBudget") if isinstance(params.get("confirmBudget"), str) else None
+
+        from dataclasses import replace as _dc_replace  # local: import-light pure
+
+        from .features import apply_engine as _apply_engine  # local: import-light pure
+        from .features import project_copy as _project_copy  # local: import-light pure
+        from .models import ai_job as _ai_job  # local: import-light
+        from .models.edit_plan import plan_to_dict  # local: import-light pure
+
+        envelope = self.plan_ai_job_envelope(
+            _ai_job.AiInputs(
+                messages=tuple({str(k): str(v) for k, v in m.items()} for m in entry.messages),
+                model=str(self.settings.get().get("cloudModel") or ""),
+            )
+        )
+        self._enforce_cloud_budget_ack(envelope, ack)
+
+        project = self._load_or_create_project(entry.video_id)
+        engines = self._director_engines()
+        plan = entry.plan
+
+        def work(_job_ctx: Any, _envelope: Any, _provider: Any) -> dict[str, Any]:
+            project_copy = _project_copy.copy_project(project)
+            result = _apply_engine.apply_plan(plan, project_copy=project_copy, engines=engines)
+            # WU-undo: stash the recorded inverse plan under the plan id so
+            # ``director.undo`` can re-apply it for a one-shot reversal (DESIGN §5).
+            self._director_inverses[plan_id] = result.inverse_plan
+            # Reuse the canonical op serializer (plan_to_dict) for the per-op
+            # statuses by framing them as a throwaway plan's ``ops``.
+            ops_status = plan_to_dict(_dc_replace(plan, ops=result.ops_status))["ops"]
+            return {
+                "planId": plan_id,
+                "opsStatus": ops_status,
+                "inversePlan": plan_to_dict(result.inverse_plan),
+                "projectCopyPath": result.project_copy_path,
+            }
+
+        job = self._run_ai_job(
+            ctx,
+            messages=list(entry.messages),
+            model=str(self.settings.get().get("cloudModel") or ""),
+            provider=self._provider,
+            work=work,
+            feature="director",
+            label="director.apply",
+            videoId=entry.video_id,
+            ack=ack,
+        )
+        return {"jobId": job.id}
+
+    def director_undo(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``director.undo({planId})`` -> ``{jobId}``. Job-based (DESIGN §5/§7.1).
+
+        One-shot undo: re-apply the inverse plan ``director.apply`` recorded under
+        ``planId`` over a FRESH project COPY via ``apply_plan`` (WU-apply), on
+        ``ctx.jobs``. The recorded inverse ops (newest-first) route through
+        :meth:`_director_inverse_engines`; re-applying them restores the
+        pre-apply COPY (round-trip undo, WU-apply acceptance (c)). Undo is a pure
+        LOCAL manifest reversal — no LLM/vision call, no egress — so the budget
+        ack is NOT re-enforced (apply already gated its egress). A plan that was
+        never applied has no recorded inverse and is rejected. The ``job.done``
+        payload carries the per-op statuses + the COPY path.
+        """
+        if ctx.jobs is None:
+            raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+        plan_id = _require_str(params, "planId")
+        entry = self._director_get_plan(plan_id)
+        inverse_plan = self._director_inverses.get(plan_id)
+        if inverse_plan is None:
+            raise _invalid(f"plan not applied (nothing to undo): {plan_id}")
+
+        from dataclasses import replace as _dc_replace  # local: import-light pure
+
+        from .features import apply_engine as _apply_engine  # local: import-light pure
+        from .features import project_copy as _project_copy  # local: import-light pure
+        from .models.edit_plan import plan_to_dict  # local: import-light pure
+
+        project = self._load_or_create_project(entry.video_id)
+        engines = self._director_inverse_engines()
+
+        def work(_job_ctx: Any, _envelope: Any, _provider: Any) -> dict[str, Any]:
+            project_copy = _project_copy.copy_project(project)
+            result = _apply_engine.apply_plan(inverse_plan, project_copy=project_copy, engines=engines)
+            ops_status = plan_to_dict(_dc_replace(inverse_plan, ops=result.ops_status))["ops"]
+            return {
+                "planId": plan_id,
+                "opsStatus": ops_status,
+                "projectCopyPath": result.project_copy_path,
+            }
+
+        job = self._run_ai_job(
+            ctx,
+            messages=list(entry.messages),
+            model=str(self.settings.get().get("cloudModel") or ""),
+            provider=self._provider,
+            work=work,
+            feature="director",
+            label="director.undo",
+            videoId=entry.video_id,
+            # Undo's ``work`` makes ZERO provider calls (pure local manifest
+            # reversal) — it never egresses, so the cloud-budget gate is skipped
+            # (DESIGN §5/§7.1). Apply already gated its own egress.
+            enforce_budget=False,
+        )
+        return {"jobId": job.id}
+
+    def _director_eval_signals(self, source: str, *, is_copy: bool) -> dict[str, Any]:  # noqa: ARG002 - is_copy distinguishes before/after for an injected seam
+        """The eval-signals seam: a source descriptor -> a JSON-safe metric bundle.
+
+        Adapts the SHIPPED ``phase8.signals`` runner output (motion values, scene
+        cuts) into the value sequences :func:`director_eval.signals_to_metrics`
+        consumes — so ``director.evaluate`` rides the SAME signal compute as
+        ``phase8.signals`` (no parallel path). ``is_copy`` lets a test inject
+        distinct before/after bundles; the default ignores it (the v1 apply COPY is
+        a manifest, not re-encoded media, so before+after share the source compute
+        until the engine WUs render an after-clip). The heavy runner stays behind
+        its existing ``# pragma: no cover`` seam; this adapter is pure shaping.
+        """
+        runner = self._phase8_runner or self._default_phase8_runner()
+        probe = self._ffprobe_duration or _self_ffprobe()
+        settings = self.settings.get()
+        tier = _coerce_tier(None, settings)
+        tracks = runner(source, tier=tier, settings=settings, duration_probe=probe)
+        motion = tracks.get("motion")
+        cuts = tracks.get("sceneCut")
+        return {
+            "motion": [float(s.value) for s in getattr(motion, "signals", ())],
+            "cuts": [float(s.start) for s in getattr(cuts, "signals", ())],
+        }
+
+    def director_evaluate(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:  # noqa: ARG002 - ctx parity (synchronous objective compute)
+        """``director.evaluate({planId})`` -> objective before/after metrics.
+
+        Computes goal-vs-result with the OBJECTIVE deltas (jerk / cutRhythm /
+        silenceRatio / ocrCoverage) via the PURE :func:`director_eval.evaluate` over
+        before/after metric dicts (DESIGN §4, AGENTS.md §7 — preferred over a
+        sycophancy-prone LLM judge). The signals ride the SHIPPED ``phase8.signals``
+        runner (the ``_director_eval_signals`` seam — no new AI path). An OPTIONAL
+        qualitative judge note (the ``_director_eval_judge`` seam, routed through
+        ``_run_ai_job`` in production) is DESCRIPTIVE only — it NEVER overrides the
+        objective score. A plan never applied has no after-state to score (rejected).
+        """
+        plan_id = _require_str(params, "planId")
+        entry = self._director_get_plan(plan_id)
+        if plan_id not in self._director_inverses:
+            raise _invalid(f"plan not applied (nothing to evaluate): {plan_id}")
+
+        from .features import director_eval as _eval  # local: import-light pure
+
+        path = cast("str", self._resolve_video_path(entry.video_id))
+        before = _eval.signals_to_metrics(self._director_eval_signals(path, is_copy=False))
+        after = _eval.signals_to_metrics(self._director_eval_signals(path, is_copy=True))
+        return _eval.evaluate(before, after, goal=entry.plan.goal, judge=self._director_eval_judge)
+
+    #: The OPTIONAL qualitative editPlan judge for ``director.evaluate`` (DESIGN §4):
+    #: ``(before, after, goal) -> note``. ``None`` by default (objective-only). A
+    #: real judge routes through ``_run_ai_job`` (no parallel path); whatever it
+    #: returns is DESCRIPTIVE and can NEVER change the objective score (the
+    #: anti-sycophancy backstop — AGENTS.md §7).
+    _director_eval_judge: Any = None
 
     def _budget_request(self, raw: Any) -> Any:
         """Coerce a wire ``request`` dict into a budget request (or ``None``).
@@ -2544,6 +3088,160 @@ def _signals_summary(tracks: dict[str, Any]) -> dict[str, Any]:
     return {"tracks": counts, "present": present}
 
 
+#: WU-8 readiness: each runnable tier id -> (label, the advisor-component names it
+#: needs). Mirrors ``system_advisor.TIERS`` but expressed against ``_COMPONENT_ASSETS``
+#: so readiness is derived purely from installed-weight state (no hardware probe /
+#: dependency import). Tier-0 is the zero-download CPU floor (no model-backed
+#: components) and so is always ready.
+_READINESS_TIERS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("tier0-numeric", "Instant numeric (no downloads)", ()),
+    (
+        "tier1-multimodal",
+        "Multimodal (visual + audio + transcript)",
+        ("saliency", "audio_saliency", "scene_transnet", "vlm_backbone", "quality_gate"),
+    ),
+    ("tier2-vlm", "Video-LLM re-rank (heavy, opt-in)", ("smolvlm2",)),
+)
+
+#: WU-8 readiness: the AI functions whose cloud-route key/consent state is rolled
+#: up. Mirrors ``presets.FUNCTIONS``; ``vision`` checks FRAME consent, the rest
+#: check TEXT consent (the §-consent data-type split).
+_READINESS_FUNCTIONS: tuple[str, ...] = ("select", "subtitles", "translation", "vision", "editPlan")
+
+#: The routing sentinel meaning "run this function locally" (mirrors
+#: ``presets.LOCAL``); an unrouted function also defaults to the local-safe route.
+_LOCAL_ROUTE = "local"
+
+
+def _missing_tier_assets(component_names: tuple[str, ...], models_present: dict[str, bool]) -> list[str]:
+    """The de-duplicated asset names a tier needs that are NOT installed.
+
+    Maps each member component to its pinned asset (``_COMPONENT_ASSETS``) and
+    keeps only the assets whose weight is not present. Components sharing an asset
+    (e.g. ``vlm_backbone``/``aesthetic`` both use SigLIP-2) collapse to one name.
+    """
+    missing: list[str] = []
+    for name in component_names:
+        if models_present.get(name, False):
+            continue
+        asset = _COMPONENT_ASSETS.get(name)
+        if asset is not None and asset not in missing:
+            missing.append(asset)
+    return missing
+
+
+def _tier_readiness_items(models_present: dict[str, bool], *, offline: bool) -> list[dict[str, Any]]:
+    """Roll each runnable tier up to a :class:`ReadinessItem` from installed state.
+
+    ``ready`` when every member weight is installed; ``needsDownload`` (with an
+    ``assets.ensure`` action over the missing names) when one is missing online;
+    ``unavailable`` when one is missing AND Offline mode is on (download blocked).
+    """
+    items: list[dict[str, Any]] = []
+    for tier_id, label, components in _READINESS_TIERS:
+        missing = _missing_tier_assets(components, models_present)
+        if not missing:
+            items.append(_readiness_item(tier_id, label, "ready", "", None))
+            continue
+        blocked = f"missing model weights: {', '.join(missing)}"
+        if offline:
+            items.append(
+                _readiness_item(tier_id, label, "unavailable", f"{blocked} (Offline mode blocks downloads)", None)
+            )
+        else:
+            action = {"kind": "assets.ensure", "assets": missing}
+            items.append(_readiness_item(tier_id, label, "needsDownload", blocked, action))
+    return items
+
+
+def _function_readiness_items(settings: dict[str, Any], providers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Roll each AI function's CLOUD route up to a key/consent readiness item.
+
+    A function routed to LOCAL (or unrouted -> local-safe default) is ``ready``.
+    A cloud-routed one is ``needsKey`` (no key for the provider), else
+    ``needsConsent`` (key present but the data-type consent is not granted), else
+    ``ready``. Vision checks FRAME consent; every other function checks TEXT.
+    """
+    from .models import consent as _consent  # local: import-light pure gate
+
+    routing = settings.get("routing")
+    per_function = routing.get("perFunction") if isinstance(routing, dict) else None
+    per_function = per_function if isinstance(per_function, dict) else {}
+
+    items: list[dict[str, Any]] = []
+    for function in _READINESS_FUNCTIONS:
+        cap = f"ai.{function}"
+        label = f"AI: {function}"
+        provider_id = _routed_cloud_provider(per_function.get(function))
+        if provider_id is None:
+            items.append(_readiness_item(cap, label, "ready", "", None))
+            continue
+        if not _provider_has_key(provider_id, providers):
+            action = {"kind": "openProviders", "provider": provider_id}
+            items.append(_readiness_item(cap, label, "needsKey", f"no key for provider {provider_id!r}", action))
+            continue
+        granted = (
+            _consent.frame_consent_granted(settings, provider_id)
+            if function == "vision"
+            else _consent.text_consent_granted(settings, provider_id)
+        )
+        if not granted:
+            action = {"kind": "setConsent", "provider": provider_id}
+            items.append(
+                _readiness_item(cap, label, "needsConsent", f"consent not granted for {provider_id!r}", action)
+            )
+            continue
+        items.append(_readiness_item(cap, label, "ready", "", None))
+    return items
+
+
+def _routed_cloud_provider(slot: Any) -> str | None:
+    """The CLOUD provider id a routing slot points at, or None for local/unrouted.
+
+    Returns ``None`` when the slot is absent, malformed, unset, or the LOCAL
+    sentinel (those all run locally — no key/consent needed); otherwise the
+    configured cloud provider id.
+    """
+    if not isinstance(slot, dict):
+        return None
+    provider_id = slot.get("provider")
+    if not isinstance(provider_id, str) or not provider_id or provider_id == _LOCAL_ROUTE:
+        return None
+    return provider_id
+
+
+def _provider_has_key(provider_id: str, providers: list[dict[str, Any]]) -> bool:
+    """True when a configured provider matching ``provider_id`` carries a key.
+
+    Matches on either the entry ``provider`` field or its ``id`` (the routing id
+    may be a friendly id or the canonical provider name). Reads the REDACTED
+    ``providers.list`` view, so it only ever sees key PRESENCE (last-4), never a
+    full key.
+    """
+    for entry in providers:
+        if not isinstance(entry, dict):
+            continue  # pragma: no cover - providers.list yields dicts only
+        ident = {str(entry.get("provider") or ""), str(entry.get("id") or "")}
+        if provider_id in ident:
+            keys = entry.get("apiKeys")
+            if isinstance(keys, list) and any(keys):
+                return True
+    return False
+
+
+def _readiness_item(
+    capability: str, label: str, status: str, blocked_by: str, action: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Build one wire :class:`ReadinessItem` dict (camelCase, JSON-safe)."""
+    return {
+        "capability": capability,
+        "label": label,
+        "status": status,
+        "blockedBy": blocked_by,
+        "action": action,
+    }
+
+
 def _advisor_report_to_wire(report: Any) -> dict[str, Any]:
     """Convert an :class:`AdvisorReport` frozen tree to the camelCase wire dict.
 
@@ -2641,6 +3339,7 @@ def register_all(
     reg("library.list", svc.library_list)
     reg("library.add", svc.library_add)
     reg("library.remove", svc.library_remove)
+    reg("library.thumbnail", svc.library_thumbnail)
 
     reg("project.open", svc.project_open)
     reg("project.save", svc.project_save)
@@ -2648,6 +3347,9 @@ def register_all(
 
     reg("settings.get", svc.settings_get)
     reg("settings.set", svc.settings_set)
+
+    # WU-1: read-only data-layout describe (no I/O, no secrets, idempotent).
+    reg("paths.describe", svc.paths_describe)
 
     reg("transcribe.start", svc.transcribe_start)
 
@@ -2679,6 +3381,10 @@ def register_all(
     # probes (advisor + present-map + local-server detect + asr engines) through
     # the PURE recommender. Makes ZERO provider/LLM calls.
     reg("system.recommend", svc.system_recommend)
+    # WU-8: the unified read-only readiness roll-up (model tiers + per-function
+    # provider key/consent state). Direct (no job): pure installed-state + redacted
+    # settings reads — no provider call, no assets.ensure (the read-only invariant).
+    reg("readiness.summary", svc.readiness_summary)
     reg("asr.engines", svc.asr_engines)
     reg("phase8.signals", svc.phase8_signals)
     reg("phase8.select", svc.phase8_select)
@@ -2696,6 +3402,26 @@ def register_all(
     # WU-envelope: AI-Job pre-flight. ai.planJob returns the route + cost/egress
     # budget + cacheHit/willEgress with ZERO provider calls (the pure planner).
     reg("ai.planJob", svc.ai_plan_job)
+
+    # WU-plan-rpc (Director): the RPC spine onto the shipped AI substrate.
+    # director.plan understands -> editPlan LLM (via _run_ai_job) -> validate ->
+    # stored plan; director.previewCost is a PURE per-data-type pass-through to
+    # ai.planJob (ZERO calls); director.apply walks the plan over a project COPY
+    # (apply_plan, WU-apply) recording an inverse. All three register HERE ONLY
+    # (the one composition root — no parallel AI path).
+    reg("director.plan", svc.director_plan)
+    reg("director.previewCost", svc.director_preview_cost)
+    reg("director.apply", svc.director_apply)
+    # WU-undo: one-shot reversal. director.undo re-applies the inverse plan that
+    # director.apply recorded (over a fresh COPY) — registered AFTER the plan-rpc
+    # methods (SEQUENCED on the single composition root, no parallel AI path).
+    reg("director.undo", svc.director_undo)
+    # WU-evaluate: objective goal-vs-result metrics. director.evaluate computes the
+    # before/after deltas (jerk/cutRhythm/silenceRatio/ocrCoverage) via the PURE
+    # director_eval.evaluate over the shipped phase8 signals; an optional LLM judge
+    # note never overrides the objective score (DESIGN §4, AGENTS.md §7). Registered
+    # HERE ONLY (the one composition root — no parallel AI path).
+    reg("director.evaluate", svc.director_evaluate)
 
     # WU-keys: provider key management. Every read is REDACTED (last-4) — no RPC
     # method ever returns a full key; the FACTORY path reads RAW via get_raw().
@@ -2719,6 +3445,15 @@ def register_all(
     reg("providers.applyPreset", svc.providers_apply_preset)
     reg("providers.setFunctionModel", svc.providers_set_function_model)
     reg("providers.firstRun", svc.providers_first_run)
+
+    # WU-10 (UX/QoL): named {autosave, exportDefaults} save-presets, persisted under
+    # the ``savePresets`` settings block (read-modify-write the whole block — the
+    # settings merge is a SHALLOW top-level replace). Mirrors providers.applyPreset
+    # (resolve -> persist) but stores user-named bundles, not routing presets.
+    reg("savePresets.list", svc.save_presets_list)
+    reg("savePresets.apply", svc.save_presets_apply)
+    reg("savePresets.upsert", svc.save_presets_upsert)
+    reg("savePresets.remove", svc.save_presets_remove)
 
     # captions-export: EDL/CSV NLE timeline export + ZIP package-for-upload.
     reg("nle.export", svc.nle_export)
@@ -2866,6 +3601,47 @@ def register_all(
         register_fn=reg,
     )
 
+    # exportPresets.* (repurpose WU2): server-persisted platform targets the
+    # templates/batch groups reference by id. Direct-return CRUD over a JSON
+    # catalog at data_dir/export-presets.json (atomic temp+rename, self-seeding).
+    # Storage-only — no provider/ML imports; the module owns its own register().
+    from .features import export_presets as _export_presets  # local: import-light
+
+    _export_presets_svc = _export_presets.register(
+        path=svc.data_dir / "export-presets.json",
+        register_fn=reg,
+    )
+
+    # templates.* (repurpose WU5): saved multi-source pipelines (a recipe PLUS
+    # defaultControls + exportTargets). list/save/delete are direct CRUD; apply
+    # runs ONE source through the EXISTING recipe runner after binding steps to
+    # the videoId and fanning out the export step over the live preset catalog.
+    # Registers AFTER the methods its steps reference AND after exportPresets (the
+    # fan-out resolves preset ids from that catalog) — no new RPC site, no provider.
+    from .features import templates as _templates  # local: import-light
+
+    _templates.register(
+        path=svc.data_dir / "templates.json",
+        presets_provider=lambda: {p["id"]: p for p in _export_presets_svc.store.list()},
+        register_fn=reg,
+    )
+
+    # batch.* (repurpose WU10): point ONE template at MANY sources and run them as
+    # one aggregate, resumable, per-source-isolated job (DESIGN §6). The seven
+    # methods own no orchestration of their own — each source rides the live
+    # ``templates.apply`` handler (registered just above), so the batch reaches the
+    # AI envelope only by method name; consent uses ``ai.planJob`` by name (ZERO
+    # provider calls). Registered AFTER templates (its default per-source runner +
+    # consent planner resolve those handlers from the live registry). No new RPC
+    # site, no provider/key wiring. The title seam reuses the library's display name.
+    from .features import batch as _batch  # local: import-light
+
+    _batch.register(
+        path=svc.data_dir / "batches",
+        title_resolver=svc._video_title,
+        register_fn=reg,
+    )
+
     # diarize.start (feature 4): token-free speaker labelling. Reuses the same
     # project load/save helpers tracks_audio uses, plus the offline-gated assets.
     #
@@ -2882,6 +3658,26 @@ def register_all(
         settings_provider=svc.settings.get,
         backend_factory=svc._diarize_backend_factory,
         models_present=svc._diarize_models_present,
+        register_fn=reg,
+    )
+
+    # refine.* (editing-refine WU-5): the standalone "tighten the edit" feature —
+    # previewable filler/silence cut-list (no encode) + apply (job). It composes
+    # the SHIPPED filler/silence math (no new cut logic) and reuses the exact
+    # project-store + ffmpeg seams the sibling features use. refine.preview is a
+    # DIRECT handler; refine.apply is a job (the module owns its register()).
+    # settings['refine.fillerSets'] reaches plan_refine's cut math via the service
+    # (params['fillerSets']); absent -> DEFAULT_SETS (no behaviour change).
+    from .features import refine as _refine  # local: import-light
+
+    _refine.register(
+        resolver=svc._resolve_video_path,
+        out_dir=svc.exports_dir / "refined",
+        load_project=_load_project_data,
+        save_project=_save_project_data,
+        settings_provider=svc.settings.get,
+        run=svc._ffmpeg_run,  # None -> the real drained ffmpeg.run
+        duration=svc._ffprobe_duration,
         register_fn=reg,
     )
 

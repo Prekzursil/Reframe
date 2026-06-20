@@ -24,10 +24,13 @@ import type {
   CatalogResponse,
   ComponentStatus,
   HardwareInfo,
+  ReadinessItem,
   Recommendation,
   UsageRow,
   client as RealClient,
 } from '../lib/rpc';
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 // ---- pure-helper coverage --------------------------------------------------
 
@@ -171,6 +174,8 @@ function makeClient(
     initialSettings?: Record<string, unknown>;
     rejectAnalyze?: boolean;
     rejectUsage?: boolean;
+    readiness?: ReadinessItem[];
+    rejectEnsure?: boolean;
   } = {},
 ): FakeClient {
   const calls: FakeClient['calls'] = [];
@@ -198,7 +203,14 @@ function makeClient(
       }),
       ensure: vi.fn(async (names: string[]) => {
         calls.push({ method: 'assets.ensure', args: [names] });
+        if (over.rejectEnsure) throw new Error('ensure failed');
         return { jobId: 'job-1' };
+      }),
+    },
+    readiness: {
+      summary: vi.fn(async () => {
+        calls.push({ method: 'readiness.summary', args: [] });
+        return { items: over.readiness ?? [] };
       }),
     },
     asr: {
@@ -965,6 +977,192 @@ describe('<ModelsSystemPanel />', () => {
     await mount(c);
     await analyze();
     expect(container.querySelector('[data-section="presets"]')).toBeNull();
+  });
+
+  // ---- WU-14: the readiness roll-up join ----------------------------------
+
+  it('renders the readiness roll-up (one badge per readiness.summary item)', async () => {
+    const c = makeClient({
+      initialSettings: { firstRunChoiceMade: true },
+      readiness: [
+        { capability: 't1', label: 'Tier 1', status: 'ready', blockedBy: '', action: null },
+        {
+          capability: 'vis',
+          label: 'Vision',
+          status: 'needsDownload',
+          blockedBy: 'saliency missing',
+          action: { kind: 'assets.ensure', assets: ['saliency'] },
+        },
+      ],
+    });
+    await mount(c);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const badges = container.querySelectorAll('.readiness-rollup [role="status"]');
+    expect(badges.length).toBe(2);
+    expect(c.calls.some((x) => x.method === 'readiness.summary')).toBe(true);
+  });
+
+  it('an assets.ensure roll-up action installs + re-lists + re-runs the advisor', async () => {
+    const c = makeClient({
+      initialSettings: { firstRunChoiceMade: true },
+      readiness: [
+        {
+          capability: 'vis',
+          label: 'Vision',
+          status: 'needsDownload',
+          blockedBy: '',
+          action: { kind: 'assets.ensure', assets: ['saliency'] },
+        },
+      ],
+    });
+    await mount(c);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const fix = container.querySelector(
+      '.readiness-rollup button.readiness-badge__action',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      fix.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(c.calls.some((x) => x.method === 'assets.ensure')).toBe(true);
+    expect(c.calls.some((x) => x.method === 'system.advisor')).toBe(true);
+  });
+
+  it('surfaces an error when a roll-up assets.ensure action fails', async () => {
+    const c = makeClient({
+      initialSettings: { firstRunChoiceMade: true },
+      rejectEnsure: true,
+      readiness: [
+        {
+          capability: 'vis',
+          label: 'Vision',
+          status: 'needsDownload',
+          blockedBy: '',
+          action: { kind: 'assets.ensure', assets: ['saliency'] },
+        },
+      ],
+    });
+    await mount(c);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const fix = container.querySelector(
+      '.readiness-rollup button.readiness-badge__action',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      fix.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.error')?.textContent).toContain('ensure failed');
+  });
+
+  it('a non-ensure roll-up action (openProviders) is a no-op install-wise', async () => {
+    const c = makeClient({
+      initialSettings: { firstRunChoiceMade: true },
+      readiness: [
+        {
+          capability: 'tr',
+          label: 'Translation',
+          status: 'needsKey',
+          blockedBy: 'no key',
+          action: { kind: 'openProviders' },
+        },
+      ],
+    });
+    await mount(c);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const fix = container.querySelector(
+      '.readiness-rollup button.readiness-badge__action',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      fix.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // No install was attempted for a key/consent action.
+    expect(c.calls.some((x) => x.method === 'assets.ensure')).toBe(false);
+  });
+
+  it('an assets.ensure roll-up action coerces a non-array list + null advisor', async () => {
+    const c = makeClient({
+      initialSettings: { firstRunChoiceMade: true },
+      readiness: [
+        {
+          capability: 'vis',
+          label: 'Vision',
+          status: 'needsDownload',
+          blockedBy: '',
+          action: { kind: 'assets.ensure', assets: ['saliency'] },
+        },
+      ],
+    });
+    // assets.list resolves a non-array -> the `: []` fallback; advisor resolves
+    // null -> the `?? null` fallback. Both arms of the post-ensure refresh.
+    (c.client.assets.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      {} as unknown as { assets: AssetInfo[] },
+    );
+    (c.client.system.advisor as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      null as unknown as AdvisorReport,
+    );
+    await mount(c);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const fix = container.querySelector(
+      '.readiness-rollup button.readiness-badge__action',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      fix.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(c.calls.some((x) => x.method === 'assets.ensure')).toBe(true);
+    // No crash; no error surfaced.
+    expect(container.querySelector('.error')).toBeNull();
+  });
+
+  it('an assets.ensure roll-up action with no asset names is a no-op', async () => {
+    const c = makeClient({
+      initialSettings: { firstRunChoiceMade: true },
+      readiness: [
+        {
+          capability: 'vis',
+          label: 'Vision',
+          status: 'needsDownload',
+          blockedBy: '',
+          // assets.ensure with an empty list -> the guard short-circuits.
+          action: { kind: 'assets.ensure', assets: [] },
+        },
+      ],
+    });
+    await mount(c);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const fix = container.querySelector(
+      '.readiness-rollup button.readiness-badge__action',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      fix.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(c.calls.some((x) => x.method === 'assets.ensure')).toBe(false);
   });
 });
 
