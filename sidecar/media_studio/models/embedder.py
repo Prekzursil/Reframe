@@ -73,7 +73,7 @@ class Embedder(Protocol):
     without any network call.
     """
 
-    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:  # pragma: no cover - interface
         """Return one embedding vector per text, in input order."""
         ...
 
