@@ -913,9 +913,13 @@ class Services:
             cache.put(cache_key, result)
             return result
 
-        # The frame egress rides the AiJob substrate (cancel/degrade/budget). The
-        # budget request carries the frame span so the pre-flight egress estimate is
-        # frame-shaped; the run provider is the routed vision provider.
+        # The frame egress rides the shared AiJob substrate (cancel/degrade/budget)
+        # exactly as phase8.select does. _run_ai_job sizes the pre-flight budget from
+        # the messages only (a text-shaped estimate, frame_bytes=0) — the same
+        # contract every _run_ai_job caller shares; threading a frame-shaped
+        # BudgetRequest would mean widening that shared substrate, which is out of
+        # this WU's scope. The confirmCloudBudget ack gate still fires for the cloud
+        # path (willEgress stays True). The run provider is the routed vision provider.
         scorer_provider = self._provider if self._provider is not None else self._provider_for_function("vision")
         job = self._run_ai_job(
             ctx,

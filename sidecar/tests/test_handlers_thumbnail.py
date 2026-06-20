@@ -401,6 +401,127 @@ def test_resolve_frame_scorer_off_without_consent(tmp_path: Path) -> None:
     assert transport.calls == []
 
 
+def _two_vision_provider_settings(*, first_consent: bool, second_consent: bool) -> dict[str, Any]:
+    """Two vision-capable cloud providers, each with its OWN frame-consent flag.
+
+    Mirrors the phase8 rotation-bypass fixture: Gemini (routed first) and OpenAI
+    are both vision-capable; the regression case is the FIRST frame-consented but
+    429-ing, the SECOND NOT frame-consented — proving frame rotation can never
+    reach the non-consented one (the consent filter drops it at pool build).
+    """
+    return {
+        "confirmCloudBudget": False,
+        "providers": [
+            {
+                "id": "gemini",
+                "provider": "Gemini",
+                "kind": "cloud",
+                "baseUrl": "https://gemini.example/v1",
+                "model": "gemini-flash",
+                "apiKeys": ["sk-gemini-1111"],
+                "enabled": True,
+                "capabilities": ["text", "vision"],
+                "unit": "req",
+            },
+            {
+                "id": "openai",
+                "provider": "OpenAI",
+                "kind": "cloud",
+                "baseUrl": "https://openai.example/v1",
+                "model": "gpt-4o-mini",
+                "apiKeys": ["sk-openai-2222"],
+                "enabled": True,
+                "capabilities": ["text", "vision"],
+                "unit": "req",
+            },
+        ],
+        "routing": {"perFunction": {"vision": {"provider": "gemini", "fallback": []}}},
+        "consent": {
+            "perProvider": {
+                "Gemini": {"frames": first_consent},
+                "OpenAI": {"frames": second_consent},
+            }
+        },
+    }
+
+
+class RotatingVisionTransport:
+    """Fake chat transport that 429s the consented provider and records ALL targets.
+
+    Raises ``ProviderError("LLM HTTP 429: ...")`` for any request whose URL contains
+    ``fail_host`` (forcing the pool to rotate). Every request's target host is
+    recorded, and the hosts that received base64 FRAMES are recorded separately, so
+    a test can assert a non-consented host NEVER received a frame (AC c).
+    """
+
+    def __init__(self, *, fail_host: str) -> None:
+        self._fail_host = fail_host
+        self.hosts: list[str] = []
+        self.frame_hosts: list[str] = []
+
+    def __call__(self, url: str, body: dict[str, Any], headers: dict[str, str], timeout: float) -> dict[str, Any]:
+        self.hosts.append(url)
+        saw_base64 = any(
+            isinstance(part, dict)
+            and part.get("type") == "image_url"
+            and "base64," in str(part.get("image_url", {}).get("url", ""))
+            for msg in body.get("messages", [])
+            if isinstance(msg.get("content"), list)
+            for part in msg["content"]
+        )
+        if saw_base64:
+            self.frame_hosts.append(url)
+        if self._fail_host in url:
+            from media_studio.models.provider import ProviderError
+
+            raise ProviderError("LLM HTTP 429: rate limited; retry-after=60")
+        return {"choices": [{"message": {"role": "assistant", "content": "0"}}]}
+
+
+def test_resolve_frame_scorer_never_egresses_to_non_consented_provider(tmp_path: Path) -> None:
+    # AC (c) — privacy CRITICAL: two vision-capable cloud providers — Gemini (routed
+    # first, frame-consented) and OpenAI (vision-capable, NO frame consent). Gemini
+    # 429s; the frame scorer's pool must NOT fail over to OpenAI with frames, because
+    # OpenAI's frame consent was never granted. The consent filter drops OpenAI at
+    # pool build, so it is never even a rotation candidate. Mirrors the proven
+    # phase8 rotation-bypass test for the re-ranker.
+    transport = RotatingVisionTransport(fail_host="gemini.example")
+    svc = _services(
+        tmp_path,
+        provider=None,
+        vlm_chat_transport=transport,
+        vlm_models_present=lambda s: False,
+    )
+    svc.settings.set(_two_vision_provider_settings(first_consent=True, second_consent=False))
+
+    from media_studio.models.provider import ProviderError
+
+    scorer = svc._resolve_frame_scorer(svc.settings.get())
+    assert scorer is not None
+    # invoking the resolved scorer drives the vision pool; Gemini 429s, then the pool
+    # exhausts (no eligible consented fallback) — a ProviderError surfaces, but the
+    # invariant under test is WHERE frames went, asserted on the recorded hosts.
+    with pytest.raises(ProviderError):
+        scorer(["frameA", "frameB", "frameC"], "best?")
+
+    # the non-consented provider (OpenAI) was NEVER reached at all, with or w/o frames.
+    assert not any("openai.example" in h for h in transport.hosts), "rotated to a non-consented provider"
+    assert all("gemini.example" in h for h in transport.frame_hosts), "frame egress reached a non-consented host"
+    # and the consented Gemini WAS attempted with frames (the leak path is otherwise vacuous).
+    assert any("gemini.example" in h for h in transport.frame_hosts), "consented provider was never tried"
+
+
+def test_resolve_frame_scorer_pool_contains_only_frame_consented_cloud_entries(tmp_path: Path) -> None:
+    # AC (c) direct: with Gemini consented and OpenAI not, the cloud egress pool the
+    # frame scorer builds has EXACTLY {Gemini} as its vision-capable cloud entries.
+    svc = _services(tmp_path, provider=None, vlm_chat_transport=RotatingVisionTransport(fail_host="none"))
+    svc.settings.set(_two_vision_provider_settings(first_consent=True, second_consent=False))
+    raw = svc.settings.get_raw()
+    pool = svc._vision_pool(svc._frame_consented_vision_settings(raw))
+    cloud_vision = [e.provider for e in pool.entries if not e.local and "vision" in e.capabilities]
+    assert cloud_vision == ["Gemini"], "non-consented vision provider leaked into the pool"
+
+
 def test_resolve_frame_scorer_local_when_weights_present(tmp_path: Path) -> None:
     class FakeBackend:
         def __init__(self) -> None:
