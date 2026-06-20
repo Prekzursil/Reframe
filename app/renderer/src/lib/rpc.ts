@@ -440,7 +440,7 @@ export interface JobInfo {
   feature: string;
   label: string;
   videoId?: string;
-  status: 'queued' | 'running' | 'done' | 'error' | 'cancelled';
+  status: 'queued' | 'running' | 'done' | 'error' | 'cancelled' | 'interrupted';
   pct: number;
 }
 

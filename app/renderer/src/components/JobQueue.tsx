@@ -26,6 +26,27 @@ export function canRetry(job: JobInfo): boolean {
   return job.status === 'error';
 }
 
+/**
+ * Resume applies to `interrupted` jobs only (a job left running/queued when the
+ * sidecar last shut down — rehydrated as `interrupted`, never auto-restarted).
+ * Kept SEPARATE from canRetry so the affordance reads as crash-recovery, not a
+ * generic failure-retry, even though both re-dispatch via `job.retry`.
+ */
+export function canResume(job: JobInfo): boolean {
+  return job.status === 'interrupted';
+}
+
+/**
+ * Resume tooltip/microcopy — makes the full re-dispatch + cloud budget
+ * re-prompt visible at the point of action (DESIGN §4.3), so Resume is never a
+ * surprise spend: the job restarts at 0% and re-flows through the budget-ack
+ * gate before any cloud egress.
+ */
+export const RESUME_TITLE =
+  'Re-runs this interrupted job from the start (it restarts at 0%, not where it ' +
+  "stopped). If it uses a cloud provider, you'll be asked to confirm the budget " +
+  'again before it runs.';
+
 /** Clamp a pct into 0..100 for rendering (NaN -> 0). */
 export function clampPct(pct: number): number {
   if (!Number.isFinite(pct)) return 0;
@@ -160,7 +181,7 @@ export function JobQueue({ open, onClose }: JobQueueProps): React.ReactElement |
                 </div>
                 <span className="jobqueue__pct">{Math.round(clampPct(job.pct))}%</span>
               </div>
-              {canCancel(job) || canRetry(job) ? (
+              {canCancel(job) || canRetry(job) || canResume(job) ? (
                 <div className="jobqueue__actions">
                   {canCancel(job) ? (
                     <button
@@ -175,9 +196,21 @@ export function JobQueue({ open, onClose }: JobQueueProps): React.ReactElement |
                     <button
                       type="button"
                       className="jobqueue__retry"
+                      aria-label={`Retry ${job.label}`}
                       onClick={() => void handleRetry(job.jobId)}
                     >
                       Retry
+                    </button>
+                  ) : null}
+                  {canResume(job) ? (
+                    <button
+                      type="button"
+                      className="jobqueue__resume"
+                      aria-label={`Resume ${job.label}`}
+                      title={RESUME_TITLE}
+                      onClick={() => void handleRetry(job.jobId)}
+                    >
+                      Resume
                     </button>
                   ) : null}
                 </div>
