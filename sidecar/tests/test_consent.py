@@ -16,6 +16,7 @@ from media_studio.models.consent import (
     ConsentError,
     frame_consent_granted,
     require_frame_consent,
+    require_text_consent,
     text_consent_granted,
 )
 
@@ -108,3 +109,33 @@ def test_require_frame_consent_raises_when_consent_absent() -> None:
 def test_data_type_constants() -> None:
     assert DATA_TYPE_TEXT == "text"
     assert DATA_TYPE_FRAMES == "frames"
+
+
+# --------------------------------------------------------------------------- #
+# require_text_consent — typed refusal (WU-A1 AC(a), G-A5, text analog of frame)
+# --------------------------------------------------------------------------- #
+def test_require_text_consent_returns_none_when_granted() -> None:
+    # No exception (returns None) when TEXT consent is explicitly granted.
+    assert require_text_consent(_settings({"Groq": {"text": True}}), "Groq") is None
+
+
+def test_require_text_consent_raises_typed_when_denied() -> None:
+    with pytest.raises(ConsentError) as exc_info:
+        require_text_consent(_settings({"Groq": {"text": False}}), "Groq")
+    err = exc_info.value
+    assert err.provider == "Groq"
+    assert err.data_type == DATA_TYPE_TEXT
+    # Message names the provider + the precise consent path, no secret.
+    assert "Groq" in str(err)
+    assert DATA_TYPE_TEXT in str(err)
+
+
+def test_require_text_consent_raises_when_consent_absent() -> None:
+    with pytest.raises(ConsentError):
+        require_text_consent({}, "Groq")
+
+
+def test_require_text_consent_independent_of_frame_consent() -> None:
+    # frames opted-in but text NOT → text egress still refused (SE1 separation).
+    with pytest.raises(ConsentError):
+        require_text_consent(_settings({"Gemini": {"frames": True}}), "Gemini")

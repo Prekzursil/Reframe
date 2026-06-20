@@ -97,3 +97,16 @@ def require_frame_consent(settings: Mapping[str, Any], provider: str) -> None:
     """
     if not frame_consent_granted(settings, provider):
         raise ConsentError(provider, DATA_TYPE_FRAMES)
+
+
+def require_text_consent(settings: Mapping[str, Any], provider: str) -> None:
+    """Raise :class:`ConsentError` unless TEXT egress is granted for ``provider``.
+
+    The text analog of :func:`require_frame_consent` (PLAN §WU-A1, G-A5): the
+    single enforcement point a transcript-text egress path calls FIRST, BEFORE
+    any transcript text leaves the machine, so a no-consent run never delivers
+    text to a non-consented provider. Mirrors the frame gate exactly — same
+    typed refusal, default-deny semantics — for the SEPARATE TEXT data type.
+    """
+    if not text_consent_granted(settings, provider):
+        raise ConsentError(provider, DATA_TYPE_TEXT)

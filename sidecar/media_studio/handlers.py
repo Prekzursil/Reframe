@@ -641,6 +641,37 @@ class Services:
         ]
         return {**settings, "providers": kept}
 
+    def _text_consented_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
+        """Return ``settings`` with ``providers`` filtered to TEXT-consented entries.
+
+        CRITICAL PRIVACY INVARIANT (PLAN §WU-A1, G-A5 — the text analog of
+        :meth:`_frame_consented_vision_settings`): the embedder rotation pool any
+        cloud ``index`` route builds rotates across EVERY cloud entry on a 429, so
+        TEXT consent must be enforced PER-ENTRY at pool-construction time — not once
+        against the first provider — or a failover could rotate transcript text onto
+        a non-consented target. Any provider whose TEXT consent
+        (``consent.perProvider[<provider>].text``) is not explicitly granted is
+        DROPPED from ``providers`` before the pool is built. Local-backstop entries
+        (no key) are unaffected — they never egress. PURE: returns a new settings
+        dict; the original is never mutated.
+
+        Scope (PLAN §WU-A1): this seam is introduced HERE and consumed ONLY by the
+        ``index`` routes; wiring it into the existing text functions
+        (translation/select/subtitles) is an explicit follow-up (DESIGN §4 G-A5).
+        """
+        from .models import consent as _consent  # local: import-light pure gate
+
+        providers = settings.get("providers")
+        if not isinstance(providers, list):
+            return settings
+        kept = [
+            p
+            for p in providers
+            if isinstance(p, dict)
+            and _consent.text_consent_granted(settings, str(p.get("provider") or p.get("id") or "cloud"))
+        ]
+        return {**settings, "providers": kept}
+
     def _vision_pool(self, settings: dict[str, Any]) -> Any:
         """Build the vision rotation pool honoring routing.perFunction["vision"].
 
