@@ -140,6 +140,9 @@ class Services:
         vlm_models_present: Callable[[dict[str, Any]], bool] | None = None,
         vlm_chat_transport: Any | None = None,
         local_detector: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
+        frame_scorer: Any | None = None,
+        frame_backend_factory: Callable[[dict[str, Any]], Any] | None = None,
+        thumbnail_writer: Any | None = None,
     ) -> None:
         base = Path(data_dir) if data_dir is not None else default_config_dir()
         self.data_dir = base
@@ -184,6 +187,17 @@ class Services:
         # real detector over the stdlib urllib GET transport; tests inject a fake
         # that returns canned PoolEntry dicts so no socket is opened.
         self._local_detector = local_detector
+
+        # WU-C3 (thumbnail.select): the best-frame scorer + writer seams. Defaults
+        # resolve a CloudFrameScorer over the SAME frame-consented vision pool the
+        # re-ranker uses (cloud) or the local SmolVLM2 backend (weights present),
+        # else None (degrade-to-midpoint). ``frame_scorer`` short-circuits the
+        # resolution (tests / a future override); ``frame_backend_factory`` is the
+        # backend the local CloudFrameScorer wraps (default the heavy native seam);
+        # ``thumbnail_writer`` is the cv2 imwrite seam (tests record its call).
+        self._frame_scorer = frame_scorer
+        self._frame_backend_factory = frame_backend_factory
+        self._thumbnail_writer = thumbnail_writer
 
         # T3: the shared llama.cpp ModelRunner (built lazily; model-identity-aware,
         # so the tiered translator can swap MT GGUFs on the one server lane).
@@ -721,6 +735,200 @@ class Services:
                 models_present=lambda _s: True,
             )
         return None
+
+    # ===================================================================== #
+    # WU-C3 — thumbnail.select (AI best-frame picker, frame-egress consented)
+    # ===================================================================== #
+    def _resolve_frame_scorer(self, settings: dict[str, Any]) -> Any:
+        """Resolve the best-frame :data:`best_frame.FrameScorer`, or ``None`` (degrade).
+
+        The EXACT decision tree of :meth:`_resolve_vlm_reranker` (DESIGN §3.2), so
+        the frame-egress consent gate is the FIRST decision and a no-consent run
+        never prepares a frame for egress:
+
+        1. A cloud vision provider is routed AND frame-consented -> a
+           :class:`best_frame.CloudFrameScorer` over a :class:`smolvlm2.CloudVlmBackend`
+           bound to a pool filtered to ONLY frame-consented cloud entries (so a 429
+           failover can never rotate frames onto a non-consented provider).
+        2. Else if the local SmolVLM2 weights are present -> a CloudFrameScorer over
+           the local backend (the same one-frame-per-clip reuse).
+        3. Else -> ``None`` (the degrade-to-midpoint path; zero egress, no scoring).
+
+        An injected ``frame_scorer`` seam wins outright (tests / overrides).
+        """
+        if self._frame_scorer is not None:
+            return self._frame_scorer
+
+        from .features import best_frame as _bf  # local: import-light (no cv2/model)
+        from .features import smolvlm2 as _sv  # local: import-light
+
+        raw_settings = self.settings.get_raw()
+        vision_provider = self._vision_provider_for_consent(raw_settings)
+        if vision_provider is not None:
+            pool = self._vision_pool(self._frame_consented_vision_settings(raw_settings))
+            backend = _sv.CloudVlmBackend(
+                pool=pool,
+                settings=settings,
+                frame_encoder=self._vlm_frame_encoder,
+            )
+            return _bf.CloudFrameScorer(backend).score_frames
+
+        present = self._vlm_models_present or _sv.default_models_present
+        if present(settings):
+            factory = self._frame_backend_factory or _sv._default_backend_factory
+            return _bf.CloudFrameScorer(factory(settings)).score_frames
+        return None
+
+    def _frame_clip_loader(self) -> Any:
+        """The clip-frame sampler for the thumbnail picker (injected fake or native).
+
+        Tests inject ``vlm_clip_frame_loader`` (the SAME seam the re-ranker uses) so
+        no cv2 is touched; the default is the heavy native loader (coverage-excluded
+        prod seam), mirroring :meth:`_default_phase8_runner`.
+        """
+        if self._vlm_clip_frame_loader is not None:
+            return self._vlm_clip_frame_loader
+        from .features import smolvlm2 as _sv  # pragma: no cover - native default seam
+
+        return _sv._default_clip_frame_loader  # pragma: no cover - native default seam
+
+    def _frame_thumbnail_writer(self) -> Any:
+        """The thumbnail writer for the picker (injected fake or the cv2 imwrite seam).
+
+        Tests inject ``thumbnail_writer`` to record the ``(frame, path)`` call; the
+        default is :func:`best_frame._default_thumbnail_writer` (the lone cv2
+        ``imwrite`` line, coverage-excluded in WU-C2).
+        """
+        if self._thumbnail_writer is not None:
+            return self._thumbnail_writer
+        from .features import best_frame as _bf  # pragma: no cover - native default seam
+
+        return _bf._default_thumbnail_writer  # pragma: no cover - native default seam
+
+    def _resolve_thumbnail_span(self, params: dict[str, Any], video_id: str) -> tuple[str, float, float]:
+        """Resolve ``(media_path, start, end)`` for the clip to thumbnail (DESIGN §3.2).
+
+        An explicit ``{path, start, end}`` wins (the renderer's per-clip action
+        forwards the produced clip). Otherwise a ``candidateId`` indexes the
+        server-side selection cache (the SAME "rank@sourceStart" cache the
+        short-maker export consults), whose candidate carries the source span
+        (``sourceStart`` .. ``end``). The path then resolves from the video id.
+        Raises INVALID_PARAMS when neither yields a usable span.
+        """
+        explicit_path = params.get("path")
+        if isinstance(explicit_path, str) and explicit_path:
+            start = float(params.get("start") or 0.0)
+            end = float(params.get("end") or 0.0)
+            return explicit_path, start, end
+
+        candidate_id = params.get("candidateId")
+        if isinstance(candidate_id, str) and candidate_id:
+            cand = self._selection_cache.get(video_id, {}).get(candidate_id)
+            if cand is None:
+                raise _invalid(f"unknown candidateId for {video_id}: {candidate_id}")
+            path = self._resolve_video_path(video_id)
+            if not path:
+                raise _invalid(f"unknown video: {video_id}")
+            start = float(cand.get("sourceStart", cand.get("start", 0.0)) or 0.0)
+            end = float(cand.get("end", 0.0) or 0.0)
+            return path, start, end
+
+        raise _invalid("thumbnail.select requires either {path} or {candidateId}")
+
+    def thumbnail_select(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``thumbnail.select({videoId, candidateId?|path?, start?, end?})`` -> ``{jobId}`` (WU-C3).
+
+        Pick the single best thumbnail frame for one produced clip with the AI
+        best-frame picker, riding the shared :meth:`_run_ai_job` envelope for the
+        universal cancel / degrade / budget framing. The work body:
+
+        * Resolves the clip span (explicit ``{path,start,end}`` or a cached
+          ``candidateId``) and the conventional ``<clip>.thumb.jpg`` write target.
+        * Consults the AI content cache keyed by clip span + frame params, so a
+          second identical call is a cache hit that NEVER re-scores (AC d).
+        * Resolves the frame scorer through the frame-egress consent gate. With NO
+          consent AND NO local weights it DEGRADES to the deterministic clip
+          midpoint — zero egress, the scorer is never called, no thumbnail is
+          written, and the job still succeeds (AC b/c/f).
+        * Otherwise samples the clip's frames, scores them, writes the argmax frame
+          via the cv2 writer seam, and records ``thumbnailFrameSec`` on the clip's
+          metadata. Done payload: ``{frameTimeSec, thumbnailPath, score}`` (AC e).
+        """
+        if ctx.jobs is None:
+            raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+        video_id = _require_str(params, "videoId")
+        media_path, start, end = self._resolve_thumbnail_span(params, video_id)
+        settings = dict(self.settings.get())
+        prompt = str(params.get("prompt") or "")
+
+        def work(job_ctx: Any, _envelope: Any, _provider: Any) -> dict[str, Any]:
+            from .features import best_frame as _bf  # local: import-light (no cv2/model)
+
+            thumb_path = str(_shorts_meta.thumbnail_path(media_path))
+            cache = self._ai_cache()
+            cache_key = cache.key(
+                [{"role": "user", "content": prompt}],
+                "thumbnail.select",
+                {"path": media_path, "start": start, "end": end},
+            )
+            cached = cache.get(cache_key)
+            if cached is not None:
+                job_ctx.progress(100.0, "cache hit")
+                return dict(cached)
+
+            scorer = self._resolve_frame_scorer(settings)
+            if scorer is None:
+                # Degrade-to-midpoint: deterministic, zero egress, scorer untouched.
+                midpoint = (start + end) / 2.0
+                _shorts_meta.write_thumbnail_metadata(media_path, midpoint)
+                result = {"frameTimeSec": midpoint, "thumbnailPath": thumb_path, "score": 0.0, "degraded": True}
+                cache.put(cache_key, result)
+                return result
+
+            loader = self._frame_clip_loader()
+            frames = list(loader(media_path, [(start, end)]))
+            # Cancel checkpoint AFTER sampling but BEFORE scoring/writing, so a job
+            # cancelled mid-load scores nothing and writes no thumbnail (AC f).
+            if job_ctx.cancelled:
+                return {"cancelled": True}
+            stack = list(frames[0]) if frames else []
+            frame_times = _evenly_spaced(start, end, len(stack))
+            writer = self._frame_thumbnail_writer()
+            picked = _bf.pick_best_frame(
+                stack,
+                prompt,
+                frame_times=frame_times,
+                thumbnail_path=thumb_path,
+                scorer=scorer,
+                writer=writer,
+            )
+            frame_sec = float(picked["frameTimeSec"])
+            _shorts_meta.write_thumbnail_metadata(media_path, frame_sec)
+            result = {
+                "frameTimeSec": frame_sec,
+                "thumbnailPath": str(picked["thumbnailPath"]),
+                "score": float(picked["score"]),
+                "degraded": False,
+            }
+            cache.put(cache_key, result)
+            return result
+
+        # The frame egress rides the AiJob substrate (cancel/degrade/budget). The
+        # budget request carries the frame span so the pre-flight egress estimate is
+        # frame-shaped; the run provider is the routed vision provider.
+        scorer_provider = self._provider if self._provider is not None else self._provider_for_function("vision")
+        job = self._run_ai_job(
+            ctx,
+            messages=[{"role": "user", "content": prompt}],
+            model=str(settings.get("cloudModel") or ""),
+            provider=scorer_provider,
+            work=work,
+            feature="thumbnail",
+            label="thumbnail.select",
+            videoId=video_id,
+            ack=params.get("confirmBudget") if isinstance(params.get("confirmBudget"), str) else None,
+        )
+        return {"jobId": job.id}
 
     # ===================================================================== #
     # subtitles.* (generate/edit/export direct; translate = job)
@@ -1896,6 +2104,21 @@ def _self_ffprobe() -> Callable[..., float]:
     return _ffmpeg.ffprobe_duration
 
 
+def _evenly_spaced(start: float, end: float, n: int) -> list[float]:
+    """The ``n`` evenly-spaced sample times across ``[start, end)`` (WU-C3).
+
+    Mirrors the frame-loader's even sampling so the picked frame's index maps back
+    to its source-relative time. ``n <= 0`` yields ``[]``; a single frame samples
+    the span start (the loader's first sample). A zero-length span collapses all
+    samples onto ``start`` (a still clip), never raising.
+    """
+    if n <= 0:
+        return []
+    span = float(end) - float(start)
+    step = span / float(n)
+    return [float(start) + step * k for k in range(n)]
+
+
 def _js_number(value: Any) -> str:
     """Render a number the way JavaScript ``String(n)`` would (for candidate ids).
 
@@ -2104,6 +2327,10 @@ def register_all(
     reg("asr.engines", svc.asr_engines)
     reg("phase8.signals", svc.phase8_signals)
     reg("phase8.select", svc.phase8_select)
+    # WU-C3: AI best-frame thumbnail picker. A custom-work AiJob (cancel/degrade/
+    # budget); frame egress is frame-consent-gated, degrades to the clip midpoint
+    # with zero egress when no vision model is available.
+    reg("thumbnail.select", svc.thumbnail_select)
 
     # WU-envelope: AI-Job pre-flight. ai.planJob returns the route + cost/egress
     # budget + cacheHit/willEgress with ZERO provider calls (the pure planner).
