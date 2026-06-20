@@ -106,8 +106,40 @@ export function App(): React.ReactElement {
     });
   }, []);
 
+  // WU-13: restore the last-opened video on launch. This is its own async path
+  // (NOT bolted onto the sync quality-hydrate effect above): read the persisted
+  // `lastOpenedVideoId` from settings, then resolve the Video via library.list
+  // (mirroring handleReexport). Navigate to its Workspace on a match; fall back
+  // to the Library home (the default route) when the video is gone or absent.
+  useEffect(() => {
+    if (!hasApi()) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const settings = await rpc<{ lastOpenedVideoId?: string }>('settings.get');
+        const id = settings?.lastOpenedVideoId;
+        if (cancelled || !id) return;
+        const { videos } = await client.library.list();
+        const match = videos.find((v) => v.id === id);
+        if (!cancelled && match) {
+          setRoute({ name: 'workspace', video: match });
+        }
+      } catch {
+        // Best-effort restore; stay on the Library default on any failure.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const openVideo = useCallback((video: Video) => {
     setRoute({ name: 'workspace', video });
+    // WU-13: persist the last-opened video so launch can restore it. Best-effort.
+    if (!hasApi()) return;
+    void rpc('settings.set', { lastOpenedVideoId: video.id }).catch(() => {
+      // Persisting is best-effort; navigation already happened in-memory.
+    });
   }, []);
 
   const backToLibrary = useCallback(() => {
