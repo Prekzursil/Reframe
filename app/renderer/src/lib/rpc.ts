@@ -528,6 +528,8 @@ export const client = {
     list: (): Promise<{ videos: Video[] }> => rpc('library.list'),
     add: (path: string): Promise<{ video: Video }> => rpc('library.add', { path }),
     remove: (id: string): Promise<{ ok: boolean }> => rpc('library.remove', { id }),
+    /** `library.thumbnail {id}` — idempotent source-video poster extraction (WU-4). */
+    thumbnail: (id: string): Promise<{ thumbnailPath: string }> => rpc('library.thumbnail', { id }),
   },
 
   project: {

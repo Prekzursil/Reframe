@@ -217,7 +217,7 @@ describe('client.ping / library / project', () => {
     expect(r).toHaveBeenCalledWith('ping', undefined);
   });
 
-  it('library.list / add / remove forward their params', async () => {
+  it('library.list / add / remove / thumbnail forward their params', async () => {
     const r = installApi();
     await client.library.list();
     expect(r).toHaveBeenCalledWith('library.list', undefined);
@@ -225,6 +225,8 @@ describe('client.ping / library / project', () => {
     expect(r).toHaveBeenCalledWith('library.add', { path: '/a.mp4' });
     await client.library.remove('v1');
     expect(r).toHaveBeenCalledWith('library.remove', { id: 'v1' });
+    await client.library.thumbnail('v1');
+    expect(r).toHaveBeenCalledWith('library.thumbnail', { id: 'v1' });
   });
 
   it('project.open / save / consolidate forward their params', async () => {
