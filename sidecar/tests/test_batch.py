@@ -820,3 +820,357 @@ class TestResumeBatch:
         # v2 fails and halts the resumed run; v3 is never attempted.
         assert invoked == ["v2"]
         assert _statuses(store, state["id"]) == ["done", "error", "queued"]
+
+
+# --------------------------------------------------------------------------- #
+# WU9 — batch consent surface (G-ACK) + visible skip
+# --------------------------------------------------------------------------- #
+#: A plan that egresses (a cloud run that would send bytes off the machine).
+_EGRESS_PLAN: dict[str, Any] = {
+    "route": {"providers": ["openai"], "willEgress": True, "cacheHit": False},
+    "costEst": {"requests": 5, "egressBytes": 1000, "withinFreeLimits": True},
+    "budget": {"requests": 5, "egressBytes": 1000, "withinFreeLimits": True},
+    "cacheHit": False,
+    "willEgress": True,
+    "cacheKey": "ck-egress",
+}
+#: A plan that stays local (never egresses — local-only routing).
+_LOCAL_PLAN: dict[str, Any] = {
+    "route": {"providers": [], "willEgress": False, "cacheHit": False},
+    "costEst": {"requests": 0, "egressBytes": 0, "withinFreeLimits": True},
+    "budget": {"requests": 0, "egressBytes": 0, "withinFreeLimits": True},
+    "cacheHit": False,
+    "willEgress": False,
+    "cacheKey": "ck-local",
+}
+#: A plan that egresses but is a cache hit (no real run; bypasses the gate).
+_CACHE_HIT_PLAN: dict[str, Any] = {
+    "route": {"providers": ["openai"], "willEgress": False, "cacheHit": True},
+    "costEst": {"requests": 0, "egressBytes": 0, "withinFreeLimits": True},
+    "budget": {"requests": 0, "egressBytes": 0, "withinFreeLimits": True},
+    "cacheHit": True,
+    "willEgress": False,
+    "cacheKey": "ck-hit",
+}
+#: An egressing plan that has NO budget headroom (over the free limit).
+_NO_HEADROOM_PLAN: dict[str, Any] = {
+    "route": {"providers": ["openai"], "willEgress": True, "cacheHit": False},
+    "costEst": {"requests": 999, "egressBytes": 9999, "withinFreeLimits": False},
+    "budget": {"requests": 999, "egressBytes": 9999, "withinFreeLimits": False},
+    "cacheHit": False,
+    "willEgress": True,
+    "cacheKey": "ck-nohead",
+}
+
+
+def _fake_plan_job(by_shape: dict[Any, dict[str, Any]]):
+    """A fake ``ai.planJob`` seam: ``shape_key -> plan`` recording every call.
+
+    Returns ``(plan_job, calls)`` where ``calls`` is the ordered list of shape
+    keys the aggregator invoked the planner with — so a test can assert dedup by
+    step-shape (the planner is called once per distinct shape, NOT per source).
+    """
+    calls: list[Any] = []
+
+    def plan_job(shape_key: Any) -> dict[str, Any]:
+        calls.append(shape_key)
+        return by_shape[shape_key]
+
+    return plan_job, calls
+
+
+class TestConsentDecision:
+    def test_local_only_runs_regardless_of_gate(self):
+        decision = batch.consent_decision(_LOCAL_PLAN, confirm_cloud_budget=True, acknowledged=False)
+        assert decision == ("run", None, None)
+
+    def test_cache_hit_runs_regardless_of_gate(self):
+        decision = batch.consent_decision(_CACHE_HIT_PLAN, confirm_cloud_budget=True, acknowledged=False)
+        assert decision == ("run", None, None)
+
+    def test_egress_with_gate_off_runs_informational(self):
+        # confirmCloudBudget OFF: the card is informational only, all sources run.
+        decision = batch.consent_decision(_EGRESS_PLAN, confirm_cloud_budget=False, acknowledged=False)
+        assert decision == ("run", None, None)
+
+    def test_egress_gate_on_unacked_is_skipped(self):
+        decision = batch.consent_decision(_EGRESS_PLAN, confirm_cloud_budget=True, acknowledged=False)
+        assert decision == ("skip", "would egress — not acknowledged", None)
+
+    def test_egress_gate_on_acked_runs_and_threads_cache_key(self):
+        # An acknowledged egressing source runs and carries the plan's cacheKey as
+        # the confirmBudget token threaded to the underlying handler.
+        decision = batch.consent_decision(_EGRESS_PLAN, confirm_cloud_budget=True, acknowledged=True)
+        assert decision == ("run", None, "ck-egress")
+
+    def test_egress_acked_but_no_headroom_is_skipped(self):
+        # Even acknowledged, a plan with no budget headroom is skipped with the
+        # distinct reason token (the user cannot ack past the free-limit ceiling).
+        decision = batch.consent_decision(_NO_HEADROOM_PLAN, confirm_cloud_budget=True, acknowledged=True)
+        assert decision == ("skip", "no budget headroom", None)
+
+
+class TestPlanConsent:
+    def test_dedup_by_step_shape_single_planner_call(self):
+        # Acceptance #1: 30 sources, ONE template shape -> exactly 1 ai.planJob call.
+        plan_job, calls = _fake_plan_job({"shape-A": _EGRESS_PLAN})
+        sources = [f"v{i}" for i in range(30)]
+        consent = batch.plan_consent(
+            sources,
+            shape_of=lambda _vid: "shape-A",
+            plan_job=plan_job,
+            confirm_cloud_budget=True,
+            acknowledged=True,
+        )
+        assert calls == ["shape-A"]
+        assert len(consent["decisions"]) == 30
+
+    def test_two_distinct_shapes_two_planner_calls(self):
+        # Two distinct shapes across 30 sources -> the planner is called per shape,
+        # not per source (planner cost is bounded by shape count).
+        plan_job, calls = _fake_plan_job({"A": _EGRESS_PLAN, "B": _LOCAL_PLAN})
+        sources = [f"v{i}" for i in range(30)]
+        batch.plan_consent(
+            sources,
+            shape_of=lambda vid: "A" if int(vid[1:]) % 2 == 0 else "B",
+            plan_job=plan_job,
+            confirm_cloud_budget=True,
+            acknowledged=True,
+        )
+        assert sorted(calls) == ["A", "B"]
+
+    def test_split_local_and_cache_hit_always_run(self):
+        # Acceptance #2 (the run half): a cache-hit source ends up runnable.
+        plan_job, _ = _fake_plan_job({"loc": _LOCAL_PLAN, "hit": _CACHE_HIT_PLAN, "eg": _EGRESS_PLAN})
+
+        def shape_of(vid: str) -> str:
+            return {"v1": "loc", "v2": "hit", "v3": "eg"}[vid]
+
+        consent = batch.plan_consent(
+            ["v1", "v2", "v3"],
+            shape_of=shape_of,
+            plan_job=plan_job,
+            confirm_cloud_budget=True,
+            acknowledged=False,
+        )
+        decisions = {d["videoId"]: d for d in consent["decisions"]}
+        assert decisions["v1"]["action"] == "run"
+        assert decisions["v2"]["action"] == "run"
+        # the egressing un-acked source is the only skip.
+        assert decisions["v3"]["action"] == "skip"
+        assert decisions["v3"]["skipReason"] == "would egress — not acknowledged"
+        assert consent["willRun"] == 2
+        assert consent["willSkip"] == 1
+
+    def test_per_source_will_egress_and_cache_hit_surfaced(self):
+        plan_job, _ = _fake_plan_job({"loc": _LOCAL_PLAN, "hit": _CACHE_HIT_PLAN})
+
+        def shape_of(vid: str) -> str:
+            return "loc" if vid == "v1" else "hit"
+
+        consent = batch.plan_consent(
+            ["v1", "v2"],
+            shape_of=shape_of,
+            plan_job=plan_job,
+            confirm_cloud_budget=False,
+            acknowledged=False,
+        )
+        decisions = {d["videoId"]: d for d in consent["decisions"]}
+        assert decisions["v1"]["willEgress"] is False
+        assert decisions["v1"]["cacheHit"] is False
+        assert decisions["v2"]["cacheHit"] is True
+
+    def test_cost_summed_only_over_egressing_sources(self):
+        # Acceptance #4: costEst sums egressBytes ONLY over egressing sources.
+        plan_job, _ = _fake_plan_job({"eg": _EGRESS_PLAN, "loc": _LOCAL_PLAN})
+
+        def shape_of(vid: str) -> str:
+            # v1,v2 egress (1000 bytes each); v3 is local (0) and must NOT count.
+            return "loc" if vid == "v3" else "eg"
+
+        consent = batch.plan_consent(
+            ["v1", "v2", "v3"],
+            shape_of=shape_of,
+            plan_job=plan_job,
+            confirm_cloud_budget=False,
+            acknowledged=False,
+        )
+        # only the two egressing sources contribute 1000 bytes each.
+        assert consent["costEst"]["egressBytes"] == 2000
+        assert consent["costEst"]["requests"] == 10
+
+    def test_reports_budget_headroom(self):
+        # Acceptance #4 (the headroom half): the aggregate reports whether the run
+        # stays within the free budget ceiling (False once any source is over-cap).
+        plan_job, _ = _fake_plan_job({"ok": _EGRESS_PLAN, "over": _NO_HEADROOM_PLAN})
+
+        def shape_of(vid: str) -> str:
+            return "over" if vid == "v2" else "ok"
+
+        consent = batch.plan_consent(
+            ["v1", "v2"],
+            shape_of=shape_of,
+            plan_job=plan_job,
+            confirm_cloud_budget=False,
+            acknowledged=False,
+        )
+        assert consent["budget"]["withinFreeLimits"] is False
+
+    def test_headroom_true_when_all_within_limits(self):
+        plan_job, _ = _fake_plan_job({"ok": _EGRESS_PLAN})
+        consent = batch.plan_consent(
+            ["v1", "v2"],
+            shape_of=lambda _vid: "ok",
+            plan_job=plan_job,
+            confirm_cloud_budget=False,
+            acknowledged=False,
+        )
+        assert consent["budget"]["withinFreeLimits"] is True
+
+    def test_gate_off_all_run_card_informational(self):
+        # confirmCloudBudget OFF: even an egressing source runs (card is info-only).
+        plan_job, _ = _fake_plan_job({"eg": _EGRESS_PLAN})
+        consent = batch.plan_consent(
+            ["v1", "v2"],
+            shape_of=lambda _vid: "eg",
+            plan_job=plan_job,
+            confirm_cloud_budget=False,
+            acknowledged=False,
+        )
+        assert consent["willRun"] == 2
+        assert consent["willSkip"] == 0
+
+
+def _make_confirm_runner(reg: JobRegistry):
+    """A template-run seam that records the ``confirm_budget`` it was handed.
+
+    Mirrors :func:`_make_runner` but accepts the optional ``confirm_budget``
+    keyword the consent path threads (the plan's ``cacheKey``), so a test can
+    assert the ack token reached the underlying handler. Returns
+    ``(runner, confirms)`` where ``confirms`` maps ``video_id -> confirm_budget``.
+    """
+    confirms: dict[str, Any] = {}
+
+    def runner(video_id: str, ctx: RpcContext, *, confirm_budget: Any = None) -> dict[str, Any]:
+        confirms[video_id] = confirm_budget
+
+        def body(job_ctx: Any) -> dict[str, Any]:
+            job_ctx.progress(50.0, "step 1/1 · go")
+            return {"source": video_id}
+
+        sub = ctx.jobs.start(body)
+        return {"jobId": sub.id}
+
+    return runner, confirms
+
+
+class TestRunBatchConsent:
+    def test_unacked_egress_source_ends_skipped_with_reason(self, tmp_path):
+        # Acceptance #2: under the gate + no ack, an egressing source ends terminal
+        # ``skipped`` with the reason token; a cache-hit source ends ``done``.
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2"])
+        plan_job, _ = _fake_plan_job({"hit": _CACHE_HIT_PLAN, "eg": _EGRESS_PLAN})
+        consent = batch.plan_consent(
+            ["v1", "v2"],
+            shape_of=lambda vid: "hit" if vid == "v1" else "eg",
+            plan_job=plan_job,
+            confirm_cloud_budget=True,
+            acknowledged=False,
+        )
+        runner, invoked = _make_runner(reg)
+        batch.run_batch(store, state["id"], runner, _FakeJobCtx(), _ctx(reg), consent=consent)
+        # the cache-hit v1 runs to done; the un-acked egress v2 is never invoked.
+        assert invoked == ["v1"]
+        items = store.load(state["id"])["items"]
+        by_id = {i["videoId"]: i for i in items}
+        assert by_id["v1"]["status"] == "done"
+        assert by_id["v2"]["status"] == "skipped"
+        assert by_id["v2"]["skipReason"] == "would egress — not acknowledged"
+
+    def test_no_headroom_source_ends_skipped_with_reason(self, tmp_path):
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1"])
+        plan_job, _ = _fake_plan_job({"over": _NO_HEADROOM_PLAN})
+        consent = batch.plan_consent(
+            ["v1"],
+            shape_of=lambda _vid: "over",
+            plan_job=plan_job,
+            confirm_cloud_budget=True,
+            acknowledged=True,
+        )
+        runner, invoked = _make_runner(reg)
+        batch.run_batch(store, state["id"], runner, _FakeJobCtx(), _ctx(reg), consent=consent)
+        assert invoked == []
+        item = store.load(state["id"])["items"][0]
+        assert item["status"] == "skipped"
+        assert item["skipReason"] == "no budget headroom"
+
+    def test_consent_threads_confirm_budget_to_runner(self, tmp_path):
+        # Acceptance #3: with ack, the underlying handler receives confirmBudget
+        # equal to the plan's cacheKey (the threaded token is asserted).
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1"])
+        plan_job, _ = _fake_plan_job({"eg": _EGRESS_PLAN})
+        consent = batch.plan_consent(
+            ["v1"],
+            shape_of=lambda _vid: "eg",
+            plan_job=plan_job,
+            confirm_cloud_budget=True,
+            acknowledged=True,
+        )
+        runner, confirms = _make_confirm_runner(reg)
+        out = batch.run_batch(store, state["id"], runner, _FakeJobCtx(), _ctx(reg), consent=consent)
+        assert confirms == {"v1": "ck-egress"}
+        assert out["items"][0]["status"] == "done"
+
+    def test_gate_off_runs_all_without_confirm_budget(self, tmp_path):
+        # confirmCloudBudget OFF: an egressing source still runs, no ack threaded.
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1"])
+        plan_job, _ = _fake_plan_job({"eg": _EGRESS_PLAN})
+        consent = batch.plan_consent(
+            ["v1"],
+            shape_of=lambda _vid: "eg",
+            plan_job=plan_job,
+            confirm_cloud_budget=False,
+            acknowledged=False,
+        )
+        runner, confirms = _make_confirm_runner(reg)
+        batch.run_batch(store, state["id"], runner, _FakeJobCtx(), _ctx(reg), consent=consent)
+        assert confirms == {"v1": None}
+        assert store.load(state["id"])["items"][0]["status"] == "done"
+
+    def test_consent_absent_runs_all_unchanged(self, tmp_path):
+        # No consent supplied -> the WU7 path is unchanged (every source runs).
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2"])
+        runner, invoked = _make_runner(reg)
+        batch.run_batch(store, state["id"], runner, _FakeJobCtx(), _ctx(reg))
+        assert invoked == ["v1", "v2"]
+
+    def test_consent_skip_does_not_consume_progress_slice(self, tmp_path):
+        # A skipped source still advances the overall bar (its slice completes) so
+        # the progress total stays consistent for the N-run/K-skip split.
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2"])
+        plan_job, _ = _fake_plan_job({"eg": _EGRESS_PLAN, "loc": _LOCAL_PLAN})
+        consent = batch.plan_consent(
+            ["v1", "v2"],
+            shape_of=lambda vid: "eg" if vid == "v1" else "loc",
+            plan_job=plan_job,
+            confirm_cloud_budget=True,
+            acknowledged=False,
+        )
+        runner, invoked = _make_runner(reg)
+        ctx_obj = _FakeJobCtx()
+        batch.run_batch(store, state["id"], runner, ctx_obj, _ctx(reg), consent=consent)
+        assert invoked == ["v2"]
+        # the final tick is the explicit 100/"done", reached after the skip + run.
+        assert ctx_obj.messages[-1] == (100.0, "done")

@@ -43,9 +43,9 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from ..jobs import JobCancelled
 from ..protocol import ErrorCode, RpcContext, RpcError
@@ -58,10 +58,18 @@ BatchItem = dict[str, Any]
 BatchState = dict[str, Any]
 BatchSummary = dict[str, Any]
 
-#: A template-run seam: ``(video_id, ctx) -> {"jobId": ...}`` — runs one source
-#: through the WU5 template path and returns the spawned sub-job id. The runner
-#: only awaits + isolates; it never builds the per-source job itself.
-TemplateRunner = Callable[[str, RpcContext], dict[str, Any]]
+
+#: A template-run seam: ``(video_id, ctx, *, confirm_budget=?) -> {"jobId": ...}``
+#: — runs one source through the WU5 template path and returns the spawned sub-job
+#: id. The runner only awaits + isolates; it never builds the per-source job
+#: itself. ``confirm_budget`` is threaded ONLY for an acknowledged egressing source
+#: (WU9); the plain two-arg call is the WU7 default.
+class TemplateRunner(Protocol):
+    def __call__(self, video_id: str, ctx: RpcContext, *, confirm_budget: str | None = ...) -> dict[str, Any]:
+        """Run one source's template path; returns ``{"jobId": ...}``."""
+        ...  # pragma: no cover - Protocol method body is never executed
+
+
 #: Maps a source ``video_id`` to a human title for the progress message.
 TitleResolver = Callable[[str], str]
 #: The sub-job await/relay seam (defaults to the recipe runner's ``_await_subjob``).
@@ -69,6 +77,18 @@ AwaitSubjob = Callable[[str, Any, RpcContext, Callable[[float, str], None]], Any
 #: The parent-job start seam: ``(job_body, **kwargs) -> <job with .id>`` (defaults
 #: to ``ctx.jobs.start``). Injected by tests to run the resume body synchronously.
 StartJob = Callable[..., Any]
+#: Maps a source ``video_id`` to its distinct AI step *shape* key (sources sharing
+#: a template+size collapse to ONE shape, so the planner cost is bounded by shape
+#: count, not source count — the dedup contract, WU9 / DESIGN §9.1).
+ShapeOf = Callable[[str], Hashable]
+#: The pure pre-flight planner seam: ``shape_key -> plan`` (the fake ``ai.planJob``
+#: in tests). Called ONCE per distinct shape; returns a plan dict with
+#: ``{willEgress, cacheHit, costEst, budget, cacheKey}`` (``handlers.py:1696``).
+PlanJob = Callable[[Hashable], dict[str, Any]]
+
+#: visible-skip reason tokens (DESIGN §9.1) — never a silent absence.
+SKIP_WOULD_EGRESS = "would egress — not acknowledged"
+SKIP_NO_HEADROOM = "no budget headroom"
 
 #: every legal :class:`BatchItem` status (DESIGN §5.2).
 ITEM_STATUSES: frozenset[str] = frozenset({"queued", "running", "done", "error", "cancelled", "skipped"})
@@ -297,6 +317,27 @@ def _default_await_subjob(
     return recipes.Recipes._await_subjob(cast("recipes.Recipes", None), sub_job_id, job_ctx, ctx, on_sub)
 
 
+def _run_source(
+    template_runner: TemplateRunner,
+    video_id: str,
+    ctx: RpcContext,
+    decision: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Invoke ``template_runner`` for one source, threading any ``confirmBudget``.
+
+    When the WU9 consent supplied a ``confirmBudget`` token (the plan's
+    ``cacheKey`` for an acknowledged egressing source), it is passed as the
+    ``confirm_budget`` keyword so the underlying AI step satisfies
+    ``_enforce_cloud_budget_ack`` (``handlers.py:1672``). With no token (local /
+    cache-hit / gate-off / no consent), the runner is called with its plain
+    ``(video_id, ctx)`` signature — the WU7 path, unchanged.
+    """
+    confirm_budget = (decision or {}).get("confirmBudget")
+    if confirm_budget:
+        return template_runner(video_id, ctx, confirm_budget=confirm_budget)
+    return template_runner(video_id, ctx)
+
+
 def run_batch(
     store: BatchStore,
     batch_id: str,
@@ -307,6 +348,7 @@ def run_batch(
     continue_on_error: bool = True,
     title_resolver: TitleResolver | None = None,
     await_subjob: AwaitSubjob | None = None,
+    consent: dict[str, Any] | None = None,
 ) -> BatchState:
     """Run a batch's sources through ``template_runner`` with per-source isolation.
 
@@ -332,6 +374,9 @@ def run_batch(
         raise _invalid(f"unknown batch: {batch_id}")
     resolve_title = title_resolver or (lambda video_id: video_id)
     await_sub = await_subjob or _default_await_subjob
+    decisions: dict[str, dict[str, Any]] = {
+        decision["videoId"]: decision for decision in (consent or {}).get("decisions", [])
+    }
 
     items: list[BatchItem] = state["items"]
     total = max(len(items), 1)
@@ -344,6 +389,13 @@ def run_batch(
             continue
         job_ctx.raise_if_cancelled()
         video_id = item["videoId"]
+        decision = decisions.get(video_id)
+        # WU9 visible skip: a source the consent gate marked ``skip`` is recorded
+        # terminal ``skipped`` with its reason BEFORE any work — never run, never a
+        # silent absence (§9.1). Its progress slice is still consumed below.
+        if decision is not None and decision["action"] == "skip":
+            final = store.update_item(batch_id, video_id, status="skipped", skipReason=decision["skipReason"])
+            continue
         title = resolve_title(video_id)
         base = index / total * 100.0
         span = 100.0 / total
@@ -355,7 +407,7 @@ def run_batch(
         final = store.update_item(batch_id, video_id, status="running")
         on_sub(0.0, "")
         try:
-            started = template_runner(video_id, ctx)
+            started = _run_source(template_runner, video_id, ctx, decision)
             result = await_sub(started["jobId"], job_ctx, ctx, on_sub)
         except JobCancelled:
             store.update_item(batch_id, video_id, status="cancelled")
@@ -455,6 +507,134 @@ def resume_batch(
     return {"jobId": job.id}
 
 
+# --------------------------------------------------------------------------- #
+# consent — pre-run batch-wide G-ACK surface + visible skip (WU9, DESIGN §9.1)
+# --------------------------------------------------------------------------- #
+def _has_headroom(plan: dict[str, Any]) -> bool:
+    """``True`` iff the plan's budget stays within the free-limit ceiling.
+
+    The pre-flight plan carries a ``budget`` (``handlers.py:1696``) whose
+    ``withinFreeLimits`` flag is ``False`` once the run exceeds any involved
+    provider's free cap (``budget.py``). A missing flag is treated as headroom
+    present (the planner only sets it ``False`` when it KNOWS the cap is busted).
+    """
+    budget = plan.get("budget") or plan.get("costEst") or {}
+    return bool(budget.get("withinFreeLimits", True))
+
+
+def consent_decision(
+    plan: dict[str, Any],
+    *,
+    confirm_cloud_budget: bool,
+    acknowledged: bool,
+) -> tuple[str, str | None, str | None]:
+    """Decide ONE source's pre-run fate from its pure plan (DESIGN §9.1).
+
+    Returns ``(action, skip_reason, confirm_budget)`` where ``action`` is
+    ``"run"`` or ``"skip"``. A local-only or cache-hit plan never egresses, so it
+    always runs (``confirm_budget`` ``None``) regardless of the gate. An egressing
+    plan runs informationally when ``confirm_cloud_budget`` is OFF. With the gate
+    ON: an un-acknowledged egress is ``skip`` (``SKIP_WOULD_EGRESS``); an
+    acknowledged egress with NO budget headroom is ``skip`` (``SKIP_NO_HEADROOM``);
+    an acknowledged egress with headroom RUNS and threads the plan's ``cacheKey``
+    as ``confirm_budget`` (satisfying ``_enforce_cloud_budget_ack``,
+    ``handlers.py:1672``, without changing the envelope).
+    """
+    if not plan.get("willEgress"):
+        return ("run", None, None)
+    if not confirm_cloud_budget:
+        return ("run", None, None)
+    if not acknowledged:
+        return ("skip", SKIP_WOULD_EGRESS, None)
+    if not _has_headroom(plan):
+        return ("skip", SKIP_NO_HEADROOM, None)
+    return ("run", None, str(plan.get("cacheKey") or ""))
+
+
+def _sum_egress_cost(egressing_plans: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate ``requests``/``egressBytes`` over the supplied EGRESSING plans.
+
+    The caller (:func:`plan_consent`) passes ONLY the plans whose ``willEgress``
+    is true, so local-only and cache-hit sources contribute nothing and the cost
+    shown reflects exactly the bytes that would leave the machine (acceptance #4).
+    ``withinFreeLimits`` is the AND across those plans — the aggregate has headroom
+    only if EVERY egressing source does.
+    """
+    requests = 0
+    egress_bytes = 0
+    within = True
+    for plan in egressing_plans:
+        cost = plan.get("costEst") or {}
+        requests += int(cost.get("requests", 0))
+        egress_bytes += int(cost.get("egressBytes", 0))
+        within = within and _has_headroom(plan)
+    return {"requests": requests, "egressBytes": egress_bytes, "withinFreeLimits": within}
+
+
+def plan_consent(
+    source_video_ids: list[str],
+    *,
+    shape_of: ShapeOf,
+    plan_job: PlanJob,
+    confirm_cloud_budget: bool,
+    acknowledged: bool,
+) -> dict[str, Any]:
+    """Build the pre-run batch consent surface from pure plans (DESIGN §9.1).
+
+    Computed BEFORE ``batch.start`` from ``ai.planJob`` plans ONLY (zero provider
+    calls). One plan is fetched per distinct step *shape* — sources sharing a
+    template+size collapse to one plan, so ``plan_job`` is invoked once per shape,
+    NOT once per source (acceptance #1). For each source it records the
+    :func:`consent_decision` (``action``/``skipReason``/``confirmBudget``) plus the
+    surfaced ``willEgress``/``cacheHit`` flags, the N-run/K-skip split, the
+    aggregated ``costEst`` over the egressing sources, and the ``budget`` headroom.
+
+    The returned dict is the consent surface the runner consumes (``decisions`` is
+    keyed-by-order to mirror the batch items) and the renderer renders as the §9.1
+    summary card.
+    """
+    plans_by_shape: dict[Hashable, dict[str, Any]] = {}
+    decisions: list[dict[str, Any]] = []
+    egressing_plans: list[dict[str, Any]] = []
+    will_run = 0
+    will_skip = 0
+    for video_id in source_video_ids:
+        shape_key = shape_of(video_id)
+        plan = plans_by_shape.get(shape_key)
+        if plan is None:
+            plan = plan_job(shape_key)
+            plans_by_shape[shape_key] = plan
+        action, skip_reason, confirm_budget = consent_decision(
+            plan,
+            confirm_cloud_budget=confirm_cloud_budget,
+            acknowledged=acknowledged,
+        )
+        if action == "run":
+            will_run += 1
+        else:
+            will_skip += 1
+        if plan.get("willEgress"):
+            egressing_plans.append(plan)
+        decisions.append(
+            {
+                "videoId": video_id,
+                "action": action,
+                "skipReason": skip_reason,
+                "confirmBudget": confirm_budget,
+                "willEgress": bool(plan.get("willEgress")),
+                "cacheHit": bool(plan.get("cacheHit")),
+            }
+        )
+    cost = _sum_egress_cost(egressing_plans)
+    return {
+        "decisions": decisions,
+        "willRun": will_run,
+        "willSkip": will_skip,
+        "costEst": cost,
+        "budget": cost,
+    }
+
+
 def _summarize(state: BatchState) -> BatchSummary:
     """Project a :class:`BatchState` to a :class:`BatchSummary` (no per-item heavy data)."""
     items = state.get("items") or []
@@ -475,19 +655,25 @@ def _summarize(state: BatchState) -> BatchSummary:
 
 __all__ = [
     "ITEM_STATUSES",
+    "SKIP_NO_HEADROOM",
+    "SKIP_WOULD_EGRESS",
     "TERMINAL_STATUSES",
     "AwaitSubjob",
     "BatchItem",
     "BatchState",
     "BatchStore",
     "BatchSummary",
+    "PlanJob",
+    "ShapeOf",
     "StartJob",
     "TemplateRunner",
     "TitleResolver",
+    "consent_decision",
     "derive_status",
     "is_terminal_status",
     "new_item",
     "new_state",
+    "plan_consent",
     "resumable_video_ids",
     "resume_batch",
     "run_batch",
