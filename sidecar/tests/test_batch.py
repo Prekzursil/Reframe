@@ -1,10 +1,19 @@
-"""WU6 tests — ``features/batch.py`` store + model + checkpoint-on-transition.
+"""WU6 + WU7 tests — ``features/batch.py``.
 
-Pure store + pure model logic over a ``tmp_path`` JSON document (one file per
-batch under ``batches/<batchId>.json``). No runner, no RPC, no media work — those
-are later WUs. The store mirrors :class:`recipes.RecipeStore`'s atomic temp+rename
-write (a simulated ``os.replace`` failure must leave the prior file intact), but
-keyed per-batch so one corrupt batch can never poison another.
+WU6 — store + model + checkpoint-on-transition. Pure store + pure model logic
+over a ``tmp_path`` JSON document (one file per batch under
+``batches/<batchId>.json``). The store mirrors :class:`recipes.RecipeStore`'s
+atomic temp+rename write, keyed per-batch so one corrupt batch can never poison
+another.
+
+WU7 — the batch RUNNER with per-source isolation (G-ISO). The parent batch job
+iterates ``sourceVideoIds``, spreads ``[0,100]`` progress across items, and runs
+each source through the template runner seam — but with NEW per-source try/except
+so one bad source records ``error`` on its :class:`batch.BatchItem` and the batch
+CONTINUES (the deliberate divergence from ``convert_batch``/``_run_one_step``).
+Gated by ``batchContinueOnError`` (default ``true``). The per-source sub-job is
+awaited with the EXISTING recipe ``_await_subjob`` relay. No real ffmpeg/model:
+the template-run seam is faked.
 """
 
 from __future__ import annotations
@@ -14,7 +23,8 @@ from typing import Any
 
 import pytest
 from media_studio.features import batch
-from media_studio.protocol import RpcError
+from media_studio.jobs import JobCancelled, JobRegistry
+from media_studio.protocol import RpcContext, RpcError
 
 # --------------------------------------------------------------------------- #
 # pure model — BatchItem / BatchState shaping + status derivation
@@ -307,6 +317,17 @@ class TestBatchStore:
         store = batch.BatchStore(tmp_path / "does-not-exist")
         assert store.list() == []
 
+    def test_set_status_overrides_aggregate(self, tmp_path):
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2"])
+        store.set_status(state["id"], "error")
+        assert store.load(state["id"])["status"] == "error"
+
+    def test_set_status_unknown_batch_raises(self, tmp_path):
+        store = batch.BatchStore(tmp_path / "batches")
+        with pytest.raises(RpcError, match="unknown batch"):
+            store.set_status("nope", "error")
+
     def test_delete_removes_file_and_reports(self, tmp_path):
         store = batch.BatchStore(tmp_path / "batches")
         state = store.create("run", "t", ["v1"])
@@ -331,3 +352,243 @@ class TestBatchStore:
             store.update_item(state["id"], "v1", status="done")
         # the original checkpoint is byte-for-byte intact (temp+rename never truncates).
         assert path.read_text(encoding="utf-8") == before
+
+
+# --------------------------------------------------------------------------- #
+# WU7 — batch runner with per-source isolation (G-ISO)
+# --------------------------------------------------------------------------- #
+class _FakeJobCtx:
+    """A minimal parent job_ctx for the batch runner (cancel + progress + raise).
+
+    Mirrors ``test_recipes._FakeJobCtx`` but also records the progress messages so
+    a test can assert the ``source k/N · <title> ·`` prefix the runner prepends.
+    """
+
+    def __init__(self, *, cancelled: bool = False, cancel_after: int | None = None) -> None:
+        self._cancelled = cancelled
+        self._cancel_after = cancel_after
+        self._raise_calls = 0
+        self.messages: list[tuple[float, str]] = []
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancelled
+
+    def raise_if_cancelled(self) -> None:
+        self._raise_calls += 1
+        # ``cancel_after`` flips cancellation on once the runner has checked the
+        # gate N times (so cancellation lands BETWEEN specific sources).
+        if self._cancel_after is not None and self._raise_calls > self._cancel_after:
+            self._cancelled = True
+        if self._cancelled:
+            raise JobCancelled()
+
+    def progress(self, pct: float, message: str = "") -> None:
+        self.messages.append((pct, message))
+
+
+def _registry() -> JobRegistry:
+    return JobRegistry(emit_progress=lambda *_: None, emit_done=lambda *_: None)
+
+
+def _ctx(registry: JobRegistry) -> RpcContext:
+    return RpcContext(emit_notification=lambda *_: None, jobs=registry)
+
+
+def _make_runner(reg: JobRegistry, *, results=None, fail=(), pct=50.0):
+    """Build a template-run seam: ``video_id -> {jobId}`` over a real sub-job.
+
+    ``fail`` is a set of video ids whose sub-job raises (so the per-source
+    try/except is exercised); every other source's sub-job reports ``pct`` then
+    returns ``{"source": video_id}`` (or ``results[video_id]`` when supplied).
+    The list of video ids the seam was invoked for is returned for assertions.
+    """
+    invoked: list[str] = []
+
+    def runner(video_id: str, ctx: RpcContext) -> dict[str, Any]:
+        invoked.append(video_id)
+
+        def body(job_ctx: Any) -> dict[str, Any]:
+            job_ctx.progress(pct, "step 1/1 · go")
+            if video_id in fail:
+                raise RuntimeError(f"boom: {video_id}")
+            return (results or {}).get(video_id, {"source": video_id})
+
+        sub = ctx.jobs.start(body)
+        return {"jobId": sub.id}
+
+    return runner, invoked
+
+
+def _statuses(store: batch.BatchStore, batch_id: str) -> list[str]:
+    return [item["status"] for item in store.load(batch_id)["items"]]
+
+
+class TestRunBatchIsolation:
+    def test_all_sources_succeed_all_done(self, tmp_path):
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2", "v3"])
+        runner, invoked = _make_runner(reg)
+        out = batch.run_batch(store, state["id"], runner, _FakeJobCtx(), _ctx(reg))
+        assert invoked == ["v1", "v2", "v3"]
+        assert _statuses(store, state["id"]) == ["done", "done", "done"]
+        assert store.load(state["id"])["status"] == "done"
+        # each item carries the unwrapped per-source result + its sub-job id.
+        items = store.load(state["id"])["items"]
+        assert items[0]["results"] == {"source": "v1"}
+        assert all(isinstance(item["jobId"], str) and item["jobId"] for item in items)
+        assert out["status"] == "done"
+
+    def test_one_bad_source_isolated_others_done(self, tmp_path):
+        # Acceptance #1: source 2 raises -> [done, error, done], status "partial".
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2", "v3"])
+        runner, invoked = _make_runner(reg, fail={"v2"})
+        batch.run_batch(store, state["id"], runner, _FakeJobCtx(), _ctx(reg))
+        assert invoked == ["v1", "v2", "v3"]  # the bad source did NOT abort the batch
+        assert _statuses(store, state["id"]) == ["done", "error", "done"]
+        loaded = store.load(state["id"])
+        assert loaded["status"] == "partial"
+        assert "boom: v2" in loaded["items"][1]["error"]
+
+    def test_continue_on_error_false_stops_at_first_error(self, tmp_path):
+        # Acceptance #2: with the toggle off, the batch stops at the first error
+        # and the remaining source stays queued; aggregate status is "error".
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2", "v3"])
+        runner, invoked = _make_runner(reg, fail={"v2"})
+        batch.run_batch(store, state["id"], runner, _FakeJobCtx(), _ctx(reg), continue_on_error=False)
+        assert invoked == ["v1", "v2"]  # v3 was never attempted
+        assert _statuses(store, state["id"]) == ["done", "error", "queued"]
+        assert store.load(state["id"])["status"] == "error"
+
+    def test_each_item_flip_is_checkpointed_to_disk(self, tmp_path):
+        # Acceptance #3: every transition is durably written before the next item.
+        # A runner that snapshots the on-disk statuses at each call proves the
+        # prior item was already flipped to a terminal state on disk.
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2"])
+        seen: list[list[str]] = []
+
+        def runner(video_id: str, ctx: RpcContext) -> dict[str, Any]:
+            seen.append(_statuses(store, state["id"]))
+
+            def body(job_ctx: Any) -> dict[str, Any]:
+                return {"source": video_id}
+
+            return {"jobId": ctx.jobs.start(body).id}
+
+        batch.run_batch(store, state["id"], runner, _FakeJobCtx(), _ctx(reg))
+        # When v1 runs it is already "running" on disk; when v2 runs, v1 is "done".
+        assert seen[0] == ["running", "queued"]
+        assert seen[1] == ["done", "running"]
+
+    def test_unknown_batch_raises(self, tmp_path):
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        runner, _ = _make_runner(reg)
+        with pytest.raises(RpcError, match="unknown batch"):
+            batch.run_batch(store, "nope", runner, _FakeJobCtx(), _ctx(reg))
+
+
+class TestRunBatchCancellation:
+    def test_cancel_between_sources_leaves_rest_queued(self, tmp_path):
+        # Acceptance #4: cancellation mid-batch — the cancel lands after source 1
+        # finishes; sources 2 and 3 stay queued, the batch is cancelled.
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2", "v3"])
+        runner, invoked = _make_runner(reg)
+        # The runner checks raise_if_cancelled once per source BEFORE running it;
+        # cancel_after=1 flips cancellation on after the first gate check, so v1
+        # runs and the gate before v2 raises.
+        with pytest.raises(JobCancelled):
+            batch.run_batch(store, state["id"], runner, _FakeJobCtx(cancel_after=1), _ctx(reg))
+        assert invoked == ["v1"]
+        assert _statuses(store, state["id"]) == ["done", "queued", "queued"]
+
+    def test_cancel_during_a_source_marks_it_cancelled(self, tmp_path):
+        # A source whose sub-job is cancelled mid-run records "cancelled" on its
+        # item (the _await_subjob relay re-raises JobCancelled), and the batch
+        # unwinds with the in-flight item cancelled, the rest still queued.
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2"])
+
+        def runner(video_id: str, ctx: RpcContext) -> dict[str, Any]:
+            def body(job_ctx: Any) -> dict[str, Any]:
+                return {"source": video_id}
+
+            return {"jobId": ctx.jobs.start(body).id}
+
+        # Parent reports NOT cancelled at the pre-source gate, then becomes
+        # cancelled while awaiting the sub-job (cancel_after=1: first gate passes
+        # for v1, the await relay sees .cancelled flip via a second check).
+        ctx_obj = _FakeJobCtx()
+
+        def fake_await(job_id, job_ctx, ctx, on_sub):
+            on_sub(100.0, "step 1/1 · go")
+            raise JobCancelled()
+
+        with pytest.raises(JobCancelled):
+            batch.run_batch(store, state["id"], runner, ctx_obj, _ctx(reg), await_subjob=fake_await)
+        assert _statuses(store, state["id"]) == ["cancelled", "queued"]
+
+
+class TestRunBatchProgress:
+    def test_progress_message_carries_source_prefix(self, tmp_path):
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2"])
+        runner, _ = _make_runner(reg, pct=40.0)
+        ctx_obj = _FakeJobCtx()
+        batch.run_batch(
+            store,
+            state["id"],
+            runner,
+            ctx_obj,
+            _ctx(reg),
+            title_resolver=lambda vid: f"Title-{vid}",
+        )
+        prefixes = [msg for _pct, msg in ctx_obj.messages if msg]
+        # The runner prepends "source k/N · <title> · " to the relayed message. The
+        # reused recipe relay forwards the sub-job's PCT with an empty message
+        # string (it relays progress percent, not the inner step text), so the
+        # message is exactly the source prefix — that prefix IS the WU7 contract.
+        assert any(msg == "source 1/2 · Title-v1 · " for msg in prefixes)
+        assert any(msg == "source 2/2 · Title-v2 · " for msg in prefixes)
+        # a terminal "done" tick lands at 100%.
+        assert (100.0, "done") in ctx_obj.messages
+
+    def test_progress_is_spread_across_sources(self, tmp_path):
+        # Source i's [0,100] slice maps into [i/N, (i+1)/N] of the overall bar. The
+        # runner emits a deterministic start-of-source tick at the slice base
+        # (on_sub(0.0) → i/N*100); the inner sub-pct relay is timing-dependent, so
+        # the spread is asserted on those runner-owned base offsets, which proves
+        # source 2 begins at the halfway mark of the overall bar.
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2", "v3", "v4"])
+        runner, _ = _make_runner(reg, pct=50.0)
+        ctx_obj = _FakeJobCtx()
+        batch.run_batch(store, state["id"], runner, ctx_obj, _ctx(reg))
+        pcts = [pct for pct, _msg in ctx_obj.messages]
+        # 4 sources -> slice bases at 0, 25, 50, 75 of the overall [0,100] bar.
+        assert 0.0 in pcts
+        assert 25.0 in pcts
+        assert 50.0 in pcts
+        assert 75.0 in pcts
+
+    def test_default_title_resolver_is_video_id(self, tmp_path):
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1"])
+        runner, _ = _make_runner(reg)
+        ctx_obj = _FakeJobCtx()
+        batch.run_batch(store, state["id"], runner, ctx_obj, _ctx(reg))
+        # with no resolver supplied, the title falls back to the raw video id.
+        assert any("source 1/1 · v1 · " in msg for _pct, msg in ctx_obj.messages)

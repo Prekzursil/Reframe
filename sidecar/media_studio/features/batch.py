@@ -1,8 +1,11 @@
-"""Repurpose BATCH store + model (the repurpose bundle's WU6 durability substrate).
+"""Repurpose BATCH store + model + per-source runner (WU6 substrate + WU7 runner).
 
 A *batch* points one saved :mod:`templates` template at MANY library sources and
-runs them as one aggregate job (the runner is WU7; this module is the durable
-state layer only). Because the job registry is in-memory (``jobs.py`` —
+runs them as one aggregate job. WU6 ships the durable state layer (model + store +
+checkpoint-on-transition); WU7 adds :func:`run_batch`, the parent batch job body
+that drives each source through the WU5 template path with NEW per-source
+try/except isolation (G-ISO) over the EXISTING recipe sub-job relay. Because the
+job registry is in-memory (``jobs.py`` —
 ``self._jobs: dict``), the ONLY thing that survives a sidecar/app restart is what
 the batch checkpoint persists. WU6 therefore ships exactly that checkpoint:
 
@@ -25,8 +28,9 @@ the batch checkpoint persists. WU6 therefore ships exactly that checkpoint:
     state is always consistent before the next item runs — the substrate the WU8
     resume reads back.
 
-Pure logic + filesystem only — no heavy-ML / network / provider / runner imports.
-The runner, resume, consent and RPC layers are later WUs.
+No heavy-ML / network / provider imports. The runner reuses the recipe sub-job
+relay by import (no new sub-job machinery); resume, consent and the RPC layer are
+later WUs.
 """
 
 from __future__ import annotations
@@ -34,17 +38,29 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from ..protocol import ErrorCode, RpcError
-from ..util import get_logger, now_ms
+from ..jobs import JobCancelled
+from ..protocol import ErrorCode, RpcContext, RpcError
+from ..util import clamp, get_logger, now_ms
+from . import recipes
 
 log = get_logger("media_studio.features.batch")
 
 BatchItem = dict[str, Any]
 BatchState = dict[str, Any]
 BatchSummary = dict[str, Any]
+
+#: A template-run seam: ``(video_id, ctx) -> {"jobId": ...}`` — runs one source
+#: through the WU5 template path and returns the spawned sub-job id. The runner
+#: only awaits + isolates; it never builds the per-source job itself.
+TemplateRunner = Callable[[str, RpcContext], dict[str, Any]]
+#: Maps a source ``video_id`` to a human title for the progress message.
+TitleResolver = Callable[[str], str]
+#: The sub-job await/relay seam (defaults to the recipe runner's ``_await_subjob``).
+AwaitSubjob = Callable[[str, Any, RpcContext, Callable[[float, str], None]], Any]
 
 #: every legal :class:`BatchItem` status (DESIGN §5.2).
 ITEM_STATUSES: frozenset[str] = frozenset({"queued", "running", "done", "error", "cancelled", "skipped"})
@@ -212,6 +228,21 @@ class BatchStore:
         self._write(state)
         return state
 
+    def set_status(self, batch_id: str, status: str) -> BatchState:
+        """Override the aggregate batch ``status`` (atomic rewrite).
+
+        The runner uses this when it deliberately STOPS early (``continue_on_error``
+        off): the items left ``queued`` would otherwise make :func:`derive_status`
+        report ``running`` for a batch that has actually halted, so the runner
+        records the terminal ``error`` aggregate explicitly (DESIGN §10.3).
+        """
+        state = self.load(batch_id)
+        if state is None:
+            raise _invalid(f"unknown batch: {batch_id}")
+        state["status"] = status
+        self._write(state)
+        return state
+
     def delete(self, batch_id: str) -> bool:
         """Drop a batch file; ``True`` if one existed, ``False`` otherwise."""
         path = self._path(batch_id)
@@ -237,6 +268,99 @@ class BatchStore:
         return summaries
 
 
+# --------------------------------------------------------------------------- #
+# runner — per-source isolation over the WU5 template path (WU7, G-ISO)
+# --------------------------------------------------------------------------- #
+def _default_await_subjob(
+    sub_job_id: str,
+    job_ctx: Any,
+    ctx: RpcContext,
+    on_sub: Callable[[float, str], None],
+) -> Any:
+    """Await one per-source sub-job via the recipe runner's proven relay.
+
+    ``recipes.Recipes._await_subjob`` references no instance state, so it is
+    reused verbatim (no new sub-job-await machinery) by calling it with a ``None``
+    ``self`` — the batch runner gains the SAME progress-relay, cancel-propagation,
+    error-reraise and timeout behavior the recipe runner already ships and tests.
+    """
+    # _await_subjob touches no instance state; the cast documents the intentional
+    # ``self``-free reuse so basedpyright accepts the stateless call.
+    return recipes.Recipes._await_subjob(cast("recipes.Recipes", None), sub_job_id, job_ctx, ctx, on_sub)
+
+
+def run_batch(
+    store: BatchStore,
+    batch_id: str,
+    template_runner: TemplateRunner,
+    job_ctx: Any,
+    ctx: RpcContext,
+    *,
+    continue_on_error: bool = True,
+    title_resolver: TitleResolver | None = None,
+    await_subjob: AwaitSubjob | None = None,
+) -> BatchState:
+    """Run a batch's sources through ``template_runner`` with per-source isolation.
+
+    The parent batch job body: iterate the batch's items, run each source through
+    the WU5 template path (``template_runner`` → ``{jobId}``), and await that
+    sub-job via the EXISTING recipe relay (:func:`_default_await_subjob`). Each
+    source's ``[0,100]`` sub-progress is spread into its even slice of the overall
+    ``[0,100]`` bar (mirroring ``convert_batch``), and the relayed step message is
+    prefixed with ``"source k/N · <title> · "`` (extends the recipe runner's
+    ``"step j/M · <label>"``, DESIGN §7).
+
+    The deliberate divergence from ``convert_batch``/``_run_one_step`` (G-ISO):
+    each source runs inside a NEW try/except, so one bad source records ``error``
+    on its :class:`BatchItem` and the batch CONTINUES when ``continue_on_error``
+    (default ``true``); with the toggle off the batch stops at the first error and
+    leaves the remaining items ``queued``. A :class:`~media_studio.jobs.JobCancelled`
+    is NOT isolated: an in-flight source is recorded ``cancelled`` and the cancel
+    re-raised so the parent job unwinds (no new cancel machinery — the relay's
+    ``raise_if_cancelled`` path is reused).
+    """
+    state = store.load(batch_id)
+    if state is None:
+        raise _invalid(f"unknown batch: {batch_id}")
+    resolve_title = title_resolver or (lambda video_id: video_id)
+    await_sub = await_subjob or _default_await_subjob
+
+    items: list[BatchItem] = state["items"]
+    total = max(len(items), 1)
+    final = state  # the latest store-returned state (always non-None for the return).
+    for index, item in enumerate(items):
+        job_ctx.raise_if_cancelled()
+        video_id = item["videoId"]
+        title = resolve_title(video_id)
+        base = index / total * 100.0
+        span = 100.0 / total
+        prefix = f"source {index + 1}/{total} · {title} · "
+
+        def on_sub(pct: float, message: str, _base: float = base, _span: float = span, _prefix: str = prefix) -> None:
+            job_ctx.progress(_base + clamp(pct, 0.0, 100.0) / 100.0 * _span, f"{_prefix}{message}")
+
+        final = store.update_item(batch_id, video_id, status="running")
+        on_sub(0.0, "")
+        try:
+            started = template_runner(video_id, ctx)
+            result = await_sub(started["jobId"], job_ctx, ctx, on_sub)
+        except JobCancelled:
+            store.update_item(batch_id, video_id, status="cancelled")
+            raise
+        except Exception as exc:  # noqa: BLE001 - per-source isolation is the point (G-ISO)
+            final = store.update_item(batch_id, video_id, status="error", error=str(exc))
+            if not continue_on_error:
+                # Halted early: the still-``queued`` tail would read as ``running``,
+                # so record the terminal ``error`` aggregate explicitly (§10.3).
+                final = store.set_status(batch_id, "error")
+                break
+            continue
+        final = store.update_item(batch_id, video_id, status="done", jobId=started["jobId"], results=result)
+
+    job_ctx.progress(100.0, "done")
+    return final
+
+
 def _summarize(state: BatchState) -> BatchSummary:
     """Project a :class:`BatchState` to a :class:`BatchSummary` (no per-item heavy data)."""
     items = state.get("items") or []
@@ -258,12 +382,16 @@ def _summarize(state: BatchState) -> BatchSummary:
 __all__ = [
     "ITEM_STATUSES",
     "TERMINAL_STATUSES",
+    "AwaitSubjob",
     "BatchItem",
     "BatchState",
     "BatchStore",
     "BatchSummary",
+    "TemplateRunner",
+    "TitleResolver",
     "derive_status",
     "is_terminal_status",
     "new_item",
     "new_state",
+    "run_batch",
 ]
