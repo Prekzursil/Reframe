@@ -24,6 +24,7 @@ you want it. **No accounts, no telemetry, no cloud dependency.**
 | **Speakers** | token-free **diarization** (speaker labels) |
 | **Dub / TTS** | multi-engine TTS (Kokoro / Chatterbox / edge-tts) + translation-driven dub |
 | **Timeline / Export** | per-video workspace; **EDL/CSV NLE export** (Premiere/DaVinci); **package-for-upload** ZIP |
+| **Intelligence** | **clip recommendations** (rank moments to turn into shorts); **best-frame thumbnails** (auto-pick the strongest frame); **semantic search** over your library (local-first embeddings, cloud only with per-data-type consent) |
 | **Pipelines** | saved multi-step **recipes** run in one shot; **system health** diagnostics |
 
 ## Architecture
