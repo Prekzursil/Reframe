@@ -103,6 +103,39 @@ describe('client.shorts (P4 §2 / C6 / C8)', () => {
   });
 });
 
+describe('client.thumbnail (WU-C4 — best-frame picker §3.5)', () => {
+  it('select forwards every span field to thumbnail.select', async () => {
+    const rpc = installApi();
+    await client.thumbnail.select({
+      videoId: 'v1',
+      candidateId: 'cand-1',
+      path: '/out/shorts-v1/clip.mp4',
+      start: 1.5,
+      end: 9.5,
+    });
+    expect(rpc).toHaveBeenCalledWith('thumbnail.select', {
+      videoId: 'v1',
+      candidateId: 'cand-1',
+      path: '/out/shorts-v1/clip.mp4',
+      start: 1.5,
+      end: 9.5,
+    });
+  });
+
+  it('select forwards a {path}-only span (the produced-clip case)', async () => {
+    const rpc = installApi();
+    await client.thumbnail.select({ path: '/out/shorts-v1/clip.mp4' });
+    expect(rpc).toHaveBeenCalledWith('thumbnail.select', { path: '/out/shorts-v1/clip.mp4' });
+  });
+
+  it('select resolves the {jobId} handle it is typed for', async () => {
+    const rpc = installApi();
+    rpc.mockResolvedValueOnce({ jobId: 'job-7' });
+    const res = await client.thumbnail.select({ candidateId: 'cand-1', videoId: 'v1' });
+    expect(res.jobId).toBe('job-7');
+  });
+});
+
 describe('client.captions (P4 §2 / C7 / C8)', () => {
   it('cues forwards {videoId} and resolves the {cues} envelope (reuses Cue type)', async () => {
     const rpc = installApi();

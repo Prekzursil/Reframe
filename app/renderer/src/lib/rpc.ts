@@ -151,6 +151,27 @@ export interface ShortInfo {
 }
 
 /**
+ * WU-C4 `thumbnail.select` job result (the `job.done.result` payload, NOT the
+ * immediate rpc resolution which is only `{jobId}`). Field names mirror the
+ * sidecar `thumbnail_select` done payload (`handlers.py` WU-C3) EXACTLY.
+ *
+ * `degraded` is `true` when no consented cloud model + no local weights were
+ * available, so the deterministic clip-midpoint frame was used (zero egress).
+ * The renderer surfaces this as a visible + announced note rather than swapping
+ * silently (DESIGN §3.6).
+ */
+export interface BestFrame {
+  /** Source-absolute time (seconds) of the chosen thumbnail frame. */
+  frameTimeSec: number;
+  /** Absolute path of the written poster (inside the exports root). */
+  thumbnailPath: string;
+  /** The scorer's confidence for the picked frame (0.0 on the degrade path). */
+  score: number;
+  /** True when the midpoint fallback was used (no vision model available). */
+  degraded: boolean;
+}
+
+/**
  * P4 §2 `shorts.reexport` result — the "reopen in short-maker" hint: the source
  * `videoId` plus a candidate skeleton rebuilt from the clip's `.json` metadata,
  * so the UI can re-open Short-maker primed and replay `shortmaker.export`. Field
@@ -624,6 +645,25 @@ export const client = {
     delete: (path: string): Promise<{ ok: boolean }> => rpc('shorts.delete', { path }),
     /** `shorts.reexport {path}` — the reopen-in-short-maker hint (no job). */
     reexport: (path: string): Promise<ShortReexportHint> => rpc('shorts.reexport', { path }),
+  },
+
+  // ---- WU-C4 best-frame thumbnail picker (§3.5; AI job) -------------------
+
+  thumbnail: {
+    /**
+     * `thumbnail.select {videoId?, candidateId?|path?, start?, end?}` (WU-C3) —
+     * the AI best-frame picker. A long job: rpc resolves with `{jobId}` ONLY;
+     * the terminal {@link BestFrame} arrives later via a `job.done` notification
+     * (subscribe through `onJobDone`). Either a `candidateId` (resolved from the
+     * selection cache) OR an explicit `{path,start,end}` span identifies the clip.
+     */
+    select: (params: {
+      videoId?: string;
+      candidateId?: string;
+      path?: string;
+      start?: number;
+      end?: number;
+    }): Promise<JobHandle> => rpc('thumbnail.select', { ...params }),
   },
 
   // ---- P4 captions (live preview overlay; §2 / C7) ------------------------
