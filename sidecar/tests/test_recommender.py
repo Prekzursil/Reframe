@@ -25,6 +25,7 @@ from typing import Any
 import pytest
 from media_studio.features import recommender
 from media_studio.features.recommender import recommend
+from media_studio.models.presets import FUNCTIONS as _PRESET_FUNCTIONS
 from media_studio.models.presets import LOCAL
 
 # --------------------------------------------------------------------------- #
@@ -91,7 +92,10 @@ def _catalog() -> FakeCatalog:
 # Input builders (the wire shapes the handler forwards)
 # --------------------------------------------------------------------------- #
 
-_FUNCTIONS = ("select", "subtitles", "translation", "vision", "editPlan")
+# Track the routable functions from the single source of truth so adding a new
+# one (e.g. WU-A3's "index") keeps the recommender's perFunction shape assertions
+# correct without silently dropping coverage of the new route.
+_FUNCTIONS = _PRESET_FUNCTIONS
 
 
 def _component(name: str, *, verdict: str = "ok", present: bool = True) -> dict[str, Any]:

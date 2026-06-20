@@ -6,14 +6,17 @@ one of three smart presets into a concrete ``routing.perFunction`` map, ranks
 per-function model candidates from the catalog, and answers the first-run
 local-vs-cloud default.
 
-The five Reframe AI functions (the task seams) — each maps to one catalog task
-tier (PLAN §WU-presets · CATALOG-SEED tasks 1..5):
+The Reframe AI functions (the task seams) — each maps to one catalog task
+tier (PLAN §WU-presets · CATALOG-SEED tasks 1..5; ``index`` added by WU-A3):
 
   * ``select``      — Moment-Find / Select   (task 1)
   * ``subtitles``   — Caption / Title / Hook (task 2)
   * ``translation`` — Translation            (task 3)
   * ``vision``      — Vision / OCR           (task 4)
   * ``editPlan``    — Edit-Plan generation   (task 5)
+  * ``index``       — Semantic-index embeddings (WU-A3; reuses task 1's tier —
+    every text-capable seed row already grades MOMENT_FIND, so no catalog edit
+    is needed to make embeddings a first-class routable function)
 
 The catalog is **duck-typed** so the ranking logic never hard-depends on
 ``catalog.py``. A catalog need only expose ``all() -> Iterable[entry]`` where each
@@ -55,8 +58,9 @@ from typing import Any, Protocol, runtime_checkable
 #: Sentinel provider id for the always-available local backstop.
 LOCAL = "local"
 
-#: The five Reframe AI functions, in canonical (catalog task 1..5) order.
-FUNCTIONS: tuple[str, ...] = ("select", "subtitles", "translation", "vision", "editPlan")
+#: The Reframe AI functions, in canonical (catalog task 1..5) order; ``index``
+#: (WU-A3, semantic-index embeddings) is appended as the routable embed seam.
+FUNCTIONS: tuple[str, ...] = ("select", "subtitles", "translation", "vision", "editPlan", "index")
 
 #: Functions whose egress is privacy-sensitive (vision = frames leave the box).
 _VISION_FUNCTIONS: frozenset[str] = frozenset({"vision"})
@@ -76,12 +80,14 @@ PRESETS: dict[str, dict[str, str]] = {
     "privacy": dict.fromkeys(FUNCTIONS, "local"),
     "bestFreeCloud": dict.fromkeys(FUNCTIONS, "cloud"),
     # balanced: cloud for text tasks (privacy-aware), local for vision frames.
+    # index (WU-A3) is a text task → privacy-aware cloud, like the other text seams.
     "balanced": {
         "select": "cloudSafe",
         "subtitles": "cloudSafe",
         "translation": "cloudSafe",
         "vision": "local",
         "editPlan": "cloudSafe",
+        "index": "cloudSafe",
     },
 }
 
@@ -228,6 +234,11 @@ _FUNCTION_TASK_NAMES: dict[str, str] = {
     "translation": "TRANSLATION",
     "vision": "VISION",
     "editPlan": "EDIT_PLAN",
+    # WU-A3: embeddings reuse the EXISTING MOMENT_FIND task (the primary
+    # text-capable task graded by every text seed row) so the bracket lookup at
+    # ``_AdaptedEntry.__init__`` resolves for all 13 rows with zero catalog edits.
+    # Promoting "index" to a dedicated EMBED tier is a flagged post-MVP follow-up.
+    "index": "MOMENT_FIND",
 }
 
 

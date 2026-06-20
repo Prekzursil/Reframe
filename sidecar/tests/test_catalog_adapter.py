@@ -123,9 +123,29 @@ def test_adapter_accepts_a_custom_catalog_tuple() -> None:
     assert entries[0].id == C.CATALOG[0].id
 
 
-def test_function_to_task_mapping_covers_all_five_functions() -> None:
+def test_function_to_task_mapping_covers_all_functions() -> None:
     # The adapter's function->Task map must be total over FUNCTIONS (no KeyError).
     mapping = P.function_tasks()
     assert set(mapping) == set(P.FUNCTIONS)
     assert mapping["vision"] is C.Task.VISION
     assert mapping["editPlan"] is C.Task.EDIT_PLAN
+    # WU-A3: "index" reuses the EXISTING MOMENT_FIND task (no new Task enum member).
+    assert mapping["index"] is C.Task.MOMENT_FIND
+
+
+def test_adapter_index_grade_mirrors_moment_find_grade() -> None:
+    # WU-A3 AC-(b): because "index" maps to MOMENT_FIND, the flattened
+    # per_task_tier grades "index" identically to "select" on every row — so the
+    # bracket lookup at _AdaptedEntry.__init__ never raises for "index".
+    for entry in _adapter().all():
+        assert entry.per_task_tier["index"] == entry.per_task_tier["select"]
+
+
+def test_bestfreecloud_over_real_catalog_resolves_an_index_route() -> None:
+    # WU-A3 AC-(b) over the REAL catalog: "index" resolves to the same top pick as
+    # "select" (shared MOMENT_FIND task), never collapsing to local under cloud.
+    routing = P.apply_preset("bestFreeCloud", {}, _adapter())
+    index_slot = routing["perFunction"]["index"]
+    select_slot = routing["perFunction"]["select"]
+    assert index_slot["provider"] == select_slot["provider"]
+    assert index_slot["provider"] != P.LOCAL

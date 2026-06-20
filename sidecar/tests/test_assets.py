@@ -267,6 +267,23 @@ class TestManifest:
         assert entry.dest == "models/qwen3-4b.gguf"
         assert entry.detect is manifest.detect_existing_gguf
 
+    def test_day1_embedder_entry(self):
+        # WU-A3 AC-(c): the small local embedder is registered with a non-empty
+        # sha + installer, retrievable via get_asset.
+        entry = manifest.get_asset(manifest.EMBEDDER_ASSET_NAME)
+        assert entry is not None
+        assert entry.kind == "model"
+        assert entry.installer == "download"
+        assert entry.sha256  # non-empty integrity pin (AC-(c))
+        assert len(entry.sha256) == 64  # a real hex sha256
+        assert entry.url and entry.url.endswith(".onnx")
+        assert entry.dest == "models/all-minilm-l6-v2.onnx"
+        assert entry.size_mb > 0
+
+    def test_embedder_entry_is_listed_in_all_assets(self):
+        names = {a.name for a in manifest.all_assets()}
+        assert manifest.EMBEDDER_ASSET_NAME in names
+
     def test_qwen_detect_existing_gguf(self, tmp_path):
         gguf = tmp_path / "anywhere" / "my-qwen.gguf"
         gguf.parent.mkdir(parents=True)

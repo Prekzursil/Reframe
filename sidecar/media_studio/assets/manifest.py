@@ -219,6 +219,19 @@ def detect_existing_gguf(settings: dict[str, Any]) -> str | None:
     return None
 
 
+EMBEDDER_ASSET_NAME = "all-minilm-l6-v2-onnx"
+# WU-A3 (resolves G-A3 asset): the pinned small local embedder for the semantic
+# index. all-MiniLM-L6-v2 emits 384-dim vectors — matching the local-backstop
+# dimension ``embedder.DEFAULT_LOCAL_EMBED_DIM`` (WU-A2) — and is Apache-2.0. The
+# URL pins the exact repo + ONNX file and the sha256 is the file's LFS oid (A6
+# lesson 5: PINNED). Routed via the existing "download" installer (no new type).
+EMBEDDER_ONNX_URL = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx"
+# LFS oid of onnx/model.onnx @ main (verified via the HF tree API, 90,405,214 B).
+EMBEDDER_SHA256 = "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452"
+EMBEDDER_DEST = "models/all-minilm-l6-v2.onnx"
+EMBEDDER_SIZE_MB = 87
+
+
 def _register_day1() -> None:
     """Install the day-1 entries (idempotent: identical re-register is a no-op)."""
     register_asset(
@@ -241,6 +254,18 @@ def _register_day1() -> None:
             installer="download",
             url=QWEN_GGUF_URL,
             detect=detect_existing_gguf,
+        )
+    )
+    register_asset(
+        AssetEntry(
+            name=EMBEDDER_ASSET_NAME,
+            kind="model",
+            size_mb=EMBEDDER_SIZE_MB,
+            dest=EMBEDDER_DEST,
+            label="all-MiniLM-L6-v2 ONNX (semantic-index embeddings, Apache-2.0)",
+            installer="download",
+            url=EMBEDDER_ONNX_URL,
+            sha256=EMBEDDER_SHA256,
         )
     )
 
