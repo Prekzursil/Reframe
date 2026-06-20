@@ -31,12 +31,14 @@ def test_jobstatus_is_str_and_values_are_stable():
     # Inherits from str so it serializes straight into JSON-RPC payloads.
     assert JobStatus.RUNNING == "running"
     assert JobStatus.DONE.value == "done"
+    # WU-6 widened the wire status set from five to six (adds "interrupted").
     assert {s.value for s in JobStatus} == {
         "pending",
         "running",
         "done",
         "error",
         "cancelled",
+        "interrupted",
     }
 
 

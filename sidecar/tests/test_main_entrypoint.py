@@ -10,23 +10,36 @@ JSON-RPC server or touching numpy/cv2/etc.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
+from types import SimpleNamespace
 
 import media_studio.__main__ as entry
+from media_studio.job_store import DiskJobStore
 
 
-def test_main_composes_and_delegates_to_rpc_main(monkeypatch):
-    """main(): runs both pre-serve guards, registers all handlers, then returns
-    rpc.main(argv)'s exit code."""
+def test_main_composes_and_delegates_to_rpc_main(monkeypatch, tmp_path):
+    """main(): runs both pre-serve guards, registers all handlers, builds a
+    DiskJobStore rooted at the returned Services.data_dir/jobs, and forwards it
+    into rpc.main(argv) — returning rpc.main's exit code (WU-6 composition seam).
+    """
     calls: list[str] = []
 
     monkeypatch.setattr(entry, "_suppress_windows_error_dialogs", lambda: calls.append("suppress"))
     monkeypatch.setattr(entry, "_preimport_native_modules", lambda: calls.append("preimport"))
-    monkeypatch.setattr(entry.handlers, "register_all", lambda: calls.append("register"))
+
+    fake_svc = SimpleNamespace(data_dir=tmp_path)
+
+    def fake_register_all():
+        calls.append("register")
+        return fake_svc
+
+    monkeypatch.setattr(entry.handlers, "register_all", fake_register_all)
 
     captured = {}
 
-    def fake_rpc_main(argv=None):
+    def fake_rpc_main(argv=None, *, store=None):
         captured["argv"] = argv
+        captured["store"] = store
         return 0
 
     monkeypatch.setattr(entry.rpc, "main", fake_rpc_main)
@@ -36,13 +49,17 @@ def test_main_composes_and_delegates_to_rpc_main(monkeypatch):
     # ordering: guards FIRST, then registration, then serve
     assert calls == ["suppress", "preimport", "register"]
     assert captured["argv"] == ["--flag"]
+    # the composition seam carries data_dir: a DiskJobStore at data_dir/jobs
+    store = captured["store"]
+    assert isinstance(store, DiskJobStore)
+    assert store.root == Path(tmp_path) / "jobs"
 
 
-def test_main_propagates_rpc_exit_code(monkeypatch):
+def test_main_propagates_rpc_exit_code(monkeypatch, tmp_path):
     monkeypatch.setattr(entry, "_suppress_windows_error_dialogs", lambda: None)
     monkeypatch.setattr(entry, "_preimport_native_modules", lambda: None)
-    monkeypatch.setattr(entry.handlers, "register_all", lambda: None)
-    monkeypatch.setattr(entry.rpc, "main", lambda argv=None: 130)
+    monkeypatch.setattr(entry.handlers, "register_all", lambda: SimpleNamespace(data_dir=tmp_path))
+    monkeypatch.setattr(entry.rpc, "main", lambda argv=None, *, store=None: 130)
     assert entry.main() == 130
 
 

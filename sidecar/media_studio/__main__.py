@@ -16,6 +16,7 @@ from __future__ import annotations
 import sys
 
 from . import handlers, rpc
+from .job_store import DiskJobStore
 
 
 def _suppress_windows_error_dialogs() -> None:
@@ -72,11 +73,20 @@ def _preimport_native_modules() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Register all feature handlers, then run the stdio JSON-RPC server."""
+    """Register all feature handlers, then run the stdio JSON-RPC server.
+
+    WU-6 composition seam: ``register_all`` returns the assembled ``Services``
+    (the only owner of ``data_dir``), and the ``JobRegistry`` is owned by the
+    ``RpcServer`` ``rpc.main`` builds. This is the ONLY place both are visible,
+    so here we build a :class:`DiskJobStore` rooted at ``svc.data_dir/jobs`` and
+    inject it — ``rpc.main`` rehydrates it once at startup so a job interrupted
+    by a prior exit reappears as INTERRUPTED (never auto-restarted, §5).
+    """
     _suppress_windows_error_dialogs()
     _preimport_native_modules()
-    handlers.register_all()
-    return rpc.main(argv)
+    svc = handlers.register_all()
+    store = DiskJobStore(svc.data_dir / "jobs")
+    return rpc.main(argv, store=store)
 
 
 if __name__ == "__main__":  # pragma: no cover - process entry

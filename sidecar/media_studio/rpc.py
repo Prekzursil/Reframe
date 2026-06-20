@@ -19,6 +19,7 @@ import threading
 from typing import Any, TextIO
 
 from . import protocol
+from .job_store import JobStore
 from .jobs import JobRegistry
 from .protocol import (
     ErrorCode,
@@ -48,11 +49,16 @@ class RpcServer:
         self,
         instream: TextIO | None = None,
         outstream: TextIO | None = None,
+        *,
+        store: JobStore | None = None,
     ) -> None:
         self._in: TextIO = instream if instream is not None else sys.stdin
         self._out: TextIO = outstream if outstream is not None else sys.stdout
         self._write_lock = threading.Lock()
-        self.jobs = JobRegistry(emit_progress=self._emit_progress, emit_done=self._emit_done)
+        # WU-6: the registry is RpcServer-owned, so the persistence store is
+        # injected here (default None = today's in-memory behavior, back-compat)
+        # and threaded down from the composition root via build_server/main.
+        self.jobs = JobRegistry(emit_progress=self._emit_progress, emit_done=self._emit_done, store=store)
         self.ctx = RpcContext(emit_notification=self._write_obj, jobs=self.jobs)
 
     # -- output ------------------------------------------------------------
@@ -127,21 +133,36 @@ class RpcServer:
         log.info("sidecar rpc server: stdin closed, exiting")
 
 
-def build_server(instream: TextIO | None = None, outstream: TextIO | None = None) -> RpcServer:
+def build_server(
+    instream: TextIO | None = None,
+    outstream: TextIO | None = None,
+    *,
+    store: JobStore | None = None,
+) -> RpcServer:
     """Construct an :class:`RpcServer`. Feature modules register handlers on
-    :data:`protocol.METHODS` at import time before this is called."""
-    return RpcServer(instream=instream, outstream=outstream)
+    :data:`protocol.METHODS` at import time before this is called.
+
+    WU-6: ``store`` (default ``None`` = in-memory) is forwarded to the
+    registry the server constructs so the composition root can supply disk
+    persistence."""
+    return RpcServer(instream=instream, outstream=outstream, store=store)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, store: JobStore | None = None) -> int:
     """Entry point: serve JSON-RPC over real stdio until stdin closes.
 
     CONTRACT-NOTE: feature handlers register themselves via import side effects.
     This core module imports none of them (to stay heavy-ML-free); the assembled
     sidecar entry point is expected to import the feature packages before calling
     ``main`` so their @method registrations land in METHODS.
+
+    WU-6: when a ``store`` is supplied, the server's registry persists through
+    it and is rehydrated once at startup (mid-flight jobs become INTERRUPTED;
+    nothing is auto-spawned — the §5 no-silent-spend invariant).
     """
-    server = build_server()
+    server = build_server(store=store)
+    if store is not None:
+        server.jobs.rehydrate()
     try:
         server.serve()
     except KeyboardInterrupt:  # pragma: no cover - interactive only
