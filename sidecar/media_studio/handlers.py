@@ -2013,6 +2013,61 @@ class Services:
         )
         return {"jobId": job.id}
 
+    def _director_eval_signals(self, source: str, *, is_copy: bool) -> dict[str, Any]:  # noqa: ARG002 - is_copy distinguishes before/after for an injected seam
+        """The eval-signals seam: a source descriptor -> a JSON-safe metric bundle.
+
+        Adapts the SHIPPED ``phase8.signals`` runner output (motion values, scene
+        cuts) into the value sequences :func:`director_eval.signals_to_metrics`
+        consumes — so ``director.evaluate`` rides the SAME signal compute as
+        ``phase8.signals`` (no parallel path). ``is_copy`` lets a test inject
+        distinct before/after bundles; the default ignores it (the v1 apply COPY is
+        a manifest, not re-encoded media, so before+after share the source compute
+        until the engine WUs render an after-clip). The heavy runner stays behind
+        its existing ``# pragma: no cover`` seam; this adapter is pure shaping.
+        """
+        runner = self._phase8_runner or self._default_phase8_runner()
+        probe = self._ffprobe_duration or _self_ffprobe()
+        settings = self.settings.get()
+        tier = _coerce_tier(None, settings)
+        tracks = runner(source, tier=tier, settings=settings, duration_probe=probe)
+        motion = tracks.get("motion")
+        cuts = tracks.get("sceneCut")
+        return {
+            "motion": [float(s.value) for s in getattr(motion, "signals", ())],
+            "cuts": [float(s.start) for s in getattr(cuts, "signals", ())],
+        }
+
+    def director_evaluate(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:  # noqa: ARG002 - ctx parity (synchronous objective compute)
+        """``director.evaluate({planId})`` -> objective before/after metrics.
+
+        Computes goal-vs-result with the OBJECTIVE deltas (jerk / cutRhythm /
+        silenceRatio / ocrCoverage) via the PURE :func:`director_eval.evaluate` over
+        before/after metric dicts (DESIGN §4, AGENTS.md §7 — preferred over a
+        sycophancy-prone LLM judge). The signals ride the SHIPPED ``phase8.signals``
+        runner (the ``_director_eval_signals`` seam — no new AI path). An OPTIONAL
+        qualitative judge note (the ``_director_eval_judge`` seam, routed through
+        ``_run_ai_job`` in production) is DESCRIPTIVE only — it NEVER overrides the
+        objective score. A plan never applied has no after-state to score (rejected).
+        """
+        plan_id = _require_str(params, "planId")
+        entry = self._director_get_plan(plan_id)
+        if plan_id not in self._director_inverses:
+            raise _invalid(f"plan not applied (nothing to evaluate): {plan_id}")
+
+        from .features import director_eval as _eval  # local: import-light pure
+
+        path = cast("str", self._resolve_video_path(entry.video_id))
+        before = _eval.signals_to_metrics(self._director_eval_signals(path, is_copy=False))
+        after = _eval.signals_to_metrics(self._director_eval_signals(path, is_copy=True))
+        return _eval.evaluate(before, after, goal=entry.plan.goal, judge=self._director_eval_judge)
+
+    #: The OPTIONAL qualitative editPlan judge for ``director.evaluate`` (DESIGN §4):
+    #: ``(before, after, goal) -> note``. ``None`` by default (objective-only). A
+    #: real judge routes through ``_run_ai_job`` (no parallel path); whatever it
+    #: returns is DESCRIPTIVE and can NEVER change the objective score (the
+    #: anti-sycophancy backstop — AGENTS.md §7).
+    _director_eval_judge: Any = None
+
     def _budget_request(self, raw: Any) -> Any:
         """Coerce a wire ``request`` dict into a budget request (or ``None``).
 
@@ -2347,6 +2402,12 @@ def register_all(
     # director.apply recorded (over a fresh COPY) — registered AFTER the plan-rpc
     # methods (SEQUENCED on the single composition root, no parallel AI path).
     reg("director.undo", svc.director_undo)
+    # WU-evaluate: objective goal-vs-result metrics. director.evaluate computes the
+    # before/after deltas (jerk/cutRhythm/silenceRatio/ocrCoverage) via the PURE
+    # director_eval.evaluate over the shipped phase8 signals; an optional LLM judge
+    # note never overrides the objective score (DESIGN §4, AGENTS.md §7). Registered
+    # HERE ONLY (the one composition root — no parallel AI path).
+    reg("director.evaluate", svc.director_evaluate)
 
     # WU-keys: provider key management. Every read is REDACTED (last-4) — no RPC
     # method ever returns a full key; the FACTORY path reads RAW via get_raw().
