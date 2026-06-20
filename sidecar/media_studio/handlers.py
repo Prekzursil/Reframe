@@ -230,6 +230,18 @@ class Services:
             return None
         return video.get("path") or None
 
+    def _video_title(self, video_id: str) -> str:
+        """videoId -> human title for a progress message (the id when unknown).
+
+        The batch runner's title seam (WU10): falls back to the ``videoId`` when
+        the library has no record or no ``title``, so a progress line is always
+        readable even for a stale id.
+        """
+        video = self.library.get(video_id)
+        if video is None:
+            return video_id
+        return str(video.get("title") or video_id)
+
     def _project_path(self, video_id: str) -> Path:
         """The manifest path for a video's project (one project per video)."""
         return self.projects_dir / f"{video_id}.json"
@@ -2575,6 +2587,47 @@ def register_all(
     # here, near the end of register_all.
     _recipes.register(
         path=svc.data_dir / "recipes.json",
+        register_fn=reg,
+    )
+
+    # exportPresets.* (repurpose WU2): server-persisted platform targets the
+    # templates/batch groups reference by id. Direct-return CRUD over a JSON
+    # catalog at data_dir/export-presets.json (atomic temp+rename, self-seeding).
+    # Storage-only — no provider/ML imports; the module owns its own register().
+    from .features import export_presets as _export_presets  # local: import-light
+
+    _export_presets_svc = _export_presets.register(
+        path=svc.data_dir / "export-presets.json",
+        register_fn=reg,
+    )
+
+    # templates.* (repurpose WU5): saved multi-source pipelines (a recipe PLUS
+    # defaultControls + exportTargets). list/save/delete are direct CRUD; apply
+    # runs ONE source through the EXISTING recipe runner after binding steps to
+    # the videoId and fanning out the export step over the live preset catalog.
+    # Registers AFTER the methods its steps reference AND after exportPresets (the
+    # fan-out resolves preset ids from that catalog) — no new RPC site, no provider.
+    from .features import templates as _templates  # local: import-light
+
+    _templates.register(
+        path=svc.data_dir / "templates.json",
+        presets_provider=lambda: {p["id"]: p for p in _export_presets_svc.store.list()},
+        register_fn=reg,
+    )
+
+    # batch.* (repurpose WU10): point ONE template at MANY sources and run them as
+    # one aggregate, resumable, per-source-isolated job (DESIGN §6). The seven
+    # methods own no orchestration of their own — each source rides the live
+    # ``templates.apply`` handler (registered just above), so the batch reaches the
+    # AI envelope only by method name; consent uses ``ai.planJob`` by name (ZERO
+    # provider calls). Registered AFTER templates (its default per-source runner +
+    # consent planner resolve those handlers from the live registry). No new RPC
+    # site, no provider/key wiring. The title seam reuses the library's display name.
+    from .features import batch as _batch  # local: import-light
+
+    _batch.register(
+        path=svc.data_dir / "batches",
+        title_resolver=svc._video_title,
         register_fn=reg,
     )
 
