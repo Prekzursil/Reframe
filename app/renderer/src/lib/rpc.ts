@@ -389,6 +389,116 @@ export interface Project {
   settings: Record<string, unknown>;
 }
 
+// ---- Director (prompt-driven editing) wire shapes ------------------------
+//
+// Field names are FROZEN, identical to the sidecar `director_*` handler payloads
+// (`handlers.py:1778+`) + the `edit_plan.py` canonical serializer + the
+// `director_eval.evaluate` result. Spans are `[startMs, endMs]` integer pairs or
+// null (whole-timeline ops); kind/status enumerate the frozen vocabularies.
+
+/** The v1 op toolbox (DESIGN §2.2) — mirrors the sidecar `OpKind` Literal. */
+export type DirectorOpKind =
+  | 'trim'
+  | 'cut'
+  | 'removeSilence'
+  | 'removeFillers'
+  | 'reorder'
+  | 'retime'
+  | 'reframe'
+  | 'zoomPan'
+  | 'caption'
+  | 'translateCaption'
+  | 'overlayText'
+  | 'lowerThird'
+  | 'export'
+  | 'stitchPanorama'
+  | 'regenScroll'
+  | 'ocrExtractList';
+
+/** Per-op lifecycle — mirrors the sidecar `OpStatus` Literal. */
+export type DirectorOpStatus = 'planned' | 'applied' | 'failed' | 'dropped';
+
+/** One ordered, reversible operation (mirrors `edit_plan.EditOp` on the wire). */
+export interface DirectorOp {
+  id: string;
+  kind: DirectorOpKind;
+  /** Source range [startMs, endMs], or null for whole-timeline ops. */
+  span: [number, number] | null;
+  params: Record<string, unknown>;
+  reversible: boolean;
+  /** Model/engine text — rendered as PLAIN TEXT, NEVER trusted as instructions. */
+  rationale: string;
+  status: DirectorOpStatus;
+  /** Typed reason a drop/fail carries (e.g. "span-exceeds-clip"), or null. */
+  statusReason: string | null;
+}
+
+/** The typed, ordered edit document (mirrors `edit_plan.EditPlan` on the wire). */
+export interface DirectorEditPlan {
+  planId: string;
+  videoId: string;
+  goal: string;
+  sourceHash: string;
+  ops: DirectorOp[];
+  /** The undo plan recorded at apply-time (empty until applied). */
+  inverse: DirectorOp[];
+}
+
+/** `director.plan` job.done payload (`handlers.py:1816`). */
+export interface DirectorPlanResult {
+  planId: string;
+  editPlan: DirectorEditPlan;
+  /** Canonical JSON of the validated plan (cache/diff anchor). */
+  preview: string;
+}
+
+/** `director.apply` / `director.undo` job.done payload (`handlers.py:1940`). */
+export interface DirectorApplyResult {
+  planId: string;
+  /** Per-op status rows after the apply walk (serialized ops). */
+  opsStatus: DirectorOp[];
+  /** Present on apply (not undo): the recorded inverse plan. */
+  inversePlan?: DirectorEditPlan;
+  projectCopyPath: string;
+}
+
+/** One per-data-type cost/route row (`director.previewCost`, `handlers.py:1846`). */
+export interface DirectorCostRow {
+  /** The routed function id: "editPlan" (text) or "vision" (frames/OCR). */
+  function: string;
+  route: string;
+  costEst: number;
+  /** True when this data type would leave the machine (frames = heaviest privacy). */
+  willEgress: boolean;
+  cacheHit: boolean;
+  /** The budget-ack token; echo as `confirmBudget` on apply. */
+  cacheKey: string;
+}
+
+/** `director.previewCost` payload (`handlers.py:1856`). */
+export interface DirectorPreview {
+  perFunction: DirectorCostRow[];
+}
+
+/** The four objective metrics (`director_eval._LOWER_IS_BETTER` keys). */
+export interface DirectorMetrics {
+  jerk: number;
+  cutRhythm: number;
+  silenceRatio: number;
+  ocrCoverage: number;
+}
+
+/** `director.evaluate` payload (`director_eval.evaluate`, `handlers.py:2062`). */
+export interface DirectorEval {
+  /** Single [0,1] summary derived ONLY from the objective deltas. */
+  score: number;
+  /** Signed improvement per metric (positive = better). */
+  deltas: DirectorMetrics;
+  beforeAfter: { before: DirectorMetrics; after: DirectorMetrics };
+  /** Optional qualitative note — descriptive only, NEVER moves `score`. */
+  judgeNote: string | null;
+}
+
 // ---- Notification payloads (CONTRACTS.md §2) -----------------------------
 
 /** `job.progress` params. */
@@ -769,6 +879,29 @@ export const client = {
       threshold?: number,
     ): Promise<JobHandle & { transcript?: Transcript }> =>
       rpc('diarize.start', threshold === undefined ? { videoId } : { videoId, threshold }),
+  },
+
+  /**
+   * `director.*` — the prompt-driven AI video editing spine (WU-plan-rpc /
+   * WU-evaluate). `plan`/`apply`/`undo` are JOB-based (resolve `{jobId}`; the
+   * typed result arrives on `job.done`); `previewCost`/`evaluate` are SYNCHRONOUS
+   * (resolve their payload directly). Field names are FROZEN, identical to the
+   * sidecar `director_*` handlers (`handlers.py:1778+`).
+   */
+  director: {
+    /** `director.plan {videoId, goal}` -> {jobId}; job.done = {planId, editPlan, preview}. */
+    plan: (videoId: string, goal: string): Promise<JobHandle> =>
+      rpc('director.plan', { videoId, goal }),
+    /** `director.previewCost {planId}` -> per-data-type cost/route/egress (ZERO provider calls). */
+    previewCost: (planId: string): Promise<DirectorPreview> =>
+      rpc('director.previewCost', { planId }),
+    /** `director.apply {planId, confirmBudget?}` -> {jobId}; job.done = DirectorApplyResult. */
+    apply: (planId: string, confirmBudget?: string): Promise<JobHandle> =>
+      rpc('director.apply', confirmBudget === undefined ? { planId } : { planId, confirmBudget }),
+    /** `director.undo {planId}` -> {jobId}; re-applies the recorded inverse plan. */
+    undo: (planId: string): Promise<JobHandle> => rpc('director.undo', { planId }),
+    /** `director.evaluate {planId}` -> objective before/after metrics (synchronous). */
+    evaluate: (planId: string): Promise<DirectorEval> => rpc('director.evaluate', { planId }),
   },
 } as const;
 

@@ -1,0 +1,252 @@
+/* directorPanel.css — the AI Director (prompt-driven editing) surface.
+   Reuses the .feature-panel base voice (panels.css / shell.css); adds the prompt
+   box, plain-language summary, cost/privacy banner, collapsible op groups, per-op
+   status rows, action gate, and the objective evaluation block. Tokens only — no
+   one-off hex. Status colors are semantic (applied/failed/dropped map to
+   success/error/muted) but ALWAYS paired with a text label (a11y F5 — never
+   color-only). Class names are test-pinned; restyle only. */
+
+.director-panel .director-intro {
+  color: var(--text-secondary);
+  max-width: 60ch;
+}
+
+/* ---- prompt ----------------------------------------------------------------- */
+
+.director-panel .director-prompt {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-5) 0 var(--space-6);
+}
+
+.director-panel .director-prompt textarea {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+}
+
+.director-panel .director-prompt button {
+  justify-self: start;
+}
+
+/* ---- progress (SR-announced) ------------------------------------------------ */
+
+.director-panel .director-progress {
+  min-height: 1.25em;
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+}
+
+/* ---- summary ---------------------------------------------------------------- */
+
+.director-panel .director-summary {
+  margin: var(--space-5) 0 var(--space-4);
+}
+
+.director-panel .director-summary__text {
+  font-size: var(--type-body-large-size, 1.1rem);
+  font-weight: 600;
+}
+
+.director-panel .director-goal-echo {
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+}
+
+/* ---- cost / privacy banner -------------------------------------------------- */
+
+.director-panel .director-cost {
+  margin: var(--space-4) 0;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.director-panel .director-cost__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.director-panel .director-cost__row {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--border-subtle);
+}
+
+.director-panel .director-cost__row.is-frame {
+  border-left-color: var(--status-warn);
+}
+
+.director-panel .director-cost__label {
+  font-weight: 600;
+}
+
+.director-panel .director-cost__route {
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  font-variant-numeric: tabular-nums;
+}
+
+.director-panel .director-cost__warn {
+  color: var(--status-warn);
+  font-size: var(--type-caption-size);
+}
+
+/* ---- filter ----------------------------------------------------------------- */
+
+.director-panel .director-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+
+/* ---- storyboard / groups ---------------------------------------------------- */
+
+.director-panel .director-storyboard {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.director-panel .director-group {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-raised);
+}
+
+.director-panel .director-group__head {
+  cursor: pointer;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.director-panel .director-group__ops {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* ---- op rows ---------------------------------------------------------------- */
+
+.director-panel .director-op {
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
+  border-left: 3px solid var(--border-subtle);
+}
+
+.director-panel .director-op:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.director-panel .director-op.is-applied {
+  border-left-color: var(--status-success);
+}
+
+.director-panel .director-op.is-failed {
+  border-left-color: var(--status-error);
+}
+
+.director-panel .director-op.is-dropped {
+  border-left-color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.director-panel .director-op.is-dropped .director-op__kind {
+  text-decoration: line-through;
+}
+
+.director-panel .director-op__head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.director-panel .director-op__kind {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.director-panel .director-op__status {
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+}
+
+.director-panel .director-op__rationale,
+.director-panel .director-op__reason,
+.director-panel .director-op__hint {
+  margin: var(--space-1) 0 0;
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+}
+
+.director-panel .director-op__reason {
+  color: var(--status-error);
+}
+
+.director-panel .director-op__controls {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.director-panel .director-op__controls .link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+
+/* ---- actions ---------------------------------------------------------------- */
+
+.director-panel .director-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: var(--space-5) 0;
+}
+
+/* ---- evaluation ------------------------------------------------------------- */
+
+.director-panel .director-eval {
+  margin-top: var(--space-5);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.director-panel .director-eval__score {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.director-panel .director-eval__deltas {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.director-panel .director-eval__note {
+  margin-top: var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+}
