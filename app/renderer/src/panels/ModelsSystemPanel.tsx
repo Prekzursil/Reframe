@@ -99,16 +99,27 @@ export function recommendationUnavailable(rec: Recommendation): boolean {
 /**
  * WU-B3 — whether the user's CURRENT settings already match the recommendation,
  * so Apply is a no-op. True iff the active preset equals the recommended preset,
- * the recommended ASR engine is already selected (or none is proposed), and the
- * recommendation proposes no downloads. Pure (settings + recommendation in).
+ * the recommended ASR engine is already selected (or none is proposed), the
+ * recommendation proposes no downloads, AND every per-function route it proposes
+ * already matches the current routing. The routing check is load-bearing: the
+ * recommender folds detected-local-server deltas (e.g. `select → local-ollama`,
+ * the headline "no cloud egress" value) INDEPENDENTLY of the preset, so a
+ * preset+ASR match can still hide a pending routing delta — omitting it would
+ * declare "already optimal" and make that local-routing recommendation
+ * un-appliable from the card. Pure (settings + recommendation in).
  */
 export function recommendationAlreadyOptimal(
   rec: Recommendation,
   activePreset: string | undefined,
   asrEngine: string | undefined,
+  currentRouting: RoutingBlock | undefined,
 ): boolean {
   if (rec.preset !== activePreset) return false;
   if (rec.downloads.length > 0) return false;
+  const current = currentRouting?.perFunction ?? {};
+  for (const [function_, slot] of Object.entries(rec.routing.perFunction)) {
+    if (current[function_]?.provider !== slot.provider) return false;
+  }
   return rec.asrEngine === null || rec.asrEngine === asrEngine;
 }
 
@@ -398,7 +409,12 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
   const recOptimal =
     recommendation !== null &&
     !recUnavailable &&
-    recommendationAlreadyOptimal(recommendation, settings.activePreset, settings.asrEngine);
+    recommendationAlreadyOptimal(
+      recommendation,
+      settings.activePreset,
+      settings.asrEngine,
+      settings.routing,
+    );
   const applyDisabled = applying || recOptimal;
   const applyName = recOptimal
     ? 'Your settings already match the recommendation'

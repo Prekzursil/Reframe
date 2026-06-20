@@ -978,18 +978,41 @@ describe('WU-B3 recommendation pure helpers', () => {
 
   it('recommendationAlreadyOptimal covers every gating arm', () => {
     const rec = recommendation();
+    // the current routing that ALREADY matches the recommendation's per-function plan
+    const matchRouting = {
+      perFunction: {
+        select: { provider: 'local-ollama', fallback: ['local'] },
+        caption: { provider: 'groq-x', fallback: ['local'] },
+      },
+    };
     // different preset -> not optimal
-    expect(recommendationAlreadyOptimal(rec, 'privacy', 'parakeet')).toBe(false);
+    expect(recommendationAlreadyOptimal(rec, 'privacy', 'parakeet', matchRouting)).toBe(false);
     // same preset but pending downloads -> not optimal
-    expect(recommendationAlreadyOptimal(rec, 'balanced', 'parakeet')).toBe(false);
+    expect(recommendationAlreadyOptimal(rec, 'balanced', 'parakeet', matchRouting)).toBe(false);
     // same preset, no downloads, but ASR engine differs -> not optimal
     const noDl = { ...rec, downloads: [] };
-    expect(recommendationAlreadyOptimal(noDl, 'balanced', 'whisper')).toBe(false);
-    // same preset, no downloads, ASR matches -> optimal
-    expect(recommendationAlreadyOptimal(noDl, 'balanced', 'parakeet')).toBe(true);
-    // same preset, no downloads, recommendation proposes NO ASR -> optimal regardless
+    expect(recommendationAlreadyOptimal(noDl, 'balanced', 'whisper', matchRouting)).toBe(false);
+    // same preset, no downloads, ASR matches, routing matches -> optimal
+    expect(recommendationAlreadyOptimal(noDl, 'balanced', 'parakeet', matchRouting)).toBe(true);
+    // same preset, no downloads, recommendation proposes NO ASR -> optimal regardless of ASR
     const noAsr = { ...rec, downloads: [], asrEngine: null };
-    expect(recommendationAlreadyOptimal(noAsr, 'balanced', undefined)).toBe(true);
+    expect(recommendationAlreadyOptimal(noAsr, 'balanced', undefined, matchRouting)).toBe(true);
+    // preset+ASR match and no downloads, but a per-function ROUTING delta remains
+    // (the folded detected-local-server route like select -> local-ollama) -> NOT
+    // optimal, so Apply stays enabled and the local-routing recommendation can be applied.
+    const routingDiverges = {
+      perFunction: {
+        select: { provider: 'groq-x', fallback: ['local'] }, // recommends local-ollama, current is cloud
+        caption: { provider: 'groq-x', fallback: ['local'] },
+      },
+    };
+    expect(recommendationAlreadyOptimal(noDl, 'balanced', 'parakeet', routingDiverges)).toBe(false);
+    // a slot the recommendation routes but current routing lacks entirely -> NOT optimal
+    expect(recommendationAlreadyOptimal(noDl, 'balanced', 'parakeet', { perFunction: {} })).toBe(
+      false,
+    );
+    // missing current routing block entirely (undefined) -> NOT optimal when rec routes slots
+    expect(recommendationAlreadyOptimal(noDl, 'balanced', 'parakeet', undefined)).toBe(false);
   });
 
   it('applyOutcomeText summarises preset, ASR, and download counts', () => {
@@ -1206,7 +1229,13 @@ describe('<ModelsSystemPanel /> WU-B3 card', () => {
       rationale: ['already optimal'],
     };
     const c = makeClient({
-      initialSettings: { ...optedIn, activePreset: 'balanced', asrEngine: 'whisper' },
+      initialSettings: {
+        ...optedIn,
+        activePreset: 'balanced',
+        asrEngine: 'whisper',
+        // current routing ALREADY matches the recommendation's per-function plan
+        routing: { perFunction: { select: { provider: 'local', fallback: [] } } },
+      },
       recommendation: rec,
     });
     await mount(c);
@@ -1219,6 +1248,49 @@ describe('<ModelsSystemPanel /> WU-B3 card', () => {
     expect(container.querySelector('[data-section="recommend-optimal"]')?.textContent).toContain(
       'already match',
     );
+  });
+
+  it('a routing-delta-only recommendation is NOT optimal: Apply stays enabled and applies the delta', async () => {
+    // preset + ASR already match and no downloads, but the recommendation folds a
+    // detected-local-server route (select -> local-ollama) the current routing lacks.
+    // This is the headline Capability-B "no cloud egress" case: the card MUST let the
+    // user apply it, not declare "already optimal".
+    const rec: Recommendation = {
+      preset: 'balanced',
+      routing: { perFunction: { select: { provider: 'local-ollama', fallback: ['local'] } } },
+      asrEngine: 'whisper',
+      downloads: [],
+      rationale: ["Detected local server 'local-ollama' — routing select to it (no cloud egress)."],
+    };
+    const c = makeClient({
+      initialSettings: {
+        ...optedIn,
+        activePreset: 'balanced',
+        asrEngine: 'whisper',
+        // current routing sends select to a CLOUD provider -> a real routing delta
+        routing: { perFunction: { select: { provider: 'groq-x', fallback: ['local'] } } },
+      },
+      recommendation: rec,
+    });
+    await mount(c);
+    await analyze();
+    const apply = container.querySelector(
+      'button[data-action="apply-recommendation"]',
+    ) as HTMLButtonElement;
+    // NOT optimal: Apply enabled with the actionable accessible name
+    expect(apply.disabled).toBe(false);
+    expect(apply.getAttribute('aria-label')).toBe('Apply recommended settings');
+    expect(container.querySelector('[data-section="recommend-optimal"]')).toBeNull();
+    // clicking it persists exactly the local-ollama routing delta
+    await act(async () => apply.click());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const fnCalls = c.calls.filter((x) => x.method === 'providers.setFunctionModel');
+    expect(fnCalls.length).toBe(1);
+    expect(fnCalls[0].args).toEqual(['select', 'local-ollama']);
   });
 
   it('no card renders when system.recommend yields a nullish recommendation', async () => {
