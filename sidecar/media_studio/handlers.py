@@ -213,6 +213,13 @@ class Services:
         # In-memory (per-session), mirroring the selection cache above.
         self._director_plans: dict[str, _DirectorPlanEntry] = {}
 
+        # WU-undo: the recorded-inverse store. ``director.apply`` stashes the
+        # ``inverse_plan`` it recorded (newest-first ops) under the SAME ``planId``
+        # so ``director.undo`` can re-run those inverse ops over a fresh COPY for a
+        # one-shot reversal (DESIGN §5/§7.1). A plan that was never applied has no
+        # entry here, so ``director.undo`` rejects it (nothing to undo).
+        self._director_inverses: dict[str, Any] = {}  # planId -> edit_plan.EditPlan
+
     # ===================================================================== #
     # resolvers
     # ===================================================================== #
@@ -1849,6 +1856,19 @@ class Services:
         """
         return {}
 
+    def _director_inverse_engines(
+        self,
+    ) -> Any:  # pragma: no cover - defaults to the forward seam; tests inject a distinct table
+        """The op-kind -> engine table used to run RECORDED INVERSE ops (WU-undo).
+
+        ``director.undo`` walks the recorded inverse ops (from ``director.apply``);
+        each routes through this table. Defaults to the forward
+        :meth:`_director_engines` — a real engine's inverse is the same engine
+        running the inverse op — so v1 needs no separate wiring. A test injects a
+        distinct table to prove the undo path routes inverse ops independently.
+        """
+        return self._director_engines()
+
     def _director_apply_ack(self, plan_id: str) -> str:
         """The budget-ack token (``cacheKey``) ``director.apply`` would require.
 
@@ -1902,6 +1922,9 @@ class Services:
         def work(_job_ctx: Any, _envelope: Any, _provider: Any) -> dict[str, Any]:
             project_copy = _project_copy.copy_project(project)
             result = _apply_engine.apply_plan(plan, project_copy=project_copy, engines=engines)
+            # WU-undo: stash the recorded inverse plan under the plan id so
+            # ``director.undo`` can re-apply it for a one-shot reversal (DESIGN §5).
+            self._director_inverses[plan_id] = result.inverse_plan
             # Reuse the canonical op serializer (plan_to_dict) for the per-op
             # statuses by framing them as a throwaway plan's ``ops``.
             ops_status = plan_to_dict(_dc_replace(plan, ops=result.ops_status))["ops"]
@@ -1922,6 +1945,58 @@ class Services:
             label="director.apply",
             videoId=entry.video_id,
             ack=ack,
+        )
+        return {"jobId": job.id}
+
+    def director_undo(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``director.undo({planId})`` -> ``{jobId}``. Job-based (DESIGN §5/§7.1).
+
+        One-shot undo: re-apply the inverse plan ``director.apply`` recorded under
+        ``planId`` over a FRESH project COPY via ``apply_plan`` (WU-apply), on
+        ``ctx.jobs``. The recorded inverse ops (newest-first) route through
+        :meth:`_director_inverse_engines`; re-applying them restores the
+        pre-apply COPY (round-trip undo, WU-apply acceptance (c)). Undo is a pure
+        LOCAL manifest reversal — no LLM/vision call, no egress — so the budget
+        ack is NOT re-enforced (apply already gated its egress). A plan that was
+        never applied has no recorded inverse and is rejected. The ``job.done``
+        payload carries the per-op statuses + the COPY path.
+        """
+        if ctx.jobs is None:
+            raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+        plan_id = _require_str(params, "planId")
+        entry = self._director_get_plan(plan_id)
+        inverse_plan = self._director_inverses.get(plan_id)
+        if inverse_plan is None:
+            raise _invalid(f"plan not applied (nothing to undo): {plan_id}")
+
+        from dataclasses import replace as _dc_replace  # local: import-light pure
+
+        from .features import apply_engine as _apply_engine  # local: import-light pure
+        from .features import project_copy as _project_copy  # local: import-light pure
+        from .models.edit_plan import plan_to_dict  # local: import-light pure
+
+        project = self._load_or_create_project(entry.video_id)
+        engines = self._director_inverse_engines()
+
+        def work(_job_ctx: Any, _envelope: Any, _provider: Any) -> dict[str, Any]:
+            project_copy = _project_copy.copy_project(project)
+            result = _apply_engine.apply_plan(inverse_plan, project_copy=project_copy, engines=engines)
+            ops_status = plan_to_dict(_dc_replace(inverse_plan, ops=result.ops_status))["ops"]
+            return {
+                "planId": plan_id,
+                "opsStatus": ops_status,
+                "projectCopyPath": result.project_copy_path,
+            }
+
+        job = self._run_ai_job(
+            ctx,
+            messages=list(entry.messages),
+            model=str(self.settings.get().get("cloudModel") or ""),
+            provider=self._provider,
+            work=work,
+            feature="director",
+            label="director.undo",
+            videoId=entry.video_id,
         )
         return {"jobId": job.id}
 
@@ -2255,6 +2330,10 @@ def register_all(
     reg("director.plan", svc.director_plan)
     reg("director.previewCost", svc.director_preview_cost)
     reg("director.apply", svc.director_apply)
+    # WU-undo: one-shot reversal. director.undo re-applies the inverse plan that
+    # director.apply recorded (over a fresh COPY) — registered AFTER the plan-rpc
+    # methods (SEQUENCED on the single composition root, no parallel AI path).
+    reg("director.undo", svc.director_undo)
 
     # WU-keys: provider key management. Every read is REDACTED (last-4) — no RPC
     # method ever returns a full key; the FACTORY path reads RAW via get_raw().
