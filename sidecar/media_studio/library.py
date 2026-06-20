@@ -114,6 +114,9 @@ class Library:
             "addedAt": v.get("addedAt") or _now_iso(),
             "durationSec": float(v.get("durationSec") or 0.0),
             "hasTranscript": bool(v.get("hasTranscript", False)),
+            # WU-2: additive source-video poster path; "" until library.thumbnail
+            # extracts one. Backfilled here so legacy records load without KeyError.
+            "thumbnailPath": str(v.get("thumbnailPath") or ""),
         }
 
     # ---- public surface (matches library.* methods) ------------------------
@@ -151,6 +154,7 @@ class Library:
             "addedAt": _now_iso(),
             "durationSec": duration,
             "hasTranscript": False,
+            "thumbnailPath": "",  # WU-2: poster filled in by library.thumbnail
         }
         videos.append(video)
         self._save(videos)
@@ -183,6 +187,21 @@ class Library:
         for v in videos:
             if v["id"] == video_id:
                 v["hasTranscript"] = bool(value)
+                result = v
+        if result is not None:
+            self._save(videos)
+        return result
+
+    def set_thumbnail(self, video_id: str, thumbnail_path: str) -> Video | None:
+        """WU-2: set a video's ``thumbnailPath`` and persist; returns the Video.
+
+        Mirrors :meth:`set_has_transcript`. Returns ``None`` for an unknown id.
+        """
+        videos = self._load()
+        result: Video | None = None
+        for v in videos:
+            if v["id"] == video_id:
+                v["thumbnailPath"] = str(thumbnail_path)
                 result = v
         if result is not None:
             self._save(videos)

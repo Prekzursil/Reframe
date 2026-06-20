@@ -11,9 +11,12 @@ import {
   rpc,
   onProgress,
   onJobDone,
+  type AutosaveSettings,
   type Candidate,
   type ConvertOptions,
+  type ExportDefaults,
   type Project,
+  type SavePresetsBlock,
   type SavedRecipe,
   type ShortInfo,
   type ShortReexportHint,
@@ -216,7 +219,7 @@ describe('client.ping / library / project', () => {
     expect(r).toHaveBeenCalledWith('ping', undefined);
   });
 
-  it('library.list / add / remove forward their params', async () => {
+  it('library.list / add / remove / thumbnail forward their params', async () => {
     const r = installApi();
     await client.library.list();
     expect(r).toHaveBeenCalledWith('library.list', undefined);
@@ -224,6 +227,8 @@ describe('client.ping / library / project', () => {
     expect(r).toHaveBeenCalledWith('library.add', { path: '/a.mp4' });
     await client.library.remove('v1');
     expect(r).toHaveBeenCalledWith('library.remove', { id: 'v1' });
+    await client.library.thumbnail('v1');
+    expect(r).toHaveBeenCalledWith('library.thumbnail', { id: 'v1' });
   });
 
   it('project.open / save / consolidate forward their params', async () => {
@@ -521,6 +526,12 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('asr.engines', undefined);
   });
 
+  it('readiness.summary calls the bare method (WU-8 roll-up)', async () => {
+    const r = installApi();
+    await client.readiness.summary();
+    expect(r).toHaveBeenCalledWith('readiness.summary', undefined);
+  });
+
   it('providers.usage calls the bare method (WU-usage-ui)', async () => {
     const r = installApi();
     await client.providers.usage();
@@ -545,6 +556,29 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('providers.firstRun', { choice: 'bestFreeCloud' });
   });
 
+  it('savePresets.* forward their params (WU-10/WU-11)', async () => {
+    const r = installApi();
+    await client.savePresets.list();
+    expect(r).toHaveBeenCalledWith('savePresets.list', undefined);
+    await client.savePresets.apply('Fast export');
+    expect(r).toHaveBeenCalledWith('savePresets.apply', { name: 'Fast export' });
+    // upsert WITHOUT a bundle: the conditional-spread falls back to `{}`.
+    await client.savePresets.upsert('Bare');
+    expect(r).toHaveBeenCalledWith('savePresets.upsert', { name: 'Bare' });
+    // upsert WITH a bundle: both parts ride along.
+    await client.savePresets.upsert('Full', {
+      autosave: { enabled: true, debounceMs: 1500 },
+      exportDefaults: { subtitleFormat: 'srt', nleFormat: 'edl', nleFps: 30 },
+    });
+    expect(r).toHaveBeenCalledWith('savePresets.upsert', {
+      name: 'Full',
+      autosave: { enabled: true, debounceMs: 1500 },
+      exportDefaults: { subtitleFormat: 'srt', nleFormat: 'edl', nleFps: 30 },
+    });
+    await client.savePresets.remove('Bare');
+    expect(r).toHaveBeenCalledWith('savePresets.remove', { name: 'Bare' });
+  });
+
   it('recipes.* forward their params', async () => {
     const r = installApi();
     const recipe: SavedRecipe = {
@@ -560,6 +594,32 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('recipes.delete', { id: 'r1' });
     await client.recipes.run('r1');
     expect(r).toHaveBeenCalledWith('recipes.run', { id: 'r1' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WU-0 (ux-qol): additive settings type shapes. These mirror the sidecar
+// DEFAULT_SETTINGS QoL keys; the assertions pin the field names/types so a future
+// drift breaks the typecheck (the interfaces are erased, so we assert literals).
+// ---------------------------------------------------------------------------
+describe('WU-0 QoL settings shapes (mirror sidecar DEFAULT_SETTINGS)', () => {
+  it('AutosaveSettings matches the sidecar default', () => {
+    const autosave: AutosaveSettings = { enabled: true, debounceMs: 1500 };
+    expect(autosave).toEqual({ enabled: true, debounceMs: 1500 });
+  });
+
+  it('ExportDefaults matches the sidecar default', () => {
+    const exportDefaults: ExportDefaults = {
+      subtitleFormat: 'srt',
+      nleFormat: 'edl',
+      nleFps: 30,
+    };
+    expect(exportDefaults).toEqual({ subtitleFormat: 'srt', nleFormat: 'edl', nleFps: 30 });
+  });
+
+  it('SavePresetsBlock matches the sidecar default (empty presets + no active)', () => {
+    const savePresets: SavePresetsBlock = { presets: {}, active: '' };
+    expect(savePresets).toEqual({ presets: {}, active: '' });
   });
 });
 

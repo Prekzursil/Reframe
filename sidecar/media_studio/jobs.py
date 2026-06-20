@@ -31,9 +31,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from .job_store import JobRecord, JobStore
 from .util import clamp_pct, get_logger
 
 log = get_logger("media_studio.jobs")
+
+# Stored statuses that are NOT terminal — a job left in one of these when the
+# process exited was mid-flight and is rehydrated as INTERRUPTED (WU-6).
+_NON_TERMINAL_WIRE_STATUSES = frozenset({"pending", "running", "queued"})
 
 # A progress sink: receives the jobId, an integer pct (0..100), and a message.
 ProgressEmit = Callable[[str, int, str], None]
@@ -51,10 +56,16 @@ class JobStatus(enum.StrEnum):
     encoder.
 
     CONTRACT-NOTE (A3): JobInfo's wire status set is "queued"|"running"|"done"|
-    "error"|"cancelled". A pool-waiting job is internally PENDING ("pending")
-    and is *mapped* to "queued" in :meth:`Job.info`; we do not add a QUEUED
-    member because the P1 ``job.status`` surface (and its tests) pin "pending"
-    as the pre-run value and the enum's value set as exactly these five.
+    "error"|"cancelled" plus (WU-6) "interrupted". A pool-waiting job is
+    internally PENDING ("pending") and is *mapped* to "queued" in
+    :meth:`Job.info`; we do not add a QUEUED member because the P1
+    ``job.status`` surface (and its tests) pin "pending" as the pre-run value.
+
+    WU-6 widens the value set to SIX by adding INTERRUPTED ("interrupted") —
+    the status given on startup to a job that was ``pending``/``running`` when
+    the process last exited (persisted via the injected JobStore and rehydrated
+    here). Unlike PENDING, INTERRUPTED is a REAL wire value: :meth:`Job.info`
+    emits it unchanged (no mapping), and resumable-job UI keys off it.
     """
 
     PENDING = "pending"
@@ -62,6 +73,7 @@ class JobStatus(enum.StrEnum):
     DONE = "done"
     ERROR = "error"
     CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"
 
 
 class JobCancelled(Exception):
@@ -197,10 +209,16 @@ class JobRegistry:
         id_prefix: str = "job",
         max_workers: int = 2,
         max_gpu_workers: int = 1,
+        store: JobStore | None = None,
     ) -> None:
         self._emit_progress = emit_progress
         self._emit_done = emit_done
         self._id_prefix = id_prefix
+        # WU-6: optional persistence seam. When ``None`` the registry is purely
+        # in-memory (P1/P2 behavior) so every existing caller keeps working;
+        # when supplied, every create / record_request / status transition is
+        # written through, and :meth:`rehydrate` reloads it at startup.
+        self._store = store
         self._jobs: dict[str, Job] = {}
         self._counter = 0
         self._lock = threading.RLock()
@@ -216,6 +234,34 @@ class JobRegistry:
     def _next_id(self) -> str:
         self._counter += 1
         return f"{self._id_prefix}-{self._counter}"
+
+    # -- persistence write-through (WU-6) -----------------------------------
+
+    @staticmethod
+    def _record_for(job: Job) -> JobRecord:
+        """Build the persisted record for ``job`` (its JobInfo + stored request).
+
+        Superset of JobInfo: adds the originating ``method``/``params`` (the
+        ``job.retry`` source) so a rehydrated shell can re-dispatch. ``videoId``
+        is always present (``None`` when unknown) so the record shape is stable.
+        """
+        record: JobRecord = {
+            "jobId": job.id,
+            "feature": job.feature,
+            "label": job.label,
+            "videoId": job.video_id,
+            "status": job.info()["status"],
+            "pct": job.pct,
+        }
+        if job.request is not None:
+            record["method"] = job.request.get("method")
+            record["params"] = job.request.get("params")
+        return record
+
+    def _persist(self, job: Job) -> None:
+        """Write ``job``'s current record through the store (no-op when absent)."""
+        if self._store is not None:
+            self._store.write(self._record_for(job))
 
     def create(
         self,
@@ -242,6 +288,7 @@ class JobRegistry:
                 gpu=bool(gpu),
             )
             self._jobs[job.id] = job
+            self._persist(job)
             return job
 
     def get(self, job_id: str) -> Job | None:
@@ -279,6 +326,9 @@ class JobRegistry:
         """
         with self._lock:
             job = self._jobs.get(job_id)
+            # First-write-wins guard (P2): a later job.retry dispatch — and a
+            # rehydrated job whose request is already populated (WU-6) — must
+            # not overwrite the real method+params, nor re-write the store.
             if job is None or job.request is not None:
                 return
             job.request = {"method": method, "params": copy.deepcopy(dict(params))}
@@ -290,6 +340,7 @@ class JobRegistry:
                 video_id = params.get("videoId") if isinstance(params, dict) else None
                 if isinstance(video_id, str) and video_id:
                     job.video_id = video_id
+            self._persist(job)
 
     def get_request(self, job_id: str) -> dict[str, Any] | None:
         """Return a copy of the stored ``{"method", "params"}`` (or ``None``)."""
@@ -298,6 +349,68 @@ class JobRegistry:
             if job is None or job.request is None:
                 return None
             return copy.deepcopy(job.request)
+
+    # -- rehydrate (WU-6 startup) -------------------------------------------
+
+    @staticmethod
+    def _rehydrated_noop(ctx: JobContext) -> None:  # pragma: no cover - never run
+        """Placeholder handler for a rehydrated shell.
+
+        A rehydrated job is NEVER auto-spawned (§5 no-silent-spend), so this
+        body never executes; ``job.retry`` re-dispatches from the stored
+        ``request`` via a FRESH handler instead.
+        """
+
+    def rehydrate(self, *, handler: JobHandler | None = None) -> None:
+        """Reload persisted jobs at startup; mark mid-flight jobs INTERRUPTED.
+
+        Recreates a :class:`Job` shell per stored record with its metadata +
+        stored ``{method, params}`` (so the built-in ``job.retry`` can
+        re-dispatch it), maps any non-terminal stored status
+        (``pending``/``running``/``queued``) to :data:`JobStatus.INTERRUPTED`
+        and persists that re-mark, and keeps terminal statuses verbatim. NO job
+        is started here — the pool is untouched (assert run-count 0). A no-op
+        when no store was injected; a record without a ``jobId`` is skipped.
+        ``handler`` overrides the shell handler (tests use it as a tripwire).
+        """
+        if self._store is None:
+            return
+        shell_handler = handler if handler is not None else self._rehydrated_noop
+        max_seen = 0
+        for record in self._store.load_all():
+            job_id = record.get("jobId")
+            if not isinstance(job_id, str) or not job_id:
+                log.warning("rehydrate: skipping record without jobId")
+                continue
+            stored_status = str(record.get("status", ""))
+            interrupted = stored_status in _NON_TERMINAL_WIRE_STATUSES
+            status = JobStatus.INTERRUPTED if interrupted else JobStatus(stored_status)
+            method = record.get("method")
+            params = record.get("params")
+            request = None
+            if isinstance(method, str):
+                request = {"method": method, "params": copy.deepcopy(params) if params is not None else {}}
+            job = Job(
+                id=job_id,
+                handler=shell_handler,
+                status=status,
+                pct=int(record.get("pct", 0) or 0),
+                feature=str(record.get("feature", "") or ""),
+                label=str(record.get("label", "") or ""),
+                video_id=record.get("videoId"),
+                request=request,
+            )
+            with self._lock:
+                self._jobs[job_id] = job
+            if interrupted:
+                # Persist the re-mark so a SECOND restart stays consistent.
+                self._persist(job)
+            suffix = job_id.rsplit("-", 1)[-1]
+            if suffix.isdigit():
+                max_seen = max(max_seen, int(suffix))
+        # New ids must not collide with rehydrated ones.
+        with self._lock:
+            self._counter = max(self._counter, max_seen)
 
     # -- execution ---------------------------------------------------------
 
@@ -384,10 +497,21 @@ class JobRegistry:
 
         return emit
 
+    def _set_status(self, job: Job, new_status: JobStatus) -> None:
+        """The SINGLE status-transition choke-point (WU-6 write-through seam).
+
+        Every status change goes through here so no transition is silently
+        missed by persistence: mutate under the lock, then write the job's
+        record through the store. The four lifecycle sinks (running / done /
+        cancelled / error) all route through this method.
+        """
+        with self._lock:
+            job.status = new_status
+        self._persist(job)
+
     def _run(self, job: Job) -> None:
         try:
-            with self._lock:
-                job.status = JobStatus.RUNNING
+            self._set_status(job, JobStatus.RUNNING)
             ctx = JobContext(
                 job_id=job.id,
                 _cancel_event=job._cancel_event,
@@ -415,15 +539,14 @@ class JobRegistry:
 
     def _finish_done(self, job: Job, result: Any) -> None:
         with self._lock:
-            job.status = JobStatus.DONE
             job.pct = 100
             job.result = result
+        self._set_status(job, JobStatus.DONE)  # one write-through, final pct included
         job._done_event.set()
         self._emit_done(job.id, result)
 
     def _finish_cancelled(self, job: Job) -> None:
-        with self._lock:
-            job.status = JobStatus.CANCELLED
+        self._set_status(job, JobStatus.CANCELLED)
         job._done_event.set()
         # CONTRACT-NOTE: §2 only specifies job.done for *completed* long jobs.
         # We do NOT emit job.done on cancel; the caller learns the outcome via
@@ -431,8 +554,8 @@ class JobRegistry:
 
     def _finish_error(self, job: Job, exc: Exception) -> None:
         with self._lock:
-            job.status = JobStatus.ERROR
             job.error = str(exc)
+        self._set_status(job, JobStatus.ERROR)  # one write-through, error set
         job._done_event.set()
         # Phase-0 spine finding: a failed job MUST notify, or every stdio client
         # (UI panels included) waits on job.done forever and the failure reads

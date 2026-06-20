@@ -215,3 +215,59 @@ def test_get_tolerates_non_list_providers(tmp_path: Path) -> None:
     path.write_text(json.dumps({"providers": "not-a-list"}), encoding="utf-8")
     store = SettingsStore(path)
     assert store.get()["providers"] == "not-a-list"
+
+
+# --------------------------------------------------------------------------- #
+# WU-0 (ux-qol): additive QoL defaults + merge behavior the downstream WUs rely on
+# --------------------------------------------------------------------------- #
+def test_qol_defaults_present_exact(store: SettingsStore) -> None:
+    """The four additive WU-0 keys land with their EXACT documented defaults."""
+    out = store.get()
+    assert out["lastOpenedVideoId"] == ""
+    assert out["autosave"] == {"enabled": True, "debounceMs": 1500}
+    assert out["exportDefaults"] == {"subtitleFormat": "srt", "nleFormat": "edl", "nleFps": 30}
+    assert out["savePresets"] == {"presets": {}, "active": ""}
+
+
+def test_export_defaults_exact_acceptance(store: SettingsStore) -> None:
+    """Acceptance pin: DEFAULT_SETTINGS['exportDefaults'] is exactly the §spec dict."""
+    assert DEFAULT_SETTINGS["exportDefaults"] == {
+        "subtitleFormat": "srt",
+        "nleFormat": "edl",
+        "nleFps": 30,
+    }
+
+
+def test_qol_keys_round_trip(store: SettingsStore) -> None:
+    """A scalar QoL key persists through the blind merge without disturbing siblings."""
+    store.set({"lastOpenedVideoId": "vid-42"})
+    out = store.get()
+    assert out["lastOpenedVideoId"] == "vid-42"
+    # Siblings remain at their defaults (untouched).
+    assert out["autosave"] == {"enabled": True, "debounceMs": 1500}
+    assert out["savePresets"] == {"presets": {}, "active": ""}
+
+
+def test_save_presets_set_is_shallow_replace_not_deep_merge(store: SettingsStore) -> None:
+    """settings.set is a SHALLOW dict.update merge (settings_store.py:167-182).
+
+    Setting savePresets to a partial block REPLACES the whole block — `presets`
+    is NOT preserved. This pins the REAL behavior (do not assume deep merge): a
+    caller that wants to keep `presets` must send the full block. This is the
+    contract WU-10/WU-11 must honor when they read/write savePresets.
+    """
+    store.set({"savePresets": {"presets": {"p1": {"x": 1}}, "active": "p1"}})
+    # A partial update with only `active` overwrites the entire savePresets block.
+    store.set({"savePresets": {"active": "p2"}})
+    out = store.get()
+    assert out["savePresets"] == {"active": "p2"}
+    assert "presets" not in out["savePresets"]
+
+
+def test_autosave_partial_set_round_trips(store: SettingsStore) -> None:
+    """Setting autosave round-trips; like savePresets, it is a shallow replace."""
+    store.set({"autosave": {"enabled": False}})
+    out = store.get()
+    assert out["autosave"] == {"enabled": False}
+    # Other top-level QoL keys are untouched by the shallow top-level merge.
+    assert out["exportDefaults"] == {"subtitleFormat": "srt", "nleFormat": "edl", "nleFps": 30}

@@ -300,6 +300,36 @@ class Services:
         ok = self.library.remove(video_id)
         return {"ok": bool(ok)}
 
+    def library_thumbnail(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``library.thumbnail({id})`` -> ``{thumbnailPath}``. Direct-return.
+
+        WU-2: extract a poster from a SOURCE library video by reusing the shorts
+        ffmpeg poster engine, persist ``thumbnailPath`` onto the Video, and return
+        it. Idempotent: an existing ``data_dir/thumbnails/<id>.jpg`` short-circuits
+        (the runner is NOT invoked again). The ffmpeg ``run`` seam is the SAME
+        injectable one ``shorts.thumbnail`` uses — never ``subprocess`` directly —
+        so tests fake it (no real ffmpeg).
+        """
+        video_id = _require_str(params, "id")
+        in_path = self._resolve_video_path(video_id)
+        if not in_path:
+            raise _invalid(f"unknown video: {video_id}")
+        out = self.data_dir / "thumbnails" / f"{video_id}.jpg"
+        if out.exists():
+            self.library.set_thumbnail(video_id, str(out))
+            return {"thumbnailPath": str(out)}
+        out.parent.mkdir(parents=True, exist_ok=True)
+        run = self._ffmpeg_run or _self_ffmpeg_run()
+        argv = _shorts_meta.build_thumbnail_argv(in_path, str(out), self.settings.get())
+        code = run(argv, total_sec=0.0)
+        if code != 0:
+            raise RpcError(
+                f"ffmpeg exited with code {code} extracting a thumbnail for {video_id}",
+                ErrorCode.INTERNAL_ERROR,
+            )
+        self.library.set_thumbnail(video_id, str(out))
+        return {"thumbnailPath": str(out)}
+
     # ===================================================================== #
     # project.*
     # ===================================================================== #
@@ -350,6 +380,72 @@ class Services:
         way ``get`` does), so the round-tripped response never echoes a full key.
         """
         return self.settings.set(dict(params))
+
+    def paths_describe(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``paths.describe()`` -> the resolved on-disk data layout. Direct-return.
+
+        WU-1 (read-only): surfaces WHERE everything lives so the renderer can SHOW
+        the data layout (today it can only fetch the root via ``dataFolder.get``).
+        A PURE path-join: no I/O, nothing is created, nothing is read from disk, so
+        repeated calls are identical. Derives the dirs from
+        :attr:`data_dir`/:attr:`projects_dir`/:attr:`exports_dir` and the file
+        paths from the injected stores' own path attributes (robust to a custom
+        settings/library location). ``subDirs`` names the per-feature derivative
+        folders the sidecar writes into — ``dubs`` under the data dir; the
+        ffmpeg-derivative folders (``stabilized``/``audiomix``/``trimmed``)
+        under the exports root, matching ``register_all``'s wiring. ``shorts`` is
+        written PER-VIDEO as ``exports/shorts-<videoId>``, so it is reported as the
+        honest ``shorts-*`` pattern (no flat ``exports/shorts`` dir exists). NO key/secret
+        string ever appears in this payload (it is layout-only).
+        """
+        return {
+            "dataDir": str(self.data_dir),
+            "projectsDir": str(self.projects_dir),
+            "exportsDir": str(self.exports_dir),
+            "settingsPath": str(self.settings.config_path),
+            "libraryPath": str(self.library.index_path),
+            "subDirs": {
+                "dubs": str(self.data_dir / "dubs"),
+                "shorts": str(self.exports_dir / "shorts-*"),
+                "stabilized": str(self.exports_dir / "stabilized"),
+                "audiomix": str(self.exports_dir / "audiomix"),
+                "trimmed": str(self.exports_dir / "trimmed"),
+            },
+        }
+
+    def readiness_summary(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``readiness.summary()`` -> ``{items:[ReadinessItem]}``. Direct-return.
+
+        WU-8 (read-only): rolls the three otherwise-split readiness sources into
+        ONE per-capability list the renderer can SHOW as a unified "what works
+        right now" view. Two capability families:
+
+          * **Model tiers** — each runnable tier (0/1/2) is ``ready`` when all its
+            model weights are installed; ``needsDownload`` when one is missing and
+            we are online (the action targets ``assets.ensure`` with the missing
+            asset names); ``unavailable`` when one is missing AND Offline mode is on
+            (the download is blocked — same rule ``system.advisor`` uses). Tier-0 is
+            the zero-download CPU floor and is always ``ready``.
+          * **AI functions** — each routed AI function (``select``/``subtitles``/
+            ``translation``/``vision``/``editPlan``) routed to a CLOUD provider is
+            ``needsKey`` (no key for that provider), then ``needsConsent`` (key
+            present but the data-type consent — TEXT for most, FRAMES for vision —
+            is not granted), then ``ready``. A function routed to LOCAL (or unrouted
+            -> the local-safe default) needs neither and is ``ready``.
+
+        STRICTLY READ-ONLY (§5): it derives everything from the installed-weight map
+        (the :meth:`_models_present_map` seam) + the redacted settings view, so it
+        performs ZERO network/provider calls and triggers NO ``assets.ensure``. No
+        full key ever rides this payload (it reads the already-redacted
+        :meth:`providers.list <providers_list>` view for key PRESENCE only).
+        """
+        settings = self.settings.get()
+        models_present = self._models_present_map(settings)
+        offline = _offline.is_offline(settings)
+        providers = self.providers_list(params, ctx)["providers"]
+        items = _tier_readiness_items(models_present, offline=offline)
+        items.extend(_function_readiness_items(settings, providers))
+        return {"items": items}
 
     # ===================================================================== #
     # providers.* (WU-keys: user-brings keys; RPC is key-free / redacted)
@@ -589,6 +685,84 @@ class Services:
         block = _routing_block(routing)
         self.settings.set({"firstRunChoiceMade": True, "activePreset": routing["activePreset"], "routing": block})
         return {"firstRunChoiceMade": True, "activePreset": routing["activePreset"], "routing": block}
+
+    # ===================================================================== #
+    # savePresets.* — named {autosave, exportDefaults} bundles (WU-10)
+    # ===================================================================== #
+    def _save_presets_block(self) -> dict[str, Any]:
+        """Return the current ``savePresets`` block as ``{presets, active}``.
+
+        ``settings.set`` is a SHALLOW top-level merge (``settings_store``: writing
+        ``savePresets`` REPLACES the whole block), so every mutating handler MUST
+        read this full block, modify it, and write it back whole — otherwise a
+        partial write would drop ``presets`` or ``active``. A corrupt (non-dict)
+        block, or non-dict ``presets``, is defensively treated as empty.
+        """
+        raw = self.settings.get().get("savePresets")
+        block = raw if isinstance(raw, dict) else {}
+        presets = block.get("presets")
+        active = block.get("active")
+        return {
+            "presets": dict(presets) if isinstance(presets, dict) else {},
+            "active": active if isinstance(active, str) else "",
+        }
+
+    def save_presets_list(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``savePresets.list()`` -> ``{presets, active}`` (WU-10).
+
+        READ-ONLY roll-up of the named ``{autosave, exportDefaults}`` bundles the
+        user has saved (``presets``) plus the last-applied bundle name (``active``).
+        Writes nothing.
+        """
+        return self._save_presets_block()
+
+    def save_presets_upsert(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``savePresets.upsert({name, autosave?, exportDefaults?})`` -> ``{presets}``.
+
+        Creates or replaces the named bundle. Omitted ``autosave`` / ``exportDefaults``
+        default to ``{}`` (the renderer fills them from live settings). The whole
+        ``savePresets`` block is read-modify-written so siblings (other presets +
+        ``active``) survive the shallow-merge replace.
+        """
+        name = _require_str(params, "name")
+        block = self._save_presets_block()
+        block["presets"][name] = {
+            "autosave": dict(params["autosave"]) if isinstance(params.get("autosave"), dict) else {},
+            "exportDefaults": dict(params["exportDefaults"]) if isinstance(params.get("exportDefaults"), dict) else {},
+        }
+        self.settings.set({"savePresets": block})
+        return {"presets": block["presets"]}
+
+    def save_presets_apply(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``savePresets.apply({name})`` -> ``{active, savePreset}`` (WU-10).
+
+        Marks ``name`` the active bundle (persisted) and echoes it back. An unknown
+        name is a typed invalid-params error (mirrors ``providers.applyPreset``'s
+        ``ValueError -> _invalid``) rather than a crash.
+        """
+        name = _require_str(params, "name")
+        block = self._save_presets_block()
+        if name not in block["presets"]:
+            raise _invalid(f"unknown save preset: {name!r}")
+        block["active"] = name
+        self.settings.set({"savePresets": block})
+        return {"active": name, "savePreset": block["presets"][name]}
+
+    def save_presets_remove(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``savePresets.remove({name})`` -> ``{presets, active}`` (WU-10).
+
+        Drops the named bundle. If it was the ``active`` one, ``active`` is reset to
+        ``""`` (no stale pointer). An unknown name is a typed invalid-params error.
+        """
+        name = _require_str(params, "name")
+        block = self._save_presets_block()
+        if name not in block["presets"]:
+            raise _invalid(f"unknown save preset: {name!r}")
+        del block["presets"][name]
+        if block["active"] == name:
+            block["active"] = ""
+        self.settings.set({"savePresets": block})
+        return {"presets": block["presets"], "active": block["active"]}
 
     # -- per-function routing resolution (the seam wiring) ------------------ #
     def _function_prefer(self, function: str) -> str | None:
@@ -2262,6 +2436,160 @@ def _signals_summary(tracks: dict[str, Any]) -> dict[str, Any]:
     return {"tracks": counts, "present": present}
 
 
+#: WU-8 readiness: each runnable tier id -> (label, the advisor-component names it
+#: needs). Mirrors ``system_advisor.TIERS`` but expressed against ``_COMPONENT_ASSETS``
+#: so readiness is derived purely from installed-weight state (no hardware probe /
+#: dependency import). Tier-0 is the zero-download CPU floor (no model-backed
+#: components) and so is always ready.
+_READINESS_TIERS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("tier0-numeric", "Instant numeric (no downloads)", ()),
+    (
+        "tier1-multimodal",
+        "Multimodal (visual + audio + transcript)",
+        ("saliency", "audio_saliency", "scene_transnet", "vlm_backbone", "quality_gate"),
+    ),
+    ("tier2-vlm", "Video-LLM re-rank (heavy, opt-in)", ("smolvlm2",)),
+)
+
+#: WU-8 readiness: the AI functions whose cloud-route key/consent state is rolled
+#: up. Mirrors ``presets.FUNCTIONS``; ``vision`` checks FRAME consent, the rest
+#: check TEXT consent (the §-consent data-type split).
+_READINESS_FUNCTIONS: tuple[str, ...] = ("select", "subtitles", "translation", "vision", "editPlan")
+
+#: The routing sentinel meaning "run this function locally" (mirrors
+#: ``presets.LOCAL``); an unrouted function also defaults to the local-safe route.
+_LOCAL_ROUTE = "local"
+
+
+def _missing_tier_assets(component_names: tuple[str, ...], models_present: dict[str, bool]) -> list[str]:
+    """The de-duplicated asset names a tier needs that are NOT installed.
+
+    Maps each member component to its pinned asset (``_COMPONENT_ASSETS``) and
+    keeps only the assets whose weight is not present. Components sharing an asset
+    (e.g. ``vlm_backbone``/``aesthetic`` both use SigLIP-2) collapse to one name.
+    """
+    missing: list[str] = []
+    for name in component_names:
+        if models_present.get(name, False):
+            continue
+        asset = _COMPONENT_ASSETS.get(name)
+        if asset is not None and asset not in missing:
+            missing.append(asset)
+    return missing
+
+
+def _tier_readiness_items(models_present: dict[str, bool], *, offline: bool) -> list[dict[str, Any]]:
+    """Roll each runnable tier up to a :class:`ReadinessItem` from installed state.
+
+    ``ready`` when every member weight is installed; ``needsDownload`` (with an
+    ``assets.ensure`` action over the missing names) when one is missing online;
+    ``unavailable`` when one is missing AND Offline mode is on (download blocked).
+    """
+    items: list[dict[str, Any]] = []
+    for tier_id, label, components in _READINESS_TIERS:
+        missing = _missing_tier_assets(components, models_present)
+        if not missing:
+            items.append(_readiness_item(tier_id, label, "ready", "", None))
+            continue
+        blocked = f"missing model weights: {', '.join(missing)}"
+        if offline:
+            items.append(
+                _readiness_item(tier_id, label, "unavailable", f"{blocked} (Offline mode blocks downloads)", None)
+            )
+        else:
+            action = {"kind": "assets.ensure", "assets": missing}
+            items.append(_readiness_item(tier_id, label, "needsDownload", blocked, action))
+    return items
+
+
+def _function_readiness_items(settings: dict[str, Any], providers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Roll each AI function's CLOUD route up to a key/consent readiness item.
+
+    A function routed to LOCAL (or unrouted -> local-safe default) is ``ready``.
+    A cloud-routed one is ``needsKey`` (no key for the provider), else
+    ``needsConsent`` (key present but the data-type consent is not granted), else
+    ``ready``. Vision checks FRAME consent; every other function checks TEXT.
+    """
+    from .models import consent as _consent  # local: import-light pure gate
+
+    routing = settings.get("routing")
+    per_function = routing.get("perFunction") if isinstance(routing, dict) else None
+    per_function = per_function if isinstance(per_function, dict) else {}
+
+    items: list[dict[str, Any]] = []
+    for function in _READINESS_FUNCTIONS:
+        cap = f"ai.{function}"
+        label = f"AI: {function}"
+        provider_id = _routed_cloud_provider(per_function.get(function))
+        if provider_id is None:
+            items.append(_readiness_item(cap, label, "ready", "", None))
+            continue
+        if not _provider_has_key(provider_id, providers):
+            action = {"kind": "openProviders", "provider": provider_id}
+            items.append(_readiness_item(cap, label, "needsKey", f"no key for provider {provider_id!r}", action))
+            continue
+        granted = (
+            _consent.frame_consent_granted(settings, provider_id)
+            if function == "vision"
+            else _consent.text_consent_granted(settings, provider_id)
+        )
+        if not granted:
+            action = {"kind": "setConsent", "provider": provider_id}
+            items.append(
+                _readiness_item(cap, label, "needsConsent", f"consent not granted for {provider_id!r}", action)
+            )
+            continue
+        items.append(_readiness_item(cap, label, "ready", "", None))
+    return items
+
+
+def _routed_cloud_provider(slot: Any) -> str | None:
+    """The CLOUD provider id a routing slot points at, or None for local/unrouted.
+
+    Returns ``None`` when the slot is absent, malformed, unset, or the LOCAL
+    sentinel (those all run locally — no key/consent needed); otherwise the
+    configured cloud provider id.
+    """
+    if not isinstance(slot, dict):
+        return None
+    provider_id = slot.get("provider")
+    if not isinstance(provider_id, str) or not provider_id or provider_id == _LOCAL_ROUTE:
+        return None
+    return provider_id
+
+
+def _provider_has_key(provider_id: str, providers: list[dict[str, Any]]) -> bool:
+    """True when a configured provider matching ``provider_id`` carries a key.
+
+    Matches on either the entry ``provider`` field or its ``id`` (the routing id
+    may be a friendly id or the canonical provider name). Reads the REDACTED
+    ``providers.list`` view, so it only ever sees key PRESENCE (last-4), never a
+    full key.
+    """
+    for entry in providers:
+        if not isinstance(entry, dict):
+            continue  # pragma: no cover - providers.list yields dicts only
+        ident = {str(entry.get("provider") or ""), str(entry.get("id") or "")}
+        if provider_id in ident:
+            keys = entry.get("apiKeys")
+            if isinstance(keys, list) and any(keys):
+                return True
+    return False
+
+
+def _readiness_item(
+    capability: str, label: str, status: str, blocked_by: str, action: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Build one wire :class:`ReadinessItem` dict (camelCase, JSON-safe)."""
+    return {
+        "capability": capability,
+        "label": label,
+        "status": status,
+        "blockedBy": blocked_by,
+        "action": action,
+    }
+
+
 def _advisor_report_to_wire(report: Any) -> dict[str, Any]:
     """Convert an :class:`AdvisorReport` frozen tree to the camelCase wire dict.
 
@@ -2359,6 +2687,7 @@ def register_all(
     reg("library.list", svc.library_list)
     reg("library.add", svc.library_add)
     reg("library.remove", svc.library_remove)
+    reg("library.thumbnail", svc.library_thumbnail)
 
     reg("project.open", svc.project_open)
     reg("project.save", svc.project_save)
@@ -2366,6 +2695,9 @@ def register_all(
 
     reg("settings.get", svc.settings_get)
     reg("settings.set", svc.settings_set)
+
+    # WU-1: read-only data-layout describe (no I/O, no secrets, idempotent).
+    reg("paths.describe", svc.paths_describe)
 
     reg("transcribe.start", svc.transcribe_start)
 
@@ -2393,6 +2725,10 @@ def register_all(
     # phase8.* are long jobs (load heavy models behind the phase8 runner seam).
     reg("system.probe", svc.system_probe)
     reg("system.advisor", svc.system_advisor)
+    # WU-8: the unified read-only readiness roll-up (model tiers + per-function
+    # provider key/consent state). Direct (no job): pure installed-state + redacted
+    # settings reads — no provider call, no assets.ensure (the read-only invariant).
+    reg("readiness.summary", svc.readiness_summary)
     reg("asr.engines", svc.asr_engines)
     reg("phase8.signals", svc.phase8_signals)
     reg("phase8.select", svc.phase8_select)
@@ -2443,6 +2779,15 @@ def register_all(
     reg("providers.applyPreset", svc.providers_apply_preset)
     reg("providers.setFunctionModel", svc.providers_set_function_model)
     reg("providers.firstRun", svc.providers_first_run)
+
+    # WU-10 (UX/QoL): named {autosave, exportDefaults} save-presets, persisted under
+    # the ``savePresets`` settings block (read-modify-write the whole block — the
+    # settings merge is a SHALLOW top-level replace). Mirrors providers.applyPreset
+    # (resolve -> persist) but stores user-named bundles, not routing presets.
+    reg("savePresets.list", svc.save_presets_list)
+    reg("savePresets.apply", svc.save_presets_apply)
+    reg("savePresets.upsert", svc.save_presets_upsert)
+    reg("savePresets.remove", svc.save_presets_remove)
 
     # captions-export: EDL/CSV NLE timeline export + ZIP package-for-upload.
     reg("nle.export", svc.nle_export)

@@ -163,6 +163,11 @@
   color: var(--status-success);
 }
 
+/* Interrupted: a crash-recovery state, not a failure — distinct from error. */
+.jobqueue__status--interrupted {
+  color: var(--status-warning, var(--text-secondary));
+}
+
 .jobqueue__label {
   font-size: var(--type-caption-size);
   color: var(--text-muted);
@@ -209,7 +214,8 @@
 }
 
 .jobqueue__cancel,
-.jobqueue__retry {
+.jobqueue__retry,
+.jobqueue__resume {
   appearance: none;
   padding: 3px 10px;
   border: none;

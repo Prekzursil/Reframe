@@ -46,6 +46,7 @@ def test_add_returns_full_video_schema(lib: Library, fake_video: Path):
         "addedAt",
         "durationSec",
         "hasTranscript",
+        "thumbnailPath",  # WU-2: additive Video field (default "")
     }
     assert v["durationSec"] == 123.5
     assert v["hasTranscript"] is False
@@ -169,6 +170,62 @@ def test_normalize_backfills_legacy_entries(tmp_path: Path):
     assert v["addedAt"]  # generated
     assert v["durationSec"] == 0.0
     assert v["hasTranscript"] is False
+
+
+# --------------------------------------------------------------------------- #
+# WU-2: thumbnailPath (additive Video field) + set_thumbnail setter
+# --------------------------------------------------------------------------- #
+def test_add_includes_thumbnail_path_default_empty(lib: Library, fake_video: Path):
+    # A freshly added Video carries the additive thumbnailPath, defaulting to "".
+    v = lib.add(str(fake_video))
+    assert v["thumbnailPath"] == ""
+
+
+def test_normalize_backfills_missing_thumbnail_path(tmp_path: Path):
+    # A legacy Video record with NO thumbnailPath loads as "" (no KeyError).
+    idx = tmp_path / "idx.json"
+    idx.write_text(json.dumps({"version": 1, "videos": [{"path": "/x.mp4"}]}), encoding="utf-8")
+    lib = Library(idx)
+    assert lib.list()[0]["thumbnailPath"] == ""
+
+
+def test_normalize_preserves_existing_thumbnail_path(tmp_path: Path):
+    # A stored thumbnailPath survives the normalize round-trip.
+    idx = tmp_path / "idx.json"
+    idx.write_text(
+        json.dumps({"version": 1, "videos": [{"path": "/x.mp4", "thumbnailPath": "/p/t.jpg"}]}),
+        encoding="utf-8",
+    )
+    lib = Library(idx)
+    assert lib.list()[0]["thumbnailPath"] == "/p/t.jpg"
+
+
+def test_set_thumbnail_persists_and_returns_video(lib: Library, fake_video: Path):
+    v = lib.add(str(fake_video))
+    updated = lib.set_thumbnail(v["id"], "/posters/x.jpg")
+    assert updated is not None
+    assert updated["thumbnailPath"] == "/posters/x.jpg"
+    # Persisted: a fresh re-read of the index shows the poster path.
+    again = Library(lib.index_path, probe_duration=lambda _p: 0.0)
+    assert again.get(v["id"])["thumbnailPath"] == "/posters/x.jpg"
+
+
+def test_set_thumbnail_unknown_id_returns_none(lib: Library):
+    assert lib.set_thumbnail("nope", "/p/t.jpg") is None
+
+
+def test_set_thumbnail_skips_non_matching_rows(lib: Library, tmp_path: Path):
+    # Two videos: setting one must skip the other in the loop.
+    a = tmp_path / "a.mp4"
+    a.write_bytes(b"a")
+    b = tmp_path / "b.mp4"
+    b.write_bytes(b"b")
+    va = lib.add(str(a))
+    vb = lib.add(str(b))
+    updated = lib.set_thumbnail(vb["id"], "/p/b.jpg")
+    assert updated["id"] == vb["id"]
+    assert lib.get(va["id"])["thumbnailPath"] == ""
+    assert lib.get(vb["id"])["thumbnailPath"] == "/p/b.jpg"
 
 
 def test_default_probe_uses_ffmpeg_lazy(monkeypatch, tmp_path: Path, fake_video: Path):

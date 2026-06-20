@@ -343,3 +343,91 @@ describe('App route switch', () => {
     root = createRoot(container);
   });
 });
+
+// WU-13: persist `lastOpenedVideoId` on openVideo + restore it on launch.
+describe('App lastOpenedVideoId persist + restore', () => {
+  it('restores the workspace for a valid persisted lastOpenedVideoId on launch', async () => {
+    rpcMock.mockImplementation((method: string) => {
+      if (method === 'settings.get') return Promise.resolve({ lastOpenedVideoId: 'v1' });
+      return Promise.resolve({});
+    });
+    libraryListMock.mockResolvedValue({ videos: [makeVideo({ id: 'v1', title: 'Restored' })] });
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+
+    expect(libraryListMock).toHaveBeenCalledTimes(1);
+    const ws = container.querySelector('[data-testid="workspace"]');
+    expect(ws).not.toBeNull();
+    expect(ws!.getAttribute('data-video-id')).toBe('v1');
+  });
+
+  it('stays on the Library when the persisted id is absent from library.list', async () => {
+    rpcMock.mockImplementation((method: string) => {
+      if (method === 'settings.get') return Promise.resolve({ lastOpenedVideoId: 'gone' });
+      return Promise.resolve({});
+    });
+    libraryListMock.mockResolvedValue({ videos: [makeVideo({ id: 'v1' })] });
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+
+    expect(libraryListMock).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="workspace"]')).toBeNull();
+  });
+
+  it('stays on the Library when no lastOpenedVideoId is persisted (empty key)', async () => {
+    rpcMock.mockImplementation((method: string) => {
+      if (method === 'settings.get') return Promise.resolve({ lastOpenedVideoId: '' });
+      return Promise.resolve({});
+    });
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+
+    // Empty key short-circuits before resolving the library.
+    expect(libraryListMock).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="workspace"]')).toBeNull();
+  });
+
+  it('stays on the Library when the restore path throws (best-effort)', async () => {
+    rpcMock.mockImplementation((method: string) => {
+      if (method === 'settings.get') return Promise.resolve({ lastOpenedVideoId: 'v1' });
+      return Promise.resolve({});
+    });
+    libraryListMock.mockRejectedValue(new Error('boom'));
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+
+    expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="workspace"]')).toBeNull();
+  });
+
+  it('persists lastOpenedVideoId via settings.set exactly once when a video is opened', async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+
+    const openBtn = container.querySelector<HTMLButtonElement>('[data-testid="library"] button');
+    await act(async () => {
+      openBtn!.click();
+    });
+    await flush();
+
+    const setCalls = rpcMock.mock.calls.filter(([method]) => method === 'settings.set');
+    expect(setCalls).toHaveLength(1);
+    expect(setCalls[0][1]).toEqual({ lastOpenedVideoId: 'v1' });
+  });
+});

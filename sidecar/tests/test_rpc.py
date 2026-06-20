@@ -516,6 +516,50 @@ def test_build_server_returns_rpcserver():
     assert server._out is outstream
 
 
+def test_rpcserver_carries_injected_store(monkeypatch):
+    # WU-6: a store injected into RpcServer reaches the owned JobRegistry.
+    import io
+
+    from media_studio.job_store import InMemoryJobStore
+
+    store = InMemoryJobStore()
+    server = RpcServer(instream=io.StringIO(""), outstream=io.StringIO(), store=store)
+    assert server.jobs._store is store
+    # write-through actually goes to the injected store
+    server.jobs.create(lambda ctx: None)
+    assert len(store.load_all()) == 1
+
+
+def test_build_server_forwards_store():
+    import io
+
+    from media_studio.job_store import InMemoryJobStore
+    from media_studio.rpc import build_server
+
+    store = InMemoryJobStore()
+    server = build_server(instream=io.StringIO(""), outstream=io.StringIO(), store=store)
+    assert server.jobs._store is store
+
+
+def test_main_rehydrates_when_store_supplied(monkeypatch):
+    # WU-6: rpc.main with a store rehydrates the registry once before serving.
+    import io
+
+    from media_studio import rpc as rpc_mod
+    from media_studio.job_store import InMemoryJobStore
+
+    store = InMemoryJobStore()
+    store.write({"jobId": "job-1", "status": "running", "method": "a.x", "params": {}})
+
+    built = RpcServer(instream=io.StringIO(""), outstream=io.StringIO(), store=store)
+    monkeypatch.setattr(rpc_mod, "build_server", lambda *, store=None: built)
+    assert rpc_mod.main(store=store) == 0
+    # the running job was rehydrated as INTERRUPTED (never auto-spawned)
+    from media_studio.jobs import JobStatus
+
+    assert built.jobs.get("job-1").status is JobStatus.INTERRUPTED
+
+
 def test_main_serves_until_stdin_closes(monkeypatch):
     # main() builds a server and serves until EOF, returning 0. build_server is
     # stubbed so no real stdio is touched.
@@ -526,7 +570,8 @@ def test_main_serves_until_stdin_closes(monkeypatch):
     streams_in = io.StringIO('{"jsonrpc":"2.0","id":1,"method":"ping"}\n')
     streams_out = io.StringIO()
     built = RpcServer(instream=streams_in, outstream=streams_out)
-    monkeypatch.setattr(rpc_mod, "build_server", lambda: built)
+    # WU-6: main() now forwards a (possibly None) store kwarg to build_server.
+    monkeypatch.setattr(rpc_mod, "build_server", lambda *, store=None: built)
     assert rpc_mod.main() == 0
     lines = [line for line in streams_out.getvalue().splitlines() if line.strip()]
     assert len(lines) == 1
@@ -542,7 +587,7 @@ def test_main_returns_130_on_keyboard_interrupt(monkeypatch):
         def serve(self) -> None:
             raise KeyboardInterrupt
 
-    def _build():
+    def _build(*, store=None):
         return _Interrupting(instream=io.StringIO(""), outstream=io.StringIO())
 
     monkeypatch.setattr(rpc_mod, "build_server", _build)

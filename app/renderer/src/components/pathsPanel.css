@@ -1,0 +1,110 @@
+/* pathsPanel.css — the data-layout list + change-root row (WU-12).
+ * Geometry/colors reuse the shared design tokens (space/radius/accent/status).
+ * The path string is inert selectable text; only the per-row Open control and the
+ * change-root control are interactive (real <button>s with focus rings). */
+
+.paths-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.paths-panel__error {
+  color: var(--status-error);
+  background: var(--status-error-soft);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+
+.paths-panel__root {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.paths-panel__root-label {
+  font-weight: var(--type-body-weight);
+}
+
+.paths-panel__root-value {
+  font-family: var(--font-mono, monospace);
+  color: var(--text-secondary);
+  user-select: text;
+}
+
+.paths-panel__root-unavailable,
+.paths-panel__restart-hint {
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+}
+
+.paths-panel__loading {
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+}
+
+.paths-panel__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.paths-panel__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+}
+
+.paths-panel__row-label {
+  min-width: 7rem;
+  font-weight: var(--type-caption-weight);
+}
+
+.paths-panel__path {
+  flex: 1;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+  user-select: text;
+  word-break: break-all;
+}
+
+.paths-panel__change-root,
+.paths-panel__open {
+  appearance: none;
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--accent);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.paths-panel__change-root:hover,
+.paths-panel__open:hover {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+
+.paths-panel__change-root:focus-visible,
+.paths-panel__open:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.paths-panel__change-root:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

@@ -9,6 +9,7 @@ import {
   mediaUrl,
   resolveSrc,
   shortMediaUrl,
+  thumbMediaUrl,
   windowEndReached,
   type PlayerHandle,
   type PlayerProps,
@@ -107,6 +108,16 @@ describe('shortMediaUrl (P4 §6 / C10)', () => {
     // The colon after `short` is encoded (%3A) so it cannot be mistaken for a
     // URL scheme/host boundary — proves it is one path segment, not media/short/.
     expect(url.startsWith('mstream://media/short%3A')).toBe(true);
+  });
+});
+
+describe('thumbMediaUrl (UX/QoL WU-4)', () => {
+  it('encodes the thumb: prefixed path as a single path segment', () => {
+    const url = thumbMediaUrl('C:\\data\\thumbnails\\v1.jpg');
+    expect(url).toBe(`mstream://media/${encodeURIComponent('thumb:C:\\data\\thumbnails\\v1.jpg')}`);
+    // The colon after `thumb` is encoded (%3A) so it cannot be mistaken for a
+    // URL scheme/host boundary — proves it is one path segment, not media/thumb/.
+    expect(url.startsWith('mstream://media/thumb%3A')).toBe(true);
   });
 });
 

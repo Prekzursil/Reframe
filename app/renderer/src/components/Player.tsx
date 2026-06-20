@@ -111,6 +111,17 @@ export function shortMediaUrl(path: string): string {
   return `${MEDIA_SCHEME}://${MEDIA_HOST}/${encodeURIComponent(`short:${path}`)}`;
 }
 
+/**
+ * UX/QoL (WU-4): the `<img src>` URL for a SOURCE-library poster frame. Rides
+ * the mstream:// protocol with the `thumb:<absolute path>` id form, which
+ * main.ts resolves ONLY inside the thumbnails root (traversal-guarded, WU-3).
+ * Mirrors `shortMediaUrl` exactly — the prefixed path stays a single encoded
+ * segment so `videoIdFromUrl` decodes it intact.
+ */
+export function thumbMediaUrl(path: string): string {
+  return `${MEDIA_SCHEME}://${MEDIA_HOST}/${encodeURIComponent(`thumb:${path}`)}`;
+}
+
 /** Resolve the effective <video> src: explicit `src` wins, else mstream URL. */
 export function resolveSrc(videoId?: string, src?: string): string {
   if (src) return src;
