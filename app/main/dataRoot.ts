@@ -28,6 +28,17 @@ export interface ChooseDataRootInput {
   exeDataDir?: string;
   /** True when `exeDataDir` is creatable/writable (false on a read-only install). */
   exeDataWritable?: boolean;
+  /**
+   * Whether the writable `<exeDir>/data` auto-pick (tier 3) is allowed. This is
+   * the PORTABLE-INSTALL default and is only sensible for a PACKAGED build (where
+   * `<exeDir>` is the install folder). In dev, `process.execPath` is
+   * `node_modules/electron/dist/electron.exe`, so `<exeDir>/data` is a writable
+   * but EMPTY folder with no `library.json` — auto-picking it silently broke
+   * preview (empty library -> mstream 404 -> blank <video> -> no subtitles). Set
+   * to `app.isPackaged`. Defaults to `true` (backward compatible) so the env +
+   * marker tiers stay UNCONDITIONAL — only this auto-pick tier is gated.
+   */
+  preferExeDataDir?: boolean;
   /** `%APPDATA%/media-studio` — the historical default + final fallback. */
   appDataRoot: string;
 }
@@ -46,10 +57,14 @@ function nonEmpty(value: string | undefined): string | undefined {
  *      so a power user / test can force any location.
  *   2. `markerContent` (trimmed)       — the user's chosen folder, persisted in
  *      `<exeDir>/data-dir.txt` by the in-app "Change…" action (survives restart).
- *   3. `exeDataDir` IF `exeDataWritable` — portable default: keep everything in a
- *      `data/` folder beside the executable when that folder can be written.
+ *   3. `exeDataDir` IF `exeDataWritable` AND `preferExeDataDir` — portable
+ *      default: keep everything in a `data/` folder beside the executable when
+ *      that folder can be written. Gated on `preferExeDataDir` (= app.isPackaged)
+ *      so a DEV run never auto-picks the empty `node_modules/electron/dist/data`
+ *      (the preview-blocker trap). `preferExeDataDir` defaults to `true`.
  *   4. `appDataRoot`                   — historical default + safe fallback when
- *      the install dir is read-only (e.g. Program Files).
+ *      the install dir is read-only (e.g. Program Files) or, in dev, when tier 3
+ *      is gated off and no env/marker is set.
  *
  * Whitespace-only / empty candidates are ignored at every tier (they never beat
  * a lower-priority real path). The result is returned VERBATIM (no path joining)
@@ -62,7 +77,9 @@ export function chooseDataRoot(input: ChooseDataRootInput): string {
   const marker = nonEmpty(input.markerContent);
   if (marker !== undefined) return marker;
 
-  if (input.exeDataWritable === true) {
+  // The portable auto-pick is gated: only when explicitly preferred (packaged).
+  // `preferExeDataDir` defaults to true so existing callers keep portable behavior.
+  if (input.exeDataWritable === true && input.preferExeDataDir !== false) {
     const exe = nonEmpty(input.exeDataDir);
     if (exe !== undefined) return exe;
   }
@@ -86,18 +103,31 @@ export interface DataRootIO {
   readMarker: () => string | undefined;
   /** True when `exeDataDir` is creatable/writable. */
   isExeDataWritable: (dir: string) => boolean;
+  /**
+   * Whether the writable `<exeDir>/data` auto-pick is allowed (= app.isPackaged).
+   * Optional for backward compatibility; omitting it keeps the portable default
+   * (`true`). main.ts passes `app.isPackaged` so dev never auto-picks the empty
+   * `node_modules/electron/dist/data` trap. See {@link ChooseDataRootInput}.
+   */
+  preferExeDataDir?: boolean;
 }
 
 /**
  * Resolve the ONE data root from an injected IO seam (G1 preview fix).
  *
- * IMPORTANT BEHAVIOR (regression-locked): the marker + exe-dir are consulted
- * UNCONDITIONALLY — there is NO `isPackaged` switch. The previous main.ts gated
- * them on `app.isPackaged`, so a DEV run ignored the marker and always landed on
- * %APPDATA%/media-studio (which has no library.json) — the root cause of the
- * "preview doesn't work at all -> no subtitles" failure. Now dev resolves the
- * real data folder exactly like a packaged build. An explicit env override still
- * wins (chooseDataRoot priority). Pure given the seam (the seam owns all IO).
+ * IMPORTANT BEHAVIOR (regression-locked): the env override + marker are consulted
+ * UNCONDITIONALLY — there is NO `isPackaged` switch on them. The previous main.ts
+ * gated the marker too, so a DEV run ignored it and always landed on
+ * %APPDATA%/media-studio — part of the "preview doesn't work -> no subtitles"
+ * failure. Now dev honors a marker/env exactly like a packaged build.
+ *
+ * The writable `<exeDir>/data` AUTO-PICK (tier 3), however, IS gated — via
+ * `io.preferExeDataDir` (= app.isPackaged). In dev `process.execPath` is
+ * `node_modules/electron/dist/electron.exe`, so `<exeDir>/data` is a writable but
+ * EMPTY folder; auto-picking it silently re-broke preview (empty library -> 404 ->
+ * blank <video>). Gating the auto-pick on packaged makes dev fall through to
+ * %APPDATA% (the historical default) UNLESS the user set an env/marker. Pure
+ * given the seam (the seam owns all IO).
  */
 export function resolveDataRootFrom(io: DataRootIO): string {
   return chooseDataRoot({
@@ -105,6 +135,7 @@ export function resolveDataRootFrom(io: DataRootIO): string {
     markerContent: io.readMarker(),
     exeDataDir: io.exeDataDir,
     exeDataWritable: io.isExeDataWritable(io.exeDataDir),
+    preferExeDataDir: io.preferExeDataDir,
     appDataRoot: io.appDataRoot,
   });
 }

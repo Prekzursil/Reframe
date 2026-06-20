@@ -634,3 +634,28 @@ describe('client.exportPresets / templates / batch (WU11)', () => {
     expect(r).toHaveBeenCalledWith('batch.delete', { id: 'b1' });
   });
 });
+
+describe('client.director (WU-panel — prompt-driven editing spine)', () => {
+  it('plan / previewCost / undo / evaluate forward their params', async () => {
+    const r = installApi();
+    await client.director.plan('v1', 'make it smooth');
+    expect(r).toHaveBeenCalledWith('director.plan', { videoId: 'v1', goal: 'make it smooth' });
+    await client.director.previewCost('plan-1');
+    expect(r).toHaveBeenCalledWith('director.previewCost', { planId: 'plan-1' });
+    await client.director.undo('plan-1');
+    expect(r).toHaveBeenCalledWith('director.undo', { planId: 'plan-1' });
+    await client.director.evaluate('plan-1');
+    expect(r).toHaveBeenCalledWith('director.evaluate', { planId: 'plan-1' });
+  });
+
+  it('apply omits confirmBudget when undefined, includes it when given (both arms)', async () => {
+    const r = installApi();
+    await client.director.apply('plan-1');
+    expect(r).toHaveBeenCalledWith('director.apply', { planId: 'plan-1' });
+    await client.director.apply('plan-1', 'CK-TEXT');
+    expect(r).toHaveBeenCalledWith('director.apply', {
+      planId: 'plan-1',
+      confirmBudget: 'CK-TEXT',
+    });
+  });
+});

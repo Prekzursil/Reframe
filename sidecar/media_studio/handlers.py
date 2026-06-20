@@ -34,6 +34,7 @@ from . import library as _library
 from . import protocol
 from .features import boundary as _boundary
 from .features import convert as _convert
+from .features import director as _director
 from .features import media_compat as _media_compat
 from .features import nle_export as _nle_export
 from .features import offline as _offline
@@ -85,6 +86,20 @@ class _LocalOnlyPool:
     """
 
     entries: tuple[_LocalPoolEntry, ...] = (_LocalPoolEntry(),)
+
+
+@dataclass(frozen=True)
+class _DirectorPlanEntry:
+    """A stored Director plan (WU-plan-rpc): the validated EditPlan + its context.
+
+    ``video_id`` correlates the plan to its source for ``director.apply``;
+    ``messages`` is the planner chat (replayed by ``director.previewCost`` so the
+    pre-flight cache key matches the plan step exactly — ZERO new LLM calls).
+    """
+
+    plan: Any  # edit_plan.EditPlan (typed in the handler; Any here to keep imports light)
+    video_id: str
+    messages: tuple[dict[str, str], ...]
 
 
 def _invalid(message: str) -> RpcError:
@@ -190,6 +205,20 @@ class Services:
         # resolve real clips; the loader exposes the cache as the context's
         # "candidates" map that _resolve_candidates already consults.
         self._selection_cache: dict[str, dict[str, Candidate]] = {}
+
+        # WU-plan-rpc: the Director plan store. ``director.plan`` stashes each
+        # validated EditPlan (+ the planner messages + the videoId it was planned
+        # against) under its ``planId`` so the follow-up ``director.previewCost`` /
+        # ``director.apply`` calls resolve the SAME plan without re-running the LLM.
+        # In-memory (per-session), mirroring the selection cache above.
+        self._director_plans: dict[str, _DirectorPlanEntry] = {}
+
+        # WU-undo: the recorded-inverse store. ``director.apply`` stashes the
+        # ``inverse_plan`` it recorded (newest-first ops) under the SAME ``planId``
+        # so ``director.undo`` can re-run those inverse ops over a fresh COPY for a
+        # one-shot reversal (DESIGN §5/§7.1). A plan that was never applied has no
+        # entry here, so ``director.undo`` rejects it (nothing to undo).
+        self._director_inverses: dict[str, Any] = {}  # planId -> edit_plan.EditPlan
 
     # ===================================================================== #
     # resolvers
@@ -1638,6 +1667,7 @@ class Services:
         label: str,
         videoId: str | None = None,  # noqa: N803 - wire-name kwarg (matches JobRegistry)
         ack: str | None = None,
+        enforce_budget: bool = True,
     ) -> Any:
         """Plan + run an :class:`ai_job.AiJob` on ``ctx.jobs`` with a custom ``work``.
 
@@ -1652,6 +1682,13 @@ class Services:
         ``cacheKey`` (the token ``ai.planJob`` returns), else the run is refused
         with a typed error telling the client to pre-flight + acknowledge first.
         A local-only / cache-hit run never egresses, so it is never gated.
+
+        ``enforce_budget=False`` skips the cloud-budget gate entirely — for a job
+        whose ``work`` provably makes NO provider call and therefore never egresses
+        (e.g. ``director.undo``: a pure LOCAL manifest reversal). Such a job rides
+        the same envelope/job path for uniformity but has no budget surface to
+        acknowledge, so gating it would refuse a non-egressing run with a token the
+        caller cannot supply.
         """
         from .models import ai_job as _ai_job  # local: import-light
 
@@ -1660,7 +1697,8 @@ class Services:
             model=model,
         )
         envelope = self.plan_ai_job_envelope(inputs)
-        self._enforce_cloud_budget_ack(envelope, ack)
+        if enforce_budget:
+            self._enforce_cloud_budget_ack(envelope, ack)
 
         def _factory() -> Any:
             if provider is not None:
@@ -1728,6 +1766,319 @@ class Services:
             capability=str(params.get("capability") or "text"),
         )
         return self.plan_ai_job_envelope(inputs).planned()
+
+    # ===================================================================== #
+    # director.* (WU-plan-rpc) — the RPC spine onto the shipped AI substrate.
+    # Every LLM call rides _run_ai_job + the pool; all three registered ONLY in
+    # register_all (no parallel AI path, DESIGN RAIL).
+    # ===================================================================== #
+    def _director_video_duration_ms(self, video_id: str) -> int:
+        """Probe the source video's duration in ms (validator clip bound)."""
+        path = self._resolve_video_path(video_id)
+        if not path:
+            raise _invalid(f"unknown video: {video_id}")
+        probe = self._ffprobe_duration or _self_ffprobe()
+        return int(round(probe(path) * 1000))
+
+    def _director_get_plan(self, plan_id: str) -> _DirectorPlanEntry:
+        """Resolve a stored plan entry by id (raises INVALID_PARAMS if absent)."""
+        entry = self._director_plans.get(plan_id)
+        if entry is None:
+            raise _invalid(f"unknown plan: {plan_id}")
+        return entry
+
+    def director_plan(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``director.plan({videoId, goal})`` -> ``{jobId}``. Job-based.
+
+        Understand -> editPlan LLM (via :meth:`_run_ai_job`, exactly the
+        ``phase8_select`` pattern) -> ``validate_and_reject`` -> store the typed
+        EditPlan under a fresh ``planId``. The ``job.done`` payload is
+        ``{planId, editPlan, preview}``. The media-derived understanding is fenced
+        as UNTRUSTED DATA by ``build_edit_plan_messages`` (injection mitigation #1);
+        the planner provider is the ``editPlan``-routed pool (no new AI path).
+        """
+        if ctx.jobs is None:
+            raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+        video_id = _require_str(params, "videoId")
+        goal = _require_str(params, "goal")
+        duration_ms = self._director_video_duration_ms(video_id)
+        path = cast("str", self._resolve_video_path(video_id))
+        project = self._load_or_create_project(video_id)
+        understanding, media = _director.build_understanding(project.data, duration_ms=duration_ms)
+        plan_id = _director.new_plan_id()
+        source = _director.source_hash(path, duration_ms)
+
+        from .features import edit_plan_prompt as _prompt  # local: import-light pure
+        from .features import edit_validate as _validate  # local: import-light pure
+
+        messages = _prompt.build_edit_plan_messages(goal, media)
+        plan_provider = self._provider if self._provider is not None else self._provider_for_function("editPlan")
+
+        def work(_job_ctx: Any, _envelope: Any, provider: Any) -> dict[str, Any]:
+            content = provider.chat(list(messages))
+            parsed = _prompt.parse_edit_plan(content, plan_id=plan_id, video_id=video_id, goal=goal, source_hash=source)
+            validated = _validate.validate_and_reject(parsed, understanding=understanding)
+            from .models.edit_plan import plan_to_dict, to_json  # local: import-light pure
+
+            self._director_plans[plan_id] = _DirectorPlanEntry(
+                plan=validated,
+                video_id=video_id,
+                messages=tuple(dict(m) for m in messages),
+            )
+            return {"planId": plan_id, "editPlan": plan_to_dict(validated), "preview": to_json(validated)}
+
+        job = self._run_ai_job(
+            ctx,
+            messages=messages,
+            model=str(self.settings.get().get("cloudModel") or ""),
+            provider=plan_provider,
+            work=work,
+            feature="director",
+            label="director.plan",
+            videoId=video_id,
+            ack=params.get("confirmBudget") if isinstance(params.get("confirmBudget"), str) else None,
+        )
+        return {"jobId": job.id}
+
+    def director_preview_cost(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:  # noqa: ARG002 - ctx parity
+        """``director.previewCost({planId})`` -> per-function cost/route preview.
+
+        A distinct ``director.*`` surface that is a PURE pass-through to
+        ``ai.planJob`` per data type (DECISION, DESIGN §7.1/§9): the ``editPlan``
+        text request + the frame ``vision`` request, each tied to its own consent
+        gate. Performs ZERO provider calls (the planner is pure). Returns
+        ``{perFunction:[{function, route, costEst, willEgress, cacheHit, cacheKey}]}``.
+        """
+        plan_id = _require_str(params, "planId")
+        entry = self._director_get_plan(plan_id)
+        messages = [dict(m) for m in entry.messages]
+        per_function: list[dict[str, Any]] = []
+        for function, capability in (("editPlan", "text"), ("vision", "vision")):
+            planned = self.ai_plan_job({"messages": messages, "capability": capability}, ctx)
+            per_function.append(
+                {
+                    "function": function,
+                    "route": planned["route"],
+                    "costEst": planned["costEst"],
+                    "willEgress": planned["willEgress"],
+                    "cacheHit": planned["cacheHit"],
+                    "cacheKey": planned["cacheKey"],
+                }
+            )
+        return {"perFunction": per_function}
+
+    def _director_engines(self) -> Any:  # pragma: no cover - real engine adapters wire in as the engine WUs land
+        """The op-kind -> engine dispatch table for ``director.apply`` (the seam).
+
+        Real impls are the shipped engine adapters (silencetrim/fillers/reframe/
+        ocr/stitch/regen), wired as those WUs land; tests inject a fake table. v1
+        ships an empty table (apply over a copy works; unmapped kinds report a
+        per-op ``failed`` with auto-rollback, never a crash).
+        """
+        return {}
+
+    def _director_inverse_engines(
+        self,
+    ) -> Any:  # pragma: no cover - defaults to the forward seam; tests inject a distinct table
+        """The op-kind -> engine table used to run RECORDED INVERSE ops (WU-undo).
+
+        ``director.undo`` walks the recorded inverse ops (from ``director.apply``);
+        each routes through this table. Defaults to the forward
+        :meth:`_director_engines` — a real engine's inverse is the same engine
+        running the inverse op — so v1 needs no separate wiring. A test injects a
+        distinct table to prove the undo path routes inverse ops independently.
+        """
+        return self._director_engines()
+
+    def _director_apply_ack(self, plan_id: str) -> str:
+        """The budget-ack token (``cacheKey``) ``director.apply`` would require.
+
+        Mirrors :meth:`_run_ai_job`'s gate: the plan's editPlan envelope cacheKey.
+        Exposed so a client (and the test) can echo it as ``confirmBudget``.
+        """
+        from .models import ai_job as _ai_job  # local: import-light
+
+        entry = self._director_get_plan(plan_id)
+        inputs = _ai_job.AiInputs(
+            messages=tuple({str(k): str(v) for k, v in m.items()} for m in entry.messages),
+            model=str(self.settings.get().get("cloudModel") or ""),
+        )
+        return self.plan_ai_job_envelope(inputs).cacheKey
+
+    def director_apply(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``director.apply({planId, confirmBudget?})`` -> ``{jobId}``. Job-based.
+
+        Copy the project -> walk the stored plan's ops over the COPY (recording an
+        inverse) via ``apply_plan`` (WU-apply), on ``ctx.jobs``. Enforces
+        ``_enforce_cloud_budget_ack`` (echo the planJob ``cacheKey`` as
+        ``confirmBudget``) so an egressing run is gated identically to the plan
+        step. The source manifest is NEVER mutated (apply writes to the COPY). The
+        ``job.done`` payload carries the per-op statuses + the COPY path.
+        """
+        if ctx.jobs is None:
+            raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+        plan_id = _require_str(params, "planId")
+        entry = self._director_get_plan(plan_id)
+        ack = params.get("confirmBudget") if isinstance(params.get("confirmBudget"), str) else None
+
+        from dataclasses import replace as _dc_replace  # local: import-light pure
+
+        from .features import apply_engine as _apply_engine  # local: import-light pure
+        from .features import project_copy as _project_copy  # local: import-light pure
+        from .models import ai_job as _ai_job  # local: import-light
+        from .models.edit_plan import plan_to_dict  # local: import-light pure
+
+        envelope = self.plan_ai_job_envelope(
+            _ai_job.AiInputs(
+                messages=tuple({str(k): str(v) for k, v in m.items()} for m in entry.messages),
+                model=str(self.settings.get().get("cloudModel") or ""),
+            )
+        )
+        self._enforce_cloud_budget_ack(envelope, ack)
+
+        project = self._load_or_create_project(entry.video_id)
+        engines = self._director_engines()
+        plan = entry.plan
+
+        def work(_job_ctx: Any, _envelope: Any, _provider: Any) -> dict[str, Any]:
+            project_copy = _project_copy.copy_project(project)
+            result = _apply_engine.apply_plan(plan, project_copy=project_copy, engines=engines)
+            # WU-undo: stash the recorded inverse plan under the plan id so
+            # ``director.undo`` can re-apply it for a one-shot reversal (DESIGN §5).
+            self._director_inverses[plan_id] = result.inverse_plan
+            # Reuse the canonical op serializer (plan_to_dict) for the per-op
+            # statuses by framing them as a throwaway plan's ``ops``.
+            ops_status = plan_to_dict(_dc_replace(plan, ops=result.ops_status))["ops"]
+            return {
+                "planId": plan_id,
+                "opsStatus": ops_status,
+                "inversePlan": plan_to_dict(result.inverse_plan),
+                "projectCopyPath": result.project_copy_path,
+            }
+
+        job = self._run_ai_job(
+            ctx,
+            messages=list(entry.messages),
+            model=str(self.settings.get().get("cloudModel") or ""),
+            provider=self._provider,
+            work=work,
+            feature="director",
+            label="director.apply",
+            videoId=entry.video_id,
+            ack=ack,
+        )
+        return {"jobId": job.id}
+
+    def director_undo(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``director.undo({planId})`` -> ``{jobId}``. Job-based (DESIGN §5/§7.1).
+
+        One-shot undo: re-apply the inverse plan ``director.apply`` recorded under
+        ``planId`` over a FRESH project COPY via ``apply_plan`` (WU-apply), on
+        ``ctx.jobs``. The recorded inverse ops (newest-first) route through
+        :meth:`_director_inverse_engines`; re-applying them restores the
+        pre-apply COPY (round-trip undo, WU-apply acceptance (c)). Undo is a pure
+        LOCAL manifest reversal — no LLM/vision call, no egress — so the budget
+        ack is NOT re-enforced (apply already gated its egress). A plan that was
+        never applied has no recorded inverse and is rejected. The ``job.done``
+        payload carries the per-op statuses + the COPY path.
+        """
+        if ctx.jobs is None:
+            raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+        plan_id = _require_str(params, "planId")
+        entry = self._director_get_plan(plan_id)
+        inverse_plan = self._director_inverses.get(plan_id)
+        if inverse_plan is None:
+            raise _invalid(f"plan not applied (nothing to undo): {plan_id}")
+
+        from dataclasses import replace as _dc_replace  # local: import-light pure
+
+        from .features import apply_engine as _apply_engine  # local: import-light pure
+        from .features import project_copy as _project_copy  # local: import-light pure
+        from .models.edit_plan import plan_to_dict  # local: import-light pure
+
+        project = self._load_or_create_project(entry.video_id)
+        engines = self._director_inverse_engines()
+
+        def work(_job_ctx: Any, _envelope: Any, _provider: Any) -> dict[str, Any]:
+            project_copy = _project_copy.copy_project(project)
+            result = _apply_engine.apply_plan(inverse_plan, project_copy=project_copy, engines=engines)
+            ops_status = plan_to_dict(_dc_replace(inverse_plan, ops=result.ops_status))["ops"]
+            return {
+                "planId": plan_id,
+                "opsStatus": ops_status,
+                "projectCopyPath": result.project_copy_path,
+            }
+
+        job = self._run_ai_job(
+            ctx,
+            messages=list(entry.messages),
+            model=str(self.settings.get().get("cloudModel") or ""),
+            provider=self._provider,
+            work=work,
+            feature="director",
+            label="director.undo",
+            videoId=entry.video_id,
+            # Undo's ``work`` makes ZERO provider calls (pure local manifest
+            # reversal) — it never egresses, so the cloud-budget gate is skipped
+            # (DESIGN §5/§7.1). Apply already gated its own egress.
+            enforce_budget=False,
+        )
+        return {"jobId": job.id}
+
+    def _director_eval_signals(self, source: str, *, is_copy: bool) -> dict[str, Any]:  # noqa: ARG002 - is_copy distinguishes before/after for an injected seam
+        """The eval-signals seam: a source descriptor -> a JSON-safe metric bundle.
+
+        Adapts the SHIPPED ``phase8.signals`` runner output (motion values, scene
+        cuts) into the value sequences :func:`director_eval.signals_to_metrics`
+        consumes — so ``director.evaluate`` rides the SAME signal compute as
+        ``phase8.signals`` (no parallel path). ``is_copy`` lets a test inject
+        distinct before/after bundles; the default ignores it (the v1 apply COPY is
+        a manifest, not re-encoded media, so before+after share the source compute
+        until the engine WUs render an after-clip). The heavy runner stays behind
+        its existing ``# pragma: no cover`` seam; this adapter is pure shaping.
+        """
+        runner = self._phase8_runner or self._default_phase8_runner()
+        probe = self._ffprobe_duration or _self_ffprobe()
+        settings = self.settings.get()
+        tier = _coerce_tier(None, settings)
+        tracks = runner(source, tier=tier, settings=settings, duration_probe=probe)
+        motion = tracks.get("motion")
+        cuts = tracks.get("sceneCut")
+        return {
+            "motion": [float(s.value) for s in getattr(motion, "signals", ())],
+            "cuts": [float(s.start) for s in getattr(cuts, "signals", ())],
+        }
+
+    def director_evaluate(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:  # noqa: ARG002 - ctx parity (synchronous objective compute)
+        """``director.evaluate({planId})`` -> objective before/after metrics.
+
+        Computes goal-vs-result with the OBJECTIVE deltas (jerk / cutRhythm /
+        silenceRatio / ocrCoverage) via the PURE :func:`director_eval.evaluate` over
+        before/after metric dicts (DESIGN §4, AGENTS.md §7 — preferred over a
+        sycophancy-prone LLM judge). The signals ride the SHIPPED ``phase8.signals``
+        runner (the ``_director_eval_signals`` seam — no new AI path). An OPTIONAL
+        qualitative judge note (the ``_director_eval_judge`` seam, routed through
+        ``_run_ai_job`` in production) is DESCRIPTIVE only — it NEVER overrides the
+        objective score. A plan never applied has no after-state to score (rejected).
+        """
+        plan_id = _require_str(params, "planId")
+        entry = self._director_get_plan(plan_id)
+        if plan_id not in self._director_inverses:
+            raise _invalid(f"plan not applied (nothing to evaluate): {plan_id}")
+
+        from .features import director_eval as _eval  # local: import-light pure
+
+        path = cast("str", self._resolve_video_path(entry.video_id))
+        before = _eval.signals_to_metrics(self._director_eval_signals(path, is_copy=False))
+        after = _eval.signals_to_metrics(self._director_eval_signals(path, is_copy=True))
+        return _eval.evaluate(before, after, goal=entry.plan.goal, judge=self._director_eval_judge)
+
+    #: The OPTIONAL qualitative editPlan judge for ``director.evaluate`` (DESIGN §4):
+    #: ``(before, after, goal) -> note``. ``None`` by default (objective-only). A
+    #: real judge routes through ``_run_ai_job`` (no parallel path); whatever it
+    #: returns is DESCRIPTIVE and can NEVER change the objective score (the
+    #: anti-sycophancy backstop — AGENTS.md §7).
+    _director_eval_judge: Any = None
 
     def _budget_request(self, raw: Any) -> Any:
         """Coerce a wire ``request`` dict into a budget request (or ``None``).
@@ -2049,6 +2400,26 @@ def register_all(
     # WU-envelope: AI-Job pre-flight. ai.planJob returns the route + cost/egress
     # budget + cacheHit/willEgress with ZERO provider calls (the pure planner).
     reg("ai.planJob", svc.ai_plan_job)
+
+    # WU-plan-rpc (Director): the RPC spine onto the shipped AI substrate.
+    # director.plan understands -> editPlan LLM (via _run_ai_job) -> validate ->
+    # stored plan; director.previewCost is a PURE per-data-type pass-through to
+    # ai.planJob (ZERO calls); director.apply walks the plan over a project COPY
+    # (apply_plan, WU-apply) recording an inverse. All three register HERE ONLY
+    # (the one composition root — no parallel AI path).
+    reg("director.plan", svc.director_plan)
+    reg("director.previewCost", svc.director_preview_cost)
+    reg("director.apply", svc.director_apply)
+    # WU-undo: one-shot reversal. director.undo re-applies the inverse plan that
+    # director.apply recorded (over a fresh COPY) — registered AFTER the plan-rpc
+    # methods (SEQUENCED on the single composition root, no parallel AI path).
+    reg("director.undo", svc.director_undo)
+    # WU-evaluate: objective goal-vs-result metrics. director.evaluate computes the
+    # before/after deltas (jerk/cutRhythm/silenceRatio/ocrCoverage) via the PURE
+    # director_eval.evaluate over the shipped phase8 signals; an optional LLM judge
+    # note never overrides the objective score (DESIGN §4, AGENTS.md §7). Registered
+    # HERE ONLY (the one composition root — no parallel AI path).
+    reg("director.evaluate", svc.director_evaluate)
 
     # WU-keys: provider key management. Every read is REDACTED (last-4) — no RPC
     # method ever returns a full key; the FACTORY path reads RAW via get_raw().

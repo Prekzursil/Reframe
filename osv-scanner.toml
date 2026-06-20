@@ -29,3 +29,8 @@
 # this file intentionally carries no IgnoredVulns. Add a dated, reasoned entry here
 # only for a future vuln that is genuinely unfixable or provably unreachable.
 # ---------------------------------------------------------------------------
+# 2026-06-20 SECURITY UPGRADE — undici (dev/build transitive via node-gyp) bumped
+# 6.26.0 -> 6.27.0 to clear 4 new CVEs (GHSA-vxpw-j846-p89q HIGH, GHSA-p88m-4jfj-68fv,
+# GHSA-35p6-xmwp-9g52, GHSA-g8m3-5g58-fq7m). Fixed by adding "undici": "^6.27.0" to
+# app/package.json overrides (same pattern as esbuild/ws). No ignore needed.
+# ---------------------------------------------------------------------------
