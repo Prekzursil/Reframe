@@ -264,6 +264,41 @@ export interface AsrEngine {
 }
 
 /**
+ * One capability's readiness state (`readiness.summary`, WU-8). The five states
+ * are distinguished by TEXT (the badge label), never hue alone (WCAG 1.4.1):
+ * `ready`, `needsDownload`, `needsKey`, `needsConsent`, `unavailable`.
+ */
+export type ReadinessStatus =
+  | 'ready'
+  | 'needsDownload'
+  | 'needsKey'
+  | 'needsConsent'
+  | 'unavailable';
+
+/** The actionable fix a not-ready capability offers (null when `ready`/blocked). */
+export interface ReadinessAction {
+  /** `assets.ensure` (download), `openProviders` (add a key), `setConsent`. */
+  kind: 'assets.ensure' | 'openProviders' | 'setConsent';
+  /** The asset names to ensure (only for `assets.ensure`). */
+  assets?: string[];
+  /** The provider id the action targets (key/consent actions). */
+  provider?: string;
+}
+
+/** One rolled-up capability row from `readiness.summary` (WU-8). */
+export interface ReadinessItem {
+  /** Stable capability id, e.g. `tier1-multimodal` or `ai.select`. */
+  capability: string;
+  /** Human-friendly capability name. */
+  label: string;
+  status: ReadinessStatus;
+  /** Plain-language reason it is not ready ("" when ready). */
+  blockedBy: string;
+  /** The fix action, or null when ready or blocked with no fix. */
+  action: ReadinessAction | null;
+}
+
+/**
  * One per-key usage row from `providers.usage` (WU-usage-ui). The pool accounts
  * usage from optimistic decrement + parsed 429 / X-RateLimit-* headers (NOT a
  * poller). `key` is ALWAYS the REDACTED last-4 (no full key crosses RPC).
@@ -346,6 +381,46 @@ export interface FirstRunResponse {
   routing?: RoutingBlock;
 }
 
+// ---------------------------------------------------------------------------
+// UX / QoL bundle (WU-0): additive settings shapes downstream WUs consume.
+// These mirror the sidecar DEFAULT_SETTINGS QoL keys (settings_store.py) and are
+// purely additive — they never widen or break the existing settings surface.
+// ---------------------------------------------------------------------------
+
+/** Workspace autosave config (WU-11): the renderer debounces `project.save`. */
+export interface AutosaveSettings {
+  enabled: boolean;
+  debounceMs: number;
+}
+
+/** Pre-selected export formats the export UI offers first (WU-11). */
+export interface ExportDefaults {
+  subtitleFormat: string;
+  nleFormat: string;
+  nleFps: number;
+}
+
+/**
+ * One saved bundle (WU-10/WU-11): the autosave + export-default choices a named
+ * preset carries. Both parts are `Partial` because the sidecar `upsert` stores
+ * `{}` for an omitted part (the renderer fills the gaps from live settings).
+ */
+export interface SavePreset {
+  autosave: Partial<AutosaveSettings>;
+  exportDefaults: Partial<ExportDefaults>;
+}
+
+/**
+ * Saved export/pipeline presets (WU-10/WU-11). `presets` is a name->preset map;
+ * `active` is the last-applied preset name. NOTE: the sidecar `settings.set` is a
+ * SHALLOW top-level merge — writing `savePresets` REPLACES the whole block, so a
+ * partial update must read-modify-write the full block to preserve `presets`.
+ */
+export interface SavePresetsBlock {
+  presets: Record<string, SavePreset>;
+  active: string;
+}
+
 /**
  * system-advanced saved pipeline recipe — field names FROZEN, identical to the
  * sidecar `recipes.normalize_recipe` shape. A `Step` names an existing RPC
@@ -361,6 +436,119 @@ export interface SavedRecipe {
   id: string;
   name: string;
   steps: RecipeStep[];
+}
+
+// ---- Repurpose bundle (WU11) — field names identical to the sidecar -------
+//
+// Wire schemas for the `exportPresets.*` / `templates.*` / `batch.*` groups
+// (DESIGN §7 / §8). Field names are FROZEN and identical to the Python side
+// (`export_presets.py`, `templates.py`, `batch.py`) — the §17 house rule.
+
+/**
+ * One server-persisted platform export preset (`export_presets.py`). `aspect` is
+ * a ratio string ("9:16"); `minSec`/`maxSec` are clamped into the hard 20-60 s
+ * window on save; `captionStyle`/`reframeEngine` are validated id sets.
+ */
+export interface ExportPreset {
+  id: string;
+  label: string;
+  aspect: string;
+  minSec: number;
+  maxSec: number;
+  count: number;
+  captionStyle: string;
+  reframeEngine: string;
+}
+
+/** One template step — a recipe step (`templates.py` reuses `normalize_recipe`). */
+export interface TemplateStep {
+  method: string;
+  params: Record<string, unknown>;
+  label: string;
+}
+
+/**
+ * A reusable edit template (`templates.py`): a recipe (`{id, name, steps}`) plus
+ * the additive `defaultControls` (shared knobs) and `exportTargets` (preset ids
+ * the export step fans out to).
+ */
+export interface Template {
+  id: string;
+  name: string;
+  steps: TemplateStep[];
+  defaultControls: Record<string, unknown>;
+  exportTargets: string[];
+}
+
+/** One source's terminal/transient status inside a batch (`batch.py`). */
+export type BatchItemStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled' | 'skipped';
+
+/**
+ * One source row of a batch (`batch.py`). `skipReason` carries the visible-skip
+ * contract (DESIGN §9.1) — a skipped source is attributed, never silently absent.
+ */
+export interface BatchItem {
+  videoId: string;
+  status: BatchItemStatus;
+  jobId?: string;
+  error?: string;
+  skipReason?: string;
+  results?: unknown;
+}
+
+/** Aggregate batch status (`batch.py` `derive_status`). */
+export type BatchStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled' | 'partial';
+
+/** A full durable batch record (`batch.py` `BatchState`). */
+export interface BatchState {
+  id: string;
+  name: string;
+  templateId: string;
+  status: BatchStatus;
+  createdAt: number;
+  items: BatchItem[];
+  /** Live-overlay `pct` while the parent job runs (`_merge_live_status`). */
+  pct?: number;
+}
+
+/** Per-status counts in a `BatchSummary` (`batch.py` `_summarize`). */
+export interface BatchCounts {
+  total: number;
+  done: number;
+  error: number;
+  skipped: number;
+  queued: number;
+  running: number;
+  cancelled: number;
+}
+
+/** A lightweight batch summary (heavy per-item data omitted) — `batch.list`. */
+export interface BatchSummary {
+  id: string;
+  name: string;
+  templateId: string;
+  status: BatchStatus;
+  createdAt: number;
+  counts: BatchCounts;
+}
+
+/** One per-source consent decision from `batch.start`'s `plan_consent` (§9.1). */
+export interface BatchConsentDecision {
+  videoId: string;
+  action: 'run' | 'skip';
+  skipReason: string | null;
+  confirmBudget: string | null;
+  willEgress: boolean;
+  cacheHit: boolean;
+}
+
+/** The pre-run consent surface (`batch.py` `plan_consent`, DESIGN §9.1). */
+export interface BatchConsent {
+  decisions: BatchConsentDecision[];
+  willRun: number;
+  willSkip: number;
+  costEst: Record<string, unknown>;
+  budget: Record<string, unknown>;
 }
 
 /** A3 VoiceSample — a stored voice-clone reference sample. */
@@ -389,6 +577,116 @@ export interface Project {
   settings: Record<string, unknown>;
 }
 
+// ---- Director (prompt-driven editing) wire shapes ------------------------
+//
+// Field names are FROZEN, identical to the sidecar `director_*` handler payloads
+// (`handlers.py:1778+`) + the `edit_plan.py` canonical serializer + the
+// `director_eval.evaluate` result. Spans are `[startMs, endMs]` integer pairs or
+// null (whole-timeline ops); kind/status enumerate the frozen vocabularies.
+
+/** The v1 op toolbox (DESIGN §2.2) — mirrors the sidecar `OpKind` Literal. */
+export type DirectorOpKind =
+  | 'trim'
+  | 'cut'
+  | 'removeSilence'
+  | 'removeFillers'
+  | 'reorder'
+  | 'retime'
+  | 'reframe'
+  | 'zoomPan'
+  | 'caption'
+  | 'translateCaption'
+  | 'overlayText'
+  | 'lowerThird'
+  | 'export'
+  | 'stitchPanorama'
+  | 'regenScroll'
+  | 'ocrExtractList';
+
+/** Per-op lifecycle — mirrors the sidecar `OpStatus` Literal. */
+export type DirectorOpStatus = 'planned' | 'applied' | 'failed' | 'dropped';
+
+/** One ordered, reversible operation (mirrors `edit_plan.EditOp` on the wire). */
+export interface DirectorOp {
+  id: string;
+  kind: DirectorOpKind;
+  /** Source range [startMs, endMs], or null for whole-timeline ops. */
+  span: [number, number] | null;
+  params: Record<string, unknown>;
+  reversible: boolean;
+  /** Model/engine text — rendered as PLAIN TEXT, NEVER trusted as instructions. */
+  rationale: string;
+  status: DirectorOpStatus;
+  /** Typed reason a drop/fail carries (e.g. "span-exceeds-clip"), or null. */
+  statusReason: string | null;
+}
+
+/** The typed, ordered edit document (mirrors `edit_plan.EditPlan` on the wire). */
+export interface DirectorEditPlan {
+  planId: string;
+  videoId: string;
+  goal: string;
+  sourceHash: string;
+  ops: DirectorOp[];
+  /** The undo plan recorded at apply-time (empty until applied). */
+  inverse: DirectorOp[];
+}
+
+/** `director.plan` job.done payload (`handlers.py:1816`). */
+export interface DirectorPlanResult {
+  planId: string;
+  editPlan: DirectorEditPlan;
+  /** Canonical JSON of the validated plan (cache/diff anchor). */
+  preview: string;
+}
+
+/** `director.apply` / `director.undo` job.done payload (`handlers.py:1940`). */
+export interface DirectorApplyResult {
+  planId: string;
+  /** Per-op status rows after the apply walk (serialized ops). */
+  opsStatus: DirectorOp[];
+  /** Present on apply (not undo): the recorded inverse plan. */
+  inversePlan?: DirectorEditPlan;
+  projectCopyPath: string;
+}
+
+/** One per-data-type cost/route row (`director.previewCost`, `handlers.py:1846`). */
+export interface DirectorCostRow {
+  /** The routed function id: "editPlan" (text) or "vision" (frames/OCR). */
+  function: string;
+  route: string;
+  costEst: number;
+  /** True when this data type would leave the machine (frames = heaviest privacy). */
+  willEgress: boolean;
+  cacheHit: boolean;
+  /** The budget-ack token; echo as `confirmBudget` on apply. */
+  cacheKey: string;
+}
+
+/** `director.previewCost` payload (`handlers.py:1856`). */
+export interface DirectorPreview {
+  perFunction: DirectorCostRow[];
+}
+
+/** The four objective metrics (`director_eval._LOWER_IS_BETTER` keys). */
+export interface DirectorMetrics {
+  jerk: number;
+  cutRhythm: number;
+  silenceRatio: number;
+  ocrCoverage: number;
+}
+
+/** `director.evaluate` payload (`director_eval.evaluate`, `handlers.py:2062`). */
+export interface DirectorEval {
+  /** Single [0,1] summary derived ONLY from the objective deltas. */
+  score: number;
+  /** Signed improvement per metric (positive = better). */
+  deltas: DirectorMetrics;
+  beforeAfter: { before: DirectorMetrics; after: DirectorMetrics };
+  /** Optional qualitative note — descriptive only, NEVER moves `score`. */
+  judgeNote: string | null;
+}
+
 // ---- Notification payloads (CONTRACTS.md §2) -----------------------------
 
 /** `job.progress` params. */
@@ -410,7 +708,7 @@ export interface JobInfo {
   feature: string;
   label: string;
   videoId?: string;
-  status: 'queued' | 'running' | 'done' | 'error' | 'cancelled';
+  status: 'queued' | 'running' | 'done' | 'error' | 'cancelled' | 'interrupted';
   pct: number;
 }
 
@@ -498,6 +796,8 @@ export const client = {
     list: (): Promise<{ videos: Video[] }> => rpc('library.list'),
     add: (path: string): Promise<{ video: Video }> => rpc('library.add', { path }),
     remove: (id: string): Promise<{ ok: boolean }> => rpc('library.remove', { id }),
+    /** `library.thumbnail {id}` — idempotent source-video poster extraction (WU-4). */
+    thumbnail: (id: string): Promise<{ thumbnailPath: string }> => rpc('library.thumbnail', { id }),
   },
 
   project: {
@@ -731,6 +1031,16 @@ export const client = {
     engines: (): Promise<{ engines: AsrEngine[] }> => rpc('asr.engines'),
   },
 
+  /**
+   * `readiness.*` — the unified "what works right now" roll-up (WU-8). Strictly
+   * read-only: it derives every row from the installed-weight map + redacted
+   * settings view, so it triggers no download and opens no socket.
+   */
+  readiness: {
+    /** `readiness.summary()` -> the per-capability readiness rows (WU-8). */
+    summary: (): Promise<{ items: ReadinessItem[] }> => rpc('readiness.summary'),
+  },
+
   /** `providers.*` — Hub key/usage reads (WU-usage-ui surfaces live usage here). */
   providers: {
     /**
@@ -753,6 +1063,32 @@ export const client = {
       rpc('providers.firstRun', choice === undefined ? {} : { choice }),
   },
 
+  /**
+   * `savePresets.*` — named `{autosave, exportDefaults}` bundles (WU-10/WU-11).
+   * The sidecar `settings.set` is a SHALLOW top-level merge, so every mutating
+   * handler read-modify-writes the whole `savePresets` block server-side; the
+   * client just mirrors the frozen method names + param/result shapes.
+   */
+  savePresets: {
+    /** `savePresets.list()` -> the saved bundle map + last-applied name. */
+    list: (): Promise<SavePresetsBlock> => rpc('savePresets.list'),
+    /** `savePresets.apply({name})` -> the now-active name + its resolved bundle. */
+    apply: (name: string): Promise<{ active: string; savePreset: SavePreset }> =>
+      rpc('savePresets.apply', { name }),
+    /**
+     * `savePresets.upsert({name, autosave?, exportDefaults?})` -> the bundle map.
+     * Omitted parts default to `{}` server-side (filled from live settings).
+     */
+    upsert: (
+      name: string,
+      bundle?: { autosave?: AutosaveSettings; exportDefaults?: ExportDefaults },
+    ): Promise<{ presets: Record<string, SavePreset> }> =>
+      rpc('savePresets.upsert', { name, ...(bundle ?? {}) }),
+    /** `savePresets.remove({name})` -> the surviving bundle map + active name. */
+    remove: (name: string): Promise<{ presets: Record<string, SavePreset>; active: string }> =>
+      rpc('savePresets.remove', { name }),
+  },
+
   /** `recipes.*` — saved multi-step pipelines run in one shot. */
   recipes: {
     list: (): Promise<{ recipes: SavedRecipe[] }> => rpc('recipes.list'),
@@ -762,6 +1098,44 @@ export const client = {
     run: (id: string): Promise<JobHandle> => rpc('recipes.run', { id }),
   },
 
+  /** `exportPresets.*` — server-persisted platform export presets (WU11). */
+  exportPresets: {
+    list: (): Promise<{ presets: ExportPreset[] }> => rpc('exportPresets.list'),
+    save: (preset: ExportPreset | Omit<ExportPreset, 'id'>): Promise<{ preset: ExportPreset }> =>
+      rpc('exportPresets.save', { preset }),
+    delete: (id: string): Promise<{ ok: boolean }> => rpc('exportPresets.delete', { id }),
+    reset: (): Promise<{ presets: ExportPreset[] }> => rpc('exportPresets.reset'),
+  },
+
+  /** `templates.*` — reusable edit templates (recipe + controls + targets). */
+  templates: {
+    list: (): Promise<{ templates: Template[] }> => rpc('templates.list'),
+    save: (template: Template | Omit<Template, 'id'>): Promise<{ template: Template }> =>
+      rpc('templates.save', { template }),
+    delete: (id: string): Promise<{ ok: boolean }> => rpc('templates.delete', { id }),
+    apply: (templateId: string, videoId: string): Promise<JobHandle> =>
+      rpc('templates.apply', { templateId, videoId }),
+  },
+
+  /** `batch.*` — durable, resumable many-source queue (WU11). */
+  batch: {
+    create: (
+      name: string,
+      templateId: string,
+      sourceVideoIds: string[],
+    ): Promise<{ batch: BatchState }> => rpc('batch.create', { name, templateId, sourceVideoIds }),
+    start: (
+      id: string,
+      opts?: { confirmCloudBudget?: boolean; acknowledged?: boolean },
+    ): Promise<JobHandle> => rpc('batch.start', { id, ...(opts ?? {}) }),
+    status: (id: string): Promise<{ batch: BatchState }> => rpc('batch.status', { id }),
+    list: (): Promise<{ batches: BatchSummary[] }> => rpc('batch.list'),
+    cancel: (id: string): Promise<{ ok: boolean }> => rpc('batch.cancel', { id }),
+    resume: (id: string): Promise<JobHandle & { status?: BatchStatus }> =>
+      rpc('batch.resume', { id }),
+    delete: (id: string): Promise<{ ok: boolean }> => rpc('batch.delete', { id }),
+  },
+
   /** `diarize.start` — token-free speaker labelling (long job -> {transcript}). */
   diarize: {
     start: (
@@ -769,6 +1143,29 @@ export const client = {
       threshold?: number,
     ): Promise<JobHandle & { transcript?: Transcript }> =>
       rpc('diarize.start', threshold === undefined ? { videoId } : { videoId, threshold }),
+  },
+
+  /**
+   * `director.*` — the prompt-driven AI video editing spine (WU-plan-rpc /
+   * WU-evaluate). `plan`/`apply`/`undo` are JOB-based (resolve `{jobId}`; the
+   * typed result arrives on `job.done`); `previewCost`/`evaluate` are SYNCHRONOUS
+   * (resolve their payload directly). Field names are FROZEN, identical to the
+   * sidecar `director_*` handlers (`handlers.py:1778+`).
+   */
+  director: {
+    /** `director.plan {videoId, goal}` -> {jobId}; job.done = {planId, editPlan, preview}. */
+    plan: (videoId: string, goal: string): Promise<JobHandle> =>
+      rpc('director.plan', { videoId, goal }),
+    /** `director.previewCost {planId}` -> per-data-type cost/route/egress (ZERO provider calls). */
+    previewCost: (planId: string): Promise<DirectorPreview> =>
+      rpc('director.previewCost', { planId }),
+    /** `director.apply {planId, confirmBudget?}` -> {jobId}; job.done = DirectorApplyResult. */
+    apply: (planId: string, confirmBudget?: string): Promise<JobHandle> =>
+      rpc('director.apply', confirmBudget === undefined ? { planId } : { planId, confirmBudget }),
+    /** `director.undo {planId}` -> {jobId}; re-applies the recorded inverse plan. */
+    undo: (planId: string): Promise<JobHandle> => rpc('director.undo', { planId }),
+    /** `director.evaluate {planId}` -> objective before/after metrics (synchronous). */
+    evaluate: (planId: string): Promise<DirectorEval> => rpc('director.evaluate', { planId }),
   },
 } as const;
 

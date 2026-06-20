@@ -58,8 +58,9 @@ response resolves when done — long jobs return `{"jobId"}` immediately and str
 
 ### Method registry (the public surface — do not rename)
 - `ping()` -> `{"pong":true,"version":str}`
-- `library.list()` -> `{"videos":[{id,path,title,addedAt,durationSec,hasTranscript}]}`
+- `library.list()` -> `{"videos":[{id,path,title,addedAt,durationSec,hasTranscript,thumbnailPath}]}`
 - `library.add({path})` -> `{video}` ; `library.remove({id})` -> `{ok:true}`
+- `library.thumbnail({id})` -> `{thumbnailPath}` (WU-2: idempotent source-video poster under `data_dir/thumbnails/<id>.jpg`)
 - `project.open({id})` -> `{project}` ; `project.save({project})` -> `{ok}` ; `project.consolidate({id})` -> `{ok,folder}`
 - `transcribe.start({videoId, language?})` -> `{jobId}` ; streams progress ; `job.done.result` = `{transcript}`
 - `subtitles.generate({videoId})` -> `{track}` ; `subtitles.edit({trackId, cues})` -> `{track}`
@@ -79,7 +80,7 @@ response resolves when done — long jobs return `{"jobId"}` immediately and str
 - **Cue** `{index:int, start:float, end:float, text:str}` ; **SubtitleTrack** `{id, lang, name, format, kind:"soft"|"hard", cues:[Cue]}`
 - **Candidate** `{rank:int, start:float, end:float, durationSec:float, hook:str, why:str, score:int, sourceStart:float}`
   (`sourceStart` = the clip's start in the ORIGINAL video; captions must subtract it to re-base to the clip's local t=0)
-- **Video** `{id, path, title, addedAt, durationSec, hasTranscript}`
+- **Video** `{id, path, title, addedAt, durationSec, hasTranscript, thumbnailPath}` (thumbnailPath is additive, default `""`)
 - **Project** `{id, video, transcript?, tracks:[SubtitleTrack], clips:[{candidate, path}], settings}`
 
 ## 4. Engine interfaces (exactly ONE impl each in this build)

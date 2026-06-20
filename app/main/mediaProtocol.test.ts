@@ -158,6 +158,16 @@ describe('videoIdFromUrl', () => {
     const url = `mstream://media/${encodeURIComponent(`short:${path}`)}`;
     expect(videoIdFromUrl(url)).toBe(`short:${path}`);
   });
+
+  it('decodes a WU-3 thumb: prefixed id intact (library poster single-segment round-trip)', () => {
+    // The library-poster URL is mstream://media/<encodeURIComponent("thumb:"+path)>.
+    // The whole `thumb:<path>` must come back as ONE id so the resolver branch can
+    // strip the prefix and traversal-guard the absolute path it encodes — exactly
+    // like short:/dub:.
+    const path = 'C:\\data\\thumbnails\\vid1.jpg';
+    const url = `mstream://media/${encodeURIComponent(`thumb:${path}`)}`;
+    expect(videoIdFromUrl(url)).toBe(`thumb:${path}`);
+  });
 });
 
 describe('contentTypeFor', () => {
