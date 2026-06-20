@@ -207,6 +207,50 @@ def test_director_undo_requires_job_registry(tmp_path: Path) -> None:
     assert ei.value.code == ErrorCode.INTERNAL_ERROR
 
 
+def test_director_undo_not_budget_gated_with_cloud_pool(tmp_path: Path) -> None:
+    """Undo is a pure LOCAL manifest reversal — no provider call, no egress.
+
+    Even under the realistic shipping config (``confirmCloudBudget`` ON + a cloud
+    provider in the pool, the exact setup of
+    ``test_director_apply_enforces_budget_ack_on_egress``), undo MUST proceed
+    WITHOUT a ``confirmBudget`` token: its ``work`` makes zero provider calls, so
+    the budget ack is never re-enforced (DESIGN §5/§7.1 reversibility). Apply
+    already gated its own egress; gating undo would permanently refuse a pure-local
+    reversal that has no budget surface to acknowledge.
+    """
+    seen: list[str] = []
+    engines = {"trim": _forward_engine("trim")}
+    svc = _services(tmp_path, provider=CannedProvider(), engines=engines)
+    svc._director_inverse_engines = lambda: {"trim": _undo_engine(seen)}  # type: ignore[attr-defined]
+    vid = _add_project(svc)
+    plan_id = _apply_and_plan_id(svc, vid)
+
+    # Force an egressing envelope + the confirm-cloud-budget gate ON (would refuse
+    # an apply lacking the echoed cacheKey — see the apply budget test).
+    class _CloudEntry:
+        provider = "Groq"
+        local = False
+
+    class _LocalEntry:
+        provider = "local"
+        local = True
+
+    class _CloudPool:
+        entries = (_CloudEntry(), _LocalEntry())
+
+    svc._ai_pool = lambda: _CloudPool()  # type: ignore[method-assign]
+    svc.settings.set({"confirmCloudBudget": True})
+
+    ctx_undo = _director_ctx()
+    out = svc.director_undo({"planId": plan_id}, ctx_undo)
+    result = _done_result(ctx_undo)
+
+    assert out["jobId"]
+    statuses = {op["id"]: op["status"] for op in result["opsStatus"]}
+    assert statuses["inv-o1"] == "applied"
+    assert seen == ["inv-o1"]
+
+
 def test_director_undo_defaults_inverse_engines_to_forward(tmp_path: Path) -> None:
     """When no separate inverse table is injected, undo reuses the forward engines."""
     engines = {"trim": _forward_engine("trim")}

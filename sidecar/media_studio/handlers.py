@@ -1655,6 +1655,7 @@ class Services:
         label: str,
         videoId: str | None = None,  # noqa: N803 - wire-name kwarg (matches JobRegistry)
         ack: str | None = None,
+        enforce_budget: bool = True,
     ) -> Any:
         """Plan + run an :class:`ai_job.AiJob` on ``ctx.jobs`` with a custom ``work``.
 
@@ -1669,6 +1670,13 @@ class Services:
         ``cacheKey`` (the token ``ai.planJob`` returns), else the run is refused
         with a typed error telling the client to pre-flight + acknowledge first.
         A local-only / cache-hit run never egresses, so it is never gated.
+
+        ``enforce_budget=False`` skips the cloud-budget gate entirely — for a job
+        whose ``work`` provably makes NO provider call and therefore never egresses
+        (e.g. ``director.undo``: a pure LOCAL manifest reversal). Such a job rides
+        the same envelope/job path for uniformity but has no budget surface to
+        acknowledge, so gating it would refuse a non-egressing run with a token the
+        caller cannot supply.
         """
         from .models import ai_job as _ai_job  # local: import-light
 
@@ -1677,7 +1685,8 @@ class Services:
             model=model,
         )
         envelope = self.plan_ai_job_envelope(inputs)
-        self._enforce_cloud_budget_ack(envelope, ack)
+        if enforce_budget:
+            self._enforce_cloud_budget_ack(envelope, ack)
 
         def _factory() -> Any:
             if provider is not None:
@@ -1997,6 +2006,10 @@ class Services:
             feature="director",
             label="director.undo",
             videoId=entry.video_id,
+            # Undo's ``work`` makes ZERO provider calls (pure local manifest
+            # reversal) — it never egresses, so the cloud-budget gate is skipped
+            # (DESIGN §5/§7.1). Apply already gated its own egress.
+            enforce_budget=False,
         )
         return {"jobId": job.id}
 
