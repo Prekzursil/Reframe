@@ -548,6 +548,29 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('providers.firstRun', { choice: 'bestFreeCloud' });
   });
 
+  it('savePresets.* forward their params (WU-10/WU-11)', async () => {
+    const r = installApi();
+    await client.savePresets.list();
+    expect(r).toHaveBeenCalledWith('savePresets.list', undefined);
+    await client.savePresets.apply('Fast export');
+    expect(r).toHaveBeenCalledWith('savePresets.apply', { name: 'Fast export' });
+    // upsert WITHOUT a bundle: the conditional-spread falls back to `{}`.
+    await client.savePresets.upsert('Bare');
+    expect(r).toHaveBeenCalledWith('savePresets.upsert', { name: 'Bare' });
+    // upsert WITH a bundle: both parts ride along.
+    await client.savePresets.upsert('Full', {
+      autosave: { enabled: true, debounceMs: 1500 },
+      exportDefaults: { subtitleFormat: 'srt', nleFormat: 'edl', nleFps: 30 },
+    });
+    expect(r).toHaveBeenCalledWith('savePresets.upsert', {
+      name: 'Full',
+      autosave: { enabled: true, debounceMs: 1500 },
+      exportDefaults: { subtitleFormat: 'srt', nleFormat: 'edl', nleFps: 30 },
+    });
+    await client.savePresets.remove('Bare');
+    expect(r).toHaveBeenCalledWith('savePresets.remove', { name: 'Bare' });
+  });
+
   it('recipes.* forward their params', async () => {
     const r = installApi();
     const recipe: SavedRecipe = {

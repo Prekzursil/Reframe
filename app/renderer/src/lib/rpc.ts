@@ -401,13 +401,23 @@ export interface ExportDefaults {
 }
 
 /**
+ * One saved bundle (WU-10/WU-11): the autosave + export-default choices a named
+ * preset carries. Both parts are `Partial` because the sidecar `upsert` stores
+ * `{}` for an omitted part (the renderer fills the gaps from live settings).
+ */
+export interface SavePreset {
+  autosave: Partial<AutosaveSettings>;
+  exportDefaults: Partial<ExportDefaults>;
+}
+
+/**
  * Saved export/pipeline presets (WU-10/WU-11). `presets` is a name->preset map;
  * `active` is the last-applied preset name. NOTE: the sidecar `settings.set` is a
  * SHALLOW top-level merge — writing `savePresets` REPLACES the whole block, so a
  * partial update must read-modify-write the full block to preserve `presets`.
  */
 export interface SavePresetsBlock {
-  presets: Record<string, unknown>;
+  presets: Record<string, SavePreset>;
   active: string;
 }
 
@@ -818,6 +828,32 @@ export const client = {
      */
     firstRun: (choice?: string): Promise<FirstRunResponse> =>
       rpc('providers.firstRun', choice === undefined ? {} : { choice }),
+  },
+
+  /**
+   * `savePresets.*` — named `{autosave, exportDefaults}` bundles (WU-10/WU-11).
+   * The sidecar `settings.set` is a SHALLOW top-level merge, so every mutating
+   * handler read-modify-writes the whole `savePresets` block server-side; the
+   * client just mirrors the frozen method names + param/result shapes.
+   */
+  savePresets: {
+    /** `savePresets.list()` -> the saved bundle map + last-applied name. */
+    list: (): Promise<SavePresetsBlock> => rpc('savePresets.list'),
+    /** `savePresets.apply({name})` -> the now-active name + its resolved bundle. */
+    apply: (name: string): Promise<{ active: string; savePreset: SavePreset }> =>
+      rpc('savePresets.apply', { name }),
+    /**
+     * `savePresets.upsert({name, autosave?, exportDefaults?})` -> the bundle map.
+     * Omitted parts default to `{}` server-side (filled from live settings).
+     */
+    upsert: (
+      name: string,
+      bundle?: { autosave?: AutosaveSettings; exportDefaults?: ExportDefaults },
+    ): Promise<{ presets: Record<string, SavePreset> }> =>
+      rpc('savePresets.upsert', { name, ...(bundle ?? {}) }),
+    /** `savePresets.remove({name})` -> the surviving bundle map + active name. */
+    remove: (name: string): Promise<{ presets: Record<string, SavePreset>; active: string }> =>
+      rpc('savePresets.remove', { name }),
   },
 
   /** `recipes.*` — saved multi-step pipelines run in one shot. */
