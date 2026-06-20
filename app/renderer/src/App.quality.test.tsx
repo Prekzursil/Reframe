@@ -15,6 +15,7 @@ import type { Video, ShortReexportHint } from './lib/rpc';
 // ---- mocks -----------------------------------------------------------------
 const rpcMock = vi.fn();
 const libraryListMock = vi.fn();
+const batchListMock = vi.fn((..._a: unknown[]) => Promise.resolve({ batches: [] as never[] }));
 // hasApi is controllable per test (the foundation of the bridge-present/absent
 // branches in the quality hydrate, changeQuality, and handleReexport guards).
 let hasApiValue = true;
@@ -24,7 +25,12 @@ vi.mock('./lib/rpc', () => ({
   hasApi: () => hasApiValue,
   client: {
     library: { list: (...a: unknown[]) => libraryListMock(...a) },
+    batch: { list: (...a: unknown[]) => batchListMock(...a) },
   },
+}));
+
+vi.mock('./views/Repurpose', () => ({
+  Repurpose: () => <div data-testid="repurpose" />,
 }));
 
 // Stub child views/chrome so the test focuses on App's own logic.

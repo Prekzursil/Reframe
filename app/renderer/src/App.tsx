@@ -10,7 +10,10 @@ import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { Library } from './views/Library';
 import { Workspace } from './views/Workspace';
 import { Shorts } from './views/Shorts';
+import { Repurpose } from './views/Repurpose';
 import { SystemHealth } from './features/SystemHealth';
+import { incompleteBatches, remainingCount } from './features/repurposeLogic';
+import { useToast } from './components/toast/useToast';
 // Phase-8 "Models & System" panel (lazy: it pulls the model-card grid + onboarding).
 const ModelsSystemPanel = lazy(() => import('./panels/ModelsSystemPanel'));
 import { client, hasApi, rpc, type ShortReexportHint, type Video } from './lib/rpc';
@@ -37,6 +40,8 @@ type Route =
   | { name: 'workspace'; video: Video }
   // P4 §6 / C11: the global generated-shorts gallery (across all videos).
   | { name: 'shorts' }
+  // WU11: the Repurpose surface (batch queue / templates / export presets).
+  | { name: 'repurpose'; resumeId?: string }
   // system-advanced: the app-global System Health diagnostic screen.
   | { name: 'health' }
   // Phase-8: the app-global "Models & System" graphics-settings panel.
@@ -70,6 +75,63 @@ function QualityToggle({
         Cloud
       </button>
     </div>
+  );
+}
+
+/**
+ * The Repurpose nav button + resume-surface (§7.2). On launch it reads
+ * `batch.list` (cheap, store-only) and renders a text `(N)` badge in the tab
+ * label for incomplete batches (SR-readable, not color-only), plus a one-time
+ * dismissible toast deep-linking into the oldest interrupted batch.
+ */
+function RepurposeNav({
+  active,
+  onOpen,
+}: {
+  active: boolean;
+  onOpen: (resumeId?: string) => void;
+}): React.ReactElement {
+  const [badge, setBadge] = useState(0);
+  const toast = useToast();
+  const toastedRef = React.useRef(false);
+
+  useEffect(() => {
+    if (!hasApi()) return;
+    let cancelled = false;
+    void client.batch
+      .list()
+      .then(({ batches }) => {
+        if (cancelled) return;
+        const incomplete = incompleteBatches(batches);
+        setBadge(incomplete.length);
+        if (incomplete.length > 0 && !toastedRef.current) {
+          toastedRef.current = true;
+          const first = incomplete[0];
+          const left = remainingCount(first.counts);
+          toast.info(
+            `A batch ('${first.name}') was interrupted — ${left} of ${first.counts.total} sources left.`,
+            { action: { label: 'Resume', onClick: () => onOpen(first.id) } },
+          );
+        }
+      })
+      .catch(() => {
+        // best-effort: no badge/toast if the read fails.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [toast, onOpen]);
+
+  const label = badge > 0 ? `Repurpose (${badge})` : 'Repurpose';
+  return (
+    <button
+      type="button"
+      className={`app__nav-btn${active ? ' is-active' : ''}`}
+      aria-current={active ? 'page' : undefined}
+      onClick={() => onOpen()}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -151,6 +213,11 @@ export function App(): React.ReactElement {
     setRoute({ name: 'shorts' });
   }, []);
 
+  // WU11: the top-level Repurpose nav (optionally deep-linking a resume).
+  const openRepurpose = useCallback((resumeId?: string) => {
+    setRoute({ name: 'repurpose', resumeId });
+  }, []);
+
   // system-advanced: the top-level System Health nav.
   const openHealth = useCallback(() => {
     setRoute({ name: 'health' });
@@ -185,6 +252,8 @@ export function App(): React.ReactElement {
         return <Workspace video={route.video} onBack={backToLibrary} />;
       case 'shorts':
         return <Shorts onReexport={(hint) => void handleReexport(hint)} />;
+      case 'repurpose':
+        return <Repurpose resumeId={route.resumeId} />;
       case 'health':
         return <SystemHealth />;
       case 'models':
@@ -224,6 +293,7 @@ export function App(): React.ReactElement {
             >
               Shorts
             </button>
+            <RepurposeNav active={route.name === 'repurpose'} onOpen={openRepurpose} />
             <button
               type="button"
               className={`app__nav-btn${route.name === 'health' ? ' is-active' : ''}`}
