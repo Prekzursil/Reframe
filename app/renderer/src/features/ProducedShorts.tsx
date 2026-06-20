@@ -124,7 +124,18 @@ function ShortThumbCard({
     setError('');
     setProgress('Starting…');
     try {
-      const res = await getApi().rpc<{ jobId?: string }>('thumbnail.select', { path: short.path });
+      // The WU-C3 `thumbnail.select` handler hard-requires `videoId` (it raises
+      // "videoId (str) is required" before touching the span) and resolves the
+      // clip span from an explicit `{path, start, end}`. A standalone produced
+      // clip's valid frame window is its whole duration (0..durationSec); both
+      // ShortInfo fields are available here, so forward a real, non-degenerate
+      // span — omitting them would either error or collapse the span to 0..0.
+      const res = await getApi().rpc<{ jobId?: string }>('thumbnail.select', {
+        videoId: short.videoId,
+        path: short.path,
+        start: 0,
+        end: short.durationSec,
+      });
       const id = typeof res.jobId === 'string' ? res.jobId : '';
       if (id) setJobId(id);
       else setPhase('idle');
@@ -132,7 +143,7 @@ function ShortThumbCard({
       setError(err instanceof Error ? err.message : String(err));
       setPhase('error');
     }
-  }, [short.path]);
+  }, [short.videoId, short.path, short.durationSec]);
 
   const running = phase === 'running';
   const posterPath = pickedPath || short.thumbnailPath;

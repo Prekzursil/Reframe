@@ -205,7 +205,17 @@ describe('<ProducedShorts />', () => {
     });
     expect(pickBtn().getAttribute('aria-busy')).toBe('true');
     expect(pickBtn().disabled).toBe(true);
-    expect(api.rpc).toHaveBeenCalledWith('thumbnail.select', { path: '/out/clip-1.mp4' });
+    // Server contract (WU-C3 handler): videoId is mandatory and the clip span
+    // must be a real, non-degenerate range — a standalone produced clip's whole
+    // duration (0..durationSec) is its valid frame window. Sending only {path}
+    // (omitting videoId) raises "videoId (str) is required" server-side, and a
+    // 0..0 span samples no frames. Both must be supplied.
+    expect(api.rpc).toHaveBeenCalledWith('thumbnail.select', {
+      videoId: 'v1',
+      path: '/out/clip-1.mp4',
+      start: 0,
+      end: 30,
+    });
   });
 
   it('announces progress in a polite live region while running', async () => {
