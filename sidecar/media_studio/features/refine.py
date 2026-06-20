@@ -25,11 +25,27 @@ removed region, not two — no double-count). The final keep-list is therefore
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import os
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Any, TypedDict
 
+from .. import protocol
+from ..jobs import JobContext
+from ..protocol import ErrorCode, RpcContext, RpcError
+from ..util import get_logger
 from . import fillers as _fillers
 from . import silencetrim as _silencetrim
+
+log = get_logger("media_studio.refine")
+
+# Injectable seams (mirror the sibling features — silencetrim / diarize).
+RunFn = Callable[..., int]
+ProbeFn = Callable[..., float]
+DetectRunner = Callable[..., Any]
+Resolver = Callable[[str], str | None]
+LoadProject = Callable[[str], dict[str, Any]]
+SaveProject = Callable[[str, dict[str, Any]], None]
 
 # A keep span as emitted in the plan: [start, end] in original-video seconds.
 Span = tuple[float, float]
@@ -166,4 +182,280 @@ def plan_refine(
     )
 
 
-__all__ = ["RefinePlan", "RefineStats", "plan_refine"]
+# --------------------------------------------------------------------------- #
+# small param helpers (mirror silencetrim's coercion seams)
+# --------------------------------------------------------------------------- #
+def _invalid(message: str) -> RpcError:
+    return RpcError(message, ErrorCode.INVALID_PARAMS)
+
+
+def _require_str(params: Mapping[str, Any], key: str) -> str:
+    value = params.get(key)
+    if not isinstance(value, str) or not value:
+        raise _invalid(f"{key} (str) is required")
+    return value
+
+
+def _float(params: Mapping[str, Any], key: str, default: float) -> float:
+    value = params.get(key, default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _bool(params: Mapping[str, Any], key: str, default: bool) -> bool:
+    value = params.get(key, default)
+    return default if value is None else bool(value)
+
+
+def _words_of(transcript: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Flatten a transcript's per-segment word timings into the flat §3 list.
+
+    Mirrors :func:`shortmaker._words_of` — the one canonical transcript→words
+    flattening the planner expects. A missing transcript / segments / words all
+    collapse to an empty list (the planner then plans on silence alone).
+    """
+    words: list[dict[str, Any]] = []
+    if not transcript:
+        return words
+    for seg in transcript.get("segments", []) or []:
+        for word in (seg or {}).get("words") or []:
+            words.append(word)
+    return words
+
+
+# --------------------------------------------------------------------------- #
+# the service (refine.preview = direct / no encode; refine.apply = a job)
+# --------------------------------------------------------------------------- #
+class RefineService:
+    """Owns ``refine.preview`` + ``refine.apply`` over injectable seams.
+
+    Seams mirror :class:`silencetrim.SilenceTrim` (``resolver``, ``out_dir``,
+    ``settings_provider``, ``run``, ``duration``, ``detect_run``) PLUS the two
+    project-store seams the diarize feature already exposes
+    (``load_project`` / ``save_project``) so the transcript words are read
+    through a fake in tests — never real I/O in the service body. ``preview``
+    is a Descript-style "see before you cut" planner (detect + plan, NO encode,
+    NO write); ``apply`` re-cuts as a job (writing a NEW ``*.refined.mp4`` so the
+    original is untouched) and re-times caption cues via
+    :func:`fillers.remap_cues`.
+    """
+
+    def __init__(
+        self,
+        *,
+        resolver: Resolver,
+        out_dir: str | os.PathLike[str],
+        load_project: LoadProject,
+        save_project: SaveProject,
+        settings_provider: Callable[[], dict[str, Any]] | None = None,
+        run: RunFn | None = None,
+        duration: ProbeFn | None = None,
+        detect_run: DetectRunner | None = None,
+    ) -> None:
+        self._resolver = resolver
+        self._out_dir = Path(out_dir)
+        self._load_project = load_project
+        self._save_project = save_project
+        self._settings_provider = settings_provider or (lambda: {})
+        self._run = run
+        self._duration = duration
+        self._detect_run = detect_run
+
+    def _settings(self) -> dict[str, Any]:
+        try:
+            return dict(self._settings_provider() or {})
+        except Exception:  # noqa: BLE001 - settings must never break an op
+            return {}
+
+    def _resolve(self, params: Mapping[str, Any]) -> str:
+        path = params.get("path")
+        if isinstance(path, str) and path:
+            return path
+        video_id = _require_str(params, "videoId")
+        resolved = self._resolver(video_id)
+        if not resolved:
+            raise _invalid(f"unknown video: {video_id}")
+        return str(resolved)
+
+    def _words(self, params: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Load the project's transcript words via the ``load_project`` seam."""
+        video_id = params.get("videoId")
+        if not isinstance(video_id, str) or not video_id:
+            return []
+        project = self._load_project(video_id) or {}
+        return _words_of(project.get("transcript"))
+
+    def _plan(self, params: Mapping[str, Any], in_path: str, settings: dict[str, Any], total: float) -> RefinePlan:
+        """Detect silence + compose the pure refine plan (shared by preview/apply)."""
+        silences = _silencetrim.detect_silence_spans(
+            in_path,
+            settings=settings,
+            noise_db=_float(params, "noiseDb", _silencetrim.DEFAULT_NOISE_DB),
+            min_silence_sec=_float(params, "minSilenceSec", _silencetrim.DEFAULT_MIN_SILENCE_SEC),
+            run=self._detect_run,
+        )
+        return plan_refine(
+            self._words(params),
+            params.get("lang"),
+            total,
+            silences,
+            remove_fillers=_bool(params, "removeFillers", True),
+            remove_silence=_bool(params, "removeSilence", True),
+            merge_gap_ms=int(_float(params, "mergeGapMs", float(_fillers.DEFAULT_MERGE_GAP_MS))),
+            pad_sec=_float(params, "padSec", _silencetrim.DEFAULT_PAD_SEC),
+            filler_sets=params.get("fillerSets"),
+        )
+
+    def preview(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:  # noqa: ARG002 - RPC signature
+        """``refine.preview({videoId|path, removeFillers?, removeSilence?, ...})``.
+
+        Resolves the clip, detects silence (the ``detect_run`` seam), reads the
+        transcript words (``load_project`` seam), and returns the pure
+        :func:`plan_refine` result as ``{plan}``. NO encode, NO file write —
+        the user sees the proposed cut before committing.
+        """
+        in_path = self._resolve(params)
+        settings = self._settings()
+        total = _float(params, "totalSec", 0.0)
+        if total <= 0.0:
+            total = _probe_total(self._duration, in_path, settings)
+        return {"plan": self._plan(params, in_path, settings, total)}
+
+    def apply(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``refine.apply({videoId|path, ...})`` -> ``{jobId}`` -> the cut result.
+
+        ``job.done.result`` = ``{path, removedSec, stats, plan, cues?}``. Builds
+        the keep-list via :func:`plan_refine`, re-cuts through the injected
+        ``run`` seam (writing ``out_dir/{stem}.refined.mp4`` — the original is
+        never touched), and re-times any caller-supplied ``cues`` via
+        :func:`fillers.remap_cues`. When there is nothing to cut the original
+        path is returned unchanged with ``removedSec == 0`` (no re-encode).
+        """
+        if ctx.jobs is None:
+            raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+        in_path = self._resolve(params)
+        settings = self._settings()
+        run = self._run if self._run is not None else _default_run()
+        duration = self._duration
+        out_dir = self._out_dir
+        cues = params.get("cues")
+        plan_params = dict(params)
+
+        def job_body(job_ctx: JobContext) -> dict[str, Any]:
+            job_ctx.raise_if_cancelled()
+            job_ctx.progress(5, "planning refine")
+            total = _probe_total(duration, in_path, settings)
+            if total <= 0.0:
+                job_ctx.progress(100, "nothing to refine")
+                return {"path": in_path, "removedSec": 0.0, "stats": _zero_stats(), "plan": _passthrough_plan(total)}
+            plan = self._plan(plan_params, in_path, settings, total)
+            keeps = [(float(a), float(b)) for a, b in plan["keeps"]]
+            removed = round(total - plan["stats"]["keptSec"], 3)
+            # Nothing to remove (single full-length keep): pass through untouched.
+            if removed <= 1e-3 or len(keeps) <= 1:
+                job_ctx.progress(100, "nothing to refine")
+                return {"path": in_path, "removedSec": 0.0, "stats": plan["stats"], "plan": plan}
+            job_ctx.raise_if_cancelled()
+            out_dir.mkdir(parents=True, exist_ok=True)
+            stem = Path(in_path).stem or "clip"
+            out_path = str(out_dir / f"{stem}.refined.mp4")
+            argv = _fillers.build_segment_cut_argv(in_path, out_path, keeps, settings)
+            job_ctx.progress(40, "re-cutting")
+            code = run(argv, total_sec=total)
+            if code != 0:
+                raise RpcError(f"refine re-cut failed (ffmpeg exit {code})", ErrorCode.INTERNAL_ERROR)
+            result: dict[str, Any] = {
+                "path": out_path,
+                "removedSec": removed,
+                "stats": plan["stats"],
+                "plan": plan,
+            }
+            if cues is not None:
+                result["cues"] = _fillers.remap_cues(cues, keeps)
+            job_ctx.progress(100, f"removed {removed:.1f}s")
+            return result
+
+        job = ctx.jobs.start(job_body, feature="refine", label="refine", videoId=params.get("videoId"))
+        return {"jobId": job.id}
+
+
+def _default_run() -> RunFn:
+    """The real drained ffmpeg ``run`` seam (lazy import keeps the module light)."""
+    from .. import ffmpeg as _ffmpeg  # noqa: PLC0415 - lazy: avoids an import cycle
+
+    return _ffmpeg.run
+
+
+def _default_duration() -> ProbeFn:
+    """The real ffprobe duration seam (lazy import keeps the module light)."""
+    from .. import ffmpeg as _ffmpeg  # noqa: PLC0415 - lazy: avoids an import cycle
+
+    return _ffmpeg.ffprobe_duration
+
+
+def _probe_total(duration: ProbeFn | None, in_path: str, settings: dict[str, Any]) -> float:
+    """Probe the clip duration through the seam; a probe failure -> 0.0."""
+    probe = duration if duration is not None else _default_duration()
+    try:
+        return float(probe(in_path, settings))
+    except Exception:  # noqa: BLE001 - a probe failure means we can't refine safely
+        log.warning("duration probe failed for %s; skipping refine", in_path)
+        return 0.0
+
+
+def _zero_stats() -> RefineStats:
+    return RefineStats(fillersRemoved=0, fillerSeconds=0.0, silenceRemovedSec=0.0, keptSec=0.0)
+
+
+def _passthrough_plan(total: float) -> RefinePlan:
+    return RefinePlan(keeps=[] if total <= 0.0 else [[0.0, round(total, 3)]], stats=_zero_stats())
+
+
+# --------------------------------------------------------------------------- #
+# registration (called from handlers.register_all — the ONE RPC site)
+# --------------------------------------------------------------------------- #
+def register(
+    *,
+    resolver: Resolver,
+    out_dir: str | os.PathLike[str],
+    load_project: LoadProject,
+    save_project: SaveProject,
+    settings_provider: Callable[[], dict[str, Any]] | None = None,
+    run: RunFn | None = None,
+    duration: ProbeFn | None = None,
+    detect_run: DetectRunner | None = None,
+    register_fn: Callable[[str, Any], None] | None = None,
+) -> RefineService:
+    """Create the service and register ``refine.preview`` + ``refine.apply``.
+
+    Mirrors :func:`silencetrim.register`: ``register_fn`` defaults to
+    :func:`protocol.register` (duplicates fail loudly); tests inject a fake
+    registrar + fake seams. ``refine.preview`` is a DIRECT handler (no job);
+    ``refine.apply`` runs as a job. Returns the service for the caller to hold.
+    """
+    service = RefineService(
+        resolver=resolver,
+        out_dir=out_dir,
+        load_project=load_project,
+        save_project=save_project,
+        settings_provider=settings_provider,
+        run=run,
+        duration=duration,
+        detect_run=detect_run,
+    )
+    reg = register_fn if register_fn is not None else protocol.register
+    reg("refine.preview", service.preview)
+    reg("refine.apply", service.apply)
+    log.info("registered refine.preview + refine.apply")
+    return service
+
+
+__all__ = [
+    "RefinePlan",
+    "RefineService",
+    "RefineStats",
+    "plan_refine",
+    "register",
+]
