@@ -58,6 +58,9 @@ export function Diarize({ videoId, api }: DiarizeProps): React.ReactElement {
   const [message, setMessage] = useState<string>('');
   const [error, setError] = useState<string>('');
   const [speakers, setSpeakers] = useState<string[]>([]);
+  // Per-speaker rename drafts ({SPEAKER_NN: typed-name}); reset whenever a new
+  // roster lands (run/re-run) so stale drafts never leak across diarizations.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!jobId) return;
@@ -77,6 +80,7 @@ export function Diarize({ videoId, api }: DiarizeProps): React.ReactElement {
     setBusy(true);
     setError('');
     setSpeakers([]);
+    setDrafts({});
     setPct(0);
     setMessage('Starting…');
     try {
@@ -112,6 +116,31 @@ export function Diarize({ videoId, api }: DiarizeProps): React.ReactElement {
     }
     setMessage('Cancelling…');
   }, [bridge, jobId]);
+
+  const applyRename = useCallback(async (): Promise<void> => {
+    // Build a {SPEAKER_NN: friendly} mapping from drafts that actually changed
+    // (trimmed, non-empty, different from the current label). A no-op submit
+    // sends nothing to the sidecar.
+    const mapping: Record<string, string> = {};
+    for (const speaker of speakers) {
+      const next = (drafts[speaker] ?? '').trim();
+      if (next && next !== speaker) {
+        mapping[speaker] = next;
+      }
+    }
+    if (Object.keys(mapping).length === 0) return;
+    setError('');
+    try {
+      const result = await bridge.rpc<unknown>('diarize.rename', { videoId, mapping });
+      const roster = extractSpeakers(result);
+      if (roster.length > 0) {
+        setSpeakers(roster);
+        setDrafts({});
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [bridge, videoId, speakers, drafts]);
 
   return (
     <section className="feature-panel diarize-panel" aria-label="Diarize">
@@ -161,6 +190,30 @@ export function Diarize({ videoId, api }: DiarizeProps): React.ReactElement {
               </li>
             ))}
           </ul>
+
+          <h3>Rename speakers</h3>
+          <div className="rename-block" data-section="rename">
+            {speakers.map((speaker) => (
+              <label key={speaker} className="rename-row">
+                <span className="rename-label">{speaker}</span>
+                <input
+                  type="text"
+                  data-rename-for={speaker}
+                  placeholder={speaker}
+                  value={drafts[speaker] ?? ''}
+                  onChange={(e) => setDrafts((prev) => ({ ...prev, [speaker]: e.target.value }))}
+                />
+              </label>
+            ))}
+            <button
+              type="button"
+              data-action="rename"
+              className="secondary"
+              onClick={() => void applyRename()}
+            >
+              Apply names
+            </button>
+          </div>
         </>
       )}
     </section>

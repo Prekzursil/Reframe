@@ -72,7 +72,7 @@ response resolves when done — long jobs return `{"jobId"}` immediately and str
 - `shortmaker.select({videoId, prompt, controls})` -> `{jobId}` -> `{candidates}` ; controls = `{count,minSec,maxSec,aspect,language,captionStyle}`
 - `shortmaker.export({videoId, candidateIds})` -> `{jobId}` -> `{clips:[{path}]}`
 - `job.cancel({jobId})` -> `{ok}` ; `job.status({jobId})` -> `{status,pct}`
-- `settings.get()` / `settings.set({...})` -> includes `{useCloud:bool, cloudApiKey?, modelsDir, ffmpegPath}`
+- `settings.get()` / `settings.set({...})` -> includes `{useCloud:bool, cloudApiKey?, modelsDir, ffmpegPath}` (editing-refinement adds the `captionSpeakerLabels` setting key; the refine tunables are per-call RPC params, not settings — see §A5)
 
 ## 3. Data schemas (Python TypedDict / TS interface — keep field names identical both sides)
 - **Word** `{text:str, start:float, end:float}` ; **Segment** `{start:float, end:float, text:str, words:[Word]}`
@@ -139,6 +139,19 @@ Scope: PLAN-P2.md v2.1 (gate-passed). Where this addendum extends §2/§3/§4/§
 - `job.list()` -> `{jobs:[JobInfo]}` ; `job.retry({jobId})` -> `{jobId}` (re-runs from stored request params)
 - `assets.list()` -> `{assets:[AssetInfo]}` ; `assets.ensure({names:[str]})` -> `{jobId}` (download/install w/ resume+preflight)
 
+## A3a. Editing-refinement schema additions (2026-06 — additive only; frozen fields unchanged)
+These extend base §3. They are **additive**: every previously-frozen field of `Cue`
+keeps its name and meaning — only an OPTIONAL field is added.
+- `Cue` gains OPTIONAL `speaker?: string` — the diarized speaker label carried onto a
+  cue (set on subtitle generate when the transcript was diarized and the
+  `captionSpeakerLabels` setting is on). Frozen `index/start/end/text` are unchanged.
+  Mirrors `DiarizedSegment = Segment & { speaker?: string }`.
+- `RefinePlan` (NEW, internal + wire payload for `refine.preview`/`refine.apply`):
+  `{ keeps: [[start:float, end:float], ...],
+     stats: { fillersRemoved:int, fillerSeconds:float, silenceRemovedSec:float, keptSec:float } }`.
+  `keeps` is the unified keep-list (filler keep-spans ∩ silence keep-spans); `stats`
+  is the typed savings block surfaced in the Refine panel.
+
 ## A3. Schema additions (field names FROZEN, both Python and TS)
 - `AudioTrack {id, lang, name, kind:"original"|"dub", voice?, path}` ; `Project.audioTracks:[AudioTrack]`
 - `JobInfo {jobId, feature, label, videoId?, status:"queued"|"running"|"done"|"error"|"cancelled", pct}`
@@ -158,6 +171,39 @@ Scope: PLAN-P2.md v2.1 (gate-passed). Where this addendum extends §2/§3/§4/§
   runs in its OWN downloaded env as a subprocess — torch stays OUT of the main sidecar env).
 - Dub alignment recipe (FROZEN): per-cue target duration -> rate re-synth -> ffmpeg atempo clamp ±15% -> pad; dub
   pipeline is BATCHED: translate ALL cues -> free MT -> synth ALL cues (never interleave model swaps).
+
+## A5. Editing-refinement settings key + refine RPC params + workspace tab (2026-06)
+The editing-refinement bundle adds exactly ONE persisted **settings key** — read via
+`settings.get()` / `settings.set({...})` (base §2) — plus a set of per-call **RPC
+params** on `refine.preview` / `refine.apply`. They are NOT the same surface: only
+`captionSpeakerLabels` lives in the settings store; the refine tunables are passed
+per call (from the Refine panel's local state) and are NOT read from any `refine.*`
+settings key. All are OPTIONAL; absent → the cited engine default, so behaviour is
+unchanged when unset. Existing `removeFillers` / `silenceTrim` / `diarizeBackend`
+keep their shortmaker meaning unchanged.
+
+**Settings key** (persisted, read via `settings.get()`):
+
+| Key | Type | Meaning | Default precedent |
+|---|---|---|---|
+| `captionSpeakerLabels` | bool | when on, subtitle generate prefixes each cue's text with the diarized speaker label (read at `handlers.py` subtitle-generate via `settings.get("captionSpeakerLabels")`; off → cues untouched) | new (mirrors the `captionPolish` flag) |
+
+**`refine.preview` / `refine.apply` call params** (per-call, NOT settings keys —
+sent in the RPC `params` payload, read by `refine.py`'s `_plan`; camelCase wire
+names, default-applied when the param is absent):
+
+| Param | Type | Meaning | Default applied |
+|---|---|---|---|
+| `noiseDb` | float | silence-detection threshold (dB) — `refine.py:295`, sent by `Refine.tsx` | `silencetrim.DEFAULT_NOISE_DB` |
+| `minSilenceSec` | float | minimum silent-span duration to cut — `refine.py:296`, sent by `Refine.tsx` | `silencetrim.DEFAULT_MIN_SILENCE_SEC` |
+| `mergeGapMs` | int | filler-cut merge window (ms) — `refine.py:306`, sent by `Refine.tsx` | `fillers.DEFAULT_MERGE_GAP_MS` |
+| `padSec` | float | padding kept around kept spans — `refine.py:307`. Default-only: read from `params` but NOT yet wired through the Refine panel, so in practice it takes the default unless a caller supplies it. | `silencetrim.DEFAULT_PAD_SEC` |
+| `fillerSets` | dict | per-language filler-set override (incl. `ro`). **Threaded into `plan_refine(filler_sets=...)`** (`refine.py:308`) — it changes the cut math (which words are removed), not just config. Not currently wired through the Refine panel; supplied directly in `params` when overriding. Absent → `fillers.DEFAULT_SETS`. | `fillers.DEFAULT_SETS` |
+
+**Workspace tab order (`WORKSPACE_TABS`, `app/renderer/src/views/Workspace.tsx`):**
+the **Refine** tab (`{ id: 'refine', label: 'Refine' }`) sits in the
+system-advanced group **directly after `diarize`** —
+`… subtitles, diarize, refine, tracks, convert …`.
 
 ## A6. Phase-0 hard lessons (NON-NEGOTIABLE for every agent)
 1. **Pre-import natives**: any NEW native module used inside a job (onnxruntime, mediapipe, soundfile, scenedetect,

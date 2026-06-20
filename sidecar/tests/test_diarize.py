@@ -311,6 +311,143 @@ class TestStartHandler:
 
 
 # --------------------------------------------------------------------------- #
+# pure: rename_speakers (GAP #3)
+# --------------------------------------------------------------------------- #
+def _diarized_transcript() -> dict[str, Any]:
+    return {
+        "language": "en",
+        "durationSec": 6.0,
+        "segments": [
+            {"start": 0.0, "end": 1.0, "text": "hi", "speaker": "SPEAKER_00"},
+            {"start": 5.0, "end": 6.0, "text": "bye", "speaker": "SPEAKER_01"},
+        ],
+        "speakers": ["SPEAKER_00", "SPEAKER_01"],
+    }
+
+
+class TestRenameSpeakers:
+    def test_renames_segments_and_roster(self):
+        t = _diarized_transcript()
+        out = diarize.rename_speakers(t, {"SPEAKER_00": "Alex"})
+        assert out["segments"][0]["speaker"] == "Alex"
+        assert out["segments"][1]["speaker"] == "SPEAKER_01"  # unmapped passes through
+        assert out["speakers"] == ["Alex", "SPEAKER_01"]
+        assert out["language"] == "en"  # untouched fields preserved
+
+    def test_does_not_mutate_input(self):
+        import copy
+
+        t = _diarized_transcript()
+        before = copy.deepcopy(t)
+        diarize.rename_speakers(t, {"SPEAKER_00": "Alex", "SPEAKER_01": "Sam"})
+        assert t == before  # byte-identical: input never mutated
+
+    def test_empty_mapping_is_identity(self):
+        t = _diarized_transcript()
+        out = diarize.rename_speakers(t, {})
+        assert out["segments"] == t["segments"]
+        assert out["speakers"] == t["speakers"]
+
+    def test_mapping_label_not_in_transcript_is_noop(self):
+        t = _diarized_transcript()
+        out = diarize.rename_speakers(t, {"SPEAKER_99": "Ghost"})
+        assert out["speakers"] == ["SPEAKER_00", "SPEAKER_01"]
+        assert out["segments"][0]["speaker"] == "SPEAKER_00"
+
+    def test_segment_without_speaker_key_untouched(self):
+        t = {
+            "segments": [{"start": 0.0, "end": 1.0, "text": "x"}],
+            "speakers": [],
+        }
+        out = diarize.rename_speakers(t, {"SPEAKER_00": "Alex"})
+        assert "speaker" not in out["segments"][0]
+
+    def test_missing_segments_and_speakers_keys(self):
+        out = diarize.rename_speakers({"language": "ro"}, {"SPEAKER_00": "Alex"})
+        assert out["segments"] == []
+        assert out["speakers"] == []
+        assert out["language"] == "ro"
+
+
+# --------------------------------------------------------------------------- #
+# Diarize.rename — the direct RPC handler
+# --------------------------------------------------------------------------- #
+class TestRenameHandler:
+    def _service(self, project, *, saved=None):
+        saved = saved if saved is not None else {}
+
+        def save(video_id, data):
+            saved[video_id] = data
+
+        svc = diarize.Diarize(
+            resolver=lambda v: "/audio.wav",
+            load_project=lambda v: dict(project),
+            save_project=save,
+            models_present=lambda s: True,
+        )
+        return svc, saved
+
+    def test_requires_video_id(self):
+        reg, _ = _registry()
+        svc, _ = self._service({"transcript": _diarized_transcript()})
+        with pytest.raises(RpcError):
+            svc.rename({"mapping": {}}, _ctx(reg))
+
+    def test_requires_mapping_dict(self):
+        reg, _ = _registry()
+        svc, _ = self._service({"transcript": _diarized_transcript()})
+        with pytest.raises(RpcError):
+            svc.rename({"videoId": "v", "mapping": "nope"}, _ctx(reg))
+
+    def test_no_transcript_refuses(self):
+        reg, _ = _registry()
+        svc, _ = self._service({})  # no transcript key
+        with pytest.raises(RpcError) as exc:
+            svc.rename({"videoId": "v", "mapping": {"SPEAKER_00": "Alex"}}, _ctx(reg))
+        assert "transcript" in str(exc.value)
+
+    def test_renames_persists_and_returns(self):
+        reg, _ = _registry()
+        svc, saved = self._service({"transcript": _diarized_transcript()})
+        out = svc.rename({"videoId": "v", "mapping": {"SPEAKER_00": "Alex"}}, _ctx(reg))
+        assert out["transcript"]["speakers"] == ["Alex", "SPEAKER_01"]
+        assert out["transcript"]["segments"][0]["speaker"] == "Alex"
+        # persisted exactly once onto a fresh project copy
+        assert saved["v"]["transcript"]["segments"][0]["speaker"] == "Alex"
+
+    def test_persists_onto_fresh_project_load(self):
+        # rename re-loads the project so unrelated fields are not clobbered.
+        reg, _ = _registry()
+        loads: list[str] = []
+
+        def load(video_id):
+            loads.append(video_id)
+            return {"transcript": _diarized_transcript(), "other": 1}
+
+        saved: dict[str, Any] = {}
+        svc = diarize.Diarize(
+            resolver=lambda v: "/audio.wav",
+            load_project=load,
+            save_project=lambda v, d: saved.__setitem__(v, d),
+            models_present=lambda s: True,
+        )
+        svc.rename({"videoId": "v", "mapping": {"SPEAKER_01": "Sam"}}, _ctx(reg))
+        assert saved["v"]["other"] == 1  # unrelated field preserved
+        assert saved["v"]["transcript"]["speakers"] == ["SPEAKER_00", "Sam"]
+
+
+def test_register_installs_diarize_rename():
+    registered: dict[str, Any] = {}
+    diarize.register(
+        resolver=lambda v: None,
+        load_project=lambda v: {},
+        save_project=lambda v, d: None,
+        register_fn=lambda n, f: registered.__setitem__(n, f),
+    )
+    assert "diarize.rename" in registered
+
+
+# --------------------------------------------------------------------------- #
 # assets + register
 # --------------------------------------------------------------------------- #
 def test_assets_registered_in_manifest():

@@ -954,6 +954,13 @@ class Services:
             track = _subtitles.generate_polished(transcript, settings=settings)
         else:
             track = _subtitles.generate(transcript)
+        # WU-5 wiring: settings['captionSpeakerLabels'] prefixes each diarized cue's
+        # text with "<speaker>: " (mirrors the captionPolish gate above). Off/absent
+        # -> the cues are unchanged (back-compat). Non-diarized cues carry no
+        # speaker, so the prefix is a no-op even when the flag is on.
+        if settings.get("captionSpeakerLabels"):
+            labelled = _subtitles.format_speaker_prefix(track.get("cues") or [], on=True)
+            track = _subtitles.edit(track, labelled)
         _tracks.add_track(project.data, track)
         project.save()
         return {"track": track}
@@ -2992,6 +2999,26 @@ def register_all(
         settings_provider=svc.settings.get,
         backend_factory=svc._diarize_backend_factory,
         models_present=svc._diarize_models_present,
+        register_fn=reg,
+    )
+
+    # refine.* (editing-refine WU-5): the standalone "tighten the edit" feature —
+    # previewable filler/silence cut-list (no encode) + apply (job). It composes
+    # the SHIPPED filler/silence math (no new cut logic) and reuses the exact
+    # project-store + ffmpeg seams the sibling features use. refine.preview is a
+    # DIRECT handler; refine.apply is a job (the module owns its register()).
+    # settings['refine.fillerSets'] reaches plan_refine's cut math via the service
+    # (params['fillerSets']); absent -> DEFAULT_SETS (no behaviour change).
+    from .features import refine as _refine  # local: import-light
+
+    _refine.register(
+        resolver=svc._resolve_video_path,
+        out_dir=svc.exports_dir / "refined",
+        load_project=_load_project_data,
+        save_project=_save_project_data,
+        settings_provider=svc.settings.get,
+        run=svc._ffmpeg_run,  # None -> the real drained ffmpeg.run
+        duration=svc._ffprobe_duration,
         register_fn=reg,
     )
 

@@ -99,22 +99,36 @@ def new_track(
     }
 
 
-def make_cue(index: int, start: float, end: float, text: str) -> Cue:
-    """Construct a single Cue dict (CONTRACTS.md §3 field order/names)."""
-    return {"index": int(index), "start": float(start), "end": float(end), "text": text}
+def make_cue(index: int, start: float, end: float, text: str, *, speaker: str | None = None) -> Cue:
+    """Construct a single Cue dict (CONTRACTS.md §3 field order/names).
+
+    The frozen §3 fields ``index/start/end/text`` keep their order/names. The
+    optional diarized ``speaker`` is ADDITIVE: the key is only set when a non-empty
+    ``speaker`` is supplied, so a non-diarized cue stays byte-identical to today
+    (no ``speaker: None`` leakage into the §3 shape).
+    """
+    cue: Cue = {"index": int(index), "start": float(start), "end": float(end), "text": text}
+    if speaker:
+        cue["speaker"] = str(speaker)
+    return cue
 
 
 def reindex(cues: Sequence[Cue]) -> list[Cue]:
-    """Return cues renumbered 1..N (1-based), as fresh dicts (no mutation)."""
+    """Return cues renumbered 1..N (1-based), as fresh dicts (no mutation).
+
+    An optional diarized ``speaker`` on the input cue is preserved (additive);
+    absent ⇒ no ``speaker`` key on the output (no ``speaker: None`` leakage).
+    """
     out: list[Cue] = []
     for i, cue in enumerate(cues, start=1):
         out.append(
-            {
-                "index": i,
-                "start": float(cue.get("start", 0.0)),
-                "end": float(cue.get("end", 0.0)),
-                "text": str(cue.get("text", "")),
-            }
+            make_cue(
+                i,
+                float(cue.get("start", 0.0)),
+                float(cue.get("end", 0.0)),
+                str(cue.get("text", "")),
+                speaker=cue.get("speaker"),
+            )
         )
     return out
 
@@ -141,16 +155,27 @@ def cues_from_transcript(
             continue
         start = float(seg.get("start", 0.0))
         end = float(seg.get("end", start))
+        speaker = seg.get("speaker")
         words = seg.get("words") or []
         if (len(text) > max_chars or (end - start) > max_duration) and words:
-            cues.extend(_split_segment(words, max_chars, max_duration))
+            cues.extend(_split_segment(words, max_chars, max_duration, speaker=speaker))
         else:
-            cues.append(make_cue(0, start, end, text))
+            cues.append(make_cue(0, start, end, text, speaker=speaker))
     return reindex(cues)
 
 
-def _split_segment(words: Sequence[dict[str, Any]], max_chars: int, max_duration: float) -> list[Cue]:
-    """Greedily pack word-timed tokens into cues bounded by chars + duration."""
+def _split_segment(
+    words: Sequence[dict[str, Any]],
+    max_chars: int,
+    max_duration: float,
+    *,
+    speaker: str | None = None,
+) -> list[Cue]:
+    """Greedily pack word-timed tokens into cues bounded by chars + duration.
+
+    Each emitted split-cue inherits the parent segment's ``speaker`` (additive;
+    omitted when the segment has none).
+    """
     cues: list[Cue] = []
     cur: list[dict[str, Any]] = []
 
@@ -159,7 +184,15 @@ def _split_segment(words: Sequence[dict[str, Any]], max_chars: int, max_duration
             return
         text = " ".join(str(w.get("text", "")).strip() for w in cur).strip()
         if text:
-            cues.append(make_cue(0, float(cur[0].get("start", 0.0)), float(cur[-1].get("end", 0.0)), text))
+            cues.append(
+                make_cue(
+                    0,
+                    float(cur[0].get("start", 0.0)),
+                    float(cur[-1].get("end", 0.0)),
+                    text,
+                    speaker=speaker,
+                )
+            )
 
     for w in words:
         tentative = cur + [w]
@@ -172,6 +205,25 @@ def _split_segment(words: Sequence[dict[str, Any]], max_chars: int, max_duration
             cur = tentative
     flush()
     return cues
+
+
+def format_speaker_prefix(cues: Sequence[Cue], *, on: bool) -> list[Cue]:
+    """Return cues with each speaker-bearing cue's text prefixed ``"<speaker>: "``.
+
+    Pure + immutable: returns fresh cue dicts (the inputs are never mutated). When
+    ``on`` is falsy this is the identity on text (cues are still copied so callers
+    get a consistent fresh-list contract). A cue with no ``speaker`` is left
+    untouched even when ``on`` is true. The ``captionSpeakerLabels`` setting (read
+    in WU-5) drives ``on``.
+    """
+    out: list[Cue] = []
+    for cue in cues:
+        new_cue = dict(cue)
+        speaker = new_cue.get("speaker")
+        if on and speaker:
+            new_cue["text"] = f"{speaker}: {new_cue.get('text', '')}"
+        out.append(new_cue)
+    return out
 
 
 def generate(
