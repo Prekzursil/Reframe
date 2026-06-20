@@ -513,6 +513,22 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('system.advisor', { commercial: false });
   });
 
+  it('system.recommend sends an empty params object when commercial is omitted (WU-B3)', async () => {
+    const r = installApi();
+    await client.system.recommend();
+    expect(r).toHaveBeenCalledWith('system.recommend', {});
+    await client.system.recommend({});
+    expect(r).toHaveBeenCalledWith('system.recommend', {});
+  });
+
+  it('system.recommend forwards {commercial} when provided (both boolean values) (WU-B3)', async () => {
+    const r = installApi();
+    await client.system.recommend({ commercial: true });
+    expect(r).toHaveBeenCalledWith('system.recommend', { commercial: true });
+    await client.system.recommend({ commercial: false });
+    expect(r).toHaveBeenCalledWith('system.recommend', { commercial: false });
+  });
+
   it('asr.engines calls the bare method', async () => {
     const r = installApi();
     await client.asr.engines();

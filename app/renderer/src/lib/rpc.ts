@@ -336,6 +336,39 @@ export interface PresetResponse {
   routing: RoutingBlock;
 }
 
+/**
+ * WU-B3 one proposed (never auto-triggered) asset download inside a
+ * {@link Recommendation}. Field names mirror the sidecar `recommender.DownloadItem`.
+ */
+export interface RecommendationDownload {
+  assetName: string;
+  label: string;
+  sizeMb: number;
+  reason: string;
+}
+
+/**
+ * WU-B3 the device-aware auto-recommender's actionable plan
+ * (`system.recommend` -> `{recommendation}`). PURE on the sidecar: composes the
+ * advisor report + installed-state + detected local servers into a concrete
+ * preset + per-function routing + ASR pick + proposed downloads + rationale.
+ * Field names are FROZEN, identical to the sidecar `recommender.Recommendation`.
+ * An EMPTY `routing.perFunction` signals the G-B1 "could not detect" fallback.
+ */
+export interface Recommendation {
+  preset: string;
+  routing: RoutingBlock;
+  /** The recommended ASR engine id, or null when no engine is installed. */
+  asrEngine: string | null;
+  downloads: RecommendationDownload[];
+  rationale: string[];
+}
+
+/** `system.recommend` response (WU-B3). */
+export interface RecommendResponse {
+  recommendation: Recommendation;
+}
+
 /** `providers.firstRun` response (WU-presets P1 #6 first-run chooser). */
 export interface FirstRunResponse {
   firstRunChoiceMade: boolean;
@@ -724,6 +757,18 @@ export const client = {
      */
     advisor: (opts?: { commercial?: boolean }): Promise<AdvisorReport> =>
       rpc('system.advisor', opts?.commercial === undefined ? {} : { commercial: opts.commercial }),
+    /**
+     * `system.recommend {commercial?}` (WU-B3) — the device-aware auto-recommender:
+     * composes the existing cheap probes into an actionable {@link Recommendation}
+     * (preset + routing + ASR + proposed downloads + rationale). Direct-return; no
+     * provider/LLM call. The "Apply" flow reuses the EXISTING mutation RPCs
+     * (`providers.applyPreset` / `setFunctionModel` / `settings.set` / `assets.ensure`).
+     */
+    recommend: (opts?: { commercial?: boolean }): Promise<RecommendResponse> =>
+      rpc(
+        'system.recommend',
+        opts?.commercial === undefined ? {} : { commercial: opts.commercial },
+      ),
   },
 
   /** `asr.engines` — selectable ASR engines (whisper / parakeet) + installed. */

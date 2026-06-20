@@ -9,10 +9,13 @@ import { createRoot, type Root } from 'react-dom/client';
 
 import {
   ModelsSystemPanel,
+  applyOutcomeText,
   errText,
   indexAssets,
   isInstalled,
   qualityFraction,
+  recommendationAlreadyOptimal,
+  recommendationUnavailable,
   sizeForComponent,
 } from './ModelsSystemPanel';
 import type {
@@ -21,6 +24,7 @@ import type {
   CatalogResponse,
   ComponentStatus,
   HardwareInfo,
+  Recommendation,
   UsageRow,
   client as RealClient,
 } from '../lib/rpc';
@@ -70,6 +74,40 @@ const assetList: AssetInfo[] = [
   { name: 'siglip2-so400m', kind: 'model', sizeMB: 4540, installed: true, dest: '/m/siglip' },
   { name: 'smolvlm2-2.2b', kind: 'model', sizeMB: 4500, installed: false, dest: '/m/smol' },
 ];
+
+// WU-B3 — a full actionable recommendation (preset + folded local-server delta +
+// ASR pick + one proposed download + rationale). The `select` slot diverges from
+// the applyPreset base ('groq-x' below) so Apply must persist that one delta.
+function recommendation(): Recommendation {
+  return {
+    preset: 'balanced',
+    routing: {
+      perFunction: {
+        select: { provider: 'local-ollama', fallback: ['local'] },
+        caption: { provider: 'groq-x', fallback: ['local'] },
+      },
+    },
+    asrEngine: 'parakeet',
+    downloads: [
+      { assetName: 'smolvlm2-2.2b', label: 'SmolVLM2 2.2B', sizeMb: 4500, reason: 'runnable' },
+    ],
+    rationale: [
+      "Recommended preset 'balanced' based on this device's advisor report.",
+      "Detected local server 'local-ollama' — routing select to it (no cloud egress).",
+    ],
+  };
+}
+
+/** The G-B1 typed fallback: empty routing -> the card's "unavailable" state. */
+function unavailableRecommendation(): Recommendation {
+  return {
+    preset: 'privacy',
+    routing: { perFunction: {} },
+    asrEngine: null,
+    downloads: [],
+    rationale: ['Could not detect this device’s capabilities — no recommendation available yet.'],
+  };
+}
 
 describe('pure helpers', () => {
   it('errText handles Error and non-Error', () => {
@@ -129,6 +167,7 @@ function makeClient(
     engines?: { id: string; label: string; installed: boolean }[];
     usage?: UsageRow[];
     catalog?: CatalogResponse;
+    recommendation?: Recommendation;
     initialSettings?: Record<string, unknown>;
     rejectAnalyze?: boolean;
     rejectUsage?: boolean;
@@ -146,6 +185,10 @@ function makeClient(
       advisor: vi.fn(async (opts?: { commercial?: boolean }) => {
         calls.push({ method: 'system.advisor', args: [opts] });
         return over.advisor ?? report();
+      }),
+      recommend: vi.fn(async (opts?: { commercial?: boolean }) => {
+        calls.push({ method: 'system.recommend', args: [opts] });
+        return { recommendation: over.recommendation ?? recommendation() };
       }),
     },
     assets: {
@@ -181,7 +224,15 @@ function makeClient(
       }),
       applyPreset: vi.fn(async (name: string) => {
         calls.push({ method: 'providers.applyPreset', args: [name] });
-        const routing = { perFunction: { select: { provider: 'groq-x', fallback: ['local'] } } };
+        // Base routing for the preset BEFORE the recommender's local-server fold:
+        // `select` resolves to a cloud provider (so the rec's `local-ollama` is a
+        // delta Apply must persist) while `caption` already matches the rec.
+        const routing = {
+          perFunction: {
+            select: { provider: 'groq-x', fallback: ['local'] },
+            caption: { provider: 'groq-x', fallback: ['local'] },
+          },
+        };
         return { activePreset: name, routing };
       }),
       setFunctionModel: vi.fn(async (function_: string, provider: string) => {
@@ -914,5 +965,271 @@ describe('<ModelsSystemPanel />', () => {
     await mount(c);
     await analyze();
     expect(container.querySelector('[data-section="presets"]')).toBeNull();
+  });
+});
+
+// ---- WU-B3: device-aware recommendation card + Apply flow ------------------
+
+describe('WU-B3 recommendation pure helpers', () => {
+  it('recommendationUnavailable is true iff routing.perFunction is empty', () => {
+    expect(recommendationUnavailable(unavailableRecommendation())).toBe(true);
+    expect(recommendationUnavailable(recommendation())).toBe(false);
+  });
+
+  it('recommendationAlreadyOptimal covers every gating arm', () => {
+    const rec = recommendation();
+    // different preset -> not optimal
+    expect(recommendationAlreadyOptimal(rec, 'privacy', 'parakeet')).toBe(false);
+    // same preset but pending downloads -> not optimal
+    expect(recommendationAlreadyOptimal(rec, 'balanced', 'parakeet')).toBe(false);
+    // same preset, no downloads, but ASR engine differs -> not optimal
+    const noDl = { ...rec, downloads: [] };
+    expect(recommendationAlreadyOptimal(noDl, 'balanced', 'whisper')).toBe(false);
+    // same preset, no downloads, ASR matches -> optimal
+    expect(recommendationAlreadyOptimal(noDl, 'balanced', 'parakeet')).toBe(true);
+    // same preset, no downloads, recommendation proposes NO ASR -> optimal regardless
+    const noAsr = { ...rec, downloads: [], asrEngine: null };
+    expect(recommendationAlreadyOptimal(noAsr, 'balanced', undefined)).toBe(true);
+  });
+
+  it('applyOutcomeText summarises preset, ASR, and download counts', () => {
+    expect(applyOutcomeText(recommendation())).toBe(
+      'Applied: preset balanced, ASR → parakeet, 1 download started.',
+    );
+    // plural downloads + no ASR
+    const many: Recommendation = {
+      ...recommendation(),
+      asrEngine: null,
+      downloads: [
+        { assetName: 'a', label: 'A', sizeMb: 1, reason: 'r' },
+        { assetName: 'b', label: 'B', sizeMb: 2, reason: 'r' },
+      ],
+    };
+    expect(applyOutcomeText(many)).toBe('Applied: preset balanced, 2 downloads started.');
+    // no ASR, no downloads -> just the preset
+    const bare: Recommendation = { ...recommendation(), asrEngine: null, downloads: [] };
+    expect(applyOutcomeText(bare)).toBe('Applied: preset balanced.');
+  });
+});
+
+describe('<ModelsSystemPanel /> WU-B3 card', () => {
+  const optedIn = { modelsOnboardingSeen: true, firstRunChoiceMade: true };
+
+  it('renders the card by its accessible heading + rationale list + plan rows', async () => {
+    const c = makeClient({ initialSettings: optedIn });
+    await mount(c);
+    await analyze();
+    const card = container.querySelector('[data-section="recommend"]') as HTMLElement;
+    expect(card).not.toBeNull();
+    // queryable by its accessible heading
+    const heading = container.querySelector('#recommend-card-heading') as HTMLElement;
+    expect(card.getAttribute('aria-labelledby')).toBe('recommend-card-heading');
+    expect(heading.textContent).toContain('Recommended setup for your machine');
+    // rationale renders as list items, count == rationale length
+    const items = card.querySelectorAll('[data-section="recommend-rationale"] li');
+    expect(items.length).toBe(recommendation().rationale.length);
+    // plan rows surface preset + ASR + downloads as labelled fields
+    expect(card.querySelector('[data-field="preset"]')).not.toBeNull();
+    expect(card.querySelector('[data-field="asr"]')?.textContent).toBe('parakeet');
+    expect(card.querySelector('[data-field="downloads"]')?.textContent).toContain('SmolVLM2');
+    // recommend RPC was called with the commercial flag
+    expect(c.calls.find((x) => x.method === 'system.recommend')?.args[0]).toEqual({
+      commercial: false,
+    });
+  });
+
+  it('the loading live region announces while analysis is in flight', async () => {
+    const c = makeClient({ initialSettings: optedIn });
+    let release: () => void = () => {};
+    (c.client.system.probe as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ vramMb: 6000, ramMb: 32000, cpuCount: 16, gpuPresent: true });
+        }),
+    );
+    await mount(c);
+    const btn = container.querySelector('button[data-action="analyze"]') as HTMLButtonElement;
+    await act(async () => btn.click());
+    const loading = container.querySelector('[data-section="recommend-loading"]') as HTMLElement;
+    expect(loading).not.toBeNull();
+    expect(loading.getAttribute('aria-live')).toBe('polite');
+    expect(loading.textContent).toContain('Analysing your machine');
+    await act(async () => {
+      release();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-section="recommend-loading"]')).toBeNull();
+  });
+
+  it('Apply issues applyPreset + exactly the diverging setFunctionModel + ASR + one ensure', async () => {
+    const c = makeClient({ initialSettings: optedIn });
+    await mount(c);
+    await analyze();
+    const apply = container.querySelector(
+      'button[data-action="apply-recommendation"]',
+    ) as HTMLButtonElement;
+    expect(apply.getAttribute('aria-label')).toBe('Apply recommended settings');
+    await act(async () => apply.click());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // base preset applied
+    expect(
+      c.calls.filter((x) => x.method === 'providers.applyPreset').map((x) => x.args[0]),
+    ).toEqual(['balanced']);
+    // ONLY the diverging `select` slot persisted (caption already matched the base)
+    const fnCalls = c.calls.filter((x) => x.method === 'providers.setFunctionModel');
+    expect(fnCalls.length).toBe(1);
+    expect(fnCalls[0].args).toEqual(['select', 'local-ollama']);
+    // ASR engine persisted
+    expect(
+      c.calls.find(
+        (x) => x.method === 'settings.set' && (x.args[0] as { asrEngine?: string }).asrEngine,
+      ),
+    ).toBeTruthy();
+    // exactly one ensure with the proposed asset
+    const ensures = c.calls.filter((x) => x.method === 'assets.ensure');
+    expect(ensures.length).toBe(1);
+    expect(ensures[0].args[0]).toEqual(['smolvlm2-2.2b']);
+    // outcome announced in the polite live region
+    const outcome = container.querySelector('[data-section="recommend-outcome"]') as HTMLElement;
+    expect(outcome.getAttribute('aria-live')).toBe('polite');
+    expect(outcome.textContent).toContain('Applied: preset balanced');
+  });
+
+  it('Apply with no ASR and no downloads only touches preset + deltas', async () => {
+    const rec: Recommendation = {
+      preset: 'balanced',
+      routing: { perFunction: { select: { provider: 'groq-x', fallback: ['local'] } } },
+      asrEngine: null,
+      downloads: [],
+      rationale: ['preset balanced'],
+    };
+    const c = makeClient({ initialSettings: optedIn, recommendation: rec });
+    await mount(c);
+    await analyze();
+    const apply = container.querySelector(
+      'button[data-action="apply-recommendation"]',
+    ) as HTMLButtonElement;
+    await act(async () => apply.click());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // select matches the base -> no setFunctionModel, no ensure, no asr settings.set
+    expect(c.calls.filter((x) => x.method === 'providers.setFunctionModel').length).toBe(0);
+    expect(c.calls.filter((x) => x.method === 'assets.ensure').length).toBe(0);
+    expect(
+      c.calls.filter(
+        (x) => x.method === 'settings.set' && 'asrEngine' in (x.args[0] as Record<string, unknown>),
+      ).length,
+    ).toBe(0);
+    expect(container.querySelector('[data-section="recommend-outcome"]')?.textContent).toContain(
+      'Applied: preset balanced',
+    );
+  });
+
+  it('shows aria-busy + disabled while Apply runs, then clears', async () => {
+    const c = makeClient({ initialSettings: optedIn });
+    let release: () => void = () => {};
+    (c.client.providers.applyPreset as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve({
+              activePreset: 'balanced',
+              routing: { perFunction: { select: { provider: 'groq-x', fallback: ['local'] } } },
+            });
+        }),
+    );
+    await mount(c);
+    await analyze();
+    const apply = container.querySelector(
+      'button[data-action="apply-recommendation"]',
+    ) as HTMLButtonElement;
+    await act(async () => apply.click());
+    expect(apply.getAttribute('aria-busy')).toBe('true');
+    expect(apply.disabled).toBe(true);
+    expect(apply.textContent).toContain('Applying');
+    await act(async () => {
+      release();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(apply.getAttribute('aria-busy')).toBe('false');
+    expect(apply.disabled).toBe(false);
+  });
+
+  it('an Apply error surfaces in the alert and clears the busy state', async () => {
+    const c = makeClient({ initialSettings: optedIn });
+    (c.client.providers.applyPreset as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('apply boom'),
+    );
+    await mount(c);
+    await analyze();
+    const apply = container.querySelector(
+      'button[data-action="apply-recommendation"]',
+    ) as HTMLButtonElement;
+    await act(async () => apply.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('apply boom');
+    expect(apply.getAttribute('aria-busy')).toBe('false');
+  });
+
+  it('the unavailable recommendation renders the announced message, not a blank card', async () => {
+    const c = makeClient({ initialSettings: optedIn, recommendation: unavailableRecommendation() });
+    await mount(c);
+    await analyze();
+    const card = container.querySelector('[data-section="recommend"]') as HTMLElement;
+    expect(card).not.toBeNull();
+    const msg = container.querySelector('[data-section="recommend-unavailable"]') as HTMLElement;
+    expect(msg).not.toBeNull();
+    expect(msg.getAttribute('aria-live')).toBe('polite');
+    expect(msg.textContent).toContain('Could not detect your hardware');
+    // no plan / no Apply button in the unavailable state
+    expect(container.querySelector('[data-section="recommend-plan"]')).toBeNull();
+    expect(container.querySelector('button[data-action="apply-recommendation"]')).toBeNull();
+  });
+
+  it('already-optimal renders Apply disabled with the reason as its accessible name', async () => {
+    const rec: Recommendation = {
+      preset: 'balanced',
+      routing: { perFunction: { select: { provider: 'local', fallback: [] } } },
+      asrEngine: 'whisper',
+      downloads: [],
+      rationale: ['already optimal'],
+    };
+    const c = makeClient({
+      initialSettings: { ...optedIn, activePreset: 'balanced', asrEngine: 'whisper' },
+      recommendation: rec,
+    });
+    await mount(c);
+    await analyze();
+    const apply = container.querySelector(
+      'button[data-action="apply-recommendation"]',
+    ) as HTMLButtonElement;
+    expect(apply.disabled).toBe(true);
+    expect(apply.getAttribute('aria-label')).toBe('Your settings already match the recommendation');
+    expect(container.querySelector('[data-section="recommend-optimal"]')?.textContent).toContain(
+      'already match',
+    );
+  });
+
+  it('no card renders when system.recommend yields a nullish recommendation', async () => {
+    const c = makeClient({ initialSettings: optedIn });
+    (c.client.system.recommend as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      {} as unknown as { recommendation: Recommendation },
+    );
+    await mount(c);
+    await analyze();
+    expect(container.querySelector('[data-section="recommend"]')).toBeNull();
+    // the rest of the analyzed panel still renders (report present).
+    expect(container.querySelector('[data-section="preset"]')).not.toBeNull();
   });
 });
