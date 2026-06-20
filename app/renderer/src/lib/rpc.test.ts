@@ -524,6 +524,12 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('asr.engines', undefined);
   });
 
+  it('readiness.summary calls the bare method (WU-8 roll-up)', async () => {
+    const r = installApi();
+    await client.readiness.summary();
+    expect(r).toHaveBeenCalledWith('readiness.summary', undefined);
+  });
+
   it('providers.usage calls the bare method (WU-usage-ui)', async () => {
     const r = installApi();
     await client.providers.usage();

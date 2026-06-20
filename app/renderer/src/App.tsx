@@ -195,7 +195,9 @@ export function App(): React.ReactElement {
         );
       case 'library':
       default:
-        return <Library onOpen={openVideo} />;
+        // WU-14: a readiness fix action on the library roll-up routes to the
+        // Models & System panel, where the provider/asset flows live.
+        return <Library onOpen={openVideo} onReadinessAction={openModels} />;
     }
   }
 

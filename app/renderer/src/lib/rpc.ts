@@ -808,6 +808,16 @@ export const client = {
     engines: (): Promise<{ engines: AsrEngine[] }> => rpc('asr.engines'),
   },
 
+  /**
+   * `readiness.*` — the unified "what works right now" roll-up (WU-8). Strictly
+   * read-only: it derives every row from the installed-weight map + redacted
+   * settings view, so it triggers no download and opens no socket.
+   */
+  readiness: {
+    /** `readiness.summary()` -> the per-capability readiness rows (WU-8). */
+    summary: (): Promise<{ items: ReadinessItem[] }> => rpc('readiness.summary'),
+  },
+
   /** `providers.*` — Hub key/usage reads (WU-usage-ui surfaces live usage here). */
   providers: {
     /**
