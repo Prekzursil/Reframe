@@ -28,9 +28,14 @@ the batch checkpoint persists. WU6 therefore ships exactly that checkpoint:
     state is always consistent before the next item runs — the substrate the WU8
     resume reads back.
 
+WU8 adds :func:`resume_batch` (G-DUR): it reads the checkpoint back, treats
+``done`` items as complete, re-enqueues the not-yet-done sources (resetting them
+to ``queued`` on disk), and starts a FRESH parent job that re-runs ONLY those
+sources at SOURCE granularity — finished work is never redone.
+
 No heavy-ML / network / provider imports. The runner reuses the recipe sub-job
-relay by import (no new sub-job machinery); resume, consent and the RPC layer are
-later WUs.
+relay by import (no new sub-job machinery); consent and the RPC layer are later
+WUs.
 """
 
 from __future__ import annotations
@@ -61,6 +66,9 @@ TemplateRunner = Callable[[str, RpcContext], dict[str, Any]]
 TitleResolver = Callable[[str], str]
 #: The sub-job await/relay seam (defaults to the recipe runner's ``_await_subjob``).
 AwaitSubjob = Callable[[str, Any, RpcContext, Callable[[float, str], None]], Any]
+#: The parent-job start seam: ``(job_body, **kwargs) -> <job with .id>`` (defaults
+#: to ``ctx.jobs.start``). Injected by tests to run the resume body synchronously.
+StartJob = Callable[..., Any]
 
 #: every legal :class:`BatchItem` status (DESIGN §5.2).
 ITEM_STATUSES: frozenset[str] = frozenset({"queued", "running", "done", "error", "cancelled", "skipped"})
@@ -329,6 +337,11 @@ def run_batch(
     total = max(len(items), 1)
     final = state  # the latest store-returned state (always non-None for the return).
     for index, item in enumerate(items):
+        # A source already in a terminal state (e.g. a ``done`` item preserved by a
+        # WU8 resume) is NOT re-run — resume re-enqueues only the incomplete sources
+        # by resetting them to ``queued``; finished work stays finished (G-DUR).
+        if is_terminal_status(item["status"]):
+            continue
         job_ctx.raise_if_cancelled()
         video_id = item["videoId"]
         title = resolve_title(video_id)
@@ -361,6 +374,87 @@ def run_batch(
     return final
 
 
+# --------------------------------------------------------------------------- #
+# resume — re-enqueue not-yet-done sources as a FRESH job (WU8, G-DUR)
+# --------------------------------------------------------------------------- #
+#: the statuses a resume re-enqueues unconditionally (work that never finished).
+_RESUMABLE_STATUSES: frozenset[str] = frozenset({"queued", "running"})
+
+
+def resumable_video_ids(state: BatchState, *, retry_errors: bool = False) -> list[str]:
+    """Video ids of the sources a resume should re-run, in batch order (§10.1).
+
+    Pure selector over the checkpointed :class:`BatchState`. ``queued`` and
+    ``running`` items are always re-enqueued (a ``running`` item is a source the
+    crash interrupted mid-flight). ``error`` items are re-enqueued ONLY when
+    ``retry_errors`` (default policy leaves an errored source terminal). ``done``
+    /``skipped``/``cancelled`` are terminal and never resumed — finished work is
+    not redone (the G-DUR durability contract).
+    """
+    selected: list[str] = []
+    for item in state.get("items") or []:
+        status = item.get("status")
+        if status in _RESUMABLE_STATUSES or (retry_errors and status == "error"):
+            selected.append(item["videoId"])
+    return selected
+
+
+def resume_batch(
+    store: BatchStore,
+    batch_id: str,
+    template_runner: TemplateRunner,
+    ctx: RpcContext,
+    *,
+    retry_errors: bool = False,
+    continue_on_error: bool = True,
+    title_resolver: TitleResolver | None = None,
+    await_subjob: AwaitSubjob | None = None,
+    start_job: StartJob | None = None,
+) -> dict[str, Any]:
+    """Resume an incomplete batch as a FRESH parent job (DESIGN §10.1, G-DUR).
+
+    Reads the checkpointed :class:`BatchState`, treats ``done`` items as complete,
+    and re-enqueues the not-yet-done sources (:func:`resumable_video_ids`) by
+    resetting them to ``queued`` ON DISK before any work starts — the durable
+    re-enqueue, not an in-memory one. It then starts a fresh parent job whose body
+    runs :func:`run_batch`; because the preserved ``done`` items are terminal,
+    ``run_batch`` skips them and runs ONLY the re-enqueued sources. Resume is at
+    SOURCE granularity: a re-enqueued source runs its full template path from step
+    one (its earlier outputs are idempotent overwrites) — mid-pipeline resume is
+    out of scope (§10.1).
+
+    Returns ``{"jobId": <id>}``. When nothing is resumable (every source already
+    terminal) it is a NO-OP: no job starts and it returns
+    ``{"jobId": None, "status": <terminal aggregate>}``.
+    """
+    state = store.load(batch_id)
+    if state is None:
+        raise _invalid(f"unknown batch: {batch_id}")
+    pending = resumable_video_ids(state, retry_errors=retry_errors)
+    if not pending:
+        return {"jobId": None, "status": state.get("status")}
+    # Durable re-enqueue: reset each not-yet-done source to ``queued`` on disk so a
+    # second crash before the job runs still sees them as pending.
+    for video_id in pending:
+        state = store.update_item(batch_id, video_id, status="queued")
+    starter = start_job or ctx.jobs.start
+
+    def job_body(job_ctx: Any) -> BatchState:
+        return run_batch(
+            store,
+            batch_id,
+            template_runner,
+            job_ctx,
+            ctx,
+            continue_on_error=continue_on_error,
+            title_resolver=title_resolver,
+            await_subjob=await_subjob,
+        )
+
+    job = starter(job_body, feature="batch", label=f"resume: {state.get('name', '')}")
+    return {"jobId": job.id}
+
+
 def _summarize(state: BatchState) -> BatchSummary:
     """Project a :class:`BatchState` to a :class:`BatchSummary` (no per-item heavy data)."""
     items = state.get("items") or []
@@ -387,11 +481,14 @@ __all__ = [
     "BatchState",
     "BatchStore",
     "BatchSummary",
+    "StartJob",
     "TemplateRunner",
     "TitleResolver",
     "derive_status",
     "is_terminal_status",
     "new_item",
     "new_state",
+    "resumable_video_ids",
+    "resume_batch",
     "run_batch",
 ]

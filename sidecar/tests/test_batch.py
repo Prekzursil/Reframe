@@ -592,3 +592,231 @@ class TestRunBatchProgress:
         batch.run_batch(store, state["id"], runner, ctx_obj, _ctx(reg))
         # with no resolver supplied, the title falls back to the raw video id.
         assert any("source 1/1 · v1 · " in msg for _pct, msg in ctx_obj.messages)
+
+    def test_run_batch_skips_already_done_items(self, tmp_path):
+        # An item already terminal-``done`` on disk (e.g. preserved by a resume)
+        # is NOT re-run — its runner is never invoked and it stays ``done``.
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2"])
+        store.update_item(state["id"], "v1", status="done", jobId="old", results={"source": "v1"})
+        runner, invoked = _make_runner(reg)
+        batch.run_batch(store, state["id"], runner, _FakeJobCtx(), _ctx(reg))
+        # v1 (already done) is skipped; only v2 runs.
+        assert invoked == ["v2"]
+        assert _statuses(store, state["id"]) == ["done", "done"]
+
+
+# --------------------------------------------------------------------------- #
+# WU8 — resume (G-DUR, source granularity)
+# --------------------------------------------------------------------------- #
+
+
+def _sync_start(captured: dict[str, Any]):
+    """A ``start_job`` seam that runs the parent job body synchronously.
+
+    Mirrors a real ``ctx.jobs.start`` enough for a deterministic test: it runs
+    the body NOW with a fresh :class:`_FakeJobCtx`, stashes the returned state in
+    ``captured``, and returns an object exposing ``.id`` (the job-id contract).
+    """
+
+    class _Job:
+        id = "resume-job-1"
+
+    def start_job(body, **_kwargs):
+        captured["state"] = body(_FakeJobCtx())
+        return _Job()
+
+    return start_job
+
+
+class TestResumableVideoIds:
+    def test_selects_queued_and_running_not_done(self):
+        state = batch.new_state("r", "t", ["v1", "v2", "v3"])
+        state["items"][0]["status"] = "done"
+        state["items"][1]["status"] = "running"
+        # v3 stays queued.
+        assert batch.resumable_video_ids(state) == ["v2", "v3"]
+
+    def test_errors_excluded_by_default(self):
+        state = batch.new_state("r", "t", ["v1", "v2"])
+        state["items"][0]["status"] = "error"
+        # default policy does NOT retry errored sources.
+        assert batch.resumable_video_ids(state) == ["v2"]
+
+    def test_errors_included_when_retry_errors(self):
+        state = batch.new_state("r", "t", ["v1", "v2"])
+        state["items"][0]["status"] = "error"
+        assert batch.resumable_video_ids(state, retry_errors=True) == ["v1", "v2"]
+
+    def test_skipped_and_cancelled_never_resumed(self):
+        state = batch.new_state("r", "t", ["v1", "v2", "v3"])
+        state["items"][0]["status"] = "skipped"
+        state["items"][1]["status"] = "cancelled"
+        # only the still-queued v3 is resumable; skip/cancel are terminal here.
+        assert batch.resumable_video_ids(state, retry_errors=True) == ["v3"]
+
+    def test_all_done_is_empty(self):
+        state = batch.new_state("r", "t", ["v1", "v2"])
+        for item in state["items"]:
+            item["status"] = "done"
+        assert batch.resumable_video_ids(state) == []
+
+
+class TestResumeBatch:
+    def test_unknown_batch_raises(self, tmp_path):
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        runner, _ = _make_runner(reg)
+        with pytest.raises(RpcError, match="unknown batch"):
+            batch.resume_batch(store, "nope", runner, _ctx(reg))
+
+    def test_resume_reruns_only_incomplete_items(self, tmp_path):
+        # Acceptance #1: resuming [done, error, queued] re-runs only items 2 & 3.
+        # The default policy retries errored sources too (retry_errors=True here),
+        # so item 1 (done) is the ONLY one not re-run — its runner is not invoked.
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2", "v3"])
+        store.update_item(state["id"], "v1", status="done", jobId="old1", results={"source": "v1"})
+        store.update_item(state["id"], "v2", status="error", error="boom: v2")
+        captured: dict[str, Any] = {}
+        runner, invoked = _make_runner(reg)
+        out = batch.resume_batch(
+            store,
+            state["id"],
+            runner,
+            _ctx(reg),
+            retry_errors=True,
+            start_job=_sync_start(captured),
+        )
+        assert out == {"jobId": "resume-job-1"}
+        # item 1's runner was NOT invoked; only the re-enqueued v2 and v3 ran.
+        assert invoked == ["v2", "v3"]
+        assert _statuses(store, state["id"]) == ["done", "done", "done"]
+
+    def test_error_not_retried_by_default(self, tmp_path):
+        # Default policy leaves errored sources terminal — only queued/running re-run.
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2", "v3"])
+        store.update_item(state["id"], "v1", status="done", results={"source": "v1"})
+        store.update_item(state["id"], "v2", status="error", error="boom: v2")
+        captured: dict[str, Any] = {}
+        runner, invoked = _make_runner(reg)
+        batch.resume_batch(store, state["id"], runner, _ctx(reg), start_job=_sync_start(captured))
+        # v1 done (skipped), v2 stays error (not retried), only v3 re-runs.
+        assert invoked == ["v3"]
+        assert _statuses(store, state["id"]) == ["done", "error", "done"]
+
+    def test_all_done_resume_is_noop_no_job(self, tmp_path):
+        # Acceptance #2: resuming an all-done batch starts NO job, reports done.
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2"])
+        store.update_item(state["id"], "v1", status="done", results={"source": "v1"})
+        store.update_item(state["id"], "v2", status="done", results={"source": "v2"})
+        started: list[Any] = []
+
+        def start_job(body, **_kwargs):  # pragma: no cover - must NOT be called
+            started.append(body)
+            raise AssertionError("no job should start for an all-done batch")
+
+        runner, invoked = _make_runner(reg)
+        out = batch.resume_batch(store, state["id"], runner, _ctx(reg), start_job=start_job)
+        assert out == {"jobId": None, "status": "done"}
+        assert started == []
+        assert invoked == []
+
+    def test_resumed_source_runs_from_first_step(self, tmp_path):
+        # Acceptance #3: a re-enqueued source runs from its FIRST step — the runner
+        # is handed the source's full template path (source granularity), proven by
+        # the start-of-source progress tick at the slice base (0.0), not a suffix.
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2"])
+        store.update_item(state["id"], "v1", status="done", results={"source": "v1"})
+        captured: dict[str, Any] = {}
+        ctx_obj_holder: dict[str, _FakeJobCtx] = {}
+
+        class _Job:
+            id = "resume-job-2"
+
+        def start_job(body, **_kwargs):
+            job_ctx = _FakeJobCtx()
+            ctx_obj_holder["ctx"] = job_ctx
+            captured["state"] = body(job_ctx)
+            return _Job()
+
+        runner, invoked = _make_runner(reg, pct=50.0)
+        batch.resume_batch(
+            store,
+            state["id"],
+            runner,
+            _ctx(reg),
+            title_resolver=lambda vid: f"Title-{vid}",
+            start_job=start_job,
+        )
+        # only v2 re-runs and it starts at its slice base (full path, step 1).
+        assert invoked == ["v2"]
+        msgs = ctx_obj_holder["ctx"].messages
+        assert any(msg == "source 2/2 · Title-v2 · " for _pct, msg in msgs)
+
+    def test_resume_resets_running_item_to_queued_before_job(self, tmp_path):
+        # A source left ``running`` by a crash is reset to ``queued`` on disk by
+        # resume BEFORE the job body runs (durable re-enqueue, not in-memory only).
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2"])
+        store.update_item(state["id"], "v1", status="done", results={"source": "v1"})
+        store.update_item(state["id"], "v2", status="running", jobId="dead-job")
+        on_disk_at_start: list[list[str]] = []
+
+        class _Job:
+            id = "resume-job-3"
+
+        def start_job(body, **_kwargs):
+            # at job-start time, the running item must already be re-queued on disk.
+            on_disk_at_start.append(_statuses(store, state["id"]))
+            body(_FakeJobCtx())
+            return _Job()
+
+        runner, _ = _make_runner(reg)
+        batch.resume_batch(store, state["id"], runner, _ctx(reg), start_job=start_job)
+        assert on_disk_at_start[0] == ["done", "queued"]
+        assert _statuses(store, state["id"]) == ["done", "done"]
+
+    def test_resume_uses_real_registry_start_by_default(self, tmp_path):
+        # With no start_job seam injected, resume starts a real parent job via the
+        # registry and returns its id; the threaded body re-runs the queued source.
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2"])
+        store.update_item(state["id"], "v1", status="done", results={"source": "v1"})
+        runner, _ = _make_runner(reg)
+        out = batch.resume_batch(store, state["id"], runner, _ctx(reg))
+        job = reg.get(out["jobId"])
+        job._thread.join(timeout=5)
+        assert isinstance(out["jobId"], str) and out["jobId"]
+        assert _statuses(store, state["id"]) == ["done", "done"]
+
+    def test_resume_passes_continue_on_error_through(self, tmp_path):
+        # The continue_on_error policy threads into the resumed run: with it off and
+        # a failing re-enqueued source, the run halts and the tail stays queued.
+        reg = _registry()
+        store = batch.BatchStore(tmp_path / "batches")
+        state = store.create("run", "t", ["v1", "v2", "v3"])
+        store.update_item(state["id"], "v1", status="done", results={"source": "v1"})
+        captured: dict[str, Any] = {}
+        runner, invoked = _make_runner(reg, fail={"v2"})
+        batch.resume_batch(
+            store,
+            state["id"],
+            runner,
+            _ctx(reg),
+            continue_on_error=False,
+            start_job=_sync_start(captured),
+        )
+        # v2 fails and halts the resumed run; v3 is never attempted.
+        assert invoked == ["v2"]
+        assert _statuses(store, state["id"]) == ["done", "error", "queued"]
