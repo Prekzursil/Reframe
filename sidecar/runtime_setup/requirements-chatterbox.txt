@@ -21,5 +21,5 @@
 # LIST, so a bootstrap-built env only counts as the installed "chatterbox-env"
 # asset when the pin order matches. Keep both in sync.
 chatterbox-tts==0.1.7
-torch==2.10.0+cu128
-torchaudio==2.10.0+cu128
+torch==2.12.1
+torchaudio==2.11.0+cu128
