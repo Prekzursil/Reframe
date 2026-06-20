@@ -1174,3 +1174,322 @@ class TestRunBatchConsent:
         assert invoked == ["v2"]
         # the final tick is the explicit 100/"done", reached after the skip + run.
         assert ctx_obj.messages[-1] == (100.0, "done")
+
+
+# --------------------------------------------------------------------------- #
+# WU10 — the seven ``batch.*`` RPC methods (the Batch service)
+# --------------------------------------------------------------------------- #
+def _service(
+    tmp_path,
+    *,
+    template_runner=None,
+    shape_of=None,
+    plan_job=None,
+    title_resolver=None,
+    methods_provider=None,
+) -> batch.Batch:
+    """A :class:`batch.Batch` over a tmp ``batches/`` dir with injected seams."""
+    return batch.Batch(
+        batch.BatchStore(tmp_path / "batches"),
+        methods_provider=methods_provider,
+        template_runner=template_runner,
+        shape_of=shape_of,
+        plan_job=plan_job,
+        title_resolver=title_resolver,
+    )
+
+
+def _created(service: batch.Batch, ctx: RpcContext, ids=("v1", "v2")) -> str:
+    out = service.create({"name": "B", "templateId": "tpl", "sourceVideoIds": list(ids)}, ctx)
+    return out["batch"]["id"]
+
+
+class TestBatchServiceCrud:
+    def test_create_persists_queued_batch(self, tmp_path):
+        reg = _registry()
+        service = _service(tmp_path)
+        out = service.create({"name": "B", "templateId": "tpl", "sourceVideoIds": ["v1", "v2"]}, _ctx(reg))
+        assert out["batch"]["status"] == "queued"
+        assert [i["videoId"] for i in out["batch"]["items"]] == ["v1", "v2"]
+        assert service.store.load(out["batch"]["id"]) is not None
+
+    def test_create_validates_fields(self, tmp_path):
+        service = _service(tmp_path)
+        with pytest.raises(RpcError):
+            service.create({"name": "", "templateId": "tpl", "sourceVideoIds": ["v1"]}, _ctx(_registry()))
+
+    def test_list_returns_summaries(self, tmp_path):
+        reg = _registry()
+        service = _service(tmp_path)
+        _created(service, _ctx(reg))
+        out = service.list({}, _ctx(reg))
+        assert len(out["batches"]) == 1
+        assert out["batches"][0]["counts"]["total"] == 2
+
+    def test_delete_drops_record_and_clears_parent_job(self, tmp_path):
+        reg = _registry()
+        service = _service(tmp_path)
+        batch_id = _created(service, _ctx(reg))
+        service._parent_jobs[batch_id] = "stale-job"
+        out = service.delete({"id": batch_id}, _ctx(reg))
+        assert out["ok"] is True
+        assert service.store.load(batch_id) is None
+        assert batch_id not in service._parent_jobs
+
+    def test_delete_unknown_is_false(self, tmp_path):
+        service = _service(tmp_path)
+        assert service.delete({"id": "nope"}, _ctx(_registry()))["ok"] is False
+
+    @pytest.mark.parametrize("svc_method", ["start", "status", "cancel", "resume", "delete"])
+    def test_id_param_required(self, tmp_path, svc_method):
+        service = _service(tmp_path)
+        with pytest.raises(RpcError, match="id"):
+            getattr(service, svc_method)({}, _ctx(_registry()))
+
+
+class TestBatchServiceStart:
+    def test_start_returns_job_id_and_runs_all(self, tmp_path):
+        reg = _registry()
+        runner, invoked = _make_runner(reg)
+        service = _service(tmp_path, template_runner=runner)
+        batch_id = _created(service, _ctx(reg))
+        out = service.start({"id": batch_id}, _ctx(reg))
+        assert isinstance(out["jobId"], str)
+        reg.join()
+        assert invoked == ["v1", "v2"]
+        assert _statuses(service.store, batch_id) == ["done", "done"]
+        assert service._parent_jobs[batch_id] == out["jobId"]
+
+    def test_start_no_registry_refuses(self, tmp_path):
+        service = _service(tmp_path)
+        batch_id = _created(service, _ctx(_registry()))
+        with pytest.raises(RpcError, match="no job registry available"):
+            service.start({"id": batch_id}, RpcContext(emit_notification=lambda *_: None, jobs=None))
+
+    def test_start_unknown_batch_refuses(self, tmp_path):
+        service = _service(tmp_path)
+        with pytest.raises(RpcError, match="unknown batch"):
+            service.start({"id": "nope"}, _ctx(_registry()))
+
+    def test_start_gate_on_unacked_egress_skips_with_reason(self, tmp_path):
+        reg = _registry()
+        runner, invoked = _make_runner(reg)
+        plan_job, _ = _fake_plan_job({"eg": _EGRESS_PLAN})
+        service = _service(tmp_path, template_runner=runner, shape_of=lambda _vid: "eg", plan_job=plan_job)
+        batch_id = _created(service, _ctx(reg), ids=["v1"])
+        service.start({"id": batch_id, "confirmCloudBudget": True, "acknowledged": False}, _ctx(reg))
+        reg.join()
+        assert invoked == []
+        item = service.store.load(batch_id)["items"][0]
+        assert item["status"] == "skipped"
+        assert item["skipReason"] == "would egress — not acknowledged"
+
+    def test_start_gate_on_acked_threads_confirm_budget(self, tmp_path):
+        reg = _registry()
+        runner, confirms = _make_confirm_runner(reg)
+        plan_job, _ = _fake_plan_job({"eg": _EGRESS_PLAN})
+        service = _service(tmp_path, template_runner=runner, shape_of=lambda _vid: "eg", plan_job=plan_job)
+        batch_id = _created(service, _ctx(reg), ids=["v1"])
+        service.start({"id": batch_id, "confirmCloudBudget": True, "acknowledged": True}, _ctx(reg))
+        reg.join()
+        assert confirms == {"v1": "ck-egress"}
+        assert service.store.load(batch_id)["items"][0]["status"] == "done"
+
+    def test_start_gate_off_skips_consent_and_runs(self, tmp_path):
+        reg = _registry()
+        runner, invoked = _make_runner(reg)
+        plan_job, calls = _fake_plan_job({"eg": _EGRESS_PLAN})
+        service = _service(tmp_path, template_runner=runner, shape_of=lambda _vid: "eg", plan_job=plan_job)
+        batch_id = _created(service, _ctx(reg), ids=["v1"])
+        service.start({"id": batch_id}, _ctx(reg))
+        reg.join()
+        assert calls == []
+        assert invoked == ["v1"]
+
+    def test_start_continue_on_error_off_halts(self, tmp_path):
+        reg = _registry()
+        runner, _ = _make_runner(reg, fail={"v1"})
+        service = _service(tmp_path, template_runner=runner)
+        batch_id = _created(service, _ctx(reg), ids=["v1", "v2"])
+        service.start({"id": batch_id, "continueOnError": False}, _ctx(reg))
+        reg.join()
+        assert _statuses(service.store, batch_id) == ["error", "queued"]
+
+
+class TestBatchServiceStatus:
+    def test_status_unknown_refuses(self, tmp_path):
+        service = _service(tmp_path)
+        with pytest.raises(RpcError, match="unknown batch"):
+            service.status({"id": "nope"}, _ctx(_registry()))
+
+    def test_status_no_live_job_returns_checkpoint(self, tmp_path):
+        reg = _registry()
+        service = _service(tmp_path)
+        batch_id = _created(service, _ctx(reg))
+        out = service.status({"id": batch_id}, _ctx(reg))
+        assert out["batch"]["status"] == "queued"
+        assert "pct" not in out["batch"]
+
+    def test_status_overlays_live_pct(self, tmp_path):
+        reg = _registry()
+        service = _service(tmp_path)
+        batch_id = _created(service, _ctx(reg))
+
+        class _LiveJob:
+            finished = False
+            pct = 42
+
+        service._parent_jobs[batch_id] = "j1"
+        reg.get = lambda _jid: _LiveJob()  # type: ignore[method-assign, return-value]
+        out = service.status({"id": batch_id}, _ctx(reg))
+        assert out["batch"]["pct"] == 42
+
+    def test_status_finished_job_adds_no_overlay(self, tmp_path):
+        reg = _registry()
+        service = _service(tmp_path)
+        batch_id = _created(service, _ctx(reg))
+
+        class _DoneJob:
+            finished = True
+            pct = 100
+
+        service._parent_jobs[batch_id] = "j1"
+        reg.get = lambda _jid: _DoneJob()  # type: ignore[method-assign, return-value]
+        out = service.status({"id": batch_id}, _ctx(reg))
+        assert "pct" not in out["batch"]
+
+
+class TestBatchServiceCancel:
+    def test_cancel_sets_parent_flag(self, tmp_path):
+        reg = _registry()
+        service = _service(tmp_path)
+        batch_id = _created(service, _ctx(reg))
+        cancelled: list[str] = []
+        service._parent_jobs[batch_id] = "j1"
+        reg.cancel = lambda jid: bool(cancelled.append(jid)) or True  # type: ignore[method-assign]
+        out = service.cancel({"id": batch_id}, _ctx(reg))
+        assert out["ok"] is True
+        assert cancelled == ["j1"]
+
+    def test_cancel_without_parent_job_is_false(self, tmp_path):
+        reg = _registry()
+        service = _service(tmp_path)
+        batch_id = _created(service, _ctx(reg))
+        assert service.cancel({"id": batch_id}, _ctx(reg))["ok"] is False
+
+    def test_cancel_without_registry_is_false(self, tmp_path):
+        service = _service(tmp_path)
+        batch_id = _created(service, _ctx(_registry()))
+        service._parent_jobs[batch_id] = "j1"
+        ctx = RpcContext(emit_notification=lambda *_: None, jobs=None)
+        assert service.cancel({"id": batch_id}, ctx)["ok"] is False
+
+
+class TestBatchServiceResume:
+    def test_resume_reenqueues_and_returns_job_id(self, tmp_path):
+        reg = _registry()
+        runner, invoked = _make_runner(reg)
+        service = _service(tmp_path, template_runner=runner)
+        batch_id = _created(service, _ctx(reg), ids=["v1", "v2"])
+        service.store.update_item(batch_id, "v1", status="done")
+        out = service.resume({"id": batch_id}, _ctx(reg))
+        assert isinstance(out["jobId"], str)
+        assert service._parent_jobs[batch_id] == out["jobId"]
+        reg.join()
+        assert invoked == ["v2"]
+        assert _statuses(service.store, batch_id) == ["done", "done"]
+
+    def test_resume_noop_when_all_terminal(self, tmp_path):
+        reg = _registry()
+        runner, _ = _make_runner(reg)
+        service = _service(tmp_path, template_runner=runner)
+        batch_id = _created(service, _ctx(reg), ids=["v1"])
+        service.store.update_item(batch_id, "v1", status="done")
+        out = service.resume({"id": batch_id}, _ctx(reg))
+        assert out == {"jobId": None, "status": "done"}
+        assert batch_id not in service._parent_jobs
+
+    def test_resume_retry_errors(self, tmp_path):
+        reg = _registry()
+        runner, invoked = _make_runner(reg)
+        service = _service(tmp_path, template_runner=runner)
+        batch_id = _created(service, _ctx(reg), ids=["v1"])
+        service.store.update_item(batch_id, "v1", status="error", error="boom")
+        service.resume({"id": batch_id, "retryErrors": True}, _ctx(reg))
+        reg.join()
+        assert invoked == ["v1"]
+
+    def test_resume_no_registry_refuses(self, tmp_path):
+        service = _service(tmp_path)
+        batch_id = _created(service, _ctx(_registry()))
+        with pytest.raises(RpcError, match="no job registry available"):
+            service.resume({"id": batch_id}, RpcContext(emit_notification=lambda *_: None, jobs=None))
+
+    def test_resume_unknown_refuses(self, tmp_path):
+        service = _service(tmp_path)
+        with pytest.raises(RpcError, match="unknown batch"):
+            service.resume({"id": "nope"}, _ctx(_registry()))
+
+
+class TestBatchServiceDefaultSeams:
+    def test_default_runner_calls_templates_apply_by_name(self, tmp_path):
+        calls: list[dict[str, Any]] = []
+
+        def fake_apply(params, ctx):
+            calls.append(params)
+            return {"jobId": "sub-1"}
+
+        service = _service(tmp_path, methods_provider=lambda: {"templates.apply": fake_apply})
+        runner = service._runner_for("tpl")
+        runner("v1", _ctx(_registry()))
+        runner("v2", _ctx(_registry()), confirm_budget="ck-1")
+        assert calls == [
+            {"templateId": "tpl", "videoId": "v1"},
+            {"templateId": "tpl", "videoId": "v2", "confirmBudget": "ck-1"},
+        ]
+
+    def test_default_plan_job_calls_ai_planjob_by_name(self, tmp_path):
+        seen: list[dict[str, Any]] = []
+
+        def fake_plan(params, ctx):
+            seen.append(params)
+            return _LOCAL_PLAN
+
+        service = _service(tmp_path, methods_provider=lambda: {"ai.planJob": fake_plan})
+        plan = service._default_plan_job("shape-A")
+        assert plan is _LOCAL_PLAN
+        assert seen == [{"capability": "shape-A"}]
+
+    def test_default_shape_of_collapses_to_template_id(self, tmp_path):
+        reg = _registry()
+        runner, _ = _make_runner(reg)
+        seen: list[dict[str, Any]] = []
+
+        def fake_plan(params, ctx):
+            seen.append(params)
+            return _LOCAL_PLAN
+
+        service = _service(tmp_path, template_runner=runner, methods_provider=lambda: {"ai.planJob": fake_plan})
+        batch_id = _created(service, _ctx(reg), ids=["v1", "v2", "v3"])
+        service.start({"id": batch_id, "confirmCloudBudget": True, "acknowledged": True}, _ctx(reg))
+        reg.join()
+        assert seen == [{"capability": "tpl"}]
+
+    def test_default_title_resolver_is_identity(self, tmp_path):
+        reg = _registry()
+        recorded: list[str] = []
+
+        def runner(video_id, ctx):
+            recorded.append(video_id)
+
+            def body(job_ctx):
+                job_ctx.progress(100.0, f"title={video_id}")
+                return {"ok": True}
+
+            return {"jobId": ctx.jobs.start(body).id}
+
+        service = _service(tmp_path, template_runner=runner)
+        batch_id = _created(service, _ctx(reg), ids=["v1"])
+        service.start({"id": batch_id}, _ctx(reg))
+        reg.join()
+        assert recorded == ["v1"]

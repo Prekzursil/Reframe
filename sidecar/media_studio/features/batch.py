@@ -47,6 +47,7 @@ from collections.abc import Callable, Hashable
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+from .. import protocol
 from ..jobs import JobCancelled
 from ..protocol import ErrorCode, RpcContext, RpcError
 from ..util import clamp, get_logger, now_ms
@@ -653,12 +654,334 @@ def _summarize(state: BatchState) -> BatchSummary:
     }
 
 
+# --------------------------------------------------------------------------- #
+# RPC service — the seven ``batch.*`` methods over the WU6-9 substrate (WU10)
+# --------------------------------------------------------------------------- #
+def _require_id(params: dict[str, Any]) -> str:
+    """Read + validate the ``id`` param shared by every id-taking ``batch.*`` method."""
+    batch_id = params.get("id")
+    if not isinstance(batch_id, str) or not batch_id:
+        raise _invalid("id (str) is required")
+    return batch_id
+
+
+def _merge_live_status(state: BatchState, job: Any) -> BatchState:
+    """Overlay a live parent job's ``pct`` onto a copy of the stored ``state``.
+
+    ``batch.status`` reads the durable checkpoint (per-item statuses, the source
+    of truth incl. ``skipped``) and, while the parent job is still in flight,
+    surfaces its live ``pct`` so the UI bar advances between item checkpoints. The
+    aggregate ``status`` stays the store's derived value (the checkpoint is
+    authoritative for the run/skip split); only the volatile ``pct`` is added. A
+    finished/absent job adds nothing — the checkpoint already reflects the outcome.
+    """
+    if job is None or job.finished:
+        return state
+    merged = dict(state)
+    merged["pct"] = job.pct
+    return merged
+
+
+class Batch:
+    """Owns the seven ``batch.*`` methods over the WU6-9 substrate (DESIGN §6).
+
+    ``create``/``list``/``delete`` are direct-return CRUD over the
+    :class:`BatchStore`. ``start`` computes the WU9 consent surface (one
+    ``ai.planJob`` per distinct step shape, ZERO provider calls) and then starts
+    the WU7 :func:`run_batch` parent job, threading each acknowledged source's
+    ``confirmBudget`` and skipping un-acked/over-budget egress sources. ``resume``
+    re-enqueues the not-yet-done sources as a FRESH job (WU8). ``status`` reads the
+    durable checkpoint and overlays the live parent job's ``pct``. ``cancel`` sets
+    the parent job's cooperative flag (``jobs.py`` ``cancel`` → the runner's
+    ``raise_if_cancelled`` between sources) — NO new cancellation machinery.
+
+    The single per-source seam is :attr:`_template_runner`: it runs ONE source
+    through the WU5 template path. The default invokes the live ``templates.apply``
+    handler (so a batch rides the SAME recipe runner / sub-job relay a single
+    ``templates.apply`` does), binding ``templateId`` from the batch state. No
+    provider/key is ever touched here — the AI envelope is reached only by method
+    name through that handler.
+
+    Seams (all injectable so tests run with fakes and no media / no real planner):
+
+      * ``template_runner`` — the ``(videoId, ctx, *, confirm_budget=?) -> {jobId}``
+        per-source seam (defaults to a ``templates.apply`` call by name).
+      * ``shape_of`` / ``plan_job`` — the consent pre-flight seams (default
+        ``shape_of`` collapses every source to the batch's ``templateId`` shape;
+        default ``plan_job`` calls ``ai.planJob`` by name with that shape's id).
+      * ``title_resolver`` — maps a ``videoId`` to a human title for the progress
+        message (defaults to the id).
+    """
+
+    def __init__(
+        self,
+        store: BatchStore,
+        *,
+        methods_provider: Callable[[], dict[str, Any]] | None = None,
+        template_runner: TemplateRunner | None = None,
+        shape_of: ShapeOf | None = None,
+        plan_job: PlanJob | None = None,
+        title_resolver: TitleResolver | None = None,
+    ) -> None:
+        self.store = store
+        self._methods_provider = methods_provider or (lambda: protocol.METHODS)
+        self._template_runner = template_runner
+        self._shape_of = shape_of
+        self._plan_job = plan_job
+        self._title_resolver = title_resolver
+        # parentJobId per running batch -> the cancel/status-merge target. In-memory
+        # only (the JobRegistry is in-memory; a restart loses it, which is exactly
+        # why resume is a CHECKPOINT read, not a live-job read — §10.1).
+        self._parent_jobs: dict[str, str] = {}
+
+    # -- direct-return CRUD -------------------------------------------------
+    def create(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``batch.create({name, templateId, sourceVideoIds})`` -> ``{batch}``.
+
+        Validates + persists an all-``queued`` :class:`BatchState` (durable). The
+        fields are validated by :func:`new_state`, so a malformed create never
+        persists a half-typed record.
+        """
+        source_ids = params.get("sourceVideoIds")
+        return {
+            "batch": self.store.create(
+                params.get("name"),  # type: ignore[arg-type] - new_state validates
+                params.get("templateId"),  # type: ignore[arg-type]
+                source_ids,  # type: ignore[arg-type]
+            )
+        }
+
+    def list(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``batch.list()`` -> ``{batches:[BatchSummary]}`` (incl. finished)."""
+        return {"batches": self.store.list()}
+
+    def delete(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``batch.delete({id})`` -> ``{ok}`` (drops a finished/cancelled record)."""
+        batch_id = _require_id(params)
+        ok = self.store.delete(batch_id)
+        self._parent_jobs.pop(batch_id, None)
+        return {"ok": ok}
+
+    # -- status (store checkpoint + live job overlay) -----------------------
+    def status(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``batch.status({id})`` -> ``{batch}`` (checkpoint + live ``pct`` overlay).
+
+        Reads the durable :class:`BatchState` (the authoritative per-item statuses,
+        incl. ``skipped`` with ``skipReason``) and, while the parent job is live,
+        overlays its ``pct`` so the aggregate bar advances between item checkpoints.
+        """
+        batch_id = _require_id(params)
+        state = self.store.load(batch_id)
+        if state is None:
+            raise _invalid(f"unknown batch: {batch_id}")
+        job = self._live_parent_job(batch_id, ctx)
+        return {"batch": _merge_live_status(state, job)}
+
+    # -- start (WU9 consent -> WU7 runner) ----------------------------------
+    def start(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``batch.start({id, confirmCloudBudget?, acknowledged?})`` -> ``{jobId}``.
+
+        Loads the batch, computes the WU9 consent surface for its still-pending
+        sources (one ``ai.planJob`` per distinct step shape; ZERO provider calls),
+        then starts the WU7 :func:`run_batch` parent job carrying that consent —
+        acknowledged egress sources thread their ``confirmBudget``; un-acked /
+        over-budget egress sources end terminal ``skipped`` with their reason
+        (never silently absent, §9.1). The parent jobId is held for ``cancel`` /
+        ``status``.
+        """
+        batch_id = _require_id(params)
+        state = self.store.load(batch_id)
+        if state is None:
+            raise _invalid(f"unknown batch: {batch_id}")
+        if ctx.jobs is None:
+            raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+        template_id = str(state.get("templateId") or "")
+        runner = self._runner_for(template_id)
+        pending = [item["videoId"] for item in state["items"] if not is_terminal_status(item["status"])]
+        consent = self._build_consent(
+            pending,
+            template_id,
+            confirm_cloud_budget=bool(params.get("confirmCloudBudget", False)),
+            acknowledged=bool(params.get("acknowledged", False)),
+        )
+        continue_on_error = bool(params.get("continueOnError", True))
+        title_resolver = self._title_resolver
+
+        def job_body(job_ctx: Any) -> BatchState:
+            return run_batch(
+                self.store,
+                batch_id,
+                runner,
+                job_ctx,
+                ctx,
+                continue_on_error=continue_on_error,
+                title_resolver=title_resolver,
+                consent=consent,
+            )
+
+        job = ctx.jobs.start(job_body, feature="batch", label=f"batch: {state.get('name', '')}")
+        self._parent_jobs[batch_id] = job.id
+        return {"jobId": job.id}
+
+    # -- resume (WU8 fresh job over the not-yet-done sources) ---------------
+    def resume(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``batch.resume({id, retryErrors?})`` -> ``{jobId}`` (re-enqueue pending).
+
+        Re-runs ONLY the not-yet-done sources of an incomplete batch as a fresh
+        parent job (:func:`resume_batch`); finished work is never redone (G-DUR).
+        A fully-terminal batch is a no-op (``{jobId: None, status}``).
+        """
+        batch_id = _require_id(params)
+        state = self.store.load(batch_id)
+        if state is None:
+            raise _invalid(f"unknown batch: {batch_id}")
+        if ctx.jobs is None:
+            raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+        template_id = str(state.get("templateId") or "")
+        out = resume_batch(
+            self.store,
+            batch_id,
+            self._runner_for(template_id),
+            ctx,
+            retry_errors=bool(params.get("retryErrors", False)),
+            title_resolver=self._title_resolver,
+        )
+        job_id = out.get("jobId")
+        if job_id is not None:
+            self._parent_jobs[batch_id] = job_id
+        return out
+
+    # -- cancel (cooperative parent-job flag; jobs.py:447) ------------------
+    def cancel(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``batch.cancel({id})`` -> ``{ok}`` (cooperative; ``jobs.py`` cancel).
+
+        Sets the parent job's cancel flag; the runner observes it via
+        ``raise_if_cancelled`` between sources and unwinds (the in-flight source is
+        recorded ``cancelled``). No new cancellation machinery. ``ok`` is ``False``
+        when no live parent job is tracked (nothing to cancel).
+        """
+        batch_id = _require_id(params)
+        parent_job_id = self._parent_jobs.get(batch_id)
+        if parent_job_id is None or ctx.jobs is None:
+            return {"ok": False}
+        return {"ok": bool(ctx.jobs.cancel(parent_job_id))}
+
+    # -- seams --------------------------------------------------------------
+    def _live_parent_job(self, batch_id: str, ctx: RpcContext) -> Any:
+        """The tracked parent :class:`~media_studio.jobs.Job` (or ``None``)."""
+        parent_job_id = self._parent_jobs.get(batch_id)
+        if parent_job_id is None or ctx.jobs is None:
+            return None
+        return ctx.jobs.get(parent_job_id)
+
+    def _runner_for(self, template_id: str) -> TemplateRunner:
+        """The per-source template seam for ``template_id`` (injected or default).
+
+        The default invokes the live ``templates.apply`` handler by name — the
+        batch rides the EXISTING single-source path; it builds no sub-job itself
+        and reaches the AI envelope only through that handler. The seam receives
+        its own per-source ``ctx`` at call time (so the same registry/jobs flow).
+        """
+        if self._template_runner is not None:
+            return self._template_runner
+
+        def runner(video_id: str, ctx: RpcContext, *, confirm_budget: str | None = None) -> dict[str, Any]:
+            apply_handler = self._methods_provider().get("templates.apply")
+            if apply_handler is None:  # pragma: no cover - register order guarantees it
+                raise RpcError("templates.apply is not registered", ErrorCode.INTERNAL_ERROR)
+            apply_params: dict[str, Any] = {"templateId": template_id, "videoId": video_id}
+            if confirm_budget:
+                apply_params["confirmBudget"] = confirm_budget
+            return apply_handler(apply_params, ctx)
+
+        return runner
+
+    def _build_consent(
+        self,
+        source_video_ids: list[str],
+        template_id: str,
+        *,
+        confirm_cloud_budget: bool,
+        acknowledged: bool,
+    ) -> dict[str, Any] | None:
+        """The WU9 consent surface for ``source_video_ids`` (``None`` to skip the gate).
+
+        With the gate OFF and no acknowledgement, the consent layer is a pass-through
+        (every source runs), so it is omitted entirely — ``run_batch`` then takes its
+        unchanged WU7 path. Otherwise one ``ai.planJob`` per distinct step shape
+        drives :func:`plan_consent` (ZERO provider calls).
+        """
+        if not confirm_cloud_budget:
+            return None
+        shape_of = self._shape_of or (lambda _video_id: template_id)
+        plan_job = self._plan_job or self._default_plan_job
+        return plan_consent(
+            source_video_ids,
+            shape_of=shape_of,
+            plan_job=plan_job,
+            confirm_cloud_budget=confirm_cloud_budget,
+            acknowledged=acknowledged,
+        )
+
+    def _default_plan_job(self, shape_key: Hashable) -> dict[str, Any]:
+        """Default consent planner: the live ``ai.planJob`` handler by name (no keys).
+
+        Passes the step shape as the request ``capability`` discriminator; the
+        handler returns the pure pre-flight plan (``willEgress``/``cacheHit``/
+        ``budget``/``cacheKey``) with ZERO provider calls.
+        """
+        plan_handler = self._methods_provider().get("ai.planJob")
+        if plan_handler is None:  # pragma: no cover - register order guarantees it
+            raise RpcError("ai.planJob is not registered", ErrorCode.INTERNAL_ERROR)
+        ctx = RpcContext(emit_notification=lambda *_: None, jobs=None)
+        return plan_handler({"capability": str(shape_key)}, ctx)
+
+
+def register(
+    *,
+    path: str | os.PathLike[str],
+    methods_provider: Callable[[], dict[str, Any]] | None = None,
+    template_runner: TemplateRunner | None = None,
+    shape_of: ShapeOf | None = None,
+    plan_job: PlanJob | None = None,
+    title_resolver: TitleResolver | None = None,
+    register_fn: Callable[[str, Any], None] | None = None,
+) -> Batch:
+    """Create a :class:`Batch` over ``path`` and register the seven methods.
+
+    ``register_fn`` defaults to :func:`protocol.register`; tests inject a fake
+    registrar + a tmp ``path`` + fake seams. Returns the service so the caller can
+    hold it (mirrors :func:`templates.register`). The default per-source runner
+    invokes ``templates.apply`` by name, so this module MUST be registered AFTER
+    the ``templates.*`` group (the composition root in ``handlers.register_all``
+    wires it there).
+    """
+    service = Batch(
+        BatchStore(path),
+        methods_provider=methods_provider,
+        template_runner=template_runner,
+        shape_of=shape_of,
+        plan_job=plan_job,
+        title_resolver=title_resolver,
+    )
+    reg = register_fn if register_fn is not None else protocol.register
+    reg("batch.create", service.create)
+    reg("batch.start", service.start)
+    reg("batch.status", service.status)
+    reg("batch.list", service.list)
+    reg("batch.cancel", service.cancel)
+    reg("batch.resume", service.resume)
+    reg("batch.delete", service.delete)
+    return service
+
+
 __all__ = [
     "ITEM_STATUSES",
     "SKIP_NO_HEADROOM",
     "SKIP_WOULD_EGRESS",
     "TERMINAL_STATUSES",
     "AwaitSubjob",
+    "Batch",
     "BatchItem",
     "BatchState",
     "BatchStore",
@@ -674,6 +997,7 @@ __all__ = [
     "new_item",
     "new_state",
     "plan_consent",
+    "register",
     "resumable_video_ids",
     "resume_batch",
     "run_batch",

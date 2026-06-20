@@ -201,6 +201,18 @@ class Services:
             return None
         return video.get("path") or None
 
+    def _video_title(self, video_id: str) -> str:
+        """videoId -> human title for a progress message (the id when unknown).
+
+        The batch runner's title seam (WU10): falls back to the ``videoId`` when
+        the library has no record or no ``title``, so a progress line is always
+        readable even for a stale id.
+        """
+        video = self.library.get(video_id)
+        if video is None:
+            return video_id
+        return str(video.get("title") or video_id)
+
     def _project_path(self, video_id: str) -> Path:
         """The manifest path for a video's project (one project per video)."""
         return self.projects_dir / f"{video_id}.json"
@@ -2229,6 +2241,22 @@ def register_all(
     _templates.register(
         path=svc.data_dir / "templates.json",
         presets_provider=lambda: {p["id"]: p for p in _export_presets_svc.store.list()},
+        register_fn=reg,
+    )
+
+    # batch.* (repurpose WU10): point ONE template at MANY sources and run them as
+    # one aggregate, resumable, per-source-isolated job (DESIGN §6). The seven
+    # methods own no orchestration of their own — each source rides the live
+    # ``templates.apply`` handler (registered just above), so the batch reaches the
+    # AI envelope only by method name; consent uses ``ai.planJob`` by name (ZERO
+    # provider calls). Registered AFTER templates (its default per-source runner +
+    # consent planner resolve those handlers from the live registry). No new RPC
+    # site, no provider/key wiring. The title seam reuses the library's display name.
+    from .features import batch as _batch  # local: import-light
+
+    _batch.register(
+        path=svc.data_dir / "batches",
+        title_resolver=svc._video_title,
         register_fn=reg,
     )
 
