@@ -458,6 +458,21 @@ function bootstrap(): void {
       const exportsRoot = resolvePath(DATA_ROOT, 'exports');
       return resolveScopedMediaPath(videoId, 'short:', exportsRoot);
     }
+    // WU-3 (ux-qol §WU-3): serve a SOURCE library video's poster frame
+    // (`<videoId>.jpg`, written by the sidecar's library.thumbnail RPC into
+    // DATA_ROOT/thumbnails) over the same traversal-guarded mstream resolver so
+    // `<img src>` can load it in the sandbox (raw fs paths cannot). The id is
+    // `thumb:<absolute path>`; resolve it ONLY inside the thumbnails root (same
+    // path-traversal guard as `dub:`/`short:`). The thumbnails root is derived
+    // from DATA_ROOT — the SAME source as `short:`/`dub:` above — so it stays in
+    // lockstep with the sidecar's data dir (see the short: cross-process
+    // invariant note above: bootstrap() propagates DATA_ROOT to the sidecar as
+    // MEDIA_STUDIO_CONFIG_DIR, and the sidecar joins `/thumbnails` onto the same
+    // root in library.thumbnail).
+    if (videoId.startsWith('thumb:')) {
+      const thumbnailsRoot = resolvePath(DATA_ROOT, 'thumbnails');
+      return resolveScopedMediaPath(videoId, 'thumb:', thumbnailsRoot);
+    }
     if (!sc) return null;
     // Distinguish a dead/throwing sidecar (transient -> SidecarUnavailableError ->
     // 503) from a genuinely-absent id (-> null -> 404). Both `request` calls go to
