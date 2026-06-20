@@ -645,6 +645,84 @@ class Services:
         self.settings.set({"firstRunChoiceMade": True, "activePreset": routing["activePreset"], "routing": block})
         return {"firstRunChoiceMade": True, "activePreset": routing["activePreset"], "routing": block}
 
+    # ===================================================================== #
+    # savePresets.* — named {autosave, exportDefaults} bundles (WU-10)
+    # ===================================================================== #
+    def _save_presets_block(self) -> dict[str, Any]:
+        """Return the current ``savePresets`` block as ``{presets, active}``.
+
+        ``settings.set`` is a SHALLOW top-level merge (``settings_store``: writing
+        ``savePresets`` REPLACES the whole block), so every mutating handler MUST
+        read this full block, modify it, and write it back whole — otherwise a
+        partial write would drop ``presets`` or ``active``. A corrupt (non-dict)
+        block, or non-dict ``presets``, is defensively treated as empty.
+        """
+        raw = self.settings.get().get("savePresets")
+        block = raw if isinstance(raw, dict) else {}
+        presets = block.get("presets")
+        active = block.get("active")
+        return {
+            "presets": dict(presets) if isinstance(presets, dict) else {},
+            "active": active if isinstance(active, str) else "",
+        }
+
+    def save_presets_list(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``savePresets.list()`` -> ``{presets, active}`` (WU-10).
+
+        READ-ONLY roll-up of the named ``{autosave, exportDefaults}`` bundles the
+        user has saved (``presets``) plus the last-applied bundle name (``active``).
+        Writes nothing.
+        """
+        return self._save_presets_block()
+
+    def save_presets_upsert(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``savePresets.upsert({name, autosave?, exportDefaults?})`` -> ``{presets}``.
+
+        Creates or replaces the named bundle. Omitted ``autosave`` / ``exportDefaults``
+        default to ``{}`` (the renderer fills them from live settings). The whole
+        ``savePresets`` block is read-modify-written so siblings (other presets +
+        ``active``) survive the shallow-merge replace.
+        """
+        name = _require_str(params, "name")
+        block = self._save_presets_block()
+        block["presets"][name] = {
+            "autosave": dict(params["autosave"]) if isinstance(params.get("autosave"), dict) else {},
+            "exportDefaults": dict(params["exportDefaults"]) if isinstance(params.get("exportDefaults"), dict) else {},
+        }
+        self.settings.set({"savePresets": block})
+        return {"presets": block["presets"]}
+
+    def save_presets_apply(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``savePresets.apply({name})`` -> ``{active, savePreset}`` (WU-10).
+
+        Marks ``name`` the active bundle (persisted) and echoes it back. An unknown
+        name is a typed invalid-params error (mirrors ``providers.applyPreset``'s
+        ``ValueError -> _invalid``) rather than a crash.
+        """
+        name = _require_str(params, "name")
+        block = self._save_presets_block()
+        if name not in block["presets"]:
+            raise _invalid(f"unknown save preset: {name!r}")
+        block["active"] = name
+        self.settings.set({"savePresets": block})
+        return {"active": name, "savePreset": block["presets"][name]}
+
+    def save_presets_remove(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``savePresets.remove({name})`` -> ``{presets, active}`` (WU-10).
+
+        Drops the named bundle. If it was the ``active`` one, ``active`` is reset to
+        ``""`` (no stale pointer). An unknown name is a typed invalid-params error.
+        """
+        name = _require_str(params, "name")
+        block = self._save_presets_block()
+        if name not in block["presets"]:
+            raise _invalid(f"unknown save preset: {name!r}")
+        del block["presets"][name]
+        if block["active"] == name:
+            block["active"] = ""
+        self.settings.set({"savePresets": block})
+        return {"presets": block["presets"], "active": block["active"]}
+
     # -- per-function routing resolution (the seam wiring) ------------------ #
     def _function_prefer(self, function: str) -> str | None:
         """Return the configured provider id the ``function`` seam should prefer.
@@ -2318,6 +2396,15 @@ def register_all(
     reg("providers.applyPreset", svc.providers_apply_preset)
     reg("providers.setFunctionModel", svc.providers_set_function_model)
     reg("providers.firstRun", svc.providers_first_run)
+
+    # WU-10 (UX/QoL): named {autosave, exportDefaults} save-presets, persisted under
+    # the ``savePresets`` settings block (read-modify-write the whole block — the
+    # settings merge is a SHALLOW top-level replace). Mirrors providers.applyPreset
+    # (resolve -> persist) but stores user-named bundles, not routing presets.
+    reg("savePresets.list", svc.save_presets_list)
+    reg("savePresets.apply", svc.save_presets_apply)
+    reg("savePresets.upsert", svc.save_presets_upsert)
+    reg("savePresets.remove", svc.save_presets_remove)
 
     # captions-export: EDL/CSV NLE timeline export + ZIP package-for-upload.
     reg("nle.export", svc.nle_export)
