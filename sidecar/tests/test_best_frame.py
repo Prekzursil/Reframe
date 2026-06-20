@@ -149,3 +149,132 @@ def test_shape_result_empty_times_yields_zero_time() -> None:
     """No frames -> a zero time, zero score result rather than an IndexError."""
     out = best_frame.shape_result(0, frame_times=[], scores=[])
     assert out == {"frameTimeSec": 0.0, "score": 0.0}
+
+
+# --------------------------------------------------------------------------- #
+# WU-C2: argmax_index — best-frame selection from per-frame scores
+# --------------------------------------------------------------------------- #
+def test_argmax_index_picks_highest_score() -> None:
+    """AC(a): scores [0.1, 0.9, 0.3] select index 1."""
+    assert best_frame.argmax_index([0.1, 0.9, 0.3]) == 1
+
+
+def test_argmax_index_ties_keep_first() -> None:
+    """A tie keeps the earliest frame (stable, deterministic)."""
+    assert best_frame.argmax_index([0.5, 0.5, 0.2]) == 0
+
+
+def test_argmax_index_empty_is_zero() -> None:
+    """No scores -> 0 (the deterministic single-frame fallback, never raises)."""
+    assert best_frame.argmax_index([]) == 0
+
+
+def test_argmax_index_single() -> None:
+    """One score -> its only index."""
+    assert best_frame.argmax_index([0.42]) == 0
+
+
+# --------------------------------------------------------------------------- #
+# WU-C2: CloudFrameScorer — 1-frame-per-clip reuse of CloudVlmBackend
+# --------------------------------------------------------------------------- #
+def test_cloud_frame_scorer_treats_each_frame_as_a_one_frame_clip() -> None:
+    """``score_frames`` ranks frames by wrapping each as a 1-frame clip stack.
+
+    The injected backend records the ``frames_per_clip`` it received: each frame
+    must arrive as its own single-frame stack so the cloud VLM scores frames the
+    same way it scores clips.
+    """
+    seen: dict[str, object] = {}
+
+    class FakeBackend:
+        def rank_clips(self, frames_per_clip: object, prompt: str) -> list[float]:
+            seen["frames_per_clip"] = frames_per_clip
+            seen["prompt"] = prompt
+            return [0.2, 0.8, 0.5]
+
+    scorer = best_frame.CloudFrameScorer(FakeBackend())
+    scores = scorer.score_frames(["fa", "fb", "fc"], "pick best")
+
+    assert scores == [0.2, 0.8, 0.5]
+    assert seen["prompt"] == "pick best"
+    # each frame wrapped as its own 1-frame "clip" stack.
+    assert list(seen["frames_per_clip"]) == [["fa"], ["fb"], ["fc"]]
+
+
+def test_cloud_frame_scorer_no_frames_returns_empty() -> None:
+    """No frames -> empty scores and the backend is never asked to rank."""
+
+    class ExplodingBackend:
+        def rank_clips(self, frames_per_clip: object, prompt: str) -> list[float]:
+            raise AssertionError("backend must not be called for zero frames")
+
+    scorer = best_frame.CloudFrameScorer(ExplodingBackend())
+    assert scorer.score_frames([], "prompt") == []
+
+
+# --------------------------------------------------------------------------- #
+# WU-C2: pick_best_frame — score -> argmax -> write -> shape (fakes injected)
+# --------------------------------------------------------------------------- #
+def test_pick_best_frame_selects_argmax_and_writes_that_frame() -> None:
+    """AC(a): scores [0.1,0.9,0.3] -> index 1; writer gets that frame + path."""
+    writes: list[tuple[object, str]] = []
+
+    def fake_scorer(frames: object, prompt: str) -> list[float]:
+        return [0.1, 0.9, 0.3]
+
+    def fake_writer(frame: object, path: str) -> None:
+        writes.append((frame, path))
+
+    result = best_frame.pick_best_frame(
+        ["f0", "f1", "f2"],
+        "which is best",
+        frame_times=[0.0, 1.5, 3.0],
+        thumbnail_path="/out/clip.jpg",
+        scorer=fake_scorer,
+        writer=fake_writer,
+    )
+
+    assert writes == [("f1", "/out/clip.jpg")]
+    assert result == {"frameTimeSec": 1.5, "score": 0.9, "thumbnailPath": "/out/clip.jpg"}
+
+
+def test_pick_best_frame_passes_prompt_to_scorer() -> None:
+    """The built prompt is what the scorer receives (so the model gets the ask)."""
+    seen: dict[str, object] = {}
+
+    def fake_scorer(frames: object, prompt: str) -> list[float]:
+        seen["frames"] = list(frames)
+        seen["prompt"] = prompt
+        return [0.7, 0.1]
+
+    best_frame.pick_best_frame(
+        ["a", "b"],
+        best_frame.build_select_prompt(2),
+        frame_times=[0.0, 2.0],
+        thumbnail_path="/out/x.jpg",
+        scorer=fake_scorer,
+        writer=lambda _f, _p: None,
+    )
+
+    assert seen["frames"] == ["a", "b"]
+    assert "thumbnail" in str(seen["prompt"]).lower()
+
+
+def test_pick_best_frame_no_frames_writes_nothing_and_shapes_zero() -> None:
+    """No frames -> no write, a zero-time/zero-score result with the path echoed."""
+    writes: list[tuple[object, str]] = []
+
+    def fake_scorer(frames: object, prompt: str) -> list[float]:
+        return []
+
+    result = best_frame.pick_best_frame(
+        [],
+        "prompt",
+        frame_times=[],
+        thumbnail_path="/out/empty.jpg",
+        scorer=fake_scorer,
+        writer=lambda f, p: writes.append((f, p)),
+    )
+
+    assert writes == []
+    assert result == {"frameTimeSec": 0.0, "score": 0.0, "thumbnailPath": "/out/empty.jpg"}
