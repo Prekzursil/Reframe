@@ -13,11 +13,13 @@ Storage-only + pure logic: no media work, no providers, no jobs (WU3). The
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import pytest
 from media_studio.features import recipes, templates
-from media_studio.protocol import RpcError
+from media_studio.jobs import JobRegistry
+from media_studio.protocol import RpcContext, RpcError
 
 
 # --------------------------------------------------------------------------- #
@@ -339,3 +341,284 @@ class TestExpandExportSteps:
         out = templates.expand_export_steps(steps, {}, _presets(_preset("tiktok")))
         assert out[0]["params"]["videoId"] == "v1"
         assert out[0]["params"]["trackId"] == "$0.track.id"
+
+
+# --------------------------------------------------------------------------- #
+# pure: bind_steps_to_source (WU5 — stamp the source videoId on every step)
+# --------------------------------------------------------------------------- #
+class TestBindStepsToSource:
+    def test_stamps_video_id_on_every_step(self):
+        steps = [{"method": "transcribe.start", "params": {}}, {"method": "phase8.select"}]
+        out = templates.bind_steps_to_source(steps, "v9")
+        assert all(s["params"]["videoId"] == "v9" for s in out)
+
+    def test_does_not_clobber_explicit_video_id(self):
+        steps = [{"method": "transcribe.start", "params": {"videoId": "explicit"}}]
+        out = templates.bind_steps_to_source(steps, "v9")
+        assert out[0]["params"]["videoId"] == "explicit"
+
+    def test_preserves_other_params_and_step_fields(self):
+        steps = [{"method": "shortmaker.export", "params": {"count": 3}, "label": "Export"}]
+        out = templates.bind_steps_to_source(steps, "v9")
+        assert out[0]["params"] == {"count": 3, "videoId": "v9"}
+        assert out[0]["label"] == "Export"
+        assert out[0]["method"] == "shortmaker.export"
+
+    def test_does_not_mutate_input_steps(self):
+        steps = [{"method": "transcribe.start", "params": {}}]
+        templates.bind_steps_to_source(steps, "v9")
+        assert steps[0]["params"] == {}  # original untouched (fresh copy)
+
+    def test_empty_steps_yield_empty(self):
+        assert templates.bind_steps_to_source([], "v9") == []
+
+    def test_handles_step_without_params_key(self):
+        out = templates.bind_steps_to_source([{"method": "phase8.select"}], "v9")
+        assert out[0]["params"] == {"videoId": "v9"}
+
+
+# --------------------------------------------------------------------------- #
+# Templates — direct-return CRUD handlers
+# --------------------------------------------------------------------------- #
+def _ctx(registry: JobRegistry | None = None) -> RpcContext:
+    return RpcContext(emit_notification=lambda *_: None, jobs=registry)
+
+
+def _valid_template(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "id": "tpl",
+        "name": "Repurpose",
+        "steps": [{"method": "shortmaker.export", "params": {"exportTargets": ["tiktok"]}}],
+        "defaultControls": {"count": 3},
+        "exportTargets": ["tiktok"],
+    }
+    base.update(overrides)
+    return base
+
+
+class TestCrudHandlers:
+    def _svc(self, tmp_path, **kw: Any) -> templates.Templates:
+        return templates.Templates(templates.TemplateStore(tmp_path / "templates.json"), **kw)
+
+    def test_save_normalizes_and_persists(self, tmp_path):
+        svc = self._svc(tmp_path)
+        out = svc.save({"template": _valid_template()}, _ctx())
+        assert out["template"]["name"] == "Repurpose"
+        assert out["template"]["exportTargets"] == ["tiktok"]
+        assert svc.list({}, _ctx())["templates"][0]["name"] == "Repurpose"
+
+    def test_save_requires_object(self, tmp_path):
+        svc = self._svc(tmp_path)
+        with pytest.raises(RpcError):
+            svc.save({"template": "nope"}, _ctx())
+
+    def test_save_rejects_disallowed_method(self, tmp_path):
+        svc = self._svc(tmp_path)
+        with pytest.raises(RpcError):
+            svc.save({"template": _valid_template(steps=[{"method": "shell.exec"}])}, _ctx())
+
+    def test_list_empty(self, tmp_path):
+        assert self._svc(tmp_path).list({}, _ctx())["templates"] == []
+
+    def test_delete_handler(self, tmp_path):
+        svc = self._svc(tmp_path)
+        svc.save({"template": _valid_template()}, _ctx())
+        assert svc.delete({"id": "tpl"}, _ctx())["ok"] is True
+        assert svc.delete({"id": "tpl"}, _ctx())["ok"] is False
+
+    def test_delete_requires_id(self, tmp_path):
+        svc = self._svc(tmp_path)
+        with pytest.raises(RpcError):
+            svc.delete({}, _ctx())
+
+
+# --------------------------------------------------------------------------- #
+# Templates.apply — single-source run over the EXISTING recipe runner
+# --------------------------------------------------------------------------- #
+class TestApply:
+    def _registry(self):
+        events: list[tuple] = []
+
+        def on_prog(jid, pct, msg):
+            events.append(("progress", jid, pct, msg))
+
+        def on_done(jid, result):
+            events.append(("done", jid, result))
+
+        return JobRegistry(emit_progress=on_prog, emit_done=on_done), events
+
+    def _svc(self, tmp_path, *, methods, presets=None) -> templates.Templates:
+        return templates.Templates(
+            templates.TemplateStore(tmp_path / "templates.json"),
+            methods_provider=lambda: methods,
+            presets_provider=(lambda: presets) if presets is not None else None,
+        )
+
+    def test_apply_requires_template_id(self, tmp_path):
+        svc = self._svc(tmp_path, methods={})
+        with pytest.raises(RpcError):
+            svc.apply({"videoId": "v1"}, _ctx())
+
+    def test_apply_requires_video_id(self, tmp_path):
+        svc = self._svc(tmp_path, methods={})
+        with pytest.raises(RpcError):
+            svc.apply({"templateId": "tpl"}, _ctx())
+
+    def test_apply_unknown_template_raises(self, tmp_path):
+        reg, _ = self._registry()
+        svc = self._svc(tmp_path, methods={})
+        with pytest.raises(RpcError):
+            svc.apply({"templateId": "nope", "videoId": "v1"}, _ctx(reg))
+
+    def test_apply_requires_registry(self, tmp_path):
+        svc = self._svc(tmp_path, methods={}, presets={"tiktok": _preset("tiktok")})
+        svc.save({"template": _valid_template()}, _ctx())
+        with pytest.raises(RpcError):
+            svc.apply({"templateId": "tpl", "videoId": "v1"}, _ctx(None))
+
+    def test_apply_runs_steps_in_order_via_live_registry(self, tmp_path):
+        reg, _ = self._registry()
+        calls: list[tuple[str, dict]] = []
+
+        def transcribe(params, ctx):
+            calls.append(("transcribe", params))
+            return {"ok": True}
+
+        def export(params, ctx):
+            calls.append(("export", params))
+            return {"clips": []}
+
+        presets = {"tiktok": _preset("tiktok")}
+        svc = self._svc(
+            tmp_path, methods={"transcribe.start": transcribe, "shortmaker.export": export}, presets=presets
+        )
+        svc.save(
+            {
+                "template": _valid_template(
+                    steps=[
+                        {"method": "transcribe.start", "params": {}},
+                        {"method": "shortmaker.export", "params": {"exportTargets": ["tiktok"]}},
+                    ]
+                )
+            },
+            _ctx(),
+        )
+        out = svc.apply({"templateId": "tpl", "videoId": "vid42"}, _ctx(reg))
+        assert "jobId" in out
+        reg.get(out["jobId"]).wait(5)
+        assert reg.get(out["jobId"]).status.value == "done"
+        # steps ran in order, each bound to the source video id.
+        assert calls[0][0] == "transcribe"
+        assert calls[0][1]["videoId"] == "vid42"
+        assert calls[1][0] == "export"
+        assert calls[1][1]["videoId"] == "vid42"
+        assert calls[1][1]["presetId"] == "tiktok"
+
+    def test_apply_three_targets_produce_three_export_invocations(self, tmp_path):
+        reg, _ = self._registry()
+        exports: list[str] = []
+
+        def export(params, ctx):
+            exports.append(params["presetId"])
+            return {"clips": []}
+
+        presets = {pid: _preset(pid) for pid in ("tiktok", "reels", "shorts")}
+        svc = self._svc(tmp_path, methods={"shortmaker.export": export}, presets=presets)
+        svc.save(
+            {
+                "template": _valid_template(
+                    steps=[{"method": "shortmaker.export", "params": {"exportTargets": ["tiktok", "reels", "shorts"]}}]
+                )
+            },
+            _ctx(),
+        )
+        out = svc.apply({"templateId": "tpl", "videoId": "v1"}, _ctx(reg))
+        reg.get(out["jobId"]).wait(5)
+        assert reg.get(out["jobId"]).status.value == "done"
+        assert exports == ["tiktok", "reels", "shorts"]
+
+    def test_apply_subjob_export_is_awaited_and_unwrapped(self, tmp_path):
+        reg, _ = self._registry()
+
+        def export(params, ctx):
+            def body(job_ctx):
+                job_ctx.progress(50.0, "half")
+                return {"clips": [params["presetId"]]}
+
+            sub = ctx.jobs.start(body)
+            return {"jobId": sub.id}
+
+        presets = {"tiktok": _preset("tiktok")}
+        svc = self._svc(tmp_path, methods={"shortmaker.export": export}, presets=presets)
+        svc.save({"template": _valid_template()}, _ctx())
+        out = svc.apply({"templateId": "tpl", "videoId": "v1"}, _ctx(reg))
+        reg.get(out["jobId"]).wait(10)
+        job = reg.get(out["jobId"])
+        assert job.status.value == "done"
+        # the inner sub-job result was unwrapped as the step result (recipe runner reuse).
+        assert job.result["results"][0] == {"clips": ["tiktok"]}
+
+    def test_apply_cancellation_propagates_via_existing_path(self, tmp_path):
+        # Cancelling the parent job mid-run surfaces as a cancelled job through the
+        # reused recipe runner's raise_if_cancelled (no new cancel machinery).
+        reg, _ = self._registry()
+        started = {"flag": False}
+
+        def slow_export(params, ctx):
+            def body(job_ctx):
+                started["flag"] = True
+                while not job_ctx.cancelled:
+                    time.sleep(0.01)
+                job_ctx.raise_if_cancelled()
+
+            sub = ctx.jobs.start(body)
+            return {"jobId": sub.id}
+
+        presets = {"tiktok": _preset("tiktok")}
+        svc = self._svc(tmp_path, methods={"shortmaker.export": slow_export}, presets=presets)
+        svc.save({"template": _valid_template()}, _ctx())
+        out = svc.apply({"templateId": "tpl", "videoId": "v1"}, _ctx(reg))
+        while not started["flag"]:  # wait for the sub-job to actually be running
+            reg.get(out["jobId"]).wait(0.01)
+        reg.cancel(out["jobId"])
+        reg.get(out["jobId"]).wait(10)
+        assert reg.get(out["jobId"]).status.value == "cancelled"
+
+    def test_apply_template_without_export_targets_runs_passthrough(self, tmp_path):
+        # A template whose export step names no targets runs the step as-is (no
+        # fan-out) — and the default empty preset catalog is fine.
+        reg, _ = self._registry()
+        calls: list[dict] = []
+
+        def export(params, ctx):
+            calls.append(params)
+            return {"ok": 1}
+
+        svc = templates.Templates(
+            templates.TemplateStore(tmp_path / "templates.json"),
+            methods_provider=lambda: {"shortmaker.export": export},
+        )
+        svc.save(
+            {"template": _valid_template(steps=[{"method": "shortmaker.export", "params": {}}], exportTargets=[])},
+            _ctx(),
+        )
+        out = svc.apply({"templateId": "tpl", "videoId": "v1"}, _ctx(reg))
+        reg.get(out["jobId"]).wait(5)
+        assert reg.get(out["jobId"]).status.value == "done"
+        assert calls[0]["videoId"] == "v1"
+
+
+# --------------------------------------------------------------------------- #
+# register
+# --------------------------------------------------------------------------- #
+def test_register_installs_four_methods(tmp_path):
+    registered: dict[str, Any] = {}
+    templates.register(path=tmp_path / "templates.json", register_fn=lambda n, f: registered.__setitem__(n, f))
+    assert set(registered) == {"templates.list", "templates.save", "templates.delete", "templates.apply"}
+
+
+def test_register_returns_service_bound_to_path(tmp_path):
+    svc = templates.register(path=tmp_path / "templates.json", register_fn=lambda *_: None)
+    assert isinstance(svc, templates.Templates)
+    svc.save({"template": _valid_template()}, _ctx())
+    assert (tmp_path / "templates.json").exists()

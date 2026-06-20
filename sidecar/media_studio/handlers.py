@@ -2213,8 +2213,22 @@ def register_all(
     # Storage-only — no provider/ML imports; the module owns its own register().
     from .features import export_presets as _export_presets  # local: import-light
 
-    _export_presets.register(
+    _export_presets_svc = _export_presets.register(
         path=svc.data_dir / "export-presets.json",
+        register_fn=reg,
+    )
+
+    # templates.* (repurpose WU5): saved multi-source pipelines (a recipe PLUS
+    # defaultControls + exportTargets). list/save/delete are direct CRUD; apply
+    # runs ONE source through the EXISTING recipe runner after binding steps to
+    # the videoId and fanning out the export step over the live preset catalog.
+    # Registers AFTER the methods its steps reference AND after exportPresets (the
+    # fan-out resolves preset ids from that catalog) — no new RPC site, no provider.
+    from .features import templates as _templates  # local: import-light
+
+    _templates.register(
+        path=svc.data_dir / "templates.json",
+        presets_provider=lambda: {p["id"]: p for p in _export_presets_svc.store.list()},
         register_fn=reg,
     )
 

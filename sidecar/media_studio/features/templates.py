@@ -34,9 +34,12 @@ fan-out are later WUs; this module is the store + normalize + allowlist only.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Callable
 from typing import Any
 
-from ..protocol import ErrorCode, RpcError
+from .. import protocol
+from ..protocol import ErrorCode, RpcContext, RpcError
 from ..util import get_logger
 from . import recipes
 
@@ -212,13 +215,169 @@ class TemplateStore(recipes.RecipeStore):
     """
 
 
+# --------------------------------------------------------------------------- #
+# pure: bind a template's steps to ONE source video
+# --------------------------------------------------------------------------- #
+#: The params key naming the source video a step operates on (wire name).
+SOURCE_PARAM = "videoId"
+
+
+def bind_steps_to_source(steps: list[dict[str, Any]], video_id: str) -> list[dict[str, Any]]:
+    """Return ``steps`` with each step's params bound to ``video_id``.
+
+    A template is source-agnostic; :meth:`Templates.apply` binds it to ONE source
+    by stamping ``params.videoId`` on every step. A step that already names a
+    ``videoId`` (e.g. an explicit override in the saved template) is left as-is,
+    so the binding never clobbers an intentional value. Pure + total: no I/O, a
+    fresh copy of each step + its params (the template record is never mutated).
+    """
+    bound: list[dict[str, Any]] = []
+    for step in steps:
+        params = dict(step.get("params") or {})
+        params.setdefault(SOURCE_PARAM, video_id)
+        bound.append({**step, "params": params})
+    return bound
+
+
+# --------------------------------------------------------------------------- #
+# the apply service (CRUD + single-source apply over the recipe runner)
+# --------------------------------------------------------------------------- #
+class Templates:
+    """Owns the ``templates.*`` methods over a :class:`TemplateStore`.
+
+    ``list``/``save``/``delete`` are direct-return CRUD (mirroring
+    :class:`recipes.Recipes`). ``apply`` runs a saved template against ONE source:
+    it binds the template's steps to the requested ``videoId``
+    (:func:`bind_steps_to_source`), fans out the multi-target export step over the
+    live :class:`export_presets.ExportPreset` catalog (:func:`expand_export_steps`,
+    WU4), then drives the EXISTING :meth:`recipes.Recipes._run_steps` /
+    ``_await_subjob`` — NO new runner, NO new sub-job machinery, NO new cancel
+    code. ``apply`` is the single-source sugar over the later batch path (one item).
+
+    Seams (all injectable so tests run with fake methods/presets and no media):
+
+      * ``methods_provider`` — the live RPC method registry a step invokes
+        (defaults to ``protocol.METHODS``); shared verbatim with the inner
+        :class:`recipes.Recipes` so steps resolve against the same registry.
+      * ``presets_provider`` — returns the ``{presetId: ExportPreset}`` map the
+        export fan-out resolves targets against (defaults to an empty catalog so
+        a template with no export targets still runs).
+    """
+
+    def __init__(
+        self,
+        store: TemplateStore,
+        *,
+        methods_provider: Callable[[], dict[str, Any]] | None = None,
+        presets_provider: Callable[[], dict[str, dict[str, Any]]] | None = None,
+    ) -> None:
+        self.store = store
+        self._presets_provider = presets_provider or (lambda: {})
+        # Reuse the proven recipe runner verbatim (step loop, scaled progress,
+        # cancel via raise_if_cancelled, sub-job await/unwrap). The Templates
+        # service owns NO orchestration logic of its own.
+        self._runner = recipes.Recipes(store, methods_provider=methods_provider)
+
+    # -- direct-return CRUD -------------------------------------------------
+    def list(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``templates.list()`` -> ``{templates:[Template]}`` (direct-return)."""
+        return {"templates": self.store.list()}
+
+    def save(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``templates.save({template})`` -> ``{template}`` (direct-return; upsert).
+
+        The template is normalized (recipe core + additive fields + method
+        allowlist) before any write, so a bad save can never persist.
+        """
+        raw = params.get("template")
+        if not isinstance(raw, dict):
+            raise _invalid("template (object) is required")
+        template = normalize_template(raw)
+        return {"template": self.store.save(template)}
+
+    def delete(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``templates.delete({id})`` -> ``{ok}`` (direct-return)."""
+        template_id = params.get("id")
+        if not isinstance(template_id, str) or not template_id:
+            raise _invalid("id (str) is required")
+        return {"ok": self.store.delete(template_id)}
+
+    # -- templates.apply (the long job, over the recipe runner) -------------
+    def apply(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``templates.apply({templateId, videoId})`` -> ``{jobId}`` (long job).
+
+        Binds the template to ONE source, expands the export fan-out, then runs
+        the resulting flat step list through the EXISTING recipe runner. The job's
+        progress + sub-job await + cancellation are all the recipe runner's.
+        """
+        template_id = params.get("templateId")
+        if not isinstance(template_id, str) or not template_id:
+            raise _invalid("templateId (str) is required")
+        video_id = params.get("videoId")
+        if not isinstance(video_id, str) or not video_id:
+            raise _invalid("videoId (str) is required")
+        template = self.store.get(template_id)
+        if template is None:
+            raise _invalid(f"unknown template: {template_id}")
+
+        # Pure pre-job shaping: bind to the source, then fan the export step out
+        # over the live preset catalog. An unknown preset id fails loud HERE
+        # (before any job is started), so a bad template never spawns a dead job.
+        bound = bind_steps_to_source(list(template.get("steps") or []), video_id)
+        steps = expand_export_steps(bound, template.get("defaultControls") or {}, self._presets_provider())
+
+        if ctx.jobs is None:
+            raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+
+        def job_body(job_ctx: Any) -> dict[str, Any]:
+            return self._runner._run_steps(steps, job_ctx, ctx)
+
+        job = ctx.jobs.start(
+            job_body, feature="templates", label=f"template: {template.get('name', '')}", videoId=video_id
+        )
+        return {"jobId": job.id}
+
+
+# --------------------------------------------------------------------------- #
+# registration (mirrors recipes.register)
+# --------------------------------------------------------------------------- #
+def register(
+    *,
+    path: str | os.PathLike[str],
+    methods_provider: Callable[[], dict[str, Any]] | None = None,
+    presets_provider: Callable[[], dict[str, dict[str, Any]]] | None = None,
+    register_fn: Callable[[str, Any], None] | None = None,
+) -> Templates:
+    """Create a :class:`Templates` over ``path`` and register the four methods.
+
+    ``register_fn`` defaults to :func:`protocol.register`; tests inject a fake
+    registrar + a tmp ``path`` + fake method/preset providers. Returns the service
+    so the caller can hold it (mirrors :func:`recipes.register`).
+    """
+    service = Templates(
+        TemplateStore(path),
+        methods_provider=methods_provider,
+        presets_provider=presets_provider,
+    )
+    reg = register_fn if register_fn is not None else protocol.register
+    reg("templates.list", service.list)
+    reg("templates.save", service.save)
+    reg("templates.delete", service.delete)
+    reg("templates.apply", service.apply)
+    return service
+
+
 __all__ = [
     "ALLOWED_METHOD_EXACT",
     "ALLOWED_METHOD_PREFIXES",
     "EXPORT_METHOD",
     "PRESET_CONTROL_FIELDS",
+    "SOURCE_PARAM",
     "Template",
     "TemplateStore",
+    "Templates",
+    "bind_steps_to_source",
     "expand_export_steps",
     "normalize_template",
+    "register",
 ]
