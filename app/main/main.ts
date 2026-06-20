@@ -12,17 +12,10 @@
 // ON, nodeIntegration OFF, sandbox ON — the renderer only sees `window.api`.
 import { app, BrowserWindow, shell } from 'electron';
 import { spawn, type ChildProcess } from 'node:child_process';
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-  promises as fsp,
-} from 'node:fs';
-import { dirname, extname, join, resolve as resolvePath } from 'node:path';
-import { DATA_DIR_MARKER, resolveDataRootFrom } from './dataRoot';
+import { existsSync, readdirSync, readFileSync, writeFileSync, promises as fsp } from 'node:fs';
+import { extname, join, resolve as resolvePath } from 'node:path';
+import { resolveDataRootFrom } from './dataRoot';
+import { dataDirMarkerPath, exeDataDir, isExeDataWritable, readDataDirMarker } from './dataRootIo';
 import { registerDataFolderIpc } from './dataFolderIpc';
 import { registerDialogIpc } from './dialogIpc';
 import { resolveScopedMediaPath } from './exportPath';
@@ -84,15 +77,18 @@ function getResourcesPath(): string {
 // process.env.MEDIA_STUDIO_CONFIG_DIR before either spawns (both inherit
 // process.env — buildSidecarEnv spreads it; bootstrap inherits it).
 //
-// BEHAVIOR CHANGE (G1 preview fix): dev now resolves the data root the SAME way
-// as a packaged build — it consults the exe-dir marker / <exeDir>/data BEFORE
-// falling back to %APPDATA%. The old code gated the marker/exe-dir on
-// app.isPackaged, so a dev run ALWAYS landed on %APPDATA%/media-studio (which has
-// no library.json), the library listed empty, getPathForVideoId returned null,
-// the mstream request 404'd, and the <video> never loaded — no playback, hence no
-// subtitles (subtitles are downstream of timeupdate). Treating dev like packaged
-// makes the dev app find the real data folder (e.g. D:\Reframe\data via the
-// marker) without needing a manual MEDIA_STUDIO_CONFIG_DIR. An explicit env
+// BEHAVIOR (G1 preview fix + dev-trap hardening): dev consults the data-dir.txt
+// MARKER and MEDIA_STUDIO_CONFIG_DIR the SAME way as a packaged build (the old
+// code gated the marker on app.isPackaged, so a dev run ignored it and landed on
+// %APPDATA% — empty, no library.json -> empty library -> getPathForVideoId null ->
+// mstream 404 -> <video> never loads -> no subtitles, since subtitles are
+// downstream of timeupdate). HOWEVER, the writable <exeDir>/data PORTABLE auto-pick
+// is gated on app.isPackaged (see resolveDataRoot's preferExeDataDir): in dev,
+// process.execPath is node_modules/electron/dist/electron.exe, so <exeDir>/data is
+// a writable but EMPTY folder — auto-picking it would re-break preview exactly the
+// same way. So a dev run with NO env/marker now falls to %APPDATA% (the historical
+// default) instead of the node_modules trap; to point dev at a real data folder,
+// set MEDIA_STUDIO_CONFIG_DIR or write a data-dir.txt marker. An explicit env
 // override still wins in both modes (chooseDataRoot priority order).
 
 /**
@@ -131,59 +127,29 @@ async function isPlayableFile(path: string): Promise<boolean> {
   }
 }
 
-/** Directory holding the running executable (where the marker file lives). */
-function exeDir(): string {
-  return dirname(process.execPath);
-}
-
-/** Absolute path of the data-folder marker file (`<exeDir>/data-dir.txt`). */
-function dataDirMarkerPath(): string {
-  return join(exeDir(), DATA_DIR_MARKER);
-}
-
-/** Read the marker file's trimmed contents, or undefined if absent/unreadable. */
-function readDataDirMarker(): string | undefined {
-  try {
-    return readFileSync(dataDirMarkerPath(), 'utf8');
-  } catch {
-    return undefined; // no marker (or unreadable) -> ignored by chooseDataRoot
-  }
-}
-
-/** True when `<exeDir>/data` is creatable/writable (a writable install dir). */
-function isExeDataWritable(dir: string): boolean {
-  try {
-    mkdirSync(dir, { recursive: true });
-    // Prove writability (mkdir on an existing dir succeeds even when read-only).
-    const probe = join(dir, `.write-probe-${process.pid}`);
-    writeFileSync(probe, '');
-    try {
-      unlinkSync(probe);
-    } catch {
-      /* probe cleanup is best-effort */
-    }
-    return true;
-  } catch {
-    return false; // read-only install (e.g. Program Files) -> fall back to appData
-  }
-}
-
 /**
  * Resolve the data root to USE this session (IO wrapper over chooseDataRoot).
  *
- * The exe-dir marker / <exeDir>/data are considered in BOTH dev and packaged
- * builds (G1 preview fix — see the BEHAVIOR CHANGE note above): the env override
- * still wins, then the marker, then a writable <exeDir>/data, then %APPDATA%.
- * The pure priority logic lives in chooseDataRoot; this wrapper only does the IO
- * (reading the marker, probing exe-dir writability, app.getPath).
+ * The env override + marker are consulted in BOTH dev and packaged builds (G1
+ * preview fix): the env override wins, then the marker. The writable <exeDir>/data
+ * auto-pick is PACKAGED-ONLY (preferExeDataDir below). The pure priority logic
+ * lives in chooseDataRoot; the FILESYSTEM seam (exeDir/marker/writability probe)
+ * lives in dataRootIo.ts (directly unit-tested); this wrapper only joins them with
+ * the Electron-specific bits (process.env, app.getPath, app.isPackaged).
  */
 function resolveDataRoot(): string {
   return resolveDataRootFrom({
     envOverride: process.env.MEDIA_STUDIO_CONFIG_DIR,
-    exeDataDir: join(exeDir(), 'data'),
+    exeDataDir: exeDataDir(),
     appDataRoot: join(app.getPath('appData'), 'media-studio'),
     readMarker: readDataDirMarker,
     isExeDataWritable,
+    // PORTABLE auto-pick gate (preview-blocker fix): only a PACKAGED build may
+    // silently use a writable <exeDir>/data. In dev, <exeDir> is
+    // node_modules/electron/dist, so that dir is empty (no library.json) — auto-
+    // picking it re-broke preview. Dev falls back to %APPDATA% unless the user
+    // sets MEDIA_STUDIO_CONFIG_DIR or a data-dir.txt marker (both still honored).
+    preferExeDataDir: app.isPackaged,
   });
 }
 
