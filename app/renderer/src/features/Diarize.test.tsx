@@ -305,4 +305,232 @@ describe('<Diarize />', () => {
       delete (globalThis as { api?: unknown }).api;
     }
   });
+
+  // --- WU-7: per-speaker rename block ---------------------------------------
+  /** Set a controlled input's value via React's tracked native setter. */
+  function typeInto(input: HTMLInputElement, value: string): void {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setter.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  /** Run a diarize so the roster is populated, then return the two-speaker fake. */
+  async function diarizeTwoSpeakers(): Promise<FakeApi> {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    await act(async () => {
+      (container.querySelector('button[data-action="diarize"]') as HTMLButtonElement).click();
+    });
+    await act(async () => {
+      fake.fireDone({
+        jobId: 'job-d',
+        result: {
+          transcript: {
+            language: 'en',
+            segments: [],
+            durationSec: 0,
+            speakers: ['SPEAKER_00', 'SPEAKER_01'],
+          },
+        },
+      });
+    });
+    return fake;
+  }
+
+  it('renders one rename input per speaker in the roster', async () => {
+    await diarizeTwoSpeakers();
+    const inputs = container.querySelectorAll('input[data-rename-for]');
+    expect(inputs.length).toBe(2);
+    expect(container.querySelector('input[data-rename-for="SPEAKER_00"]')).toBeTruthy();
+    expect(container.querySelector('input[data-rename-for="SPEAKER_01"]')).toBeTruthy();
+  });
+
+  it('does not render a rename block when the roster is empty', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    expect(container.querySelector('[data-section="rename"]')).toBeNull();
+  });
+
+  it('renaming a speaker submits diarize.rename and refreshes the labels', async () => {
+    const fake = makeFakeApi();
+    // diarize.rename returns the renamed transcript directly (not a job).
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementation(
+      async (method: string, params?: Record<string, unknown>) => {
+        fake.calls.push({ method, params });
+        if (method === 'diarize.start') return { jobId: 'job-d' };
+        if (method === 'diarize.rename') {
+          return {
+            transcript: {
+              language: 'en',
+              segments: [],
+              durationSec: 0,
+              speakers: ['Alex', 'SPEAKER_01'],
+            },
+          };
+        }
+        return {};
+      },
+    );
+    await mount(fake.api);
+    await act(async () => {
+      (container.querySelector('button[data-action="diarize"]') as HTMLButtonElement).click();
+    });
+    await act(async () => {
+      fake.fireDone({
+        jobId: 'job-d',
+        result: {
+          transcript: {
+            language: 'en',
+            segments: [],
+            durationSec: 0,
+            speakers: ['SPEAKER_00', 'SPEAKER_01'],
+          },
+        },
+      });
+    });
+
+    const input = container.querySelector(
+      'input[data-rename-for="SPEAKER_00"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      typeInto(input, 'Alex');
+    });
+    const applyBtn = container.querySelector('button[data-action="rename"]') as HTMLButtonElement;
+    await act(async () => {
+      applyBtn.click();
+      await Promise.resolve();
+    });
+
+    expect(fake.calls.find((c) => c.method === 'diarize.rename')?.params).toEqual({
+      videoId: 'v1',
+      mapping: { SPEAKER_00: 'Alex' },
+    });
+    // The displayed roster now shows the renamed label.
+    expect(container.querySelector('li[data-speaker="Alex"]')).toBeTruthy();
+    expect(container.querySelector('li[data-speaker="SPEAKER_00"]')).toBeNull();
+  });
+
+  it('submits only the speakers whose names actually changed', async () => {
+    const fake = await diarizeTwoSpeakers();
+    // Edit one input back to its original label, edit the other to a new name.
+    const input1 = container.querySelector(
+      'input[data-rename-for="SPEAKER_01"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      typeInto(input1, 'Sam');
+    });
+    await act(async () => {
+      (container.querySelector('button[data-action="rename"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(fake.calls.find((c) => c.method === 'diarize.rename')?.params).toEqual({
+      videoId: 'v1',
+      mapping: { SPEAKER_01: 'Sam' },
+    });
+  });
+
+  it('does not call diarize.rename when no name changed', async () => {
+    const fake = await diarizeTwoSpeakers();
+    await act(async () => {
+      (container.querySelector('button[data-action="rename"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(fake.calls.find((c) => c.method === 'diarize.rename')).toBeUndefined();
+  });
+
+  it('treats a whitespace-only rename as unchanged (trim guard)', async () => {
+    const fake = await diarizeTwoSpeakers();
+    const input = container.querySelector(
+      'input[data-rename-for="SPEAKER_00"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      typeInto(input, '   ');
+    });
+    await act(async () => {
+      (container.querySelector('button[data-action="rename"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(fake.calls.find((c) => c.method === 'diarize.rename')).toBeUndefined();
+  });
+
+  it('surfaces a diarize.rename rejection', async () => {
+    const fake = await diarizeTwoSpeakers();
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('rename failed'));
+    const input = container.querySelector(
+      'input[data-rename-for="SPEAKER_00"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      typeInto(input, 'Alex');
+    });
+    await act(async () => {
+      (container.querySelector('button[data-action="rename"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('rename failed');
+  });
+
+  it('surfaces a non-Error diarize.rename rejection via String(err)', async () => {
+    const fake = await diarizeTwoSpeakers();
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce('plain rename error');
+    const input = container.querySelector(
+      'input[data-rename-for="SPEAKER_00"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      typeInto(input, 'Alex');
+    });
+    await act(async () => {
+      (container.querySelector('button[data-action="rename"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('plain rename error');
+  });
+
+  it('keeps existing labels when diarize.rename returns no roster', async () => {
+    const fake = await diarizeTwoSpeakers();
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ transcript: {} });
+    const input = container.querySelector(
+      'input[data-rename-for="SPEAKER_00"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      typeInto(input, 'Alex');
+    });
+    await act(async () => {
+      (container.querySelector('button[data-action="rename"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    // No roster came back -> labels unchanged, no error.
+    expect(container.querySelector('li[data-speaker="SPEAKER_00"]')).toBeTruthy();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('clears the draft inputs after a re-diarize repopulates the roster', async () => {
+    const fake = await diarizeTwoSpeakers();
+    const input = container.querySelector(
+      'input[data-rename-for="SPEAKER_00"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      typeInto(input, 'Alex');
+    });
+    // Re-run diarize -> roster (and drafts) reset.
+    await act(async () => {
+      (container.querySelector('button[data-action="diarize"]') as HTMLButtonElement).click();
+    });
+    await act(async () => {
+      fake.fireDone({
+        jobId: 'job-d',
+        result: {
+          transcript: {
+            language: 'en',
+            segments: [],
+            durationSec: 0,
+            speakers: ['SPEAKER_00', 'SPEAKER_01'],
+          },
+        },
+      });
+    });
+    const fresh = container.querySelector(
+      'input[data-rename-for="SPEAKER_00"]',
+    ) as HTMLInputElement;
+    expect(fresh.value).toBe('');
+  });
 });
