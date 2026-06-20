@@ -172,6 +172,32 @@ export interface BestFrame {
 }
 
 /**
+ * WU-A6 semantic-search result row (`index.search` → `{hits:[...]}`). Mirrors the
+ * sidecar `semantic_index.Hit` TypedDict (`features/semantic_index.py:35`): the
+ * source segment's index/span/text plus its cosine `score`.
+ */
+export interface IndexHit {
+  segmentIndex: number;
+  start: number;
+  end: number;
+  text: string;
+  score: number;
+}
+
+/**
+ * WU-A6 semantic-index status (`index.status` → this shape). An unbuilt video
+ * reports `{built:false, segmentCount:0, model:null, builtAt:null, dim:0}`
+ * (`handlers.py:1178`).
+ */
+export interface IndexStatus {
+  built: boolean;
+  segmentCount: number;
+  model: string | null;
+  builtAt: string | null;
+  dim: number;
+}
+
+/**
  * P4 §2 `shorts.reexport` result — the "reopen in short-maker" hint: the source
  * `videoId` plus a candidate skeleton rebuilt from the clip's `.json` metadata,
  * so the UI can re-open Short-maker primed and replay `shortmaker.export`. Field
@@ -854,6 +880,22 @@ export const client = {
       threshold?: number,
     ): Promise<JobHandle & { transcript?: Transcript }> =>
       rpc('diarize.start', threshold === undefined ? { videoId } : { videoId, threshold }),
+  },
+
+  /**
+   * `index.*` (WU-A5/A6) — the per-video semantic transcript index. `build` is a
+   * long job (embed every segment + persist vectors); `search` / `status` are
+   * direct-return. Params are forwarded unconditionally — `toEqual` ignores
+   * `undefined` keys, so a branch-free wrapper keeps the wire contract exact.
+   */
+  index: {
+    /** `index.build {videoId}` -> {jobId} — embed + persist the segment vectors. */
+    build: (videoId: string): Promise<JobHandle> => rpc('index.build', { videoId }),
+    /** `index.status {videoId}` -> {built,...} — pure file read (no provider call). */
+    status: (videoId: string): Promise<IndexStatus> => rpc('index.status', { videoId }),
+    /** `index.search {videoId,query,topK?}` -> {hits} — one query embed + cosine. */
+    search: (videoId: string, query: string, topK = 8): Promise<{ hits: IndexHit[] }> =>
+      rpc('index.search', { videoId, query, topK }),
   },
 } as const;
 

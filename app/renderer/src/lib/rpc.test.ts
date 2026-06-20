@@ -305,6 +305,32 @@ describe('client.transcribe / diarize (optional-param branches)', () => {
   });
 });
 
+describe('client.index (WU-A5/A6 — semantic transcript index)', () => {
+  it('build forwards {videoId} to index.build', async () => {
+    const r = installApi();
+    await client.index.build('v1');
+    expect(r).toHaveBeenCalledWith('index.build', { videoId: 'v1' });
+  });
+
+  it('status forwards {videoId} to index.status', async () => {
+    const r = installApi();
+    await client.index.status('v1');
+    expect(r).toHaveBeenCalledWith('index.status', { videoId: 'v1' });
+  });
+
+  it('search forwards {videoId,query,topK} with the default topK', async () => {
+    const r = installApi();
+    await client.index.search('v1', 'pricing');
+    expect(r).toHaveBeenCalledWith('index.search', { videoId: 'v1', query: 'pricing', topK: 8 });
+  });
+
+  it('search forwards an explicit topK', async () => {
+    const r = installApi();
+    await client.index.search('v1', 'pricing', 3);
+    expect(r).toHaveBeenCalledWith('index.search', { videoId: 'v1', query: 'pricing', topK: 3 });
+  });
+});
+
 describe('client.subtitles (spread-opts branches)', () => {
   it('generate / edit / export forward their params', async () => {
     const r = installApi();
