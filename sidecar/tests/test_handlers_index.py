@@ -330,19 +330,15 @@ def _build_then_clear_spy(svc: Services, spy: SpyTransport, vid: str) -> None:
 
     Building and searching MUST share the same embedder route so the persisted
     vector dim matches the query vector dim (production always does). We build under
-    the SAME consent route the search will use (so the persisted vector dim matches),
-    but with the budget ack gate OFF during the build (the build-path budget gate is
-    not what these SEARCH tests assert — they isolate the search egress + ack). The
-    spy is reset afterwards so the assertion isolates the SEARCH egress.
+    the SAME consent route the search will use, then reset the spy so the assertion
+    isolates the SEARCH egress. No budget toggle is needed: the build path plans its
+    envelope over the SAME text-consented settings as search, so a consent-denied
+    build routes local (willEgress False) and is never refused for a missing ack.
     """
-    live = dict(svc.settings.get())
-    build_settings = {**live, "confirmCloudBudget": False}
-    svc.settings.set(build_settings)
     ctx = _ctx()
     svc.index_build({"videoId": vid}, ctx)
     ctx.jobs.join(timeout=5)
     _done_result(ctx)
-    svc.settings.set(live)
     spy.calls.clear()
 
 
@@ -416,6 +412,63 @@ def test_index_search_consent_denied_with_budget_on_does_not_block(tmp_path: Pat
     out = svc.index_search({"videoId": vid, "query": "q"}, _ctx())  # no ack, must NOT raise
     assert spy.calls == []
     assert "hits" in out
+
+
+# --------------------------------------------------------------------------- #
+# build-path budget coherence: consent DENIED + budget ON -> local build, NO ack
+# (DESIGN §1.5 "default privacy preset -> local -> zero egress regardless").
+# --------------------------------------------------------------------------- #
+def test_index_build_consent_denied_with_budget_on_does_not_block(tmp_path: Path) -> None:
+    spy = SpyTransport()
+    svc = _services(tmp_path, embed_transport=spy)
+    vid = _add_video_with_transcript(svc, tmp_path)
+    _set_settings(svc, _cloud_settings(text_consent=False, confirm_budget=True))
+    ctx = _ctx()
+    # No confirmBudget ack passed: a denied build routes local (willEgress False),
+    # so the ack gate must NOT fire and the job must complete with a local index.
+    svc.index_build({"videoId": vid}, ctx)
+    ctx.jobs.join(timeout=5)
+    result = _done_result(ctx)
+    assert spy.calls == []
+    assert result["model"] == "local"
+    assert result["segmentCount"] == 2
+
+
+def test_index_build_consent_granted_with_budget_on_requires_ack(tmp_path: Path) -> None:
+    # The flip side: consent GRANTED + budget ON + no ack -> the cloud build IS
+    # refused with a typed budget-ack error before any egress (gate still bites).
+    spy = SpyTransport()
+    svc = _services(tmp_path, embed_transport=spy)
+    vid = _add_video_with_transcript(svc, tmp_path)
+    _set_settings(svc, _cloud_settings(text_consent=True, confirm_budget=True))
+    with pytest.raises(RpcError) as ei:
+        svc.index_build({"videoId": vid}, _ctx())
+    assert ei.value.code == ErrorCode.INVALID_PARAMS
+    assert spy.calls == []
+
+
+# --------------------------------------------------------------------------- #
+# AC d (extended): a route change after build -> dimension mismatch is a TYPED
+# "rebuild" error out of index.search, not a raw cosine ValueError.
+# --------------------------------------------------------------------------- #
+def test_index_search_dimension_mismatch_raises_rebuild(tmp_path: Path) -> None:
+    spy = SpyTransport()
+    svc = _services(tmp_path, embed_transport=spy)
+    vid = _add_video_with_transcript(svc, tmp_path)
+    # Build on the privacy default (LocalEmbedder, 384-dim, no cloud route)...
+    _set_settings(svc, {"providers": []})
+    ctx = _ctx()
+    svc.index_build({"videoId": vid}, ctx)
+    ctx.jobs.join(timeout=5)
+    built = _done_result(ctx)
+    assert built["dim"] == _embedder.DEFAULT_LOCAL_EMBED_DIM
+    # ...then switch to a cloud route (SpyTransport -> 2-dim query vector). The query
+    # dim (2) no longer matches the persisted dim (384) -> typed rebuild error.
+    _set_settings(svc, _cloud_settings(text_consent=True))
+    with pytest.raises(RpcError) as ei:
+        svc.index_search({"videoId": vid, "query": "pricing"}, _ctx())
+    assert ei.value.code == ErrorCode.INVALID_PARAMS
+    assert "rebuild" in str(ei.value).lower()
 
 
 # --------------------------------------------------------------------------- #

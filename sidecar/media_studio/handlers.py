@@ -1073,17 +1073,21 @@ class Services:
     def index_build(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
         """``index.build({videoId, confirmBudget?})`` -> ``{jobId}`` (WU-A5).
 
-        A long job (custom ``work`` body via :meth:`_run_ai_job`): embed every
+        A long job (custom ``work`` body on a shared AiJob envelope): embed every
         transcript segment through the consent + budget-gated ``index`` route and
         persist the vectors to the per-video sidecar. The done payload is
         ``{segmentCount, model, builtAt, dim}``.
 
-        The embedding egress rides the shared AiJob envelope so it inherits the
-        cancel check, degrade tracking, and the SAME ``confirmCloudBudget`` ack the
-        rest of the bundle enforces; the embedder itself is resolved through the
-        per-entry TEXT-consent filter (:meth:`_resolve_index_embedder`) so a cloud
-        route never reaches a non-consented provider. A transcript with zero
-        segments builds an empty index (``segmentCount=0``) rather than erroring.
+        The embedding egress rides the AiJob envelope so it inherits the cancel
+        check, degrade tracking, and the SAME ``confirmCloudBudget`` ack the rest of
+        the bundle enforces; the embedder is resolved through the per-entry
+        TEXT-consent filter (:meth:`_resolve_index_embedder`) so a cloud route never
+        reaches a non-consented provider. The budget envelope is planned over the
+        TEXT-consented settings (:meth:`_plan_index_envelope`, the SAME path
+        ``index.search`` uses) so ``willEgress`` reflects post-consent reality — a
+        consent-denied build routes LOCAL and so is NEVER refused for a missing ack
+        (DESIGN §1.5 "default privacy preset -> local -> zero egress regardless").
+        A transcript with zero segments builds an empty index (``segmentCount=0``).
         """
         if ctx.jobs is None:
             raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
@@ -1118,22 +1122,49 @@ class Services:
                 "dim": dim,
             }
 
-        # The query embedding's egress is sized text-shaped (the corpus is the
-        # privacy-sensitive payload, but _run_ai_job's shared budget reads the
-        # messages only — the same contract every caller shares). The cloud ack
-        # gate still fires (willEgress stays True when a cloud index entry exists).
-        job = self._run_ai_job(
-            ctx,
-            messages=[{"role": "user", "content": "index.build"}],
+        # Plan + gate the budget envelope over the TEXT-consented settings (so a
+        # consent-denied local build is never refused), then run the custom work body
+        # on the shared job bus. The envelope's egress is sized text-shaped (the
+        # shared budget reads the messages only — every caller's contract).
+        from .models import ai_job as _ai_job  # local: import-light
+
+        inputs = _ai_job.AiInputs(
+            messages=({"role": "user", "content": "index.build"},),
             model=str(settings.get("cloudEmbedModel") or settings.get("cloudModel") or ""),
-            provider=self._provider,
+        )
+        envelope = self._plan_index_envelope(inputs)
+        self._enforce_cloud_budget_ack(
+            envelope,
+            params.get("confirmBudget") if isinstance(params.get("confirmBudget"), str) else None,
+        )
+
+        # The work body drives the EMBEDDER (not this chat provider), so the
+        # provider here only satisfies run_ai_job's degrade-aware factory contract;
+        # it is the injected provider in tests and the lazily-built real one in prod.
+        job = _ai_job.run_ai_job(
+            envelope,
+            jobs=ctx.jobs,
+            provider_factory=self._index_provider_factory,
+            cache=self._ai_cache(),
             work=work,
             feature="index",
             label="index.build",
             videoId=video_id,
-            ack=params.get("confirmBudget") if isinstance(params.get("confirmBudget"), str) else None,
         )
         return {"jobId": job.id}
+
+    def _index_provider_factory(self) -> Any:
+        """The degrade-aware chat provider for the ``index.build`` job's envelope.
+
+        The embedding work body uses the EMBEDDER seam, not this provider, so this
+        only satisfies ``run_ai_job``'s factory contract — the injected provider in
+        tests, else the lazily-built real one (FACTORY PATH: RAW keys).
+        """
+        if self._provider is not None:
+            return self._provider
+        from .models import provider as _provider_mod  # pragma: no cover - real-provider factory (tests inject)
+
+        return _provider_mod.get_provider(self.settings.get_raw())  # pragma: no cover - real-provider factory
 
     def index_status(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
         """``index.status({videoId})`` -> ``{built, segmentCount, model, builtAt, dim}``.
@@ -1213,6 +1244,20 @@ class Services:
             embedder = self._resolve_index_embedder(settings)
             query_vec = embedder.embed([query])[0]
             cache.put(cache_key, query_vec)
+
+        # Guard the cross-route mismatch (PLAN §WU-A5 (d) error contract; WU-A4's
+        # search defers the dimension check to its caller — this is that caller). The
+        # index was built on whatever route was active THEN; if the route has since
+        # changed (e.g. privacy-default LocalEmbedder -> a cloud embedder of a
+        # different dim), the query vector won't line up with the persisted vectors.
+        # Surface a typed "rebuild" error rather than letting diarize.cosine_similarity
+        # raise a raw ValueError out of the handler.
+        built_dim = index.get("dim") or 0
+        if isinstance(built_dim, int) and built_dim > 0 and len(query_vec) != built_dim:
+            raise _invalid(
+                f"semantic index for {video_id} was built with a different embedding "
+                "model (dimension mismatch); run index.build to rebuild it first"
+            )
 
         vectors = index.get("vectors") or []
         project_transcript = self._load_or_create_project(video_id).data.get("transcript")
