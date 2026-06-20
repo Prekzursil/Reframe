@@ -660,3 +660,30 @@ def test_scan_dir_probe_failure_degrades_dims_to_zero(exports_dir):
     assert len(result["shorts"]) == 1
     info = result["shorts"][0]
     assert info["width"] == 0 and info["height"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# write_thumbnail_metadata (WU-C3): records thumbnailFrameSec onto <clip>.json
+# --------------------------------------------------------------------------- #
+def test_write_thumbnail_metadata_merges_into_existing(exports_dir):
+    # An existing .json (export-time fields) is preserved; thumbnailFrameSec added.
+    clip = make_clip(
+        exports_dir / "shorts-v1",
+        "src-1",
+        meta={"videoId": "v1", "hook": "keep me", "durationSec": 9.0},
+    )
+    merged = sh.write_thumbnail_metadata(clip, 7.25)
+    assert merged["thumbnailFrameSec"] == 7.25
+    assert merged["hook"] == "keep me"  # untouched
+    on_disk = sh.read_metadata(clip)
+    assert on_disk["thumbnailFrameSec"] == 7.25
+    assert on_disk["videoId"] == "v1" and on_disk["durationSec"] == 9.0
+
+
+def test_write_thumbnail_metadata_creates_record_when_absent(exports_dir):
+    # No .json yet -> a minimal record carrying only thumbnailFrameSec is created.
+    clip = make_clip(exports_dir / "shorts-v1", "src-2")  # no meta
+    assert sh.read_metadata(clip) is None
+    merged = sh.write_thumbnail_metadata(clip, 3.0)
+    assert merged == {"thumbnailFrameSec": 3.0}
+    assert sh.read_metadata(clip) == {"thumbnailFrameSec": 3.0}

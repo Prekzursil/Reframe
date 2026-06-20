@@ -32,9 +32,12 @@ const NleExport = lazy(() => import('../features/NleExport'));
 const Diarize = lazy(() => import('../features/Diarize'));
 const Refine = lazy(() => import('../features/Refine'));
 const Recipes = lazy(() => import('../features/Recipes'));
+// intelligence A: semantic transcript search (seeks the player on a hit).
+const SemanticSearch = lazy(() => import('../features/SemanticSearch'));
 
 export const WORKSPACE_TABS: TabDef[] = [
   { id: 'transcribe', label: 'Transcribe' },
+  { id: 'search', label: 'Search' },
   { id: 'subtitles', label: 'Subtitles' },
   { id: 'diarize', label: 'Diarize' },
   { id: 'refine', label: 'Refine' },
@@ -145,6 +148,8 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
         return <NleExport videoId={video.id} />;
       case 'recipes':
         return <Recipes videoId={video.id} />;
+      case 'search':
+        return <SemanticSearch videoId={video.id} playerRef={playerRef} />;
       case 'assets':
         return <Assets />;
       case 'transcribe':

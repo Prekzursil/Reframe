@@ -64,6 +64,7 @@ vi.mock('../features/NleExport', () => stubPanel('NleExport'));
 vi.mock('../features/Diarize', () => stubPanel('Diarize'));
 vi.mock('../features/Refine', () => stubPanel('Refine'));
 vi.mock('../features/Recipes', () => stubPanel('Recipes'));
+vi.mock('../features/SemanticSearch', () => stubPanel('SemanticSearch'));
 
 import { Workspace, WORKSPACE_TABS } from './Workspace';
 import type { Video, Project } from '../components/api';
@@ -123,6 +124,7 @@ describe('Workspace', () => {
   it('exposes the contract tabs in order (P2: +Timeline/Dub/Assets; captions-export: +Timeline export; system-advanced: +Diarize/Recipes)', () => {
     expect(WORKSPACE_TABS.map((t) => t.label)).toEqual([
       'Transcribe',
+      'Search',
       'Subtitles',
       'Diarize',
       'Refine',
@@ -230,6 +232,7 @@ describe('Workspace', () => {
   // renderPanel() (the switch) including the 'transcribe'/default fall-through.
   const tabPanels: Array<[string, string]> = [
     ['transcribe', 'Transcribe'],
+    ['search', 'SemanticSearch'],
     ['subtitles', 'Subtitles'],
     ['diarize', 'Diarize'],
     ['refine', 'Refine'],

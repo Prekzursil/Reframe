@@ -43,7 +43,7 @@ class FakeCatalog:
 
 
 def _catalog() -> FakeCatalog:
-    """A representative multi-provider catalog spanning all 5 functions."""
+    """A representative multi-provider catalog spanning all six functions."""
     return FakeCatalog(
         entries=(
             FakeEntry(
@@ -56,6 +56,10 @@ def _catalog() -> FakeCatalog:
                     "translation": "A",
                     "vision": "na",
                     "editPlan": "S",
+                    # WU-A3: "index" reuses the MOMENT_FIND task (== "select"'s
+                    # task), so its grade mirrors "select" — exactly how the real
+                    # CatalogAdapter flattens it (every text row already grades it).
+                    "index": "S",
                 },
                 privacy_tier="SAFE",
             ),
@@ -69,6 +73,7 @@ def _catalog() -> FakeCatalog:
                     "translation": "S",
                     "vision": "na",
                     "editPlan": "A",
+                    "index": "A",
                 },
                 privacy_tier="SAFE",
             ),
@@ -82,6 +87,7 @@ def _catalog() -> FakeCatalog:
                     "translation": "A",
                     "vision": "S",
                     "editPlan": "A",
+                    "index": "A",
                 },
                 privacy_tier="AVOID",
             ),
@@ -95,6 +101,7 @@ def _catalog() -> FakeCatalog:
                     "translation": "A",
                     "vision": "A",
                     "editPlan": "B",
+                    "index": "B",
                 },
                 privacy_tier="SAFE",
             ),
@@ -111,13 +118,45 @@ def test_presets_registry_has_exactly_the_three_named_presets() -> None:
     assert set(P.PRESETS) == {"privacy", "bestFreeCloud", "balanced"}
 
 
-def test_every_preset_maps_all_five_functions() -> None:
+def test_every_preset_maps_all_functions() -> None:
     for descriptor in P.PRESETS.values():
         assert set(descriptor) == set(P.FUNCTIONS)
 
 
-def test_functions_constant_is_the_five_task_seams() -> None:
-    assert P.FUNCTIONS == ("select", "subtitles", "translation", "vision", "editPlan")
+def test_functions_constant_is_the_task_seams_including_index() -> None:
+    # WU-A3 promotes embeddings to a first-class routable function ("index").
+    assert P.FUNCTIONS == ("select", "subtitles", "translation", "vision", "editPlan", "index")
+
+
+def test_index_is_a_text_capability_function() -> None:
+    # WU-A3 AC-(a): "index" requires the "text" capability (not vision).
+    assert "index" in P.FUNCTIONS
+    assert P._REQUIRED_CAPABILITY["index"] == "text"
+
+
+def test_index_maps_to_existing_moment_find_task() -> None:
+    # WU-A3 AC-(a): "index" reuses the EXISTING MOMENT_FIND catalog task so the
+    # bracket lookup resolves against every seed row with zero catalog edits.
+    assert P._FUNCTION_TASK_NAMES["index"] == "MOMENT_FIND"
+
+
+def test_apply_preset_produces_an_index_route_for_every_preset() -> None:
+    # WU-A3 AC-(b): every preset yields a routing.perFunction["index"] slot with
+    # NO KeyError at _AdaptedEntry.__init__ (the task resolves on all rows).
+    for name in P.PRESETS:
+        routing = P.apply_preset(name, {}, _catalog())
+        slot = routing["perFunction"]["index"]
+        assert "provider" in slot
+        assert "fallback" in slot
+
+
+def test_index_routes_local_under_privacy_and_cloud_under_bestfreecloud() -> None:
+    # AC-(b): under privacy the index route is local (no egress); under cloud it
+    # resolves to the catalog's top index pick (mirrors "select" via MOMENT_FIND).
+    assert P.apply_preset("privacy", {}, _catalog())["perFunction"]["index"]["provider"] == P.LOCAL
+    cloud = P.apply_preset("bestFreeCloud", {}, _catalog())["perFunction"]["index"]
+    assert cloud["provider"] == "groq-gpt-oss-120b"
+    assert cloud["fallback"][-1] == P.LOCAL
 
 
 # --------------------------------------------------------------------------- #

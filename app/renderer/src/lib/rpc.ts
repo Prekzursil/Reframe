@@ -151,6 +151,53 @@ export interface ShortInfo {
 }
 
 /**
+ * WU-C4 `thumbnail.select` job result (the `job.done.result` payload, NOT the
+ * immediate rpc resolution which is only `{jobId}`). Field names mirror the
+ * sidecar `thumbnail_select` done payload (`handlers.py` WU-C3) EXACTLY.
+ *
+ * `degraded` is `true` when no consented cloud model + no local weights were
+ * available, so the deterministic clip-midpoint frame was used (zero egress).
+ * The renderer surfaces this as a visible + announced note rather than swapping
+ * silently (DESIGN §3.6).
+ */
+export interface BestFrame {
+  /** Source-absolute time (seconds) of the chosen thumbnail frame. */
+  frameTimeSec: number;
+  /** Absolute path of the written poster (inside the exports root). */
+  thumbnailPath: string;
+  /** The scorer's confidence for the picked frame (0.0 on the degrade path). */
+  score: number;
+  /** True when the midpoint fallback was used (no vision model available). */
+  degraded: boolean;
+}
+
+/**
+ * WU-A6 semantic-search result row (`index.search` → `{hits:[...]}`). Mirrors the
+ * sidecar `semantic_index.Hit` TypedDict (`features/semantic_index.py:35`): the
+ * source segment's index/span/text plus its cosine `score`.
+ */
+export interface IndexHit {
+  segmentIndex: number;
+  start: number;
+  end: number;
+  text: string;
+  score: number;
+}
+
+/**
+ * WU-A6 semantic-index status (`index.status` → this shape). An unbuilt video
+ * reports `{built:false, segmentCount:0, model:null, builtAt:null, dim:0}`
+ * (`handlers.py:1178`).
+ */
+export interface IndexStatus {
+  built: boolean;
+  segmentCount: number;
+  model: string | null;
+  builtAt: string | null;
+  dim: number;
+}
+
+/**
  * P4 §2 `shorts.reexport` result — the "reopen in short-maker" hint: the source
  * `videoId` plus a candidate skeleton rebuilt from the clip's `.json` metadata,
  * so the UI can re-open Short-maker primed and replay `shortmaker.export`. Field
@@ -369,6 +416,39 @@ export interface RoutingBlock {
 export interface PresetResponse {
   activePreset: string;
   routing: RoutingBlock;
+}
+
+/**
+ * WU-B3 one proposed (never auto-triggered) asset download inside a
+ * {@link Recommendation}. Field names mirror the sidecar `recommender.DownloadItem`.
+ */
+export interface RecommendationDownload {
+  assetName: string;
+  label: string;
+  sizeMb: number;
+  reason: string;
+}
+
+/**
+ * WU-B3 the device-aware auto-recommender's actionable plan
+ * (`system.recommend` -> `{recommendation}`). PURE on the sidecar: composes the
+ * advisor report + installed-state + detected local servers into a concrete
+ * preset + per-function routing + ASR pick + proposed downloads + rationale.
+ * Field names are FROZEN, identical to the sidecar `recommender.Recommendation`.
+ * An EMPTY `routing.perFunction` signals the G-B1 "could not detect" fallback.
+ */
+export interface Recommendation {
+  preset: string;
+  routing: RoutingBlock;
+  /** The recommended ASR engine id, or null when no engine is installed. */
+  asrEngine: string | null;
+  downloads: RecommendationDownload[];
+  rationale: string[];
+}
+
+/** `system.recommend` response (WU-B3). */
+export interface RecommendResponse {
+  recommendation: Recommendation;
 }
 
 /** `providers.firstRun` response (WU-presets P1 #6 first-run chooser). */
@@ -893,6 +973,25 @@ export const client = {
     reexport: (path: string): Promise<ShortReexportHint> => rpc('shorts.reexport', { path }),
   },
 
+  // ---- WU-C4 best-frame thumbnail picker (§3.5; AI job) -------------------
+
+  thumbnail: {
+    /**
+     * `thumbnail.select {videoId?, candidateId?|path?, start?, end?}` (WU-C3) —
+     * the AI best-frame picker. A long job: rpc resolves with `{jobId}` ONLY;
+     * the terminal {@link BestFrame} arrives later via a `job.done` notification
+     * (subscribe through `onJobDone`). Either a `candidateId` (resolved from the
+     * selection cache) OR an explicit `{path,start,end}` span identifies the clip.
+     */
+    select: (params: {
+      videoId?: string;
+      candidateId?: string;
+      path?: string;
+      start?: number;
+      end?: number;
+    }): Promise<JobHandle> => rpc('thumbnail.select', { ...params }),
+  },
+
   // ---- P4 captions (live preview overlay; §2 / C7) ------------------------
 
   captions: {
@@ -1024,6 +1123,18 @@ export const client = {
      */
     advisor: (opts?: { commercial?: boolean }): Promise<AdvisorReport> =>
       rpc('system.advisor', opts?.commercial === undefined ? {} : { commercial: opts.commercial }),
+    /**
+     * `system.recommend {commercial?}` (WU-B3) — the device-aware auto-recommender:
+     * composes the existing cheap probes into an actionable {@link Recommendation}
+     * (preset + routing + ASR + proposed downloads + rationale). Direct-return; no
+     * provider/LLM call. The "Apply" flow reuses the EXISTING mutation RPCs
+     * (`providers.applyPreset` / `setFunctionModel` / `settings.set` / `assets.ensure`).
+     */
+    recommend: (opts?: { commercial?: boolean }): Promise<RecommendResponse> =>
+      rpc(
+        'system.recommend',
+        opts?.commercial === undefined ? {} : { commercial: opts.commercial },
+      ),
   },
 
   /** `asr.engines` — selectable ASR engines (whisper / parakeet) + installed. */
@@ -1143,6 +1254,22 @@ export const client = {
       threshold?: number,
     ): Promise<JobHandle & { transcript?: Transcript }> =>
       rpc('diarize.start', threshold === undefined ? { videoId } : { videoId, threshold }),
+  },
+
+  /**
+   * `index.*` (WU-A5/A6) — the per-video semantic transcript index. `build` is a
+   * long job (embed every segment + persist vectors); `search` / `status` are
+   * direct-return. Params are forwarded unconditionally — `toEqual` ignores
+   * `undefined` keys, so a branch-free wrapper keeps the wire contract exact.
+   */
+  index: {
+    /** `index.build {videoId}` -> {jobId} — embed + persist the segment vectors. */
+    build: (videoId: string): Promise<JobHandle> => rpc('index.build', { videoId }),
+    /** `index.status {videoId}` -> {built,...} — pure file read (no provider call). */
+    status: (videoId: string): Promise<IndexStatus> => rpc('index.status', { videoId }),
+    /** `index.search {videoId,query,topK?}` -> {hits} — one query embed + cosine. */
+    search: (videoId: string, query: string, topK = 8): Promise<{ hits: IndexHit[] }> =>
+      rpc('index.search', { videoId, query, topK }),
   },
 
   /**

@@ -108,6 +108,39 @@ describe('client.shorts (P4 §2 / C6 / C8)', () => {
   });
 });
 
+describe('client.thumbnail (WU-C4 — best-frame picker §3.5)', () => {
+  it('select forwards every span field to thumbnail.select', async () => {
+    const rpc = installApi();
+    await client.thumbnail.select({
+      videoId: 'v1',
+      candidateId: 'cand-1',
+      path: '/out/shorts-v1/clip.mp4',
+      start: 1.5,
+      end: 9.5,
+    });
+    expect(rpc).toHaveBeenCalledWith('thumbnail.select', {
+      videoId: 'v1',
+      candidateId: 'cand-1',
+      path: '/out/shorts-v1/clip.mp4',
+      start: 1.5,
+      end: 9.5,
+    });
+  });
+
+  it('select forwards a {path}-only span (the produced-clip case)', async () => {
+    const rpc = installApi();
+    await client.thumbnail.select({ path: '/out/shorts-v1/clip.mp4' });
+    expect(rpc).toHaveBeenCalledWith('thumbnail.select', { path: '/out/shorts-v1/clip.mp4' });
+  });
+
+  it('select resolves the {jobId} handle it is typed for', async () => {
+    const rpc = installApi();
+    rpc.mockResolvedValueOnce({ jobId: 'job-7' });
+    const res = await client.thumbnail.select({ candidateId: 'cand-1', videoId: 'v1' });
+    expect(res.jobId).toBe('job-7');
+  });
+});
+
 describe('client.captions (P4 §2 / C7 / C8)', () => {
   it('cues forwards {videoId} and resolves the {cues} envelope (reuses Cue type)', async () => {
     const rpc = installApi();
@@ -276,6 +309,32 @@ describe('client.transcribe / diarize (optional-param branches)', () => {
     expect(r).toHaveBeenCalledWith('diarize.start', { videoId: 'v1', threshold: 0.5 });
     await client.diarize.start('v1', 0);
     expect(r).toHaveBeenCalledWith('diarize.start', { videoId: 'v1', threshold: 0 });
+  });
+});
+
+describe('client.index (WU-A5/A6 — semantic transcript index)', () => {
+  it('build forwards {videoId} to index.build', async () => {
+    const r = installApi();
+    await client.index.build('v1');
+    expect(r).toHaveBeenCalledWith('index.build', { videoId: 'v1' });
+  });
+
+  it('status forwards {videoId} to index.status', async () => {
+    const r = installApi();
+    await client.index.status('v1');
+    expect(r).toHaveBeenCalledWith('index.status', { videoId: 'v1' });
+  });
+
+  it('search forwards {videoId,query,topK} with the default topK', async () => {
+    const r = installApi();
+    await client.index.search('v1', 'pricing');
+    expect(r).toHaveBeenCalledWith('index.search', { videoId: 'v1', query: 'pricing', topK: 8 });
+  });
+
+  it('search forwards an explicit topK', async () => {
+    const r = installApi();
+    await client.index.search('v1', 'pricing', 3);
+    expect(r).toHaveBeenCalledWith('index.search', { videoId: 'v1', query: 'pricing', topK: 3 });
   });
 });
 
@@ -518,6 +577,22 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('system.advisor', { commercial: true });
     await client.system.advisor({ commercial: false });
     expect(r).toHaveBeenCalledWith('system.advisor', { commercial: false });
+  });
+
+  it('system.recommend sends an empty params object when commercial is omitted (WU-B3)', async () => {
+    const r = installApi();
+    await client.system.recommend();
+    expect(r).toHaveBeenCalledWith('system.recommend', {});
+    await client.system.recommend({});
+    expect(r).toHaveBeenCalledWith('system.recommend', {});
+  });
+
+  it('system.recommend forwards {commercial} when provided (both boolean values) (WU-B3)', async () => {
+    const r = installApi();
+    await client.system.recommend({ commercial: true });
+    expect(r).toHaveBeenCalledWith('system.recommend', { commercial: true });
+    await client.system.recommend({ commercial: false });
+    expect(r).toHaveBeenCalledWith('system.recommend', { commercial: false });
   });
 
   it('asr.engines calls the bare method', async () => {

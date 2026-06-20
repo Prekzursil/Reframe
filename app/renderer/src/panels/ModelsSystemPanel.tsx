@@ -25,6 +25,7 @@ import {
   type CatalogResponse,
   type ComponentStatus,
   type HardwareInfo,
+  type Recommendation,
   type RoutingBlock,
   type UsageRow,
 } from '../lib/rpc';
@@ -87,6 +88,57 @@ export function sizeForComponent(
   return info && Number.isFinite(info.sizeMB) ? info.sizeMB : null;
 }
 
+/**
+ * WU-B3 — whether `system.recommend` could not detect the device (G-B1). The
+ * sidecar's typed fallback returns an EMPTY `routing.perFunction`, so an empty
+ * map is the falsifiable "unavailable" signal the card renders as an announced
+ * "could not detect" message (never a blank card).
+ */
+export function recommendationUnavailable(rec: Recommendation): boolean {
+  return Object.keys(rec.routing.perFunction).length === 0;
+}
+
+/**
+ * WU-B3 — whether the user's CURRENT settings already match the recommendation,
+ * so Apply is a no-op. True iff the active preset equals the recommended preset,
+ * the recommended ASR engine is already selected (or none is proposed), the
+ * recommendation proposes no downloads, AND every per-function route it proposes
+ * already matches the current routing. The routing check is load-bearing: the
+ * recommender folds detected-local-server deltas (e.g. `select → local-ollama`,
+ * the headline "no cloud egress" value) INDEPENDENTLY of the preset, so a
+ * preset+ASR match can still hide a pending routing delta — omitting it would
+ * declare "already optimal" and make that local-routing recommendation
+ * un-appliable from the card. Pure (settings + recommendation in).
+ */
+export function recommendationAlreadyOptimal(
+  rec: Recommendation,
+  activePreset: string | undefined,
+  asrEngine: string | undefined,
+  currentRouting: RoutingBlock | undefined,
+): boolean {
+  if (rec.preset !== activePreset) return false;
+  if (rec.downloads.length > 0) return false;
+  const current = currentRouting?.perFunction ?? {};
+  for (const [function_, slot] of Object.entries(rec.routing.perFunction)) {
+    if (current[function_]?.provider !== slot.provider) return false;
+  }
+  return rec.asrEngine === null || rec.asrEngine === asrEngine;
+}
+
+/**
+ * WU-B3 — a short, perceivable outcome summary announced after Apply runs (the
+ * polite live region). Pure: derives the human sentence from what was applied so
+ * the one-click result is conveyed without re-reading the panel.
+ */
+export function applyOutcomeText(rec: Recommendation): string {
+  const parts = [`preset ${rec.preset}`];
+  if (rec.asrEngine) parts.push(`ASR → ${rec.asrEngine}`);
+  if (rec.downloads.length > 0) {
+    parts.push(`${rec.downloads.length} download${rec.downloads.length === 1 ? '' : 's'} started`);
+  }
+  return `Applied: ${parts.join(', ')}.`;
+}
+
 export interface ModelsSystemPanelProps {
   /** Inject the typed client for tests; defaults to the real lib/rpc client. */
   rpcClient?: typeof client;
@@ -120,6 +172,10 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
   const [usage, setUsage] = useState<UsageRow[]>([]);
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
   const [presetBusy, setPresetBusy] = useState<boolean>(false);
+  // WU-B3 device-aware recommendation card + one-click Apply.
+  const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
+  const [applying, setApplying] = useState<boolean>(false);
+  const [applyOutcome, setApplyOutcome] = useState<string>('');
 
   const byAsset = useMemo(() => indexAssets(assets), [assets]);
 
@@ -146,13 +202,14 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
     setError('');
     try {
       const commercial = Boolean(settings.commercial);
-      const [hw, rep, assetRes, engineRes, usageRes, catalogRes] = await Promise.all([
+      const [hw, rep, assetRes, engineRes, usageRes, catalogRes, recRes] = await Promise.all([
         api.system.probe(),
         api.system.advisor({ commercial }),
         api.assets.list(),
         api.asr.engines(),
         api.providers.usage(),
         api.providers.catalog(),
+        api.system.recommend({ commercial }),
       ]);
       setHardware(hw ?? null);
       setReport(rep ?? null);
@@ -160,6 +217,8 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
       setEngines(Array.isArray(engineRes?.engines) ? engineRes.engines : []);
       setUsage(Array.isArray(usageRes?.usage) ? usageRes.usage : []);
       setCatalog(catalogRes ?? null);
+      setRecommendation(recRes?.recommendation ?? null);
+      setApplyOutcome('');
       setAnalyzed(true);
       // First-run tour: show once if the user hasn't seen it.
       if (!settings.modelsOnboardingSeen) setShowTour(true);
@@ -265,6 +324,47 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
     [api],
   );
 
+  // WU-B3 one-click Apply: reuses the EXISTING mutation RPCs only (no new
+  // mutation path). Order: applyPreset (base routing) -> per-function deltas the
+  // recommender folded over the base (detected-local capture) -> persist the ASR
+  // engine -> queue the proposed downloads. Announces the outcome politely.
+  const applyRecommendation = useCallback(
+    async (rec: Recommendation): Promise<void> => {
+      setApplying(true);
+      setApplyOutcome('');
+      setError('');
+      try {
+        const base = await api.providers.applyPreset(rec.preset);
+        let routing = base.routing;
+        let activePreset = base.activePreset;
+        for (const [function_, slot] of Object.entries(rec.routing.perFunction)) {
+          const current = base.routing.perFunction[function_];
+          if (current?.provider !== slot.provider) {
+            const res = await api.providers.setFunctionModel(function_, slot.provider);
+            routing = res.routing;
+            activePreset = res.activePreset;
+          }
+        }
+        if (rec.asrEngine) await api.settings.set({ asrEngine: rec.asrEngine });
+        if (rec.downloads.length > 0) {
+          await api.assets.ensure(rec.downloads.map((d) => d.assetName));
+        }
+        setSettings((prev) => ({
+          ...prev,
+          activePreset,
+          routing,
+          ...(rec.asrEngine ? { asrEngine: rec.asrEngine } : {}),
+        }));
+        setApplyOutcome(applyOutcomeText(rec));
+      } catch (err) {
+        setError(errText(err));
+      } finally {
+        setApplying(false);
+      }
+    },
+    [api],
+  );
+
   const applyPreset = useCallback(() => {
     /* v8 ignore next -- the Apply-preset button only renders inside the `analyzed && report` block, so report is always set here. */
     if (!report) return;
@@ -328,6 +428,21 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
 
   const currentTier = settings.phase8Tier ?? 1;
   const recommendedTier = report ? presetTier(report.recommendedPreset) : 0;
+  // WU-B3 derived card state (pure helpers; recomputed on settings/rec change).
+  const recUnavailable = recommendation ? recommendationUnavailable(recommendation) : false;
+  const recOptimal =
+    recommendation !== null &&
+    !recUnavailable &&
+    recommendationAlreadyOptimal(
+      recommendation,
+      settings.activePreset,
+      settings.asrEngine,
+      settings.routing,
+    );
+  const applyDisabled = applying || recOptimal;
+  const applyName = recOptimal
+    ? 'Your settings already match the recommendation'
+    : 'Apply recommended settings';
 
   return (
     <section className="feature-panel models-system-panel" aria-label="Models and System">
@@ -380,6 +495,13 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
         </p>
       )}
 
+      {/* WU-B3: loading live region while system.recommend (inside analyze) runs. */}
+      {busy && (
+        <p className="status" data-section="recommend-loading" role="status" aria-live="polite">
+          Analysing your machine…
+        </p>
+      )}
+
       {analyzed && hardware && (
         <div className="hardware-header" data-section="hardware">
           <h3>Your hardware</h3>
@@ -426,6 +548,84 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
               Apply preset
             </button>
           </div>
+
+          {/* WU-B3: device-aware recommendation card + one-click Apply. */}
+          {recommendation && (
+            <section
+              className="recommend-card"
+              data-section="recommend"
+              aria-labelledby="recommend-card-heading"
+            >
+              <h3 id="recommend-card-heading">Recommended setup for your machine</h3>
+              {recUnavailable ? (
+                <p
+                  className="recommend-card__unavailable"
+                  data-section="recommend-unavailable"
+                  role="status"
+                  aria-live="polite"
+                >
+                  Could not detect your hardware — pick a preset manually using the controls below.
+                </p>
+              ) : (
+                <>
+                  <dl className="recommend-card__plan" data-section="recommend-plan">
+                    <div className="recommend-card__row">
+                      <dt>Preset</dt>
+                      <dd data-field="preset">{presetLabel(recommendation.preset)}</dd>
+                    </div>
+                    {recommendation.asrEngine && (
+                      <div className="recommend-card__row">
+                        <dt>Speech engine</dt>
+                        <dd data-field="asr">{recommendation.asrEngine}</dd>
+                      </div>
+                    )}
+                    {recommendation.downloads.length > 0 && (
+                      <div className="recommend-card__row">
+                        <dt>Downloads</dt>
+                        <dd data-field="downloads">
+                          {recommendation.downloads.map((d) => d.label).join(', ')}
+                        </dd>
+                      </div>
+                    )}
+                  </dl>
+
+                  <h4 className="recommend-card__why-heading">Why</h4>
+                  <ul className="recommend-card__rationale" data-section="recommend-rationale">
+                    {recommendation.rationale.map((line) => (
+                      <li key={line} className="recommend-card__rationale-item">
+                        {line}
+                      </li>
+                    ))}
+                  </ul>
+
+                  <button
+                    type="button"
+                    className="recommend-card__apply"
+                    data-action="apply-recommendation"
+                    aria-label={applyName}
+                    aria-busy={applying}
+                    disabled={applyDisabled}
+                    onClick={() => void applyRecommendation(recommendation)}
+                  >
+                    {applying ? 'Applying…' : 'Apply recommended settings'}
+                  </button>
+                  {recOptimal && (
+                    <p className="recommend-card__optimal" data-section="recommend-optimal">
+                      Your settings already match the recommendation.
+                    </p>
+                  )}
+                  <p
+                    className="recommend-card__outcome"
+                    data-section="recommend-outcome"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {applyOutcome}
+                  </p>
+                </>
+              )}
+            </section>
+          )}
 
           <h3>Quality tier</h3>
           <div className="tier-grid" data-section="tiers">

@@ -177,6 +177,26 @@ def read_metadata(clip_path: str | os.PathLike) -> dict[str, Any] | None:
     return obj if isinstance(obj, dict) else None
 
 
+def write_thumbnail_metadata(clip_path: str | os.PathLike, frame_sec: float) -> dict[str, Any]:
+    """Record the chosen best-frame time onto the clip's ``<clip>.json`` (WU-C3).
+
+    Merges ``thumbnailFrameSec`` (the source-relative seconds of the AI-picked
+    thumbnail frame) into the existing sidecar metadata — preserving every other
+    persisted field — and rewrites the file (UTF-8, LF). When no ``.json`` exists
+    yet (a clip produced before any metadata write) a minimal record carrying only
+    ``thumbnailFrameSec`` is created, so a later ``shorts.list`` still surfaces the
+    chosen frame. Returns the merged metadata dict that was persisted.
+
+    PURE w.r.t. its inputs (a fresh dict is built; the on-disk read is the only
+    side input). Reuses :func:`write_export_metadata`'s best-effort write so a
+    write failure is logged + swallowed and never sinks the thumbnail job.
+    """
+    meta = dict(read_metadata(clip_path) or {})
+    meta["thumbnailFrameSec"] = float(frame_sec)
+    write_export_metadata(clip_path, meta)
+    return meta
+
+
 # --------------------------------------------------------------------------- #
 # pure: ffmpeg/ffprobe argv builders
 # --------------------------------------------------------------------------- #
@@ -506,4 +526,5 @@ __all__ = [
     "short_info",
     "thumbnail_path",
     "write_export_metadata",
+    "write_thumbnail_metadata",
 ]
