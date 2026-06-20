@@ -264,6 +264,41 @@ export interface AsrEngine {
 }
 
 /**
+ * One capability's readiness state (`readiness.summary`, WU-8). The five states
+ * are distinguished by TEXT (the badge label), never hue alone (WCAG 1.4.1):
+ * `ready`, `needsDownload`, `needsKey`, `needsConsent`, `unavailable`.
+ */
+export type ReadinessStatus =
+  | 'ready'
+  | 'needsDownload'
+  | 'needsKey'
+  | 'needsConsent'
+  | 'unavailable';
+
+/** The actionable fix a not-ready capability offers (null when `ready`/blocked). */
+export interface ReadinessAction {
+  /** `assets.ensure` (download), `openProviders` (add a key), `setConsent`. */
+  kind: 'assets.ensure' | 'openProviders' | 'setConsent';
+  /** The asset names to ensure (only for `assets.ensure`). */
+  assets?: string[];
+  /** The provider id the action targets (key/consent actions). */
+  provider?: string;
+}
+
+/** One rolled-up capability row from `readiness.summary` (WU-8). */
+export interface ReadinessItem {
+  /** Stable capability id, e.g. `tier1-multimodal` or `ai.select`. */
+  capability: string;
+  /** Human-friendly capability name. */
+  label: string;
+  status: ReadinessStatus;
+  /** Plain-language reason it is not ready ("" when ready). */
+  blockedBy: string;
+  /** The fix action, or null when ready or blocked with no fix. */
+  action: ReadinessAction | null;
+}
+
+/**
  * One per-key usage row from `providers.usage` (WU-usage-ui). The pool accounts
  * usage from optimistic decrement + parsed 429 / X-RateLimit-* headers (NOT a
  * poller). `key` is ALWAYS the REDACTED last-4 (no full key crosses RPC).

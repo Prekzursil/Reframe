@@ -372,6 +372,40 @@ class Services:
             },
         }
 
+    def readiness_summary(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``readiness.summary()`` -> ``{items:[ReadinessItem]}``. Direct-return.
+
+        WU-8 (read-only): rolls the three otherwise-split readiness sources into
+        ONE per-capability list the renderer can SHOW as a unified "what works
+        right now" view. Two capability families:
+
+          * **Model tiers** — each runnable tier (0/1/2) is ``ready`` when all its
+            model weights are installed; ``needsDownload`` when one is missing and
+            we are online (the action targets ``assets.ensure`` with the missing
+            asset names); ``unavailable`` when one is missing AND Offline mode is on
+            (the download is blocked — same rule ``system.advisor`` uses). Tier-0 is
+            the zero-download CPU floor and is always ``ready``.
+          * **AI functions** — each routed AI function (``select``/``subtitles``/
+            ``translation``/``vision``/``editPlan``) routed to a CLOUD provider is
+            ``needsKey`` (no key for that provider), then ``needsConsent`` (key
+            present but the data-type consent — TEXT for most, FRAMES for vision —
+            is not granted), then ``ready``. A function routed to LOCAL (or unrouted
+            -> the local-safe default) needs neither and is ``ready``.
+
+        STRICTLY READ-ONLY (§5): it derives everything from the installed-weight map
+        (the :meth:`_models_present_map` seam) + the redacted settings view, so it
+        performs ZERO network/provider calls and triggers NO ``assets.ensure``. No
+        full key ever rides this payload (it reads the already-redacted
+        :meth:`providers.list <providers_list>` view for key PRESENCE only).
+        """
+        settings = self.settings.get()
+        models_present = self._models_present_map(settings)
+        offline = _offline.is_offline(settings)
+        providers = self.providers_list(params, ctx)["providers"]
+        items = _tier_readiness_items(models_present, offline=offline)
+        items.extend(_function_readiness_items(settings, providers))
+        return {"items": items}
+
     # ===================================================================== #
     # providers.* (WU-keys: user-brings keys; RPC is key-free / redacted)
     # ===================================================================== #
@@ -1961,6 +1995,160 @@ def _signals_summary(tracks: dict[str, Any]) -> dict[str, Any]:
     return {"tracks": counts, "present": present}
 
 
+#: WU-8 readiness: each runnable tier id -> (label, the advisor-component names it
+#: needs). Mirrors ``system_advisor.TIERS`` but expressed against ``_COMPONENT_ASSETS``
+#: so readiness is derived purely from installed-weight state (no hardware probe /
+#: dependency import). Tier-0 is the zero-download CPU floor (no model-backed
+#: components) and so is always ready.
+_READINESS_TIERS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("tier0-numeric", "Instant numeric (no downloads)", ()),
+    (
+        "tier1-multimodal",
+        "Multimodal (visual + audio + transcript)",
+        ("saliency", "audio_saliency", "scene_transnet", "vlm_backbone", "quality_gate"),
+    ),
+    ("tier2-vlm", "Video-LLM re-rank (heavy, opt-in)", ("smolvlm2",)),
+)
+
+#: WU-8 readiness: the AI functions whose cloud-route key/consent state is rolled
+#: up. Mirrors ``presets.FUNCTIONS``; ``vision`` checks FRAME consent, the rest
+#: check TEXT consent (the §-consent data-type split).
+_READINESS_FUNCTIONS: tuple[str, ...] = ("select", "subtitles", "translation", "vision", "editPlan")
+
+#: The routing sentinel meaning "run this function locally" (mirrors
+#: ``presets.LOCAL``); an unrouted function also defaults to the local-safe route.
+_LOCAL_ROUTE = "local"
+
+
+def _missing_tier_assets(component_names: tuple[str, ...], models_present: dict[str, bool]) -> list[str]:
+    """The de-duplicated asset names a tier needs that are NOT installed.
+
+    Maps each member component to its pinned asset (``_COMPONENT_ASSETS``) and
+    keeps only the assets whose weight is not present. Components sharing an asset
+    (e.g. ``vlm_backbone``/``aesthetic`` both use SigLIP-2) collapse to one name.
+    """
+    missing: list[str] = []
+    for name in component_names:
+        if models_present.get(name, False):
+            continue
+        asset = _COMPONENT_ASSETS.get(name)
+        if asset is not None and asset not in missing:
+            missing.append(asset)
+    return missing
+
+
+def _tier_readiness_items(models_present: dict[str, bool], *, offline: bool) -> list[dict[str, Any]]:
+    """Roll each runnable tier up to a :class:`ReadinessItem` from installed state.
+
+    ``ready`` when every member weight is installed; ``needsDownload`` (with an
+    ``assets.ensure`` action over the missing names) when one is missing online;
+    ``unavailable`` when one is missing AND Offline mode is on (download blocked).
+    """
+    items: list[dict[str, Any]] = []
+    for tier_id, label, components in _READINESS_TIERS:
+        missing = _missing_tier_assets(components, models_present)
+        if not missing:
+            items.append(_readiness_item(tier_id, label, "ready", "", None))
+            continue
+        blocked = f"missing model weights: {', '.join(missing)}"
+        if offline:
+            items.append(
+                _readiness_item(tier_id, label, "unavailable", f"{blocked} (Offline mode blocks downloads)", None)
+            )
+        else:
+            action = {"kind": "assets.ensure", "assets": missing}
+            items.append(_readiness_item(tier_id, label, "needsDownload", blocked, action))
+    return items
+
+
+def _function_readiness_items(settings: dict[str, Any], providers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Roll each AI function's CLOUD route up to a key/consent readiness item.
+
+    A function routed to LOCAL (or unrouted -> local-safe default) is ``ready``.
+    A cloud-routed one is ``needsKey`` (no key for the provider), else
+    ``needsConsent`` (key present but the data-type consent is not granted), else
+    ``ready``. Vision checks FRAME consent; every other function checks TEXT.
+    """
+    from .models import consent as _consent  # local: import-light pure gate
+
+    routing = settings.get("routing")
+    per_function = routing.get("perFunction") if isinstance(routing, dict) else None
+    per_function = per_function if isinstance(per_function, dict) else {}
+
+    items: list[dict[str, Any]] = []
+    for function in _READINESS_FUNCTIONS:
+        cap = f"ai.{function}"
+        label = f"AI: {function}"
+        provider_id = _routed_cloud_provider(per_function.get(function))
+        if provider_id is None:
+            items.append(_readiness_item(cap, label, "ready", "", None))
+            continue
+        if not _provider_has_key(provider_id, providers):
+            action = {"kind": "openProviders", "provider": provider_id}
+            items.append(_readiness_item(cap, label, "needsKey", f"no key for provider {provider_id!r}", action))
+            continue
+        granted = (
+            _consent.frame_consent_granted(settings, provider_id)
+            if function == "vision"
+            else _consent.text_consent_granted(settings, provider_id)
+        )
+        if not granted:
+            action = {"kind": "setConsent", "provider": provider_id}
+            items.append(
+                _readiness_item(cap, label, "needsConsent", f"consent not granted for {provider_id!r}", action)
+            )
+            continue
+        items.append(_readiness_item(cap, label, "ready", "", None))
+    return items
+
+
+def _routed_cloud_provider(slot: Any) -> str | None:
+    """The CLOUD provider id a routing slot points at, or None for local/unrouted.
+
+    Returns ``None`` when the slot is absent, malformed, unset, or the LOCAL
+    sentinel (those all run locally — no key/consent needed); otherwise the
+    configured cloud provider id.
+    """
+    if not isinstance(slot, dict):
+        return None
+    provider_id = slot.get("provider")
+    if not isinstance(provider_id, str) or not provider_id or provider_id == _LOCAL_ROUTE:
+        return None
+    return provider_id
+
+
+def _provider_has_key(provider_id: str, providers: list[dict[str, Any]]) -> bool:
+    """True when a configured provider matching ``provider_id`` carries a key.
+
+    Matches on either the entry ``provider`` field or its ``id`` (the routing id
+    may be a friendly id or the canonical provider name). Reads the REDACTED
+    ``providers.list`` view, so it only ever sees key PRESENCE (last-4), never a
+    full key.
+    """
+    for entry in providers:
+        if not isinstance(entry, dict):
+            continue  # pragma: no cover - providers.list yields dicts only
+        ident = {str(entry.get("provider") or ""), str(entry.get("id") or "")}
+        if provider_id in ident:
+            keys = entry.get("apiKeys")
+            if isinstance(keys, list) and any(keys):
+                return True
+    return False
+
+
+def _readiness_item(
+    capability: str, label: str, status: str, blocked_by: str, action: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Build one wire :class:`ReadinessItem` dict (camelCase, JSON-safe)."""
+    return {
+        "capability": capability,
+        "label": label,
+        "status": status,
+        "blockedBy": blocked_by,
+        "action": action,
+    }
+
+
 def _advisor_report_to_wire(report: Any) -> dict[str, Any]:
     """Convert an :class:`AdvisorReport` frozen tree to the camelCase wire dict.
 
@@ -2096,6 +2284,10 @@ def register_all(
     # phase8.* are long jobs (load heavy models behind the phase8 runner seam).
     reg("system.probe", svc.system_probe)
     reg("system.advisor", svc.system_advisor)
+    # WU-8: the unified read-only readiness roll-up (model tiers + per-function
+    # provider key/consent state). Direct (no job): pure installed-state + redacted
+    # settings reads — no provider call, no assets.ensure (the read-only invariant).
+    reg("readiness.summary", svc.readiness_summary)
     reg("asr.engines", svc.asr_engines)
     reg("phase8.signals", svc.phase8_signals)
     reg("phase8.select", svc.phase8_select)
