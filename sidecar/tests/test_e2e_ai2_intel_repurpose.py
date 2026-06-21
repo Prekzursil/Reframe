@@ -323,6 +323,36 @@ def test_intel_semantic_settings_driven_egress_redacted_key_bug(tmp_path: Path) 
 
 
 # ========================================================================== #
+# INTELLIGENCE (a') — director.plan: REAL chat egress -> valid EditPlan JSON.
+# This is the path-SPECIFICITY control for the redacted-key bug above: the chat
+# factory (_provider_for_function -> get_provider(get_raw())) uses RAW keys, so
+# the SAME settings-driven egress that FAILS for embeddings SUCCEEDS here. That
+# proves the embeddings failure is the get()-vs-get_raw() defect, not the mock.
+# ========================================================================== #
+def test_intel_director_plan_real_chat_editplan_over_http(tmp_path: Path) -> None:
+    media = tmp_path / "talk.mp4"
+    _make_landscape_clip(media)
+    with MockModelServer() as server:
+        svc = _new_services(tmp_path)
+        protocol.clear_methods()
+        handlers.register_all(services=svc)
+        svc.settings.set(_cloud_settings(server.base_url, capabilities=["text"]))
+        vid = _add_video(svc, media, transcript=_transcript())
+        rpc = Rpc(svc)
+
+        done = rpc.run_job("director.plan", {"videoId": vid, "goal": "tighten this into a punchy short"})
+        # The mock returned a valid EditPlan JSON; the real parser + validator accepted it.
+        assert server.hits["chat"] >= 1, "director.plan never reached the mock /v1/chat/completions"
+        assert isinstance(done.get("planId"), str) and done["planId"]
+        kinds = [op["kind"] for op in done["editPlan"]["ops"]]
+        assert kinds == ["removeSilence", "trim", "caption"], f"EditPlan ops not parsed/validated: {kinds!r}"
+        # The Director request carried the structural untrusted-data fence (injection
+        # mitigation #1) — proof the real prompt builder, not a shortcut, ran.
+        sent = server.last_bodies["chat"]["messages"]
+        assert any("UNTRUSTED_MEDIA_DATA" in str(m.get("content", "")) for m in sent)
+
+
+# ========================================================================== #
 # INTELLIGENCE (b) — system.recommend: REAL device-detect + a recommendation
 # ========================================================================== #
 def test_intel_recommender_real_device_detect(tmp_path: Path) -> None:
