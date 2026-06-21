@@ -11,11 +11,13 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 import { ProvidersKeys, type ProvidersKeysProps } from './ProvidersKeys';
+import type { SpendCapClient } from './SpendCap';
 import type {
   CatalogResponse,
   ProviderConsent,
   ProvidersListResponse,
   SetConsentResponse,
+  SpendInfo,
   TestKeyResult,
   UsageRow,
 } from '../lib/rpc';
@@ -135,11 +137,26 @@ function makeApi(over: ApiOverrides = {}): ProvidersKeysProps['rpcClient'] {
   } as unknown as ProvidersKeysProps['rpcClient'];
 }
 
+/** A no-op spend client for the panel tests (SpendCap has its own dedicated suite). */
+function makeSpendClient(): SpendCapClient {
+  const spend: SpendInfo = {
+    month: '2026-06',
+    monthToDateCents: 0,
+    softLimitCents: 0,
+    hardLimitCents: 0,
+    enforceHardLimit: false,
+  };
+  return {
+    providers: { spend: () => Promise.resolve(spend) },
+    settings: { set: vi.fn(() => Promise.resolve({})) },
+  };
+}
+
 async function mount(
   props: Partial<ProvidersKeysProps> & { rpcClient: ProvidersKeysProps['rpcClient'] },
 ): Promise<void> {
   await act(async () => {
-    root.render(<ProvidersKeys {...props} />);
+    root.render(<ProvidersKeys spendClient={makeSpendClient()} {...props} />);
   });
   await flush();
 }
@@ -184,7 +201,7 @@ describe('ProvidersKeys — load + empty state', () => {
         }),
     });
     await act(async () => {
-      root.render(<ProvidersKeys rpcClient={api} />);
+      root.render(<ProvidersKeys spendClient={makeSpendClient()} rpcClient={api} />);
     });
     await act(async () => root.unmount());
     // Resolving now is a no-op (alive === false).
@@ -205,7 +222,7 @@ describe('ProvidersKeys — load + empty state', () => {
         }),
     });
     await act(async () => {
-      root.render(<ProvidersKeys rpcClient={api} />);
+      root.render(<ProvidersKeys spendClient={makeSpendClient()} rpcClient={api} />);
     });
     await act(async () => root.unmount());
     await act(async () => {
