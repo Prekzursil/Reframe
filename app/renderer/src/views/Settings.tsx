@@ -45,17 +45,20 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   {
     id: 'models',
     label: 'Models & System',
-    render: () => (
+    // WU-PROVIDERS: a readiness fix action of kind openProviders/setConsent on
+    // this panel routes to the Providers & Keys section (where key + consent
+    // management now lives), fixing the previous early-return dead-end.
+    render: (ctx) => (
       <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>
-        <ModelsSystemPanel />
+        <ModelsSystemPanel onOpenProviders={() => ctx.goTo('providers')} />
       </Suspense>
     ),
   },
   {
     id: 'providers',
     label: 'Providers & Keys',
-    // The empty-state action routes to the Models & System section, where
-    // per-function provider routing lives today.
+    // The full key + consent management surface. Its secondary link routes back
+    // to Models & System where per-function provider routing lives.
     render: (ctx) => <ProvidersKeys onOpenModels={() => ctx.goTo('models')} />,
   },
   {

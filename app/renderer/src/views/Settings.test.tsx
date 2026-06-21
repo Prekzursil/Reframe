@@ -11,7 +11,13 @@ import { createRoot, type Root } from 'react-dom/client';
 
 // Stub the three section bodies so the test exercises ONLY Settings' sub-nav.
 vi.mock('../panels/ModelsSystemPanel', () => ({
-  default: () => <div data-testid="models" />,
+  default: ({ onOpenProviders }: { onOpenProviders?: () => void }) => (
+    <div data-testid="models">
+      <button type="button" data-testid="open-providers" onClick={() => onOpenProviders?.()}>
+        add a key
+      </button>
+    </div>
+  ),
 }));
 vi.mock('../features/SystemHealth', () => ({
   SystemHealth: () => <div data-testid="health" />,
@@ -120,7 +126,7 @@ describe('Settings sub-nav', () => {
     expect(container.querySelector('[data-testid="models"]')).not.toBeNull();
   });
 
-  it('routes the Providers empty-state action to the Models section', async () => {
+  it('routes the Providers secondary action to the Models section', async () => {
     await mount('providers');
     expect(container.querySelector('[data-testid="providers"]')).not.toBeNull();
     await act(async () => {
@@ -129,5 +135,16 @@ describe('Settings sub-nav', () => {
     await flush();
     expect(container.querySelector('[data-testid="models"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="providers"]')).toBeNull();
+  });
+
+  it('routes a Models readiness key/consent action to the Providers section', async () => {
+    await mount('models');
+    expect(container.querySelector('[data-testid="models"]')).not.toBeNull();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="open-providers"]')!.click();
+    });
+    await flush();
+    expect(container.querySelector('[data-testid="providers"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="models"]')).toBeNull();
   });
 });

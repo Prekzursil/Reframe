@@ -34,7 +34,15 @@ import {
 } from './components/navIcons';
 // AI Director panel (lazy: it pulls the storyboard/diff + cost-banner surface).
 const DirectorPanel = lazy(() => import('./panels/DirectorPanel'));
-import { client, hasApi, rpc, type ShortReexportHint, type Video } from './lib/rpc';
+import {
+  client,
+  hasApi,
+  rpc,
+  type ReadinessAction,
+  type ShortReexportHint,
+  type Video,
+} from './lib/rpc';
+import { actionSection } from './features/providersKeysLogic';
 import { ToastProvider } from './components/toast/ToastProvider';
 import { ToastHost } from './components/toast/ToastHost';
 import { JobQueue } from './components/JobQueue';
@@ -242,6 +250,16 @@ function AppShell(): React.ReactElement {
     setRoute({ name: 'settings', section });
   }, []);
 
+  // WU-PROVIDERS: a readiness fix action from the Library roll-up routes to the
+  // matching Settings section — download actions to Models & System, key/consent
+  // actions to Providers & Keys (fixes the always-to-models dead-end).
+  const handleReadinessAction = useCallback(
+    (action: ReadinessAction) => {
+      openSettings(actionSection(action));
+    },
+    [openSettings],
+  );
+
   // The top-level tab strip switches surfaces (Workspace returns to the Library
   // home rather than staying drilled-in).
   const selectTab = useCallback(
@@ -321,7 +339,7 @@ function AppShell(): React.ReactElement {
         return route.video ? (
           <Workspace video={route.video} onBack={backToLibrary} />
         ) : (
-          <Library onOpen={openVideo} onReadinessAction={() => openSettings('models')} />
+          <Library onOpen={openVideo} onReadinessAction={handleReadinessAction} />
         );
     }
   }

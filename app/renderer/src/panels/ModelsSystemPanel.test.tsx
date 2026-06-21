@@ -293,9 +293,9 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function mount(c: FakeClient): Promise<void> {
+async function mount(c: FakeClient, onOpenProviders?: () => void): Promise<void> {
   await act(async () => {
-    root.render(<ModelsSystemPanel rpcClient={c.client} />);
+    root.render(<ModelsSystemPanel rpcClient={c.client} onOpenProviders={onOpenProviders} />);
   });
   await act(async () => {
     await Promise.resolve();
@@ -1093,6 +1093,68 @@ describe('<ModelsSystemPanel />', () => {
     });
     // No install was attempted for a key/consent action.
     expect(c.calls.some((x) => x.method === 'assets.ensure')).toBe(false);
+  });
+
+  it('WU-PROVIDERS: a key/consent roll-up action navigates via onOpenProviders', async () => {
+    const onOpenProviders = vi.fn();
+    const c = makeClient({
+      initialSettings: { firstRunChoiceMade: true },
+      readiness: [
+        {
+          capability: 'tr',
+          label: 'Translation',
+          status: 'needsKey',
+          blockedBy: 'no key',
+          action: { kind: 'openProviders', provider: 'Groq' },
+        },
+      ],
+    });
+    await mount(c, onOpenProviders);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const fix = container.querySelector(
+      '.readiness-rollup button.readiness-badge__action',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      fix.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(onOpenProviders).toHaveBeenCalledTimes(1);
+    // Navigation only — no install attempted.
+    expect(c.calls.some((x) => x.method === 'assets.ensure')).toBe(false);
+  });
+
+  it('WU-PROVIDERS: a setConsent roll-up action also navigates via onOpenProviders', async () => {
+    const onOpenProviders = vi.fn();
+    const c = makeClient({
+      initialSettings: { firstRunChoiceMade: true },
+      readiness: [
+        {
+          capability: 'tr',
+          label: 'Translation',
+          status: 'needsConsent',
+          blockedBy: 'consent needed',
+          action: { kind: 'setConsent', provider: 'Groq' },
+        },
+      ],
+    });
+    await mount(c, onOpenProviders);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const fix = container.querySelector(
+      '.readiness-rollup button.readiness-badge__action',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      fix.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(onOpenProviders).toHaveBeenCalledTimes(1);
   });
 
   it('an assets.ensure roll-up action coerces a non-array list + null advisor', async () => {

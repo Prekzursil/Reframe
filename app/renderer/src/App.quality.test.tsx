@@ -62,9 +62,16 @@ vi.mock('./views/Library', () => ({
       <button
         type="button"
         data-testid="readiness-fix"
-        onClick={() => onReadinessAction?.({ kind: 'models' })}
+        onClick={() => onReadinessAction?.({ kind: 'assets.ensure', assets: ['x'] })}
       >
         fix
+      </button>
+      <button
+        type="button"
+        data-testid="readiness-fix-key"
+        onClick={() => onReadinessAction?.({ kind: 'openProviders', provider: 'Groq' })}
+      >
+        fix-key
       </button>
     </div>
   ),
@@ -274,8 +281,8 @@ describe('App quality toggle — persist on change', () => {
   });
 });
 
-describe('App readiness deep-link → Settings/Models', () => {
-  it('opens Settings with the models section from a Library readiness fix', async () => {
+describe('App readiness deep-link → Settings', () => {
+  it('routes a download (assets.ensure) fix to the Models & System section', async () => {
     await mount();
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[data-testid="readiness-fix"]')!.click();
@@ -284,6 +291,18 @@ describe('App readiness deep-link → Settings/Models', () => {
     const settings = container.querySelector('[data-testid="settings"]');
     expect(settings).not.toBeNull();
     expect(settings!.getAttribute('data-section')).toBe('models');
+    expect(tab('Settings').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('routes a key (openProviders) fix to the Providers & Keys section', async () => {
+    await mount();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="readiness-fix-key"]')!.click();
+    });
+    await flush();
+    const settings = container.querySelector('[data-testid="settings"]');
+    expect(settings).not.toBeNull();
+    expect(settings!.getAttribute('data-section')).toBe('providers');
     expect(tab('Settings').getAttribute('aria-selected')).toBe('true');
   });
 });

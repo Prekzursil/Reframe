@@ -142,6 +142,13 @@ export function applyOutcomeText(rec: Recommendation): string {
 export interface ModelsSystemPanelProps {
   /** Inject the typed client for tests; defaults to the real lib/rpc client. */
   rpcClient?: typeof client;
+  /**
+   * WU-PROVIDERS: navigate to the Providers & Keys section. A readiness fix
+   * action of kind `openProviders` (add a key) or `setConsent` (grant consent)
+   * routes here instead of dead-ending on this panel. Optional: when absent the
+   * key/consent actions no-op (the host did not wire navigation).
+   */
+  onOpenProviders?: () => void;
 }
 
 interface SettingsShape {
@@ -155,7 +162,10 @@ interface SettingsShape {
   firstRunChoiceMade?: boolean;
 }
 
-export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.ReactElement {
+export function ModelsSystemPanel({
+  rpcClient,
+  onOpenProviders,
+}: ModelsSystemPanelProps): React.ReactElement {
   /* v8 ignore next -- the `?? client` default only runs in the real app; every test injects rpcClient. */
   const api = useMemo(() => rpcClient ?? client, [rpcClient]);
 
@@ -404,14 +414,20 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
     [api, downloading, settings.commercial],
   );
 
-  // WU-14: the readiness roll-up surfaces a fix action per not-ready capability.
-  // A `assets.ensure` action installs the named weights then re-lists assets +
-  // re-runs the advisor (same effect as a per-model Download). Key/consent
-  // actions are handled by the provider controls already on this panel, so the
-  // roll-up just announces them — no extra navigation needed here.
+  // WU-14 / WU-PROVIDERS: the readiness roll-up surfaces a fix action per
+  // not-ready capability.
+  //   * `assets.ensure` — install the named weights here, then re-list assets +
+  //     re-run the advisor (same effect as a per-model Download).
+  //   * `openProviders` (add a key) / `setConsent` (grant consent) — navigate to
+  //     the Providers & Keys section via `onOpenProviders` (fixes the previous
+  //     early-return dead-end where these actions did nothing).
   const handleReadinessAction = useCallback(
     async (action: ReadinessAction): Promise<void> => {
-      if (action.kind !== 'assets.ensure' || !action.assets || action.assets.length === 0) return;
+      if (action.kind === 'openProviders' || action.kind === 'setConsent') {
+        onOpenProviders?.();
+        return;
+      }
+      if (!action.assets || action.assets.length === 0) return;
       setError('');
       try {
         await api.assets.ensure(action.assets);
@@ -423,7 +439,7 @@ export function ModelsSystemPanel({ rpcClient }: ModelsSystemPanelProps): React.
         setError(errText(err));
       }
     },
-    [api, settings.commercial],
+    [api, settings.commercial, onOpenProviders],
   );
 
   const currentTier = settings.phase8Tier ?? 1;
