@@ -687,3 +687,158 @@ def test_default_parakeet_runner_delegates_to_real_module(monkeypatch):
     assert out["language"] == "ro"
     assert captured["audio"] == "/clip.mp4"
     assert captured["language"] == "ro"
+
+
+# --------------------------------------------------------------------------- #
+# device/model auto-detection (FIX #2: CPU fallback for non-GPU machines)
+# --------------------------------------------------------------------------- #
+def test_detect_device_cuda_when_probe_true():
+    device, compute = transcribe.detect_device(probe=lambda: True)
+    assert device == "cuda"
+    assert compute == transcribe.DEFAULT_GPU_COMPUTE
+
+
+def test_detect_device_cpu_when_probe_false():
+    device, compute = transcribe.detect_device(probe=lambda: False)
+    assert device == transcribe.CPU_DEVICE
+    assert compute == transcribe.CPU_COMPUTE
+
+
+def test_resolve_target_auto_gpu():
+    model, device, compute = transcribe.resolve_transcribe_target({}, probe=lambda: True)
+    assert (model, device, compute) == (
+        transcribe.DEFAULT_MODEL,
+        "cuda",
+        transcribe.DEFAULT_GPU_COMPUTE,
+    )
+
+
+def test_resolve_target_auto_cpu_uses_cpu_model():
+    model, device, compute = transcribe.resolve_transcribe_target({}, probe=lambda: False)
+    assert device == transcribe.CPU_DEVICE
+    assert compute == transcribe.CPU_COMPUTE
+    assert model == transcribe.CPU_MODEL
+    assert model != transcribe.DEFAULT_MODEL
+
+
+def test_resolve_target_explicit_device_cpu_override_skips_probe():
+    probed = {"n": 0}
+
+    def probe() -> bool:
+        probed["n"] += 1
+        return True
+
+    model, device, compute = transcribe.resolve_transcribe_target({"transcribeDevice": "cpu"}, probe=probe)
+    assert device == transcribe.CPU_DEVICE
+    assert compute == transcribe.CPU_COMPUTE
+    assert model == transcribe.CPU_MODEL
+    assert probed["n"] == 0
+
+
+def test_resolve_target_explicit_device_cuda_override():
+    model, device, compute = transcribe.resolve_transcribe_target({"transcribeDevice": "CUDA"}, probe=lambda: False)
+    assert device == "cuda"
+    assert compute == transcribe.DEFAULT_GPU_COMPUTE
+    assert model == transcribe.DEFAULT_MODEL
+
+
+def test_resolve_target_explicit_model_override():
+    model, device, _ = transcribe.resolve_transcribe_target({"transcribeModel": "medium"}, probe=lambda: True)
+    assert model == "medium"
+    assert device == "cuda"
+
+
+def test_resolve_target_unknown_device_value_falls_back_to_auto():
+    model, device, compute = transcribe.resolve_transcribe_target({"transcribeDevice": "gpu-9000"}, probe=lambda: False)
+    assert device == transcribe.CPU_DEVICE
+    assert compute == transcribe.CPU_COMPUTE
+    assert model == transcribe.CPU_MODEL
+
+
+def test_resolve_target_non_string_device_value_falls_back_to_auto():
+    model, device, _ = transcribe.resolve_transcribe_target(
+        {"transcribeDevice": 1, "transcribeModel": None}, probe=lambda: True
+    )
+    assert device == "cuda"
+    assert model == transcribe.DEFAULT_MODEL
+
+
+def test_transcribe_with_engine_no_cuda_loads_cpu_int8_only():
+    loader = FakeLoader(_two_segment_model())
+    t = transcribe.transcribe_with_engine("/v.mp4", loader=loader, settings={}, detect_probe=lambda: False)
+    assert len(t["segments"]) == 2
+    assert loader.loads == [(transcribe.CPU_MODEL, transcribe.CPU_DEVICE, transcribe.CPU_COMPUTE)]
+
+
+def test_transcribe_with_engine_cuda_loads_gpu_default():
+    loader = FakeLoader(_two_segment_model())
+    transcribe.transcribe_with_engine("/v.mp4", loader=loader, settings={}, detect_probe=lambda: True)
+    assert loader.loads == [(transcribe.DEFAULT_MODEL, "cuda", transcribe.DEFAULT_GPU_COMPUTE)]
+
+
+def test_transcribe_with_engine_settings_device_override():
+    loader = FakeLoader(_two_segment_model())
+    transcribe.transcribe_with_engine(
+        "/v.mp4",
+        loader=loader,
+        settings={"transcribeDevice": "cpu"},
+        detect_probe=lambda: True,
+    )
+    assert loader.loads == [(transcribe.CPU_MODEL, transcribe.CPU_DEVICE, transcribe.CPU_COMPUTE)]
+
+
+def test_transcribe_with_engine_parakeet_degrade_uses_resolved_cpu_target():
+    loader = FakeLoader(_two_segment_model())
+
+    def empty_parakeet(audio_path: str, **kwargs: Any):
+        return {"language": "", "segments": [], "durationSec": 0.0}
+
+    transcribe.transcribe_with_engine(
+        "/v.mp4",
+        loader=loader,
+        settings={"asrEngine": "parakeet"},
+        parakeet_runner=empty_parakeet,
+        detect_probe=lambda: False,
+    )
+    assert loader.loads == [(transcribe.CPU_MODEL, transcribe.CPU_DEVICE, transcribe.CPU_COMPUTE)]
+
+
+def test_default_cuda_probe_is_callable_and_safe():
+    result = transcribe._default_cuda_probe()
+    assert isinstance(result, bool)
+
+
+def test_default_cuda_probe_true_when_torch_reports_cuda(monkeypatch):
+    # With a (faked) torch reporting CUDA available, the probe returns True
+    # (covers the torch-present branch without the heavy real import).
+    import sys
+    import types as _types
+
+    fake_torch = _types.ModuleType("torch")
+    fake_torch.cuda = _types.SimpleNamespace(is_available=lambda: True)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    assert transcribe._default_cuda_probe() is True
+
+
+def test_default_cuda_probe_false_when_torch_reports_no_cuda(monkeypatch):
+    import sys
+    import types as _types
+
+    fake_torch = _types.ModuleType("torch")
+    fake_torch.cuda = _types.SimpleNamespace(is_available=lambda: False)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    assert transcribe._default_cuda_probe() is False
+
+
+def test_resolve_target_empty_model_string_keeps_auto_model():
+    # An empty/whitespace transcribeModel is ignored -> the auto model stands
+    # (covers the falsy-trimmed short-circuit branch).
+    model, device, _ = transcribe.resolve_transcribe_target({"transcribeModel": "   "}, probe=lambda: False)
+    assert model == transcribe.CPU_MODEL
+    assert device == transcribe.CPU_DEVICE
+
+
+def test_resolve_target_auto_literal_model_keeps_auto_model():
+    # transcribeModel == "auto" (the sentinel) is ignored -> auto model stands.
+    model, _, _ = transcribe.resolve_transcribe_target({"transcribeModel": "AUTO"}, probe=lambda: True)
+    assert model == transcribe.DEFAULT_MODEL

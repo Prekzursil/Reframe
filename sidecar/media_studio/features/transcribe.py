@@ -76,6 +76,21 @@ DEFAULT_DEVICE = "cuda"
 DEFAULT_GPU_COMPUTE = "float16"
 CPU_DEVICE = "cpu"
 CPU_COMPUTE = "int8"
+#: CPU-appropriate model: ``large-v3-turbo`` is impractically slow on CPU/int8.
+#: ``small`` is the sweet spot — multilingual, ~10x faster than large on CPU, and
+#: still good quality. Chosen as the auto CPU default; overridable via settings.
+CPU_MODEL = "small"
+
+#: the settings key picking the transcribe device (``auto`` | ``cuda`` | ``cpu``).
+TRANSCRIBE_DEVICE_KEY = "transcribeDevice"
+#: the settings key picking the whisper model (``auto`` | any faster-whisper id).
+TRANSCRIBE_MODEL_KEY = "transcribeModel"
+#: the sentinel meaning "decide automatically" for both knobs above.
+AUTO = "auto"
+
+#: a CUDA-availability probe seam: ``() -> bool``. Injected in tests; the default
+#: (:func:`_default_cuda_probe`) consults torch lazily and degrades to ``False``.
+DeviceProbe = Callable[[], bool]
 
 # Type aliases matching CONTRACTS.md §3 (plain JSON-able dicts both sides).
 Word = dict[str, Any]
@@ -171,6 +186,76 @@ def load_model_with_cpu_fallback(
             CPU_COMPUTE,
         )
         return loader.load(model, CPU_DEVICE, CPU_COMPUTE), CPU_DEVICE
+
+
+def _default_cuda_probe() -> bool:
+    """Return True when a real CUDA device is available, else False.
+
+    Mirrors the ``ctc_align_backend``/``diarize_backend`` device policy: the
+    torch import is lazy + the whole thing degrades to ``False`` (CPU) when torch
+    is absent or CUDA init fails — so a non-GPU machine never raises here.
+    """
+    try:
+        import torch  # noqa: PLC0415 - heavy seam, runtime only
+
+        return bool(torch.cuda.is_available())
+    except Exception:  # noqa: BLE001 - no torch / no CUDA runtime -> CPU path
+        return False
+
+
+def detect_device(*, probe: DeviceProbe | None = None) -> tuple[str, str]:
+    """Auto-detect ``(device, compute_type)`` from CUDA availability.
+
+    ``cuda``/``float16`` when ``probe()`` reports a real CUDA device, else
+    ``cpu``/``int8`` (the non-GPU fallback). ``probe`` is injectable in tests; the
+    default consults torch via :func:`_default_cuda_probe`.
+    """
+    cuda_probe = probe if probe is not None else _default_cuda_probe
+    if cuda_probe():
+        return DEFAULT_DEVICE, DEFAULT_GPU_COMPUTE
+    return CPU_DEVICE, CPU_COMPUTE
+
+
+def resolve_transcribe_target(
+    settings: dict[str, Any] | None,
+    *,
+    probe: DeviceProbe | None = None,
+) -> tuple[str, str, str]:
+    """Resolve ``(model, device, compute_type)`` from settings + auto-detection.
+
+    The two knobs (``transcribeDevice`` / ``transcribeModel``, both defaulting to
+    ``"auto"``) follow the tolerant pattern of :func:`selected_asr_engine`:
+
+      * ``transcribeDevice`` == ``"cuda"`` -> force GPU (``float16``) regardless of
+        detection; == ``"cpu"`` -> force CPU (``int8``); anything else (``auto``,
+        a typo, a non-string) -> :func:`detect_device`.
+      * the model defaults to the device-appropriate auto model (large turbo on
+        GPU, :data:`CPU_MODEL` on CPU) and is overridden only by an explicit,
+        non-empty string ``transcribeModel``.
+
+    Returning the resolved triple lets the caller pass it straight into
+    :func:`transcribe_file` (whose ``model``/``device``/``compute_type`` params
+    already exist) — the exception-based CPU fallback underneath stays as a final
+    safety net for the GPU-attempt path.
+    """
+    settings = settings or {}
+
+    device_raw = settings.get(TRANSCRIBE_DEVICE_KEY)
+    device_choice = device_raw.strip().lower() if isinstance(device_raw, str) else AUTO
+    if device_choice == DEFAULT_DEVICE:
+        device, compute = DEFAULT_DEVICE, DEFAULT_GPU_COMPUTE
+    elif device_choice == CPU_DEVICE:
+        device, compute = CPU_DEVICE, CPU_COMPUTE
+    else:  # "auto" / unknown / non-string -> detect
+        device, compute = detect_device(probe=probe)
+
+    model = DEFAULT_MODEL if device == DEFAULT_DEVICE else CPU_MODEL
+    model_raw = settings.get(TRANSCRIBE_MODEL_KEY)
+    if isinstance(model_raw, str):
+        trimmed = model_raw.strip()
+        if trimmed and trimmed.lower() != AUTO:
+            model = trimmed
+    return model, device, compute
 
 
 def _word_to_dict(word: Any) -> Word:
@@ -335,6 +420,7 @@ def transcribe_with_engine(
     duration: float | None = None,
     duration_probe: Callable[[str], float] | None = None,
     parakeet_runner: ParakeetRunner | None = None,
+    detect_probe: DeviceProbe | None = None,
     on_progress: ProgressCb | None = None,
     should_cancel: CancelProbe | None = None,
 ) -> Transcript:
@@ -353,7 +439,14 @@ def transcribe_with_engine(
     ``loader`` is the whisper loader seam (used for the default engine AND the
     fallback). ``parakeet_runner`` is the injectable Parakeet seam (default lazily
     delegates to the real module). The return is always a §3 :class:`Transcript`.
+
+    The whisper device/model is resolved up-front via
+    :func:`resolve_transcribe_target` (settings knobs + CUDA auto-detection) so a
+    non-GPU machine runs cpu/int8 with a CPU-appropriate model directly — instead
+    of attempting cuda and relying on the exception fallback. ``detect_probe`` is
+    the injectable CUDA-availability seam.
     """
+    model, device, compute_type = resolve_transcribe_target(settings, probe=detect_probe)
     engine = selected_asr_engine(settings)
     if engine == PARAKEET_ENGINE:
         runner = parakeet_runner if parakeet_runner is not None else _default_parakeet_runner
@@ -374,6 +467,9 @@ def transcribe_with_engine(
         audio_path,
         loader=loader,
         language=language,
+        model=model,
+        device=device,
+        compute_type=compute_type,
         on_progress=on_progress,
         should_cancel=should_cancel,
     )
