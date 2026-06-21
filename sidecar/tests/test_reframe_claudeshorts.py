@@ -19,7 +19,7 @@ import json
 import pytest
 from media_studio.features import reframe
 from media_studio.features import reframe_claudeshorts as cs
-from media_studio.features.reframe import ReframeEngine
+from media_studio.features.reframe import ReframeEngine, ReframeError
 from media_studio.features.reframe_claudeshorts import (
     ClaudeShortsReframeEngine,
     ClaudeShortsReframeError,
@@ -418,23 +418,26 @@ def test_engine_default_aspect_is_9_16(fake_bins):
 
 
 # --------------------------------------------------------------------------- #
-# registry + automatic fallback (reframe.get_engine — MOCKED wsl probe)
+# registry + automatic fallback (reframe.get_engine — MOCKED wsl which-probe)
 # --------------------------------------------------------------------------- #
-def _wsl_probe(returncode=0, exc=None):
+def _which(found=True):
+    """A ``shutil.which``-shaped fake recording every lookup.
+
+    ``found=True`` -> ``wsl`` resolves to a path (WSL present);
+    ``found=False`` -> ``None`` (WSL absent on this host).
+    """
     calls = []
 
-    def probe(argv, **kwargs):
-        calls.append(argv)
-        if exc is not None:
-            raise exc
-        return _Completed(returncode=returncode)
+    def which(name):
+        calls.append(name)
+        return "/usr/bin/wsl" if found else None
 
-    probe.calls = calls
-    return probe
+    which.calls = calls
+    return which
 
 
-def _never_probe(argv, **kwargs):  # pragma: no cover - must never run
-    raise AssertionError("probe must not run for an explicit claudeshorts request")
+def _never_which(name):  # pragma: no cover - must never run
+    raise AssertionError("which must not run for an explicit claudeshorts request")
 
 
 @pytest.fixture
@@ -452,11 +455,12 @@ def test_engines_registry_has_exactly_the_two_a4_impls():
 
 
 def test_wsl_available_probe_shapes():
-    ok = _wsl_probe(returncode=0)
-    assert reframe.wsl_available(ok) is True
-    assert ok.calls[0] == ["wsl", "--status"]
-    assert reframe.wsl_available(_wsl_probe(returncode=1)) is False
-    assert reframe.wsl_available(_wsl_probe(exc=FileNotFoundError("wsl"))) is False
+    # WSL presence is a pure PATH lookup (shutil.which) — never a subprocess,
+    # so a half-installed WSL whose `wsl --status` would hang can never block.
+    present = _which(found=True)
+    assert reframe.wsl_available(which=present) is True
+    assert present.calls == ["wsl"]
+    assert reframe.wsl_available(which=_which(found=False)) is False
 
 
 def test_script_present(verthor_script):
@@ -467,36 +471,58 @@ def test_script_present(verthor_script):
 
 
 def test_resolve_explicit_claudeshorts_never_probes():
-    name, notice = reframe.resolve_engine_name("claudeshorts", {}, probe_runner=_never_probe)
+    name, notice = reframe.resolve_engine_name("claudeshorts", {}, which=_never_which)
     assert name == "claudeshorts"
     assert notice is None
 
 
 @pytest.mark.parametrize("requested", ["auto", "verthor", "", None])
 def test_resolve_verthor_when_available(requested, verthor_script):
-    name, notice = reframe.resolve_engine_name(requested, verthor_script, probe_runner=_wsl_probe(returncode=0))
+    name, notice = reframe.resolve_engine_name(requested, verthor_script, which=_which(found=True))
     assert name == "verthor"
     assert notice is None
 
 
-@pytest.mark.parametrize("requested", ["auto", "verthor"])
-def test_resolve_falls_back_when_wsl_probe_fails(requested, verthor_script):
-    name, notice = reframe.resolve_engine_name(requested, verthor_script, probe_runner=_wsl_probe(returncode=1))
+@pytest.mark.parametrize("requested", ["auto", "", None])
+def test_resolve_auto_falls_back_when_wsl_absent(requested, verthor_script):
+    """auto (and the blank/None synonyms) -> claudeshorts when WSL is absent."""
+    name, notice = reframe.resolve_engine_name(requested, verthor_script, which=_which(found=False))
     assert name == "claudeshorts"
     assert notice is not None
     assert notice["type"] == "reframe.fallback"
-    assert notice["requested"] == requested
+    # "", None and "auto" all normalise to the "auto" selector in the notice.
+    assert notice["requested"] == "auto"
     assert notice["engine"] == "claudeshorts"
     assert "WSL" in notice["reason"]
     assert "claudeshorts" in notice["message"]
 
 
-def test_resolve_falls_back_when_script_missing(monkeypatch):
+def test_resolve_explicit_verthor_errors_when_wsl_absent(verthor_script):
+    """EXPLICIT verthor must FAIL LOUDLY when WSL is absent — never silently
+    fall back. Only ``auto`` is allowed to substitute claudeshorts."""
+    with pytest.raises(ReframeError) as exc:
+        reframe.resolve_engine_name("verthor", verthor_script, which=_which(found=False))
+    assert "WSL" in str(exc.value)
+
+
+def test_resolve_explicit_verthor_errors_when_script_missing(monkeypatch):
+    """Explicit verthor also errors (not falls back) when the script is missing."""
+    monkeypatch.delenv("MEDIA_STUDIO_VERTHOR_SCRIPT", raising=False)
+    with pytest.raises(ReframeError) as exc:
+        reframe.resolve_engine_name(
+            "verthor",
+            {"verthorScript": "definitely_missing/nope.sh"},
+            which=_never_which,  # script check fails BEFORE any wsl probe
+        )
+    assert "not found" in str(exc.value)
+
+
+def test_resolve_auto_falls_back_when_script_missing(monkeypatch):
     monkeypatch.delenv("MEDIA_STUDIO_VERTHOR_SCRIPT", raising=False)
     name, notice = reframe.resolve_engine_name(
         "auto",
         {"verthorScript": "definitely_missing/nope.sh"},
-        probe_runner=_never_probe,  # script check fails BEFORE any wsl probe
+        which=_never_which,  # script check fails BEFORE any wsl probe
     )
     assert name == "claudeshorts"
     assert "not found" in notice["reason"]
@@ -508,17 +534,22 @@ def test_resolve_unknown_engine_raises():
 
 
 def test_get_engine_returns_constructed_instances(verthor_script):
-    eng, notice = reframe.get_engine("auto", verthor_script, probe_runner=_wsl_probe(returncode=0))
+    eng, notice = reframe.get_engine("auto", verthor_script, which=_which(found=True))
     assert isinstance(eng, ReframeEngine)
     assert notice is None
 
-    eng, notice = reframe.get_engine("auto", verthor_script, probe_runner=_wsl_probe(returncode=1))
+    eng, notice = reframe.get_engine("auto", verthor_script, which=_which(found=False))
     assert isinstance(eng, ClaudeShortsReframeEngine)
     assert notice is not None
 
-    eng, notice = reframe.get_engine("claudeshorts", {}, probe_runner=_never_probe)
+    eng, notice = reframe.get_engine("claudeshorts", {}, which=_never_which)
     assert isinstance(eng, ClaudeShortsReframeEngine)
     assert notice is None
+
+
+def test_get_engine_explicit_verthor_errors_when_wsl_absent(verthor_script):
+    with pytest.raises(ReframeError):
+        reframe.get_engine("verthor", verthor_script, which=_which(found=False))
 
 
 # --------------------------------------------------------------------------- #

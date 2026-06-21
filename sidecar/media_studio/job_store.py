@@ -31,6 +31,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -80,11 +81,21 @@ class DiskJobStore:
         return self.root / f"{job_id}.json"
 
     def write(self, record: JobRecord) -> None:
-        """Atomically persist ``record`` to ``root/<jobId>.json`` (temp + rename)."""
+        """Atomically persist ``record`` to ``root/<jobId>.json`` (temp + rename).
+
+        The temp file gets a UNIQUE name (:func:`tempfile.mkstemp` in the target
+        directory) rather than a fixed ``<jobId>.json.tmp``. Two threads writing
+        the same job — e.g. the RPC thread (record_request) and the worker thread
+        (_set_status) — would otherwise share one temp path: the first
+        ``os.replace`` consumes it and the second raises ``FileNotFoundError``,
+        breaking the job on the production store. A per-write temp makes the two
+        replaces independent (last writer wins), preserving atomicity.
+        """
         path = self._path(str(record["jobId"]))
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, indent=2, ensure_ascii=False))
         os.replace(tmp, path)
 
     def load_all(self) -> list[JobRecord]:
