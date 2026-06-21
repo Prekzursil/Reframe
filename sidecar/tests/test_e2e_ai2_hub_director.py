@@ -375,6 +375,73 @@ def test_hub_rotation_on_real_429(tmp_path: Path) -> None:
 
 
 # ========================================================================== #
+# HUB-4b — usage/budget accounting updates after a REAL HTTP egress
+# ========================================================================== #
+def test_hub_usage_updates_after_real_egress(tmp_path: Path) -> None:
+    """The RotatingProvider's per-key usage updates after a REAL HTTP chat.
+
+    This is the genuine accounting unit: ``_on_success`` increments ``used`` and
+    folds in the parsed ``X-RateLimit-*`` headers. We build the pool exactly as
+    the product factory does (``get_provider(get_raw())`` -> RotatingProvider over
+    a real socket), issue one real chat through it, and assert the budget moved.
+
+    NOTE (finding, not asserted as a breakage): the ``providers.usage`` RPC builds
+    a SEPARATE planning pool (``self._ai_pool()``, fresh counters), so it does NOT
+    reflect egress that happened through a director/job pool instance in-process —
+    per-key usage from AI jobs is surfaced via the persisted ``usageCache``, not a
+    shared live counter. The accounting itself (below) is real.
+    """
+    from media_studio.models import provider as _provider_mod
+
+    with MockModelServer() as server:
+        svc, rpc = _wire(tmp_path)
+        rpc.call("providers.upsert", {"provider": _provider_entry(server.base_url)})
+        svc.settings.set(_base_settings("mock"))
+
+        # The product factory path: RAW keys -> a RotatingProvider over a real socket.
+        pool = _provider_mod.get_provider(svc.settings.get_raw())
+        assert isinstance(pool, _provider_mod.RotatingProvider), f"not a pool: {pool!r}"
+
+        before = [r for r in pool.usage() if r.get("provider") == "mock"][0]
+        assert before["used"] == 0, f"usage did not start at zero: {before!r}"
+
+        content = pool.chat([{"role": "user", "content": "ping"}], capability="text")
+        assert isinstance(content, str) and content, "real chat returned no content"
+        assert server.hits["chat"] >= 1, "no real egress to account for"
+
+        after = [r for r in pool.usage() if r.get("provider") == "mock"][0]
+        # The mock sends X-RateLimit-Limit:1000 / Remaining:999 -> used==1, max==1000.
+        assert after["used"] >= 1, f"usage 'used' not incremented after egress: {after!r}"
+        assert after["max"] == 1000, f"budget 'max' not parsed from X-RateLimit headers: {after!r}"
+
+
+# ========================================================================== #
+# DIRECTOR — previewCost: per-function route/cost preview, PURE (zero egress)
+# ========================================================================== #
+def test_director_preview_cost_is_pure(tmp_path: Path) -> None:
+    media = tmp_path / "talk.mp4"
+    _make_sample_mp4(media)
+    with MockModelServer() as server:
+        svc, rpc = _wire(tmp_path)
+        rpc.call("providers.upsert", {"provider": _provider_entry(server.base_url)})
+        svc.settings.set(_base_settings("mock"))
+        vid = _add_video(svc, media)
+
+        plan = rpc.run_job("director.plan", {"videoId": vid, "goal": "tighten"})
+        hits_after_plan = dict(server.hits)
+
+        preview = rpc.call("director.previewCost", {"planId": plan["planId"]})
+        per_function = {row["function"]: row for row in preview["perFunction"]}
+        # Both data-type surfaces are previewed, each with its own route/cost/egress.
+        assert {"editPlan", "vision"} <= set(per_function), f"previewCost missing functions: {per_function!r}"
+        for row in preview["perFunction"]:
+            for key in ("route", "costEst", "willEgress", "cacheHit", "cacheKey"):
+                assert key in row, f"previewCost row missing {key!r}: {row!r}"
+        # PURE: previewCost made ZERO additional provider calls.
+        assert server.hits == hits_after_plan, f"previewCost egressed (impure): {hits_after_plan} -> {server.hits}"
+
+
+# ========================================================================== #
 # HUB-5 — text-consent gate blocks egress; budget gate refuses un-acked run
 # ========================================================================== #
 def test_hub_text_consent_gate_blocks_egress(tmp_path: Path) -> None:
@@ -411,6 +478,50 @@ def test_hub_text_consent_gate_blocks_egress(tmp_path: Path) -> None:
         svc.settings.set({"consent": {"perProvider": {"mock": {"text": True}}}})
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "PRODUCT BUG (TOP_BREAKAGE): the director.plan CHAT/editPlan egress path is "
+        "NOT text-consent gated. The index embedder filters providers via "
+        "_text_consented_settings and the vision paths via "
+        "_frame_consented_vision_settings, but director.plan builds its provider "
+        "with _provider_for_function('editPlan') -> get_provider(get_raw()) with NO "
+        "consent filter. build_understanding folds the TRANSCRIPT into the prompt, "
+        "so with TEXT consent REVOKED director.plan still ships the transcript text "
+        "to the cloud (verified: chat hit + transcript bytes on the wire). Candidate "
+        "fix: filter the editPlan pool through _text_consented_settings like the "
+        "index path. Strict xfail -> flips to a hard fail the moment it is fixed."
+    ),
+)
+def test_hub_director_chat_path_honors_text_consent_xfail(tmp_path: Path) -> None:
+    """The chat (director.plan) egress SHOULD be blocked when TEXT consent is off.
+
+    This is the consent equivalent of agent-2's redacted-key xfail: the SECURE
+    behavior is asserted, and it currently FAILS because the editPlan chat path
+    skips the per-provider TEXT-consent filter the index/vision paths apply.
+    """
+    media = tmp_path / "talk.mp4"
+    _make_sample_mp4(media)
+    with MockModelServer() as server:
+        svc, rpc = _wire(tmp_path)
+        rpc.call("providers.upsert", {"provider": _provider_entry(server.base_url)})
+        svc.settings.set(_base_settings("mock"))
+        # REVOKE text consent — transcript must NOT egress to the cloud planner.
+        rpc.call("providers.setConsent", {"provider": "mock", "text": False})
+        vid = _add_video(svc, media)
+        project = svc._load_or_create_project(vid)
+        project.data["transcript"] = {
+            "language": "en",
+            "durationSec": 6.0,
+            "segments": [{"start": 0.0, "end": 2.0, "text": "secret revenue numbers", "words": []}],
+        }
+        project.save()
+
+        rpc.run_job("director.plan", {"videoId": vid, "goal": "tighten"})
+        # SECURE expectation (currently violated): zero chat egress with consent off.
+        assert server.hits["chat"] == 0, "director.plan egressed transcript text despite TEXT consent revoked"
+
+
 def test_hub_budget_gate_refuses_unacked_cloud_run(tmp_path: Path) -> None:
     media = tmp_path / "talk.mp4"
     _make_sample_mp4(media)
@@ -442,6 +553,40 @@ def test_hub_budget_gate_refuses_unacked_cloud_run(tmp_path: Path) -> None:
         done = rpc.run_job("director.plan", {"videoId": vid, "goal": "tighten"})
         assert server.hits["chat"] >= 1, "acknowledged run did not egress"
         assert [op["kind"] for op in done["editPlan"]["ops"]] == ["removeSilence", "trim", "caption"]
+
+
+def test_hub_budget_ack_token_admits_gated_run(tmp_path: Path) -> None:
+    """The REAL ack path: echo the planJob cacheKey -> a gated cloud run is admitted.
+
+    Exercises the ``ack == envelope.cacheKey`` branch (not the disable-the-gate
+    shortcut). ``director.apply`` exposes the exact token via ``_director_apply_ack``;
+    passing it as ``confirmBudget`` with the gate ARMED admits the run.
+    """
+    media = tmp_path / "talk.mp4"
+    _make_sample_mp4(media)
+    with MockModelServer() as server:
+        svc, rpc = _wire(tmp_path)
+        rpc.call("providers.upsert", {"provider": _provider_entry(server.base_url)})
+        svc.settings.set(_base_settings("mock"))  # gate OFF so the plan can be created
+        vid = _add_video(svc, media)
+        plan = rpc.run_job("director.plan", {"videoId": vid, "goal": "tighten"})
+        plan_id = plan["planId"]
+
+        # ARM the budget gate; the exact ack token is the plan's envelope cacheKey.
+        svc.settings.set({"confirmCloudBudget": True})
+        ack = svc._director_apply_ack(plan_id)
+        assert isinstance(ack, str) and ack, "no budget ack token exposed"
+
+        # WITHOUT the ack -> refused.
+        with pytest.raises(Exception) as exc:  # noqa: PT011 - typed RpcError
+            rpc.run_job("director.apply", {"planId": plan_id})
+        assert "budget" in str(exc.value).lower(), f"not the budget gate: {exc.value!r}"
+
+        # WITH the correct ack token -> admitted (the run proceeds past the gate;
+        # the empty default engine table then fails the ops, which is the separate
+        # TOP_BREAKAGE — what matters here is the gate ADMITTED the run).
+        applied = rpc.run_job("director.apply", {"planId": plan_id, "confirmBudget": ack})
+        assert "opsStatus" in applied, f"ack did not admit the gated run: {applied!r}"
 
 
 # ========================================================================== #
