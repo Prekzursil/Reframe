@@ -112,6 +112,7 @@ class MockModelServer:
     def __init__(self) -> None:
         self.hits: dict[str, int] = {"chat": 0, "embeddings": 0, "vision": 0}
         self.last_bodies: dict[str, dict[str, Any]] = {}
+        self.auth_headers: dict[str, str | None] = {}
         self._lock = threading.Lock()
         outer = self
 
@@ -160,6 +161,7 @@ class MockModelServer:
         with self._lock:
             self.hits["embeddings"] += 1
             self.last_bodies["embeddings"] = body
+            self.auth_headers["embeddings"] = handler.headers.get("Authorization")
         data = [
             {"object": "embedding", "index": i, "embedding": _deterministic_vector(str(t))}
             for i, t in enumerate(inputs)
@@ -180,6 +182,7 @@ class MockModelServer:
             if vision:
                 self.hits["vision"] += 1
             self.last_bodies["chat"] = body
+            self.auth_headers["chat"] = handler.headers.get("Authorization")
         if _is_director_request(body):
             content = _edit_plan_json()
         elif vision:
@@ -201,6 +204,65 @@ class MockModelServer:
 
     # -- lifecycle ----------------------------------------------------------
     def __enter__(self) -> MockModelServer:
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler_cls)
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+    @property
+    def port(self) -> int:
+        assert self._server is not None, "server not started"
+        return self._server.server_address[1]
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self.port}/v1"
+
+
+class Always429Server:
+    """A real HTTP server that returns 429 on every chat/embeddings POST.
+
+    Used as the FIRST provider in a rotation test so the REAL
+    :class:`RotatingProvider` hits a genuine 429 over a real socket and fails
+    over to the working :class:`MockModelServer` (the second provider). Counts
+    hits so a test can prove the throttled key was actually tried.
+    """
+
+    def __init__(self) -> None:
+        self.hits = 0
+        self._lock = threading.Lock()
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args: Any) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802 - http.server API
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                if length:
+                    self.rfile.read(length)
+                with outer._lock:
+                    outer.hits += 1
+                out = json.dumps({"error": {"message": "rate limit exceeded", "type": "rate_limit"}}).encode("utf-8")
+                self.send_response(429)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out)))
+                self.send_header("Retry-After", "1")
+                self.end_headers()
+                self.wfile.write(out)
+
+        self._handler_cls = Handler
+        self._server: ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self) -> Always429Server:
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler_cls)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
