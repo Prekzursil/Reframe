@@ -4,9 +4,13 @@ P2 (ADDENDUM A4): there are now TWO implementations behind one interface —
 **verthor** (this module's adapter, the default) and **claudeshorts**
 (:mod:`.reframe_claudeshorts`, in-sidecar MediaPipe/OpenCV crop + one ffmpeg
 pass). This module additionally owns the ENGINE REGISTRY (:data:`ENGINES`),
-:func:`get_engine`, and the AUTOMATIC fallback: when WSL/verthor is unavailable
-(wsl probe fails or the script is missing) ``get_engine`` returns the
-claudeshorts engine together with a typed notice (surfaced in job progress).
+:func:`get_engine`, and the AUTOMATIC fallback: when **auto** is selected and
+WSL/verthor is unavailable (``wsl.exe`` not on PATH, probed via
+``shutil.which`` — never a subprocess — or the script is missing) ``get_engine``
+returns the claudeshorts engine together with a typed notice (surfaced in job
+progress). An EXPLICIT ``verthor`` request, by contrast, raises
+:class:`ReframeError` when WSL is absent — explicit engine choices fail loudly
+rather than being silently substituted.
 
 The verthor adapter: verthor (a mediapipe-based auto-reframer) runs inside its
 own **WSL2** environment, so we invoke it as a Windows-host subprocess that
@@ -30,6 +34,7 @@ spaces stay intact because each is its own argv element; logs go to stderr.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from collections.abc import Callable
 from pathlib import Path, PureWindowsPath
@@ -64,6 +69,8 @@ _DEFAULT_VERTHOR_SCRIPT = "__BUNDLED__"  # sentinel resolved in resolve_script()
 
 # Injectable subprocess seam (mocked in tests).
 Runner = Callable[..., Any]
+# Injectable ``shutil.which``-shaped seam for the WSL presence probe.
+WhichFn = Callable[[str], str | None]
 
 
 class ReframeError(RuntimeError):
@@ -290,23 +297,17 @@ def make_fallback_notice(requested: str, reason: str) -> dict[str, str]:
     }
 
 
-def wsl_available(probe_runner: Runner = subprocess.run) -> bool:
-    """Probe whether WSL is usable on this host (``wsl --status``).
+def wsl_available(*, which: WhichFn = shutil.which) -> bool:
+    """Probe whether WSL is present on this host — a pure PATH lookup.
 
-    Argv list, output captured as BYTES (wsl emits UTF-16; we only need the
-    exit code) so both pipes are drained (A6 lesson 2). Any spawn failure —
-    wsl.exe missing, timeout, crash — means "not available".
+    Uses ``shutil.which("wsl")`` (NOT ``wsl --status``): a presence probe must
+    never spawn a subprocess, because a half-installed WSL can make
+    ``wsl --status`` hang and that would block the job thread. ``which`` is the
+    injectable seam (tests pass a fake that returns a path / ``None``). On a
+    Windows box with no WSL feature installed, ``wsl.exe`` is absent from PATH
+    and this returns ``False`` — the auto-engine fallback's gate.
     """
-    try:
-        completed = probe_runner(
-            ["wsl", "--status"],
-            capture_output=True,
-            check=False,
-            timeout=15,
-        )
-    except Exception:  # noqa: BLE001 - any probe failure == unavailable
-        return False
-    return getattr(completed, "returncode", 1) == 0
+    return which("wsl") is not None
 
 
 def _script_host_path(settings: dict[str, Any] | None = None) -> str:
@@ -338,28 +339,36 @@ def script_present(settings: dict[str, Any] | None = None) -> bool:
 
 def verthor_unavailable_reason(
     settings: dict[str, Any] | None = None,
-    probe_runner: Runner = subprocess.run,
+    *,
+    which: WhichFn = shutil.which,
 ) -> str | None:
-    """``None`` when verthor is usable, else a human reason (script/WSL)."""
+    """``None`` when verthor is usable, else a human reason (script/WSL).
+
+    WSL presence is the pure-PATH :func:`wsl_available` probe (no subprocess).
+    """
     settings = settings or {}
     if not script_present(settings):
         return f"verthor script not found at {_script_host_path(settings)}"
-    if not wsl_available(probe_runner):
-        return "WSL probe failed (wsl --status)"
+    if not wsl_available(which=which):
+        return "WSL not found on PATH (wsl.exe missing — WSL not installed?)"
     return None
 
 
 def resolve_engine_name(
     name: str | None,
     settings: dict[str, Any] | None = None,
-    probe_runner: Runner = subprocess.run,
+    *,
+    which: WhichFn = shutil.which,
 ) -> tuple[str, dict[str, str] | None]:
     """Resolve a requested engine name to ``(concrete_name, notice|None)``.
 
     - ``"claudeshorts"``: returned as-is, no probing, no notice.
-    - ``"auto"`` / ``"verthor"`` (and ``None``/blank -> auto): verthor when the
-      WSL probe + script check pass; otherwise **automatic fallback** to
-      claudeshorts with a typed :func:`make_fallback_notice`.
+    - ``"auto"`` (and ``None``/blank -> auto): verthor when the WSL PATH probe +
+      script check pass; otherwise **automatic fallback** to claudeshorts with a
+      typed :func:`make_fallback_notice`.
+    - ``"verthor"`` (EXPLICIT): verthor when available, else **raise**
+      :class:`ReframeError`. An explicit engine request must NOT be silently
+      substituted — only ``auto`` is allowed to fall back.
     - anything else: ``ValueError`` (unknown engines fail loudly, A6 #3).
     """
     requested = str(name or ENGINE_AUTO).strip().lower() or ENGINE_AUTO
@@ -367,9 +376,12 @@ def resolve_engine_name(
         return ENGINE_CLAUDESHORTS, None
     if requested not in (ENGINE_AUTO, ENGINE_VERTHOR):
         raise ValueError(f"unknown reframe engine: {name!r}")
-    reason = verthor_unavailable_reason(settings, probe_runner=probe_runner)
+    reason = verthor_unavailable_reason(settings, which=which)
     if reason is None:
         return ENGINE_VERTHOR, None
+    if requested == ENGINE_VERTHOR:
+        # Explicit verthor: fail loudly, never silently fall back.
+        raise ReframeError(f"verthor reframe engine requested but unavailable: {reason}")
     _log.warning("reframe fallback (%s requested): %s", requested, reason)
     return ENGINE_CLAUDESHORTS, make_fallback_notice(requested, reason)
 
@@ -377,15 +389,17 @@ def resolve_engine_name(
 def get_engine(
     name: str | None,
     settings: dict[str, Any] | None = None,
-    probe_runner: Runner = subprocess.run,
+    *,
+    which: WhichFn = shutil.which,
 ) -> tuple[Any, dict[str, str] | None]:
     """Build the reframe engine for ``name`` -> ``(engine, notice|None)``.
 
     The engine is a fresh instance of the resolved :data:`ENGINES` class,
     constructed with ``settings``. ``notice`` is non-None only when an
     automatic verthor->claudeshorts fallback happened; callers running inside a
-    job should surface ``notice["message"]`` via ``job.progress``.
+    job should surface ``notice["message"]`` via ``job.progress``. An explicit
+    ``verthor`` request with WSL absent raises :class:`ReframeError`.
     """
     settings = settings or {}
-    resolved, notice = resolve_engine_name(name, settings, probe_runner=probe_runner)
+    resolved, notice = resolve_engine_name(name, settings, which=which)
     return ENGINES[resolved](settings), notice
