@@ -828,9 +828,7 @@ def make_export_engine(*, runner: RunFn, settings: Mapping[str, Any] | None = No
         return _render(
             project_copy,
             op,
-            lambda i, o: _ffmpeg.build_convert_argv(
-                i, o, {"vcodec": "libx264", "acodec": "aac"}, dict(settings or {})
-            ),
+            lambda i, o: _ffmpeg.build_convert_argv(i, o, {"vcodec": "libx264", "acodec": "aac"}, dict(settings or {})),
             runner=runner,
             settings=settings,
         )
