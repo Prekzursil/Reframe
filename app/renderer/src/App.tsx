@@ -16,6 +16,8 @@ import { incompleteBatches, remainingCount } from './features/repurposeLogic';
 import { useToast } from './components/toast/useToast';
 // Phase-8 "Models & System" panel (lazy: it pulls the model-card grid + onboarding).
 const ModelsSystemPanel = lazy(() => import('./panels/ModelsSystemPanel'));
+// AI Director panel (lazy: it pulls the storyboard/diff + cost-banner surface).
+const DirectorPanel = lazy(() => import('./panels/DirectorPanel'));
 import { client, hasApi, rpc, type ShortReexportHint, type Video } from './lib/rpc';
 import { ToastProvider } from './components/toast/ToastProvider';
 import { ToastHost } from './components/toast/ToastHost';
@@ -45,7 +47,9 @@ type Route =
   // system-advanced: the app-global System Health diagnostic screen.
   | { name: 'health' }
   // Phase-8: the app-global "Models & System" graphics-settings panel.
-  | { name: 'models' };
+  | { name: 'models' }
+  // Director: the prompt-driven AI video-editing panel (director.plan/apply/…).
+  | { name: 'director' };
 
 /** Local/Cloud quality toggle. Maps to settings.useCloud (CONTRACTS.md §2). */
 function QualityToggle({
@@ -228,6 +232,11 @@ export function App(): React.ReactElement {
     setRoute({ name: 'models' });
   }, []);
 
+  // Director: the top-level AI Director nav.
+  const openDirector = useCallback(() => {
+    setRoute({ name: 'director' });
+  }, []);
+
   // P4 §6: Re-export reopens the source video's Workspace (where the
   // Short-maker tab lives) so the user can replay the export. Resolve the
   // source Video by id via library.list, then navigate; fall back to the
@@ -260,6 +269,12 @@ export function App(): React.ReactElement {
         return (
           <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>
             <ModelsSystemPanel />
+          </Suspense>
+        );
+      case 'director':
+        return (
+          <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>
+            <DirectorPanel />
           </Suspense>
         );
       case 'library':
@@ -309,6 +324,14 @@ export function App(): React.ReactElement {
               onClick={openModels}
             >
               Models &amp; System
+            </button>
+            <button
+              type="button"
+              className={`app__nav-btn${route.name === 'director' ? ' is-active' : ''}`}
+              aria-current={route.name === 'director' ? 'page' : undefined}
+              onClick={openDirector}
+            >
+              Director
             </button>
           </nav>
           <QualityToggle quality={quality} onChange={changeQuality} />

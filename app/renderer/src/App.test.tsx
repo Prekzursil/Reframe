@@ -81,6 +81,13 @@ vi.mock('./panels/ModelsSystemPanel', () => ({
   default: () => <div data-testid="models" />,
 }));
 
+// Stub the lazy AI Director panel (it owns its own tests). This proves the
+// router can resolve + mount it; the panel-mount selector mirrors the GUI
+// harness convention (a data-testid the nav must be able to reach).
+vi.mock('./panels/DirectorPanel', () => ({
+  default: () => <div data-testid="director" />,
+}));
+
 // Stub the Repurpose view; expose the resumeId App wired in (it owns its tests).
 vi.mock('./views/Repurpose', () => ({
   Repurpose: ({ resumeId }: { resumeId?: string }) => (
@@ -184,6 +191,27 @@ describe('App route switch', () => {
     expect(container.querySelector('[data-testid="models"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="library"]')).toBeNull();
     expect(nav('Models & System').classList.contains('is-active')).toBe(true);
+  });
+
+  it('navigates to (mounts) the AI Director panel via the header nav', async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+
+    // The Director surface is NOT mounted until the nav routes to it.
+    expect(container.querySelector('[data-testid="director"]')).toBeNull();
+
+    await act(async () => {
+      nav('Director').click();
+    });
+    await flush();
+
+    // The router resolved the lazy panel and mounted it (reachability proven).
+    expect(container.querySelector('[data-testid="director"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="library"]')).toBeNull();
+    expect(nav('Director').classList.contains('is-active')).toBe(true);
+    expect(nav('Director').getAttribute('aria-current')).toBe('page');
   });
 
   it('opens a video into the Workspace and back via nav', async () => {
