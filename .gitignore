@@ -58,6 +58,10 @@ dist/
 
 # Regenerable build binaries (staged by build/python-embed-setup.ps1 -WithFfmpeg)
 build/ffmpeg/
+# The dedicated py3.14 embeddable for the isolated chatterbox env is large and
+# regenerable by the same prep script — never commit it (mirrors build/ffmpeg/).
+# NOTE: build/python-embed/ (py3.12) IS tracked historically; this only covers 3.14.
+build/python-embed-314/
 
 # Runtime data root (models/exports/envs — relocatable via MEDIA_STUDIO_CONFIG_DIR)
 /data/

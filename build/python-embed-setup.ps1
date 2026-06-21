@@ -32,8 +32,11 @@ param(
     [string]$ChatterboxDest = (Join-Path $PSScriptRoot 'python-embed-314'),
     [string]$ExpectedChatterboxPythonSha256 = '',  # fill in after the first verified run
     [switch]$WithFfmpeg,
-    # Pinned ffmpeg build (gyan.dev essentials; ~80 MB zip). Verify on first run.
-    [string]$FfmpegUrl = 'https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-7.1.1-essentials_build.zip',
+    # Pinned ffmpeg build (GyanD essentials 7.1.1; ~80 MB zip). Served from the
+    # GyanD GitHub release (durable per-version asset) rather than gyan.dev's
+    # builds/packages/ path, which only keeps the CURRENT release and 404s for an
+    # older pinned version. Verify the sha256 on first run.
+    [string]$FfmpegUrl = 'https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip',
     [string]$ExpectedFfmpegSha256 = '',
     [string]$FfmpegDest = (Join-Path $PSScriptRoot 'ffmpeg'),
     [string]$GetPipUrl = 'https://bootstrap.pypa.io/get-pip.py',
