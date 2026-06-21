@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import ast
 import json
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -409,3 +411,121 @@ def test_director_feature_module_is_pure() -> None:
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.append(node.module)
     assert not any("provider" in name.lower() for name in imported), imported
+
+
+# --------------------------------------------------------------------------- #
+# FIX #7: _director_engines wires the REAL ffmpeg adapters (was an empty {})
+# --------------------------------------------------------------------------- #
+def test_director_engines_wires_real_adapters(tmp_path: Path) -> None:
+    from media_studio.features import director_op_engines as _engines
+
+    svc = _services(tmp_path)  # NO injected engines -> exercises the real seam
+    table = svc._director_engines()
+    # The marquee bug was an EMPTY table (every op failed -> no-op manifest copy);
+    # the fix returns the real core renderers so apply actually renders media.
+    assert set(table) == set(_engines.WIRED_KINDS)
+    assert callable(table["trim"]) and callable(table["caption"])
+
+
+def test_director_engines_logs_deferred_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[Any] = []
+    monkeypatch.setattr(handlers.log, "info", lambda *a, **_k: calls.append(a))
+    svc = _services(tmp_path)
+    svc._director_engines()
+    svc._director_engines()  # second build must NOT re-log (one-shot flag)
+    deferred_logs = [a for a in calls if a and isinstance(a[0], str) and "deferred" in a[0]]
+    assert len(deferred_logs) == 1
+
+
+# --------------------------------------------------------------------------- #
+# FIX #7 (real ffmpeg): director.apply RENDERS a real edited mp4 the persisted
+# manifest references, and director.undo round-trips — the full handler spine.
+# --------------------------------------------------------------------------- #
+_HAVE_FFMPEG = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+
+
+def _ffprobe_video_duration(path: str) -> float:
+    out = subprocess.run(  # noqa: S603 - fixed argv, no shell, test-only probe
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
+            path,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return float(out)
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _HAVE_FFMPEG, reason="ffmpeg/ffprobe not installed")
+def test_director_apply_then_undo_renders_real_media_end_to_end(tmp_path: Path) -> None:
+    # A REAL 1.5 s sample the director will edit (replaces the placeholder talk.mp4).
+    svc = _services(tmp_path, provider=CannedProvider())
+    sample = tmp_path / "talk.mp4"
+    subprocess.run(  # noqa: S603 - fixed argv, no shell, test-only sample render
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=320x240:rate=15:duration=1.5",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=duration=1.5",
+            "-shortest",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-t",
+            "1.5",
+            str(sample),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    vid = _add_project(svc)  # registers the (now real) talk.mp4
+    source_path = svc._load_or_create_project(vid).data["video"]["path"]
+
+    ctx = _director_ctx()
+    svc.director_plan({"videoId": vid, "goal": "tighten the intro"}, ctx)
+    plan_id = _done_result(ctx)["planId"]
+
+    # apply: real engines render the valid trim op (o1, span [0,1000]).
+    ctx2 = _director_ctx()
+    svc.director_apply({"planId": plan_id}, ctx2)
+    applied = _done_result(ctx2)
+    statuses = {op["id"]: op["status"] for op in applied["opsStatus"]}
+    assert statuses["o1"] == "applied"  # NOT failed (the old empty-table bug)
+
+    # The PERSISTED copy manifest references a real, ffprobe-valid edited mp4 that
+    # is NOT the source (validity alone is insufficient — the source is valid too).
+    copy_manifest = json.loads(Path(applied["projectCopyPath"]).read_text(encoding="utf-8"))
+    edited = copy_manifest["video"]["path"]
+    assert edited != source_path
+    assert _ffprobe_video_duration(edited) > 0
+    assert _ffprobe_video_duration(edited) < _ffprobe_video_duration(source_path)  # trim shortened it
+    # The source manifest was never mutated.
+    assert svc._load_or_create_project(vid).data["video"]["path"] == source_path
+
+    # undo: re-applies the recorded inverse over a FRESH copy via the inverse-engine
+    # seam -> the persisted copy manifest flips back to the source reference.
+    ctx3 = _director_ctx()
+    svc.director_undo({"planId": plan_id}, ctx3)
+    undone = _done_result(ctx3)
+    undo_manifest = json.loads(Path(undone["projectCopyPath"]).read_text(encoding="utf-8"))
+    assert undo_manifest["video"]["path"] == source_path

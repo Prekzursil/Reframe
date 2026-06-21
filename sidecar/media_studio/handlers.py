@@ -253,6 +253,7 @@ class Services:
         # one-shot reversal (DESIGN §5/§7.1). A plan that was never applied has no
         # entry here, so ``director.undo`` rejects it (nothing to undo).
         self._director_inverses: dict[str, Any] = {}  # planId -> edit_plan.EditPlan
+        self._director_engines_logged = False  # one-shot deferred-kinds log (FIX #7)
 
     # ===================================================================== #
     # resolvers
@@ -2745,15 +2746,24 @@ class Services:
             )
         return {"perFunction": per_function}
 
-    def _director_engines(self) -> Any:  # pragma: no cover - real engine adapters wire in as the engine WUs land
+    def _director_engines(self) -> Any:
         """The op-kind -> engine dispatch table for ``director.apply`` (the seam).
 
-        Real impls are the shipped engine adapters (silencetrim/fillers/reframe/
-        ocr/stitch/regen), wired as those WUs land; tests inject a fake table. v1
-        ships an empty table (apply over a copy works; unmapped kinds report a
-        per-op ``failed`` with auto-rollback, never a crash).
+        Wires the REAL ffmpeg op-engine adapters (``features.director_op_engines``)
+        so ``director.apply`` actually RENDERS edited media (FIX #7): the core
+        renderers ``trim``/``cut``/``removeSilence``/``caption`` operate on the
+        project COPY and produce real mp4s, each recording an inverse for
+        ``director.undo``. Deferred kinds (logged ONCE on first build) have no
+        engine yet, so an op of one surfaces as a per-op ``failed`` with
+        auto-rollback — never a crash, never a silent no-op. Tests inject a fake
+        table over this seam.
         """
-        return {}
+        from .features import director_op_engines as _engines  # local: import-light pure
+
+        if not self._director_engines_logged:
+            _engines.log_deferred(log)
+            self._director_engines_logged = True
+        return _engines.build_engines(settings=self.settings.get())
 
     def _director_inverse_engines(
         self,
