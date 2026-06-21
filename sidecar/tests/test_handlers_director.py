@@ -195,21 +195,58 @@ def test_director_plan_fences_media_as_untrusted_data(tmp_path: Path) -> None:
     assert fence_start < token_at < fence_end
 
 
-def test_director_plan_uses_editplan_routed_provider(tmp_path: Path) -> None:
+def test_director_plan_builds_editplan_provider_over_text_consented_settings(tmp_path: Path) -> None:
+    """director.plan resolves its planner via the editPlan route over CONSENT-FILTERED settings.
+
+    The transcript-bearing chat egress is built from
+    ``_text_consented_settings(get_raw())`` honoring ``routing.perFunction["editPlan"]``
+    (the per-entry TEXT-consent gate, FIX #6) — NOT the unfiltered
+    ``_provider_for_function`` path. A non-consented cloud entry must be DROPPED
+    before the pool is built so it can never become the prefer-primary nor a 429
+    failover target.
+    """
     svc = _services(tmp_path)  # no injected legacy provider -> routing resolves
+    # Two cloud providers; text consent granted ONLY to "yes"; editPlan prefers "yes".
+    svc.settings.set(
+        {
+            "providers": [
+                {
+                    "id": "yes",
+                    "provider": "yes",
+                    "baseUrl": "https://yes.example/v1",
+                    "model": "m",
+                    "apiKeys": ["sk-yes"],
+                },
+                {"id": "no", "provider": "no", "baseUrl": "https://no.example/v1", "model": "m", "apiKeys": ["sk-no"]},
+            ],
+            "consent": {"perProvider": {"yes": {"text": True}, "no": {"text": False}}},
+            "routing": {"perFunction": {"editPlan": {"provider": "yes"}}},
+            "confirmCloudBudget": False,  # isolate the consent gate from the budget gate
+        }
+    )
     vid = _add_project(svc)
     ctx = _director_ctx()
-    seen: dict[str, str] = {}
+    seen: dict[str, Any] = {}
     canned = CannedProvider()
 
-    def fake_route(function: str) -> Any:
-        seen["function"] = function
+    def fake_get_provider(settings: dict[str, Any], *, prefer: str | None = None, **_kw: Any) -> Any:
+        seen["settings"] = settings
+        seen["prefer"] = prefer
         return canned
 
-    svc._provider_for_function = fake_route  # type: ignore[method-assign]
-    svc.director_plan({"videoId": vid, "goal": "g"}, ctx)
-    _done_result(ctx)
-    assert seen["function"] == "editPlan"
+    import media_studio.models.provider as _pmod
+
+    monkeypatched = _pmod.get_provider
+    _pmod.get_provider = fake_get_provider  # type: ignore[assignment]
+    try:
+        svc.director_plan({"videoId": vid, "goal": "g"}, ctx)
+        _done_result(ctx)
+    finally:
+        _pmod.get_provider = monkeypatched  # type: ignore[assignment]
+
+    assert seen["prefer"] == "yes", "editPlan route was not honored"
+    provider_ids = [p["id"] for p in seen["settings"]["providers"]]
+    assert provider_ids == ["yes"], f"non-consented cloud entry not filtered out: {provider_ids!r}"
 
 
 def test_director_plan_unknown_video_rejected(tmp_path: Path) -> None:

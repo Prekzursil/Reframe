@@ -2606,6 +2606,62 @@ class Services:
             raise _invalid(f"unknown plan: {plan_id}")
         return entry
 
+    def _editplan_provider_or_refuse(self) -> Any:
+        """Resolve the ``editPlan`` chat provider, gated by per-provider TEXT consent.
+
+        CRITICAL PRIVACY INVARIANT (PLAN §WU-A1/G-A5 — the chat analog of the
+        index-embedder :meth:`_resolve_index_embedder` and the vision
+        :meth:`_resolve_frame_scorer` consent gates): ``build_understanding`` folds
+        the transcript into the planner prompt, so the ``director.plan`` chat egress
+        carries transcript TEXT. The egress provider is therefore BUILT FROM the
+        per-entry TEXT-consent-filtered settings — exactly like the embedder builds
+        its :class:`CloudEmbedder` from :meth:`_resolve_index_embedder`'s filtered
+        pool — so EVERY slot the routed pool may rotate to (primary AND every 429
+        failover) is one whose TEXT consent is granted. Filtering the actual pool
+        (not just an all-or-nothing precheck) is what closes the mixed-consent
+        rotation hole: a non-consented cloud entry is DROPPED before the pool is
+        built, so it can never become the ``prefer`` primary nor a failover target.
+
+        Resolution (mirrors :meth:`_resolve_index_embedder`):
+
+        1. An injected ``_provider`` seam wins outright (tests / a wholesale
+           override) — same as the embedder's injected-``_embedder`` short-circuit.
+        2. Else build the routed ``editPlan`` pool over the TEXT-CONSENT-FILTERED
+           RAW settings (``get_raw()`` keeps the RAW key on the wire for the
+           consented entries; the filter drops every non-consented cloud entry).
+           When the RAW (unfiltered) routed pool HAD a cloud egress target but the
+           filtered pool has NONE, every configured cloud target is non-consented:
+           REFUSE before any chat (a clear refusal, the chat analog of the
+           embedder's local fallback — chat has no in-process local backstop to
+           complete with). Zero bytes leave the machine.
+        3. Else -> the consent-filtered routed pool: a consented cloud entry
+           egresses (RAW key), and a genuinely local/no-cloud config routes local
+           untouched.
+        """
+        if self._provider is not None:
+            return self._provider
+
+        from .models import provider as _provider_mod  # local: heavy seam
+
+        prefer = self._function_prefer("editPlan")
+        raw = self.settings.get_raw()
+        consented_provider = _provider_mod.get_provider(self._text_consented_settings(raw), prefer=prefer)
+
+        builder = getattr(_provider_mod, "build_pool_provider", None)
+        if builder is not None:  # pragma: no branch -- always present off the stub
+            raw_cloud = any(not e.local for e in builder(raw, detect_local=False, prefer=prefer).entries)
+            consented_cloud = any(
+                not e.local
+                for e in builder(self._text_consented_settings(raw), detect_local=False, prefer=prefer).entries
+            )
+            if raw_cloud and not consented_cloud:
+                raise _invalid(
+                    "director.plan would egress transcript text but TEXT consent is "
+                    "revoked for every configured cloud provider; grant per-provider "
+                    "text consent (consent.perProvider[<provider>].text) or route local"
+                )
+        return consented_provider
+
     def director_plan(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
         """``director.plan({videoId, goal})`` -> ``{jobId}``. Job-based.
 
@@ -2614,7 +2670,10 @@ class Services:
         EditPlan under a fresh ``planId``. The ``job.done`` payload is
         ``{planId, editPlan, preview}``. The media-derived understanding is fenced
         as UNTRUSTED DATA by ``build_edit_plan_messages`` (injection mitigation #1);
-        the planner provider is the ``editPlan``-routed pool (no new AI path).
+        the planner provider is the ``editPlan``-routed pool, resolved through the
+        per-provider TEXT-consent gate (:meth:`_editplan_provider_or_refuse`) so the
+        transcript-bearing prompt is NEVER egressed to a non-consented cloud target
+        (no new AI path).
         """
         if ctx.jobs is None:
             raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
@@ -2631,7 +2690,7 @@ class Services:
         from .features import edit_validate as _validate  # local: import-light pure
 
         messages = _prompt.build_edit_plan_messages(goal, media)
-        plan_provider = self._provider if self._provider is not None else self._provider_for_function("editPlan")
+        plan_provider = self._editplan_provider_or_refuse()
 
         def work(_job_ctx: Any, _envelope: Any, provider: Any) -> dict[str, Any]:
             content = provider.chat(list(messages))
