@@ -79,10 +79,29 @@ def test_build_engines_defaults_runner_to_ffmpeg_run() -> None:
 def test_deferred_kinds_have_no_engine() -> None:
     table = build_engines(runner=FakeRunner())
     assert not (set(DEFERRED_KINDS) & set(table))
-    assert "reframe" in DEFERRED_KINDS  # the host->WSL-bridge op stays deferred
+    # The honestly-deferred subsystem ops stay out of the table; reorder too.
+    assert {"stitchPanorama", "regenScroll", "ocrExtractList", "reorder"} <= set(DEFERRED_KINDS)
+    # The ffmpeg-achievable ops moved INTO the wired table.
+    assert {
+        "reframe",
+        "zoomPan",
+        "retime",
+        "overlayText",
+        "lowerThird",
+        "removeFillers",
+        "translateCaption",
+        "export",
+    } <= set(WIRED_KINDS)
 
 
-def test_log_deferred_announces_unwired_kinds() -> None:
+def test_deferred_subsystems_cover_every_deferred_kind() -> None:
+    # Every deferred kind names the subsystem it requires (no bare deferrals).
+    assert set(engines_mod.DEFERRED_SUBSYSTEMS) == set(DEFERRED_KINDS)
+    assert "panorama" in engines_mod.DEFERRED_SUBSYSTEMS["stitchPanorama"]
+    assert "OCR" in engines_mod.DEFERRED_SUBSYSTEMS["ocrExtractList"]
+
+
+def test_log_deferred_announces_unwired_kinds_with_subsystems() -> None:
     seen: list[tuple[Any, ...]] = []
 
     class _Log:
@@ -91,6 +110,8 @@ def test_log_deferred_announces_unwired_kinds() -> None:
 
     engines_mod.log_deferred(_Log())
     assert seen and "deferred" in seen[0][0]
+    notice = seen[0][-1]  # the "kind (requires <subsystem>)" string
+    assert "stitchPanorama (requires" in notice and "OCR" in notice
 
 
 # --------------------------------------------------------------------------- #
@@ -329,3 +350,332 @@ def test_missing_source_path_is_error(tmp_path: Path) -> None:
     pc = _copy(tmp_path, video={"path": ""})
     with pytest.raises(DirectorEngineError, match="no source path"):
         build_engines(runner=FakeRunner())["trim"](EditOp(id="t", kind="trim", span=(1000, 2000)), pc)
+
+
+# --------------------------------------------------------------------------- #
+# removeFillers (drop the filler span — like trim)
+# --------------------------------------------------------------------------- #
+def test_remove_fillers_cuts_span_and_records_inverse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    runner = FakeRunner()
+    pc = _copy(tmp_path)
+    src_before = pc.data["video"]["path"]
+    op = EditOp(id="rf1", kind="removeFillers", span=(2000, 4000))
+
+    inverse = build_engines(runner=runner)["removeFillers"](op, pc)
+
+    fc = runner.calls[0][runner.calls[0].index("-filter_complex") + 1]
+    # head [0,2.0] + tail [4.0,12.0] kept -> the filler span [2,4] is excised.
+    assert "trim=start=0.000:end=2.000" in fc and "trim=start=4.000:end=12.000" in fc
+    assert pc.data["video"]["path"] != src_before
+    assert inverse.params[RESTORE_KEY] == src_before
+
+
+def test_remove_fillers_inverse_restores(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    runner = FakeRunner()
+    pc = _copy(tmp_path)
+    original = pc.data["video"]["path"]
+    table = build_engines(runner=runner)
+    fwd = table["removeFillers"](EditOp(id="rf", kind="removeFillers", span=(1000, 3000)), pc)
+    calls = len(runner.calls)
+    table["removeFillers"](fwd, pc)
+    assert pc.data["video"]["path"] == original
+    assert len(runner.calls) == calls  # restore-only, no re-render
+
+
+# --------------------------------------------------------------------------- #
+# reframe (center-crop + scale to aspect)
+# --------------------------------------------------------------------------- #
+def test_reframe_default_aspect_crops_and_scales(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    runner = FakeRunner()
+    pc = _copy(tmp_path)
+    src_before = pc.data["video"]["path"]
+    inverse = build_engines(runner=runner)["reframe"](EditOp(id="r1", kind="reframe", span=(0, 12000)), pc)
+    vf = runner.calls[0][runner.calls[0].index("-vf") + 1]
+    assert vf.startswith("crop=ih*9/16:ih,scale=1080:1920")  # default 9:16 -> 1080x1920
+    assert pc.data["video"]["path"] != src_before
+    assert inverse.params[RESTORE_KEY] == src_before
+
+
+def test_reframe_custom_aspect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    runner = FakeRunner()
+    pc = _copy(tmp_path)
+    build_engines(runner=runner)["reframe"](
+        EditOp(id="r", kind="reframe", span=(0, 12000), params={"aspect": "1:1"}), pc
+    )
+    vf = runner.calls[0][runner.calls[0].index("-vf") + 1]
+    assert "crop=ih*1/1:ih" in vf
+
+
+def test_reframe_blank_aspect_falls_back_to_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    runner = FakeRunner()
+    pc = _copy(tmp_path)
+    # A non-str / blank aspect param falls back to the 9:16 default.
+    build_engines(runner=runner)["reframe"](
+        EditOp(id="r", kind="reframe", span=(0, 12000), params={"aspect": "   "}), pc
+    )
+    vf = runner.calls[0][runner.calls[0].index("-vf") + 1]
+    assert "crop=ih*9/16:ih" in vf
+
+
+def test_reframe_non_string_aspect_falls_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    runner = FakeRunner()
+    pc = _copy(tmp_path)
+    build_engines(runner=runner)["reframe"](
+        EditOp(id="r", kind="reframe", span=(0, 12000), params={"aspect": 169}), pc
+    )
+    vf = runner.calls[0][runner.calls[0].index("-vf") + 1]
+    assert "crop=ih*9/16:ih" in vf
+
+
+@pytest.mark.parametrize(
+    ("aspect", "match"),
+    [
+        ("9", "must be 'W:H'"),
+        ("a:b", "two integers"),
+        ("0:16", "must be positive"),
+    ],
+)
+def test_reframe_bad_aspect_is_error(aspect: str, match: str) -> None:
+    with pytest.raises(DirectorEngineError, match=match):
+        engines_mod.build_reframe_argv("in.mp4", "out.mp4", aspect)
+
+
+# --------------------------------------------------------------------------- #
+# zoomPan (Ken-Burns push-in)
+# --------------------------------------------------------------------------- #
+def _fake_dims(monkeypatch: pytest.MonkeyPatch, value: tuple[int, int] = (320, 240)) -> None:
+    monkeypatch.setattr(engines_mod._shorts, "probe_dims", lambda *_a, **_k: value)
+
+
+def test_zoom_pan_renders_zoompan_filter_preserving_dims(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    _fake_dims(monkeypatch, (1080, 1920))
+    runner = FakeRunner()
+    pc = _copy(tmp_path)
+    src_before = pc.data["video"]["path"]
+    inverse = build_engines(runner=runner)["zoomPan"](EditOp(id="z1", kind="zoomPan", span=(0, 12000)), pc)
+    vf = runner.calls[0][runner.calls[0].index("-vf") + 1]
+    assert vf.startswith("zoompan=z=min(1.0+0.5*on/")
+    assert ":s=1080x1920" in vf  # source dims PINNED (no silent 1280x720 rescale)
+    assert pc.data["video"]["path"] != src_before
+    assert inverse.params[RESTORE_KEY] == src_before
+
+
+def test_zoom_pan_omits_size_when_probe_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A failed dims probe ((0, 0)) omits s= rather than emitting s=0x0.
+    _fake_probe(monkeypatch)
+    _fake_dims(monkeypatch, (0, 0))
+    runner = FakeRunner()
+    pc = _copy(tmp_path)
+    build_engines(runner=runner)["zoomPan"](EditOp(id="z", kind="zoomPan", span=(0, 12000)), pc)
+    vf = runner.calls[0][runner.calls[0].index("-vf") + 1]
+    assert ":s=" not in vf
+
+
+def test_zoom_pan_zero_duration_clamps_frames() -> None:
+    # total_sec 0 -> frames clamps to >=1 so the expression never divides by zero.
+    argv = engines_mod.build_zoompan_argv("in.mp4", "out.mp4", total_sec=0.0)
+    vf = argv[argv.index("-vf") + 1]
+    assert "on/1\\,1.5" in vf
+    assert ":s=" not in vf  # default dims (0, 0) -> no s=
+
+
+# --------------------------------------------------------------------------- #
+# retime (setpts + atempo)
+# --------------------------------------------------------------------------- #
+def test_retime_speeds_up(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    runner = FakeRunner()
+    pc = _copy(tmp_path)
+    src_before = pc.data["video"]["path"]
+    inverse = build_engines(runner=runner)["retime"](
+        EditOp(id="rt1", kind="retime", span=(0, 12000), params={"factor": 2.0}), pc
+    )
+    fg = runner.calls[0][runner.calls[0].index("-filter_complex") + 1]
+    assert "setpts=0.500000*PTS" in fg and "atempo=2.0" in fg
+    assert pc.data["video"]["path"] != src_before
+    assert inverse.params[RESTORE_KEY] == src_before
+
+
+def test_retime_no_op_factor_is_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    pc = _copy(tmp_path)
+    with pytest.raises(DirectorEngineError, match="no-op"):
+        build_engines(runner=FakeRunner())["retime"](
+            EditOp(id="rt", kind="retime", span=(0, 12000), params={"factor": 1.0}), pc
+        )
+
+
+def test_retime_non_positive_factor_is_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    pc = _copy(tmp_path)
+    with pytest.raises(DirectorEngineError, match="no-op"):
+        build_engines(runner=FakeRunner())["retime"](
+            EditOp(id="rt", kind="retime", span=(0, 12000), params={"factor": 0.0}), pc
+        )
+
+
+def test_retime_non_numeric_factor_is_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    pc = _copy(tmp_path)
+    with pytest.raises(DirectorEngineError, match="numeric"):
+        build_engines(runner=FakeRunner())["retime"](
+            EditOp(id="rt", kind="retime", span=(0, 12000), params={"factor": "fast"}), pc
+        )
+
+
+def test_atempo_chain_speed_up_beyond_two() -> None:
+    # 5x -> 2.0, 2.0, then the 1.25 remainder.
+    stages = engines_mod._atempo_chain(5.0)
+    assert stages[:2] == ["2.0", "2.0"]
+    assert abs(float(stages[-1]) - 1.25) < 1e-6
+
+
+def test_atempo_chain_slow_down_below_half() -> None:
+    # 0.25x -> 0.5, then a 0.5 remainder.
+    stages = engines_mod._atempo_chain(0.25)
+    assert stages[0] == "0.5"
+    assert abs(float(stages[-1]) - 0.5) < 1e-6
+
+
+# --------------------------------------------------------------------------- #
+# overlayText / lowerThird (drawtext)
+# --------------------------------------------------------------------------- #
+def test_overlay_text_draws_centered(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    runner = FakeRunner()
+    pc = _copy(tmp_path)
+    src_before = pc.data["video"]["path"]
+    inverse = build_engines(runner=runner)["overlayText"](
+        EditOp(id="o1", kind="overlayText", span=(0, 12000), params={"text": "Hi"}), pc
+    )
+    vf = runner.calls[0][runner.calls[0].index("-vf") + 1]
+    assert vf.startswith("drawtext=text='Hi'") and "box=1" not in vf  # centered, no box
+    assert pc.data["video"]["path"] != src_before
+    assert inverse.params[RESTORE_KEY] == src_before
+
+
+def test_lower_third_draws_boxed_band(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    runner = FakeRunner()
+    pc = _copy(tmp_path)
+    build_engines(runner=runner)["lowerThird"](
+        EditOp(id="l1", kind="lowerThird", span=(0, 12000), params={"text": "Jane Doe"}), pc
+    )
+    vf = runner.calls[0][runner.calls[0].index("-vf") + 1]
+    assert "box=1" in vf and "y=h-h/6" in vf  # lower band over a box
+
+
+@pytest.mark.parametrize("kind", ["overlayText", "lowerThird"])
+def test_drawtext_missing_text_is_error(kind: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    pc = _copy(tmp_path)
+    with pytest.raises(DirectorEngineError, match="non-empty"):
+        build_engines(runner=FakeRunner())[kind](EditOp(id="x", kind=kind, span=(0, 12000)), pc)  # type: ignore[arg-type]
+
+
+def test_drawtext_blank_text_is_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    pc = _copy(tmp_path)
+    with pytest.raises(DirectorEngineError, match="non-empty"):
+        build_engines(runner=FakeRunner())["overlayText"](
+            EditOp(id="x", kind="overlayText", span=(0, 12000), params={"text": "   "}), pc
+        )
+
+
+def test_escape_drawtext_handles_special_chars() -> None:
+    # backslash, colon, percent, quote, and newline are all neutralised.
+    out = engines_mod._escape_drawtext("a\\b:c 50%'q\nx")
+    assert out == "a\\\\b\\:c 50\\%\\'q x"
+
+
+# --------------------------------------------------------------------------- #
+# translateCaption (re-burn the translated track's cues)
+# --------------------------------------------------------------------------- #
+def test_translate_caption_burns_translated_cues(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    runner = FakeRunner()
+    translated = [{"index": 1, "start": 1.0, "end": 3.0, "text": "bonjour"}]
+    pc = _copy(tmp_path, tracks=[{"id": "fr", "lang": "fr", "cues": translated}])
+    src_before = pc.data["video"]["path"]
+    inverse = build_engines(runner=runner)["translateCaption"](
+        EditOp(id="tc1", kind="translateCaption", params={"track": "fr"}), pc
+    )
+    ass = next(pc.manifest_path.parent.glob("*.ass"))
+    assert "bonjour" in ass.read_text(encoding="utf-8")  # the TRANSLATED text is burned
+    vf = runner.calls[0][runner.calls[0].index("-vf") + 1]
+    assert vf.startswith("subtitles=")
+    assert pc.data["video"]["path"] != src_before
+    assert inverse.params[RESTORE_KEY] == src_before
+
+
+def test_translate_caption_missing_track_is_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    pc = _copy(tmp_path, tracks=[{"id": "other", "cues": _CUES}])
+    with pytest.raises(DirectorEngineError, match="not found"):
+        build_engines(runner=FakeRunner())["translateCaption"](
+            EditOp(id="tc", kind="translateCaption", params={"track": "fr"}), pc
+        )
+
+
+# --------------------------------------------------------------------------- #
+# export (re-encode/mux passthrough)
+# --------------------------------------------------------------------------- #
+def test_export_re_encodes_and_records_inverse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    runner = FakeRunner()
+    pc = _copy(tmp_path)
+    src_before = pc.data["video"]["path"]
+    inverse = build_engines(runner=runner)["export"](EditOp(id="ex1", kind="export"), pc)
+    argv = runner.calls[0]
+    assert "libx264" in argv and "aac" in argv  # a real re-encode
+    assert pc.data["video"]["path"] != src_before
+    assert inverse.params[RESTORE_KEY] == src_before
+
+
+def test_export_inverse_restores(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    runner = FakeRunner()
+    pc = _copy(tmp_path)
+    original = pc.data["video"]["path"]
+    table = build_engines(runner=runner)
+    fwd = table["export"](EditOp(id="ex", kind="export"), pc)
+    calls = len(runner.calls)
+    table["export"](fwd, pc)
+    assert pc.data["video"]["path"] == original
+    assert len(runner.calls) == calls
+
+
+# --------------------------------------------------------------------------- #
+# dual-mode inverse for the new geometry/timing/overlay ops
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    ("kind", "op_params"),
+    [
+        ("reframe", {"aspect": "9:16"}),
+        ("zoomPan", {}),
+        ("retime", {"factor": 2.0}),
+        ("overlayText", {"text": "hi"}),
+        ("lowerThird", {"text": "hi"}),
+    ],
+)
+def test_inverse_restores_for_new_render_ops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, op_params: dict[str, Any]
+) -> None:
+    _fake_probe(monkeypatch)
+    _fake_dims(monkeypatch)
+    runner = FakeRunner()
+    pc = _copy(tmp_path)
+    original = pc.data["video"]["path"]
+    table = build_engines(runner=runner)
+    fwd = table[kind](EditOp(id="op", kind=kind, span=(0, 12000), params=op_params), pc)  # type: ignore[arg-type]
+    calls = len(runner.calls)
+    table[kind](fwd, pc)
+    assert pc.data["video"]["path"] == original
+    assert len(runner.calls) == calls  # restore-only on undo
