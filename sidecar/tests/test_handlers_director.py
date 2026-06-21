@@ -251,6 +251,69 @@ def test_director_plan_builds_editplan_provider_over_text_consented_settings(tmp
     assert provider_ids == ["yes"], f"non-consented cloud entry not filtered out: {provider_ids!r}"
 
 
+# --------------------------------------------------------------------------- #
+# OFFLINE ENFORCEMENT (bug fix): director.plan has no in-process local chat
+# backstop, so offline + a configured cloud editPlan target must REFUSE (typed)
+# before any chat — zero transcript bytes leave the machine.
+# --------------------------------------------------------------------------- #
+def _offline_director_settings() -> dict[str, Any]:
+    return {
+        "offline": True,
+        "providers": [
+            {
+                "id": "yes",
+                "provider": "yes",
+                "baseUrl": "https://yes.example/v1",
+                "model": "m",
+                "apiKeys": ["sk-yes"],
+            }
+        ],
+        "consent": {"perProvider": {"yes": {"text": True}}},
+        "routing": {"perFunction": {"editPlan": {"provider": "yes"}}},
+        "confirmCloudBudget": False,
+    }
+
+
+def test_director_plan_offline_with_cloud_target_refuses(tmp_path: Path) -> None:
+    # No injected provider -> routing resolves -> the offline gate fires. Even with
+    # TEXT consent granted, offline forbids the cloud egress: a typed refusal, no chat.
+    svc = _services(tmp_path)  # provider=None
+    svc.settings.set(_offline_director_settings())
+    vid = _add_project(svc)
+    ctx = _director_ctx()
+    with pytest.raises(RpcError) as ei:
+        svc.director_plan({"videoId": vid, "goal": "g"}, ctx)
+    assert ei.value.code == ErrorCode.INVALID_PARAMS
+    assert "offline" in str(ei.value).lower()
+
+
+def test_director_plan_offline_local_route_allowed(tmp_path: Path) -> None:
+    # Offline but the editPlan route is LOCAL (no cloud target): the planner is the
+    # local provider, so the plan proceeds (offline forbids EGRESS, not local AI).
+    svc = _services(tmp_path)  # provider=None -> routing resolves to local
+    svc.settings.set({"offline": True, "routing": {"perFunction": {"editPlan": {"provider": "local"}}}})
+    vid = _add_project(svc)
+    ctx = _director_ctx()
+    seen: dict[str, Any] = {}
+    canned = CannedProvider()
+
+    def fake_get_provider(settings: dict[str, Any], *, prefer: str | None = None, **_kw: Any) -> Any:
+        seen["prefer"] = prefer
+        return canned
+
+    import media_studio.models.provider as _pmod
+
+    saved = _pmod.get_provider
+    _pmod.get_provider = fake_get_provider  # type: ignore[assignment]
+    try:
+        svc.director_plan({"videoId": vid, "goal": "g"}, ctx)
+        _done_result(ctx)
+    finally:
+        _pmod.get_provider = saved  # type: ignore[assignment]
+    assert seen["prefer"] == "local", "editPlan local route was not honored offline"
+    assert len(canned.calls) == 1
+
+
 def test_director_plan_unknown_video_rejected(tmp_path: Path) -> None:
     svc = _services(tmp_path, provider=CannedProvider())
     ctx = _director_ctx()

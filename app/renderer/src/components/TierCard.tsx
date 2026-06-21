@@ -38,6 +38,11 @@ export function TierCard({
       className={`tier-card${selected ? ' is-selected' : ''}`}
       data-tier={tier.tier}
       data-verdict={tier.verdict}
+      // SELECTION clarity: aria-current marks the active tier for assistive tech;
+      // the visible "Selected" badge below conveys it sighted (color is never the
+      // sole signal). `undefined` (not false) so the attribute is fully absent
+      // on unselected cards.
+      aria-current={selected ? 'true' : undefined}
       title={`${tier.label}. ${blurb}`}
     >
       <div className="tier-card__head">
@@ -51,6 +56,11 @@ export function TierCard({
         />
         <span className="tier-card__title">
           Tier {tier.tier}
+          {selected && (
+            <span className="tier-card__selected" title="This tier is currently selected">
+              Selected
+            </span>
+          )}
           {recommended && (
             <span className="tier-card__recommended" title="Recommended for your hardware">
               Recommended

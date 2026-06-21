@@ -128,8 +128,13 @@ describe('<PresetPicker />', () => {
     });
     const active = container.querySelector('[data-preset="bestFreeCloud"]') as HTMLElement;
     expect(active.getAttribute('aria-pressed')).toBe('true');
+    // Selection clarity: the active preset carries a visible "Active" badge.
+    expect(active.classList.contains('is-active')).toBe(true);
+    expect(active.querySelector('.preset-picker__active')).not.toBeNull();
     const other = container.querySelector('[data-preset="privacy"]') as HTMLElement;
     expect(other.getAttribute('aria-pressed')).toBe('false');
+    expect(other.classList.contains('is-active')).toBe(false);
+    expect(other.querySelector('.preset-picker__active')).toBeNull();
   });
 
   it('calls onApplyPreset when a preset is clicked', () => {

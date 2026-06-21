@@ -96,6 +96,9 @@ describe('<TierCard />', () => {
     expect(card.querySelector('.tier-card__recommended')).not.toBeNull();
     expect(card.querySelector('.verdict-badge')?.textContent).toBe('Will run');
     expect(card.querySelector('.tier-card__members')?.textContent).toContain('SigLIP-2');
+    // Not selected -> no aria-current, no Selected badge (selection clarity).
+    expect(card.getAttribute('aria-current')).toBeNull();
+    expect(card.querySelector('.tier-card__selected')).toBeNull();
     const radio = card.querySelector('input[type="radio"]') as HTMLInputElement;
     await act(async () => {
       radio.click();
@@ -113,6 +116,9 @@ describe('<TierCard />', () => {
     );
     const card = container.querySelector('.tier-card') as HTMLElement;
     expect(card.classList.contains('is-selected')).toBe(true);
+    // Selected -> aria-current + a visible Selected badge (never color alone).
+    expect(card.getAttribute('aria-current')).toBe('true');
+    expect(card.querySelector('.tier-card__selected')).not.toBeNull();
     expect(card.querySelector('.tier-card__recommended')).toBeNull();
     expect(card.querySelector('.tier-card__members')).toBeNull();
   });
@@ -154,7 +160,10 @@ describe('<ModelCard />', () => {
     expect(qualFill.style.width).toBe('50%');
     const btn = card.querySelector('.model-card__download') as HTMLButtonElement;
     expect(btn.disabled).toBe(false);
-    expect(btn.textContent).toBe('Download');
+    // MODEL state clarity: the actionable size is on the button itself.
+    expect(btn.textContent).toBe('Download (4.4 GB)');
+    expect(btn.getAttribute('data-state')).toBe('download');
+    expect(btn.querySelector('svg[data-icon="installed"]')).toBeNull();
     await act(async () => {
       btn.click();
     });
@@ -178,7 +187,27 @@ describe('<ModelCard />', () => {
     expect(card.querySelector('.model-card__size')?.textContent).toBe('—');
     const btn = card.querySelector('.model-card__download') as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
-    expect(btn.textContent).toBe('Installed');
+    expect(btn.textContent).toContain('Installed');
+    expect(btn.getAttribute('data-state')).toBe('installed');
+    // MODEL state clarity: the installed check is an inline SVG, NOT an emoji.
+    expect(btn.querySelector('svg[data-icon="installed"]')).not.toBeNull();
+  });
+
+  it('renders a bare "Download" (no size) when the asset size is unknown', async () => {
+    await render(
+      <ModelCard
+        component={comp()}
+        qualityFraction={0.5}
+        vramBudgetMb={6000}
+        installed={false}
+        sizeMb={null}
+        downloading={false}
+        onDownload={vi.fn()}
+      />,
+    );
+    const btn = container.querySelector('.model-card__download') as HTMLButtonElement;
+    expect(btn.textContent).toBe('Download');
+    expect(btn.getAttribute('data-state')).toBe('download');
   });
 
   it('greys Download for a license-blocked model and shows the blocked tooltip', async () => {

@@ -28,23 +28,57 @@ import {
   type ProgressEvent,
 } from '../lib/rpc';
 import {
+  canMoveOp,
   costRowLabel,
   egressWarning,
   groupOpsByKind,
   isFrameFunction,
+  moveOpWithinKind,
   opKindLabel,
   recoveryHint,
   statusLabel,
   summarizePlan,
+  toggleOpStatus,
   type DirectorApplyResult,
   type DirectorCostRow,
   type DirectorEditPlan,
   type DirectorEval,
   type DirectorOp,
   type DirectorOpKind,
+  type OpMoveDirection,
   type DirectorPlanResult,
   type DirectorPreview,
 } from '../lib/directorTypes';
+
+// Lucide-style 24x24 line icons (stroke-based, currentColor) for the per-op
+// reorder controls — inline SVG, NEVER emoji-as-icon (DESIGN: pro-UI rails).
+const ICON_PATHS: Record<OpMoveDirection, string> = {
+  up: 'M12 19V5 M5 12l7-7 7 7',
+  down: 'M12 5v14 M19 12l-7 7-7-7',
+};
+
+function MoveIcon({ dir }: { dir: OpMoveDirection }): React.ReactElement {
+  return (
+    <svg
+      className="director-op__icon"
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {ICON_PATHS[dir].split(' M').map((seg, i) => (
+        // eslint-disable-next-line react/no-array-index-key -- static two-segment icon path
+        <path key={i} d={i === 0 ? seg : `M${seg}`} />
+      ))}
+    </svg>
+  );
+}
 
 // --- pure helpers (exported for tests) -------------------------------------
 
@@ -260,6 +294,26 @@ export function DirectorPanel({ rpcClient, jobEvents }: DirectorPanelProps): Rea
     if (plan) setGoal(plan.goal);
   }, [plan]);
 
+  // WU-director-controls: enable/disable one op (toggle planned<->dropped) in the
+  // REVIEWABLE plan. The edit lands in `plan.ops` (the same state apply reads via
+  // planId), immutably, so the storyboard + the plain-language summary update and
+  // the change rides the next director.apply. A no-op while busy or post-apply.
+  const toggleOp = useCallback((opId: string): void => {
+    setPlan((prev) =>
+      /* v8 ignore next -- presence guard: the controls only render inside `plan && …`, so `prev` is non-null whenever this fires. */
+      prev ? { ...prev, ops: toggleOpStatus(prev.ops, opId) } : prev,
+    );
+  }, []);
+
+  // WU-director-controls: reorder one op up/down past its nearest same-kind
+  // neighbour (within-group, so the move is visible) in the reviewable plan.
+  const moveOp = useCallback((opId: string, dir: OpMoveDirection): void => {
+    setPlan((prev) =>
+      /* v8 ignore next -- presence guard: the controls only render inside `plan && …`, so `prev` is non-null whenever this fires. */
+      prev ? { ...prev, ops: moveOpWithinKind(prev.ops, opId, dir) } : prev,
+    );
+  }, []);
+
   // Merge per-op apply statuses (when present) over the planned ops so the
   // storyboard reflects applied/failed AFTER an apply, planned/dropped before it.
   const displayOps = useMemo<DirectorOp[]>(() => {
@@ -274,6 +328,11 @@ export function DirectorPanel({ rpcClient, jobEvents }: DirectorPanelProps): Rea
     () => (kindFilter === 'all' ? groups : groups.filter((g) => g.kind === kindFilter)),
     [groups, kindFilter],
   );
+
+  // The per-op controls edit the REVIEWABLE plan, so they are interactive only
+  // BEFORE an apply (once applied, the op statuses are server truth — the user
+  // undoes, not edits) and never mid-job. Disabled controls keep their reason.
+  const controlsEnabled = !applied && opsStatus === null && !busy;
 
   return (
     <section className="feature-panel director-panel" aria-label="AI Director">
@@ -352,7 +411,14 @@ export function DirectorPanel({ rpcClient, jobEvents }: DirectorPanelProps): Rea
           {/* F1: collapsible groups + F2 per-op status rows + F4 plain-text. */}
           <div className="director-storyboard" data-section="storyboard">
             {visibleGroups.map((g) => (
-              <OpGroupSection key={g.kind} group={g} />
+              <OpGroupSection
+                key={g.kind}
+                group={g}
+                allOps={displayOps}
+                controlsEnabled={controlsEnabled}
+                onToggle={toggleOp}
+                onMove={moveOp}
+              />
             ))}
           </div>
 
@@ -437,12 +503,26 @@ function CostRow({ row }: { row: DirectorCostRow }): React.ReactElement {
   );
 }
 
+/** Per-op control wiring threaded down to each {@link OpRow}. */
+interface OpControlProps {
+  /** The full ordered op list (for same-kind boundary detection). */
+  allOps: DirectorOp[];
+  /** Controls are interactive only on the REVIEWABLE plan (pre-apply, not busy). */
+  controlsEnabled: boolean;
+  /** Toggle one op enabled<->disabled in the edit plan. */
+  onToggle: (opId: string) => void;
+  /** Reorder one op up/down within its kind in the edit plan. */
+  onMove: (opId: string, dir: OpMoveDirection) => void;
+}
+
 /** F1 collapsible group + F2 per-op rows. Uses native <details> for a11y. */
 function OpGroupSection({
   group,
-}: {
-  group: ReturnType<typeof groupOpsByKind>[number];
-}): React.ReactElement {
+  allOps,
+  controlsEnabled,
+  onToggle,
+  onMove,
+}: { group: ReturnType<typeof groupOpsByKind>[number] } & OpControlProps): React.ReactElement {
   return (
     <details className="director-group" data-kind={group.kind} open={!group.collapsedByDefault}>
       <summary className="director-group__head">
@@ -450,7 +530,14 @@ function OpGroupSection({
       </summary>
       <ul className="director-group__ops">
         {group.ops.map((op) => (
-          <OpRow key={op.id} op={op} />
+          <OpRow
+            key={op.id}
+            op={op}
+            allOps={allOps}
+            controlsEnabled={controlsEnabled}
+            onToggle={onToggle}
+            onMove={onMove}
+          />
         ))}
       </ul>
     </details>
@@ -461,16 +548,56 @@ function OpGroupSection({
  * F2 per-op row + F4 plain-text rendering. The rationale/statusReason are model/
  * engine text — rendered as PLAIN React text nodes (never dangerouslySetInnerHTML,
  * never markdown/link auto-render), so an injected `<script>`/HTML string is inert.
- * F5: each row is keyboard-focusable with enable/disable + move-up/down controls.
+ * F5 + WU-director-controls: the row is keyboard-focusable AND its enable/disable
+ * + move-up/down controls are WIRED — click via each button's onClick, and the
+ * focusable row's onKeyDown activates them (Enter/Space toggle; ArrowUp/ArrowDown
+ * move within kind). jsdom does NOT fire a native <button> onClick on keydown, so
+ * keyboard support lives on the row, exactly where the focus is. Move buttons at a
+ * same-kind boundary are disabled (opacity + not-allowed + an explanatory title).
  */
-function OpRow({ op }: { op: DirectorOp }): React.ReactElement {
+function OpRow({
+  op,
+  allOps,
+  controlsEnabled,
+  onToggle,
+  onMove,
+}: { op: DirectorOp } & OpControlProps): React.ReactElement {
   const hint = recoveryHint(op);
+  const dropped = op.status === 'dropped';
+  const canUp = controlsEnabled && canMoveOp(allOps, op.id, 'up');
+  const canDown = controlsEnabled && canMoveOp(allOps, op.id, 'down');
+
+  // The row's keyboard seam (a custom control, so it owns its key handling). It
+  // only acts on keys it handles AND only when controls are live; everything else
+  // bubbles (so Tab/Shift+Tab still move focus naturally).
+  const onKeyDown = (e: React.KeyboardEvent<HTMLLIElement>): void => {
+    // Only act when the ROW itself is focused. A keydown bubbling up from a child
+    // button (Tab to "Move up", press Enter) must keep its OWN native activation
+    // (button onClick) — without this guard the row would hijack it and toggle.
+    if (e.target !== e.currentTarget) return;
+    if (!controlsEnabled) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onToggle(op.id);
+    } else if (e.key === 'ArrowUp') {
+      if (!canUp) return;
+      e.preventDefault();
+      onMove(op.id, 'up');
+    } else if (e.key === 'ArrowDown') {
+      if (!canDown) return;
+      e.preventDefault();
+      onMove(op.id, 'down');
+    }
+  };
+
   return (
     <li
       className={`director-op is-${op.status}`}
       data-op-id={op.id}
       data-status={op.status}
       tabIndex={0}
+      aria-label={`${opKindLabel(op.kind)} — ${statusLabel(op.status)}`}
+      onKeyDown={onKeyDown}
     >
       <div className="director-op__head">
         <span className="director-op__kind">{opKindLabel(op.kind)}</span>
@@ -490,8 +617,23 @@ function OpRow({ op }: { op: DirectorOp }): React.ReactElement {
         </p>
       )}
       <div className="director-op__controls">
-        <button type="button" data-action="op-disable" data-op={op.id} className="link">
-          {op.status === 'dropped' ? 'Enable' : 'Disable'}
+        <button
+          type="button"
+          data-action="op-disable"
+          data-op={op.id}
+          className="link"
+          aria-pressed={dropped}
+          disabled={!controlsEnabled}
+          title={
+            controlsEnabled
+              ? dropped
+                ? 'Re-enable this step in the plan'
+                : 'Disable this step (kept in the plan but skipped)'
+              : 'Editing is available before you apply the plan'
+          }
+          onClick={() => onToggle(op.id)}
+        >
+          {dropped ? 'Enable' : 'Disable'}
         </button>
         <button
           type="button"
@@ -499,8 +641,11 @@ function OpRow({ op }: { op: DirectorOp }): React.ReactElement {
           data-op={op.id}
           className="link"
           aria-label="Move up"
+          disabled={!canUp}
+          title={canUp ? 'Move up' : 'Already first of its kind'}
+          onClick={() => onMove(op.id, 'up')}
         >
-          ↑
+          <MoveIcon dir="up" />
         </button>
         <button
           type="button"
@@ -508,8 +653,11 @@ function OpRow({ op }: { op: DirectorOp }): React.ReactElement {
           data-op={op.id}
           className="link"
           aria-label="Move down"
+          disabled={!canDown}
+          title={canDown ? 'Move down' : 'Already last of its kind'}
+          onClick={() => onMove(op.id, 'down')}
         >
-          ↓
+          <MoveIcon dir="down" />
         </button>
       </div>
     </li>

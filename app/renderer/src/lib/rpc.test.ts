@@ -607,6 +607,12 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('readiness.summary', undefined);
   });
 
+  it('paths.describe calls the bare method (data-locations layout)', async () => {
+    const r = installApi();
+    await client.paths.describe();
+    expect(r).toHaveBeenCalledWith('paths.describe', undefined);
+  });
+
   it('providers.usage calls the bare method (WU-usage-ui)', async () => {
     const r = installApi();
     await client.providers.usage();
@@ -629,6 +635,30 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('providers.firstRun', {});
     await client.providers.firstRun('bestFreeCloud');
     expect(r).toHaveBeenCalledWith('providers.firstRun', { choice: 'bestFreeCloud' });
+  });
+
+  it('providers.* key/consent management forward their params (WU-keys)', async () => {
+    const r = installApi();
+    await client.providers.list();
+    expect(r).toHaveBeenCalledWith('providers.list', undefined);
+    await client.providers.upsert({ id: 'groq', provider: 'Groq', apiKeys: ['raw-key'] });
+    expect(r).toHaveBeenCalledWith('providers.upsert', {
+      provider: { id: 'groq', provider: 'Groq', apiKeys: ['raw-key'] },
+    });
+    await client.providers.remove('groq');
+    expect(r).toHaveBeenCalledWith('providers.remove', { id: 'groq' });
+    // testKey passes the whole args object straight through.
+    await client.providers.testKey({ baseUrl: 'https://x/v1', apiKey: 'k', model: 'm' });
+    expect(r).toHaveBeenCalledWith('providers.testKey', {
+      baseUrl: 'https://x/v1',
+      apiKey: 'k',
+      model: 'm',
+    });
+    // setConsent spreads the patch alongside the provider name.
+    await client.providers.setConsent('Groq', { text: true });
+    expect(r).toHaveBeenCalledWith('providers.setConsent', { provider: 'Groq', text: true });
+    await client.providers.setConsent('Groq', { frames: false });
+    expect(r).toHaveBeenCalledWith('providers.setConsent', { provider: 'Groq', frames: false });
   });
 
   it('savePresets.* forward their params (WU-10/WU-11)', async () => {

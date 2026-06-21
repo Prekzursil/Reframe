@@ -485,6 +485,88 @@ def test_vision_provider_for_consent_returns_first_vision_cloud_name(tmp_path: P
     assert name == "Gemini"
 
 
+# --------------------------------------------------------------------------- #
+# OFFLINE ENFORCEMENT (bug fix): offline forbids cloud vision egress even when
+# the provider is fully frame-consented + routed. Mirrors the consent fall-through
+# above — offline drops the cloud branch so the resolver degrades to local/None.
+# --------------------------------------------------------------------------- #
+def test_resolve_vlm_reranker_offline_skips_cloud_falls_through_to_local(tmp_path: Path) -> None:
+    # Cloud vision is routed AND frame-consented, but offline is ON: the cloud
+    # branch must be refused (no frame egress); with local weights present the
+    # resolver falls through to the LOCAL reranker (zero network).
+    svc = _phase8_services(
+        tmp_path,
+        provider=None,
+        vlm_clip_frame_loader=_fake_clip_loader,
+        vlm_models_present=lambda s: True,
+    )
+    svc.settings.set({**_vision_provider_settings(with_consent=True), "offline": True})
+    rr = svc._resolve_vlm_reranker(svc.settings.get(), media_path="/v.mp4")
+    from media_studio.features import smolvlm2 as sv
+
+    assert isinstance(rr, sv.SmolVlmReranker)
+    assert rr._factory is sv._default_backend_factory  # local, not the cloud closure
+
+
+def test_resolve_vlm_reranker_offline_no_weights_is_none(tmp_path: Path) -> None:
+    # Cloud vision routed + consented, offline ON, NO local weights -> None
+    # (transcript-only). No cloud closure is ever built, so no frame can egress.
+    svc = _phase8_services(tmp_path, provider=None, vlm_models_present=lambda s: False)
+    svc.settings.set({**_vision_provider_settings(with_consent=True), "offline": True})
+    assert svc._resolve_vlm_reranker(svc.settings.get(), media_path="/v.mp4") is None
+
+
+def test_phase8_select_offline_no_frame_egress(tmp_path: Path, video_file: Path) -> None:
+    # End-to-end: offline + a fully frame-consented cloud vision provider -> the
+    # cloud vision pool is NEVER touched (the fake vision transport records zero
+    # calls). The select job still completes (degraded to transcript-only).
+    transport = VisionTransport(content="0")
+    svc, ctx, vid = _run_select_with_vision(
+        tmp_path,
+        video_file,
+        settings_patch={**_vision_provider_settings(with_consent=True), "offline": True},
+        transport=transport,
+        models_present=lambda s: False,
+    )
+    assert transport.calls == [], "frames egressed while offline"
+    assert transport.saw_base64 is False
+    selects = [e for e in ctx.events if e[0] == "done" and "candidates" in e[2]]  # type: ignore[attr-defined]
+    assert selects, "select job did not complete (should degrade to transcript-only)"
+    assert svc._resolve_vlm_reranker(svc.settings.get(), media_path=str(video_file)) is None
+
+
+def test_phase8_select_offline_text_select_routes_local_no_egress(tmp_path: Path, video_file: Path) -> None:
+    # The PRIMARY text egress (the select chat provider) must also be refused
+    # offline: with offline ON + a routed text-capable cloud provider, the select
+    # provider is built over cloud-STRIPPED settings, so a 429 can never fail over
+    # to cloud and select_unified cannot egress. The resolved provider exposes only
+    # local entries (no cloud egress target).
+    svc = _phase8_services(tmp_path, provider=None, vlm_models_present=lambda s: False)
+    svc.settings.set({**_vision_provider_settings(with_consent=True), "offline": True})
+    provider = svc._select_provider_or_local()
+    pool = getattr(provider, "entries", None)
+    assert pool is not None, "expected a rotating pool with inspectable entries"
+    assert all(entry.local for entry in pool), "offline select provider still carries a cloud egress target"
+
+
+def test_select_provider_or_local_online_honors_select_route(tmp_path: Path) -> None:
+    # ONLINE (offline off) + no injected provider: the select route is honored,
+    # so a configured cloud entry is the pool's first (egress) target.
+    from media_studio.models import provider as provider_mod
+
+    svc = _phase8_services(tmp_path, provider=None)
+    svc.settings.set(_vision_provider_settings(with_consent=True))  # offline absent -> online
+    svc.settings.set(
+        {
+            **_vision_provider_settings(with_consent=True),
+            "routing": {"perFunction": {"select": {"provider": "gemini", "fallback": []}}},
+        }
+    )
+    pool = svc._select_provider_or_local()
+    assert isinstance(pool, provider_mod.RotatingProvider)
+    assert pool.entries[0].provider == "Gemini", "online select route was not honored"
+
+
 def _two_vision_provider_settings(*, first_consent: bool, second_consent: bool) -> dict[str, Any]:
     """Two vision-capable cloud providers, each with its OWN frame-consent flag.
 

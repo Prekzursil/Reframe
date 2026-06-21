@@ -5,6 +5,64 @@
    only — no one-off hex. Status colors are semantic (verdict ok/degraded/won't-
    run map to success/warn/error). Class names are test-pinned; restyle only. */
 
+/* ---- empty state (pre-analysis): a helpful prompt, never a blank wall -------- */
+
+.models-system-panel .empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin: var(--space-5) 0;
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--edge);
+}
+
+.models-system-panel .empty-state__title {
+  margin: 0;
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  color: var(--text-primary);
+}
+
+.models-system-panel .empty-state__body {
+  margin: 0;
+  max-width: 56ch;
+  color: var(--text-secondary);
+  line-height: var(--type-body-leading);
+}
+
+.models-system-panel .empty-state__cta {
+  margin-top: var(--space-2);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 650;
+}
+
+.models-system-panel .empty-state__cta:hover {
+  background: var(--accent-hover);
+}
+
+/* DISABLED clarity: a greyed control reads as non-interactive (cursor) AND
+   dimmed, scoped to THIS panel so sibling feature panels keep their own voice.
+   The `.feature-panel` qualifier raises specificity above the shared
+   `.feature-panel button:disabled { cursor: default }` base (same element carries
+   both classes), so this wins regardless of stylesheet source order. */
+.feature-panel.models-system-panel button:disabled {
+  cursor: not-allowed;
+}
+
+/* Visible keyboard focus on every interactive control in the panel (no layout
+   shift — the ring is a shadow, not a border). */
+.models-system-panel button:focus-visible,
+.models-system-panel select:focus-visible,
+.models-system-panel input:focus-visible,
+.models-system-panel .tier-card:focus-within {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 /* ---- hardware header --------------------------------------------------------- */
 
 .models-system-panel .hardware-header {
@@ -177,6 +235,19 @@
   letter-spacing: var(--type-caption-tracking);
   text-transform: uppercase;
   color: var(--accent);
+}
+
+/* SELECTION clarity: an unmistakable filled badge on the active tier (color +
+   shape + text — never hue alone). */
+.tier-card__selected {
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .tier-card__label {
@@ -359,6 +430,20 @@
 
 .model-card__download {
   width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+/* MODEL state clarity: the installed row reads its check icon in the calm
+   success hue (the "Installed" text carries the meaning; the icon reinforces). */
+.model-card__download[data-state="installed"] {
+  color: var(--status-success);
+}
+
+.model-card__check {
+  flex: none;
 }
 
 /* ---- notes strip ------------------------------------------------------------- */
@@ -525,10 +610,27 @@
 .preset-picker__preset[aria-pressed="true"] {
   border-color: var(--accent);
   box-shadow: inset 0 0 0 1px var(--accent);
+  background: var(--accent-soft);
 }
 
 .preset-picker__preset-name {
   font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* SELECTION clarity: the active preset gets a filled "Active" badge (color +
+   shape + text), echoing the selected-tier badge so both read the same way. */
+.preset-picker__active {
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .preset-picker__preset-hint {

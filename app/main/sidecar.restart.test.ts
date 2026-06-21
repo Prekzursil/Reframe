@@ -176,4 +176,176 @@ describe('Sidecar.restart() — self-healing', () => {
     expect(spawnMock).toHaveBeenCalledTimes(2);
     expect(sc.running).toBe(true);
   });
+
+  it('restart() race: a LATE exit from the killed child1 must not orphan child2 or spawn child3', () => {
+    const sc = new Sidecar({ python: 'py', pythonArgs: [], cwd: '/x' });
+    sc.on('status', () => undefined);
+    sc.on('error', () => undefined);
+
+    sc.start();
+    const child1 = lastChild();
+    expect(sc.running).toBe(true);
+
+    // restart() kills child1 and spawns child2. The mocked kill is synchronous
+    // but real `kill()` is async: the 'exit' event for child1 can fire LATER,
+    // after child2 is already live. Simulate that by NOT auto-emitting on kill
+    // and firing child1's exit explicitly AFTER the restart returns.
+    sc.restart();
+    const child2 = lastChild();
+    expect(child2).not.toBe(child1);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+
+    // A request now goes to child2; capture its in-flight pending call.
+    const pending = sc.request('ping');
+    let rejected = false;
+    pending.catch(() => {
+      rejected = true;
+    });
+    expect(child2.stdin.write).toHaveBeenCalledTimes(1);
+
+    // child1's exit fires LATE (after child2 spawned). It must be ignored:
+    // no child3 spawn, child2 still the live child, child2's request not rejected.
+    child1.fakeExit(1);
+    flushBackoff();
+
+    expect(spawnMock).toHaveBeenCalledTimes(2); // NO child3
+    expect(sc.running).toBe(true); // child2 still alive (this.child not nulled)
+    return Promise.resolve().then(() => {
+      expect(rejected).toBe(false); // child2's in-flight call NOT rejected
+    });
+  });
+
+  it("a LIVE child exit with a null code formats the rejection as 'code null'", () => {
+    const sc = new Sidecar({ python: 'py', pythonArgs: [], cwd: '/x' });
+    sc.on('status', () => undefined);
+    sc.on('error', () => undefined);
+    sc.on('exit', () => undefined);
+
+    sc.start();
+    const child = lastChild();
+    const pending = sc.request('ping');
+    let message = '';
+    pending.catch((e: Error) => {
+      message = e.message;
+    });
+
+    // A signal-kill yields code=null; the rejection must coalesce to 'code null'.
+    child.fakeExit(null);
+
+    return Promise.resolve().then(() => {
+      expect(message).toBe('sidecar exited (code null)');
+    });
+  });
+
+  it('restart() tolerates a kill() that throws (process already gone)', () => {
+    const sc = new Sidecar({ python: 'py', pythonArgs: [], cwd: '/x' });
+    sc.on('status', () => undefined);
+
+    sc.start();
+    const child = lastChild();
+    child.kill.mockImplementationOnce(() => {
+      throw new Error('ESRCH: already gone');
+    });
+
+    // restart() must swallow the kill() throw and still spawn a fresh child.
+    const result = sc.restart();
+
+    expect(result).toEqual({ ok: true });
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(sc.running).toBe(true);
+  });
+
+  it("a spawn 'error' on the LIVE child rejects pending calls and auto-restarts", () => {
+    const sc = new Sidecar({ python: 'py', pythonArgs: [], cwd: '/x' });
+    const restarts: number[] = [];
+    sc.on('status', () => undefined);
+    sc.on('error', () => undefined);
+    sc.on('log', () => undefined);
+    sc.on('restart', (n: number) => restarts.push(n));
+
+    sc.start();
+    const child = lastChild();
+    const pending = sc.request('ping');
+    let rejected = false;
+    pending.catch(() => {
+      rejected = true;
+    });
+
+    // The current child errors (the guard's false-branch: this.child === child),
+    // so the supervisor must reject in-flight calls, drop the child and restart.
+    child.emit('error', new Error('boom'));
+
+    expect(sc.running).toBe(false);
+    expect(restarts).toEqual([1]);
+    flushBackoff();
+    expect(spawnMock).toHaveBeenCalledTimes(2); // auto-restart spawned a fresh child
+    return Promise.resolve().then(() => {
+      expect(rejected).toBe(true);
+    });
+  });
+
+  it('restart() race: a LATE spawn error from the killed child1 must not orphan child2', () => {
+    const sc = new Sidecar({ python: 'py', pythonArgs: [], cwd: '/x' });
+    sc.on('status', () => undefined);
+    sc.on('error', () => undefined);
+    sc.on('log', () => undefined);
+
+    sc.start();
+    const child1 = lastChild();
+
+    sc.restart();
+    const child2 = lastChild();
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+
+    const pending = sc.request('ping');
+    let rejected = false;
+    pending.catch(() => {
+      rejected = true;
+    });
+
+    // A late 'error' from the replaced child1 must be guarded the same way.
+    child1.emit('error', new Error('late spawn error from child1'));
+    flushBackoff();
+
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(sc.running).toBe(true);
+    expect(child2.stdin.write).toHaveBeenCalledTimes(1);
+    return Promise.resolve().then(() => {
+      expect(rejected).toBe(false);
+    });
+  });
+
+  it('restart() detaches the old child stdout so its buffered output cannot misroute', () => {
+    const sc = new Sidecar({ python: 'py', pythonArgs: [], cwd: '/x' });
+    sc.on('status', () => undefined);
+
+    sc.start();
+    const child1 = lastChild();
+    sc.restart();
+    const child2 = lastChild();
+
+    // A request is in flight on child2 (id=1). If child1's stdout listeners were
+    // NOT removed on replacement, a late chunk from child1 carrying id=1 would
+    // resolve/settle child2's pending call from the WRONG process.
+    const pending = sc.request<unknown>('ping');
+    let settled = false;
+    void pending.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+
+    // child1 emits a stray response for id=1 AFTER being replaced.
+    child1.stdout.emit('data', `${JSON.stringify({ jsonrpc: '2.0', id: 1, result: 'stale' })}\n`);
+
+    // child1's listeners were detached: the stale line is dropped, child2's
+    // pending call stays unsettled (it belongs to child2's stdout).
+    expect(child2.stdout.listenerCount('data')).toBe(1);
+    return Promise.resolve().then(() => {
+      expect(settled).toBe(false);
+    });
+  });
 });

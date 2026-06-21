@@ -311,6 +311,20 @@ export interface AsrEngine {
 }
 
 /**
+ * The resolved on-disk data layout (`paths.describe`, WU-1, read-only). Layout
+ * only — no key/secret string ever appears here. `subDirs` names the per-feature
+ * derivative folders the sidecar writes into.
+ */
+export interface PathsDescribe {
+  dataDir: string;
+  projectsDir: string;
+  exportsDir: string;
+  settingsPath: string;
+  libraryPath: string;
+  subDirs?: Record<string, string>;
+}
+
+/**
  * One capability's readiness state (`readiness.summary`, WU-8). The five states
  * are distinguished by TEXT (the badge label), never hue alone (WCAG 1.4.1):
  * `ready`, `needsDownload`, `needsKey`, `needsConsent`, `unavailable`.
@@ -367,6 +381,69 @@ export interface UsageRow {
   stale: boolean;
   /** Epoch seconds this row was last observed (drives "last checked Xm ago"). */
   lastCheckedAt: number | null;
+}
+
+/**
+ * One configured provider entry as returned REDACTED by `providers.list` /
+ * `providers.upsert` / `providers.remove` (WU-keys). The RPC NEVER returns a
+ * full key: every `apiKeys` entry is already the redacted last-4 (e.g. "…WXYZ").
+ * `id` is the stable provider slug (e.g. "groq"); `provider` is the display
+ * name (e.g. "Groq") and is also the key consent is tracked under.
+ */
+export interface ProviderEntry {
+  /** Stable provider slug used as the upsert/remove id (e.g. "groq"). */
+  id: string;
+  /** Display name (e.g. "Groq"); also the per-provider consent key. */
+  provider?: string;
+  /** OpenAI-compatible base URL the rotation pool calls. */
+  baseUrl?: string;
+  /** Default model id for this provider, when set. */
+  model?: string;
+  /** REDACTED keys (last-4 only) — never a full key over RPC. */
+  apiKeys?: string[];
+  /** Whether the provider participates in the rotation pool. */
+  enabled?: boolean;
+  /** What this provider can ingest ("text" / "vision"). */
+  capabilities?: string[];
+  /** The free-limit unit ("req" / "token"). */
+  unit?: string;
+}
+
+/** The `providers.list` / `providers.upsert` / `providers.remove` payload (WU-keys). */
+export interface ProvidersListResponse {
+  providers: ProviderEntry[];
+}
+
+/**
+ * `providers.testKey` result (WU-keys): a validation ping through the provider
+ * seam. The key is NEVER echoed back — only `ok`, the declared `capabilities`,
+ * and a SCRUBBED `error` string on failure (the live key is stripped at the
+ * provider construction site, so a 4xx body never leaks it over RPC).
+ */
+export interface TestKeyResult {
+  ok: boolean;
+  capabilities?: string[];
+  error?: string;
+}
+
+/**
+ * One provider's per-data-type consent (`consent.perProvider[provider]`). TEXT
+ * (transcripts) and FRAMES (vision) are SEPARATE, independently-revocable
+ * opt-ins (SE1). Either may be absent (treated as not-yet-granted = false).
+ */
+export interface ProviderConsent {
+  text?: boolean;
+  frames?: boolean;
+}
+
+/** The full consent block returned by `providers.setConsent` (WU-keys / SE1). */
+export interface ConsentBlock {
+  perProvider?: Record<string, ProviderConsent>;
+}
+
+/** `providers.setConsent` response (WU-keys / SE1): the full consent block. */
+export interface SetConsentResponse {
+  consent: ConsentBlock;
 }
 
 /**
@@ -1152,8 +1229,51 @@ export const client = {
     summary: (): Promise<{ items: ReadinessItem[] }> => rpc('readiness.summary'),
   },
 
+  /**
+   * `paths.*` — the resolved on-disk data layout (WU-1). Read-only: a pure
+   * path-join the renderer SHOWS so users know WHERE everything lives.
+   */
+  paths: {
+    /** `paths.describe()` -> the resolved data layout (no I/O, no secrets). */
+    describe: (): Promise<PathsDescribe> => rpc('paths.describe'),
+  },
+
   /** `providers.*` — Hub key/usage reads (WU-usage-ui surfaces live usage here). */
   providers: {
+    /**
+     * `providers.list` — the configured provider pool, REDACTED (WU-keys). Every
+     * `apiKeys` entry is the last-4 only; the RPC never returns a full key.
+     */
+    list: (): Promise<ProvidersListResponse> => rpc('providers.list'),
+    /**
+     * `providers.upsert` — insert or merge a provider entry (WU-keys). RAW keys
+     * are stored server-side; the returned list is REDACTED. Pass the full entry
+     * (`{id, provider?, baseUrl?, model?, apiKeys?, ...}`); merging into an
+     * existing `id` preserves untouched fields.
+     */
+    upsert: (entry: ProviderEntry): Promise<ProvidersListResponse> =>
+      rpc('providers.upsert', { provider: entry }),
+    /** `providers.remove` — drop the provider with this id; returns the REDACTED list. */
+    remove: (id: string): Promise<ProvidersListResponse> => rpc('providers.remove', { id }),
+    /**
+     * `providers.testKey` — validate a key with one minimal completion ping
+     * (WU-keys). The key is never echoed back: only `ok` + declared
+     * `capabilities` + a scrubbed `error` on failure.
+     */
+    testKey: (args: {
+      baseUrl: string;
+      apiKey: string;
+      model?: string;
+      capabilities?: string[];
+    }): Promise<TestKeyResult> => rpc('providers.testKey', args),
+    /**
+     * `providers.setConsent` — set per-data-type egress consent for a provider
+     * (WU-keys / SE1). TEXT and FRAMES are independent: only the keys present in
+     * the patch change, so revoking `frames` leaves `text` intact. Returns the
+     * full consent block.
+     */
+    setConsent: (provider: string, patch: ProviderConsent): Promise<SetConsentResponse> =>
+      rpc('providers.setConsent', { provider, ...patch }),
     /**
      * `providers.usage` — per-key live usage (cached, persisted, stale-flagged;
      * NOT a poller). Keys are redacted; req/token units are returned distinctly.

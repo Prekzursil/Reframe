@@ -86,21 +86,33 @@ export function PresetPicker({
     <div className="preset-picker" data-section="presets">
       <h3>AI presets</h3>
       <div className="preset-picker__presets" role="group" aria-label="Smart presets">
-        {PRESETS.map((preset) => (
-          <button
-            key={preset.id}
-            type="button"
-            className="preset-picker__preset"
-            data-preset={preset.id}
-            aria-pressed={activePreset === preset.id}
-            disabled={busy}
-            title={preset.hint}
-            onClick={() => onApplyPreset(preset.id)}
-          >
-            <span className="preset-picker__preset-name">{preset.label}</span>
-            <span className="preset-picker__preset-hint">{preset.hint}</span>
-          </button>
-        ))}
+        {PRESETS.map((preset) => {
+          const active = activePreset === preset.id;
+          return (
+            <button
+              key={preset.id}
+              type="button"
+              className={`preset-picker__preset${active ? ' is-active' : ''}`}
+              data-preset={preset.id}
+              // SELECTION clarity: aria-pressed announces the active preset; the
+              // visible "Active" badge conveys it sighted (never color alone).
+              aria-pressed={active}
+              disabled={busy}
+              title={busy ? 'Applying a preset…' : preset.hint}
+              onClick={() => onApplyPreset(preset.id)}
+            >
+              <span className="preset-picker__preset-name">
+                {preset.label}
+                {active && (
+                  <span className="preset-picker__active" title="This preset is currently active">
+                    Active
+                  </span>
+                )}
+              </span>
+              <span className="preset-picker__preset-hint">{preset.hint}</span>
+            </button>
+          );
+        })}
       </div>
 
       <h3>Per-function model</h3>

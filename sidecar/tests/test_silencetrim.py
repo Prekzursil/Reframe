@@ -160,7 +160,7 @@ class TestTrimClip:
     def test_trim_recuts_keeps_and_reports_removed(self, settings, tmp_path):
         run = RecordingRun()
         out = str(tmp_path / "out.mp4")
-        path, removed = stm.trim_clip(
+        path, removed, keeps = stm.trim_clip(
             "/in.mp4",
             out,
             settings=settings,
@@ -173,10 +173,13 @@ class TestTrimClip:
         assert removed > 4.0
         # The re-cut used a filter_complex concat (fillers.build_segment_cut_argv).
         assert "-filter_complex" in run.calls[0]
+        # The clip-local KEEP spans are returned (>1 keep, since interior silence
+        # was removed) so the caller can remap caption cues onto the new timeline.
+        assert len(keeps) > 1
 
     def test_trim_passthrough_when_no_silence(self, settings, tmp_path):
         run = RecordingRun()
-        path, removed = stm.trim_clip(
+        path, removed, keeps = stm.trim_clip(
             "/in.mp4",
             str(tmp_path / "out.mp4"),
             settings=settings,
@@ -184,17 +187,19 @@ class TestTrimClip:
             run=run,
             duration=lambda p, s=None: 20.0,
         )
-        # Pass-through: original path returned, no re-encode, nothing removed.
+        # Pass-through: original path returned, no re-encode, nothing removed. The
+        # keeps cover the whole clip (identity remap -> cues map through unchanged).
         assert path == "/in.mp4"
         assert removed == 0.0
         assert run.calls == []
+        assert keeps == [(0.0, 20.0)]
 
     def test_trim_passthrough_when_duration_probe_raises(self, settings, tmp_path):
         # A probe failure means we can't trim safely -> pass through unchanged.
         def boom_duration(p, s=None):
             raise OSError("ffprobe died")
 
-        path, removed = stm.trim_clip(
+        path, removed, keeps = stm.trim_clip(
             "/in.mp4",
             str(tmp_path / "out.mp4"),
             settings=settings,
@@ -203,9 +208,10 @@ class TestTrimClip:
             duration=boom_duration,
         )
         assert path == "/in.mp4" and removed == 0.0
+        assert keeps == []  # no timeline -> nothing to remap
 
     def test_trim_passthrough_when_duration_unknown(self, settings, tmp_path):
-        path, removed = stm.trim_clip(
+        path, removed, keeps = stm.trim_clip(
             "/in.mp4",
             str(tmp_path / "out.mp4"),
             settings=settings,
@@ -214,6 +220,7 @@ class TestTrimClip:
             duration=lambda p, s=None: 0.0,
         )
         assert path == "/in.mp4" and removed == 0.0
+        assert keeps == []
 
     def test_trim_ffmpeg_failure_raises(self, settings, tmp_path):
         with pytest.raises(stm.SilenceTrimError, match="silence-trim re-cut"):

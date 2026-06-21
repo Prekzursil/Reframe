@@ -401,6 +401,76 @@ def test_resolve_frame_scorer_off_without_consent(tmp_path: Path) -> None:
     assert transport.calls == []
 
 
+# --------------------------------------------------------------------------- #
+# OFFLINE ENFORCEMENT (bug fix): offline forbids cloud frame egress even when the
+# provider is fully frame-consented. The cloud branch is skipped so the resolver
+# degrades to the local scorer (weights present) or None (degrade-to-midpoint).
+# --------------------------------------------------------------------------- #
+def test_resolve_frame_scorer_offline_skips_cloud_uses_local(tmp_path: Path) -> None:
+    transport = VisionTransport(content="2")
+
+    class _LocalBackend:
+        """A fake LOCAL vlm backend: scores frames without any network."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def rank_clips(self, stacks: Any, prompt: str) -> list[float]:
+            self.calls += 1
+            return [0.5 for _ in list(stacks)]
+
+    local_backend = _LocalBackend()
+    svc = _services(
+        tmp_path,
+        provider=None,
+        vlm_chat_transport=transport,
+        vlm_models_present=lambda s: True,  # local weights present
+        frame_backend_factory=lambda _s: local_backend,
+    )
+    svc.settings.set({**_vision_provider_settings(with_consent=True), "offline": True})
+    scorer = svc._resolve_frame_scorer(svc.settings.get())
+    assert scorer is not None
+    # Invoke it: the LOCAL backend scores, the CLOUD vision transport stays untouched.
+    scores = scorer(["a", "b"], "best?")
+    assert local_backend.calls == 1, "offline did not route to the local backend"
+    assert transport.calls == [], "frames egressed to cloud while offline"
+    assert len(scores) == 2
+
+
+def test_resolve_frame_scorer_offline_no_weights_is_none(tmp_path: Path) -> None:
+    transport = VisionTransport(content="2")
+    svc = _services(
+        tmp_path,
+        provider=None,
+        vlm_chat_transport=transport,
+        vlm_models_present=lambda s: False,
+    )
+    svc.settings.set({**_vision_provider_settings(with_consent=True), "offline": True})
+    # offline + consented cloud + no local weights -> None (degrade-to-midpoint).
+    assert svc._resolve_frame_scorer(svc.settings.get()) is None
+    assert transport.calls == []
+
+
+def test_thumbnail_select_offline_no_frame_egress(tmp_path: Path, video_file: Path) -> None:
+    # End-to-end: offline + a fully frame-consented cloud vision provider + no
+    # local weights -> degrade-to-midpoint, the cloud vision transport NEVER hit.
+    transport = VisionTransport(content="2")
+    svc = _services(
+        tmp_path,
+        provider=None,
+        vlm_chat_transport=transport,
+        vlm_models_present=lambda s: False,
+    )
+    svc.settings.set({**_vision_provider_settings(with_consent=True), "offline": True})
+    vid = _add_video(svc, video_file)
+    ctx = _ctx()
+    svc.thumbnail_select({"videoId": vid, "path": str(video_file), "start": 0.0, "end": 4.0}, ctx)
+    ctx.jobs.join(timeout=5)
+    result = _done_result(ctx)
+    assert transport.calls == [], "frames egressed while offline"
+    assert result["degraded"] is True
+
+
 def _two_vision_provider_settings(*, first_consent: bool, second_consent: bool) -> dict[str, Any]:
     """Two vision-capable cloud providers, each with its OWN frame-consent flag.
 

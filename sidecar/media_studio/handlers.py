@@ -833,6 +833,25 @@ class Services:
 
         return _provider_mod.get_provider(self.settings.get_raw(), prefer=self._function_prefer(function))
 
+    def _select_provider_or_local(self) -> Any:
+        """Resolve the ``phase8.select`` chat provider, forcing LOCAL when offline.
+
+        OFFLINE GATE: the unified selector's primary AI is a text chat over the
+        ``select`` route, which is a cloud egress when routed cloud. Offline forbids
+        that egress, so the provider is built with ``prefer=LOCAL_PROVIDER_ID`` —
+        :func:`provider.build_pool_provider` then yields a LOCAL-ONLY pool with NO
+        cloud entry, so neither the primary call NOR a 429 failover can ever reach a
+        cloud target. Online, the normal per-function ``select`` route is honored.
+        An injected ``_provider`` (tests) still wins outright.
+        """
+        if self._provider is not None:
+            return self._provider
+        from .models import provider as _provider_mod  # local: heavy seam
+
+        if _offline.is_offline(self.settings.get()):
+            return _provider_mod.get_provider(self.settings.get_raw(), prefer=_provider_mod.LOCAL_PROVIDER_ID)
+        return self._provider_for_function("select")
+
     def _translator_for_function(self, function: str) -> Any:
         """Build the TieredTranslator whose tier3 hosted pool honors routing."""
         from .models import translation as _translation_mod  # local: heavy seam
@@ -966,7 +985,11 @@ class Services:
         from .features import smolvlm2 as _sv  # local: import-light (no heavy import)
 
         raw_settings = self.settings.get_raw()
-        vision_provider = self._vision_provider_for_consent(raw_settings)
+        # OFFLINE GATE: offline forbids ALL cloud frame egress, even for a fully
+        # frame-consented + routed provider (offline is authoritative over consent).
+        # Skip the cloud branch so the resolver degrades to local weights / None —
+        # the same fall-through a no-consent run takes (mirrors assets/diarize).
+        vision_provider = None if _offline.is_offline(settings) else self._vision_provider_for_consent(raw_settings)
         if vision_provider is not None:
             # SECURITY: the pool is built over ONLY frame-consented cloud entries,
             # so RotatingProvider.chat(capability="vision") can never fail over to a
@@ -1024,7 +1047,11 @@ class Services:
         from .features import smolvlm2 as _sv  # local: import-light
 
         raw_settings = self.settings.get_raw()
-        vision_provider = self._vision_provider_for_consent(raw_settings)
+        # OFFLINE GATE: offline forbids ALL cloud frame egress, even for a fully
+        # frame-consented + routed provider — skip the cloud branch so the resolver
+        # degrades to local weights / None (degrade-to-midpoint), exactly the
+        # no-consent fall-through. Mirrors :meth:`_resolve_vlm_reranker`.
+        vision_provider = None if _offline.is_offline(settings) else self._vision_provider_for_consent(raw_settings)
         if vision_provider is not None:
             pool = self._vision_pool(self._frame_consented_vision_settings(raw_settings))
             backend = _sv.CloudVlmBackend(
@@ -1253,6 +1280,13 @@ class Services:
             return self._embedder
 
         from .models import embedder as _embedder  # local: import-light
+
+        # OFFLINE GATE: offline forbids ALL cloud text egress, even for a fully
+        # TEXT-consented + routed provider — use the deterministic local backstop
+        # (zero egress) instead of resolving a CloudEmbedder. Offline is
+        # authoritative over consent/routing (mirrors assets/diarize).
+        if _offline.is_offline(settings):
+            return _embedder.LocalEmbedder()
 
         pool = self._ai_pool_for_index(self._text_consented_settings(settings))
         if pool is None:  # pragma: no cover - only when provider is a stub w/o the pool builder
@@ -2148,8 +2182,10 @@ class Services:
         # while preserving the {jobId} shape and the {candidates} done payload.
         # WU-presets: the select seam honors routing.perFunction["select"] — its
         # rotation pool tries the routed provider first (local-only when routed to
-        # LOCAL). A legacy injected provider (tests) still wins.
-        select_provider = self._provider if self._provider is not None else self._provider_for_function("select")
+        # LOCAL). A legacy injected provider (tests) still wins. OFFLINE GATE: when
+        # offline, the provider is forced LOCAL-only so select_unified's chat egress
+        # is refused (no cloud primary, no 429 cloud failover).
+        select_provider = self._select_provider_or_local()
         job = self._run_ai_job(
             ctx,
             messages=[{"role": "user", "content": prompt}],
@@ -2651,6 +2687,17 @@ class Services:
         builder = getattr(_provider_mod, "build_pool_provider", None)
         if builder is not None:  # pragma: no branch -- always present off the stub
             raw_cloud = any(not e.local for e in builder(raw, detect_local=False, prefer=prefer).entries)
+            # OFFLINE GATE: offline forbids ALL cloud text egress, even for a fully
+            # TEXT-consented + routed provider. Chat has no in-process local
+            # backstop to complete with, so REFUSE before any chat when a cloud
+            # egress target is configured (offline is authoritative over consent).
+            # A genuinely local/no-cloud route (raw_cloud False) proceeds untouched.
+            if raw_cloud and _offline.is_offline(self.settings.get()):
+                raise _offline.OfflineError(
+                    "Offline mode is on — director.plan would egress transcript text to a "
+                    "cloud provider, which has no local backstop. Turn off Offline mode in "
+                    "System Health, or route editPlan to a local provider."
+                )
             consented_cloud = any(
                 not e.local
                 for e in builder(self._text_consented_settings(raw), detect_local=False, prefer=prefer).entries
