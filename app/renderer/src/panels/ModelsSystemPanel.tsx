@@ -204,6 +204,33 @@ export function ModelsSystemPanel({
     };
   }, [api]);
 
+  // Progressive disclosure: load the CHEAP, probe-INDEPENDENT data up-front so
+  // the AI-presets, ASR/diarization, and provider-usage controls work BEFORE the
+  // user opts into the (heavier, privacy-sensitive) hardware analysis. None of
+  // these reads touches the hardware probe, so the opt-in-probe contract holds.
+  // A failed read degrades that one control quietly (never the panel, never the
+  // alert region) — the opt-in prompt still renders.
+  useEffect(() => {
+    let alive = true;
+    Promise.all([
+      api.providers.catalog().catch(() => null),
+      api.asr.engines().catch(() => null),
+      api.providers.usage().catch(() => null),
+    ])
+      .then(([catalogRes, engineRes, usageRes]) => {
+        if (alive) {
+          if (catalogRes) setCatalog(catalogRes);
+          if (engineRes) setEngines(Array.isArray(engineRes.engines) ? engineRes.engines : []);
+          if (usageRes) setUsage(Array.isArray(usageRes.usage) ? usageRes.usage : []);
+        }
+      })
+      /* v8 ignore next 2 -- every inner read already .catch()es to null, so the outer Promise.all never rejects; this is a belt-and-braces guard. */
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [api]);
+
   // Opt-in analysis: probe hardware + advisor + asset/engine state in parallel.
   const analyze = useCallback(async (): Promise<void> => {
     /* v8 ignore next -- re-entrancy guard: the Analyze button is disabled while busy, so this never trips in tests. */
@@ -475,7 +502,13 @@ export function ModelsSystemPanel({
       />
 
       <div className="actions">
-        <button type="button" data-action="analyze" onClick={() => void analyze()} disabled={busy}>
+        <button
+          type="button"
+          data-action="analyze"
+          onClick={() => void analyze()}
+          disabled={busy}
+          title={busy ? 'Analysis is already running…' : undefined}
+        >
           {busy ? 'Analyzing…' : analyzed ? 'Re-analyze' : 'Analyze my system'}
         </button>
         {analyzed && (
@@ -506,9 +539,22 @@ export function ModelsSystemPanel({
       )}
 
       {!analyzed && !busy && (
-        <p className="status" data-section="prompt">
-          Run “Analyze my system” to detect your hardware and see model recommendations.
-        </p>
+        <div className="empty-state" data-section="prompt">
+          <p className="empty-state__title">See what your machine can run</p>
+          <p className="empty-state__body">
+            Detect your hardware to see per-model and per-tier “will it run” verdicts and a
+            recommended setup. The presets, speech engine, and provider-usage controls below already
+            work — analysis is opt-in and runs locally.
+          </p>
+          <button
+            type="button"
+            className="empty-state__cta"
+            data-action="analyze-cta"
+            onClick={() => void analyze()}
+          >
+            Analyze my system
+          </button>
+        </div>
       )}
 
       {/* WU-B3: loading live region while system.recommend (inside analyze) runs. */}
@@ -619,6 +665,10 @@ export function ModelsSystemPanel({
                     className="recommend-card__apply"
                     data-action="apply-recommendation"
                     aria-label={applyName}
+                    // DISABLED clarity: a hover tooltip surfaces the WHY (the same
+                    // reason the SR-only aria-label carries) so a sighted user
+                    // learns why a greyed Apply is inert.
+                    title={applyName}
                     aria-busy={applying}
                     disabled={applyDisabled}
                     onClick={() => void applyRecommendation(recommendation)}
@@ -684,79 +734,81 @@ export function ModelsSystemPanel({
               </ul>
             </div>
           )}
-
-          <h3>Speech &amp; diarization</h3>
-          <div className="speech-section" data-section="speech">
-            <div className="field">
-              <label htmlFor="asr-engine">ASR engine</label>
-              <select
-                id="asr-engine"
-                data-action="asr-engine"
-                value={settings.asrEngine ?? 'whisper'}
-                onChange={(e) => void patchSettings({ asrEngine: e.target.value })}
-              >
-                {(engines.length > 0
-                  ? engines
-                  : [{ id: 'whisper', label: 'Whisper', installed: true }]
-                ).map((engine) => (
-                  <option key={engine.id} value={engine.id}>
-                    {engine.label}
-                    {engine.installed ? '' : ' (not installed)'}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
-              <label htmlFor="diarize-backend">Diarization backend</label>
-              <select
-                id="diarize-backend"
-                data-action="diarize-backend"
-                value={settings.diarizeBackend ?? 'speechbrain'}
-                onChange={(e) => void patchSettings({ diarizeBackend: e.target.value })}
-              >
-                <option value="speechbrain">SpeechBrain (token-free, default)</option>
-                <option value="pyannote">pyannote 3.1 (needs HF token)</option>
-              </select>
-              {(settings.diarizeBackend ?? 'speechbrain') === 'pyannote' && (
-                <p className="field-hint" data-hint="pyannote">
-                  pyannote needs an HF token (HF_TOKEN) and both gated repos accepted.
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div className="usage-section" data-section="usage">
-            <div className="usage-section__head">
-              <h3>Provider usage</h3>
-              <button
-                type="button"
-                data-action="refresh-usage"
-                className="secondary"
-                onClick={() => void refreshUsage()}
-              >
-                Refresh usage
-              </button>
-            </div>
-            <p className="usage-section__intro">
-              Live per-key quota from your loaded providers — request- and token-limited keys are
-              shown separately and never combined. Updated from response headers, not a poller.
-            </p>
-            <UsageBars rows={usage} />
-          </div>
-
-          {catalog && (
-            <div className="presets-section" data-section="presets-section">
-              <PresetPicker
-                catalog={catalog}
-                routing={settings.routing ?? { perFunction: {} }}
-                activePreset={settings.activePreset ?? ''}
-                onApplyPreset={(name) => void applyAiPreset(name)}
-                onSetFunction={(fn, provider) => void setFunctionModel(fn, provider)}
-                busy={presetBusy}
-              />
-            </div>
-          )}
         </>
+      )}
+
+      {/* Progressive disclosure: these are probe-INDEPENDENT controls (their data
+          loads on mount), so they render whether or not the user has opted into
+          the hardware analysis — the panel is never a blank "analyze first" wall. */}
+      <h3>Speech &amp; diarization</h3>
+      <div className="speech-section" data-section="speech">
+        <div className="field">
+          <label htmlFor="asr-engine">ASR engine</label>
+          <select
+            id="asr-engine"
+            data-action="asr-engine"
+            value={settings.asrEngine ?? 'whisper'}
+            onChange={(e) => void patchSettings({ asrEngine: e.target.value })}
+          >
+            {(engines.length > 0 ? engines : [{ id: 'whisper', label: 'Whisper', installed: true }]).map(
+              (engine) => (
+                <option key={engine.id} value={engine.id}>
+                  {engine.label}
+                  {engine.installed ? '' : ' (not installed)'}
+                </option>
+              ),
+            )}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="diarize-backend">Diarization backend</label>
+          <select
+            id="diarize-backend"
+            data-action="diarize-backend"
+            value={settings.diarizeBackend ?? 'speechbrain'}
+            onChange={(e) => void patchSettings({ diarizeBackend: e.target.value })}
+          >
+            <option value="speechbrain">SpeechBrain (token-free, default)</option>
+            <option value="pyannote">pyannote 3.1 (needs HF token)</option>
+          </select>
+          {(settings.diarizeBackend ?? 'speechbrain') === 'pyannote' && (
+            <p className="field-hint" data-hint="pyannote">
+              pyannote needs an HF token (HF_TOKEN) and both gated repos accepted.
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="usage-section" data-section="usage">
+        <div className="usage-section__head">
+          <h3>Provider usage</h3>
+          <button
+            type="button"
+            data-action="refresh-usage"
+            className="secondary"
+            onClick={() => void refreshUsage()}
+          >
+            Refresh usage
+          </button>
+        </div>
+        <p className="usage-section__intro">
+          Live per-key quota from your loaded providers — request- and token-limited keys are shown
+          separately and never combined. Updated from response headers, not a poller.
+        </p>
+        <UsageBars rows={usage} />
+      </div>
+
+      {catalog && (
+        <div className="presets-section" data-section="presets-section">
+          <PresetPicker
+            catalog={catalog}
+            routing={settings.routing ?? { perFunction: {} }}
+            activePreset={settings.activePreset ?? ''}
+            onApplyPreset={(name) => void applyAiPreset(name)}
+            onSetFunction={(fn, provider) => void setFunctionModel(fn, provider)}
+            busy={presetBusy}
+          />
+        </div>
       )}
 
       {!settings.firstRunChoiceMade && (

@@ -607,6 +607,12 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('readiness.summary', undefined);
   });
 
+  it('paths.describe calls the bare method (data-locations layout)', async () => {
+    const r = installApi();
+    await client.paths.describe();
+    expect(r).toHaveBeenCalledWith('paths.describe', undefined);
+  });
+
   it('providers.usage calls the bare method (WU-usage-ui)', async () => {
     const r = installApi();
     await client.providers.usage();

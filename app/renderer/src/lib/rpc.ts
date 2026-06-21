@@ -311,6 +311,20 @@ export interface AsrEngine {
 }
 
 /**
+ * The resolved on-disk data layout (`paths.describe`, WU-1, read-only). Layout
+ * only — no key/secret string ever appears here. `subDirs` names the per-feature
+ * derivative folders the sidecar writes into.
+ */
+export interface PathsDescribe {
+  dataDir: string;
+  projectsDir: string;
+  exportsDir: string;
+  settingsPath: string;
+  libraryPath: string;
+  subDirs?: Record<string, string>;
+}
+
+/**
  * One capability's readiness state (`readiness.summary`, WU-8). The five states
  * are distinguished by TEXT (the badge label), never hue alone (WCAG 1.4.1):
  * `ready`, `needsDownload`, `needsKey`, `needsConsent`, `unavailable`.
@@ -1213,6 +1227,15 @@ export const client = {
   readiness: {
     /** `readiness.summary()` -> the per-capability readiness rows (WU-8). */
     summary: (): Promise<{ items: ReadinessItem[] }> => rpc('readiness.summary'),
+  },
+
+  /**
+   * `paths.*` — the resolved on-disk data layout (WU-1). Read-only: a pure
+   * path-join the renderer SHOWS so users know WHERE everything lives.
+   */
+  paths: {
+    /** `paths.describe()` -> the resolved data layout (no I/O, no secrets). */
+    describe: (): Promise<PathsDescribe> => rpc('paths.describe'),
   },
 
   /** `providers.*` — Hub key/usage reads (WU-usage-ui surfaces live usage here). */

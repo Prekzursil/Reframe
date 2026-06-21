@@ -9,6 +9,32 @@ import type { ComponentStatus } from '../lib/rpc';
 import { fillPct, fmtMb, licenseChip, prettyName } from './advisorMeta';
 import { VerdictBadge } from './VerdictBadge';
 
+/**
+ * The "Installed" check — an inline Lucide-style 24×24 stroke icon (NEVER an
+ * emoji glyph, which renders inconsistently and reads as content). Decorative:
+ * the button's "Installed" text carries the meaning, so it is aria-hidden.
+ */
+function CheckIcon(): React.ReactElement {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      focusable="false"
+      aria-hidden="true"
+      data-icon="installed"
+      className="model-card__check"
+    >
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  );
+}
+
 export interface ModelCardProps {
   component: ComponentStatus;
   /** Quality rank 0..1 (tier-derived) for the quality mini-bar. */
@@ -100,11 +126,23 @@ export function ModelCard({
           className="model-card__download"
           data-action="download"
           data-model={component.name}
+          data-state={installed ? 'installed' : downloading ? 'downloading' : 'download'}
           disabled={downloadDisabled}
           title={downloadTip}
           onClick={() => onDownload(component.name)}
         >
-          {installed ? 'Installed' : downloading ? 'Downloading…' : 'Download'}
+          {installed ? (
+            <>
+              <CheckIcon />
+              Installed
+            </>
+          ) : downloading ? (
+            'Downloading…'
+          ) : sizeText === '—' ? (
+            'Download'
+          ) : (
+            `Download (${sizeText})`
+          )}
         </button>
       </div>
     </li>

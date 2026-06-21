@@ -18,7 +18,22 @@ import React, { Suspense, lazy, useState } from 'react';
 import { TabBar, type TabDef } from '../components/TabBar';
 import { SystemHealth } from '../features/SystemHealth';
 import { ProvidersKeys } from '../features/ProvidersKeys';
+import { PathsPanel, type PathsBridge } from '../components/PathsPanel';
+import { client } from '../lib/rpc';
+import { resolveWindowApi } from '../features/shortMakerLogic';
 import './settings.css';
+
+/**
+ * The MAIN-process bridge slice PathsPanel needs (open-in-folder + data-root
+ * flow). It lives on `window.api` (NOT a sidecar RPC), so we read it via the
+ * shared `resolveWindowApi` accessor — the SAME structural-cast pattern
+ * ShortMaker's data-root section uses. A missing preload degrades each control
+ * to its own "Unavailable" state (PathsPanel fails soft per-capability), so an
+ * empty object is a safe default that never throws.
+ */
+function pathsBridge(): PathsBridge {
+  return (resolveWindowApi() as PathsBridge | undefined) ?? {};
+}
 
 // Lazy: the model-card grid + onboarding is heavy and rarely the first thing a
 // user opens. Mirrors App's previous lazy import of the same panel.
@@ -60,6 +75,15 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     // The full key + consent management surface. Its secondary link routes back
     // to Models & System where per-function provider routing lives.
     render: (ctx) => <ProvidersKeys onOpenModels={() => ctx.goTo('models')} />,
+  },
+  {
+    id: 'storage',
+    label: 'Storage',
+    // Wires the previously-orphaned PathsPanel: SHOW where data lives, change the
+    // data root, and open folders in the OS explorer. Read-only layout via
+    // `client.paths`; the data-root flow + open-in-folder via the window.api
+    // bridge (fail-soft per control when the preload is absent).
+    render: () => <PathsPanel rpc={client.paths} bridge={pathsBridge()} />,
   },
   {
     id: 'health',

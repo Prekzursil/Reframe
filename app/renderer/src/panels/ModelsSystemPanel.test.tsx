@@ -321,6 +321,76 @@ describe('<ModelsSystemPanel />', () => {
     expect(container.querySelector('[data-section="hardware"]')).toBeNull();
   });
 
+  // ---- progressive disclosure: key controls work BEFORE analysis ----------
+  it('the empty-state prompt offers an Analyze call-to-action button', async () => {
+    const c = makeClient();
+    await mount(c);
+    const prompt = container.querySelector('[data-section="prompt"]') as HTMLElement;
+    expect(prompt).not.toBeNull();
+    const cta = prompt.querySelector('button[data-action="analyze-cta"]') as HTMLButtonElement;
+    expect(cta).not.toBeNull();
+    // The CTA drives the same opt-in analysis as the header button.
+    await act(async () => cta.click());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-section="hardware"]')).not.toBeNull();
+  });
+
+  it('renders the AI presets + speech controls BEFORE analysis (cheap data on mount)', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true, firstRunChoiceMade: true },
+      catalog: presetCatalog(),
+    });
+    await mount(c);
+    // No analysis yet, but the probe-independent controls are present + usable.
+    expect(container.querySelector('[data-section="hardware"]')).toBeNull();
+    expect(container.querySelector('[data-section="presets"]')).not.toBeNull();
+    expect(container.querySelector('[data-preset="balanced"]')).not.toBeNull();
+    expect(container.querySelector('select[data-action="asr-engine"]')).not.toBeNull();
+    expect(container.querySelector('[data-section="usage"]')).not.toBeNull();
+    // The cheap reads ran on mount without the user opting into the probe.
+    expect(c.calls.some((x) => x.method === 'providers.catalog')).toBe(true);
+    expect(c.calls.some((x) => x.method === 'asr.engines')).toBe(true);
+    expect(c.calls.some((x) => x.method === 'providers.usage')).toBe(true);
+    expect(c.calls.some((x) => x.method === 'system.probe')).toBe(false);
+  });
+
+  it('applies a preset BEFORE analysis (key control is not gated)', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true, firstRunChoiceMade: true },
+      catalog: presetCatalog(),
+    });
+    await mount(c);
+    const btn = container.querySelector('[data-preset="privacy"]') as HTMLButtonElement;
+    await act(async () => btn.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(c.client.providers.applyPreset as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+      'privacy',
+    );
+  });
+
+  it('tolerates a rejected cheap mount load without blocking the panel', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    (c.client.providers.catalog as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('catalog offline'),
+    );
+    (c.client.asr.engines as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('engines offline'),
+    );
+    (c.client.providers.usage as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('usage offline'),
+    );
+    await mount(c);
+    // A failed cheap read degrades quietly: the opt-in prompt still renders and
+    // nothing is thrown into the alert region.
+    expect(container.querySelector('[data-section="prompt"]')).not.toBeNull();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it('analyzes: renders bars, preset, tiers, models, notes, and the onboarding tour', async () => {
     const c = makeClient();
     await mount(c);
@@ -346,6 +416,62 @@ describe('<ModelsSystemPanel />', () => {
     // advisor called with commercial:false (no setting)
     expect(c.calls.find((x) => x.method === 'system.advisor')?.args[0]).toEqual({
       commercial: false,
+    });
+  });
+
+  it('model rows read exactly one unambiguous state (Installed / Download (size) / Downloading)', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    await mount(c);
+    await analyze();
+
+    // smolvlm2: not installed, asset 4500 MB -> "Download (4.4 GB)" + the size.
+    const smolCard = container.querySelector('.model-card[data-model="smolvlm2"]') as HTMLElement;
+    const smolBtn = smolCard.querySelector('button[data-action="download"]') as HTMLButtonElement;
+    expect(smolBtn.textContent).toContain('Download');
+    expect(smolBtn.textContent).toContain('4.4 GB');
+    expect(smolBtn.disabled).toBe(false);
+    // No installed-check icon on a not-installed row.
+    expect(smolCard.querySelector('svg[data-icon="installed"]')).toBeNull();
+
+    // vlm_backbone: installed (siglip) -> "Installed", disabled, with an SVG check
+    // (no emoji glyph used as an icon).
+    const vlmCard = container.querySelector('.model-card[data-model="vlm_backbone"]') as HTMLElement;
+    const vlmBtn = vlmCard.querySelector('button[data-action="download"]') as HTMLButtonElement;
+    expect(vlmBtn.textContent).toContain('Installed');
+    expect(vlmBtn.disabled).toBe(true);
+    expect(vlmCard.querySelector('svg[data-icon="installed"]')).not.toBeNull();
+
+    // motion: a CPU floor (no asset) -> "Installed" (nothing to download).
+    const motionCard = container.querySelector('.model-card[data-model="motion"]') as HTMLElement;
+    const motionBtn = motionCard.querySelector(
+      'button[data-action="download"]',
+    ) as HTMLButtonElement;
+    expect(motionBtn.textContent).toContain('Installed');
+    expect(motionBtn.disabled).toBe(true);
+  });
+
+  it('a model row shows the Downloading… state while its download is in flight', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    // Hold assets.ensure open so the row stays in the downloading state.
+    let release: (() => void) | undefined;
+    (c.client.assets.ensure as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise<{ jobId: string }>((resolve) => {
+          release = () => resolve({ jobId: 'job-x' });
+        }),
+    );
+    await mount(c);
+    await analyze();
+    const smolCard = container.querySelector('.model-card[data-model="smolvlm2"]') as HTMLElement;
+    const btn = smolCard.querySelector('button[data-action="download"]') as HTMLButtonElement;
+    await act(async () => btn.click());
+    expect(btn.textContent).toContain('Downloading…');
+    expect(btn.disabled).toBe(true);
+    // Let the download settle so the test tears down cleanly.
+    await act(async () => {
+      release?.();
+      await Promise.resolve();
+      await Promise.resolve();
     });
   });
 
@@ -379,6 +505,37 @@ describe('<ModelsSystemPanel />', () => {
       (radios[2] as HTMLInputElement).click();
     });
     expect(c.calls.find((x) => x.method === 'settings.set')?.args[0]).toEqual({ phase8Tier: 2 });
+  });
+
+  it('the selected tier carries an unmistakable Selected badge + aria-current', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true, phase8Tier: 2 } });
+    await mount(c);
+    await analyze();
+    const selected = container.querySelector('.tier-card[data-tier="2"]') as HTMLElement;
+    const unselected = container.querySelector('.tier-card[data-tier="0"]') as HTMLElement;
+    // Selection is conveyed by a visible badge AND aria-current (not color alone).
+    expect(selected.getAttribute('aria-current')).toBe('true');
+    expect(selected.querySelector('.tier-card__selected')).not.toBeNull();
+    expect(unselected.getAttribute('aria-current')).toBeNull();
+    expect(unselected.querySelector('.tier-card__selected')).toBeNull();
+  });
+
+  it('the active AI preset shows an Active badge + aria-pressed (selection clarity)', async () => {
+    const c = makeClient({
+      initialSettings: {
+        modelsOnboardingSeen: true,
+        firstRunChoiceMade: true,
+        activePreset: 'balanced',
+      },
+      catalog: presetCatalog(),
+    });
+    await mount(c);
+    const active = container.querySelector('[data-preset="balanced"]') as HTMLButtonElement;
+    const inactive = container.querySelector('[data-preset="privacy"]') as HTMLButtonElement;
+    expect(active.getAttribute('aria-pressed')).toBe('true');
+    expect(active.querySelector('.preset-picker__active')).not.toBeNull();
+    expect(inactive.getAttribute('aria-pressed')).toBe('false');
+    expect(inactive.querySelector('.preset-picker__active')).toBeNull();
   });
 
   it('Apply preset writes the recommended tier', async () => {
@@ -631,7 +788,10 @@ describe('<ModelsSystemPanel />', () => {
     (c.client.assets.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       assets: 'nope' as unknown as AssetInfo[],
     });
-    (c.client.asr.engines as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+    // asr.engines is read TWICE (cheap mount load + analyze); use a persistent
+    // mock so the analyze path's `Array.isArray(engineRes?.engines)` false-arm is
+    // exercised (a single Once would be consumed by the mount load first).
+    (c.client.asr.engines as ReturnType<typeof vi.fn>).mockResolvedValue({
       engines: null as unknown as { id: string; label: string; installed: boolean }[],
     });
     await mount(c);
@@ -1505,6 +1665,8 @@ describe('<ModelsSystemPanel /> WU-B3 card', () => {
     ) as HTMLButtonElement;
     expect(apply.disabled).toBe(true);
     expect(apply.getAttribute('aria-label')).toBe('Your settings already match the recommendation');
+    // DISABLED clarity: a hover tooltip gives the WHY (not just the SR-only label).
+    expect(apply.getAttribute('title')).toBe('Your settings already match the recommendation');
     expect(container.querySelector('[data-section="recommend-optimal"]')?.textContent).toContain(
       'already match',
     );
