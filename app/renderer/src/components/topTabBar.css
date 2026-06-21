@@ -1,0 +1,108 @@
+/* topTabBar.css — the application's top-level tab strip (components/TopTabBar.tsx).
+   Distinct from the in-view `.tabbar`/`.tab` sub-tabs: this is the chrome-level
+   surface switcher under the app bar. All values are tokens (styles/tokens.css);
+   the dark theme + global focus ring + reduced-motion rules come from shell.css.
+   The active tab is unmistakable: accent text + icon AND a 2px accent underline
+   (color is never the only signal). */
+
+.toptabs {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-1);
+  padding: 0 var(--space-5);
+  flex: none;
+  background: var(--surface-raised);
+  box-shadow: inset 0 -1px 0 var(--edge);
+}
+
+.toptab {
+  appearance: none;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  /* Color/background shift only — no layout-bound props, so no hover jump. */
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+/* The active underline. A pseudo-element so it never affects layout (no shift
+   between active/inactive); animates the accent in. */
+.toptab::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
+  transition: background var(--dur-base) var(--ease-out);
+}
+
+.toptab__icon {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+}
+
+/* 24×24 source SVGs scaled down to the 18px chrome slot. */
+.toptab__icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.toptab__label {
+  white-space: nowrap;
+}
+
+/* Pending-count badge (e.g. interrupted Repurpose batches): a quiet accent chip,
+   tabular so multi-digit counts don't jitter. */
+.toptab__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.toptab:hover {
+  color: var(--text-secondary);
+  background: var(--surface-hover);
+}
+
+.toptab:hover::after {
+  background: var(--edge-strong);
+}
+
+/* Active: accent text + icon + a solid accent underline. Unmistakable, and not
+   color-alone (the underline is a second, shape signal). */
+.toptab--active {
+  color: var(--accent);
+}
+
+.toptab--active:hover {
+  color: var(--accent-hover);
+  background: var(--accent-soft);
+}
+
+.toptab--active::after,
+.toptab--active:hover::after {
+  background: var(--accent);
+}

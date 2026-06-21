@@ -62,13 +62,15 @@ test('Library panel mounts and shows the imported sample', async () => {
   await expect(win.locator('.library__item-title').first()).toHaveText('sample');
 });
 
-test('Shorts panel mounts via top nav', async () => {
+test('Create (Shorts) panel mounts via the top-level tabs', async () => {
   const win = await app.firstWindow();
-  await win.locator('.app__nav-btn', { hasText: 'Shorts' }).click();
-  // Shorts view renders its own surface; the nav button becomes active.
-  await expect(win.locator('.app__nav-btn.is-active', { hasText: 'Shorts' })).toBeVisible();
+  await win.locator('.toptab', { hasText: 'Create' }).click();
+  // The Create tab becomes the selected top-level tab.
+  await expect(
+    win.locator('.toptab[aria-selected="true"]', { hasText: 'Create' }),
+  ).toBeVisible();
   // Return to Library for the Workspace test.
-  await win.locator('.app__nav-btn', { hasText: 'Library' }).click();
+  await win.locator('.toptab', { hasText: 'Library' }).click();
   await expect(win.locator('.library__title')).toBeVisible();
 });
 

@@ -93,42 +93,12 @@ body,
   display: inline-flex;
   align-items: center;
   gap: var(--space-3);
-}
-
-/* View nav: a quiet segmented control sitting next to the wordmark. The nav
-   carries the auto-margin so everything after it (Quality + Jobs) sits right. */
-.app__nav {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
   margin-right: auto;
 }
 
-.app__nav-btn {
-  appearance: none;
-  border: none;
-  padding: 5px 12px;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
-}
-
-.app__nav-btn:hover {
-  color: var(--text-primary);
-  background: var(--surface-hover);
-}
-
-.app__nav-btn.is-active {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
+/* The top-level tab strip lives in components/topTabBar.css (.toptabs/.toptab),
+   sitting below the bar. The wordmark (above) carries the auto-margin so the
+   Quality toggle + Jobs button sit to the right of it. */
 
 .app__brand::before {
   content: "";

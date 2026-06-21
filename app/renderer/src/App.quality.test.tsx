@@ -1,9 +1,10 @@
-// App.quality.test.tsx — covers App's non-routing behaviour that App.test.tsx
-// leaves uncovered: the Local/Cloud quality toggle (hydrate-from-settings +
-// persist-on-change, both with and without the preload bridge), the System
-// Health nav, the Jobs slide-over toggle, and the Re-export guard branches
-// (no videoId / no bridge / library.list rejecting). hasApi is a CONTROLLABLE
-// mock so both the bridge-present and bridge-absent code paths are exercised.
+// App.quality.test.tsx — App's non-routing behaviour that App.test.tsx leaves
+// uncovered: the Local/Cloud quality toggle (hydrate-from-settings +
+// persist-on-change, with and without the preload bridge), the Settings
+// readiness deep-link (Library → Settings/Models), the Jobs slide-over toggle,
+// and the Re-export guard branches (no videoId / no bridge / library.list
+// rejecting). hasApi is a CONTROLLABLE mock so both bridge-present and
+// bridge-absent paths are exercised.
 
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -16,8 +17,6 @@ import type { Video, ShortReexportHint } from './lib/rpc';
 const rpcMock = vi.fn();
 const libraryListMock = vi.fn();
 const batchListMock = vi.fn((..._a: unknown[]) => Promise.resolve({ batches: [] as never[] }));
-// hasApi is controllable per test (the foundation of the bridge-present/absent
-// branches in the quality hydrate, changeQuality, and handleReexport guards).
 let hasApiValue = true;
 
 vi.mock('./lib/rpc', () => ({
@@ -33,9 +32,16 @@ vi.mock('./views/Repurpose', () => ({
   Repurpose: () => <div data-testid="repurpose" />,
 }));
 
-// Stub child views/chrome so the test focuses on App's own logic.
+// The Library stub exposes BOTH onOpen and onReadinessAction so we can drive
+// the readiness deep-link into Settings/Models.
 vi.mock('./views/Library', () => ({
-  Library: ({ onOpen }: { onOpen: (v: Video) => void }) => (
+  Library: ({
+    onOpen,
+    onReadinessAction,
+  }: {
+    onOpen: (v: Video) => void;
+    onReadinessAction?: (action: unknown) => void;
+  }) => (
     <div data-testid="library">
       <button
         type="button"
@@ -52,6 +58,13 @@ vi.mock('./views/Library', () => ({
         }
       >
         open-video
+      </button>
+      <button
+        type="button"
+        data-testid="readiness-fix"
+        onClick={() => onReadinessAction?.({ kind: 'models' })}
+      >
+        fix
       </button>
     </div>
   ),
@@ -91,8 +104,11 @@ vi.mock('./views/Shorts', () => ({
     </div>
   ),
 }));
-vi.mock('./features/SystemHealth', () => ({
-  SystemHealth: () => <div data-testid="health" />,
+// Settings stub surfaces the initialSection App wired (proves the deep-link).
+vi.mock('./views/Settings', () => ({
+  Settings: ({ initialSection }: { initialSection?: string }) => (
+    <div data-testid="settings" data-section={initialSection ?? ''} />
+  ),
 }));
 vi.mock('./components/JobQueue', () => ({
   JobQueue: ({ open, onClose }: { open: boolean; onClose: () => void }) => (
@@ -148,10 +164,10 @@ function qualityBtn(label: 'Local' | 'Cloud'): HTMLButtonElement {
   return found;
 }
 
-function nav(label: string): HTMLButtonElement {
-  const btns = Array.from(container.querySelectorAll<HTMLButtonElement>('.app__nav-btn'));
-  const found = btns.find((b) => b.textContent === label);
-  if (!found) throw new Error(`nav button "${label}" not found`);
+function tab(label: string): HTMLButtonElement {
+  const btns = Array.from(container.querySelectorAll<HTMLButtonElement>('.toptab'));
+  const found = btns.find((b) => b.querySelector('.toptab__label')?.textContent === label);
+  if (!found) throw new Error(`tab "${label}" not found`);
   return found;
 }
 
@@ -204,7 +220,6 @@ describe('App quality toggle — hydrate from settings', () => {
     hasApiValue = false;
     await mount();
     expect(rpcMock).not.toHaveBeenCalledWith('settings.get');
-    // The toggle still renders, defaulting to Local.
     expect(qualityBtn('Local').getAttribute('aria-pressed')).toBe('true');
   });
 });
@@ -259,20 +274,17 @@ describe('App quality toggle — persist on change', () => {
   });
 });
 
-describe('App System Health nav', () => {
-  it('navigates to the Health screen and marks the nav active', async () => {
+describe('App readiness deep-link → Settings/Models', () => {
+  it('opens Settings with the models section from a Library readiness fix', async () => {
     await mount();
     await act(async () => {
-      nav('Health').click();
+      container.querySelector<HTMLButtonElement>('[data-testid="readiness-fix"]')!.click();
     });
     await flush();
-    expect(container.querySelector('[data-testid="health"]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="library"]')).toBeNull();
-    expect(nav('Health').classList.contains('is-active')).toBe(true);
-    expect(nav('Health').getAttribute('aria-current')).toBe('page');
-    // The other nav buttons are NOT active / not aria-current.
-    expect(nav('Library').classList.contains('is-active')).toBe(false);
-    expect(nav('Library').getAttribute('aria-current')).toBeNull();
+    const settings = container.querySelector('[data-testid="settings"]');
+    expect(settings).not.toBeNull();
+    expect(settings!.getAttribute('data-section')).toBe('models');
+    expect(tab('Settings').getAttribute('aria-selected')).toBe('true');
   });
 });
 
@@ -292,7 +304,6 @@ describe('App jobs slide-over toggle', () => {
     expect(container.querySelector('[data-testid="jobqueue"]')!.getAttribute('data-open')).toBe(
       'true',
     );
-    // Toggle back off.
     await act(async () => {
       jobsToggle.click();
     });
@@ -308,7 +319,6 @@ describe('App jobs slide-over toggle', () => {
     });
     await flush();
     expect(jobsToggle.getAttribute('aria-expanded')).toBe('true');
-    // The JobQueue panel's own close control invokes App's onClose callback.
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[data-testid="jobqueue-close"]')!.click();
     });
@@ -324,14 +334,13 @@ describe('App handleReexport guard branches', () => {
   it('falls back to the Library when the hint has no videoId', async () => {
     await mount();
     await act(async () => {
-      nav('Shorts').click();
+      tab('Create').click();
     });
     await flush();
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[data-testid="reexport-no-id"]')!.click();
     });
     await flush();
-    // No videoId -> early return to Library, library.list never called.
     expect(libraryListMock).not.toHaveBeenCalled();
     expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
   });
@@ -340,7 +349,7 @@ describe('App handleReexport guard branches', () => {
     hasApiValue = false;
     await mount();
     await act(async () => {
-      nav('Shorts').click();
+      tab('Create').click();
     });
     await flush();
     await act(async () => {
@@ -355,7 +364,7 @@ describe('App handleReexport guard branches', () => {
     libraryListMock.mockRejectedValue(new Error('list failed'));
     await mount();
     await act(async () => {
-      nav('Shorts').click();
+      tab('Create').click();
     });
     await flush();
     await act(async () => {
@@ -372,7 +381,6 @@ describe('App lastOpenedVideoId — bridge-absent branches (WU-13)', () => {
   it('does NOT read settings.get on launch when no preload bridge is present', async () => {
     hasApiValue = false;
     await mount();
-    // The restore effect short-circuits before any RPC; stays on the Library.
     expect(rpcMock).not.toHaveBeenCalledWith('settings.get');
     expect(libraryListMock).not.toHaveBeenCalled();
     expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
@@ -385,7 +393,6 @@ describe('App lastOpenedVideoId — bridge-absent branches (WU-13)', () => {
       container.querySelector<HTMLButtonElement>('[data-testid="open-video"]')!.click();
     });
     await flush();
-    // openVideo still navigates in-memory but skips the settings.set persist.
     expect(rpcMock).not.toHaveBeenCalledWith('settings.set', { lastOpenedVideoId: 'v1' });
     expect(
       container.querySelector('[data-testid="workspace"]')!.getAttribute('data-video-id'),

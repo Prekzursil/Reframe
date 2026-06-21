@@ -1,0 +1,17 @@
+/* settings.css — the Settings view shell (views/Settings.tsx). A vertical stack:
+   the sub-nav `.tabbar` (styled in shell.css) on top, the active section below in
+   a scrolling panel. Mirrors the Repurpose view's layout. Tokens only. */
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.settings__panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-6);
+}
