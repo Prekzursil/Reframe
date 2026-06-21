@@ -258,8 +258,13 @@ export class Sidecar extends EventEmitter {
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => this.onStdout(chunk));
     child.stderr.on('data', (chunk: string) => this.onStderr(chunk));
-    child.on('exit', (code) => this.onExit(code));
-    child.on('error', (err) => this.onSpawnError(err));
+    // Capture the child per-listener so a LATE 'exit'/'error' from a process we
+    // already replaced (via restart()) is ignored — see onExit/onSpawnError's
+    // `this.child !== child` guard. Without this, child1's delayed exit would
+    // reject child2's in-flight calls, null this.child (orphaning the live
+    // child2) and spawn a redundant child3 (two live sidecars + misrouting).
+    child.on('exit', (code) => this.onExit(child, code));
+    child.on('error', (err) => this.onSpawnError(child, err));
 
     this.child = child;
     this.emitStatus('running');
@@ -284,9 +289,16 @@ export class Sidecar extends EventEmitter {
     this.emitStatus('restarting');
     const existing = this.child;
     // If a process is somehow still alive, tear it down first (best-effort) so
-    // we don't leak it; its 'exit' will be ignored because we null the ref.
+    // we don't leak it. Its later 'exit'/'error' is ignored by the per-child
+    // guard in onExit/onSpawnError (this.child !== existing) — so we KEEP those
+    // listeners attached. We DO detach its stdout/stderr 'data' listeners,
+    // because a buffered late stdout chunk from the OLD child cannot be guarded
+    // by child identity inside onStdout and would otherwise dispatch into the
+    // NEW child's pending-call map (response misrouting).
     if (existing) {
       this.child = null;
+      existing.stdout.removeAllListeners('data');
+      existing.stderr.removeAllListeners('data');
       try {
         existing.kill();
       } catch {
@@ -445,14 +457,22 @@ export class Sidecar extends EventEmitter {
 
   // ---- lifecycle / restart ------------------------------------------------
 
-  private onSpawnError(err: Error): void {
+  private onSpawnError(child: ChildProcessWithoutNullStreams, err: Error): void {
+    // Ignore an 'error' from a child we already replaced (restart-race guard):
+    // acting on it would reject the live child's calls, null this.child and
+    // trigger a redundant respawn.
+    if (this.child !== child) return;
     this.emit('log', `[sidecar] spawn error: ${err.message}`);
     this.rejectAllPending(err);
     this.child = null;
     this.maybeRestart();
   }
 
-  private onExit(code: number | null): void {
+  private onExit(child: ChildProcessWithoutNullStreams, code: number | null): void {
+    // Ignore an 'exit' from a child we already replaced (restart-race guard):
+    // acting on it would reject the live child's calls, null this.child
+    // (orphaning the live process) and spawn a redundant second sidecar.
+    if (this.child !== child) return;
     this.emit('exit', code);
     this.rejectAllPending(new Error(`sidecar exited (code ${code ?? 'null'})`));
     this.child = null;
