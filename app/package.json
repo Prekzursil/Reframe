@@ -16,9 +16,12 @@
     "preview": "electron-vite preview",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit",
+    "typecheck:e2e": "tsc --noEmit -p tsconfig.e2e.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "playwright test --config playwright.config.ts",
+    "test:e2e:dom": "vitest run --config vitest.e2e.config.ts"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -29,6 +32,7 @@
     "undici": "^6.27.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.0",
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",

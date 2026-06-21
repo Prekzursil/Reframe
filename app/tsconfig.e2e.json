@@ -1,0 +1,17 @@
+{
+  // Typecheck-only config for the E2E harness (e2e/**). Kept separate from the
+  // app's main tsconfig so Playwright/vitest test types never leak into the
+  // main/preload/renderer build or the strict renderer coverage gate.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": [
+    "e2e/**/*.ts",
+    "e2e/**/*.tsx",
+    "playwright.config.ts",
+    "vitest.e2e.config.ts"
+  ],
+  "exclude": ["node_modules", "out", "dist"]
+}

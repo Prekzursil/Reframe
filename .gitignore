@@ -5,6 +5,11 @@ app/out/
 app/.vite/
 *.log
 
+# Playwright / E2E artifacts (regenerable; never commit)
+app/test-results/
+app/playwright-report/
+app/.playwright/
+
 # Python
 __pycache__/
 *.pyc
