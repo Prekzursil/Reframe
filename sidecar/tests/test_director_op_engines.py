@@ -426,9 +426,7 @@ def test_reframe_non_string_aspect_falls_back(tmp_path: Path, monkeypatch: pytes
     _fake_probe(monkeypatch)
     runner = FakeRunner()
     pc = _copy(tmp_path)
-    build_engines(runner=runner)["reframe"](
-        EditOp(id="r", kind="reframe", span=(0, 12000), params={"aspect": 169}), pc
-    )
+    build_engines(runner=runner)["reframe"](EditOp(id="r", kind="reframe", span=(0, 12000), params={"aspect": 169}), pc)
     vf = runner.calls[0][runner.calls[0].index("-vf") + 1]
     assert "crop=ih*9/16:ih" in vf
 
