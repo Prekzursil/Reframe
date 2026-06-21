@@ -503,3 +503,50 @@ def test_resolve_index_embedder_injected_wins(tmp_path: Path) -> None:
     emb = RecordingEmbedder()
     svc = _services(tmp_path, embedder=emb)
     assert svc._resolve_index_embedder(_cloud_settings(text_consent=True)) is emb
+
+
+# --------------------------------------------------------------------------- #
+# REGRESSION (bug #5): the settings-DRIVEN index egress (no injected embedder)
+# must carry the RAW apiKey to the wire, not the REDACTED last-4 form.
+#
+# Mirrors the e2e-ai2 strict-xfail companion
+# ``test_intel_semantic_settings_driven_egress_redacted_key_bug`` as a PASSING
+# regression: the call sites resolved the embedder over ``self.settings.get()``
+# (which redacts ``apiKeys`` to ``…1234``), so ``CloudEmbedder`` built an
+# ``Authorization: Bearer …1234`` header — a corrupted key (non-latin-1 ellipsis
+# crashes locally / 401 on a real cloud). The vision/director factories correctly
+# use ``get_raw()`` (handlers.py); the embedder path now does too. The unit
+# consent tests above missed this because they assert on the egressed TEXT
+# (``body["input"]``), never on the egressed KEY (``headers["Authorization"]``).
+# --------------------------------------------------------------------------- #
+_RAW_INDEX_KEY: str = "sk-index-key-1234"
+_REDACTED_INDEX_KEY: str = "…1234"  # secrets.redact_keys(...) of _RAW_INDEX_KEY
+
+
+def test_index_build_egresses_raw_apikey_not_redacted(tmp_path: Path) -> None:
+    spy = SpyTransport()
+    svc = _services(tmp_path, embed_transport=spy)
+    _set_settings(svc, _cloud_settings(text_consent=True))
+    vid = _add_video_with_transcript(svc, tmp_path)
+    ctx = _ctx()
+    svc.index_build({"videoId": vid}, ctx)
+    ctx.jobs.join(timeout=5)
+    _done_result(ctx)
+    assert spy.calls, "consent granted but no egress happened (embedder wired wrong)"
+    auth = spy.calls[0]["headers"]["Authorization"]
+    assert auth == f"Bearer {_RAW_INDEX_KEY}", auth
+    assert _REDACTED_INDEX_KEY not in auth
+
+
+def test_index_search_egresses_raw_apikey_not_redacted(tmp_path: Path) -> None:
+    spy = SpyTransport()
+    svc = _services(tmp_path, embed_transport=spy)
+    vid = _add_video_with_transcript(svc, tmp_path)
+    _set_settings(svc, _cloud_settings(text_consent=True))
+    _build_then_clear_spy(svc, spy, vid)
+
+    svc.index_search({"videoId": vid, "query": "find pricing"}, _ctx())
+    assert spy.calls, "consent granted but query never egressed"
+    auth = spy.calls[0]["headers"]["Authorization"]
+    assert auth == f"Bearer {_RAW_INDEX_KEY}", auth
+    assert _REDACTED_INDEX_KEY not in auth
