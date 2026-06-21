@@ -1311,7 +1311,12 @@ class Services:
         transcript = project.data.get("transcript")
         if not transcript:
             raise _invalid(f"video {video_id} has no transcript yet (run transcribe.start first)")
-        settings = dict(self.settings.get())
+        # FACTORY PATH: the embedder resolution below reaches CloudEmbedder, which
+        # needs the RAW apiKey on the wire — mirror the vision/director factories
+        # (get_raw() at _provider_for_function/_resolve_frame_scorer). get_raw()
+        # only un-redacts apiKey; consent/routing/budget semantics are identical to
+        # get() (settings_store.get just last-4-redacts providers[].apiKeys).
+        settings = dict(self.settings.get_raw())
 
         def work(job_ctx: Any, _envelope: Any, _provider: Any) -> dict[str, Any]:
             from .features import semantic_index as _si  # local: import-light (pure)
@@ -1432,7 +1437,10 @@ class Services:
         if index is None:
             raise _invalid(f"video {video_id} has no semantic index yet (run index.build first)")
 
-        settings = dict(self.settings.get())
+        # FACTORY PATH: the query-embedder resolution below reaches CloudEmbedder,
+        # which needs the RAW apiKey on the wire — get_raw() mirrors the vision/
+        # director factories and only un-redacts apiKey (consent/routing identical).
+        settings = dict(self.settings.get_raw())
         # Plan the budget envelope over the TEXT-consented settings so willEgress
         # reflects what would actually leave the box after the consent filter, then
         # enforce the ack BEFORE any embedding call (zero egress on an unacked run).
