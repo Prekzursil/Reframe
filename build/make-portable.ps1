@@ -4,7 +4,12 @@
 # Zips dist/win-unpacked into a portable artifact and enforces the SLIM rules:
 #   * no torch, no model weights (*.gguf/*.onnx/*.safetensors/*.pt), no envs —
 #    heavy bits belong to FIRST RUN (%APPDATA%/media-studio), never the artifact
-#   * total size sanity vs the < ~700 MB target (NSIS ~2 GB ceiling far behind)
+#   * total size sanity vs the slim target (NSIS ~2 GB ceiling far behind). The
+#    UNPACKED tree ships TWO embeddable CPythons (3.12 sidecar + 3.14 chatterbox,
+#    ~100 MB combined) plus ffmpeg/ffprobe (~175 MB) plus the Remotion native
+#    compositor, so the unpacked dir lands ~720 MB; the COMPRESSED artifacts stay
+#    ~200 MB (nsis) / ~265 MB (zip). The slim invariant that matters is the
+#    "no heavy ML payload" set above — the byte target is just a sanity ceiling.
 #
 # Offline; touches only dist/. Output is terminal-state: SUCCESS:/FAILED:.
 
@@ -12,7 +17,12 @@
 param(
     [string]$UnpackedDir = (Join-Path $PSScriptRoot '..\dist\win-unpacked'),
     [string]$OutZip = (Join-Path $PSScriptRoot '..\dist\media-studio-portable-win-x64.zip'),
-    [int]$MaxMB = 700,
+    # Unpacked-tree sanity ceiling. Raised from 700 -> 800 once the build began
+    # shipping the SECOND embeddable CPython (py3.14 chatterbox env) alongside the
+    # py3.12 sidecar embed: two embeds + ffmpeg + the Remotion compositor put the
+    # unpacked dir at ~720 MB. The compressed artifacts are far smaller (~200/265
+    # MB). The real slim guarantee is the "no torch/weights/envs" assertion set.
+    [int]$MaxMB = 800,
     [switch]$SkipZip   # only run the slim checks (CI gate mode)
 )
 
