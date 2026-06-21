@@ -34,9 +34,9 @@ export function formatDollars(cents: number): string {
 
 /**
  * A dollar input STRING -> integer cents. Blank / non-numeric / negative all
- * coerce to 0 (a defensive, never-throws boundary), and fractional cents round
- * to the nearest cent ("12.005" -> 1201 is intentionally avoided: 12.005*100 =
- * 1200.4999.. so Math.round gives 1200; we round the cents, not the dollars).
+ * coerce to 0 (a defensive, never-throws boundary), and sub-cent precision is
+ * rounded to the nearest whole cent (`Math.round(dollars * 100)` — e.g.
+ * "12.005" -> 1201, "0.004" -> 0).
  */
 export function dollarsToCents(value: string): number {
   const n = Number.parseFloat(value);
