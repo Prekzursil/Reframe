@@ -316,11 +316,11 @@
   line-height: var(--type-caption-leading);
 }
 
-.consent-toggle__disclosure[data-trains='true'] {
+.consent-toggle__disclosure[data-trains="true"] {
   color: var(--status-error);
 }
 
-.consent-toggle__disclosure[data-trains='conditional'] {
+.consent-toggle__disclosure[data-trains="conditional"] {
   color: var(--status-warn);
 }
 
@@ -451,11 +451,11 @@
   color: var(--text-faint);
 }
 
-.picker-option__privacy[data-privacy='AVOID'] {
+.picker-option__privacy[data-privacy="AVOID"] {
   color: var(--status-error);
 }
 
-.picker-option__privacy[data-privacy='CONDITIONAL'] {
+.picker-option__privacy[data-privacy="CONDITIONAL"] {
   color: var(--status-warn);
 }
 

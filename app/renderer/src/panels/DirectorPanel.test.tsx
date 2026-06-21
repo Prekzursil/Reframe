@@ -646,8 +646,7 @@ describe('DirectorPanel', () => {
         op({ id: 'b', kind: 'trim', rationale: 'second' }),
       ]),
     );
-    const ids = () =>
-      $all('.director-op[data-op-id]').map((el) => el.getAttribute('data-op-id'));
+    const ids = () => $all('.director-op[data-op-id]').map((el) => el.getAttribute('data-op-id'));
     expect(ids()).toEqual(['a', 'b']);
     await act(async () => {
       $('button[data-action="op-down"][data-op="a"]').click();
@@ -664,10 +663,7 @@ describe('DirectorPanel', () => {
 
   it('move buttons are disabled at a same-kind boundary (first/last)', async () => {
     const c = makeClient();
-    await planTo(
-      c,
-      planFixture([op({ id: 'a', kind: 'trim' }), op({ id: 'b', kind: 'trim' })]),
-    );
+    await planTo(c, planFixture([op({ id: 'a', kind: 'trim' }), op({ id: 'b', kind: 'trim' })]));
     // "a" is first of its kind -> up disabled, down enabled.
     expect(($('button[data-action="op-up"][data-op="a"]') as HTMLButtonElement).disabled).toBe(
       true,
@@ -704,12 +700,8 @@ describe('DirectorPanel', () => {
 
   it('keyboard: ArrowDown/ArrowUp on the row reorder same-kind ops', async () => {
     const c = makeClient();
-    await planTo(
-      c,
-      planFixture([op({ id: 'a', kind: 'trim' }), op({ id: 'b', kind: 'trim' })]),
-    );
-    const ids = () =>
-      $all('.director-op[data-op-id]').map((el) => el.getAttribute('data-op-id'));
+    await planTo(c, planFixture([op({ id: 'a', kind: 'trim' }), op({ id: 'b', kind: 'trim' })]));
+    const ids = () => $all('.director-op[data-op-id]').map((el) => el.getAttribute('data-op-id'));
     await act(async () => {
       $('.director-op[data-op-id="a"]').dispatchEvent(
         new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
@@ -728,12 +720,8 @@ describe('DirectorPanel', () => {
 
   it('keyboard: an unhandled key, and a move key at a boundary, are no-ops', async () => {
     const c = makeClient();
-    await planTo(
-      c,
-      planFixture([op({ id: 'a', kind: 'trim' }), op({ id: 'b', kind: 'trim' })]),
-    );
-    const ids = () =>
-      $all('.director-op[data-op-id]').map((el) => el.getAttribute('data-op-id'));
+    await planTo(c, planFixture([op({ id: 'a', kind: 'trim' }), op({ id: 'b', kind: 'trim' })]));
+    const ids = () => $all('.director-op[data-op-id]').map((el) => el.getAttribute('data-op-id'));
     const rowA = $('.director-op[data-op-id="a"]');
     // Unhandled key: nothing changes.
     await act(async () => {

@@ -243,7 +243,7 @@
 }
 
 /* A re-enabled (toggled-on) Disable button reads as a pressed/active state. */
-.director-panel .director-op__controls .link[aria-pressed='true'] {
+.director-panel .director-op__controls .link[aria-pressed="true"] {
   font-weight: 600;
 }
 

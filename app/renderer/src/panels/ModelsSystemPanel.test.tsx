@@ -435,7 +435,9 @@ describe('<ModelsSystemPanel />', () => {
 
     // vlm_backbone: installed (siglip) -> "Installed", disabled, with an SVG check
     // (no emoji glyph used as an icon).
-    const vlmCard = container.querySelector('.model-card[data-model="vlm_backbone"]') as HTMLElement;
+    const vlmCard = container.querySelector(
+      '.model-card[data-model="vlm_backbone"]',
+    ) as HTMLElement;
     const vlmBtn = vlmCard.querySelector('button[data-action="download"]') as HTMLButtonElement;
     expect(vlmBtn.textContent).toContain('Installed');
     expect(vlmBtn.disabled).toBe(true);

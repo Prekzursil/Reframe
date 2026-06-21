@@ -424,9 +424,9 @@ export function ProvidersKeys({ rpcClient, onOpenModels }: ProvidersKeysProps): 
           Providers &amp; API Keys
         </h2>
         <p className="providers-keys__hint">
-          Bring a free API key from one or more providers to unlock Cloud-quality
-          processing. Keys are stored locally, shown only as the last 4 characters, and
-          never leave your machine except to the provider you choose.
+          Bring a free API key from one or more providers to unlock Cloud-quality processing. Keys
+          are stored locally, shown only as the last 4 characters, and never leave your machine
+          except to the provider you choose.
         </p>
       </header>
 
@@ -443,8 +443,8 @@ export function ProvidersKeys({ rpcClient, onOpenModels }: ProvidersKeysProps): 
             <KeyIcon />
           </span>
           <p className="providers-keys__empty-msg">
-            No provider keys yet. Pick a provider below, grab a free key, and paste it in
-            to start using Cloud quality.
+            No provider keys yet. Pick a provider below, grab a free key, and paste it in to start
+            using Cloud quality.
           </p>
         </div>
       ) : (

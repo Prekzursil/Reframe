@@ -199,11 +199,7 @@ export function opMoveTargetIndex(
 }
 
 /** True when `opId` can move `dir` within its kind (i.e. it is not at a boundary). */
-export function canMoveOp(
-  ops: readonly DirectorOp[],
-  opId: string,
-  dir: OpMoveDirection,
-): boolean {
+export function canMoveOp(ops: readonly DirectorOp[], opId: string, dir: OpMoveDirection): boolean {
   return opMoveTargetIndex(ops, opId, dir) >= 0;
 }
 

@@ -102,7 +102,9 @@ export interface SettingsProps {
 /** The Settings view: a sub-tabbed area over Models, Providers, and Health. */
 export function Settings({ initialSection }: SettingsProps): React.ReactElement {
   const known = SETTINGS_SECTIONS.some((s) => s.id === initialSection);
-  const [active, setActive] = useState(known ? (initialSection as string) : SETTINGS_SECTIONS[0].id);
+  const [active, setActive] = useState(
+    known ? (initialSection as string) : SETTINGS_SECTIONS[0].id,
+  );
 
   // `active` is always a known section id, so `find` always resolves; the
   // fallback satisfies the `T | undefined` return type only.

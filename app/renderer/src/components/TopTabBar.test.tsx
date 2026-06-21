@@ -69,7 +69,9 @@ describe('TopTabBar — rendering + ARIA', () => {
     act(() => {
       root.render(<TopTabBar tabs={TABS} active="library" onSelect={() => {}} label="Surfaces" />);
     });
-    expect(container.querySelector('[role="tablist"]')!.getAttribute('aria-label')).toBe('Surfaces');
+    expect(container.querySelector('[role="tablist"]')!.getAttribute('aria-label')).toBe(
+      'Surfaces',
+    );
   });
 
   it('marks only the active tab selected, with class + roving tabindex', () => {
@@ -96,9 +98,9 @@ describe('TopTabBar — rendering + ARIA', () => {
     render('library', () => {});
     // Repurpose has badge:3.
     expect(tab('Repurpose').querySelector('.toptab__badge')!.textContent).toBe('3');
-    expect(
-      tab('Repurpose').querySelector('.toptab__badge')!.getAttribute('aria-label'),
-    ).toBe('3 pending');
+    expect(tab('Repurpose').querySelector('.toptab__badge')!.getAttribute('aria-label')).toBe(
+      '3 pending',
+    );
     // Library has no badge.
     expect(tab('Library').querySelector('.toptab__badge')).toBeNull();
   });

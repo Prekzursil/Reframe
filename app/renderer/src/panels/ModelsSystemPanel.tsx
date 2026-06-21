@@ -750,14 +750,15 @@ export function ModelsSystemPanel({
             value={settings.asrEngine ?? 'whisper'}
             onChange={(e) => void patchSettings({ asrEngine: e.target.value })}
           >
-            {(engines.length > 0 ? engines : [{ id: 'whisper', label: 'Whisper', installed: true }]).map(
-              (engine) => (
-                <option key={engine.id} value={engine.id}>
-                  {engine.label}
-                  {engine.installed ? '' : ' (not installed)'}
-                </option>
-              ),
-            )}
+            {(engines.length > 0
+              ? engines
+              : [{ id: 'whisper', label: 'Whisper', installed: true }]
+            ).map((engine) => (
+              <option key={engine.id} value={engine.id}>
+                {engine.label}
+                {engine.installed ? '' : ' (not installed)'}
+              </option>
+            ))}
           </select>
         </div>
         <div className="field">

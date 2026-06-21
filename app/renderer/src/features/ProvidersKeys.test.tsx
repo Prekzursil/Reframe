@@ -327,7 +327,9 @@ describe('ProvidersKeys — configured provider card', () => {
     const api = makeApi({
       list: () =>
         Promise.resolve({
-          providers: [{ id: 'groq', provider: 'Groq', baseUrl: 'https://b/v1', apiKeys: ['…WXYZ'] }],
+          providers: [
+            { id: 'groq', provider: 'Groq', baseUrl: 'https://b/v1', apiKeys: ['…WXYZ'] },
+          ],
         }),
       testKey,
       upsert,
@@ -698,9 +700,7 @@ describe('ProvidersKeys — consent', () => {
     const api = makeApi({
       list: () =>
         Promise.resolve({
-          providers: [
-            { id: 'google-ai-studio', provider: 'Google AI Studio', apiKeys: ['…WXYZ'] },
-          ],
+          providers: [{ id: 'google-ai-studio', provider: 'Google AI Studio', apiKeys: ['…WXYZ'] }],
         }),
     });
     await mount({ rpcClient: api });
