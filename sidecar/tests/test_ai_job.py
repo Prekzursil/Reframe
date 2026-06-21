@@ -523,6 +523,152 @@ def test_run_custom_work_honors_precancel(tmp_path: Any) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# run_ai_job — on_egress completion callback (WU-spend-cap record-at-completion)
+# --------------------------------------------------------------------------- #
+def test_on_egress_fires_after_a_real_cloud_run(tmp_path: Any) -> None:
+    """A miss against a cloud pool egresses → the callback fires exactly once."""
+    cache = AiCache(store_dir=tmp_path)
+    env = _env(cache)  # cloud pool, fresh content -> willEgress True
+    harness = JobHarness()
+    fired: list[AiJob] = []
+    run_ai_job(
+        env,
+        jobs=harness.registry,
+        provider_factory=lambda: SpyProvider("ans"),
+        cache=cache,
+        on_egress=fired.append,
+    )
+    harness.registry.join(timeout=5)
+    assert len(fired) == 1
+    assert fired[0] is env
+
+
+def test_on_egress_records_on_degraded_to_local(tmp_path: Any) -> None:
+    """A run that fell through to local still egressed (attempted cloud) → record."""
+    cache = AiCache(store_dir=tmp_path)
+    env = _env(cache)
+    harness = JobHarness()
+    fired: list[AiJob] = []
+    run_ai_job(
+        env,
+        jobs=harness.registry,
+        provider_factory=lambda: DegradingProvider("local-ans"),
+        cache=cache,
+        on_egress=fired.append,
+    )
+    harness.registry.join(timeout=5)
+    assert len(fired) == 1
+
+
+def test_on_egress_skipped_for_local_only_pool(tmp_path: Any) -> None:
+    """A local-only pool never egresses → the callback must NOT fire."""
+    cache = AiCache(store_dir=tmp_path)
+    env = plan_ai_job(_inputs(content="loc"), pool=_local_only_pool(), catalog=FakeCatalog(), cache=cache)
+    assert env.route.willEgress is False
+    harness = JobHarness()
+    fired: list[AiJob] = []
+    run_ai_job(
+        env,
+        jobs=harness.registry,
+        provider_factory=lambda: SpyProvider("ans"),
+        cache=cache,
+        on_egress=fired.append,
+    )
+    harness.registry.join(timeout=5)
+    assert fired == []
+
+
+def test_on_egress_skipped_on_cache_hit(tmp_path: Any) -> None:
+    """A cache hit returns before the provider → no egress, no record."""
+    cache = AiCache(store_dir=tmp_path)
+    inputs = _inputs(content="hot")
+    env = plan_ai_job(inputs, pool=_cloud_pool(), catalog=FakeCatalog(), cache=cache)
+    cache.put(env.cacheKey, "stored")  # populate AFTER planning -> runtime hit
+    harness = JobHarness()
+    fired: list[AiJob] = []
+    run_ai_job(
+        env,
+        jobs=harness.registry,
+        provider_factory=lambda: SpyProvider("SHOULD-NOT-RUN"),
+        cache=cache,
+        on_egress=fired.append,
+    )
+    harness.registry.join(timeout=5)
+    assert fired == []
+
+
+def test_on_egress_skipped_when_provider_errors(tmp_path: Any) -> None:
+    """A provider exception aborts before the record point → ledger untouched."""
+    cache = AiCache(store_dir=tmp_path)
+    env = _env(cache)
+    harness = JobHarness()
+    fired: list[AiJob] = []
+    run_ai_job(
+        env,
+        jobs=harness.registry,
+        provider_factory=lambda: RaisingProvider(),
+        cache=cache,
+        on_egress=fired.append,
+    )
+    harness.registry.join(timeout=5)
+    assert fired == []
+
+
+def test_on_egress_fires_for_custom_work_cloud_run(tmp_path: Any) -> None:
+    """The custom-work path also records when it egressed over a cloud pool."""
+    cache = AiCache(store_dir=tmp_path)
+    env = _env(cache)
+    harness = JobHarness()
+    fired: list[AiJob] = []
+
+    def work(ctx: Any, envelope: AiJob, provider: Any) -> dict[str, Any]:
+        return {"candidates": [provider.chat(list(envelope.inputs.messages))]}
+
+    run_ai_job(
+        env,
+        jobs=harness.registry,
+        provider_factory=lambda: SpyProvider("ranked"),
+        cache=cache,
+        work=work,
+        on_egress=fired.append,
+    )
+    harness.registry.join(timeout=5)
+    assert len(fired) == 1
+
+
+def test_on_egress_skipped_for_custom_work_local_only(tmp_path: Any) -> None:
+    """Custom work over a local-only pool does not egress → no record."""
+    cache = AiCache(store_dir=tmp_path)
+    env = plan_ai_job(_inputs(content="cw-loc"), pool=_local_only_pool(), catalog=FakeCatalog(), cache=cache)
+    harness = JobHarness()
+    fired: list[AiJob] = []
+
+    def work(ctx: Any, envelope: AiJob, provider: Any) -> dict[str, Any]:
+        return {"track": provider.chat(list(envelope.inputs.messages))}
+
+    run_ai_job(
+        env,
+        jobs=harness.registry,
+        provider_factory=lambda: SpyProvider("ans"),
+        cache=cache,
+        work=work,
+        on_egress=fired.append,
+    )
+    harness.registry.join(timeout=5)
+    assert fired == []
+
+
+def test_run_without_on_egress_is_unchanged(tmp_path: Any) -> None:
+    """The default (no on_egress) path runs exactly as before — backward compat."""
+    cache = AiCache(store_dir=tmp_path)
+    env = _env(cache)
+    harness = JobHarness()
+    run_ai_job(env, jobs=harness.registry, provider_factory=lambda: SpyProvider("ans"), cache=cache)
+    harness.registry.join(timeout=5)
+    assert harness.done[-1][1]["result"] == "ans"
+
+
+# --------------------------------------------------------------------------- #
 # CatalogFreeCapAdapter (WAVE-1 carryforward #1)
 # --------------------------------------------------------------------------- #
 def test_catalog_adapter_reports_uncapped() -> None:

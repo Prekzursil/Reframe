@@ -67,6 +67,19 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # estimate when the request pins no size. Mirrors budget.DEFAULT_TARGET_JOB_SIZE;
     # a DOCUMENTED placeholder until the user pins N (one 60-min source -> N shorts).
     "defaultTargetJobSize": _budget.DEFAULT_TARGET_JOB_SIZE,
+    # WU-spend-cap: persisted monthly cumulative spend ceiling (single-user; no org
+    # dimension). The per-run budget gate only sizes ONE run; these caps bound the
+    # MONTH-TO-DATE total accumulated across many approved cloud-AI runs (recorded
+    # in the spend_ledger at job completion). All three default OFF/0 so the cap is
+    # backward-compatible: an existing install caps nothing until the user opts in.
+    #   * monthlySoftLimitCents: when month-to-date + this job's estimate exceeds
+    #     this, the plan/envelope carries a non-blocking soft WARNING (UI nudge).
+    #   * monthlyHardLimitCents: the ceiling the hard gate enforces (cents).
+    #   * enforceMonthlyHardLimit: master switch; only when True does an over-cap
+    #     cloud run get REFUSED before egress. 0 caps + False = no enforcement.
+    "monthlySoftLimitCents": 0,
+    "monthlyHardLimitCents": 0,
+    "enforceMonthlyHardLimit": False,
     # Provider Hub presets + per-function routing (WU-presets / PH3). ``routing``
     # holds the resolved per-function provider choice; each function's seam prefers
     # its configured provider (pool fallback). ``perFunction[<fn>]`` is a

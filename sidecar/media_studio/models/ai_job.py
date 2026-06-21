@@ -260,6 +260,14 @@ def _preview_text(cost: Budget, cache_hit: bool) -> str:
 # by ``provider_factory`` and handed in so degrade-tracking still applies.
 AiWork = Callable[[Any, AiJob, Any], dict[str, Any]]
 
+# A completion hook fired with the planned envelope AFTER a run that actually
+# egressed (a real cloud call — including one that degraded to local). It is NOT
+# fired on a cache hit, a local-only pool, a cancel-before-call, or a provider
+# error. The handler passes a closure that records the run's cost in the
+# spend ledger (WU-spend-cap record-at-completion); the default ``None`` keeps the
+# substrate persistence-free for every non-billed caller.
+OnEgress = Callable[[AiJob], None]
+
 
 def run_ai_job(
     envelope: AiJob,
@@ -272,6 +280,7 @@ def run_ai_job(
     feature: str = "ai",
     label: str = "AI",
     videoId: str | None = None,  # noqa: N803 - wire-name kwarg (matches JobRegistry)
+    on_egress: OnEgress | None = None,
 ) -> Any:
     """Run ``envelope`` on a ``jobs`` job; return the created :class:`jobs.Job`.
 
@@ -298,12 +307,12 @@ def run_ai_job(
             return {"cancelled": True}
         ctx.progress(0.0, "planning")
         if work is not None:
-            return _execute_work(ctx, envelope, provider_factory, work)
+            return _execute_work(ctx, envelope, provider_factory, work, on_egress)
         cached = cache.get(envelope.cacheKey)
         if cached is not None:
             ctx.progress(100.0, "cache hit")
             return {"result": cached, "cacheHit": True, "degraded": False}
-        return _execute_uncached(ctx, envelope, provider_factory, cache)
+        return _execute_uncached(ctx, envelope, provider_factory, cache, on_egress)
 
     return jobs.start(job_body, feature=feature, label=label, videoId=videoId)
 
@@ -313,12 +322,15 @@ def _execute_work(
     envelope: AiJob,
     provider_factory: ProviderFactory,
     work: AiWork,
+    on_egress: OnEgress | None = None,
 ) -> dict[str, Any]:
     """Run a custom ``work`` body with a degrade-aware provider; return its result.
 
     The provider is built once and a ``degraded`` notice is emitted if the run
     fell through to the local backstop, so the handler-specific work inherits the
-    same graceful-degradation visibility as the default chat path.
+    same graceful-degradation visibility as the default chat path. When the run
+    would egress (a cloud pool), ``on_egress`` is fired AFTER the work completes
+    so the cost is recorded only for a run that ran to completion.
     """
     provider = provider_factory()
     degraded_flag = {"hit_local": False}
@@ -326,6 +338,7 @@ def _execute_work(
     result = work(ctx, envelope, provider)
     if degraded_flag["hit_local"]:
         ctx.progress(99.0, "degraded: fell back to local")
+    _fire_on_egress(envelope, on_egress)
     return result
 
 
@@ -334,8 +347,15 @@ def _execute_uncached(
     envelope: AiJob,
     provider_factory: ProviderFactory,
     cache: AiCache,
+    on_egress: OnEgress | None = None,
 ) -> dict[str, Any]:
-    """Build the provider, run the chat, store the result, and flag degradation."""
+    """Build the provider, run the chat, store the result, and flag degradation.
+
+    Reached ONLY on a real cache miss (``job_body`` returns earlier on a hit), so
+    firing ``on_egress`` here after the chat records cost exclusively for a run
+    that genuinely called a provider — a runtime cache hit, a cancel-before-call,
+    and a provider error each return / raise before the record line.
+    """
     provider = provider_factory()
     degraded_flag = {"hit_local": False}
     _subscribe_degrade(provider, degraded_flag)
@@ -347,7 +367,21 @@ def _execute_uncached(
         ctx.progress(90.0, "degraded: fell back to local")
     cache.put(envelope.cacheKey, result)
     ctx.progress(100.0, "done")
+    _fire_on_egress(envelope, on_egress)
     return {"result": result, "cacheHit": False, "degraded": degraded_flag["hit_local"]}
+
+
+def _fire_on_egress(envelope: AiJob, on_egress: OnEgress | None) -> None:
+    """Invoke ``on_egress`` iff a callback is set AND the run would egress.
+
+    A local-only pool (``willEgress`` False) never sends bytes off the machine and
+    therefore costs nothing — it is not recorded even though the local provider
+    ran. A degraded-to-local run kept ``willEgress`` True (it attempted cloud) and
+    IS recorded: for a spend ceiling, over-counting stops the user sooner (the safe
+    direction) and keeps the record decision free of the degrade flag.
+    """
+    if on_egress is not None and envelope.route.willEgress:
+        on_egress(envelope)
 
 
 def _subscribe_degrade(provider: Any, flag: dict[str, bool]) -> None:

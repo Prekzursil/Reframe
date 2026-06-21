@@ -649,6 +649,26 @@ class Services:
         self.settings.set({"usageCache": {"rows": merged, "checkedAt": next_checked, "savedAt": now}})
         return {"usage": stamped}
 
+    def providers_spend(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.spend()`` -> month-to-date spend + configured caps (WU-spend-cap).
+
+        Surfaces the persisted monthly cumulative spend ledger for the renderer:
+        the current month, the month-to-date total (cents), and the three
+        configured caps (``monthlySoftLimitCents`` / ``monthlyHardLimitCents`` /
+        ``enforceMonthlyHardLimit``). Read-only: it never records or mutates state.
+        With the default off/0 settings every cap reads zero/false so an
+        unconfigured install shows a benign "no cap" view.
+        """
+        ledger = self._spend_ledger()
+        settings = self.settings.get()
+        return {
+            "month": ledger.current_month(),
+            "monthToDateCents": ledger.month_to_date(),
+            "softLimitCents": int(settings.get("monthlySoftLimitCents") or 0),
+            "hardLimitCents": int(settings.get("monthlyHardLimitCents") or 0),
+            "enforceHardLimit": bool(settings.get("enforceMonthlyHardLimit")),
+        }
+
     # ===================================================================== #
     # providers.* presets + per-function routing (WU-presets / PH3)
     # ===================================================================== #
@@ -1388,7 +1408,9 @@ class Services:
             model=str(settings.get("cloudEmbedModel") or settings.get("cloudModel") or ""),
         )
         envelope = self._plan_index_envelope(inputs)
-        self._enforce_cloud_budget_ack(
+        # WU-spend-cap: the index embedding egress is gated (ack + monthly hard cap)
+        # and metered exactly like _run_ai_job — it is a cloud egress path too.
+        self._enforce_egress_gates(
             envelope,
             params.get("confirmBudget") if isinstance(params.get("confirmBudget"), str) else None,
         )
@@ -1405,6 +1427,7 @@ class Services:
             feature="index",
             label="index.build",
             videoId=video_id,
+            on_egress=self._record_egress_cost,
         )
         return {"jobId": job.id}
 
@@ -1484,7 +1507,8 @@ class Services:
             model=str(settings.get("cloudEmbedModel") or settings.get("cloudModel") or ""),
         )
         envelope = self._plan_index_envelope(inputs)
-        self._enforce_cloud_budget_ack(
+        # WU-spend-cap: gate the query-embedding egress (ack + monthly hard cap).
+        self._enforce_egress_gates(
             envelope,
             params.get("confirmBudget") if isinstance(params.get("confirmBudget"), str) else None,
         )
@@ -1502,6 +1526,13 @@ class Services:
             embedder = self._resolve_index_embedder(settings)
             query_vec = embedder.embed([query])[0]
             cache.put(cache_key, query_vec)
+            # WU-spend-cap record-at-completion: the synchronous query embed just
+            # ran; record its cost iff it egressed (a cloud route). A cache hit
+            # (above) re-embeds nothing and so is never recorded. _record_egress_cost
+            # is a zero-record for a local-only envelope, but gating here keeps the
+            # local-route path from touching the ledger at all.
+            if envelope.route.willEgress:
+                self._record_egress_cost(envelope)
 
         # Guard the cross-route mismatch (PLAN §WU-A5 (d) error contract; WU-A4's
         # search defers the dimension check to its caller — this is that caller). The
@@ -2495,6 +2526,79 @@ class Services:
         # FACTORY PATH (PLAN §WU-keys): the pool is built from RAW keys.
         return builder(self.settings.get_raw(), detect_local=False)
 
+    def _spend_ledger(self) -> Any:
+        """The persisted monthly spend ledger (WU-spend-cap), under the data root.
+
+        A single JSON document at ``data_dir/spend-ledger.json`` (alongside the
+        other persisted state), keyed by calendar month. The handler's injectable
+        ``_now`` clock is threaded in so the month-key derivation is deterministic
+        under test and matches the rest of the Hub's wall-clock seam.
+        """
+        from .models.spend_ledger import SpendLedger  # local: import-light pure
+
+        return SpendLedger(self.data_dir / "spend-ledger.json", clock=self._now)
+
+    def _estimate_job_cents(self, envelope: Any) -> int:
+        """The estimated cost (cents) of running ``envelope``, or 0 if non-egressing.
+
+        A run that will not egress (cache hit / local-only pool) costs nothing. For
+        an egressing cloud run the estimate is the planned request count times the
+        documented placeholder per-request rate (the catalog has no structured
+        numeric price yet — see ``spend_ledger.PLACEHOLDER_CENTS_PER_REQUEST``). The
+        SAME helper feeds both the pre-egress hard-cap check and the completion
+        record, so the predicted and recorded costs always agree.
+        """
+        from .models.spend_ledger import PLACEHOLDER_CENTS_PER_REQUEST  # local: pure
+
+        if not envelope.route.willEgress:
+            return 0
+        return int(envelope.costEst.requests) * PLACEHOLDER_CENTS_PER_REQUEST
+
+    def _enforce_monthly_hard_cap(self, envelope: Any) -> None:
+        """Refuse an egressing run that would push month-to-date over the hard cap.
+
+        Fires ONLY when ``enforceMonthlyHardLimit`` is on AND the planned run would
+        egress AND ``month_to_date + this-job-estimate`` exceeds
+        ``monthlyHardLimitCents``. This is INDEPENDENT of the ``confirmCloudBudget``
+        ack gate (the two are orthogonal: a per-run ack does not waive the monthly
+        ceiling). A non-egressing run costs nothing and is never refused.
+        """
+        settings = self.settings.get()
+        if not settings.get("enforceMonthlyHardLimit"):
+            return
+        job_cents = self._estimate_job_cents(envelope)
+        if job_cents <= 0:
+            return
+        hard_cap = settings.get("monthlyHardLimitCents")
+        if not isinstance(hard_cap, (int, float)) or isinstance(hard_cap, bool) or hard_cap <= 0:
+            return
+        ledger = self._spend_ledger()
+        projected = ledger.month_to_date() + job_cents
+        if projected > hard_cap:
+            raise _invalid(f"monthly spend cap ${hard_cap / 100:.2f} reached")
+
+    def _enforce_egress_gates(self, envelope: Any, ack: str | None) -> None:
+        """Run BOTH pre-egress gates for ``envelope`` (the single egress chokepoint).
+
+        Every cloud-egress path (``_run_ai_job`` and the ``index.*`` embedding
+        routes) calls this so the gates can never be applied unevenly: the per-run
+        ``confirmCloudBudget`` ack gate AND the independent monthly hard cap. Both
+        are no-ops for a non-egressing (local-only / cache-hit) envelope.
+        """
+        self._enforce_cloud_budget_ack(envelope, ack)
+        self._enforce_monthly_hard_cap(envelope)
+
+    def _record_egress_cost(self, envelope: Any) -> None:
+        """Record ``envelope``'s estimated cost in the spend ledger (WU-spend-cap).
+
+        The single recording site shared by the job-bus path (via ``run_ai_job``'s
+        ``on_egress`` callback) and the synchronous ``index.search`` query embed.
+        ``_estimate_job_cents`` returns 0 for a non-egressing envelope, so calling
+        this for a local-only run is a harmless zero-record; callers gate on
+        ``willEgress`` first so a local run records nothing at all.
+        """
+        self._spend_ledger().record(self._estimate_job_cents(envelope))
+
     def plan_ai_job_envelope(self, inputs: Any) -> Any:
         """Assemble an :class:`ai_job.AiJob` envelope for ``inputs`` (PURE, no calls).
 
@@ -2554,7 +2658,9 @@ class Services:
         )
         envelope = self.plan_ai_job_envelope(inputs)
         if enforce_budget:
-            self._enforce_cloud_budget_ack(envelope, ack)
+            # WU-spend-cap: the per-run ack gate AND the independent monthly hard
+            # cap both run here before any egress (the shared egress chokepoint).
+            self._enforce_egress_gates(envelope, ack)
 
         def _factory() -> Any:
             if provider is not None:
@@ -2573,6 +2679,10 @@ class Services:
             feature=feature,
             label=label,
             videoId=videoId,
+            # WU-spend-cap record-at-completion: fired ONLY after a run that
+            # actually egressed (a real cloud call, including degrade-to-local) —
+            # never on a cache hit, local-only run, cancel, or error.
+            on_egress=self._record_egress_cost if enforce_budget else None,
         )
 
     def _enforce_cloud_budget_ack(self, envelope: Any, ack: str | None) -> None:
@@ -2621,7 +2731,37 @@ class Services:
             request=request,
             capability=str(params.get("capability") or "text"),
         )
-        return self.plan_ai_job_envelope(inputs).planned()
+        envelope = self.plan_ai_job_envelope(inputs)
+        planned = envelope.planned()
+        warning = self._soft_spend_warning(envelope)
+        if warning is not None:
+            planned["spendWarning"] = warning
+        return planned
+
+    def _soft_spend_warning(self, envelope: Any) -> dict[str, Any] | None:
+        """A non-blocking soft-cap warning for ``ai.planJob``, or ``None``.
+
+        Returns a warning payload when ``monthlySoftLimitCents`` is set (> 0) AND
+        the projected month-to-date (current MTD + this job's estimate) exceeds it.
+        This NEVER blocks — it is surfaced in the plan/envelope so the renderer can
+        nudge the user; the hard cap (``_enforce_monthly_hard_cap``) is the only
+        thing that refuses a run.
+        """
+        settings = self.settings.get()
+        soft_cap = settings.get("monthlySoftLimitCents")
+        if not isinstance(soft_cap, (int, float)) or isinstance(soft_cap, bool) or soft_cap <= 0:
+            return None
+        ledger = self._spend_ledger()
+        month_to_date = ledger.month_to_date()
+        projected = month_to_date + self._estimate_job_cents(envelope)
+        if projected <= soft_cap:
+            return None
+        return {
+            "softLimitCents": int(soft_cap),
+            "monthToDateCents": month_to_date,
+            "projectedCents": projected,
+            "message": f"monthly soft spend limit ${soft_cap / 100:.2f} exceeded",
+        }
 
     # ===================================================================== #
     # director.* (WU-plan-rpc) — the RPC spine onto the shipped AI substrate.
@@ -3562,6 +3702,10 @@ def register_all(
     # burst). The rotation pool already accounts usage from optimistic decrement +
     # parsed 429/X-RateLimit-* headers — this RPC just surfaces it, redacted.
     reg("providers.usage", svc.providers_usage)
+    # WU-spend-cap: month-to-date cumulative spend + the configured monthly caps
+    # (read-only). The persisted ledger is written at job completion; this RPC just
+    # surfaces it (+ the soft/hard cap settings) for the renderer's spend view.
+    reg("providers.spend", svc.providers_spend)
     # WU-presets (PH3): smart presets + per-function override + first-run chooser.
     # applyPreset resolves a preset over the curated catalog into routing.perFunction;
     # setFunctionModel overrides one slot; firstRun is the local-vs-cloud chooser

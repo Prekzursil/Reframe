@@ -619,6 +619,12 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('providers.usage', undefined);
   });
 
+  it('providers.spend calls the bare method (WU-spend-cap)', async () => {
+    const r = installApi();
+    await client.providers.spend();
+    expect(r).toHaveBeenCalledWith('providers.spend', undefined);
+  });
+
   it('providers.* presets forward their params (WU-presets)', async () => {
     const r = installApi();
     await client.providers.catalog();

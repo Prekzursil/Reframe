@@ -415,6 +415,26 @@ export interface ProvidersListResponse {
 }
 
 /**
+ * `providers.spend` payload (WU-spend-cap): the persisted monthly cumulative
+ * spend ledger plus the configured caps, for the Monthly spend-cap control.
+ * ALL money is integer CENTS (the UI converts to dollars). `month` is the
+ * current UTC month key ("YYYY-MM"). With the default off/0 settings every cap
+ * reads zero/false (a benign "no cap" view). Read-only: it never mutates state.
+ */
+export interface SpendInfo {
+  /** The current UTC month the ledger is keyed by, e.g. "2026-06". */
+  month: string;
+  /** Cumulative cloud spend this month, in integer cents. */
+  monthToDateCents: number;
+  /** The non-blocking warning ceiling (cents); 0 = not set. */
+  softLimitCents: number;
+  /** The blocking ceiling (cents); 0 = not set. */
+  hardLimitCents: number;
+  /** Master switch: only when true does an over-hard-cap run get refused. */
+  enforceHardLimit: boolean;
+}
+
+/**
  * `providers.testKey` result (WU-keys): a validation ping through the provider
  * seam. The key is NEVER echoed back — only `ok`, the declared `capabilities`,
  * and a SCRUBBED `error` string on failure (the live key is stripped at the
@@ -1279,6 +1299,11 @@ export const client = {
      * NOT a poller). Keys are redacted; req/token units are returned distinctly.
      */
     usage: (): Promise<{ usage: UsageRow[] }> => rpc('providers.usage'),
+    /**
+     * `providers.spend` — month-to-date cumulative cloud spend + the configured
+     * monthly caps (WU-spend-cap). Read-only; all money is integer cents.
+     */
+    spend: (): Promise<SpendInfo> => rpc('providers.spend'),
     /** `providers.catalog` — the static curated model catalog (WU-catalog). */
     catalog: (): Promise<CatalogResponse> => rpc('providers.catalog'),
     /** `providers.applyPreset` — resolve a smart preset into routing (WU-presets). */

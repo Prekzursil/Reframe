@@ -30,6 +30,7 @@ import { AddKeyRow } from '../components/AddKeyRow';
 import { ProviderKeyRow } from '../components/ProviderKeyRow';
 import { ConsentToggle, type ConsentType } from '../components/ConsentToggle';
 import { UsageBars } from '../components/UsageBar';
+import { SpendCap, type SpendCapClient } from './SpendCap';
 import {
   client,
   type CatalogEntry,
@@ -75,6 +76,12 @@ export interface ProvidersKeysProps {
   rpcClient?: Pick<typeof client, 'providers'> & {
     settings?: { get?: () => Promise<SettingsConsentRead> };
   };
+  /**
+   * Inject the Monthly spend-cap control's client for tests. Optional: the real
+   * {@link SpendCap} falls back to the live lib/rpc client when omitted, so the
+   * app needs no wiring here — only tests pass a mock.
+   */
+  spendClient?: SpendCapClient;
   /**
    * Open the Models & System section (where per-function provider routing lives).
    * Optional; rendered as a quiet secondary link when wired.
@@ -228,7 +235,11 @@ function PickerOption({ option, configured, busy, onAdd }: PickerOptionProps): R
 /**
  * Providers & Keys — the full key + consent management surface (WU-PROVIDERS).
  */
-export function ProvidersKeys({ rpcClient, onOpenModels }: ProvidersKeysProps): React.ReactElement {
+export function ProvidersKeys({
+  rpcClient,
+  spendClient,
+  onOpenModels,
+}: ProvidersKeysProps): React.ReactElement {
   /* v8 ignore next -- the `?? client` default only runs in the real app; every test injects rpcClient. */
   const api = rpcClient ?? client;
 
@@ -506,6 +517,9 @@ export function ProvidersKeys({ rpcClient, onOpenModels }: ProvidersKeysProps): 
         <h3 className="providers-keys__usage-title">Usage</h3>
         <UsageBars rows={usage} />
       </section>
+
+      {/* Monthly spend cap — the budget control (self-contained read/write). */}
+      <SpendCap rpcClient={spendClient} />
 
       {onOpenModels ? (
         <button type="button" className="providers-keys__models-link" onClick={onOpenModels}>

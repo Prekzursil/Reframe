@@ -1,0 +1,310 @@
+/* spendCap.css — the Monthly spend-cap control inside Providers & Keys
+   (features/SpendCap.tsx, WU-spend-cap). Tokens only; dark theme + the global
+   :focus-visible ring (components/shell.css) are inherited; reduced motion is
+   respected. The zone state (ok / near / blocked) is carried by TEXT + ICON;
+   color here is a redundant reinforcement, never the only signal. */
+
+.spend-cap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--edge);
+}
+
+.spend-cap__loading {
+  padding: var(--space-5);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.spend-cap__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.spend-cap__title {
+  margin: 0;
+  font-size: var(--type-caption-size);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.spend-cap__hint {
+  margin: 0;
+  max-width: 60ch;
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-leading);
+}
+
+.spend-cap__error {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--status-error);
+  border-radius: var(--radius-sm);
+  background: var(--status-error-soft);
+  color: var(--text-primary);
+  font-size: var(--type-caption-size);
+}
+
+/* --- month-to-date readout + meter -------------------------------------- */
+
+.spend-cap__meter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.spend-cap__readout {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.spend-cap__readout-label {
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.spend-cap__readout-value {
+  font-family: var(--font-mono);
+  font-size: var(--type-display-size);
+  font-weight: var(--type-display-weight);
+  letter-spacing: var(--type-display-tracking);
+  color: var(--text-primary);
+}
+
+.spend-cap__readout-month {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-faint);
+}
+
+.spend-cap__track {
+  position: relative;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-deep);
+  overflow: hidden;
+}
+
+.spend-cap__fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--status-success);
+  transition: width var(--dur-base) var(--ease-out);
+}
+
+.spend-cap__fill[data-zone="no-cap"],
+.spend-cap__fill[data-zone="ok"] {
+  background: var(--status-success);
+}
+
+.spend-cap__fill[data-zone="near"] {
+  background: var(--status-warn);
+}
+
+.spend-cap__fill[data-zone="blocked"] {
+  background: var(--status-error);
+}
+
+.spend-cap__status {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-leading);
+}
+
+.spend-cap__status[data-zone="near"] {
+  color: var(--status-warn);
+}
+
+.spend-cap__status[data-zone="blocked"] {
+  color: var(--status-error);
+}
+
+.spend-cap__status-glyph {
+  flex: none;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+/* --- soft / hard fields -------------------------------------------------- */
+
+.spend-cap__fields {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.spend-cap__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 200px;
+}
+
+.spend-cap__label {
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.spend-cap__money {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--surface-bg);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.spend-cap__money:hover {
+  border-color: var(--edge-strong);
+}
+
+.spend-cap__money:focus-within {
+  border-color: var(--accent-edge);
+}
+
+.spend-cap__money-sign {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.spend-cap__input {
+  flex: 1;
+  width: 100%;
+  padding: 7px 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.spend-cap__input:focus {
+  outline: none;
+}
+
+.spend-cap__input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.spend-cap__field-help {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-leading);
+}
+
+/* --- enforce toggle ------------------------------------------------------ */
+
+.spend-cap__enforce {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--surface-bg);
+}
+
+.spend-cap__enforce-input {
+  cursor: pointer;
+}
+
+.spend-cap__enforce-input:disabled {
+  cursor: not-allowed;
+}
+
+.spend-cap__enforce-label {
+  color: var(--text-secondary);
+  font-size: var(--type-body-size);
+  cursor: pointer;
+}
+
+.spend-cap__enforce-help {
+  grid-column: 2;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-leading);
+}
+
+/* --- actions ------------------------------------------------------------- */
+
+.spend-cap__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.spend-cap__save {
+  padding: 7px 16px;
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
+}
+
+.spend-cap__save:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.spend-cap__save:active:not(:disabled) {
+  background: var(--accent-pressed);
+}
+
+.spend-cap__save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.spend-cap__saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--status-success);
+  font-size: var(--type-caption-size);
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spend-cap__fill,
+  .spend-cap__money,
+  .spend-cap__save {
+    transition: none;
+  }
+}

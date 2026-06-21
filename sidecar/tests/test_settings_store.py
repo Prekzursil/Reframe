@@ -229,6 +229,30 @@ def test_qol_defaults_present_exact(store: SettingsStore) -> None:
     assert out["savePresets"] == {"presets": {}, "active": ""}
 
 
+# --------------------------------------------------------------------------- #
+# WU-spend-cap: monthly cumulative spend-cap settings (additive, default-off)
+# --------------------------------------------------------------------------- #
+def test_spend_cap_defaults_present_and_off(store: SettingsStore) -> None:
+    """The spend-cap keys land OFF/0 so the cap is backward-compatibly disabled."""
+    out = store.get()
+    assert out["monthlySoftLimitCents"] == 0
+    assert out["monthlyHardLimitCents"] == 0
+    assert out["enforceMonthlyHardLimit"] is False
+
+
+def test_spend_cap_keys_are_user_settable(store: SettingsStore) -> None:
+    out = store.set(
+        {
+            "monthlySoftLimitCents": 500,
+            "monthlyHardLimitCents": 2000,
+            "enforceMonthlyHardLimit": True,
+        }
+    )
+    assert out["monthlySoftLimitCents"] == 500
+    assert out["monthlyHardLimitCents"] == 2000
+    assert out["enforceMonthlyHardLimit"] is True
+
+
 def test_export_defaults_exact_acceptance(store: SettingsStore) -> None:
     """Acceptance pin: DEFAULT_SETTINGS['exportDefaults'] is exactly the §spec dict."""
     assert DEFAULT_SETTINGS["exportDefaults"] == {
