@@ -130,38 +130,49 @@ test('preview <video> PLAYS the imported sample (real playback)', async () => {
 
 test('Workspace tabs mount, including SemanticSearch', async () => {
   const win = await app.firstWindow();
-  // Workspace is already open from the playback test. Verify the tab bar + a
-  // representative set of panels mount without error.
+  // Workspace is already open from the playback test.
   await expect(win.locator('.workspace')).toBeVisible();
 
-  // Switch to the Search tab (SemanticSearch panel).
+  // Switch to the Search tab and assert the SemanticSearch panel ITSELF mounted
+  // (panel-specific selectors, not the always-present tabpanel container): its
+  // section, heading, and the search input the user types into.
   await win.locator('button', { hasText: 'Search' }).first().click();
-  await expect(win.locator('[role="tabpanel"]')).toBeVisible();
+  await expect(win.locator('section.semantic-search-panel')).toBeVisible();
+  await expect(win.locator('section.semantic-search-panel h2')).toHaveText('Search the transcript');
+  await expect(win.locator('input[aria-label="Search the transcript"]')).toBeVisible();
 
-  // Switch to Timeline export (NleExport) to confirm a second panel mounts.
+  // Switch to Timeline export and assert the NleExport panel ITSELF mounted.
   await win.locator('button', { hasText: 'Timeline export' }).first().click();
-  await expect(win.locator('[role="tabpanel"]')).toBeVisible();
+  await expect(win.locator('section.nle-panel')).toBeVisible();
+  await expect(
+    win.locator('section.nle-panel button', { hasText: 'Export timeline' }),
+  ).toBeVisible();
 });
 
-test('export action yields a real file (NLE timeline export)', async () => {
+test('export action yields a real file (NLE timeline export, real button)', async () => {
   const win = await app.firstWindow();
-  // Drive the real nle.export RPC through the live preload bridge — exactly what
-  // the NleExport "Export" button calls — and verify the returned path exists.
-  const result = await win.evaluate(async (videoId: string) => {
-    // window.api is the frozen preload bridge (see app/main/preload.ts).
-    const api = (
-      window as unknown as {
-        api: { rpc<T>(m: string, p?: Record<string, unknown>): Promise<T> };
-      }
-    ).api;
-    return api.rpc<{ path: string; clipCount: number }>('nle.export', {
-      videoId,
-      format: 'edl',
-      fps: 30,
-    });
-  }, seeded.videoId);
+  // Drive the REAL "Export timeline" button in the mounted NleExport panel (it
+  // calls nle.export through the live preload bridge -> live sidecar). Then read
+  // the saved path the panel renders and assert the file exists on disk.
+  await win.locator('button', { hasText: 'Timeline export' }).first().click();
+  await expect(win.locator('section.nle-panel')).toBeVisible();
+  await win.locator('section.nle-panel button', { hasText: 'Export timeline' }).click();
 
-  expect(result.path, 'export path').toMatch(/\.edl$/);
-  const abs = resolve(result.path);
+  // The panel renders "Saved … to <code>{path}</code>" on success.
+  const code = win.locator('.export-path code');
+  await expect(code).toBeVisible();
+  const savedPath = (await code.textContent())?.trim() ?? '';
+  expect(savedPath, 'exported path text').not.toBe('');
+  const abs = resolve(savedPath);
   expect(existsSync(abs), `exported file exists: ${abs}`).toBe(true);
+});
+
+test('no console errors across the whole session', async () => {
+  // The console/pageerror listener (bound in test 1) collected for the entire
+  // run, including the Workspace open, panel switches, playback, and export. A
+  // single early assertion would miss interaction-time errors, so re-assert here
+  // after all UI flows have exercised.
+  expect(consoleErrors, `console errors across session: ${JSON.stringify(consoleErrors)}`).toEqual(
+    [],
+  );
 });
