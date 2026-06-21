@@ -205,12 +205,52 @@
 }
 
 .director-panel .director-op__controls .link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   background: none;
   border: none;
+  border-radius: var(--radius-sm);
   color: var(--accent);
   cursor: pointer;
-  padding: 0;
+  padding: var(--space-1);
   font: inherit;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.director-panel .director-op__controls .link:hover:not(:disabled) {
+  background: var(--surface-raised);
+  color: var(--accent-strong, var(--accent));
+}
+
+.director-panel .director-op__controls .link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Disabled control (post-apply, or a same-kind reorder boundary): dimmed,
+   not-allowed cursor; the explanatory reason rides each button's title. */
+.director-panel .director-op__controls .link:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* The reorder icon inherits the control's color (currentColor stroke). */
+.director-panel .director-op__icon {
+  display: block;
+}
+
+/* A re-enabled (toggled-on) Disable button reads as a pressed/active state. */
+.director-panel .director-op__controls .link[aria-pressed='true'] {
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .director-panel .director-op__controls .link {
+    transition: none;
+  }
 }
 
 /* ---- actions ---------------------------------------------------------------- */

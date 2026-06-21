@@ -596,6 +596,228 @@ describe('DirectorPanel', () => {
     expect($('button[data-action="op-disable"][data-op="a"]').textContent).toBe('Disable');
   });
 
+  // ---- WU-director-controls: the per-op controls are WIRED (were inert) -------
+
+  it('clicking Disable toggles a planned op to dropped (and back), updating the summary', async () => {
+    const c = makeClient();
+    await planTo(c, planFixture([op({ id: 'a', kind: 'trim', status: 'planned' })]));
+    expect($('[data-testid="status-a"]').textContent).toBe('Planned');
+    // Click Disable -> dropped (status row + summary reflect it).
+    await act(async () => {
+      $('button[data-action="op-disable"][data-op="a"]').click();
+    });
+    await flush();
+    expect($('[data-testid="status-a"]').textContent).toBe('Dropped');
+    expect($('.director-op[data-op-id="a"]').getAttribute('data-status')).toBe('dropped');
+    expect($('[data-testid="plan-summary"]').textContent).toBe('No changes · 1 dropped op');
+    expect($('button[data-action="op-disable"][data-op="a"]').getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+    // Click again -> re-enabled (Enable label, back to planned).
+    await act(async () => {
+      $('button[data-action="op-disable"][data-op="a"]').click();
+    });
+    await flush();
+    expect($('[data-testid="status-a"]').textContent).toBe('Planned');
+    expect($('[data-testid="plan-summary"]').textContent).toBe('1 trim');
+  });
+
+  it('re-enabling a dropped op clears its drop reason', async () => {
+    const c = makeClient();
+    await planTo(
+      c,
+      planFixture([op({ id: 'a', kind: 'trim', status: 'dropped', statusReason: 'too-long' })]),
+    );
+    expect($('[data-testid="reason-a"]').textContent).toBe('too-long');
+    await act(async () => {
+      $('button[data-action="op-disable"][data-op="a"]').click();
+    });
+    await flush();
+    expect(container.querySelector('[data-testid="reason-a"]')).toBeNull();
+    expect($('[data-testid="status-a"]').textContent).toBe('Planned');
+  });
+
+  it('clicking Move down/up reorders same-kind ops within their group', async () => {
+    const c = makeClient();
+    await planTo(
+      c,
+      planFixture([
+        op({ id: 'a', kind: 'trim', rationale: 'first' }),
+        op({ id: 'b', kind: 'trim', rationale: 'second' }),
+      ]),
+    );
+    const ids = () =>
+      $all('.director-op[data-op-id]').map((el) => el.getAttribute('data-op-id'));
+    expect(ids()).toEqual(['a', 'b']);
+    await act(async () => {
+      $('button[data-action="op-down"][data-op="a"]').click();
+    });
+    await flush();
+    expect(ids()).toEqual(['b', 'a']);
+    // Move it back up.
+    await act(async () => {
+      $('button[data-action="op-up"][data-op="a"]').click();
+    });
+    await flush();
+    expect(ids()).toEqual(['a', 'b']);
+  });
+
+  it('move buttons are disabled at a same-kind boundary (first/last)', async () => {
+    const c = makeClient();
+    await planTo(
+      c,
+      planFixture([op({ id: 'a', kind: 'trim' }), op({ id: 'b', kind: 'trim' })]),
+    );
+    // "a" is first of its kind -> up disabled, down enabled.
+    expect(($('button[data-action="op-up"][data-op="a"]') as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(($('button[data-action="op-down"][data-op="a"]') as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    // "b" is last of its kind -> down disabled.
+    expect(($('button[data-action="op-down"][data-op="b"]') as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    // A disabled boundary button carries an explanatory title (reason).
+    expect($('button[data-action="op-up"][data-op="a"]').getAttribute('title')).toMatch(
+      /first of its kind/i,
+    );
+  });
+
+  it('keyboard: Enter on the focusable row toggles the op; Space does too', async () => {
+    const c = makeClient();
+    await planTo(c, planFixture([op({ id: 'a', kind: 'trim', status: 'planned' })]));
+    const row = $('.director-op[data-op-id="a"]');
+    await act(async () => {
+      row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    await flush();
+    expect($('[data-testid="status-a"]').textContent).toBe('Dropped');
+    // Space toggles back.
+    await act(async () => {
+      row.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    });
+    await flush();
+    expect($('[data-testid="status-a"]').textContent).toBe('Planned');
+  });
+
+  it('keyboard: ArrowDown/ArrowUp on the row reorder same-kind ops', async () => {
+    const c = makeClient();
+    await planTo(
+      c,
+      planFixture([op({ id: 'a', kind: 'trim' }), op({ id: 'b', kind: 'trim' })]),
+    );
+    const ids = () =>
+      $all('.director-op[data-op-id]').map((el) => el.getAttribute('data-op-id'));
+    await act(async () => {
+      $('.director-op[data-op-id="a"]').dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+      );
+    });
+    await flush();
+    expect(ids()).toEqual(['b', 'a']);
+    await act(async () => {
+      $('.director-op[data-op-id="a"]').dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }),
+      );
+    });
+    await flush();
+    expect(ids()).toEqual(['a', 'b']);
+  });
+
+  it('keyboard: an unhandled key, and a move key at a boundary, are no-ops', async () => {
+    const c = makeClient();
+    await planTo(
+      c,
+      planFixture([op({ id: 'a', kind: 'trim' }), op({ id: 'b', kind: 'trim' })]),
+    );
+    const ids = () =>
+      $all('.director-op[data-op-id]').map((el) => el.getAttribute('data-op-id'));
+    const rowA = $('.director-op[data-op-id="a"]');
+    // Unhandled key: nothing changes.
+    await act(async () => {
+      rowA.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }));
+    });
+    await flush();
+    expect(ids()).toEqual(['a', 'b']);
+    expect($('[data-testid="status-a"]').textContent).toBe('Planned');
+    // ArrowUp on the first-of-kind op is a boundary no-op.
+    await act(async () => {
+      rowA.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    });
+    await flush();
+    expect(ids()).toEqual(['a', 'b']);
+    // ArrowDown on the last-of-kind op is a boundary no-op.
+    await act(async () => {
+      $('.director-op[data-op-id="b"]').dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+      );
+    });
+    await flush();
+    expect(ids()).toEqual(['a', 'b']);
+  });
+
+  it('a keydown bubbling from a child button is NOT hijacked by the row handler', async () => {
+    const c = makeClient();
+    await planTo(c, planFixture([op({ id: 'a', kind: 'trim', status: 'planned' })]));
+    // Pressing Enter while a Move button is focused must keep the BUTTON's own
+    // native activation — the row's onKeyDown must ignore the bubbled event
+    // (target !== currentTarget), so the op is NOT toggled by the row.
+    await act(async () => {
+      $('button[data-action="op-up"][data-op="a"]').dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+      );
+    });
+    await flush();
+    expect($('[data-testid="status-a"]').textContent).toBe('Planned');
+  });
+
+  it('controls are disabled (and keyboard inert) after the plan is applied', async () => {
+    const c = makeClient();
+    await planTo(c, planFixture([op({ id: 'a', kind: 'trim' }), op({ id: 'b', kind: 'trim' })]));
+    await act(async () => {
+      $('button[data-action="apply"]').click();
+    });
+    await flush();
+    await act(async () => {
+      events.emitDone({
+        jobId: 'job-apply',
+        result: {
+          planId: 'plan-1',
+          opsStatus: [op({ id: 'a', status: 'applied' }), op({ id: 'b', status: 'applied' })],
+          projectCopyPath: '/c',
+        },
+      });
+    });
+    await flush();
+    // Post-apply: the Disable control is disabled with an explanatory title.
+    const disable = $('button[data-action="op-disable"][data-op="a"]') as HTMLButtonElement;
+    expect(disable.disabled).toBe(true);
+    expect(disable.getAttribute('title')).toMatch(/before you apply/i);
+    // Keyboard activation is inert post-apply (status unchanged).
+    await act(async () => {
+      $('.director-op[data-op-id="a"]').dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+      );
+    });
+    await flush();
+    expect($('[data-testid="status-a"]').textContent).toBe('Applied');
+  });
+
+  it('move controls render Lucide-style inline SVG icons (no emoji/glyph)', async () => {
+    const c = makeClient();
+    await planTo(c, planFixture([op({ id: 'a', kind: 'trim' })]));
+    const upBtn = $('button[data-action="op-up"][data-op="a"]');
+    const svg = upBtn.querySelector('svg.director-op__icon');
+    expect(svg).not.toBeNull();
+    expect(svg?.getAttribute('aria-hidden')).toBe('true');
+    expect(svg?.querySelectorAll('path').length).toBe(2);
+    // The legacy arrow glyph is gone (accessible name comes from aria-label).
+    expect(upBtn.textContent).not.toContain('↑');
+    expect(upBtn.getAttribute('aria-label')).toBe('Move up');
+  });
+
   it('progress events for the active job update the SR region', async () => {
     const c = makeClient();
     await mount(c);

@@ -156,6 +156,75 @@ export function recoveryHint(op: DirectorOp): string {
   return op.status === 'failed' ? 'Edit or disable this step, then re-apply.' : '';
 }
 
+/**
+ * Toggle one op's enabled/disabled state in a plan's ops list (WU-director-
+ * controls), returning a NEW array (immutable; the source is never mutated). A
+ * `dropped` op becomes `planned` (re-enabled); ANY other op becomes `dropped`
+ * (disabled). Re-enabling clears the stale `statusReason` so a previously-dropped
+ * op no longer shows the drop reason once it is back in the plan. An unknown id
+ * returns the same logical list (a no-op copy).
+ */
+export function toggleOpStatus(ops: readonly DirectorOp[], opId: string): DirectorOp[] {
+  return ops.map((o) => {
+    if (o.id !== opId) return o;
+    return o.status === 'dropped'
+      ? { ...o, status: 'planned', statusReason: null }
+      : { ...o, status: 'dropped' };
+  });
+}
+
+/** A move direction for a storyboard op control (F5 reorder). */
+export type OpMoveDirection = 'up' | 'down';
+
+/**
+ * Index of the same-KIND neighbour of `opId` in `ops` for a move in `dir`, or
+ * `-1` when `opId` is the first/last op of its kind (a boundary — the control is
+ * disabled there). Reordering is WITHIN a kind so the move is visible: the
+ * storyboard groups ops by kind, so swapping past a different-kind neighbour
+ * would be an invisible no-op.
+ */
+export function opMoveTargetIndex(
+  ops: readonly DirectorOp[],
+  opId: string,
+  dir: OpMoveDirection,
+): number {
+  const idx = ops.findIndex((o) => o.id === opId);
+  if (idx < 0) return -1;
+  const kind = ops[idx].kind;
+  const step = dir === 'up' ? -1 : 1;
+  for (let i = idx + step; i >= 0 && i < ops.length; i += step) {
+    if (ops[i].kind === kind) return i;
+  }
+  return -1;
+}
+
+/** True when `opId` can move `dir` within its kind (i.e. it is not at a boundary). */
+export function canMoveOp(
+  ops: readonly DirectorOp[],
+  opId: string,
+  dir: OpMoveDirection,
+): boolean {
+  return opMoveTargetIndex(ops, opId, dir) >= 0;
+}
+
+/**
+ * Move one op `up`/`down` past its nearest same-kind neighbour, returning a NEW
+ * ops array (immutable). A boundary move (no same-kind neighbour in `dir`) is a
+ * no-op copy so the caller can call unconditionally.
+ */
+export function moveOpWithinKind(
+  ops: readonly DirectorOp[],
+  opId: string,
+  dir: OpMoveDirection,
+): DirectorOp[] {
+  const idx = ops.findIndex((o) => o.id === opId);
+  const target = opMoveTargetIndex(ops, opId, dir);
+  if (target < 0) return ops.slice();
+  const next = ops.slice();
+  [next[idx], next[target]] = [next[target], next[idx]];
+  return next;
+}
+
 /** True when a cost row is the frame/vision data type (heaviest cost+privacy). */
 export function isFrameFunction(row: DirectorCostRow): boolean {
   return row.function === 'vision';
