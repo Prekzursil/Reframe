@@ -194,9 +194,9 @@ def test_remove_silence_repoints_when_trim_cuts(tmp_path: Path, monkeypatch: pyt
     op = EditOp(id="s1", kind="removeSilence", span=(0, 12000))
 
     # Stub trim_clip to "render" a real output file and report a removal.
-    def fake_trim_clip(in_path: str, out_path: str, **_k: Any) -> tuple[str, float]:
+    def fake_trim_clip(in_path: str, out_path: str, **_k: Any) -> tuple[str, float, list[tuple[float, float]]]:
         Path(out_path).write_bytes(b"\x00trimmed")
-        return out_path, 3.0
+        return out_path, 3.0, [(0.0, 6.0), (9.0, 12.0)]
 
     monkeypatch.setattr(engines_mod._silencetrim, "trim_clip", fake_trim_clip)
     inverse = build_engines(runner=FakeRunner())["removeSilence"](op, pc)
@@ -210,8 +210,8 @@ def test_remove_silence_passthrough_repoints_to_input(tmp_path: Path, monkeypatc
     src_before = pc.data["video"]["path"]
 
     # Nothing to remove: trim_clip returns the INPUT unchanged (removedSec 0).
-    def fake_trim_clip(in_path: str, out_path: str, **_k: Any) -> tuple[str, float]:
-        return in_path, 0.0
+    def fake_trim_clip(in_path: str, out_path: str, **_k: Any) -> tuple[str, float, list[tuple[float, float]]]:
+        return in_path, 0.0, [(0.0, 12.0)]
 
     monkeypatch.setattr(engines_mod._silencetrim, "trim_clip", fake_trim_clip)
     inverse = build_engines(runner=FakeRunner())["removeSilence"](
@@ -319,9 +319,9 @@ def test_inverse_restores_for_every_wired_kind(
     _fake_probe(monkeypatch)
     runner = FakeRunner()
 
-    def fake_trim_clip(in_path: str, out_path: str, **_k: Any) -> tuple[str, float]:
+    def fake_trim_clip(in_path: str, out_path: str, **_k: Any) -> tuple[str, float, list[tuple[float, float]]]:
         Path(out_path).write_bytes(b"\x00trimmed")
-        return out_path, 1.0
+        return out_path, 1.0, [(0.0, 6.0), (8.0, 12.0)]
 
     monkeypatch.setattr(engines_mod._silencetrim, "trim_clip", fake_trim_clip)
     pc = _copy(tmp_path, tracks=tracks)

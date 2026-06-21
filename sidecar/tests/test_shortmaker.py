@@ -93,8 +93,10 @@ class RecordingStages:
         self.trim_args.append((in_path, out_path))
         if self._trim_impl is not None:
             return self._trim_impl(in_path, out_path)
-        # Default stub: "removed 2.5s of dead air", returns the new path.
-        return out_path, 2.5
+        # Default stub: "removed 2.5s of dead air", returns the new path + keeps.
+        # The default keeps cover the whole clip (no interior removal to remap), so
+        # the base ordering tests stay timeline-neutral.
+        return out_path, 2.5, [(0.0, 30.0)]
 
     def stabilize(self, in_path, out_path, *, settings=None, on_notice=None):
         self.calls.append("stabilize")
@@ -789,6 +791,58 @@ def test_run_export_silence_trim_runs_after_cut(transcript, tmp_path):
     # silenceRemovedSec is surfaced on the clip payload (default stub removed 2.5s).
     assert out["items"][0]["silenceRemovedSec"] == pytest.approx(2.5)
     assert trimmed_out.endswith(".trimmed.mp4")
+
+
+def test_run_export_silence_trim_remaps_caption_cues(tmp_path):
+    """BUG FIX: trimming interior silence MUST remap caption cues to the new timeline.
+
+    A candidate [sourceStart=0, end=30] with two cues — one BEFORE the removed
+    silence and one AFTER. Silence-trim removes the interior span [6, 16) (10s),
+    so the kept clip-local timeline is [(0,6), (16,30)]. The cue after the gap must
+    shift earlier by the removed 10s; without remapping it would drift by 10s and
+    the captions would desync. The caption stage must receive clip-local cues and
+    ``source_start == 0`` (already re-based), exactly like the remove-fillers path.
+    """
+    calls: list[str] = []
+    # Cues in ORIGINAL-video time (sourceStart=0 so they are already clip-local):
+    #   cue1 [2,4]  (before the removed silence) -> stays [2,4]
+    #   cue2 [20,22] (after a 10s removal at [6,16)) -> shifts to [10,12]
+    cue_transcript = {
+        "language": "en",
+        "durationSec": 30.0,
+        "segments": [
+            {
+                "start": 0.0,
+                "end": 30.0,
+                "text": "intro then outro",
+                "words": [
+                    {"text": "intro", "start": 2.0, "end": 4.0},
+                    {"text": "outro", "start": 20.0, "end": 22.0},
+                ],
+            }
+        ],
+    }
+
+    def trim_impl(in_path, out_path):
+        # Removed interior silence [6,16): keeps the talking parts around it.
+        return out_path, 10.0, [(0.0, 6.0), (16.0, 30.0)]
+
+    rec = RecordingStages(calls, trim_impl=trim_impl)
+    sm.run_export(
+        make_ctx(),
+        video_id="v1",
+        candidates=[_stab_candidate()],
+        load_context=loader_for(str(tmp_path / "src.mp4"), cue_transcript),
+        out_dir=str(tmp_path / "out"),
+        stages=rec.as_stages(),
+        settings={"silenceTrim": True},
+    )
+    cap = rec.caption_kwargs[0]
+    # The clip is already clip-local after the remap, so the caption re-base is 0.
+    assert cap["source_start"] == pytest.approx(0.0)
+    remapped = {(round(c["start"], 3), round(c["end"], 3)) for c in cap["cues"]}
+    # cue1 unchanged; cue2 pulled 10s earlier onto the compacted timeline.
+    assert remapped == {(2.0, 4.0), (10.0, 12.0)}
 
 
 def test_run_export_stabilize_runs_after_cut_warp_only(transcript, tmp_path):
@@ -2384,10 +2438,17 @@ class TestLazyTrimSilenceStage:
     def test_delegates_to_trim_clip(self, monkeypatch):
         import media_studio.features.silencetrim as silencetrim
 
-        monkeypatch.setattr(silencetrim, "trim_clip", lambda i, o, *, settings=None: (o, 3.25))
-        out_path, removed = sm._lazy_trim_silence("/in.mp4", "/out.trim.mp4", settings={})
+        # trim_clip now also returns the clip-local KEEP spans so the orchestrator
+        # can remap caption cues onto the compacted timeline (cue-desync fix).
+        monkeypatch.setattr(
+            silencetrim,
+            "trim_clip",
+            lambda i, o, *, settings=None: (o, 3.25, [(0.0, 4.0), (6.0, 12.0)]),
+        )
+        out_path, removed, keeps = sm._lazy_trim_silence("/in.mp4", "/out.trim.mp4", settings={})
         assert out_path == "/out.trim.mp4"
         assert removed == pytest.approx(3.25)
+        assert keeps == [(0.0, 4.0), (6.0, 12.0)]
 
 
 class TestLazyZoomStage:

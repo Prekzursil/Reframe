@@ -123,7 +123,7 @@ MuxAudioStage = Callable[..., str]
 StabilizeStage = Callable[..., str]
 # trim_silence(in_path, out_path, *, settings) -> (out_path|in_path, removedSec)
 #   (audio-stabilize group: ffmpeg silencedetect -> dead-air re-cut)
-SilenceTrimStage = Callable[..., tuple[str, float]]
+SilenceTrimStage = Callable[..., tuple[str, float, list[tuple[float, float]]]]
 
 
 # -- default stage adapters (bind to the real sibling APIs) -----------------
@@ -259,12 +259,15 @@ def _lazy_stabilize(in_path, out_path, *, settings=None, on_notice=None) -> str:
     return _stabilize.stabilize_clip(in_path, out_path, settings=settings, on_notice=on_notice)
 
 
-def _lazy_trim_silence(in_path, out_path, *, settings=None) -> tuple[str, float]:
+def _lazy_trim_silence(in_path, out_path, *, settings=None) -> tuple[str, float, list[tuple[float, float]]]:
     """Dead-air removal pre-step (audio-stabilize group).
 
     Delegates to ``features.silencetrim.trim_clip``: detects silent spans via
-    ffmpeg silencedetect, re-cuts the keeps, and returns ``(path, removedSec)``.
-    Returns ``(in_path, 0.0)`` unchanged when there is no dead air to remove.
+    ffmpeg silencedetect, re-cuts the keeps, and returns
+    ``(path, removedSec, keeps)``. The ``keeps`` (clip-local kept spans) let the
+    orchestrator remap caption cues onto the compacted timeline. Returns
+    ``(in_path, 0.0, [(0, total)])`` when there is no dead air to remove (an
+    identity remap, so cues map through unchanged).
     """
     from . import silencetrim as _silencetrim
 
@@ -875,14 +878,24 @@ def _export_one(
     # ``silenceTrim`` toggle is set. Runs on the cut clip (clip-local t=0). It
     # CHANGES the clip's timeline, so it is mutually exclusive with REMOVE-FILLERS
     # (whose clip-local cues are derived from the ORIGINAL timings); when both are
-    # set, silence-trim wins and de-fill is skipped below. The base caption path
-    # re-bases from the ORIGINAL source_start, which still excludes the removed
-    # dead air because the trim only drops sub-threshold silence (no spoken cue
-    # falls inside it — cues for those silent gaps don't exist).
+    # set, silence-trim wins and de-fill is skipped below.
+    #
+    # CUE REMAP (bug fix): the trim drops INTERIOR silence between/within spoken
+    # cues, so every cue AFTER a removed gap shifts earlier on the compacted
+    # timeline. The cues MUST be re-timed onto that timeline or captions drift late
+    # by the removed duration. Mirror the REMOVE-FILLERS path exactly: re-base the
+    # cues to clip-local, remap them across the kept spans the trim returned, and
+    # tell CAPTION the clip is already re-based (``source_start = 0``). A
+    # pass-through (nothing removed) returns the full-length keeps -> identity remap.
     silence_trim_on = bool((settings or {}).get("silenceTrim"))
     if silence_trim_on:
+        from . import fillers as _fillers  # local: shared cue-remap, import-light
+
         trimmed_path = str(out_dir / f"{stem}.trimmed.mp4")
-        stage_clip, silence_removed = stages.trim_silence(cut_path, trimmed_path, settings=settings)
+        stage_clip, silence_removed, silence_keeps = stages.trim_silence(cut_path, trimmed_path, settings=settings)
+        local_cues = _rebase_cues(caption_cues, source_start)
+        caption_cues = _fillers.remap_cues(local_cues, silence_keeps)
+        caption_source_start = 0.0
 
     # STABILIZE (audio-stabilize group, the DIFFERENTIATOR) — camera-shake
     # stabilization via ffmpeg vidstab 2-pass, ON when the ``stabilize`` toggle is

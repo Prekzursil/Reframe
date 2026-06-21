@@ -327,7 +327,7 @@ def make_remove_silence_engine(*, runner: RunFn, settings: Mapping[str, Any] | N
             return restored
         in_path = _source_path(project_copy)
         out_path = _out_path(project_copy, op)
-        result_path, _removed = _silencetrim.trim_clip(
+        result_path, _removed, _keeps = _silencetrim.trim_clip(
             in_path,
             str(out_path),
             settings=dict(settings or {}),

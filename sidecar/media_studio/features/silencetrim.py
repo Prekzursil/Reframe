@@ -207,14 +207,22 @@ def trim_clip(
     detect_run: DetectRunner | None = None,
     run: RunFn | None = None,
     duration: ProbeFn | None = None,
-) -> tuple[str, float]:
-    """Trim dead air from ``in_path`` -> ``out_path``; return ``(path, removedSec)``.
+) -> tuple[str, float, list[Span]]:
+    """Trim dead air from ``in_path`` -> ``out_path``; return ``(path, removedSec, keeps)``.
 
     The pipeline-facing entry point. Detects silent spans, inverts them to keeps,
     and re-cuts via :func:`fillers.build_segment_cut_argv`. When there is nothing
     to remove (no silence detected, or a single full-length keep), the ORIGINAL
     ``in_path`` is returned unchanged with ``removedSec == 0.0`` (no needless
     re-encode). Raises :class:`SilenceTrimError` on a non-zero ffmpeg exit.
+
+    ``keeps`` is the list of clip-local KEEP spans the re-cut concatenated (in the
+    SAME timeline as ``in_path``). The export orchestrator feeds it to
+    :func:`fillers.remap_cues` so caption cues are re-timed onto the compacted
+    timeline (without it, every cue after a removed interior silence drifts late by
+    the removed duration). On a pass-through (nothing removed) ``keeps`` is the
+    single full-length span ``[(0, total)]`` — an identity remap, so cues map
+    through unchanged.
     """
     settings = settings or {}
     run = run or ffmpeg.run
@@ -224,9 +232,9 @@ def trim_clip(
         total = float(duration(in_path, settings))
     except Exception:  # noqa: BLE001 - a probe failure means we can't trim safely
         log.warning("duration probe failed for %s; skipping silence-trim", in_path)
-        return in_path, 0.0
+        return in_path, 0.0, []
     if total <= 0.0:
-        return in_path, 0.0
+        return in_path, 0.0, []
 
     silences = detect_silence_spans(
         in_path,
@@ -237,15 +245,16 @@ def trim_clip(
     )
     keeps = keep_spans(silences, total, pad_sec=pad_sec)
     removed = removed_seconds(keeps, total)
-    # Nothing to remove (or a single full-length keep): pass through untouched.
+    # Nothing to remove (or a single full-length keep): pass through untouched. The
+    # keeps then cover the whole clip (identity remap), so cues map through as-is.
     if removed <= 1e-3 or len(keeps) <= 1:
-        return in_path, 0.0
+        return in_path, 0.0, [(0.0, total)]
 
     argv = _fillers.build_segment_cut_argv(in_path, out_path, keeps, settings)
     code = run(argv, total_sec=total)
     if code != 0:
         raise SilenceTrimError(f"silence-trim re-cut failed (ffmpeg exit {code}) for {in_path}")
-    return out_path, removed
+    return out_path, removed, keeps
 
 
 # --------------------------------------------------------------------------- #
@@ -312,7 +321,7 @@ class SilenceTrim:
             out_dir.mkdir(parents=True, exist_ok=True)
             stem = Path(in_path).stem or "clip"
             out_path = str(out_dir / f"{stem}.trimmed.mp4")
-            path, removed = trim_clip(
+            path, removed, _keeps = trim_clip(
                 in_path,
                 out_path,
                 settings=settings,
