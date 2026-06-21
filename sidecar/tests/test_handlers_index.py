@@ -370,6 +370,44 @@ def test_index_search_cloud_consent_granted_query_egresses(tmp_path: Path) -> No
 
 
 # --------------------------------------------------------------------------- #
+# OFFLINE ENFORCEMENT (bug fix): offline forbids cloud embedding egress even when
+# TEXT consent is fully granted + the cloud route is preferred. The embedder must
+# fall back to the LocalEmbedder backstop (zero egress) for BOTH build and search.
+# --------------------------------------------------------------------------- #
+def _offline_cloud_settings() -> dict[str, Any]:
+    return {**_cloud_settings(text_consent=True), "offline": True}
+
+
+def test_index_build_offline_consent_granted_no_text_egress(tmp_path: Path) -> None:
+    spy = SpyTransport()
+    svc = _services(tmp_path, embed_transport=spy)
+    _set_settings(svc, _offline_cloud_settings())
+    vid = _add_video_with_transcript(svc, tmp_path)
+    ctx = _ctx()
+    svc.index_build({"videoId": vid}, ctx)
+    ctx.jobs.join(timeout=5)
+    result = _done_result(ctx)
+    # Offline -> the cloud entry is dropped -> LocalEmbedder backstop -> zero egress.
+    assert spy.calls == [], "transcript text egressed while offline"
+    assert result["segmentCount"] == 2
+    assert result["model"] == "local"
+
+
+def test_index_search_offline_consent_granted_query_no_egress(tmp_path: Path) -> None:
+    spy = SpyTransport()
+    svc = _services(tmp_path, embed_transport=spy)
+    vid = _add_video_with_transcript(svc, tmp_path)
+    # Build + search BOTH offline -> LocalEmbedder for both, dims align, the cloud
+    # transport is never touched on the search query embedding.
+    _set_settings(svc, _offline_cloud_settings())
+    _build_then_clear_spy(svc, spy, vid)
+
+    out = svc.index_search({"videoId": vid, "query": "secret query"}, _ctx())
+    assert spy.calls == [], "query text egressed while offline"
+    assert "hits" in out
+
+
+# --------------------------------------------------------------------------- #
 # AC c3 (search path) — confirmCloudBudget on: unacked blocks, acked proceeds.
 # --------------------------------------------------------------------------- #
 def test_index_search_budget_ack_required_then_proceeds(tmp_path: Path) -> None:
