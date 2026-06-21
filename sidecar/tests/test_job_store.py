@@ -18,10 +18,13 @@ the unit under test (no ffmpeg / network / provider is touched).
 
 from __future__ import annotations
 
+import os
+import threading
 from pathlib import Path
 from typing import Any
 
 import pytest
+from media_studio import job_store
 from media_studio.job_store import DiskJobStore, InMemoryJobStore, JobStore
 
 
@@ -185,3 +188,56 @@ def test_in_memory_write_copies_input_record(tmp_path: Path) -> None:
     store.write(rec)
     rec["pct"] = 999
     assert store.load_all()[0]["pct"] == 10
+
+
+# --------------------------------------------------------------------------- #
+# Concurrency: two threads writing the SAME job must not clobber each other.   #
+# --------------------------------------------------------------------------- #
+def test_disk_concurrent_writes_same_job_do_not_raise(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two threads writing the same ``jobId`` must both succeed (no race).
+
+    Reproduces the production DiskJobStore race: the RPC thread (record_request)
+    and the worker thread (_set_status) write the SAME job concurrently. With a
+    fixed ``<job>.json.tmp`` temp name both threads target one temp file, so the
+    first ``os.replace`` consumes it and the second raises ``FileNotFoundError``,
+    breaking the job. A unique temp per write makes both writes independent.
+
+    The interleaving is forced deterministically (not thread-spawn-and-hope): a
+    :class:`threading.Barrier` holds BOTH workers at the ``os.replace`` seam
+    until both have created their temp file, then the replaces are serialized.
+    Pre-fix this guarantees the collision; post-fix both replaces succeed.
+    """
+    store = DiskJobStore(tmp_path / "jobs")
+    store.write(_record("job-x"))  # create the root dir up front
+
+    barrier = threading.Barrier(2)
+    serialize = threading.Lock()
+    real_replace = os.replace
+
+    def coordinated_replace(src: Any, dst: Any) -> None:
+        # Both threads have written their temp file before ANY replace happens.
+        barrier.wait()
+        with serialize:
+            real_replace(src, dst)
+
+    monkeypatch.setattr(job_store.os, "replace", coordinated_replace)
+
+    errors: list[BaseException] = []
+
+    def worker(status: str) -> None:
+        try:
+            store.write(_record("job-x", status=status))
+        except BaseException as exc:  # noqa: BLE001 - capture for assertion
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(status,)) for status in ("running", "done")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors, errors
+    # Exactly one record survives (last writer wins), root has no .tmp residue.
+    loaded = store.load_all()
+    assert [r["jobId"] for r in loaded] == ["job-x"]
+    assert sorted(p.name for p in (tmp_path / "jobs").iterdir()) == ["job-x.json"]
