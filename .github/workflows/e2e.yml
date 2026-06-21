@@ -1,0 +1,152 @@
+name: e2e
+
+# OPT-IN autonomous end-to-end suite. This NEVER gates a normal PR — it is the
+# heavy companion to `quality.yml`. It installs the heavier runtime deps that the
+# standard gate deliberately omits (no-heavy-ML rule) and runs the real-pipeline
+# / real-ffmpeg / mock-model flows that are excluded from the default gate:
+#   * sidecar  : pytest -m e2e            (the `e2e`-marked AI2 hub/director +
+#                                          intel/repurpose real-media tests)
+#   * sidecar  : real_pipeline_smoke.py   (standalone real-ffmpeg + tiny-whisper
+#                                          short-making pipeline)
+#   * app      : npm run test:e2e         (Playwright Electron GUI preview E2E)
+#   * app      : npm run test:e2e:dom     (vitest DOM caption-over-video proof)
+#
+# Triggered ONLY on demand (workflow_dispatch) or on the nightly schedule, so the
+# default `quality.yml` gate (100% coverage, heavy-ML-free) is untouched.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Nightly at 04:17 UTC (off the hour to avoid GitHub's scheduler congestion).
+    - cron: "17 4 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-sidecar:
+    name: e2e-sidecar (real pipeline + AI marker)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install sidecar + E2E runtime deps (CPU)
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov
+          # Package itself (pure-logic modules) + dev extras, no heavy transitives.
+          pip install -e "sidecar[dev]" --no-deps
+          # The CPU runtime deps the opt-in E2E flows actually exercise. Unlike the
+          # standard gate, the E2E suite IS allowed the heavier (still CPU-only)
+          # stack: real tiny faster-whisper, scenedetect, av, onnxruntime, cv2.
+          pip install \
+            httpx numpy opencv-python-headless \
+            faster-whisper scenedetect av onnxruntime \
+            huggingface_hub tokenizers
+
+      - name: E2E sidecar — pytest -m e2e (AI2 hub/director + intel/repurpose)
+        working-directory: sidecar
+        run: python -m pytest -m e2e -v
+
+      - name: E2E sidecar — real short-making pipeline smoke (real ffmpeg + tiny whisper)
+        run: |
+          mkdir -p e2e_artifacts
+          # A short sample clip (no speech → tiny whisper honestly returns 0
+          # segments; the script reports that explicitly, see the e2e README).
+          ffmpeg -y -f lavfi -i testsrc=size=640x360:rate=30:duration=8 \
+                 -f lavfi -i sine=frequency=440:duration=8 \
+                 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest \
+                 e2e_artifacts/sample.mp4
+          export PYTHONPATH="$PWD/sidecar"
+          python sidecar/tests/e2e/real_pipeline_smoke.py \
+            --sample e2e_artifacts/sample.mp4 \
+            --workdir e2e_artifacts/run \
+            --repo "$PWD"
+
+      - name: Upload sidecar E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: e2e-sidecar-artifacts
+          path: e2e_artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  e2e-gui:
+    name: e2e-gui (Playwright Electron + DOM)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install sidecar (stdlib preview path — no ML deps)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "sidecar[dev]" --no-deps
+
+      - name: Install app deps
+        working-directory: app
+        run: npm ci
+
+      - name: Install render-cli deps
+        working-directory: app/render-cli
+        run: npm ci
+
+      - name: Install Playwright browsers + OS deps
+        working-directory: app
+        run: npx playwright install --with-deps chromium
+
+      - name: Build app (electron-vite + remotion bundle)
+        working-directory: app
+        run: npm run build
+
+      - name: Type-check the E2E harness
+        working-directory: app
+        run: npm run typecheck:e2e
+
+      - name: E2E GUI — vitest DOM caption-over-video proof
+        working-directory: app
+        run: npm run test:e2e:dom
+
+      - name: E2E GUI — Playwright Electron preview
+        working-directory: app
+        # xvfb gives the headless runner a display for the real Electron window.
+        run: xvfb-run --auto-servernum npm run test:e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: e2e-gui-playwright-report
+          path: |
+            app/playwright-report/
+            app/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

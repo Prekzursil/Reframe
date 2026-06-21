@@ -48,7 +48,14 @@ packages = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# OPT-IN E2E SUITE: the heavy autonomous end-to-end tests (real ffmpeg / real
+# model server / mock-model-over-a-socket) are marked ``e2e`` and DESELECTED
+# from the default gate via ``addopts`` below, so the standard 100%-coverage
+# run never installs ML deps, never spawns servers, and stays fast. Run the
+# opt-in suite explicitly with ``pytest -m e2e`` (see .github/workflows/e2e.yml).
+addopts = "-m 'not e2e'"
 markers = [
   "unit: fast, dependency-free unit tests (no heavy-ML imports)",
   "integration: tests that exercise multiple modules together",
+  "e2e: opt-in heavy end-to-end tests (real ffmpeg/model/socket); excluded from the default gate",
 ]
