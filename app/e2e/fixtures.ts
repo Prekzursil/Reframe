@@ -17,6 +17,7 @@ import { mkdtempSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { findLatestBuild, parseElectronApp } from 'electron-playwright-helpers';
 
 // ESM (the app package is "type": "module"): derive __dirname from import.meta.
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -25,8 +26,55 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(HERE, '..', '..');
 /** The Python sidecar package dir (cwd for `-m media_studio`). */
 export const SIDECAR_DIR = join(REPO_ROOT, 'sidecar');
-/** The built main-process entry the launched Electron app boots. */
+/** The built main-process entry the launched Electron app boots (DEV build). */
 export const MAIN_ENTRY = join(REPO_ROOT, 'app', 'out', 'main', 'main.js');
+/** electron-builder packaged-artifact output dir (electron-builder.yml). */
+export const DIST_DIR = join(REPO_ROOT, 'dist');
+
+/**
+ * What the launched app boots: the args + (for a real package) the executable
+ * path, plus whether we are pointing at a PACKAGED artifact or the dev build.
+ */
+export interface BuiltApp {
+  /** Launch args ([appInfo.main] for a package, [MAIN_ENTRY] for dev). */
+  main: string;
+  /** electron-builder executable path; undefined => use the dev electron bin. */
+  executablePath?: string;
+  /** True when resolved to a real electron-builder package (the shipped .exe). */
+  packaged: boolean;
+}
+
+/**
+ * Resolve the app under test, PREFERRING a real electron-builder package so the
+ * E2E drives the SHIPPED binary (the .exe on Windows). If RF_E2E_DEV is set, or
+ * no package exists in `dist/`, fall back to the dev build (out/main/main.js) so
+ * the same spec still gives local GUI coverage. Set RF_E2E_REQUIRE_PACKAGED=1 to
+ * make the absence of a package a hard error (the packaged.spec.ts CI leg).
+ */
+export function findBuiltApp(): BuiltApp {
+  const wantDev = process.env.RF_E2E_DEV === '1';
+  if (!wantDev && existsSync(DIST_DIR)) {
+    try {
+      const latest = findLatestBuild(DIST_DIR);
+      const info = parseElectronApp(latest);
+      if (existsSync(info.executable) && existsSync(info.main)) {
+        return { main: info.main, executablePath: info.executable, packaged: true };
+      }
+    } catch {
+      // Fall through to the dev build below (no parseable package present).
+    }
+  }
+  if (process.env.RF_E2E_REQUIRE_PACKAGED === '1') {
+    throw new Error(
+      `no electron-builder package found under ${DIST_DIR} (RF_E2E_REQUIRE_PACKAGED=1). ` +
+        'Run electron-builder before this packaged-only leg.',
+    );
+  }
+  if (!existsSync(MAIN_ENTRY)) {
+    throw new Error(`built main entry missing: ${MAIN_ENTRY} — run \`npm run build\` first`);
+  }
+  return { main: MAIN_ENTRY, packaged: false };
+}
 
 /**
  * The Python 3.12 interpreter to run the sidecar with. RF_PY (set by the test
