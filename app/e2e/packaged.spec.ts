@@ -77,4 +77,45 @@ test.describe('packaged (shipped binary) E2E', () => {
     await win.waitForTimeout(1500);
     expect(consoleErrors, `console errors: ${JSON.stringify(consoleErrors)}`).toEqual([]);
   });
+
+  test('the packaged compute backend responds and serves the seeded library', async () => {
+    // Seed-independent proof that the SHIPPED sidecar (spawned by the packaged
+    // main process) actually answers RPCs — not just that the window painted a
+    // static "Library" title. Drive the frozen window.api.rpc bridge directly:
+    //   ping            -> the packaged backend is alive
+    //   library.list    -> it reads the SAME data root we seeded (MEDIA_STUDIO_
+    //                      CONFIG_DIR), proving cross-process env propagation into
+    //                      the packaged .exe and a working compute pipeline.
+    // The main-process env is read first so a failure tells us WHY (env not
+    // propagated vs sidecar dead vs wrong data root), not just THAT.
+    const mainEnv = await app.evaluate(() => ({
+      configDir: process.env.MEDIA_STUDIO_CONFIG_DIR ?? null,
+      python: process.env.MEDIA_STUDIO_PYTHON ?? null,
+      sidecarDir: process.env.MEDIA_STUDIO_SIDECAR_DIR ?? null,
+    }));
+    expect(
+      mainEnv.configDir,
+      `packaged main process must inherit MEDIA_STUDIO_CONFIG_DIR (got ${JSON.stringify(mainEnv)})`,
+    ).toBe(seeded.dataRoot);
+
+    const win = await app.firstWindow();
+    const pong = await win.evaluate(async () => {
+      const api = (window as unknown as { api: { rpc: (m: string, p?: unknown) => Promise<unknown> } })
+        .api;
+      return api.rpc('ping');
+    });
+    expect((pong as { pong?: boolean }).pong, `packaged sidecar ping: ${JSON.stringify(pong)}`).toBe(
+      true,
+    );
+
+    const lib = (await win.evaluate(async () => {
+      const api = (window as unknown as { api: { rpc: (m: string, p?: unknown) => Promise<unknown> } })
+        .api;
+      return api.rpc('library.list');
+    })) as { videos?: Array<{ id: string }> };
+    const ids = (lib.videos ?? []).map((v) => v.id);
+    expect(ids, `packaged library.list must include the seeded video ${seeded.videoId}`).toContain(
+      seeded.videoId,
+    );
+  });
 });
