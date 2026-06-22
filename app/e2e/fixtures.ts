@@ -66,10 +66,15 @@ export function findBuiltApp(): BuiltApp {
       if (!existsSync(dir)) continue;
       try {
         const info = parseElectronApp(dir);
-        if (existsSync(info.executable) && existsSync(info.main)) {
+        // Only the EXECUTABLE must exist on disk. info.main is the app entry as
+        // electron.launch wants it — for an asar build that is a path INSIDE
+        // app.asar (e.g. resources/app.asar/out/main/main.js), which existsSync()
+        // always reports false even though Electron resolves it fine; never gate
+        // on it.
+        if (existsSync(info.executable)) {
           return { main: info.main, executablePath: info.executable, packaged: true };
         }
-        diag.push(`${candidate}: parsed but exe/main missing (${info.executable})`);
+        diag.push(`${candidate}: parsed but executable missing (${info.executable})`);
       } catch (err) {
         const inside = readdirSync(dir).slice(0, 20).join(',');
         diag.push(`${candidate}: ${(err as Error).message} [contains: ${inside}]`);
@@ -78,10 +83,10 @@ export function findBuiltApp(): BuiltApp {
     try {
       const latest = findLatestBuild(DIST_DIR);
       const info = parseElectronApp(latest);
-      if (existsSync(info.executable) && existsSync(info.main)) {
+      if (existsSync(info.executable)) {
         return { main: info.main, executablePath: info.executable, packaged: true };
       }
-      diag.push(`findLatestBuild(${latest}): exe/main missing (${info.executable})`);
+      diag.push(`findLatestBuild(${latest}): executable missing (${info.executable})`);
     } catch (err) {
       diag.push(`findLatestBuild: ${(err as Error).message}`);
     }
