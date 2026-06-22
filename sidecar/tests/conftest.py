@@ -11,8 +11,28 @@ import json
 from typing import Any
 
 import pytest
+from hypothesis import HealthCheck, settings
 from media_studio import protocol
 from media_studio.jobs import JobRegistry
+
+# --- Hypothesis: a deterministic, bounded CI profile -----------------------
+# WU-B property/fuzz layer. The default Hypothesis profile is non-deterministic
+# (random seed) and enforces a 200ms per-example deadline — both flake the
+# 100%-coverage gate on the slow WSL-on-/mnt/c box. The "ci" profile pins a
+# bounded example count, disables the deadline, and turns OFF the on-disk
+# example database so a stale .hypothesis/ carryover can never change a run.
+# ``derandomize`` makes the example stream a pure function of the test body, so
+# the suite is byte-reproducible across machines/reruns (deterministic CI).
+settings.register_profile(
+    "ci",
+    max_examples=75,
+    deadline=None,
+    derandomize=True,
+    database=None,
+    print_blob=False,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+settings.load_profile("ci")
 
 
 @pytest.fixture()
