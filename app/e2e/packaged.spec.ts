@@ -38,9 +38,19 @@ test.describe('packaged (shipped binary) E2E', () => {
   const mainLog: string[] = [];
 
   test.beforeAll(async () => {
-    // HARD requirement: a real package must exist (no dev fallback here).
+    // HARD requirement: a real package must exist (no dev fallback here). Set the
+    // flag ONLY around our own resolution and restore it immediately, so it can
+    // never leak into preview.spec (same single-worker process) and force IT to
+    // require a package — preview.spec must stay free to use RF_E2E_DEV.
+    const prev = process.env.RF_E2E_REQUIRE_PACKAGED;
     process.env.RF_E2E_REQUIRE_PACKAGED = '1';
-    const built = findBuiltApp();
+    let built: ReturnType<typeof findBuiltApp>;
+    try {
+      built = findBuiltApp();
+    } finally {
+      if (prev === undefined) delete process.env.RF_E2E_REQUIRE_PACKAGED;
+      else process.env.RF_E2E_REQUIRE_PACKAGED = prev;
+    }
     expect(built.packaged, 'packaged.spec must launch a real electron-builder artifact').toBe(true);
     expect(built.executablePath, 'a packaged artifact must expose an executable path').toBeTruthy();
 

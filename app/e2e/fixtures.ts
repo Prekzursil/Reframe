@@ -52,7 +52,12 @@ export interface BuiltApp {
  * make the absence of a package a hard error (the packaged.spec.ts CI leg).
  */
 export function findBuiltApp(): BuiltApp {
-  const wantDev = process.env.RF_E2E_DEV === '1';
+  const requirePackaged = process.env.RF_E2E_REQUIRE_PACKAGED === '1';
+  // RF_E2E_DEV forces the dev build (used to run preview.spec's data-pipeline
+  // against the dev build on the Windows leg). But packaged.spec self-sets
+  // RF_E2E_REQUIRE_PACKAGED in the SAME process — that ALWAYS wins, so the
+  // packaged-only spec still drives the real .exe even when RF_E2E_DEV is set.
+  const wantDev = !requirePackaged && process.env.RF_E2E_DEV === '1';
   if (!wantDev && existsSync(DIST_DIR)) {
     const diag: string[] = [];
     // electron-builder writes its UNPACKED app tree to a per-platform dir
@@ -90,7 +95,7 @@ export function findBuiltApp(): BuiltApp {
     } catch (err) {
       diag.push(`findLatestBuild: ${(err as Error).message}`);
     }
-    if (process.env.RF_E2E_REQUIRE_PACKAGED === '1') {
+    if (requirePackaged) {
       const listing = readdirSync(DIST_DIR).join(', ');
       throw new Error(
         `electron-builder output present under ${DIST_DIR} but no launchable package resolved ` +
@@ -98,7 +103,7 @@ export function findBuiltApp(): BuiltApp {
       );
     }
   }
-  if (process.env.RF_E2E_REQUIRE_PACKAGED === '1') {
+  if (requirePackaged) {
     throw new Error(
       `no electron-builder output dir found at ${DIST_DIR} (RF_E2E_REQUIRE_PACKAGED=1). ` +
         'Run electron-builder before this packaged-only leg.',
