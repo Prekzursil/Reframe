@@ -13,7 +13,7 @@
 // app lists + opens + plays the exact same library record either way.
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, existsSync } from 'node:fs';
+import { mkdtempSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,19 +54,48 @@ export interface BuiltApp {
 export function findBuiltApp(): BuiltApp {
   const wantDev = process.env.RF_E2E_DEV === '1';
   if (!wantDev && existsSync(DIST_DIR)) {
+    const diag: string[] = [];
+    // electron-builder writes its UNPACKED app tree to a per-platform dir
+    // (win-unpacked / linux-unpacked / mac[-arm64]); the installers (.exe/.zip)
+    // sit beside it. parseElectronApp needs the UNPACKED dir, not an installer.
+    // Try the deterministic dirs first, then fall back to findLatestBuild
+    // (which itself only accepts a "<platform>-…" DIRECTORY, never an installer).
+    const candidates = ['win-unpacked', 'linux-unpacked', 'mac', 'mac-arm64'];
+    for (const candidate of candidates) {
+      const dir = join(DIST_DIR, candidate);
+      if (!existsSync(dir)) continue;
+      try {
+        const info = parseElectronApp(dir);
+        if (existsSync(info.executable) && existsSync(info.main)) {
+          return { main: info.main, executablePath: info.executable, packaged: true };
+        }
+        diag.push(`${candidate}: parsed but exe/main missing (${info.executable})`);
+      } catch (err) {
+        const inside = readdirSync(dir).slice(0, 20).join(',');
+        diag.push(`${candidate}: ${(err as Error).message} [contains: ${inside}]`);
+      }
+    }
     try {
       const latest = findLatestBuild(DIST_DIR);
       const info = parseElectronApp(latest);
       if (existsSync(info.executable) && existsSync(info.main)) {
         return { main: info.main, executablePath: info.executable, packaged: true };
       }
-    } catch {
-      // Fall through to the dev build below (no parseable package present).
+      diag.push(`findLatestBuild(${latest}): exe/main missing (${info.executable})`);
+    } catch (err) {
+      diag.push(`findLatestBuild: ${(err as Error).message}`);
+    }
+    if (process.env.RF_E2E_REQUIRE_PACKAGED === '1') {
+      const listing = readdirSync(DIST_DIR).join(', ');
+      throw new Error(
+        `electron-builder output present under ${DIST_DIR} but no launchable package resolved ` +
+          `(RF_E2E_REQUIRE_PACKAGED=1). dist contents: [${listing}]. attempts: ${diag.join(' | ')}`,
+      );
     }
   }
   if (process.env.RF_E2E_REQUIRE_PACKAGED === '1') {
     throw new Error(
-      `no electron-builder package found under ${DIST_DIR} (RF_E2E_REQUIRE_PACKAGED=1). ` +
+      `no electron-builder output dir found at ${DIST_DIR} (RF_E2E_REQUIRE_PACKAGED=1). ` +
         'Run electron-builder before this packaged-only leg.',
     );
   }
