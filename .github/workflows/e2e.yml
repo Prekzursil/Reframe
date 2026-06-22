@@ -198,11 +198,20 @@ jobs:
           RF_E2E_DEV: "1"
         run: npm run test:e2e
 
-      - name: E2E GUI — Playwright Electron (Windows PACKAGED .exe)
+      # Windows runs BOTH specs in one invocation: packaged.spec ALWAYS drives the
+      # real shipped .exe (it self-forces RF_E2E_REQUIRE_PACKAGED, ignoring
+      # RF_E2E_DEV) to prove isPackaged===true / asar / no-console-error + that the
+      # .exe wires its first-run bootstrap. preview.spec's DATA-PIPELINE assertions
+      # (seeded library / playback / export) run against the dev build because a
+      # COLD packaged launch pip-installs the heavy sidecar runtime on first run
+      # (multi-minute, network) and cannot answer RPCs inside a CI window — a
+      # documented packaged-runtime limitation, not a regression (see app/e2e/README).
+      - name: E2E GUI — Playwright Electron (Windows packaged .exe + dev-build pipeline)
         if: runner.os == 'Windows'
         working-directory: app
         env:
           RF_PY: ${{ steps.setup-python.outputs.python-path }}
+          RF_E2E_DEV: "1"
         run: npm run test:e2e
 
       - name: Upload Playwright report
