@@ -31,6 +31,11 @@ test.describe('packaged (shipped binary) E2E', () => {
   let seeded: SeededEnv;
   let app: ElectronApplication;
   const consoleErrors: string[] = [];
+  // Capture the packaged MAIN process stdout/stderr — that is where the spawned
+  // sidecar's startup errors (Python ENOENT, import traceback, first-run
+  // bootstrap) surface. Playwright's error-context.md does NOT include them, so
+  // we buffer them here and append to the diagnostic assertion below.
+  const mainLog: string[] = [];
 
   test.beforeAll(async () => {
     // HARD requirement: a real package must exist (no dev fallback here).
@@ -45,6 +50,9 @@ test.describe('packaged (shipped binary) E2E', () => {
       ...(built.executablePath ? { executablePath: built.executablePath } : {}),
       env: seeded.appEnv,
     });
+    const proc = app.process();
+    proc.stdout?.on('data', (d: Buffer) => mainLog.push(d.toString()));
+    proc.stderr?.on('data', (d: Buffer) => mainLog.push(d.toString()));
   });
 
   test.afterAll(async () => {
@@ -95,18 +103,26 @@ test.describe('packaged (shipped binary) E2E', () => {
     }));
     expect(
       mainEnv.configDir,
-      `packaged main process must inherit MEDIA_STUDIO_CONFIG_DIR (got ${JSON.stringify(mainEnv)})`,
+      `packaged main process must inherit MEDIA_STUDIO_CONFIG_DIR (env=${JSON.stringify(mainEnv)})`,
     ).toBe(seeded.dataRoot);
 
+    // Give the spawned sidecar a moment to boot (or to fail and log why).
     const win = await app.firstWindow();
-    const pong = await win.evaluate(async () => {
-      const api = (window as unknown as { api: { rpc: (m: string, p?: unknown) => Promise<unknown> } })
-        .api;
-      return api.rpc('ping');
-    });
-    expect((pong as { pong?: boolean }).pong, `packaged sidecar ping: ${JSON.stringify(pong)}`).toBe(
-      true,
-    );
+    await win.waitForTimeout(3000);
+    const tail = (): string => `\n--- packaged main/sidecar log ---\n${mainLog.join('').slice(-4000)}`;
+
+    const pong = await win
+      .evaluate(async () => {
+        const api = (
+          window as unknown as { api: { rpc: (m: string, p?: unknown) => Promise<unknown> } }
+        ).api;
+        return api.rpc('ping');
+      })
+      .catch((err: Error) => ({ error: err.message }));
+    expect(
+      (pong as { pong?: boolean }).pong,
+      `packaged sidecar ping failed (env=${JSON.stringify(mainEnv)}): ${JSON.stringify(pong)}${tail()}`,
+    ).toBe(true);
 
     const lib = (await win.evaluate(async () => {
       const api = (window as unknown as { api: { rpc: (m: string, p?: unknown) => Promise<unknown> } })
@@ -114,8 +130,9 @@ test.describe('packaged (shipped binary) E2E', () => {
       return api.rpc('library.list');
     })) as { videos?: Array<{ id: string }> };
     const ids = (lib.videos ?? []).map((v) => v.id);
-    expect(ids, `packaged library.list must include the seeded video ${seeded.videoId}`).toContain(
-      seeded.videoId,
-    );
+    expect(
+      ids,
+      `packaged library.list must include the seeded video ${seeded.videoId} (got ${JSON.stringify(ids)})`,
+    ).toContain(seeded.videoId);
   });
 });
