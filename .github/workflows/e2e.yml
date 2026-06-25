@@ -5,11 +5,23 @@ name: e2e
 # standard gate deliberately omits (no-heavy-ML rule) and runs the real-pipeline
 # / real-ffmpeg / mock-model flows that are excluded from the default gate:
 #   * sidecar  : pytest -m e2e            (the `e2e`-marked AI2 hub/director +
-#                                          intel/repurpose real-media tests)
+#                                          intel/repurpose + NASTY-INPUT real-media
+#                                          tests)
 #   * sidecar  : real_pipeline_smoke.py   (standalone real-ffmpeg + tiny-whisper
 #                                          short-making pipeline)
-#   * app      : npm run test:e2e         (Playwright Electron GUI preview E2E)
-#   * app      : npm run test:e2e:dom     (vitest DOM caption-over-video proof)
+#   * app      : npm run test:e2e         (Playwright Electron GUI E2E — preview +
+#                                          PACKAGED `app.isPackaged` proof)
+#   * app      : npm run test:e2e:dom     (vitest DOM caption-over-video + nasty-
+#                                          caption proofs)
+#
+# OS MATRIX (WU-A): the GUI E2E runs on windows-latest, macos-latest, macos-13,
+# and ubuntu-latest. On Windows the leg BUILDS the real electron-builder package
+# and drives the SHIPPED .exe (packaged.spec.ts asserts app.isPackaged === true);
+# the packaged artifact is Windows-only (electron-builder.yml has a `win:` target
+# and the embeddable-CPython/ffmpeg staging in build/python-embed-setup.ps1 is
+# PowerShell/Windows-only), so the macOS/Linux legs run the SAME specs against the
+# dev build (RF_E2E_DEV=1); packaged.spec.ts self-skips off-Windows. xvfb-run is
+# Linux-only (Windows/macOS run the Electron window natively).
 #
 # Triggered ONLY on demand (workflow_dispatch) or on the nightly schedule, so the
 # default `quality.yml` gate (100% coverage, heavy-ML-free) is untouched.
@@ -29,7 +41,7 @@ concurrency:
 
 jobs:
   e2e-sidecar:
-    name: e2e-sidecar (real pipeline + AI marker)
+    name: e2e-sidecar (real pipeline + AI/nasty markers)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -58,7 +70,7 @@ jobs:
             faster-whisper scenedetect av onnxruntime \
             huggingface_hub tokenizers
 
-      - name: E2E sidecar — pytest -m e2e (AI2 hub/director + intel/repurpose)
+      - name: E2E sidecar — pytest -m e2e (AI2 hub/director + intel/repurpose + nasty inputs)
         working-directory: sidecar
         run: python -m pytest -m e2e -v
 
@@ -87,13 +99,23 @@ jobs:
           retention-days: 7
 
   e2e-gui:
-    name: e2e-gui (Playwright Electron + DOM)
-    runs-on: ubuntu-latest
+    name: e2e-gui (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One red OS leg must NOT cancel the others — we want the full OS picture.
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, macos-13, ubuntu-latest]
+    env:
+      # electron-builder must never try to discover/notarize a signing identity
+      # in CI (it would hang on macOS); this app is unsigned (electron-builder.yml).
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Set up Python
+        id: setup-python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
@@ -103,8 +125,18 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install ffmpeg
+      # ffmpeg is needed on EVERY OS (the fixtures generate the real sample clip).
+      - name: Install ffmpeg (Linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
 
       - name: Install sidecar (stdlib preview path — no ML deps)
         run: |
@@ -131,20 +163,62 @@ jobs:
         working-directory: app
         run: npm run typecheck:e2e
 
-      - name: E2E GUI — vitest DOM caption-over-video proof
+      # --- Windows ONLY: stage the embeddable runtime + build the real package, so
+      # the GUI E2E drives the SHIPPED .exe (packaged.spec.ts asserts isPackaged). ---
+      - name: Stage packaged runtime (embeddable CPython + ffmpeg)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./build/python-embed-setup.ps1 -WithFfmpeg
+
+      - name: Package the Windows app (electron-builder → dist/)
+        if: runner.os == 'Windows'
+        working-directory: app
+        run: npx electron-builder --config ../electron-builder.yml --win
+
+      - name: E2E GUI — vitest DOM caption + nasty-caption proofs
         working-directory: app
         run: npm run test:e2e:dom
 
-      - name: E2E GUI — Playwright Electron preview
+      # The GUI Playwright E2E: on Windows preview.spec drives the packaged .exe
+      # (dist/ exists) and packaged.spec asserts isPackaged===true; elsewhere
+      # RF_E2E_DEV forces the dev build and packaged.spec self-skips.
+      - name: E2E GUI — Playwright Electron (Linux, xvfb)
+        if: runner.os == 'Linux'
         working-directory: app
-        # xvfb gives the headless runner a display for the real Electron window.
+        env:
+          RF_PY: ${{ steps.setup-python.outputs.python-path }}
+          RF_E2E_DEV: "1"
         run: xvfb-run --auto-servernum npm run test:e2e
+
+      - name: E2E GUI — Playwright Electron (macOS dev build)
+        if: runner.os == 'macOS'
+        working-directory: app
+        env:
+          RF_PY: ${{ steps.setup-python.outputs.python-path }}
+          RF_E2E_DEV: "1"
+        run: npm run test:e2e
+
+      # Windows runs BOTH specs in one invocation: packaged.spec ALWAYS drives the
+      # real shipped .exe (it self-forces RF_E2E_REQUIRE_PACKAGED, ignoring
+      # RF_E2E_DEV) to prove isPackaged===true / asar / no-console-error + that the
+      # .exe wires its first-run bootstrap. preview.spec's DATA-PIPELINE assertions
+      # (seeded library / playback / export) run against the dev build because a
+      # COLD packaged launch pip-installs the heavy sidecar runtime on first run
+      # (multi-minute, network) and cannot answer RPCs inside a CI window — a
+      # documented packaged-runtime limitation, not a regression (see app/e2e/README).
+      - name: E2E GUI — Playwright Electron (Windows packaged .exe + dev-build pipeline)
+        if: runner.os == 'Windows'
+        working-directory: app
+        env:
+          RF_PY: ${{ steps.setup-python.outputs.python-path }}
+          RF_E2E_DEV: "1"
+        run: npm run test:e2e
 
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: e2e-gui-playwright-report
+          name: e2e-gui-playwright-report-${{ matrix.os }}
           path: |
             app/playwright-report/
             app/test-results/

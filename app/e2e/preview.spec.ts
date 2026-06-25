@@ -17,24 +17,27 @@
 import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { MAIN_ENTRY, probePlayable, seedEnvironment, type SeededEnv } from './fixtures';
+import { findBuiltApp, probePlayable, seedEnvironment, type SeededEnv } from './fixtures';
 
 let seeded: SeededEnv;
 let app: ElectronApplication;
+let underTestIsPackaged = false;
 const consoleErrors: string[] = [];
 
 test.beforeAll(async () => {
-  if (!existsSync(MAIN_ENTRY)) {
-    throw new Error(`built main entry missing: ${MAIN_ENTRY} — run \`npm run build\` first`);
-  }
+  // Prefer the SHIPPED package (real .exe on Windows); fall back to the dev
+  // build so this spec still gives local GUI coverage (see fixtures.findBuiltApp).
+  const built = findBuiltApp();
+  underTestIsPackaged = built.packaged;
   seeded = seedEnvironment();
   app = await electron.launch({
     args: [
-      MAIN_ENTRY,
+      built.main,
       // No user gesture exists in an automated launch; allow play() to start.
       '--autoplay-policy=no-user-gesture-required',
       '--no-sandbox',
     ],
+    ...(built.executablePath ? { executablePath: built.executablePath } : {}),
     env: seeded.appEnv,
   });
 });
@@ -54,6 +57,16 @@ test('renderer loads with no console errors', async () => {
   // Let the library list + readiness rollup settle (RPCs to the live sidecar).
   await win.waitForTimeout(1500);
   expect(consoleErrors, `console errors: ${JSON.stringify(consoleErrors)}`).toEqual([]);
+});
+
+test('app.isPackaged reflects whether we drove the shipped package', async () => {
+  // electronApp.evaluate runs in the MAIN process, so app.isPackaged is the real
+  // Electron verdict — true ONLY when we launched the electron-builder artifact
+  // (the shipped binary), false for the dev out/main build. Asserting they agree
+  // proves "the shipped binary works" when CI runs the packaged leg, and keeps
+  // the dev-build path honest locally.
+  const isPackaged = await app.evaluate(({ app: electronApp }) => electronApp.isPackaged);
+  expect(isPackaged).toBe(underTestIsPackaged);
 });
 
 test('Library panel mounts and shows the imported sample', async () => {

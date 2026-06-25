@@ -13,10 +13,11 @@
 // app lists + opens + plays the exact same library record either way.
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, existsSync } from 'node:fs';
+import { mkdtempSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { findLatestBuild, parseElectronApp } from 'electron-playwright-helpers';
 
 // ESM (the app package is "type": "module"): derive __dirname from import.meta.
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -25,8 +26,94 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(HERE, '..', '..');
 /** The Python sidecar package dir (cwd for `-m media_studio`). */
 export const SIDECAR_DIR = join(REPO_ROOT, 'sidecar');
-/** The built main-process entry the launched Electron app boots. */
+/** The built main-process entry the launched Electron app boots (DEV build). */
 export const MAIN_ENTRY = join(REPO_ROOT, 'app', 'out', 'main', 'main.js');
+/** electron-builder packaged-artifact output dir (electron-builder.yml). */
+export const DIST_DIR = join(REPO_ROOT, 'dist');
+
+/**
+ * What the launched app boots: the args + (for a real package) the executable
+ * path, plus whether we are pointing at a PACKAGED artifact or the dev build.
+ */
+export interface BuiltApp {
+  /** Launch args ([appInfo.main] for a package, [MAIN_ENTRY] for dev). */
+  main: string;
+  /** electron-builder executable path; undefined => use the dev electron bin. */
+  executablePath?: string;
+  /** True when resolved to a real electron-builder package (the shipped .exe). */
+  packaged: boolean;
+}
+
+/**
+ * Resolve the app under test, PREFERRING a real electron-builder package so the
+ * E2E drives the SHIPPED binary (the .exe on Windows). If RF_E2E_DEV is set, or
+ * no package exists in `dist/`, fall back to the dev build (out/main/main.js) so
+ * the same spec still gives local GUI coverage. Set RF_E2E_REQUIRE_PACKAGED=1 to
+ * make the absence of a package a hard error (the packaged.spec.ts CI leg).
+ */
+export function findBuiltApp(): BuiltApp {
+  const requirePackaged = process.env.RF_E2E_REQUIRE_PACKAGED === '1';
+  // RF_E2E_DEV forces the dev build (used to run preview.spec's data-pipeline
+  // against the dev build on the Windows leg). But packaged.spec self-sets
+  // RF_E2E_REQUIRE_PACKAGED in the SAME process — that ALWAYS wins, so the
+  // packaged-only spec still drives the real .exe even when RF_E2E_DEV is set.
+  const wantDev = !requirePackaged && process.env.RF_E2E_DEV === '1';
+  if (!wantDev && existsSync(DIST_DIR)) {
+    const diag: string[] = [];
+    // electron-builder writes its UNPACKED app tree to a per-platform dir
+    // (win-unpacked / linux-unpacked / mac[-arm64]); the installers (.exe/.zip)
+    // sit beside it. parseElectronApp needs the UNPACKED dir, not an installer.
+    // Try the deterministic dirs first, then fall back to findLatestBuild
+    // (which itself only accepts a "<platform>-…" DIRECTORY, never an installer).
+    const candidates = ['win-unpacked', 'linux-unpacked', 'mac', 'mac-arm64'];
+    for (const candidate of candidates) {
+      const dir = join(DIST_DIR, candidate);
+      if (!existsSync(dir)) continue;
+      try {
+        const info = parseElectronApp(dir);
+        // Only the EXECUTABLE must exist on disk. info.main is the app entry as
+        // electron.launch wants it — for an asar build that is a path INSIDE
+        // app.asar (e.g. resources/app.asar/out/main/main.js), which existsSync()
+        // always reports false even though Electron resolves it fine; never gate
+        // on it.
+        if (existsSync(info.executable)) {
+          return { main: info.main, executablePath: info.executable, packaged: true };
+        }
+        diag.push(`${candidate}: parsed but executable missing (${info.executable})`);
+      } catch (err) {
+        const inside = readdirSync(dir).slice(0, 20).join(',');
+        diag.push(`${candidate}: ${(err as Error).message} [contains: ${inside}]`);
+      }
+    }
+    try {
+      const latest = findLatestBuild(DIST_DIR);
+      const info = parseElectronApp(latest);
+      if (existsSync(info.executable)) {
+        return { main: info.main, executablePath: info.executable, packaged: true };
+      }
+      diag.push(`findLatestBuild(${latest}): executable missing (${info.executable})`);
+    } catch (err) {
+      diag.push(`findLatestBuild: ${(err as Error).message}`);
+    }
+    if (requirePackaged) {
+      const listing = readdirSync(DIST_DIR).join(', ');
+      throw new Error(
+        `electron-builder output present under ${DIST_DIR} but no launchable package resolved ` +
+          `(RF_E2E_REQUIRE_PACKAGED=1). dist contents: [${listing}]. attempts: ${diag.join(' | ')}`,
+      );
+    }
+  }
+  if (requirePackaged) {
+    throw new Error(
+      `no electron-builder output dir found at ${DIST_DIR} (RF_E2E_REQUIRE_PACKAGED=1). ` +
+        'Run electron-builder before this packaged-only leg.',
+    );
+  }
+  if (!existsSync(MAIN_ENTRY)) {
+    throw new Error(`built main entry missing: ${MAIN_ENTRY} — run \`npm run build\` first`);
+  }
+  return { main: MAIN_ENTRY, packaged: false };
+}
 
 /**
  * The Python 3.12 interpreter to run the sidecar with. RF_PY (set by the test
