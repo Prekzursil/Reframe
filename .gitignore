@@ -5,6 +5,11 @@ app/out/
 app/.vite/
 *.log
 
+# Playwright run artifacts (reports + per-test traces/screenshots) — regenerable,
+# never commit. Screenshot BASELINES under e2e/**/-snapshots/ ARE tracked.
+app/playwright-report/
+app/test-results/
+
 # Python
 __pycache__/
 *.pyc

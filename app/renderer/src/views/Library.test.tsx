@@ -322,9 +322,10 @@ describe('Library', () => {
     const onOpen = vi.fn();
     await renderLibrary(onOpen);
 
-    const item = container.querySelector('li.library__item') as HTMLLIElement;
+    // A11Y: the open affordance is now the inner <button>, not the <li> itself.
+    const open = container.querySelector('.library__item-open') as HTMLButtonElement;
     await act(async () => {
-      item.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      open.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(onOpen).toHaveBeenCalledTimes(1);
     expect(onOpen.mock.calls[0][0].id).toBe('v1');
@@ -512,32 +513,24 @@ describe('Library', () => {
     expect(container.querySelector('.library__error')?.textContent).toContain('delete failed');
   });
 
-  it('opens a video via the keyboard (Enter and Space)', async () => {
+  it('exposes the open affordance as a real, labelled <button> (keyboard-native)', async () => {
+    // A11Y: the row open action is a native <button> (was a role="button" <li>
+    // with a custom Enter/Space handler — which nested the focusable Remove
+    // button and tripped axe nested-interactive/only-listitems). A native button
+    // is keyboard-operable by the platform, so there is no custom key handler to
+    // test; instead assert the semantic contract that makes it accessible.
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     const onOpen = vi.fn();
     await renderLibrary(onOpen);
 
+    const open = container.querySelector('.library__item-open') as HTMLButtonElement;
+    expect(open.tagName).toBe('BUTTON');
+    expect(open.getAttribute('aria-label')).toBe('Open Talk');
+    // The <li> is a plain list item (no button role / tabindex) so the <ul> only
+    // contains list items and the open/remove buttons are SIBLINGS, not nested.
     const item = container.querySelector('li.library__item') as HTMLLIElement;
-    await act(async () => {
-      item.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    });
-    await act(async () => {
-      item.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
-    });
-    expect(onOpen).toHaveBeenCalledTimes(2);
-  });
-
-  it('ignores non-activation keys on a library item', async () => {
-    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
-    const onOpen = vi.fn();
-    await renderLibrary(onOpen);
-
-    const item = container.querySelector('li.library__item') as HTMLLIElement;
-    await act(async () => {
-      item.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      item.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
-    });
-    expect(onOpen).not.toHaveBeenCalled();
+    expect(item.getAttribute('role')).toBeNull();
+    expect(item.getAttribute('tabindex')).toBeNull();
   });
 
   it('renders the transcript badge only for videos that have a transcript', async () => {

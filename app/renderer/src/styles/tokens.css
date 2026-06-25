@@ -35,7 +35,10 @@
   --text-primary: #f4f5f7; /* titles, numbers, content */
   --text-secondary: #b0b6c0; /* supporting copy, values */
   --text-muted: #7d8390; /* labels, captions */
-  --text-faint: #50555f; /* timestamps, dividers, disabled */
+  /* faint: quietest readable step — timestamps, paths, disabled. Held at AA
+   * (>=4.5:1 on every surface in the ladder; was #50555f at ~2.4:1, which failed
+   * WCAG 1.4.3 for the real content it labels, e.g. library file paths). */
+  --text-faint: #838892;
 
   /* ---- the ONE accent: signal amber (progress / active / approve only) ---- */
   --accent: #f2a33c;

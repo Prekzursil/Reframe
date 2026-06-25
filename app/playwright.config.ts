@@ -11,6 +11,11 @@ export default defineConfig({
   // Only Playwright specs. The e2e/*.test.tsx files are vitest DOM proofs
   // (run via vitest.e2e.config.ts), not Playwright tests.
   testMatch: '**/*.spec.ts',
+  // The Wave-2b VISUAL + A11Y suite lives under e2e/visual/ and runs via its
+  // OWN config (playwright.visual.config.ts) in a dedicated single-OS job, so
+  // its platform-specific screenshot baselines never burden this 4-OS GUI
+  // matrix (a missing snapshot would hard-fail the non-baselined OS legs).
+  testIgnore: 'visual/**',
   // Electron cold-start + sidecar boot + real video decode need headroom.
   timeout: 120_000,
   expect: { timeout: 30_000 },
