@@ -14,6 +14,7 @@ corrupt/missing fallback to an empty ledger (mirrors SettingsStore).
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 from media_studio.models.spend_ledger import SpendLedger, month_key
@@ -47,6 +48,28 @@ class TestMonthKey:
 
     def test_month_key_rolls_into_next_year(self):
         assert month_key(_JAN_2027) == "2027-01"
+
+    @pytest.mark.skipif(
+        not hasattr(time, "tzset"),
+        reason="time.tzset() (and TZ-env honouring) is Unix-only; on Windows the "
+        "host timezone cannot be forced per-process to prove UTC-invariance.",
+    )
+    def test_month_key_is_utc_not_host_local_time(self, monkeypatch):
+        # The module's stated invariant is that the month boundary is UTC, stable
+        # across hosts. Pick a timestamp that is one month earlier in a far-west
+        # local zone than in UTC, force that zone, and assert month_key still
+        # reports the UTC month — proving it uses tz=UTC, not the host clock.
+        # 2026-07-01 03:00:00 UTC -> "2026-07" in UTC, but 2026-06-30 20:00
+        # "2026-06" in US/Pacific (UTC-7). This kills any tz=None / dropped-tz
+        # mutant, which would read the local (June) month instead.
+        boundary = 1782874800.0
+        monkeypatch.setenv("TZ", "America/Los_Angeles")
+        time.tzset()
+        try:
+            assert month_key(boundary) == "2026-07"
+        finally:
+            monkeypatch.delenv("TZ", raising=False)
+            time.tzset()
 
 
 class TestRecordAndMonthToDate:
@@ -106,6 +129,27 @@ class TestPersistenceRobustness:
         data = json.loads(path.read_text(encoding="utf-8"))
         assert data["months"]["2026-06"] == 12
 
+    def test_persisted_document_carries_the_schema_version(self, tmp_path):
+        # The on-disk shape is the FROZEN {"version": 1, "months": {...}} schema;
+        # assert the version field name AND value so a regression that drops, renames
+        # (e.g. "VERSION"), or nulls it is caught — not just the months sub-map.
+        path = tmp_path / "spend.json"
+        ledger = SpendLedger(path, clock=_FakeClock(_JUN_2026))
+        ledger.record(12)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data["version"] == 1
+        assert "VERSION" not in data and "Version" not in data
+
+    def test_write_creates_missing_parent_directories(self, tmp_path):
+        # The data root may not exist on first run; _write must mkdir(parents=True)
+        # so a nested, not-yet-created path is created rather than raising.
+        path = tmp_path / "nested" / "deeper" / "spend.json"
+        assert not path.parent.exists()
+        ledger = SpendLedger(path, clock=_FakeClock(_JUN_2026))
+        ledger.record(42)
+        assert path.exists()
+        assert ledger.month_to_date() == 42
+
     def test_no_temp_file_left_behind(self, tmp_path):
         path = tmp_path / "spend.json"
         ledger = SpendLedger(path, clock=_FakeClock(_JUN_2026))
@@ -145,7 +189,9 @@ class TestPersistenceRobustness:
 class TestRecordValidation:
     def test_negative_cost_is_rejected(self, tmp_path):
         ledger = SpendLedger(tmp_path / "spend.json", clock=_FakeClock(_JUN_2026))
-        with pytest.raises(ValueError):
+        # Anchored match: assert the EXACT message so a regression that nulls,
+        # re-cases, or pads the error text (not just the ValueError type) is caught.
+        with pytest.raises(ValueError, match=r"^spend cost must be non-negative$"):
             ledger.record(-1)
 
     def test_record_coerces_float_cents_to_int(self, tmp_path):
