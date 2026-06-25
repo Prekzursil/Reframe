@@ -42,7 +42,7 @@ jobs:
             ruff==0.15.17 \
             basedpyright==1.39.8 \
             pre-commit==4.6.0 \
-            pytest pytest-cov
+            pytest pytest-cov hypothesis
           # The sidecar runtime deps (faster-whisper, scenedetect, torch, ...) are
           # NOT installed in CI; the unit tests are deliberately heavy-ML-free
           # (sidecar/tests/conftest.py). Install the package itself only for its
