@@ -61,7 +61,8 @@ CAPTION_STYLES: frozenset[str] = frozenset({"libass", "none", *caption_remotion.
 #: Allowed ``reframeEngine`` ids (A4 engines + the "auto" selector).
 REFRAME_ENGINES: frozenset[str] = frozenset({"auto", "verthor", "claudeshorts"})
 
-#: Default reframe engine when a preset omits one (verthor with fallback).
+#: Default reframe engine when a preset omits one. "auto" now resolves to the
+#: in-sidecar claudeshorts engine (no WSL); verthor is an explicit opt-in.
 DEFAULT_REFRAME_ENGINE = "auto"
 
 

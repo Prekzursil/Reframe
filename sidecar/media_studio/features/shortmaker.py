@@ -1111,14 +1111,13 @@ def run_export(
         if audio_track is None:
             raise ValueError(f"unknown audio track: {audio_track_id}")
 
-    # T4b: resolve the reframe engine ONCE per export; an automatic
-    # verthor->claudeshorts fallback surfaces as a typed notice via job.progress.
+    # T4b/P3: resolve the reframe engine ONCE per export. "auto" now resolves to
+    # the in-sidecar claudeshorts engine (no WSL); an explicit "verthor" on a
+    # host without WSL raises (handled by the job's error path).
     from . import reframe as _reframe_mod  # lazy: keeps module import-light
 
-    engine_name, notice = _reframe_mod.resolve_engine_name(str(settings.get("reframeEngine") or "auto"), settings)
+    engine_name, _notice = _reframe_mod.resolve_engine_name(str(settings.get("reframeEngine") or "auto"), settings)
     settings = {**settings, "reframeEngine": engine_name}
-    if notice is not None:
-        ctx.progress(3, notice["message"])
 
     dest = Path(out_dir)
     dest.mkdir(parents=True, exist_ok=True)

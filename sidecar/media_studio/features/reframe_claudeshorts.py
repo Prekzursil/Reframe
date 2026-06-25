@@ -9,16 +9,20 @@ Python detection logic and then apply it ffmpeg-side with ONE ``crop`` +
 no WSL, no node, no Remotion:
 
   1. probe the source geometry/duration (ffprobe, argv list);
-  2. sample one frame per time window and detect the subject's horizontal
-     center — **mediapipe** face detection when importable (A6: it MUST be
-     pre-imported by ``__main__._preimport_native_modules``; see
-     :data:`NATIVE_MODULES_FOR_PREIMPORT`), else an **OpenCV haar**-cascade
-     face fallback, else a plain **center** crop;
-  3. smooth the per-window centers with simple exponential easing and convert
-     them to clamped crop-x keyframes (deduped, Route A style);
-  4. apply ONE ffmpeg pass: ``crop=W:H:'x(t)':Y,scale=1080:1920`` (a static x
-     when the subject doesn't move; a piecewise-linear ``x(t)`` expression when
-     it does), h264 output at the contract's 1080x1920 for 9:16.
+  2. sample ~one frame per second and locate the SPEAKER's horizontal center
+     with a fallback chain so the crop never collapses to a center crop the
+     moment a face turns away: **mediapipe** face detection when importable (A6:
+     it MUST be pre-imported by ``__main__._preimport_native_modules``; see
+     :data:`NATIVE_MODULES_FOR_PREIMPORT`) or an **OpenCV haar**-cascade face,
+     then a **HOG person/body** detector for profile/turned shots, then **motion
+     saliency** (inter-frame diff centroid) as a last resort, else — only when
+     all three find nothing across the clip — a plain **center** crop;
+  3. heavily smooth the per-window centers with a zero-phase (forward+backward)
+     EMA so the crop FOLLOWS the speaker steadily with no frame-to-frame jitter,
+     and convert them to finely-spaced crop-x keyframes;
+  4. apply ONE ffmpeg pass: ``crop=W:H:'x(t)':Y,scale=1080:1920`` — a static x
+     ONLY when the subject genuinely never moves, otherwise an interpolated
+     piecewise-linear ``x(t)`` (no stepped teleports), h264 at 1080x1920 for 9:16.
 
 A6 hard lessons honoured here:
   * native modules (mediapipe, cv2) are imported ONLY inside job-time function
@@ -59,27 +63,28 @@ DEFAULT_ASPECT = "9:16"
 OUT_WIDTH = 1080
 OUT_HEIGHT = 1920
 
-# Sampling/smoothing knobs (Route A used 5 samples per clip; per-window sampling
-# generalizes that to clip length while bounding frame-extraction cost).
-WINDOW_SEC = 2.0
-MAX_WINDOWS = 24
-# Exponential-easing factor: 0=frozen, 1=no smoothing. Dialled WAY down from the
-# original 0.35 (which let per-window face-detector noise leak straight into the
-# crop, producing the visible 9:16 jitter on a near-static talking head). 0.15
-# heavily damps that noise while still tracking a genuinely moving subject.
+# Sampling/smoothing knobs. The original Route A used 5 samples per clip; we
+# sample ~1/sec so the smoothed track has enough resolution to FOLLOW a speaker
+# steadily (a coarse 2s window aliased fast pans into visible teleports).
+WINDOW_SEC = 1.0
+MAX_WINDOWS = 90
+# Heavy temporal EMA: a LOW alpha makes the crop follow the speaker steadily
+# with no frame-to-frame jitter (0=frozen, 1=no smoothing). 0.35 was visibly
+# jittery on real footage; ~0.15 tracks the subject without chasing detector
+# noise. Smoothing is applied forward+backward (zero-phase) so the steady track
+# has no directional lag bias toward the start of the clip.
 SMOOTH_ALPHA = 0.15
-# DEADZONE (the jitter fix): the crop center is HELD until the smoothed subject
-# center drifts more than this fraction of the SOURCE WIDTH (normalized 0..1
-# center space). A sitting speaker whose detected center merely wobbles a few
-# percent therefore yields a STATIC crop — no micro-pan. 7% is the spec's 6-8%.
-DEADZONE_FRAC = 0.07
-# Route A drops keyframes whose x moved < this fraction of the crop width; the
-# same threshold decides "the track is effectively static -> one static crop".
-# Raised from 2% so low-variance tracks bias toward a single static crop (the
-# deadzone already pins the centers; this is the belt-and-braces static gate in
-# crop-pixel space, matched to the deadzone band).
-KEYFRAME_MIN_DELTA_FRAC = 0.06
-STATIC_EPSILON_FRAC = 0.06
+# Keyframes are kept finely (small min-delta) so x(t) is a smooth piecewise-
+# linear pan, NOT a few coarse steps that teleport between sample windows.
+KEYFRAME_MIN_DELTA_FRAC = 0.004
+# "Fully static" means the subject GENUINELY never moves across the whole clip;
+# only then do we collapse to one fixed crop. Kept tight so a speaker who drifts
+# is tracked (not frozen at an average x that can land off them).
+STATIC_EPSILON_FRAC = 0.01
+# A track is only trusted when a subject was located in at least this fraction of
+# the sampled windows; below it the detector is too unreliable to track on, so we
+# keep the centered crop instead of chasing a couple of stray hits.
+MIN_SUBJECT_HIT_FRAC = 0.15
 
 # A6 LESSON 1 — PRE-IMPORT FLAG (NON-NEGOTIABLE): these native C-extension
 # modules are first used INSIDE a job thread by this engine. They MUST be added
@@ -169,13 +174,8 @@ def crop_x_for_center(cx_norm: float, crop_w: int, src_w: int) -> int:
 # --------------------------------------------------------------------------- #
 # track smoothing + keyframes (pure)
 # --------------------------------------------------------------------------- #
-def smooth_centers(centers: Sequence[float], alpha: float = SMOOTH_ALPHA) -> list[float]:
-    """Exponential-easing smoothing of subject centers (simple easing).
-
-    ``out[i] = out[i-1] + alpha * (centers[i] - out[i-1])`` — each step eases
-    toward the new measurement, damping detector jitter while still following a
-    genuinely moving subject.
-    """
+def _ema_forward(centers: Sequence[float], alpha: float) -> list[float]:
+    """One causal EMA pass: ``out[i] = out[i-1] + alpha*(centers[i]-out[i-1])``."""
     out: list[float] = []
     prev: float | None = None
     for c in centers:
@@ -185,25 +185,19 @@ def smooth_centers(centers: Sequence[float], alpha: float = SMOOTH_ALPHA) -> lis
     return out
 
 
-def apply_deadzone(centers: Sequence[float], deadzone: float = DEADZONE_FRAC) -> list[float]:
-    """Hold the subject center until it drifts more than ``deadzone`` (the fix).
+def smooth_centers(centers: Sequence[float], alpha: float = SMOOTH_ALPHA) -> list[float]:
+    """Heavy zero-phase EMA smoothing of subject centers.
 
-    Walks the (already-smoothed) normalized centers and emits a HELD value that
-    only snaps to a new center once the new measurement deviates from the held
-    one by more than ``deadzone`` (a fraction of source width, in 0..1 center
-    space). A near-static talking head whose detected center merely jitters
-    within the band therefore yields a single constant center -> a STATIC crop
-    (no per-window micro-pan). A genuine move past the band updates the hold,
-    so a real pan is still followed.
+    A single causal EMA both damps jitter AND lags the true subject (the crop
+    trails the speaker). We instead run the EMA forward, then backward over the
+    result, and average the two — a zero-phase (forward+backward) filter that
+    removes the directional lag while keeping the same low ``alpha`` heavy
+    damping. With a LOW alpha (~0.15) the crop FOLLOWS the speaker steadily with
+    no frame-to-frame jitter; a constant input is returned unchanged.
     """
-    out: list[float] = []
-    held: float | None = None
-    for c in centers:
-        c = float(c)
-        if held is None or abs(c - held) > float(deadzone):
-            held = c
-        out.append(held)
-    return out
+    fwd = _ema_forward(centers, alpha)
+    bwd = list(reversed(_ema_forward(list(reversed(fwd)), alpha)))
+    return [(f + b) / 2.0 for f, b in zip(fwd, bwd, strict=False)]
 
 
 def window_timestamps(
@@ -475,6 +469,98 @@ def _make_face_finder(backend: str) -> tuple[Callable[[Any], float | None] | Non
     return None, lambda: None
 
 
+# OpenCV's default people detector uses a 64x128 HOG window; calling
+# detectMultiScale on a frame smaller than the window crashes the native code
+# (segfault), so we hard-skip sub-window frames.
+_HOG_MIN_W = 64
+_HOG_MIN_H = 128
+
+
+def _person_center(img: Any) -> float | None:
+    """Normalized horizontal center of the most prominent PERSON in ``img``.
+
+    Uses OpenCV's built-in HOG people detector (ships with opencv — no model
+    download, node-free). This is the fallback for profile/turned heads where
+    face detection fails but the speaker's BODY is still clearly in frame, so
+    the crop stays on the person instead of collapsing to a center crop.
+    Frames smaller than the 64x128 HOG window are skipped (calling the detector
+    on them crashes the native code). Returns ``None`` when no person is found.
+    """
+    import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
+
+    h, w = int(img.shape[0]), int(img.shape[1])
+    if w < _HOG_MIN_W or h < _HOG_MIN_H:
+        return None
+    hog = cv2.HOGDescriptor()
+    hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+    rects, weights = hog.detectMultiScale(img, winStride=(8, 8))
+    if rects is None or len(rects) == 0:
+        return None
+    weights = list(weights) if weights is not None else []
+    best_idx = max(range(len(rects)), key=lambda i: weights[i] if i < len(weights) else 0.0)
+    rx, _ry, rw, _rh = rects[best_idx]
+    return float((float(rx) + float(rw) / 2.0) / w)
+
+
+def _motion_center(prev: Any, img: Any) -> float | None:
+    """Normalized horizontal center of the strongest MOTION between two frames.
+
+    Last-resort saliency: a sitting/standing speaker still moves (head, hands,
+    mouth) more than the static studio behind them. We diff consecutive sampled
+    frames, threshold the change, and take the intensity-weighted horizontal
+    centroid of the moving pixels — so the crop locates the SPEAKER even when
+    neither a face nor a full body is detectable. ``None`` when nothing moved.
+    """
+    import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
+    import numpy as np  # noqa: PLC0415 - job-time native (numpy ships with cv2)
+
+    if prev.shape != img.shape:
+        return None  # frame geometry changed (e.g. scene cut) — no usable diff
+    g0 = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
+    g1 = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    diff = cv2.absdiff(g0, g1)
+    _thr, mask = cv2.threshold(diff, 18, 255, cv2.THRESH_BINARY)
+    col = np.asarray(mask, dtype="float64").sum(axis=0)
+    total = float(col.sum())
+    if total <= 0.0:
+        return None
+    cols = np.arange(col.shape[0], dtype="float64")
+    centroid = float((cols * col).sum() / total)
+    return centroid / float(img.shape[1])
+
+
+def _make_subject_finder(
+    backend: str,
+) -> tuple[Callable[[Any], float | None] | None, Callable[[], None]]:
+    """Build a stateful subject finder: face -> person -> motion fallback.
+
+    Returns ``(find(img_bgr) -> cx_norm|None, close())``. ``find`` tries, in
+    order: the backend's FACE detector (mediapipe/haar); then a PERSON (HOG body)
+    detector for profile/turned shots where the face is weak or absent; then
+    MOTION saliency against the previous frame as a last resort. This keeps the
+    crop on the SPEAKER instead of falling back to a center-of-frame crop the
+    moment a face is not cleanly visible. ``None`` only when none of the three
+    locate anything. For the ``center`` backend there is no finder.
+    """
+    face_find, face_close = _make_face_finder(backend)
+    if backend == "center":
+        return None, face_close
+    prev_frame: dict[str, Any] = {"img": None}
+
+    def find(img: Any) -> float | None:
+        cx: float | None = None
+        if face_find is not None:
+            cx = face_find(img)
+        if cx is None:
+            cx = _person_center(img)
+        if cx is None and prev_frame["img"] is not None:
+            cx = _motion_center(prev_frame["img"], img)
+        prev_frame["img"] = img
+        return cx
+
+    return find, face_close
+
+
 def detect_subject_centers(
     in_path: str,
     timestamps: Sequence[float],
@@ -486,16 +572,16 @@ def detect_subject_centers(
     """Detect the subject's normalized horizontal center per sampled window.
 
     Extracts one frame per timestamp via ffmpeg (argv list, pipes drained by
-    ``capture_output``), runs the backend's face finder, and returns
-    ``[(t, cx_norm)]`` for the frames where a subject was found. An empty list
-    means "no subject anywhere" -> the caller keeps the centered crop.
+    ``capture_output``), runs the face->person->motion subject finder, and
+    returns ``[(t, cx_norm)]`` for the frames where a subject was located. An
+    empty list means "no subject anywhere" -> the caller keeps the centered crop.
     """
     backend = backend or detect_backend()
     if backend == "center":
         return []
     import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
 
-    find, close = _make_face_finder(backend)
+    find, close = _make_subject_finder(backend)
     if find is None:
         return []
     tmpdir = tempfile.mkdtemp(prefix="media_studio_reframe_")
@@ -572,26 +658,28 @@ class ClaudeShortsReframeEngine:
             # the encode still runs; only subject tracking is lost.
             _log.warning("subject detection failed; using centered crop", exc_info=True)
             samples = []
-        if not samples:
+        # Trust gate: a couple of stray hits across many windows is detector noise,
+        # not a locatable subject -> keep the centered crop rather than tracking it.
+        min_hits = max(1, math.ceil(len(timestamps) * MIN_SUBJECT_HIT_FRAC))
+        if len(samples) < min_hits:
             return crop, [], duration
 
         smoothed = smooth_centers([c for _, c in samples])
-        # DEADZONE: pin the center until it drifts past the band, so detector
-        # jitter on a near-static subject never reaches the crop (the jitter fix).
-        held = apply_deadzone(smoothed)
-        xs = [crop_x_for_center(c, crop["w"], src_w) for c in held]
+        xs = [crop_x_for_center(c, crop["w"], src_w) for c in smoothed]
         kfs = build_keyframes([t for t, _ in samples], xs)
         kfs = dedupe_keyframes(kfs, min_delta=crop["w"] * KEYFRAME_MIN_DELTA_FRAC)
         if is_static(kfs, epsilon=crop["w"] * STATIC_EPSILON_FRAC):
-            # Stable subject -> ONE static crop centered on it (Route A's
-            # face-track average), clamped into frame.
-            avg_x = int(round(sum(k["x"] for k in kfs) / len(kfs)))
-            crop = {**crop, "x": max(0, min(avg_x, max(0, src_w - crop["w"])))}
+            # GENUINELY static subject -> ONE fixed crop centered ON THE SUBJECT
+            # (the smoothed track sits within epsilon, so any keyframe x is the
+            # subject's position — NOT a bias back toward frame center).
+            static_x = int(round(sum(k["x"] for k in kfs) / len(kfs)))
+            crop = {**crop, "x": max(0, min(static_x, max(0, src_w - crop["w"])))}
             return crop, [], duration
-        # Moving subject -> animated x(t); the static x stays the track average
-        # (the fallback value also used before the first keyframe segment).
-        avg_x = int(round(sum(k["x"] for k in kfs) / len(kfs)))
-        crop = {**crop, "x": max(0, min(avg_x, max(0, src_w - crop["w"])))}
+        # Moving subject -> animated x(t) that FOLLOWS the speaker. The static
+        # fallback x (used only before the first keyframe / by build_crop_x_expr)
+        # is the FIRST tracked position so the crop opens ON the subject, never
+        # pre-biased to frame center.
+        crop = {**crop, "x": int(kfs[0]["x"])}
         return crop, kfs, duration
 
     def reframe(

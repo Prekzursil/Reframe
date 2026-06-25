@@ -2595,12 +2595,25 @@ def test_candidate_virality_non_numeric_returns_none():
 # ---------------------------------------------------------------------------
 # run_export — reframe-engine fallback notice + per-export notice de-dup
 # ---------------------------------------------------------------------------
-def test_run_export_surfaces_reframe_fallback_notice(transcript, tmp_path, monkeypatch):
-    """A verthor->claudeshorts fallback notice is surfaced via job.progress."""
+def test_run_export_default_engine_is_claudeshorts_no_wsl(transcript, tmp_path, monkeypatch):
+    """P3: with no reframeEngine set, run_export resolves the in-sidecar
+    claudeshorts engine WITHOUT probing WSL (no wsl.exe needed), pins that
+    CONCRETE name into the settings handed to the reframe stage, and surfaces no
+    fallback notice."""
     import media_studio.features.reframe as reframe_mod
 
-    notice = {"type": "reframe.fallback", "message": "verthor unavailable; using claudeshorts"}
-    monkeypatch.setattr(reframe_mod, "resolve_engine_name", lambda name, settings: ("claudeshorts", notice))
+    # which() must NEVER run: auto -> claudeshorts is decided with zero WSL probe.
+    def _never_which(_name):  # pragma: no cover - asserted by not being called
+        raise AssertionError("WSL must not be probed for the default engine")
+
+    monkeypatch.setattr(reframe_mod.shutil, "which", _never_which)
+
+    seen: dict[str, object] = {}
+
+    class _CaptureStages(RecordingStages):
+        def reframe(self, in_path, out_path, aspect, *, settings=None):
+            seen["engine"] = (settings or {}).get("reframeEngine")
+            return super().reframe(in_path, out_path, aspect, settings=settings)
 
     progress: list[tuple[int, str]] = []
     ctx = JobContext(
@@ -2608,7 +2621,7 @@ def test_run_export_surfaces_reframe_fallback_notice(transcript, tmp_path, monke
         _cancel_event=threading.Event(),
         _emit_progress=lambda jid, pct, msg: progress.append((pct, msg)),
     )
-    rec = RecordingStages([])
+    rec = _CaptureStages([])
     candidate = {"rank": 1, "start": 0.0, "end": 25.0, "sourceStart": 0.0, "score": 9}
     sm.run_export(
         ctx,
@@ -2618,7 +2631,8 @@ def test_run_export_surfaces_reframe_fallback_notice(transcript, tmp_path, monke
         out_dir=str(tmp_path / "out"),
         stages=rec.as_stages(),
     )
-    assert any("claudeshorts" in msg for _pct, msg in progress)
+    assert seen["engine"] == "claudeshorts"
+    assert not any("fallback" in msg.lower() for _pct, msg in progress)
 
 
 def test_run_export_dedupes_repeated_stabilize_notice(transcript, tmp_path):
