@@ -48,6 +48,7 @@ import json
 import math
 import os
 import shutil
+import statistics
 import subprocess
 import tempfile
 from collections.abc import Callable, Sequence
@@ -74,6 +75,13 @@ MAX_WINDOWS = 90
 # noise. Smoothing is applied forward+backward (zero-phase) so the steady track
 # has no directional lag bias toward the start of the clip.
 SMOOTH_ALPHA = 0.15
+# Outlier-robust median pre-filter window (odd, samples). A single-frame detector
+# spike — a stray left detection at the clip start, a mis-detect on a head turn —
+# would otherwise seed the zero-phase EMA and drag the OPENING crop off the steady
+# subject (empty-studio frames). A length-3 median replaces each lone spike with
+# its neighbours' value BEFORE the EMA, while leaving a constant track and a
+# sustained step untouched. 1 disables it.
+MEDIAN_WINDOW = 3
 # Keyframes are kept finely (small min-delta) so x(t) is a smooth piecewise-
 # linear pan, NOT a few coarse steps that teleport between sample windows.
 KEYFRAME_MIN_DELTA_FRAC = 0.004
@@ -185,8 +193,36 @@ def _ema_forward(centers: Sequence[float], alpha: float) -> list[float]:
     return out
 
 
+def median_prefilter(centers: Sequence[float], window: int = MEDIAN_WINDOW) -> list[float]:
+    """Sliding-window median over ``centers`` (odd ``window``; edges shrink).
+
+    Replaces each lone single-frame spike with its neighbours' median so detector
+    outliers cannot seed the EMA. A constant track and a sustained step are both
+    returned unchanged (the median of either is the level itself). At the ends the
+    window shrinks to the available samples (no out-of-range clamp). ``window<=1``
+    (or fewer than 2 samples) is the identity.
+    """
+    vals = [float(c) for c in centers]
+    n = len(vals)
+    w = int(window)
+    if w <= 1 or n < 2:
+        return vals
+    w = min(w, n)  # window can't exceed the track length
+    half = w // 2
+    out: list[float] = []
+    for i in range(n):
+        # Keep a FULL odd window even at the ends by shifting it inward (forward
+        # at the start, backward at the end). A symmetric shrink would leave an
+        # edge sample with only one neighbour, so a lone spike AT the first/last
+        # index — the opening crop, the worst case — would survive; shifting the
+        # window inward lets the steady neighbours outvote the edge spike.
+        lo = min(max(0, i - half), n - w)
+        out.append(statistics.median(vals[lo : lo + w]))
+    return out
+
+
 def smooth_centers(centers: Sequence[float], alpha: float = SMOOTH_ALPHA) -> list[float]:
-    """Heavy zero-phase EMA smoothing of subject centers.
+    """Heavy zero-phase EMA smoothing of subject centers (outlier-robust).
 
     A single causal EMA both damps jitter AND lags the true subject (the crop
     trails the speaker). We instead run the EMA forward, then backward over the
@@ -194,8 +230,12 @@ def smooth_centers(centers: Sequence[float], alpha: float = SMOOTH_ALPHA) -> lis
     removes the directional lag while keeping the same low ``alpha`` heavy
     damping. With a LOW alpha (~0.15) the crop FOLLOWS the speaker steadily with
     no frame-to-frame jitter; a constant input is returned unchanged.
+
+    A length-:data:`MEDIAN_WINDOW` median pre-filter runs FIRST so a lone detector
+    spike (e.g. a stray left detection at the clip start) cannot seed the EMA and
+    drag the opening crop off the steady subject.
     """
-    fwd = _ema_forward(centers, alpha)
+    fwd = _ema_forward(median_prefilter(centers), alpha)
     bwd = list(reversed(_ema_forward(list(reversed(fwd)), alpha)))
     return [(f + b) / 2.0 for f, b in zip(fwd, bwd, strict=False)]
 

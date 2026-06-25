@@ -223,6 +223,44 @@ def test_smooth_centers_damps_jitter():
     assert out_jump < raw_jump
 
 
+def test_median_prefilter_kills_single_frame_spike():
+    """A lone outlier sample is replaced by its neighbours' median, not kept.
+
+    Detector noise on real footage produces single-frame spikes (a stray face on
+    a graphic, a mis-detect on a turn). A spike between two steady samples must be
+    pulled back to the steady value BEFORE the EMA sees it, so it cannot drag the
+    track. Edges mirror (median over the available neighbours), so endpoints are
+    never corrupted by a clamp.
+    """
+    out = cs.median_prefilter([0.65, 0.1, 0.65], window=3)
+    assert out[1] == pytest.approx(0.65)
+    # a constant input is returned unchanged
+    assert cs.median_prefilter([0.4, 0.4, 0.4]) == pytest.approx([0.4, 0.4, 0.4])
+    # a sustained step is NOT smeared (median preserves the level on each side)
+    assert cs.median_prefilter([0.2, 0.2, 0.8, 0.8]) == pytest.approx([0.2, 0.2, 0.8, 0.8])
+
+
+def test_median_prefilter_identity_cases():
+    """``window<=1`` and short (<2-sample) tracks are returned unchanged — the
+    pre-filter is a no-op there (nothing to median over)."""
+    assert cs.median_prefilter([0.1, 0.9, 0.2], window=1) == pytest.approx([0.1, 0.9, 0.2])
+    assert cs.median_prefilter([0.7]) == pytest.approx([0.7])
+    assert cs.median_prefilter([]) == []
+
+
+def test_smooth_centers_outlier_does_not_drag_opening():
+    """The real m03 failure: a single early outlier (a stray left detection at
+    the clip start) must NOT drag the smoothed OPENING crop off the steady
+    subject. The opening sample drives the crop's first-keyframe x, so an outlier
+    there shows empty studio. After the median pre-filter the opening tracks the
+    steady subject, not the spike."""
+    # first sample is a far-left spike; the subject is steadily at ~0.64.
+    raw = [0.38, 0.65, 0.69, 0.63, 0.63, 0.64, 0.64, 0.64]
+    out = cs.smooth_centers(raw)
+    # the opening must sit near the steady subject, not be dragged toward 0.38.
+    assert out[0] == pytest.approx(0.64, abs=0.06)
+
+
 def test_window_timestamps_midpoints():
     assert cs.window_timestamps(10.0, window_sec=2.0) == [1.0, 3.0, 5.0, 7.0, 9.0]
 
