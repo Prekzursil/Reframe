@@ -505,7 +505,7 @@ def test_run_export_orders_cut_reframe_caption_export(transcript, tmp_path):
         stages=rec.as_stages(),
     )
     # Exact §5 order for a single clip.
-    assert calls == ["cut", "reframe", "caption", "export"]
+    assert calls == ["cut", "stabilize", "reframe", "caption", "export"]
     assert out["clips"] == [{"path": str(tmp_path / "out" / "src-1.mp4")}]
 
 
@@ -700,7 +700,7 @@ def test_run_export_zoom_off_by_default(transcript, tmp_path):
         stages=rec.as_stages(),
     )
     assert "zoom" not in calls
-    assert calls == ["cut", "reframe", "caption", "export"]
+    assert calls == ["cut", "stabilize", "reframe", "caption", "export"]
     assert rec.zoom_kwargs == []
 
 
@@ -718,7 +718,7 @@ def test_run_export_zoom_inserted_between_reframe_and_caption(transcript, tmp_pa
         stages=rec.as_stages(),
         settings={"autoZoom": True},
     )
-    assert calls == ["cut", "reframe", "zoom", "caption", "export"]
+    assert calls == ["cut", "stabilize", "reframe", "zoom", "caption", "export"]
     # The zoom stage consumes the reframed clip and feeds caption its output.
     z = rec.zoom_kwargs[0]
     assert z["in_path"].endswith(".reframed.mp4")
@@ -755,8 +755,9 @@ def _stab_candidate() -> dict[str, Any]:
     return {"rank": 1, "start": 0.0, "end": 30.0, "sourceStart": 0.0, "score": 9}
 
 
-def test_run_export_audio_stabilize_off_by_default(transcript, tmp_path):
-    """Neither toggle set: the pre-step stages never run; base order unchanged."""
+def test_run_export_stabilize_on_by_default(transcript, tmp_path):
+    """No toggle set: stabilize is DEFAULT-ON in the reframe path (it runs after
+    cut, before reframe); silence-trim stays off (it remains opt-in)."""
     calls: list[str] = []
     rec = RecordingStages(calls)
     sm.run_export(
@@ -767,7 +768,24 @@ def test_run_export_audio_stabilize_off_by_default(transcript, tmp_path):
         out_dir=str(tmp_path / "out"),
         stages=rec.as_stages(),
     )
-    assert "trim_silence" not in calls
+    assert "trim_silence" not in calls  # silence-trim is still opt-in
+    assert "stabilize" in calls  # stabilization is now default-on
+    assert calls == ["cut", "stabilize", "reframe", "caption", "export"]
+
+
+def test_run_export_stabilize_disabled_by_explicit_false(transcript, tmp_path):
+    """An EXPLICIT ``stabilize: False`` disables the default-on stabilization."""
+    calls: list[str] = []
+    rec = RecordingStages(calls)
+    sm.run_export(
+        make_ctx(),
+        video_id="v1",
+        candidates=[_stab_candidate()],
+        load_context=loader_for(str(tmp_path / "src.mp4"), transcript),
+        out_dir=str(tmp_path / "out"),
+        stages=rec.as_stages(),
+        settings={"stabilize": False},
+    )
     assert "stabilize" not in calls
     assert calls == ["cut", "reframe", "caption", "export"]
 
@@ -785,7 +803,7 @@ def test_run_export_silence_trim_runs_after_cut(transcript, tmp_path):
         stages=rec.as_stages(),
         settings={"silenceTrim": True},
     )
-    assert calls == ["cut", "trim_silence", "reframe", "caption", "export"]
+    assert calls == ["cut", "trim_silence", "stabilize", "reframe", "caption", "export"]
     # The trimmed clip (not the raw cut) is what reframe receives.
     trimmed_out = rec.trim_args[0][1]
     # silenceRemovedSec is surfaced on the clip payload (default stub removed 2.5s).
@@ -963,7 +981,7 @@ def test_run_export_brand_overlay_after_caption_before_export(transcript, tmp_pa
         stages=rec.as_stages(),
         settings={"brandLogoPath": "C:/brand/logo.png"},
     )
-    assert calls == ["cut", "reframe", "caption", "brand_overlay", "export"]
+    assert calls == ["cut", "stabilize", "reframe", "caption", "brand_overlay", "export"]
     b = rec.brand_kwargs[0]
     assert b["in_path"].endswith(".captioned.mp4")
     assert b["out_path"].endswith(".branded.mp4")
@@ -1025,10 +1043,12 @@ def test_run_export_multiple_clips_order_and_paths(transcript, tmp_path):
     # Two full pipelines back-to-back.
     assert calls == [
         "cut",
+        "stabilize",
         "reframe",
         "caption",
         "export",
         "cut",
+        "stabilize",
         "reframe",
         "caption",
         "export",
@@ -1207,7 +1227,7 @@ def test_shortmaker_export_handler_returns_jobId(registry, transcript, tmp_path)
     assert job is not None
     job.wait(timeout=5)
     assert job.result["clips"][0]["path"].endswith(".mp4")
-    assert calls == ["cut", "reframe", "caption", "export"]
+    assert calls == ["cut", "stabilize", "reframe", "caption", "export"]
 
 
 def test_shortmaker_select_requires_videoId(registry):
@@ -1536,7 +1556,7 @@ class TestExportWithAudioTrack:
 
     def test_mux_runs_last_and_final_path_is_unchanged(self, transcript, tmp_path):
         out, rec, calls = self._export(tmp_path, transcript, audio_track_id="aud-dub-1", tracks=[DUB_TRACK])
-        assert calls == ["cut", "reframe", "caption", "export", "mux_audio"]
+        assert calls == ["cut", "stabilize", "reframe", "caption", "export", "mux_audio"]
         # The §2 contract path is the SAME with or without the audio carry.
         assert out["clips"] == [{"path": str(tmp_path / "out" / "talk-1.mp4")}]
         mux = rec.mux_kwargs[0]
@@ -1555,7 +1575,7 @@ class TestExportWithAudioTrack:
 
     def test_no_audio_track_id_skips_the_mux_stage(self, transcript, tmp_path):
         _out, rec, calls = self._export(tmp_path, transcript, audio_track_id=None, tracks=[DUB_TRACK])
-        assert calls == ["cut", "reframe", "caption", "export"]
+        assert calls == ["cut", "stabilize", "reframe", "caption", "export"]
         assert rec.mux_kwargs == []
 
     def test_unknown_audio_track_id_fails_before_any_stage(self, transcript, tmp_path):
@@ -1581,11 +1601,13 @@ class TestExportWithAudioTrack:
         )
         assert calls == [
             "cut",
+            "stabilize",
             "reframe",
             "caption",
             "export",
             "mux_audio",
             "cut",
+            "stabilize",
             "reframe",
             "caption",
             "export",
@@ -1618,7 +1640,7 @@ class TestExportHandlerAudioTrackParam:
         )
         job = registry.get(out["jobId"])
         job.wait(timeout=5)
-        assert calls == ["cut", "reframe", "caption", "export", "mux_audio"]
+        assert calls == ["cut", "stabilize", "reframe", "caption", "export", "mux_audio"]
         assert rec.mux_kwargs[0]["audio_track"]["id"] == "aud-dub-1"
 
     def test_export_rejects_a_non_string_audioTrackId(self, registry, transcript, tmp_path):
@@ -1644,7 +1666,7 @@ class TestExportHandlerAudioTrackParam:
             _rpc_ctx(registry),
         )
         registry.get(out["jobId"]).wait(timeout=5)
-        assert calls == ["cut", "reframe", "caption", "export"]
+        assert calls == ["cut", "stabilize", "reframe", "caption", "export"]
 
 
 class TestLazyMuxAudioStage:
@@ -1704,7 +1726,7 @@ class TestExportRemoveFillers:
             settings={"removeFillers": False},
         )
         # OFF: byte-identical base order, no filler stage, no stats on payload.
-        assert calls == ["cut", "reframe", "caption", "export"]
+        assert calls == ["cut", "stabilize", "reframe", "caption", "export"]
         assert rec.filler_kwargs == []
 
     def test_filler_stage_absent_setting_is_off(self, transcript, tmp_path):
@@ -1737,6 +1759,7 @@ class TestExportRemoveFillers:
         # ON: the de-fill runs AFTER cut, BEFORE reframe.
         assert calls == [
             "cut",
+            "stabilize",
             "remove_fillers",
             "reframe",
             "caption",

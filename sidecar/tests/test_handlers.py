@@ -602,6 +602,9 @@ def test_shortmaker_export_resolves_cached_candidates(services: Services, ctx: R
             select_candidates=lambda *a, **k: [],
             snap_candidates=lambda *a, **k: ([], []),
             cut_clip=fake_cut,
+            # stabilize is DEFAULT-ON in the reframe path; stub it so no real
+            # vidstab/ffmpeg runs (warp-only pass-through for this handler test).
+            stabilize=lambda i, o, *, settings=None, on_notice=None: i,
             reframe=lambda i, o, a, *, settings=None: o,
             render_caption=lambda *a, **k: a[2],
             export_clip=lambda i, o, *, settings=None: o,

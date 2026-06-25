@@ -63,11 +63,23 @@ OUT_HEIGHT = 1920
 # generalizes that to clip length while bounding frame-extraction cost).
 WINDOW_SEC = 2.0
 MAX_WINDOWS = 24
-SMOOTH_ALPHA = 0.35  # exponential-easing factor: 0=frozen, 1=no smoothing
-# Route A drops keyframes whose x moved < 2% of the crop width; the same
-# threshold decides "the track is effectively static -> one static crop".
-KEYFRAME_MIN_DELTA_FRAC = 0.02
-STATIC_EPSILON_FRAC = 0.02
+# Exponential-easing factor: 0=frozen, 1=no smoothing. Dialled WAY down from the
+# original 0.35 (which let per-window face-detector noise leak straight into the
+# crop, producing the visible 9:16 jitter on a near-static talking head). 0.15
+# heavily damps that noise while still tracking a genuinely moving subject.
+SMOOTH_ALPHA = 0.15
+# DEADZONE (the jitter fix): the crop center is HELD until the smoothed subject
+# center drifts more than this fraction of the SOURCE WIDTH (normalized 0..1
+# center space). A sitting speaker whose detected center merely wobbles a few
+# percent therefore yields a STATIC crop — no micro-pan. 7% is the spec's 6-8%.
+DEADZONE_FRAC = 0.07
+# Route A drops keyframes whose x moved < this fraction of the crop width; the
+# same threshold decides "the track is effectively static -> one static crop".
+# Raised from 2% so low-variance tracks bias toward a single static crop (the
+# deadzone already pins the centers; this is the belt-and-braces static gate in
+# crop-pixel space, matched to the deadzone band).
+KEYFRAME_MIN_DELTA_FRAC = 0.06
+STATIC_EPSILON_FRAC = 0.06
 
 # A6 LESSON 1 — PRE-IMPORT FLAG (NON-NEGOTIABLE): these native C-extension
 # modules are first used INSIDE a job thread by this engine. They MUST be added
@@ -170,6 +182,27 @@ def smooth_centers(centers: Sequence[float], alpha: float = SMOOTH_ALPHA) -> lis
         c = float(c)
         prev = c if prev is None else prev + float(alpha) * (c - prev)
         out.append(prev)
+    return out
+
+
+def apply_deadzone(centers: Sequence[float], deadzone: float = DEADZONE_FRAC) -> list[float]:
+    """Hold the subject center until it drifts more than ``deadzone`` (the fix).
+
+    Walks the (already-smoothed) normalized centers and emits a HELD value that
+    only snaps to a new center once the new measurement deviates from the held
+    one by more than ``deadzone`` (a fraction of source width, in 0..1 center
+    space). A near-static talking head whose detected center merely jitters
+    within the band therefore yields a single constant center -> a STATIC crop
+    (no per-window micro-pan). A genuine move past the band updates the hold,
+    so a real pan is still followed.
+    """
+    out: list[float] = []
+    held: float | None = None
+    for c in centers:
+        c = float(c)
+        if held is None or abs(c - held) > float(deadzone):
+            held = c
+        out.append(held)
     return out
 
 
@@ -543,7 +576,10 @@ class ClaudeShortsReframeEngine:
             return crop, [], duration
 
         smoothed = smooth_centers([c for _, c in samples])
-        xs = [crop_x_for_center(c, crop["w"], src_w) for c in smoothed]
+        # DEADZONE: pin the center until it drifts past the band, so detector
+        # jitter on a near-static subject never reaches the crop (the jitter fix).
+        held = apply_deadzone(smoothed)
+        xs = [crop_x_for_center(c, crop["w"], src_w) for c in held]
         kfs = build_keyframes([t for t, _ in samples], xs)
         kfs = dedupe_keyframes(kfs, min_delta=crop["w"] * KEYFRAME_MIN_DELTA_FRAC)
         if is_static(kfs, epsilon=crop["w"] * STATIC_EPSILON_FRAC):

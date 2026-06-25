@@ -192,6 +192,48 @@ def test_is_static():
 
 
 # --------------------------------------------------------------------------- #
+# DEADZONE — a sitting talking-head must yield a STATIC crop (no micro-pan)
+# --------------------------------------------------------------------------- #
+def test_apply_deadzone_holds_within_threshold():
+    """Centers wobbling inside the deadzone are pinned to the first value.
+
+    A near-static talking head: the detector reports a center jittering by a few
+    percent of frame width. Below ``DEADZONE_FRAC`` the held center never moves,
+    so every emitted center is identical -> downstream xs are identical -> static.
+    """
+    raw = [0.50, 0.52, 0.49, 0.51, 0.48]  # all within 7% of 0.50
+    out = cs.apply_deadzone(raw, deadzone=cs.DEADZONE_FRAC)
+    assert out == [0.50, 0.50, 0.50, 0.50, 0.50]
+
+
+def test_apply_deadzone_follows_a_real_move():
+    """A genuine move beyond the deadzone updates the held center (and only then).
+
+    The first two stay pinned to 0.20 (within 7%); the third (0.40) is +0.20 away
+    -> beyond the deadzone -> the held center snaps to it; the fourth (0.42) is
+    then within 7% of 0.40 -> pinned to 0.40.
+    """
+    raw = [0.20, 0.24, 0.40, 0.42]
+    out = cs.apply_deadzone(raw, deadzone=cs.DEADZONE_FRAC)
+    assert out == [0.20, 0.20, 0.40, 0.40]
+
+
+def test_apply_deadzone_empty():
+    assert cs.apply_deadzone([], deadzone=cs.DEADZONE_FRAC) == []
+
+
+def test_deadzone_constant_is_meaningful_fraction():
+    # 6-8% of source width per the framing-stability spec.
+    assert 0.06 <= cs.DEADZONE_FRAC <= 0.08
+
+
+def test_smooth_alpha_is_strong():
+    # The fix dials smoothing much stronger than the old 0.35 to damp detector
+    # jitter on a near-static subject.
+    assert cs.SMOOTH_ALPHA <= 0.2
+
+
+# --------------------------------------------------------------------------- #
 # crop-x expression + ffmpeg argv shape
 # --------------------------------------------------------------------------- #
 def test_build_crop_x_expr_static():
@@ -383,6 +425,53 @@ def test_engine_stable_subject_off_center_static_clamped(fake_bins):
     crop, kfs, _d = eng.compute_plan("/in.mp4")
     assert kfs == []  # static
     assert crop["x"] == 1280 - 405  # clamped to the frame edge
+
+
+def test_engine_near_static_jittery_track_yields_single_static_crop(fake_bins):
+    """ROOT-CAUSE FIX (1): a sitting speaker whose detected center merely jitters
+    must produce ONE static crop — no per-window pan. The detector reports a
+    center wobbling +/- a few percent (the real haar/mediapipe noise on a static
+    head); the deadzone + strong smoothing collapse it to a single crop-x.
+    """
+    ts = cs.window_timestamps(20.0)  # many windows -> many chances to drift
+    # Center jitters within ~3% of 0.5 — well inside the 7% deadzone.
+    jitter = [0.50, 0.53, 0.47, 0.51, 0.49, 0.52, 0.48, 0.50, 0.515, 0.485]
+    noisy = [(t, jitter[i % len(jitter)]) for i, t in enumerate(ts)]
+    eng, runner = _engine(fake_bins, detector=lambda p, t: noisy)
+    crop, kfs, _d = eng.compute_plan("/in.mp4")
+    assert kfs == []  # STATIC: no animated keyframes despite per-window noise
+    # the single encode pass carries a constant x (no if(...) expression)
+    eng.reframe("/in.mp4", "/out.mp4")
+    vf = _vf_of(runner.calls[0]["argv"])
+    assert "if(" not in vf
+
+
+def test_engine_moving_subject_crop_x_is_interpolated_and_smooth(fake_bins):
+    """ROOT-CAUSE FIX (2): when the subject genuinely moves, x(t) is a CONTINUOUS
+    piecewise-linear interpolation between keyframes — no stepped teleports. The
+    rendered crop expression uses the ``if(lt(t,...))`` lerp form, the keyframes
+    are monotone with the pan, the deadzone COARSENS the track (fewer keyframes
+    than windows), and no keyframe step whips past the crop window (no teleport).
+    A smooth left->right pan across the frame, sampled per window.
+    """
+    ts = cs.window_timestamps(20.0)
+    n = len(ts)
+    # A smooth left->right pan from 0.15 to 0.85 across the clip.
+    pan = [(t, 0.15 + 0.70 * (i / (n - 1))) for i, t in enumerate(ts)]
+    eng, runner = _engine(fake_bins, detector=lambda p, t: pan)
+    crop, kfs, _d = eng.compute_plan("/in.mp4")
+    assert len(kfs) >= 2  # genuinely animated
+    # the deadzone coarsens the per-window track to fewer keyframes than windows
+    assert len(kfs) < len(ts)
+    xs = [k["x"] for k in kfs]
+    assert xs == sorted(xs)  # monotone with the pan direction
+    # x(t) is CONTINUOUS interpolation (piecewise-linear lerp) — zero stepped
+    # discontinuities in the rendered crop expression.
+    eng.reframe("/in.mp4", "/out.mp4")
+    assert "if(lt(t," in _vf_of(runner.calls[0]["argv"])
+    # no-teleport: a single keyframe step never whips across the whole crop window
+    deltas = [abs(b - a) for a, b in zip(xs, xs[1:], strict=False)]
+    assert max(deltas) < crop["w"]
 
 
 def test_engine_detector_failure_degrades_to_center(fake_bins):
