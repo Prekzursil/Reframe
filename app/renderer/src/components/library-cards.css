@@ -14,7 +14,10 @@ ul.library__list {
 }
 
 /* Card = raised surface, no border box; hover/focus lifts it one tone +
-   a shadow, so depth (not a blue outline) communicates interactivity. */
+   a shadow, so depth (not a blue outline) communicates interactivity.
+   A11Y: the open AFFORDANCE is now the inner .library__item-open <button>
+   (keyboard/SR-native), so the card-lift visuals live on it; the <li> is a
+   plain stretch container that also carries the raised surface tone. */
 li.library__item {
   flex-direction: column;
   align-items: stretch;
@@ -28,15 +31,33 @@ li.library__item {
     transform var(--dur-base) var(--ease-out);
 }
 
+/* The clickable open-button: fills the card body, inherits the flat card look,
+   and owns the hover/focus/active feedback. Reset the native button chrome. */
+.library__item-open {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 li.library__item:hover {
   background: var(--surface-hover);
   box-shadow: var(--shadow-raise);
   transform: translateY(-2px);
 }
 
-li.library__item:focus-visible {
+.library__item-open:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
 }
 
 li.library__item:active {

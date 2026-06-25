@@ -396,26 +396,27 @@ export function Library({
       ) : (
         <ul className="library__list">
           {videos.map((video) => (
-            <li
-              key={video.id}
-              className="library__item"
-              role="button"
-              tabIndex={0}
-              onClick={() => onOpen(video)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  onOpen(video);
-                }
-              }}
-            >
-              <VideoThumb video={video} />
-              <div className="library__item-main">
-                <span className="library__item-title">{video.title}</span>
-                <span className="library__item-path" title={video.path}>
-                  {video.path}
-                </span>
-              </div>
+            // A11Y: the row is a plain <li> (so the <ul> only contains list
+            // items — fixes axe `list`/`only-listitems`). The OPEN affordance is
+            // a real <button> wrapping the thumb + title (natively keyboard- and
+            // screen-reader-operable), and Remove is its SIBLING button — not a
+            // focusable nested inside another control (fixes `nested-interactive`
+            // / `no-focusable-content`).
+            <li key={video.id} className="library__item">
+              <button
+                type="button"
+                className="library__item-open"
+                aria-label={`Open ${video.title}`}
+                onClick={() => onOpen(video)}
+              >
+                <VideoThumb video={video} />
+                <div className="library__item-main">
+                  <span className="library__item-title">{video.title}</span>
+                  <span className="library__item-path" title={video.path}>
+                    {video.path}
+                  </span>
+                </div>
+              </button>
               <div className="library__item-meta">
                 {video.hasTranscript ? (
                   <span className="library__badge" title="Has transcript">

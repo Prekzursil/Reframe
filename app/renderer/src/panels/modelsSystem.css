@@ -698,7 +698,10 @@
   padding: 0 var(--space-2);
   border-radius: var(--radius-sm);
   background: var(--accent);
-  color: var(--on-accent);
+  /* The ink color FOR accent fills. Was var(--on-accent) — an undefined token,
+   * so the badge inherited --text-secondary on amber (~1.02:1, failing AA);
+   * --accent-ink is the defined on-accent color (~8.6:1). */
+  color: var(--accent-ink);
   font-size: var(--type-small-size);
   font-weight: 600;
 }

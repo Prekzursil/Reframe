@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": "Mutation testing for the renderer (Stryker >= 9). Wave-2a, NON-BLOCKING NIGHTLY ONLY. Complements the 100% vitest line+branch gate (gate:3): coverage proves a line ran, mutation proves a test would FAIL if its logic were wrong. Scope is DELIBERATELY NARROW to the high-value PURE-LOGIC renderer libs (timeline cue algebra + the typed RPC client) — NOT React components or wiring, whose mutants are mostly equivalent. Stryker is INSTALLED AD-HOC by .github/workflows/mutation.yml (npm install --no-save) and is NOT in package.json devDependencies, so it never enters package-lock.json and cannot affect the blocking gates (npm ci / osv-scanner). Run locally from app/ with: npx stryker run. The mutation-score TARGET lives in the repo-root .coverage-thresholds.json (key: mutation.renderer).",
+  "packageManager": "npm",
+  "testRunner": "vitest",
+  "vitest": {
+    "configFile": "vitest.config.ts"
+  },
+  "reporters": ["clear-text", "progress"],
+  "coverageAnalysis": "perTest",
+  "mutate": [
+    "renderer/src/lib/timelineOps.ts",
+    "renderer/src/lib/rpc.ts"
+  ],
+  "tempDirName": ".stryker-tmp",
+  "thresholds": {
+    "high": 90,
+    "low": 80,
+    "break": null
+  },
+  "_comment_thresholds": "break is null so a low score NEVER fails the run — Wave-2a is observe-only / non-blocking. The documented target (see .coverage-thresholds.json) is enforced by review, not by failing CI."
+}

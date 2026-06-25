@@ -13,6 +13,9 @@ name: e2e
 #                                          PACKAGED `app.isPackaged` proof)
 #   * app      : npm run test:e2e:dom     (vitest DOM caption-over-video + nasty-
 #                                          caption proofs)
+#   * app      : npm run test:e2e:visual  (Wave-2b VISUAL screenshot-diff +
+#                                          A11Y/axe + keyboard/focus/reduced-motion;
+#                                          WINDOWS-ONLY — baselines are `*-win32.png`)
 #
 # OS MATRIX (WU-A): the GUI E2E runs on windows-latest, macos-latest, macos-13,
 # and ubuntu-latest. On Windows the leg BUILDS the real electron-builder package
@@ -213,6 +216,21 @@ jobs:
           RF_PY: ${{ steps.setup-python.outputs.python-path }}
           RF_E2E_DEV: "1"
         run: npm run test:e2e
+
+      # WAVE-2b VISUAL + A11Y — Windows ONLY. The visual screenshot baselines are
+      # platform-specific (committed as `*-win32.png`), so this suite runs on the
+      # SINGLE OS its baselines were generated for; the 4-OS e2e-gui matrix's other
+      # legs skip it (a missing snapshot would hard-fail a non-baselined OS). The
+      # a11y/keyboard checks are DOM-based and OS-independent but ride this same
+      # Windows leg to reuse the already-built dev app. Runs against the dev build
+      # (RF_E2E_DEV=1) — the same target the baselines were captured against.
+      - name: E2E GUI — VISUAL screenshot-diff + A11Y (axe) [Windows only]
+        if: runner.os == 'Windows'
+        working-directory: app
+        env:
+          RF_PY: ${{ steps.setup-python.outputs.python-path }}
+          RF_E2E_DEV: "1"
+        run: npm run test:e2e:visual
 
       - name: Upload Playwright report
         if: always()

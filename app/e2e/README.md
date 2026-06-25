@@ -33,6 +33,46 @@ build (`preview.spec` with `RF_E2E_DEV=1`) on every OS leg. Set `RF_E2E_DEV=1`
 locally to force the dev build; omit it (with a warm first-run env) to drive a
 real package end-to-end.
 
+## Wave-2b: VISUAL screenshot-diff + A11Y (`e2e/visual/`)
+
+A deterministic, no-cloud visual-regression + accessibility suite over the
+renderer surfaces, run via its OWN config (`playwright.visual.config.ts`) so its
+platform-specific screenshot baselines never burden the 4-OS `e2e-gui` matrix.
+
+| Spec | What runs | Surfaces |
+| --- | --- | --- |
+| `library.visual.spec.ts` | The visual spike: `toHaveScreenshot` against the seeded Library tab; proves a pixel-stable diff against a real `_electron.launch` window. | Library |
+| `surfaces.visual.spec.ts` | `toHaveScreenshot` baselines for the rest of the tabs/panels. | Create, Director, Repurpose, Settings → Models & System, Settings → Providers & Keys, the Spend-cap card, and the Workspace preview (`<video>` masked) |
+| `a11y.a11y.spec.ts` | `axe-core` scan asserting **zero serious/critical** WCAG 2.0/2.1 A+AA violations on every panel, plus keyboard-nav reaches interactive controls, `:focus-visible` paints the focus ring, and `prefers-reduced-motion: reduce` collapses animations. | all of the above + global chrome |
+
+**Determinism** (see `e2e/visual/_visualSetup.ts`): the BrowserWindow is pinned
+to 1280×820, reduced-motion is emulated + `animations: 'disabled'`, and the
+non-deterministic live regions (the moving `testsrc` `<video>` frame, the CPU/RAM
+`ResourceBar`, provider usage numbers, month-to-date spend) are **masked**, never
+asserted. A small `maxDiffPixelRatio` absorbs sub-pixel AA/font-hinting noise.
+
+**axe under Electron** (`runAxe` in `_visualSetup.ts`): `@axe-core/playwright`'s
+`AxeBuilder.analyze()` calls `browserContext.newPage()`, which the Electron
+embedder rejects; and the renderer ships a strict CSP (`script-src 'self'`) that
+blocks inline `addScriptTag`. So axe is injected via `page.evaluate` (the CDP
+`Runtime.evaluate` channel, which bypasses the page CSP) and run with `axe.run()`
+in-page — no new page, CSP-safe.
+
+This suite found (and this branch FIXED) real serious violations: low-contrast
+faint text (`--text-faint` failed WCAG 1.4.3), a "Recommended" badge using an
+undefined `--on-accent` token (~1.02:1 on amber), and the Library row using a
+`role="button"` `<li>` that both broke list semantics and nested the focusable
+Remove button (`only-listitems` / `nested-interactive`).
+
+**Baselines are Windows-only** (`*-win32.png`). The CI step runs only on the
+Windows `e2e-gui` leg (a11y is OS-independent but rides the same leg). Regenerate
+after an intentional UI change:
+
+```sh
+npm run test:e2e:visual         # check against committed baselines
+npm run test:e2e:visual:update  # regenerate the `*-win32.png` baselines
+```
+
 ## Prerequisites
 
 - `npm run build` (or `npx electron-vite build` for the preview-only path) so
