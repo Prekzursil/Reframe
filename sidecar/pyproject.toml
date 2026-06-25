@@ -60,3 +60,63 @@ markers = [
   "integration: tests that exercise multiple modules together",
   "e2e: opt-in heavy end-to-end tests (real ffmpeg/model/socket); excluded from the default gate",
 ]
+
+# --------------------------------------------------------------------------- #
+# Mutation testing (mutmut >= 3.6) — Wave-2a, NON-BLOCKING NIGHTLY ONLY.
+#
+# This is a SIDECAR-side complement to the 100% branch-coverage gate (gate:3).
+# Line/branch coverage proves a line *executed*; it does NOT prove a test would
+# FAIL if that line's logic were wrong. mutmut perturbs the source (flips
+# operators, swaps constants, drops statements) and checks that some test then
+# fails ("kills" the mutant). A surviving mutant = a coverage-blind spot: code
+# the suite runs but does not actually assert on.
+#
+# SCOPE IS DELIBERATELY NARROW (Wave-2a brief): only HIGH-VALUE, PURE-LOGIC
+# modules whose behaviour is worth proving — protocol dispatch, the ffmpeg
+# command/arg builders, scene-boundary snapping, the timeline cue algebra, the
+# Ken-Burns zoom math, the SRT/VTT caption parsers, and the persisted spend
+# ledger. Heavy-ML / I/O / provider modules are intentionally EXCLUDED: their
+# mutants are mostly equivalent or untestable without real models, so they would
+# only add noise to the score.
+#
+# This config is INERT for the blocking gate: nothing in quality.yml invokes
+# mutmut, and mutmut is NOT added to the lockfiles / sidecar runtime deps. It is
+# run exclusively by the separate, non-blocking .github/workflows/mutation.yml
+# (workflow_dispatch + nightly cron). Run locally from the sidecar/ directory:
+#
+#     mutmut run            # mutate + test (the targets below)
+#     mutmut results        # surviving mutants, grouped by module
+#
+# The mutation-score TARGET (kill rate) is documented alongside the coverage
+# thresholds in the repo-root .coverage-thresholds.json (key: "mutation").
+# --------------------------------------------------------------------------- #
+[tool.mutmut]
+# Pure-logic modules worth mutating (paths are relative to sidecar/).
+source_paths = [
+  "media_studio/protocol.py",
+  "media_studio/ffmpeg.py",
+  "media_studio/features/boundary.py",
+  "media_studio/features/timeline.py",
+  "media_studio/features/zoom.py",
+  "media_studio/features/caption.py",
+  "media_studio/features/subtitles.py",
+  "media_studio/models/spend_ledger.py",
+]
+# Run ONLY the unit tests that exercise the mutated modules. This keeps the
+# mutmut run fast AND avoids importing the heavy-ML test modules (faster-whisper,
+# torch, ...) whose deps are not installed in the lean test environment.
+pytest_add_cli_args_test_selection = [
+  "tests/test_protocol_stateful.py",
+  "tests/test_ffmpeg.py",
+  "tests/test_boundary.py",
+  "tests/test_boundary_property.py",
+  "tests/test_timeline.py",
+  "tests/test_zoom.py",
+  "tests/test_zoom_caption_property.py",
+  "tests/test_caption.py",
+  "tests/test_subtitles.py",
+  "tests/test_spend_ledger.py",
+]
+# Deselect the opt-in heavy e2e suite (mirrors [tool.pytest.ini_options].addopts,
+# which mutmut's test-selection args bypass).
+pytest_add_cli_args = ["-m", "not e2e"]

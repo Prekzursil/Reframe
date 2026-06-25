@@ -1,0 +1,108 @@
+# Mutation testing — NON-BLOCKING NIGHTLY (Wave-2a).
+#
+# This workflow is DELIBERATELY SEPARATE from quality.yml and NEVER gates a PR or
+# a push: it has no `push`/`pull_request` trigger, so it cannot turn a required
+# check red. It runs on a nightly schedule and on-demand. Mutation testing is a
+# SECOND-ORDER quality signal on top of the 100% coverage gate: coverage proves a
+# line executed; mutation proves a test would actually FAIL if that line's logic
+# were wrong. Surviving mutants point at weak assertions to strengthen.
+#
+# Scope is narrow on purpose (high-value PURE-LOGIC modules only) — see
+# sidecar/pyproject.toml [tool.mutmut] and app/stryker.conf.json. The score
+# TARGETS are documented in the repo-root .coverage-thresholds.json.
+#
+# NOTE: GitHub only fires `schedule` cron from the repository's DEFAULT branch.
+# Until this lands on main, exercise it manually via the Actions "Run workflow"
+# button or `gh workflow run mutation.yml`.
+#
+# Both tools are installed AD-HOC here (mutmut via pip, Stryker via
+# `npm install --no-save`) so they NEVER enter the committed lockfiles and cannot
+# affect the blocking gates (npm ci / osv-scanner read those lockfiles).
+name: mutation
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 03:17 UTC nightly (off the top of the hour to dodge cron congestion).
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mutmut-sidecar:
+    name: mutmut-sidecar
+    runs-on: ubuntu-latest
+    # Mutation runs are long; cap so a runaway run cannot burn the budget.
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install sidecar (pure-logic) + test + mutation tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov hypothesis
+          # Install the package WITHOUT its heavy-ML runtime deps (mirrors
+          # quality.yml). The mutated modules are pure-logic; the selected tests
+          # are heavy-ML-free.
+          pip install -e "sidecar" --no-deps
+          pip install httpx numpy opencv-python-headless
+          # Mutation tool — pinned, AD-HOC (never added to the lockfiles).
+          pip install mutmut==3.6.0
+
+      - name: Run mutmut (high-value pure-logic modules)
+        working-directory: sidecar
+        run: |
+          # mutmut reads [tool.mutmut] from sidecar/pyproject.toml. It exits
+          # non-zero when mutants survive; this workflow is observe-only, so we
+          # capture the result and always surface the report instead of failing.
+          mutmut run || true
+
+      - name: Mutation results (sidecar)
+        if: always()
+        working-directory: sidecar
+        run: mutmut results || true
+
+  stryker-renderer:
+    name: stryker-renderer
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+
+      - name: Install app deps
+        working-directory: app
+        run: npm ci
+
+      - name: Install Stryker AD-HOC (never enters package-lock.json)
+        working-directory: app
+        run: |
+          # --no-save: do NOT touch package.json / package-lock.json, so the
+          # blocking gates (npm ci, osv-scanner --lockfile) are unaffected.
+          npm install --no-save \
+            @stryker-mutator/core@9.6.1 \
+            @stryker-mutator/vitest-runner@9.6.1
+
+      - name: Run Stryker (renderer pure-logic libs)
+        working-directory: app
+        run: npx stryker run

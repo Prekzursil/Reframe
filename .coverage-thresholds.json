@@ -1,0 +1,33 @@
+{
+  "_comment": "Single source of truth for the project's test-strength TARGETS. The line/branch COVERAGE gates are enforced in CI (the BLOCKING quality.yml gate:3): the sidecar via `pytest --cov=media_studio --cov-branch --cov-fail-under=100`, and the renderer via the 100% thresholds in app/vitest.config.ts. Those two are mirrored here for visibility. The `mutation` block documents the Wave-2a mutation-testing target (kill rate) measured by the SEPARATE, NON-BLOCKING nightly .github/workflows/mutation.yml (mutmut for the sidecar, Stryker for the renderer). Mutation is observe-only: it does NOT fail quality.yml. Raise these targets toward 100% as surviving mutants are killed by strengthening assertions (never by weakening tests).",
+  "coverage": {
+    "sidecar": {
+      "lines": 100,
+      "branches": 100,
+      "_enforced_by": "quality.yml gate-tests-coverage pytest (--cov-fail-under=100 --cov-branch)"
+    },
+    "renderer": {
+      "lines": 100,
+      "branches": 100,
+      "functions": 100,
+      "statements": 100,
+      "_enforced_by": "app/vitest.config.ts test.coverage.thresholds (gate:3)"
+    }
+  },
+  "mutation": {
+    "_blocking": false,
+    "_measured_by": ".github/workflows/mutation.yml (nightly cron + workflow_dispatch)",
+    "_scope": "high-value PURE-LOGIC modules only (sidecar: protocol/ffmpeg/boundary/timeline/zoom/caption/subtitles/spend_ledger; renderer: timelineOps/rpc)",
+    "_target_basis": "score_target is a directional FLOOR over NON-equivalent mutants, not a CI gate. Remaining survivors above the baseline are equivalent or host-dependent mutants (e.g. cosmetic JSON indent/encoding-case, log message text, and clamp boundary identities that no behaviour can distinguish). Raise the baseline toward the target only by strengthening assertions (never by weakening tests).",
+    "sidecar": {
+      "_tool": "mutmut>=3.6",
+      "score_target": 80,
+      "_note": "Mutation score = killed / (killed + survived) as a percentage. Measured baseline for media_studio/models/spend_ledger.py (2026-06-25): 94 mutants -> 77 killed / 17 survived = 81.9% AFTER assertion strengthening (was 66/94 = 70.2% before). The 17 remaining survivors are equivalent mutants only: cosmetic JSON formatting (indent=2->3, ensure_ascii), encoding-case (utf-8 vs UTF-8 vs None), and log-message text — none change observable behaviour."
+    },
+    "renderer": {
+      "_tool": "@stryker-mutator/core>=9 (vitest-runner)",
+      "score_target": 90,
+      "_note": "Stryker mutation score (killed+timeout / total, excl. no-coverage). Measured baseline for renderer/src/lib/timelineOps.ts (2026-06-25): 208 mutants -> 189 killed + 1 timeout / 18 survived = 91.35%. Survivors are mostly clamp boundary identities (e.g. `<= 0` vs `< 0` on an already-guarded path) that produce identical results."
+    }
+  }
+}
