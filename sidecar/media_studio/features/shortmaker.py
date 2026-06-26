@@ -898,13 +898,15 @@ def _export_one(
         caption_source_start = 0.0
 
     # STABILIZE (audio-stabilize group, the DIFFERENTIATOR) — camera-shake
-    # stabilization via ffmpeg vidstab 2-pass, ON when the ``stabilize`` toggle is
-    # set. It does NOT change the timeline (warp only), so captions stay in sync
-    # and it can run on whatever the trim produced. When libvidstab is missing the
-    # stage passes the clip through unchanged and surfaces a typed notice via the
-    # ``on_notice`` sink (the orchestrator routes it to job.progress) — never a
-    # silent skip.
-    if (settings or {}).get("stabilize"):
+    # stabilization via ffmpeg vidstab 2-pass, DEFAULT-ON in the reframe/shorts
+    # path (steadier vertical clips out of the box) and only disabled by an
+    # EXPLICIT ``stabilize: False`` toggle. It does NOT change the timeline (warp
+    # only), so captions stay in sync and it can run on whatever the trim
+    # produced. The stage's own ``stabilize_clip`` is the libvidstab gate: when
+    # libvidstab is missing it passes the clip through unchanged and surfaces a
+    # typed notice via the ``on_notice`` sink (the orchestrator routes it to
+    # job.progress) — never a silent skip, so default-on degrades gracefully.
+    if (settings or {}).get("stabilize", True):
         stabilized_path = str(out_dir / f"{stem}.stabilized.mp4")
         stage_clip = stages.stabilize(
             stage_clip,
@@ -1109,14 +1111,13 @@ def run_export(
         if audio_track is None:
             raise ValueError(f"unknown audio track: {audio_track_id}")
 
-    # T4b: resolve the reframe engine ONCE per export; an automatic
-    # verthor->claudeshorts fallback surfaces as a typed notice via job.progress.
+    # T4b/P3: resolve the reframe engine ONCE per export. "auto" now resolves to
+    # the in-sidecar claudeshorts engine (no WSL); an explicit "verthor" on a
+    # host without WSL raises (handled by the job's error path).
     from . import reframe as _reframe_mod  # lazy: keeps module import-light
 
-    engine_name, notice = _reframe_mod.resolve_engine_name(str(settings.get("reframeEngine") or "auto"), settings)
+    engine_name, _notice = _reframe_mod.resolve_engine_name(str(settings.get("reframeEngine") or "auto"), settings)
     settings = {**settings, "reframeEngine": engine_name}
-    if notice is not None:
-        ctx.progress(3, notice["message"])
 
     dest = Path(out_dir)
     dest.mkdir(parents=True, exist_ok=True)
@@ -1247,10 +1248,12 @@ class ShortMaker:
         #             pre-step (ffmpeg silencedetect -> keep-span re-cut), run on
         #             each cut clip before reframe; mutually exclusive with
         #             removeFillers (silence-trim wins).
-        #   stabilize (default false) -> audio-stabilize group: camera-shake
-        #             stabilization pre-step (ffmpeg vidstab 2-pass), warp-only so
-        #             it composes with every other stage; a missing libvidstab is
-        #             reported via job.progress, never silently skipped.
+        #   stabilize (DEFAULT TRUE in the reframe/shorts path) -> audio-stabilize
+        #             group: camera-shake stabilization pre-step (ffmpeg vidstab
+        #             2-pass), warp-only so it composes with every other stage; a
+        #             missing libvidstab is reported via job.progress, never
+        #             silently skipped (so default-on degrades gracefully). An
+        #             explicit ``stabilize: false`` from the caller disables it.
         for key in ("hookTitle", "removeFillers", "emphasis", "autoZoom", "silenceTrim", "stabilize"):
             value = params.get(key)
             if isinstance(value, bool):

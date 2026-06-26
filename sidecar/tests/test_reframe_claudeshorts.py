@@ -62,6 +62,50 @@ def _vf_of(argv):
     return argv[argv.index("-vf") + 1]
 
 
+def _eval_crop_x(expr: str, t: float) -> float:
+    """Evaluate the ffmpeg crop-x expression for a given ``t`` (test oracle).
+
+    NO eval(): a tiny recursive-descent reader of the exact
+    ``if(lt(t,T),SEG,ELSE)`` piecewise-linear grammar emitted by
+    ``build_crop_x_expr`` (segments are ``x0+(x1-x0)*(t-t0)/(dt)``), used to
+    prove x(t) is a smooth INTERPOLATION with no stepped teleports.
+    """
+    import re
+
+    def split_top(s: str) -> list[str]:
+        parts, depth, start = [], 0, 0
+        for i, ch in enumerate(s):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+            elif ch == "," and depth == 0:
+                parts.append(s[start:i])
+                start = i + 1
+        parts.append(s[start:])
+        return parts
+
+    def ev(s: str) -> float:
+        s = s.strip()
+        if s.startswith("if("):
+            cond, a, b = split_top(s[3:-1])
+            return ev(a) if ev_cond(cond) else ev(b)
+        # a linear segment "x0+(x1-x0)*(t-t0)/(dt)" or a bare integer
+        m = re.fullmatch(r"(-?\d+)\+\((-?\d+)-(-?\d+)\)\*\(t-([\d.]+)\)/\(([\d.]+)\)", s)
+        if m:
+            x0, x1, _x0b, t0, dt = (float(g) for g in m.groups())
+            return x0 + (x1 - x0) * (t - t0) / dt
+        return float(s)
+
+    def ev_cond(s: str) -> bool:
+        # only "lt(t,T)" appears
+        inner = s.strip()[3:-1]
+        _lhs, rhs = split_top(inner)
+        return t < float(rhs)
+
+    return ev(expr)
+
+
 def _engine(
     fake_bins,
     detector,
@@ -141,15 +185,34 @@ def test_crop_x_for_center_clamps_to_frame():
 # smoothing / windows / keyframes
 # --------------------------------------------------------------------------- #
 def test_smooth_centers_constant_input_unchanged():
-    assert cs.smooth_centers([0.5, 0.5, 0.5]) == [0.5, 0.5, 0.5]
+    # A constant subject -> a constant track (zero-phase EMA of a constant).
+    assert cs.smooth_centers([0.5, 0.5, 0.5]) == pytest.approx([0.5, 0.5, 0.5])
 
 
-def test_smooth_centers_eases_toward_a_step():
-    out = cs.smooth_centers([0.2, 0.8, 0.8, 0.8], alpha=0.35)
-    assert out[0] == pytest.approx(0.2)
-    # monotone approach toward 0.8, never overshooting
-    assert out[1] < out[2] < out[3] < 0.8
-    assert out[1] == pytest.approx(0.2 + 0.35 * 0.6)
+def test_smooth_centers_zero_phase_no_lag_bias():
+    """Heavy zero-phase (forward+backward) EMA: the smoothed track of a step
+    settles symmetrically around the step (no single-direction lag), and stays
+    bounded within the raw range — it follows the subject without chasing noise."""
+    raw = [0.2, 0.2, 0.8, 0.8, 0.8]
+    out = cs.smooth_centers(raw, alpha=cs.SMOOTH_ALPHA)
+    assert min(out) >= min(raw) - 1e-9
+    assert max(out) <= max(raw) + 1e-9
+    # the track is monotone non-decreasing across the single up-step
+    assert all(b >= a - 1e-9 for a, b in zip(out, out[1:], strict=False))
+    # zero-phase: the midpoint sample sits near the step's halfway value, i.e.
+    # the smoothing is NOT biased toward the earlier (0.2) side like a causal EMA.
+    assert out[2] == pytest.approx(0.5, abs=0.2)
+
+
+def test_smooth_centers_low_alpha_is_heavier_than_high():
+    """A LOWER alpha smooths harder — the track deviates LESS from the mean,
+    proving the knob controls smoothing strength (jitter damping)."""
+    raw = [0.5, 0.9, 0.1, 0.9, 0.1]
+    heavy = cs.smooth_centers(raw, alpha=0.15)
+    light = cs.smooth_centers(raw, alpha=0.6)
+    heavy_swing = max(heavy) - min(heavy)
+    light_swing = max(light) - min(light)
+    assert heavy_swing < light_swing
 
 
 def test_smooth_centers_damps_jitter():
@@ -158,6 +221,44 @@ def test_smooth_centers_damps_jitter():
     raw_jump = max(abs(b - a) for a, b in zip(raw, raw[1:], strict=False))
     out_jump = max(abs(b - a) for a, b in zip(out, out[1:], strict=False))
     assert out_jump < raw_jump
+
+
+def test_median_prefilter_kills_single_frame_spike():
+    """A lone outlier sample is replaced by its neighbours' median, not kept.
+
+    Detector noise on real footage produces single-frame spikes (a stray face on
+    a graphic, a mis-detect on a turn). A spike between two steady samples must be
+    pulled back to the steady value BEFORE the EMA sees it, so it cannot drag the
+    track. Edges mirror (median over the available neighbours), so endpoints are
+    never corrupted by a clamp.
+    """
+    out = cs.median_prefilter([0.65, 0.1, 0.65], window=3)
+    assert out[1] == pytest.approx(0.65)
+    # a constant input is returned unchanged
+    assert cs.median_prefilter([0.4, 0.4, 0.4]) == pytest.approx([0.4, 0.4, 0.4])
+    # a sustained step is NOT smeared (median preserves the level on each side)
+    assert cs.median_prefilter([0.2, 0.2, 0.8, 0.8]) == pytest.approx([0.2, 0.2, 0.8, 0.8])
+
+
+def test_median_prefilter_identity_cases():
+    """``window<=1`` and short (<2-sample) tracks are returned unchanged — the
+    pre-filter is a no-op there (nothing to median over)."""
+    assert cs.median_prefilter([0.1, 0.9, 0.2], window=1) == pytest.approx([0.1, 0.9, 0.2])
+    assert cs.median_prefilter([0.7]) == pytest.approx([0.7])
+    assert cs.median_prefilter([]) == []
+
+
+def test_smooth_centers_outlier_does_not_drag_opening():
+    """The real m03 failure: a single early outlier (a stray left detection at
+    the clip start) must NOT drag the smoothed OPENING crop off the steady
+    subject. The opening sample drives the crop's first-keyframe x, so an outlier
+    there shows empty studio. After the median pre-filter the opening tracks the
+    steady subject, not the spike."""
+    # first sample is a far-left spike; the subject is steadily at ~0.64.
+    raw = [0.38, 0.65, 0.69, 0.63, 0.63, 0.64, 0.64, 0.64]
+    out = cs.smooth_centers(raw)
+    # the opening must sit near the steady subject, not be dragged toward 0.38.
+    assert out[0] == pytest.approx(0.64, abs=0.06)
 
 
 def test_window_timestamps_midpoints():
@@ -385,6 +486,132 @@ def test_engine_stable_subject_off_center_static_clamped(fake_bins):
     assert crop["x"] == 1280 - 405  # clamped to the frame edge
 
 
+# --------------------------------------------------------------------------- #
+# TDD (a): an OFF-CENTER subject -> crop centered ON THE SUBJECT, not frame-center
+# --------------------------------------------------------------------------- #
+def test_engine_offcenter_static_subject_crops_on_subject_not_frame_center(fake_bins):
+    """A speaker sitting steadily LEFT of frame center (cx≈0.25) must yield a
+    static crop centered on HIM — NOT drifted back toward frame center. This is
+    the regression the static-bias change introduced (empty studio shown)."""
+    # cx=0.25 across every window: genuinely static, off to the left.
+    ts = cs.window_timestamps(8.0)
+    eng, _ = _engine(fake_bins, detector=lambda p, t: [(x, 0.25) for x in ts])
+    crop, kfs, _d = eng.compute_plan("/in.mp4")
+    assert kfs == []  # static subject -> one fixed crop
+    # crop centered on the subject: x ≈ 0.25*1280 - 405/2 = 117.5
+    subject_x = cs.crop_x_for_center(0.25, 405, 1280)
+    frame_center_x = (1280 - 405) // 2  # 437
+    assert abs(crop["x"] - subject_x) <= 2
+    # and it is NOT sitting near frame center (the drift bug)
+    assert abs(crop["x"] - frame_center_x) > 100
+
+
+def test_engine_offcenter_static_keeps_subject_inside_crop(fake_bins):
+    """The subject's horizontal position stays WITHIN the crop window (he is not
+    pushed to the frame edge / out of view)."""
+    ts = cs.window_timestamps(8.0)
+    cx = 0.7
+    eng, _ = _engine(fake_bins, detector=lambda p, t: [(x, cx) for x in ts])
+    crop, _kfs, _d = eng.compute_plan("/in.mp4")
+    subj_px = cx * 1280
+    assert crop["x"] <= subj_px <= crop["x"] + crop["w"]
+
+
+# --------------------------------------------------------------------------- #
+# TDD (b): a profile/weak-face frame -> person/motion fallback still locates him
+# --------------------------------------------------------------------------- #
+def test_subject_finder_falls_back_to_person_when_face_absent(monkeypatch):
+    """Face detector returns None (profile/turned head) -> the PERSON (HOG body)
+    detector locates the subject so the crop stays on him."""
+    # face finder: never finds a face. person finder: body at cx=0.8.
+    monkeypatch.setattr(cs, "_make_face_finder", lambda backend: (lambda img: None, lambda: None))
+    monkeypatch.setattr(cs, "_person_center", lambda img: 0.8)
+    monkeypatch.setattr(cs, "_motion_center", lambda prev, img: pytest.fail("motion must not run when person hit"))
+    find, _close = cs._make_subject_finder("haar")
+    assert find(object()) == pytest.approx(0.8)
+
+
+def test_subject_finder_falls_back_to_motion_when_face_and_person_absent(monkeypatch):
+    """Neither face nor body detectable -> MOTION saliency (vs the previous
+    frame) still locates the moving speaker. The first frame (no prev) yields
+    None; the second resolves via motion."""
+    monkeypatch.setattr(cs, "_make_face_finder", lambda backend: (lambda img: None, lambda: None))
+    monkeypatch.setattr(cs, "_person_center", lambda img: None)
+    monkeypatch.setattr(cs, "_motion_center", lambda prev, img: 0.35)
+    find, _close = cs._make_subject_finder("haar")
+    assert find("frame0") is None  # no previous frame yet -> motion can't run
+    assert find("frame1") == pytest.approx(0.35)  # diff vs frame0 locates motion
+
+
+def test_subject_finder_face_hit_skips_fallbacks(monkeypatch):
+    """When the FACE is found, neither person nor motion fallback runs."""
+    monkeypatch.setattr(cs, "_make_face_finder", lambda backend: (lambda img: 0.5, lambda: None))
+    monkeypatch.setattr(cs, "_person_center", lambda img: pytest.fail("person must not run on a face hit"))
+    monkeypatch.setattr(cs, "_motion_center", lambda prev, img: pytest.fail("motion must not run on a face hit"))
+    find, _close = cs._make_subject_finder("mediapipe")
+    assert find(object()) == pytest.approx(0.5)
+
+
+def test_subject_finder_center_backend_has_no_finder():
+    find, close = cs._make_subject_finder("center")
+    assert find is None
+    close()  # the no-op closer is callable
+
+
+def test_subject_finder_no_face_finder_goes_straight_to_person(monkeypatch):
+    """When the FACE backend yields no finder at all (e.g. missing haar cascade),
+    the subject finder skips the face step and uses the person fallback."""
+    monkeypatch.setattr(cs, "_make_face_finder", lambda backend: (None, lambda: None))
+    monkeypatch.setattr(cs, "_person_center", lambda img: 0.6)
+    find, _close = cs._make_subject_finder("haar")
+    assert find(object()) == pytest.approx(0.6)
+
+
+def test_engine_profile_video_tracks_via_fallback_not_center(fake_bins):
+    """End-to-end (b): the detector (simulating face->person/motion fallback)
+    returns an off-center track; the engine crops on the SUBJECT, never the
+    centered no-subject fallback."""
+    ts = cs.window_timestamps(8.0)
+    # subject located at 0.78 in every window via the fallback chain.
+    eng, runner = _engine(fake_bins, detector=lambda p, t: [(x, 0.78) for x in ts])
+    eng.reframe("/in.mp4", "/out.mp4")
+    vf = _vf_of(runner.calls[0]["argv"])
+    x = int(vf.split(":'")[1].split("'")[0])
+    assert x != (1280 - 405) // 2  # NOT the center-crop fallback x (437)
+    assert abs(x - cs.crop_x_for_center(0.78, 405, 1280)) <= 2
+
+
+# --------------------------------------------------------------------------- #
+# TDD (c): smooth interpolation -> no stepped jumps between sampled windows
+# --------------------------------------------------------------------------- #
+def test_engine_moving_subject_interpolates_no_teleport(fake_bins):
+    """A subject panning across the frame yields an INTERPOLATED x(t) — the per-
+    frame crop-x change is bounded (no teleport between sample windows)."""
+    moving = [(float(i), 0.1 + 0.1 * i) for i in range(8)]  # 0.1 -> 0.8 over 8s
+    eng, _ = _engine(fake_bins, detector=lambda p, t: moving)
+    crop, kfs, duration = eng.compute_plan("/in.mp4")
+    assert len(kfs) >= 2
+    expr = cs.build_crop_x_expr(crop["x"], kfs)
+    # evaluate the piecewise-linear x(t) on a dense time grid (no stepped jumps).
+    xs = [_eval_crop_x(expr, t) for t in [i * 0.1 for i in range(int(duration * 10) + 1)]]
+    max_step = max(abs(b - a) for a, b in zip(xs, xs[1:], strict=False))
+    full_span = max(xs) - min(xs)
+    # a teleport would move a large fraction of the whole pan in one 0.1s step;
+    # interpolation keeps each step tiny relative to the total travel.
+    assert full_span > 0
+    assert max_step < full_span * 0.2
+
+
+def test_engine_smoothing_lags_raw_target(fake_bins):
+    """Heavy EMA: the tracked endpoints LAG the raw per-window target (the crop
+    eases toward the subject rather than snapping), proving smoothing is active."""
+    moving = [(1.0, 0.1), (3.0, 0.3), (5.0, 0.5), (7.0, 0.9)]
+    eng, _ = _engine(fake_bins, detector=lambda p, t: moving)
+    _crop, kfs, _d = eng.compute_plan("/in.mp4")
+    raw_last = cs.crop_x_for_center(0.9, 405, 1280)
+    assert kfs[-1]["x"] < raw_last  # eased, not a raw pass-through
+
+
 def test_engine_detector_failure_degrades_to_center(fake_bins):
     def broken(p, t):
         raise RuntimeError("mediapipe exploded")
@@ -470,36 +697,44 @@ def test_script_present(verthor_script):
     assert reframe.script_present({"verthorScript": "/opt/verthor/reframe.sh"}) is True
 
 
+def test_script_present_bundled_default_resolves_packaged_script(monkeypatch):
+    """No settings + no env -> the BUNDLED verthor script path is resolved
+    (verthor is opt-in, but its host path still resolves to the packaged .sh).
+    This exercises the _script_host_path bundled-default branch."""
+    monkeypatch.delenv("MEDIA_STUDIO_VERTHOR_SCRIPT", raising=False)
+    host = reframe._script_host_path({})
+    assert host.endswith("verthor_reframe.sh")
+    assert "__BUNDLED__" not in host
+    # the packaged script ships in the repo, so it is present on the host.
+    assert reframe.script_present({}) is True
+
+
 def test_resolve_explicit_claudeshorts_never_probes():
     name, notice = reframe.resolve_engine_name("claudeshorts", {}, which=_never_which)
     assert name == "claudeshorts"
     assert notice is None
 
 
-@pytest.mark.parametrize("requested", ["auto", "verthor", "", None])
-def test_resolve_verthor_when_available(requested, verthor_script):
-    name, notice = reframe.resolve_engine_name(requested, verthor_script, which=_which(found=True))
+@pytest.mark.parametrize("requested", ["auto", "", None])
+def test_resolve_auto_is_claudeshorts_without_probing_wsl(requested):
+    """P3 DEFAULT FLIP: auto (and blank/None) -> claudeshorts, the NO-WSL
+    default. No WSL/script probe runs (``_never_which`` would explode), and no
+    fallback notice is produced."""
+    name, notice = reframe.resolve_engine_name(requested, {}, which=_never_which)
+    assert name == "claudeshorts"
+    assert notice is None
+
+
+def test_resolve_explicit_verthor_when_available(verthor_script):
+    """EXPLICIT verthor still resolves to verthor when WSL + script are present."""
+    name, notice = reframe.resolve_engine_name("verthor", verthor_script, which=_which(found=True))
     assert name == "verthor"
     assert notice is None
 
 
-@pytest.mark.parametrize("requested", ["auto", "", None])
-def test_resolve_auto_falls_back_when_wsl_absent(requested, verthor_script):
-    """auto (and the blank/None synonyms) -> claudeshorts when WSL is absent."""
-    name, notice = reframe.resolve_engine_name(requested, verthor_script, which=_which(found=False))
-    assert name == "claudeshorts"
-    assert notice is not None
-    assert notice["type"] == "reframe.fallback"
-    # "", None and "auto" all normalise to the "auto" selector in the notice.
-    assert notice["requested"] == "auto"
-    assert notice["engine"] == "claudeshorts"
-    assert "WSL" in notice["reason"]
-    assert "claudeshorts" in notice["message"]
-
-
 def test_resolve_explicit_verthor_errors_when_wsl_absent(verthor_script):
     """EXPLICIT verthor must FAIL LOUDLY when WSL is absent — never silently
-    fall back. Only ``auto`` is allowed to substitute claudeshorts."""
+    fall back. verthor is an explicit opt-in; the default is claudeshorts."""
     with pytest.raises(ReframeError) as exc:
         reframe.resolve_engine_name("verthor", verthor_script, which=_which(found=False))
     assert "WSL" in str(exc.value)
@@ -517,33 +752,25 @@ def test_resolve_explicit_verthor_errors_when_script_missing(monkeypatch):
     assert "not found" in str(exc.value)
 
 
-def test_resolve_auto_falls_back_when_script_missing(monkeypatch):
-    monkeypatch.delenv("MEDIA_STUDIO_VERTHOR_SCRIPT", raising=False)
-    name, notice = reframe.resolve_engine_name(
-        "auto",
-        {"verthorScript": "definitely_missing/nope.sh"},
-        which=_never_which,  # script check fails BEFORE any wsl probe
-    )
-    assert name == "claudeshorts"
-    assert "not found" in notice["reason"]
-
-
 def test_resolve_unknown_engine_raises():
     with pytest.raises(ValueError):
         reframe.resolve_engine_name("ffmpeg-magic", {})
 
 
 def test_get_engine_returns_constructed_instances(verthor_script):
-    eng, notice = reframe.get_engine("auto", verthor_script, which=_which(found=True))
-    assert isinstance(eng, ReframeEngine)
+    # P3: auto -> claudeshorts (no WSL probe), no notice.
+    eng, notice = reframe.get_engine("auto", {}, which=_never_which)
+    assert isinstance(eng, ClaudeShortsReframeEngine)
     assert notice is None
 
-    eng, notice = reframe.get_engine("auto", verthor_script, which=_which(found=False))
-    assert isinstance(eng, ClaudeShortsReframeEngine)
-    assert notice is not None
-
+    # explicit claudeshorts -> claudeshorts, no probe.
     eng, notice = reframe.get_engine("claudeshorts", {}, which=_never_which)
     assert isinstance(eng, ClaudeShortsReframeEngine)
+    assert notice is None
+
+    # explicit verthor (WSL present) -> the verthor (WSL) engine.
+    eng, notice = reframe.get_engine("verthor", verthor_script, which=_which(found=True))
+    assert isinstance(eng, ReframeEngine)
     assert notice is None
 
 
@@ -784,8 +1011,8 @@ def test_detect_subject_centers_skips_unreadable_frame(monkeypatch):
 
 
 def test_detect_subject_centers_no_finder_backend_returns_empty(monkeypatch):
-    # When _make_face_finder yields no finder (None) the body returns [] early.
-    monkeypatch.setattr(cs, "_make_face_finder", lambda backend: (None, lambda: None))
+    # When _make_subject_finder yields no finder (None) the body returns [] early.
+    monkeypatch.setattr(cs, "_make_subject_finder", lambda backend: (None, lambda: None))
 
     def boom(*a, **k):  # pragma: no cover - must never run (no finder -> no frames)
         raise AssertionError("no frame extraction without a finder")
@@ -825,3 +1052,109 @@ def test_detect_subject_centers_finder_close_failure_is_swallowed(monkeypatch):
     # A failing close() must never mask the collected results (cleanup-swallow).
     samples = cs.detect_subject_centers("/in.mp4", [0.5], frame_runner=frame_runner, backend="haar")
     assert samples == [(0.5, 0.5)]
+
+
+# --------------------------------------------------------------------------- #
+# _person_center — HOG body fallback (real cv2; sub-window guard + stubbed hit)
+# --------------------------------------------------------------------------- #
+def test_person_center_skips_subwindow_frame_no_crash():
+    import numpy as np
+
+    # Frame smaller than the 64x128 HOG window -> guarded out (would segfault).
+    small = np.zeros((80, 160, 3), dtype=np.uint8)
+    assert cs._person_center(small) is None
+
+
+def test_person_center_no_person_returns_none():
+    import numpy as np
+
+    # A blank window-sized frame -> the real HOG finds no person.
+    blank = np.zeros((256, 256, 3), dtype=np.uint8)
+    assert cs._person_center(blank) is None
+
+
+def test_person_center_returns_normalized_center_on_detection(monkeypatch):
+    import cv2
+    import numpy as np
+
+    class _HOG:
+        def setSVMDetector(self, _d):
+            pass
+
+        def detectMultiScale(self, _img, winStride):
+            # two bodies; the higher-weighted (second) wins. frame width = 400.
+            rects = [(10, 0, 60, 120), (300, 0, 60, 120)]
+            weights = [0.2, 0.9]
+            return rects, weights
+
+    monkeypatch.setattr(cv2, "HOGDescriptor", lambda: _HOG())
+    monkeypatch.setattr(cv2, "HOGDescriptor_getDefaultPeopleDetector", lambda: object())
+    img = np.zeros((200, 400, 3), dtype=np.uint8)  # width 400
+    cx = cs._person_center(img)
+    # best body center x = 300 + 60/2 = 330; normalized = 330/400 = 0.825
+    assert cx == pytest.approx(0.825)
+
+
+def test_person_center_no_rects_returns_none(monkeypatch):
+    import cv2
+    import numpy as np
+
+    class _HOG:
+        def setSVMDetector(self, _d):
+            pass
+
+        def detectMultiScale(self, _img, winStride):
+            return (), None  # no rects, no weights
+
+    monkeypatch.setattr(cv2, "HOGDescriptor", lambda: _HOG())
+    monkeypatch.setattr(cv2, "HOGDescriptor_getDefaultPeopleDetector", lambda: object())
+    assert cs._person_center(np.zeros((200, 200, 3), dtype=np.uint8)) is None
+
+
+def test_person_center_missing_weights_uses_zero(monkeypatch):
+    import cv2
+    import numpy as np
+
+    class _HOG:
+        def setSVMDetector(self, _d):
+            pass
+
+        def detectMultiScale(self, _img, winStride):
+            return [(40, 0, 80, 120)], None  # rect present, weights None
+
+    monkeypatch.setattr(cv2, "HOGDescriptor", lambda: _HOG())
+    monkeypatch.setattr(cv2, "HOGDescriptor_getDefaultPeopleDetector", lambda: object())
+    img = np.zeros((200, 200, 3), dtype=np.uint8)
+    # single rect, center x = 40 + 80/2 = 80; normalized = 80/200 = 0.4
+    assert cs._person_center(img) == pytest.approx(0.4)
+
+
+# --------------------------------------------------------------------------- #
+# _motion_center — inter-frame saliency fallback (real cv2 diff)
+# --------------------------------------------------------------------------- #
+def test_motion_center_locates_moving_block():
+    import numpy as np
+
+    prev = np.zeros((100, 200, 3), dtype=np.uint8)
+    img = np.zeros((100, 200, 3), dtype=np.uint8)
+    # a bright block appears on the RIGHT half -> motion centroid is right-of-center.
+    img[:, 150:180, :] = 255
+    cx = cs._motion_center(prev, img)
+    assert cx is not None
+    assert cx > 0.6  # centroid near x≈165/200 = 0.825
+
+
+def test_motion_center_no_motion_returns_none():
+    import numpy as np
+
+    frame = np.full((60, 120, 3), 30, dtype=np.uint8)
+    # identical frames -> zero diff -> no motion located.
+    assert cs._motion_center(frame, frame.copy()) is None
+
+
+def test_motion_center_shape_mismatch_returns_none():
+    import numpy as np
+
+    prev = np.zeros((100, 200, 3), dtype=np.uint8)
+    img = np.zeros((90, 160, 3), dtype=np.uint8)  # different geometry (scene cut)
+    assert cs._motion_center(prev, img) is None

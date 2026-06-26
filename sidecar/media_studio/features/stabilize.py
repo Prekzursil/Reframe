@@ -67,7 +67,7 @@ DEFAULT_OPTZOOM = 1
 DETECT_FILTER = "vidstabdetect"
 TRANSFORM_FILTER = "vidstabtransform"
 
-# The typed notice discriminator (mirrors reframe.REFRAME_FALLBACK_NOTICE).
+# The typed notice discriminator (a `notice["type"]` consumers can match on).
 STABILIZE_UNAVAILABLE_NOTICE = "stabilize.unavailable"
 
 

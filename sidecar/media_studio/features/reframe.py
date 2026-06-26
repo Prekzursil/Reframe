@@ -263,11 +263,12 @@ class ReframeEngine:
 
 
 # --------------------------------------------------------------------------- #
-# P2 / A4: engine registry + automatic fallback (T4b)
+# P2 / A4 + P3: engine registry + default (claudeshorts, no-WSL)
 # --------------------------------------------------------------------------- #
 # Engine names are part of the UI contract (ShortMaker's auto/verthor/
-# claudeshorts override). "auto" is a SELECTOR, not an engine — it resolves to
-# verthor when available, else claudeshorts (with a typed fallback notice).
+# claudeshorts override). "auto" is a SELECTOR, not an engine — P3 makes it
+# resolve to the in-sidecar **claudeshorts** engine so the pipeline needs NO WSL
+# by default; **verthor** (WSL2) is now an EXPLICIT opt-in only.
 ENGINE_AUTO = "auto"
 ENGINE_VERTHOR = "verthor"
 ENGINE_CLAUDESHORTS = "claudeshorts"
@@ -277,24 +278,6 @@ ENGINES: dict[str, Any] = {
     ENGINE_VERTHOR: ReframeEngine,
     ENGINE_CLAUDESHORTS: ClaudeShortsReframeEngine,
 }
-
-# The typed notice's discriminator (consumers match on `notice["type"]`).
-REFRAME_FALLBACK_NOTICE = "reframe.fallback"
-
-
-def make_fallback_notice(requested: str, reason: str) -> dict[str, str]:
-    """Build the typed notice emitted when verthor falls back to claudeshorts.
-
-    Shape: ``{type, requested, engine, reason, message}`` — ``message`` is the
-    human line the shortmaker job surfaces via ``job.progress``.
-    """
-    return {
-        "type": REFRAME_FALLBACK_NOTICE,
-        "requested": requested,
-        "engine": ENGINE_CLAUDESHORTS,
-        "reason": reason,
-        "message": (f"reframe: verthor (WSL) unavailable — {reason}; falling back to the claudeshorts engine"),
-    }
 
 
 def wsl_available(*, which: WhichFn = shutil.which) -> bool:
@@ -362,28 +345,29 @@ def resolve_engine_name(
 ) -> tuple[str, dict[str, str] | None]:
     """Resolve a requested engine name to ``(concrete_name, notice|None)``.
 
+    P3 DEFAULT FLIP: the in-sidecar **claudeshorts** engine is now the default,
+    so the pipeline needs NO WSL out of the box. ``verthor`` (WSL2) is an
+    EXPLICIT opt-in only.
+
+    - ``"auto"`` (and ``None``/blank -> auto): **claudeshorts**, no WSL probe,
+      no notice — the no-WSL default.
     - ``"claudeshorts"``: returned as-is, no probing, no notice.
-    - ``"auto"`` (and ``None``/blank -> auto): verthor when the WSL PATH probe +
-      script check pass; otherwise **automatic fallback** to claudeshorts with a
-      typed :func:`make_fallback_notice`.
     - ``"verthor"`` (EXPLICIT): verthor when available, else **raise**
       :class:`ReframeError`. An explicit engine request must NOT be silently
-      substituted — only ``auto`` is allowed to fall back.
+      substituted — choosing the WSL engine on a host without WSL fails loudly.
     - anything else: ``ValueError`` (unknown engines fail loudly, A6 #3).
     """
     requested = str(name or ENGINE_AUTO).strip().lower() or ENGINE_AUTO
-    if requested == ENGINE_CLAUDESHORTS:
+    if requested in (ENGINE_AUTO, ENGINE_CLAUDESHORTS):
+        # auto + claudeshorts both resolve to the no-WSL default engine.
         return ENGINE_CLAUDESHORTS, None
-    if requested not in (ENGINE_AUTO, ENGINE_VERTHOR):
+    if requested != ENGINE_VERTHOR:
         raise ValueError(f"unknown reframe engine: {name!r}")
     reason = verthor_unavailable_reason(settings, which=which)
-    if reason is None:
-        return ENGINE_VERTHOR, None
-    if requested == ENGINE_VERTHOR:
+    if reason is not None:
         # Explicit verthor: fail loudly, never silently fall back.
         raise ReframeError(f"verthor reframe engine requested but unavailable: {reason}")
-    _log.warning("reframe fallback (%s requested): %s", requested, reason)
-    return ENGINE_CLAUDESHORTS, make_fallback_notice(requested, reason)
+    return ENGINE_VERTHOR, None
 
 
 def get_engine(
@@ -395,9 +379,9 @@ def get_engine(
     """Build the reframe engine for ``name`` -> ``(engine, notice|None)``.
 
     The engine is a fresh instance of the resolved :data:`ENGINES` class,
-    constructed with ``settings``. ``notice`` is non-None only when an
-    automatic verthor->claudeshorts fallback happened; callers running inside a
-    job should surface ``notice["message"]`` via ``job.progress``. An explicit
+    constructed with ``settings``. ``notice`` is always ``None`` since P3 (the
+    default ``auto`` resolves straight to claudeshorts with no WSL probe and so
+    no fallback notice); the tuple shape is kept for callers. An explicit
     ``verthor`` request with WSL absent raises :class:`ReframeError`.
     """
     settings = settings or {}
