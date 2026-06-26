@@ -532,7 +532,7 @@ def _person_center(img: Any) -> float | None:
     if w < _HOG_MIN_W or h < _HOG_MIN_H:
         return None
     hog = cv2.HOGDescriptor()
-    hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+    hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())  # pyright: ignore[reportAttributeAccessIssue]
     rects, weights = hog.detectMultiScale(img, winStride=(8, 8))
     if rects is None or len(rects) == 0:
         return None
