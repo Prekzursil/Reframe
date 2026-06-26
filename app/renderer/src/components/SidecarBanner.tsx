@@ -17,6 +17,13 @@ export type SidecarStatus = 'running' | 'restarting' | 'down';
 interface SidecarBridge {
   restartSidecar?: () => Promise<{ ok: boolean }>;
   onSidecarStatus?: (cb: (status: SidecarStatus) => void) => () => void;
+  /**
+   * First-run setup failure relay (WU-1 FAIL-LOUD). The main process forwards
+   * bootstrap.py's terminal `FAILED:bootstrap …` line — an ACTIONABLE message
+   * (what failed + where + how to fix) — so a broken first run is never a silent
+   * empty app. Returns an unsubscribe fn.
+   */
+  onBootstrapError?: (cb: (message: string) => void) => () => void;
 }
 
 /** Read the preload-injected bridge without a global Window augmentation. */
@@ -34,6 +41,9 @@ export function SidecarBanner(): React.ReactElement | null {
   // 'running' is the optimistic default: absent any 'down' event the app is fine.
   const [status, setStatus] = useState<SidecarStatus>('running');
   const [busy, setBusy] = useState(false);
+  // First-run setup failure message (WU-1). null = no failure; a non-empty
+  // string is the actionable error to surface (takes precedence over status).
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
 
   useEffect(() => {
     const api = bridge();
@@ -45,6 +55,12 @@ export function SidecarBanner(): React.ReactElement | null {
       setBusy(false);
     });
     return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    const api = bridge();
+    if (!api || typeof api.onBootstrapError !== 'function') return;
+    return api.onBootstrapError((message) => setBootstrapError(message ? message : null));
   }, []);
 
   const onRestart = useCallback(() => {
@@ -63,6 +79,16 @@ export function SidecarBanner(): React.ReactElement | null {
         setBusy(false);
       });
   }, []);
+
+  // First-run setup failure wins: it means there is no sidecar to restart, so we
+  // show the ACTIONABLE message (no Restart button — the fix is in the message).
+  if (bootstrapError !== null) {
+    return (
+      <div className="sidecar-banner sidecar-banner--error" role="alert" aria-live="assertive">
+        <span className="sidecar-banner__message">{bootstrapError}</span>
+      </div>
+    );
+  }
 
   if (status === 'running') return null;
 

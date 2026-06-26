@@ -191,6 +191,36 @@ def write_pth(
     return pth
 
 
+def activate_embed_pth(
+    embed_dir: Path | str,
+    env_dir: Path | str,
+    sidecar_src: Path | str | None = None,
+) -> Path | None:
+    """GUARDED ``._pth`` activation — the runtime never depends on this write.
+
+    The embeddable ``._pth`` lives in the INSTALL dir (beside ``python.exe``). On
+    a read-only install location — e.g. ``C:\\Program Files`` — rewriting it
+    raises :class:`PermissionError`/:class:`OSError`. That MUST NOT abort
+    first-run setup: the env itself installs into the writable DATA ROOT, and the
+    sidecar self-activates it from there at startup
+    (:func:`media_studio.__main__._activate_sidecar_env`). So a failed ``._pth``
+    write is a logged, NON-fatal degradation here — never the silent ``exit 1``
+    that produced an empty data dir and made find-shorts/AI fail downstream.
+
+    Returns the written ``._pth`` path, ``None`` when the dir holds no ``._pth``
+    (a full CPython / dev venv), or ``None`` when the install dir is not writable.
+    """
+    try:
+        return write_pth(embed_dir, env_dir, sidecar_src)
+    except OSError as exc:
+        _log(
+            f"install dir not writable — skipping ._pth activation at {embed_dir} "
+            f"({exc}); the sidecar will self-activate the env from the data dir "
+            f"({env_dir}) instead"
+        )
+        return None
+
+
 # --------------------------------------------------------------------------- #
 # pure logic: pip step argv building (mirrors assets.manager's env installer)
 # --------------------------------------------------------------------------- #
@@ -558,7 +588,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             # pip' — caught by the real-bundle bootstrap smoke, not the mocked
             # unit tests.) The chatterbox env install then reuses this same pip.
             env_dir.mkdir(parents=True, exist_ok=True)
-            write_pth(embed_dir, env_dir, _SIDECAR_DIR)
+            # GUARDED: a read-only install dir (Program Files) cannot take the
+            # ._pth write — that is logged + skipped, NOT fatal. The env installs
+            # into the writable data root and the sidecar self-activates it there.
+            activate_embed_pth(embed_dir, env_dir, _SIDECAR_DIR)
             env_dir = install_env(
                 python_exe=python_exe,
                 root=root,
@@ -602,6 +635,36 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("FAILED:bootstrap interrupted")
         return 130
+    # FAIL LOUD + ACTIONABLE: an unexpected setup failure (e.g. a PermissionError
+    # writing the data dir, a disk-full OSError) must NOT escape as a bare
+    # traceback / silent exit 1 that leaves an EMPTY data dir — the exact
+    # real-machine failure (Program Files install -> unguarded ._pth write ->
+    # exit 1 -> find-shorts/AI fail silently). Every path here prints a single
+    # terminal FAILED: line naming WHAT failed, WHERE (the data root), and HOW to
+    # fix it; the Electron supervisor relays that line to the UI error channel.
+    except PermissionError as exc:
+        print(
+            f"FAILED:bootstrap permission denied during first-run setup: {exc} | "
+            f"data root={root} | fix: pick a writable data folder in Settings "
+            f"(or set MEDIA_STUDIO_CONFIG_DIR) and relaunch — the runtime never "
+            f"needs to write the install dir"
+        )
+        return 1
+    except OSError as exc:
+        print(
+            f"FAILED:bootstrap I/O error during first-run setup: {exc} | "
+            f"data root={root} | fix: ensure the data folder exists, is writable, "
+            f"and has free disk space, then relaunch"
+        )
+        return 1
+    except Exception as exc:  # noqa: BLE001 - last-resort: never a silent traceback
+        print(
+            f"FAILED:bootstrap unexpected first-run setup error: "
+            f"{type(exc).__name__}: {exc} | data root={root} | "
+            f"fix: retry the launch; if it persists, reinstall to a writable "
+            f"location and report this message"
+        )
+        return 1
 
 
 if __name__ == "__main__":  # pragma: no cover - process entry

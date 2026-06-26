@@ -25,6 +25,19 @@
   animation: sidecar-banner-drop var(--dur-slow) var(--ease-out);
 }
 
+/* First-run setup FAILURE (WU-1): a louder edge so a broken first run reads as
+   an actionable error, not the routine "Sidecar stopped" recovery strip. The
+   message itself carries the fix; the strip wraps long, multi-clause text. */
+.sidecar-banner--error {
+  border-color: var(--status-error);
+  border-left-width: 4px;
+  max-width: min(720px, calc(100vw - var(--space-5) * 2));
+}
+
+.sidecar-banner--error .sidecar-banner__message {
+  white-space: normal;
+}
+
 @keyframes sidecar-banner-drop {
   from {
     opacity: 0;

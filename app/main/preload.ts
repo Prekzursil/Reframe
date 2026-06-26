@@ -26,6 +26,7 @@ const SHELL_SHOW_ITEM_CHANNEL = 'shell.showItemInFolder'; // must match app/main
 const DIALOG_PICK_LOGO_CHANNEL = 'dialog.pickLogoFile'; // must match app/main/shellIpc.ts
 const SIDECAR_RESTART_CHANNEL = 'sidecar.restart'; // must match app/main/ipc.ts
 const SIDECAR_STATUS_CHANNEL = 'sidecar.status'; // must match app/main/ipc.ts
+const BOOTSTRAP_ERROR_CHANNEL = 'bootstrap.error'; // must match app/main/main.ts
 const DATA_FOLDER_GET_CHANNEL = 'dataFolder.get'; // must match app/main/dataFolderIpc.ts
 const DATA_FOLDER_PICK_CHANNEL = 'dataFolder.pick'; // must match app/main/dataFolderIpc.ts
 const DATA_FOLDER_SET_CHANNEL = 'dataFolder.set'; // must match app/main/dataFolderIpc.ts
@@ -76,6 +77,14 @@ export interface MediaApi {
   restartSidecar(): Promise<{ ok: boolean }>;
   /** Subscribe to sidecar lifecycle transitions. Returns an unsubscribe fn. */
   onSidecarStatus(cb: (status: SidecarStatus) => void): () => void;
+  /**
+   * WU-1 FAIL-LOUD: subscribe to first-run setup failures. The main process
+   * relays bootstrap.py's terminal `FAILED:bootstrap …` line (an actionable
+   * message: what failed + where + how to fix) so a broken first run surfaces in
+   * the UI instead of leaving an empty, silently-failing app. Returns an
+   * unsubscribe fn.
+   */
+  onBootstrapError(cb: (message: string) => void): () => void;
   /**
    * DATA ROOT: the data folder (models/envs/exports/...) in use THIS session.
    * Resolves with the absolute path the sidecar also derives its tree from.
@@ -134,6 +143,12 @@ const api: MediaApi = {
     const listener = (_event: IpcRendererEvent, status: SidecarStatus): void => cb(status);
     ipcRenderer.on(SIDECAR_STATUS_CHANNEL, listener);
     return () => ipcRenderer.removeListener(SIDECAR_STATUS_CHANNEL, listener);
+  },
+
+  onBootstrapError(cb: (message: string) => void): () => void {
+    const listener = (_event: IpcRendererEvent, message: string): void => cb(message);
+    ipcRenderer.on(BOOTSTRAP_ERROR_CHANNEL, listener);
+    return () => ipcRenderer.removeListener(BOOTSTRAP_ERROR_CHANNEL, listener);
   },
 
   getDataFolder(): Promise<string> {
