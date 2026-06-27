@@ -15,6 +15,7 @@ import { SidecarBanner, type SidecarStatus } from './SidecarBanner';
 // ---- bridge fake ------------------------------------------------------------
 
 let statusCb: ((status: SidecarStatus) => void) | null = null;
+let bootstrapErrorCb: ((message: string) => void) | null = null;
 const restartSidecar = vi.fn<() => Promise<{ ok: boolean }>>();
 
 function installBridge(): void {
@@ -29,10 +30,36 @@ function installBridge(): void {
   };
 }
 
+/** Bridge that ALSO relays first-run bootstrap errors (WU-1 FAIL-LOUD). */
+function installBridgeWithBootstrap(): void {
+  (window as unknown as { api?: unknown }).api = {
+    onSidecarStatus: (cb: (status: SidecarStatus) => void) => {
+      statusCb = cb;
+      return () => {
+        statusCb = null;
+      };
+    },
+    restartSidecar,
+    onBootstrapError: (cb: (message: string) => void) => {
+      bootstrapErrorCb = cb;
+      return () => {
+        bootstrapErrorCb = null;
+      };
+    },
+  };
+}
+
 /** Drive a supervisor status push into the mounted banner. */
 function pushStatus(status: SidecarStatus): void {
   act(() => {
     statusCb?.(status);
+  });
+}
+
+/** Drive a first-run bootstrap-error push into the mounted banner. */
+function pushBootstrapError(message: string): void {
+  act(() => {
+    bootstrapErrorCb?.(message);
   });
 }
 
@@ -41,6 +68,7 @@ let root: Root;
 
 beforeEach(() => {
   statusCb = null;
+  bootstrapErrorCb = null;
   restartSidecar.mockReset();
   restartSidecar.mockResolvedValue({ ok: true });
   installBridge();
@@ -172,5 +200,41 @@ describe('SidecarBanner', () => {
     mount();
     // No status pushes possible; renders nothing and does not throw.
     expect(banner()).toBeNull();
+  });
+
+  // ---- WU-1: first-run setup FAIL-LOUD surfacing -----------------------------
+
+  it('surfaces an actionable first-run bootstrap error (role=alert, no Restart)', () => {
+    installBridgeWithBootstrap();
+    mount();
+    expect(banner()).toBeNull();
+    pushBootstrapError(
+      'FAILED:bootstrap permission denied | data root=C:\\Users\\me | fix: pick a writable folder',
+    );
+    const el = banner();
+    expect(el).not.toBeNull();
+    expect(el!.getAttribute('role')).toBe('alert');
+    expect(el!.textContent).toContain('permission denied');
+    expect(el!.textContent).toContain('fix:');
+    // The bootstrap-error banner offers no Restart (the fix is in the message).
+    expect(restartBtn()).toBeNull();
+  });
+
+  it('ignores an empty bootstrap-error message (stays clear)', () => {
+    installBridgeWithBootstrap();
+    mount();
+    pushBootstrapError('');
+    expect(banner()).toBeNull();
+  });
+
+  it('the bootstrap error takes precedence over a sidecar status banner', () => {
+    installBridgeWithBootstrap();
+    mount();
+    pushStatus('down');
+    expect(banner()!.textContent).toContain('Sidecar stopped');
+    pushBootstrapError('FAILED:bootstrap I/O error | fix: free disk space');
+    // The actionable first-run failure replaces the generic status banner.
+    expect(banner()!.textContent).toContain('I/O error');
+    expect(restartBtn()).toBeNull();
   });
 });

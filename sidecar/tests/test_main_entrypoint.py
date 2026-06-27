@@ -25,6 +25,7 @@ def test_main_composes_and_delegates_to_rpc_main(monkeypatch, tmp_path):
     calls: list[str] = []
 
     monkeypatch.setattr(entry, "_suppress_windows_error_dialogs", lambda: calls.append("suppress"))
+    monkeypatch.setattr(entry, "_activate_sidecar_env", lambda: calls.append("activate"))
     monkeypatch.setattr(entry, "_preimport_native_modules", lambda: calls.append("preimport"))
 
     fake_svc = SimpleNamespace(data_dir=tmp_path)
@@ -46,8 +47,8 @@ def test_main_composes_and_delegates_to_rpc_main(monkeypatch, tmp_path):
 
     rc = entry.main(["--flag"])
     assert rc == 0
-    # ordering: guards FIRST, then registration, then serve
-    assert calls == ["suppress", "preimport", "register"]
+    # ordering: dialog guard, env activation (before natives), pre-import, register
+    assert calls == ["suppress", "activate", "preimport", "register"]
     assert captured["argv"] == ["--flag"]
     # the composition seam carries data_dir: a DiskJobStore at data_dir/jobs
     store = captured["store"]
@@ -57,10 +58,67 @@ def test_main_composes_and_delegates_to_rpc_main(monkeypatch, tmp_path):
 
 def test_main_propagates_rpc_exit_code(monkeypatch, tmp_path):
     monkeypatch.setattr(entry, "_suppress_windows_error_dialogs", lambda: None)
+    monkeypatch.setattr(entry, "_activate_sidecar_env", lambda: None)
     monkeypatch.setattr(entry, "_preimport_native_modules", lambda: None)
     monkeypatch.setattr(entry.handlers, "register_all", lambda: SimpleNamespace(data_dir=tmp_path))
     monkeypatch.setattr(entry.rpc, "main", lambda argv=None, *, store=None: 130)
     assert entry.main() == 130
+
+
+# --------------------------------------------------------------------------- #
+# _activate_sidecar_env — make the runtime independent of the install-dir ._pth
+# (WU-1 packaging hardening: read-only Program Files cannot have its ._pth
+# rewritten, so the env is self-activated from the relocatable DATA ROOT).
+# --------------------------------------------------------------------------- #
+class TestActivateSidecarEnv:
+    def test_adds_existing_env_dir_via_site(self, monkeypatch, tmp_path):
+        """An existing <data root>/envs/sidecar is put on sys.path via
+        site.addsitedir (the install dir is never touched)."""
+        env_dir = tmp_path / "envs" / "sidecar"
+        env_dir.mkdir(parents=True)
+        monkeypatch.setattr(entry, "default_config_dir", lambda: tmp_path)
+        added: list[str] = []
+        monkeypatch.setattr(entry.site, "addsitedir", lambda p: added.append(p))
+        # a clean sys.path snapshot so the "already present" guard does not fire
+        monkeypatch.setattr(entry.sys, "path", ["/somewhere/else"])
+
+        entry._activate_sidecar_env()
+        assert added == [str(env_dir)]
+
+    def test_noop_when_env_dir_absent(self, monkeypatch, tmp_path):
+        """A dev box with no provisioned env (the dir is absent) is a no-op —
+        addsitedir is never called."""
+        monkeypatch.setattr(entry, "default_config_dir", lambda: tmp_path)
+
+        def boom(_p):  # pragma: no cover - must not be reached
+            raise AssertionError("addsitedir must not run when the env dir is absent")
+
+        monkeypatch.setattr(entry.site, "addsitedir", boom)
+        entry._activate_sidecar_env()  # no envs/sidecar under tmp_path -> returns
+
+    def test_idempotent_when_already_on_sys_path(self, monkeypatch, tmp_path):
+        """When the env dir is ALREADY on sys.path (e.g. via the ._pth on a
+        writable install) we do not add it a second time."""
+        env_dir = tmp_path / "envs" / "sidecar"
+        env_dir.mkdir(parents=True)
+        monkeypatch.setattr(entry, "default_config_dir", lambda: tmp_path)
+        monkeypatch.setattr(entry.sys, "path", ["/x", str(env_dir), "/y"])
+
+        def boom(_p):  # pragma: no cover - must not be reached
+            raise AssertionError("addsitedir must not run when already on sys.path")
+
+        monkeypatch.setattr(entry.site, "addsitedir", boom)
+        entry._activate_sidecar_env()  # already present -> returns without adding
+
+    def test_filesystem_error_never_crashes_startup(self, monkeypatch):
+        """A malformed/unreadable data-root path is swallowed (best-effort): the
+        OSError must NOT propagate and crash the sidecar."""
+
+        def raise_os_error():
+            raise OSError("bad data-root path")
+
+        monkeypatch.setattr(entry, "default_config_dir", raise_os_error)
+        entry._activate_sidecar_env()  # returns None, no exception
 
 
 def test_suppress_windows_error_dialogs_non_win32_is_noop(monkeypatch):

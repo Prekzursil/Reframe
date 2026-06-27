@@ -59,6 +59,14 @@ function liveWindows(): BrowserWindow[] {
 
 /** ipc channel carrying `{state, line}` bootstrap progress to the renderer. */
 const BOOTSTRAP_PROGRESS_CHANNEL = 'bootstrap.progress';
+/**
+ * WU-1 FAIL-LOUD: ipc channel carrying the ACTIONABLE first-run failure message
+ * (bootstrap.py's terminal `FAILED:bootstrap …` line, or a spawn-failure
+ * fallback) to the renderer's SidecarBanner. Must match preload.ts
+ * BOOTSTRAP_ERROR_CHANNEL + the renderer bridge `onBootstrapError`. A broken
+ * first run is then visible + actionable instead of a silent empty app.
+ */
+const BOOTSTRAP_ERROR_CHANNEL = 'bootstrap.error';
 
 let bootstrapChild: ChildProcess | null = null;
 
@@ -243,6 +251,20 @@ function broadcastBootstrap(state: 'running' | 'done' | 'error', line: string): 
 }
 
 /**
+ * WU-1 FAIL-LOUD: push the ACTIONABLE first-run failure message to every live
+ * renderer so the SidecarBanner can surface it (what failed + where + how to
+ * fix). Separate from broadcastBootstrap's progress stream because this is the
+ * terminal, user-facing error — not a progress line.
+ */
+function broadcastBootstrapError(message: string): void {
+  for (const win of liveWindows()) {
+    if (!win.webContents.isDestroyed()) {
+      win.webContents.send(BOOTSTRAP_ERROR_CHANNEL, message);
+    }
+  }
+}
+
+/**
  * Spawn `runtime_setup/bootstrap.py` with the bundled embeddable python and
  * relay its progress lines (`[bootstrap] ...` on stderr, the terminal
  * SUCCESS:/FAILED: line on stdout) to the renderer over 'bootstrap.progress'.
@@ -260,6 +282,9 @@ function runFirstRunBootstrap(): Promise<boolean> {
       windowsHide: true,
     });
     bootstrapChild = child;
+    // WU-1 FAIL-LOUD: remember bootstrap.py's terminal actionable failure line
+    // (`FAILED:bootstrap …`) so we can surface it to the UI on a non-zero exit.
+    let lastFailLine = '';
     const relayLines = (stream: NodeJS.ReadableStream | null): void => {
       if (!stream) return;
       let buffer = '';
@@ -273,6 +298,7 @@ function runFirstRunBootstrap(): Promise<boolean> {
           if (line !== '') {
             // eslint-disable-next-line no-console
             console.error(`[bootstrap] ${line}`);
+            if (line.startsWith('FAILED:bootstrap')) lastFailLine = line;
             broadcastBootstrap('running', line);
           }
           nl = buffer.indexOf('\n');
@@ -286,12 +312,26 @@ function runFirstRunBootstrap(): Promise<boolean> {
       // eslint-disable-next-line no-console
       console.error(`[bootstrap] spawn error: ${err.message}`);
       broadcastBootstrap('error', `bootstrap spawn failed: ${err.message}`);
+      broadcastBootstrapError(
+        `First-run setup could not start: ${err.message}. ` +
+          'Reinstall to a writable location, or set MEDIA_STUDIO_PYTHON, then relaunch.',
+      );
       resolveRun(false);
     });
     child.on('exit', (code: number | null) => {
       bootstrapChild = null;
       const ok = code === 0;
       broadcastBootstrap(ok ? 'done' : 'error', `bootstrap exited (code ${code ?? 'null'})`);
+      if (!ok) {
+        // Prefer bootstrap.py's actionable FAILED line; fall back to a generic
+        // but still-actionable message if the process died before printing one.
+        broadcastBootstrapError(
+          lastFailLine !== ''
+            ? lastFailLine
+            : `First-run setup failed (exit ${code ?? 'null'}). Check that the data ` +
+                'folder is writable and has free disk space, then relaunch.',
+        );
+      }
       resolveRun(ok);
     });
   });

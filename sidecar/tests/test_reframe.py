@@ -210,6 +210,19 @@ def test_reframe_returns_out_path():
     assert out == r"C:\out\clip.mp4"
 
 
+def test_reframe_accepts_on_notice_for_seam_uniformity():
+    # WU-3: the stage seam passes on_notice to whichever engine is resolved. The
+    # verthor adapter runs subject tracking inside WSL (it cannot emit a
+    # Python-side degrade notice), so it ACCEPTS on_notice and never calls it —
+    # but the signature must match so _lazy_reframe can thread it uniformly.
+    runner = _make_runner(returncode=0)
+    engine = ReframeEngine(settings={"verthorScript": "/opt/verthor/reframe.sh"}, runner=runner)
+    notices: list = []
+    out = engine.reframe(r"C:\in\clip.mp4", r"C:\out\clip.mp4", on_notice=notices.append)
+    assert out == r"C:\out\clip.mp4"
+    assert notices == []
+
+
 def test_reframe_invokes_runner_with_argv_list_no_shell():
     runner = _make_runner(returncode=0)
     engine = ReframeEngine(

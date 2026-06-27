@@ -605,7 +605,7 @@ def test_shortmaker_export_resolves_cached_candidates(services: Services, ctx: R
             # stabilize is DEFAULT-ON in the reframe path; stub it so no real
             # vidstab/ffmpeg runs (warp-only pass-through for this handler test).
             stabilize=lambda i, o, *, settings=None, on_notice=None: i,
-            reframe=lambda i, o, a, *, settings=None: o,
+            reframe=lambda i, o, a, *, settings=None, on_notice=None: o,
             render_caption=lambda *a, **k: a[2],
             export_clip=lambda i, o, *, settings=None: o,
         ),
@@ -655,7 +655,7 @@ def test_shortmaker_select_caches_candidates(services: Services, ctx: RpcContext
             select_candidates=lambda *a, **k: [cand],
             snap_candidates=lambda cands, *a, **k: (list(cands), []),
             cut_clip=lambda *a, **k: a[1],
-            reframe=lambda i, o, a, *, settings=None: o,
+            reframe=lambda i, o, a, *, settings=None, on_notice=None: o,
             render_caption=lambda *a, **k: a[2],
             export_clip=lambda i, o, *, settings=None: o,
         ),

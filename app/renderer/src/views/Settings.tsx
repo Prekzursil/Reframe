@@ -19,6 +19,7 @@ import { TabBar, type TabDef } from '../components/TabBar';
 import { SystemHealth } from '../features/SystemHealth';
 import { ProvidersKeys } from '../features/ProvidersKeys';
 import { PathsPanel, type PathsBridge } from '../components/PathsPanel';
+import { SetupStatusPanel } from '../components/SetupStatusPanel';
 import { client } from '../lib/rpc';
 import { resolveWindowApi } from '../features/shortMakerLogic';
 import './settings.css';
@@ -68,6 +69,14 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
         <ModelsSystemPanel onOpenProviders={() => ctx.goTo('providers')} />
       </Suspense>
     ),
+  },
+  {
+    id: 'setup',
+    label: 'Setup',
+    // WU-2: the first-run self-diagnostic. Validates the install end-to-end
+    // (writable data dir, device probe, reframe deps, ASR backend, ffmpeg) and
+    // reports LOUDLY with fix hints so the user never lands in a broken render.
+    render: () => <SetupStatusPanel title="Setup status" />,
   },
   {
     id: 'providers',

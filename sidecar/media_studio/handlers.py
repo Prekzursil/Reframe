@@ -2119,6 +2119,32 @@ class Services:
         )
         return {"recommendation": recommendation}
 
+    def system_self_test(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``system.selfTest()`` -> the first-run diagnostic report. Direct-return.
+
+        WU-2: validates a fresh install END-TO-END and reports LOUDLY so the app
+        never proceeds into a broken render. Composes the PURE
+        :func:`self_test.run` over the runtime services — the data-dir writability
+        probe (write+read+delete under :attr:`data_dir`), the hardware probe seam
+        (:class:`HardwareProbe`, the SAME one ``system.probe``/``advisor`` use), the
+        native-dependency import map (cv2/mediapipe for reframe + the faster-whisper
+        ASR backend, via ``importlib.find_spec`` — nothing heavy is imported), and
+        the ffmpeg/ffprobe chain (:func:`tools_resolver.resolve_tool`). Every probe
+        is fail-open: a failure becomes a reported problem + fix hint, never an
+        exception. Returns the camelCase wire report the setup-status panel renders.
+        """
+        from . import tools_resolver as _tools_resolver  # local: import-light (registers tool assets)
+        from .features import self_test as _self_test  # local: import-light pure
+
+        settings = self.settings.get()
+        probe = self._hardware_probe or self._default_hardware_probe()
+        report = _self_test.run(
+            data_dir=self.data_dir,
+            hardware_probe=probe,
+            resolve_tool=lambda name: _tools_resolver.resolve_tool(name, settings),
+        )
+        return _self_test_report_to_wire(report)
+
     def phase8_signals(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
         """``phase8.signals({videoId, tier?})`` -> ``{jobId}``. Job-based.
 
@@ -3535,6 +3561,29 @@ def _advisor_report_to_wire(report: Any) -> dict[str, Any]:
     }
 
 
+def _self_test_report_to_wire(report: Any) -> dict[str, Any]:
+    """Convert a :class:`self_test.SelfTestReport` to the camelCase wire dict.
+
+    Mirrors the renderer's ``SelfTestReport`` TS type (ok / checks[id,label,ok,
+    required,detail,fixHint] / problems), so the setup-status panel maps it 1:1.
+    """
+    return {
+        "ok": report.ok,
+        "checks": [
+            {
+                "id": c.id,
+                "label": c.label,
+                "ok": c.ok,
+                "required": c.required,
+                "detail": c.detail,
+                "fixHint": c.fix_hint,
+            }
+            for c in report.checks
+        ],
+        "problems": list(report.problems),
+    }
+
+
 def _run_phase8_signals(  # pragma: no cover - heavy Wave-1 signal compute (torch/cv2/transformers); tests inject a fake runner
     media_path: str,
     *,
@@ -3645,6 +3694,9 @@ def register_all(
     # probes (advisor + present-map + local-server detect + asr engines) through
     # the PURE recommender. Makes ZERO provider/LLM calls.
     reg("system.recommend", svc.system_recommend)
+    # WU-2: the first-run self-diagnostic. Direct (no job): pure data-dir/device/
+    # native-dep/ffmpeg probes behind seams — reports LOUDLY, never proceeds broken.
+    reg("system.selfTest", svc.system_self_test)
     # WU-8: the unified read-only readiness roll-up (model tiers + per-function
     # provider key/consent state). Direct (no job): pure installed-state + redacted
     # settings reads — no provider call, no assets.ensure (the read-only invariant).

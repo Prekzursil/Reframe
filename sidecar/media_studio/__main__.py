@@ -13,10 +13,50 @@ Running ``python -m media_studio.rpc`` instead would start the bare core with on
 
 from __future__ import annotations
 
+import site
 import sys
 
 from . import handlers, rpc
 from .job_store import DiskJobStore
+from .settings_store import default_config_dir
+
+#: the first-run env subdir under the data root. Mirrors
+#: ``runtime_setup.bootstrap.SIDECAR_ENV_NAME`` (kept a local literal so the
+#: runtime never imports the build-time ``runtime_setup`` package).
+_SIDECAR_ENV_DIRNAME = "sidecar"
+
+
+def _activate_sidecar_env() -> None:
+    """Put the first-run sidecar env on ``sys.path`` FROM THE DATA ROOT.
+
+    The heavy runtime deps (httpx, numpy, faster-whisper, kokoro-onnx, ...)
+    install into the relocatable DATA ROOT at ``<data root>/envs/sidecar`` —
+    NEVER the install dir. The embeddable interpreter's ``python3XX._pth`` is the
+    *other* mechanism that puts that env on ``sys.path``, but a read-only install
+    dir (e.g. ``C:\\Program Files``) CANNOT have its ``._pth`` rewritten by
+    first-run bootstrap. The runtime therefore MUST NOT depend on that write: we
+    add the env dir via :func:`site.addsitedir` here so its ``site-packages`` and
+    ``.pth`` files resolve whether or not the install dir was writable.
+
+    Idempotent (skips when the dir is already on ``sys.path``) and best-effort
+    (absence is fine on a dev box that runs from a venv; any filesystem probe
+    error returns quietly rather than bricking startup — the ``._pth`` activation
+    may still have succeeded). The data root is resolved the SAME way the rest of
+    the sidecar resolves it (``MEDIA_STUDIO_CONFIG_DIR`` -> ``%APPDATA%`` -> XDG),
+    so it always matches the dir bootstrap provisioned into.
+    """
+    try:
+        env_dir = default_config_dir() / "envs" / _SIDECAR_ENV_DIRNAME
+        if not env_dir.is_dir():
+            return
+        resolved = str(env_dir)
+        if resolved in sys.path:
+            return
+        site.addsitedir(resolved)
+    except OSError:
+        # A malformed/unreadable data-root path must never crash startup; the
+        # ._pth activation (when the install dir was writable) is the fallback.
+        return
 
 
 def _suppress_windows_error_dialogs() -> None:
@@ -83,6 +123,10 @@ def main(argv: list[str] | None = None) -> int:
     by a prior exit reappears as INTERRUPTED (never auto-restarted, §5).
     """
     _suppress_windows_error_dialogs()
+    # Activate the data-root env BEFORE pre-importing natives (they live in it),
+    # so the runtime never depends on a writable install dir (the read-only
+    # Program Files first-run failure this hardening fixes).
+    _activate_sidecar_env()
     _preimport_native_modules()
     svc = handlers.register_all()
     store = DiskJobStore(svc.data_dir / "jobs")

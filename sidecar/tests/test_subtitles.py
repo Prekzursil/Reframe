@@ -409,6 +409,17 @@ def test_escape_ass_text_blocks_override_injection():
     assert "}" not in escaped
 
 
+def test_unescape_ass_text_passes_through_stray_backslashes():
+    # read_ass may parse externally-authored ASS containing backslashes that are
+    # NOT one of the known escapes (\N, \(, \), \\). Such a backslash — and a
+    # trailing backslash with no following char — passes through literally rather
+    # than raising or consuming the next character.
+    assert S._unescape_ass_text("a\\xb") == "a\\xb"  # '\x' is not a known escape
+    assert S._unescape_ass_text("end\\") == "end\\"  # trailing backslash, no next char
+    # And the known escapes still decode (inverse of escape_ass_text):
+    assert S._unescape_ass_text("\\(\\)\\\\\\N") == "{}\\\n"
+
+
 def test_escape_ass_text_converts_newlines():
     assert S.escape_ass_text("a\nb") == "a\\Nb"
     assert S.escape_ass_text("a\r\nb") == "a\\Nb"

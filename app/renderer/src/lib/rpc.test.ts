@@ -595,6 +595,12 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('system.recommend', { commercial: false });
   });
 
+  it('system.selfTest calls the bare method (WU-2 first-run diagnostic)', async () => {
+    const r = installApi();
+    await client.system.selfTest();
+    expect(r).toHaveBeenCalledWith('system.selfTest', undefined);
+  });
+
   it('asr.engines calls the bare method', async () => {
     const r = installApi();
     await client.asr.engines();

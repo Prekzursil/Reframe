@@ -133,6 +133,43 @@ class TestPthActivation:
         assert bs.find_pth_file(tmp_path) == target
 
 
+class TestActivateEmbedPth:
+    """GUARDED ._pth activation: a read-only install dir must NOT crash setup
+    (the runtime self-activates the env from the data dir instead)."""
+
+    def test_writes_pth_when_dir_is_writable(self, tmp_path):
+        embed = tmp_path / "python-embed"
+        embed.mkdir()
+        (embed / "python312._pth").write_text("python312.zip\n.\n#import site\n")
+        written = bs.activate_embed_pth(embed, tmp_path / "env", tmp_path / "src")
+        assert written == embed / "python312._pth"
+        assert "import site" in written.read_text(encoding="utf-8")
+
+    def test_returns_none_for_non_embed_dir(self, tmp_path):
+        # no ._pth (a full CPython / dev venv) — nothing to activate, no error
+        assert bs.activate_embed_pth(tmp_path, tmp_path / "env") is None
+
+    def test_permission_error_is_guarded_not_raised(self, tmp_path, monkeypatch, capsys):
+        # simulate a read-only install dir (e.g. Program Files): the write raises
+        # PermissionError, which activate_embed_pth swallows + logs (returns None).
+        def boom(*_a, **_k):
+            raise PermissionError("install dir is read-only")
+
+        monkeypatch.setattr(bs, "write_pth", boom)
+        result = bs.activate_embed_pth(tmp_path / "install" / "python", tmp_path / "env")
+        assert result is None
+        err = capsys.readouterr().err
+        assert "skipping ._pth activation" in err
+        assert "self-activate the env from the data dir" in err
+
+    def test_generic_oserror_is_guarded(self, tmp_path, monkeypatch):
+        def boom(*_a, **_k):
+            raise OSError("disk gremlin")
+
+        monkeypatch.setattr(bs, "write_pth", boom)
+        assert bs.activate_embed_pth(tmp_path, tmp_path / "env") is None
+
+
 # --------------------------------------------------------------------------- #
 # pip step argv building (mirrors the U4 env installer; NO pip is run)
 # --------------------------------------------------------------------------- #
@@ -424,6 +461,90 @@ class TestMainOrdering:
 
         assert rc == 0
         assert order == ["pth", "install"], "._pth must be written before the pip install"
+
+
+class TestMainReadOnlyInstallDir:
+    """WU-1 root cause: a read-only install dir (Program Files) must NOT abort
+    first-run setup. The ._pth write is skipped (guarded) and the env still
+    provisions into the writable DATA ROOT (``--root``)."""
+
+    def _fake_py(self, tmp_path: Path) -> Path:
+        fake_py = tmp_path / "install" / "python" / "python.exe"
+        fake_py.parent.mkdir(parents=True)
+        fake_py.write_text("", encoding="utf-8")
+        return fake_py
+
+    def test_pth_not_writable_still_provisions_env_in_data_root(self, tmp_path, monkeypatch, capsys):
+        # 1) the install-dir ._pth write fails like a read-only Program Files dir
+        def deny_pth(*_a, **_k):
+            raise PermissionError("Program Files is read-only")
+
+        monkeypatch.setattr(bs, "write_pth", deny_pth)
+
+        # 2) the env install lands in the DATA ROOT (root == tmp_path), proving
+        #    provisioning succeeds THERE even though the install dir is read-only.
+        def fake_install(*, python_exe, root, env_name, req_file, embed_dir=None):
+            env_dir = Path(root) / "envs" / env_name
+            env_dir.mkdir(parents=True, exist_ok=True)
+            (env_dir / "provisioned.marker").write_text("ok", encoding="utf-8")
+            return env_dir
+
+        monkeypatch.setattr(bs, "install_env", fake_install)
+        fake_py = self._fake_py(tmp_path)
+
+        rc = bs.main(["--skip-assets", "--root", str(tmp_path), "--python", str(fake_py)])
+
+        # NOT a silent exit 1: setup completes, the env exists in the data root.
+        assert rc == 0
+        assert (tmp_path / "envs" / "sidecar" / "provisioned.marker").is_file()
+        # the guard logged the read-only skip (actionable, not a crash)
+        assert "skipping ._pth activation" in capsys.readouterr().err
+
+
+class TestMainFailsLoud:
+    """An unexpected first-run failure surfaces a single actionable FAILED line
+    (what + where + how to fix) and exit 1 — never a bare traceback / silent
+    empty data dir."""
+
+    def _fake_py(self, tmp_path: Path) -> Path:
+        fake_py = tmp_path / "py" / "python.exe"
+        fake_py.parent.mkdir(parents=True)
+        fake_py.write_text("", encoding="utf-8")
+        return fake_py
+
+    def test_permission_error_is_actionable(self, tmp_path, monkeypatch, capsys):
+        def boom(**_kwargs):
+            raise PermissionError("denied writing the data dir")
+
+        monkeypatch.setattr(bs, "install_env", boom)
+        rc = bs.main(["--skip-assets", "--root", str(tmp_path), "--python", str(self._fake_py(tmp_path))])
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "FAILED:bootstrap permission denied" in out
+        assert str(tmp_path) in out  # WHERE: the data root
+        assert "fix:" in out  # HOW to fix
+
+    def test_oserror_is_actionable(self, tmp_path, monkeypatch, capsys):
+        def boom(**_kwargs):
+            raise OSError("No space left on device")
+
+        monkeypatch.setattr(bs, "install_env", boom)
+        rc = bs.main(["--skip-assets", "--root", str(tmp_path), "--python", str(self._fake_py(tmp_path))])
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "FAILED:bootstrap I/O error" in out
+        assert "free disk space" in out
+
+    def test_unexpected_error_is_actionable(self, tmp_path, monkeypatch, capsys):
+        def boom(**_kwargs):
+            raise RuntimeError("totally unexpected")
+
+        monkeypatch.setattr(bs, "install_env", boom)
+        rc = bs.main(["--skip-assets", "--root", str(tmp_path), "--python", str(self._fake_py(tmp_path))])
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "FAILED:bootstrap unexpected first-run setup error" in out
+        assert "RuntimeError: totally unexpected" in out
 
 
 class TestMainChatterbox:
