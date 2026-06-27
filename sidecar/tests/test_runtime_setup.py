@@ -71,7 +71,7 @@ class TestShippedRequirementFiles:
         assert pins["httpx"] == "0.28.1"
         assert pins["opencv-python"] == "4.13.0.92"
         assert pins["nvidia-cublas-cu12"] == "12.9.2.10"
-        assert pins["nvidia-cudnn-cu12"] == "9.23.1.3"
+        assert pins["nvidia-cudnn-cu12"] == "9.23.2.1"
         assert "kokoro-onnx" in pins  # pinned TTS engine (exact version chosen by T5)
         # A6.5 / §7: torch must NEVER enter the main sidecar env
         assert "torch" not in pins
@@ -80,16 +80,16 @@ class TestShippedRequirementFiles:
     def test_chatterbox_file_parses_with_torch_cu12(self):
         reqs = bs.load_requirements(bs.CHATTERBOX_REQUIREMENTS)
         pins = dict(p.split("==", 1) for p in reqs.pins)
-        # The new py3.14 trio (torch 2.10 cu128).
-        assert pins["torch"] == "2.10.0+cu128"
-        assert pins["torchaudio"] == "2.10.0+cu128"
+        # The new py3.14 trio (torch 2.11 cu128).
+        assert pins["torch"] == "2.11.0+cu128"
+        assert pins["torchaudio"] == "2.11.0+cu128"
         assert pins["chatterbox-tts"] == "0.1.7"
         assert reqs.options == ("--extra-index-url https://download.pytorch.org/whl/cu128",)
         # ORDER MATTERS: mirror the CHATTERBOX_REQUIREMENTS tuple order so a
         # bootstrap-built env registers as the installed asset (sentinel match).
         assert reqs.pins[0].startswith("chatterbox-tts==")
-        assert reqs.pins[1] == "torch==2.10.0+cu128"
-        assert reqs.pins[2] == "torchaudio==2.10.0+cu128"
+        assert reqs.pins[1] == "torch==2.11.0+cu128"
+        assert reqs.pins[2] == "torchaudio==2.11.0+cu128"
 
 
 # --------------------------------------------------------------------------- #
