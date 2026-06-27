@@ -70,10 +70,23 @@ def test_set_is_a_partial_merge(store: SettingsStore) -> None:
 
 def test_set_persists_cloud_api_key_but_not_in_a_project(store: SettingsStore, tmp_path: Path) -> None:
     # The key lives ONLY in the per-user config file, never a project folder (§0).
-    store.set({"cloudApiKey": "sk-secret"})
-    assert store.get()["cloudApiKey"] == "sk-secret"
+    # SECURITY (adv-fix): the RPC-facing get() MUST NOT echo the full cloud key —
+    # it is redacted to last-4 exactly like providers[].apiKeys. Only get_raw()
+    # (the factory path, never registered over RPC) and the on-disk store keep the
+    # live key. set() returns the redacted view too (no echo of a full key).
+    redacted = store.set({"cloudApiKey": "sk-secret-1234"})
+    assert redacted["cloudApiKey"] == "…1234"
+    assert store.get()["cloudApiKey"] == "…1234"
+    assert store.get_raw()["cloudApiKey"] == "sk-secret-1234"
     raw = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
-    assert raw["cloudApiKey"] == "sk-secret"
+    assert raw["cloudApiKey"] == "sk-secret-1234"
+
+
+def test_get_does_not_redact_empty_cloud_api_key(store: SettingsStore) -> None:
+    # An empty/absent cloud key must render as-is ("") — never "…" — so the UI
+    # does not imply a key exists when none is set (the redact branch is skipped).
+    store.set({"cloudApiKey": ""})
+    assert store.get()["cloudApiKey"] == ""
 
 
 def test_set_rejects_non_dict(store: SettingsStore) -> None:

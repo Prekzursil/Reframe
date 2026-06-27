@@ -232,7 +232,11 @@ class TestTrimClip:
             duration=boom_duration,
         )
         assert path == "/in.mp4" and removed == 0.0
-        assert keeps == []  # no timeline -> nothing to remap
+        # ADV-FIX (caption-erasure): a passthrough must return IDENTITY keeps so
+        # the caller's remap_cues maps caption cues through UNCHANGED. Returning
+        # [] made remap_time collapse EVERY cue to 0 -> all captions silently
+        # erased. An open-ended keep (0 .. inf) is the identity transform.
+        assert keeps == [(0.0, float("inf"))]
 
     def test_trim_duration_probe_failure_surfaces_notice(self, settings, tmp_path):
         # WU-3: a probe failure currently passes through silently — it must now
@@ -250,7 +254,8 @@ class TestTrimClip:
             duration=boom_duration,
             on_notice=notices.append,
         )
-        assert path == "/in.mp4" and removed == 0.0 and keeps == []
+        assert path == "/in.mp4" and removed == 0.0
+        assert keeps == [(0.0, float("inf"))]  # identity remap (cues survive)
         assert len(notices) == 1
         assert notices[0]["type"] == stm.SILENCE_TRIM_UNAVAILABLE_NOTICE
         assert "duration" in notices[0]["reason"].lower()
@@ -285,7 +290,37 @@ class TestTrimClip:
             duration=lambda p, s=None: 0.0,
         )
         assert path == "/in.mp4" and removed == 0.0
-        assert keeps == []
+        # ADV-FIX: a non-positive probed duration is also a passthrough; return
+        # identity keeps so cues are never silently erased on remap.
+        assert keeps == [(0.0, float("inf"))]
+
+    def test_trim_passthrough_keeps_remap_cues_through_unchanged(self, settings, tmp_path):
+        # ADV-FIX regression (caption erasure): the identity keeps a passthrough
+        # returns MUST leave caption cues intact when fed to fillers.remap_cues
+        # (the exact shortmaker.py wiring). With the old empty-keeps bug every cue
+        # collapsed to length 0 and was dropped -> all captions silently erased.
+        from media_studio.features import fillers as _fillers
+
+        def boom_duration(p, s=None):
+            raise OSError("ffprobe died")
+
+        _path, _removed, keeps = stm.trim_clip(
+            "/in.mp4",
+            str(tmp_path / "out.mp4"),
+            settings=settings,
+            detect_run=detect_with(SILENCE_STDERR),
+            run=RecordingRun(),
+            duration=boom_duration,
+        )
+        cues = [
+            {"start": 0.0, "end": 1.5, "text": "hello"},
+            {"start": 2.0, "end": 4.0, "text": "world"},
+        ]
+        remapped = _fillers.remap_cues(cues, keeps)
+        assert [(c["start"], c["end"], c["text"]) for c in remapped] == [
+            (0.0, 1.5, "hello"),
+            (2.0, 4.0, "world"),
+        ]
 
     def test_trim_ffmpeg_failure_raises(self, settings, tmp_path):
         with pytest.raises(stm.SilenceTrimError, match="silence-trim re-cut"):

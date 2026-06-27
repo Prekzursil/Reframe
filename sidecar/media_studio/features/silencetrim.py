@@ -272,14 +272,21 @@ def trim_clip(
     run = run or ffmpeg.run
     duration = duration or ffmpeg.ffprobe_duration
 
+    # ADV-FIX (caption erasure): a passthrough that returns ``[]`` made the
+    # caller's :func:`fillers.remap_cues` collapse EVERY caption cue to length 0
+    # (``remap_time`` over an empty keep-list returns 0.0 for all times) — every
+    # caption was then dropped, silently. The identity keep ``[(0.0, inf)]`` maps
+    # any cue time ``t`` back to ``t`` (cues pass through UNCHANGED), so a clip we
+    # could not / need not trim keeps its captions intact.
+    identity_keeps: list[Span] = [(0.0, float("inf"))]
     try:
         total = float(duration(in_path, settings))
     except Exception:  # noqa: BLE001 - a probe failure means we can't trim safely
         log.warning("duration probe failed for %s; skipping silence-trim", in_path)
         _notify(on_notice, "duration probe failed")
-        return in_path, 0.0, []
+        return in_path, 0.0, identity_keeps
     if total <= 0.0:
-        return in_path, 0.0, []
+        return in_path, 0.0, identity_keeps
 
     silences = detect_silence_spans(
         in_path,
