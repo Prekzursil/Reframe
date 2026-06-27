@@ -310,6 +310,37 @@ export interface AsrEngine {
   installed: boolean;
 }
 
+// ---- First-run self-diagnostic (`system.selfTest`, WU-2) ------------------
+//
+// Field names are FROZEN, identical to the sidecar `_self_test_report_to_wire`
+// payload (camelCase on the wire already). Each check validates one slice of a
+// fresh install (data dir / device / reframe deps / ASR / ffmpeg); a `required`
+// check whose `ok` is false blocks a working render, an informational one
+// (`device`) is surfaced but does not flip the overall `ok`.
+
+/** One self-diagnostic check row (`system.selfTest`, WU-2). */
+export interface SelfTestCheck {
+  /** Stable id the panel keys on: `data` | `device` | `cv2` | `asr` | `ffmpeg`. */
+  id: string;
+  label: string;
+  ok: boolean;
+  /** A failure of a required check blocks a working render (informational ones do not). */
+  required: boolean;
+  /** What was probed / what failed (human one-line). */
+  detail: string;
+  /** Actionable remedy, populated only when the check failed (empty on success). */
+  fixHint: string;
+}
+
+/** The full first-run self-diagnostic report (`system.selfTest`, WU-2). */
+export interface SelfTestReport {
+  /** True iff every REQUIRED check passed (a broken install is loudly false). */
+  ok: boolean;
+  checks: SelfTestCheck[];
+  /** Human problem lines (one per failing check, each with its fix hint). */
+  problems: string[];
+}
+
 /**
  * The resolved on-disk data layout (`paths.describe`, WU-1, read-only). Layout
  * only — no key/secret string ever appears here. `subDirs` names the per-feature
@@ -1232,6 +1263,14 @@ export const client = {
         'system.recommend',
         opts?.commercial === undefined ? {} : { commercial: opts.commercial },
       ),
+    /**
+     * `system.selfTest` (WU-2) — the first-run self-diagnostic: validates the
+     * install END-TO-END (writable data dir, device probe, reframe deps, ASR
+     * backend, ffmpeg/ffprobe) and returns a structured pass/fail report with
+     * fix hints. Direct-return; fail-open on the sidecar (a broken probe becomes
+     * a reported problem, never an exception).
+     */
+    selfTest: (): Promise<SelfTestReport> => rpc('system.selfTest'),
   },
 
   /** `asr.engines` — selectable ASR engines (whisper / parakeet) + installed. */

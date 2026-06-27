@@ -1,0 +1,155 @@
+/* setupStatus.css — the first-run self-diagnostic panel (WU-2).
+ * Layout + status tint only; status is ALWAYS conveyed by visible text (Pass /
+ * Problem / Warning), never hue alone (WCAG 1.4.1). Tokens come from the shared
+ * design system (modelsSystem.css / tokens). */
+
+.setup-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.setup-status__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.setup-status__title {
+  margin: 0;
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.setup-status__rerun {
+  appearance: none;
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--accent);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.setup-status__rerun:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+
+.setup-status__rerun:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.setup-status__rerun:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.setup-status__loading {
+  color: var(--text-faint);
+  font-size: var(--type-caption-size);
+}
+
+.setup-status__error {
+  color: var(--status-error);
+  background: var(--status-error-soft);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  margin: 0;
+}
+
+.setup-status__summary {
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  font-weight: var(--type-body-strong-weight, 600);
+}
+
+.setup-status__summary.is-ok {
+  color: var(--status-success);
+  background: var(--status-success-soft);
+}
+
+.setup-status__summary.is-blocked {
+  color: var(--status-error);
+  background: var(--status-error-soft);
+}
+
+.setup-status__checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.setup-status__check {
+  border: 1px solid var(--surface-edge);
+  border-left: 3px solid var(--surface-edge);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.setup-status__check.is-ok {
+  border-left-color: var(--status-success);
+}
+
+.setup-status__check.is-failed {
+  border-left-color: var(--status-error);
+}
+
+.setup-status__check-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.setup-status__check-name {
+  color: var(--text-primary);
+  font-weight: var(--type-body-strong-weight, 600);
+}
+
+.setup-status__check-state {
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.setup-status__check-state[data-state="ok"] {
+  color: var(--status-success);
+}
+
+.setup-status__check-state[data-state="failed"] {
+  color: var(--status-error);
+}
+
+.setup-status__check-detail {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+}
+
+.setup-status__check-fix {
+  margin: 0;
+  color: var(--accent);
+  font-size: var(--type-caption-size);
+}
+
+.setup-status__empty {
+  color: var(--text-faint);
+  font-size: var(--type-caption-size);
+  margin: 0;
+}

@@ -35,6 +35,9 @@ vi.mock('../components/PathsPanel', () => ({
   PathsPanel: () => <div data-testid="storage" />,
   default: () => <div data-testid="storage" />,
 }));
+vi.mock('../components/SetupStatusPanel', () => ({
+  SetupStatusPanel: () => <div data-testid="setup" />,
+}));
 
 import { Settings, SETTINGS_SECTIONS } from './Settings';
 
@@ -75,19 +78,32 @@ function subtab(label: string): HTMLButtonElement {
 }
 
 describe('Settings sub-nav', () => {
-  it('exposes the four sub-sections as the extension array', () => {
+  it('exposes the sub-sections as the extension array', () => {
     expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual([
       'models',
+      'setup',
       'providers',
       'storage',
       'health',
     ]);
     expect(SETTINGS_SECTIONS.map((s) => s.label)).toEqual([
       'Models & System',
+      'Setup',
       'Providers & Keys',
       'Storage',
       'System Health',
     ]);
+  });
+
+  it('opens the Setup section (self-diagnostic) via the sub-tab', async () => {
+    await mount();
+    await act(async () => {
+      subtab('Setup').click();
+    });
+    await flush();
+    expect(container.querySelector('[data-testid="setup"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="models"]')).toBeNull();
+    expect(subtab('Setup').classList.contains('tab--active')).toBe(true);
   });
 
   it('opens the Storage section (PathsPanel) via the sub-tab', async () => {
