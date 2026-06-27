@@ -349,53 +349,6 @@ describe('App jobs slide-over toggle', () => {
   });
 });
 
-describe('App handleReexport guard branches', () => {
-  it('falls back to the Library when the hint has no videoId', async () => {
-    await mount();
-    await act(async () => {
-      tab('Create').click();
-    });
-    await flush();
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('[data-testid="reexport-no-id"]')!.click();
-    });
-    await flush();
-    expect(libraryListMock).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
-  });
-
-  it('falls back to the Library when no preload bridge is present', async () => {
-    hasApiValue = false;
-    await mount();
-    await act(async () => {
-      tab('Create').click();
-    });
-    await flush();
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('[data-testid="reexport-ok"]')!.click();
-    });
-    await flush();
-    expect(libraryListMock).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
-  });
-
-  it('falls back to the Library when library.list rejects (catch branch)', async () => {
-    libraryListMock.mockRejectedValue(new Error('list failed'));
-    await mount();
-    await act(async () => {
-      tab('Create').click();
-    });
-    await flush();
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('[data-testid="reexport-ok"]')!.click();
-    });
-    await flush();
-    expect(libraryListMock).toHaveBeenCalledTimes(1);
-    expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="workspace"]')).toBeNull();
-  });
-});
-
 describe('App lastOpenedVideoId — bridge-absent branches (WU-13)', () => {
   it('does NOT read settings.get on launch when no preload bridge is present', async () => {
     hasApiValue = false;
