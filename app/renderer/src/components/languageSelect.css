@@ -1,0 +1,16 @@
+/* languageSelect.css — the reusable language dropdown + its advice note. */
+.lang-select {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs, 0.25rem);
+}
+
+.lang-select__control {
+  width: 100%;
+}
+
+.lang-select__advice {
+  margin: 0;
+  font-size: var(--text-sm, 0.8125rem);
+  color: var(--color-warn-fg, #8a6d00);
+}
