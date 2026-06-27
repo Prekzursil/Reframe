@@ -625,16 +625,43 @@ def escape_ass_text(text: str) -> str:
     """
     out = str(text)
     out = out.replace("\\", "\\\\")  # literal backslash first
-    out = out.replace("{", "(").replace("}", ")")  # kill override-block injection
+    # Neutralize braces to a brace-FREE, reversible escape: '{' -> '\(' and
+    # '}' -> '\)'. The output contains NO raw '{'/'}' so no ASS override block can
+    # be injected (CONTRACTS.md §4), and _unescape_ass_text reverses it losslessly.
+    # ('\' is escaped first, so a literal '(' / ')' is never confused with an
+    # escaped brace, and a literal '\(' encodes as '\\(' — collision-free.)
+    out = out.replace("{", "\\(").replace("}", "\\)")
     out = out.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\N")
     return out
 
 
+#: Reverse map for :func:`_unescape_ass_text` — each ``\<key>`` decodes to its
+#: value (inverse of :func:`escape_ass_text`): ``\N``/``\n`` -> newline,
+#: ``\(`` -> ``{``, ``\)`` -> ``}``, ``\\`` -> ``\``.
+_ASS_UNESCAPE: dict[str, str] = {"N": "\n", "n": "\n", "(": "{", ")": "}", "\\": "\\"}
+
+
 def _unescape_ass_text(text: str) -> str:
-    """Inverse of :func:`escape_ass_text` for round-tripping (``\\N`` -> newline)."""
-    out = text.replace("\\N", "\n").replace("\\n", "\n")
-    out = out.replace("\\\\", "\\")
-    return out
+    r"""Inverse of :func:`escape_ass_text`, round-tripping ``\N``/``\{``/``\}``/``\\``.
+
+    A single left-to-right pass consuming each ``\<x>`` escape as a unit, so a
+    literal backslash (escaped as ``\\``) can never collide with a following
+    ``{``/``}``/``N`` (e.g. ``\\{`` decodes to a literal backslash + ``{``).
+    """
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\" and i + 1 < n:
+            decoded = _ASS_UNESCAPE.get(text[i + 1])
+            if decoded is not None:
+                out.append(decoded)
+                i += 2
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def to_ass(cues: Sequence[Cue], *, width: int = 1080, height: int = 1920, fontsize: int = 54) -> str:
