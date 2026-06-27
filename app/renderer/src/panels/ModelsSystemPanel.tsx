@@ -25,6 +25,8 @@ import {
   type CatalogResponse,
   type ComponentStatus,
   type HardwareInfo,
+  type LocalModelPlan,
+  type OpenRouterUsageRow,
   type Recommendation,
   type RoutingBlock,
   type UsageRow,
@@ -35,6 +37,10 @@ import { TierCard } from '../components/TierCard';
 import { ModelCard } from '../components/ModelCard';
 import { ModelsOnboarding } from '../components/ModelsOnboarding';
 import { UsageBars } from '../components/UsageBar';
+import { DeviceStatusStrip } from '../components/DeviceStatusStrip';
+import { DeviceModelReco } from '../components/DeviceModelReco';
+import { LocalRunners } from '../components/LocalRunners';
+import { OpenRouterUsage } from '../components/OpenRouterUsage';
 import { PresetPicker } from '../components/PresetPicker';
 import { FirstRunChooser } from '../components/FirstRunChooser';
 import { ReadinessRollup } from '../components/ReadinessRollup';
@@ -180,6 +186,10 @@ export function ModelsSystemPanel({
   const [downloading, setDownloading] = useState<string | null>(null);
   const [showTour, setShowTour] = useState<boolean>(false);
   const [usage, setUsage] = useState<UsageRow[]>([]);
+  // WU-models/device: local-runner plan (device-ranked whisper+LLM + runner advice)
+  // and per-key OpenRouter COST rows (the cost axis alongside the calls/tokens bars).
+  const [runners, setRunners] = useState<LocalModelPlan | null>(null);
+  const [openrouterUsage, setOpenrouterUsage] = useState<OpenRouterUsageRow[]>([]);
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
   const [presetBusy, setPresetBusy] = useState<boolean>(false);
   // WU-B3 device-aware recommendation card + one-click Apply.
@@ -216,12 +226,14 @@ export function ModelsSystemPanel({
       api.providers.catalog().catch(() => null),
       api.asr.engines().catch(() => null),
       api.providers.usage().catch(() => null),
+      api.providers.openrouterUsage().catch(() => null),
     ])
-      .then(([catalogRes, engineRes, usageRes]) => {
+      .then(([catalogRes, engineRes, usageRes, orRes]) => {
         if (alive) {
           if (catalogRes) setCatalog(catalogRes);
           if (engineRes) setEngines(Array.isArray(engineRes.engines) ? engineRes.engines : []);
           if (usageRes) setUsage(Array.isArray(usageRes.usage) ? usageRes.usage : []);
+          if (orRes) setOpenrouterUsage(Array.isArray(orRes.usage) ? orRes.usage : []);
         }
       })
       /* v8 ignore next 2 -- every inner read already .catch()es to null, so the outer Promise.all never rejects; this is a belt-and-braces guard. */
@@ -239,15 +251,17 @@ export function ModelsSystemPanel({
     setError('');
     try {
       const commercial = Boolean(settings.commercial);
-      const [hw, rep, assetRes, engineRes, usageRes, catalogRes, recRes] = await Promise.all([
-        api.system.probe(),
-        api.system.advisor({ commercial }),
-        api.assets.list(),
-        api.asr.engines(),
-        api.providers.usage(),
-        api.providers.catalog(),
-        api.system.recommend({ commercial }),
-      ]);
+      const [hw, rep, assetRes, engineRes, usageRes, catalogRes, recRes, runnersRes] =
+        await Promise.all([
+          api.system.probe(),
+          api.system.advisor({ commercial }),
+          api.assets.list(),
+          api.asr.engines(),
+          api.providers.usage(),
+          api.providers.catalog(),
+          api.system.recommend({ commercial }),
+          api.models.runners(),
+        ]);
       setHardware(hw ?? null);
       setReport(rep ?? null);
       setAssets(Array.isArray(assetRes?.assets) ? assetRes.assets : []);
@@ -255,6 +269,7 @@ export function ModelsSystemPanel({
       setUsage(Array.isArray(usageRes?.usage) ? usageRes.usage : []);
       setCatalog(catalogRes ?? null);
       setRecommendation(recRes?.recommendation ?? null);
+      setRunners(runnersRes ?? null);
       setApplyOutcome('');
       setAnalyzed(true);
       // First-run tour: show once if the user hasn't seen it.
@@ -592,7 +607,19 @@ export function ModelsSystemPanel({
               Re-probe
             </button>
           </div>
+          {/* WU-models/device: the device + per-job ETA status strip (free disk /
+              RAM / VRAM / GPU). ETA is idle here (Settings runs no job). */}
+          <DeviceStatusStrip hardware={hardware} />
         </div>
+      )}
+
+      {/* WU-models/device: device-ranked model recommendation ("X because RAM/VRAM
+          Y") + local-runner (Ollama / LM Studio) detect / pull / install advice. */}
+      {analyzed && runners && (
+        <>
+          <DeviceModelReco whisper={runners.whisper} llm={runners.llm} />
+          <LocalRunners runners={runners.runners} />
+        </>
       )}
 
       {analyzed && report && (
@@ -797,6 +824,12 @@ export function ModelsSystemPanel({
           separately and never combined. Updated from response headers, not a poller.
         </p>
         <UsageBars rows={usage} />
+        {/* WU-models/device: the COST axis (OpenRouter cumulative credit spend),
+            alongside the calls/tokens bars above. Keys are redacted last-4 only. */}
+        <div className="usage-section__cost" data-section="openrouter-usage">
+          <h4 className="usage-section__cost-head">OpenRouter spend</h4>
+          <OpenRouterUsage rows={openrouterUsage} />
+        </div>
       </div>
 
       {catalog && (

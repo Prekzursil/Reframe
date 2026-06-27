@@ -150,6 +150,7 @@ class Services:
         hardware_probe: Any | None = None,
         phase8_runner: Callable[..., dict[str, Any]] | None = None,
         test_key_transport: Any | None = None,
+        openrouter_usage_transport: Any | None = None,
         now: Callable[[], float] | None = None,
         vlm_clip_frame_loader: Any | None = None,
         vlm_frame_encoder: Any | None = None,
@@ -185,6 +186,10 @@ class Services:
         # WU-keys: the transport providers.testKey uses for its validation ping.
         # None -> the real stdlib urllib transport; tests inject a fake.
         self._test_key_transport = test_key_transport
+        # WU-models/device: the GET transport providers.openrouterUsage uses to read
+        # each OpenRouter key's cumulative credit usage. None -> the real stdlib
+        # urllib GET transport; tests inject a fake so no socket is opened.
+        self._openrouter_usage_transport = openrouter_usage_transport
         # WU-usage-ui: the wall-clock seam used to stamp + stale-flag the cached
         # providers.usage rows. None -> real ``time.time``; tests inject a fake
         # clock so the >10-min stale threshold is deterministic.
@@ -648,6 +653,28 @@ class Services:
         # Persist the merged snapshot so the next launch shows it without polling.
         self.settings.set({"usageCache": {"rows": merged, "checkedAt": next_checked, "savedAt": now}})
         return {"usage": stamped}
+
+    def providers_openrouter_usage(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``providers.openrouterUsage()`` -> ``{usage:[...]}`` per-key COST (WU-models/device).
+
+        The "calls/tokens" axes already live in :meth:`providers_usage` (parsed
+        ``X-RateLimit-*`` headers). This adds the COST axis for OpenRouter: a
+        best-effort ``GET /api/v1/key`` per RAW OpenRouter key (through the injectable
+        ``_openrouter_usage_transport`` GET seam) reporting cumulative credit usage
+        (USD), limit, and remaining. Best-effort + key-safe: a dead key is skipped
+        (never raised), the live key rides ONLY the ``Authorization`` header, and the
+        returned rows carry the REDACTED last-4 only — no full key crosses RPC.
+        """
+        from .models import openrouter_usage as _oru  # local: import-light
+        from .models import provider as _provider_mod  # local: heavy seam (GET transport)
+
+        transport = self._openrouter_usage_transport or _provider_mod.urllib_get_json
+        providers = self.settings.get_raw().get("providers")
+        rows = _oru.fetch_usage(
+            providers if isinstance(providers, list) else [],
+            transport=transport,
+        )
+        return {"usage": rows}
 
     def providers_spend(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
         """``providers.spend()`` -> month-to-date spend + configured caps (WU-spend-cap).
@@ -2012,6 +2039,9 @@ class Services:
             "ramMb": hw.ram_mb,
             "cpuCount": hw.cpu_count,
             "gpuPresent": hw.gpu_present,
+            # WU-models/device: free disk on the data drive feeds the device+ETA
+            # status strip (how much room is left for model downloads).
+            "diskFreeMb": hw.disk_free_mb,
         }
 
     def system_advisor(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
@@ -2118,6 +2148,25 @@ class Services:
             commercial=commercial,
         )
         return {"recommendation": recommendation}
+
+    def models_runners(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``models.runners()`` -> ``{whisper, llm, runners:[...]}``. Direct-return.
+
+        The local-model brain for the "Models & System" panel (WU-models/device):
+        composes the cheap hardware probe (:meth:`system_probe`) + the detected
+        Ollama / LM Studio servers (:meth:`_detect_local_servers`) into a PURE
+        :func:`model_recommend.recommend_local_models` plan — a DEVICE-RANKED whisper
+        + LLM recommendation ("X because RAM/VRAM Y") and per-runner advice (running?
+        which models? the device-fit model to pull + a copy-able pull hint; when
+        absent, the official install link — advice only, NEVER an auto-install).
+        Composes probes ONLY: no LLM/provider call, no pull is triggered here.
+        """
+        from .models import model_recommend as _mr  # local: import-light pure
+
+        hardware = self.system_probe(params, ctx)
+        detected_local = self._detect_local_servers(self.settings.get())
+        plan = _mr.recommend_local_models(hardware, detected_local)
+        return cast("dict[str, Any]", plan)
 
     def system_self_test(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
         """``system.selfTest()`` -> the first-run diagnostic report. Direct-return.
@@ -2281,10 +2330,14 @@ class Services:
         return present
 
     def _default_hardware_probe(self) -> Any:  # pragma: no cover - lazy heavy seam (pynvml/torch); tests inject a fake
-        """Build the real :class:`HardwareProbe` (lazy import; runtime only)."""
+        """Build the real :class:`HardwareProbe` (lazy import; runtime only).
+
+        The free-disk seam is bound to the DATA dir so the device strip reports the
+        room left on the drive model downloads actually land on.
+        """
         from .features import system_advisor as _sa  # noqa: PLC0415 - lazy
 
-        return _sa.HardwareProbe()
+        return _sa.HardwareProbe(disk_probe=lambda: _sa.default_disk_probe(str(self.data_dir)))
 
     def _default_phase8_runner(self) -> Callable[..., dict[str, Any]]:
         """Resolve the real Wave-1 signal-compute runner (lazy; runtime only).
@@ -3694,6 +3747,11 @@ def register_all(
     # probes (advisor + present-map + local-server detect + asr engines) through
     # the PURE recommender. Makes ZERO provider/LLM calls.
     reg("system.recommend", svc.system_recommend)
+    # WU-models/device: the local-model brain — device-ranked whisper + LLM
+    # recommendation + Ollama/LM Studio detect/pull/install advice. Direct-return;
+    # composes the cheap hardware probe + local-server detect through the PURE
+    # model_recommend module. NO LLM/provider call, NO pull is triggered here.
+    reg("models.runners", svc.models_runners)
     # WU-2: the first-run self-diagnostic. Direct (no job): pure data-dir/device/
     # native-dep/ffmpeg probes behind seams — reports LOUDLY, never proceeds broken.
     reg("system.selfTest", svc.system_self_test)
@@ -3754,6 +3812,10 @@ def register_all(
     # burst). The rotation pool already accounts usage from optimistic decrement +
     # parsed 429/X-RateLimit-* headers — this RPC just surfaces it, redacted.
     reg("providers.usage", svc.providers_usage)
+    # WU-models/device: per-key OpenRouter COST rows (cumulative credit usage USD)
+    # — the cost axis alongside providers.usage's calls/tokens. Best-effort GET per
+    # RAW key through the GET-transport seam; no full key ever crosses RPC.
+    reg("providers.openrouterUsage", svc.providers_openrouter_usage)
     # WU-spend-cap: month-to-date cumulative spend + the configured monthly caps
     # (read-only). The persisted ledger is written at job completion; this RPC just
     # surfaces it (+ the soft/hard cap settings) for the renderer's spend view.

@@ -24,6 +24,8 @@ import type {
   CatalogResponse,
   ComponentStatus,
   HardwareInfo,
+  LocalModelPlan,
+  OpenRouterUsageRow,
   ReadinessItem,
   Recommendation,
   UsageRow,
@@ -101,6 +103,56 @@ function recommendation(): Recommendation {
   };
 }
 
+// WU-models/device — a device-ranked local-model plan (whisper + LLM picks) + the
+// two known runners (Ollama detected, LM Studio absent w/ install link).
+function localModelPlan(): LocalModelPlan {
+  return {
+    whisper: {
+      model: 'large-v3-turbo',
+      label: 'Whisper large-v3-turbo',
+      reason: 'Whisper large-v3-turbo — fits your GPU (6000 MB VRAM)',
+    },
+    llm: {
+      model: 'qwen2.5:7b',
+      label: 'Qwen2.5 7B',
+      reason: 'Qwen2.5 7B — fits your GPU (6000 MB VRAM)',
+    },
+    runners: [
+      {
+        kind: 'ollama',
+        label: 'Ollama',
+        present: true,
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        installUrl: 'https://ollama.com/download',
+        installHint: 'Ollama is running — no install needed.',
+        installedModels: ['llama3.2'],
+        recommendedModel: {
+          model: 'qwen2.5:7b',
+          label: 'Qwen2.5 7B',
+          reason: 'Qwen2.5 7B — fits your GPU (6000 MB VRAM)',
+          pull: 'ollama pull qwen2.5:7b',
+        },
+      },
+      {
+        kind: 'lmstudio',
+        label: 'LM Studio',
+        present: false,
+        baseUrl: 'http://127.0.0.1:1234/v1',
+        installUrl: 'https://lmstudio.ai',
+        installHint:
+          'LM Studio is not running. Install it from https://lmstudio.ai (we never auto-install).',
+        installedModels: [],
+        recommendedModel: {
+          model: 'qwen2.5:7b',
+          label: 'Qwen2.5 7B',
+          reason: 'Qwen2.5 7B — fits your GPU (6000 MB VRAM)',
+          pull: "Search 'qwen2.5:7b' in the LM Studio model browser to download it",
+        },
+      },
+    ],
+  };
+}
+
 /** The G-B1 typed fallback: empty routing -> the card's "unavailable" state. */
 function unavailableRecommendation(): Recommendation {
   return {
@@ -171,9 +223,12 @@ function makeClient(
     usage?: UsageRow[];
     catalog?: CatalogResponse;
     recommendation?: Recommendation;
+    runners?: LocalModelPlan;
+    openrouterUsage?: OpenRouterUsageRow[];
     initialSettings?: Record<string, unknown>;
     rejectAnalyze?: boolean;
     rejectUsage?: boolean;
+    rejectOpenrouter?: boolean;
     readiness?: ReadinessItem[];
     rejectEnsure?: boolean;
   } = {},
@@ -194,6 +249,12 @@ function makeClient(
       recommend: vi.fn(async (opts?: { commercial?: boolean }) => {
         calls.push({ method: 'system.recommend', args: [opts] });
         return { recommendation: over.recommendation ?? recommendation() };
+      }),
+    },
+    models: {
+      runners: vi.fn(async () => {
+        calls.push({ method: 'models.runners', args: [] });
+        return over.runners ?? localModelPlan();
       }),
     },
     assets: {
@@ -229,6 +290,11 @@ function makeClient(
         calls.push({ method: 'providers.usage', args: [] });
         if (over.rejectUsage) throw new Error('usage failed');
         return { usage: over.usage ?? [] };
+      }),
+      openrouterUsage: vi.fn(async () => {
+        calls.push({ method: 'providers.openrouterUsage', args: [] });
+        if (over.rejectOpenrouter) throw new Error('openrouter usage failed');
+        return { usage: over.openrouterUsage ?? [] };
       }),
       catalog: vi.fn(async () => {
         calls.push({ method: 'providers.catalog', args: [] });
@@ -1727,5 +1793,82 @@ describe('<ModelsSystemPanel /> WU-B3 card', () => {
     expect(container.querySelector('[data-section="recommend"]')).toBeNull();
     // the rest of the analyzed panel still renders (report present).
     expect(container.querySelector('[data-section="preset"]')).not.toBeNull();
+  });
+
+  // ---- WU-models/device: device strip + model reco + local runners ----------
+  it('renders the device status strip + device-ranked reco + local runners after analysis', async () => {
+    const c = makeClient({ initialSettings: optedIn });
+    await mount(c);
+    await analyze();
+    // device + ETA status strip (free disk / RAM / VRAM / GPU).
+    expect(container.querySelector('[data-section="device-strip"]')).not.toBeNull();
+    // device-ranked model recommendation ("X because RAM/VRAM Y").
+    const reco = container.querySelector('[data-section="device-reco"]') as HTMLElement;
+    expect(reco.querySelector('[data-reco="whisper"] [data-field="model"]')?.textContent).toBe(
+      'Whisper large-v3-turbo',
+    );
+    // local-runner detect + pull + install advice.
+    const runners = container.querySelector('[data-section="local-runners"]') as HTMLElement;
+    expect(runners.querySelector('[data-runner="ollama"]')?.getAttribute('data-present')).toBe(
+      'true',
+    );
+    const lm = runners.querySelector('[data-runner="lmstudio"] [data-action="install-link"]');
+    expect(lm?.getAttribute('href')).toBe('https://lmstudio.ai');
+    expect(c.calls.some((x) => x.method === 'models.runners')).toBe(true);
+  });
+
+  it('hides the device-models sections before analysis (runners not yet loaded)', async () => {
+    const c = makeClient();
+    await mount(c);
+    expect(container.querySelector('[data-section="device-reco"]')).toBeNull();
+    expect(container.querySelector('[data-section="local-runners"]')).toBeNull();
+  });
+
+  it('shows OpenRouter cost rows from the mount-time read', async () => {
+    const c = makeClient({
+      openrouterUsage: [
+        {
+          provider: 'OpenRouter',
+          key: '…WXYZ',
+          costUsd: 1.5,
+          limitUsd: 10,
+          remainingUsd: 8.5,
+          isFreeTier: false,
+        },
+      ],
+    });
+    await mount(c);
+    const cost = container.querySelector('[data-section="openrouter-usage"]') as HTMLElement;
+    expect(cost.querySelector('[data-field="cost"]')?.textContent).toContain('$1.50');
+  });
+
+  it('shows the OpenRouter empty hint when the cost read rejects', async () => {
+    const c = makeClient({ rejectOpenrouter: true });
+    await mount(c);
+    const cost = container.querySelector('[data-section="openrouter-usage"]') as HTMLElement;
+    expect(cost.querySelector('[data-openrouter="empty"]')).not.toBeNull();
+  });
+
+  it('tolerates a non-array OpenRouter usage payload (degrades to empty)', async () => {
+    const c = makeClient();
+    (c.client.providers.openrouterUsage as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      {} as unknown as { usage: OpenRouterUsageRow[] },
+    );
+    await mount(c);
+    const cost = container.querySelector('[data-section="openrouter-usage"]') as HTMLElement;
+    expect(cost.querySelector('[data-openrouter="empty"]')).not.toBeNull();
+  });
+
+  it('hides the device-models sections when models.runners yields nothing', async () => {
+    const c = makeClient({ initialSettings: optedIn });
+    (c.client.models.runners as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      null as unknown as LocalModelPlan,
+    );
+    await mount(c);
+    await analyze();
+    // analysis ran (hardware present) but the local-model plan was empty.
+    expect(container.querySelector('[data-section="hardware"]')).not.toBeNull();
+    expect(container.querySelector('[data-section="device-reco"]')).toBeNull();
+    expect(container.querySelector('[data-section="local-runners"]')).toBeNull();
   });
 });
