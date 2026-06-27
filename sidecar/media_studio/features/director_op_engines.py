@@ -78,6 +78,7 @@ _ATEMPO_MAX = 2.0
 WIRED_KINDS: tuple[str, ...] = (
     "trim",
     "cut",
+    "join",
     "removeSilence",
     "caption",
     "removeFillers",
@@ -304,6 +305,86 @@ def make_cut_engine(*, runner: RunFn, settings: Mapping[str, Any] | None = None)
             project_copy,
             op,
             lambda i, o: _fillers.build_segment_cut_argv(i, o, keeps, dict(settings or {})),
+            runner=runner,
+            settings=settings,
+        )
+
+    return engine
+
+
+def _require_clips(op: EditOp) -> list[str]:
+    """Return the join op's ``params['clips']`` — a non-empty list of path strings.
+
+    ``join``/concat appends one or more extra clips AFTER the COPY source, so it
+    needs at least one additional clip path. A missing / empty / non-string list
+    is a render error (per-op ``failed`` + rollback), never a silent no-op.
+    """
+    raw = op.params.get("clips")
+    if not isinstance(raw, (list, tuple)) or not raw:
+        raise DirectorEngineError(f"join op {op.id!r} requires a non-empty params['clips'] list")
+    clips = [p for p in raw if isinstance(p, str) and p.strip()]
+    if not clips:
+        raise DirectorEngineError(f"join op {op.id!r} params['clips'] has no usable path strings")
+    return clips
+
+
+def build_join_argv(
+    in_path: str,
+    clips: Sequence[str],
+    out_path: str,
+    settings: Mapping[str, Any] | None = None,
+) -> list[str]:
+    """argv that CONCATENATES ``in_path`` + each ``clips`` entry into one mp4.
+
+    Uses ffmpeg's ``concat`` filter (re-encode), which — unlike the concat
+    *demuxer* — tolerates inputs whose codecs/resolutions differ, the common case
+    when a user joins arbitrary clips. Every input contributes one video + one
+    audio stream to the ``concat=n=N:v=1:a=1`` graph, so the output duration is
+    the sum of the parts (the strongest non-no-op proof). Output is H.264/AAC.
+    """
+    inputs = [in_path, *clips]
+    n = len(inputs)
+    argv = [_ffmpeg.ffmpeg_path(settings), "-hide_banner", "-nostdin", "-y"]
+    for path in inputs:
+        argv += ["-i", path]
+    streams = "".join(f"[{idx}:v][{idx}:a]" for idx in range(n))
+    filtergraph = f"{streams}concat=n={n}:v=1:a=1[v][a]"
+    argv += [
+        "-filter_complex",
+        filtergraph,
+        "-map",
+        "[v]",
+        "-map",
+        "[a]",
+        "-c:v",
+        "libx264",
+        "-c:a",
+        "aac",
+        "-progress",
+        "pipe:1",
+        "-nostats",
+        out_path,
+    ]
+    return argv
+
+
+def make_join_engine(*, runner: RunFn, settings: Mapping[str, Any] | None = None) -> OpEngine:
+    """Engine for ``join``: concatenate extra ``params['clips']`` after the source.
+
+    Forward renders a real concatenated mp4 (``build_join_argv`` — concat filter,
+    re-encode) and re-points the COPY at it; the recorded inverse restores the
+    pre-join reference (undo, no re-render). A whole-timeline op (no span).
+    """
+
+    def engine(op: EditOp, project_copy: ProjectCopy) -> EditOp:
+        restored = _maybe_restore(op, project_copy)
+        if restored is not None:
+            return restored
+        clips = _require_clips(op)
+        return _render(
+            project_copy,
+            op,
+            lambda i, o: build_join_argv(i, clips, o, settings),
             runner=runner,
             settings=settings,
         )
@@ -849,6 +930,7 @@ def build_engines(*, runner: RunFn | None = None, settings: Mapping[str, Any] | 
     return {
         "trim": make_trim_engine(runner=run, settings=settings),
         "cut": make_cut_engine(runner=run, settings=settings),
+        "join": make_join_engine(runner=run, settings=settings),
         "removeSilence": make_remove_silence_engine(runner=run, settings=settings),
         "caption": make_caption_engine(runner=run, settings=settings),
         "removeFillers": make_remove_fillers_engine(runner=run, settings=settings),
@@ -882,6 +964,7 @@ __all__ = [
     "DirectorEngineError",
     "build_drawtext_argv",
     "build_engines",
+    "build_join_argv",
     "build_reframe_argv",
     "build_retime_argv",
     "build_zoompan_argv",
@@ -889,6 +972,7 @@ __all__ = [
     "make_caption_engine",
     "make_cut_engine",
     "make_export_engine",
+    "make_join_engine",
     "make_lower_third_engine",
     "make_overlay_text_engine",
     "make_reframe_engine",

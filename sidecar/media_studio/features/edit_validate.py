@@ -97,13 +97,26 @@ def _params_str(params: Mapping[str, Any], key: str) -> str:
     return value if isinstance(value, str) else ""
 
 
+def _has_clips(params: Mapping[str, Any]) -> bool:
+    """True when ``params['clips']`` is a non-empty list with a usable path string."""
+    clips = params.get("clips")
+    if not isinstance(clips, (list, tuple)) or not clips:
+        return False
+    return any(isinstance(p, str) and p.strip() for p in clips)
+
+
 def _precondition_reason(op: EditOp, understanding: Understanding) -> StatusReason | None:
     """Per-kind precondition checks beyond span/track, or ``None`` if satisfied.
 
-    Currently the canonical-example precondition (DESIGN §3): ``regenScroll``
-    must reference a stitched panorama artifact via ``params["panorama"]``.
+    Two preconditions today:
+      * ``regenScroll`` must reference a stitched panorama (DESIGN §3 canonical
+        example) via ``params["panorama"]``;
+      * ``join`` must carry a non-empty ``params["clips"]`` list of paths to
+        concatenate (V1 IA §h E2 — a join with nothing to join is impossible).
     """
     if op.kind == "regenScroll" and understanding.require_regen_panorama and not _params_str(op.params, "panorama"):
+        return "precondition-unmet"
+    if op.kind == "join" and not _has_clips(op.params):
         return "precondition-unmet"
     return None
 

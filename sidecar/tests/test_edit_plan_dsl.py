@@ -296,6 +296,30 @@ def test_export_op_exempt_from_span_requirement():
     assert out.ops[0].status == "planned"
 
 
+def test_join_is_a_known_op_kind():
+    # V1 IA §h E2: join/concat is a first-class op-kind (not the old gap).
+    assert "join" in OP_KINDS
+
+
+def test_drop_join_without_clips_precondition():
+    plan = _plan(ops=(_op("o1", "join", None),))
+    out = validate_and_reject(plan, understanding=_u())
+    assert out.ops[0].status_reason == "precondition-unmet"
+
+
+def test_drop_join_with_empty_clip_strings():
+    plan = _plan(ops=(_op("o1", "join", None, clips=["", "  "]),))
+    out = validate_and_reject(plan, understanding=_u())
+    assert out.ops[0].status_reason == "precondition-unmet"
+
+
+def test_keep_join_with_clips():
+    # join carries the extra clip paths to concatenate (no span required).
+    plan = _plan(ops=(_op("o1", "join", None, clips=["/b.mp4"]),))
+    out = validate_and_reject(plan, understanding=_u())
+    assert out.ops[0].status == "planned"
+
+
 def test_already_dropped_op_left_untouched():
     pre = _op("o1", "trim", (0, 1000)).with_status("dropped", "span-exceeds-clip")
     out = validate_and_reject(_plan(ops=(pre,)), understanding=_u())

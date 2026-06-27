@@ -651,6 +651,62 @@ def test_export_inverse_restores(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
 
 # --------------------------------------------------------------------------- #
+# join / concat (V1 IA §h E2)
+# --------------------------------------------------------------------------- #
+def test_join_concatenates_clips_and_records_inverse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    runner = FakeRunner()
+    pc = _copy(tmp_path)
+    src_before = pc.data["video"]["path"]
+    extra = tmp_path / "b.mp4"
+    extra.write_bytes(b"\x00b")
+    inverse = build_engines(runner=runner)["join"](EditOp(id="j1", kind="join", params={"clips": [str(extra)]}), pc)
+    argv = runner.calls[0]
+    # Two inputs (source + one extra clip) feed the concat=n=2 filtergraph.
+    assert argv.count("-i") == 2
+    fg = argv[argv.index("-filter_complex") + 1]
+    assert "concat=n=2:v=1:a=1[v][a]" in fg
+    assert str(extra) in argv
+    assert pc.data["video"]["path"] != src_before
+    assert inverse.params[RESTORE_KEY] == src_before
+
+
+def test_join_filtergraph_scales_with_clip_count() -> None:
+    argv = engines_mod.build_join_argv("/a.mp4", ["/b.mp4", "/c.mp4"], "/out.mp4")
+    fg = argv[argv.index("-filter_complex") + 1]
+    # Three inputs total -> concat=n=3 with three [i:v][i:a] stream pairs.
+    assert fg == "[0:v][0:a][1:v][1:a][2:v][2:a]concat=n=3:v=1:a=1[v][a]"
+    assert argv.count("-i") == 3
+
+
+def test_join_requires_a_non_empty_clips_list(tmp_path: Path) -> None:
+    pc = _copy(tmp_path)
+    with pytest.raises(DirectorEngineError, match="non-empty params\\['clips'\\]"):
+        build_engines(runner=FakeRunner())["join"](EditOp(id="j", kind="join", params={}), pc)
+
+
+def test_join_rejects_clips_without_usable_paths(tmp_path: Path) -> None:
+    pc = _copy(tmp_path)
+    with pytest.raises(DirectorEngineError, match="no usable path"):
+        build_engines(runner=FakeRunner())["join"](EditOp(id="j", kind="join", params={"clips": ["", "  ", 7]}), pc)
+
+
+def test_join_inverse_restores(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_probe(monkeypatch)
+    runner = FakeRunner()
+    pc = _copy(tmp_path)
+    original = pc.data["video"]["path"]
+    extra = tmp_path / "b.mp4"
+    extra.write_bytes(b"\x00b")
+    table = build_engines(runner=runner)
+    fwd = table["join"](EditOp(id="j", kind="join", params={"clips": [str(extra)]}), pc)
+    calls = len(runner.calls)
+    table["join"](fwd, pc)
+    assert pc.data["video"]["path"] == original
+    assert len(runner.calls) == calls  # restore-only on undo
+
+
+# --------------------------------------------------------------------------- #
 # dual-mode inverse for the new geometry/timing/overlay ops
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(

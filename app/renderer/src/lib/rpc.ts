@@ -850,6 +850,7 @@ export interface Project {
 export type DirectorOpKind =
   | 'trim'
   | 'cut'
+  | 'join'
   | 'removeSilence'
   | 'removeFillers'
   | 'reorder'

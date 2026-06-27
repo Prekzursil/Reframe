@@ -1,26 +1,26 @@
-// App.tsx — the renderer shell + TOP-LEVEL TABBED NAVIGATION (CONTRACTS.md §1).
+// App.tsx — the renderer shell + TOP-LEVEL TABBED NAVIGATION (V1 IA §h).
 //
-// The app is organised into five top-level tabs (components/TopTabBar.tsx):
-//   * Library    — the video library home; opening a video drills into its
-//                  per-video Workspace (a sub-state of this tab; "← Library"
-//                  returns home),
-//   * Create     — the global generated-Shorts gallery + ShortMaker flow,
-//   * Director    — the prompt-driven AI video-editing panel (lazy),
-//   * Repurpose  — the batch/template/export-preset surface (with a (N) badge +
-//                  resume toast for interrupted batches),
-//   * Settings   — a sub-navigated area: Models & System, Providers & Keys, and
-//                  System Health (views/Settings.tsx).
+// The app is organised into the FIVE V1 sections (components/TopTabBar.tsx):
+//   * Library    — the video library home; opening a video routes into the Edit
+//                  section for that video,
+//   * Make Shorts — the novice front door: AI moment-pick + manual intervals +
+//                   the single produced-shorts gallery + batch/templates
+//                   (views/MakeShorts.tsx; carries the interrupted-batch badge),
+//   * Edit       — the per-video manual surface (trim/cut/join/reframe/caption/
+//                  audio…) hosted in the Workspace (views/Edit.tsx),
+//   * Director   — the prompt-driven AI video-editing panel (lazy),
+//   * Settings   — Models & System / Providers & Keys / Storage / Health.
 //
 // The active tab is DERIVED from the route (one source of truth), so navigation
-// and the tab strip can never desync. Workspace lives under the Library tab.
+// and the tab strip can never desync. The currently-open Edit video is held in
+// shell state so switching tabs and re-entering Edit keeps the same video.
 //
 // Also hosts the Local/Cloud quality toggle (CONTRACTS.md §0/§2: settings.useCloud)
 // and the global Jobs slide-over (components/JobQueue.tsx).
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { Library } from './views/Library';
-import { Workspace } from './views/Workspace';
-import { Shorts } from './views/Shorts';
-import { Repurpose } from './views/Repurpose';
+import { Edit } from './views/Edit';
+import { MakeShorts } from './views/MakeShorts';
 import { Settings } from './views/Settings';
 import { incompleteBatches, remainingCount } from './features/repurposeLogic';
 import { useToast } from './components/toast/useToast';
@@ -34,14 +34,7 @@ import {
 } from './components/navIcons';
 // AI Director panel (lazy: it pulls the storyboard/diff + cost-banner surface).
 const DirectorPanel = lazy(() => import('./panels/DirectorPanel'));
-import {
-  client,
-  hasApi,
-  rpc,
-  type ReadinessAction,
-  type ShortReexportHint,
-  type Video,
-} from './lib/rpc';
+import { client, hasApi, rpc, type ReadinessAction, type Video } from './lib/rpc';
 import { actionSection } from './features/providersKeysLogic';
 import { ToastProvider } from './components/toast/ToastProvider';
 import { ToastHost } from './components/toast/ToastHost';
@@ -61,30 +54,30 @@ registerJobRetry((jobId) => rpc<{ jobId: string }>('job.retry', { jobId }));
 
 type Quality = 'local' | 'cloud';
 
-/** The five top-level tab ids (the surface switcher). */
-type TabId = 'library' | 'create' | 'director' | 'repurpose' | 'settings';
+/** The five V1 top-level tab ids (the surface switcher). */
+type TabId = 'library' | 'makeshorts' | 'edit' | 'director' | 'settings';
 
 type Route =
-  // The Library tab. `video` drills into a per-video Workspace (Library sub-state).
-  | { name: 'library'; video?: Video }
-  // Create: the global generated-shorts gallery + ShortMaker flow.
-  | { name: 'create' }
+  // The Library home.
+  | { name: 'library' }
+  // Make Shorts: AI/manual making + the gallery + batch (resume deep-link).
+  | { name: 'makeshorts'; resumeId?: string }
+  // Edit: the per-video manual surface (the open video lives in shell state).
+  | { name: 'edit' }
   // Director: the prompt-driven AI video-editing panel.
   | { name: 'director' }
-  // Repurpose: the batch queue / templates / export presets surface.
-  | { name: 'repurpose'; resumeId?: string }
   // Settings: a sub-navigated area (Models & System / Providers & Keys / Health).
   | { name: 'settings'; section?: string };
 
-/** Map a route to the top-level tab it belongs to (Workspace ⇒ Library). */
+/** Map a route to the top-level tab it belongs to. */
 function routeTab(route: Route): TabId {
   switch (route.name) {
-    case 'create':
-      return 'create';
+    case 'makeshorts':
+      return 'makeshorts';
+    case 'edit':
+      return 'edit';
     case 'director':
       return 'director';
-    case 'repurpose':
-      return 'repurpose';
     case 'settings':
       return 'settings';
     case 'library':
@@ -171,6 +164,9 @@ function useRepurposeBadge(onResume: (resumeId: string) => void): number {
 function AppShell(): React.ReactElement {
   const [route, setRoute] = useState<Route>({ name: 'library' });
   const [quality, setQuality] = useState<Quality>('local');
+  // The currently-open Edit video (kept in shell state so it survives tab
+  // switches; null until a video is opened from the Library).
+  const [editVideo, setEditVideo] = useState<Video | null>(null);
   // T6: the global job-queue slide-over (components/JobQueue.tsx). Closed by
   // default — the panel polls job.list only while open.
   const [jobsOpen, setJobsOpen] = useState(false);
@@ -202,8 +198,8 @@ function AppShell(): React.ReactElement {
   }, []);
 
   // WU-13: restore the last-opened video on launch. Read the persisted
-  // `lastOpenedVideoId`, resolve the Video via library.list, and drill into its
-  // Workspace on a match; fall back to the Library home otherwise.
+  // `lastOpenedVideoId`, resolve the Video via library.list, and open it in the
+  // Edit section on a match; fall back to the Library home otherwise.
   useEffect(() => {
     if (!hasApi()) return;
     let cancelled = false;
@@ -215,7 +211,8 @@ function AppShell(): React.ReactElement {
         const { videos } = await client.library.list();
         const match = videos.find((v) => v.id === id);
         if (!cancelled && match) {
-          setRoute({ name: 'library', video: match });
+          setEditVideo(match);
+          setRoute({ name: 'edit' });
         }
       } catch {
         // Best-effort restore; stay on the Library default on any failure.
@@ -226,8 +223,10 @@ function AppShell(): React.ReactElement {
     };
   }, []);
 
+  // Opening a video from the Library routes into the Edit section for it.
   const openVideo = useCallback((video: Video) => {
-    setRoute({ name: 'library', video });
+    setEditVideo(video);
+    setRoute({ name: 'edit' });
     // WU-13: persist the last-opened video so launch can restore it. Best-effort.
     if (!hasApi()) return;
     void rpc('settings.set', { lastOpenedVideoId: video.id }).catch(() => {
@@ -239,9 +238,9 @@ function AppShell(): React.ReactElement {
     setRoute({ name: 'library' });
   }, []);
 
-  // WU11: the Repurpose nav (optionally deep-linking a resume from the toast).
-  const openRepurpose = useCallback((resumeId?: string) => {
-    setRoute({ name: 'repurpose', resumeId });
+  // The Make Shorts nav (optionally deep-linking a batch resume from the toast).
+  const openMakeShorts = useCallback((resumeId?: string) => {
+    setRoute({ name: 'makeshorts', resumeId });
   }, []);
 
   // Open Settings, optionally pre-selecting a sub-section (e.g. a readiness fix
@@ -260,19 +259,19 @@ function AppShell(): React.ReactElement {
     [openSettings],
   );
 
-  // The top-level tab strip switches surfaces (Workspace returns to the Library
-  // home rather than staying drilled-in).
+  // The top-level tab strip switches surfaces. Re-entering Edit shows the
+  // currently-open video (or its empty state when none is open yet).
   const selectTab = useCallback(
     (id: string) => {
       switch (id as TabId) {
-        case 'create':
-          setRoute({ name: 'create' });
+        case 'makeshorts':
+          openMakeShorts();
+          break;
+        case 'edit':
+          setRoute({ name: 'edit' });
           break;
         case 'director':
           setRoute({ name: 'director' });
-          break;
-        case 'repurpose':
-          openRepurpose();
           break;
         case 'settings':
           openSettings();
@@ -283,64 +282,44 @@ function AppShell(): React.ReactElement {
           break;
       }
     },
-    [openRepurpose, openSettings],
+    [openMakeShorts, openSettings],
   );
 
-  // P4 §6: Re-export reopens the source video's Workspace (where the Short-maker
-  // tab lives). Resolve the source Video by id, then drill into its Workspace
-  // under the Library tab; fall back to the Library home when it is gone.
-  const handleReexport = useCallback(async (hint: ShortReexportHint) => {
-    if (!hint.videoId || !hasApi()) {
-      setRoute({ name: 'library' });
-      return;
-    }
-    try {
-      const { videos } = await client.library.list();
-      const source = videos.find((v) => v.id === hint.videoId);
-      setRoute(source ? { name: 'library', video: source } : { name: 'library' });
-    } catch {
-      setRoute({ name: 'library' });
-    }
-  }, []);
-
-  const repurposeBadge = useRepurposeBadge(openRepurpose);
+  // The interrupted-batch badge now rides the Make Shorts tab (batch lives in
+  // that section); a resume deep-links into Make Shorts → Batch.
+  const batchBadge = useRepurposeBadge(openMakeShorts);
 
   const tabs: TopTab[] = useMemo(
     () => [
       { id: 'library', label: 'Library', icon: <LibraryIcon /> },
-      { id: 'create', label: 'Create', icon: <CreateIcon /> },
+      { id: 'makeshorts', label: 'Make Shorts', icon: <CreateIcon />, badge: batchBadge },
+      { id: 'edit', label: 'Edit', icon: <RepurposeIcon /> },
       { id: 'director', label: 'Director', icon: <DirectorIcon /> },
-      { id: 'repurpose', label: 'Repurpose', icon: <RepurposeIcon />, badge: repurposeBadge },
       { id: 'settings', label: 'Settings', icon: <SettingsIcon /> },
     ],
-    [repurposeBadge],
+    [batchBadge],
   );
 
   const activeTab = routeTab(route);
 
   function renderRoute(): React.ReactElement {
     switch (route.name) {
-      case 'create':
-        return <Shorts onReexport={(hint) => void handleReexport(hint)} />;
+      case 'makeshorts':
+        return <MakeShorts resumeId={route.resumeId} />;
+      case 'edit':
+        return <Edit video={editVideo} onBack={backToLibrary} />;
       case 'director':
         return (
           <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>
             <DirectorPanel />
           </Suspense>
         );
-      case 'repurpose':
-        return <Repurpose resumeId={route.resumeId} />;
       case 'settings':
         return <Settings initialSection={route.section} />;
       case 'library':
       default:
-        // Drilled into a video → its Workspace; otherwise the Library home.
         // WU-14: a readiness fix action routes to Settings → Models & System.
-        return route.video ? (
-          <Workspace video={route.video} onBack={backToLibrary} />
-        ) : (
-          <Library onOpen={openVideo} onReadinessAction={handleReadinessAction} />
-        );
+        return <Library onOpen={openVideo} onReadinessAction={handleReadinessAction} />;
     }
   }
 

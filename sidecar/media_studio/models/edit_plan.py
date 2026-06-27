@@ -40,6 +40,7 @@ from typing import Any, Literal, get_args
 OpKind = Literal[
     "trim",
     "cut",
+    "join",
     "removeSilence",
     "removeFillers",
     "reorder",

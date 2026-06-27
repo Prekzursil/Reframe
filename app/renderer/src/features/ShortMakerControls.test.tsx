@@ -157,18 +157,20 @@ describe('<ShortMakerControls />', () => {
   it('forwards each toggle change to setControl with the checked bool', () => {
     mount();
     const toggle = (label: string) => byLabel(label) as HTMLInputElement;
+    // V1 quality-defaults-ON (G-4): all four quality toggles start ON, so a
+    // single click flips each OFF (the inverse of the pre-V1 OFF defaults).
     act(() => {
       toggle('Hook title').click(); // ON -> OFF
     });
     expect(spies.setControl).toHaveBeenCalledWith('hookTitle', false);
-    act(() => toggle('Remove fillers').click()); // OFF -> ON
-    expect(spies.setControl).toHaveBeenCalledWith('removeFillers', true);
+    act(() => toggle('Remove fillers').click()); // ON -> OFF
+    expect(spies.setControl).toHaveBeenCalledWith('removeFillers', false);
     act(() => toggle('Auto zoom').click());
-    expect(spies.setControl).toHaveBeenCalledWith('autoZoom', true);
+    expect(spies.setControl).toHaveBeenCalledWith('autoZoom', false);
     act(() => toggle('Trim silence').click());
-    expect(spies.setControl).toHaveBeenCalledWith('silenceTrim', true);
+    expect(spies.setControl).toHaveBeenCalledWith('silenceTrim', false);
     act(() => toggle('Stabilize').click());
-    expect(spies.setControl).toHaveBeenCalledWith('stabilize', true);
+    expect(spies.setControl).toHaveBeenCalledWith('stabilize', false);
   });
 
   it('forwards audio-track selection to setAudioTrackId', () => {

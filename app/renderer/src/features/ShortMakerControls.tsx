@@ -24,6 +24,7 @@ import {
 } from './shortMakerLogic';
 import { type PlatformPresetId, PLATFORM_PRESETS, PLATFORM_PRESET_IDS } from './shortMakerPresets';
 import { CAPTION_STYLES } from './shortMakerLogic';
+import { LanguageSelect } from '../components/LanguageSelect';
 
 export interface ShortMakerControlsProps {
   videoId: string;
@@ -139,11 +140,11 @@ export function ShortMakerControls({
 
         <label className="sm-field">
           <span>Language</span>
-          <input
-            aria-label="Language"
-            type="text"
+          {/* V1 IA §h: language is a DROPDOWN (never free-typed) + auto-detect
+              advice — the shared LanguageSelect is the one source for this. */}
+          <LanguageSelect
             value={controls.language}
-            onChange={(e) => setControl('language', e.target.value)}
+            onChange={(code) => setControl('language', code)}
           />
         </label>
 

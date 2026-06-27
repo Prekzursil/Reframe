@@ -1,0 +1,38 @@
+/* makeShorts.css — the Make Shorts section layout. */
+.make-shorts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm, 0.5rem);
+}
+
+.make-shorts__make {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md, 1rem);
+}
+
+.make-shorts__picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs, 0.25rem);
+  max-width: 24rem;
+}
+
+.make-shorts__heading {
+  margin: 0 0 var(--space-xs, 0.25rem);
+  font-size: var(--text-base, 1rem);
+}
+
+.make-shorts__error {
+  margin: 0;
+  color: var(--color-error-fg, #b00020);
+}
+
+.make-shorts__note {
+  margin: 0;
+  color: var(--color-text-2, #555);
+}
+
+.make-shorts__hint {
+  color: var(--color-text-2, #555);
+}

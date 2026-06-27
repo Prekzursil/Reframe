@@ -1,0 +1,45 @@
+/* outputTray.css — the shared keystone post-action surface. */
+.output-tray {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm, 0.5rem);
+  padding: var(--space-md, 1rem);
+  border: 1px solid var(--color-border, #d0d0d0);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-surface-2, #f7f7f8);
+}
+
+.output-tray__title {
+  margin: 0;
+  font-size: var(--text-base, 1rem);
+}
+
+.output-tray__toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md, 1rem);
+}
+
+.output-tray__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs, 0.25rem);
+}
+
+.output-tray__lang {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs, 0.25rem);
+  max-width: 20rem;
+}
+
+.output-tray__lang-label {
+  font-size: var(--text-sm, 0.8125rem);
+  color: var(--color-text-2, #555);
+}
+
+.output-tray__saves {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm, 0.5rem);
+}
