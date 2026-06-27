@@ -231,11 +231,14 @@ export const DEFAULT_CONTROLS: ShortMakerControls = {
   captionStyle: DEFAULT_CAPTION_STYLE,
   reframeEngine: DEFAULT_REFRAME_ENGINE,
   hookTitle: true,
-  removeFillers: false,
+  // V1 IA (GRILL G-4): quality features DEFAULT-ON to match the "all quality ON"
+  // promise — removeFillers / autoZoom / silenceTrim / stabilize all start ON
+  // (the novice front door ships its best output without touching Advanced).
+  removeFillers: true,
   emphasis: DEFAULT_EMPHASIS,
-  autoZoom: false,
-  silenceTrim: false,
-  stabilize: false,
+  autoZoom: true,
+  silenceTrim: true,
+  stabilize: true,
 };
 
 export const ASPECT_OPTIONS = ['9:16', '1:1', '4:5', '16:9'] as const;
@@ -255,10 +258,10 @@ export function clamp(n: number, lo: number, hi: number): number {
  * - non-empty aspect / language (fall back to defaults)
  * - captionStyle must be a known style id (else the libass default)
  * - reframeEngine must be auto|verthor|claudeshorts (else auto)
- * - hookTitle/removeFillers must be real booleans (else their defaults ON/OFF)
+ * - hookTitle/removeFillers must be real booleans (else their defaults ON — G-4)
  * - emphasis must be 'default'|'on'|'off' (else the 'default' per-style mode)
- * - autoZoom must be a real boolean (else its default OFF)
- * - silenceTrim/stabilize must be real booleans (else their defaults OFF)
+ * - autoZoom must be a real boolean (else its default ON — G-4)
+ * - silenceTrim/stabilize must be real booleans (else their defaults ON — G-4)
  */
 export function sanitizeControls(raw: Partial<ShortMakerControls>): ShortMakerControls {
   const count = Math.max(1, Math.round(raw.count ?? DEFAULT_CONTROLS.count));

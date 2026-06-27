@@ -214,36 +214,36 @@ describe('sanitizeControls', () => {
 
   // ---- P3: hookTitle / removeFillers toggles --------------------------------
 
-  it('defaults hookTitle ON and removeFillers OFF (P3 mini-contract)', () => {
+  it('defaults hookTitle ON and removeFillers ON (V1 quality-defaults-ON, G-4)', () => {
     const c = sanitizeControls({});
     expect(c.hookTitle).toBe(true);
-    expect(c.removeFillers).toBe(false);
+    expect(c.removeFillers).toBe(true);
     expect(DEFAULT_CONTROLS.hookTitle).toBe(true);
-    expect(DEFAULT_CONTROLS.removeFillers).toBe(false);
+    expect(DEFAULT_CONTROLS.removeFillers).toBe(true);
   });
 
   it('keeps explicit boolean toggle values', () => {
     expect(sanitizeControls({ hookTitle: false }).hookTitle).toBe(false);
-    expect(sanitizeControls({ removeFillers: true }).removeFillers).toBe(true);
+    expect(sanitizeControls({ removeFillers: false }).removeFillers).toBe(false);
   });
 
   it('rejects non-boolean toggle values back to the defaults', () => {
     expect(sanitizeControls({ hookTitle: 'yes' as unknown as boolean }).hookTitle).toBe(true);
     expect(sanitizeControls({ hookTitle: 0 as unknown as boolean }).hookTitle).toBe(true);
-    expect(sanitizeControls({ removeFillers: 1 as unknown as boolean }).removeFillers).toBe(false);
+    expect(sanitizeControls({ removeFillers: 1 as unknown as boolean }).removeFillers).toBe(true);
     expect(sanitizeControls({ removeFillers: 'true' as unknown as boolean }).removeFillers).toBe(
-      false,
+      true,
     );
   });
 
   // ---- P4 §8a emphasis tri-state / §8b autoZoom -----------------------------
 
-  it("defaults emphasis to 'default' (per-style) and autoZoom OFF (P4 §8a/§8b)", () => {
+  it("defaults emphasis to 'default' (per-style) and autoZoom ON (V1 quality-defaults-ON, G-4)", () => {
     const c = sanitizeControls({});
     expect(c.emphasis).toBe('default');
-    expect(c.autoZoom).toBe(false);
+    expect(c.autoZoom).toBe(true);
     expect(DEFAULT_CONTROLS.emphasis).toBe('default');
-    expect(DEFAULT_CONTROLS.autoZoom).toBe(false);
+    expect(DEFAULT_CONTROLS.autoZoom).toBe(true);
   });
 
   it('keeps explicit emphasis choices and normalizes case', () => {
@@ -257,10 +257,10 @@ describe('sanitizeControls', () => {
     expect(sanitizeControls({ emphasis: '' as unknown as 'on' }).emphasis).toBe('default');
   });
 
-  it('keeps an explicit autoZoom boolean; junk falls back OFF', () => {
-    expect(sanitizeControls({ autoZoom: true }).autoZoom).toBe(true);
-    expect(sanitizeControls({ autoZoom: 1 as unknown as boolean }).autoZoom).toBe(false);
-    expect(sanitizeControls({ autoZoom: 'true' as unknown as boolean }).autoZoom).toBe(false);
+  it('keeps an explicit autoZoom boolean; junk falls back to the default ON', () => {
+    expect(sanitizeControls({ autoZoom: false }).autoZoom).toBe(false);
+    expect(sanitizeControls({ autoZoom: 1 as unknown as boolean }).autoZoom).toBe(true);
+    expect(sanitizeControls({ autoZoom: 'true' as unknown as boolean }).autoZoom).toBe(true);
   });
 
   // ---- T4b: caption style + reframe engine sanitation ----------------------
@@ -778,8 +778,8 @@ describe('buildExportParams (P4 §8c / §2 export contract)', () => {
       captionStyle: 'bold',
       reframeEngine: 'verthor',
       hookTitle: false,
-      removeFillers: false,
-      autoZoom: false,
+      removeFillers: true,
+      autoZoom: true,
     });
     expect((params.candidates as Candidate[]).map((c) => c.rank)).toEqual([2, 1]);
   });
@@ -791,11 +791,11 @@ describe('buildExportParams (P4 §8c / §2 export contract)', () => {
     expect(buildExportParams('v1', top, ctrl, 'dub-es')).toMatchObject({ audioTrackId: 'dub-es' });
   });
 
-  it('always sends autoZoom (P4 §8b) and reflects an explicit ON', () => {
+  it('always sends autoZoom (P4 §8b) and reflects an explicit OFF', () => {
     const top = [cand()];
-    expect(buildExportParams('v1', top, sanitizeControls({}), '').autoZoom).toBe(false);
-    expect(buildExportParams('v1', top, sanitizeControls({ autoZoom: true }), '').autoZoom).toBe(
-      true,
+    expect(buildExportParams('v1', top, sanitizeControls({}), '').autoZoom).toBe(true);
+    expect(buildExportParams('v1', top, sanitizeControls({ autoZoom: false }), '').autoZoom).toBe(
+      false,
     );
   });
 
@@ -812,17 +812,17 @@ describe('buildExportParams (P4 §8c / §2 export contract)', () => {
     });
   });
 
-  it('always sends the audio-stabilize toggles (silenceTrim/stabilize, default OFF)', () => {
+  it('always sends the audio-stabilize toggles (silenceTrim/stabilize, default ON)', () => {
     const top = [cand()];
-    const off = buildExportParams('v1', top, sanitizeControls({}), '');
-    expect(off).toMatchObject({ silenceTrim: false, stabilize: false });
-    const on = buildExportParams(
+    const on = buildExportParams('v1', top, sanitizeControls({}), '');
+    expect(on).toMatchObject({ silenceTrim: true, stabilize: true });
+    const off = buildExportParams(
       'v1',
       top,
-      sanitizeControls({ silenceTrim: true, stabilize: true }),
+      sanitizeControls({ silenceTrim: false, stabilize: false }),
       '',
     );
-    expect(on).toMatchObject({ silenceTrim: true, stabilize: true });
+    expect(off).toMatchObject({ silenceTrim: false, stabilize: false });
   });
 });
 
@@ -1508,7 +1508,7 @@ describe('<ShortMaker /> component', () => {
     await flush();
   }
 
-  it('renders the two P3 toggles with their defaults (hook title ON, fillers OFF + experimental tag)', () => {
+  it('renders the two P3 toggles with their V1 defaults (hook title ON, fillers ON + experimental tag)', () => {
     render(<ShortMaker videoId="v1" api={makeApi()} />);
     const hook = byLabel('Hook title') as HTMLInputElement;
     const fillers = byLabel('Remove fillers') as HTMLInputElement;
@@ -1517,7 +1517,7 @@ describe('<ShortMaker /> component', () => {
     expect(hook.checked).toBe(true);
     expect(fillers).toBeTruthy();
     expect(fillers.type).toBe('checkbox');
-    expect(fillers.checked).toBe(false);
+    expect(fillers.checked).toBe(true);
     const tag = container.querySelector('.sm-tag-exp');
     expect(tag?.textContent).toBe('experimental');
   });
@@ -1527,13 +1527,13 @@ describe('<ShortMaker /> component', () => {
     render(<ShortMaker videoId="v1" api={makeApi({ rpc })} />);
 
     act(() => (byLabel('Hook title') as HTMLInputElement).click()); // ON -> OFF
-    act(() => (byLabel('Remove fillers') as HTMLInputElement).click()); // OFF -> ON
+    act(() => (byLabel('Remove fillers') as HTMLInputElement).click()); // ON -> OFF (V1 default ON)
     await submitForm();
 
     expect(rpc).toHaveBeenCalledWith(
       'shortmaker.select',
       expect.objectContaining({
-        controls: expect.objectContaining({ hookTitle: false, removeFillers: true }),
+        controls: expect.objectContaining({ hookTitle: false, removeFillers: false }),
       }),
     );
   });
@@ -1581,7 +1581,7 @@ describe('<ShortMaker /> component', () => {
     await submitForm();
 
     // Flip the two new controls in the UI (proving the call site exists).
-    act(() => (byLabel('Auto zoom') as HTMLInputElement).click()); // OFF -> ON
+    act(() => (byLabel('Auto zoom') as HTMLInputElement).click()); // ON -> OFF (V1 default ON)
     const emphasisSel = byLabel('Emphasis') as HTMLSelectElement;
     act(() => {
       emphasisSel.value = 'on';
@@ -1601,7 +1601,7 @@ describe('<ShortMaker /> component', () => {
 
     expect(rpc).toHaveBeenCalledWith(
       'shortmaker.export',
-      expect.objectContaining({ videoId: 'v1', autoZoom: true, emphasis: true }),
+      expect.objectContaining({ videoId: 'v1', autoZoom: false, emphasis: true }),
     );
   });
 
