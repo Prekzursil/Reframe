@@ -8,10 +8,10 @@ import { AUTO_DETECT } from '../lib/languages';
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('DEFAULT_OUTPUT_TRAY', () => {
-  it('ships quality features ON by default (G-4): caption + reframe + burn-subs', () => {
+  it('ships quality features ON by default (G-4): caption + reframe + burn subtitles', () => {
     expect(DEFAULT_OUTPUT_TRAY.caption).toBe(true);
     expect(DEFAULT_OUTPUT_TRAY.reframe).toBe(true);
-    expect(DEFAULT_OUTPUT_TRAY.burnSubs).toBe(true);
+    expect(DEFAULT_OUTPUT_TRAY.subtitleMode).toBe('burn');
     // Translate is opt-in (off until a target language is wanted).
     expect(DEFAULT_OUTPUT_TRAY.translate).toBe(false);
     expect(DEFAULT_OUTPUT_TRAY.language).toBe('en');
@@ -49,12 +49,11 @@ describe('<OutputTray />', () => {
     return [...container.querySelectorAll('button')].find((b) => b.textContent === text);
   }
 
-  it('renders the four consolidated post-action toggles', () => {
+  it('renders the consolidated post-action toggles', () => {
     render();
     expect(toggle('Caption')).toBeTruthy();
     expect(toggle('Translate')).toBeTruthy();
     expect(toggle('Reframe')).toBeTruthy();
-    expect(toggle('Burn subtitles')).toBeTruthy();
   });
 
   it('emits an immutable next-state when a toggle flips', () => {
@@ -65,10 +64,26 @@ describe('<OutputTray />', () => {
     expect(state.caption).toBe(true);
   });
 
-  it('toggles burn-subs independently', () => {
-    const { onChange, state } = render();
-    act(() => toggle('Burn subtitles').click());
-    expect(onChange).toHaveBeenCalledWith({ ...state, burnSubs: false });
+  it('shows the subtitle-delivery selector only while Caption is on and forwards it', () => {
+    const onChange = vi.fn();
+    // Caption OFF -> no subtitle delivery selector.
+    render({ state: { ...DEFAULT_OUTPUT_TRAY, caption: false }, onChange });
+    expect(container.querySelector('.output-tray__subs')).toBeNull();
+    // Caption ON -> the four delivery modes are offered.
+    render({ state: { ...DEFAULT_OUTPUT_TRAY, caption: true }, onChange });
+    const select = container.querySelector(
+      'select[aria-label="Subtitle delivery"]',
+    ) as HTMLSelectElement;
+    expect([...select.options].map((o) => o.value)).toEqual(['burn', 'softmux', 'sidecar', 'none']);
+    act(() => {
+      select.value = 'sidecar';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(onChange).toHaveBeenCalledWith({
+      ...DEFAULT_OUTPUT_TRAY,
+      caption: true,
+      subtitleMode: 'sidecar',
+    });
   });
 
   it('hides the translate-language picker until Translate is on, then forwards it', () => {

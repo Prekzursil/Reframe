@@ -203,6 +203,7 @@ class RecordingStages:
                 "width": width,
                 "height": height,
                 "hook_title": hook_title,
+                "settings": settings,
             }
         )
         return out_path

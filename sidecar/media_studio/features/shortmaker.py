@@ -328,6 +328,30 @@ def _lazy_brand_overlay(in_path, out_path, logo_path, *, settings=None) -> str:
     return out_path
 
 
+# P4 §4: subtitle DELIVERY mode (renderer Output Tray). Burn = hardcode into
+# pixels; softmux = embed a selectable soft subtitle track; sidecar = deliver the
+# subtitles as a SEPARATE file (no captions embedded in the short); none = no
+# subtitles at all. The renderer also exposes "Save SRT separately" (subtitles.
+# export), so the sidecar/none modes still let the user keep an SRT.
+_SUBTITLE_MODES = ("burn", "softmux", "sidecar", "none")
+
+
+def resolve_subtitle_mode(settings) -> str:
+    """The validated ``subtitleMode`` (defaults to ``burn`` — quality-ON, G-4)."""
+    raw = str((settings or {}).get("subtitleMode") or "").strip().lower()
+    return raw if raw in _SUBTITLE_MODES else "burn"
+
+
+def caption_embedded(settings) -> bool:
+    """True when captions are written INTO the exported video (burn or soft track)."""
+    return resolve_subtitle_mode(settings) in ("burn", "softmux")
+
+
+def resolve_caption_burn(settings) -> bool:
+    """True when captions are hard-burned into the pixels (``subtitleMode=burn``)."""
+    return resolve_subtitle_mode(settings) == "burn"
+
+
 def _lazy_caption(
     clip_path,
     cues,
@@ -347,12 +371,18 @@ def _lazy_caption(
       - "none"                                       -> skip captioning entirely
       - anything else / unset                        -> libass (the default)
 
+    P4 §4 subtitle DELIVERY (settings["subtitleMode"]): captions are only written
+    INTO the video for burn / softmux; for sidecar / none the stage is skipped
+    (the clip passes through bare and the subtitles, if any, are delivered as a
+    separate file via subtitles.export). ``settings["captionPosition"]`` (a
+    normalised box) positions the libass default caption when present.
+
     P3-A: ``hook_title`` (the candidate's hook headline, or None to skip) is
     threaded into BOTH engines so the overlay rides whichever caption engine the
     style selects.
     """
     style = str((settings or {}).get("captionStyle") or "").strip().lower()
-    if style == "none":
+    if style == "none" or not caption_embedded(settings):
         return clip_path  # pass-through: the export stage encodes the bare clip
 
     if style:
@@ -384,6 +414,8 @@ def _lazy_caption(
         height=height,
         source_start=source_start,
         hook_title=hook_title,
+        # P4 §4: the libass default engine honours the caption position box.
+        position=(settings or {}).get("captionPosition"),
     )
 
 
@@ -1001,13 +1033,17 @@ def _export_one(
     if (settings or {}).get("hookTitle", True):
         hook_text = str(candidate.get("hook", "") or "").strip()
         hook_title = hook_text or None
+    # P4 §4 subtitle DELIVERY: burn only when subtitleMode is "burn"; for the
+    # soft-track / sidecar / none modes the caption stage soft-muxes or skips (the
+    # stage RETURNS the path to encode — the bare clip when it skips), so capture
+    # it instead of assuming the captioned path always exists.
     captioned_path = str(out_dir / f"{stem}.captioned.mp4")
-    stages.render_caption(
+    caption_out = stages.render_caption(
         caption_clip,
         caption_cues,
         captioned_path,
         source_start=caption_source_start,
-        burn=True,
+        burn=resolve_caption_burn(settings),
         width=OUT_WIDTH,
         height=OUT_HEIGHT,
         settings=settings,
@@ -1020,11 +1056,11 @@ def _export_one(
     # drained ffmpeg.run seam (C16). The final {stem}.mp4 path is unchanged.
     from . import brandkit as _brandkit  # lazy: keep shortmaker import-light
 
-    export_input = captioned_path
+    export_input = caption_out
     if _brandkit.has_brand_logo(settings):
         branded_path = str(out_dir / f"{stem}.branded.mp4")
         stages.brand_overlay(
-            captioned_path,
+            caption_out,
             branded_path,
             _brandkit.brand_logo_path(settings),
             settings=settings,
@@ -1260,10 +1296,17 @@ class ShortMaker:
             raise _invalid_params("videoId (str) is required")
         settings = dict(self.settings_provider())
         # T4b: optional per-export string overrides (renderer ShortMaker controls).
-        for key in ("reframeEngine", "captionStyle"):
+        # P4 §4: subtitleMode is the same kind of optional per-export string
+        # override (burn / softmux / sidecar / none — Output Tray delivery).
+        for key in ("reframeEngine", "captionStyle", "subtitleMode"):
             value = params.get(key)
             if isinstance(value, str) and value:
                 settings[key] = value
+        # P4 §4: the caption POSITION box (normalised {x,y,w,h}); only a dict is
+        # accepted so a malformed value can never poison the libass layout.
+        caption_position = params.get("captionPosition")
+        if isinstance(caption_position, dict):
+            settings["captionPosition"] = caption_position
         # P3/P4: optional per-export BOOLEAN toggles (frozen mini-contract):
         #   hookTitle (default true)  -> render the candidate's hook as a top
         #                                title in the CAPTION stage (P3-A);
