@@ -68,6 +68,9 @@ secrets.local.*
 
 # build artifacts (installer + unpacked) — never commit
 dist/
+# Built installers (NSIS .exe + portable .zip) — large binaries; attach to
+# GitHub Releases, never commit to the repo.
+installers/
 
 # Regenerable build binaries (staged by build/python-embed-setup.ps1 -WithFfmpeg)
 build/ffmpeg/
