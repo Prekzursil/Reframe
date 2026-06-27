@@ -3,6 +3,23 @@
 All notable changes to Reframe — Media Studio are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added — V1 Caption editor + output (Phase 4)
+
+- **Caption position editor** — a draggable / resizable caption box with a live preview on a
+  real video frame, so the caption lands exactly where you place it on the export. The box is
+  stored normalised (resolution-independent) and converted to ASS alignment + margins by the
+  sidecar; quick Top / Center / Bottom band buttons re-seat it.
+- **Subtitle style templates** — a previewable swatch picker (karaoke + the OpusClip-style
+  premium looks), each rendered with its real palette / font / box / outline, previewed both
+  as swatches and live on the video before processing.
+- **Output options in the Output Tray** — subtitle delivery is now a real choice (burn-in /
+  soft track / separate file / none) honoured by the export pipeline (burn is no longer
+  hard-coded), alongside save cut / save short / save SRT for every combination.
+- **Preferences** — a Settings → Caption defaults area persists the default caption style,
+  position, subtitle delivery, and language; Make Shorts seeds new clips from it.
+
 ## [0.1.0] — 2026-06-25
 
 First public release: a plug-and-play, local-first Windows desktop video studio that turns

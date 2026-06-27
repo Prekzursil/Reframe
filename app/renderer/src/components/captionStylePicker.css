@@ -1,0 +1,54 @@
+/* CaptionStylePicker — previewable caption style swatch grid (P4 §4). */
+
+.caption-style-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+.caption-style-swatch {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1.5px solid var(--border, #2a2a33);
+  border-radius: 8px;
+  background: #14141a;
+  cursor: pointer;
+  text-align: center;
+}
+
+.caption-style-swatch.is-active {
+  border-color: var(--accent, #4c8dff);
+  box-shadow: 0 0 0 1px var(--accent, #4c8dff);
+}
+
+.caption-style-swatch__preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #2b2b38, #101016);
+}
+
+.caption-style-swatch__sample {
+  font-weight: 800;
+  font-size: 22px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.caption-style-swatch__none {
+  font-size: 12px;
+  color: #8a8a99;
+}
+
+.caption-style-swatch__label {
+  font-size: 11px;
+  color: #c9c9d4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

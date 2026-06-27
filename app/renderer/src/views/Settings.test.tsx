@@ -38,6 +38,9 @@ vi.mock('../components/PathsPanel', () => ({
 vi.mock('../components/SetupStatusPanel', () => ({
   SetupStatusPanel: () => <div data-testid="setup" />,
 }));
+vi.mock('../components/CaptionPreferences', () => ({
+  CaptionPreferences: () => <div data-testid="preferences" />,
+}));
 
 import { Settings, SETTINGS_SECTIONS } from './Settings';
 
@@ -84,6 +87,7 @@ describe('Settings sub-nav', () => {
       'setup',
       'providers',
       'storage',
+      'preferences',
       'health',
     ]);
     expect(SETTINGS_SECTIONS.map((s) => s.label)).toEqual([
@@ -91,8 +95,19 @@ describe('Settings sub-nav', () => {
       'Setup',
       'Providers & Keys',
       'Storage',
+      'Caption defaults',
       'System Health',
     ]);
+  });
+
+  it('opens the Caption defaults (Preferences) section via the sub-tab', async () => {
+    await mount();
+    await act(async () => {
+      subtab('Caption defaults').click();
+    });
+    await flush();
+    expect(container.querySelector('[data-testid="preferences"]')).not.toBeNull();
+    expect(subtab('Caption defaults').classList.contains('tab--active')).toBe(true);
   });
 
   it('opens the Setup section (self-diagnostic) via the sub-tab', async () => {

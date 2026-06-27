@@ -20,6 +20,7 @@ import { SystemHealth } from '../features/SystemHealth';
 import { ProvidersKeys } from '../features/ProvidersKeys';
 import { PathsPanel, type PathsBridge } from '../components/PathsPanel';
 import { SetupStatusPanel } from '../components/SetupStatusPanel';
+import { CaptionPreferences } from '../components/CaptionPreferences';
 import { client } from '../lib/rpc';
 import { resolveWindowApi } from '../features/shortMakerLogic';
 import './settings.css';
@@ -93,6 +94,13 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     // `client.paths`; the data-root flow + open-in-folder via the window.api
     // bridge (fail-soft per control when the preload is absent).
     render: () => <PathsPanel rpc={client.paths} bridge={pathsBridge()} />,
+  },
+  {
+    id: 'preferences',
+    label: 'Caption defaults',
+    // P4 §4: the Preferences area — caption style/position, subtitle delivery,
+    // and language defaults every new short seeds from (persisted to settings).
+    render: () => <CaptionPreferences />,
   },
   {
     id: 'health',
