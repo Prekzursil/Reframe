@@ -71,7 +71,7 @@ your limit, so many small approved runs can't quietly add up.
 | Area | Features |
 |------|----------|
 | **Short-maker** (the star) | LLM moment-selection → boundary-snap → cut → vertical reframe → captions → export; subtle zoom/punch-in; brand-logo overlay; virality scoring + a feedback flywheel |
-| **Reframe** | 9:16 auto-reframe via **verthor** (WSL2/MediaPipe) with an automatic in-sidecar **claudeshorts** (OpenCV/MediaPipe) fallback |
+| **Reframe** | 9:16 auto-reframe via **verthor** (WSL2/MediaPipe) with an automatic in-sidecar **claudeshorts** (OpenCV/MediaPipe) fallback. **V1 follows a single speaker** — in a wide / two-shot the crop locks onto the dominant/active speaker and tracks them smoothly (never an empty studio or the gap between two people). Automatic multi-speaker *switching* is a [V2 roadmap](docs/ROADMAP.md) item. |
 | **Director** | prompt-driven edits → storyboard/diff + cost preview → real ffmpeg op-engines |
 | **Stabilize** *(differentiator)* | camera-shake removal via ffmpeg **vidstab** 2-pass — something OpusClip & peers don't do |
 | **Audio** | A/V mix + sidechain **auto-duck** + EBU R128 loudnorm; **silence-trim** dead-air removal |
@@ -94,7 +94,11 @@ your limit, so many small approved runs can't quietly add up.
   **CPU** (slower) — there is always a CPU fallback.
 - **9:16 reframe:** the high-quality **verthor** path uses **WSL2 / MediaPipe**; if WSL2 is
   absent the app **auto-falls back** to the in-process **claudeshorts** reframer — no setup
-  required either way.
+  required either way. **V1 follows a single speaker:** even in a wide or two-shot the crop
+  locks onto the dominant/active speaker (largest, most-active face/person) and tracks them
+  smoothly — it never shows an empty studio or the gap between two people. Automatic
+  multi-speaker *switching* (cutting between people as they talk) is a [V2 roadmap](docs/ROADMAP.md)
+  item.
 - **Disk / network:** ~**a few GB** of one-time first-run download for ML wheels + the models
   you enable (into `%APPDATA%\media-studio`). **Offline after** the first-run setup.
 - **No toolchain needed:** Python, ffmpeg, and the render engine are bundled.

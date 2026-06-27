@@ -934,12 +934,14 @@ def _fake_mediapipe(detections):
     return mod, captured
 
 
-def _bbox(xmin, width, height):
+def _bbox(xmin, width, height, ymin=0.0):
     import types
 
+    # The real mediapipe relative_bounding_box carries ymin too (the finder uses
+    # it to build the per-face motion box for the active-speaker tie-break).
     return types.SimpleNamespace(
         location_data=types.SimpleNamespace(
-            relative_bounding_box=types.SimpleNamespace(xmin=xmin, width=width, height=height)
+            relative_bounding_box=types.SimpleNamespace(xmin=xmin, ymin=ymin, width=width, height=height)
         )
     )
 
@@ -1241,3 +1243,223 @@ def test_motion_center_shape_mismatch_returns_none():
     prev = np.zeros((100, 200, 3), dtype=np.uint8)
     img = np.zeros((90, 160, 3), dtype=np.uint8)  # different geometry (scene cut)
     assert cs._motion_center(prev, img) is None
+
+
+# --------------------------------------------------------------------------- #
+# WU PHASE-5 — WIDE-SHOT framing: lock onto the DOMINANT/active single speaker
+# (largest face/person; tie-break by motion). NEVER the empty gap between two
+# people / an edge-cut. Multi-speaker SWITCHING is V2 (docs/ROADMAP.md).
+# --------------------------------------------------------------------------- #
+# select_dominant — the pure subject-selection core.
+def test_select_dominant_empty_returns_none():
+    assert cs.select_dominant([]) is None
+
+
+def test_select_dominant_single_candidate_returns_it():
+    assert cs.select_dominant([(0.3, 100.0, 0.0)]) == pytest.approx(0.3)
+
+
+def test_select_dominant_two_people_different_sizes_picks_larger():
+    """Two-person shot, different face/person sizes -> the LARGER (closer =
+    dominant) subject is framed, not the smaller one nor the midpoint."""
+    cands = [(0.25, 2000.0, 0.0), (0.8, 300.0, 0.0)]  # left big, right small
+    assert cs.select_dominant(cands) == pytest.approx(0.25)
+
+
+def test_select_dominant_larger_wins_over_higher_activity_when_gap_is_real():
+    """A genuinely larger subject beats a smaller, more-active one — size (who is
+    featured) dominates unless the sizes are a near-tie."""
+    cands = [(0.2, 5000.0, 0.0), (0.9, 500.0, 99.0)]
+    assert cs.select_dominant(cands) == pytest.approx(0.2)
+
+
+def test_select_dominant_wide_offcenter_locks_on_person_not_center():
+    """A single off-center person in a WIDE shot -> framed ON him, never drifted
+    back to frame center / an empty studio."""
+    assert cs.select_dominant([(0.82, 1500.0, 0.0)]) == pytest.approx(0.82)
+
+
+def test_select_dominant_equal_size_tie_broken_by_motion():
+    """A symmetric two-shot (equal face size) -> the ACTIVE (talking, more
+    motion) speaker is framed, not an arbitrary largest-by-a-pixel pick."""
+    left = (0.25, 1000.0, 0.1)
+    right = (0.75, 1000.0, 5.0)  # more motion -> the active speaker
+    assert cs.select_dominant([left, right]) == pytest.approx(0.75)
+
+
+def test_select_dominant_near_size_tie_uses_motion():
+    """Within DOMINANT_SIZE_TIE_FRAC the marginally-smaller but ACTIVE speaker
+    still wins (the tie band, not a hard equality)."""
+    bigger_quiet = (0.2, 1000.0, 0.0)
+    smaller_active = (0.8, 1000.0 * (1.0 - cs.DOMINANT_SIZE_TIE_FRAC / 2.0), 9.0)
+    assert cs.select_dominant([bigger_quiet, smaller_active]) == pytest.approx(0.8)
+
+
+def test_select_dominant_all_zero_size_falls_back_to_activity():
+    """Degenerate (all zero-area) candidates -> activity decides (covers the
+    largest<=0 guard)."""
+    assert cs.select_dominant([(0.1, 0.0, 1.0), (0.9, 0.0, 5.0)]) == pytest.approx(0.9)
+
+
+def test_select_dominant_exact_tie_is_deterministic_first():
+    """Exact ties (same size + same activity) resolve to the FIRST candidate —
+    deterministic, so the crop never flips frame-to-frame on a coin-flip."""
+    assert cs.select_dominant([(0.3, 100.0, 0.0), (0.7, 100.0, 0.0)]) == pytest.approx(0.3)
+
+
+# _region_activity — per-face motion score for the active-speaker tie-break.
+def test_region_activity_no_prev_frame_returns_zero():
+    import numpy as np
+
+    img = np.zeros((50, 50, 3), dtype=np.uint8)
+    assert cs._region_activity(None, img, (0, 0, 50, 50)) == 0.0
+
+
+def test_region_activity_shape_mismatch_returns_zero():
+    import numpy as np
+
+    prev = np.zeros((40, 40, 3), dtype=np.uint8)
+    img = np.zeros((50, 50, 3), dtype=np.uint8)
+    assert cs._region_activity(prev, img, (0, 0, 40, 40)) == 0.0
+
+
+def test_region_activity_empty_or_out_of_range_box_returns_zero():
+    import numpy as np
+
+    f = np.zeros((50, 50, 3), dtype=np.uint8)
+    assert cs._region_activity(f, f.copy(), (30, 0, 30, 50)) == 0.0  # x1<=x0
+    assert cs._region_activity(f, f.copy(), (60, 60, 70, 70)) == 0.0  # clamps to empty
+
+
+def test_region_activity_detects_change_inside_box_only():
+    import numpy as np
+
+    prev = np.zeros((50, 80, 3), dtype=np.uint8)
+    cur = np.zeros((50, 80, 3), dtype=np.uint8)
+    cur[10:40, 10:40, :] = 200
+    moved = cs._region_activity(prev, cur, (10, 10, 40, 40))
+    still = cs._region_activity(prev, cur, (50, 0, 80, 50))
+    assert moved > 0.0
+    assert still == 0.0
+
+
+# _dominant_cluster_centroid — motion fallback picks ONE cluster, never the gap.
+def test_dominant_cluster_centroid_single_run():
+    assert cs._dominant_cluster_centroid([0, 0, 4, 4, 0, 0]) == pytest.approx(2.5)
+
+
+def test_dominant_cluster_centroid_picks_run_with_most_motion():
+    # left run cols 2-3 (sum 2) vs right run cols 6-8 (sum 30) -> dominant = right.
+    col = [0, 0, 1, 1, 0, 0, 10, 10, 10, 0]
+    assert cs._dominant_cluster_centroid(col) == pytest.approx(7.0)
+
+
+def test_dominant_cluster_centroid_run_extends_to_end():
+    # a run touching the last column exercises the trailing-run append.
+    assert cs._dominant_cluster_centroid([0, 0, 5, 5]) == pytest.approx(2.5)
+
+
+def test_motion_center_two_movers_picks_dominant_not_midpoint():
+    """The empty-studio bug: two people both moving in a wide/two-shot. The
+    GLOBAL centroid would land in the gap between them; the dominant-cluster
+    centroid locks onto the more-active subject instead."""
+    import numpy as np
+
+    prev = np.zeros((100, 300, 3), dtype=np.uint8)
+    img = np.zeros((100, 300, 3), dtype=np.uint8)
+    img[40:60, 20:40, :] = 255  # small mover, left
+    img[20:80, 240:280, :] = 255  # big mover, right (dominant)
+    cx = cs._motion_center(prev, img)
+    assert cx is not None
+    assert cx > 0.7  # right cluster, NOT the ~0.5 midpoint gap
+
+
+# face/person finders — dominant selection wired through the real detectors.
+def test_make_face_finder_haar_two_faces_picks_larger(monkeypatch):
+    import cv2
+    import numpy as np
+
+    class _TwoFaces:
+        def __init__(self, *_a):
+            pass
+
+        def empty(self):
+            return False
+
+        def detectMultiScale(self, gray, scaleFactor, minNeighbors):
+            # left small (20x20 @x=20), right large (60x60 @x=300). width = 400.
+            return [(20, 20, 20, 20), (300, 20, 60, 60)]
+
+    monkeypatch.setattr(cv2, "CascadeClassifier", _TwoFaces)
+    find, _close = cs._make_face_finder("haar")
+    cx = find(np.zeros((120, 400, 3), dtype=np.uint8))
+    # larger face center x = 300 + 30 = 330 -> 330/400 = 0.825.
+    assert cx == pytest.approx(0.825)
+
+
+def test_make_face_finder_haar_active_speaker_motion_tiebreak(monkeypatch):
+    import cv2
+    import numpy as np
+
+    class _TwoEqual:
+        def __init__(self, *_a):
+            pass
+
+        def empty(self):
+            return False
+
+        def detectMultiScale(self, gray, scaleFactor, minNeighbors):
+            return [(20, 20, 40, 40), (120, 20, 40, 40)]  # equal size; width = 200
+
+    monkeypatch.setattr(cv2, "CascadeClassifier", _TwoEqual)
+    find, _close = cs._make_face_finder("haar")
+    f0 = np.zeros((100, 200, 3), dtype=np.uint8)
+    f1 = np.zeros((100, 200, 3), dtype=np.uint8)
+    f1[20:60, 120:160, :] = 200  # the RIGHT face moves (talking)
+    find(f0)  # establish previous frame
+    cx = find(f1)
+    assert cx == pytest.approx(0.7)  # active (right) speaker: (120 + 20) / 200
+
+
+def test_make_face_finder_mediapipe_active_speaker_motion_tiebreak(monkeypatch):
+    import numpy as np
+
+    left = _bbox(0.05, 0.2, 0.4)  # equal-size faces
+    right = _bbox(0.6, 0.2, 0.4)
+    _mod, _captured = _fake_mediapipe([left, right])
+    monkeypatch.setitem(__import__("sys").modules, "mediapipe", _mod)
+    find, close = cs._make_face_finder("mediapipe")
+    f0 = np.zeros((100, 200, 3), dtype=np.uint8)
+    f1 = np.zeros((100, 200, 3), dtype=np.uint8)
+    f1[0:40, 120:160, :] = 200  # right face box (x 120..160, y 0..40) moves
+    find(f0)
+    cx = find(f1)
+    assert cx == pytest.approx(0.7)  # right active speaker: xmin + width/2 = 0.6 + 0.1
+    close()
+
+
+def test_person_center_prefers_larger_closer_body_over_higher_weight(monkeypatch):
+    import cv2
+    import numpy as np
+
+    class _HOG:
+        def setSVMDetector(self, _d):
+            pass
+
+        def detectMultiScale(self, _img, winStride):
+            # left BIG body (closer) lower weight; right small higher weight. width=400.
+            return [(10, 0, 160, 300), (320, 0, 40, 90)], [0.3, 0.95]
+
+    monkeypatch.setattr(cv2, "HOGDescriptor", lambda: _HOG())
+    monkeypatch.setattr(cv2, "HOGDescriptor_getDefaultPeopleDetector", lambda: object())
+    cx = cs._person_center(np.zeros((320, 400, 3), dtype=np.uint8))
+    # dominant = larger (closer) body -> center x = 10 + 80 = 90 -> 90/400 = 0.225.
+    assert cx == pytest.approx(0.225)
+
+
+def test_single_speaker_capability_note_is_honest():
+    """The honest 'V1 follows a single speaker' capability copy is a real,
+    asserted artifact (not just prose) — and points at the V2 switching roadmap."""
+    note = cs.SINGLE_SPEAKER_CAPABILITY_NOTE
+    assert "single speaker" in note.lower()
+    assert "v2" in note.lower()
