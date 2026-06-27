@@ -1,0 +1,79 @@
+/* CaptionDesigner — caption editor with live preview on a real frame (P4 §4). */
+
+.caption-designer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.caption-designer__phone {
+  position: relative;
+  width: 270px;
+  max-width: 100%;
+  aspect-ratio: 9 / 16;
+  margin: 0 auto;
+  background: #000;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.caption-designer__phone video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.caption-designer__sample {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  text-align: center;
+}
+
+.caption-designer__hook {
+  font-weight: 800;
+  font-size: 13px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.caption-designer__line {
+  font-weight: 800;
+  font-size: 15px;
+  line-height: 1.1;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.caption-designer__hint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.caption-designer__bands {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+
+.caption-designer__band {
+  padding: 4px 12px;
+  border: 1px solid var(--border, #2a2a33);
+  border-radius: 6px;
+  background: #14141a;
+  color: #c9c9d4;
+  cursor: pointer;
+}
+
+.caption-designer__band.is-active {
+  border-color: var(--accent, #4c8dff);
+  color: #fff;
+}

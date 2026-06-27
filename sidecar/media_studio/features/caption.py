@@ -29,6 +29,7 @@ injectable so tests exercise argv construction with no real ffmpeg present.
 from __future__ import annotations
 
 import contextlib
+import math
 import os
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
@@ -198,6 +199,57 @@ def render_cue_text(cue: CueLike) -> str:
 # --------------------------------------------------------------------------- #
 # ASS document generation (pure function — the heart of the unit)
 # --------------------------------------------------------------------------- #
+def normalize_caption_box(raw: Any) -> dict[str, float] | None:
+    """Validate a renderer caption box (``{x,y,w,h}`` fractions 0..1) or None.
+
+    The renderer's caption position editor (P4 §4) sends a NORMALISED box; this
+    coerces + clamps it into a usable box, returning ``None`` for anything that
+    is not a finite-numbered ``{x,y,w,h}`` so the caller keeps the default
+    bottom-centred placement (never a silent crash on malformed input).
+    """
+    if not isinstance(raw, dict):
+        return None
+    try:
+        x = float(raw["x"])
+        y = float(raw["y"])
+        w = float(raw["w"])
+        h = float(raw["h"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (x, y, w, h)):
+        return None
+    w = min(max(w, 0.0), 1.0)
+    h = min(max(h, 0.0), 1.0)
+    x = min(max(x, 0.0), 1.0)
+    y = min(max(y, 0.0), 1.0)
+    return {"x": x, "y": y, "w": w, "h": h}
+
+
+def caption_position_fields(box: dict[str, float], play_x: int, play_y: int) -> tuple[int, int, int, int]:
+    """ASS ``(Alignment, MarginL, MarginR, MarginV)`` for a normalised box.
+
+    The box centre's vertical band picks the anchor (top=8 / middle=5 /
+    bottom=2, all horizontally centred); margins place the box edge in pixels.
+    For a TOP-anchored line MarginV measures from the top edge, for a BOTTOM line
+    from the bottom edge, and a MIDDLE line ignores MarginV (libass centres it).
+    """
+    y = box["y"]
+    h = box["h"]
+    cy = y + h / 2.0
+    if cy < 1.0 / 3.0:
+        alignment = 8
+        margin_v = int(round(y * play_y))
+    elif cy < 2.0 / 3.0:
+        alignment = 5
+        margin_v = 0
+    else:
+        alignment = 2
+        margin_v = int(round((1.0 - (y + h)) * play_y))
+    margin_l = int(round(box["x"] * play_x))
+    margin_r = int(round((1.0 - (box["x"] + box["w"])) * play_x))
+    return alignment, max(0, margin_l), max(0, margin_r), max(0, margin_v)
+
+
 def build_ass(
     cues: Sequence[CueLike],
     width: int = 1080,
@@ -205,6 +257,7 @@ def build_ass(
     source_start: float = 0.0,
     hook_title: str | None = None,
     total_sec: float = 0.0,
+    position: Any = None,
 ) -> str:
     """Build a complete ASS subtitle document for ``cues``.
 
@@ -226,7 +279,16 @@ def build_ass(
     # A readable default style scaled to the canvas height. Bottom-centred,
     # white fill with a black outline + drop shadow (typical short-form caption).
     font_size = max(12, int(round(play_y * 0.045)))
-    margin_v = max(10, int(round(play_y * 0.06)))
+    default_margin_v = max(10, int(round(play_y * 0.06)))
+
+    # P4 §4: honour the renderer's normalised caption POSITION box when present
+    # (alignment + margins from the box); otherwise keep the bottom-centred
+    # default. Malformed boxes fall back to the default (no silent crash).
+    box = normalize_caption_box(position)
+    if box is not None:
+        alignment, margin_l, margin_r, margin_v = caption_position_fields(box, play_x, play_y)
+    else:
+        alignment, margin_l, margin_r, margin_v = 2, 40, 40, default_margin_v
 
     styles = [
         (
@@ -235,7 +297,7 @@ def build_ass(
             "&H00FFFFFF,&H000000FF,&H00000000,&H64000000,"
             "-1,0,0,0,"
             "100,100,0,0,1,3,1,"
-            f"2,40,40,{margin_v},1"
+            f"{alignment},{margin_l},{margin_r},{margin_v},1"
         ),
     ]
 
@@ -434,6 +496,7 @@ class CaptionEngine:
         source_start: float = 0.0,
         hook_title: str | None = None,
         total_sec: float = 0.0,
+        position: Any = None,
     ) -> str:
         """Generate the ASS document (delegates to module-level :func:`build_ass`)."""
         return build_ass(
@@ -443,6 +506,7 @@ class CaptionEngine:
             source_start=source_start,
             hook_title=hook_title,
             total_sec=total_sec,
+            position=position,
         )
 
     def render(
@@ -458,6 +522,7 @@ class CaptionEngine:
         should_cancel: Callable[[], bool] | None = None,
         total_sec: float = 0.0,
         hook_title: str | None = None,
+        position: Any = None,
     ) -> str:
         """Render ``cues`` onto ``clip_path`` -> ``out_path`` and return ``out_path``.
 
@@ -481,6 +546,7 @@ class CaptionEngine:
             source_start=source_start,
             hook_title=hook_title,
             total_sec=total_sec,
+            position=position,
         )
 
         # Write the ASS to a temp sidecar file. We pass its path as an argv

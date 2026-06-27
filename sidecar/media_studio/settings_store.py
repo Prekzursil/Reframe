@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import budget as _budget
-from .models.secrets import redact_keys
+from .models.secrets import redact, redact_keys
 from .util import get_logger
 
 log = get_logger("media_studio.settings")
@@ -166,18 +166,22 @@ class SettingsStore:
     def get(self) -> dict[str, Any]:
         """Return the REDACTED §2 settings object (defaults backfilled).
 
-        This is the RPC-facing view: ``settings.providers[].apiKeys`` are
-        redacted to last-4 via :func:`secrets.redact_keys` so NO full key ever
+        This is the RPC-facing view: ``settings.providers[].apiKeys`` AND the
+        legacy single-cloud ``cloudApiKey`` are redacted to last-4 via
+        :func:`secrets.redact` / :func:`secrets.redact_keys` so NO full key ever
         crosses the RPC boundary (PLAN §WU-keys security invariant). The
-        provider/translator FACTORY path must call :meth:`get_raw` instead — see
-        its docstring. ``cloudApiKey`` (the legacy single-cloud key) stays as-is:
-        it is not part of the pool and the §0 contract names it directly; the
-        Hub's redaction is scoped to the new ``providers`` pool only.
+        provider/translator FACTORY path must call :meth:`get_raw` instead — it is
+        the ONLY accessor that returns the live ``cloudApiKey`` (and pool keys),
+        and it is never registered over RPC. An empty/absent ``cloudApiKey`` is
+        left as-is so the UI does not imply a key exists when none is set.
         """
         merged = self.get_raw()
         providers = merged.get("providers")
         if isinstance(providers, list):
             merged["providers"] = redact_keys(providers)
+        cloud_key = merged.get("cloudApiKey")
+        if isinstance(cloud_key, str) and cloud_key:
+            merged["cloudApiKey"] = redact(cloud_key)
         return merged
 
     def get_raw(self) -> dict[str, Any]:

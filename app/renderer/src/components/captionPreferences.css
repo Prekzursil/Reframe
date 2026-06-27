@@ -1,0 +1,62 @@
+/* CaptionPreferences — caption + output defaults panel (P4 §4). */
+
+.caption-prefs {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.caption-prefs__title {
+  margin: 0;
+}
+
+.caption-prefs__hint {
+  margin: 0;
+  color: var(--color-text-2, #777);
+  font-size: 0.875rem;
+}
+
+.caption-prefs__group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.caption-prefs__group h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.caption-prefs__row {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.caption-prefs__frame {
+  position: relative;
+  width: 220px;
+  aspect-ratio: 9 / 16;
+  border-radius: 12px;
+  background: linear-gradient(160deg, #2a2a38, #0d0d12);
+  overflow: hidden;
+}
+
+.caption-prefs__sample {
+  font-weight: 800;
+  font-size: 18px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.caption-prefs__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.caption-prefs__status {
+  color: var(--color-success, #2e7d32);
+}
+
+.caption-prefs__error {
+  color: var(--color-error, #c62828);
+}

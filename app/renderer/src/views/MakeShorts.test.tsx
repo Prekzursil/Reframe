@@ -8,6 +8,7 @@ import type { Candidate, ShortReexportHint, Video } from '../lib/rpc';
 
 const libraryListMock = vi.fn();
 const exportMock = vi.fn();
+const settingsGetMock = vi.fn();
 let hasApiValue = true;
 
 vi.mock('../lib/rpc', () => ({
@@ -15,7 +16,26 @@ vi.mock('../lib/rpc', () => ({
   client: {
     library: { list: (...a: unknown[]) => libraryListMock(...a) },
     shortmaker: { export: (...a: unknown[]) => exportMock(...a) },
+    settings: { get: (...a: unknown[]) => settingsGetMock(...a) },
   },
+}));
+
+vi.mock('../components/CaptionDesigner', () => ({
+  CaptionDesigner: ({
+    design,
+    onChange,
+    videoId,
+  }: {
+    design: { style: string };
+    onChange: (d: { style: string }) => void;
+    videoId?: string;
+  }) => (
+    <div data-testid="caption-designer" data-style={design.style} data-video-id={videoId}>
+      <button type="button" onClick={() => onChange({ ...design, style: 'karaoke' })}>
+        designer-pick-karaoke
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock('./Shorts', () => ({
@@ -76,7 +96,13 @@ const MANUAL_CANDS: Candidate[] = [
 
 vi.mock('../components/OutputTray', () => {
   // Self-contained (vi.mock is hoisted — no top-level refs allowed).
-  const seed = { caption: true, translate: false, reframe: true, burnSubs: true, language: 'en' };
+  const seed = {
+    caption: true,
+    translate: false,
+    reframe: true,
+    subtitleMode: 'burn',
+    language: 'en',
+  };
   return {
     DEFAULT_OUTPUT_TRAY: seed,
     OutputTray: ({
@@ -126,6 +152,8 @@ beforeEach(() => {
   libraryListMock.mockResolvedValue({ videos: [makeVideo()] });
   exportMock.mockReset();
   exportMock.mockResolvedValue({ clips: [{ path: '/out/1.mp4' }] });
+  settingsGetMock.mockReset();
+  settingsGetMock.mockResolvedValue({});
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -240,9 +268,65 @@ describe('<MakeShorts />', () => {
     const [vid, ids, opts] = exportMock.mock.calls[0];
     expect(vid).toBe('v1');
     expect(ids).toEqual(['1@10']);
-    expect(opts).toMatchObject({ candidates: MANUAL_CANDS });
+    // P4 §4: the caption design + subtitle delivery ride the export payload.
+    expect(opts).toMatchObject({
+      candidates: MANUAL_CANDS,
+      captionStyle: 'libass',
+      subtitleMode: 'burn',
+    });
+    expect(opts.captionPosition).toMatchObject({ w: expect.any(Number), h: expect.any(Number) });
     expect(container.querySelector('.make-shorts__note')?.textContent).toContain('Exported 1 clip');
     expect(container.querySelector('[data-testid="output-tray"]')).toBeTruthy();
+  });
+
+  it('seeds the caption design + subtitle delivery from persisted preferences', async () => {
+    settingsGetMock.mockResolvedValue({
+      defaultCaptionStyle: 'neon',
+      defaultSubtitleMode: 'sidecar',
+      defaultLanguage: 'pt',
+    });
+    await mount();
+    await selectVideo('v1');
+    // The designer reflects the persisted style.
+    expect(
+      container.querySelector('[data-testid="caption-designer"]')?.getAttribute('data-style'),
+    ).toBe('neon');
+    await act(async () => {
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'manual-submit',
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    await flush();
+    const [, , opts] = exportMock.mock.calls[0];
+    expect(opts).toMatchObject({ captionStyle: 'neon', subtitleMode: 'sidecar' });
+  });
+
+  it('swallows a settings.get rejection (keeps built-in defaults)', async () => {
+    settingsGetMock.mockRejectedValue(new Error('settings down'));
+    await mount();
+    await selectVideo('v1');
+    // Built-in default style survives.
+    expect(
+      container.querySelector('[data-testid="caption-designer"]')?.getAttribute('data-style'),
+    ).toBe('libass');
+  });
+
+  it('updates the caption design from the editor', async () => {
+    await mount();
+    await selectVideo('v1');
+    await act(async () => {
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'designer-pick-karaoke',
+        ) as HTMLButtonElement
+      ).click();
+    });
+    expect(
+      container.querySelector('[data-testid="caption-designer"]')?.getAttribute('data-style'),
+    ).toBe('karaoke');
   });
 
   it('surfaces a manual-export error and shows no tray', async () => {
@@ -338,6 +422,25 @@ describe('<MakeShorts />', () => {
     act(() => root.unmount());
     await act(async () => {
       resolveList({ videos: [makeVideo()] });
+      await Promise.resolve();
+    });
+    root = createRoot(container);
+  });
+
+  it('ignores a late settings.get result after unmount (cancelled guard)', async () => {
+    let resolveSettings: (v: Record<string, unknown>) => void = () => {};
+    settingsGetMock.mockReturnValue(
+      new Promise((res) => {
+        resolveSettings = res;
+      }),
+    );
+    await act(async () => {
+      root.render(<MakeShorts />);
+    });
+    await flush();
+    act(() => root.unmount());
+    await act(async () => {
+      resolveSettings({ defaultCaptionStyle: 'neon' });
       await Promise.resolve();
     });
     root = createRoot(container);

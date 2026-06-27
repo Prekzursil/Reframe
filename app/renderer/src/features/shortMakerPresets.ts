@@ -21,6 +21,8 @@ import {
   displayVirality,
   CAPTION_STYLE_OPTIONS,
 } from './shortMakerLogic';
+import type { CaptionBox } from '../lib/captionPosition';
+import type { SubtitleMode } from '../lib/outputOptions';
 
 // ---------------------------------------------------------------------------
 // P4 §7 — candidate sort (rank ↔ virality).
@@ -141,12 +143,24 @@ export function topByVirality(candidates: readonly Candidate[], n: number): Cand
  * 'on'/'off' send an explicit `emphasis` bool; 'default' OMITS the key so the
  * sidecar's `resolve_emphasis` per-style default applies (ON for OpusClip-style
  * templates, OFF for clean/minimal) — sending nothing is the contract default.
+ *
+ * P4 §4 caption editor: the optional `output` slice carries the caption POSITION
+ * box + the subtitle DELIVERY mode (burn / soft track / sidecar / none). Each is
+ * sent only when provided so the existing AI/batch callers (no editor) are
+ * byte-identical; the sidecar honours `subtitleMode` (burn vs not, skip for
+ * none/sidecar) + `captionPosition` (ASS alignment/margins).
  */
+export interface ExportOutputOptions {
+  captionPosition?: CaptionBox;
+  subtitleMode?: SubtitleMode;
+}
+
 export function buildExportParams(
   videoId: string,
   candidates: readonly Candidate[],
   controls: ShortMakerControls,
   audioTrackId: string,
+  output: ExportOutputOptions = {},
 ): Record<string, unknown> {
   return {
     videoId,
@@ -165,6 +179,8 @@ export function buildExportParams(
     stabilize: controls.stabilize,
     ...(controls.emphasis === 'default' ? {} : { emphasis: controls.emphasis === 'on' }),
     ...(audioTrackId ? { audioTrackId } : {}),
+    ...(output.subtitleMode ? { subtitleMode: output.subtitleMode } : {}),
+    ...(output.captionPosition ? { captionPosition: output.captionPosition } : {}),
   };
 }
 

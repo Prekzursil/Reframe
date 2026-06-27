@@ -19,10 +19,21 @@ import { Repurpose } from './Repurpose';
 import { ShortMaker } from '../features/ShortMaker';
 import { ManualInterval } from '../features/ManualInterval';
 import { OutputTray, DEFAULT_OUTPUT_TRAY, type OutputTrayState } from '../components/OutputTray';
+import { CaptionDesigner } from '../components/CaptionDesigner';
 import { buildExportParams } from '../features/shortMakerPresets';
 import { candidateId, sanitizeControls } from '../features/shortMakerLogic';
+import {
+  type CaptionDesign,
+  DEFAULT_CAPTION_DESIGN,
+  captionDesignWire,
+  sampleCaptionCues,
+} from '../lib/captionDesign';
+import { readPreferences } from '../lib/captionPreferences';
 import { client, hasApi, type Candidate, type ShortReexportHint, type Video } from '../lib/rpc';
 import './makeShorts.css';
+
+/** Seconds of the source the caption editor previews (style/position rehearsal). */
+const CAPTION_PREVIEW_SEC = 6;
 
 const SECTIONS: TabDef[] = [
   { id: 'make', label: 'Make' },
@@ -50,6 +61,9 @@ export function MakeShorts({ resumeId }: MakeShortsProps): React.ReactElement {
   const [manualError, setManualError] = useState<string | null>(null);
   const [tray, setTray] = useState<OutputTrayState>(DEFAULT_OUTPUT_TRAY);
   const [trayOpen, setTrayOpen] = useState(false);
+  // P4 §4: the caption design (style + on-frame position) for the manual export,
+  // seeded from the persisted Preferences (Settings → Caption defaults).
+  const [design, setDesign] = useState<CaptionDesign>(DEFAULT_CAPTION_DESIGN);
 
   useEffect(() => {
     if (!hasApi()) return;
@@ -61,6 +75,29 @@ export function MakeShorts({ resumeId }: MakeShortsProps): React.ReactElement {
       })
       .catch(() => {
         // Best-effort: the picker simply stays empty if the list fails.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // P4 §4: seed the caption design + output defaults from the persisted
+  // Preferences so a new short starts from the user's chosen style/position/
+  // delivery. Best-effort: a missing/failed settings read keeps the built-in
+  // defaults (never blocks the front door).
+  useEffect(() => {
+    if (!hasApi()) return;
+    let cancelled = false;
+    void client.settings
+      .get()
+      .then((raw) => {
+        if (cancelled) return;
+        const prefs = readPreferences(raw);
+        setDesign(prefs.design);
+        setTray((t) => ({ ...t, subtitleMode: prefs.subtitleMode, language: prefs.language }));
+      })
+      .catch(() => {
+        // Best-effort: keep the built-in defaults if preferences can't be read.
       });
     return () => {
       cancelled = true;
@@ -91,7 +128,14 @@ export function MakeShorts({ resumeId }: MakeShortsProps): React.ReactElement {
       setTrayOpen(false);
       setManualBusy(true);
       try {
-        const params = buildExportParams(selectedId, candidates, sanitizeControls({}), '');
+        const wire = captionDesignWire(design);
+        // The design's style flows via controls.captionStyle; the position +
+        // subtitle delivery flow via the export output options (P4 §4).
+        const controls = sanitizeControls({ captionStyle: wire.captionStyle });
+        const params = buildExportParams(selectedId, candidates, controls, '', {
+          captionPosition: wire.captionPosition,
+          subtitleMode: tray.subtitleMode,
+        });
         await client.shortmaker.export(selectedId, candidates.map(candidateId), params);
         setManualNote(`Exported ${candidates.length} clip(s) from your ranges.`);
         setTrayOpen(true);
@@ -101,7 +145,7 @@ export function MakeShorts({ resumeId }: MakeShortsProps): React.ReactElement {
         setManualBusy(false);
       }
     },
-    [selectedId],
+    [selectedId, design, tray.subtitleMode],
   );
 
   return (
@@ -133,6 +177,21 @@ export function MakeShorts({ resumeId }: MakeShortsProps): React.ReactElement {
                 <section className="make-shorts__ai">
                   <h2 className="make-shorts__heading">AI moment-pick</h2>
                   <ShortMaker videoId={selectedId} />
+                </section>
+
+                <section className="make-shorts__captions">
+                  <h2 className="make-shorts__heading">Caption &amp; style</h2>
+                  <p className="make-shorts__sub">
+                    Drag the caption box to position it, pick a style — previewed live on your
+                    video.
+                  </p>
+                  <CaptionDesigner
+                    videoId={selectedId}
+                    window={{ start: 0, end: CAPTION_PREVIEW_SEC }}
+                    cues={sampleCaptionCues({ start: 0, end: CAPTION_PREVIEW_SEC })}
+                    design={design}
+                    onChange={setDesign}
+                  />
                 </section>
 
                 <section className="make-shorts__manual">

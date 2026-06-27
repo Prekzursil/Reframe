@@ -26,6 +26,24 @@
   gap: var(--space-xs, 0.25rem);
 }
 
+.output-tray__subs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm, 0.5rem);
+}
+
+.output-tray__subs-label {
+  font-size: var(--text-sm, 0.8125rem);
+  color: var(--color-text-2, #555);
+}
+
+.output-tray__subs-help {
+  font-size: var(--text-sm, 0.8125rem);
+  color: var(--color-text-2, #777);
+  flex-basis: 100%;
+}
+
 .output-tray__lang {
   display: flex;
   flex-direction: column;

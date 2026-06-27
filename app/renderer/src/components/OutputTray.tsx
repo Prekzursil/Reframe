@@ -15,24 +15,26 @@
 // in a later phase — this is the clean seam it plugs into.
 import React from 'react';
 import { LanguageSelect } from './LanguageSelect';
+import { SUBTITLE_MODES, SUBTITLE_MODE_META, type SubtitleMode } from '../lib/outputOptions';
 import './outputTray.css';
 
-/** The four consolidated post-action toggles + the translate target language. */
+/** The consolidated post-action toggles + subtitle delivery + translate language. */
 export interface OutputTrayState {
   caption: boolean;
   translate: boolean;
   reframe: boolean;
-  burnSubs: boolean;
+  /** How subtitles ride the export (burn / soft track / separate file / none). */
+  subtitleMode: SubtitleMode;
   /** Target language for Translate (a code from lib/languages, never auto). */
   language: string;
 }
 
-/** Quality-defaults-ON seed (G-4): caption + reframe + burn-subs ON; translate opt-in. */
+/** Quality-defaults-ON seed (G-4): caption + reframe ON, burn subtitles; translate opt-in. */
 export const DEFAULT_OUTPUT_TRAY: OutputTrayState = {
   caption: true,
   translate: false,
   reframe: true,
-  burnSubs: true,
+  subtitleMode: 'burn',
   language: 'en',
 };
 
@@ -54,7 +56,7 @@ export interface OutputTrayProps {
 }
 
 interface ToggleDef {
-  key: 'caption' | 'translate' | 'reframe' | 'burnSubs';
+  key: 'caption' | 'translate' | 'reframe';
   label: string;
 }
 
@@ -62,7 +64,6 @@ const TOGGLES: readonly ToggleDef[] = [
   { key: 'caption', label: 'Caption' },
   { key: 'translate', label: 'Translate' },
   { key: 'reframe', label: 'Reframe' },
-  { key: 'burnSubs', label: 'Burn subtitles' },
 ];
 
 /** The single, shared post-action tray. */
@@ -92,6 +93,29 @@ export function OutputTray({
           </label>
         ))}
       </div>
+
+      {state.caption ? (
+        <div className="output-tray__subs">
+          <label className="output-tray__subs-label" htmlFor="output-tray-subtitle-mode">
+            Subtitles
+          </label>
+          <select
+            id="output-tray-subtitle-mode"
+            aria-label="Subtitle delivery"
+            value={state.subtitleMode}
+            onChange={(e) => onChange({ ...state, subtitleMode: e.target.value as SubtitleMode })}
+          >
+            {SUBTITLE_MODES.map((mode) => (
+              <option key={mode} value={mode}>
+                {SUBTITLE_MODE_META[mode].label}
+              </option>
+            ))}
+          </select>
+          <span className="output-tray__subs-help">
+            {SUBTITLE_MODE_META[state.subtitleMode].help}
+          </span>
+        </div>
+      ) : null}
 
       {state.translate ? (
         <div className="output-tray__lang">

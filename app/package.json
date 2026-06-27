@@ -1,6 +1,6 @@
 {
   "name": "media-studio",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Local personal video-manager desktop app (Electron + Python sidecar)",
   "private": true,
   "type": "module",
