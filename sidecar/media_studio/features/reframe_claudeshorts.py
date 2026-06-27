@@ -93,6 +93,25 @@ STATIC_EPSILON_FRAC = 0.01
 # the sampled windows; below it the detector is too unreliable to track on, so we
 # keep the centered crop instead of chasing a couple of stray hits.
 MIN_SUBJECT_HIT_FRAC = 0.15
+# WU PHASE-5 WIDE-SHOT FRAMING — DOMINANT/ACTIVE single-speaker selection. In a
+# wide / two-shot we lock the crop onto ONE subject (the featured speaker), never
+# the empty gap between two people. Two subjects whose face/person size is within
+# this fraction of the largest count as the SAME size — a symmetric two-shot — so
+# the ACTIVE speaker (more mouth/gesture motion) wins the tie instead of an
+# arbitrary largest-by-a-pixel pick. A real size gap (one person clearly closer)
+# is honoured outright: the larger/closer subject is the dominant one.
+DOMINANT_SIZE_TIE_FRAC = 0.2
+
+# Honest V1 capability copy (surfaced in README + docs/ROADMAP.md). V1 frames the
+# dominant/active SINGLE speaker even in a wide/two-shot; automatic multi-speaker
+# SWITCHING (cutting between people as they talk) is a V2 feature.
+SINGLE_SPEAKER_CAPABILITY_NOTE = (
+    "V1 follows a single speaker: in a wide or two-shot the crop locks onto the "
+    "dominant/active speaker (the largest, most-active face/person) and tracks "
+    "them smoothly — it never shows an empty studio or the gap between two people. "
+    "Automatic multi-speaker switching (cutting between people as they talk) is a "
+    "V2 feature."
+)
 
 # A6 LESSON 1 — PRE-IMPORT FLAG (NON-NEGOTIABLE): these native C-extension
 # modules are first used INSIDE a job thread by this engine. They MUST be added
@@ -208,6 +227,41 @@ def crop_x_for_center(cx_norm: float, crop_w: int, src_w: int) -> int:
     """
     x = int(round(float(cx_norm) * src_w - crop_w / 2.0))
     return max(0, min(x, max(0, src_w - crop_w)))
+
+
+# --------------------------------------------------------------------------- #
+# dominant / active single-speaker selection (pure — the wide-shot fix core)
+# --------------------------------------------------------------------------- #
+def select_dominant(candidates: Sequence[tuple[float, float, float]]) -> float | None:
+    """Pick the DOMINANT subject's normalized horizontal center (the wide-shot fix).
+
+    ``candidates`` is a sequence of ``(cx, size, activity)`` for every face/person
+    detected in ONE frame: ``cx`` is the normalized horizontal center (0..1),
+    ``size`` the subject's relative prominence (face/person area — bigger = closer
+    = more dominant), and ``activity`` a motion/active-speaker score used ONLY to
+    break a near-size tie. Returns the chosen subject's ``cx``, or ``None`` when
+    there are no candidates.
+
+    Selection rule (WU PHASE-5): the LARGEST subject wins outright; when several
+    subjects are within :data:`DOMINANT_SIZE_TIE_FRAC` of the largest (a symmetric
+    two-shot), the most-ACTIVE one wins (the talking head), then larger size as a
+    final, deterministic tie-break (first candidate on an exact tie — the crop
+    never flips frame-to-frame on a coin-flip). This is what keeps the crop on the
+    featured single speaker in a wide/two-shot instead of the empty gap between
+    two people. Choosing exactly ONE subject per frame (never a blend / centroid
+    of several) is the structural guard against the empty-studio / edge-cut bug.
+    """
+    cands = list(candidates)
+    if not cands:
+        return None
+    largest = max(float(c[1]) for c in cands)
+    # A real size gap is honoured; only a near-tie opens the activity tie-break.
+    # ``largest <= 0`` (degenerate zero-area candidates) -> everyone is a
+    # contender and activity (then size) decides.
+    threshold = largest * (1.0 - DOMINANT_SIZE_TIE_FRAC) if largest > 0.0 else 0.0
+    contenders = [c for c in cands if float(c[1]) >= threshold]
+    best = max(contenders, key=lambda c: (float(c[2]), float(c[1])))
+    return float(best[0])
 
 
 # --------------------------------------------------------------------------- #
@@ -502,28 +556,70 @@ def detect_backend(importer: Callable[[str], Any] = importlib.import_module) -> 
         ) from exc
 
 
+def _region_activity(prev_img: Any, cur_img: Any, box: tuple[int, int, int, int]) -> float:
+    """Mean inter-frame change inside ``box`` (``x0,y0,x1,y1`` px) — the per-face
+    motion score for the active-speaker tie-break.
+
+    Used by :func:`_make_face_finder` to pick the TALKING head in a symmetric
+    two-shot (mouth/gesture motion is concentrated on the active speaker's face).
+    Returns ``0.0`` when there is no previous frame, the two frames differ in
+    shape (a scene cut), or the box is empty / out of range — so the tie-break
+    simply falls back to size on the very first frame and on geometry changes.
+    """
+    import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
+
+    if prev_img is None or prev_img.shape != cur_img.shape:
+        return 0.0
+    h, w = int(cur_img.shape[0]), int(cur_img.shape[1])
+    x0 = max(0, min(int(box[0]), w))
+    y0 = max(0, min(int(box[1]), h))
+    x1 = max(0, min(int(box[2]), w))
+    y1 = max(0, min(int(box[3]), h))
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    prev_gray = cv2.cvtColor(prev_img[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
+    cur_gray = cv2.cvtColor(cur_img[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
+    return float(cv2.absdiff(prev_gray, cur_gray).mean())
+
+
 def _make_face_finder(backend: str) -> tuple[Callable[[Any], float | None] | None, Callable[[], None]]:
-    """Build ``(find(img_bgr) -> cx_norm|None, close())`` for ``backend``."""
+    """Build ``(find(img_bgr) -> cx_norm|None, close())`` for ``backend``.
+
+    ``find`` returns the DOMINANT/active face's normalized horizontal center via
+    :func:`select_dominant`: the largest (closest) face wins outright, and a
+    symmetric two-shot is broken toward the ACTIVE speaker using per-face motion
+    against the previous frame (held in the closure). This is the wide-shot fix —
+    the crop locks onto ONE featured speaker, never a blend of two faces. The
+    finder is stateful (it remembers the previous frame) so the motion tie-break
+    has something to diff; the first frame has no previous frame, so it falls back
+    to pure size selection.
+    """
     if backend == "mediapipe":
         import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
         import mediapipe as mp  # noqa: PLC0415 - job-time native (pre-imported)  # pyright: ignore[reportMissingImports]  # optional runtime dep
 
         detector = mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
+        prev: dict[str, Any] = {"img": None}
 
         def find_mp(img: Any) -> float | None:
             rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             results = detector.process(rgb)
             detections = getattr(results, "detections", None)
-            if not detections:
-                return None
-            best = max(
-                detections,
-                key=lambda d: (
-                    d.location_data.relative_bounding_box.width * d.location_data.relative_bounding_box.height
-                ),
-            )
-            bbox = best.location_data.relative_bounding_box
-            return float(bbox.xmin + bbox.width / 2.0)
+            h, w = int(img.shape[0]), int(img.shape[1])
+            cands: list[tuple[float, float, float]] = []
+            for det in detections or []:
+                bbox = det.location_data.relative_bounding_box
+                cx = float(bbox.xmin + bbox.width / 2.0)
+                size = float(bbox.width * bbox.height)
+                box = (
+                    int(bbox.xmin * w),
+                    int(bbox.ymin * h),
+                    int((bbox.xmin + bbox.width) * w),
+                    int((bbox.ymin + bbox.height) * h),
+                )
+                cands.append((cx, size, _region_activity(prev["img"], img, box)))
+            prev["img"] = img
+            return select_dominant(cands)
 
         return find_mp, detector.close
 
@@ -536,14 +632,21 @@ def _make_face_finder(backend: str) -> tuple[Callable[[Any], float | None] | Non
         if cascade.empty():
             _log.warning("haar cascade missing at %s; using center crop", cascade_path)
             return None, lambda: None
+        prev = {"img": None}
 
         def find_haar(img: Any) -> float | None:
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4)
-            if faces is None or len(faces) == 0:
-                return None
-            x, _y, w, h = max(faces, key=lambda f: int(f[2]) * int(f[3]))
-            return float((x + w / 2.0) / img.shape[1])
+            w_img = int(img.shape[1])
+            cands: list[tuple[float, float, float]] = []
+            for face in faces if faces is not None else []:
+                x, y, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
+                cx = float((x + fw / 2.0) / w_img)
+                size = float(fw * fh)
+                box = (x, y, x + fw, y + fh)
+                cands.append((cx, size, _region_activity(prev["img"], img, box)))
+            prev["img"] = img
+            return select_dominant(cands)
 
         return find_haar, lambda: None
 
@@ -578,9 +681,45 @@ def _person_center(img: Any) -> float | None:
     if rects is None or len(rects) == 0:
         return None
     weights = list(weights) if weights is not None else []
-    best_idx = max(range(len(rects)), key=lambda i: weights[i] if i < len(weights) else 0.0)
-    rx, _ry, rw, _rh = rects[best_idx]
-    return float((float(rx) + float(rw) / 2.0) / w)
+    # WU PHASE-5: in a wide / two-shot pick the DOMINANT person = the LARGEST
+    # (closest) body, breaking a same-size tie by detector confidence (weight ~
+    # how strongly a body was seen). This frames the featured speaker instead of
+    # a smaller, further person who merely scored a higher confidence.
+    cands: list[tuple[float, float, float]] = []
+    for i, rect in enumerate(rects):
+        rx, _ry, rw, rh = float(rect[0]), float(rect[1]), float(rect[2]), float(rect[3])
+        cx = float((rx + rw / 2.0) / w)
+        area = float(rw * rh)
+        activity = float(weights[i]) if i < len(weights) else 0.0
+        cands.append((cx, area, activity))
+    return select_dominant(cands)
+
+
+def _dominant_cluster_centroid(col: Sequence[float]) -> float:
+    """Intensity-weighted center column of the DOMINANT contiguous motion run.
+
+    ``col`` is a per-column motion profile (a row-sum of the motion mask). Two
+    people moving in a wide / two-shot show up as TWO separate nonzero runs with a
+    still gap between them; the plain global centroid of all moving pixels lands in
+    that gap (the empty-studio bug). We instead split ``col`` into contiguous
+    nonzero runs and return the intensity-weighted centroid of the run with the
+    most total motion — the single most-active subject. ``col`` is assumed to have
+    at least one nonzero entry (the caller checks the total first).
+    """
+    runs: list[tuple[int, int]] = []
+    start: int | None = None
+    for i in range(len(col)):
+        if float(col[i]) > 0.0 and start is None:
+            start = i
+        elif float(col[i]) <= 0.0 and start is not None:
+            runs.append((start, i))
+            start = None
+    if start is not None:
+        runs.append((start, len(col)))
+    lo, hi = max(runs, key=lambda r: sum(float(col[i]) for i in range(r[0], r[1])))
+    total = sum(float(col[i]) for i in range(lo, hi))
+    weighted = sum(i * float(col[i]) for i in range(lo, hi))
+    return weighted / total
 
 
 def _motion_center(prev: Any, img: Any) -> float | None:
@@ -589,8 +728,10 @@ def _motion_center(prev: Any, img: Any) -> float | None:
     Last-resort saliency: a sitting/standing speaker still moves (head, hands,
     mouth) more than the static studio behind them. We diff consecutive sampled
     frames, threshold the change, and take the intensity-weighted horizontal
-    centroid of the moving pixels — so the crop locates the SPEAKER even when
-    neither a face nor a full body is detectable. ``None`` when nothing moved.
+    centroid of the DOMINANT motion cluster (:func:`_dominant_cluster_centroid`) —
+    so the crop locates ONE speaker even when neither a face nor a full body is
+    detectable, and in a wide/two-shot it locks onto the most-active person rather
+    than the empty gap between two movers. ``None`` when nothing moved.
     """
     import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
     import numpy as np  # noqa: PLC0415 - job-time native (numpy ships with cv2)
@@ -602,11 +743,9 @@ def _motion_center(prev: Any, img: Any) -> float | None:
     diff = cv2.absdiff(g0, g1)
     _thr, mask = cv2.threshold(diff, 18, 255, cv2.THRESH_BINARY)
     col = np.asarray(mask, dtype="float64").sum(axis=0)
-    total = float(col.sum())
-    if total <= 0.0:
+    if float(col.sum()) <= 0.0:
         return None
-    cols = np.arange(col.shape[0], dtype="float64")
-    centroid = float((cols * col).sum() / total)
+    centroid = _dominant_cluster_centroid(col.tolist())
     return centroid / float(img.shape[1])
 
 
