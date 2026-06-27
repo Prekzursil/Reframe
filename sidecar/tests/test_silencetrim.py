@@ -152,6 +152,30 @@ class TestDetect:
         monkeypatch.setattr(_ffmpeg, "ffmpeg_path", boom_path)
         assert stm.detect_silence_spans("/in.mp4", settings={}, run=detect_with("")) == []
 
+    # WU-3 NO-SILENT-FALLBACK: a swallowed detection miss must SURFACE a notice.
+    def test_detect_no_ffmpeg_surfaces_notice(self, monkeypatch):
+        from media_studio import ffmpeg as _ffmpeg
+
+        def boom_path(s=None):
+            raise _ffmpeg.FfmpegNotFound("nope")
+
+        monkeypatch.setattr(_ffmpeg, "ffmpeg_path", boom_path)
+        notices: list[dict] = []
+        assert stm.detect_silence_spans("/in.mp4", settings={}, run=detect_with(""), on_notice=notices.append) == []
+        assert len(notices) == 1
+        assert notices[0]["type"] == stm.SILENCE_TRIM_UNAVAILABLE_NOTICE
+        assert "ffmpeg" in notices[0]["reason"].lower()
+
+    def test_detect_failure_surfaces_notice(self, settings):
+        def boom(argv, **kw):
+            raise OSError("ffmpeg died")
+
+        notices: list[dict] = []
+        assert stm.detect_silence_spans("/in.mp4", settings=settings, run=boom, on_notice=notices.append) == []
+        assert len(notices) == 1
+        assert notices[0]["type"] == stm.SILENCE_TRIM_UNAVAILABLE_NOTICE
+        assert "silencedetect" in notices[0]["reason"].lower()
+
 
 # --------------------------------------------------------------------------- #
 # pipeline pre-step adapter
@@ -210,6 +234,47 @@ class TestTrimClip:
         assert path == "/in.mp4" and removed == 0.0
         assert keeps == []  # no timeline -> nothing to remap
 
+    def test_trim_duration_probe_failure_surfaces_notice(self, settings, tmp_path):
+        # WU-3: a probe failure currently passes through silently — it must now
+        # SURFACE a notice so the skip is reported, never swallowed.
+        def boom_duration(p, s=None):
+            raise OSError("ffprobe died")
+
+        notices: list[dict] = []
+        path, removed, keeps = stm.trim_clip(
+            "/in.mp4",
+            str(tmp_path / "out.mp4"),
+            settings=settings,
+            detect_run=detect_with(SILENCE_STDERR),
+            run=RecordingRun(),
+            duration=boom_duration,
+            on_notice=notices.append,
+        )
+        assert path == "/in.mp4" and removed == 0.0 and keeps == []
+        assert len(notices) == 1
+        assert notices[0]["type"] == stm.SILENCE_TRIM_UNAVAILABLE_NOTICE
+        assert "duration" in notices[0]["reason"].lower()
+
+    def test_trim_threads_on_notice_into_detect(self, settings, tmp_path):
+        # The trim adapter forwards on_notice to the detector so a detect-side
+        # swallow (e.g. ffmpeg crash) still surfaces through trim_clip.
+        def boom(argv, **kw):
+            raise OSError("ffmpeg died")
+
+        notices: list[dict] = []
+        path, removed, _keeps = stm.trim_clip(
+            "/in.mp4",
+            str(tmp_path / "out.mp4"),
+            settings=settings,
+            detect_run=boom,
+            run=RecordingRun(),
+            duration=lambda p, s=None: 20.0,
+            on_notice=notices.append,
+        )
+        # no silence detected (detector surfaced + returned []) -> pass-through
+        assert path == "/in.mp4" and removed == 0.0
+        assert len(notices) == 1 and notices[0]["type"] == stm.SILENCE_TRIM_UNAVAILABLE_NOTICE
+
     def test_trim_passthrough_when_duration_unknown(self, settings, tmp_path):
         path, removed, keeps = stm.trim_clip(
             "/in.mp4",
@@ -253,6 +318,28 @@ class TestService:
         job.wait(timeout=5)
         assert job.result["removedSec"] > 4.0
         assert job.result["path"].endswith(".trimmed.mp4")
+
+    def test_trim_service_surfaces_notice_via_progress(self, tmp_path, registry, collected, monkeypatch):
+        # WU-3: a swallowed detect failure (no ffmpeg) must surface via job.progress
+        # from the RPC service too — never a silent {removedSec: 0} no-op.
+        from media_studio import ffmpeg as _ffmpeg
+
+        def boom_path(s=None):
+            raise _ffmpeg.FfmpegNotFound("nope")
+
+        monkeypatch.setattr(_ffmpeg, "ffmpeg_path", boom_path)
+        svc = stm.SilenceTrim(
+            resolver=lambda vid: "/lib/in.mp4",
+            out_dir=tmp_path / "trim",
+            settings_provider=lambda: {},
+            run=RecordingRun(),
+            duration=lambda p, s=None: 20.0,
+            detect_run=detect_with(SILENCE_STDERR),
+        )
+        out = svc.trim({"videoId": "v1"}, _rpc_ctx(registry))
+        registry.get(out["jobId"]).wait(timeout=5)
+        msgs = [payload[2] for kind, payload in collected if kind == "progress"]
+        assert any("silence-trim skipped" in m for m in msgs)
 
     def test_trim_unknown_video_raises(self, settings, tmp_path, registry):
         svc = stm.SilenceTrim(

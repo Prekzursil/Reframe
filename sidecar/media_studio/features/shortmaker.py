@@ -106,6 +106,8 @@ CutStage = Callable[..., str]
 # remove_fillers(in_path, out_path, words, cues, *, lang, settings)
 #   -> (out_path, remapped_cues, {"fillersRemoved", "fillerSeconds"})
 RemoveFillersStage = Callable[..., tuple[str, list[Cue], dict[str, Any]]]
+# reframe(in_path, out_path, aspect, *, settings, on_notice) -> out_path
+#   (speaker-tracking degrade is surfaced via on_notice — WU-3 no-silent-fallback)
 ReframeStage = Callable[..., str]
 # apply_zoom(in_path, out_path, cues, *, source_start, duration_sec, settings)
 #   -> out_path  (P4 §8b: subtle slow zoom + punch-in at sentence-start beats)
@@ -121,8 +123,9 @@ MuxAudioStage = Callable[..., str]
 #   (audio-stabilize group: ffmpeg vidstab 2-pass; pass-through when libvidstab
 #    is missing — the unavailable notice is surfaced via on_notice, never skipped)
 StabilizeStage = Callable[..., str]
-# trim_silence(in_path, out_path, *, settings) -> (out_path|in_path, removedSec)
-#   (audio-stabilize group: ffmpeg silencedetect -> dead-air re-cut)
+# trim_silence(in_path, out_path, *, settings, on_notice) -> (out_path|in_path, removedSec, keeps)
+#   (audio-stabilize group: ffmpeg silencedetect -> dead-air re-cut; a swallowed
+#    detect/probe failure is surfaced via on_notice — WU-3 no-silent-fallback)
 SilenceTrimStage = Callable[..., tuple[str, float, list[tuple[float, float]]]]
 
 
@@ -237,13 +240,15 @@ def _lazy_remove_fillers(
     return out_path, remapped, stats
 
 
-def _lazy_reframe(in_path, out_path, aspect, *, settings=None) -> str:
+def _lazy_reframe(in_path, out_path, aspect, *, settings=None, on_notice=None) -> str:
     from . import reframe as _reframe
 
     # T4b: settings["reframeEngine"] is the CONCRETE name run_export resolved
     # ("verthor" | "claudeshorts"); "auto" (direct callers) re-resolves here.
+    # WU-3: thread on_notice so the claudeshorts engine's speaker-tracking degrade
+    # surfaces (the verthor engine accepts it for seam uniformity, never calls it).
     engine, _notice = _reframe.get_engine((settings or {}).get("reframeEngine", "auto"), settings or {})
-    return engine.reframe(in_path, out_path, aspect)
+    return engine.reframe(in_path, out_path, aspect, on_notice=on_notice)
 
 
 def _lazy_stabilize(in_path, out_path, *, settings=None, on_notice=None) -> str:
@@ -259,7 +264,9 @@ def _lazy_stabilize(in_path, out_path, *, settings=None, on_notice=None) -> str:
     return _stabilize.stabilize_clip(in_path, out_path, settings=settings, on_notice=on_notice)
 
 
-def _lazy_trim_silence(in_path, out_path, *, settings=None) -> tuple[str, float, list[tuple[float, float]]]:
+def _lazy_trim_silence(
+    in_path, out_path, *, settings=None, on_notice=None
+) -> tuple[str, float, list[tuple[float, float]]]:
     """Dead-air removal pre-step (audio-stabilize group).
 
     Delegates to ``features.silencetrim.trim_clip``: detects silent spans via
@@ -268,10 +275,13 @@ def _lazy_trim_silence(in_path, out_path, *, settings=None) -> tuple[str, float,
     orchestrator remap caption cues onto the compacted timeline. Returns
     ``(in_path, 0.0, [(0, total)])`` when there is no dead air to remove (an
     identity remap, so cues map through unchanged).
+
+    WU-3: ``on_notice`` is threaded so a swallowed detect/probe failure surfaces
+    (the orchestrator routes it to job.progress) instead of silently no-op'ing.
     """
     from . import silencetrim as _silencetrim
 
-    return _silencetrim.trim_clip(in_path, out_path, settings=settings)
+    return _silencetrim.trim_clip(in_path, out_path, settings=settings, on_notice=on_notice)
 
 
 def _lazy_zoom(in_path, out_path, cues, *, source_start, duration_sec, settings=None) -> str:
@@ -824,7 +834,7 @@ def _export_one(
     audio_track: dict[str, Any] | None = None,
     video_id: str = "",
     source_title: str = "",
-    on_notice: Callable[[dict[str, str]], None] | None = None,
+    on_notice: Callable[[dict[str, str]], None],
 ) -> dict[str, Any]:
     """Run CUT (-> SILENCE-TRIM -> STABILIZE -> REMOVE-FILLERS) -> REFRAME -> CAPTION -> EXPORT (-> MUX-AUDIO).
 
@@ -856,8 +866,11 @@ def _export_one(
     When ``audio_track`` is given (A2 ``audioTrackId``), the chosen track's
     [sourceStart, end) window is muxed onto the exported clip as a final stage.
 
-    ``on_notice`` (optional): a sink for typed stage notices (e.g. the stabilize
-    libvidstab-unavailable notice) the orchestrator routes to ``job.progress``.
+    ``on_notice``: a sink for typed stage notices (e.g. the stabilize
+    libvidstab-unavailable notice, or the WU-3 reframe speaker-tracking degrade)
+    the orchestrator routes to ``job.progress``. Required — ``run_export`` always
+    supplies it (the per-export de-duping sink), so stages can surface a skip /
+    degrade without a silent fallback.
     """
     # CUT — frame-accurate carve; persist sourceStart on the clip record (§3).
     source_start = float(candidate.get("sourceStart", candidate.get("start", 0.0)))
@@ -892,7 +905,9 @@ def _export_one(
         from . import fillers as _fillers  # local: shared cue-remap, import-light
 
         trimmed_path = str(out_dir / f"{stem}.trimmed.mp4")
-        stage_clip, silence_removed, silence_keeps = stages.trim_silence(cut_path, trimmed_path, settings=settings)
+        stage_clip, silence_removed, silence_keeps = stages.trim_silence(
+            cut_path, trimmed_path, settings=settings, on_notice=on_notice
+        )
         local_cues = _rebase_cues(caption_cues, source_start)
         caption_cues = _fillers.remap_cues(local_cues, silence_keeps)
         caption_source_start = 0.0
@@ -936,9 +951,19 @@ def _export_one(
         # The de-filled clip is already clip-local; cues are remapped clip-local.
         caption_source_start = 0.0
 
-    # REFRAME — verthor adapter (center-crop fallback handled INSIDE the engine).
+    # REFRAME — claudeshorts/verthor engine (center-crop fallback handled INSIDE
+    # the engine). WU-3 NO-SILENT-FALLBACK: capture a speaker-tracking degrade as a
+    # structured per-clip signal so the UI can show a real/degraded badge — the
+    # marquee tracking must never SILENTLY collapse to a dumb center crop. The
+    # notice is ALSO forwarded to the shared ``on_notice`` sink (job.progress).
     reframed_path = str(out_dir / f"{stem}.reframed.mp4")
-    stages.reframe(stage_clip, reframed_path, aspect, settings=settings)
+    reframe_degraded: dict[str, Any] = {}
+
+    def _reframe_notice(notice: dict[str, str]) -> None:
+        reframe_degraded["notice"] = notice
+        on_notice(notice)
+
+    stages.reframe(stage_clip, reframed_path, aspect, settings=settings, on_notice=_reframe_notice)
     caption_clip = reframed_path
 
     # P4 §8b / C16: AUTO PUNCH-IN ZOOM — inserted BETWEEN reframe and caption
@@ -1052,6 +1077,11 @@ def _export_one(
     # was nothing to trim — mirrors the optional P3-B filler stats shape).
     if silence_removed > 0.0:
         item["silenceRemovedSec"] = round(float(silence_removed), 3)
+    # WU-3: surface the per-clip reframe degraded signal (speaker tracking fell
+    # back to a center crop) so the UI can render a real/degraded badge. Absent
+    # when reframe tracked the subject normally (no false-positive badge).
+    if reframe_degraded:
+        item["reframeDegraded"] = reframe_degraded["notice"]
     return item
 
 
@@ -1173,6 +1203,10 @@ def _clip_payload(item: dict[str, Any]) -> dict[str, Any]:
     if "fillersRemoved" in item:
         clip["fillersRemoved"] = int(item["fillersRemoved"])
         clip["fillerSeconds"] = float(item.get("fillerSeconds", 0.0))
+    # WU-3: the §2 clip payload carries the reframe degraded badge when present
+    # (the UI reads it off the clips list to flag real-vs-degraded tracking).
+    if "reframeDegraded" in item:
+        clip["reframeDegraded"] = item["reframeDegraded"]
     return clip
 
 

@@ -236,6 +236,7 @@ class ReframeEngine:
         in_path: str,
         out_path: str,
         aspect: str = DEFAULT_ASPECT,
+        on_notice: Callable[[dict[str, str]], None] | None = None,
     ) -> str:
         """Reframe ``in_path`` to vertical and write ``out_path``; return it.
 
@@ -243,7 +244,14 @@ class ReframeEngine:
         FROM A FILE, never piped via ``tr|bash`` on stdin). Output is 1080x1920
         h264 for the default 9:16 aspect. Raises :class:`ReframeError` on a
         non-zero exit code.
+
+        ``on_notice`` is accepted for stage-seam uniformity with the in-sidecar
+        claudeshorts engine (so :func:`shortmaker._lazy_reframe` can thread it to
+        whichever engine is resolved). verthor runs subject tracking INSIDE WSL,
+        so it cannot emit a Python-side speaker-tracking-degrade notice — the
+        parameter is therefore intentionally not invoked here.
         """
+        _ = on_notice  # verthor degrades inside WSL; no Python-side notice to emit
         argv = build_reframe_argv(in_path, out_path, aspect, self._settings)
         if not isinstance(argv, list):  # defensive: never a shell string
             raise TypeError("reframe argv must be a list of strings")

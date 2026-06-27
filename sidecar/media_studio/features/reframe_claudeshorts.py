@@ -112,6 +112,37 @@ class ClaudeShortsReframeError(RuntimeError):
     """Raised when the claudeshorts reframe cannot probe or encode."""
 
 
+class ClaudeShortsBackendUnavailableError(ClaudeShortsReframeError):
+    """No native subject-tracking backend (cv2/mediapipe) is importable.
+
+    This is a SETUP/PROVISIONING failure, NOT a per-clip event: without OpenCV
+    the engine cannot decode frames to track a speaker at all. It is raised as an
+    EXPLICIT signal (never a silent ``center`` fallback) so the job surfaces an
+    actionable "install opencv-python/mediapipe" error rather than silently
+    degrading every clip to a dumb center crop (WU-3 NO-SILENT-FALLBACK).
+    """
+
+
+# Per-clip "speaker tracking was lost" signal (a RUNTIME degrade, distinct from
+# the setup error above). Surfaced via the ``on_notice`` sink so the UI can show a
+# real/degraded badge instead of the degrade being swallowed into a center crop.
+REFRAME_DEGRADED_NOTICE = "reframe.degraded"
+
+
+def make_degraded_notice(reason: str) -> dict[str, str]:
+    """Build the typed per-clip degraded notice (``{type, message, reason}``).
+
+    ``message`` is the human line a job surfaces via ``job.progress``; ``reason``
+    is the specific cause (a detector error, or no trackable subject) so the UI /
+    logs can explain WHY the crop fell back to center.
+    """
+    return {
+        "type": REFRAME_DEGRADED_NOTICE,
+        "message": f"reframe: speaker tracking unavailable ({reason}) — used center crop",
+        "reason": reason,
+    }
+
+
 # --------------------------------------------------------------------------- #
 # aspect handling (kept in sync with features.reframe — see module docstring)
 # --------------------------------------------------------------------------- #
@@ -441,12 +472,18 @@ def probe_video(
 # subject detection (mediapipe -> haar -> center; natives imported lazily)
 # --------------------------------------------------------------------------- #
 def detect_backend(importer: Callable[[str], Any] = importlib.import_module) -> str:
-    """Pick the detection backend: ``mediapipe`` | ``haar`` | ``center``.
+    """Pick the detection backend: ``mediapipe`` | ``haar``.
 
     mediapipe needs cv2 too (frame decode), so the mediapipe backend requires
     BOTH. ``importer`` is injectable so tests exercise the fallback chain with
     no native modules present. NOTE (A6): in production these imports only
     *re-find* modules already loaded by ``__main__._preimport_native_modules``.
+
+    WU-3 NO-SILENT-FALLBACK: when NEITHER mediapipe+cv2 nor cv2 alone is
+    importable, subject tracking is impossible — this raises
+    :class:`ClaudeShortsBackendUnavailableError` (an EXPLICIT setup/provisioning
+    signal) instead of returning a silent ``"center"`` that the rest of the
+    pipeline could not distinguish from a legitimate no-subject clip.
     """
     try:
         importer("mediapipe")
@@ -457,8 +494,12 @@ def detect_backend(importer: Callable[[str], Any] = importlib.import_module) -> 
     try:
         importer("cv2")
         return "haar"
-    except Exception:  # noqa: BLE001
-        return "center"
+    except Exception as exc:  # noqa: BLE001
+        raise ClaudeShortsBackendUnavailableError(
+            "subject tracking requires OpenCV (cv2) — and optionally MediaPipe — "
+            "but neither is importable; install opencv-python (and mediapipe) to "
+            "enable speaker tracking, or this is a provisioning/setup error"
+        ) from exc
 
 
 def _make_face_finder(backend: str) -> tuple[Callable[[Any], float | None] | None, Callable[[], None]]:
@@ -681,27 +722,45 @@ class ClaudeShortsReframeEngine:
         )
 
     def compute_plan(
-        self, in_path: str, aspect: str = DEFAULT_ASPECT
+        self,
+        in_path: str,
+        aspect: str = DEFAULT_ASPECT,
+        on_notice: Callable[[dict[str, str]], None] | None = None,
     ) -> tuple[dict[str, int], list[dict[str, float]], float]:
         """Compute ``(crop_rect, keyframes, durationSec)`` for ``in_path``.
 
         Pure planning (probe + detect + smooth + keyframe), no encoding. The
         returned keyframes list is empty when a single static crop suffices.
+
+        WU-3 NO-SILENT-FALLBACK: when speaker tracking cannot run, the crop still
+        degrades to a center crop (the encode never fails for this), but the
+        degrade is SURFACED through ``on_notice`` (a structured
+        :data:`REFRAME_DEGRADED_NOTICE`) so the UI can show a real/degraded badge
+        — it is never swallowed into a silent center crop. A native-backend SETUP
+        error (:class:`ClaudeShortsBackendUnavailableError`) is NOT a per-clip
+        degrade: it propagates so the job fails loudly (install opencv/mediapipe).
         """
         src_w, src_h, duration = self._prober(in_path)
         crop = centered_crop(src_w, src_h, aspect)
         timestamps = window_timestamps(duration)
         try:
             samples = list(self._detector(in_path, timestamps) or [])
-        except Exception:  # noqa: BLE001 - detection is best-effort by design
-            # "else center": a broken detector degrades to the centered crop —
-            # the encode still runs; only subject tracking is lost.
+        except ClaudeShortsBackendUnavailableError:
+            # SETUP/provisioning failure (no cv2/mediapipe): fail loud, never a
+            # per-clip silent degrade. Re-raise so the job surfaces an actionable
+            # "install opencv/mediapipe" error.
+            raise
+        except Exception as exc:  # noqa: BLE001 - a runtime detector failure -> degrade
+            # A broken detector degrades to the centered crop — the encode still
+            # runs; only subject tracking is lost. SURFACE it (never swallow).
             _log.warning("subject detection failed; using centered crop", exc_info=True)
-            samples = []
+            self._notify_degraded(on_notice, f"subject detection failed: {exc}")
+            return crop, [], duration
         # Trust gate: a couple of stray hits across many windows is detector noise,
         # not a locatable subject -> keep the centered crop rather than tracking it.
         min_hits = max(1, math.ceil(len(timestamps) * MIN_SUBJECT_HIT_FRAC))
         if len(samples) < min_hits:
+            self._notify_degraded(on_notice, "no trackable subject located")
             return crop, [], duration
 
         smoothed = smooth_centers([c for _, c in samples])
@@ -722,6 +781,16 @@ class ClaudeShortsReframeEngine:
         crop = {**crop, "x": int(kfs[0]["x"])}
         return crop, kfs, duration
 
+    @staticmethod
+    def _notify_degraded(on_notice: Callable[[dict[str, str]], None] | None, reason: str) -> None:
+        """Surface a per-clip degraded notice through ``on_notice`` (when wired).
+
+        The degrade is ALSO logged, but the structured notice is what lets the
+        orchestrator/UI render a degraded badge — the "never swallow" contract.
+        """
+        if on_notice is not None:
+            on_notice(make_degraded_notice(reason))
+
     def reframe(
         self,
         in_path: str,
@@ -729,13 +798,16 @@ class ClaudeShortsReframeEngine:
         aspect: str = DEFAULT_ASPECT,
         on_progress: Callable[[float, str], None] | None = None,
         should_cancel: Callable[[], bool] | None = None,
+        on_notice: Callable[[dict[str, str]], None] | None = None,
     ) -> str:
         """Reframe ``in_path`` -> vertical ``out_path`` in ONE ffmpeg pass.
 
         Raises :class:`ClaudeShortsReframeError` on a non-zero encode exit (the
         shortmaker job converts that into the job.done error payload — A6 #3).
+        ``on_notice`` is forwarded to :meth:`compute_plan` so a speaker-tracking
+        degrade surfaces from this one-shot entry point too (WU-3).
         """
-        crop, keyframes, duration = self.compute_plan(in_path, aspect)
+        crop, keyframes, duration = self.compute_plan(in_path, aspect, on_notice=on_notice)
         argv = build_reframe_argv(in_path, out_path, crop, keyframes, aspect, self._settings)
         if not isinstance(argv, list):  # defensive: never a shell string
             raise TypeError("reframe argv must be a list of strings")

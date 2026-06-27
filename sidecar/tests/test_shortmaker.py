@@ -54,8 +54,12 @@ class RecordingStages:
         filler_impl=None,
         trim_impl=None,
         stabilize_impl=None,
+        reframe_notice=None,
+        trim_notice=None,
     ):
         self.calls = calls
+        self._reframe_notice = reframe_notice
+        self._trim_notice = trim_notice
         self._select_return = select_return if select_return is not None else []
         self._snap_impl = snap_impl
         self._reframe_impl = reframe_impl
@@ -88,9 +92,11 @@ class RecordingStages:
         )
 
     # -- audio-stabilize group stages --------------------------------------
-    def trim_silence(self, in_path, out_path, *, settings=None):
+    def trim_silence(self, in_path, out_path, *, settings=None, on_notice=None):
         self.calls.append("trim_silence")
         self.trim_args.append((in_path, out_path))
+        if self._trim_notice is not None and on_notice is not None:
+            on_notice(self._trim_notice)
         if self._trim_impl is not None:
             return self._trim_impl(in_path, out_path)
         # Default stub: "removed 2.5s of dead air", returns the new path + keeps.
@@ -147,8 +153,10 @@ class RecordingStages:
         stats = {"fillersRemoved": 1, "fillerSeconds": 0.4}
         return out_path, list(cues), stats
 
-    def reframe(self, in_path, out_path, aspect, *, settings=None):
+    def reframe(self, in_path, out_path, aspect, *, settings=None, on_notice=None):
         self.calls.append("reframe")
+        if self._reframe_notice is not None and on_notice is not None:
+            on_notice(self._reframe_notice)
         if self._reframe_impl is not None:
             return self._reframe_impl(in_path, out_path, aspect)
         return out_path
@@ -928,6 +936,86 @@ def test_run_export_stabilize_unavailable_notice_surfaced(transcript, tmp_path):
     # unavailable notice was surfaced via job.progress (never silently skipped).
     assert "stabilize" in calls
     assert any("libvidstab" in msg for _pct, msg in progress)
+
+
+def test_run_export_reframe_degraded_surfaced_on_clip_and_progress(transcript, tmp_path):
+    """WU-3: when reframe degrades to a center crop (no trackable subject), the
+    per-clip degraded signal is surfaced BOTH on the clip payload/item (so the UI
+    can show a real/degraded badge) AND via job.progress — never swallowed."""
+    calls: list[str] = []
+    progress: list[tuple[int, str]] = []
+    degraded = {
+        "type": "reframe.degraded",
+        "message": "reframe: speaker tracking unavailable — used center crop",
+        "reason": "no trackable subject located",
+    }
+    rec = RecordingStages(calls, reframe_notice=degraded)
+    ctx = JobContext(
+        job_id="j1",
+        _cancel_event=threading.Event(),
+        _emit_progress=lambda jid, pct, msg: progress.append((pct, msg)),
+    )
+    out = sm.run_export(
+        ctx,
+        video_id="v1",
+        candidates=[{"rank": 1, "start": 0.0, "end": 30.0, "sourceStart": 0.0, "score": 9}],
+        load_context=loader_for(str(tmp_path / "src.mp4"), transcript),
+        out_dir=str(tmp_path / "out"),
+        stages=rec.as_stages(),
+        settings={"stabilize": False},
+    )
+    # surfaced on the full item record ...
+    assert out["items"][0]["reframeDegraded"] == degraded
+    # ... AND on the §2 clip payload (the UI badge source) ...
+    assert out["clips"][0]["reframeDegraded"] == degraded
+    # ... AND announced via progress (not silently swallowed).
+    assert any("speaker tracking unavailable" in msg for _pct, msg in progress)
+
+
+def test_run_export_reframe_ok_has_no_degraded_badge(transcript, tmp_path):
+    """A healthy reframe must NOT stamp a degraded badge (no false positive)."""
+    calls: list[str] = []
+    rec = RecordingStages(calls)  # no reframe_notice -> reframe does not degrade
+    out = sm.run_export(
+        make_ctx(),
+        video_id="v1",
+        candidates=[{"rank": 1, "start": 0.0, "end": 30.0, "sourceStart": 0.0, "score": 9}],
+        load_context=loader_for(str(tmp_path / "src.mp4"), transcript),
+        out_dir=str(tmp_path / "out"),
+        stages=rec.as_stages(),
+        settings={"stabilize": False},
+    )
+    assert "reframeDegraded" not in out["items"][0]
+    assert "reframeDegraded" not in out["clips"][0]
+
+
+def test_run_export_silence_trim_unavailable_notice_surfaced(transcript, tmp_path):
+    """WU-3: a swallowed silence-trim failure (e.g. no ffmpeg for silencedetect)
+    is surfaced via job.progress instead of silently no-op'ing the step."""
+    calls: list[str] = []
+    progress: list[tuple[int, str]] = []
+    notice = {
+        "type": "silencetrim.unavailable",
+        "message": "silence-trim skipped: ffmpeg not found; the clip was passed through unchanged",
+        "reason": "ffmpeg not found",
+    }
+    rec = RecordingStages(calls, trim_notice=notice)
+    ctx = JobContext(
+        job_id="j1",
+        _cancel_event=threading.Event(),
+        _emit_progress=lambda jid, pct, msg: progress.append((pct, msg)),
+    )
+    sm.run_export(
+        ctx,
+        video_id="v1",
+        candidates=[_stab_candidate()],
+        load_context=loader_for(str(tmp_path / "src.mp4"), transcript),
+        out_dir=str(tmp_path / "out"),
+        stages=rec.as_stages(),
+        settings={"silenceTrim": True, "stabilize": False},
+    )
+    assert "trim_silence" in calls
+    assert any("silence-trim skipped" in msg for _pct, msg in progress)
 
 
 def test_run_export_silence_trim_excludes_fillers(transcript, tmp_path):
@@ -2408,8 +2496,8 @@ class TestLazyReframeStage:
             def __init__(self):
                 self.calls: list[tuple] = []
 
-            def reframe(self, in_path, out_path, aspect):
-                self.calls.append((in_path, out_path, aspect))
+            def reframe(self, in_path, out_path, aspect, *, on_notice=None):
+                self.calls.append((in_path, out_path, aspect, on_notice))
                 return out_path
 
         engine = FakeEngine()
@@ -2420,10 +2508,14 @@ class TestLazyReframeStage:
             return engine, None
 
         monkeypatch.setattr(reframe, "get_engine", fake_get_engine)
-        out = sm._lazy_reframe("/in.mp4", "/out.reframed.mp4", "9:16", settings={"reframeEngine": "verthor"})
+        sink = lambda n: None  # noqa: E731 - stable identity for the assert
+        out = sm._lazy_reframe(
+            "/in.mp4", "/out.reframed.mp4", "9:16", settings={"reframeEngine": "verthor"}, on_notice=sink
+        )
         assert out == "/out.reframed.mp4"
         assert seen["name"] == "verthor"
-        assert engine.calls == [("/in.mp4", "/out.reframed.mp4", "9:16")]
+        # the on_notice sink is threaded through to the engine's reframe()
+        assert engine.calls == [("/in.mp4", "/out.reframed.mp4", "9:16", sink)]
 
     def test_defaults_to_auto_when_unset(self, monkeypatch):
         import media_studio.features.reframe as reframe
@@ -2431,7 +2523,7 @@ class TestLazyReframeStage:
         seen: dict[str, Any] = {}
 
         class _E:
-            def reframe(self, *a):
+            def reframe(self, *a, on_notice=None):
                 return a[1]
 
         monkeypatch.setattr(reframe, "get_engine", lambda name, settings: seen.update(name=name) or (_E(), None))
@@ -2463,15 +2555,20 @@ class TestLazyTrimSilenceStage:
 
         # trim_clip now also returns the clip-local KEEP spans so the orchestrator
         # can remap caption cues onto the compacted timeline (cue-desync fix).
+        seen: dict[str, Any] = {}
         monkeypatch.setattr(
             silencetrim,
             "trim_clip",
-            lambda i, o, *, settings=None: (o, 3.25, [(0.0, 4.0), (6.0, 12.0)]),
+            lambda i, o, *, settings=None, on_notice=None: (
+                seen.update(on_notice=on_notice) or (o, 3.25, [(0.0, 4.0), (6.0, 12.0)])
+            ),
         )
-        out_path, removed, keeps = sm._lazy_trim_silence("/in.mp4", "/out.trim.mp4", settings={})
+        sink = lambda n: None  # noqa: E731 - stable identity for the assert
+        out_path, removed, keeps = sm._lazy_trim_silence("/in.mp4", "/out.trim.mp4", settings={}, on_notice=sink)
         assert out_path == "/out.trim.mp4"
         assert removed == pytest.approx(3.25)
         assert keeps == [(0.0, 4.0), (6.0, 12.0)]
+        assert seen["on_notice"] is sink  # the notice sink is threaded through
 
 
 class TestLazyZoomStage:
@@ -2611,9 +2708,9 @@ def test_run_export_default_engine_is_claudeshorts_no_wsl(transcript, tmp_path, 
     seen: dict[str, object] = {}
 
     class _CaptureStages(RecordingStages):
-        def reframe(self, in_path, out_path, aspect, *, settings=None):
+        def reframe(self, in_path, out_path, aspect, *, settings=None, on_notice=None):
             seen["engine"] = (settings or {}).get("reframeEngine")
-            return super().reframe(in_path, out_path, aspect, settings=settings)
+            return super().reframe(in_path, out_path, aspect, settings=settings, on_notice=on_notice)
 
     progress: list[tuple[int, str]] = []
     ctx = JobContext(

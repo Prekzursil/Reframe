@@ -59,6 +59,37 @@ DEFAULT_MIN_SILENCE_SEC = _boundary.DEFAULT_SILENCE_MIN_SEC  # 0.5 s
 # Leave this much silence on each kept edge so the cut doesn't sound clipped.
 DEFAULT_PAD_SEC = 0.1
 
+# WU-3 NO-SILENT-FALLBACK: when silence-trim cannot run its detection (no ffmpeg,
+# a silencedetect spawn failure, an unprobeable duration) the step previously
+# no-op'd SILENTLY. It now surfaces this typed notice through an ``on_notice`` sink
+# so the skip is REPORTED (the orchestrator routes it to job.progress), never
+# swallowed. Distinct from a legitimate "no dead air to remove" pass-through.
+SILENCE_TRIM_UNAVAILABLE_NOTICE = "silencetrim.unavailable"
+
+# A notice sink mirroring the stabilize pre-step's: receives a {type, message,
+# reason} dict the orchestrator surfaces via job.progress.
+NoticeSink = Callable[[dict[str, str]], None]
+
+
+def make_unavailable_notice(reason: str) -> dict[str, str]:
+    """Build the typed notice emitted when silence-trim is skipped (``{type, message, reason}``).
+
+    ``message`` is the human line a job surfaces via ``job.progress``; ``reason``
+    is the specific cause (no ffmpeg, a detection spawn failure, an unprobeable
+    duration) so the skip is actionable instead of silent.
+    """
+    return {
+        "type": SILENCE_TRIM_UNAVAILABLE_NOTICE,
+        "message": f"silence-trim skipped: {reason}; the clip was passed through unchanged",
+        "reason": reason,
+    }
+
+
+def _notify(on_notice: NoticeSink | None, reason: str) -> None:
+    """Surface the silence-trim unavailable notice through ``on_notice`` (when wired)."""
+    if on_notice is not None:
+        on_notice(make_unavailable_notice(reason))
+
 
 class SilenceTrimError(RuntimeError):
     """Raised when the silence-trim re-cut ffmpeg pass fails (non-zero exit)."""
@@ -163,6 +194,7 @@ def detect_silence_spans(
     noise_db: float = DEFAULT_NOISE_DB,
     min_silence_sec: float = DEFAULT_MIN_SILENCE_SEC,
     run: DetectRunner | None = None,
+    on_notice: NoticeSink | None = None,
 ) -> list[Span]:
     """Detect silent spans in ``in_path`` via ffmpeg ``silencedetect``.
 
@@ -171,12 +203,17 @@ def detect_silence_spans(
     ``subprocess.run`` but is injectable so tests mock the subprocess. A probe
     failure returns ``[]`` (the trim then keeps the whole clip) rather than
     raising — a detection miss must not fail the pipeline.
+
+    WU-3 NO-SILENT-FALLBACK: a detection failure (no resolvable ffmpeg, or a
+    ``silencedetect`` spawn failure) is SURFACED through ``on_notice`` so the
+    skipped trim is reported, not silently swallowed.
     """
     runner = run if run is not None else subprocess.run
     try:
         ffmpeg_bin = ffmpeg.ffmpeg_path(settings)
     except Exception:  # noqa: BLE001 - no ffmpeg resolvable -> no silences
         log.warning("ffmpeg not found for silencedetect on %s", in_path)
+        _notify(on_notice, "ffmpeg not found for silencedetect")
         return []
     argv = _boundary.build_silencedetect_argv(
         in_path,
@@ -188,6 +225,7 @@ def detect_silence_spans(
         completed = runner(argv, capture_output=True, text=True, check=False)
     except Exception as exc:  # noqa: BLE001 - a probe failure must not crash trim
         log.warning("silencedetect failed for %s: %s", in_path, exc)
+        _notify(on_notice, f"silencedetect failed: {exc}")
         return []
     stderr = getattr(completed, "stderr", "") or ""
     return parse_silence_spans(stderr)
@@ -207,6 +245,7 @@ def trim_clip(
     detect_run: DetectRunner | None = None,
     run: RunFn | None = None,
     duration: ProbeFn | None = None,
+    on_notice: NoticeSink | None = None,
 ) -> tuple[str, float, list[Span]]:
     """Trim dead air from ``in_path`` -> ``out_path``; return ``(path, removedSec, keeps)``.
 
@@ -223,6 +262,11 @@ def trim_clip(
     the removed duration). On a pass-through (nothing removed) ``keeps`` is the
     single full-length span ``[(0, total)]`` — an identity remap, so cues map
     through unchanged.
+
+    WU-3 NO-SILENT-FALLBACK: a swallowed failure (an unprobeable duration, or a
+    detection miss forwarded from :func:`detect_silence_spans`) is SURFACED
+    through ``on_notice`` so the skipped trim is reported, never silent. A
+    legitimate "no dead air to remove" pass-through emits NO notice.
     """
     settings = settings or {}
     run = run or ffmpeg.run
@@ -232,6 +276,7 @@ def trim_clip(
         total = float(duration(in_path, settings))
     except Exception:  # noqa: BLE001 - a probe failure means we can't trim safely
         log.warning("duration probe failed for %s; skipping silence-trim", in_path)
+        _notify(on_notice, "duration probe failed")
         return in_path, 0.0, []
     if total <= 0.0:
         return in_path, 0.0, []
@@ -242,6 +287,7 @@ def trim_clip(
         noise_db=noise_db,
         min_silence_sec=min_silence_sec,
         run=detect_run,
+        on_notice=on_notice,
     )
     keeps = keep_spans(silences, total, pad_sec=pad_sec)
     removed = removed_seconds(keeps, total)
@@ -331,6 +377,9 @@ class SilenceTrim:
                 detect_run=detect_run,
                 run=run,
                 duration=duration,
+                # WU-3: surface a swallowed detect/probe failure via job.progress
+                # (the skip is reported, never a silent {removedSec: 0} no-op).
+                on_notice=lambda notice: job_ctx.progress(50, notice["message"]),
             )
             job_ctx.progress(100, f"removed {removed:.1f}s of dead air")
             return {"path": path, "removedSec": removed}
@@ -375,10 +424,12 @@ __all__ = [
     "DEFAULT_MIN_SILENCE_SEC",
     "DEFAULT_NOISE_DB",
     "DEFAULT_PAD_SEC",
+    "SILENCE_TRIM_UNAVAILABLE_NOTICE",
     "SilenceTrim",
     "SilenceTrimError",
     "detect_silence_spans",
     "keep_spans",
+    "make_unavailable_notice",
     "parse_silence_spans",
     "register",
     "removed_seconds",

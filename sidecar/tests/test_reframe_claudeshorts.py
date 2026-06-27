@@ -416,13 +416,26 @@ def test_detect_backend_haar_when_mediapipe_missing():
     assert cs.detect_backend(_importer({"cv2"})) == "haar"
 
 
-def test_detect_backend_mediapipe_without_cv2_falls_to_center():
-    # mediapipe alone cannot decode frames; chain must not stop half-way.
-    assert cs.detect_backend(_importer({"mediapipe"})) == "center"
+def test_detect_backend_mediapipe_without_cv2_raises_setup_error():
+    # mediapipe alone cannot decode frames; cv2 is required. With cv2 absent the
+    # backend is UNAVAILABLE -> an EXPLICIT setup/provisioning error, never a
+    # silent "center" that degrades per-clip (WU-3 NO-SILENT-FALLBACK).
+    with pytest.raises(cs.ClaudeShortsBackendUnavailableError) as exc:
+        cs.detect_backend(_importer({"mediapipe"}))
+    assert "cv2" in str(exc.value).lower() or "opencv" in str(exc.value).lower()
 
 
-def test_detect_backend_center_when_nothing_imports():
-    assert cs.detect_backend(_importer(set())) == "center"
+def test_detect_backend_no_natives_raises_setup_error():
+    # No native modules at all -> explicit setup error (fail loud at setup), not a
+    # silent center fallback the rest of the pipeline can't distinguish.
+    with pytest.raises(cs.ClaudeShortsBackendUnavailableError):
+        cs.detect_backend(_importer(set()))
+
+
+def test_backend_unavailable_is_a_reframe_error_subclass():
+    # So a single ``except ClaudeShortsReframeError`` at the job boundary still
+    # catches it, but it is DISTINCT from a per-clip degrade (caught separately).
+    assert issubclass(cs.ClaudeShortsBackendUnavailableError, cs.ClaudeShortsReframeError)
 
 
 def test_detect_subject_centers_center_backend_short_circuits():
@@ -620,6 +633,76 @@ def test_engine_detector_failure_degrades_to_center(fake_bins):
     out = eng.reframe("/in.mp4", "/out.mp4")
     assert out == "/out.mp4"
     assert "'437'" in _vf_of(runner.calls[0]["argv"])
+
+
+# --------------------------------------------------------------------------- #
+# WU-3 NO-SILENT-FALLBACK: compute_plan must SURFACE a per-clip degraded signal
+# (never swallow a detection failure / trust-gate miss into a silent center crop)
+# --------------------------------------------------------------------------- #
+def test_compute_plan_detection_exception_surfaces_degraded_notice(fake_bins):
+    """A broken detector still degrades to a center crop, but the degrade is
+    SURFACED via on_notice (structured) instead of being swallowed with a log."""
+
+    def broken(p, t):
+        raise RuntimeError("mediapipe exploded")
+
+    eng, _ = _engine(fake_bins, detector=broken)
+    notices: list[dict] = []
+    crop, kfs, _d = eng.compute_plan("/in.mp4", on_notice=notices.append)
+    # still a centered crop (encode proceeds) ...
+    assert kfs == [] and crop["x"] == 437
+    # ... but the degrade was reported, not silently swallowed.
+    assert len(notices) == 1
+    assert notices[0]["type"] == cs.REFRAME_DEGRADED_NOTICE
+    assert "center crop" in notices[0]["message"].lower()
+    assert "mediapipe exploded" in notices[0]["reason"]
+
+
+def test_compute_plan_trust_gate_miss_surfaces_degraded_notice(fake_bins):
+    """No locatable subject (zero / too-few hits) -> centered crop AND a surfaced
+    'tracking unavailable' notice so the UI can show a degraded badge."""
+    eng, _ = _engine(fake_bins, detector=lambda p, t: [])
+    notices: list[dict] = []
+    crop, kfs, _d = eng.compute_plan("/in.mp4", on_notice=notices.append)
+    assert kfs == [] and crop["x"] == 437
+    assert len(notices) == 1
+    assert notices[0]["type"] == cs.REFRAME_DEGRADED_NOTICE
+    assert "center crop" in notices[0]["message"].lower()
+
+
+def test_compute_plan_subject_found_emits_no_notice(fake_bins):
+    """A clean track must NOT emit a degraded notice (no false 'degraded' badge)."""
+    ts = cs.window_timestamps(8.0)
+    eng, _ = _engine(fake_bins, detector=lambda p, t: [(x, 0.5) for x in ts])
+    notices: list[dict] = []
+    eng.compute_plan("/in.mp4", on_notice=notices.append)
+    assert notices == []
+
+
+def test_compute_plan_backend_unavailable_propagates_not_swallowed(fake_bins):
+    """A native-backend setup error (cv2/mediapipe absent) is a PROVISIONING
+    failure: it must propagate (fail loud at setup), NOT be swallowed into a
+    per-clip center-crop degrade."""
+
+    def no_backend(p, t):
+        raise cs.ClaudeShortsBackendUnavailableError("opencv (cv2) not installed")
+
+    eng, _ = _engine(fake_bins, detector=no_backend)
+    notices: list[dict] = []
+    with pytest.raises(cs.ClaudeShortsBackendUnavailableError):
+        eng.compute_plan("/in.mp4", on_notice=notices.append)
+    # not turned into a per-clip degrade notice
+    assert notices == []
+
+
+def test_reframe_threads_on_notice_through_to_compute_plan(fake_bins):
+    """The engine's reframe() forwards on_notice so the degrade surfaces from the
+    one-shot reframe entry point too."""
+    eng, _ = _engine(fake_bins, detector=lambda p, t: [])
+    notices: list[dict] = []
+    eng.reframe("/in.mp4", "/out.mp4", on_notice=notices.append)
+    assert len(notices) == 1
+    assert notices[0]["type"] == cs.REFRAME_DEGRADED_NOTICE
 
 
 def test_engine_passes_total_sec_and_argv_list(fake_bins):
