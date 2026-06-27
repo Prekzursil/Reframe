@@ -22,8 +22,8 @@ and pick one:
 
 | Asset | What it is |
 |-------|------------|
-| `media-studio-0.1.0-win-x64.exe` | **NSIS installer** — double-click, choose an install dir, get a Start-menu / desktop shortcut ("Reframe - Media Studio"). |
-| `media-studio-0.1.0-win-x64.zip` | **Portable** — unzip anywhere and run `Reframe - Media Studio.exe`. No install, no admin. |
+| `media-studio-1.0.0-win-x64.exe` | **NSIS installer** — double-click, choose an install dir, get a Start-menu / desktop shortcut ("Reframe - Media Studio"). |
+| `media-studio-1.0.0-win-x64.zip` | **Portable** — unzip anywhere and run `Reframe - Media Studio.exe`. No install, no admin. |
 
 **First run does the rest automatically.** The download is **slim** (the app + a bundled
 CPython + ffmpeg + the render engine). On first launch the app downloads the heavier pieces
@@ -51,13 +51,16 @@ is exactly one place to manage keys, cost, and privacy.
 
 ### The tabs
 
+V1 organises everything into **five** top-level sections (an ARIA tablist; the active
+section is derived from the route, so the strip can never desync):
+
 | Tab | What it's for |
 |-----|---------------|
-| **Library** | Your video library home. Add videos; open one to drill into its per-video **Workspace** (transcribe, caption, reframe, stabilize, audio, export…). |
-| **Create** | The short-maker. LLM moment-selection → boundary-snap → cut → vertical 9:16 reframe → captions → export, with the global generated-Shorts gallery. |
+| **Library** | Your video library home. Add videos; open one to drill into the **Edit** section for that video. |
+| **Make Shorts** | The novice front door / short-maker: AI moment-pick **and** manual-interval shorts → boundary-snap → cut → vertical 9:16 reframe → caption editor → export, plus the single produced-Shorts gallery and batch / template repurposing (it carries the interrupted-batch resume badge). |
+| **Edit** | The per-video manual surface — trim / cut / join, reframe, the caption position & style editor, audio mix / duck / loudnorm, stabilize, transcribe, export — hosted in the per-video Workspace. |
 | **Director** | Prompt-driven AI video editing: describe an edit, review the storyboard / diff and its cost, then apply real ffmpeg op-engines (reframe, zoom/pan, retime, overlay, lower-third, remove fillers, translate captions, export). |
-| **Repurpose** | Batch / template / export-preset surface: point a pipeline at many sources, run one aggregate job, resume after a restart, fan out per-platform (TikTok / Reels / Shorts) presets. |
-| **Settings** | Sub-navigated: **Models & System** (pick / download models, hardware tiers, paths), **Providers & Keys** (add / redact API keys, per-key usage bars, consent toggles, **monthly spend cap**), and **System Health** diagnostics. |
+| **Settings** | Sub-navigated: **Models & System** (pick / download models, hardware tiers, paths), **Providers & Keys** (add / redact API keys, per-key usage bars, consent toggles, **monthly spend cap**), **Storage**, and **System Health** diagnostics. |
 
 **Providers & Keys + spend cap.** Keys live **only on your machine** — never transmitted
 anywhere but the owning provider, never logged. A persisted, month-keyed **cumulative spend
@@ -71,7 +74,8 @@ your limit, so many small approved runs can't quietly add up.
 | Area | Features |
 |------|----------|
 | **Short-maker** (the star) | LLM moment-selection → boundary-snap → cut → vertical reframe → captions → export; subtle zoom/punch-in; brand-logo overlay; virality scoring + a feedback flywheel |
-| **Reframe** | 9:16 auto-reframe via **verthor** (WSL2/MediaPipe) with an automatic in-sidecar **claudeshorts** (OpenCV/MediaPipe) fallback. **V1 follows a single speaker** — in a wide / two-shot the crop locks onto the dominant/active speaker and tracks them smoothly (never an empty studio or the gap between two people). Automatic multi-speaker *switching* is a [V2 roadmap](docs/ROADMAP.md) item. |
+| **Reframe** | 9:16 auto-reframe that runs **natively — no WSL required**. The in-sidecar **claudeshorts** (OpenCV/MediaPipe) engine is the default (`auto`); **verthor** (WSL2/MediaPipe) is an optional explicit opt-in for higher quality. **No silent fallback:** an explicit `verthor` request fails loudly when WSL is absent (it is never silently swapped). **V1 follows a single speaker** — in a wide / two-shot the crop locks onto the dominant/active speaker and tracks them smoothly (never an empty studio or the gap between two people). Automatic multi-speaker *switching* is a [V2 roadmap](docs/ROADMAP.md) item. |
+| **Caption editor** | A draggable / resizable caption box previewed on a real video frame (stored normalised → ASS alignment + margins), a previewable style-template swatch picker (karaoke + premium looks), and per-output subtitle delivery (burn-in / soft track / separate file / none) — defaults persisted in Settings and seeded into every new short. |
 | **Director** | prompt-driven edits → storyboard/diff + cost preview → real ffmpeg op-engines |
 | **Stabilize** *(differentiator)* | camera-shake removal via ffmpeg **vidstab** 2-pass — something OpusClip & peers don't do |
 | **Audio** | A/V mix + sidechain **auto-duck** + EBU R128 loudnorm; **silence-trim** dead-air removal |

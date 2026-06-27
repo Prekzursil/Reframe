@@ -5,7 +5,29 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added — V1 Caption editor + output (Phase 4)
+## [1.0.0] — 2026-06-28
+
+**Reframe v1.0.0 — the first stable release.** A plug-and-play, local-first Windows desktop
+video studio that turns long videos into shorts: download one file, run it, and the app does
+its own first-run setup (Python, ffmpeg, and the render engine are bundled). Both gates are at
+**strict 100% line + branch coverage** (sidecar **and** renderer) and `main` CI is green.
+
+### Added — Five-section information architecture (V1 IA)
+
+- **A clean five-section top-level IA** replaces the old tab set. The app is now organised into
+  **Library · Make Shorts · Edit · Director · Settings** (an ARIA tablist whose active section
+  is *derived from the route*, so the strip can never desync):
+  - **Library** — the video library home; opening a video routes into **Edit** for it.
+  - **Make Shorts** — the novice front door / short-maker: **AI moment-pick *and* manual-interval**
+    shorts, the single produced-Shorts gallery, and batch / template repurposing (it carries the
+    interrupted-batch resume badge).
+  - **Edit** — the per-video manual surface (trim / cut / join, reframe, caption editor, audio,
+    stabilize, transcribe, export) hosted in the per-video Workspace.
+  - **Director** — the prompt-driven AI video-editing panel (storyboard / diff + cost preview →
+    real ffmpeg op-engines).
+  - **Settings** — Models & System / Providers & Keys / Storage / System Health.
+
+### Added — Caption position & style editor + output options
 
 - **Caption position editor** — a draggable / resizable caption box with a live preview on a
   real video frame, so the caption lands exactly where you place it on the export. The box is
@@ -19,6 +41,32 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   hard-coded), alongside save cut / save short / save SRT for every combination.
 - **Preferences** — a Settings → Caption defaults area persists the default caption style,
   position, subtitle delivery, and language; Make Shorts seeds new clips from it.
+
+### Changed — Framing: native, no-WSL by default + no silent fallback
+
+- **9:16 reframe now runs natively with no WSL required.** The `auto` selector resolves to the
+  in-sidecar **claudeshorts** (OpenCV / MediaPipe) engine, so the short-maker needs no WSL by
+  default; **verthor** (WSL2 / MediaPipe) is now an *explicit opt-in* for higher quality.
+- **No silent fallback.** An explicit `verthor` request fails **loudly** when WSL is absent
+  (raising rather than being silently swapped); the `auto` path that does substitute surfaces a
+  typed notice in job progress. First-run setup is loud about what it is doing — no quiet
+  degradation. The packaging root-cause + a `dataRoot` fallback and a startup self-test landed
+  alongside.
+- **Single-speaker framing (V1).** Even in a wide / two-shot the crop locks onto the dominant /
+  active speaker and tracks them smoothly — never an empty studio or the gap between two people.
+  Automatic multi-speaker *switching* remains a V2 roadmap item.
+
+### Security
+
+- **`cloudApiKey` is redacted over the RPC / IPC bridge** — the only RPC-facing settings
+  accessor now redacts provider keys so a key can never leak unredacted to the renderer.
+- Stopped a silent-caption-erasure path so caption edits are never quietly dropped.
+
+### Coverage / CI
+
+- Strict **100% line + branch coverage** enforced on both the Python sidecar and the
+  TypeScript renderer under the single deterministic `quality` CI gate; `main` is green and has
+  **0 open issues**.
 
 ## [0.1.0] — 2026-06-25
 
