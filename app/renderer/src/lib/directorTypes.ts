@@ -42,6 +42,7 @@ export const GROUP_COLLAPSE_THRESHOLD = 5;
 const OP_KIND_LABELS: Record<DirectorOpKind, string> = {
   trim: 'trim',
   cut: 'cut',
+  join: 'join',
   removeSilence: 'silence removal',
   removeFillers: 'filler removal',
   reorder: 'reorder',

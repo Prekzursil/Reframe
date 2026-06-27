@@ -57,6 +57,7 @@ function costRow(over: Partial<DirectorCostRow> = {}): DirectorCostRow {
 describe('opKindLabel', () => {
   it('maps every known kind to a friendly noun', () => {
     expect(opKindLabel('trim')).toBe('trim');
+    expect(opKindLabel('join')).toBe('join');
     expect(opKindLabel('ocrExtractList')).toBe('on-screen text read');
     expect(opKindLabel('overlayText')).toBe('text overlay');
   });
