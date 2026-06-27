@@ -301,6 +301,60 @@ export interface HardwareInfo {
   ramMb: number | null;
   cpuCount: number | null;
   gpuPresent: boolean;
+  /** FREE disk space (MB) on the data drive, or null when undetectable. */
+  diskFreeMb?: number | null;
+}
+
+/**
+ * WU-models/device: a device-ranked model pick + the "X because RAM/VRAM Y"
+ * reason (`models.runners` -> `whisper` / `llm`). Field names mirror the sidecar
+ * `model_recommend.ModelReco`.
+ */
+export interface ModelReco {
+  model: string;
+  label: string;
+  reason: string;
+}
+
+/** A runner's pull recommendation: a {@link ModelReco} + a copy-able pull hint. */
+export interface RunnerModelReco extends ModelReco {
+  pull: string;
+}
+
+/**
+ * WU-models/device: per-runner (Ollama / LM Studio) detect + recommend + install
+ * advice (`models.runners` -> `runners[]`). Mirrors `model_recommend.RunnerAdvice`.
+ */
+export interface RunnerAdvice {
+  kind: string;
+  label: string;
+  present: boolean;
+  baseUrl: string;
+  installUrl: string;
+  installHint: string;
+  installedModels: string[];
+  recommendedModel: RunnerModelReco;
+}
+
+/** The full `models.runners` payload: device whisper + LLM + per-runner advice. */
+export interface LocalModelPlan {
+  whisper: ModelReco;
+  llm: ModelReco;
+  runners: RunnerAdvice[];
+}
+
+/**
+ * WU-models/device: one OpenRouter key's COST row (`providers.openrouterUsage`).
+ * `key` is the REDACTED last-4 only (no full key crosses RPC). Money is USD.
+ * Mirrors the sidecar `openrouter_usage.OpenRouterUsageRow`.
+ */
+export interface OpenRouterUsageRow {
+  provider: string;
+  key: string;
+  costUsd: number | null;
+  limitUsd: number | null;
+  remainingUsd: number | null;
+  isFreeTier: boolean;
 }
 
 /** One selectable ASR engine row (`asr.engines`). */
@@ -1279,6 +1333,16 @@ export const client = {
   },
 
   /**
+   * `models.*` (WU-models/device) — the local-model brain. `runners` composes the
+   * cheap hardware probe + Ollama/LM Studio detect into a device-ranked whisper +
+   * LLM recommendation and per-runner detect/pull/install advice. Direct-return;
+   * NO provider/LLM call, and it NEVER triggers a pull (the pull hint is advice).
+   */
+  models: {
+    runners: (): Promise<LocalModelPlan> => rpc('models.runners'),
+  },
+
+  /**
    * `readiness.*` — the unified "what works right now" roll-up (WU-8). Strictly
    * read-only: it derives every row from the installed-weight map + redacted
    * settings view, so it triggers no download and opens no socket.
@@ -1338,6 +1402,13 @@ export const client = {
      * NOT a poller). Keys are redacted; req/token units are returned distinctly.
      */
     usage: (): Promise<{ usage: UsageRow[] }> => rpc('providers.usage'),
+    /**
+     * `providers.openrouterUsage` (WU-models/device) — per-key OpenRouter COST
+     * rows (cumulative credit usage USD): the cost axis alongside `usage`'s
+     * calls/tokens. Best-effort; keys are redacted (no full key crosses RPC).
+     */
+    openrouterUsage: (): Promise<{ usage: OpenRouterUsageRow[] }> =>
+      rpc('providers.openrouterUsage'),
     /**
      * `providers.spend` — month-to-date cumulative cloud spend + the configured
      * monthly caps (WU-spend-cap). Read-only; all money is integer cents.

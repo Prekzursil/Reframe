@@ -149,3 +149,64 @@ def test_usage_registered_in_register_all(tmp_path: Path) -> None:
     protocol.METHODS.clear()
     register_all(Services(data_dir=tmp_path))
     assert "providers.usage" in protocol.METHODS
+    assert "providers.openrouterUsage" in protocol.METHODS
+
+
+# --------------------------------------------------------------------------- #
+# providers.openrouterUsage (WU-models/device): per-key COST rows, key-safe
+# --------------------------------------------------------------------------- #
+OR_KEY = "sk-or-live-SECRET-MNOP"
+
+
+def _with_openrouter(svc: Services, keys: list[str] | None = None) -> None:
+    svc.settings.set(
+        {
+            "providers": [
+                {
+                    "id": "openrouter",
+                    "provider": "OpenRouter",
+                    "kind": "cloud",
+                    "baseUrl": "https://openrouter.ai/api/v1",
+                    "model": "deepseek/deepseek-chat:free",
+                    "apiKeys": keys if keys is not None else [OR_KEY],
+                    "enabled": True,
+                    "capabilities": ["text"],
+                    "unit": "req",
+                }
+            ]
+        }
+    )
+
+
+def test_openrouter_usage_returns_cost_rows_no_full_key(tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_transport(url: str, body: dict[str, Any], headers: dict[str, str], timeout: float) -> dict[str, Any]:
+        captured["headers"] = headers
+        return {"data": {"usage": 1.5, "limit": 10.0, "limit_remaining": 8.5, "is_free_tier": False}}
+
+    svc = Services(data_dir=tmp_path, openrouter_usage_transport=fake_transport)
+    _with_openrouter(svc)
+    res = svc.providers_openrouter_usage({}, _ctx())
+    rows = res["usage"]
+    assert len(rows) == 1
+    assert rows[0]["provider"] == "OpenRouter"
+    assert rows[0]["costUsd"] == 1.5
+    assert rows[0]["limitUsd"] == 10.0
+    # No full key crosses RPC; the live key rides ONLY the Authorization header.
+    assert OR_KEY not in json.dumps(res)
+    assert captured["headers"]["Authorization"] == f"Bearer {OR_KEY}"
+
+
+def test_openrouter_usage_skips_when_no_openrouter_provider(tmp_path: Path) -> None:
+    def fake_transport(url: str, body: dict[str, Any], headers: dict[str, str], timeout: float) -> dict[str, Any]:
+        raise AssertionError("no probe should run when no OpenRouter provider is configured")
+
+    svc = Services(data_dir=tmp_path, openrouter_usage_transport=fake_transport)
+    _with_groq(svc)  # only a Groq provider configured
+    assert svc.providers_openrouter_usage({}, _ctx())["usage"] == []
+
+
+def test_openrouter_usage_empty_when_no_providers(tmp_path: Path) -> None:
+    svc = Services(data_dir=tmp_path, openrouter_usage_transport=lambda *a, **k: {})
+    assert svc.providers_openrouter_usage({}, _ctx())["usage"] == []

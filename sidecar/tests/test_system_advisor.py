@@ -274,9 +274,25 @@ def test_hardware_probe_with_fake_seams() -> None:
         vram_probe=lambda: 6144,
         ram_probe=lambda: 16384,
         cpu_probe=lambda: 8,
+        disk_probe=lambda: 250000,
     )
     hw = probe.detect()
-    assert hw == sa.HardwareInfo(vram_mb=6144, ram_mb=16384, cpu_count=8, gpu_present=True)
+    assert hw == sa.HardwareInfo(vram_mb=6144, ram_mb=16384, cpu_count=8, gpu_present=True, disk_free_mb=250000)
+
+
+def test_default_disk_probe_reads_free_space() -> None:
+    # The default seam reads real free space (MB) on the home drive; with an
+    # explicit path it reads that drive instead. Both return a non-negative int.
+    assert sa.default_disk_probe() >= 0
+    assert sa.default_disk_probe(str(sa.__file__)) >= 0
+
+
+def test_hardware_probe_swallows_failing_disk_seam() -> None:
+    def boom() -> int | None:
+        raise OSError("disk gone")
+
+    probe = sa.HardwareProbe(vram_probe=lambda: 1, ram_probe=lambda: 1, cpu_probe=lambda: 1, disk_probe=boom)
+    assert probe.detect().disk_free_mb is None  # failure mapped to None
 
 
 def test_hardware_probe_no_gpu() -> None:

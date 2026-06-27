@@ -607,6 +607,18 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('asr.engines', undefined);
   });
 
+  it('models.runners calls the bare method (WU-models/device)', async () => {
+    const r = installApi();
+    await client.models.runners();
+    expect(r).toHaveBeenCalledWith('models.runners', undefined);
+  });
+
+  it('providers.openrouterUsage calls the bare method (WU-models/device cost)', async () => {
+    const r = installApi();
+    await client.providers.openrouterUsage();
+    expect(r).toHaveBeenCalledWith('providers.openrouterUsage', undefined);
+  });
+
   it('readiness.summary calls the bare method (WU-8 roll-up)', async () => {
     const r = installApi();
     await client.readiness.summary();

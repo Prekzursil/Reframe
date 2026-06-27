@@ -50,6 +50,7 @@ Verdict = Literal["ok", "degraded", "unavailable"]
 VramProbe = Callable[[], int | None]  # total GPU VRAM in MB, or None if no GPU.
 RamProbe = Callable[[], int | None]  # total system RAM in MB, or None if unknown.
 CpuProbe = Callable[[], int | None]  # logical CPU count, or None if unknown.
+DiskProbe = Callable[[], int | None]  # FREE disk space (MB) on the data drive, or None.
 
 #: VRAM budget headroom: a component whose resident VRAM exceeds this fraction of
 #: the budget is "tight" (``degraded``) even though it nominally fits.
@@ -363,6 +364,7 @@ class HardwareInfo:
     ram_mb: int | None
     cpu_count: int | None
     gpu_present: bool
+    disk_free_mb: int | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -512,21 +514,25 @@ class HardwareProbe:
         vram_probe: VramProbe | None = None,
         ram_probe: RamProbe | None = None,
         cpu_probe: CpuProbe | None = None,
+        disk_probe: DiskProbe | None = None,
     ) -> None:
         self._vram_probe = vram_probe or default_vram_probe
         self._ram_probe = ram_probe or default_ram_probe
         self._cpu_probe = cpu_probe or default_cpu_probe
+        self._disk_probe = disk_probe or default_disk_probe
 
     def detect(self) -> HardwareInfo:
-        """Run all three seams (each fail-safe) -> a :class:`HardwareInfo`."""
+        """Run all four seams (each fail-safe) -> a :class:`HardwareInfo`."""
         vram = self._call(self._vram_probe)
         ram = self._call(self._ram_probe)
         cpu = self._call(self._cpu_probe)
+        disk = self._call(self._disk_probe)
         return HardwareInfo(
             vram_mb=vram,
             ram_mb=ram,
             cpu_count=cpu,
             gpu_present=vram is not None,
+            disk_free_mb=disk,
         )
 
     @staticmethod
@@ -639,6 +645,20 @@ def default_cpu_probe() -> int | None:
     return os.cpu_count()
 
 
+def default_disk_probe(path: str | None = None) -> int | None:
+    """FREE disk space (MB) on the drive holding ``path`` (defaults to the home dir).
+
+    Uses ``shutil.disk_usage`` (lazy import) so the device+ETA status strip can show
+    how much room is left for model downloads. Fail-safe by contract: the caller
+    wraps it so any error degrades to ``None`` (the strip then reads "not detected").
+    """
+    import shutil  # noqa: PLC0415 - stdlib, lazy for symmetry
+    from pathlib import Path  # noqa: PLC0415 - stdlib, lazy for symmetry
+
+    target = Path(path) if path else Path.home()
+    return int(shutil.disk_usage(target).free // (1024 * 1024))
+
+
 def probe_capabilities(
     *,
     find_spec: Callable[[str], object] | None = None,
@@ -725,6 +745,7 @@ __all__ = [
     "advise",
     "advise_for_hardware",
     "default_cpu_probe",
+    "default_disk_probe",
     "default_ram_probe",
     "default_vram_probe",
     "probe_capabilities",

@@ -68,6 +68,7 @@ class _FakeHardwareProbe:
         vram_mb: int | None = 6000,
         ram_mb: int | None = 16000,
         cpu_count: int | None = 8,
+        disk_free_mb: int | None = 200000,
     ) -> None:
         from media_studio.features.system_advisor import HardwareInfo
 
@@ -76,6 +77,7 @@ class _FakeHardwareProbe:
             ram_mb=ram_mb,
             cpu_count=cpu_count,
             gpu_present=vram_mb is not None,
+            disk_free_mb=disk_free_mb,
         )
 
     def detect(self) -> Any:
@@ -184,7 +186,41 @@ def test_system_probe_returns_hardware_info(tmp_path: Path) -> None:
     svc = _phase8_services(tmp_path)
     direct = RpcContext(emit_notification=lambda obj: None, jobs=None)
     out = svc.system_probe({}, direct)
-    assert out == {"vramMb": 6000, "ramMb": 16000, "cpuCount": 8, "gpuPresent": True}
+    assert out == {
+        "vramMb": 6000,
+        "ramMb": 16000,
+        "cpuCount": 8,
+        "gpuPresent": True,
+        "diskFreeMb": 200000,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# models.runners (WU-models/device) — device-ranked local-model plan + runner advice
+# --------------------------------------------------------------------------- #
+def test_models_runners_composes_device_plan(tmp_path: Path) -> None:
+    # A detected Ollama server + a known device -> device-ranked whisper/LLM picks
+    # and per-runner advice (Ollama present, LM Studio absent with install link).
+    detected = [{"kind": "ollama", "model": "qwen2.5:7b", "base_url": "http://127.0.0.1:11434/v1"}]
+    svc = _phase8_services(tmp_path, local_detector=lambda _s: detected)
+    direct = RpcContext(emit_notification=lambda obj: None, jobs=None)
+    out = svc.models_runners({}, direct)
+    assert out["whisper"]["model"] == "large-v3-turbo"  # 6000MB GPU fits turbo
+    assert out["llm"]["model"] == "qwen2.5:7b"  # 6000MB GPU fits 7b
+    by_kind = {r["kind"]: r for r in out["runners"]}
+    assert by_kind["ollama"]["present"] is True
+    assert by_kind["ollama"]["installedModels"] == ["qwen2.5:7b"]
+    assert by_kind["lmstudio"]["present"] is False
+    assert "https://lmstudio.ai" in by_kind["lmstudio"]["installHint"]
+
+
+def test_models_runners_registered(tmp_path: Path) -> None:
+    registered: dict[str, Any] = {}
+    handlers.register_all(
+        services=Services(data_dir=tmp_path / "d"),
+        register=lambda name, fn: registered.__setitem__(name, fn),
+    )
+    assert "models.runners" in registered
 
 
 def test_system_advisor_returns_wire_report(tmp_path: Path) -> None:
