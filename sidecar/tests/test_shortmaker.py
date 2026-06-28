@@ -191,6 +191,8 @@ class RecordingStages:
         height,
         settings=None,
         hook_title=None,
+        hook_card=False,
+        hook_card_sec=0.0,
     ):
         self.calls.append("caption")
         self.caption_kwargs.append(
@@ -203,6 +205,8 @@ class RecordingStages:
                 "width": width,
                 "height": height,
                 "hook_title": hook_title,
+                "hook_card": hook_card,
+                "hook_card_sec": hook_card_sec,
                 "settings": settings,
             }
         )
@@ -515,7 +519,7 @@ def test_run_export_orders_cut_reframe_caption_export(transcript, tmp_path):
     )
     # Exact §5 order for a single clip.
     assert calls == ["cut", "stabilize", "reframe", "caption", "export"]
-    assert out["clips"] == [{"path": str(tmp_path / "out" / "src-1.mp4")}]
+    assert out["clips"] == [{"path": str(tmp_path / "out" / "01-src.mp4")}]
 
 
 def _one_candidate() -> dict:
@@ -1091,7 +1095,7 @@ def test_run_export_brand_defaults_caption_style_when_unset(transcript, tmp_path
         settings={"brandCaptionTemplate": "hormozi"},
     )
     # The persisted metadata records the resolved (brand-defaulted) template.
-    meta_path = tmp_path / "out" / "src-1.mp4.json"
+    meta_path = tmp_path / "out" / "01-src.mp4.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     assert meta["template"] == "hormozi"
 
@@ -1109,7 +1113,7 @@ def test_run_export_user_caption_style_beats_brand_default(transcript, tmp_path)
         stages=rec.as_stages(),
         settings={"captionStyle": "neon", "brandCaptionTemplate": "hormozi"},
     )
-    meta_path = tmp_path / "out" / "src-1.mp4.json"
+    meta_path = tmp_path / "out" / "01-src.mp4.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     assert meta["template"] == "neon"
 
@@ -1144,12 +1148,12 @@ def test_run_export_multiple_clips_order_and_paths(transcript, tmp_path):
     ]
     paths = [c["path"] for c in out["clips"]]
     assert paths == [
-        str(tmp_path / "out" / "talk-1.mp4"),
-        str(tmp_path / "out" / "talk-2.mp4"),
+        str(tmp_path / "out" / "01-talk.mp4"),
+        str(tmp_path / "out" / "02-talk.mp4"),
     ]
     # The full {candidate, path} records survive for the manifest (§3).
     assert out["items"][0]["candidate"]["rank"] == 1
-    assert out["items"][0]["path"].endswith("talk-1.mp4")
+    assert out["items"][0]["path"].endswith("01-talk.mp4")
 
 
 def test_run_export_empty_batch_gives_no_clips(transcript, tmp_path):
@@ -1657,9 +1661,9 @@ class TestExportWithAudioTrack:
         out, rec, calls = self._export(tmp_path, transcript, audio_track_id="aud-dub-1", tracks=[DUB_TRACK])
         assert calls == ["cut", "stabilize", "reframe", "caption", "export", "mux_audio"]
         # The §2 contract path is the SAME with or without the audio carry.
-        assert out["clips"] == [{"path": str(tmp_path / "out" / "talk-1.mp4")}]
+        assert out["clips"] == [{"path": str(tmp_path / "out" / "01-talk.mp4")}]
         mux = rec.mux_kwargs[0]
-        assert mux["out_path"] == str(tmp_path / "out" / "talk-1.mp4")
+        assert mux["out_path"] == str(tmp_path / "out" / "01-talk.mp4")
         assert mux["clip_path"] == str(tmp_path / "out" / "talk-1.encoded.mp4")
 
     def test_mux_receives_resolved_track_and_source_window(self, transcript, tmp_path):
@@ -1949,7 +1953,7 @@ class TestExportRemoveFillers:
             settings={"removeFillers": False},
         )
         # §2 base shape preserved exactly when filler removal didn't run.
-        assert out["clips"][0] == {"path": str(tmp_path / "out" / "src-1.mp4")}
+        assert out["clips"][0] == {"path": str(tmp_path / "out" / "01-src.mp4")}
 
 
 # -- P3-A hook-title threading through CAPTION (CRITICAL #2 P3-A) -------------
@@ -2019,6 +2023,77 @@ class TestExportHookTitle:
             settings={"hookTitle": True},
         )
         assert rec.caption_kwargs[0]["hook_title"] is None
+
+
+# -- WU SP2: hook CARD gating (top-N by virality rank) + rank-ordered names ---
+
+
+class TestExportHookCard:
+    """The hook CARD is applied to the TOP-N clips by virality rank only; the rest
+    keep the plain hook title. Carded clips get the first-~5 s time-box, and ALL
+    clips export with a rank-ordered ``NN-`` filename prefix."""
+
+    def _cand(self, rank, hook="The hook"):
+        return {
+            "rank": rank,
+            "start": float(rank) * 30.0,
+            "end": float(rank) * 30.0 + 25.0,
+            "durationSec": 25.0,
+            "hook": hook,
+            "sourceStart": float(rank) * 30.0,
+            "score": 9,
+        }
+
+    def _run(self, tmp_path, transcript, cands, settings):
+        rec = RecordingStages([])
+        out = sm.run_export(
+            make_ctx(),
+            video_id="v1",
+            candidates=cands,
+            load_context=loader_for(str(tmp_path / "talk.mp4"), transcript),
+            out_dir=str(tmp_path / "out"),
+            stages=rec.as_stages(),
+            settings=settings,
+        )
+        return rec, out
+
+    def test_card_gated_to_top_n_by_rank(self, transcript, tmp_path):
+        # 3 clips, top-N=2 -> ranks 1 & 2 carded; rank 3 keeps the plain title.
+        cands = [self._cand(1), self._cand(2), self._cand(3)]
+        rec, _ = self._run(tmp_path, transcript, cands, {"hookCardTopN": 2})
+        flags = [k["hook_card"] for k in rec.caption_kwargs]
+        assert flags == [True, True, False]
+        # carded clips carry the first-~5 s time-box; the non-carded clip does not.
+        assert rec.caption_kwargs[0]["hook_card_sec"] == 5.0
+
+    def test_card_disabled_no_clip_carded(self, transcript, tmp_path):
+        cands = [self._cand(1), self._cand(2)]
+        rec, _ = self._run(tmp_path, transcript, cands, {"hookCard": False})
+        assert [k["hook_card"] for k in rec.caption_kwargs] == [False, False]
+
+    def test_card_respects_custom_window(self, transcript, tmp_path):
+        rec, _ = self._run(tmp_path, transcript, [self._cand(1)], {"hookCardSec": 4})
+        assert rec.caption_kwargs[0]["hook_card"] is True
+        assert rec.caption_kwargs[0]["hook_card_sec"] == 4.0
+
+    def test_card_not_applied_without_hook_text(self, transcript, tmp_path):
+        # No hook text -> hookTitle is None so there is no card to draw.
+        rec, _ = self._run(tmp_path, transcript, [self._cand(1, hook="  ")], {})
+        assert rec.caption_kwargs[0]["hook_card"] is False
+
+    def test_card_suppressed_when_hook_title_off(self, transcript, tmp_path):
+        rec, _ = self._run(tmp_path, transcript, [self._cand(1)], {"hookTitle": False})
+        assert rec.caption_kwargs[0]["hook_card"] is False
+
+    def test_rank_ordered_filename_prefix(self, transcript, tmp_path):
+        # Output files carry a zero-padded NN- prefix (sorts by virality rank).
+        cands = [self._cand(1), self._cand(2)]
+        _, out = self._run(tmp_path, transcript, cands, {})
+        paths = [c["path"] for c in out["clips"]]
+        assert paths == [
+            str(tmp_path / "out" / "01-talk.mp4"),
+            str(tmp_path / "out" / "02-talk.mp4"),
+        ]
 
 
 # -- P3 toggle extraction params->settings (CRITICAL #2) ---------------------
@@ -2264,7 +2339,7 @@ class TestExportWritesShortMetadata:
             stages=rec.as_stages(),
             settings={"captionStyle": "hormozi"},
         )
-        clip = tmp_path / "out" / "src-1.mp4"
+        clip = tmp_path / "out" / "01-src.mp4"
         json_path = shorts_mod.metadata_path(clip)
         assert json_path.exists(), "the <clip>.json sidecar must be written"
         meta = json.loads(json_path.read_text(encoding="utf-8"))
@@ -2287,7 +2362,7 @@ class TestExportWritesShortMetadata:
             stages=rec.as_stages(),
             settings={"captionStyle": "bold"},
         )
-        meta = json.loads(shorts_mod.metadata_path(tmp_path / "out" / "src-1.mp4").read_text("utf-8"))
+        meta = json.loads(shorts_mod.metadata_path(tmp_path / "out" / "01-src.mp4").read_text("utf-8"))
         assert set(meta) == set(shorts_mod.META_FIELDS)
 
     def test_metadata_template_blank_when_no_caption_style(self, transcript, tmp_path):
@@ -2301,7 +2376,7 @@ class TestExportWritesShortMetadata:
             stages=rec.as_stages(),
             settings={},  # no captionStyle override
         )
-        meta = json.loads(shorts_mod.metadata_path(tmp_path / "out" / "src-1.mp4").read_text("utf-8"))
+        meta = json.loads(shorts_mod.metadata_path(tmp_path / "out" / "01-src.mp4").read_text("utf-8"))
         assert meta["template"] == ""
 
     def test_metadata_prefers_calibrated_pct_over_virality(self, transcript, tmp_path):
@@ -2316,7 +2391,7 @@ class TestExportWritesShortMetadata:
             stages=rec.as_stages(),
             settings={"captionStyle": "neon"},
         )
-        meta = json.loads(shorts_mod.metadata_path(tmp_path / "out" / "src-1.mp4").read_text("utf-8"))
+        meta = json.loads(shorts_mod.metadata_path(tmp_path / "out" / "01-src.mp4").read_text("utf-8"))
         assert meta["viralityPct"] == 42
 
     def test_metadata_virality_null_when_absent(self, transcript, tmp_path):
@@ -2330,7 +2405,7 @@ class TestExportWritesShortMetadata:
             stages=rec.as_stages(),
             settings={},
         )
-        meta = json.loads(shorts_mod.metadata_path(tmp_path / "out" / "src-1.mp4").read_text("utf-8"))
+        meta = json.loads(shorts_mod.metadata_path(tmp_path / "out" / "01-src.mp4").read_text("utf-8"))
         assert meta["viralityPct"] is None
 
     def test_metadata_hook_falls_back_to_candidate_when_hooktitle_off(self, transcript, tmp_path):
@@ -2346,7 +2421,7 @@ class TestExportWritesShortMetadata:
             stages=rec.as_stages(),
             settings={"hookTitle": False},
         )
-        meta = json.loads(shorts_mod.metadata_path(tmp_path / "out" / "src-1.mp4").read_text("utf-8"))
+        meta = json.loads(shorts_mod.metadata_path(tmp_path / "out" / "01-src.mp4").read_text("utf-8"))
         assert meta["hook"] == "still recorded"
 
     def test_metadata_written_for_every_clip(self, transcript, tmp_path):
@@ -2365,7 +2440,7 @@ class TestExportWritesShortMetadata:
             settings={"captionStyle": "bold"},
         )
         for rank in (1, 2):
-            clip = tmp_path / "out" / f"talk-{rank}.mp4"
+            clip = tmp_path / "out" / f"{rank:02d}-talk.mp4"
             assert shorts_mod.metadata_path(clip).exists()
 
     def test_listing_reconstructs_short_from_written_metadata(self, transcript, tmp_path):
@@ -2385,7 +2460,7 @@ class TestExportWritesShortMetadata:
         # The mocked export stage doesn't actually encode an mp4; materialize the
         # final file so shorts.list (which globs *.mp4) can pick it up. The .json
         # the real pipeline writes is already on disk.
-        (out_dir / "src-1.mp4").write_bytes(b"\x00fake-mp4")
+        (out_dir / "01-src.mp4").write_bytes(b"\x00fake-mp4")
         svc = shorts_mod.Shorts(
             exports_dir=tmp_path / "exports",
             probe=lambda p, s=None: (1080, 1920),

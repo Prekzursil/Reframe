@@ -169,6 +169,10 @@ export function buildExportParams(
     captionStyle: controls.captionStyle,
     reframeEngine: controls.reframeEngine,
     hookTitle: controls.hookTitle,
+    // WU SP2: the hook-card toggle + top-N gate flow to the sidecar (which also
+    // owns the first-~5 s window + the rank-ordered NN- output filename prefix).
+    hookCard: controls.hookCard,
+    hookCardTopN: controls.hookCardTopN,
     removeFillers: controls.removeFillers,
     autoZoom: controls.autoZoom,
     // audio-stabilize group: dead-air removal + camera-shake stabilization

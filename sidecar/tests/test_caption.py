@@ -655,6 +655,56 @@ def test_build_ass_title_duration_falls_back_to_last_cue():
     assert "0:01:00.00" in title_event
 
 
+# --------------------------------------------------------------------------- #
+# WU SP2 — hook CARD (white box, bold black, upper-third, first-~5 s time-box)
+# --------------------------------------------------------------------------- #
+def test_build_ass_hook_card_emits_card_style_not_plain_title():
+    doc = build_ass(
+        [cue(1, 0.0, 1.0, "body")],
+        hook_title="The big hook",
+        total_sec=30.0,
+        hook_card=True,
+        hook_card_sec=5.0,
+    )
+    # The CARD style replaces the plain HookTitle style on a carded clip.
+    assert "Style: HookCard," in doc
+    assert "Style: HookTitle," not in doc
+    style_line = next(line for line in doc.splitlines() if line.startswith("Style: HookCard,"))
+    fields = style_line.split(",")
+    assert fields[15] == "3"  # BorderStyle 3 = opaque (white) box
+    assert fields[18] == "8"  # top-centre alignment (upper third)
+
+
+def test_build_ass_hook_card_event_is_time_boxed_to_first_seconds():
+    # The card shows only for the first ~5 s even on a 30 s clip.
+    doc = build_ass([cue(1, 0.0, 1.0, "b")], hook_title="HOOK", total_sec=30.0, hook_card=True, hook_card_sec=5.0)
+    card_event = next(line for line in doc.splitlines() if line.startswith("Dialogue:") and "HookCard" in line)
+    assert "0:00:00.00" in card_event  # starts at clip t=0
+    assert "0:00:05.00" in card_event  # ends at the 5 s time-box
+    assert "0:00:30.00" not in card_event  # NOT the whole clip
+
+
+def test_build_ass_hook_card_caps_window_to_short_clip():
+    # A clip shorter than the card window caps the card at the clip length.
+    doc = build_ass([cue(1, 0.0, 1.0, "b")], hook_title="HOOK", total_sec=3.0, hook_card=True, hook_card_sec=5.0)
+    card_event = next(line for line in doc.splitlines() if line.startswith("Dialogue:") and "HookCard" in line)
+    assert "0:00:03.00" in card_event
+
+
+def test_build_ass_hook_card_ignored_without_title():
+    # No hook text -> no card (and byte-identical to the no-title default).
+    doc = build_ass([cue(1, 0.0, 1.0, "hi")], hook_card=True, hook_card_sec=5.0)
+    assert "HookCard" not in doc
+    assert doc == build_ass([cue(1, 0.0, 1.0, "hi")])
+
+
+def test_build_ass_hook_card_false_keeps_plain_title():
+    # hook_card=False (the default) keeps the plain full-clip HookTitle path.
+    doc = build_ass([cue(1, 0.0, 1.0, "b")], hook_title="HOOK", total_sec=10.0)
+    assert "Style: HookTitle," in doc
+    assert "HookCard" not in doc
+
+
 def test_render_threads_hook_title_into_written_ass(fake_ffmpeg, monkeypatch):
     """render() forwards hook_title into the ASS actually written to disk."""
     written: dict[str, str] = {}

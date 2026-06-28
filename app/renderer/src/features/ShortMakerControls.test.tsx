@@ -171,6 +171,20 @@ describe('<ShortMakerControls />', () => {
     expect(spies.setControl).toHaveBeenCalledWith('silenceTrim', false);
     act(() => toggle('Stabilize').click());
     expect(spies.setControl).toHaveBeenCalledWith('stabilize', false);
+    // WU SP2: the hook-card toggle flips like the rest.
+    act(() => toggle('Hook card').click()); // ON -> OFF
+    expect(spies.setControl).toHaveBeenCalledWith('hookCard', false);
+  });
+
+  it('forwards the hook-card top-N number change and disables it when the card is off', () => {
+    mount();
+    change(byLabel('Hook card top N') as HTMLInputElement, '3');
+    expect(spies.setControl).toHaveBeenCalledWith('hookCardTopN', 3);
+    // enabled while the card toggle is ON ...
+    expect((byLabel('Hook card top N') as HTMLInputElement).disabled).toBe(false);
+    // ... and disabled when the card is OFF.
+    mount({ controls: { hookCard: false } });
+    expect((byLabel('Hook card top N') as HTMLInputElement).disabled).toBe(true);
   });
 
   it('forwards audio-track selection to setAudioTrackId', () => {

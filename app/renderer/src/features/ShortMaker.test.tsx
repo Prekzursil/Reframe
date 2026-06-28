@@ -202,6 +202,8 @@ describe('sanitizeControls', () => {
         'captionStyle',
         'count',
         'emphasis',
+        'hookCard',
+        'hookCardTopN',
         'hookTitle',
         'language',
         'maxSec',
@@ -236,6 +238,26 @@ describe('sanitizeControls', () => {
     expect(sanitizeControls({ removeFillers: 'true' as unknown as boolean }).removeFillers).toBe(
       true,
     );
+  });
+
+  // ---- WU SP2: hook-card toggle + top-N gate --------------------------------
+
+  it('defaults hookCard ON and hookCardTopN to 10', () => {
+    expect(DEFAULT_CONTROLS.hookCard).toBe(true);
+    expect(DEFAULT_CONTROLS.hookCardTopN).toBe(10);
+    const c = sanitizeControls({});
+    expect(c.hookCard).toBe(true);
+    expect(c.hookCardTopN).toBe(10);
+  });
+
+  it('keeps an explicit hookCard bool and clamps hookCardTopN to a positive int', () => {
+    expect(sanitizeControls({ hookCard: false }).hookCard).toBe(false);
+    expect(sanitizeControls({ hookCard: 'no' as unknown as boolean }).hookCard).toBe(true);
+    expect(sanitizeControls({ hookCardTopN: 3 }).hookCardTopN).toBe(3);
+    expect(sanitizeControls({ hookCardTopN: 0 }).hookCardTopN).toBe(1);
+    expect(
+      sanitizeControls({ hookCardTopN: 'x' as unknown as number }).hookCardTopN,
+    ).toBe(10);
   });
 
   // ---- P4 §8a emphasis tri-state / §8b autoZoom -----------------------------
@@ -804,6 +826,8 @@ describe('buildExportParams (P4 §8c / §2 export contract)', () => {
       captionStyle: 'bold',
       reframeEngine: 'verthor',
       hookTitle: false,
+      hookCard: true,
+      hookCardTopN: 10,
       removeFillers: true,
       autoZoom: true,
     });

@@ -205,6 +205,30 @@ export function ShortMakerControls({
           />
         </label>
 
+        {/* WU SP2: OpusClip hook CARD (white box, bold black, first ~5 s) on the
+            top-N clips by virality rank only (default ON). */}
+        <label className="sm-field sm-toggle">
+          <span>Hook card</span>
+          <input
+            aria-label="Hook card"
+            type="checkbox"
+            checked={controls.hookCard}
+            onChange={(e) => setControl('hookCard', e.target.checked)}
+          />
+        </label>
+
+        <label className="sm-field">
+          <span>Hook card top N</span>
+          <input
+            aria-label="Hook card top N"
+            type="number"
+            min={1}
+            value={controls.hookCardTopN}
+            disabled={!controls.hookCard}
+            onChange={(e) => setControl('hookCardTopN', Number(e.target.value))}
+          />
+        </label>
+
         {/* P3-B: filler-removal toggle (default OFF until proven). */}
         <label className="sm-field sm-toggle">
           <span>

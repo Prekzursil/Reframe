@@ -40,6 +40,7 @@ from media_studio import ffmpeg
 
 from . import caption_override as _override
 from . import emphasis as _emphasis
+from . import hook_card as _hook_card
 from .caption_override import ResolvedCaptionStyle
 
 # A Cue is the contract's ``{index:int, start:float, end:float, text:str}``
@@ -309,6 +310,8 @@ def build_ass(
     total_sec: float = 0.0,
     position: Any = None,
     override: Mapping[str, Any] | None = None,
+    hook_card: bool = False,
+    hook_card_sec: float = 0.0,
 ) -> str:
     """Build a complete ASS subtitle document for ``cues``.
 
@@ -364,18 +367,24 @@ def build_ass(
     # P3-A: a bold, larger, TOP-anchored headline style (Alignment 8 = top-
     # centre). Slightly larger than the body caption with a thicker outline so
     # it reads as a headline; safe top margin keeps it off the very edge.
+    # V1.1 WU SP2: a carded clip (top-N by virality) swaps the plain headline for
+    # the OpusClip HOOK CARD style — a white opaque box with bold black text in
+    # the upper third, time-boxed to the first ~5 s (the event below).
     title_text = wrap_hook_title(hook_title or "")
     if title_text:
-        title_size = max(14, int(round(play_y * 0.055)))
-        title_margin_v = max(12, int(round(play_y * 0.07)))
-        styles.append(
-            "Style: HookTitle,Arial,"
-            f"{title_size},"
-            "&H00FFFFFF,&H000000FF,&H00000000,&H96000000,"
-            "-1,0,0,0,"
-            "100,100,0,0,1,4,2,"
-            f"8,60,60,{title_margin_v},1"
-        )
+        if hook_card:
+            styles.append(_hook_card.hook_card_style_line(play_x, play_y))
+        else:
+            title_size = max(14, int(round(play_y * 0.055)))
+            title_margin_v = max(12, int(round(play_y * 0.07)))
+            styles.append(
+                "Style: HookTitle,Arial,"
+                f"{title_size},"
+                "&H00FFFFFF,&H000000FF,&H00000000,&H96000000,"
+                "-1,0,0,0,"
+                "100,100,0,0,1,4,2,"
+                f"8,60,60,{title_margin_v},1"
+            )
 
     header = [
         "[Script Info]",
@@ -402,19 +411,28 @@ def build_ass(
     events: list[str] = []
 
     # P3-A: emit the hook-title event FIRST so it draws above the body captions.
+    # WU SP2: a carded clip emits a HookCard event time-boxed to the first ~5 s
+    # (NOT the whole clip), capped to the clip length when known.
     if title_text:
-        title_end = float(total_sec)
-        if title_end <= 0.0:
-            # No probed duration: span to the last cue (clip-local) or a 60s
-            # floor (the §5 hard max clip length) so the headline persists.
-            cue_ends = [rebase_cue_time(c.get("end", 0.0), source_start) for c in cues]
-            title_end = max(
-                [*cue_ends, _HOOK_TITLE_FALLBACK_SEC],
-                default=_HOOK_TITLE_FALLBACK_SEC,
+        if hook_card:
+            card_end = _hook_card.hook_card_end_sec(hook_card_sec, total_sec)
+            events.append(
+                f"Dialogue: 0,{format_ass_timestamp(0.0)},{format_ass_timestamp(card_end)},"
+                f"{_hook_card.HOOK_CARD_STYLE_NAME},,0,0,0,,{title_text}"
             )
-        events.append(
-            f"Dialogue: 0,{format_ass_timestamp(0.0)},{format_ass_timestamp(title_end)},HookTitle,,0,0,0,,{title_text}"
-        )
+        else:
+            title_end = float(total_sec)
+            if title_end <= 0.0:
+                # No probed duration: span to the last cue (clip-local) or a 60s
+                # floor (the §5 hard max clip length) so the headline persists.
+                cue_ends = [rebase_cue_time(c.get("end", 0.0), source_start) for c in cues]
+                title_end = max(
+                    [*cue_ends, _HOOK_TITLE_FALLBACK_SEC],
+                    default=_HOOK_TITLE_FALLBACK_SEC,
+                )
+            events.append(
+                f"Dialogue: 0,{format_ass_timestamp(0.0)},{format_ass_timestamp(title_end)},HookTitle,,0,0,0,,{title_text}"
+            )
 
     for cue in cues:
         raw_start = cue.get("start", 0.0)
@@ -558,6 +576,8 @@ class CaptionEngine:
         total_sec: float = 0.0,
         position: Any = None,
         override: Mapping[str, Any] | None = None,
+        hook_card: bool = False,
+        hook_card_sec: float = 0.0,
     ) -> str:
         """Generate the ASS document (delegates to module-level :func:`build_ass`)."""
         return build_ass(
@@ -569,6 +589,8 @@ class CaptionEngine:
             total_sec=total_sec,
             position=position,
             override=override,
+            hook_card=hook_card,
+            hook_card_sec=hook_card_sec,
         )
 
     def render(
@@ -587,6 +609,8 @@ class CaptionEngine:
         position: Any = None,
         override: Mapping[str, Any] | None = None,
         karaoke: bool = False,
+        hook_card: bool = False,
+        hook_card_sec: float = 0.0,
     ) -> str:
         """Render ``cues`` onto ``clip_path`` -> ``out_path`` and return ``out_path``.
 
@@ -627,6 +651,8 @@ class CaptionEngine:
                 total_sec=total_sec,
                 position=position,
                 override=override,
+                hook_card=hook_card,
+                hook_card_sec=hook_card_sec,
             )
 
         # Write the ASS to a temp sidecar file. We pass its path as an argv

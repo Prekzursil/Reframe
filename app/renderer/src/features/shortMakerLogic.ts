@@ -12,6 +12,9 @@
 // Python/sidecar side (§3 Candidate / §2 controls). Do not rename.
 import type { PlayerWindow } from '../components/Player';
 import { logWarn } from '../lib/logger';
+// WU SP2: the hook-card top-N default + clamp live in the drift-guarded preset
+// mirror (hookCardPreset.ts) so the renderer config can't drift from the sidecar.
+import { HOOK_CARD_DEFAULT_TOP_N, clampHookCardTopN } from '../lib/hookCardPreset';
 // F1+F2: the deferred-job wait is the SINGLE shared helper in ./_api (timeout +
 // {error} reject + AbortSignal + leak-free cleanup). This module drops its old
 // private copy and re-exports the shared one so existing importers/tests (which
@@ -70,6 +73,13 @@ export interface ShortMakerControls {
   reframeEngine: string;
   /** P3-A: render the candidate's hook as the headline overlay (default ON). */
   hookTitle: boolean;
+  /**
+   * WU SP2: render the hook as an OpusClip CARD (white box, bold black, upper
+   * third, first ~5 s) on the top-N clips by virality rank only (default ON).
+   */
+  hookCard: boolean;
+  /** WU SP2: how many top clips (by virality rank) get a hook card (default 10). */
+  hookCardTopN: number;
   /** P3-B: filler-word removal cut pass (default OFF — experimental). */
   removeFillers: boolean;
   /**
@@ -266,6 +276,8 @@ export const DEFAULT_CONTROLS: ShortMakerControls = {
   captionStyle: DEFAULT_CAPTION_STYLE,
   reframeEngine: DEFAULT_REFRAME_ENGINE,
   hookTitle: true,
+  hookCard: true,
+  hookCardTopN: HOOK_CARD_DEFAULT_TOP_N,
   // V1 IA (GRILL G-4): quality features DEFAULT-ON to match the "all quality ON"
   // promise — removeFillers / autoZoom / silenceTrim / stabilize all start ON
   // (the novice front door ships its best output without touching Advanced).
@@ -322,6 +334,10 @@ export function sanitizeControls(raw: Partial<ShortMakerControls>): ShortMakerCo
     ? rawEngine
     : DEFAULT_CONTROLS.reframeEngine;
   const hookTitle = typeof raw.hookTitle === 'boolean' ? raw.hookTitle : DEFAULT_CONTROLS.hookTitle;
+  // WU SP2: hookCard is a real-bool toggle (else default ON — G-4); hookCardTopN
+  // clamps to a positive integer (else the default 10) via the preset mirror.
+  const hookCard = typeof raw.hookCard === 'boolean' ? raw.hookCard : DEFAULT_CONTROLS.hookCard;
+  const hookCardTopN = clampHookCardTopN(raw.hookCardTopN);
   const removeFillers =
     typeof raw.removeFillers === 'boolean' ? raw.removeFillers : DEFAULT_CONTROLS.removeFillers;
   const rawEmphasis = (raw.emphasis ?? '').trim().toLowerCase();
@@ -341,6 +357,8 @@ export function sanitizeControls(raw: Partial<ShortMakerControls>): ShortMakerCo
     captionStyle,
     reframeEngine,
     hookTitle,
+    hookCard,
+    hookCardTopN,
     removeFillers,
     emphasis,
     autoZoom,

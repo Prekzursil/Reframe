@@ -363,6 +363,8 @@ def _lazy_caption(
     height,
     settings=None,
     hook_title=None,
+    hook_card=False,
+    hook_card_sec=0.0,
 ) -> str:
     """Caption-stage router (A4): style picks the engine.
 
@@ -419,6 +421,10 @@ def _lazy_caption(
         position=(settings or {}).get("captionPosition"),
         # V1.1 WU SP1: the "opusclip-karaoke" libass preset (word-by-word ASS).
         karaoke=is_karaoke_style(style),
+        # V1.1 WU SP2: render the hook as an OpusClip CARD (white box, bold black,
+        # upper third, first-~5 s) on the top-N-by-rank clips only.
+        hook_card=hook_card,
+        hook_card_sec=hook_card_sec,
     )
 
 
@@ -870,6 +876,9 @@ def _export_one(
     video_id: str = "",
     source_title: str = "",
     on_notice: Callable[[dict[str, str]], None],
+    hook_card: bool = False,
+    hook_card_sec: float = 0.0,
+    final_stem: str | None = None,
 ) -> dict[str, Any]:
     """Run CUT (-> SILENCE-TRIM -> STABILIZE -> REMOVE-FILLERS) -> REFRAME -> CAPTION -> EXPORT (-> MUX-AUDIO).
 
@@ -1036,6 +1045,9 @@ def _export_one(
     if (settings or {}).get("hookTitle", True):
         hook_text = str(candidate.get("hook", "") or "").strip()
         hook_title = hook_text or None
+    # WU SP2: a carded clip (top-N by virality rank, decided in run_export) draws
+    # the hook as a CARD — but only when there IS a hook title to draw.
+    clip_hook_card = bool(hook_card and hook_title)
     # P4 §4 subtitle DELIVERY: burn only when subtitleMode is "burn"; for the
     # soft-track / sidecar / none modes the caption stage soft-muxes or skips (the
     # stage RETURNS the path to encode — the bare clip when it skips), so capture
@@ -1051,6 +1063,8 @@ def _export_one(
         height=OUT_HEIGHT,
         settings=settings,
         hook_title=hook_title,
+        hook_card=clip_hook_card,
+        hook_card_sec=hook_card_sec,
     )
 
     # P4 §8d: BRAND-LOGO OVERLAY — composite the configured brand logo into a
@@ -1070,8 +1084,10 @@ def _export_one(
         )
         export_input = branded_path
 
-    # EXPORT — final libx264 encode.
-    final_path = str(out_dir / f"{stem}.mp4")
+    # EXPORT — final libx264 encode. WU SP2: the FINAL clip carries the
+    # rank-ordered ``NN-`` filename prefix (``final_stem``) so the exported set
+    # sorts by virality rank; intermediates keep the plain working ``stem``.
+    final_path = str(out_dir / f"{final_stem or stem}.mp4")
     if audio_track is None:
         stages.export_clip(export_input, final_path, settings=settings)
     else:
@@ -1204,13 +1220,25 @@ def run_export(
         _seen_notices.add(key)
         ctx.progress(4, notice.get("message", "stabilize: notice"))
 
+    # WU SP2: resolve the hook-card config ONCE, then gate the card to the top-N
+    # clips by virality rank and compute the rank-ordered ``NN-`` filename width.
+    from . import hook_card as _hook_card  # lazy: keep module import-light
+
+    card_cfg = _hook_card.resolve_hook_card_config(settings)
+    carded_ranks = _hook_card.select_hook_card_ranks(candidates, card_cfg)
+    max_rank = _hook_card.max_export_rank(candidates)
+    base_stem = Path(source_path).stem or "clip"
+
     items: list[dict[str, Any]] = []
     total = len(candidates)
     for i, candidate in enumerate(candidates):
         ctx.raise_if_cancelled()
         candidate = _ensure_source_start(candidate)
         rank = candidate.get("rank", i + 1)
-        stem = f"{Path(source_path).stem or 'clip'}-{rank}"
+        stem = f"{base_stem}-{rank}"
+        # WU SP2: rank-ordered output name + per-clip card gate (top-N by rank).
+        clip_rank = _hook_card.resolve_rank(candidate, i + 1)
+        final_stem = _hook_card.rank_ordered_stem(base_stem, clip_rank, max_rank)
         ctx.progress(int(100 * i / total), f"exporting clip {i + 1}/{total}")
         item = _export_one(
             candidate,
@@ -1225,6 +1253,9 @@ def run_export(
             video_id=video_id,
             source_title=source_title,
             on_notice=_emit_notice,
+            hook_card=clip_rank in carded_ranks,
+            hook_card_sec=card_cfg.duration_sec,
+            final_stem=final_stem,
         )
         items.append(item)
 
