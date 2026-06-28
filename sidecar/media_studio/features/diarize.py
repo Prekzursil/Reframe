@@ -59,10 +59,13 @@ ProgressCb = Callable[[float, str], None]
 # --------------------------------------------------------------------------- #
 VAD_ASSET_NAME = "speechbrain-vad-crdnn"
 VAD_HF_REPO = "speechbrain/vad-crdnn-libriparty"
+# F3c: pin the HF snapshot revisions to commit hashes (verified 2026-06-28).
+VAD_HF_REVISION = "c5d5ae4fce161d94c3ab0286e32fb4a041a21a04"
 VAD_SIZE_MB = 70
 
 ECAPA_ASSET_NAME = "speechbrain-ecapa-voxceleb"
 ECAPA_HF_REPO = "speechbrain/spkrec-ecapa-voxceleb"
+ECAPA_HF_REVISION = "0f99f2d0ebe89ac095bcc5903c4dd8f72b367286"
 ECAPA_SIZE_MB = 80
 
 #: the asset names diarization needs present before it can run.
@@ -403,6 +406,7 @@ def register_diarize_assets() -> None:
             label="SpeechBrain VAD (CRDNN, speech detection)",
             installer="hf",
             hf_repo=VAD_HF_REPO,
+            hf_revision=VAD_HF_REVISION,
         )
     )
     manifest.register_asset(
@@ -413,6 +417,7 @@ def register_diarize_assets() -> None:
             label="SpeechBrain ECAPA-TDNN (speaker embeddings)",
             installer="hf",
             hf_repo=ECAPA_HF_REPO,
+            hf_revision=ECAPA_HF_REVISION,
         )
     )
 

@@ -415,7 +415,9 @@ def _resolve_duration(
 # asset registration (mirrors diarize / ctc_align / pyannote_backend)
 # --------------------------------------------------------------------------- #
 #: pinned revision per the SOTA manifest (#10): README commit 575de92.
-ASSET_REVISION = "575de92"
+# F3c: expanded the abbreviated 7-char hash to the full 40-char commit (a short
+# hash is ambiguous; verified via the HF revision API to start with 575de92).
+ASSET_REVISION = "575de92b31b2f60855bca9b70968bde5afb069ba"
 ASSET_SIZE_MB = 2400
 
 

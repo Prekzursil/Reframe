@@ -69,16 +69,24 @@ TIERS: tuple[str, ...] = (TIER_LOCAL, TIER_LOCAL_HEAVY, TIER_HOSTED)
 SLOW_LABEL: str = "SLOW"
 
 # Pinned artifacts (survey §2). File names double as the modelsDir lookup names.
+# F3c: the resolve URLs pin a COMMIT HASH (not "main") and carry the file's LFS
+# oid as sha256 (both verified via the HF tree + revision APIs, 2026-06-28).
 TIER1_GGUF_NAME: str = "translategemma-4b-it.Q4_K_M.gguf"
+TIER1_GGUF_COMMIT: str = "35a7486e128b19642cdc72d7b91b21ba388aaf42"
 TIER1_GGUF_URL: str = (
-    "https://huggingface.co/mradermacher/translategemma-4b-it-GGUF/resolve/main/translategemma-4b-it.Q4_K_M.gguf"
+    "https://huggingface.co/mradermacher/translategemma-4b-it-GGUF/resolve/"
+    f"{TIER1_GGUF_COMMIT}/translategemma-4b-it.Q4_K_M.gguf"
 )
+TIER1_GGUF_SHA256: str = "81200d03e843d2ec1ece6eeafe7d13cb6e5211e1fcd336ade55790b683a08330"
 TIER1_SIZE_MB: int = 2550  # 2.49 GB
 
 TIER2_GGUF_NAME: str = "translategemma-12b-it.Q4_K_M.gguf"
+TIER2_GGUF_COMMIT: str = "fdf84c9f6fe14e69d58814f14e7b5b63bb6a1b28"
 TIER2_GGUF_URL: str = (
-    "https://huggingface.co/mradermacher/translategemma-12b-it-GGUF/resolve/main/translategemma-12b-it.Q4_K_M.gguf"
+    "https://huggingface.co/mradermacher/translategemma-12b-it-GGUF/resolve/"
+    f"{TIER2_GGUF_COMMIT}/translategemma-12b-it.Q4_K_M.gguf"
 )
+TIER2_GGUF_SHA256: str = "b7aac4b4be7ab0c49b6556c29c4467e74313df7f1e95d9f9676bb2adf0afa528"
 TIER2_SIZE_MB: int = 7580  # 7.4 GB
 
 #: Partial offload for the 12B tier on a 6GB card (survey §2; re-tune on the
@@ -592,8 +600,8 @@ detect_existing_tier2_gguf = _detect_existing("translateTier2GgufPath", TIER2_GG
 def _register_mt_assets() -> None:
     """Register the survey-chosen MT GGUFs (idempotent re-register is a no-op).
 
-    sha256 left unpinned per A3/U4 ("sha-optional"); fill in after the first
-    verified download. URLs + quant sizes: docs/research/MT-MODELS-2026.md §2.
+    F3c: sha256 + HF commit revision are now PINNED (verified via the HF tree +
+    revision APIs). URLs + quant sizes: docs/research/MT-MODELS-2026.md §2.
     """
     register_asset(
         AssetEntry(
@@ -604,6 +612,7 @@ def _register_mt_assets() -> None:
             label="TranslateGemma-4B Q4_K_M (translation, tier 1)",
             installer="download",
             url=TIER1_GGUF_URL,
+            sha256=TIER1_GGUF_SHA256,
             detect=detect_existing_tier1_gguf,
         )
     )
@@ -616,6 +625,7 @@ def _register_mt_assets() -> None:
             label="TranslateGemma-12B Q4_K_M (translation, tier 2 — SLOW)",
             installer="download",
             url=TIER2_GGUF_URL,
+            sha256=TIER2_GGUF_SHA256,
             detect=detect_existing_tier2_gguf,
         )
     )

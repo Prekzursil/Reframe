@@ -299,7 +299,10 @@ def _default_frame_loader(media_path: str, candidates: Sequence[Candidate]) -> l
 # asset registration (mirrors diarize / parakeet_asr / ctc_align)
 # --------------------------------------------------------------------------- #
 #: pinned DOVER commit (SOTA manifest #5; DOVER-Mobile v0.5.0).
-DOVER_REVISION = "f1ddc96"
+# F3c: the prior abbreviated hash f1ddc96 no longer resolves in teowu/DOVER
+# (history rewrite); re-pinned to the current main commit (full 40-char, verified
+# via the HF refs API 2026-06-28).
+DOVER_REVISION = "841d2f90f8ed5e30e7d60213fd6b4354fd56b06c"
 
 
 def register_quality_gate_assets() -> None:

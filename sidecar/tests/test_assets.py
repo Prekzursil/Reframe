@@ -9,6 +9,7 @@ no real pip, no huggingface_hub import.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ from media_studio.assets import manifest
 from media_studio.assets import rpc as assets_rpc
 from media_studio.assets.manager import (
     DISK_MARGIN_MB,
+    GET_PIP_SHA256,
     GET_PIP_URL,
     MB,
     PINNED_PIP,
@@ -109,6 +111,7 @@ def make_manager(
     env_vars: dict[str, str] | None = None,
     usage=big_free_usage,
     python_exe: str = "C:/embed py/python.exe",
+    get_pip_sha256: str | None = None,
 ) -> AssetManager:
     return AssetManager(
         root=tmp_path,
@@ -119,10 +122,26 @@ def make_manager(
         python_exe=python_exe,
         usage=usage,
         env_vars=env_vars if env_vars is not None else {},
+        get_pip_sha256=get_pip_sha256,
     )
 
 
-def download_entry(name="tiny-model", *, sha256=None, size_mb=0.001, dest=None):
+# F3c: installer='download' entries now REQUIRE a sha256 pin at registration
+# (manifest.AssetEntry.__post_init__). The helper defaults to a valid 64-hex
+# placeholder so the many manager tests that don't care about integrity keep
+# building entries; tests that exercise the verify path still pass an explicit one.
+_DUMMY_SHA256 = "a" * 64
+
+
+def sha_of(*parts: bytes) -> str:
+    """sha256 of concatenated body parts (lets download tests pin the served bytes)."""
+    digest = hashlib.sha256()
+    for part in parts:
+        digest.update(part)
+    return digest.hexdigest()
+
+
+def download_entry(name="tiny-model", *, sha256=_DUMMY_SHA256, size_mb=0.001, dest=None):
     return manifest.register_asset(
         name=name,
         kind="model",
@@ -144,6 +163,7 @@ class TestManifest:
             size_mb=12,
             dest="tools/yolo.pt",
             url="https://example.test/yolo.pt",
+            sha256=_DUMMY_SHA256,
         )
         assert manifest.get_asset("yolo-weights") is entry
         assert entry in manifest.all_assets()
@@ -155,6 +175,7 @@ class TestManifest:
             size_mb=1,
             dest="models/p.bin",
             url="https://example.test/p.bin",
+            sha256=_DUMMY_SHA256,
         )
         assert manifest.register_asset(entry) is entry
         assert manifest.get_asset("prebuilt") == entry
@@ -166,6 +187,7 @@ class TestManifest:
             "size_mb": 1,
             "dest": "models/dup.bin",
             "url": "https://example.test/dup.bin",
+            "sha256": _DUMMY_SHA256,
         }
         first = manifest.register_asset(**kwargs)
         second = manifest.register_asset(**kwargs)
@@ -180,6 +202,7 @@ class TestManifest:
                 size_mb=2,
                 dest="tools/other.bin",
                 url="https://example.test/other.bin",
+                sha256=_DUMMY_SHA256,
             )
 
     def test_entry_and_kwargs_together_rejected(self):
@@ -227,6 +250,111 @@ class TestManifest:
         )
         assert pinned.requirements == ("soundfile==0.12.1",)
 
+    # --- F3c: integrity + revision pinning enforcement --------------------- #
+    def test_download_entry_requires_sha256(self):
+        # installer='download' WITHOUT a sha256 is rejected at registration.
+        with pytest.raises(ValueError, match="installer='download' requires a sha256"):
+            manifest.AssetEntry(
+                name="unpinned-dl",
+                kind="model",
+                size_mb=1,
+                dest="models/x.bin",
+                url="https://example.test/x.bin",
+            )
+
+    @pytest.mark.parametrize("bad_sha", ["", "abc", "z" * 64, "A" * 63, "a" * 65, "  " + "a" * 62 + "  "])
+    def test_download_sha256_must_be_64_hex(self, bad_sha):
+        with pytest.raises(ValueError, match="sha256"):
+            manifest.AssetEntry(
+                name="badsha-dl",
+                kind="model",
+                size_mb=1,
+                dest="models/x.bin",
+                url="https://example.test/x.bin",
+                sha256=bad_sha,
+            )
+
+    def test_download_sha256_accepts_uppercase_hex(self):
+        entry = manifest.AssetEntry(
+            name="upper-dl",
+            kind="model",
+            size_mb=1,
+            dest="models/x.bin",
+            url="https://example.test/x.bin",
+            sha256="A" * 64,
+        )
+        assert entry.sha256 == "A" * 64
+
+    def test_hf_resolve_download_url_must_pin_commit_hash(self):
+        # An HF resolve URL on a branch/tag ref (not a 40-hex commit) is rejected.
+        with pytest.raises(ValueError, match="commit hash"):
+            manifest.AssetEntry(
+                name="hf-main-dl",
+                kind="model",
+                size_mb=1,
+                dest="models/x.gguf",
+                url="https://huggingface.co/org/repo/resolve/main/x.gguf",
+                sha256="a" * 64,
+            )
+
+    def test_hf_resolve_download_url_with_commit_hash_ok(self):
+        commit = "bc640142c66e1fdd12af0bd68f40445458f3869b"
+        entry = manifest.AssetEntry(
+            name="hf-pinned-dl",
+            kind="model",
+            size_mb=1,
+            dest="models/x.gguf",
+            url=f"https://huggingface.co/org/repo/resolve/{commit}/x.gguf",
+            sha256="a" * 64,
+        )
+        assert commit in entry.url
+
+    def test_non_hf_download_url_needs_no_commit_revision(self):
+        # A plain (non-HF) pinned URL is fine with just a sha256 (no resolve/<ref>).
+        entry = manifest.AssetEntry(
+            name="gh-dl",
+            kind="model",
+            size_mb=1,
+            dest="models/x.onnx",
+            url="https://github.com/org/repo/raw/abcdef/x.onnx",
+            sha256="a" * 64,
+        )
+        assert entry.installer == "download"
+
+    def test_hf_installer_requires_pinned_revision(self):
+        # installer='hf' WITHOUT an hf_revision is rejected (no floating 'main').
+        with pytest.raises(ValueError, match="hf_revision"):
+            manifest.AssetEntry(
+                name="hf-no-rev",
+                kind="model",
+                size_mb=1,
+                installer="hf",
+                hf_repo="org/repo",
+            )
+
+    @pytest.mark.parametrize("bad_rev", ["main", "v1.0", "z" * 40, "a" * 39, "a" * 41])
+    def test_hf_installer_revision_must_be_commit_hash(self, bad_rev):
+        with pytest.raises(ValueError, match="commit hash"):
+            manifest.AssetEntry(
+                name="hf-bad-rev",
+                kind="model",
+                size_mb=1,
+                installer="hf",
+                hf_repo="org/repo",
+                hf_revision=bad_rev,
+            )
+
+    def test_hf_installer_with_commit_revision_ok(self):
+        entry = manifest.AssetEntry(
+            name="hf-ok-rev",
+            kind="model",
+            size_mb=1,
+            installer="hf",
+            hf_repo="org/repo",
+            hf_revision="0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+        )
+        assert entry.hf_revision == "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
+
     def test_python_kind_defaults_to_host(self):
         entry = manifest.AssetEntry(
             name="host-env",
@@ -257,6 +385,9 @@ class TestManifest:
         assert entry.installer == "hf"
         assert entry.hf_repo == "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
         assert entry.size_mb > 0
+        # F3c: the hf revision is a pinned 40-hex commit, never floating 'main'.
+        assert entry.hf_revision and len(entry.hf_revision) == 40
+        assert entry.hf_revision != "main"
 
     def test_day1_qwen_entry(self):
         entry = manifest.get_asset(manifest.QWEN_ASSET_NAME)
@@ -266,6 +397,9 @@ class TestManifest:
         assert entry.url and entry.url.endswith(".gguf")
         assert entry.dest == "models/qwen3-4b.gguf"
         assert entry.detect is manifest.detect_existing_gguf
+        # F3c: a real 64-hex sha256 + an HF resolve URL pinned to a commit hash.
+        assert entry.sha256 and len(entry.sha256) == 64
+        assert "/resolve/main/" not in entry.url
 
     def test_day1_embedder_entry(self):
         # WU-A3 AC-(c): the small local embedder is registered with a non-empty
@@ -283,6 +417,31 @@ class TestManifest:
     def test_embedder_entry_is_listed_in_all_assets(self):
         names = {a.name for a in manifest.all_assets()}
         assert manifest.EMBEDDER_ASSET_NAME in names
+
+    def test_phase8_optional_entries_are_sha_pinned(self):
+        # F3c: the optional emotion + OCR download entries each carry a 64-hex
+        # sha256 (they EXECUTE no code, but the file is integrity-verified).
+        for name in (manifest.HSEMOTION_ASSET_NAME, manifest.RAPIDOCR_ASSET_NAME):
+            entry = manifest.get_asset(name)
+            assert entry is not None, name
+            assert entry.installer == "download"
+            assert entry.sha256 and len(entry.sha256) == 64, name
+
+    def test_rapidocr_url_is_a_live_pinned_hf_commit(self):
+        # F3c re-point: the old GitHub-release URL 404'd; it now resolves an HF
+        # commit-pinned ONNX (the resolve URL must carry a commit hash, asserted
+        # by AssetEntry, and the file ends in .onnx).
+        entry = manifest.get_asset(manifest.RAPIDOCR_ASSET_NAME)
+        assert entry is not None
+        assert "huggingface.co" in entry.url
+        assert "/resolve/main/" not in entry.url
+        assert entry.url.endswith(".onnx")
+
+    def test_every_download_asset_in_registry_is_sha_pinned(self):
+        # F3c invariant: NO installer='download' entry may ship without a sha256.
+        for entry in manifest.all_assets():
+            if entry.installer == "download":
+                assert entry.sha256 and len(entry.sha256) == 64, entry.name
 
     def test_qwen_detect_existing_gguf(self, tmp_path):
         gguf = tmp_path / "anywhere" / "my-qwen.gguf"
@@ -422,7 +581,7 @@ class TestDownload:
         body = [b"hello ", b"world"]
         client = FakeClient([FakeResponse(200, {"Content-Length": "11"}, chunks=body)])
         mgr = make_manager(tmp_path, client=client)
-        entry = download_entry("fresh")
+        entry = download_entry("fresh", sha256=sha_of(*body))
         dest = mgr.resolve_dest(entry)
 
         fracs: list[float] = []
@@ -435,7 +594,8 @@ class TestDownload:
         assert all(b <= a for a, b in zip(fracs[1:], fracs, strict=False))  # non-decreasing
 
     def test_resume_sends_range_and_appends(self, tmp_path):
-        mgr_entry = download_entry("resume")
+        # finalize verifies the FULL file (existing partial b"1234" + appended chunks).
+        mgr_entry = download_entry("resume", sha256=sha_of(b"1234567890"))
         client = FakeClient(
             [
                 FakeResponse(
@@ -457,7 +617,7 @@ class TestDownload:
         assert not part_path(dest).exists()
 
     def test_server_ignoring_range_restarts_clean(self, tmp_path):
-        entry = download_entry("restart")
+        entry = download_entry("restart", sha256=sha_of(b"fullbody"))
         client = FakeClient([FakeResponse(200, {"Content-Length": "8"}, chunks=[b"fullbody"])])
         mgr = make_manager(tmp_path, client=client)
         dest = mgr.resolve_dest(entry)
@@ -470,7 +630,7 @@ class TestDownload:
         assert dest.read_bytes() == b"fullbody"
 
     def test_416_with_full_part_finalizes(self, tmp_path):
-        entry = download_entry("complete")
+        entry = download_entry("complete", sha256=sha_of(b"already-all-here"))
         client = FakeClient([FakeResponse(416, {}, chunks=[])])
         mgr = make_manager(tmp_path, client=client)
         dest = mgr.resolve_dest(entry)
@@ -773,7 +933,11 @@ class TestEnvInstaller:
         assert not env_sentinel_path(tmp_path / "envs" / "bad-env").exists()
 
     def test_get_pip_downloaded_when_missing(self, tmp_path):
-        client = FakeClient([FakeResponse(200, {"Content-Length": "9"}, chunks=[b"# get-pip"])])
+        # F3c: get-pip.py is EXECUTED, so it is verified BEFORE exec — the manager
+        # downloads it pinned to a sha256 (here injected to match the fake bytes).
+        body = b"# get-pip"
+        good_sha = hashlib.sha256(body).hexdigest()
+        client = FakeClient([FakeResponse(200, {"Content-Length": str(len(body))}, chunks=[body])])
         calls: list[list[str]] = []
 
         def run_cmd(argv, extra_env=None):
@@ -781,12 +945,36 @@ class TestEnvInstaller:
             return 0, ""
 
         entry = env_entry("dl-env")
-        mgr = make_manager(tmp_path, client=client, run_cmd=run_cmd)
+        mgr = make_manager(tmp_path, client=client, run_cmd=run_cmd, get_pip_sha256=good_sha)
         mgr._install(entry, on_frac=lambda f, m="": None, should_cancel=lambda: False)
 
         assert client.requests[0]["url"] == GET_PIP_URL
-        assert (tmp_path / "tools" / "get-pip.py").read_bytes() == b"# get-pip"
+        assert (tmp_path / "tools" / "get-pip.py").read_bytes() == body
         assert len(calls) == 2
+
+    def test_get_pip_tampered_download_rejected_before_exec(self, tmp_path):
+        # A get-pip.py whose bytes don't match the pinned sha256 is REJECTED (no
+        # .part promoted, no env steps run) — the verify-before-exec guarantee.
+        body = b"# evil get-pip"  # does NOT match get_pip_sha256
+        client = FakeClient([FakeResponse(200, {"Content-Length": str(len(body))}, chunks=[body])])
+        ran: list[list[str]] = []
+
+        def run_cmd(argv, extra_env=None):
+            ran.append(list(argv))
+            return 0, ""
+
+        entry = env_entry("tamper-env")
+        mgr = make_manager(tmp_path, client=client, run_cmd=run_cmd, get_pip_sha256="b" * 64)
+        with pytest.raises(AssetError, match="sha256 mismatch"):
+            mgr._install(entry, on_frac=lambda f, m="": None, should_cancel=lambda: False)
+        assert ran == []  # never executed the tampered script
+        assert not (tmp_path / "tools" / "get-pip.py").exists()
+
+    def test_get_pip_sha256_defaults_to_pinned_constant(self, tmp_path):
+        # When the seam is not injected, the manager uses the pinned module constant.
+        mgr = make_manager(tmp_path)
+        assert mgr._get_pip_sha256 == GET_PIP_SHA256
+        assert len(GET_PIP_SHA256) == 64
 
     def test_changed_pins_flip_installed_off(self, tmp_path):
         entry = env_entry("pin-env", reqs=("numpy==2.1.0",))
@@ -814,7 +1002,10 @@ class TestHfInstaller:
         mgr = make_manager(tmp_path, hf_fetch=hf_fetch)
         entry = manifest.get_asset(manifest.WHISPER_ASSET_NAME)
         mgr._install(entry, on_frac=lambda f, m="": None, should_cancel=lambda: False)
-        assert fetched == [("mobiuslabsgmbh/faster-whisper-large-v3-turbo", None)]
+        # F3c: the snapshot seam is now called with the PINNED commit revision.
+        assert fetched == [
+            ("mobiuslabsgmbh/faster-whisper-large-v3-turbo", manifest.WHISPER_HF_REVISION),
+        ]
 
     def test_hf_failure_becomes_asset_error(self, tmp_path):
         def hf_fetch(repo_id, revision):
@@ -838,8 +1029,8 @@ class TestEnsureJob:
         # Content must plausibly match the declared size: the entry claims
         # 0.001 MB (~1049 bytes) and file_size_ok demands >= 50% of it, so a
         # 10-byte body would (correctly) read as NOT installed afterwards.
-        entry = download_entry("jobasset")
         body_a, body_b = b"a" * 600, b"b" * 500
+        entry = download_entry("jobasset", sha256=sha_of(body_a, body_b))
         client = FakeClient([FakeResponse(200, {"Content-Length": "1100"}, chunks=[body_a, body_b])])
         mgr = make_manager(tmp_path, client=client)
         handler = assets_rpc.make_ensure_handler(mgr)
@@ -937,8 +1128,8 @@ class TestEnsureJob:
             handler({"names": [manifest.QWEN_ASSET_NAME]}, ctx)
 
     def test_multi_asset_aggregate_progress_monotonic(self, tmp_path, registry, collected):
-        download_entry("multi-a", size_mb=0.001)
-        download_entry("multi-b", size_mb=0.001)
+        download_entry("multi-a", size_mb=0.001, sha256=sha_of(b"aaaa"))
+        download_entry("multi-b", size_mb=0.001, sha256=sha_of(b"bbbb"))
         client = FakeClient(
             [
                 FakeResponse(200, {"Content-Length": "4"}, chunks=[b"aaaa"]),

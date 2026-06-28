@@ -320,9 +320,15 @@ class TestBuildReranker:
 # default_models_present (asset-manager lookup; failure -> False)
 # --------------------------------------------------------------------------- #
 class TestDefaultModelsPresent:
-    def test_unknown_asset_is_false(self):
-        # The smolvlm2 asset is registered by Wave-2's Integrate phase, not here,
-        # so in the build venv the lookup returns None -> False.
+    def test_unknown_asset_is_false(self, monkeypatch: pytest.MonkeyPatch):
+        # When the asset is NOT registered, the manifest lookup returns None -> False.
+        # F3c: the module now self-registers smolvlm2-2.2b at import, and a dev box
+        # may have the snapshot in its HF cache (installed_path would then be truthy),
+        # so force get_asset -> None to exercise this branch deterministically (no
+        # host-HF-cache dependency) — mirrors test_saliency's equivalent.
+        from media_studio.assets import manifest as real_manifest
+
+        monkeypatch.setattr(real_manifest, "get_asset", lambda _name: None)
         assert sv.default_models_present({}) is False
 
     def test_registered_and_installed_is_true(self, monkeypatch: pytest.MonkeyPatch):

@@ -55,6 +55,8 @@ log = get_logger("media_studio.features.vlm_backbone")
 # --------------------------------------------------------------------------- #
 #: HF model id of the shared backbone (patch16, NOT patch14 — patch14 404s).
 SIGLIP2_MODEL_ID = "google/siglip2-so400m-patch16-384"
+#: F3c: pin the HF snapshot revision to a commit hash (verified 2026-06-28).
+SIGLIP2_REVISION = "dd658faac399427308559e2c3ac1e99cbe43845d"
 #: the on-demand asset name (Wave-2 registers the manifest entry).
 BACKBONE_ASSET_NAME = "siglip2-so400m"
 #: resident VRAM at fp16 inference (manifest VRAM table) — diagnostics only.
@@ -484,6 +486,7 @@ def register_backbone_assets() -> None:
             label="SigLIP-2 SoViT-400M (shared vision backbone, Apache-2.0)",
             installer="hf",
             hf_repo=SIGLIP2_MODEL_ID,
+            hf_revision=SIGLIP2_REVISION,
         )
     )
 

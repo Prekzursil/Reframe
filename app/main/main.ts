@@ -10,15 +10,22 @@
 // server in development (ELECTRON_RENDERER_URL) and from the built bundle
 // (out/renderer/index.html) in production. Security baseline: contextIsolation
 // ON, nodeIntegration OFF, sandbox ON — the renderer only sees `window.api`.
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, session, shell } from 'electron';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, writeFileSync, promises as fsp } from 'node:fs';
 import { extname, join, resolve as resolvePath } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { resolveDataRootFrom } from './dataRoot';
 import { dataDirMarkerPath, exeDataDir, isExeDataWritable, readDataDirMarker } from './dataRootIo';
 import { registerDataFolderIpc } from './dataFolderIpc';
 import { registerDialogIpc } from './dialogIpc';
 import { resolveScopedMediaPath } from './exportPath';
+import {
+  cspResponseHeaders,
+  isAllowedExternalUrl,
+  isAllowedNavigation,
+  shouldGrantPermission,
+} from './security';
 import { registerIpc } from './ipc';
 import {
   registerMediaProtocol,
@@ -382,13 +389,35 @@ function createWindow(): BrowserWindow {
 
   win.once('ready-to-show', () => win.show());
 
-  // Open external links in the OS browser, not inside the app window.
+  // F3c defense-in-depth: the renderer must never become a window into the OS or
+  // a remote origin. Open external links in the OS browser, but ONLY web (http/s)
+  // URLs — a `file:`/`javascript:`/`smb:` url handed to the OS would launch an
+  // executable or run script (isAllowedExternalUrl parses + denies on failure).
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isAllowedExternalUrl(url)) {
+      void shell.openExternal(url);
+    } else {
+      // eslint-disable-next-line no-console
+      console.error(`[security] blocked openExternal for non-web url: ${url}`);
+    }
     return { action: 'deny' };
   });
 
   const devUrl = process.env.ELECTRON_RENDERER_URL;
+  const appUrl =
+    isDev && devUrl ? devUrl : pathToFileURL(join(__dirname, '../renderer/index.html')).href;
+
+  // F3c: `will-navigate` allowlist — block any navigation that leaves the app's
+  // own origin (a poisoned renderer or injected <a target=_top> can't redirect
+  // the window to a hostile site). Same-origin route/hash changes still pass.
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!isAllowedNavigation(url, appUrl)) {
+      event.preventDefault();
+      // eslint-disable-next-line no-console
+      console.error(`[security] blocked cross-origin navigation to: ${url}`);
+    }
+  });
+
   if (isDev && devUrl) {
     void win.loadURL(devUrl);
   } else {
@@ -398,11 +427,33 @@ function createWindow(): BrowserWindow {
   return win;
 }
 
+/**
+ * F3c session-level defense-in-depth (applies to every renderer in the default
+ * session): deny ALL permission requests (a local media app needs none), and
+ * serve the CSP as a real response header via onHeadersReceived so a poisoned
+ * index.html cannot strip it. Wired once at startup, before any window loads.
+ */
+function installSessionSecurity(): void {
+  const ses = session.defaultSession;
+  // Deny-by-default: both the async request path and the sync check path.
+  ses.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(shouldGrantPermission(permission));
+  });
+  ses.setPermissionCheckHandler((_wc, permission) => shouldGrantPermission(permission));
+  // Authoritative CSP on every response (overrides any header-injected CSP).
+  ses.webRequest.onHeadersReceived((details, callback) => {
+    callback({ responseHeaders: cspResponseHeaders(details.responseHeaders ?? undefined) });
+  });
+}
+
 function bootstrap(): void {
   // Set MEDIA_STUDIO_CONFIG_DIR BEFORE the sidecar is created or first-run
   // bootstrap is spawned, so both inherit the SAME data root main derives its
   // short:/dub:/._pth paths from (the cross-process invariant below).
   propagateDataRootEnv();
+
+  // F3c: install permission/CSP guards on the default session before any load.
+  installSessionSecurity();
 
   sidecar = createSidecar();
 

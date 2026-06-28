@@ -464,7 +464,10 @@ def _default_profanity_factory(settings: dict[str, Any]) -> ProfanityBackend:
 # asset registration (mirrors diarize / ctc_align / parakeet_asr)
 # --------------------------------------------------------------------------- #
 #: the tiny EN-only sherpa-onnx punctuation+casing model repo (manifest #15).
-PUNCT_HF_REPO = "csukuangfj/sherpa-onnx-online-punct-en-2024-08-06"
+# F3c re-point: the original csukuangfj/* repo 404s (removed upstream); re-pointed
+# to a live identical re-upload mirror, pinned to its commit hash (2026-06-28).
+PUNCT_HF_REPO = "lorneluo/sherpa-onnx-online-punct-en-2024-08-06"
+PUNCT_HF_REVISION = "aad05f2d2818122135b0667806628019cb923e84"
 PUNCT_SIZE_MB = 30
 
 
@@ -487,6 +490,7 @@ def register_caption_polish_assets() -> None:
             label="sherpa-onnx punctuation + casing (EN, Apache-2.0)",
             installer="hf",
             hf_repo=PUNCT_HF_REPO,
+            hf_revision=PUNCT_HF_REVISION,
         )
     )
 

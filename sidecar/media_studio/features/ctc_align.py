@@ -99,6 +99,9 @@ def _decode_pcm_or_raise(
 # --------------------------------------------------------------------------- #
 #: the package default — CC-BY-NC-4.0, 158-language, ungated. Local-tool default.
 DEFAULT_MODEL_ID = "MahmoudAshraf/mms-300m-1130-forced-aligner"
+# F3c: pin the HF snapshot revisions to commit hashes (verified 2026-06-28).
+DEFAULT_MODEL_REVISION = "49402e9577b1158620820667c218cd494cc44486"
+WAV2VEC2_REVISION = "54074b1c16f4de6a5ad59affb4caa8f2ea03a119"
 
 #: commercial-safe MIT wav2vec2/HuBERT alternatives (the Decision #1 swap).
 #: Keyed by a short alias the UI/settings can surface; values are the model ids.
@@ -481,6 +484,7 @@ def register_ctc_align_assets() -> None:
             label="CTC forced aligner — MMS-300M (word timing, CC-BY-NC)",
             installer="hf",
             hf_repo=DEFAULT_MODEL_ID,
+            hf_revision=DEFAULT_MODEL_REVISION,
         )
     )
     manifest.register_asset(
@@ -491,6 +495,7 @@ def register_ctc_align_assets() -> None:
             label="CTC forced aligner — wav2vec2 (word timing, MIT commercial)",
             installer="hf",
             hf_repo=MIT_MODEL_IDS["wav2vec2-960h-lv60"],
+            hf_revision=WAV2VEC2_REVISION,
         )
     )
 

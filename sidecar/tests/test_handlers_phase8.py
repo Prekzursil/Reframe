@@ -800,7 +800,19 @@ def test_default_phase8_runner_is_the_module_runner(tmp_path: Path) -> None:
 
 def test_models_present_map_omits_missing_and_fails_open(tmp_path: Path, monkeypatch: Any) -> None:
     svc = _phase8_services(tmp_path)
+    # Importing smolvlm2 registers its asset (top-level register_*_assets()), so the
+    # "present-but-not-installed" branch is exercised deterministically — not reliant
+    # on another test having imported it first (prior latent ordering dependency).
     from media_studio.assets import manifest as _manifest
+    from media_studio.features import smolvlm2 as _sv  # noqa: F401 - import for its registration side effect
+
+    # Isolate the HF cache to an empty tmp dir: smolvlm2 is an installer='hf' asset
+    # whose installed-probe reads the real HF cache, so without this a dev box that
+    # has the snapshot cached would report it INSTALLED (host-dependent flake).
+    empty_hf = tmp_path / "hf-empty"
+    empty_hf.mkdir()
+    monkeypatch.setenv("HF_HUB_CACHE", str(empty_hf))
+    monkeypatch.setenv("HF_HOME", str(empty_hf))
 
     real_get = _manifest.get_asset
 

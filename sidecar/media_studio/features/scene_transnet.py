@@ -477,24 +477,28 @@ ASSET_SIZE_MB: int = 40
 def register_scene_transnet_assets() -> None:
     """Register the TransNetV2 PyTorch weights as an on-demand asset (idempotent).
 
-    MIT (commercial OK), ~40 MB, fp16 <1 GB. The asset name matches
-    :data:`ASSET_NAME` (and ``system_advisor.ComponentSpec``'s ``scene_transnet``
-    lookup key) so :func:`default_models_present` detects an already-cached
-    snapshot. Identical re-registration is a no-op (module re-import safe).
-    """
-    from ..assets import manifest  # noqa: PLC0415 - lazy: avoids an import cycle
+    F3c-ESCALATION (NOT registered): the upstream ``soCzech/TransNetV2`` HF repo now
+    returns HTTP 404 (removed; verified 2026-06-28), so its commit revision can no
+    longer be pinned. F3c makes a pinned commit-hash ``hf_revision`` MANDATORY. Live
+    re-uploads exist (``Sn4kehead/TransNetV2`` and ``MiaoshouAI/transnetv2-pytorch-
+    weights`` both host ``transnetv2-pytorch-weights.pth``) but their snapshot
+    LAYOUT differs from the original this module's loader was written against, so a
+    blind re-point risks a silent scene-detection break — out of scope for a
+    security WU. The entry is intentionally NOT registered (``default_models_present``
+    honestly reports it unavailable) rather than pinning a dead/unverified repo.
+    OPERATOR ACTION REQUIRED: confirm a mirror is loader-compatible, then restore the
+    ``register_asset`` call below with ``hf_repo=<mirror>`` + its pinned commit hash.
 
-    manifest.register_asset(
-        manifest.AssetEntry(
-            name=ASSET_NAME,
-            kind="model",
-            size_mb=ASSET_SIZE_MB,
-            label="TransNetV2 (scene-cut detection, MIT)",
-            installer="hf",
-            hf_repo=HF_REPO,
-            hf_revision=ASSET_REVISION,
+        manifest.register_asset(
+            manifest.AssetEntry(
+                name=ASSET_NAME, kind="model", size_mb=ASSET_SIZE_MB,
+                label="TransNetV2 (scene-cut detection, MIT)",
+                installer="hf", hf_repo=HF_REPO, hf_revision="<full 40-hex commit>",
+            )
         )
-    )
+    """
+    # Intentionally a no-op until the dead upstream is replaced (see docstring).
+    return
 
 
 # Register the asset at import (mirrors diarize.register_diarize_assets()).
