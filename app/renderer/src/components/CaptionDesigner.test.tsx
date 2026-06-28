@@ -145,4 +145,37 @@ describe('<CaptionDesigner />', () => {
     ) as HTMLButtonElement;
     expect(centerBtn.getAttribute('aria-pressed')).toBe('true');
   });
+
+  it('renders the T2 "Customize…" disclosure under the style row', () => {
+    render();
+    expect(container.querySelector('.caption-customizer__toggle')?.textContent).toBe('Customize…');
+  });
+
+  it('threads a customizer edit back into the design override', () => {
+    const { onChange, design } = render();
+    act(() => (container.querySelector('.caption-customizer__toggle') as HTMLButtonElement).click());
+    const upper = container.querySelector(
+      '.caption-customizer__bool-uppercase input',
+    ) as HTMLInputElement;
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked')?.set?.call(
+      upper,
+      true,
+    );
+    act(() => upper.dispatchEvent(new Event('click', { bubbles: true })));
+    expect(onChange).toHaveBeenLastCalledWith({ ...design, override: { uppercase: true } });
+  });
+
+  it('reflects the override (font + size scale) in the live preview line', () => {
+    render({
+      design: {
+        style: 'karaoke',
+        box: DEFAULT_CAPTION_DESIGN.box,
+        override: { fontFamily: 'Anton', sizeScale: 1.4 },
+      },
+    });
+    tick(container, 11.5);
+    const line = container.querySelector('.caption-designer__line') as HTMLElement;
+    expect(line.style.fontFamily).toContain('Anton');
+    expect(line.style.fontSize).toBe('1.4em');
+  });
 });
