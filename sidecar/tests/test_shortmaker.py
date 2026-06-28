@@ -1518,6 +1518,16 @@ class TestCaptionStageRouting:
         fired, out = self._route(monkeypatch, "comic-sans")
         assert fired["engine"] == "libass"
         assert out == "out.mp4"
+        # a non-karaoke libass route passes karaoke=False.
+        assert fired["kw"]["karaoke"] is False
+
+    def test_opusclip_karaoke_routes_to_libass_with_karaoke_flag(self, monkeypatch):
+        # WU SP1: the "opusclip-karaoke" preset is a libass style (not a Remotion
+        # template) and selects the word-by-word karaoke ASS via karaoke=True.
+        fired, out = self._route(monkeypatch, "opusclip-karaoke")
+        assert fired["engine"] == "libass"
+        assert fired["kw"]["karaoke"] is True
+        assert out == "out.mp4"
 
 
 # -- audioTrackId through export (punch #4 — the frozen A2 line) --------------

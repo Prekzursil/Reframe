@@ -586,6 +586,7 @@ class CaptionEngine:
         hook_title: str | None = None,
         position: Any = None,
         override: Mapping[str, Any] | None = None,
+        karaoke: bool = False,
     ) -> str:
         """Render ``cues`` onto ``clip_path`` -> ``out_path`` and return ``out_path``.
 
@@ -601,17 +602,32 @@ class CaptionEngine:
         Raises :class:`CaptionError` on a non-zero ffmpeg exit. ``source_start``
         defaults to 0.0; callers exporting a :class:`Candidate` pass that
         candidate's ``sourceStart`` so the captions line up with the clip.
+
+        When ``karaoke`` is set (the V1.1 WU SP1 ``opusclip-karaoke`` preset), the
+        OpusClip word-by-word karaoke ASS is built instead of the standard
+        document — same temp-file burn/soft-mux path. ``hook_title``/``override``
+        do not apply to the karaoke preset (its look is fixed by the teardown).
         """
-        ass_doc = build_ass(
-            cues,
-            width=width,
-            height=height,
-            source_start=source_start,
-            hook_title=hook_title,
-            total_sec=total_sec,
-            position=position,
-            override=override,
-        )
+        if karaoke:
+            from . import caption_karaoke as _karaoke  # lazy: avoid an import cycle
+
+            ass_doc = _karaoke.build_karaoke_ass(
+                cues,
+                width=width,
+                height=height,
+                source_start=source_start,
+            )
+        else:
+            ass_doc = build_ass(
+                cues,
+                width=width,
+                height=height,
+                source_start=source_start,
+                hook_title=hook_title,
+                total_sec=total_sec,
+                position=position,
+                override=override,
+            )
 
         # Write the ASS to a temp sidecar file. We pass its path as an argv
         # element to ffmpeg (no shell, no stdin pipe), so spaces are safe.

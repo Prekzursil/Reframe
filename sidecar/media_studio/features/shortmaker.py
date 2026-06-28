@@ -403,6 +403,7 @@ def _lazy_caption(
             )
 
     from . import caption as _caption
+    from .caption_karaoke import is_karaoke_style
 
     engine = _caption.CaptionEngine(settings or {})
     return engine.render(
@@ -416,6 +417,8 @@ def _lazy_caption(
         hook_title=hook_title,
         # P4 §4: the libass default engine honours the caption position box.
         position=(settings or {}).get("captionPosition"),
+        # V1.1 WU SP1: the "opusclip-karaoke" libass preset (word-by-word ASS).
+        karaoke=is_karaoke_style(style),
     )
 
 

@@ -419,6 +419,46 @@ def test_render_rebases_inside_written_ass(fake_ffmpeg, monkeypatch):
     assert "0:00:00.00,0:00:02.00,Default,,0,0,0,,late" in captured_doc["ass"]
 
 
+def test_render_karaoke_writes_opusclip_karaoke_ass(fake_ffmpeg, monkeypatch):
+    """render(karaoke=True) burns the OpusClip word-by-word karaoke ASS (WU SP1)
+    instead of the standard document — same temp-file burn path."""
+    written: dict[str, str] = {}
+    real_mkstemp = caption.tempfile.mkstemp
+
+    def spy_mkstemp(*a, **k):
+        fd, path = real_mkstemp(*a, **k)
+        written["path"] = path
+        return fd, path
+
+    monkeypatch.setattr(caption.tempfile, "mkstemp", spy_mkstemp)
+
+    captured_doc: dict[str, str] = {}
+
+    def runner(argv, total_sec=0.0, on_progress=None, should_cancel=None):
+        with open(written["path"], encoding="utf-8") as fh:
+            captured_doc["ass"] = fh.read()
+        return 0
+
+    eng = CaptionEngine(runner=runner)
+    karaoke_cue = {
+        "index": 1,
+        "start": 0.0,
+        "end": 1.0,
+        "text": "go now",
+        "words": [
+            {"text": "go", "start": 0.0, "end": 0.5},
+            {"text": "now", "start": 0.5, "end": 1.0},
+        ],
+    }
+    out = eng.render("/in.mp4", [karaoke_cue], "/out.mp4", karaoke=True)
+    assert out == "/out.mp4"
+    doc = captured_doc["ass"]
+    # the karaoke ASS: all-caps + alternating active colour + scale-pop tags.
+    assert "OpusClip karaoke preset" in doc
+    assert "{\\1c&H0000FFFF&\\t(0,120,\\fscx115\\fscy115)}GO{\\r} NOW" in doc
+    assert "{\\1c&H0000FF00&\\t(0,120,\\fscx115\\fscy115)}NOW{\\r}" in doc
+
+
 def test_render_cleans_up_temp_ass(fake_ffmpeg):
     paths: list[str] = []
 
