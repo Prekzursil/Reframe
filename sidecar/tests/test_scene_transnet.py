@@ -16,6 +16,8 @@ import numpy as np
 import pytest
 from media_studio.features import scene_transnet as st
 
+from tests._import_hygiene import assert_module_import_is_light
+
 
 # --------------------------------------------------------------------------- #
 # fakes (the injected seams)
@@ -432,7 +434,11 @@ class TestHasCutSource:
 # module surface: no heavy import at load
 # --------------------------------------------------------------------------- #
 def test_no_heavy_imports_at_module_load():
-    import sys
-
-    assert "torch" not in sys.modules
-    assert "tensorflow" not in sys.modules
+    # Checked in a CLEAN subprocess (fresh interpreter) so the guard measures the
+    # MODULE's import hygiene, not the shared pytest process' sys.modules — which
+    # other tests legitimately pollute by exercising the real GPU device probe
+    # when torch happens to be installed. Importing scene_transnet must never pull
+    # a heavy native backend.
+    assert_module_import_is_light(
+        "media_studio.features.scene_transnet", ("torch", "tensorflow")
+    )

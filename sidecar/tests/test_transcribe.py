@@ -862,6 +862,33 @@ def test_default_cuda_probe_false_when_torch_reports_no_cuda(monkeypatch):
     assert transcribe._default_cuda_probe() is False
 
 
+def test_default_cuda_probe_false_when_torch_raises(monkeypatch):
+    # Deterministically exercise the except branch (no-torch / broken-CUDA path):
+    # a CUDA init error must degrade to False, never propagate. This keeps the
+    # branch covered REGARDLESS of whether real torch is installed in the env (a
+    # machine WITH torch never raises here, so the import-fails path would
+    # otherwise be unreachable and the gate would slip below 100%).
+    import sys
+    import types as _types
+
+    def _boom() -> bool:
+        raise RuntimeError("CUDA init failed")
+
+    fake_torch = _types.ModuleType("torch")
+    fake_torch.cuda = _types.SimpleNamespace(is_available=_boom)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    assert transcribe._default_cuda_probe() is False
+
+
+def test_default_cuda_probe_false_when_torch_import_fails(monkeypatch):
+    # The torch-ABSENT path: a sentinel ``None`` in sys.modules makes
+    # ``import torch`` raise ImportError, which the probe swallows -> False.
+    import sys
+
+    monkeypatch.setitem(sys.modules, "torch", None)
+    assert transcribe._default_cuda_probe() is False
+
+
 def test_resolve_target_empty_model_string_keeps_auto_model():
     # An empty/whitespace transcribeModel is ignored -> the auto model stands
     # (covers the falsy-trimmed short-circuit branch).
