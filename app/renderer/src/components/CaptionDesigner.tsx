@@ -19,12 +19,9 @@ import { CaptionStylePicker } from './CaptionStylePicker';
 import { CaptionCustomizer } from './CaptionCustomizer';
 import { activeLine, wordColor } from './CaptionOverlay';
 import { isNoCaption } from '../lib/captionTemplates';
-import {
-  captionSampleStyle,
-  previewSizeScale,
-  previewVisual,
-} from '../lib/captionOverridePreview';
+import { captionSampleStyle, previewSizeScale, previewVisual } from '../lib/captionOverridePreview';
 import { type CaptionBand, bandBox, boxBand } from '../lib/captionPosition';
+import type { CaptionContentContext } from '../lib/captionDefaults';
 import type { CaptionDesign } from '../lib/captionDesign';
 import type { CaptionStyleOption } from '../features/shortMakerLogic';
 import type { Cue } from '../lib/rpc';
@@ -47,6 +44,8 @@ export interface CaptionDesignerProps {
   hookTitle?: string;
   /** Override the style catalog (defaults to the full set). */
   styles?: readonly CaptionStyleOption[];
+  /** Project content context for the per-language reading-speed default (WU S4). */
+  content?: CaptionContentContext;
 }
 
 const BANDS: readonly { id: CaptionBand; label: string }[] = [
@@ -64,6 +63,7 @@ export function CaptionDesigner({
   onChange,
   hookTitle,
   styles,
+  content,
 }: CaptionDesignerProps): React.ReactElement {
   const [currentTime, setCurrentTime] = useState(win.start);
 
@@ -140,6 +140,7 @@ export function CaptionDesigner({
       <CaptionCustomizer
         value={design.override}
         onChange={(override) => onChange({ ...design, override })}
+        content={content}
       />
     </div>
   );

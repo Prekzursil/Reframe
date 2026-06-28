@@ -26,6 +26,11 @@ import {
   SIZE_SCALE_MIN,
   sanitizeCaptionOverride,
 } from '../lib/captionOverride';
+import {
+  type CaptionContentContext,
+  defaultMaxCps,
+  resolveReadability,
+} from '../lib/captionDefaults';
 import './captionCustomizer.css';
 
 /** The colour presets shown in the swatch grid (text/active/spoken share them). */
@@ -47,9 +52,8 @@ const BANDS: readonly { id: CaptionPositionBand; label: string }[] = [
   { id: 'bottom', label: 'Bottom' },
 ];
 
-/** Slider neutral positions shown when the field is unset (identity / safe default). */
+/** Slider neutral position shown when the size field is unset (identity scale). */
 const NEUTRAL_SIZE = 1;
-const NEUTRAL_CPS = 17;
 const SIZE_STEP = 0.05;
 const CPS_STEP = 1;
 
@@ -68,16 +72,27 @@ export interface CaptionCustomizerProps {
   onChange: (next: CaptionOverride | undefined) => void;
   /** Disclosure label (default "Customize…"). */
   label?: string;
+  /**
+   * Project content context for the per-language reading-speed novice default
+   * (§1.5). Absent => the conservative cross-language 17 (V1 behaviour).
+   */
+  content?: CaptionContentContext;
 }
 
 export function CaptionCustomizer({
   value,
   onChange,
   label = 'Customize…',
+  content,
 }: CaptionCustomizerProps): React.ReactElement {
   const [open, setOpen] = useState(false);
   const panelId = useId();
   const ov: CaptionOverride = value ?? {};
+  // The reading-speed slider's neutral = the per-language novice default; the
+  // readout below shows the EFFECTIVE (post-resolution) limits the burn applies
+  // so the preview matches what ships (§1.5 preview parity).
+  const neutralCps = defaultMaxCps(content);
+  const readability = resolveReadability(value, content);
 
   /** Set (or clear, when `v === undefined`) one override field, then re-validate. */
   function set<K extends keyof CaptionOverride>(key: K, v: CaptionOverride[K] | undefined): void {
@@ -105,7 +120,9 @@ export function CaptionCustomizer({
             <span>Font</span>
             <select
               value={ov.fontFamily ?? ''}
-              onChange={(e) => set('fontFamily', e.target.value === '' ? undefined : e.target.value)}
+              onChange={(e) =>
+                set('fontFamily', e.target.value === '' ? undefined : e.target.value)
+              }
             >
               <option value="">Default</option>
               {CURATED_CAPTION_FONTS.map((f) => (
@@ -233,10 +250,15 @@ export function CaptionCustomizer({
               min={MAX_CPS_MIN}
               max={MAX_CPS_MAX}
               step={CPS_STEP}
-              value={ov.maxCps ?? NEUTRAL_CPS}
+              value={ov.maxCps ?? neutralCps}
               onChange={(e) => set('maxCps', Number(e.target.value))}
             />
           </label>
+
+          <p className="caption-customizer__resolved" aria-live="polite">
+            Burns at ≤{readability.maxCps} cps · {readability.maxLines === 1 ? '1 line' : '2 lines'}{' '}
+            · ≤{readability.maxCpl} chars/line
+          </p>
 
           <button
             type="button"

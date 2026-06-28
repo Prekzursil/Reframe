@@ -21,9 +21,9 @@ describe('<CaptionCustomizer />', () => {
     container.remove();
   });
 
-  function render(
-    value: CaptionOverride | undefined = undefined,
-  ): { onChange: ReturnType<typeof vi.fn> } {
+  function render(value: CaptionOverride | undefined = undefined): {
+    onChange: ReturnType<typeof vi.fn>;
+  } {
     const onChange = vi.fn();
     act(() => root.render(<CaptionCustomizer value={value} onChange={onChange} />));
     return { onChange };
@@ -38,7 +38,10 @@ describe('<CaptionCustomizer />', () => {
   // dispatch the event React actually listens to (input for value inputs, change
   // for <select>, click for checkboxes — mirrors AddKeyRow/ConsentToggle tests).
   const fireInput = (el: HTMLInputElement, value: string): void => {
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set?.call(el, value);
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set?.call(
+      el,
+      value,
+    );
     act(() => el.dispatchEvent(new Event('input', { bubbles: true })));
   };
   const fireSelect = (el: HTMLSelectElement, value: string): void => {
@@ -48,7 +51,10 @@ describe('<CaptionCustomizer />', () => {
     act(() => el.dispatchEvent(new Event('change', { bubbles: true })));
   };
   const fireCheck = (el: HTMLInputElement, checked: boolean): void => {
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked')?.set?.call(el, checked);
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked')?.set?.call(
+      el,
+      checked,
+    );
     act(() => el.dispatchEvent(new Event('click', { bubbles: true })));
   };
 
@@ -62,7 +68,9 @@ describe('<CaptionCustomizer />', () => {
 
   it('uses a custom label when provided', () => {
     const onChange = vi.fn();
-    act(() => root.render(<CaptionCustomizer value={undefined} onChange={onChange} label="Tune" />));
+    act(() =>
+      root.render(<CaptionCustomizer value={undefined} onChange={onChange} label="Tune" />),
+    );
     expect(toggleBtn().textContent).toBe('Tune');
   });
 
@@ -96,7 +104,9 @@ describe('<CaptionCustomizer />', () => {
     onChange.mockClear();
     // Re-render reflecting the new value so "Default" can clear it (the panel
     // stays open — `open` is component state preserved across the re-render).
-    act(() => root.render(<CaptionCustomizer value={{ fontFamily: 'Anton' }} onChange={onChange} />));
+    act(() =>
+      root.render(<CaptionCustomizer value={{ fontFamily: 'Anton' }} onChange={onChange} />),
+    );
     fireSelect(q<HTMLSelectElement>('.caption-customizer__font select'), '');
     expect(onChange).toHaveBeenLastCalledWith(undefined);
   });
@@ -213,7 +223,57 @@ describe('<CaptionCustomizer />', () => {
   it('resets every customization back to the template default', () => {
     const { onChange } = render({ sizeScale: 1.5, uppercase: true });
     open();
-    act(() => (q<HTMLButtonElement>('.caption-customizer__reset')).click());
+    act(() => q<HTMLButtonElement>('.caption-customizer__reset').click());
     expect(onChange).toHaveBeenLastCalledWith(undefined);
+  });
+
+  // ----------------------------------------------------------------------- //
+  // WU S4 — per-language novice reading-speed default + resolved readability
+  // readout (preview parity with what the burn will apply).
+  // ----------------------------------------------------------------------- //
+  const renderWith = (
+    value: CaptionOverride | undefined,
+    content?: import('../lib/captionDefaults').CaptionContentContext,
+  ): void => {
+    act(() =>
+      root.render(<CaptionCustomizer value={value} onChange={vi.fn()} content={content} />),
+    );
+  };
+  const cpsSlider = (): HTMLInputElement => q<HTMLInputElement>('.caption-customizer__cps input');
+  const resolvedText = (): string =>
+    (q<HTMLElement>('.caption-customizer__resolved').textContent ?? '').replace(/\s+/g, ' ').trim();
+
+  it('seeds the reading-speed slider with the conservative cross-language default (no content)', () => {
+    render();
+    open();
+    expect(cpsSlider().value).toBe('17');
+  });
+
+  it('seeds the slider with 20 for English and 13 for children content', () => {
+    renderWith(undefined, { language: 'en-US' });
+    open();
+    expect(cpsSlider().value).toBe('20');
+    renderWith(undefined, { children: true, language: 'en' });
+    expect(cpsSlider().value).toBe('13');
+  });
+
+  it('still reflects an explicit maxCps on the slider over the per-language default', () => {
+    renderWith({ maxCps: 25 }, { language: 'en' });
+    open();
+    expect(cpsSlider().value).toBe('25');
+  });
+
+  it('shows the resolved readability readout that mirrors what will burn', () => {
+    render();
+    open();
+    expect(resolvedText()).toBe('Burns at ≤17 cps · 2 lines · ≤42 chars/line');
+  });
+
+  it('updates the readout for an English project and an explicit override', () => {
+    renderWith(undefined, { language: 'en' });
+    open();
+    expect(resolvedText()).toBe('Burns at ≤20 cps · 2 lines · ≤42 chars/line');
+    renderWith({ maxCps: 12, maxLines: 1 }, { children: true });
+    expect(resolvedText()).toBe('Burns at ≤12 cps · 1 line · ≤42 chars/line');
   });
 });

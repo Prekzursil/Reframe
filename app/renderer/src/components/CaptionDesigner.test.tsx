@@ -153,7 +153,9 @@ describe('<CaptionDesigner />', () => {
 
   it('threads a customizer edit back into the design override', () => {
     const { onChange, design } = render();
-    act(() => (container.querySelector('.caption-customizer__toggle') as HTMLButtonElement).click());
+    act(() =>
+      (container.querySelector('.caption-customizer__toggle') as HTMLButtonElement).click(),
+    );
     const upper = container.querySelector(
       '.caption-customizer__bool-uppercase input',
     ) as HTMLInputElement;
@@ -163,6 +165,17 @@ describe('<CaptionDesigner />', () => {
     );
     act(() => upper.dispatchEvent(new Event('click', { bubbles: true })));
     expect(onChange).toHaveBeenLastCalledWith({ ...design, override: { uppercase: true } });
+  });
+
+  it('threads the content context into the customizer per-language reading-speed default (WU S4)', () => {
+    render({ content: { language: 'en' } });
+    act(() =>
+      (container.querySelector('.caption-customizer__toggle') as HTMLButtonElement).click(),
+    );
+    const cps = container.querySelector('.caption-customizer__cps input') as HTMLInputElement;
+    expect(cps.value).toBe('20');
+    const readout = container.querySelector('.caption-customizer__resolved') as HTMLElement;
+    expect(readout.textContent?.replace(/\s+/g, ' ')).toContain('≤20 cps');
   });
 
   it('reflects the override (font + size scale) in the live preview line', () => {
