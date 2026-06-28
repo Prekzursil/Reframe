@@ -419,3 +419,109 @@ class TestDefaultFactories:
         from media_studio.features.caption_polish_backend import AltProfanityBackend
 
         assert isinstance(cp._default_profanity_factory({}), AltProfanityBackend)
+
+
+# --------------------------------------------------------------------------- #
+# resolve_caption_limits — per-content/per-language CPS default + override (S2)
+# --------------------------------------------------------------------------- #
+class TestResolveCaptionLimits:
+    def test_none_settings_defaults(self):
+        max_cps, max_lines = cp.resolve_caption_limits(None)
+        assert max_cps == cp.MAX_CPS  # 17 cross-language default
+        assert max_lines == cp.MAX_LINES
+
+    def test_empty_settings_defaults(self):
+        assert cp.resolve_caption_limits({}) == (cp.MAX_CPS, cp.MAX_LINES)
+
+    def test_children_uses_children_cps(self):
+        max_cps, _ = cp.resolve_caption_limits({"captionChildren": True})
+        assert max_cps == cp.MAX_CPS_CHILDREN  # 13
+
+    @pytest.mark.parametrize("lang", ["en", "EN", "en-US", "eng", "english"])
+    def test_english_relaxes_to_20(self, lang: str):
+        max_cps, _ = cp.resolve_caption_limits({"language": lang})
+        assert max_cps == cp.MAX_CPS_ENGLISH  # 20
+
+    def test_caption_language_key_takes_priority(self):
+        max_cps, _ = cp.resolve_caption_limits({"captionLanguage": "en", "language": "fr"})
+        assert max_cps == cp.MAX_CPS_ENGLISH
+
+    def test_non_english_uses_cross_language_default(self):
+        max_cps, _ = cp.resolve_caption_limits({"language": "fr"})
+        assert max_cps == cp.MAX_CPS
+
+    def test_children_beats_english(self):
+        # children content stays at the children's cap even for English projects.
+        max_cps, _ = cp.resolve_caption_limits({"captionChildren": True, "language": "en"})
+        assert max_cps == cp.MAX_CPS_CHILDREN
+
+    def test_override_maxcps_wins_and_clamps_within(self):
+        max_cps, _ = cp.resolve_caption_limits({"captionOverride": {"maxCps": 22}})
+        assert max_cps == 22
+
+    def test_override_maxcps_clamps_below_floor(self):
+        max_cps, _ = cp.resolve_caption_limits({"captionOverride": {"maxCps": 3}})
+        assert max_cps == cp.MAX_CPS_FLOOR  # 10
+
+    def test_override_maxcps_clamps_above_ceil(self):
+        max_cps, _ = cp.resolve_caption_limits({"captionOverride": {"maxCps": 99}})
+        assert max_cps == cp.MAX_CPS_CEIL  # 30
+
+    def test_override_maxcps_overrides_children(self):
+        # an explicit user choice wins over the children's default.
+        max_cps, _ = cp.resolve_caption_limits({"captionChildren": True, "captionOverride": {"maxCps": 25}})
+        assert max_cps == 25
+
+    @pytest.mark.parametrize("bad", [True, False, "20", None, float("nan"), float("inf")])
+    def test_override_maxcps_invalid_keeps_default(self, bad: object):
+        max_cps, _ = cp.resolve_caption_limits({"captionOverride": {"maxCps": bad}})
+        assert max_cps == cp.MAX_CPS
+
+    @pytest.mark.parametrize("lines", [1, 2])
+    def test_override_maxlines_applied(self, lines: int):
+        _, max_lines = cp.resolve_caption_limits({"captionOverride": {"maxLines": lines}})
+        assert max_lines == lines
+
+    @pytest.mark.parametrize("bad", [3, 0, "1", None, True])
+    def test_override_maxlines_invalid_keeps_default(self, bad: object):
+        _, max_lines = cp.resolve_caption_limits({"captionOverride": {"maxLines": bad}})
+        assert max_lines == cp.MAX_LINES
+
+    def test_non_dict_override_ignored(self):
+        assert cp.resolve_caption_limits({"captionOverride": "nope"}) == (cp.MAX_CPS, cp.MAX_LINES)
+
+
+# --------------------------------------------------------------------------- #
+# wrap_two_lines / enforce_cps_cpl — max_lines parameterisation (S2)
+# --------------------------------------------------------------------------- #
+class TestMaxLinesParameter:
+    def test_wrap_two_lines_default_two(self):
+        # long text wraps onto two lines by default.
+        out = cp.wrap_two_lines("a " * 30, max_cpl=10)
+        assert out.count("\n") == 1
+
+    def test_wrap_one_line_never_breaks(self):
+        # maxLines=1 keeps everything on a single line (no hard break).
+        out = cp.wrap_two_lines("a " * 30, max_cpl=10, max_lines=1)
+        assert "\n" not in out
+
+    def test_enforce_one_line_splits_more_than_two(self):
+        cue = _cue(1, 0.0, 60.0, " ".join(["word"] * 30))  # plenty of slack on time
+        two = cp.enforce_cps_cpl(cue, max_cpl=42, max_lines=2)
+        one = cp.enforce_cps_cpl(cue, max_cpl=42, max_lines=1)
+        assert len(one) > len(two)
+
+    def test_polish_cues_maxlines_one_via_override(self):
+        out = cp.polish_cues(
+            [_cue(1, 0.0, 60.0, " ".join(["word"] * 30))],
+            settings={"captionOverride": {"maxLines": 1}},
+        )
+        # every resulting cue is a single line (no hard break inserted).
+        assert all("\n" not in c["text"] for c in out)
+
+    def test_polish_cues_override_maxcps_threaded(self):
+        # a very low maxCps forces more pieces than the default cap would.
+        cue = _cue(1, 0.0, 2.0, " ".join(["abc"] * 7))  # 27 chars / 2s = 13.5 cps
+        default = cp.polish_cues([cue])
+        strict = cp.polish_cues([cue], settings={"captionOverride": {"maxCps": 10}})
+        assert len(strict) >= len(default)

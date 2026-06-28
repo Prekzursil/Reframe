@@ -38,7 +38,9 @@ from typing import Any
 
 from media_studio import ffmpeg
 
+from . import caption_override as _override
 from . import emphasis as _emphasis
+from .caption_override import ResolvedCaptionStyle
 
 # A Cue is the contract's ``{index:int, start:float, end:float, text:str}``
 # (CONTRACTS.md section 3). We accept it duck-typed as a Mapping so this module
@@ -165,7 +167,7 @@ _ASS_BOLD_ON = r"{\b1}"
 _ASS_BOLD_OFF = r"{\b0}"
 
 
-def render_cue_text(cue: CueLike) -> str:
+def render_cue_text(cue: CueLike, uppercase: bool = False) -> str:
     r"""Escaped ASS text for a cue, with §8a emphasis bolding + a trailing emoji.
 
     The cue's raw ``text`` is escaped against override injection FIRST. Then any
@@ -175,20 +177,31 @@ def render_cue_text(cue: CueLike) -> str:
     text bounds, sorted, and skipped when they overlap, so a malformed annotation
     can never corrupt the line. With no annotation this returns exactly
     :func:`escape_ass_text` of the text (byte-identical to the pre-§8a output).
+
+    When ``uppercase`` is set (the V1.1 ``CaptionOverride.uppercase`` text
+    transform) each raw text slice is upper-cased BEFORE escaping — never the
+    assembled string, so the inserted ``{\b1}`` override tags can never be
+    corrupted into ``{\B1}``. Span offsets index the original-case ``raw`` and the
+    slices are upper-cased independently, so the casing transform cannot shift them.
+    The trailing emoji is left untransformed.
     """
     raw = str(cue.get("text", "") or "")
     spans = _emphasis.normalize_spans(cue.get("emphasis"), len(raw))
+
+    def _tx(slice_text: str) -> str:
+        return slice_text.upper() if uppercase else slice_text
+
     if not spans:
-        body = escape_ass_text(raw)
+        body = escape_ass_text(_tx(raw))
     else:
         parts: list[str] = []
         cursor = 0
         for span in spans:
             start, end = span["start"], span["end"]
-            parts.append(escape_ass_text(raw[cursor:start]))
-            parts.append(_ASS_BOLD_ON + escape_ass_text(raw[start:end]) + _ASS_BOLD_OFF)
+            parts.append(escape_ass_text(_tx(raw[cursor:start])))
+            parts.append(_ASS_BOLD_ON + escape_ass_text(_tx(raw[start:end])) + _ASS_BOLD_OFF)
             cursor = end
-        parts.append(escape_ass_text(raw[cursor:]))
+        parts.append(escape_ass_text(_tx(raw[cursor:])))
         body = "".join(parts)
     emoji = str(cue.get("emoji", "") or "")
     if emoji:
@@ -250,6 +263,43 @@ def caption_position_fields(box: dict[str, float], play_x: int, play_y: int) -> 
     return alignment, max(0, margin_l), max(0, margin_r), max(0, margin_v)
 
 
+def _band_position(band: str, default_margin_v: int) -> tuple[int, int]:
+    """``(Alignment, MarginV)`` for a coarse ``CaptionOverride.positionBand``.
+
+    The band maps to the centred numpad anchor (top=8 / center=5 / bottom=2);
+    a centre band is libass-centred so its ``MarginV`` is ``0``, while top/bottom
+    sit ``default_margin_v`` px from their edge (fine offset stays in the box
+    margins). Pure.
+    """
+    alignment = _override.POSITION_BAND_ALIGNMENT[band]
+    return alignment, (0 if alignment == 5 else default_margin_v)
+
+
+def _default_style_line(
+    resolved: ResolvedCaptionStyle,
+    font_size: int,
+    alignment: int,
+    margin_l: int,
+    margin_r: int,
+    margin_v: int,
+) -> str:
+    """Assemble the ``Style: Default`` line from a resolved caption style.
+
+    With the base (no-override) :class:`ResolvedCaptionStyle` this is byte-identical
+    to the historical hard-coded V1 line (back-compat keystone — guarded by the
+    existing caption tests); an override only changes the fields it touches.
+    """
+    return (
+        f"Style: Default,{resolved.font_name},"
+        f"{font_size},"
+        f"{resolved.primary_color},{resolved.secondary_color},"
+        f"{resolved.outline_color},{resolved.back_color},"
+        "-1,0,0,0,"
+        f"100,100,0,0,{resolved.border_style},{resolved.outline_width},{resolved.shadow},"
+        f"{alignment},{margin_l},{margin_r},{margin_v},1"
+    )
+
+
 def build_ass(
     cues: Sequence[CueLike],
     width: int = 1080,
@@ -258,6 +308,7 @@ def build_ass(
     hook_title: str | None = None,
     total_sec: float = 0.0,
     position: Any = None,
+    override: Mapping[str, Any] | None = None,
 ) -> str:
     """Build a complete ASS subtitle document for ``cues``.
 
@@ -272,13 +323,24 @@ def build_ass(
       as its own style + event. The hook text is escaped (it is user-ish data)
       and soft-wrapped onto <= 2 lines inside a safe top margin. It shows for the
       whole clip (``total_sec`` if known, else through the last cue / 60s floor).
+    - When a V1.1 ``override`` (validated ``CaptionOverride``) is given, the body
+      ``Style: Default`` line is rebuilt from the resolved style (font / size /
+      colours / outline / card / position-band) and cue text is upper-cased when
+      requested. An absent/empty override resolves to the base style, so the
+      emitted document is byte-identical to V1 (back-compat).
     """
     play_x = int(width)
     play_y = int(height)
 
-    # A readable default style scaled to the canvas height. Bottom-centred,
-    # white fill with a black outline + drop shadow (typical short-form caption).
+    # V1.1: resolve the (validated, additive) caption override onto the base libass
+    # visual. An absent/empty override yields the base style => byte-identical V1.
+    resolved = _override.apply_override(override)
+
+    # A readable default style scaled to the canvas height. Bottom-centred, white
+    # fill with a black outline + drop shadow (typical short-form caption). The
+    # override's size scale multiplies the canvas-derived base size (>=12 floor).
     font_size = max(12, int(round(play_y * 0.045)))
+    font_size = max(12, int(round(font_size * resolved.size_scale)))
     default_margin_v = max(10, int(round(play_y * 0.06)))
 
     # P4 §4: honour the renderer's normalised caption POSITION box when present
@@ -290,15 +352,13 @@ def build_ass(
     else:
         alignment, margin_l, margin_r, margin_v = 2, 40, 40, default_margin_v
 
+    # V1.1: a coarse positionBand override re-anchors the body caption (alignment +
+    # band margin_v); the box still supplies the fine L/R offset.
+    if resolved.position_band is not None:
+        alignment, margin_v = _band_position(resolved.position_band, default_margin_v)
+
     styles = [
-        (
-            "Style: Default,Arial,"
-            f"{font_size},"
-            "&H00FFFFFF,&H000000FF,&H00000000,&H64000000,"
-            "-1,0,0,0,"
-            "100,100,0,0,1,3,1,"
-            f"{alignment},{margin_l},{margin_r},{margin_v},1"
-        ),
+        _default_style_line(resolved, font_size, alignment, margin_l, margin_r, margin_v),
     ]
 
     # P3-A: a bold, larger, TOP-anchored headline style (Alignment 8 = top-
@@ -369,7 +429,7 @@ def build_ass(
             f"{format_ass_timestamp(start)},"
             f"{format_ass_timestamp(end)},"
             "Default,,0,0,0,,"
-            f"{render_cue_text(cue)}"
+            f"{render_cue_text(cue, uppercase=resolved.uppercase)}"
         )
 
     # ASS files are conventionally CRLF; libass accepts LF too. Use LF for
@@ -497,6 +557,7 @@ class CaptionEngine:
         hook_title: str | None = None,
         total_sec: float = 0.0,
         position: Any = None,
+        override: Mapping[str, Any] | None = None,
     ) -> str:
         """Generate the ASS document (delegates to module-level :func:`build_ass`)."""
         return build_ass(
@@ -507,6 +568,7 @@ class CaptionEngine:
             hook_title=hook_title,
             total_sec=total_sec,
             position=position,
+            override=override,
         )
 
     def render(
@@ -523,6 +585,7 @@ class CaptionEngine:
         total_sec: float = 0.0,
         hook_title: str | None = None,
         position: Any = None,
+        override: Mapping[str, Any] | None = None,
     ) -> str:
         """Render ``cues`` onto ``clip_path`` -> ``out_path`` and return ``out_path``.
 
@@ -547,6 +610,7 @@ class CaptionEngine:
             hook_title=hook_title,
             total_sec=total_sec,
             position=position,
+            override=override,
         )
 
         # Write the ASS to a temp sidecar file. We pass its path as an argv

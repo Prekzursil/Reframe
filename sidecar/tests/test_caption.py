@@ -638,3 +638,139 @@ def test_render_threads_hook_title_into_written_ass(fake_ffmpeg, monkeypatch):
     eng.render("/in.mp4", [cue(1, 0.0, 1.0, "body")], "/out.mp4", hook_title="My Hook")
     assert "HookTitle" in captured["ass"]
     assert "My Hook" in captured["ass"]
+
+
+# --------------------------------------------------------------------------- #
+# V1.1 WU S2: CaptionOverride -> ASS Style / inline-tag mapping in build_ass
+# --------------------------------------------------------------------------- #
+def _default_style(doc: str) -> str:
+    """Return the ``Style: Default,...`` line from an ASS document."""
+    for line in doc.splitlines():
+        if line.startswith("Style: Default,"):
+            return line
+    raise AssertionError("no Default style line found")  # pragma: no cover - guard
+
+
+def test_build_ass_no_override_is_unchanged():
+    # An absent override resolves to the base style => byte-identical to V1.
+    assert build_ass([cue(1, 0.0, 1.0, "hi")]) == build_ass([cue(1, 0.0, 1.0, "hi")], override=None)
+
+
+def test_build_ass_empty_override_is_base_style():
+    base = _default_style(build_ass([cue(1, 0.0, 1.0, "hi")]))
+    with_empty = _default_style(build_ass([cue(1, 0.0, 1.0, "hi")], override={}))
+    assert with_empty == base
+
+
+def test_build_ass_override_font_family():
+    line = _default_style(build_ass([cue(1, 0.0, 1.0, "hi")], override={"fontFamily": "Montserrat"}))
+    assert line.startswith("Style: Default,Montserrat,")
+
+
+def test_build_ass_override_text_color_is_exact_bgr():
+    # #FF0000 (red) -> ASS BGR &H000000FF& as the PrimaryColour (4th field).
+    line = _default_style(build_ass([cue(1, 0.0, 1.0, "hi")], override={"textColor": "#FF0000"}))
+    fields = line.split(",")
+    assert fields[3] == "&H000000FF&"
+
+
+def test_build_ass_override_active_color_is_secondary():
+    line = _default_style(build_ass([cue(1, 0.0, 1.0, "hi")], override={"activeColor": "#00FF00"}))
+    fields = line.split(",")
+    assert fields[4] == "&H0000FF00&"
+
+
+def test_build_ass_override_size_scale_grows_font():
+    base = _default_style(build_ass([cue(1, 0.0, 1.0, "hi")], height=1920))
+    big = _default_style(build_ass([cue(1, 0.0, 1.0, "hi")], height=1920, override={"sizeScale": 1.8}))
+    assert int(big.split(",")[2]) > int(base.split(",")[2])
+
+
+def test_build_ass_override_box_sets_border_style_3():
+    line = _default_style(build_ass([cue(1, 0.0, 1.0, "hi")], override={"box": True}))
+    # "Style: Default" is field 0, so BorderStyle is comma-field index 15.
+    assert line.split(",")[15] == "3"
+
+
+def test_build_ass_override_outline_off_zeroes_outline_width():
+    line = _default_style(build_ass([cue(1, 0.0, 1.0, "hi")], override={"outline": False}))
+    fields = line.split(",")
+    assert fields[15] == "1"  # BorderStyle stays outline
+    assert fields[16] == "0"  # Outline width zeroed
+
+
+@pytest.mark.parametrize(
+    ("band", "alignment"),
+    [("top", "8"), ("center", "5"), ("bottom", "2")],
+)
+def test_build_ass_override_position_band_sets_alignment(band: str, alignment: str):
+    line = _default_style(build_ass([cue(1, 0.0, 1.0, "hi")], override={"positionBand": band}))
+    assert line.split(",")[18] == alignment  # Alignment field
+
+
+def test_build_ass_override_position_band_overrides_box_alignment():
+    # box would anchor at the top (alignment 8), but positionBand bottom wins.
+    box = {"x": 0.1, "y": 0.0, "w": 0.8, "h": 0.1}
+    line = _default_style(build_ass([cue(1, 0.0, 1.0, "hi")], position=box, override={"positionBand": "bottom"}))
+    assert line.split(",")[18] == "2"
+
+
+def test_build_ass_override_uppercases_cue_text():
+    doc = build_ass([cue(1, 0.0, 2.0, "hello world")], override={"uppercase": True})
+    assert "HELLO WORLD" in doc
+    assert "hello world" not in doc
+
+
+# --------------------------------------------------------------------------- #
+# render_cue_text — uppercase transform (must not corrupt emphasis override tags)
+# --------------------------------------------------------------------------- #
+def test_render_cue_text_uppercase_plain():
+    assert render_cue_text(cue(1, 0.0, 1.0, "hi there"), uppercase=True) == "HI THERE"
+
+
+def test_render_cue_text_uppercase_default_off():
+    assert render_cue_text(cue(1, 0.0, 1.0, "Hi There")) == "Hi There"
+
+
+def test_render_cue_text_uppercase_keeps_bold_tags_lowercase():
+    c = {
+        "index": 1,
+        "start": 0.0,
+        "end": 1.0,
+        "text": "make it pop",
+        "emphasis": [{"start": 8, "end": 11, "kind": "keyword"}],
+    }
+    out = render_cue_text(c, uppercase=True)
+    assert r"{\b1}POP{\b0}" in out
+    assert out.startswith("MAKE IT ")
+
+
+# --------------------------------------------------------------------------- #
+# CaptionEngine threads the override through build_ass / render
+# --------------------------------------------------------------------------- #
+def test_engine_build_ass_threads_override():
+    eng = CaptionEngine()
+    line = _default_style(eng.build_ass([cue(1, 0.0, 1.0, "hi")], override={"fontFamily": "Inter"}))
+    assert line.startswith("Style: Default,Inter,")
+
+
+def test_engine_render_threads_override_into_written_ass(monkeypatch):
+    written: dict[str, str] = {}
+    orig = caption.tempfile.mkstemp
+
+    def spy(*a, **k):
+        fd, path = orig(*a, **k)
+        written["path"] = path
+        return fd, path
+
+    monkeypatch.setattr(caption.tempfile, "mkstemp", spy)
+    captured: dict[str, str] = {}
+
+    def runner(argv, total_sec=0.0, on_progress=None, should_cancel=None):
+        with open(written["path"], encoding="utf-8") as fh:
+            captured["ass"] = fh.read()
+        return 0
+
+    eng = CaptionEngine(runner=runner)
+    eng.render("/in.mp4", [cue(1, 0.0, 1.0, "loud")], "/out.mp4", override={"uppercase": True})
+    assert "LOUD" in captured["ass"]
