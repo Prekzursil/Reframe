@@ -27,6 +27,23 @@ describe('sanitizeCaptionDesign', () => {
       DEFAULT_CAPTION_DESIGN,
     );
   });
+
+  it('attaches a validated override when present', () => {
+    const d = sanitizeCaptionDesign({
+      style: 'karaoke',
+      box: { x: 0.1, y: 0.2, w: 0.5, h: 0.2 },
+      override: { fontFamily: 'Anton', sizeScale: 9, textColor: '#ff0000' },
+    });
+    expect(d.override).toEqual({ fontFamily: 'Anton', sizeScale: 1.8, textColor: '#FF0000' });
+  });
+
+  it('omits the override key entirely when it sanitises to nothing (back-compat)', () => {
+    const d = sanitizeCaptionDesign({
+      style: 'karaoke',
+      override: { fontFamily: 'NotAFont' },
+    });
+    expect(d).not.toHaveProperty('override');
+  });
 });
 
 describe('captionDesignWire', () => {
@@ -43,6 +60,20 @@ describe('captionDesignWire', () => {
       captionStyle: DEFAULT_CAPTION_STYLE,
       captionPosition: boxToWire(DEFAULT_CAPTION_BOX),
     });
+  });
+
+  it('carries the override onto the wire when present', () => {
+    const wire = captionDesignWire({
+      style: 'karaoke',
+      box: DEFAULT_CAPTION_BOX,
+      override: { uppercase: true, maxLines: 1 },
+    });
+    expect(wire.captionOverride).toEqual({ uppercase: true, maxLines: 1 });
+  });
+
+  it('omits captionOverride when the design has no override', () => {
+    const wire = captionDesignWire({ style: 'neon', box: DEFAULT_CAPTION_BOX });
+    expect(wire).not.toHaveProperty('captionOverride');
   });
 });
 
