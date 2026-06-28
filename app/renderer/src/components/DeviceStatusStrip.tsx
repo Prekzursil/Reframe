@@ -5,7 +5,7 @@
 // the hardware comes from system.probe and the ETA is passed in by the host.
 import React from 'react';
 import type { HardwareInfo } from '../lib/rpc';
-import { fmtMb } from './advisorMeta';
+import { fmtMb, fmtMbOrUnknown } from './advisorMeta';
 
 /** Format an ETA (seconds) as "m:ss", or "—" when there is no running job. */
 export function formatEta(etaSeconds: number | null | undefined): string {
@@ -40,7 +40,7 @@ interface Chip {
 export function deviceChips(hardware: HardwareInfo, etaSeconds: number | null | undefined): Chip[] {
   return [
     { key: 'disk', label: 'Free disk', value: fmtMb(hardware.diskFreeMb ?? null) },
-    { key: 'ram', label: 'RAM', value: fmtMb(hardware.ramMb) },
+    { key: 'ram', label: 'RAM', value: fmtMbOrUnknown(hardware.ramMb) },
     { key: 'vram', label: 'VRAM', value: fmtMb(hardware.vramMb) },
     { key: 'gpu', label: 'GPU', value: hardware.gpuPresent ? 'yes' : 'none' },
     { key: 'eta', label: 'ETA', value: formatEta(etaSeconds) },

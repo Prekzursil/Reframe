@@ -485,7 +485,7 @@ def test_ram_probe_falls_back_to_os(monkeypatch: pytest.MonkeyPatch) -> None:
     assert sa.default_ram_probe() == 4096
 
 
-def test_ram_from_os_success(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ram_from_posix_success(monkeypatch: pytest.MonkeyPatch) -> None:
     import os
 
     monkeypatch.setattr(
@@ -494,17 +494,84 @@ def test_ram_from_os_success(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda name: {"SC_PHYS_PAGES": 1024 * 1024, "SC_PAGE_SIZE": 4096}[name],
         raising=False,
     )
-    assert sa._ram_from_os() == (1024 * 1024 * 4096) // (1024 * 1024)
+    assert sa._ram_from_posix() == (1024 * 1024 * 4096) // (1024 * 1024)
 
 
-def test_ram_from_os_unsupported(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ram_from_posix_unsupported(monkeypatch: pytest.MonkeyPatch) -> None:
     import os
 
     def boom(name: str) -> int:
         raise ValueError("unsupported sysconf name")
 
     monkeypatch.setattr(os, "sysconf", boom, raising=False)
-    assert sa._ram_from_os() is None
+    assert sa._ram_from_posix() is None
+
+
+def test_ram_from_os_dispatches_to_posix(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Non-Windows host -> the POSIX sysconf path. Patch the platform so the
+    # branch is exercised deterministically on any CI runner (Linux or Windows).
+    monkeypatch.setattr(sys, "platform", "linux", raising=False)
+    monkeypatch.setattr(sa, "_ram_from_posix", lambda: 4096)
+    monkeypatch.setattr(sa, "_ram_from_windows", lambda: 9999)
+    assert sa._ram_from_os() == 4096
+
+
+def test_ram_from_os_dispatches_to_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Windows host -> the ctypes GlobalMemoryStatusEx path. The Win helper is
+    # stubbed so this covers the dispatch branch from a Linux CI runner with no
+    # real Win32 kernel (and no ``# pragma``).
+    monkeypatch.setattr(sys, "platform", "win32", raising=False)
+    monkeypatch.setattr(sa, "_ram_from_posix", lambda: 4096)
+    monkeypatch.setattr(sa, "_ram_from_windows", lambda: 8192)
+    assert sa._ram_from_os() == 8192
+
+
+# --------------------------------------------------------------------------- #
+# _ram_from_windows — both branches via the injected GlobalMemoryStatusEx seam
+# --------------------------------------------------------------------------- #
+
+
+def test_ram_from_windows_reports_total_mb() -> None:
+    # 8 GiB ullTotalPhys (bytes) -> 8192 MB. The seam returns raw bytes so the
+    # MB conversion is covered without a real Win32 kernel.
+    assert sa._ram_from_windows(memory_status=lambda: 8 * 1024 * 1024 * 1024) == 8192
+
+
+def test_ram_from_windows_none_when_seam_returns_none() -> None:
+    assert sa._ram_from_windows(memory_status=lambda: None) is None
+
+
+def test_ram_from_windows_none_when_seam_returns_zero() -> None:
+    # A zero ullTotalPhys (GlobalMemoryStatusEx failed) degrades to None, never 0.
+    assert sa._ram_from_windows(memory_status=lambda: 0) is None
+
+
+def _install_fake_windll(monkeypatch: pytest.MonkeyPatch, gmse: Any) -> None:
+    """Patch ``ctypes.windll`` (absent on POSIX) with a fake kernel32.GMSE seam."""
+    import ctypes
+
+    fake = types.SimpleNamespace(
+        kernel32=types.SimpleNamespace(GlobalMemoryStatusEx=gmse),
+    )
+    monkeypatch.setattr(ctypes, "windll", fake, raising=False)
+
+
+def test_default_global_memory_status_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Fake GlobalMemoryStatusEx writes ullTotalPhys through the pointer and
+    # returns a truthy success code -> bytes flow back. Works on Linux CI (no
+    # real windll) because the ctypes Structure + pointer are cross-platform.
+    def gmse(ptr: Any) -> int:
+        ptr.contents.ullTotalPhys = 16 * 1024 * 1024 * 1024
+        return 1
+
+    _install_fake_windll(monkeypatch, gmse)
+    assert sa._default_global_memory_status() == 16 * 1024 * 1024 * 1024
+
+
+def test_default_global_memory_status_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A zero (FALSE) return from GlobalMemoryStatusEx -> None (probe failed).
+    _install_fake_windll(monkeypatch, lambda ptr: 0)
+    assert sa._default_global_memory_status() is None
 
 
 # --------------------------------------------------------------------------- #

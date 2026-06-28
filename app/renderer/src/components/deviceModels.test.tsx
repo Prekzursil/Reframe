@@ -83,6 +83,20 @@ describe('deviceChips', () => {
     expect(byKey.gpu).toBe('none');
     expect(byKey.eta).toBe('—');
   });
+  it('reads RAM as "unknown" (never "undefined MB") when the probe found nothing', () => {
+    // F3: Windows RAM probe -> null on an undetectable host. The RAM chip must
+    // degrade to a readable "unknown", distinct from the em dash used elsewhere.
+    const noRam: HardwareInfo = {
+      vramMb: 6000,
+      ramMb: null,
+      cpuCount: 8,
+      gpuPresent: true,
+      diskFreeMb: 250000,
+    };
+    const byKey = Object.fromEntries(deviceChips(noRam, 30).map((c) => [c.key, c.value]));
+    expect(byKey.ram).toBe('unknown');
+    expect(byKey.ram).not.toContain('undefined');
+  });
 });
 
 describe('<DeviceStatusStrip />', () => {

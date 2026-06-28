@@ -130,6 +130,8 @@ propcache==0.5.2
     #   yarl
 protobuf==7.35.1
     # via onnxruntime
+psutil==7.2.2
+    # via media-studio-sidecar (F3 — primary system-RAM source)
 pygments==2.20.0
     # via rich
 pyparsing==3.3.2

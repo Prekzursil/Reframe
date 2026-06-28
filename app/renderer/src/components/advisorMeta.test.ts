@@ -7,6 +7,7 @@ import {
   fillPct,
   fillZone,
   fmtMb,
+  fmtMbOrUnknown,
   licenseChip,
   presetLabel,
   presetTier,
@@ -54,6 +55,20 @@ describe('fmtMb', () => {
     expect(fmtMb(0)).toBe('—');
     expect(fmtMb(-5)).toBe('—');
     expect(fmtMb(Number.NaN)).toBe('—');
+  });
+});
+
+describe('fmtMbOrUnknown (F3 — null-RAM UX)', () => {
+  it('formats a real megabyte count like fmtMb', () => {
+    expect(fmtMbOrUnknown(32000)).toBe('31.3 GB');
+    expect(fmtMbOrUnknown(512)).toBe('512 MB');
+  });
+  it('reads "unknown" (never "undefined MB") for an undetectable probe', () => {
+    expect(fmtMbOrUnknown(null)).toBe('unknown');
+    expect(fmtMbOrUnknown(undefined)).toBe('unknown');
+    expect(fmtMbOrUnknown(0)).toBe('unknown');
+    expect(fmtMbOrUnknown(-5)).toBe('unknown');
+    expect(fmtMbOrUnknown(Number.NaN)).toBe('unknown');
   });
 });
 

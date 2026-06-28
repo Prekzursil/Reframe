@@ -627,6 +627,23 @@ def default_ram_probe() -> int | None:
 
 
 def _ram_from_os() -> int | None:
+    """Total RAM (MB) from the host-appropriate stdlib source, or None.
+
+    This is the stdlib fallback used when psutil (the primary source — see
+    :func:`default_ram_probe`) is absent. It is a ONE-LINE platform dispatch
+    kept behind the ``RamProbe`` seam: ``GlobalMemoryStatusEx`` on Windows
+    (``os.sysconf`` does not exist there), ``os.sysconf`` on POSIX. Both leaf
+    helpers take an injected seam so a single-OS CI run covers every branch with
+    no ``# pragma``.
+    """
+    import sys  # noqa: PLC0415 - stdlib, lazy for symmetry
+
+    if sys.platform.startswith("win"):
+        return _ram_from_windows()
+    return _ram_from_posix()
+
+
+def _ram_from_posix() -> int | None:
     """Total RAM (MB) via ``os.sysconf`` (POSIX), or None where unsupported."""
     import os  # noqa: PLC0415 - stdlib, lazy for symmetry
 
@@ -636,6 +653,55 @@ def _ram_from_os() -> int | None:
     except (AttributeError, ValueError, OSError):
         return None
     return int((pages * page_size) // (1024 * 1024))
+
+
+def _ram_from_windows(memory_status: RamProbe | None = None) -> int | None:
+    """Total RAM (MB) via the Win32 ``GlobalMemoryStatusEx`` API, or None.
+
+    ``memory_status`` is the injectable seam returning the raw ``ullTotalPhys``
+    byte count (or None on failure); the default reads it lazily via ctypes
+    (:func:`_default_global_memory_status`). Isolating the ctypes call behind the
+    seam lets a Linux CI run cover BOTH the success and the None branch here
+    without a real Win32 kernel — so no ``# pragma`` is needed. A zero/None byte
+    count (the API failed) degrades to None, never a bogus ``0``.
+    """
+    probe = memory_status or _default_global_memory_status
+    total_bytes = probe()
+    if not total_bytes:
+        return None
+    return int(total_bytes // (1024 * 1024))
+
+
+def _default_global_memory_status() -> int | None:
+    """Raw ``ullTotalPhys`` (bytes) from Win32 ``GlobalMemoryStatusEx``, or None.
+
+    The ctypes ``Structure`` + ``pointer`` are cross-platform; only the
+    ``ctypes.windll`` accessor is Windows-only, so a test patches ``windll`` with
+    a fake that writes ``ullTotalPhys`` back through the pointer — covering both
+    the success and failure branch from any OS. Kept behind the
+    :func:`_ram_from_windows` seam (the spec's injection requirement).
+    """
+    import ctypes  # noqa: PLC0415 - stdlib, lazy for symmetry
+
+    class _MemoryStatusEx(ctypes.Structure):
+        _fields_ = (  # noqa: RUF012 - ctypes Structure field spec, not mutable state
+            ("dwLength", ctypes.c_ulong),
+            ("dwMemoryLoad", ctypes.c_ulong),
+            ("ullTotalPhys", ctypes.c_ulonglong),
+            ("ullAvailPhys", ctypes.c_ulonglong),
+            ("ullTotalPageFile", ctypes.c_ulonglong),
+            ("ullAvailPageFile", ctypes.c_ulonglong),
+            ("ullTotalVirtual", ctypes.c_ulonglong),
+            ("ullAvailVirtual", ctypes.c_ulonglong),
+            ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+        )
+
+    stat = _MemoryStatusEx()
+    stat.dwLength = ctypes.sizeof(stat)
+    ok = ctypes.windll.kernel32.GlobalMemoryStatusEx(  # pyright: ignore[reportAttributeAccessIssue]
+        ctypes.pointer(stat),
+    )
+    return int(stat.ullTotalPhys) if ok else None
 
 
 def default_cpu_probe() -> int | None:

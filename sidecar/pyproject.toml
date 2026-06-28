@@ -21,6 +21,10 @@ dependencies = [
   "kokoro-onnx==0.5.0",    # A4: the onnx build — NEVER the torch `kokoro` package
   "onnxruntime==1.27.0",   # kokoro-onnx backend (or onnxruntime-gpu, same pin)
   "edge-tts==7.2.8",       # hosted TTS engine (network only at runtime)
+  # F3: PRIMARY system-RAM source for the device advisor (cross-platform), with
+  # an OS-stdlib fallback (Win32 GlobalMemoryStatusEx / POSIX sysconf) behind the
+  # RamProbe seam. PINNED (A6 lesson 5) so the probe number is reproducible.
+  "psutil==7.2.2",         # total system RAM (system_advisor.default_ram_probe)
 ]
 
 [project.optional-dependencies]
