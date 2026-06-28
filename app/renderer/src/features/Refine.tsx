@@ -44,15 +44,6 @@ export function applyResultPath(result: unknown): string | null {
   return typeof path === 'string' ? path : null;
 }
 
-/** Pull the §A3 job.done error payload message ({error:{message,type}}). */
-function doneErrorMessage(result: unknown): string | null {
-  const err = pickField<{ message?: unknown }>(result, 'error');
-  if (err && typeof err === 'object' && typeof err.message === 'string') {
-    return err.message;
-  }
-  return null;
-}
-
 export interface RefineProps {
   videoId: string;
   /** Injectable bridge for tests; defaults to the preload-exposed api. */
@@ -123,17 +114,14 @@ export function Refine({ videoId, api }: RefineProps): React.ReactElement {
       const res = await bridge.rpc<{ jobId: string }>('refine.apply', { ...params });
       const id = res?.jobId ?? null;
       setJobId(id);
+      // F1: waitForJobDone REJECTS on an {error} job.done payload (surfaced by
+      // the catch below) — no more silent doneErrorMessage swallow.
       const result = id ? await waitForJobDone<unknown>(bridge, id, (r) => r ?? null) : null;
-      const errMessage = doneErrorMessage(result);
-      if (errMessage) {
-        setError(errMessage);
-      } else {
-        const path = applyResultPath(result);
-        if (path) {
-          setResultPath(path);
-          setPct(100);
-          setMessage('Done');
-        }
+      const path = applyResultPath(result);
+      if (path) {
+        setResultPath(path);
+        setPct(100);
+        setMessage('Done');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

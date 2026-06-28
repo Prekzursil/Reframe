@@ -253,6 +253,27 @@ describe('<Transcribe />', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('whisper crashed');
   });
 
+  it('returns to idle when job.done carries neither a transcript nor an error', async () => {
+    // F1/F2: a job that finishes with neither payload must NOT stick on
+    // 'running' forever — the terminal finally drops the panel back to idle.
+    const fake = makeFakeApi();
+    install(fake);
+    await mount('v1');
+    await act(async () => {
+      startBtn().click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fake.fireDone({ jobId: 'job-t', result: {} });
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector('.transcript-summary')).toBeNull();
+    const btn = startBtn();
+    expect(btn.disabled).toBe(false);
+    expect(btn.textContent).toContain('Start transcription');
+  });
+
   it('ignores progress notifications for a different job', async () => {
     const fake = makeFakeApi();
     install(fake);

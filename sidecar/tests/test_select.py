@@ -20,6 +20,7 @@ from media_studio.features.select import (
     MAX_CLIP_SEC,
     MIN_CLIP_SEC,
     TEMPERATURE,
+    SelectionParseError,
     build_rerank_user_prompt,
     build_system_prompt,
     build_user_prompt,
@@ -230,10 +231,34 @@ def test_extract_clips_finds_json_amid_prose():
     assert extract_clips(raw) == [{"rank": 1}]
 
 
-def test_extract_clips_returns_empty_on_garbage():
-    assert extract_clips("no json here") == []
+def test_extract_clips_genuine_empty_returns_empty():
+    # An empty reply (nothing after stripping <think>) is a GENUINE empty result
+    # — there was nothing to parse, so [] (NOT a parse failure).
+    assert extract_clips("") == []
+    assert extract_clips("   ") == []
     assert extract_clips("<think>only thinking</think>") == []
-    assert extract_clips("{not valid json}") == []
+
+
+def test_extract_clips_explicit_empty_clips_array_returns_empty():
+    # An explicit {"clips": []} is the model saying "no clips" — genuine empty.
+    assert extract_clips('{"clips": []}') == []
+
+
+def test_extract_clips_raises_on_non_empty_unparseable_reply():
+    # A NON-empty reply that yields no parseable clips is a PARSE FAILURE: it
+    # must raise (so the job ends ERROR), NOT silently return [].
+    with pytest.raises(SelectionParseError):
+        extract_clips("no json here")
+    with pytest.raises(SelectionParseError):
+        extract_clips("{not valid json}")
+
+
+def test_extract_clips_raises_when_json_object_lacks_clips_array():
+    # JSON parsed, but no `clips` array (or it isn't a list) -> parse failure.
+    with pytest.raises(SelectionParseError):
+        extract_clips('{"foo": 1}')
+    with pytest.raises(SelectionParseError):
+        extract_clips('{"clips": "nope"}')
 
 
 # ---------------------------------------------------------------------------
@@ -388,8 +413,18 @@ def test_select_uses_default_prompt_when_blank(good_clips):
     assert "share-worthy" in user_msg.lower()
 
 
-def test_select_empty_on_unparseable_response():
+def test_select_single_pass_raises_on_unparseable_response():
+    # F1: the single-pass common path must NOT silently return [] on an LLM
+    # parse failure — it propagates SelectionParseError so the job ends ERROR.
     provider = FakeProvider(["sorry, no json"])
+    with pytest.raises(SelectionParseError):
+        select(_short_transcript(), "x", {"count": 3}, provider)
+
+
+def test_select_single_pass_genuine_empty_returns_empty():
+    # An explicit {"clips": []} from the model is a confirmed zero-result, NOT a
+    # parse failure — select() returns [] (genuine empty preserved).
+    provider = FakeProvider([_clips_json([])])
     cands = select(_short_transcript(), "x", {"count": 3}, provider)
     assert cands == []
 
@@ -674,10 +709,12 @@ def test_select_unified_returns_empty_when_no_candidates():
     assert select_unified(None, "x", {"count": 3}, None, tracks={}, duration_total=0.0) == []
 
 
-def test_select_unified_returns_empty_when_llm_unparseable():
+def test_select_unified_propagates_llm_parse_failure():
+    # F1: select_unified wraps select() on the transcript+provider path, so a
+    # single-pass LLM PARSE FAILURE propagates as a LOUD job ERROR (not silent []).
     provider = FakeProvider(["no json at all"])
-    cands = select_unified(_short_transcript(), "x", {"count": 3}, provider, duration_total=300.0)
-    assert cands == []
+    with pytest.raises(SelectionParseError):
+        select_unified(_short_transcript(), "x", {"count": 3}, provider, duration_total=300.0)
 
 
 # --- Tier-0: learned re-rank + diversity (always on, zero downloads) -------

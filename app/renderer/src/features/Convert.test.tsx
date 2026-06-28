@@ -216,6 +216,43 @@ describe('<Convert />', () => {
     expect(container.querySelectorAll('.output-paths li').length).toBe(2);
   });
 
+  it('start returns to idle when job.done carries neither a path nor an error', async () => {
+    // F1/F2: a job that finishes with neither payload must NOT stick on
+    // 'running' forever — the terminal finally drops the panel back to idle.
+    const fake = makeFakeApi();
+    await mount(fake, { videoId: 'v1' });
+    await submit();
+    await act(async () => {
+      fake.fireDone({ jobId: 'job-c', result: {} });
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.output-paths')).toBeNull();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    const btn = [...container.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Convert',
+    ) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+  });
+
+  it('batch returns to idle when job.done carries neither paths nor an error', async () => {
+    const items: ConvertBatchItem[] = [{ videoId: 'v1', options: undefined as never }];
+    const fake = makeFakeApi();
+    await mount(fake, { videoId: 'v1', batchItems: items });
+    const batchBtn = [...container.querySelectorAll('button')].find((b) =>
+      /Convert batch/.test(b.textContent ?? ''),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      batchBtn.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fake.fireDone({ jobId: 'job-cb', result: {} });
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.output-paths')).toBeNull();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it('does not show the batch button without batch items', async () => {
     const fake = makeFakeApi();
     await mount(fake, { videoId: 'v1' });

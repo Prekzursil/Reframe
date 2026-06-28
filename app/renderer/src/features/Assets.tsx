@@ -46,15 +46,6 @@ export function extractAssets(result: unknown): AssetInfo[] | null {
   return Array.isArray(assets) ? assets : null;
 }
 
-/** Pull the §A3 job.done error payload message ({error:{message,type}}). */
-export function doneErrorMessage(result: unknown): string | null {
-  const err = pickField<{ message?: unknown }>(result, 'error');
-  if (err && typeof err === 'object' && typeof err.message === 'string') {
-    return err.message;
-  }
-  return null;
-}
-
 export interface AssetsProps {
   /** Injectable bridge for tests; defaults to the preload-exposed api. */
   api?: MediaStudioApi;
@@ -112,20 +103,17 @@ export function Assets({ api }: AssetsProps): React.ReactElement {
         const res = await bridge.rpc<{ jobId: string }>('assets.ensure', { names });
         const id = res?.jobId ?? null;
         setJobId(id);
+        // F1: waitForJobDone REJECTS on an {error} job.done payload (surfaced by
+        // the catch below) — no more silent doneErrorMessage swallow.
         const result = id ? await waitForJobDone<unknown>(bridge, id, (r) => r ?? null) : null;
-        const errMessage = doneErrorMessage(result);
-        if (errMessage) {
-          setEnsureError(errMessage);
+        const updated = extractAssets(result);
+        if (updated) {
+          setAssets(updated);
         } else {
-          const updated = extractAssets(result);
-          if (updated) {
-            setAssets(updated);
-          } else {
-            await refresh();
-          }
-          setPct(100);
-          setMessage('Done');
+          await refresh();
         }
+        setPct(100);
+        setMessage('Done');
       } catch (err) {
         setEnsureError(err instanceof Error ? err.message : String(err));
       } finally {

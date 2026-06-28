@@ -5,12 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
-import Recipes, {
-  type Recipe,
-  RECIPE_PRESETS,
-  buildRecipeFromPreset,
-  doneErrorMessage,
-} from './Recipes';
+import Recipes, { type Recipe, RECIPE_PRESETS, buildRecipeFromPreset } from './Recipes';
 import type { DoneEvent, MediaStudioApi, ProgressEvent } from './_api';
 
 const SAVED: Recipe[] = [
@@ -101,17 +96,6 @@ describe('buildRecipeFromPreset', () => {
       'transcribe.start',
       'subtitles.generate',
     ]);
-  });
-});
-
-describe('doneErrorMessage', () => {
-  it('extracts the error payload message', () => {
-    expect(doneErrorMessage({ error: { message: 'offline', type: 'OfflineError' } })).toBe(
-      'offline',
-    );
-  });
-  it('null for success', () => {
-    expect(doneErrorMessage({ results: [] })).toBeNull();
   });
 });
 

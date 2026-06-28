@@ -18,6 +18,10 @@
 // `getApi()` accessor below, which casts `window.api` to our local interface in
 // one place. No global merge => no cross-unit collision, panels stay typed.
 
+// F1: the shared job wait reuses the SINGLE A3 error-payload reader so error
+// detection stays identical everywhere (no per-panel `doneErrorMessage` copies).
+import { extractJobError } from '../components/useJob';
+
 // --- Frozen IPC surface (CONTRACTS.md §1/§2) -----------------------------
 // §2 progress notification params are `{jobId, pct, message}`.
 export interface ProgressEvent {
@@ -30,6 +34,27 @@ export interface ProgressEvent {
 export interface DoneEvent {
   jobId: string;
   result?: unknown;
+}
+
+/**
+ * Default `job.done` wait timeout (F2). A dead/wedged sidecar must NOT hang a
+ * panel forever — every job wait is raced against this ceiling. 15 minutes is
+ * long enough for the longest real job (a batch export) yet short enough that a
+ * silent sidecar death surfaces a user-facing error instead of a frozen UI.
+ */
+export const DEFAULT_JOB_TIMEOUT_MS = 15 * 60 * 1000;
+
+/**
+ * Rejection raised when a `waitForJobDone` wait is torn down via its
+ * `AbortSignal` (the caller cancelled the job or the panel unmounted, F2). It is
+ * NOT a job failure — callers detect it and reset to idle WITHOUT surfacing an
+ * error toast/banner (a cancel is a clean escape, not an error).
+ */
+export class JobAbortedError extends Error {
+  constructor(message = 'Job wait aborted (cancelled or unmounted).') {
+    super(message);
+    this.name = 'JobAbortedError';
+  }
 }
 
 export interface MediaStudioApi {
@@ -142,24 +167,97 @@ export function extractJobId(res: unknown): string | undefined {
   return undefined;
 }
 
+/** Minimal bridge surface `waitForJobDone` needs — any `window.api` shape satisfies it. */
+export interface JobDoneCapable {
+  onJobDone?: (cb: (ev: DoneEvent) => void) => () => void;
+}
+
 /**
  * Wait for the `job.done` notification matching `jobId` and pull the terminal
- * payload out of `result` with `extract`. Mirrors ShortMaker.tsx's working
- * pattern. Resolves `null` if the bridge exposes no `onJobDone` hook (then the
- * rpc promise was the only channel and only carried the `{jobId}` handle).
+ * payload out of `result` with `extract`. Resolves `null` if the bridge exposes
+ * no `onJobDone` hook (then the rpc promise was the only channel and only
+ * carried the `{jobId}` handle).
+ *
+ * Hardened for Lane 0 F1+F2 — the ONE shared wait for all deferred-job panels:
+ *  - **F1 error surfacing:** a failed job arrives as `result:{error:{message,
+ *    type}}` (jobs.py `_finish_error`). We REJECT with that message so the
+ *    caller's `catch` shows a real error — never a silent empty "success".
+ *    Reuses {@link extractJobError}. A `type==='JobCancelled'` payload is a
+ *    clean cancel, NOT a failure, so it resolves `null` (no error surfaced).
+ *  - **F1 neither-result-nor-error:** a success payload with neither a matching
+ *    field nor an error resolves whatever `extract` returns (commonly `null`) —
+ *    the original behaviour is preserved.
+ *  - **F2 timeout:** the wait is raced against `timeoutMs` (default
+ *    {@link DEFAULT_JOB_TIMEOUT_MS}); on expiry it REJECTS with a user-facing
+ *    message so a dead sidecar can't hang the UI. Pass `0` to disable.
+ *  - **F2 abort:** an optional `signal` tears the wait down (cancel/unmount) and
+ *    rejects with {@link JobAbortedError}; callers treat that as a clean idle
+ *    reset, not an error.
+ *  - **No leaks:** the `onJobDone` subscription, the timer, and the abort
+ *    listener are ALWAYS cleaned up on whichever settle path wins.
  */
 export function waitForJobDone<T>(
-  api: MediaStudioApi,
+  api: JobDoneCapable,
   jobId: string,
   extract: (result: unknown) => T | null,
+  timeoutMs: number = DEFAULT_JOB_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<T | null> {
   if (typeof api.onJobDone !== 'function') return Promise.resolve(null);
-  return new Promise<T | null>((resolve) => {
-    const off = api.onJobDone!((d) => {
+  return new Promise<T | null>((resolve, reject) => {
+    let off: (() => void) | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    // Idempotent teardown — `resolve`/`reject` themselves are single-shot, and
+    // every channel is removed here, so the FIRST settle wins and no other can
+    // fire (no `settled` flag needed).
+    const cleanup = (): void => {
+      off?.();
+      if (timer !== undefined) clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const settleResolve = (value: T | null): void => {
+      cleanup();
+      resolve(value);
+    };
+    const settleReject = (err: Error): void => {
+      cleanup();
+      reject(err);
+    };
+    function onAbort(): void {
+      settleReject(new JobAbortedError());
+    }
+
+    if (signal?.aborted) {
+      settleReject(new JobAbortedError());
+      return;
+    }
+
+    off = api.onJobDone!((d) => {
       if (d.jobId !== jobId) return;
-      off();
-      resolve(extract(d.result));
+      const failure = extractJobError(d.result);
+      if (failure) {
+        // A user-initiated cancel is a clean finish, not an error to surface.
+        if (failure.type === 'JobCancelled') {
+          settleResolve(null);
+          return;
+        }
+        settleReject(new Error(failure.message));
+        return;
+      }
+      settleResolve(extract(d.result));
     });
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        settleReject(
+          new Error(
+            'Timed out waiting for the job to finish — the sidecar may have ' +
+              'stopped responding. Please try again.',
+          ),
+        );
+      }, timeoutMs);
+    }
+    signal?.addEventListener('abort', onAbort);
   });
 }
 

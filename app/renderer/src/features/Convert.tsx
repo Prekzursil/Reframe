@@ -109,6 +109,10 @@ export function Convert({ videoId, path, batchItems }: ConvertProps): React.Reac
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPhase('error');
+    } finally {
+      // F1/F2: a job that finished with neither a path nor an error (or a
+      // timed-out wait) must NOT stick on 'running' forever — drop back to idle.
+      setPhase((p) => (p === 'running' ? 'idle' : p));
     }
   }, [beginRun, options, videoId, path]);
 
@@ -143,6 +147,10 @@ export function Convert({ videoId, path, batchItems }: ConvertProps): React.Reac
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPhase('error');
+    } finally {
+      // F1/F2: a job that finished with neither paths nor an error (or a
+      // timed-out wait) must NOT stick on 'running' forever — drop back to idle.
+      setPhase((p) => (p === 'running' ? 'idle' : p));
     }
   }, [beginRun, batchItems, options]);
 

@@ -359,22 +359,40 @@ def strip_think(content: str) -> str:
     return _THINK_RE.sub("", content).strip()
 
 
+class SelectionParseError(RuntimeError):
+    """A NON-empty LLM reply yielded no parseable ``clips`` (a PARSE FAILURE).
+
+    Distinguishes a *parse failure* (the model replied with real text but we
+    could not extract a valid ``{"clips": [...]}`` object) from a *genuine empty*
+    result (an empty reply, or an explicit ``{"clips": []}``). A parse failure
+    MUST surface as a LOUD job ERROR — never a silent ``[]`` that the UI renders
+    as "0 clips" success (V1 "no silent fallbacks — fail LOUD + clear" contract).
+    """
+
+
 def extract_clips(content: str) -> list[dict[str, Any]]:
     """Strip reasoning, locate the JSON object, and return its ``clips`` list.
 
-    Returns ``[]`` when no JSON object is present or it fails to parse / lacks a
-    ``clips`` array (the spike treated a missing match as zero clips).
+    A *genuine empty* reply — nothing after stripping ``<think>`` — returns
+    ``[]`` (there was nothing to parse). An explicit ``{"clips": []}`` is also a
+    genuine empty result and returns ``[]``. A *non-empty* reply that has no JSON
+    object, fails to parse, or carries no ``clips`` array is a PARSE FAILURE and
+    raises :class:`SelectionParseError` (so the job ends ERROR, not silent-empty).
     """
     cleaned = strip_think(content)
+    if not cleaned:
+        return []
     match = _JSON_OBJ_RE.search(cleaned)
     if not match:
-        return []
+        raise SelectionParseError("The model reply contained no JSON clips object.")
     try:
         obj = json.loads(match.group(0))
-    except (ValueError, json.JSONDecodeError):
-        return []
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise SelectionParseError("The model reply was not valid JSON.") from exc
     clips = obj.get("clips") if isinstance(obj, dict) else None
-    return clips if isinstance(clips, list) else []
+    if not isinstance(clips, list):
+        raise SelectionParseError("The model reply contained no 'clips' array.")
+    return clips
 
 
 def _coerce_int(value: Any, default: int = 0) -> int:
@@ -639,23 +657,37 @@ def select(
         return _finalize(to_candidates(clips, min_sec, max_sec, duration_total), count)
 
     # --- MAP: shortlist candidates per chunk -------------------------------
+    # A per-chunk parse failure is tolerated (skip that chunk) — the reduce/
+    # shortlist fallback below still yields real candidates from the other
+    # chunks, so one bad chunk must not nuke a long-transcript selection. The
+    # single-pass common path above has no such fallback, so its parse failure
+    # propagates as a LOUD job ERROR (F1).
     chunk_system = build_system_prompt(CHUNK_SHORTLIST_COUNT, min_sec, max_sec)
     shortlist: list[Candidate] = []
     for chunk in _chunk_lines(lines, CHUNK_LINE_SIZE):
         body = "\n".join(chunk)
-        clips = _ask(
-            provider, chunk_system, build_user_prompt(user_prompt, CHUNK_SHORTLIST_COUNT, min_sec, max_sec, body)
-        )
+        try:
+            clips = _ask(
+                provider, chunk_system, build_user_prompt(user_prompt, CHUNK_SHORTLIST_COUNT, min_sec, max_sec, body)
+            )
+        except SelectionParseError:
+            continue
         shortlist.extend(to_candidates(clips, min_sec, max_sec, duration_total))
 
     if not shortlist:
         return []
 
     # --- REDUCE: one global re-rank over the union shortlist ---------------
+    # A reduce parse failure falls back to the validated map shortlist (we HAVE
+    # real candidates), so it degrades rather than erroring (the map-reduce
+    # branch's intended best-effort behaviour).
     shortlist_body = "\n".join(_candidate_to_shortlist_row(c) for c in shortlist)
-    rerank_clips = _ask(
-        provider, system, build_rerank_user_prompt(user_prompt, count, min_sec, max_sec, shortlist_body)
-    )
+    try:
+        rerank_clips = _ask(
+            provider, system, build_rerank_user_prompt(user_prompt, count, min_sec, max_sec, shortlist_body)
+        )
+    except SelectionParseError:
+        rerank_clips = []
     final = to_candidates(rerank_clips, min_sec, max_sec, duration_total)
     if final:
         return _finalize(final, count)

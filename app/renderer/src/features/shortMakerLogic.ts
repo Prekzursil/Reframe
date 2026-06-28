@@ -11,6 +11,13 @@
 // CONTRACT-NOTE: the wire field names here are FROZEN — identical to the
 // Python/sidecar side (§3 Candidate / §2 controls). Do not rename.
 import type { PlayerWindow } from '../components/Player';
+// F1+F2: the deferred-job wait is the SINGLE shared helper in ./_api (timeout +
+// {error} reject + AbortSignal + leak-free cleanup). This module drops its old
+// private copy and re-exports the shared one so existing importers/tests (which
+// pull `waitForJobDone` through ShortMaker) keep ONE entry point.
+import { DEFAULT_JOB_TIMEOUT_MS, waitForJobDone } from './_api';
+
+export { waitForJobDone };
 
 // ---------------------------------------------------------------------------
 // Contract types (§3) — field names identical to the Python/wire side.
@@ -628,18 +635,24 @@ export function errMsg(e: unknown): string {
 }
 
 /**
- * Default job.done wait timeout (HIGH #5): a dead/wedged sidecar must not hang
- * the UI forever. Exports take the longest of the short-maker jobs, so 15 min is
- * a generous ceiling — long enough for a real batch export, short enough that a
- * silent sidecar death surfaces a user-facing error instead of a frozen UI.
+ * Default job.done wait timeout (F2): a dead/wedged sidecar must not hang the UI
+ * forever. Exports take the longest of the short-maker jobs; the shared
+ * {@link DEFAULT_JOB_TIMEOUT_MS} (15 min) is a generous ceiling — long enough
+ * for a real batch export, short enough that a silent sidecar death surfaces a
+ * user-facing error instead of a frozen UI. Aliased to the shared default so
+ * there is ONE source of truth for the ceiling.
  */
-export const EXPORT_JOB_TIMEOUT_MS = 15 * 60 * 1000;
+export const EXPORT_JOB_TIMEOUT_MS = DEFAULT_JOB_TIMEOUT_MS;
 
 /**
  * Resolve an rpc result into its terminal payload (P4 §8c batch reuse): try the
  * immediate `extract`; if it's only a deferred {jobId} handle, record it on
  * `jobRef` (for progress/cancel) and wait for `job.done`. Mirrors the inline
  * extract-or-wait pattern in runSelect/runExport so the batch flow stays small.
+ *
+ * `timeoutMs`/`signal` flow straight through to the shared {@link waitForJobDone}
+ * (F2): omitting `timeoutMs` applies the shared default ceiling, and `signal`
+ * lets a cancel/unmount tear the wait down.
  */
 export async function resolveJobResult<T>(
   api: Api,
@@ -647,53 +660,13 @@ export async function resolveJobResult<T>(
   extract: (payload: unknown) => T[] | null,
   jobRef: { current: string | null },
   timeoutMs?: number,
+  signal?: AbortSignal,
 ): Promise<T[] | null> {
   const direct = extract(res);
   if (direct !== null) return direct;
   if (isJobHandle(res)) {
     jobRef.current = res.jobId;
-    return waitForJobDone(api, res.jobId, extract, timeoutMs);
+    return waitForJobDone(api, res.jobId, extract, timeoutMs, signal);
   }
   return null;
-}
-
-/**
- * Wait for a job.done notification for `jobId` and pull the payload out with
- * `extract`. If the api exposes no onJobDone hook, resolves null (the rpc
- * promise was the resolution channel and already returned only a handle).
- *
- * HIGH #5: when `timeoutMs` is given, the wait is raced against a timer that
- * REJECTS with a user-facing error if no matching `job.done` arrives in time —
- * a dead sidecar can no longer hang the UI indefinitely. The subscription and
- * timer are always cleaned up (whichever side wins). Omitting `timeoutMs`
- * preserves the original never-timing-out behavior (used where the rpc promise
- * is the real resolution channel).
- */
-export function waitForJobDone<T>(
-  api: Api,
-  jobId: string,
-  extract: (payload: unknown) => T | null,
-  timeoutMs?: number,
-): Promise<T | null> {
-  if (typeof api.onJobDone !== 'function') return Promise.resolve(null);
-  return new Promise<T | null>((resolve, reject) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const off = api.onJobDone!((d) => {
-      if (d.jobId !== jobId) return;
-      if (timer !== undefined) clearTimeout(timer);
-      off();
-      resolve(extract(d.result));
-    });
-    if (timeoutMs !== undefined && timeoutMs > 0) {
-      timer = setTimeout(() => {
-        off();
-        reject(
-          new Error(
-            'Timed out waiting for the export to finish — the sidecar may have ' +
-              'stopped responding. Please try again.',
-          ),
-        );
-      }, timeoutMs);
-    }
-  });
 }

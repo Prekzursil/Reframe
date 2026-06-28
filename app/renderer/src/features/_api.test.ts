@@ -1,8 +1,10 @@
 // Unit tests for the pure helpers in the feature-panel shared module.
 // Pure logic only — no React render, no window.api, no heavy imports.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  DEFAULT_JOB_TIMEOUT_MS,
   type DoneEvent,
+  JobAbortedError,
   type MediaStudioApi,
   type ProgressEvent,
   extractJobId,
@@ -16,6 +18,8 @@ import {
 function fakeApi(opts: { withJobDone?: boolean } = {}): {
   api: MediaStudioApi;
   fire: (ev: DoneEvent) => void;
+  /** Live subscriber count — 0 proves the wait cleaned up its subscription. */
+  count: () => number;
 } {
   const listeners: Array<(ev: DoneEvent) => void> = [];
   const api: MediaStudioApi = {
@@ -31,7 +35,11 @@ function fakeApi(opts: { withJobDone?: boolean } = {}): {
       };
     };
   }
-  return { api, fire: (ev) => listeners.slice().forEach((l) => l(ev)) };
+  return {
+    api,
+    fire: (ev) => listeners.slice().forEach((l) => l(ev)),
+    count: () => listeners.length,
+  };
 }
 
 describe('fmtSeconds', () => {
@@ -122,11 +130,143 @@ describe('waitForJobDone', () => {
   });
 
   it('unsubscribes after the first matching event (no leak)', async () => {
-    const { api, fire } = fakeApi();
+    const { api, fire, count } = fakeApi();
     const promise = waitForJobDone(api, 'job-9', (r) => pickField<string[]>(r, 'paths'));
     fire({ jobId: 'job-9', result: { paths: ['/x'] } });
     await expect(promise).resolves.toEqual(['/x']);
+    expect(count()).toBe(0); // subscription cleaned up
     // A second fire after resolution must not throw (listener already removed).
     expect(() => fire({ jobId: 'job-9', result: { paths: ['/y'] } })).not.toThrow();
+  });
+
+  // ---- F1: surface the {error} job.done payload as a rejection --------------
+
+  it('REJECTS with the message when job.done carries an {error} payload', async () => {
+    const { api, fire, count } = fakeApi();
+    const promise = waitForJobDone(api, 'job-e', (r) => pickField<string>(r, 'path'));
+    const assertion = expect(promise).rejects.toThrow('disk full');
+    fire({ jobId: 'job-e', result: { error: { message: 'disk full', type: 'RpcError' } } });
+    await assertion;
+    expect(count()).toBe(0); // subscription torn down on the error reject
+  });
+
+  it('treats a JobCancelled error payload as a clean finish (resolves null, no throw)', async () => {
+    const { api, fire } = fakeApi();
+    const promise = waitForJobDone(api, 'job-c', (r) => pickField<string>(r, 'path'));
+    fire({ jobId: 'job-c', result: { error: { message: 'cancelled', type: 'JobCancelled' } } });
+    await expect(promise).resolves.toBeNull();
+  });
+
+  it('resolves the extracted value (null) when job.done has neither result nor error', async () => {
+    const { api, fire } = fakeApi();
+    const promise = waitForJobDone(api, 'job-n', (r) => pickField<string>(r, 'path'));
+    fire({ jobId: 'job-n', result: {} });
+    await expect(promise).resolves.toBeNull();
+  });
+
+  // ---- F2: timeout ---------------------------------------------------------
+
+  it('REJECTS with a user-facing message when the timeout elapses', async () => {
+    vi.useFakeTimers();
+    try {
+      const { api, count } = fakeApi(); // job.done never fires (dead sidecar)
+      const promise = waitForJobDone(api, 'job-t', (r) => pickField<string>(r, 'path'), 1000);
+      const assertion = expect(promise).rejects.toThrow(/Timed out waiting for the job/);
+      await vi.advanceTimersByTimeAsync(1000);
+      await assertion;
+      expect(count()).toBe(0); // subscription torn down on timeout
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('applies the default timeout when none is given', async () => {
+    vi.useFakeTimers();
+    try {
+      const { api } = fakeApi();
+      const promise = waitForJobDone(api, 'job-d', (r) => pickField<string>(r, 'path'));
+      const assertion = expect(promise).rejects.toThrow(/Timed out waiting for the job/);
+      await vi.advanceTimersByTimeAsync(DEFAULT_JOB_TIMEOUT_MS);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears the timer when the job resolves first (no late rejection)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { api, fire } = fakeApi();
+      const promise = waitForJobDone(api, 'job-r', (r) => pickField<string>(r, 'path'), 1000);
+      fire({ jobId: 'job-r', result: { path: '/ok.mp4' } });
+      await expect(promise).resolves.toBe('/ok.mp4');
+      await vi.advanceTimersByTimeAsync(1000); // must NOT produce a late rejection
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never times out when timeoutMs is 0 (disabled)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { api } = fakeApi();
+      const promise = waitForJobDone(api, 'job-0', (r) => pickField<string>(r, 'path'), 0);
+      let settled = false;
+      void promise.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(DEFAULT_JOB_TIMEOUT_MS * 2);
+      expect(settled).toBe(false); // no timer armed — still pending
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // ---- F2: AbortSignal (cancel / unmount) ----------------------------------
+
+  it('REJECTS with JobAbortedError when the signal aborts mid-wait', async () => {
+    const { api, count } = fakeApi();
+    const ctrl = new AbortController();
+    const promise = waitForJobDone(
+      api,
+      'job-a',
+      (r) => pickField<string>(r, 'path'),
+      DEFAULT_JOB_TIMEOUT_MS,
+      ctrl.signal,
+    );
+    const assertion = expect(promise).rejects.toBeInstanceOf(JobAbortedError);
+    ctrl.abort();
+    await assertion;
+    expect(count()).toBe(0); // subscription + abort listener torn down
+  });
+
+  it('REJECTS immediately with JobAbortedError when the signal is already aborted', async () => {
+    const { api, count } = fakeApi();
+    const ctrl = new AbortController();
+    ctrl.abort();
+    await expect(
+      waitForJobDone(
+        api,
+        'job-pre',
+        (r) => pickField<string>(r, 'path'),
+        DEFAULT_JOB_TIMEOUT_MS,
+        ctrl.signal,
+      ),
+    ).rejects.toBeInstanceOf(JobAbortedError);
+    expect(count()).toBe(0); // never left a dangling subscription
+  });
+});
+
+describe('JobAbortedError', () => {
+  it('carries a default message and the JobAbortedError name', () => {
+    const err = new JobAbortedError();
+    expect(err.name).toBe('JobAbortedError');
+    expect(err.message).toContain('aborted');
+    expect(err).toBeInstanceOf(Error);
   });
 });

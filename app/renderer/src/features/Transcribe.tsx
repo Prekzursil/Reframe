@@ -86,6 +86,10 @@ export function Transcribe({ videoId, onTranscript }: TranscribeProps): React.Re
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPhase('error');
+    } finally {
+      // F1/F2: a job that finished with neither a transcript nor an error (or a
+      // timed-out wait) must NOT stick on 'running' forever — drop back to idle.
+      setPhase((p) => (p === 'running' ? 'idle' : p));
     }
   }, [videoId, language, onTranscript]);
 

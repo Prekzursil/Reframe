@@ -1008,7 +1008,7 @@ describe('waitForJobDone', () => {
       };
       const p = waitForJobDone(api, 'j1', extractClips, EXPORT_JOB_TIMEOUT_MS);
       // Attach the rejection handler BEFORE advancing time (no unhandled reject).
-      const assertion = expect(p).rejects.toThrow(/Timed out waiting for the export/);
+      const assertion = expect(p).rejects.toThrow(/Timed out waiting for the job/);
       await vi.advanceTimersByTimeAsync(EXPORT_JOB_TIMEOUT_MS);
       await assertion;
       expect(off).toBe(true); // the subscription was cleaned up on timeout
@@ -1041,7 +1041,10 @@ describe('waitForJobDone', () => {
     }
   });
 
-  it('never times out when no timeoutMs is given (back-compat)', async () => {
+  it('applies the shared default timeout when no timeoutMs is given', async () => {
+    // F2: the consolidated helper ALWAYS races a timeout (the shared default) so
+    // the 9 panels that omit one still cannot hang the UI. (timeoutMs=0 to
+    // disable is covered centrally in _api.test.ts.)
     vi.useFakeTimers();
     try {
       const api: Api = {
@@ -1049,18 +1052,10 @@ describe('waitForJobDone', () => {
         onProgress: () => () => {},
         onJobDone: () => () => {},
       };
-      const p = waitForJobDone(api, 'j1', extractClips); // no timeout arg
-      let settled = false;
-      void p.then(
-        () => {
-          settled = true;
-        },
-        () => {
-          settled = true;
-        },
-      );
-      await vi.advanceTimersByTimeAsync(EXPORT_JOB_TIMEOUT_MS * 2);
-      expect(settled).toBe(false); // still pending — no timer was armed
+      const p = waitForJobDone(api, 'j1', extractClips); // no timeout arg -> default
+      const assertion = expect(p).rejects.toThrow(/Timed out waiting for the job/);
+      await vi.advanceTimersByTimeAsync(EXPORT_JOB_TIMEOUT_MS);
+      await assertion;
     } finally {
       vi.useRealTimers();
     }
@@ -2104,7 +2099,7 @@ describe('<ShortMaker /> component', () => {
     expect(container.querySelector('.sm-exported')?.textContent).toContain('Exported 2 clip(s)');
   });
 
-  it('batch surfaces an error and does NOT export when no candidates are proposed', async () => {
+  it('batch shows the empty state (not an error) and does NOT export when no candidates are proposed', async () => {
     const rpc = rpcFake({ 'shortmaker.select': { candidates: [] } });
     render(<ShortMaker videoId="v1" api={makeApi({ rpc })} initialControls={{ count: 3 }} />);
     await act(async () => {
@@ -2113,7 +2108,9 @@ describe('<ShortMaker /> component', () => {
     });
     await flush();
     expect(rpc.mock.calls.find((c) => c[0] === 'shortmaker.export')).toBeUndefined();
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('No candidates');
+    // F1: a confirmed zero-result is the EMPTY state, not an error alert/Retry.
+    expect(container.querySelector('.sm-empty')?.textContent).toContain('No candidates');
+    expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
   // -------------------------------------------------------------------------
@@ -2518,6 +2515,160 @@ describe('<ShortMaker /> component', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(
       'batch select blew up',
     );
+  });
+
+  // ---- F1: distinct error state + Retry (re-runs the failed op) ------------
+
+  it('a select failure shows a DISTINCT error + Retry that re-runs select', async () => {
+    let n = 0;
+    const rpc = vi.fn(async (method: string) => {
+      if (method === 'shortmaker.select') {
+        n += 1;
+        if (n === 1) throw new Error('select blew up');
+        return { candidates: THREE };
+      }
+      return {};
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc })} />);
+    await submitForm();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('select blew up');
+    const retryBtn = container.querySelector('.sm-retry') as HTMLButtonElement;
+    expect(retryBtn).toBeTruthy();
+    await act(async () => {
+      retryBtn.click();
+      await Promise.resolve();
+    });
+    await flush();
+    // Retry re-ran select -> candidates loaded, error cleared.
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelectorAll('.sm-candidate').length).toBe(3);
+  });
+
+  it('a batch failure shows a Retry that re-runs the batch', async () => {
+    let n = 0;
+    const rpc = vi.fn(async (method: string) => {
+      if (method === 'shortmaker.select') {
+        n += 1;
+        if (n === 1) throw new Error('batch blew up');
+        return { candidates: THREE };
+      }
+      if (method === 'shortmaker.export') return { clips: [{ path: '/out/b.mp4' }] };
+      return {};
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc })} initialControls={{ count: 3 }} />);
+    await act(async () => {
+      (byLabel('Make N shorts') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('batch blew up');
+    await act(async () => {
+      (container.querySelector('.sm-retry') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('.sm-exported')?.textContent).toContain('/out/b.mp4');
+  });
+
+  it('an export failure shows a Retry that re-runs the export', async () => {
+    let n = 0;
+    const rpc = vi.fn(async (method: string) => {
+      if (method === 'shortmaker.select') return { candidates: THREE };
+      if (method === 'shortmaker.export') {
+        n += 1;
+        if (n === 1) throw new Error('export blew up');
+        return { clips: [{ path: '/out/e.mp4' }] };
+      }
+      return {};
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc })} />);
+    await submitForm();
+    const row = container.querySelector('.sm-candidate[data-id="1@97"]')!;
+    act(() => (row.querySelector('[aria-label="Approve"]') as HTMLButtonElement).click());
+    await act(async () => {
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'Export approved',
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('export blew up');
+    await act(async () => {
+      (container.querySelector('.sm-retry') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('.sm-exported')?.textContent).toContain('/out/e.mp4');
+  });
+
+  // ---- F2: Cancel always resets to idle (aborts the wait, no error) --------
+
+  it('Cancel during export aborts the wait and resets to idle (no error)', async () => {
+    const rpc = vi.fn(async (method: string) => {
+      if (method === 'shortmaker.select') return { candidates: THREE };
+      if (method === 'shortmaker.export') return { jobId: 'exp-1' };
+      return {};
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    // job.done NEVER fires (a cancelled export emits none) -> only the abort
+    // can unwedge the wait.
+    const api = makeApi({ rpc, onJobDone: () => () => undefined });
+    render(<ShortMaker videoId="v1" api={api} />);
+    await submitForm();
+    const row = container.querySelector('.sm-candidate[data-id="1@97"]')!;
+    act(() => (row.querySelector('[aria-label="Approve"]') as HTMLButtonElement).click());
+    await act(async () => {
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'Export approved',
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'Cancel',
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    // Idle again: no Cancel button left (escape to idle, no hang).
+    expect(
+      [...container.querySelectorAll('button')].find((b) => b.textContent === 'Cancel'),
+    ).toBeUndefined();
+  });
+
+  it('Cancel during a batch aborts the wait and resets to idle (no hang)', async () => {
+    const calls: string[] = [];
+    const rpc = vi.fn(async (method: string) => {
+      calls.push(method);
+      if (method === 'shortmaker.select') return { jobId: 'bsel-1' };
+      return {};
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    const api = makeApi({ rpc, onJobDone: () => () => undefined });
+    render(<ShortMaker videoId="v1" api={api} initialControls={{ count: 2 }} />);
+    await act(async () => {
+      (byLabel('Make N shorts') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'Cancel',
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(calls).toContain('job.cancel');
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(
+      [...container.querySelectorAll('button')].find((b) => b.textContent === 'Cancel'),
+    ).toBeUndefined();
   });
 
   it('shows a clip with fillersRemoved but no fillerSeconds (defaults the seconds)', async () => {
@@ -2989,7 +3140,9 @@ describe('<ShortMaker /> component', () => {
       await Promise.resolve();
     });
     await flush();
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('No candidates');
+    // F1: a confirmed zero-result is the EMPTY state, not an error alert.
+    expect(container.querySelector('.sm-empty')?.textContent).toContain('No candidates');
+    expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
   it('treats an empty data-folder string from the bridge as no folder', async () => {

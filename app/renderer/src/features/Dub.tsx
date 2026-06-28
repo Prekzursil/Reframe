@@ -18,7 +18,6 @@ import './panels.css';
 import {
   extractJobId,
   getApi,
-  pickField,
   waitForJobDone,
   type MediaStudioApi,
   type SubtitleTrack,
@@ -106,15 +105,6 @@ export function buildDubParams(args: {
  */
 export function dubMediaUrl(path: string): string {
   return `mstream://media/${encodeURIComponent(`dub:${path}`)}`;
-}
-
-/** Pull the §A3 job.done error payload message ({error:{message,type}}). */
-export function doneErrorMessage(result: unknown): string | null {
-  const err = pickField<{ message?: unknown }>(result, 'error');
-  if (err && typeof err === 'object' && typeof err.message === 'string') {
-    return err.message;
-  }
-  return null;
 }
 
 export interface DubProps {
@@ -236,11 +226,10 @@ export function Dub({ videoId, api }: DubProps): React.ReactElement {
       const res = await bridge.rpc<{ jobId: string }>('tts.dub.start', params);
       const id = extractJobId(res) ?? null;
       setJobId(id);
+      // F1: waitForJobDone REJECTS on an {error} job.done payload (surfaced by
+      // the catch below) — no more silent doneErrorMessage swallow.
       const done = id ? await waitForJobDone<unknown>(bridge, id, (r) => r ?? null) : null;
-      const errMessage = doneErrorMessage(done);
-      if (errMessage) {
-        setError(errMessage);
-      } else if (done && typeof done === 'object') {
+      if (done && typeof done === 'object') {
         const payload = done as DubDoneResult;
         if (payload.audioTrack && payload.path) setResult(payload);
         setPct(100);

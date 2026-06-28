@@ -50,8 +50,11 @@ class FakeWhisperLoader:
 
 class FakeProvider:
     def chat(self, *args: Any, **kwargs: Any) -> str:
-        # never reached by the silent-path tests; present so select() has a provider.
-        return "[]"
+        # An explicit empty clips object = a GENUINE empty selection (the text
+        # path proposes nothing, so these tests exercise the vision/egress path).
+        # NOTE: a bare "[]" would now be a PARSE FAILURE (no JSON clips object,
+        # F1) and raise SelectionParseError — use the valid empty-clips object.
+        return '{"clips": []}'
 
     def exemplar_block(self, language: str | None = None) -> str | None:
         return None

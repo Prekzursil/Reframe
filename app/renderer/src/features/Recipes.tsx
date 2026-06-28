@@ -13,7 +13,7 @@
 // the shared `./_api` helpers, the same pattern as the sibling panels.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import './panels.css';
-import { getApi, pickField, waitForJobDone, type MediaStudioApi } from './_api';
+import { getApi, waitForJobDone, type MediaStudioApi } from './_api';
 
 // --- wire shapes (field names FROZEN, identical to the Python side) ---------
 export interface RecipeStep {
@@ -80,15 +80,6 @@ export const RECIPE_PRESETS: RecipePreset[] = [
 /** Build a save-ready recipe payload from a preset + the active videoId. */
 export function buildRecipeFromPreset(preset: RecipePreset, videoId: string): Omit<Recipe, 'id'> {
   return { name: preset.name, steps: preset.build(videoId) };
-}
-
-/** Pull the §A3 job.done error payload message ({error:{message,type}}). */
-export function doneErrorMessage(result: unknown): string | null {
-  const err = pickField<{ message?: unknown }>(result, 'error');
-  if (err && typeof err === 'object' && typeof err.message === 'string') {
-    return err.message;
-  }
-  return null;
 }
 
 export interface RecipesProps {
@@ -173,14 +164,12 @@ export function Recipes({ videoId, api }: RecipesProps): React.ReactElement {
         const res = await bridge.rpc<{ jobId: string }>('recipes.run', { id });
         const job = res?.jobId ?? null;
         setJobId(job);
-        const result = job ? await waitForJobDone<unknown>(bridge, job, (r) => r ?? null) : null;
-        const errMessage = doneErrorMessage(result);
-        if (errMessage) {
-          setRunError(errMessage);
-        } else {
-          setPct(100);
-          setMessage('Done');
-        }
+        // F1: waitForJobDone REJECTS on an {error} job.done payload (surfaced by
+        // the catch below) — no more silent doneErrorMessage swallow. We only
+        // need it to settle (success or reject); the recipe carries no payload.
+        if (job) await waitForJobDone<unknown>(bridge, job, (r) => r ?? null);
+        setPct(100);
+        setMessage('Done');
       } catch (err) {
         setRunError(err instanceof Error ? err.message : String(err));
       } finally {
