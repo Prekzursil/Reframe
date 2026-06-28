@@ -91,7 +91,8 @@ DEFAULT_ASPECT = "9:16"
 #
 # The orchestrator-facing seam each default wraps:
 #   select_candidates(transcript, prompt, controls, *, settings) -> List[Candidate]
-#   snap_candidates(candidates, transcript, *, settings) -> (kept, dropped)
+#   snap_candidates(candidates, transcript, *, controls, settings) -> (kept, dropped)
+#       (controls carries the SEL1 durationMode so BOUNDARY shares SELECT's window)
 #       kept   = re-snapped+re-ranked candidates (sourceStart re-based)
 #       dropped = [{candidate, reason}] for clips with no valid boundary
 #   cut_clip(in_path, out_path, start, end, *, settings) -> out_path
@@ -162,10 +163,21 @@ def _lazy_select(transcript, prompt, controls, *, settings=None) -> list[Candida
     return [dict(c) for c in _select.select(transcript, prompt, controls, provider)]
 
 
-def _lazy_snap(candidates, transcript, *, settings=None) -> tuple[list[Candidate], list[dict[str, Any]]]:
+def _lazy_snap(
+    candidates, transcript, *, controls=None, settings=None
+) -> tuple[list[Candidate], list[dict[str, Any]]]:
     from . import boundary as _boundary
+    from . import select as _select
 
     words = _words_of(transcript)
+    # V1.1 WU SEL1 (BLOCKER fix): thread the SELECT-side ``durationMode`` into the
+    # boundary stage so a mid-form request (16-180 s) is NOT re-clamped back to the
+    # standard 20-60 s window and silently dropped. We normalise through the SAME
+    # fail-closed clamp SELECT uses (``resolve_duration_mode``) so the two stages
+    # share ONE envelope: a typo degrades to "standard", and an absent mode leaves
+    # ``duration_mode=None`` (the boundary default window — unchanged behaviour).
+    raw_mode = (controls or {}).get("durationMode")
+    duration_mode = _select.resolve_duration_mode(raw_mode) if raw_mode is not None else None
     # CONTRACT-NOTE: silence/scene detection lives behind the boundary seam; the
     # real detectors (ffmpeg silencedetect / PySceneDetect) are wired here in
     # production. Passing empty lists makes snapping rely on sentence-end timing
@@ -175,6 +187,7 @@ def _lazy_snap(candidates, transcript, *, settings=None) -> tuple[list[Candidate
         words,
         silences=(settings or {}).get("silences"),
         scene_cuts=(settings or {}).get("sceneCuts"),
+        duration_mode=duration_mode,
     )
 
 
@@ -776,7 +789,9 @@ def run_select(
     # -- BOUNDARY-SNAP (batch) -------------------------------------------------
     ctx.progress(55, "snapping boundaries")
     ctx.raise_if_cancelled()
-    kept, dropped = stages.snap_candidates(raw, transcript, settings=settings)
+    # SEL1: forward controls so BOUNDARY-SNAP honours the same durationMode
+    # envelope SELECT used (else a mid-form clip is re-clamped to 20-60 s here).
+    kept, dropped = stages.snap_candidates(raw, transcript, controls=controls, settings=settings)
     kept = [_coerce_candidate(c, i + 1) for i, c in enumerate(kept or [])]
 
     requested = int(controls.get("count", len(raw)) or len(raw))

@@ -116,8 +116,9 @@ class RecordingStages:
         self.calls.append("select")
         return list(self._select_return)
 
-    def snap_candidates(self, candidates, transcript, *, settings=None):
+    def snap_candidates(self, candidates, transcript, *, controls=None, settings=None):
         self.calls.append("snap")
+        self.snap_controls = controls
         if self._snap_impl is not None:
             return self._snap_impl(list(candidates))
         # Default: a no-op pass-through snap that fixes sourceStart=start and
@@ -374,6 +375,77 @@ def test_run_select_passes_coerced_candidates_to_snap(transcript):
     )
     passed = seen["candidates"][0]
     assert passed["rank"] == 1 and passed["score"] == 0 and "sourceStart" in passed
+
+
+# ---------------------------------------------------------------------------
+# SELECT phase — durationMode threads SELECT<->BOUNDARY (V1.1 WU SEL1)
+# ---------------------------------------------------------------------------
+def _long_clip_transcript(span_sec: float = 155.0) -> dict[str, Any]:
+    """A transcript whose words span ~0..span_sec with NO sentence punctuation.
+
+    With no sentence terminators the only boundary targets are the injected
+    silences, so a long-clip request snaps cleanly to a single silence pair —
+    the same shape the boundary-unit mid-form test uses, lifted to the pipeline.
+    """
+    words = [{"text": "w", "start": float(i), "end": float(i) + 0.5} for i in range(int(span_sec))]
+    return {
+        "language": "en",
+        "durationSec": span_sec,
+        "segments": [
+            {"start": 0.0, "end": span_sec, "text": "w " * int(span_sec), "words": words},
+        ],
+    }
+
+
+def _long_clip_select(*_args, **_kwargs):
+    """A SELECT stage that emits ONE ~150 s mid-form candidate (too long for 20-60)."""
+    return [{"rank": 1, "start": 0.1, "end": 150.5, "hook": "h", "why": "w", "score": 95}]
+
+
+def test_run_select_midform_keeps_long_clip_through_pipeline():
+    """SEL1 BLOCKER fix: durationMode='midform' survives SELECT -> BOUNDARY-SNAP.
+
+    Uses the REAL default ``snap_candidates`` (``_lazy_snap``) so the wiring from
+    controls into ``boundary.snap_from_lists`` is exercised end-to-end — not the
+    in-isolation unit. A 150 s clip would be dropped under the standard 20-60
+    window; the mid-form envelope (16-180 s) must keep it WHOLE.
+    """
+    stages = sm.Stages(select_candidates=_long_clip_select)
+    out = sm.run_select(
+        make_ctx(),
+        video_id="v1",
+        prompt="best clips",
+        controls={"durationMode": "midform", "count": 1},
+        load_context=loader_for("/src.mp4", _long_clip_transcript()),
+        stages=stages,
+        settings={"silences": [0.0, 150.0]},
+    )
+    assert "reason" not in out
+    assert len(out["candidates"]) == 1
+    cand = out["candidates"][0]
+    assert cand["start"] == pytest.approx(0.0)
+    assert cand["end"] == pytest.approx(150.0)
+    assert cand["durationSec"] == pytest.approx(150.0)
+
+
+def test_run_select_standard_drops_long_clip_through_pipeline():
+    """Control for the SEL1 fix: the SAME long clip is DROPPED under standard.
+
+    Locks the SELECT<->BOUNDARY envelope agreement — if the mid-form window
+    leaked into the standard path (or vice versa) one of these two asserts breaks.
+    """
+    stages = sm.Stages(select_candidates=_long_clip_select)
+    out = sm.run_select(
+        make_ctx(),
+        video_id="v1",
+        prompt="best clips",
+        controls={"durationMode": "standard", "count": 1},
+        load_context=loader_for("/src.mp4", _long_clip_transcript()),
+        stages=stages,
+        settings={"silences": [0.0, 150.0]},
+    )
+    assert out["candidates"] == []
+    assert out["reason"] == "no clips"
 
 
 # ---------------------------------------------------------------------------
@@ -2524,8 +2596,14 @@ class TestLazySnapStage:
 
         seen: dict[str, Any] = {}
 
-        def fake_snap(candidates, words, *, silences, scene_cuts):
-            seen.update(candidates=candidates, words=words, silences=silences, scene_cuts=scene_cuts)
+        def fake_snap(candidates, words, *, silences, scene_cuts, duration_mode=None):
+            seen.update(
+                candidates=candidates,
+                words=words,
+                silences=silences,
+                scene_cuts=scene_cuts,
+                duration_mode=duration_mode,
+            )
             return list(candidates), []
 
         monkeypatch.setattr(boundary, "snap_from_lists", fake_snap)
@@ -2540,7 +2618,26 @@ class TestLazySnapStage:
         assert [w["text"] for w in seen["words"]] == ["a", "b"]
         assert seen["silences"] == [(1, 2)]
         assert seen["scene_cuts"] == [3.0]
+        # No controls -> no duration_mode override (standard 20-60 window applies).
+        assert seen["duration_mode"] is None
         assert kept == cands and dropped == []
+
+    def test_threads_duration_mode_from_controls(self, monkeypatch):
+        """SEL1: ``durationMode`` from controls reaches ``snap_from_lists`` (clamped)."""
+        import media_studio.features.boundary as boundary
+
+        seen: dict[str, Any] = {}
+
+        def fake_snap(candidates, words, *, silences, scene_cuts, duration_mode=None):
+            seen["duration_mode"] = duration_mode
+            return list(candidates), []
+
+        monkeypatch.setattr(boundary, "snap_from_lists", fake_snap)
+        sm._lazy_snap([], {"segments": []}, controls={"durationMode": "midform"})
+        assert seen["duration_mode"] == "midform"
+        # A typo fails closed to the conservative standard envelope (shared clamp).
+        sm._lazy_snap([], {"segments": []}, controls={"durationMode": "bogus"})
+        assert seen["duration_mode"] == "standard"
 
     def test_settings_none_passes_none_detectors(self, monkeypatch):
         import media_studio.features.boundary as boundary
@@ -2549,7 +2646,10 @@ class TestLazySnapStage:
         monkeypatch.setattr(
             boundary,
             "snap_from_lists",
-            lambda c, w, *, silences, scene_cuts: seen.update(silences=silences, scene_cuts=scene_cuts) or (c, []),
+            lambda c, w, *, silences, scene_cuts, duration_mode=None: seen.update(
+                silences=silences, scene_cuts=scene_cuts
+            )
+            or (c, []),
         )
         sm._lazy_snap([], {"segments": []}, settings=None)
         assert seen["silences"] is None and seen["scene_cuts"] is None
