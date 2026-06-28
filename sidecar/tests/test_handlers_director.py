@@ -465,7 +465,8 @@ def test_director_apply_requires_job_registry(tmp_path: Path) -> None:
 # purity: the director feature module imports no Provider/transport
 # --------------------------------------------------------------------------- #
 def test_director_feature_module_is_pure() -> None:
-    src = Path(handlers.__file__).with_name("features") / "director.py"
+    # handlers is now a package (media_studio/handlers/); features is its sibling.
+    src = Path(handlers.__file__).parent.parent / "features" / "director.py"
     tree = ast.parse(src.read_text(encoding="utf-8"))
     imported: list[str] = []
     for node in ast.walk(tree):

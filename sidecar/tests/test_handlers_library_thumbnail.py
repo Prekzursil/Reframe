@@ -161,7 +161,9 @@ def test_uses_default_ffmpeg_run_seam_when_not_injected(
         out.write_bytes(b"\xff\xd8\xff")
         return 0
 
-    monkeypatch.setattr(handlers, "_self_ffmpeg_run", lambda: fake_run)
+    # F4b: the default-seam factory is looked up in the library_ops handler module
+    # (patch where it is USED, not the package re-export).
+    monkeypatch.setattr(handlers.library_ops, "_self_ffmpeg_run", lambda: fake_run)
     svc = Services(data_dir=tmp_path / "data", ffprobe_duration=lambda _p: 0.0)
     video = svc.library.add(str(fake_video))
 

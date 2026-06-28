@@ -36,6 +36,7 @@ export default defineConfig({
         '**/*.d.ts',
         // Pure re-export barrels (no logic to cover).
         'renderer/src/components/index.ts',
+        'renderer/src/lib/rpc/index.ts',
         // Browser entry point: mounts <App/> into the DOM via ReactDOM; runs only
         // in the packaged renderer, not under jsdom unit tests.
         'renderer/src/main.tsx',

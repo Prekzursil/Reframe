@@ -11,6 +11,7 @@
 // CONTRACT-NOTE: the wire field names here are FROZEN — identical to the
 // Python/sidecar side (§3 Candidate / §2 controls). Do not rename.
 import type { PlayerWindow } from '../components/Player';
+import { logWarn } from '../lib/logger';
 // F1+F2: the deferred-job wait is the SINGLE shared helper in ./_api (timeout +
 // {error} reject + AbortSignal + leak-free cleanup). This module drops its old
 // private copy and re-exports the shared one so existing importers/tests (which
@@ -518,10 +519,10 @@ export function recordFeedback(
   if (!api || typeof api.rpc !== 'function') return;
   try {
     Promise.resolve(api.rpc('feedback.record', { videoId, candidate, action })).catch((e) => {
-      console.warn('feedback.record failed (ignored)', e);
+      logWarn('feedback.record failed (ignored)', e);
     });
   } catch (e) {
-    console.warn('feedback.record failed (ignored)', e);
+    logWarn('feedback.record failed (ignored)', e);
   }
 }
 

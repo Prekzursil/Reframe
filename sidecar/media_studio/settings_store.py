@@ -197,17 +197,82 @@ class SettingsStore:
         merged.update(self._read())
         return merged
 
+    @staticmethod
+    def _restore_one(incoming: Any, stored: Any) -> Any:
+        """Swap a redacted ``incoming`` value back to the RAW ``stored`` key.
+
+        Returns ``stored`` only when ``incoming`` is exactly the :func:`redact`
+        form of a non-empty stored RAW key (a redacted get -> set round-trip);
+        otherwise ``incoming`` is a genuinely new value and is returned as-is.
+        """
+        if isinstance(incoming, str) and isinstance(stored, str) and stored and incoming == redact(stored):
+            return stored
+        return incoming
+
+    @staticmethod
+    def _stored_provider_keys(current: dict[str, Any]) -> dict[str, list[Any]]:
+        """Map each stored provider ``id`` -> its RAW ``apiKeys`` list (for restore)."""
+        raw_providers = current.get("providers")
+        items = raw_providers if isinstance(raw_providers, list) else []
+        out: dict[str, list[Any]] = {}
+        for raw in items:
+            pid = raw.get("id") if isinstance(raw, dict) else None
+            keys = raw.get("apiKeys") if isinstance(raw, dict) else None
+            if isinstance(pid, str) and isinstance(keys, list):
+                out[pid] = keys
+        return out
+
+    def _restore_provider(self, prov: Any, stored_by_id: dict[str, list[Any]]) -> Any:
+        """Restore each redacted ``apiKeys`` entry of ``prov`` to its stored RAW key.
+
+        Matching is by provider ``id`` then positional index: an incoming key that
+        equals the redaction of the same-index stored key is swapped back to RAW;
+        a new/changed key (or a key with no stored counterpart) is left untouched.
+        """
+        if not isinstance(prov, dict):
+            return prov
+        pid = prov.get("id")
+        keys = prov.get("apiKeys")
+        stored = stored_by_id.get(pid) if isinstance(pid, str) else None
+        if not isinstance(keys, list) or stored is None:
+            return prov
+        restored = [self._restore_one(k, stored[i]) if i < len(stored) else k for i, k in enumerate(keys)]
+        return {**prov, "apiKeys": restored}
+
+    def _restore_redacted_keys(self, values: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+        """Return ``values`` with redacted-placeholder secrets restored to RAW.
+
+        The RPC-facing :meth:`get` returns keys redacted to last-4. A UI that reads
+        settings and writes the whole block back would otherwise PERSIST the
+        redacted placeholder over the live key, silently destroying it. Every
+        incoming ``cloudApiKey`` / ``providers[].apiKeys`` value that is exactly the
+        redaction of the stored RAW key is swapped back so a get -> set round-trip
+        is a no-op on secrets; genuinely new keys are written as given.
+        """
+        restored = dict(values)
+        if "cloudApiKey" in restored:
+            restored["cloudApiKey"] = self._restore_one(restored["cloudApiKey"], current.get("cloudApiKey"))
+        providers = restored.get("providers")
+        if isinstance(providers, list):
+            stored_by_id = self._stored_provider_keys(current)
+            restored["providers"] = [self._restore_provider(p, stored_by_id) for p in providers]
+        return restored
+
     def set(self, values: dict[str, Any]) -> dict[str, Any]:
         """Merge ``values`` over the stored settings, persist, and return the result.
 
         Only the keys present in ``values`` are updated (a partial update); the
         rest of the stored settings are preserved. Returns the full merged object
         so the caller (and the UI) always sees the complete current state.
+
+        A redacted secret in ``values`` (the last-4 placeholder :meth:`get`
+        returns) is restored to the stored RAW key before persisting, so a
+        get -> set round-trip never overwrites a live key with its placeholder.
         """
         if not isinstance(values, dict):
             raise ValueError("settings.set expects an object of values")
         current = dict(self._read())
-        current.update(values)
+        current.update(self._restore_redacted_keys(values, current))
         self._write(current)
         # The on-disk store keeps RAW keys (the factory reads them via get_raw);
         # the RPC-facing return MUST be redacted exactly like get() so the

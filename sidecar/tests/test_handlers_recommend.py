@@ -195,7 +195,8 @@ def test_system_recommend_commercial_defaults_to_settings(tmp_path: Path, monkey
 # --------------------------------------------------------------------------- #
 def test_system_recommend_unavailable_on_no_probe_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Force the advisor wire to lack recommendedPreset (the recommender's G-B1 trigger).
-    monkeypatch.setattr(handlers, "_advisor_report_to_wire", lambda _r: {"components": []})
+    # F4b: the wire adapter is looked up in the system_ops handler module (patch where USED).
+    monkeypatch.setattr(handlers.system_ops, "_advisor_report_to_wire", lambda _r: {"components": []})
     svc = _services(tmp_path)
     out = svc.system_recommend({}, _direct())  # must NOT raise
     rec = out["recommendation"]

@@ -502,7 +502,7 @@ def make_transcribe_handler(
     *,
     loader: WhisperLoader | None = None,
     on_transcribed: TranscribedHook | None = None,
-):
+) -> Callable[[dict[str, Any], Any], dict[str, Any]]:
     """Build the ``transcribe.start`` RPC handler.
 
     ``resolve_video`` maps a ``videoId`` to its media path (the library owns the

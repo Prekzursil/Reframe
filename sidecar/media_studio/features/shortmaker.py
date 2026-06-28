@@ -336,18 +336,18 @@ def _lazy_brand_overlay(in_path, out_path, logo_path, *, settings=None) -> str:
 _SUBTITLE_MODES = ("burn", "softmux", "sidecar", "none")
 
 
-def resolve_subtitle_mode(settings) -> str:
+def resolve_subtitle_mode(settings: dict[str, Any] | None) -> str:
     """The validated ``subtitleMode`` (defaults to ``burn`` — quality-ON, G-4)."""
     raw = str((settings or {}).get("subtitleMode") or "").strip().lower()
     return raw if raw in _SUBTITLE_MODES else "burn"
 
 
-def caption_embedded(settings) -> bool:
+def caption_embedded(settings: dict[str, Any] | None) -> bool:
     """True when captions are written INTO the exported video (burn or soft track)."""
     return resolve_subtitle_mode(settings) in ("burn", "softmux")
 
 
-def resolve_caption_burn(settings) -> bool:
+def resolve_caption_burn(settings: dict[str, Any] | None) -> bool:
     """True when captions are hard-burned into the pixels (``subtitleMode=burn``)."""
     return resolve_subtitle_mode(settings) == "burn"
 
