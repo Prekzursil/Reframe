@@ -185,6 +185,52 @@ def models_runners(self: Services, params: dict[str, Any], ctx: RpcContext) -> d
     return cast("dict[str, Any]", plan)
 
 
+def models_overview(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``models.overview({commercial?})`` -> the unified Models&System screen. Direct.
+
+    M1a — the THIN compose RPC the "Models & System" panel renders as ONE screen
+    (DESIGN §2.3 step 2): it stitches the EXISTING cheap probes/handlers together
+    with NO new model logic. The shape is
+    ``{hardware, tiers, recommendedPreset, runners, localPlan, providers, keyPool,
+    routingPolicy}``:
+
+      * ``hardware`` — :meth:`system_probe` (VRAM/RAM/CPU/GPU/disk).
+      * ``tiers`` / ``recommendedPreset`` — the :meth:`system_advisor` report's
+        rolled-up tiers + the recommended preset (``commercial`` honored).
+      * ``runners`` — the detected Ollama / LM Studio servers (``detect``).
+      * ``localPlan`` — the PURE :func:`model_recommend.recommend_local_models`
+        device-ranked whisper + LLM + per-runner pull/install advice.
+      * ``providers`` — the REDACTED :meth:`providers_list` (last-4 keys only).
+      * ``keyPool`` — the per-key rows derived from those redacted providers
+        (:func:`key_pool.build_key_pool`); M4 enriches them with live usage.
+      * ``routingPolicy`` — the persisted policy read FAIL-CLOSED to ``local``
+        (:func:`routing_policy.read_routing_policy`; GATE-2 zero-egress).
+
+    Composes probes/reads ONLY: ZERO provider/LLM calls, NO pull, and NO settings
+    mutation (a strictly read-only screen). No full key ever crosses RPC.
+    """
+    from ..models import key_pool as _key_pool  # local: import-light pure
+    from ..models import model_recommend as _mr  # local: import-light pure
+    from ..models import routing_policy as _routing_policy  # local: import-light pure
+
+    settings = self.settings.get()  # REDACTED view (providers' keys already last-4)
+    hardware = self.system_probe(params, ctx)
+    advisor = self.system_advisor(params, ctx)
+    detected_local = self._detect_local_servers(settings)
+    local_plan = _mr.recommend_local_models(hardware, detected_local)
+    providers = self.providers_list(params, ctx)["providers"]
+    return {
+        "hardware": hardware,
+        "tiers": advisor["tiers"],
+        "recommendedPreset": advisor["recommendedPreset"],
+        "runners": detected_local,
+        "localPlan": local_plan,
+        "providers": providers,
+        "keyPool": _key_pool.build_key_pool(providers),
+        "routingPolicy": _routing_policy.read_routing_policy(settings),
+    }
+
+
 def system_self_test(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
     """``system.selfTest()`` -> the first-run diagnostic report. Direct-return.
 

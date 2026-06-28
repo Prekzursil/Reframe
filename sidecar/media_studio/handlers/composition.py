@@ -81,6 +81,11 @@ def register_all(
     # composes the cheap hardware probe + local-server detect through the PURE
     # model_recommend module. NO LLM/provider call, NO pull is triggered here.
     reg("models.runners", svc.models_runners)
+    # M1a (V1.1 Lane 2): the THIN Models&System compose. Direct-return; stitches
+    # the cheap probes (probe + advisor + local detect + recommend) with the
+    # redacted providers + per-key pool + fail-closed routing policy into ONE
+    # screen. ZERO provider/LLM calls, NO pull, NO settings mutation, no full key.
+    reg("models.overview", svc.models_overview)
     # WU-2: the first-run self-diagnostic. Direct (no job): pure data-dir/device/
     # native-dep/ffmpeg probes behind seams — reports LOUDLY, never proceeds broken.
     reg("system.selfTest", svc.system_self_test)

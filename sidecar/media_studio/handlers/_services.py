@@ -247,6 +247,7 @@ class Services:
     _detect_local_servers = system_ops._detect_local_servers
     system_recommend = system_ops.system_recommend
     models_runners = system_ops.models_runners
+    models_overview = system_ops.models_overview
     system_self_test = system_ops.system_self_test
     phase8_signals = system_ops.phase8_signals
     phase8_select = system_ops.phase8_select

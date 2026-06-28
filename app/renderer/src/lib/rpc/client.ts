@@ -43,6 +43,7 @@ import type {
   LocalModelPlan,
   MediaApi,
   MediaPlayableResult,
+  ModelsOverview,
   NleFormat,
   NleFps,
   OpenRouterUsageRow,
@@ -400,6 +401,15 @@ export const client = {
    */
   models: {
     runners: (): Promise<LocalModelPlan> => rpc('models.runners'),
+    /**
+     * `models.overview {commercial?}` (M1a) — the THIN Models&System compose: the
+     * whole panel in ONE read (hardware + advisor tiers/preset + detected runners
+     * + device-ranked plan + redacted providers + per-key pool + fail-closed
+     * routing policy). Direct-return; the sidecar makes NO provider/LLM call and
+     * NEVER mutates settings (a strictly read-only screen, no full key over RPC).
+     */
+    overview: (opts?: { commercial?: boolean }): Promise<ModelsOverview> =>
+      rpc('models.overview', opts?.commercial === undefined ? {} : { commercial: opts.commercial }),
   },
 
   /**

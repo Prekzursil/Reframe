@@ -613,6 +613,22 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('models.runners', undefined);
   });
 
+  it('models.overview sends an empty params object when commercial is omitted (M1a)', async () => {
+    const r = installApi();
+    await client.models.overview();
+    expect(r).toHaveBeenCalledWith('models.overview', {});
+    await client.models.overview({});
+    expect(r).toHaveBeenCalledWith('models.overview', {});
+  });
+
+  it('models.overview forwards {commercial} when provided (both boolean values) (M1a)', async () => {
+    const r = installApi();
+    await client.models.overview({ commercial: true });
+    expect(r).toHaveBeenCalledWith('models.overview', { commercial: true });
+    await client.models.overview({ commercial: false });
+    expect(r).toHaveBeenCalledWith('models.overview', { commercial: false });
+  });
+
   it('providers.openrouterUsage calls the bare method (WU-models/device cost)', async () => {
     const r = installApi();
     await client.providers.openrouterUsage();

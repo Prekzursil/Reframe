@@ -58,6 +58,7 @@ FROZEN_RPC_SURFACE: frozenset[str] = frozenset(
         "library.thumbnail",
         "media.playable",
         "media.proxy.start",
+        "models.overview",
         "models.runners",
         "nle.export",
         "package.export",

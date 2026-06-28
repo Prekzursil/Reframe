@@ -335,6 +335,75 @@ export interface LocalModelPlan {
 }
 
 /**
+ * M1a (V1.1 Lane 2): one REDACTED key-pool row (`models.overview` -> `keyPool`).
+ * `redactedKey` is the last-4 redaction only (never a full key); `status` starts
+ * `"active"` (M4 flips it to `"cooldown"` on a 402/429). Mirrors the sidecar
+ * `key_pool.KeyPoolEntry`.
+ */
+export interface KeyPoolEntry {
+  /** Stable `"<providerId>#<index>"` slug. */
+  id: string;
+  providerId: string;
+  /** REDACTED last-4 only (e.g. "…WXYZ") — never a full key over RPC. */
+  redactedKey: string;
+  /** Rate-limit unit ("req" / "token"). */
+  unit: string;
+  /** "active" | "cooldown" — M4 surfaces cooldown on a 402/429. */
+  status: string;
+}
+
+/**
+ * M1a (V1.1 Lane 2): the single routing policy (`models.overview` ->
+ * `routingPolicy`; M3 owns the WRITE). `global` is the header toggle mode;
+ * `overrides` maps a function name to a per-function mode. A corrupt/missing
+ * policy is read FAIL-CLOSED to `{ global: 'local', overrides: {} }` (GATE-2,
+ * zero egress). Mirrors the sidecar `routing_policy` shape.
+ */
+export type RoutingMode = 'local' | 'cloud' | 'auto';
+export interface RoutingPolicy {
+  global: RoutingMode;
+  overrides: Record<string, RoutingMode>;
+}
+
+/**
+ * M1a (V1.1 Lane 2): one detected local OpenAI-compatible server
+ * (`models.overview` -> `runners[]`). Emitted verbatim by the sidecar
+ * `local_detect.detect_local_servers` probe, so the field names are snake_case
+ * (`base_url`) — this is the raw detection row, not a wire-adapted view.
+ */
+export interface PoolEntry {
+  id: string;
+  /** Server family: "ollama" | "lmstudio". */
+  kind: string;
+  base_url: string;
+  /** The first model id the server reports serving. */
+  model: string;
+  capabilities: string[];
+  /** Rate-limit unit (local servers are request-bounded -> "req"). */
+  unit: string;
+}
+
+/**
+ * M1a (V1.1 Lane 2): the THIN `models.overview` compose — the whole "Models &
+ * System" screen in ONE read (DESIGN §2.3 step 2). Stitches the cheap probes
+ * (hardware + advisor tiers/preset + local runner detect + device-ranked plan)
+ * with the redacted providers + per-key pool + fail-closed routing policy. The
+ * sidecar makes ZERO provider/LLM calls and NEVER mutates settings.
+ */
+export interface ModelsOverview {
+  hardware: HardwareInfo;
+  tiers: TierStatus[];
+  recommendedPreset: string;
+  /** Detected local OpenAI-compatible servers (Ollama / LM Studio). */
+  runners: PoolEntry[];
+  localPlan: LocalModelPlan;
+  /** REDACTED provider entries (last-4 keys only). */
+  providers: ProviderEntry[];
+  keyPool: KeyPoolEntry[];
+  routingPolicy: RoutingPolicy;
+}
+
+/**
  * WU-models/device: one OpenRouter key's COST row (`providers.openrouterUsage`).
  * `key` is the REDACTED last-4 only (no full key crosses RPC). Money is USD.
  * Mirrors the sidecar `openrouter_usage.OpenRouterUsageRow`.
