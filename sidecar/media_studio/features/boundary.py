@@ -36,6 +36,33 @@ log = get_logger("media_studio.boundary")
 MIN_SEC: float = 20.0
 MAX_SEC: float = 60.0
 
+# N1 (V1.1 SEL1) — "mid-form" relaxes the hard snap window so a long moment can be
+# kept WHOLE instead of being trimmed back to 60 s. The verified OpusClip teardown
+# (docs/research/OPUSCLIP-PARITY-IMPROVEMENT-NOTE) shows real clips run 16-160 s,
+# NOT 60-capped. The envelope per mode is the single source of truth shared with
+# ``select.py`` (the two modules must agree so a select-side mid-form candidate is
+# not silently clamped at the boundary stage).
+MIDFORM_MIN_SEC: float = 16.0
+MIDFORM_MAX_SEC: float = 180.0
+DEFAULT_DURATION_MODE: str = "standard"
+_DURATION_ENVELOPES: dict[str, tuple[float, float]] = {
+    "standard": (MIN_SEC, MAX_SEC),
+    "midform": (MIDFORM_MIN_SEC, MIDFORM_MAX_SEC),
+}
+
+
+def resolve_window(mode: Any) -> tuple[float, float]:
+    """Return the hard ``(min_sec, max_sec)`` snap window for a duration mode.
+
+    ``"standard"`` is the frozen 20-60 s window; ``"midform"`` relaxes it to
+    16-180 s. An unknown / non-string mode fails **closed** to ``"standard"``
+    (mirrors the select-side GATE-2 out-of-enum clamp) — never silently widening
+    the window on a typo.
+    """
+    if isinstance(mode, str) and mode in _DURATION_ENVELOPES:
+        return _DURATION_ENVELOPES[mode]
+    return _DURATION_ENVELOPES[DEFAULT_DURATION_MODE]
+
 # Characters that, when a word's text ends with one of them, mark a complete
 # sentence/thought — the snap target is that word's ``end`` time.
 _SENTENCE_TERMINATORS: tuple[str, ...] = (".", "!", "?", "…")
@@ -389,13 +416,22 @@ def snap_from_lists(
     scene_provider: SceneProvider | None = None,
     min_sec: float = MIN_SEC,
     max_sec: float = MAX_SEC,
+    duration_mode: str | None = None,
 ) -> tuple[list[Candidate], list[dict[str, Any]]]:
     """Convenience: build the boundary set then snap a batch in one call.
 
     This is the orchestrator-facing entry point. The orchestrator passes the
     detected silence/scene lists (or seam providers bound to ffmpeg /
     PySceneDetect); tests pass known lists directly.
+
+    ``duration_mode`` (N1, V1.1 SEL1), when supplied, resolves the hard
+    ``(min_sec, max_sec)`` snap window via :func:`resolve_window` — so a
+    ``"midform"`` request keeps a 16-180 s clip whole instead of trimming it to
+    60 s. Passing it overrides the explicit ``min_sec``/``max_sec`` so the
+    boundary stage stays in lock-step with the select-side envelope.
     """
+    if duration_mode is not None:
+        min_sec, max_sec = resolve_window(duration_mode)
     boundaries = build_boundary_set(
         words,
         silences=silences,

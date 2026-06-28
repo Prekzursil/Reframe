@@ -47,9 +47,33 @@ if TYPE_CHECKING:  # pragma: no cover - typing-only imports (heavy/seam types)
 # CONTRACT-NOTE: §5 fixes temperature at 0.4 and reasoning ON (no /no_think).
 TEMPERATURE: float = 0.4
 
-# §5: each clip is a hard 20-60 seconds.
+# §5: each clip is a hard 20-60 seconds (the "standard" duration mode).
 MIN_CLIP_SEC: float = 20.0
 MAX_CLIP_SEC: float = 60.0
+
+# N1 (V1.1 SEL1) — duration policy relax. The verified OpusClip teardown
+# (docs/research/OPUSCLIP-PARITY-IMPROVEMENT-NOTE) shows real clips run 16-160 s,
+# NOT 60-capped, with the same top moment shipped at BOTH a long and a punchy-short
+# length. ``durationMode`` picks the hard envelope: "standard" keeps the frozen
+# 20-60 s window; "midform" relaxes it to 16-180 s. The envelope table is the
+# single source of truth shared with ``boundary.resolve_window`` (the two MUST
+# agree or a mid-form candidate would be re-clamped at boundary-snap).
+MIDFORM_MIN_CLIP_SEC: float = 16.0
+MIDFORM_MAX_CLIP_SEC: float = 180.0
+DEFAULT_DURATION_MODE: str = "standard"
+DURATION_ENVELOPES: dict[str, tuple[float, float]] = {
+    "standard": (MIN_CLIP_SEC, MAX_CLIP_SEC),
+    "midform": (MIDFORM_MIN_CLIP_SEC, MIDFORM_MAX_CLIP_SEC),
+}
+
+# Overlap ladder (N1): OFF by default. When on, each of the top-N ranked moments
+# that is meaningfully longer than the punchy-short length ALSO ships a shorter
+# OVERLAPPING candidate sharing the same start (the hook) — the "overlap ladder".
+DEFAULT_OVERLAP_LADDER_TOP_N: int = 1
+DEFAULT_PUNCHY_SHORT_SEC: float = 30.0
+
+# Float comparison tolerance (matches boundary.EPS): treat sub-ms diffs as equal.
+EPS: float = 1e-6
 
 # §2 controls default count when the caller omits it.
 DEFAULT_COUNT: int = 5
@@ -130,6 +154,11 @@ class Candidate(TypedDict):
     rankerScore: NotRequired[float]
     qualityScore: NotRequired[float]
     vlmScore: NotRequired[float]
+    # N1 overlap ladder (V1.1 SEL1): set ONLY on a ladder-emitted punchy-short
+    # candidate. ``overlap`` flags it as an intentional overlapping clip; ``overlapOf``
+    # carries the parent moment's pre-ladder rank for traceability.
+    overlap: NotRequired[bool]
+    overlapOf: NotRequired[int]
 
 
 class Word(TypedDict, total=False):
@@ -169,6 +198,12 @@ class Controls(TypedDict, total=False):
     captionStyle: str
     hookTitle: bool
     removeFillers: bool
+    # N1 (V1.1 SEL1): "standard" (20-60 s, default) | "midform" (16-180 s).
+    durationMode: str
+    # N1 overlap ladder: emit a punchy-short overlapping clip for the top-N moments.
+    overlapLadder: bool
+    overlapLadderTopN: int
+    punchyShortSec: float
 
 
 class FeedbackSeam(Protocol):
@@ -545,31 +580,135 @@ def to_candidates(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_controls(controls: Controls | None) -> dict[str, Any]:
-    """Resolve count/min/max from controls, applying §5 defaults + clamps.
+def resolve_duration_mode(mode: Any) -> str:
+    """Clamp an arbitrary ``durationMode`` to a known mode (fail-closed).
 
-    ``count`` defaults to 5 (§2); ``minSec``/``maxSec`` default to the hard
-    20/60 window and are themselves clamped so a caller cannot request a clip
-    shorter than 20 s or longer than 60 s.
+    Mirrors the GATE-2 M3 "clamp out-of-enum mode" rule: an unknown / non-string
+    mode degrades to the conservative ``"standard"`` 20-60 s envelope rather than
+    raising or silently widening the window on a typo.
+    """
+    if isinstance(mode, str) and mode in DURATION_ENVELOPES:
+        return mode
+    return DEFAULT_DURATION_MODE
+
+
+def _resolve_overlap_ladder(controls: Mapping[str, Any], min_sec: float, max_sec: float) -> dict[str, Any]:
+    """Resolve the N1 overlap-ladder config from controls.
+
+    ``enabled`` (default off), ``top_n`` (default 1, never negative) and
+    ``punchy_sec`` (default 30 s) — the punchy-short length is itself clamped into
+    the active ``[min_sec, max_sec]`` envelope so a ladder short is always a valid
+    clip length.
+    """
+    enabled = bool(controls.get("overlapLadder", False))
+    top_n = _coerce_int(controls.get("overlapLadderTopN"), DEFAULT_OVERLAP_LADDER_TOP_N)
+    if top_n < 0:
+        top_n = 0
+    try:
+        punchy = float(controls.get("punchyShortSec", DEFAULT_PUNCHY_SHORT_SEC))
+    except (TypeError, ValueError):
+        punchy = DEFAULT_PUNCHY_SHORT_SEC
+    punchy = max(min_sec, min(punchy, max_sec))
+    return {"enabled": enabled, "top_n": top_n, "punchy_sec": punchy}
+
+
+def _resolve_controls(controls: Controls | None) -> dict[str, Any]:
+    """Resolve count/min/max/mode/ladder from controls, applying §5 defaults + clamps.
+
+    ``count`` defaults to 5 (§2). ``durationMode`` (N1) selects the hard envelope:
+    "standard" → 20-60 s (default), "midform" → 16-180 s; an unknown mode fails
+    closed to "standard". ``minSec``/``maxSec`` default to the active envelope's
+    bounds and are clamped so a caller can never request a clip outside it. The
+    overlap-ladder config rides along (resolved against the active window).
     """
     controls = controls or {}
     count = _coerce_int(controls.get("count"), DEFAULT_COUNT)
     if count < 1:
         count = DEFAULT_COUNT
+    mode = resolve_duration_mode(controls.get("durationMode"))
+    env_min, env_max = DURATION_ENVELOPES[mode]
     try:
-        min_sec = float(controls.get("minSec", MIN_CLIP_SEC))
+        min_sec = float(controls.get("minSec", env_min))
     except (TypeError, ValueError):
-        min_sec = MIN_CLIP_SEC
+        min_sec = env_min
     try:
-        max_sec = float(controls.get("maxSec", MAX_CLIP_SEC))
+        max_sec = float(controls.get("maxSec", env_max))
     except (TypeError, ValueError):
-        max_sec = MAX_CLIP_SEC
-    # Keep the requested window inside the hard 20-60 s envelope (§5).
-    min_sec = max(MIN_CLIP_SEC, min(min_sec, MAX_CLIP_SEC))
-    max_sec = max(MIN_CLIP_SEC, min(max_sec, MAX_CLIP_SEC))
+        max_sec = env_max
+    # Keep the requested window inside the active envelope (§5 / N1 mid-form).
+    min_sec = max(env_min, min(min_sec, env_max))
+    max_sec = max(env_min, min(max_sec, env_max))
     if max_sec < min_sec:
         min_sec, max_sec = max_sec, min_sec
-    return {"count": count, "min_sec": min_sec, "max_sec": max_sec}
+    ladder = _resolve_overlap_ladder(controls, min_sec, max_sec)
+    return {
+        "count": count,
+        "min_sec": min_sec,
+        "max_sec": max_sec,
+        "duration_mode": mode,
+        "ladder": ladder,
+    }
+
+
+def _punchy_short(parent: Candidate, punchy_sec: float) -> Candidate | None:
+    """Build a punchy-short OVERLAPPING clip from ``parent`` (N1), or ``None``.
+
+    The short shares the parent's start (the hook) but ends ``punchy_sec`` later.
+    Returns ``None`` when the parent is not meaningfully longer than the short
+    (so a ladder short is always a genuinely shorter, distinct cut — never a
+    duplicate). Factor dicts are copied by value so the short never aliases the
+    parent's mutable maps.
+    """
+    try:
+        start = float(parent["start"])
+        end = float(parent["end"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if (end - start) <= punchy_sec + EPS:
+        return None
+    short: Candidate = cast("Candidate", dict(parent))
+    short["start"] = round(start, 3)
+    short["end"] = round(start + punchy_sec, 3)
+    short["sourceStart"] = round(start, 3)
+    short["durationSec"] = round(punchy_sec, 3)
+    short["overlap"] = True
+    short["overlapOf"] = _coerce_int(parent.get("rank"), 0)
+    p_factors = parent.get("factors")
+    if isinstance(p_factors, dict):
+        short["factors"] = dict(p_factors)
+    p_notes = parent.get("factorNotes")
+    if isinstance(p_notes, dict):
+        short["factorNotes"] = dict(p_notes)
+    return short
+
+
+def apply_overlap_ladder(
+    candidates: list[Candidate],
+    *,
+    enabled: bool,
+    top_n: int,
+    punchy_sec: float,
+) -> list[Candidate]:
+    """N1 "overlap ladder": ship the top moments at BOTH a long and a short length.
+
+    For each of the top ``top_n`` ranked candidates that is meaningfully longer
+    than ``punchy_sec``, emit an additional OVERLAPPING candidate that shares the
+    same start (the hook) trimmed to ``punchy_sec``. Disabled (or ``top_n <= 0``)
+    returns the input list unchanged. The batch is re-ranked 1..N preserving the
+    parent-then-short order; each emitted short carries ``overlap=True``.
+    """
+    if not enabled or top_n <= 0:
+        return candidates
+    out: list[Candidate] = []
+    for idx, cand in enumerate(candidates):
+        out.append(cand)
+        if idx < top_n:
+            short = _punchy_short(cand, punchy_sec)
+            if short is not None:
+                out.append(short)
+    for new_rank, cand in enumerate(out, start=1):
+        cand["rank"] = new_rank
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -619,13 +758,19 @@ def _ask(
 # ---------------------------------------------------------------------------
 
 
-def _finalize(cands: list[Candidate], count: int) -> list[Candidate]:
-    """Trim to ``count`` then stamp viralityPct over EXACTLY the returned set.
+def _finalize(cands: list[Candidate], count: int, *, ladder: Mapping[str, Any] | None = None) -> list[Candidate]:
+    """Trim to ``count``, apply the N1 overlap ladder, then stamp viralityPct.
 
     P3-C: the batch percentile must rank within the clips the user actually
-    receives, not the wider pre-trim pool (reviewer finding) — so trim first.
+    receives, not the wider pre-trim pool (reviewer finding) — so trim FIRST.
+    N1: the overlap ladder runs AFTER the trim so its punchy-short clips ride on
+    top of the chosen set (they never push a real moment out of ``count``); the
+    percentile is then stamped over the full returned set (shorts included).
     """
-    return apply_virality_pct(list(cands[:count]))
+    trimmed = list(cands[:count])
+    if ladder is not None:
+        trimmed = apply_overlap_ladder(trimmed, **ladder)
+    return apply_virality_pct(trimmed)
 
 
 def select(
@@ -643,6 +788,7 @@ def select(
     """
     cfg = _resolve_controls(controls)
     count, min_sec, max_sec = cfg["count"], cfg["min_sec"], cfg["max_sec"]
+    ladder = cfg["ladder"]
     user_prompt = (prompt or "").strip() or ("Find the most share-worthy clips for vertical short-form.")
     duration_total = transcript.get("durationSec")
     if not isinstance(duration_total, (int, float)):
@@ -654,7 +800,7 @@ def select(
     if len(lines) <= CHUNK_LINE_THRESHOLD:
         body = "\n".join(lines)
         clips = _ask(provider, system, build_user_prompt(user_prompt, count, min_sec, max_sec, body))
-        return _finalize(to_candidates(clips, min_sec, max_sec, duration_total), count)
+        return _finalize(to_candidates(clips, min_sec, max_sec, duration_total), count, ladder=ladder)
 
     # --- MAP: shortlist candidates per chunk -------------------------------
     # A per-chunk parse failure is tolerated (skip that chunk) — the reduce/
@@ -690,7 +836,7 @@ def select(
         rerank_clips = []
     final = to_candidates(rerank_clips, min_sec, max_sec, duration_total)
     if final:
-        return _finalize(final, count)
+        return _finalize(final, count, ladder=ladder)
     # CONTRACT-NOTE: §5 — if the reduce pass returns no parseable JSON, fall back
     # to the already-validated map shortlist (best-effort, never empty-on-error
     # when we have real candidates) rather than dropping the whole selection.
@@ -715,6 +861,7 @@ def select(
             duration_total,
         ),
         count,
+        ladder=ladder,
     )
 
 
