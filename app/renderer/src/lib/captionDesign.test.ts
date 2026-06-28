@@ -20,6 +20,14 @@ describe('sanitizeCaptionDesign', () => {
     expect(sanitizeCaptionDesign({ style: 'bogus' }).style).toBe(DEFAULT_CAPTION_STYLE);
   });
 
+  it('preserves the opusclip-karaoke libass preset (V1.1 WU SP1 BLOCKER fix)', () => {
+    // Before the fix the preset was absent from CAPTION_STYLE_OPTIONS, so this
+    // sanitizer reset it to the libass default and the karaoke burn was
+    // unreachable end-to-end. It must now survive sanitization to route to the
+    // sidecar with karaoke=True.
+    expect(sanitizeCaptionDesign({ style: 'opusclip-karaoke' }).style).toBe('opusclip-karaoke');
+  });
+
   it('defaults the whole design for null / non-string style / missing box', () => {
     expect(sanitizeCaptionDesign(null)).toEqual(DEFAULT_CAPTION_DESIGN);
     expect(sanitizeCaptionDesign(undefined)).toEqual(DEFAULT_CAPTION_DESIGN);

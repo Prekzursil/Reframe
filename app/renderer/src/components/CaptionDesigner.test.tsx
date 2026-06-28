@@ -80,6 +80,17 @@ describe('<CaptionDesigner />', () => {
     expect(spans && spans.length).toBeGreaterThan(0);
   });
 
+  it('paints the opusclip-karaoke preset look with an alternating accent (V1.1 WU SP1)', () => {
+    render({ design: { style: 'opusclip-karaoke', box: DEFAULT_CAPTION_DESIGN.box } });
+    tick(container, 11.5); // inside cue 0 "Hello" — line index 0 -> yellow accent
+    const line = container.querySelector('.caption-designer__line') as HTMLElement;
+    // The karaoke preset is all-caps (Anton) — uppercase look renders live.
+    expect(line.style.textTransform).toBe('uppercase');
+    expect(line.style.fontFamily).toContain('Anton');
+    const active = [...line.querySelectorAll('span')].find((s) => s.textContent === 'Hello');
+    expect(active?.style.color.replace(/\s/g, '')).toContain('255,255,0');
+  });
+
   it('uppercases the live line for an uppercase template', () => {
     render({ design: { style: 'bold', box: DEFAULT_CAPTION_DESIGN.box } });
     tick(container, 11.5);

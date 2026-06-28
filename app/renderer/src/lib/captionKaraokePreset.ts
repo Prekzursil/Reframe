@@ -1,11 +1,26 @@
 // captionKaraokePreset.ts — renderer mirror of the OpusClip-style KARAOKE caption
 // preset (V1.1 WU SP1). The export/burn authority is the sidecar libass builder
 // `caption_karaoke.py` (`build_karaoke_ass`); this module is the renderer-side
-// MIRROR so the live preview/overlay paints the SAME palette, casing, scale-pop,
-// 1-4-word grouping, and 9:16 safe-area position the burn produces. The mirror is
-// drift-guarded by `captionKaraokePreset.test.ts`, which reads the sidecar source
-// and asserts the shared constants match (the same defence the three-way template
-// conformance test uses).
+// MIRROR of the shared constants + helpers so the LIVE PREVIEW can never silently
+// drift from the burn.
+//
+// WHAT THE LIVE PREVIEW SHOWS (consumed by `captionTemplates.captionVisualFor`
+// -> `KARAOKE_PRESET_VISUAL`, the CaptionStylePicker swatch, the CaptionOverlay,
+// and the CaptionDesigner sample): the same PALETTE (white fill / dark outline),
+// CASING (all-caps), FONT (Anton), bottom (lower-mid) position, and the
+// ALTERNATING yellow/green active-word accent (`karaokeActiveColor`) the burn
+// uses.
+//
+// WHAT IS BURN-ONLY (NOT painted by the HTML/CSS preview): the timed ASS
+// scale-pop animation (`\t \fscx/\fscy` over `KARAOKE_POP_MS`) and the per-word
+// pixel-exact 9:16 safe-area `MarginV` (`safeAreaMarginV`); the CSS overlay
+// approximates the band with a percentage position. These constants/helpers are
+// mirrored here (and drift-guarded) for parity bookkeeping, not for an animated
+// CSS reproduction.
+//
+// The mirror is drift-guarded by `captionKaraokePreset.test.ts`, which reads the
+// sidecar source and asserts the shared constants match (the same defence the
+// three-way template conformance test uses).
 //
 // Everything here is PURE (no React, no DOM). This is a libass preset, NOT a
 // Remotion template, so it deliberately stays OUT of the frozen three-way

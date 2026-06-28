@@ -200,10 +200,37 @@ export const CAPTION_STYLES: CaptionStyleOption[] = [
   { id: 'none', engine: 'libass', label: 'No captions' },
 ];
 
+/**
+ * Libass-engine PRESETS that are NOT part of the frozen three-way Remotion
+ * TEMPLATES mirror (V1.1 WU SP1). These are first-class, SELECTABLE caption
+ * looks that route to the libass {@link CaptionEngine} (not Remotion), so they
+ * are kept OUT of {@link CAPTION_STYLES} (which the conformance test pins to
+ * `TEMPLATES ∪ {libass, none}`). The `opusclip-karaoke` preset selects the
+ * word-by-word OpusClip karaoke ASS builder on the sidecar (karaoke=True).
+ *
+ * They ARE part of the user-facing catalog ({@link ALL_CAPTION_STYLES}) and the
+ * sanitizer allowlist ({@link CAPTION_STYLE_OPTIONS}) so a chosen preset is
+ * selectable in the picker and survives both renderer sanitizers end-to-end.
+ */
+export const CAPTION_LIBASS_PRESETS: CaptionStyleOption[] = [
+  { id: 'opusclip-karaoke', engine: 'libass', label: 'OpusClip Karaoke (word pop)' },
+];
+
 /** A4: libass is the default caption engine/style. */
 export const DEFAULT_CAPTION_STYLE = 'libass';
 
-export const CAPTION_STYLE_OPTIONS: readonly string[] = CAPTION_STYLES.map((s) => s.id);
+/**
+ * The FULL selectable caption catalog = the three-way Remotion/libass mirror
+ * ({@link CAPTION_STYLES}) PLUS the libass-only presets
+ * ({@link CAPTION_LIBASS_PRESETS}). This is what the picker renders and what the
+ * sanitizers honour; {@link CAPTION_STYLES} stays the conformance-pinned mirror.
+ */
+export const ALL_CAPTION_STYLES: CaptionStyleOption[] = [
+  ...CAPTION_STYLES,
+  ...CAPTION_LIBASS_PRESETS,
+];
+
+export const CAPTION_STYLE_OPTIONS: readonly string[] = ALL_CAPTION_STYLES.map((s) => s.id);
 
 /** A4 reframe engines + the "auto" selector (verthor with claudeshorts fallback). */
 export const REFRAME_ENGINE_OPTIONS = ['auto', 'verthor', 'claudeshorts'] as const;

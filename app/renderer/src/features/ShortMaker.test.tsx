@@ -20,6 +20,8 @@ import ShortMaker, {
   MAX_CLIP_SEC,
   DEFAULT_CONTROLS,
   CAPTION_STYLES,
+  CAPTION_LIBASS_PRESETS,
+  ALL_CAPTION_STYLES,
   CAPTION_STYLE_OPTIONS,
   DEFAULT_CAPTION_STYLE,
   REFRAME_ENGINE_OPTIONS,
@@ -277,6 +279,14 @@ describe('sanitizeControls', () => {
     }
   });
 
+  it('preserves the opusclip-karaoke libass preset (V1.1 WU SP1 BLOCKER fix)', () => {
+    // The controls sanitizer must keep the preset so the export wire carries it
+    // to the sidecar (which routes karaoke=True). Before the fix it reset to libass.
+    expect(sanitizeControls({ captionStyle: 'opusclip-karaoke' }).captionStyle).toBe(
+      'opusclip-karaoke',
+    );
+  });
+
   it('defaults reframeEngine to auto and normalizes case', () => {
     expect(sanitizeControls({}).reframeEngine).toBe('auto');
     expect(sanitizeControls({ reframeEngine: 'CLAUDESHORTS' }).reframeEngine).toBe('claudeshorts');
@@ -333,6 +343,22 @@ describe('CAPTION_STYLES / REFRAME_ENGINE_OPTIONS (T4b)', () => {
     expect([...REFRAME_ENGINE_OPTIONS]).toEqual(['auto', 'verthor', 'claudeshorts']);
     expect(DEFAULT_REFRAME_ENGINE).toBe('auto');
     expect(DEFAULT_CONTROLS.reframeEngine).toBe('auto');
+  });
+
+  it('carries the libass-only presets OUTSIDE the conformance mirror (V1.1 WU SP1)', () => {
+    // The opusclip-karaoke preset is a libass-engine preset that must NOT widen
+    // CAPTION_STYLES (the conformance-pinned three-way mirror) but MUST be in the
+    // full catalog + the sanitizer allowlist so it is selectable end-to-end.
+    expect(CAPTION_LIBASS_PRESETS.map((s) => s.id)).toEqual(['opusclip-karaoke']);
+    expect(CAPTION_LIBASS_PRESETS.every((s) => s.engine === 'libass')).toBe(true);
+    // Kept out of the frozen mirror...
+    expect(CAPTION_STYLES.map((s) => s.id)).not.toContain('opusclip-karaoke');
+    // ...but present in the full catalog + the allowlist.
+    expect(ALL_CAPTION_STYLES).toEqual([...CAPTION_STYLES, ...CAPTION_LIBASS_PRESETS]);
+    expect(CAPTION_STYLE_OPTIONS).toContain('opusclip-karaoke');
+    // No duplicate ids across the full catalog.
+    const ids = ALL_CAPTION_STYLES.map((s) => s.id);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });
 

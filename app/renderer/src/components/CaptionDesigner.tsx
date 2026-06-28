@@ -19,6 +19,7 @@ import { CaptionStylePicker } from './CaptionStylePicker';
 import { CaptionCustomizer } from './CaptionCustomizer';
 import { activeLine, wordColor } from './CaptionOverlay';
 import { isNoCaption } from '../lib/captionTemplates';
+import { isKaraokeStyle, karaokeActiveColor } from '../lib/captionKaraokePreset';
 import { captionSampleStyle, previewSizeScale, previewVisual } from '../lib/captionOverridePreview';
 import { type CaptionBand, bandBox, boxBand } from '../lib/captionPosition';
 import type { CaptionContentContext } from '../lib/captionDefaults';
@@ -71,6 +72,8 @@ export function CaptionDesigner({
   const scale = previewSizeScale(design.override);
   const lineStyle = captionSampleStyle(visual, scale);
   const none = isNoCaption(design.style);
+  // V1.1 WU SP1: the karaoke preset alternates the active word accent per word.
+  const karaoke = isKaraokeStyle(design.style);
   const words = none ? [] : activeLine(cues, win, currentTime - win.start);
   const band = boxBand(design.box);
   const title = (hookTitle ?? '').trim();
@@ -97,7 +100,7 @@ export function CaptionDesigner({
                   <span
                     key={`${w.text}-${w.start}-${i}`}
                     style={{
-                      color: wordColor(w, visual),
+                      color: wordColor(w, visual, karaoke ? karaokeActiveColor(i) : undefined),
                       backgroundColor: w.active ? visual.activeBackground : 'transparent',
                     }}
                   >

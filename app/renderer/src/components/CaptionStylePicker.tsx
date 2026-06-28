@@ -10,7 +10,7 @@
 // Controlled + presentational: the parent owns `value` and gets `onChange(id)`.
 import React from 'react';
 import { type CaptionTemplateVisual, captionVisualFor, isNoCaption } from '../lib/captionTemplates';
-import { CAPTION_STYLES, type CaptionStyleOption } from '../features/shortMakerLogic';
+import { ALL_CAPTION_STYLES, type CaptionStyleOption } from '../features/shortMakerLogic';
 import './captionStylePicker.css';
 
 /** The CSS for a swatch's sample line, from the template visual (mirrors overlay). */
@@ -30,7 +30,7 @@ export interface CaptionStylePickerProps {
   value: string;
   /** Called with the chosen style id. */
   onChange: (id: string) => void;
-  /** The styles to show (defaults to the full caption catalog). */
+  /** The styles to show (defaults to the full caption catalog incl. libass presets). */
   styles?: readonly CaptionStyleOption[];
   /** Accessible label for the group. */
   label?: string;
@@ -42,7 +42,7 @@ const SAMPLE_TEXT = 'Aa';
 export function CaptionStylePicker({
   value,
   onChange,
-  styles = CAPTION_STYLES,
+  styles = ALL_CAPTION_STYLES,
   label = 'Caption style',
 }: CaptionStylePickerProps): React.ReactElement {
   return (

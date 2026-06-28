@@ -4,7 +4,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { CaptionStylePicker, sampleStyle } from './CaptionStylePicker';
 import { captionVisualFor } from '../lib/captionTemplates';
-import { CAPTION_STYLES } from '../features/shortMakerLogic';
+import { ALL_CAPTION_STYLES } from '../features/shortMakerLogic';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -59,12 +59,28 @@ describe('<CaptionStylePicker />', () => {
   const swatch = (id: string): HTMLButtonElement =>
     container.querySelector(`[data-style="${id}"]`) as HTMLButtonElement;
 
-  it('renders a swatch for every catalog style', () => {
+  it('renders a swatch for every catalog style (incl. the libass presets)', () => {
     render();
-    expect(container.querySelectorAll('.caption-style-swatch')).toHaveLength(CAPTION_STYLES.length);
+    expect(container.querySelectorAll('.caption-style-swatch')).toHaveLength(
+      ALL_CAPTION_STYLES.length,
+    );
     expect(container.querySelector('.caption-style-picker')?.getAttribute('aria-label')).toBe(
       'Caption style',
     );
+  });
+
+  it('renders + selects the opusclip-karaoke libass preset (V1.1 WU SP1)', () => {
+    // BLOCKER fix: the preset MUST be selectable end-to-end (a swatch exists and
+    // clicking it emits its id). Before the fix it was absent from the catalog.
+    const { onChange } = render({ value: 'opusclip-karaoke' });
+    const karaoke = swatch('opusclip-karaoke');
+    expect(karaoke).toBeTruthy();
+    expect(karaoke.getAttribute('aria-pressed')).toBe('true');
+    // The swatch paints the karaoke look (yellow active word — KARAOKE_ACTIVE_HEX[0]).
+    const sample = karaoke.querySelector('.caption-style-swatch__sample') as HTMLElement;
+    expect(sample.style.color.toLowerCase()).toContain('255, 255, 0');
+    act(() => karaoke.click());
+    expect(onChange).toHaveBeenCalledWith('opusclip-karaoke');
   });
 
   it('marks the selected style as pressed', () => {
