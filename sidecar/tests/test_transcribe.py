@@ -227,6 +227,38 @@ def test_transcribe_file_uses_cpu_fallback_end_to_end():
 
 
 # --------------------------------------------------------------------------- #
+# F3b: GPU->CPU fallback surfaces a loud notice (not a silent slow run)
+# --------------------------------------------------------------------------- #
+def test_load_fallback_invokes_on_fallback_notice():
+    loader = FakeLoader(_two_segment_model(), fail_on={"cuda"})
+    notices: list[str] = []
+    _inst, device = transcribe.load_model_with_cpu_fallback(loader, on_fallback=notices.append)
+    assert device == transcribe.CPU_DEVICE
+    assert notices == [transcribe.GPU_FALLBACK_NOTICE]
+
+
+def test_load_success_emits_no_fallback_notice():
+    loader = FakeLoader(_two_segment_model())
+    notices: list[str] = []
+    transcribe.load_model_with_cpu_fallback(loader, on_fallback=notices.append)
+    assert notices == []
+
+
+def test_transcribe_file_surfaces_cpu_fallback_notice_via_progress():
+    loader = FakeLoader(_two_segment_model(), fail_on={"cuda"})
+    events: list[tuple[float, str]] = []
+    transcribe.transcribe_file("/v.mp4", loader=loader, on_progress=lambda p, m: events.append((p, m)))
+    assert (0.0, transcribe.GPU_FALLBACK_NOTICE) in events
+
+
+def test_transcribe_file_no_fallback_notice_when_gpu_succeeds():
+    loader = FakeLoader(_two_segment_model())
+    events: list[tuple[float, str]] = []
+    transcribe.transcribe_file("/v.mp4", loader=loader, on_progress=lambda p, m: events.append((p, m)))
+    assert all(msg != transcribe.GPU_FALLBACK_NOTICE for _, msg in events)
+
+
+# --------------------------------------------------------------------------- #
 # progress streaming
 # --------------------------------------------------------------------------- #
 def test_progress_is_monotonic_and_ends_at_100():

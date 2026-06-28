@@ -38,6 +38,7 @@ from typing import Any, Protocol
 
 from ..util import clamp, get_logger
 from . import offline as _offline
+from .transcribe import GPU_FALLBACK_NOTICE
 
 log = get_logger("media_studio.features.parakeet_asr")
 
@@ -65,6 +66,8 @@ Transcript = dict[str, Any]
 CancelProbe = Callable[[], bool]
 # A progress sink: (pct 0..100, message) -> None.
 ProgressCb = Callable[[float, str], None]
+# F3b: a one-shot notice sink invoked when a GPU load falls back to CPU.
+FallbackNotice = Callable[[str], None]
 #: are the model weights installed? (drives the offline degrade).
 ModelsPresent = Callable[[dict[str, Any]], bool]
 
@@ -128,13 +131,15 @@ def load_model_with_cpu_fallback(
     model: str = DEFAULT_MODEL,
     device: str = DEFAULT_DEVICE,
     compute_type: str = DEFAULT_GPU_COMPUTE,
+    on_fallback: FallbackNotice | None = None,
 ) -> tuple[ParakeetModel, str]:
     """Load ``model`` on ``device``; fall back to CPU (OpenVINO/ONNX) on failure.
 
     Returns ``(model_instance, device_used)``. If the requested device is
     already ``cpu`` the fallback is skipped (a CPU failure is a hard error,
     since there is nothing further to fall back to). Mirrors
-    ``transcribe.load_model_with_cpu_fallback``.
+    ``transcribe.load_model_with_cpu_fallback`` — incl. the F3b ``on_fallback``
+    notice (:data:`GPU_FALLBACK_NOTICE`) fired when a GPU load degrades to CPU.
     """
     try:
         return loader.load(model, device, compute_type), device
@@ -147,6 +152,8 @@ def load_model_with_cpu_fallback(
             exc,
             CPU_COMPUTE,
         )
+        if on_fallback is not None:
+            on_fallback(GPU_FALLBACK_NOTICE)
         return loader.load(model, CPU_DEVICE, CPU_COMPUTE), CPU_DEVICE
 
 
@@ -344,8 +351,9 @@ def transcribe_file(
         return {"language": str(language or ""), "segments": [], "durationSec": 0.0}
 
     active_loader = loader if loader is not None else _default_loader()
+    notify = (lambda msg: on_progress(0.0, msg)) if on_progress is not None else None
     parakeet_model, device_used = load_model_with_cpu_fallback(
-        active_loader, model=model, device=device, compute_type=compute_type
+        active_loader, model=model, device=device, compute_type=compute_type, on_fallback=notify
     )
     media_duration = _resolve_duration(audio_path, duration, duration_probe)
     log.info(
@@ -448,6 +456,7 @@ __all__ = [
     "DEFAULT_DEVICE",
     "DEFAULT_GPU_COMPUTE",
     "DEFAULT_MODEL",
+    "GPU_FALLBACK_NOTICE",
     "ParakeetLoader",
     "ParakeetModel",
     "chunk_audio_spans",

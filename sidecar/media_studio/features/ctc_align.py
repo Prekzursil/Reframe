@@ -54,6 +54,46 @@ Word = dict[str, Any]
 Segment = dict[str, Any]
 Transcript = dict[str, Any]
 
+#: F3b user-facing notice when word-level alignment is SKIPPED due to a backend
+#: or audio-decode failure (vs a genuinely empty transcript, which is silent).
+#: Surfaced as a ``job.progress`` message so karaoke timing degrades LOUDLY.
+ALIGN_SKIPPED_NOTICE = "word-level alignment unavailable — using segment timings"
+
+#: how many trailing chars of ffmpeg stderr to fold into an :class:`AudioDecodeError`.
+_FFMPEG_STDERR_TAIL = 500
+
+
+class AudioDecodeError(RuntimeError):
+    """F3b: raised when ffmpeg fails to decode the audio (non-zero exit code).
+
+    Previously the default loader ignored ffmpeg's returncode and handed back an
+    empty/garbage buffer — a silent failure. Now a non-zero exit raises this with
+    the stderr tail so the caller can degrade with a LOUD notice.
+    """
+
+
+def _decode_pcm_or_raise(
+    returncode: int,
+    raw: bytes | None,
+    stderr: bytes | None,
+    *,
+    target_sr: int,
+) -> tuple[np.ndarray, int]:
+    """Turn an ffmpeg result into ``(samples, sr)`` — or raise on a bad exit.
+
+    The PURE, fully-tested core of :func:`_default_audio_loader`: on a non-zero
+    ``returncode`` it raises :class:`AudioDecodeError` with the stderr tail (F3b);
+    otherwise it reads the f32le PCM bytes into a float64 array.
+    """
+    import numpy as _np  # noqa: PLC0415 - numpy is in the venv; kept lazy for symmetry
+
+    if returncode != 0:
+        tail = (stderr or b"").decode("utf-8", errors="replace").strip()[-_FFMPEG_STDERR_TAIL:]
+        raise AudioDecodeError(f"ffmpeg audio decode failed (exit {returncode}): {tail}")
+    samples = _np.frombuffer(raw or b"", dtype=_np.float32).astype(_np.float64)
+    return samples, target_sr
+
+
 # --------------------------------------------------------------------------- #
 # model ids + asset (Decision #1: CC-BY-NC default, MIT override available)
 # --------------------------------------------------------------------------- #
@@ -283,8 +323,6 @@ def _default_audio_loader(media_path: str) -> tuple[np.ndarray, int]:  # pragma:
     """
     import subprocess  # noqa: PLC0415, S404 - argv-list only, never shell=True
 
-    import numpy as np  # noqa: PLC0415
-
     from .. import ffmpeg  # noqa: PLC0415 - avoids a top-level import cycle
 
     target_sr = 16000
@@ -303,9 +341,9 @@ def _default_audio_loader(media_path: str) -> tuple[np.ndarray, int]:  # pragma:
         "-",
     ]
     completed = subprocess.run(argv, capture_output=True, check=False)  # noqa: S603 - argv list, no shell
-    raw = completed.stdout or b""
-    samples = np.frombuffer(raw, dtype=np.float32).astype(np.float64)
-    return samples, target_sr
+    # F3b: honour the returncode — a non-zero exit raises (with the stderr tail)
+    # instead of silently returning an empty/garbage buffer.
+    return _decode_pcm_or_raise(completed.returncode, completed.stdout, completed.stderr, target_sr=target_sr)
 
 
 def default_models_present(
@@ -384,7 +422,12 @@ def align_words(
         return {**transcript}
 
     _progress(2.0, "decoding audio")
-    samples, sr = loader(audio_path)
+    try:
+        samples, sr = loader(audio_path)
+    except Exception as exc:  # noqa: BLE001 - an audio-decode failure must not crash the pipeline
+        log.warning("ctc_align: audio decode failed for %s: %s", audio_path, exc)
+        _progress(100.0, ALIGN_SKIPPED_NOTICE)
+        return {**transcript}
 
     import numpy as np  # noqa: PLC0415 - numpy is in the venv
 
@@ -408,6 +451,7 @@ def align_words(
         )
     except Exception as exc:  # noqa: BLE001 - an alignment failure must not crash the pipeline
         log.warning("ctc_align: alignment failed for %s: %s", audio_path, exc)
+        _progress(100.0, ALIGN_SKIPPED_NOTICE)
         return {**transcript}
 
     _progress(95.0, "merging word timings")

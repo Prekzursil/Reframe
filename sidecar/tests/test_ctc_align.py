@@ -459,6 +459,74 @@ class TestAlignWordsDegrade:
         assert out["segments"][0]["words"][0]["start"] == 0.0
         assert out is not t
 
+    # -- F3b: a backend/decode failure surfaces a one-line notice -------------
+    def test_backend_failure_surfaces_skip_notice(self):
+        events: list[tuple[float, str]] = []
+        ca.align_words(
+            transcript_with_words(),
+            "a.wav",
+            models_present=lambda s, m: True,
+            audio_loader=make_loader(),
+            backend_factory=make_factory([], raises=RuntimeError("boom")),
+            on_progress=lambda p, m: events.append((p, m)),
+        )
+        assert any(msg == ca.ALIGN_SKIPPED_NOTICE for _, msg in events)
+
+    def test_audio_decode_failure_surfaces_notice_and_returns_unchanged(self):
+        events: list[tuple[float, str]] = []
+
+        def boom_loader(_path: str) -> Any:
+            raise ca.AudioDecodeError("ffmpeg audio decode failed (exit 1): bad input")
+
+        out = ca.align_words(
+            transcript_with_words(),
+            "a.wav",
+            models_present=lambda s, m: True,
+            audio_loader=boom_loader,
+            backend_factory=make_factory([ca.WordSpan("x", 0.0, 1.0)] * 3),
+            on_progress=lambda p, m: events.append((p, m)),
+        )
+        # text + original timings preserved (never dropped)
+        assert out["segments"][0]["words"][0]["start"] == 0.0
+        assert any(msg == ca.ALIGN_SKIPPED_NOTICE for _, msg in events)
+
+    def test_empty_transcript_emits_no_skip_notice(self):
+        # a GENUINELY empty transcript is not a failure -> no alarming notice.
+        events: list[tuple[float, str]] = []
+        ca.align_words(
+            {"language": "x", "segments": []},
+            "a.wav",
+            models_present=lambda s, m: True,
+            audio_loader=make_loader(),
+            on_progress=lambda p, m: events.append((p, m)),
+        )
+        assert all(msg != ca.ALIGN_SKIPPED_NOTICE for _, msg in events)
+
+
+# --------------------------------------------------------------------------- #
+# F3b: ffmpeg returncode check in the default audio decoder (pure helper)
+# --------------------------------------------------------------------------- #
+class TestDecodePcmOrRaise:
+    def test_nonzero_returncode_raises_with_stderr_tail(self):
+        with pytest.raises(ca.AudioDecodeError) as ei:
+            ca._decode_pcm_or_raise(1, b"", b"line one\nffmpeg: Invalid data found", target_sr=16000)
+        message = str(ei.value)
+        assert "exit 1" in message
+        assert "Invalid data found" in message  # stderr tail surfaced
+
+    def test_success_returns_float64_samples(self):
+        raw = np.asarray([0.25, -0.5], dtype=np.float32).tobytes()
+        samples, sr = ca._decode_pcm_or_raise(0, raw, b"", target_sr=16000)
+        assert sr == 16000
+        assert samples.dtype == np.float64
+        assert samples.shape[0] == 2
+        assert samples[0] == pytest.approx(0.25)
+
+    def test_success_with_empty_stdout_yields_empty_array(self):
+        samples, sr = ca._decode_pcm_or_raise(0, b"", b"", target_sr=8000)
+        assert sr == 8000
+        assert samples.shape[0] == 0
+
 
 # --------------------------------------------------------------------------- #
 # defaults: factory / loader / probe wiring (no heavy import at module load)

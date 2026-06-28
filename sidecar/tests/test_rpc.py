@@ -190,6 +190,15 @@ def test_job_cancel_returns_ok():
     assert job.cancel_requested is True
 
 
+def test_server_arms_the_per_job_watchdog_by_default():
+    # F3b: the production registry carries the wall-clock deadline so a wedged
+    # handler is force-finished ERROR instead of starving the pool.
+    from media_studio.rpc import DEFAULT_JOB_TIMEOUT_SEC
+
+    server = RpcServer()
+    assert server.jobs._job_timeout_sec == DEFAULT_JOB_TIMEOUT_SEC
+
+
 def test_job_status_returns_status_and_pct():
     server = RpcServer()
     job = server.jobs.create(lambda ctx: None)

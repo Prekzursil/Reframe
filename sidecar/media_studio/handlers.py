@@ -114,6 +114,20 @@ def _require_str(params: dict[str, Any], key: str) -> str:
     return value
 
 
+def _require_number(params: dict[str, Any], key: str, default: float) -> float:
+    """Validate ``params[key]`` as a real number, returning ``default`` when absent.
+
+    F3b: rejects non-numeric values — and ``bool`` (``True``/``False`` are
+    ``int`` subclasses but never a valid count/coordinate/fps) — with a clean
+    :data:`ErrorCode.INVALID_PARAMS` instead of letting a string/None crash
+    deeper in the pipeline (``float("x")`` / ``int(None)``).
+    """
+    value = params.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise _invalid(f"{key} must be a number")
+    return float(value)
+
+
 def _routing_block(routing: dict[str, Any]) -> dict[str, Any]:
     """Extract the persistable ``{perFunction}`` block from a preset routing.
 
@@ -1152,8 +1166,8 @@ class Services:
         """
         explicit_path = params.get("path")
         if isinstance(explicit_path, str) and explicit_path:
-            start = float(params.get("start") or 0.0)
-            end = float(params.get("end") or 0.0)
+            start = _require_number(params, "start", 0.0)
+            end = _require_number(params, "end", 0.0)
             return explicit_path, start, end
 
         candidate_id = params.get("candidateId")
@@ -1517,7 +1531,7 @@ class Services:
 
         video_id = _require_str(params, "videoId")
         query = _require_str(params, "query")
-        top_k = int(params.get("topK") or 8)
+        top_k = int(_require_number(params, "topK", 8))
         index = self._read_index(video_id)
         if index is None:
             raise _invalid(f"video {video_id} has no semantic index yet (run index.build first)")
@@ -2487,7 +2501,7 @@ class Services:
         """
         video_id = _require_str(params, "videoId")
         fmt = str(params.get("format") or "edl")
-        fps = params.get("fps", 30)
+        fps = _require_number(params, "fps", 30)
         title = params.get("title")
         if not isinstance(title, str) or not title:
             video = self.library.get(video_id)
