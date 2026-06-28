@@ -38,7 +38,7 @@ import { client, hasApi, rpc, type ReadinessAction, type Video } from './lib/rpc
 import { actionSection } from './features/providersKeysLogic';
 import { ToastProvider } from './components/toast/ToastProvider';
 import { ToastHost } from './components/toast/ToastHost';
-import { JobQueue } from './components/JobQueue';
+import { JobQueue, JOBQUEUE_PANEL_ID } from './components/JobQueue';
 import { SidecarBanner } from './components/SidecarBanner';
 import { registerJobRetry } from './components/useJob';
 // Foundation owns the top-level CSS import (per components/shell.css note).
@@ -333,6 +333,7 @@ function AppShell(): React.ReactElement {
             type="button"
             className="app__jobs-toggle"
             aria-expanded={jobsOpen}
+            aria-controls={JOBQUEUE_PANEL_ID}
             onClick={() => setJobsOpen((open) => !open)}
           >
             Jobs

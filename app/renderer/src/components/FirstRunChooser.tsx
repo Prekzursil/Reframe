@@ -9,7 +9,16 @@
 // the preset (`providers.firstRun`) and flips the flag.
 //
 // Pure presentational: the parent owns the busy state + the apply call.
+//
+// Lane 0 F4 (R-M10): the blocking dialog uses the shared useFocusTrap so focus
+// lands on the RECOMMENDED privacy-safe option on mount, Tab is trapped, and
+// focus is restored on unmount. Escape selects the privacy-safe default (the
+// always-recommended local path — no egress, no surprise spend), so keyboard
+// users get a "safe default on Escape" without bypassing the required choice.
+// Escape is inert while busy (the buttons are disabled mid-apply).
 import React from 'react';
+
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 export interface FirstRunChooserProps {
   /** Apply the chosen first-run preset ("privacy" local-safe | "bestFreeCloud"). */
@@ -22,8 +31,18 @@ export function FirstRunChooser({
   onChoose,
   busy = false,
 }: FirstRunChooserProps): React.ReactElement {
+  const trapRef = useFocusTrap<HTMLDivElement>({
+    initialFocus: '[data-default="true"]',
+    onEscape: busy ? undefined : () => onChoose('privacy'),
+  });
   return (
-    <div className="first-run-chooser" role="dialog" aria-label="Choose how Reframe runs AI">
+    <div
+      ref={trapRef}
+      className="first-run-chooser"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Choose how Reframe runs AI"
+    >
       <h3 className="first-run-chooser__title">How should Reframe run AI?</h3>
       <p className="first-run-chooser__intro">
         Pick where your transcripts and frames are processed. You can change this any time in Models

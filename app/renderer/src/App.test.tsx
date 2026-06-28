@@ -68,7 +68,10 @@ vi.mock('./views/Settings', () => ({
 }));
 
 // Stub the always-mounted chrome so the test focuses on routing.
-vi.mock('./components/JobQueue', () => ({ JobQueue: () => <div /> }));
+vi.mock('./components/JobQueue', () => ({
+  JobQueue: () => <div />,
+  JOBQUEUE_PANEL_ID: 'jobqueue-panel',
+}));
 vi.mock('./components/SidecarBanner', () => ({ SidecarBanner: () => <div /> }));
 
 import { App } from './App';

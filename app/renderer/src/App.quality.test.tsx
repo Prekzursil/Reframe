@@ -125,6 +125,7 @@ vi.mock('./components/JobQueue', () => ({
       </button>
     </div>
   ),
+  JOBQUEUE_PANEL_ID: 'jobqueue-panel',
 }));
 vi.mock('./components/SidecarBanner', () => ({ SidecarBanner: () => <div /> }));
 
@@ -311,6 +312,8 @@ describe('App jobs slide-over toggle', () => {
   it('opens and closes the JobQueue via the Jobs button', async () => {
     await mount();
     const jobsToggle = container.querySelector<HTMLButtonElement>('.app__jobs-toggle')!;
+    // F4 (R-L4): the toggle owns the slide-over panel via aria-controls.
+    expect(jobsToggle.getAttribute('aria-controls')).toBe('jobqueue-panel');
     expect(jobsToggle.getAttribute('aria-expanded')).toBe('false');
     expect(container.querySelector('[data-testid="jobqueue"]')!.getAttribute('data-open')).toBe(
       'false',

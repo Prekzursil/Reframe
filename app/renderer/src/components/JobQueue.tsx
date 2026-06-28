@@ -9,12 +9,18 @@
 // stored-request re-dispatch). No new RPC methods (A2 frozen surface only).
 //
 // The toggle button lives in App.tsx's header; this file owns the panel.
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { onProgress, rpc, type JobInfo } from '../lib/rpc';
 import './jobqueue.css';
 
 /** How often the open panel re-polls `job.list`. */
 export const JOB_POLL_INTERVAL_MS = 2000;
+
+/**
+ * The slide-over panel's DOM id. The App-header toggle points at it via
+ * aria-controls so AT knows the button owns this region (Lane 0 F4 / R-L4).
+ */
+export const JOBQUEUE_PANEL_ID = 'jobqueue-panel';
 
 /** Cancel applies to jobs that are still cancellable (queued/running). */
 export function canCancel(job: JobInfo): boolean {
@@ -86,6 +92,24 @@ export interface JobQueueProps {
 export function JobQueue({ open, onClose }: JobQueueProps): React.ReactElement | null {
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const panelRef = useRef<HTMLElement>(null);
+
+  // Lane 0 F4 (R-L4): move focus into the panel when it opens, so keyboard users
+  // land in the slide-over instead of being stranded behind it.
+  useEffect(() => {
+    if (!open) return;
+    // The panel (with this ref) is rendered whenever `open` is true, and effects
+    // run after the DOM commit, so the ref is always populated here.
+    (panelRef.current as HTMLElement).focus();
+  }, [open]);
+
+  // Escape closes the slide-over (R-L4). It is non-modal, so Tab is NOT trapped.
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLElement>) => {
+      if (e.key === 'Escape') onClose();
+    },
+    [onClose],
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -141,7 +165,15 @@ export function JobQueue({ open, onClose }: JobQueueProps): React.ReactElement |
   if (!open) return null;
 
   return (
-    <aside className="jobqueue" role="complementary" aria-label="Job queue">
+    <aside
+      ref={panelRef}
+      id={JOBQUEUE_PANEL_ID}
+      className="jobqueue"
+      role="complementary"
+      aria-label="Job queue"
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
+    >
       <header className="jobqueue__header">
         <h2 className="jobqueue__title">Jobs</h2>
         <button

@@ -150,4 +150,16 @@ describe('<CandidateReview />', () => {
     expect(viralityBtn.getAttribute('aria-pressed')).toBe('true');
     expect(rankBtn.getAttribute('aria-pressed')).toBe('false');
   });
+
+  it('advertises the single-letter shortcuts to AT and exposes the legend (F4)', () => {
+    const it = item();
+    mount({ items: [it], selected: it });
+    const group = container.querySelector('.sm-review') as HTMLElement;
+    // The keyboard shortcuts are discoverable via aria-keyshortcuts on the group.
+    expect(group.getAttribute('aria-keyshortcuts')).toBe('J K Space A X ArrowLeft ArrowRight');
+    // The visible legend is no longer hidden from assistive tech.
+    const legend = container.querySelector('.sm-kbd-hints') as HTMLElement;
+    expect(legend.getAttribute('aria-hidden')).toBeNull();
+    expect(legend.getAttribute('aria-label')).toBe('Keyboard shortcuts');
+  });
 });

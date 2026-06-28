@@ -222,7 +222,9 @@ export function UsageBars({ rows, nowSec }: UsageBarsProps): React.ReactElement 
                   data-label="superpowered"
                   title={`Superpowered: ${SUPERPOWERED_MIN}+ healthy keys across distinct providers rotate this unit — high headroom.`}
                 >
-                  ⚡ Superpowered
+                  {/* Decorative glyph — hidden from AT so it isn't read as a
+                      word; the "Superpowered" text carries the meaning (R-L4). */}
+                  <span aria-hidden="true">⚡</span> Superpowered
                 </span>
               )}
             </header>

@@ -3,7 +3,13 @@
 // quality tier, (3) download what you need. Shown once (gated on
 // settings.modelsOnboardingSeen by the parent); "Got it" persists the flag and
 // closes. Self-contained (no portal): rendered as an overlay inside the panel.
+//
+// Lane 0 F4 (R-M10): the dialog now uses the shared useFocusTrap so focus moves
+// into it on mount, Tab is trapped, Escape dismisses (same as "Skip tour"), and
+// focus is restored to the opener on unmount.
 import React, { useState } from 'react';
+
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 export interface OnboardingStep {
   title: string;
@@ -35,9 +41,11 @@ export function ModelsOnboarding({ onDone }: ModelsOnboardingProps): React.React
   const [step, setStep] = useState<number>(0);
   const current = ONBOARDING_STEPS[step];
   const isLast = step === ONBOARDING_STEPS.length - 1;
+  const trapRef = useFocusTrap<HTMLDivElement>({ onEscape: onDone });
 
   return (
     <div
+      ref={trapRef}
       className="models-onboarding"
       role="dialog"
       aria-modal="true"
