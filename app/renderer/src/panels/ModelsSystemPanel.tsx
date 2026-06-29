@@ -41,6 +41,7 @@ import { UsageBars } from '../components/UsageBar';
 import { DeviceStatusStrip } from '../components/DeviceStatusStrip';
 import { DeviceModelReco } from '../components/DeviceModelReco';
 import { ReasonStrip } from '../components/ReasonStrip';
+import { AdvancedModels } from '../components/AdvancedModels';
 import { LocalRunners } from '../components/LocalRunners';
 import { OpenRouterUsage } from '../components/OpenRouterUsage';
 import { PresetPicker } from '../components/PresetPicker';
@@ -168,6 +169,9 @@ interface SettingsShape {
   activePreset?: string;
   routing?: RoutingBlock;
   firstRunChoiceMade?: boolean;
+  // M3 POINT: non-default local-runner base URLs the detector probes.
+  ollamaBaseUrl?: string;
+  lmStudioBaseUrl?: string;
 }
 
 export function ModelsSystemPanel({
@@ -592,6 +596,18 @@ export function ModelsSystemPanel({
           VRAM estimate when a detected Ollama runner exposes metadata, else the
           advisor's verbatim device-ranked reason; RAM reads "unknown" gracefully. */}
       {analyzed && overview && <ReasonStrip overview={overview} />}
+
+      {/* M3 Advanced disclosure: model SORT (VRAM-fit/size/name) over the
+          metadata eligibility + manual runner POINT (base URL/port) — the
+          detector honours ollamaBaseUrl/lmStudioBaseUrl on the next analyse. */}
+      {analyzed && overview && (
+        <AdvancedModels
+          models={overview.eligibility.models}
+          ollamaBaseUrl={settings.ollamaBaseUrl ?? ''}
+          lmStudioBaseUrl={settings.lmStudioBaseUrl ?? ''}
+          onApplyRunnerUrls={(patch) => void patchSettings(patch)}
+        />
+      )}
 
       {analyzed && hardware && (
         <div className="hardware-header" data-section="hardware">

@@ -87,3 +87,62 @@ def test_returned_overrides_is_independent_copy() -> None:
     out = rp.read_routing_policy(src)
     out["overrides"]["a"] = "auto"
     assert src["routingPolicy"]["overrides"]["a"] == "cloud"
+
+
+# --- sanitize_routing_policy (shared corrupt-load + write-validate clamp) ------
+
+
+@pytest.mark.parametrize("corrupt", [None, "garbage", 42, [], 3.14, True])
+def test_sanitize_non_dict_returns_default(corrupt: Any) -> None:
+    """A non-dict candidate policy degrades to the fail-closed local default."""
+    assert rp.sanitize_routing_policy(corrupt) == {"global": "local", "overrides": {}}
+
+
+def test_sanitize_clamps_global_and_overrides() -> None:
+    """An out-of-enum global AND override modes are clamped to local; bad keys dropped."""
+    out = rp.sanitize_routing_policy({"global": "nope", "overrides": {"select": "cloud", "vision": "bad", 7: "auto"}})
+    assert out == {"global": "local", "overrides": {"select": "cloud", "vision": "local"}}
+
+
+def test_sanitize_preserves_valid_policy() -> None:
+    """A fully-valid candidate survives sanitisation verbatim."""
+    out = rp.sanitize_routing_policy({"global": "auto", "overrides": {"director": "cloud"}})
+    assert out == {"global": "auto", "overrides": {"director": "cloud"}}
+
+
+# --- resolve_route (the pure policy resolver M3 owns) -------------------------
+
+
+def test_resolve_route_unknown_fn_uses_global() -> None:
+    """A function with no override resolves to the global mode (GATE-2 test 3)."""
+    settings = {"routingPolicy": {"global": "cloud", "overrides": {"select": "local"}}}
+    assert rp.resolve_route("director", settings) == {"mode": "cloud"}
+
+
+def test_resolve_route_override_wins_over_global() -> None:
+    """A per-function override takes precedence over the global mode."""
+    settings = {"routingPolicy": {"global": "cloud", "overrides": {"select": "local"}}}
+    assert rp.resolve_route("select", settings) == {"mode": "local"}
+
+
+def test_resolve_route_missing_policy_fails_closed_to_local() -> None:
+    """No persisted policy -> every function resolves local (zero egress)."""
+    assert rp.resolve_route("select", {}) == {"mode": "local"}
+
+
+@pytest.mark.parametrize("corrupt", [None, "garbage", 42, []])
+def test_resolve_route_corrupt_policy_fails_closed_to_local(corrupt: Any) -> None:
+    """A corrupt (non-dict) persisted policy resolves local for any function."""
+    assert rp.resolve_route("vision", {"routingPolicy": corrupt}) == {"mode": "local"}
+
+
+def test_resolve_route_corrupt_global_clamps_to_local() -> None:
+    """An out-of-enum GLOBAL clamps the FINAL resolved mode to local (no override)."""
+    settings = {"routingPolicy": {"global": "cloudy", "overrides": {}}}
+    assert rp.resolve_route("select", settings) == {"mode": "local"}
+
+
+def test_resolve_route_corrupt_override_mode_clamps_to_local() -> None:
+    """An out-of-enum override mode clamps that function's resolved mode to local."""
+    settings = {"routingPolicy": {"global": "cloud", "overrides": {"select": "sketchy"}}}
+    assert rp.resolve_route("select", settings) == {"mode": "local"}

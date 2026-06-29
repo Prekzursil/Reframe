@@ -590,7 +590,9 @@ def test_phase8_select_offline_text_select_routes_local_no_egress(tmp_path: Path
 
 def test_select_provider_or_local_online_honors_select_route(tmp_path: Path) -> None:
     # ONLINE (offline off) + no injected provider: the select route is honored,
-    # so a configured cloud entry is the pool's first (egress) target.
+    # so a configured cloud entry is the pool's first (egress) target. The M3
+    # RoutingPolicy global must ALLOW cloud (flipped to cloud) — otherwise the
+    # fail-closed local default would short-circuit the seam to local-only.
     from media_studio.models import provider as provider_mod
 
     svc = _phase8_services(tmp_path, provider=None)
@@ -598,6 +600,7 @@ def test_select_provider_or_local_online_honors_select_route(tmp_path: Path) -> 
     svc.settings.set(
         {
             **_vision_provider_settings(with_consent=True),
+            "routingPolicy": {"global": "cloud"},
             "routing": {"perFunction": {"select": {"provider": "gemini", "fallback": []}}},
         }
     )

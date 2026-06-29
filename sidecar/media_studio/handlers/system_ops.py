@@ -240,6 +240,33 @@ def models_overview(self: Services, params: dict[str, Any], ctx: RpcContext) -> 
     }
 
 
+def models_set_routing_policy(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``models.setRoutingPolicy({global?, overrides?})`` -> ``{routingPolicy}``. WRITE.
+
+    M3 — the WRITE half of the single ``RoutingPolicy`` store the M1a read
+    (:func:`routing_policy.read_routing_policy`) surfaces. The header toggle sends
+    ``{global}``; the Advanced per-function table sends ``{overrides}``. The
+    incoming candidate is run through :func:`routing_policy.sanitize_routing_policy`
+    BEFORE persistence so the SAME fail-closed clamp protects the write as the
+    read: an out-of-enum (or corrupt) ``global`` / override mode is forced to
+    ``local`` (zero silent cloud egress, GATE-2) and a non-string override key is
+    dropped — the handler NEVER raises on a malformed body, it clamps.
+
+    Persistence is the existing :class:`settings_store.SettingsStore` ``set`` (a
+    partial top-level merge whose ``_write`` is an atomic temp-file +
+    ``os.replace`` — mirrors ``library._write_json``), so a half-written file can
+    never be observed. The DECISION §4 default (``global:'local'``, no auto-
+    promote) is unchanged: the toggle only ever moves on an explicit user write.
+    Returns the persisted, sanitised policy so the UI reflects exactly what landed
+    on disk (never the raw request).
+    """
+    from ..models import routing_policy as _routing_policy  # local: import-light pure
+
+    policy = _routing_policy.sanitize_routing_policy(params)
+    self.settings.set({"routingPolicy": policy})
+    return {"routingPolicy": policy}
+
+
 def system_self_test(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
     """``system.selfTest()`` -> the first-run diagnostic report. Direct-return.
 

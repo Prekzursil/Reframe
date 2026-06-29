@@ -86,6 +86,10 @@ def register_all(
     # redacted providers + per-key pool + fail-closed routing policy into ONE
     # screen. ZERO provider/LLM calls, NO pull, NO settings mutation, no full key.
     reg("models.overview", svc.models_overview)
+    # M3 (V1.1 Lane 2): the WRITE half of the single RoutingPolicy store. Persists
+    # the sanitised (fail-closed clamped) {global, overrides} via the atomic
+    # settings store; the header toggle + Advanced per-function table call it.
+    reg("models.setRoutingPolicy", svc.models_set_routing_policy)
     # WU-2: the first-run self-diagnostic. Direct (no job): pure data-dir/device/
     # native-dep/ffmpeg probes behind seams — reports LOUDLY, never proceeds broken.
     reg("system.selfTest", svc.system_self_test)

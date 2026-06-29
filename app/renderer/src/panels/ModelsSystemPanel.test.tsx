@@ -316,7 +316,11 @@ function makeClient(
         calls.push({ method: 'models.overview', args: [opts] });
         return (
           over.overview ??
-          modelsOverview({ hardware: over.hardware, runners: over.runners, eligibility: over.eligibility })
+          modelsOverview({
+            hardware: over.hardware,
+            runners: over.runners,
+            eligibility: over.eligibility,
+          })
         );
       }),
     },
@@ -601,6 +605,73 @@ describe('<ModelsSystemPanel />', () => {
     expect(ram).toContain('unknown');
     expect(ram).not.toContain('undefined');
     expect(ram).not.toContain('NaN');
+  });
+
+  // ---- M3: Advanced disclosure (model SORT + manual runner POINT) ----------
+  it('is hidden before analysis and revealed (with the eligibility models) after', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    await mount(c);
+    expect(container.querySelector('details.advanced-models')).toBeNull();
+    await analyze();
+    expect(container.querySelector('details.advanced-models')).not.toBeNull();
+    const names = Array.from(
+      container.querySelectorAll('[data-section="advanced-models"] [data-model]'),
+    ).map((el) => el.getAttribute('data-model'));
+    expect(names).toEqual(['qwen2.5:7b-instruct-q4_K_M']);
+  });
+
+  it('seeds the runner POINT inputs from persisted base URLs', async () => {
+    const c = makeClient({
+      initialSettings: {
+        modelsOnboardingSeen: true,
+        ollamaBaseUrl: 'http://gpu-box:11434/v1',
+        lmStudioBaseUrl: 'http://gpu-box:1234/v1',
+      },
+    });
+    await mount(c);
+    await analyze();
+    expect(
+      (container.querySelector('input[data-action="ollama-url"]') as HTMLInputElement).value,
+    ).toBe('http://gpu-box:11434/v1');
+    expect(
+      (container.querySelector('input[data-action="lmstudio-url"]') as HTMLInputElement).value,
+    ).toBe('http://gpu-box:1234/v1');
+  });
+
+  it('persists edited runner URLs via settings.set on submit (POINT)', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    await mount(c);
+    await analyze();
+    const ollama = container.querySelector('input[data-action="ollama-url"]') as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    await act(async () => {
+      setter?.call(ollama, 'http://127.0.0.1:11500/v1');
+      ollama.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const form = container.querySelector('form.advanced-models__point') as HTMLFormElement;
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    const setCall = c.calls.find(
+      (x) => x.method === 'settings.set' && (x.args[0] as Record<string, unknown>).ollamaBaseUrl,
+    );
+    expect(setCall?.args[0]).toEqual({
+      ollamaBaseUrl: 'http://127.0.0.1:11500/v1',
+      lmStudioBaseUrl: '',
+    });
+  });
+
+  it('seeds blank POINT inputs when no base URLs are persisted', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    await mount(c);
+    await analyze();
+    expect(
+      (container.querySelector('input[data-action="ollama-url"]') as HTMLInputElement).value,
+    ).toBe('');
+    expect(
+      (container.querySelector('input[data-action="lmstudio-url"]') as HTMLInputElement).value,
+    ).toBe('');
   });
 
   it('model rows read exactly one unambiguous state (Installed / Download (size) / Downloading)', async () => {

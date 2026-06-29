@@ -193,13 +193,57 @@ def test_function_prefer_malformed_slot_is_none(tmp_path: Any) -> None:
 
 
 def test_select_seam_provider_prefers_routed_provider(tmp_path: Any) -> None:
-    # The provider the select seam builds tries the routed provider FIRST.
+    # The provider the select seam builds tries the routed provider FIRST. The M3
+    # egress gate must ALLOW cloud first: with the RoutingPolicy global flipped to
+    # cloud, the per-function route is honored (the gate only forces local when it
+    # resolves to 'local').
     svc = _svc(tmp_path)
     _configure_pool(svc)
+    svc.settings.set({"routingPolicy": {"global": "cloud"}})
     svc.providers_set_function_model({"function": "select", "provider": "groq-llama-3.3-70b"}, _ctx())
     pool = svc._provider_for_function("select")
     assert isinstance(pool, provider_mod.RotatingProvider)
     assert [e.provider for e in pool.entries][0] == "GroqL"  # the llama entry's provider name
+
+
+# --------------------------------------------------------------------------- #
+# M3 — RoutingPolicy egress gate at the _provider_for_function seam (GATE-2)
+# --------------------------------------------------------------------------- #
+
+
+def test_provider_for_function_local_policy_forces_local_pool(tmp_path: Any) -> None:
+    # Even with a fully-configured cloud route for "select", the DEFAULT (and
+    # explicit) RoutingPolicy global:'local' short-circuits to a LOCAL-ONLY pool —
+    # NO cloud egress target is built (GATE-2 Risk #3, fail-closed by default).
+    svc = _svc(tmp_path)
+    _configure_pool(svc)
+    svc.providers_set_function_model({"function": "select", "provider": "groq-llama-3.3-70b"}, _ctx())
+    # no routingPolicy persisted -> the fail-closed local default applies
+    pool = svc._provider_for_function("select")
+    assert isinstance(pool, provider_mod.RotatingProvider)
+    assert all(e.local for e in pool.entries), "local policy still carried a cloud egress target"
+
+
+def test_provider_for_function_corrupt_policy_forces_local_pool(tmp_path: Any) -> None:
+    # A corrupt persisted RoutingPolicy fails CLOSED to local at the egress seam,
+    # never silently to cloud.
+    svc = _svc(tmp_path)
+    _configure_pool(svc)
+    svc.providers_set_function_model({"function": "select", "provider": "groq-llama-3.3-70b"}, _ctx())
+    svc.settings.set({"routingPolicy": "corrupt-not-a-dict"})
+    pool = svc._provider_for_function("select")
+    assert all(e.local for e in pool.entries), "corrupt policy must fail closed to local"
+
+
+def test_provider_for_function_override_local_forces_local_even_when_global_cloud(tmp_path: Any) -> None:
+    # A per-function override of 'local' beats a global 'cloud' at the seam: the
+    # select function is forced local while other functions could still egress.
+    svc = _svc(tmp_path)
+    _configure_pool(svc)
+    svc.providers_set_function_model({"function": "select", "provider": "groq-llama-3.3-70b"}, _ctx())
+    svc.settings.set({"routingPolicy": {"global": "cloud", "overrides": {"select": "local"}}})
+    pool = svc._provider_for_function("select")
+    assert all(e.local for e in pool.entries), "override 'local' must force the local pool"
 
 
 def test_translation_seam_translator_prefers_routed_provider(tmp_path: Any) -> None:

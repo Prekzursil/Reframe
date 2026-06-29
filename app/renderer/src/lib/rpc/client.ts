@@ -56,6 +56,8 @@ import type {
   ProvidersListResponse,
   ReadinessItem,
   RecommendResponse,
+  RoutingMode,
+  RoutingPolicy,
   SavePreset,
   SavePresetsBlock,
   SavedRecipe,
@@ -410,6 +412,19 @@ export const client = {
      */
     overview: (opts?: { commercial?: boolean }): Promise<ModelsOverview> =>
       rpc('models.overview', opts?.commercial === undefined ? {} : { commercial: opts.commercial }),
+    /**
+     * `models.setRoutingPolicy {global?, overrides?}` (M3) — the WRITE half of the
+     * single `RoutingPolicy` store. The header toggle sends `{global}`; the
+     * Advanced per-function table sends `{overrides}`. The sidecar sanitises the
+     * body fail-CLOSED (an out-of-enum / corrupt mode -> `local`, a non-string
+     * key dropped; never throws) and persists atomically, returning the policy
+     * that actually landed on disk. The DECISION §4 default (`global:'local'`)
+     * never auto-promotes — it only moves on an explicit write.
+     */
+    setRoutingPolicy: (policy: {
+      global?: RoutingMode;
+      overrides?: Record<string, RoutingMode>;
+    }): Promise<{ routingPolicy: RoutingPolicy }> => rpc('models.setRoutingPolicy', policy),
   },
 
   /**

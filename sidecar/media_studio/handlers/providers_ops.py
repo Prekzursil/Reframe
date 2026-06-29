@@ -420,9 +420,22 @@ def _provider_for_function(self: Services, function: str) -> Any:
     FACTORY PATH (PLAN §WU-keys): RAW keys via ``get_raw()``. The routed
     provider (``_function_prefer``) is tried first; the rest of the pool is
     failover with the local backstop last (or local-only when routed to LOCAL).
+
+    M3 EGRESS GATE (GATE-2, Risk #3 — silent cloud egress): the cross-cutting
+    ``RoutingPolicy`` resolves WHERE this function runs. ``resolve_route`` is
+    fail-closed (a missing / corrupt / out-of-enum policy resolves ``local``), so
+    ``mode == 'local'`` — which includes the DECISION §4 local-by-default — short-
+    circuits to a LOCAL-ONLY pool with ``prefer=LOCAL_PROVIDER_ID``, exactly like
+    offline: NO cloud entry is built, so neither the primary call nor a 429
+    failover can ever reach a cloud target. ``cloud`` / ``auto`` fall through to
+    the normal per-function route, where the per-entry text/frame consent gates
+    still apply downstream.
     """
     from ..models import provider as _provider_mod  # local: heavy seam
+    from ..models import routing_policy as _routing_policy  # local: import-light pure
 
+    if _routing_policy.resolve_route(function, self.settings.get())["mode"] == "local":
+        return _provider_mod.get_provider(self.settings.get_raw(), prefer=_provider_mod.LOCAL_PROVIDER_ID)
     return _provider_mod.get_provider(self.settings.get_raw(), prefer=self._function_prefer(function))
 
 

@@ -157,6 +157,68 @@ body,
   color: var(--accent);
 }
 
+/* M3 header routing toggle — mirrors the quality toggle's pill group, with a
+   small "may egress" hint surfaced on the cloud/auto modes. */
+.routing-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.routing-toggle__label {
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.routing-toggle__btn {
+  appearance: none;
+  border: none;
+  padding: 5px 14px;
+  background: var(--surface-deep);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.routing-toggle__btn:first-of-type {
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+}
+
+.routing-toggle__btn:last-of-type {
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+}
+
+.routing-toggle__btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.routing-toggle__btn.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.routing-toggle__btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.routing-toggle__egress {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--warn, #c9772a);
+}
+
 /* .app__jobs-toggle lives in jobqueue.css; both consume the same tokens. */
 
 .app__main {

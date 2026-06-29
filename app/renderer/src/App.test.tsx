@@ -17,13 +17,16 @@ import type { Video } from './lib/rpc';
 const rpcMock = vi.fn();
 const libraryListMock = vi.fn();
 const batchListMock = vi.fn();
+const setRoutingPolicyMock = vi.fn();
+let hasApiReturn = true;
 
 vi.mock('./lib/rpc', () => ({
   rpc: (...a: unknown[]) => rpcMock(...a),
-  hasApi: () => true,
+  hasApi: () => hasApiReturn,
   client: {
     library: { list: (...a: unknown[]) => libraryListMock(...a) },
     batch: { list: (...a: unknown[]) => batchListMock(...a) },
+    models: { setRoutingPolicy: (...a: unknown[]) => setRoutingPolicyMock(...a) },
   },
 }));
 
@@ -97,6 +100,9 @@ beforeEach(() => {
   libraryListMock.mockReset();
   batchListMock.mockReset();
   batchListMock.mockResolvedValue({ batches: [] });
+  setRoutingPolicyMock.mockReset();
+  setRoutingPolicyMock.mockResolvedValue({ routingPolicy: { global: 'local', overrides: {} } });
+  hasApiReturn = true;
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -425,5 +431,91 @@ describe('App lastOpenedVideoId persist + restore', () => {
     const setCalls = rpcMock.mock.calls.filter(([method]) => method === 'settings.set');
     expect(setCalls).toHaveLength(1);
     expect(setCalls[0][1]).toEqual({ lastOpenedVideoId: 'v1' });
+  });
+});
+
+describe('App M3 header routing toggle', () => {
+  function routingBtn(mode: string): HTMLButtonElement {
+    return container.querySelector(
+      `.routing-toggle button[data-mode="${mode}"]`,
+    ) as HTMLButtonElement;
+  }
+
+  it('defaults the routing toggle to Local when no policy is persisted', async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    expect(routingBtn('local').getAttribute('aria-pressed')).toBe('true');
+    expect(routingBtn('cloud').getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('hydrates the toggle from a persisted routingPolicy.global', async () => {
+    rpcMock.mockImplementation((method: string) => {
+      if (method === 'settings.get') {
+        return Promise.resolve({ routingPolicy: { global: 'auto', overrides: {} } });
+      }
+      return Promise.resolve({});
+    });
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    expect(routingBtn('auto').getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('keeps Local when the persisted global is out-of-enum/missing', async () => {
+    rpcMock.mockImplementation((method: string) => {
+      if (method === 'settings.get') {
+        return Promise.resolve({ routingPolicy: { global: 'sneaky' } });
+      }
+      return Promise.resolve({});
+    });
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    expect(routingBtn('local').getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('persists a click via models.setRoutingPolicy and reflects it immediately', async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    await act(async () => {
+      routingBtn('cloud').click();
+    });
+    await flush();
+    expect(setRoutingPolicyMock).toHaveBeenCalledWith({ global: 'cloud' });
+    expect(routingBtn('cloud').getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('updates the toggle in-memory but skips the RPC when no api bridge is present', async () => {
+    hasApiReturn = false;
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    await act(async () => {
+      routingBtn('cloud').click();
+    });
+    await flush();
+    expect(setRoutingPolicyMock).not.toHaveBeenCalled();
+    expect(routingBtn('cloud').getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('keeps the in-memory selection even if the write rejects', async () => {
+    setRoutingPolicyMock.mockRejectedValue(new Error('offline'));
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    await act(async () => {
+      routingBtn('auto').click();
+    });
+    await flush();
+    expect(setRoutingPolicyMock).toHaveBeenCalledWith({ global: 'auto' });
+    expect(routingBtn('auto').getAttribute('aria-pressed')).toBe('true');
   });
 });

@@ -869,3 +869,72 @@
   font-weight: var(--type-title-weight);
   color: var(--text-primary);
 }
+
+/* M3 Advanced disclosure: model SORT + manual runner POINT. */
+.advanced-models {
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  padding-top: var(--space-3);
+}
+
+.advanced-models > summary {
+  cursor: pointer;
+  font-weight: var(--type-title-weight);
+  color: var(--text-secondary);
+}
+
+.advanced-models__sort {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.advanced-models__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.advanced-models__row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-1) 0;
+}
+
+.advanced-models__fit {
+  font-size: var(--type-small-size);
+  color: var(--text-secondary);
+}
+
+.advanced-models__fit.is-fit {
+  color: var(--accent);
+}
+
+.advanced-models__vram {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.advanced-models__empty {
+  color: var(--text-secondary);
+  font-size: var(--type-small-size);
+}
+
+.advanced-models__point {
+  margin-top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.advanced-models__point-intro {
+  margin: 0;
+  font-size: var(--type-small-size);
+  color: var(--text-secondary);
+}

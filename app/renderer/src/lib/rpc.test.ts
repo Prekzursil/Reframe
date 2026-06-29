@@ -629,6 +629,17 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('models.overview', { commercial: false });
   });
 
+  it('models.setRoutingPolicy forwards the policy body verbatim (M3)', async () => {
+    const r = installApi();
+    await client.models.setRoutingPolicy({ global: 'cloud' });
+    expect(r).toHaveBeenCalledWith('models.setRoutingPolicy', { global: 'cloud' });
+    await client.models.setRoutingPolicy({ global: 'auto', overrides: { select: 'local' } });
+    expect(r).toHaveBeenCalledWith('models.setRoutingPolicy', {
+      global: 'auto',
+      overrides: { select: 'local' },
+    });
+  });
+
   it('providers.openrouterUsage calls the bare method (WU-models/device cost)', async () => {
     const r = installApi();
     await client.providers.openrouterUsage();
