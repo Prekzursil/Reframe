@@ -382,6 +382,25 @@ class Library:
             ).fetchone()
         return self._row_to_video(row)
 
+    # ---- L2 lineage (PROV append on Job success) ---------------------------
+    def record_lineage(
+        self,
+        job: Any,
+        inputs: builtins.list[Any],
+        outputs: builtins.list[Any],
+        agent: Any,
+    ) -> str:
+        """Append one PROV lineage record for a successful ``job`` (DESIGN §3.3).
+
+        Thin façade over :func:`media_studio.lineage.record_lineage` (imported
+        lazily so :mod:`lineage` — which reuses this module's id/timestamp/schema
+        helpers — can import :mod:`library` without an import cycle). Returns the
+        new activity id. Opt-in: an op that does not want lineage never calls it.
+        """
+        from . import lineage  # lazy import breaks the library<->lineage cycle
+
+        return lineage.record_lineage(self, job, inputs, outputs, agent)
+
 
 class Project:
     """A versioned JSON project manifest referencing its source video by path.
