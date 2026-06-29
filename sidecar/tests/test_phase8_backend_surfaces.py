@@ -45,6 +45,7 @@ def test_lightasd_vendored_package_imports_light() -> None:
     # (importable spec) without executing them, so the coverage run never needs
     # torch (their statements are all ``# pragma: no cover``).
     import importlib.util
+    import os
 
     import media_studio.features._lightasd as pkg
 
@@ -52,14 +53,21 @@ def test_lightasd_vendored_package_imports_light() -> None:
     assert pkg.S3FD_WEIGHT_NAME == "sfd_face.pth"
     assert pkg.ASD_WEIGHT_NAME == "finetuning_TalkSet.model"
     assert len(pkg.LIGHT_ASD_COMMIT) == 40
+    # ``find_spec`` on the LIGHT package + the top-level torch model modules locates
+    # them WITHOUT executing them (it never imports the leaf), so no torch is needed.
     for mod in (
         "media_studio.features._lightasd.model",
         "media_studio.features._lightasd.asd",
         "media_studio.features._lightasd.s3fd",
-        "media_studio.features._lightasd.s3fd.nets",
-        "media_studio.features._lightasd.s3fd.box_utils",
     ):
         assert importlib.util.find_spec(mod) is not None
+    # The s3fd SUBMODULES (nets / box_utils) sit under the s3fd package whose
+    # ``__init__`` imports torch at module top; ``find_spec("...s3fd.nets")`` would
+    # have to EXECUTE that ``__init__`` (no torch in the coverage-gate env). Assert
+    # they SHIP via the filesystem instead — proves they are vendored, no import.
+    s3fd_dir = os.path.join(os.path.dirname(pkg.__file__), "s3fd")
+    for fname in ("__init__.py", "nets.py", "box_utils.py"):
+        assert os.path.isfile(os.path.join(s3fd_dir, fname))
 
 
 def test_vlm_backbone_backend_surface_imports_light() -> None:
