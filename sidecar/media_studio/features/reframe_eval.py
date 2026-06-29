@@ -24,8 +24,11 @@ The six metrics (``docs/WU-R0-EVAL-HARNESS.md`` pins the exact data contract):
   * ``shot_boundary_f1`` — cut-detection F1 with a ±N-frame match tolerance;
   * ``layout_match_accuracy`` — per-frame single/split/composite label agreement;
   * ``switch_latency`` — ms lag of predicted speaker/layout switches vs reference;
-  * ``static_shot_jitter`` — mean per-frame crop-centre travel (must NOT regress
-    the current engine — :data:`STATIC_JITTER_BASELINE`, captured deterministically);
+  * ``static_shot_jitter`` — mean per-frame crop-centre travel WITHIN each static
+    segment (the gate uses :func:`static_shot_jitter_within_segments`, which never
+    charges the intentional hard-cut jumps BETWEEN segments as jitter, so a clean
+    multi-cut trace is not penalised; must NOT regress the current engine —
+    :data:`STATIC_JITTER_BASELINE`, captured deterministically on an uncut shot);
   * ``crop_iou`` — intersection-over-union of a predicted crop vs a reference rect;
   * ``speaker_attribution_accuracy`` — per-frame active-speaker label agreement.
 
@@ -263,7 +266,14 @@ def crop_iou(
 
 
 def static_shot_jitter(crops: Sequence[tuple[float, float, float, float]]) -> float:
-    """Mean Euclidean per-frame crop-centre travel (lower = stiller; 0 if < 2 frames)."""
+    """Mean Euclidean per-frame crop-centre travel (lower = stiller; 0 if < 2 frames).
+
+    WHOLE-track travel — it counts every consecutive-frame step, including the
+    deliberate jump at a hard-cut boundary. The gate uses the segment-aware
+    :func:`static_shot_jitter_within_segments` instead (which excludes those
+    boundaries); this raw form is retained for the baseline derivation, where the
+    reference sway is a single uncut shot, and as the regression-guard contrast.
+    """
     centers = [(x + w / 2.0, y + h / 2.0) for (x, y, w, h) in crops]
     if len(centers) < 2:
         return 0.0
@@ -272,6 +282,33 @@ def static_shot_jitter(crops: Sequence[tuple[float, float, float, float]]) -> fl
         for i in range(len(centers) - 1)
     )
     return total / (len(centers) - 1)
+
+
+def static_shot_jitter_within_segments(
+    crops: Sequence[tuple[float, float, float, float]],
+    segments: Sequence[Segment],
+) -> float:
+    """Mean per-frame crop-centre travel measured WITHIN each static segment.
+
+    Unlike :func:`static_shot_jitter` (whole-track travel), this counts a
+    consecutive-frame step ONLY when both of its frames fall inside the SAME
+    segment, so the intentional crop jump at every hard-cut boundary between
+    segments is never charged as jitter. This is the metric the gate uses: a
+    clean multi-cut trace is not penalised for its deliberate cuts, while real
+    wobble inside a single static shot still registers. Segment bounds are
+    clamped to the crop range so a length mismatch is safe; returns ``0.0`` when
+    no two consecutive frames share a segment.
+    """
+    centers = [(x + w / 2.0, y + h / 2.0) for (x, y, w, h) in crops]
+    total = 0.0
+    steps = 0
+    for seg in segments:
+        lo = max(seg.start_frame, 0)
+        hi = min(seg.end_frame, len(centers))
+        for i in range(lo, hi - 1):
+            total += math.hypot(centers[i + 1][0] - centers[i][0], centers[i + 1][1] - centers[i][1])
+            steps += 1
+    return total / steps if steps else 0.0
 
 
 def segments_to_per_frame(segments: Sequence[Segment], total_frames: int) -> list[str]:
@@ -399,7 +436,7 @@ def run_harness(
             switch_frames(reference.speaker_per_frame),
             fps=fps,
         ),
-        "staticJitter": static_shot_jitter(predicted.crops),
+        "staticJitter": static_shot_jitter_within_segments(predicted.crops, predicted.segments),
         "cropIoU": mean_crop_iou(predicted.crops, reference.crops),
         "speakerAttribution": speaker_attribution_accuracy(predicted.speaker_per_frame, reference.speaker_per_frame),
     }

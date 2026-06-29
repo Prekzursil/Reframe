@@ -232,6 +232,85 @@ def test_static_jitter_baseline_matches_current_engine() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# static_shot_jitter_within_segments (the segment-aware gate metric)
+# --------------------------------------------------------------------------- #
+
+
+def test_within_segment_jitter_empty_is_zero() -> None:
+    """No segments -> no in-segment steps -> 0.0 (outer loop never runs)."""
+    crops = [(0.0, 0.0, 2.0, 2.0), (100.0, 0.0, 2.0, 2.0)]
+    assert re.static_shot_jitter_within_segments(crops, []) == 0.0
+
+
+def test_within_segment_jitter_single_frame_segment_is_zero() -> None:
+    """A one-frame segment has no internal step -> 0.0 (inner loop never runs)."""
+    crops = [(0.0, 0.0, 2.0, 2.0), (100.0, 0.0, 2.0, 2.0)]
+    assert re.static_shot_jitter_within_segments(crops, [re.Segment(0, 1, "single")]) == 0.0
+
+
+def test_within_segment_jitter_single_segment_matches_whole_track() -> None:
+    """One segment spanning every frame == the raw whole-track travel."""
+    crops = [(0.0, 0.0, 2.0, 2.0), (3.0, 0.0, 2.0, 2.0), (3.0, 4.0, 2.0, 2.0)]
+    seg = [re.Segment(0, len(crops), "single")]
+    assert re.static_shot_jitter_within_segments(crops, seg) == pytest.approx(re.static_shot_jitter(crops))
+
+
+def test_within_segment_jitter_excludes_cut_boundary() -> None:
+    """The deliberate jump at a hard-cut boundary is NOT charged as jitter.
+
+    Two stone-still segments separated by a large crop jump: the within-segment
+    metric sees 0.0 (no motion inside either shot) even though the raw whole-track
+    metric is huge — proving the boundary step is excluded.
+    """
+    crops = [(0.0, 0.0, 2.0, 2.0)] * 3 + [(1000.0, 0.0, 2.0, 2.0)] * 3
+    segs = [re.Segment(0, 3, "single"), re.Segment(3, 6, "split")]
+    assert re.static_shot_jitter_within_segments(crops, segs) == 0.0
+    # The OLD whole-track metric WOULD have charged the boundary jump (and blown the gate).
+    assert re.static_shot_jitter(crops) > re.GATE_THRESHOLDS["static_jitter_max"]
+
+
+def test_within_segment_jitter_clamps_out_of_range_segment() -> None:
+    """Segment bounds outside the crop range are clamped (length-mismatch safety)."""
+    crops = [(0.0, 0.0, 2.0, 2.0), (4.0, 0.0, 2.0, 2.0)]
+    # start<0 and end>len(crops): clamped to [0, 2) -> one 4.0 step.
+    assert re.static_shot_jitter_within_segments(crops, [re.Segment(-5, 99, "single")]) == pytest.approx(4.0)
+
+
+def test_gate_passes_clean_multi_cut_trace() -> None:
+    """A multi-cut trace (still WITHIN each shot) now PASSES the jitter gate.
+
+    Under the old whole-clip metric the deliberate boundary jumps would fail it;
+    the segment-aware gate correctly passes it.
+    """
+    predicted = _trace(
+        {
+            "segments": [
+                {"startFrame": 0, "endFrame": 3, "layout": "single"},
+                {"startFrame": 3, "endFrame": 6, "layout": "split"},
+            ],
+            "crops": [[0.0, 0.0, 2.0, 2.0]] * 3 + [[900.0, 0.0, 2.0, 2.0]] * 3,
+        }
+    )
+    report = re.run_harness(predicted, _trace())
+    assert report["metrics"]["staticJitter"] == 0.0
+    assert report["gate"]["staticJitter"]["passed"] is True
+
+
+def test_gate_fails_jittery_single_segment() -> None:
+    """A genuinely-wobbly single (uncut) segment STILL fails the jitter gate."""
+    predicted = _trace(
+        {
+            "shotBoundaries": [],
+            "segments": [{"startFrame": 0, "endFrame": 6, "layout": "single"}],
+            "crops": [[float(10 * i), 0.0, 2.0, 2.0] for i in range(6)],
+        }
+    )
+    report = re.run_harness(predicted, _trace())
+    assert report["metrics"]["staticJitter"] > re.GATE_THRESHOLDS["static_jitter_max"]
+    assert report["gate"]["staticJitter"]["passed"] is False
+
+
+# --------------------------------------------------------------------------- #
 # segments_to_per_frame
 # --------------------------------------------------------------------------- #
 
