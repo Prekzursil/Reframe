@@ -57,6 +57,7 @@ import contextlib
 import math
 import os
 import shutil
+import statistics
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -882,6 +883,177 @@ def _frame_center(
 
 
 # --------------------------------------------------------------------------- #
+# Multi-region geometry (pure) — per-segment crop region(s) for the compositor
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class _TrackStat:
+    """Aggregated presence / activity / geometry of ONE tracked face over a segment."""
+
+    tid: int
+    presence: int
+    activity: float
+    cx: float
+    area: float
+
+
+@dataclass(frozen=True)
+class SegmentRegions:
+    """A :class:`~media_studio.features.reframe_eval.Segment` + the source-px crop
+    region(s) its layout composites — the SIBLING of :class:`ReframeTrace`.
+
+    ``build_trace`` / :class:`ReframeTrace` are left byte-for-byte back-compat (the
+    R0 harness + R2 override contract are untouched); :func:`build_segment_regions`
+    produces one of these per trace segment so the GPU-tier ``_render`` can
+    crop-and-stack the right ``regions`` over each segment's
+    ``[start_frame, end_frame)`` time range.
+
+    ``regions`` is sized for :func:`build_filter_complex`: ``single`` -> 1 region,
+    ``split`` -> 2 (top, bottom), ``composite`` -> host + 1-2 guests.
+    """
+
+    start_frame: int
+    end_frame: int
+    layout: str
+    regions: tuple[Box, ...]
+
+
+def _track_stats(analysis: ShotAnalysis, start: int, end: int, width: int) -> list[_TrackStat]:
+    """Re-track a segment's frames -> per-face presence / activity / geometry.
+
+    A FRESH :class:`MultiFaceTracker` gives stable face ids WITHIN the segment;
+    each track's median horizontal centre + median area (robust to a single
+    jittery frame) and mean visual ASD score (activity) drive the region picks.
+    Tracks are returned in first-seen order (deterministic).
+    """
+    tracker = MultiFaceTracker()
+    cxs: dict[int, list[float]] = {}
+    areas: dict[int, list[float]] = {}
+    scores: dict[int, list[float]] = {}
+    for frame in range(start, end):
+        boxes = list(analysis.boxes_per_frame[frame])
+        frame_scores = analysis.visual_scores_per_frame[frame]
+        for i, tid in enumerate(tracker.update(boxes)):
+            x, _y, w, h = boxes[i]
+            if tid not in cxs:
+                cxs[tid], areas[tid], scores[tid] = [], [], []
+            cxs[tid].append((x + w / 2.0) / float(width))
+            areas[tid].append(float(w) * float(h))
+            scores[tid].append(float(frame_scores[i]))
+    return [
+        _TrackStat(
+            tid=tid,
+            presence=len(cxs[tid]),
+            activity=sum(scores[tid]) / len(scores[tid]),
+            cx=statistics.median(cxs[tid]),
+            area=statistics.median(areas[tid]),
+        )
+        for tid in cxs
+    ]
+
+
+def _region_for_center(cx_norm: float, cell_w: int, cell_h: int, width: int, height: int) -> Box:
+    """A crop-able ``(x, y, w, h)`` source rect of ``cell_w:cell_h`` aspect.
+
+    Horizontally centred on ``cx_norm`` (clamped inside the frame via
+    :func:`reframe_claudeshorts.crop_x_for_center`) and vertically centred. The
+    cell aspect is what lets :func:`build_filter_complex` scale the crop into its
+    target cell (full 9:16, a split half, or a composite guest) without distortion.
+    """
+    crop_w, crop_h = _cs.crop_size(width, height, f"{cell_w}:{cell_h}")
+    x = _cs.crop_x_for_center(cx_norm, crop_w, width)
+    y = max(0, (height - crop_h) // 2)
+    return (float(x), float(y), float(crop_w), float(crop_h))
+
+
+def _rank_tracks(stats: Sequence[_TrackStat]) -> list[_TrackStat]:
+    """Most-present, then most-active, then lowest-id (deterministic) first."""
+    return sorted(stats, key=lambda s: (s.presence, s.activity, -s.tid), reverse=True)
+
+
+def segment_regions(analysis: ShotAnalysis, segment: Segment, *, aspect: str = DEFAULT_ASPECT) -> tuple[Box, ...]:
+    """The PURE multi-region geometry — the crop region(s) one ``segment`` needs.
+
+    Derived from ``analysis.boxes_per_frame`` + the per-segment face tracks +
+    visual ASD scores over ``[segment.start_frame, segment.end_frame)``:
+
+    * ``single`` -> ``[active-speaker crop region]`` — the most present/active
+      face; the deterministic :func:`reframe_claudeshorts.select_dominant`
+      cold-centre when the segment has no faces (NEVER a blind centre crop);
+    * ``split`` -> the top-2 present/active faces -> 2 regions, assigned
+      top/bottom by horizontal position (left -> top) so the assignment is STABLE
+      frame-to-frame;
+    * ``composite`` -> the host (largest, most-central face) full-width on top +
+      up to 2 guests side-by-side on the bottom (ordered left -> right).
+
+    Returns source-pixel ``(x, y, w, h)`` rects sized for
+    :func:`build_filter_complex` (``single``=1, ``split``=2, ``composite``=2-3).
+    Fewer faces than a layout needs are padded with the cold dominant centre, so
+    the region count ALWAYS matches the layout (the compositor never raises).
+    """
+    start, end, layout = segment.start_frame, segment.end_frame, segment.layout
+    if layout not in LAYOUTS:
+        raise MultiSpeakerReframeError(f"unknown layout {layout!r}")
+    if not (0 <= start < end <= analysis.total_frames):
+        raise MultiSpeakerReframeError("segment out of range")
+    width, height = analysis.width, analysis.height
+    out_w, out_h = _aspect.output_dimensions(aspect)
+    ranked = _rank_tracks(_track_stats(analysis, start, end, width))
+    cold = _shot_dominant_center(analysis.boxes_per_frame[start], width)
+
+    if layout == "single":
+        cx = ranked[0].cx if ranked else cold
+        return (_region_for_center(cx, out_w, out_h, width, height),)
+
+    half = out_h // 2
+    if layout == "split":
+        cxs = [s.cx for s in ranked[:2]]
+        while len(cxs) < 2:
+            cxs.append(cold)  # pad a missing speaker with the cold dominant centre
+        top, bottom = sorted(cxs)  # left -> top (stable top/bottom assignment)
+        return (
+            _region_for_center(top, out_w, half, width, height),
+            _region_for_center(bottom, out_w, half, width, height),
+        )
+
+    # composite: host (largest, most-central) full-width on top, guests below.
+    if not ranked:
+        host_cx = cold
+        guest_cxs = [cold]
+    else:
+        host = max(ranked, key=lambda s: (s.area, -abs(s.cx - 0.5), -s.tid))
+        host_cx = host.cx
+        guest_cxs = sorted(s.cx for s in ranked if s is not host)[:2] or [cold]
+    guest_w = out_w // len(guest_cxs)
+    return (
+        _region_for_center(host_cx, out_w, half, width, height),
+        *(_region_for_center(cx, guest_w, half, width, height) for cx in guest_cxs),
+    )
+
+
+def build_segment_regions(
+    analysis: ShotAnalysis,
+    trace: ReframeTrace,
+    *,
+    aspect: str = DEFAULT_ASPECT,
+) -> tuple[SegmentRegions, ...]:
+    """Attach :func:`segment_regions` to every segment of ``trace`` (the sibling plan).
+
+    Keeps ``build_trace`` / :class:`ReframeTrace` untouched (back-compat); the GPU
+    tier ``_render`` consumes these :class:`SegmentRegions` to composite each
+    segment's layout over its own ``[start_frame, end_frame)`` time range.
+    """
+    return tuple(
+        SegmentRegions(
+            start_frame=seg.start_frame,
+            end_frame=seg.end_frame,
+            layout=seg.layout,
+            regions=segment_regions(analysis, seg, aspect=aspect),
+        )
+        for seg in trace.segments
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Render orchestration (atomic temp write; OOM cleanup; staged + freed backend)
 # --------------------------------------------------------------------------- #
 ReframeRunner = Callable[..., int]  # ffmpeg.run-shaped
@@ -1092,11 +1264,13 @@ __all__ = [
     "MultiSpeakerRenderError",
     "MultiSpeakerUnavailableError",
     "OneEuroFilter",
+    "SegmentRegions",
     "ShotAnalysis",
     "SpeakerVote",
     "availability_reason",
     "build_composite_argv",
     "build_filter_complex",
+    "build_segment_regions",
     "build_trace",
     "commit_cuts",
     "debounce_layouts",
@@ -1108,6 +1282,7 @@ __all__ = [
     "merge_short_shots",
     "register_multispeaker_assets",
     "resolve_speaker_track",
+    "segment_regions",
     "shot_spans",
     "smooth_centers_one_euro",
     "speaker_turn_frames",

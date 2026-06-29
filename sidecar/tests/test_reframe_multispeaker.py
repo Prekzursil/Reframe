@@ -619,3 +619,160 @@ class TestRegistryIntegration:
         from media_studio.features.export_presets import REFRAME_ENGINES
 
         assert "reframe_multispeaker" in REFRAME_ENGINES
+
+
+# --------------------------------------------------------------------------- #
+# Multi-region geometry — segment_regions / SegmentRegions / build_segment_regions
+# --------------------------------------------------------------------------- #
+def _faces_analysis(boxes_one_frame, scores_one_frame, *, total=6, width=1920, height=1080):
+    """An analysis whose every frame has the SAME faces/scores (a stable segment)."""
+    boxes = tuple(tuple(boxes_one_frame) for _ in range(total))
+    scores = tuple(tuple(scores_one_frame) for _ in range(total))
+    return _analysis(total=total, width=width, height=height, boxes=boxes, scores=scores)
+
+
+# the canonical 9:16 crop width of a 1920x1080 source (round(1080*9/16)=608).
+_W_9_16 = 608.0
+# a split/composite half-cell (out_w:out_h//2 = 1080:960) crop width of 1920x1080.
+_W_HALF_CELL = 1215.0
+
+
+class TestSegmentRegions:
+    def test_single_one_face_centers_on_speaker(self):
+        analysis = _faces_analysis([(100.0, 0.0, 200.0, 400.0)], [0.9])
+        regions = ms.segment_regions(analysis, Segment(0, 6, "single"))
+        assert len(regions) == 1
+        x, y, w, h = regions[0]
+        assert (w, h) == (_W_9_16, 1080.0)
+        assert (x, y) == (0.0, 0.0)  # face at left -> crop clamped to left edge
+
+    def test_single_no_faces_uses_centered_cold_crop(self):
+        analysis = _analysis(total=6, boxes=tuple(() for _ in range(6)), scores=tuple(() for _ in range(6)))
+        regions = ms.segment_regions(analysis, Segment(0, 6, "single"))
+        assert len(regions) == 1
+        centered_x = float((1920 - int(_W_9_16)) // 2)
+        assert regions[0][0] == centered_x  # cold center == frame center, no faces
+
+    def test_single_picks_more_active_speaker(self):
+        # two faces in one segment; the RIGHT face is far more active -> single
+        # crop follows it (proves "active-speaker crop region", not largest/first).
+        analysis = _faces_analysis(
+            [(100.0, 0.0, 200.0, 400.0), (1500.0, 0.0, 200.0, 400.0)],
+            [0.1, 0.9],
+        )
+        regions = ms.segment_regions(analysis, Segment(0, 6, "single"))
+        assert regions[0][0] > 600.0  # crop shifted toward the right speaker
+
+    def test_split_two_faces_stable_top_bottom(self):
+        analysis = _faces_analysis(
+            [(100.0, 0.0, 200.0, 400.0), (1500.0, 0.0, 200.0, 400.0)],
+            [0.9, 0.9],
+        )
+        regions = ms.segment_regions(analysis, Segment(0, 6, "split"))
+        assert len(regions) == 2
+        assert all(r[2] == _W_HALF_CELL for r in regions)  # each half-cell width
+        # left face -> top (regions[0]), right face -> bottom (regions[1]): STABLE.
+        assert regions[0][0] < regions[1][0]
+
+    def test_split_one_face_pads_to_two(self):
+        analysis = _faces_analysis([(100.0, 0.0, 200.0, 400.0)], [0.9])
+        regions = ms.segment_regions(analysis, Segment(0, 6, "split"))
+        assert len(regions) == 2
+
+    def test_split_no_faces_pads_two_centered(self):
+        analysis = _analysis(total=6, boxes=tuple(() for _ in range(6)), scores=tuple(() for _ in range(6)))
+        regions = ms.segment_regions(analysis, Segment(0, 6, "split"))
+        assert len(regions) == 2
+
+    def test_composite_three_faces_host_top_guests_bottom(self):
+        # center face is largest -> host (full width on top); left+right are guests
+        # ordered left->right on the bottom.
+        analysis = _faces_analysis(
+            [
+                (100.0, 0.0, 100.0, 400.0),
+                (900.0, 0.0, 300.0, 500.0),
+                (1700.0, 0.0, 100.0, 400.0),
+            ],
+            [0.9, 0.9, 0.9],
+        )
+        regions = ms.segment_regions(analysis, Segment(0, 6, "composite"))
+        assert len(regions) == 3
+        assert regions[0][2] == _W_HALF_CELL  # host is the full-width half-cell
+        assert regions[1][2] == _W_9_16 and regions[2][2] == _W_9_16  # narrow guests
+        assert regions[1][0] < regions[2][0]  # guests ordered left -> right
+
+    def test_composite_two_faces_host_plus_one_guest(self):
+        analysis = _faces_analysis(
+            [(100.0, 0.0, 100.0, 400.0), (800.0, 0.0, 400.0, 500.0)],
+            [0.9, 0.9],
+        )
+        regions = ms.segment_regions(analysis, Segment(0, 6, "composite"))
+        assert len(regions) == 2
+
+    def test_composite_one_face_host_plus_cold_guest(self):
+        analysis = _faces_analysis([(800.0, 0.0, 400.0, 500.0)], [0.9])
+        regions = ms.segment_regions(analysis, Segment(0, 6, "composite"))
+        assert len(regions) == 2
+
+    def test_composite_no_faces_two_centered(self):
+        analysis = _analysis(total=6, boxes=tuple(() for _ in range(6)), scores=tuple(() for _ in range(6)))
+        regions = ms.segment_regions(analysis, Segment(0, 6, "composite"))
+        assert len(regions) == 2
+
+    def test_deterministic(self):
+        analysis = _faces_analysis(
+            [(100.0, 0.0, 200.0, 400.0), (1500.0, 0.0, 200.0, 400.0)],
+            [0.9, 0.9],
+        )
+        seg = Segment(0, 6, "split")
+        assert ms.segment_regions(analysis, seg) == ms.segment_regions(analysis, seg)
+
+    def test_unknown_layout_raises(self):
+        analysis = _faces_analysis([(100.0, 0.0, 200.0, 400.0)], [0.9])
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.segment_regions(analysis, Segment(0, 6, "mosaic"))
+
+    def test_out_of_range_segment_raises(self):
+        analysis = _faces_analysis([(100.0, 0.0, 200.0, 400.0)], [0.9])
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.segment_regions(analysis, Segment(0, 99, "single"))
+
+    def test_empty_segment_raises(self):
+        analysis = _faces_analysis([(100.0, 0.0, 200.0, 400.0)], [0.9])
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.segment_regions(analysis, Segment(3, 3, "single"))
+
+    def test_regions_feed_build_filter_complex(self):
+        # every layout's regions must be accepted by the compositor (sized for it).
+        analysis = _faces_analysis(
+            [(100.0, 0.0, 200.0, 400.0), (1500.0, 0.0, 200.0, 400.0)],
+            [0.9, 0.9],
+        )
+        for layout in LAYOUTS:
+            regs = ms.segment_regions(analysis, Segment(0, 6, layout))
+            fc = ms.build_filter_complex(layout, list(regs), out_w=1080, out_h=1920)
+            assert fc.endswith("[v]")
+
+
+class TestBuildSegmentRegions:
+    def test_attaches_regions_to_every_segment(self):
+        boxes = tuple(((100.0, 0.0, 200.0, 400.0), (1500.0, 0.0, 200.0, 400.0)) for _ in range(30))
+        scores = tuple((0.9, 0.9) for _ in range(30))
+        analysis = _analysis(total=30, boxes=boxes, scores=scores)
+        trace = ms.build_trace(analysis)
+        plan = ms.build_segment_regions(analysis, trace)
+        assert len(plan) == len(trace.segments)
+        for sr, seg in zip(plan, trace.segments, strict=True):
+            assert isinstance(sr, ms.SegmentRegions)
+            assert (sr.start_frame, sr.end_frame, sr.layout) == (seg.start_frame, seg.end_frame, seg.layout)
+            assert sr.regions  # non-empty
+            # region count matches the layout the compositor expects.
+            ms.build_filter_complex(sr.layout, list(sr.regions), out_w=1080, out_h=1920)
+
+    def test_empty_trace_no_segments(self):
+        # a single-speaker clip with no committed layout segments -> empty plan is
+        # still valid (build_segment_regions just maps over whatever segments exist).
+        analysis = _faces_analysis([(100.0, 0.0, 200.0, 400.0)], [0.9])
+        trace = ms.build_trace(analysis)
+        plan = ms.build_segment_regions(analysis, trace)
+        assert len(plan) == len(trace.segments)

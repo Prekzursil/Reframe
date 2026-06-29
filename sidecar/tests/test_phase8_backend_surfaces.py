@@ -24,6 +24,19 @@ def test_reframe_multispeaker_backend_surface_imports_light() -> None:
     assert "RealMultiSpeakerBackend" in be.__all__
 
 
+def test_lightasd_infer_surface_imports_light() -> None:
+    # The Light-ASD inference helpers are ``# pragma: no cover`` (they need
+    # torch / cv2 + real weights); the module SURFACE (imports, constants,
+    # ``__all__``) imports light — cover it so the gate stays 100% without the
+    # heavy stack (mirrors the Real*Backend surface-test convention).
+    import media_studio.features._lightasd_infer as li
+
+    assert callable(li.analyze_visual)
+    assert "analyze_visual" in li.__all__
+    assert li.ASD_FPS == 25
+    assert li.AUDIO_SR == 16000
+
+
 def test_vlm_backbone_backend_surface_imports_light() -> None:
     import media_studio.features.vlm_backbone_backend as be
 
