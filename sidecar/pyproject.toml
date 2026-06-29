@@ -37,6 +37,22 @@ dev = [
   "pytest-cov>=5.0",
   "hypothesis>=6.0",   # property/fuzz tests (deterministic CI profile in conftest)
 ]
+# R1 multi-speaker reframe GPU tier (the vendored Light-ASD S3FD + ASD stack in
+# media_studio/features/_lightasd/). These are NOT installed by build agents and
+# NOT in the CI gate env (the unit tests are heavy-ML-free); a human installs them
+# on the GPU host. PINNED to the GPU-validated versions (A6 lesson 5). ⚠ torch /
+# torchvision / torchaudio must be installed from the CUDA wheel index to get the
+# +cuXXX builds, e.g.:
+#   pip install "media-studio-sidecar[reframe-gpu]" \
+#     --extra-index-url https://download.pytorch.org/whl/cu124
+reframe-gpu = [
+  "torch==2.6.0",                 # GPU-validated Light-ASD runtime (cu124 build via the torch index)
+  "torchvision==0.21.0",          # paired with torch 2.6.0
+  "torchaudio==2.6.0",            # paired with torch 2.6.0
+  "opencv-python-headless==4.13.0.92",  # frame I/O + face-crop ops (headless: no GUI libs)
+  "python_speech_features==0.6",  # MFCC features for the ASD audio frontend
+  "scipy==1.18.0",                # face-track interpolation + median filter + wav read
+]
 
 [project.scripts]
 # The sidecar entry point. The ASSEMBLED process (media_studio.__main__) imports
@@ -52,8 +68,15 @@ packages = [
   "media_studio.models",
   "media_studio.features",
   "media_studio.features.tts",
+  "media_studio.features._lightasd",
+  "media_studio.features._lightasd.s3fd",
   "media_studio.assets",
 ]
+
+[tool.setuptools.package-data]
+# Ship the vendored Light-ASD MIT license alongside the vendored code (the MIT
+# terms require the copyright + permission notice to travel with the source).
+"media_studio.features._lightasd" = ["LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

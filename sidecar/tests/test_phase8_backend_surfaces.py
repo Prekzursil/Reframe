@@ -37,6 +37,31 @@ def test_lightasd_infer_surface_imports_light() -> None:
     assert li.AUDIO_SR == 16000
 
 
+def test_lightasd_vendored_package_imports_light() -> None:
+    # The vendored Light-ASD package __init__ is LIGHT (no torch/cv2); it carries
+    # the upstream provenance + the weight basenames. The heavy model modules
+    # (model / asd / s3fd) import torch at module top, so they are imported lazily
+    # only inside analyze_visual and are NEVER imported here — we assert they SHIP
+    # (importable spec) without executing them, so the coverage run never needs
+    # torch (their statements are all ``# pragma: no cover``).
+    import importlib.util
+
+    import media_studio.features._lightasd as pkg
+
+    assert pkg.LIGHT_ASD_LICENSE == "MIT"
+    assert pkg.S3FD_WEIGHT_NAME == "sfd_face.pth"
+    assert pkg.ASD_WEIGHT_NAME == "finetuning_TalkSet.model"
+    assert len(pkg.LIGHT_ASD_COMMIT) == 40
+    for mod in (
+        "media_studio.features._lightasd.model",
+        "media_studio.features._lightasd.asd",
+        "media_studio.features._lightasd.s3fd",
+        "media_studio.features._lightasd.s3fd.nets",
+        "media_studio.features._lightasd.s3fd.box_utils",
+    ):
+        assert importlib.util.find_spec(mod) is not None
+
+
 def test_vlm_backbone_backend_surface_imports_light() -> None:
     import media_studio.features.vlm_backbone_backend as be
 

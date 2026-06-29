@@ -351,6 +351,64 @@ RAPIDOCR_DEST = "models/rapidocr-ppocrv4-det.onnx"
 RAPIDOCR_SIZE_MB = 20
 
 
+# --------------------------------------------------------------------------- #
+# R1 multi-speaker reframe — vendored Light-ASD visual active-speaker weights.
+# Two on-demand weights for the vendored S3FD detector + Light-ASD model
+# (sidecar/media_studio/features/_lightasd/, MIT). BOTH are sha256-pinned to the
+# exact bytes of the ~/Light-ASD GPU-validated copies (A6 lesson 5).
+# --------------------------------------------------------------------------- #
+LIGHTASD_S3FD_ASSET_NAME = "lightasd-s3fd"
+# The S3FD face-detector weight (sfd_face.pth). NOT in the Light-ASD GitHub repo
+# (the upstream fetches it via gdown from Google Drive, which is not a pinnable
+# direct download). Re-pointed to a loader-identical, COMMIT-pinned HF mirror; the
+# sha256 is the file's verified digest (== the ~/Light-ASD copy, 89,844,381 B,
+# downloaded + sha256-checked 2026-06-29).
+LIGHTASD_S3FD_COMMIT = "345f55fc8d94d74437095b34158c68645e113c01"
+LIGHTASD_S3FD_URL = f"https://huggingface.co/lithiumice/syncnet/resolve/{LIGHTASD_S3FD_COMMIT}/sfd_face.pth"
+LIGHTASD_S3FD_SHA256 = "d54a87c2b7543b64729c9a25eafd188da15fd3f6e02f0ecec76ae1b30d86c491"
+LIGHTASD_S3FD_DEST = "models/lightasd-sfd-face.pth"
+LIGHTASD_S3FD_SIZE_MB = 86
+
+LIGHTASD_ASD_ASSET_NAME = "lightasd-asd"
+# The Light-ASD active-speaker weight (finetuning_TalkSet.model). Tracked directly
+# in the upstream GitHub repo, so the URL pins a GitHub-raw COMMIT (not LFS, served
+# verbatim); the sha256 is the file's verified digest (== the ~/Light-ASD copy,
+# 4,175,289 B, downloaded + sha256-checked 2026-06-29).
+LIGHTASD_ASD_COMMIT = "ed38c232de5efe0261dbd68627c0ade7cdfe14eb"
+LIGHTASD_ASD_URL = f"https://github.com/Junhua-Liao/Light-ASD/raw/{LIGHTASD_ASD_COMMIT}/weight/finetuning_TalkSet.model"
+LIGHTASD_ASD_SHA256 = "efc375833887eefa9d209dc92810e18519b04c3c73ea35a549f2a7f40b7d94d5"
+LIGHTASD_ASD_DEST = "models/lightasd-finetuning-talkset.model"
+LIGHTASD_ASD_SIZE_MB = 4
+
+
+def _register_lightasd() -> None:
+    """Register the vendored Light-ASD S3FD + ASD weights (idempotent)."""
+    register_asset(
+        AssetEntry(
+            name=LIGHTASD_S3FD_ASSET_NAME,
+            kind="model",
+            size_mb=LIGHTASD_S3FD_SIZE_MB,
+            dest=LIGHTASD_S3FD_DEST,
+            label="S3FD face detector (Light-ASD visual ASD, MIT)",
+            installer="download",
+            url=LIGHTASD_S3FD_URL,
+            sha256=LIGHTASD_S3FD_SHA256,
+        )
+    )
+    register_asset(
+        AssetEntry(
+            name=LIGHTASD_ASD_ASSET_NAME,
+            kind="model",
+            size_mb=LIGHTASD_ASD_SIZE_MB,
+            dest=LIGHTASD_ASD_DEST,
+            label="Light-ASD active-speaker model (finetuning_TalkSet, MIT)",
+            installer="download",
+            url=LIGHTASD_ASD_URL,
+            sha256=LIGHTASD_ASD_SHA256,
+        )
+    )
+
+
 def _register_phase8_optional() -> None:
     """Register the optional Phase-8 emotion + OCR signal models (idempotent)."""
     register_asset(
@@ -381,3 +439,4 @@ def _register_phase8_optional() -> None:
 
 _register_day1()
 _register_phase8_optional()
+_register_lightasd()

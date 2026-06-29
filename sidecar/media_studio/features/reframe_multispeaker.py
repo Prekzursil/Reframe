@@ -753,21 +753,27 @@ def _default_backend_factory(
 
 
 def default_models_present(settings: dict[str, Any]) -> bool:
-    """True when the Light-ASD weights are installed (no import, never raises).
+    """True when BOTH vendored Light-ASD weights are installed (never raises).
 
-    Mirrors ``scene_transnet.default_models_present``: any lookup failure (asset
-    not registered, no asset machinery) degrades to ``False`` so the engine
-    reports itself unavailable rather than crashing.
+    The engine needs two on-demand weights — the S3FD face detector and the
+    Light-ASD active-speaker model (registered in
+    :mod:`media_studio.assets.manifest`). Mirrors
+    ``scene_transnet.default_models_present``: any lookup failure (asset not
+    registered, no asset machinery) degrades to ``False`` so the engine reports
+    itself unavailable rather than crashing.
     """
     try:
         from ..assets import manifest  # noqa: PLC0415 - lazy: avoids a cycle
         from ..assets.manager import AssetManager  # noqa: PLC0415
 
-        entry = manifest.get_asset(LIGHT_ASD_ASSET)
-        if entry is None:
-            return False
         mgr = AssetManager(settings_provider=lambda: settings)
-        return mgr.installed_path(entry) is not None
+        for name in (manifest.LIGHTASD_S3FD_ASSET_NAME, manifest.LIGHTASD_ASD_ASSET_NAME):
+            entry = manifest.get_asset(name)
+            if entry is None:
+                return False
+            if mgr.installed_path(entry) is None:
+                return False
+        return True
     except Exception:  # noqa: BLE001 - missing asset machinery -> use fallback
         return False
 
@@ -1481,33 +1487,24 @@ class MultiSpeakerReframeEngine:
 # Asset registration (F3c — pinned; mirrors scene_transnet's honest no-op)
 # --------------------------------------------------------------------------- #
 def register_multispeaker_assets() -> None:
-    """Register the Light-ASD weights as an on-demand HF asset (idempotent).
+    """Back-compat shim — the weights are now registered in the manifest itself.
 
-    F3c (NON-NEGOTIABLE): every weight enters the manifest with a PINNED
-    ``hf_revision`` (a 40-hex commit), never a moving branch/tag, and NEVER via
-    gdown / torch.hub / Google-Drive / git-clone (those bypass integrity
-    pinning). Light-ASD (``TaoRuijie/Light-ASD``, the design's visual ASD) ships
-    its weights in the GitHub repo, not on the HF hub, so a loader-compatible HF
-    MIRROR + its pinned commit hash must be confirmed by an operator before the
-    entry can be registered — exactly the live ``scene_transnet`` precedent
-    (a dead/unverified pin is worse than an honest "unavailable").
+    R1 Phase 3 vendored a numpy-2-clean S3FD + Light-ASD into the sidecar
+    (:mod:`media_studio.features._lightasd`, MIT), so the two weights are no
+    longer operator-blocked: they are registered DIRECTLY (and idempotently) in
+    :mod:`media_studio.assets.manifest` (``_register_lightasd``) as sha256-pinned
+    on-demand ``download`` assets —
 
-    Until that mirror is confirmed this is intentionally a NO-OP:
-    :func:`default_models_present` honestly reports the engine unavailable, so the
-    pure layer + seam ship and the GPU tier is an OPERATOR-BLOCKER (it is never
-    silently marked validated). OPERATOR ACTION: confirm an HF mirror is
-    loader-compatible, then register::
+    * :data:`~media_studio.assets.manifest.LIGHTASD_S3FD_ASSET_NAME` — the S3FD
+      face detector (``sfd_face.pth``), a commit-pinned HF mirror; and
+    * :data:`~media_studio.assets.manifest.LIGHTASD_ASD_ASSET_NAME` — the
+      Light-ASD model (``finetuning_TalkSet.model``), a commit-pinned GitHub raw.
 
-        from ..assets.manifest import register_asset, AssetEntry
-        register_asset(AssetEntry(
-            name=LIGHT_ASD_ASSET, kind="model", size_mb=LIGHT_ASD_SIZE_MB,
-            label="Light-ASD (visual active-speaker detection)",
-            installer="hf", hf_repo="<loader-compatible mirror>",
-            hf_revision="<full 40-hex commit>",
-        ))
+    Both enter the manifest PINNED (F3c): a 40-hex commit in the URL + the file's
+    verified sha256. This shim remains a no-op so existing callers (and the
+    idempotency test) keep working; importing the manifest is what registers them.
     """
-    # Intentionally a no-op until a loader-compatible, commit-pinned HF mirror is
-    # confirmed (see docstring + docs/WU-R1-MULTISPEAKER-ENGINE.md operator note).
+    # No-op: registration happens at manifest import (manifest._register_lightasd).
     return
 
 

@@ -7,6 +7,10 @@
 # Pinned tool: ruff 0.15.17 (see QUALITY-CHARTER.md).
 target-version = "py312"
 line-length = 120
+# Honor extend-exclude even when pre-commit passes explicit file paths (the gate
+# runs ruff via `pre-commit run --all-files`, which feeds a file list); without
+# this the vendored _lightasd tree below would still be linted.
+force-exclude = true
 extend-exclude = [
   ".venv",
   "sidecar/.venv",
@@ -15,6 +19,10 @@ extend-exclude = [
   "build",
   "out",
   "vendor",
+  # Vendored third-party code (Light-ASD, MIT) kept byte-faithful to upstream so
+  # the released weights load unchanged — linted/formatted to upstream's style,
+  # not this repo's, exactly like a `vendor/` tree.
+  "sidecar/media_studio/features/_lightasd",
   "Inspirations & Former Attempts",
 ]
 
@@ -83,6 +91,10 @@ exclude = [
   ".venv",
   "sidecar/.venv",
   "**/tests",
+  # Vendored third-party code (Light-ASD, MIT): kept byte-faithful to upstream and
+  # only imported lazily on the GPU host (torch is not installed in the gate env),
+  # so it is not type-gated to this repo's standard (mirrors the ruff exclude).
+  "sidecar/media_studio/features/_lightasd",
 ]
 # Resolve the sidecar import root (so `import media_studio.*` resolves).
 extraPaths = [

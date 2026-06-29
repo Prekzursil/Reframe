@@ -390,8 +390,21 @@ class TestAvailability:
         reason = ms.availability_reason({}, which=lambda _x: "/wsl", models_present=lambda _s: False)
         assert reason is not None and ms.LIGHT_ASD_ASSET in reason
 
-    def test_default_models_present_false_when_unregistered(self):
-        # Light-ASD asset is intentionally NOT registered (operator-blocker) -> False.
+    def test_default_models_present_false_when_unregistered(self, monkeypatch):
+        # A weight asset that resolves to no entry (get_asset -> None) -> False
+        # (covers the entry-is-None guard in the two-weight presence check).
+        from media_studio.assets import manager, manifest
+
+        monkeypatch.setattr(manifest, "get_asset", lambda _n: None)
+
+        class _Mgr:
+            def __init__(self, **_kw):
+                pass
+
+            def installed_path(self, _e):  # pragma: no cover - never reached (entry is None)
+                return "/unused"
+
+        monkeypatch.setattr(manager, "AssetManager", _Mgr)
         assert ms.default_models_present({}) is False
 
     def test_default_models_present_true_when_installed(self, monkeypatch):

@@ -11,14 +11,19 @@ the GPU): extract @25 fps frames + 16 kHz mono audio -> S3FD face detect ->
 IoU face-track linking -> per-track 112x112 crop + MFCC -> windowed audio-visual
 ASD scoring -> map per-track 25 fps scores back to the source-fps frame grid.
 
-VALIDATION-GRADE seam: the heavy S3FD + ASD code is loaded from the Light-ASD
-checkout at ``settings['lightAsdRepo']`` (default ``~/Light-ASD``). PRODUCTION
-TODO: vendor the numpy-2-clean S3FD + ASD model code into the sidecar and
-register both weight files as HF assets (see assets/manifest.py); then this
-module imports the vendored package instead of a $HOME checkout.
+PRODUCTION VENDORED (R1 Phase 3): the heavy S3FD + ASD code is now the
+numpy-2-clean copy vendored into :mod:`media_studio.features._lightasd` (MIT —
+see that package's ``LICENSE``), NOT a ``$HOME`` checkout. The ``sys.path`` +
+``chdir``-to-``~/Light-ASD`` seam is GONE; the two weight files are resolved by
+PATH via :func:`_resolve_weights` (a ``settings['lightAsdWeightsDir']`` override,
+else the sha256-pinned asset-manager install paths registered in
+``assets/manifest.py``).
 
-Coverage of this module is excluded (it requires torch/cv2 + real weights); the
-pure director it feeds is covered exhaustively in test_reframe_multispeaker.py.
+Coverage: the torch/cv2/ffmpeg seam functions are ``# pragma: no cover`` (they
+need the heavy native stack + real weights); the PURE helpers (:func:`_bb_iou`,
+:func:`_source_frame_index`, :func:`_vad_per_frame`) are unit-tested for real in
+``test_lightasd_infer_helpers.py``, and the pure director this module feeds is
+covered exhaustively in ``test_reframe_multispeaker.py``.
 """
 
 from __future__ import annotations
@@ -26,7 +31,6 @@ from __future__ import annotations
 import math
 import os
 import subprocess  # noqa: S404 - argv lists only, no shell=True (see _run)
-import sys
 import tempfile
 from typing import Any
 
@@ -48,8 +52,34 @@ DET_SCALE = 0.25
 DURATIONS = (1, 1, 1, 2, 2, 2, 3, 3, 4, 5, 6)
 
 
-def _repo_dir(settings: dict[str, Any]) -> str:  # pragma: no cover - heavy native seam
-    return os.path.expanduser(str(settings.get("lightAsdRepo") or "~/Light-ASD"))
+def _resolve_weights(settings: dict[str, Any]) -> tuple[str, str]:  # pragma: no cover - heavy native seam
+    """Resolve ``(s3fd_weight_path, asd_weight_path)`` for the vendored loaders.
+
+    Order: an explicit operator override ``settings['lightAsdWeightsDir']`` (a dir
+    holding ``sfd_face.pth`` + ``finetuning_TalkSet.model``) wins; otherwise the
+    paths come from the sha256-pinned asset manager (the two weights registered in
+    ``assets/manifest.py``). Raises if a weight cannot be located (never silently
+    falls back to a missing file).
+    """
+    from ._lightasd import ASD_WEIGHT_NAME, S3FD_WEIGHT_NAME  # noqa: PLC0415
+
+    override = settings.get("lightAsdWeightsDir")
+    if override:
+        wdir = os.path.expanduser(str(override))
+        return os.path.join(wdir, S3FD_WEIGHT_NAME), os.path.join(wdir, ASD_WEIGHT_NAME)
+
+    from ..assets import manifest  # noqa: PLC0415
+    from ..assets.manager import AssetManager  # noqa: PLC0415
+
+    mgr = AssetManager(settings_provider=lambda: settings)
+    paths: list[str] = []
+    for name in (manifest.LIGHTASD_S3FD_ASSET_NAME, manifest.LIGHTASD_ASD_ASSET_NAME):
+        entry = manifest.get_asset(name)
+        path = mgr.installed_path(entry) if entry is not None else None
+        if path is None:
+            raise RuntimeError(f"Light-ASD weight asset {name!r} is not installed")
+        paths.append(path)
+    return paths[0], paths[1]
 
 
 def _run(argv: list[str]) -> None:  # pragma: no cover - heavy native seam
@@ -57,7 +87,23 @@ def _run(argv: list[str]) -> None:  # pragma: no cover - heavy native seam
     subprocess.run(argv, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)  # noqa: S603
 
 
-def _bb_iou(a: Any, b: Any) -> float:  # pragma: no cover - heavy native seam
+def _source_frame_index(frame: int, fps: float, n25: int) -> int:
+    """Map a source-fps frame index onto the 25-fps ASD grid (clamped to range).
+
+    The visual pipeline runs at :data:`ASD_FPS` (25); this maps source frame
+    ``frame`` (at ``fps``) to the nearest 25-fps grid index, clamped to the last
+    extracted frame ``n25 - 1`` so trailing source frames never index past the
+    grid. PURE (stdlib only) so it is unit-tested for real.
+    """
+    return min(n25 - 1, int(round(frame / max(fps, 1e-6) * ASD_FPS)))
+
+
+def _bb_iou(a: Any, b: Any) -> float:
+    """IoU of two ``(x1, y1, x2, y2)`` corner boxes (0.0 when disjoint).
+
+    PURE (stdlib only) so it is unit-tested for real; used by the face-track
+    linker :func:`_track_shot`.
+    """
     xa, ya, xb, yb = max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])
     inter = max(0.0, xb - xa) * max(0.0, yb - ya)
     if inter <= 0.0:
@@ -200,87 +246,82 @@ def analyze_visual(  # pragma: no cover - heavy native seam
     import numpy as np  # noqa: PLC0415
     from scipy.io import wavfile  # noqa: PLC0415
 
-    repo = _repo_dir(settings)
-    if repo not in sys.path:
-        sys.path.insert(0, repo)
-    cwd0 = os.getcwd()
-    os.chdir(repo)  # S3FD resolves its weight relative to cwd
-    try:
-        from ASD import ASD  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
-        from model.faceDetector.s3fd import S3FD  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
+    from ._lightasd.asd import ASD  # noqa: PLC0415
+    from ._lightasd.s3fd import S3FD  # noqa: PLC0415
 
-        work = tempfile.mkdtemp(prefix="msreframe_")
-        frames_dir = os.path.join(work, "f")
-        os.makedirs(frames_dir, exist_ok=True)
-        audio_wav = os.path.join(work, "a.wav")
-        _run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                media_path,
-                "-qscale:v",
-                "2",
-                "-r",
-                str(ASD_FPS),
-                "-async",
-                "1",
-                os.path.join(frames_dir, "%06d.jpg"),
-            ]
-        )
-        _run(["ffmpeg", "-y", "-i", media_path, "-ac", "1", "-vn", "-ar", str(AUDIO_SR), audio_wav])
-        flist = sorted(os.path.join(frames_dir, f) for f in os.listdir(frames_dir) if f.endswith(".jpg"))
-        n25 = len(flist)
-        if n25 == 0:
-            raise RuntimeError("no frames extracted for visual ASD")
+    s3fd_weight, asd_weight = _resolve_weights(settings)
+    dev = "cuda" if _cuda() else "cpu"
 
-        det = S3FD(device="cuda" if _cuda() else "cpu")
-        scene: list[list[dict[str, Any]]] = []
-        for fidx, fn in enumerate(flist):
-            img = cv2.cvtColor(cv2.imread(fn), cv2.COLOR_BGR2RGB)
-            bboxes = det.detect_faces(img, conf_th=DET_CONF, scales=[DET_SCALE])
-            scene.append([{"frame": fidx, "bbox": b[:-1].tolist(), "conf": float(b[-1])} for b in bboxes])
+    work = tempfile.mkdtemp(prefix="msreframe_")
+    frames_dir = os.path.join(work, "f")
+    os.makedirs(frames_dir, exist_ok=True)
+    audio_wav = os.path.join(work, "a.wav")
+    _run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            media_path,
+            "-qscale:v",
+            "2",
+            "-r",
+            str(ASD_FPS),
+            "-async",
+            "1",
+            os.path.join(frames_dir, "%06d.jpg"),
+        ]
+    )
+    _run(["ffmpeg", "-y", "-i", media_path, "-ac", "1", "-vn", "-ar", str(AUDIO_SR), audio_wav])
+    flist = sorted(os.path.join(frames_dir, f) for f in os.listdir(frames_dir) if f.endswith(".jpg"))
+    n25 = len(flist)
+    if n25 == 0:
+        raise RuntimeError("no frames extracted for visual ASD")
 
-        tracks = _track_shot(scene)
+    det = S3FD(s3fd_weight, device=dev)
+    scene: list[list[dict[str, Any]]] = []
+    for fidx, fn in enumerate(flist):
+        img = cv2.cvtColor(cv2.imread(fn), cv2.COLOR_BGR2RGB)
+        bboxes = det.detect_faces(img, conf_th=DET_CONF, scales=[DET_SCALE])
+        scene.append([{"frame": fidx, "bbox": b[:-1].tolist(), "conf": float(b[-1])} for b in bboxes])
 
-        # per-track audio source for slicing
-        for i in range(len(tracks)):
-            _link_audio(audio_wav, os.path.join(work, f"t{i}.__src.wav"))
+    tracks = _track_shot(scene)
 
-        asd = ASD()
-        asd.loadParameters(os.path.join(repo, "weight", "finetuning_TalkSet.model"))
-        asd.eval()
+    # per-track audio source for slicing
+    for i in range(len(tracks)):
+        _link_audio(audio_wav, os.path.join(work, f"t{i}.__src.wav"))
 
-        # 25 fps grid: per-frame list of (box_xywh, score)
-        boxes25: list[list[Box]] = [[] for _ in range(n25)]
-        scores25: list[list[float]] = [[] for _ in range(n25)]
-        for i, tr in enumerate(tracks):
-            cf = os.path.join(work, f"t{i}")
-            _crop_track(tr, flist, cf)
-            sc = _score_track(asd, cf)
-            frames = [int(f) for f in tr["frame"]]
-            for j, fr in enumerate(frames):
-                if 0 <= fr < n25:
-                    x1, y1, x2, y2 = tr["bbox"][j]
-                    boxes25[fr].append((float(x1), float(y1), float(x2 - x1), float(y2 - y1)))
-                    scores25[fr].append(float(sc[j]) if j < len(sc) else 0.0)
+    asd = ASD(device=dev)
+    asd.loadParameters(asd_weight)
+    asd.eval()
 
-        # per-source-frame VAD (normalised RMS over each frame window)
-        sr, wav = wavfile.read(audio_wav)
-        wav = wav.astype(np.float32)
-        vad_src = _vad_per_frame(wav, sr, total_frames, fps)
+    # 25 fps grid: per-frame list of (box_xywh, score)
+    boxes25: list[list[Box]] = [[] for _ in range(n25)]
+    scores25: list[list[float]] = [[] for _ in range(n25)]
+    for i, tr in enumerate(tracks):
+        cf = os.path.join(work, f"t{i}")
+        _crop_track(tr, flist, cf)
+        sc = _score_track(asd, cf)
+        frames = [int(f) for f in tr["frame"]]
+        for j, fr in enumerate(frames):
+            if 0 <= fr < n25:
+                x1, y1, x2, y2 = tr["bbox"][j]
+                boxes25[fr].append((float(x1), float(y1), float(x2 - x1), float(y2 - y1)))
+                scores25[fr].append(float(sc[j]) if j < len(sc) else 0.0)
 
-        # map 25 fps grid -> source-fps grid (length total_frames)
-        boxes_pf: list[tuple[Box, ...]] = []
-        scores_pf: list[tuple[float, ...]] = []
-        for f in range(total_frames):
-            g = min(n25 - 1, int(round(f / max(fps, 1e-6) * ASD_FPS)))
-            boxes_pf.append(tuple(boxes25[g]))
-            scores_pf.append(tuple(scores25[g]))
-        log.info("visual ASD: %d frames, %d tracks", total_frames, len(tracks))
-        return tuple(boxes_pf), tuple(scores_pf), vad_src
-    finally:
-        os.chdir(cwd0)
+    # per-source-frame VAD (normalised RMS over each frame window)
+    sr, wav = wavfile.read(audio_wav)
+    wav = wav.astype(np.float32)
+    vad_src = _vad_per_frame(wav, sr, total_frames, fps)
+
+    # map 25 fps grid -> source-fps grid (length total_frames)
+    boxes_pf: list[tuple[Box, ...]] = []
+    scores_pf: list[tuple[float, ...]] = []
+    for f in range(total_frames):
+        g = _source_frame_index(f, fps, n25)
+        boxes_pf.append(tuple(boxes25[g]))
+        scores_pf.append(tuple(scores25[g]))
+    log.info("visual ASD: %d frames, %d tracks", total_frames, len(tracks))
+    return tuple(boxes_pf), tuple(scores_pf), vad_src
 
 
 def _cuda() -> bool:  # pragma: no cover - heavy native seam
@@ -302,10 +343,14 @@ def _link_audio(src: str, dst: str) -> None:  # pragma: no cover - heavy native 
             shutil.copyfile(src, dst)
 
 
-def _vad_per_frame(
-    wav: Any, sr: int, total_frames: int, fps: float
-) -> tuple[float, ...]:  # pragma: no cover - heavy native seam
-    """Normalised per-frame RMS voice-activity (0..1)."""
+def _vad_per_frame(wav: Any, sr: int, total_frames: int, fps: float) -> tuple[float, ...]:
+    """Normalised per-frame RMS voice-activity (0..1).
+
+    ``wav`` is a numpy 1-D (mono) or 2-D (multi-channel, averaged) sample array.
+    Each source frame's window RMS is normalised by 3x the clip RMS and clamped to
+    ``[0, 1]``. Uses only numpy (available in the CI gate env) so it is
+    unit-tested for real.
+    """
     import numpy as np  # noqa: PLC0415
 
     if wav.ndim > 1:
