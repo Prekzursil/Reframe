@@ -43,6 +43,7 @@ from typing import Any
 
 from . import ffmpeg as _ffmpeg
 from .assets import manifest
+from .pathsafe import ensure_within
 from .settings_store import default_config_dir
 from .util import get_logger
 
@@ -136,7 +137,7 @@ def resolve_llama_server(
         return found
     base = _tools_root(root)
     for sub in (TOOL_DIR_CUDA, TOOL_DIR_CPU):
-        cand = base / sub / LLAMA_EXE
+        cand = Path(ensure_within(base, sub, LLAMA_EXE))
         if cand.is_file():
             return str(cand)
     dev = Path(DEV_LLAMA_DIR) / LLAMA_EXE
@@ -306,7 +307,7 @@ TOOL_ARCHIVES: tuple[ToolArchive, ...] = (
 
 def _detect_in_tool_dir(sub: str, file_name: str) -> str | None:
     """An extracted file under the CURRENT assets root (env-overridable)."""
-    cand = default_config_dir() / sub / file_name
+    cand = Path(ensure_within(default_config_dir(), sub, file_name))
     return str(cand) if cand.is_file() else None
 
 

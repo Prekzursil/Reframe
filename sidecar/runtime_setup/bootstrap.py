@@ -57,6 +57,7 @@ from media_studio.assets.manager import (  # noqa: E402
     GET_PIP_URL,
     PINNED_PIP,
 )
+from media_studio.pathsafe import ensure_within  # noqa: E402
 from media_studio.settings_store import default_config_dir  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -311,7 +312,7 @@ def ensure_get_pip(
         staged = Path(embed_dir) / "get-pip.py"
         if staged.is_file():
             return staged
-    cached = root / "tools" / "get-pip.py"
+    cached = Path(ensure_within(root, "tools", "get-pip.py"))
     if cached.is_file():
         return cached
     _log(f"downloading get-pip.py from {GET_PIP_URL}")
@@ -371,7 +372,7 @@ def install_env(
 ) -> Path:
     """Build ``<root>/envs/<env_name>`` from a PINNED requirements file."""
     reqs = load_requirements(req_file)  # validate BEFORE any subprocess runs
-    env_dir = root / "envs" / env_name
+    env_dir = Path(ensure_within(root, "envs", env_name))
     env_dir.mkdir(parents=True, exist_ok=True)
     get_pip = ensure_get_pip(root, embed_dir, urlopen=urlopen)
     steps = build_pip_steps(python_exe, get_pip, env_dir, req_file)
@@ -493,10 +494,10 @@ def extract_tool_archives(
             continue
         zip_path = Path(entry.dest)
         if not zip_path.is_absolute():
-            zip_path = root / zip_path
+            zip_path = Path(ensure_within(root, entry.dest))
         if not zip_path.is_file():
             continue
-        target = root / arch.extract_to
+        target = Path(ensure_within(root, arch.extract_to))
         _log(f"extracting {arch.asset} -> {target}")
         extract_archive(zip_path, target)
         flatten_tool_dir(target, tools_resolver.LLAMA_EXE)
@@ -577,7 +578,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"SUCCESS:bootstrap tools-only ({', '.join(extracted) or 'nothing to extract'})")
             return 0
 
-        env_dir = root / "envs" / SIDECAR_ENV_NAME
+        env_dir = Path(ensure_within(root, "envs", SIDECAR_ENV_NAME))
         if not args.skip_env:
             # Activate the ._pth BEFORE the pip steps. The embeddable ._pth runs
             # python in ISOLATED mode (it IGNORES PYTHONPATH), so pip-install
