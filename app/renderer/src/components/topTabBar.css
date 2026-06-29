@@ -20,7 +20,11 @@
   position: relative;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-3);
+  /* >=44px tap target (a11y / layout_lint tap-target gate). */
+  min-height: 44px;
+  min-width: 44px;
   padding: 10px 14px;
   border: none;
   background: transparent;

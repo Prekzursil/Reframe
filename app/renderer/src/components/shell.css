@@ -73,7 +73,7 @@ body,
   align-items: center;
   gap: var(--space-5);
   padding: 0 var(--space-5);
-  height: 46px;
+  height: 48px;
   flex: none;
   background: var(--surface-raised);
   box-shadow: var(--shadow-raise);
@@ -127,7 +127,14 @@ body,
 .quality-toggle__btn {
   appearance: none;
   border: none;
-  padding: 5px 14px;
+  /* >=44px tap target (a11y / layout_lint tap-target gate): center the label in
+     a 44px box rather than relying on text-height + thin padding. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 5px 16px;
   background: var(--surface-deep);
   color: var(--text-muted);
   font-family: inherit;
@@ -176,7 +183,15 @@ body,
 .routing-toggle__btn {
   appearance: none;
   border: none;
-  padding: 5px 14px;
+  /* >=44px tap target (a11y / layout_lint tap-target gate). NOTE: the audit
+     brief named `.routing-toggle__egress`, but that is a non-interactive hint
+     <span> the gate never measures — the gate-relevant control is this button. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 5px 16px;
   background: var(--surface-deep);
   color: var(--text-muted);
   font-family: inherit;
@@ -216,7 +231,9 @@ body,
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--warn, #c9772a);
+  /* Was `var(--warn, …)` — `--warn` is undeclared, so it silently fell back to a
+     one-off hex. Use the canonical semantic warn token (same as `.sm-nudged`). */
+  color: var(--status-warn);
 }
 
 /* .app__jobs-toggle lives in jobqueue.css; both consume the same tokens. */
@@ -229,6 +246,19 @@ body,
 }
 
 .app__main > * {
+  flex: 1;
+  min-height: 0;
+}
+
+/* The tab-panel wrapper inside <main> (carries role="tabpanel"). It must pass the
+   flex fill through to the single route child so layout is identical to when the
+   route rendered as a direct child of .app__main. */
+.app__panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.app__panel > * {
   flex: 1;
   min-height: 0;
 }
@@ -1109,7 +1139,14 @@ button {
 }
 
 .sm-row-actions button {
-  padding: 3px 8px;
+  /* >=44px tap target (a11y / layout_lint tap-target gate): short mono labels
+     (e.g. "Undo") otherwise fall below 44px in both axes. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 3px 12px;
   font-size: var(--type-caption-size);
   font-family: var(--font-mono);
   background: transparent;

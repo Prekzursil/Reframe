@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { rpc, type Video } from '../components/api';
 import { useVideoThumbnail, type VideoThumbnailRpc } from '../components/useVideoThumbnail';
 import { ReadinessRollup } from '../components/ReadinessRollup';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import { LineagePanel, type LineageAsset } from '../features/LineagePanel';
 import { lineageActions } from '../features/lineageActionsClient';
 import type { LineageResult, ReadinessAction } from '../lib/rpc';
@@ -391,7 +392,11 @@ export function Library({
         </div>
       </header>
 
-      <ReadinessRollup title="What works right now" onAction={onReadinessAction} />
+      {/* Contain any future render throw from the roll-up to an inline alert so
+          a readiness-panel failure can never blank the whole Library view. */}
+      <ErrorBoundary label="Readiness roll-up failed to render">
+        <ReadinessRollup title="What works right now" onAction={onReadinessAction} />
+      </ErrorBoundary>
 
       {dragOver ? (
         <div className="library__drophint" aria-hidden="true">
