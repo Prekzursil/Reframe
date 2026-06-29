@@ -3,6 +3,7 @@ import { rpc, type Video } from '../components/api';
 import { useVideoThumbnail, type VideoThumbnailRpc } from '../components/useVideoThumbnail';
 import { ReadinessRollup } from '../components/ReadinessRollup';
 import { LineagePanel, type LineageAsset } from '../features/LineagePanel';
+import { lineageActions } from '../features/lineageActionsClient';
 import type { LineageResult, ReadinessAction } from '../lib/rpc';
 import '../components/library-cards.css';
 
@@ -484,7 +485,12 @@ export function Library({
       )}
 
       {lineageAsset ? (
-        <LineagePanel asset={lineageAsset} loadLineage={loadLineage} onClose={closeLineage} />
+        <LineagePanel
+          asset={lineageAsset}
+          loadLineage={loadLineage}
+          onClose={closeLineage}
+          actions={lineageActions}
+        />
       ) : null}
     </div>
   );

@@ -38,6 +38,13 @@ def register_all(
     # L3 (V1.1 Lane 3): read-only provenance query — ancestors (made from) +
     # descendants (used to make) via a recursive derived_from edge walk. Direct.
     reg("library.lineage", svc.library_lineage)
+    # L5 (V1.1 Lane 3): reveal source / regenerate-from-source / hash-verified
+    # relink. Reveal+regenerate are read-only; relink/pinHash mutate the entity
+    # row (path / content_hash) only after a whole-file BLAKE3 verify. Direct.
+    reg("library.reveal", svc.library_reveal)
+    reg("library.regenerate", svc.library_regenerate)
+    reg("library.pinHash", svc.library_pin_hash)
+    reg("library.relink", svc.library_relink)
 
     reg("project.open", svc.project_open)
     reg("project.save", svc.project_save)

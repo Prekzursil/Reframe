@@ -41,6 +41,9 @@ import type {
   JobHandle,
   JobInfo,
   LineageResult,
+  RegenerateResult,
+  RelinkResult,
+  RevealResult,
   LocalModelPlan,
   ConcreteRoute,
   MediaApi,
@@ -127,6 +130,15 @@ export const client = {
     thumbnail: (id: string): Promise<{ thumbnailPath: string }> => rpc('library.thumbnail', { id }),
     /** `library.lineage {id}` — an asset's PROV ancestors/descendants + card data (L3/L4). */
     lineage: (id: string): Promise<LineageResult> => rpc('library.lineage', { id }),
+    /** `library.reveal {id}` — resolve an asset to its by-path source file(s) to reveal (L5). */
+    reveal: (id: string): Promise<RevealResult> => rpc('library.reveal', { id }),
+    /** `library.regenerate {id}` — the replay descriptor (op + params) for an asset (L5). */
+    regenerate: (id: string): Promise<RegenerateResult> => rpc('library.regenerate', { id }),
+    /** `library.pinHash {id}` — record an asset's whole-file BLAKE3 hash baseline (L5). */
+    pinHash: (id: string): Promise<RelinkResult> => rpc('library.pinHash', { id }),
+    /** `library.relink {id, path}` — hash-verified re-point of a moved source (L5). */
+    relink: (id: string, path: string): Promise<RelinkResult> =>
+      rpc('library.relink', { id, path }),
   },
 
   project: {

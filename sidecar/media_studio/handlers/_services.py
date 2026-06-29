@@ -183,6 +183,10 @@ class Services:
     library_remove = library_ops.library_remove
     library_thumbnail = library_ops.library_thumbnail
     library_lineage = library_ops.library_lineage
+    library_reveal = library_ops.library_reveal
+    library_regenerate = library_ops.library_regenerate
+    library_pin_hash = library_ops.library_pin_hash
+    library_relink = library_ops.library_relink
     project_open = library_ops.project_open
     project_save = library_ops.project_save
     project_consolidate = library_ops.project_consolidate

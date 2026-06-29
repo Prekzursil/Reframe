@@ -25,6 +25,10 @@ dependencies = [
   # an OS-stdlib fallback (Win32 GlobalMemoryStatusEx / POSIX sysconf) behind the
   # RamProbe seam. PINNED (A6 lesson 5) so the probe number is reproducible.
   "psutil==7.2.2",         # total system RAM (system_advisor.default_ram_probe)
+  # L5: whole-file content hash for hash-verified relink (DESIGN §3.2). BLAKE3 is
+  # SIMD/multithread-parallel — fast on multi-GB sources; digests are stored
+  # algorithm-prefixed (``blake3:…``) so a future SHA-256/C2PA path can coexist.
+  "blake3>=1.0",           # L5 hash-verified re-point/relink (algorithm-prefixed)
 ]
 
 [project.optional-dependencies]

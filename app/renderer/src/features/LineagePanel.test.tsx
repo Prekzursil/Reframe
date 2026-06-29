@@ -117,6 +117,33 @@ describe('<LineagePanel />', () => {
     expect(usedToMake.querySelector('.lineage-panel__rel-list')).toBeNull();
   });
 
+  it('renders the L5 action row when `actions` is provided (and not otherwise)', async () => {
+    // Without `actions` (the other tests) the card stays read-only.
+    mount(() => Promise.resolve(result()));
+    await flush();
+    expect(container.querySelector('.lineage-actions')).toBeNull();
+
+    // With `actions`, the reveal/regenerate row renders under the card.
+    const actions = {
+      reveal: vi.fn(),
+      regenerate: vi.fn(),
+      runRegenerate: vi.fn(),
+      relink: vi.fn(),
+    };
+    act(() => {
+      root.render(
+        <LineagePanel
+          asset={ASSET}
+          loadLineage={() => Promise.resolve(result())}
+          onClose={vi.fn()}
+          actions={actions}
+        />,
+      );
+    });
+    await flush();
+    expect(container.querySelector('.lineage-actions')).not.toBeNull();
+  });
+
   it('surfaces an Error rejection loudly (role="alert")', async () => {
     mount(() => Promise.reject(new Error('sidecar down')));
     await flush();

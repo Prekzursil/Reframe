@@ -274,6 +274,46 @@ export interface LineageResult {
   provenance: LineageProvenance | null;
 }
 
+/**
+ * L5 `library.reveal {id}` source row — one by-path source the asset derives from,
+ * plus whether its file is still on disk. Field names mirror the sidecar EXACTLY.
+ */
+export interface RevealSource {
+  id: string;
+  path: string;
+  title: string;
+  exists: boolean;
+}
+
+/**
+ * L5 `library.reveal {id}` result — the by-path source file(s) to reveal in the OS
+ * file explorer. `missing` lists the source paths no longer on disk (loud — the
+ * UI offers a hash-verified relink rather than silently skipping).
+ */
+export interface RevealResult {
+  id: string;
+  sources: RevealSource[];
+  missing: string[];
+}
+
+/**
+ * L5 `library.regenerate {id}` result — the replay descriptor for an asset: the
+ * producing `op` + its redacted `params`. `ready` is `false` (and `missing` is
+ * populated) when any source file is gone; the caller must relink before re-running.
+ */
+export interface RegenerateResult {
+  id: string;
+  op: string;
+  params: Record<string, unknown> | null;
+  missing: string[];
+  ready: boolean;
+}
+
+/** L5 `library.relink {id, path}` / `library.pinHash {id}` result — the updated entity row. */
+export interface RelinkResult {
+  entity: LineageEntity;
+}
+
 /** A3 AudioTrack — one original/dub audio lane of a video. */
 export interface AudioTrack {
   id: string;

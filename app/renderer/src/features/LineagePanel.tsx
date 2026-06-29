@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 
+import { LineageActions, type LineageActionHandlers } from './LineageActions';
 import { LineageCard } from './LineageCard';
 import type { LineageNode, LineageResult } from '../lib/rpc';
 import './lineage.css';
@@ -24,6 +25,12 @@ export interface LineagePanelProps {
   loadLineage: (id: string) => Promise<LineageResult>;
   /** Close the drawer. */
   onClose: () => void;
+  /**
+   * Optional L5 action slice (reveal source / regenerate / relink). When present,
+   * the drawer renders the action row under the provenance card; absent -> the
+   * card stays read-only (the L4 behaviour). Injected so unit tests stay decoupled.
+   */
+  actions?: LineageActionHandlers;
 }
 
 type Phase =
@@ -78,6 +85,7 @@ export function LineagePanel({
   asset,
   loadLineage,
   onClose,
+  actions,
 }: LineagePanelProps): React.ReactElement {
   const [phase, setPhase] = useState<Phase>({ status: 'loading' });
 
@@ -123,6 +131,7 @@ export function LineagePanel({
       ) : (
         <div className="lineage-panel__body">
           <LineageCard entity={phase.result.entity} provenance={phase.result.provenance} />
+          {actions ? <LineageActions asset={asset} actions={actions} /> : null}
           <NodeList heading="Made from" nodes={phase.result.ancestors} />
           <NodeList heading="Used to make" nodes={phase.result.descendants} />
         </div>

@@ -396,6 +396,50 @@ class Library:
 
         return lineage.lineage_of(self, entity_id)
 
+    # ---- L5 reveal / regenerate / hash-verified relink ---------------------
+    def reveal_source(self, entity_id: str) -> dict[str, Any]:
+        """L5: resolve ``entity_id`` to its by-path source file(s) for OS-reveal.
+
+        Thin façade over :func:`media_studio.relink.reveal_source` (lazy import, as
+        for :meth:`lineage`). ``{id, sources:[{id,path,title,exists}], missing}`` —
+        ``missing`` lists sources no longer on disk (loud, never silently skipped).
+        """
+        from . import relink  # lazy import keeps relink (which imports library) cycle-free
+
+        return relink.reveal_source(self, entity_id)
+
+    def regenerate(self, entity_id: str) -> dict[str, Any]:
+        """L5: build the replay descriptor for ``entity_id`` (``{id, op, params, missing, ready}``).
+
+        Thin façade over :func:`media_studio.relink.regenerate` (lazy import).
+        ``ready`` is ``False`` when any source file is missing — the caller relinks
+        first rather than regenerating from a vanished source.
+        """
+        from . import relink  # lazy import keeps relink (which imports library) cycle-free
+
+        return relink.regenerate(self, entity_id)
+
+    def pin_source_hash(self, entity_id: str, hash_file: Callable[[str], str] | None = None) -> dict[str, Any]:
+        """L5: record ``entity_id``'s whole-file BLAKE3 ``content_hash`` (relink baseline).
+
+        Thin façade over :func:`media_studio.relink.pin_source_hash` (lazy import).
+        Returns the updated entity dict; raises if the source file is missing.
+        """
+        from . import relink  # lazy import keeps relink (which imports library) cycle-free
+
+        return relink.pin_source_hash(self, entity_id, hash_file=hash_file)
+
+    def relink(self, entity_id: str, new_path: str, hash_file: Callable[[str], str] | None = None) -> dict[str, Any]:
+        """L5: HASH-VERIFIED re-point of ``entity_id`` to ``new_path`` (whole-file BLAKE3).
+
+        Thin façade over :func:`media_studio.relink.relink` (lazy import). Re-points
+        only when the new file's BLAKE3 matches the recorded ``content_hash``; a
+        mismatch or an unverifiable asset (no recorded hash) raises loudly.
+        """
+        from . import relink  # lazy import keeps relink (which imports library) cycle-free
+
+        return relink.relink(self, entity_id, new_path, hash_file=hash_file)
+
 
 class Project:
     """A versioned JSON project manifest referencing its source video by path.

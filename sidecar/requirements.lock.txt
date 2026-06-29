@@ -18,6 +18,8 @@ av==17.1.0
     # via faster-whisper
 babel==2.18.0
     # via csvw
+blake3==1.0.9
+    # via media-studio-sidecar
 certifi==2026.6.17
     # via
     #   edge-tts

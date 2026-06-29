@@ -266,6 +266,18 @@ describe('client.ping / library / project', () => {
     expect(r).toHaveBeenCalledWith('library.lineage', { id: 'v1' });
   });
 
+  it('library.reveal / regenerate / pinHash / relink forward their params (L5)', async () => {
+    const r = installApi();
+    await client.library.reveal('v1');
+    expect(r).toHaveBeenCalledWith('library.reveal', { id: 'v1' });
+    await client.library.regenerate('v1');
+    expect(r).toHaveBeenCalledWith('library.regenerate', { id: 'v1' });
+    await client.library.pinHash('v1');
+    expect(r).toHaveBeenCalledWith('library.pinHash', { id: 'v1' });
+    await client.library.relink('v1', '/new/path.mp4');
+    expect(r).toHaveBeenCalledWith('library.relink', { id: 'v1', path: '/new/path.mp4' });
+  });
+
   it('project.open / save / consolidate forward their params', async () => {
     const r = installApi();
     const video: Video = {

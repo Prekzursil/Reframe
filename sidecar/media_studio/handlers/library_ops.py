@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .. import library as _library
+from .. import relink as _relink
 from ..features import offline as _offline
 from ..features import shorts as _shorts_meta
 from ..protocol import ErrorCode, RpcContext, RpcError
@@ -155,6 +156,68 @@ def library_lineage(self: Services, params: dict[str, Any], ctx: RpcContext) -> 
     """
     entity_id = _require_str(params, "id")
     return self.library.lineage(entity_id)
+
+
+def library_reveal(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``library.reveal({id})`` -> ``{id, sources:[{id,path,title,exists}], missing}`` (L5).
+
+    Direct-return. Resolves an asset to its by-path SOURCE file(s) so the renderer
+    can reveal them in the OS file explorer (via the existing ``openInFolder``
+    bridge). ``missing`` surfaces any source whose file is gone (loud — never a
+    silent skip), so the UI can offer a hash-verified relink. An unknown id is an
+    INVALID_PARAMS error.
+    """
+    entity_id = _require_str(params, "id")
+    try:
+        return self.library.reveal_source(entity_id)
+    except _relink.RelinkError as exc:
+        raise _invalid(str(exc)) from exc
+
+
+def library_regenerate(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``library.regenerate({id})`` -> ``{id, op, params, missing, ready}`` (L5, DESIGN §3.3.3).
+
+    Direct-return. Builds the replay descriptor (the producing op + its redacted
+    params) for an asset. ``ready`` is ``false`` (and ``missing`` is populated) when
+    any source file is gone — the renderer must relink before re-running the op,
+    never regenerate from a missing source. Unknown id / a raw (un-produced) asset
+    are INVALID_PARAMS errors.
+    """
+    entity_id = _require_str(params, "id")
+    try:
+        return self.library.regenerate(entity_id)
+    except _relink.RelinkError as exc:
+        raise _invalid(str(exc)) from exc
+
+
+def library_pin_hash(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``library.pinHash({id})`` -> ``{entity}`` (L5).
+
+    Direct-return. Records the asset's whole-file BLAKE3 ``content_hash`` while its
+    file is present — the baseline a later ``library.relink`` verifies against. A
+    missing source file or unknown id is an INVALID_PARAMS error (loud).
+    """
+    entity_id = _require_str(params, "id")
+    try:
+        return {"entity": self.library.pin_source_hash(entity_id)}
+    except (_relink.RelinkError, FileNotFoundError) as exc:
+        raise _invalid(str(exc)) from exc
+
+
+def library_relink(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``library.relink({id, path})`` -> ``{entity}`` (L5, hash-verified re-point).
+
+    Direct-return. Re-points a moved source ONLY when the new file's whole-file
+    BLAKE3 matches the recorded ``content_hash`` (a ``(size,mtime)`` stat is NOT
+    accepted). A mismatch, an unverifiable asset (no recorded hash), a missing new
+    file, or an unknown id all raise INVALID_PARAMS with a loud message.
+    """
+    entity_id = _require_str(params, "id")
+    new_path = _require_str(params, "path")
+    try:
+        return {"entity": self.library.relink(entity_id, new_path)}
+    except (_relink.RelinkError, FileNotFoundError) as exc:
+        raise _invalid(str(exc)) from exc
 
 
 def project_open(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:

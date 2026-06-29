@@ -210,3 +210,58 @@
   background: var(--status-success-soft);
   color: var(--status-success);
 }
+
+/* L5 — reveal / regenerate / relink action row (under the provenance card). */
+.lineage-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.lineage-actions__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.lineage-actions__btn {
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-default);
+  color: var(--text-primary);
+  font-size: var(--type-body-size);
+  cursor: pointer;
+}
+
+.lineage-actions__btn:hover:not(:disabled) {
+  background: var(--surface-active);
+}
+
+.lineage-actions__btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.lineage-actions__btn--relink {
+  border-color: var(--status-warning, var(--accent-ink));
+  color: var(--status-warning, var(--accent-ink));
+}
+
+.lineage-actions__status {
+  font-size: var(--type-caption-size);
+  margin: 0;
+}
+
+.lineage-actions__status--error {
+  color: var(--status-error, crimson);
+}
+
+.lineage-actions__status--success {
+  color: var(--status-success);
+}
+
+.lineage-actions__status--info {
+  color: var(--text-secondary);
+}
