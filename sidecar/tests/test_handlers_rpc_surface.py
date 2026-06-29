@@ -94,6 +94,7 @@ FROZEN_RPC_SURFACE: frozenset[str] = frozenset(
         "recipes.save",
         "refine.apply",
         "refine.preview",
+        "reframe.eval",
         "savePresets.apply",
         "savePresets.list",
         "savePresets.remove",

@@ -46,6 +46,15 @@ clips/
 # but keep the spike's reference inputs
 !spike/talk.en.vtt
 
+# Reframe ML eval golden set (WU R0) — PRIVATE / third-party, NEVER committed.
+# The OpusClip-derived golden reference (the razvan_gandu RO talk-show + its 41
+# derived clips) is sourced via the REFRAME_GOLDEN_DIR env var (an EXTERNAL path,
+# e.g. ~/Downloads/razvan_gandu); these patterns defend against an accidental
+# repo-relative copy. The 100% pure-coverage tier never needs these bytes.
+razvan_gandu/
+**/razvan_gandu/
+testdata/razvan_gandu/
+
 # Local agent / orchestration state (never commit — machine-local recovery)
 .beads/
 .claude/

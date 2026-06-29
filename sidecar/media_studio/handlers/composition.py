@@ -254,6 +254,13 @@ def register_all(
 
     _feedback.register(register_fn=reg)
 
+    # reframe.eval (R0): the PURE ML eval harness — the regression gate R1 must
+    # clear. Scores a predicted-vs-reference trace over the wire (the heavy
+    # real-frame engine run stays out-of-band; the GPU/e2e tier wires it in R1).
+    from ..features import reframe_eval as _reframe_eval  # local: import-light
+
+    _reframe_eval.register(register_fn=reg)
+
     # shorts.* (P4 §2/C6): the shorts library registers its own four methods,
     # bound to the same exports root + per-video out-dir layout the short-maker
     # export uses (Services.exports_dir / "shorts-<videoId>").
