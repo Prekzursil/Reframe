@@ -33,19 +33,25 @@ function meta(over: Partial<ModelMeta> = {}): ModelMeta {
   };
 }
 
-function overview(over: {
-  hardware?: HardwareInfo;
-  source?: string;
-  models?: ModelMeta[];
-} = {}): ModelsOverview {
+function overview(
+  over: { hardware?: HardwareInfo; source?: string; models?: ModelMeta[] } = {},
+): ModelsOverview {
   return {
     hardware: over.hardware ?? hw(),
     tiers: [],
     recommendedPreset: 'tier1-multimodal',
     runners: [],
     localPlan: {
-      whisper: { model: 'large-v3-turbo', label: 'Whisper large-v3-turbo', reason: 'whisper reason' },
-      llm: { model: 'qwen2.5:7b', label: 'Qwen2.5 7B', reason: 'Qwen2.5 7B — fits your GPU (8000 MB VRAM)' },
+      whisper: {
+        model: 'large-v3-turbo',
+        label: 'Whisper large-v3-turbo',
+        reason: 'whisper reason',
+      },
+      llm: {
+        model: 'qwen2.5:7b',
+        label: 'Qwen2.5 7B',
+        reason: 'Qwen2.5 7B — fits your GPU (8000 MB VRAM)',
+      },
       runners: [],
     },
     providers: [],

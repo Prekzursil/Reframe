@@ -2646,10 +2646,9 @@ class TestLazySnapStage:
         monkeypatch.setattr(
             boundary,
             "snap_from_lists",
-            lambda c, w, *, silences, scene_cuts, duration_mode=None: seen.update(
-                silences=silences, scene_cuts=scene_cuts
-            )
-            or (c, []),
+            lambda c, w, *, silences, scene_cuts, duration_mode=None: (
+                seen.update(silences=silences, scene_cuts=scene_cuts) or (c, [])
+            ),
         )
         sm._lazy_snap([], {"segments": []}, settings=None)
         assert seen["silences"] is None and seen["scene_cuts"] is None

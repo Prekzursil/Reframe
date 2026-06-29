@@ -44,8 +44,8 @@ export function RoutingOverrideTable({
     <details className="routing-overrides">
       <summary>Per-function routing (Advanced)</summary>
       <p className="routing-overrides__intro">
-        Override where each AI step runs. “Global default” follows the header
-        Local/Cloud/Auto toggle ({OVERRIDE_LABELS[policy.global]}).
+        Override where each AI step runs. “Global default” follows the header Local/Cloud/Auto
+        toggle ({OVERRIDE_LABELS[policy.global]}).
       </p>
       <ul className="routing-overrides__list" data-section="routing-overrides">
         {AI_FUNCTIONS.map((fn) => {

@@ -57,7 +57,15 @@ def test_as_int_surfaces_override_error() -> None:
     # A non-integer primitive from the reused R0 helper is re-raised as OverrideError.
     with pytest.raises(ro.OverrideError, match="shot.index entries must be integers"):
         ro.ShotDecision.from_dict(
-            {"index": "x", "startFrame": 0, "endFrame": 1, "speaker": "a", "layout": "single", "crop": [0, 0, 1, 1], "speakers": []}
+            {
+                "index": "x",
+                "startFrame": 0,
+                "endFrame": 1,
+                "speaker": "a",
+                "layout": "single",
+                "crop": [0, 0, 1, 1],
+                "speakers": [],
+            }
         )
 
 

@@ -132,7 +132,9 @@ def _fetch_one(provider: str, key: str, *, transport: Transport) -> OpenRouterUs
         log.debug("OpenRouter usage probe failed for %s (%s): %s", provider, redact(key), safe)
         return None
     except Exception as exc:  # noqa: BLE001 - best-effort, must not raise
-        log.debug("OpenRouter usage probe failed for %s (%s): %s", provider, redact(key), scrub_error_body(str(exc), [key]))
+        log.debug(
+            "OpenRouter usage probe failed for %s (%s): %s", provider, redact(key), scrub_error_body(str(exc), [key])
+        )
         return None
     parsed = parse_key_usage(response)
     status, reason = key_pool_status.classify_success(parsed)

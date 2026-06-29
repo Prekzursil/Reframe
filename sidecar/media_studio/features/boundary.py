@@ -63,6 +63,7 @@ def resolve_window(mode: Any) -> tuple[float, float]:
         return _DURATION_ENVELOPES[mode]
     return _DURATION_ENVELOPES[DEFAULT_DURATION_MODE]
 
+
 # Characters that, when a word's text ends with one of them, mark a complete
 # sentence/thought — the snap target is that word's ``end`` time.
 _SENTENCE_TERMINATORS: tuple[str, ...] = (".", "!", "?", "…")

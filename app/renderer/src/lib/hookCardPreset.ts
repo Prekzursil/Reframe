@@ -75,7 +75,10 @@ export function selectHookCardRanks(
 
 /** Zero-padded rank-ordered filename prefix (`01`, `02` … `NN`), min width 2. */
 export function orderPrefix(rank: number, maxRank: number): string {
-  const width = Math.max(HOOK_CARD_MIN_ORDER_WIDTH, String(Math.max(1, Math.trunc(maxRank))).length);
+  const width = Math.max(
+    HOOK_CARD_MIN_ORDER_WIDTH,
+    String(Math.max(1, Math.trunc(maxRank))).length,
+  );
   return String(Math.trunc(rank)).padStart(width, '0');
 }
 

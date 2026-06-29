@@ -37,7 +37,15 @@ def _add_source(lib: Library, tmp_path: Path, name: str, data: bytes = b"\x00") 
 
 def _record_short(lib: Library, *, src_id: str, clip_id: str) -> None:
     lib.record_lineage(
-        type("J", (), {"id": "j1", "status": type("S", (), {"value": "done"})(), "request": {"method": "shorts.select", "params": {"preset": "punchy"}}})(),
+        type(
+            "J",
+            (),
+            {
+                "id": "j1",
+                "status": type("S", (), {"value": "done"})(),
+                "request": {"method": "shorts.select", "params": {"preset": "punchy"}},
+            },
+        )(),
         inputs=[{"id": src_id}],
         outputs=[{"id": clip_id, "kind": "short", "path": "/exports/clip.mp4"}],
         agent={"appVersion": "1.1.0", "route": {"mode": "local"}},

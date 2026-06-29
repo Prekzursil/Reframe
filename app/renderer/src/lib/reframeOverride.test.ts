@@ -30,7 +30,10 @@ function plan(): ShotPlan {
     sourceWidth: 1920,
     sourceHeight: 1080,
     fps: 30,
-    shots: [shot({ index: 0 }), shot({ index: 1, speaker: 'b', layout: 'split', startFrame: 3, endFrame: 6 })],
+    shots: [
+      shot({ index: 0 }),
+      shot({ index: 1, speaker: 'b', layout: 'split', startFrame: 3, endFrame: 6 }),
+    ],
   };
 }
 
@@ -87,7 +90,12 @@ describe('cycleSpeaker', () => {
 
 describe('applyShotOverride', () => {
   it('flips speaker, switches layout, and clamps crop', () => {
-    const out = applyShotOverride(shot(), { index: 0, speaker: 'b', layout: 'composite', crop: [-5, 0, 9999, 9999] }, 1920, 1080);
+    const out = applyShotOverride(
+      shot(),
+      { index: 0, speaker: 'b', layout: 'composite', crop: [-5, 0, 9999, 9999] },
+      1920,
+      1080,
+    );
     expect(out.speaker).toBe('b');
     expect(out.layout).toBe('composite');
     expect(out.crop).toEqual([0, 0, 1920, 1080]);
@@ -101,7 +109,9 @@ describe('applyShotOverride', () => {
   });
 
   it('throws loud on a speaker that is not a candidate', () => {
-    expect(() => applyShotOverride(shot(), { index: 0, speaker: 'z' }, 1920, 1080)).toThrow('is not a candidate');
+    expect(() => applyShotOverride(shot(), { index: 0, speaker: 'z' }, 1920, 1080)).toThrow(
+      'is not a candidate',
+    );
   });
 });
 
@@ -122,7 +132,9 @@ describe('applyShotOverrides', () => {
 describe('affectedShotIndices', () => {
   it('returns only the changed shots', () => {
     const base = plan();
-    const resolved = applyShotOverrides(base, [{ index: 1, layout: 'composite', crop: [0, 0, 200, 200] }]);
+    const resolved = applyShotOverrides(base, [
+      { index: 1, layout: 'composite', crop: [0, 0, 200, 200] },
+    ]);
     expect(affectedShotIndices(base, resolved)).toEqual([1]);
     expect(affectedShotIndices(base, base)).toEqual([]);
   });

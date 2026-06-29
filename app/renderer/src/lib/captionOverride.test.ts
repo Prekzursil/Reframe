@@ -61,9 +61,7 @@ describe('sanitizeCaptionOverride — fontFamily allowlist', () => {
   });
 
   it('drops a non-string fontFamily', () => {
-    expect(
-      sanitizeCaptionOverride({ fontFamily: 42 as unknown as string }),
-    ).toBeUndefined();
+    expect(sanitizeCaptionOverride({ fontFamily: 42 as unknown as string })).toBeUndefined();
   });
 });
 
@@ -111,17 +109,17 @@ describe('sanitizeCaptionOverride — colours (#RRGGBB)', () => {
     expect(sanitizeCaptionOverride({ textColor: 'red' })).toBeUndefined();
     expect(sanitizeCaptionOverride({ textColor: 'FF0000' })).toBeUndefined();
     expect(sanitizeCaptionOverride({ textColor: '#GG0000' })).toBeUndefined();
-    expect(
-      sanitizeCaptionOverride({ textColor: 0xff0000 as unknown as string }),
-    ).toBeUndefined();
+    expect(sanitizeCaptionOverride({ textColor: 0xff0000 as unknown as string })).toBeUndefined();
   });
 });
 
 describe('sanitizeCaptionOverride — booleans', () => {
   it('keeps genuine booleans (true and false)', () => {
-    expect(
-      sanitizeCaptionOverride({ outline: true, box: false, uppercase: true }),
-    ).toEqual({ outline: true, box: false, uppercase: true });
+    expect(sanitizeCaptionOverride({ outline: true, box: false, uppercase: true })).toEqual({
+      outline: true,
+      box: false,
+      uppercase: true,
+    });
   });
 
   it('drops non-boolean toggle values', () => {

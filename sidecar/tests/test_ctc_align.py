@@ -297,9 +297,7 @@ class TestResolveModelId:
         assert ca._resolve_model_id({}, "romanian-wav2vec2") == "gigant/romanian-wav2vec2"
 
     def test_ro_full_id_passthrough(self):
-        assert ca._resolve_model_id({"ctcModelId": "gigant/romanian-wav2vec2"}, None) == (
-            "gigant/romanian-wav2vec2"
-        )
+        assert ca._resolve_model_id({"ctcModelId": "gigant/romanian-wav2vec2"}, None) == ("gigant/romanian-wav2vec2")
 
     def test_asset_for_ro_model_is_its_own_asset(self):
         ro_id = ca.RO_MODEL_IDS["romanian-wav2vec2"]

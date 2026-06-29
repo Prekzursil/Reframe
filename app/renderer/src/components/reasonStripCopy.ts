@@ -122,7 +122,8 @@ export interface DeviceFact {
 export function deviceFacts(overview: ModelsOverview): DeviceFact[] {
   const { hardware } = overview;
   const llm = chosenLlm(overview);
-  const meta = overview.eligibility.source === 'metadata' ? overview.eligibility.models[0] : undefined;
+  const meta =
+    overview.eligibility.source === 'metadata' ? overview.eligibility.models[0] : undefined;
   const quantVal = meta ? sizeQuantLabel(meta) || '—' : '—';
   const vramEstVal = meta ? vramEstimateText(meta.vramEstimateGb) || '—' : '—';
   return [

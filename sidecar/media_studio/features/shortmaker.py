@@ -163,9 +163,7 @@ def _lazy_select(transcript, prompt, controls, *, settings=None) -> list[Candida
     return [dict(c) for c in _select.select(transcript, prompt, controls, provider)]
 
 
-def _lazy_snap(
-    candidates, transcript, *, controls=None, settings=None
-) -> tuple[list[Candidate], list[dict[str, Any]]]:
+def _lazy_snap(candidates, transcript, *, controls=None, settings=None) -> tuple[list[Candidate], list[dict[str, Any]]]:
     from . import boundary as _boundary
     from . import select as _select
 

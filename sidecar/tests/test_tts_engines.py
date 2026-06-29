@@ -588,9 +588,7 @@ class TestChatterboxRunner:
     def test_module_import_is_light(self):
         # Clean-subprocess import-hygiene guard (immune to cross-test pollution):
         # importing the runner must not pull torch / the chatterbox backbone.
-        assert_module_import_is_light(
-            "media_studio.features.tts.chatterbox_runner", ("torch", "chatterbox")
-        )
+        assert_module_import_is_light("media_studio.features.tts.chatterbox_runner", ("torch", "chatterbox"))
 
     def test_parse_job_valid(self):
         job = cbr.parse_job(cb.build_job_payload(CUES, "C:/s.wav", "en", "C:/o.wav", 1.0))

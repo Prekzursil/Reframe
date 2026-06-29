@@ -158,7 +158,11 @@ export function affectedShotIndices(base: ShotPlan, resolved: ShotPlan): number[
   base.shots.forEach((before, i) => {
     const after = resolved.shots[i];
     if (before.index !== after.index) throw new Error('plans describe different shots');
-    if (before.speaker !== after.speaker || before.layout !== after.layout || !cropsEqual(before.crop, after.crop)) {
+    if (
+      before.speaker !== after.speaker ||
+      before.layout !== after.layout ||
+      !cropsEqual(before.crop, after.crop)
+    ) {
       affected.push(after.index);
     }
   });

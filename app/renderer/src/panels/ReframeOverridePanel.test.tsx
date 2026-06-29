@@ -19,8 +19,24 @@ function planFixture(): ShotPlan {
     sourceHeight: 1080,
     fps: 30,
     shots: [
-      { index: 0, startFrame: 0, endFrame: 3, speaker: 'a', layout: 'single', crop: [100, 0, 600, 1080], speakers: ['a', 'b'] },
-      { index: 1, startFrame: 3, endFrame: 6, speaker: '', layout: 'split', crop: [200, 0, 600, 1080], speakers: [''] },
+      {
+        index: 0,
+        startFrame: 0,
+        endFrame: 3,
+        speaker: 'a',
+        layout: 'single',
+        crop: [100, 0, 600, 1080],
+        speakers: ['a', 'b'],
+      },
+      {
+        index: 1,
+        startFrame: 3,
+        endFrame: 6,
+        speaker: '',
+        layout: 'split',
+        crop: [200, 0, 600, 1080],
+        speakers: [''],
+      },
     ],
   };
 }
@@ -83,8 +99,12 @@ describe('ReframeOverridePanel', () => {
 
   it('disables Flip when a shot has a single candidate, enables it otherwise', async () => {
     await mount();
-    expect(($('[data-shot="0"] [data-action="flip-speaker"]') as HTMLButtonElement).disabled).toBe(false);
-    expect(($('[data-shot="1"] [data-action="flip-speaker"]') as HTMLButtonElement).disabled).toBe(true);
+    expect(($('[data-shot="0"] [data-action="flip-speaker"]') as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    expect(($('[data-shot="1"] [data-action="flip-speaker"]') as HTMLButtonElement).disabled).toBe(
+      true,
+    );
   });
 
   it('starts with nothing to re-render and Reset disabled', async () => {

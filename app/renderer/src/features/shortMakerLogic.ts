@@ -246,7 +246,12 @@ export const CAPTION_STYLE_OPTIONS: readonly string[] = ALL_CAPTION_STYLES.map((
  * A4 reframe engines + the "auto" selector (verthor with claudeshorts fallback)
  * + the R1 (V1.1) flagship hybrid multi-speaker director (explicit opt-in).
  */
-export const REFRAME_ENGINE_OPTIONS = ['auto', 'verthor', 'claudeshorts', 'reframe_multispeaker'] as const;
+export const REFRAME_ENGINE_OPTIONS = [
+  'auto',
+  'verthor',
+  'claudeshorts',
+  'reframe_multispeaker',
+] as const;
 export type ReframeEngineChoice = (typeof REFRAME_ENGINE_OPTIONS)[number];
 export const DEFAULT_REFRAME_ENGINE: ReframeEngineChoice = 'auto';
 

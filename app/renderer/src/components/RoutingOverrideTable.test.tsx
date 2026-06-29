@@ -69,7 +69,10 @@ describe('RoutingOverrideTable', () => {
   });
 
   it('shows an egress badge only for cloud/auto rows', () => {
-    mount({ policy: { global: 'local', overrides: { select: 'cloud', asr: 'auto' } }, onApply: () => {} });
+    mount({
+      policy: { global: 'local', overrides: { select: 'cloud', asr: 'auto' } },
+      onApply: () => {},
+    });
     expect(container.querySelector('[data-testid="egress-select"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="egress-asr"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="egress-caption"]')).toBeNull();

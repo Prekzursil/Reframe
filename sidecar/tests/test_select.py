@@ -626,13 +626,15 @@ def test_resolve_controls_midform_non_numeric_window_uses_envelope_defaults():
 
 def test_resolve_controls_ladder_defaults_disabled():
     ladder = sel._resolve_controls({})["ladder"]
-    assert ladder == {"enabled": False, "top_n": sel.DEFAULT_OVERLAP_LADDER_TOP_N, "punchy_sec": sel.DEFAULT_PUNCHY_SHORT_SEC}
+    assert ladder == {
+        "enabled": False,
+        "top_n": sel.DEFAULT_OVERLAP_LADDER_TOP_N,
+        "punchy_sec": sel.DEFAULT_PUNCHY_SHORT_SEC,
+    }
 
 
 def test_resolve_controls_ladder_enabled_and_configured():
-    ladder = sel._resolve_controls(
-        {"overlapLadder": True, "overlapLadderTopN": 3, "punchyShortSec": 25}
-    )["ladder"]
+    ladder = sel._resolve_controls({"overlapLadder": True, "overlapLadderTopN": 3, "punchyShortSec": 25})["ladder"]
     assert ladder == {"enabled": True, "top_n": 3, "punchy_sec": 25.0}
 
 

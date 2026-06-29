@@ -70,7 +70,10 @@ export interface ReframeOverridePanelProps {
   onRerender: (shotIndices: readonly number[]) => void;
 }
 
-export function ReframeOverridePanel({ plan, onRerender }: ReframeOverridePanelProps): React.ReactElement {
+export function ReframeOverridePanel({
+  plan,
+  onRerender,
+}: ReframeOverridePanelProps): React.ReactElement {
   const [overrides, setOverrides] = useState<Record<number, ShotOverride>>({});
 
   const overrideList = useMemo(() => Object.values(overrides), [overrides]);
@@ -84,7 +87,8 @@ export function ReframeOverridePanel({ plan, onRerender }: ReframeOverridePanelP
   }, []);
 
   const flipSpeaker = useCallback(
-    (shot: ShotDecision): void => patch(shot.index, { speaker: cycleSpeaker(shot.speaker, shot.speakers) }),
+    (shot: ShotDecision): void =>
+      patch(shot.index, { speaker: cycleSpeaker(shot.speaker, shot.speakers) }),
     [patch],
   );
   const setLayout = useCallback(
@@ -93,7 +97,9 @@ export function ReframeOverridePanel({ plan, onRerender }: ReframeOverridePanelP
   );
   const nudge = useCallback(
     (shot: ShotDecision, dx: number, dy: number): void =>
-      patch(shot.index, { crop: nudgeCrop(shot.crop, dx, dy, plan.sourceWidth, plan.sourceHeight) }),
+      patch(shot.index, {
+        crop: nudgeCrop(shot.crop, dx, dy, plan.sourceWidth, plan.sourceHeight),
+      }),
     [patch, plan.sourceWidth, plan.sourceHeight],
   );
   const zoom = useCallback(
@@ -115,8 +121,9 @@ export function ReframeOverridePanel({ plan, onRerender }: ReframeOverridePanelP
     <section className="feature-panel reframe-override" aria-label="Manual reframe correction">
       <h2>Fix the framing</h2>
       <p className="reframe-override__intro">
-        For each shot, the auto-reframe picked who to follow and how to lay it out. Flip the speaker,
-        switch the layout, or nudge the crop on any shot it got wrong — then re-render just those shots.
+        For each shot, the auto-reframe picked who to follow and how to lay it out. Flip the
+        speaker, switch the layout, or nudge the crop on any shot it got wrong — then re-render just
+        those shots.
       </p>
 
       <div className="reframe-override__shots" data-section="shots">
@@ -160,7 +167,15 @@ interface ShotRowProps {
   onReset: (index: number) => void;
 }
 
-function ShotRow({ shot, changed, onFlip, onLayout, onNudge, onZoom, onReset }: ShotRowProps): React.ReactElement {
+function ShotRow({
+  shot,
+  changed,
+  onFlip,
+  onLayout,
+  onNudge,
+  onZoom,
+  onReset,
+}: ShotRowProps): React.ReactElement {
   const canFlip = shot.speakers.length > 1;
   return (
     <div
@@ -183,7 +198,11 @@ function ShotRow({ shot, changed, onFlip, onLayout, onNudge, onZoom, onReset }: 
             type="button"
             data-action="flip-speaker"
             disabled={!canFlip}
-            title={canFlip ? 'Switch to the next detected speaker' : 'Only one speaker detected in this shot'}
+            title={
+              canFlip
+                ? 'Switch to the next detected speaker'
+                : 'Only one speaker detected in this shot'
+            }
             onClick={() => onFlip(shot)}
           >
             Flip

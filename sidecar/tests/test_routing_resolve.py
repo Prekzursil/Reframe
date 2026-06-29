@@ -86,15 +86,11 @@ class TestLocalMode:
         assert route["runner"] == rr.BUNDLED_RUNNER
 
     def test_runner_without_kind_is_skipped(self) -> None:
-        route = rr.resolve_concrete_route(
-            "select", {}, _overview(runners=[{"model": "x"}, {"kind": "lmstudio"}])
-        )
+        route = rr.resolve_concrete_route("select", {}, _overview(runners=[{"model": "x"}, {"kind": "lmstudio"}]))
         assert route["runner"] == "lmstudio"
 
     def test_non_dict_runner_is_skipped(self) -> None:
-        route = rr.resolve_concrete_route(
-            "select", {}, _overview(runners=["nope", {"kind": "ollama"}])
-        )
+        route = rr.resolve_concrete_route("select", {}, _overview(runners=["nope", {"kind": "ollama"}]))
         assert route["runner"] == "ollama"
 
     def test_missing_local_plan_model_is_empty_string(self) -> None:
@@ -174,9 +170,7 @@ class TestCloudMode:
 # --------------------------------------------------------------------------- #
 class TestDegradeToLocal:
     def test_cloud_without_provider_degrades_loud(self) -> None:
-        route = rr.resolve_concrete_route(
-            "select", {"routingPolicy": {"global": "cloud"}}, _overview(providers=[])
-        )
+        route = rr.resolve_concrete_route("select", {"routingPolicy": {"global": "cloud"}}, _overview(providers=[]))
         assert route["mode"] == "local"
         assert route["requestedMode"] == "cloud"
         assert route["degraded"] is True
@@ -186,9 +180,7 @@ class TestDegradeToLocal:
         assert route["provider"] is None
 
     def test_auto_without_provider_degrades_loud(self) -> None:
-        route = rr.resolve_concrete_route(
-            "select", {"routingPolicy": {"global": "auto"}}, _overview(providers=[])
-        )
+        route = rr.resolve_concrete_route("select", {"routingPolicy": {"global": "auto"}}, _overview(providers=[]))
         assert route["requestedMode"] == "auto"
         assert route["degraded"] is True
 
@@ -233,9 +225,7 @@ class TestDegradeToLocal:
         assert route["degraded"] is True
 
     def test_degraded_asr_uses_whisper(self) -> None:
-        route = rr.resolve_concrete_route(
-            "asr", {"routingPolicy": {"global": "cloud"}}, _overview(providers=[])
-        )
+        route = rr.resolve_concrete_route("asr", {"routingPolicy": {"global": "cloud"}}, _overview(providers=[]))
         assert route["model"] == "large-v3-turbo"
 
 

@@ -439,6 +439,4 @@ def test_no_heavy_imports_at_module_load():
     # other tests legitimately pollute by exercising the real GPU device probe
     # when torch happens to be installed. Importing scene_transnet must never pull
     # a heavy native backend.
-    assert_module_import_is_light(
-        "media_studio.features.scene_transnet", ("torch", "tensorflow")
-    )
+    assert_module_import_is_light("media_studio.features.scene_transnet", ("torch", "tensorflow"))

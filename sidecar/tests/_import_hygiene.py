@@ -44,6 +44,5 @@ def assert_module_import_is_light(modules: str | Iterable[str], banned: Iterable
         check=False,
     )
     assert proc.returncode == 0, (
-        f"import of {targets} leaked a heavy backend or failed:\n"
-        f"stdout={proc.stdout!r}\nstderr={proc.stderr!r}"
+        f"import of {targets} leaked a heavy backend or failed:\nstdout={proc.stdout!r}\nstderr={proc.stderr!r}"
     )

@@ -54,17 +54,13 @@ def test_free_cap_reason_paid_tier_is_active() -> None:
 # classify_success — (status, reason) for a successful probe
 # --------------------------------------------------------------------------- #
 def test_classify_success_free_cap_is_cooldown() -> None:
-    status, reason = kps.classify_success(
-        {"costUsd": 0.0, "limitUsd": 10.0, "remainingUsd": 2.0, "isFreeTier": True}
-    )
+    status, reason = kps.classify_success({"costUsd": 0.0, "limitUsd": 10.0, "remainingUsd": 2.0, "isFreeTier": True})
     assert status == kps.STATUS_COOLDOWN
     assert reason == kps.FREE_CAP_REASON
 
 
 def test_classify_success_paid_is_active_no_reason() -> None:
-    status, reason = kps.classify_success(
-        {"costUsd": 1.0, "limitUsd": 50.0, "remainingUsd": 49.0, "isFreeTier": False}
-    )
+    status, reason = kps.classify_success({"costUsd": 1.0, "limitUsd": 50.0, "remainingUsd": 49.0, "isFreeTier": False})
     assert status == kps.STATUS_ACTIVE
     assert reason is None
 

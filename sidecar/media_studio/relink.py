@@ -87,9 +87,7 @@ def blake3_file(path: str) -> str:
     try:
         import blake3 as _blake3
     except ImportError as exc:  # the package is a declared dep; a missing one is loud
-        raise RelinkError(
-            "the 'blake3' package is required for hash-verified relink but is not installed"
-        ) from exc
+        raise RelinkError("the 'blake3' package is required for hash-verified relink but is not installed") from exc
     hasher = _blake3.blake3()
     with open(path, "rb") as handle:
         for chunk in iter(lambda: handle.read(_HASH_CHUNK), b""):

@@ -695,9 +695,9 @@ describe('<ModelsSystemPanel />', () => {
     const call = c.calls.find((x) => x.method === 'models.setRoutingPolicy');
     expect(call?.args[0]).toEqual({ global: 'auto', overrides: { select: 'cloud' } });
     // overview reflects the persisted policy (the row now reads cloud).
-    expect((container.querySelector('select[data-action="route-select"]') as HTMLSelectElement).value).toBe(
-      'cloud',
-    );
+    expect(
+      (container.querySelector('select[data-action="route-select"]') as HTMLSelectElement).value,
+    ).toBe('cloud');
   });
 
   it('surfaces an error when the routing-policy write fails (M5)', async () => {
@@ -713,7 +713,9 @@ describe('<ModelsSystemPanel />', () => {
       sel.dispatchEvent(new Event('change', { bubbles: true }));
       await Promise.resolve();
     });
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('routing write failed');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'routing write failed',
+    );
   });
 
   it('exposes the RO alignment opt-in and persists ctcModelId (M5)', async () => {

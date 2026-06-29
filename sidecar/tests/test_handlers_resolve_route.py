@@ -23,9 +23,7 @@ class _FakeHardwareProbe:
     def __init__(self) -> None:
         from media_studio.features.system_advisor import HardwareInfo
 
-        self._info = HardwareInfo(
-            vram_mb=6000, ram_mb=16000, cpu_count=8, gpu_present=True, disk_free_mb=200000
-        )
+        self._info = HardwareInfo(vram_mb=6000, ram_mb=16000, cpu_count=8, gpu_present=True, disk_free_mb=200000)
 
     def detect(self) -> Any:
         return self._info

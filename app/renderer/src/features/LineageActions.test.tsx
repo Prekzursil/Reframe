@@ -219,7 +219,11 @@ describe('<LineageActions />', () => {
 
   // ---- loud error path ----------------------------------------------------
   it('surfaces an Error throw loudly (role=alert)', async () => {
-    const h = handlers({ reveal: vi.fn(async () => { throw new Error('boom'); }) });
+    const h = handlers({
+      reveal: vi.fn(async () => {
+        throw new Error('boom');
+      }),
+    });
     mount(h);
     await click(btn('Reveal source'));
     expect(statusEl()?.getAttribute('role')).toBe('alert');
@@ -227,7 +231,11 @@ describe('<LineageActions />', () => {
   });
 
   it('surfaces a non-Error throw via String()', async () => {
-    const h = handlers({ regenerate: vi.fn(async () => { throw 'plain string'; }) });
+    const h = handlers({
+      regenerate: vi.fn(async () => {
+        throw 'plain string';
+      }),
+    });
     mount(h);
     await click(btn('Regenerate'));
     expect(statusEl()?.textContent).toBe('plain string');

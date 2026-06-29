@@ -99,7 +99,11 @@ function normalizeHexColor(value: unknown): string | undefined {
 }
 
 /** A boolean assigned onto `out[key]` only when `value` is a genuine boolean. */
-function assignBoolean(out: CaptionOverride, key: 'outline' | 'box' | 'uppercase', value: unknown): void {
+function assignBoolean(
+  out: CaptionOverride,
+  key: 'outline' | 'box' | 'uppercase',
+  value: unknown,
+): void {
   if (typeof value === 'boolean') out[key] = value;
 }
 

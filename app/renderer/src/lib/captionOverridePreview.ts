@@ -28,10 +28,7 @@ export function cssFontFamily(name: string): string {
  * Merge a validated override onto the resolved template visual for the live
  * preview. An absent override (or absent field) keeps the template's value.
  */
-export function previewVisual(
-  style: string,
-  override?: CaptionOverride,
-): CaptionTemplateVisual {
+export function previewVisual(style: string, override?: CaptionOverride): CaptionTemplateVisual {
   const base = captionVisualFor(style);
   if (override === undefined) return base;
   return {
@@ -58,10 +55,7 @@ export function previewSizeScale(override?: CaptionOverride): number {
  * designer paints each karaoke word individually), so colour is intentionally
  * omitted here.
  */
-export function captionSampleStyle(
-  visual: CaptionTemplateVisual,
-  scale: number,
-): CSSProperties {
+export function captionSampleStyle(visual: CaptionTemplateVisual, scale: number): CSSProperties {
   return {
     fontFamily: visual.fontFamily,
     fontSize: `${scale}em`,

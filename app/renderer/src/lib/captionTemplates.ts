@@ -406,4 +406,4 @@ export const isNoCaption = (templateId: string): boolean => templateId === 'none
 export const captionVisualFor = (templateId: string): CaptionTemplateVisual =>
   isKaraokeStyle(templateId)
     ? KARAOKE_PRESET_VISUAL
-    : CAPTION_TEMPLATE_VISUALS[templateId] ?? LIBASS_VISUAL;
+    : (CAPTION_TEMPLATE_VISUALS[templateId] ?? LIBASS_VISUAL);

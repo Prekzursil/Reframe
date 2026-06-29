@@ -255,9 +255,7 @@ describe('sanitizeControls', () => {
     expect(sanitizeControls({ hookCard: 'no' as unknown as boolean }).hookCard).toBe(true);
     expect(sanitizeControls({ hookCardTopN: 3 }).hookCardTopN).toBe(3);
     expect(sanitizeControls({ hookCardTopN: 0 }).hookCardTopN).toBe(1);
-    expect(
-      sanitizeControls({ hookCardTopN: 'x' as unknown as number }).hookCardTopN,
-    ).toBe(10);
+    expect(sanitizeControls({ hookCardTopN: 'x' as unknown as number }).hookCardTopN).toBe(10);
   });
 
   // ---- P4 §8a emphasis tri-state / §8b autoZoom -----------------------------

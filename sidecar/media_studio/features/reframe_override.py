@@ -367,7 +367,9 @@ def apply_shot_overrides(plan: ShotPlan, overrides: Sequence[ShotOverride]) -> S
             raise OverrideError(f"duplicate override for shot index {override.index}")
         by_index[override.index] = override
     shots = tuple(
-        _apply_one(shot, by_index[shot.index], plan.source_width, plan.source_height) if shot.index in by_index else shot
+        _apply_one(shot, by_index[shot.index], plan.source_width, plan.source_height)
+        if shot.index in by_index
+        else shot
         for shot in plan.shots
     )
     return replace(plan, shots=shots)

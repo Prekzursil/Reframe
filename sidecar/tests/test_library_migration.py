@@ -157,9 +157,7 @@ def test_migration_preexisting_bak_does_not_crash(tmp_path: Path):
     assert [v["id"] for v in listed] == ["z"]
     assert _user_version(_db_for(idx)) == 1
     # os.replace overwrites the stale .bak with the point-in-time source.
-    assert bak.read_text(encoding="utf-8") == json.dumps(
-        {"version": 1, "videos": [{"id": "z", "path": "/z.mp4"}]}
-    )
+    assert bak.read_text(encoding="utf-8") == json.dumps({"version": 1, "videos": [{"id": "z", "path": "/z.mp4"}]})
 
 
 # --------------------------------------------------------------------------- #
@@ -195,9 +193,7 @@ def test_migration_videos_not_a_list_is_corrupt(tmp_path: Path):
 # --------------------------------------------------------------------------- #
 # transaction rollback -> source stays authoritative, next open retries
 # --------------------------------------------------------------------------- #
-def test_migration_rollback_on_insert_failure_then_retry_succeeds(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_migration_rollback_on_insert_failure_then_retry_succeeds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     idx = tmp_path / "library.json"
     _write_index(idx, {"version": 1, "videos": [{"id": "r", "path": "/r.mp4"}]})
 
@@ -222,9 +218,7 @@ def test_migration_rollback_on_insert_failure_then_retry_succeeds(
     assert _user_version(db) == 1
 
 
-def test_backup_rename_failure_is_best_effort(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_backup_rename_failure_is_best_effort(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     idx = tmp_path / "library.json"
     _write_index(idx, {"version": 1, "videos": [{"id": "b", "path": "/b.mp4"}]})
 
@@ -267,9 +261,7 @@ def test_content_hash_column_nullable_and_unpopulated(tmp_path: Path):
     v = lib.add(str(media))
     conn = sqlite3.connect(str(_db_for(idx)))
     try:
-        row = conn.execute(
-            "SELECT content_hash FROM entity WHERE id=?", (v["id"],)
-        ).fetchone()
+        row = conn.execute("SELECT content_hash FROM entity WHERE id=?", (v["id"],)).fetchone()
     finally:
         conn.close()
     assert row[0] is None  # nullable + unpopulated in L1 (no BLAKE3 dep)

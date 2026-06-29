@@ -47,9 +47,7 @@ export interface LineageActionsProps {
   actions: LineageActionHandlers;
 }
 
-type Status =
-  | { kind: 'idle' }
-  | { kind: 'info' | 'success' | 'error'; message: string };
+type Status = { kind: 'idle' } | { kind: 'info' | 'success' | 'error'; message: string };
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
