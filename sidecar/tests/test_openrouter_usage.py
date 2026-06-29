@@ -102,12 +102,70 @@ def test_fetch_usage_returns_cost_row_with_redacted_key() -> None:
     assert row["provider"] == "OpenRouter"
     assert row["costUsd"] == 2.0
     assert row["limitUsd"] == 10.0
+    # A healthy paid key is ACTIVE with no cooldown reason (M4).
+    assert row["status"] == "active"
+    assert row["cooldownReason"] is None
     # The live key never appears in the row — only the redacted last-4.
     assert row["key"] == "…1234"
     assert "LIVEKEY" not in row["key"]
     # ...but it DOES ride the Authorization header (and only there).
     assert transport.calls[0]["headers"]["Authorization"] == "Bearer sk-or-LIVEKEY1234"
     assert transport.calls[0]["url"] == oru.OPENROUTER_KEY_URL
+
+
+def test_fetch_usage_free_tier_under_floor_is_cooldown() -> None:
+    # A free key under the 10-credit floor is parked (cooldown), NOT deleted.
+    transport = RecordingTransport(_key_response(0.0, 10.0, 3.0, free=True))
+    rows = oru.fetch_usage([{"provider": "OpenRouter", "apiKeys": ["sk-or-freekey99"]}], transport=transport)
+    assert len(rows) == 1  # the row stays — cooldown-not-delete
+    assert rows[0]["status"] == "cooldown"
+    assert "50 :free" in rows[0]["cooldownReason"]
+    assert rows[0]["isFreeTier"] is True
+
+
+@pytest.mark.parametrize(("code", "marker"), [(402, "402"), (429, "429")])
+def test_fetch_usage_402_429_parks_key_not_deleted(code: int, marker: str) -> None:
+    # A 402/429 probe error parks the key on cooldown (a row is still returned).
+    transport = RecordingTransport(error=ProviderError(f"LLM HTTP {code}: nope", status_code=code))
+    rows = oru.fetch_usage([{"provider": "OpenRouter", "apiKeys": ["sk-or-LIVE9876"]}], transport=transport)
+    assert len(rows) == 1  # cooldown-not-delete
+    row = rows[0]
+    assert row["status"] == "cooldown"
+    assert marker in row["cooldownReason"]
+    # The parked row carries the redacted key only; cost is unknown.
+    assert row["key"] == "…9876"
+    assert row["costUsd"] is None
+
+
+def test_fetch_usage_scrubs_probe_error_body_of_live_key(caplog: pytest.LogCaptureFixture) -> None:
+    # The probe error body (logged on failure) must NOT contain the live key (M4).
+    live = "sk-or-SECRETKEYABCD"
+    transport = RecordingTransport(error=ProviderError(f"LLM HTTP 402: balance for {live} is 0", status_code=402))
+    with caplog.at_level("DEBUG", logger="media_studio.models.openrouter_usage"):
+        rows = oru.fetch_usage([{"provider": "OpenRouter", "apiKeys": [live]}], transport=transport)
+    assert rows[0]["status"] == "cooldown"
+    assert live not in caplog.text  # the body was scrubbed before logging
+    assert "SECRETKEY" not in caplog.text
+
+
+def test_fetch_usage_bad_key_401_is_dropped(caplog: pytest.LogCaptureFixture) -> None:
+    # A non-cooldown HTTP error (bad key) is best-effort dropped AND scrubbed.
+    live = "sk-or-DEADKEYZZZZ"
+    transport = RecordingTransport(error=ProviderError(f"LLM HTTP 401: {live} unauthorized", status_code=401))
+    with caplog.at_level("DEBUG", logger="media_studio.models.openrouter_usage"):
+        rows = oru.fetch_usage([{"provider": "OpenRouter", "apiKeys": [live]}], transport=transport)
+    assert rows == []  # dropped (not a recoverable cooldown)
+    assert live not in caplog.text  # still scrubbed
+
+
+def test_fetch_usage_non_provider_error_is_dropped_and_scrubbed(caplog: pytest.LogCaptureFixture) -> None:
+    # A non-ProviderError transport failure is swallowed best-effort and scrubbed.
+    live = "sk-or-OOPSKEY7777"
+    transport = RecordingTransport(error=ValueError(f"boom {live}"))
+    with caplog.at_level("DEBUG", logger="media_studio.models.openrouter_usage"):
+        rows = oru.fetch_usage([{"provider": "OpenRouter", "apiKeys": [live]}], transport=transport)
+    assert rows == []
+    assert live not in caplog.text
 
 
 def test_fetch_usage_skips_non_openrouter_provider() -> None:

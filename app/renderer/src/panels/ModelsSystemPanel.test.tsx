@@ -1952,6 +1952,8 @@ describe('<ModelsSystemPanel /> WU-B3 card', () => {
           limitUsd: 10,
           remainingUsd: 8.5,
           isFreeTier: false,
+          status: 'active',
+          cooldownReason: null,
         },
       ],
     });

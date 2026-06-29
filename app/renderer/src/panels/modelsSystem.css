@@ -576,6 +576,60 @@
   line-height: var(--type-body-leading);
 }
 
+/* ---- M4: OpenRouter key-pool rows (per-key usage + cooldown status) --------- */
+
+.openrouter-usage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.openrouter-usage__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--surface-edge);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+/* A parked key stays listed (cooldown-not-delete) but reads as paused. */
+.openrouter-usage__row.is-cooldown {
+  border-color: var(--status-warn);
+  background: var(--status-warn-soft);
+}
+
+.openrouter-usage__key {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.openrouter-usage__status {
+  margin-left: auto;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: 0.8em;
+  font-weight: 600;
+}
+
+.openrouter-usage__status--active {
+  color: var(--status-success);
+  background: var(--status-success-soft);
+}
+
+.openrouter-usage__status--cooldown {
+  color: var(--status-warn);
+  background: var(--status-warn-soft);
+}
+
+.openrouter-usage__cooldown-reason {
+  flex-basis: 100%;
+  color: var(--text-secondary);
+  font-size: 0.85em;
+}
+
 /* ---- WU-presets: AI presets + per-function override -------------------------- */
 
 .presets-section {

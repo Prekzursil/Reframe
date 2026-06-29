@@ -443,10 +443,16 @@ export interface ModelsOverview {
   eligibility: Eligibility;
 }
 
+/** One OpenRouter key-pool row's status: serving, or parked (NOT deleted). */
+export type KeyPoolStatus = 'active' | 'cooldown';
+
 /**
- * WU-models/device: one OpenRouter key's COST row (`providers.openrouterUsage`).
- * `key` is the REDACTED last-4 only (no full key crosses RPC). Money is USD.
- * Mirrors the sidecar `openrouter_usage.OpenRouterUsageRow`.
+ * WU-models/device + M4: one OpenRouter key's COST + status row
+ * (`providers.openrouterUsage`). `key` is the REDACTED last-4 only (no full key
+ * crosses RPC). Money is USD. `status` is `active`/`cooldown` — a parked key is
+ * NEVER deleted (cooldown-not-delete) and carries `cooldownReason` (402/429, or
+ * the free-tier <10-credit cap). Mirrors the sidecar
+ * `openrouter_usage.OpenRouterUsageRow`.
  */
 export interface OpenRouterUsageRow {
   provider: string;
@@ -455,6 +461,8 @@ export interface OpenRouterUsageRow {
   limitUsd: number | null;
   remainingUsd: number | null;
   isFreeTier: boolean;
+  status: KeyPoolStatus;
+  cooldownReason: string | null;
 }
 
 /** One selectable ASR engine row (`asr.engines`). */
