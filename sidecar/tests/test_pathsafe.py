@@ -49,6 +49,15 @@ def test_ensure_within_rejects_absolute_part_on_other_root(tmp_path: Path) -> No
         ensure_within(base, str(outside))
 
 
+def test_ensure_within_rejects_prefix_sibling_escape(tmp_path: Path) -> None:
+    # A sibling dir that SHARES the base's name prefix (`base` vs `base_evil`)
+    # must NOT be accepted — guards the classic str.startswith prefix bug.
+    (tmp_path / "base").mkdir()
+    (tmp_path / "base_evil").mkdir()
+    with pytest.raises(PathTraversalError):
+        ensure_within(tmp_path / "base", "..", "base_evil", "secret.txt")
+
+
 def test_clean_for_log_flattens_control_chars() -> None:
     assert clean_for_log("a\r\nb\x00c") == "a  b c"
     assert clean_for_log("plain") == "plain"

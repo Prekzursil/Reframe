@@ -54,9 +54,19 @@ def ensure_within(base: str | os.PathLike[str], *parts: str | os.PathLike[str]) 
     base_real = _real(base)
     joined = os.path.join(base_real, *(os.fspath(p) for p in parts))
     target = os.path.realpath(joined)
-    # CodeQL barrier: `target` is realpath-normalised and checked with startswith.
-    prefix = base_real if base_real.endswith(os.sep) else base_real + os.sep
-    if target == base_real or target.startswith(prefix):
+    # CodeQL py/path-injection barrier: the realpath-normalised `target` is the
+    # DIRECT receiver of a `str.startswith` check against the real base, with the
+    # protected use on the True branch. The second clause admits the base dir
+    # itself (exact length) and a base that is a filesystem root (already ends in
+    # a separator), while still rejecting the classic prefix-sibling escape
+    # (`…/base` must not match `…/base2`). Keeping `target.startswith(base_real)`
+    # as the outer guard — never an `== ` disjunct — is what makes the barrier
+    # recognised even when there are no extra ``parts`` (a bare canonicalise).
+    if target.startswith(base_real) and (
+        base_real.endswith(os.sep)
+        or len(target) == len(base_real)
+        or target[len(base_real) : len(base_real) + 1] == os.sep
+    ):
         return target
     # Unreachable with no ``parts`` (``target == base_real`` holds), so the join
     # below always has at least one argument when this raise fires.
