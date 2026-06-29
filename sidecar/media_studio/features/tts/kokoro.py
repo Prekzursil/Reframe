@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from ...assets.manifest import AssetEntry, register_asset
+from ...pathsafe import ensure_within
 from ...settings_store import default_config_dir
 from ...util import get_logger
 from .engine import (
@@ -205,7 +206,7 @@ class KokoroEngine(TtsEngine):
             (self.model_path, KOKORO_MODEL_ASSET),
             (self.voices_path, KOKORO_VOICES_ASSET),
         ):
-            if not Path(path).is_file():
+            if not Path(ensure_within(path)).is_file():
                 raise TtsError(f"kokoro weights missing at {path} — install the {asset!r} asset first (assets.ensure)")
         try:
             self._session = self._factory(self.model_path, self.voices_path)

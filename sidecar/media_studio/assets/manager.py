@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from ..jobs import JobCancelled
+from ..pathsafe import clean_for_log, ensure_within
 from ..settings_store import default_config_dir
 from ..util import clamp, get_logger
 from . import manifest
@@ -257,8 +258,12 @@ def hf_cache_dir(env_vars: Mapping[str, str] | None = None) -> Path:
 
 
 def hf_repo_dir(repo_id: str, env_vars: Mapping[str, str] | None = None) -> Path:
-    """The cache folder huggingface_hub uses for ``repo_id`` (models--org--name)."""
-    return hf_cache_dir(env_vars) / ("models--" + repo_id.replace("/", "--"))
+    """The cache folder huggingface_hub uses for ``repo_id`` (models--org--name).
+
+    Confined under the (env-derived) HF cache dir so a hostile ``HF_HOME`` /
+    ``repo_id`` cannot escape it (and the resolved path is a sanitised sink).
+    """
+    return Path(ensure_within(hf_cache_dir(env_vars), "models--" + repo_id.replace("/", "--")))
 
 
 def hf_snapshot_present(repo_dir: Path) -> bool:
@@ -354,11 +359,18 @@ class AssetManager:
 
     # -- resolution / installed state ---------------------------------------
     def resolve_dest(self, entry: AssetEntry) -> Path:
-        """Absolute on-disk destination for ``entry``."""
+        """Absolute on-disk destination for ``entry`` (relative dests confined under root).
+
+        A relative ``dest`` is resolved + confined under the (env-derived) root
+        via :func:`ensure_within`, blocking traversal out of the data root and
+        making every downstream filesystem use a sanitised CodeQL sink.
+        """
         if entry.installer == "hf":
             return hf_repo_dir(entry.hf_repo or "", self._env_vars)
         dest = Path(entry.dest)
-        return dest if dest.is_absolute() else self.root / dest
+        # Absolute dests are intentionally honoured as-is; a relative dest is
+        # resolved + confined under root (the sanitised CodeQL sink).
+        return dest if dest.is_absolute() else Path(ensure_within(self.root, entry.dest))
 
     def _settings(self) -> dict[str, Any]:
         if self._settings_provider is None:
@@ -513,7 +525,7 @@ class AssetManager:
         offset = resume_offset(part)
         headers = resume_headers(offset)
         if offset:
-            log.info("resuming %s from byte %d", name, offset)
+            log.info("resuming %s from byte %d", clean_for_log(name), offset)
 
         with self._http_factory() as client, client.stream("GET", url, headers=headers) as resp:
             status = int(resp.status_code)
@@ -539,7 +551,7 @@ class AssetManager:
                 for chunk in resp.iter_bytes(CHUNK_SIZE):
                     if should_cancel is not None and should_cancel():
                         # Keep the .part so the next ensure RESUMES (U4).
-                        log.info("download of %s cancelled at byte %d", name, done)
+                        log.info("download of %s cancelled at byte %d", clean_for_log(name), done)
                         raise JobCancelled(name)
                     if not chunk:
                         continue

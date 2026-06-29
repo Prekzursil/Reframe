@@ -38,6 +38,7 @@ from typing import Any
 from .. import ffmpeg as _ffmpeg
 from .. import protocol, tools_resolver
 from ..assets.manager import hf_cache_dir
+from ..pathsafe import ensure_within
 from ..protocol import RpcContext
 from ..settings_store import default_config_dir
 from ..util import get_logger
@@ -179,7 +180,9 @@ class Health:
         return {"label": label, "module": module, "installed": installed, "version": version}
 
     def _path_entry(self, label: str, path: Path) -> dict[str, Any]:
-        return {"label": label, "path": str(path), "exists": path.exists()}
+        # Canonicalise the (settings/env-derived) path before the existence probe.
+        safe = Path(ensure_within(path))
+        return {"label": label, "path": str(safe), "exists": safe.exists()}
 
     def _model_paths(self, settings: dict[str, Any]) -> list[dict[str, Any]]:
         """The model-cache locations the panel surfaces (with exists flags)."""

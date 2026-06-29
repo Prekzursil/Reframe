@@ -22,6 +22,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from ..pathsafe import clean_for_log
 from ..util import get_logger
 from .ocr_list import ASSET_NAME
 
@@ -70,7 +71,7 @@ class RealOcrBackend:  # pragma: no cover - requires the heavy native OCR stack
         path = self._model_path()
         params = {"Det.model_path": path} if path else {}
         self._engine = RapidOCR(params=params) if params else RapidOCR()
-        log.info("rapidocr ready (det=%s)", path or "packaged-default")
+        log.info("rapidocr ready (det=%s)", clean_for_log(path or "packaged-default"))
 
     def read_text(self, frame: Any) -> list[dict[str, Any]]:
         """OCR one RGB frame into ``{text, top, left}`` boxes (top-left anchored).

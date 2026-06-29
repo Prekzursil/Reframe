@@ -32,6 +32,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, ClassVar
 
+from ...pathsafe import ensure_within
 from ...util import get_logger
 
 log = get_logger("media_studio.tts.engine")
@@ -138,7 +139,7 @@ def write_pcm_wav(
     sample_width: int = DEFAULT_SAMPLE_WIDTH,
 ) -> str:
     """Write raw PCM ``frames`` to ``out_path`` as a WAV file; return the path."""
-    p = Path(out_path)
+    p = Path(ensure_within(out_path))
     p.parent.mkdir(parents=True, exist_ok=True)
     with wave.open(str(p), "wb") as wf:
         wf.setnchannels(channels)
