@@ -381,6 +381,54 @@ def _related_ids(conn: sqlite3.Connection, start_id: str, *, ancestors: bool) ->
     return order
 
 
+def _parse_json(text: Any) -> Any:
+    """Decode a stored JSON column back to a value; empty/``NULL`` -> ``None``.
+
+    Mirrors :func:`_dump` (the write side): an absent ``params_json`` /
+    ``route_json`` was stored as SQL ``NULL`` (``None``), which round-trips to
+    ``None`` here rather than raising.
+    """
+    if not text:
+        return None
+    return json.loads(text)
+
+
+def _load_provenance(conn: sqlite3.Connection, eid: str) -> dict[str, Any] | None:
+    """Resolve the producing activity + agent of ``eid`` for the L4 detail card.
+
+    Follows the ``output --generated_by--> activity --(agent_id)--> agent`` chain
+    (one ``generated_by`` edge per produced entity; earliest ``rowid`` wins if an
+    id were ever regenerated). Returns the activity's ``op``/``status``/timestamps
+    + its redacted ``params`` and the agent's ``appVersion``/``preset``/``route``
+    (the resolved M3 RoutingPolicy) — exactly what the provenance card maps to
+    FRIENDLY op/model labels. ``None`` when ``eid`` was never produced by an
+    activity (a raw imported source, an unknown id, or a dangling edge whose
+    activity row is absent — the INNER JOIN drops it rather than guessing).
+    """
+    row = conn.execute(
+        "SELECT a.op AS op, a.status AS status, a.started_at AS started_at,"
+        " a.ended_at AS ended_at, a.params_json AS params_json,"
+        " g.app_version AS app_version, g.route_json AS route_json, g.preset AS preset"
+        " FROM edge e"
+        " JOIN activity a ON a.id = e.dst"
+        " LEFT JOIN agent g ON g.id = a.agent_id"
+        " WHERE e.src = ? AND e.rel = ? ORDER BY e.rowid LIMIT 1",
+        (eid, REL_GENERATED_BY),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "op": row["op"],
+        "status": row["status"],
+        "startedAt": row["started_at"],
+        "endedAt": row["ended_at"],
+        "params": _parse_json(row["params_json"]),
+        "appVersion": row["app_version"],
+        "preset": row["preset"],
+        "route": _parse_json(row["route_json"]),
+    }
+
+
 def lineage_of(library: Any, entity_id: str) -> dict[str, Any]:
     """Return the provenance of ``entity_id`` — ancestors + descendants (DESIGN §3.2).
 
@@ -388,13 +436,22 @@ def lineage_of(library: Any, entity_id: str) -> dict[str, Any]:
     upward); ``descendants`` = what was made from it (the chain downward). Each is
     a list of full entity dicts (or a ``missing`` stub for a referenced-but-absent
     node), in breadth-first order. ``entity`` is the queried node itself
-    (``None`` when the id is unknown). One read transaction over the L1 store.
+    (``None`` when the id is unknown). ``provenance`` is the producing activity +
+    agent of the queried node (``None`` for a raw source) — the L4 detail card's
+    data source. One read transaction over the L1 store.
     """
     with library._open() as conn:
         entity = _load_entity(conn, entity_id)
         ancestors = [_resolve_entity(conn, i) for i in _related_ids(conn, entity_id, ancestors=True)]
         descendants = [_resolve_entity(conn, i) for i in _related_ids(conn, entity_id, ancestors=False)]
-    return {"id": entity_id, "entity": entity, "ancestors": ancestors, "descendants": descendants}
+        provenance = _load_provenance(conn, entity_id)
+    return {
+        "id": entity_id,
+        "entity": entity,
+        "ancestors": ancestors,
+        "descendants": descendants,
+        "provenance": provenance,
+    }
 
 
 __all__ = [

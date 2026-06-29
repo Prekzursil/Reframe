@@ -262,6 +262,8 @@ describe('client.ping / library / project', () => {
     expect(r).toHaveBeenCalledWith('library.remove', { id: 'v1' });
     await client.library.thumbnail('v1');
     expect(r).toHaveBeenCalledWith('library.thumbnail', { id: 'v1' });
+    await client.library.lineage('v1');
+    expect(r).toHaveBeenCalledWith('library.lineage', { id: 'v1' });
   });
 
   it('project.open / save / consolidate forward their params', async () => {

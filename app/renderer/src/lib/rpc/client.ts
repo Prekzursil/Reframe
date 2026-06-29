@@ -40,6 +40,7 @@ import type {
   IndexStatus,
   JobHandle,
   JobInfo,
+  LineageResult,
   LocalModelPlan,
   ConcreteRoute,
   MediaApi,
@@ -124,6 +125,8 @@ export const client = {
     remove: (id: string): Promise<{ ok: boolean }> => rpc('library.remove', { id }),
     /** `library.thumbnail {id}` — idempotent source-video poster extraction (WU-4). */
     thumbnail: (id: string): Promise<{ thumbnailPath: string }> => rpc('library.thumbnail', { id }),
+    /** `library.lineage {id}` — an asset's PROV ancestors/descendants + card data (L3/L4). */
+    lineage: (id: string): Promise<LineageResult> => rpc('library.lineage', { id }),
   },
 
   project: {

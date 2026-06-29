@@ -381,7 +381,13 @@ def _record(lib: Library, *, inputs: list[object], outputs: list[object]) -> str
 def test_lineage_of_unknown_id_returns_empty_structure(tmp_path: Path):
     lib = _fresh_library(tmp_path)
     out = lineage.lineage_of(lib, "nope")
-    assert out == {"id": "nope", "entity": None, "ancestors": [], "descendants": []}
+    assert out == {
+        "id": "nope",
+        "entity": None,
+        "ancestors": [],
+        "descendants": [],
+        "provenance": None,
+    }
 
 
 def test_lineage_of_root_entity_shape_for_source(tmp_path: Path):
@@ -452,6 +458,68 @@ def test_lineage_of_missing_source_yields_stub(tmp_path: Path):
     _record(lib, inputs=[{"id": "ghost"}], outputs=[{"id": "out1", "path": "/x/o.mp4"}])
     out = lineage.lineage_of(lib, "out1")
     assert out["ancestors"] == [{"id": "ghost", "missing": True}]
+
+
+# --------------------------------------------------------------------------- #
+# L4 — provenance card data (producing activity + agent of the queried node)
+# --------------------------------------------------------------------------- #
+def test_provenance_for_produced_output_carries_op_route_and_params(tmp_path: Path):
+    # A produced clip exposes the op that made it, the agent's app version +
+    # resolved route (M3 RoutingPolicy), and the redacted params -> the L4 card.
+    lib = _fresh_library(tmp_path)
+    src = _add_source(lib, tmp_path, "talk.mp4")
+    lib.record_lineage(
+        _job(method="shortmaker.select", params={"prompt": "punchy", "template": "bold"}),
+        inputs=[{"id": src}],
+        outputs=[{"id": "clip1", "kind": "short", "path": "/x/c.mp4"}],
+        agent={"appVersion": "1.1.0", "preset": "Punchy", "route": {"mode": "local", "model": "qwen2.5:7b"}},
+    )
+    prov = lineage.lineage_of(lib, "clip1")["provenance"]
+    assert prov is not None
+    assert prov["op"] == "shortmaker.select"
+    assert prov["status"] == "done"
+    assert prov["appVersion"] == "1.1.0"
+    assert prov["preset"] == "Punchy"
+    assert prov["route"] == {"mode": "local", "model": "qwen2.5:7b"}
+    assert prov["params"] == {"prompt": "punchy", "template": "bold"}
+    assert prov["startedAt"] == prov["endedAt"]  # one timestamp at append time
+
+
+def test_provenance_is_none_for_a_raw_source(tmp_path: Path):
+    # A library source was imported, not produced by an activity -> no card data.
+    lib = _fresh_library(tmp_path)
+    src = _add_source(lib, tmp_path, "talk.mp4")
+    assert lineage.lineage_of(lib, src)["provenance"] is None
+
+
+def test_provenance_null_route_and_params_round_trip_to_none(tmp_path: Path):
+    # An agent with no route + a job with no params store SQL NULL, which
+    # `_parse_json` decodes back to None (not "" / not a crash).
+    lib = _fresh_library(tmp_path)
+    src = _add_source(lib, tmp_path, "talk.mp4")
+    lib.record_lineage(
+        _job(method="shortmaker.export", params=None),
+        inputs=[{"id": src}],
+        outputs=[{"id": "clip2", "path": "/x/c2.mp4"}],
+        agent={"appVersion": "1.1.0"},
+    )
+    prov = lineage.lineage_of(lib, "clip2")["provenance"]
+    assert prov is not None
+    assert prov["route"] is None
+    assert prov["params"] is None
+    assert prov["preset"] == ""  # normalize_agent default for a missing preset
+
+
+def test_provenance_dangling_generated_by_edge_is_not_guessed(tmp_path: Path):
+    # Defensive: a generated_by edge whose activity row is absent yields None
+    # (the INNER JOIN drops it) rather than a half-built / guessed card.
+    lib = _fresh_library(tmp_path)
+    with lib._open() as conn:
+        conn.execute(
+            "INSERT INTO edge (src, dst, rel) VALUES (?, ?, ?)",
+            ("orphan", "no-such-activity", lineage.REL_GENERATED_BY),
+        )
+    assert lineage.lineage_of(lib, "orphan")["provenance"] is None
 
 
 def test_library_lineage_facade(tmp_path: Path):

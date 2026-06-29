@@ -60,11 +60,23 @@ def test_lineage_returns_ancestors_and_descendants(tmp_path: Path, ctx: RpcConte
     from_source = svc.library_lineage({"id": src}, ctx)
     assert [d["id"] for d in from_source["descendants"]] == ["clip1"]
 
+    # L4: the produced clip carries its provenance card data through the RPC;
+    # the raw source (imported, not produced) carries none.
+    assert result["provenance"]["op"] == "shorts.select"
+    assert result["provenance"]["route"] == {"mode": "local"}
+    assert from_source["provenance"] is None
+
 
 def test_lineage_unknown_id_returns_empty_structure(tmp_path: Path, ctx: RpcContext) -> None:
     svc = _services(tmp_path)
     result = svc.library_lineage({"id": "ghost"}, ctx)
-    assert result == {"id": "ghost", "entity": None, "ancestors": [], "descendants": []}
+    assert result == {
+        "id": "ghost",
+        "entity": None,
+        "ancestors": [],
+        "descendants": [],
+        "provenance": None,
+    }
 
 
 def test_lineage_id_param_is_required(tmp_path: Path, ctx: RpcContext) -> None:

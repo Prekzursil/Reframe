@@ -213,6 +213,67 @@ export interface Video {
   hasTranscript: boolean;
 }
 
+/**
+ * L3/L4 lineage node — a full PROV entity row (`lineage._row_to_entity`). Richer
+ * than {@link Video} (carries `kind`/`role`/`contentHash`) because a node can be
+ * a source, a derived output or an export. Field names mirror the sidecar EXACTLY.
+ */
+export interface LineageEntity {
+  id: string;
+  kind: string;
+  role: string;
+  path: string;
+  title: string;
+  addedAt: string;
+  durationSec: number;
+  contentHash: string | null;
+  hasTranscript: boolean;
+  thumbnailPath: string;
+}
+
+/**
+ * L3 loud stub for a `derived_from` endpoint with no `entity` row (an input
+ * referenced by id but never added as a library source). Surfaced — never
+ * silently dropped — so the card can show "source no longer in library".
+ */
+export interface LineageMissing {
+  id: string;
+  missing: true;
+}
+
+/** One ancestor/descendant: a resolved entity OR a loud missing stub. */
+export type LineageNode = LineageEntity | LineageMissing;
+
+/**
+ * L4 provenance card data — the producing activity + agent of an asset
+ * (`lineage._load_provenance`). `null` for a raw imported source. `route` is the
+ * resolved M3 RoutingPolicy the job took; `params` is the redacted job params.
+ * Field names mirror the sidecar EXACTLY.
+ */
+export interface LineageProvenance {
+  op: string;
+  status: string;
+  startedAt: string;
+  endedAt: string;
+  params: Record<string, unknown> | null;
+  appVersion: string | null;
+  preset: string | null;
+  route: Record<string, unknown> | null;
+}
+
+/**
+ * L3/L4 `library.lineage {id}` result — the queried node plus its ancestors
+ * (what it was made from), descendants (what was made from it) and provenance
+ * card data. `entity` is `null` when the id is unknown.
+ */
+export interface LineageResult {
+  id: string;
+  entity: LineageEntity | null;
+  ancestors: LineageNode[];
+  descendants: LineageNode[];
+  provenance: LineageProvenance | null;
+}
+
 /** A3 AudioTrack — one original/dub audio lane of a video. */
 export interface AudioTrack {
   id: string;

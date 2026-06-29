@@ -27,7 +27,7 @@ import sqlite3
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -98,8 +98,7 @@ _SCHEMA: tuple[str, ...] = (
     "CREATE TABLE activity ("
     " id TEXT PRIMARY KEY, op TEXT, started_at TEXT, ended_at TEXT,"
     " status TEXT, params_json TEXT, agent_id TEXT)",
-    "CREATE TABLE agent ("
-    " id TEXT PRIMARY KEY, app_version TEXT, route_json TEXT, preset TEXT)",
+    "CREATE TABLE agent ( id TEXT PRIMARY KEY, app_version TEXT, route_json TEXT, preset TEXT)",
     "CREATE TABLE edge (src TEXT, dst TEXT, rel TEXT)",
     "CREATE INDEX ix_edge_src ON edge(src)",
     "CREATE INDEX ix_edge_dst ON edge(dst)",
@@ -111,10 +110,7 @@ _SCHEMA: tuple[str, ...] = (
 SCHEMA_USER_VERSION = 1
 
 # All Video columns, in INSERT order, mapping the Video dict -> the entity row.
-_ENTITY_COLUMNS = (
-    "id, kind, path, role, title, added_at, duration_sec,"
-    " content_hash, has_transcript, thumbnail_path"
-)
+_ENTITY_COLUMNS = "id, kind, path, role, title, added_at, duration_sec, content_hash, has_transcript, thumbnail_path"
 
 
 class LibraryMigrationError(RuntimeError):
@@ -209,9 +205,7 @@ class Library:
             raise LibraryMigrationError(f"corrupt library index (not an object): {self.index_path}")
         videos = data.get("videos", [])
         if not isinstance(videos, builtins.list):
-            raise LibraryMigrationError(
-                f"corrupt library index (videos not a list): {self.index_path}"
-            )
+            raise LibraryMigrationError(f"corrupt library index (videos not a list): {self.index_path}")
         return videos
 
     def _backup_library_json(self) -> None:
@@ -225,10 +219,11 @@ class Library:
         if not self.index_path.exists():
             return
         bak = self.index_path.with_name(self.index_path.name + ".bak")
-        try:
+        # Best-effort: a backup miss must never crash/roll back (no `await` here,
+        # so contextlib.suppress is safe — satisfies ruff SIM105 without the
+        # CodeQL py/ineffectual-statement gotcha that bites `await` in suppress).
+        with suppress(OSError):
             os.replace(self.index_path, bak)
-        except OSError:
-            pass
 
     @staticmethod
     def _insert_entity(conn: sqlite3.Connection, video: Video) -> None:
@@ -238,8 +233,7 @@ class Library:
         ``content_hash`` is stored as ``NULL`` (unpopulated in L1).
         """
         conn.execute(
-            f"INSERT OR REPLACE INTO entity ({_ENTITY_COLUMNS})"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            f"INSERT OR REPLACE INTO entity ({_ENTITY_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 video["id"],
                 "video",
@@ -289,9 +283,7 @@ class Library:
     def list(self) -> builtins.list[Video]:
         """Return all source videos (insertion order preserved)."""
         with self._open() as conn:
-            rows = conn.execute(
-                "SELECT * FROM entity WHERE role = ? ORDER BY rowid", ("source",)
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM entity WHERE role = ? ORDER BY rowid", ("source",)).fetchall()
         return [self._row_to_video(r) for r in rows]
 
     def add(self, path: str, title: str | None = None) -> Video:
@@ -306,9 +298,7 @@ class Library:
 
         abspath = str(src.resolve())
         with self._open() as conn:
-            existing = conn.execute(
-                "SELECT * FROM entity WHERE role = ? AND path = ?", ("source", abspath)
-            ).fetchone()
+            existing = conn.execute("SELECT * FROM entity WHERE role = ? AND path = ?", ("source", abspath)).fetchone()
             if existing is not None:
                 return self._row_to_video(existing)  # idempotent re-add
 
@@ -334,9 +324,7 @@ class Library:
     def get(self, video_id: str) -> Video | None:
         """Return the Video with ``id == video_id`` or ``None``."""
         with self._open() as conn:
-            row = conn.execute(
-                "SELECT * FROM entity WHERE role = ? AND id = ?", ("source", video_id)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM entity WHERE role = ? AND id = ?", ("source", video_id)).fetchone()
         return self._row_to_video(row) if row is not None else None
 
     def remove(self, video_id: str) -> bool:
@@ -346,9 +334,7 @@ class Library:
         (refs are by path; deletion is out of scope for a library remove).
         """
         with self._open() as conn:
-            cur = conn.execute(
-                "DELETE FROM entity WHERE role = ? AND id = ?", ("source", video_id)
-            )
+            cur = conn.execute("DELETE FROM entity WHERE role = ? AND id = ?", ("source", video_id))
             return cur.rowcount > 0
 
     def set_has_transcript(self, video_id: str, value: bool = True) -> Video | None:
@@ -360,9 +346,7 @@ class Library:
             )
             if cur.rowcount == 0:
                 return None
-            row = conn.execute(
-                "SELECT * FROM entity WHERE role = ? AND id = ?", ("source", video_id)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM entity WHERE role = ? AND id = ?", ("source", video_id)).fetchone()
         return self._row_to_video(row)
 
     def set_thumbnail(self, video_id: str, thumbnail_path: str) -> Video | None:
@@ -377,9 +361,7 @@ class Library:
             )
             if cur.rowcount == 0:
                 return None
-            row = conn.execute(
-                "SELECT * FROM entity WHERE role = ? AND id = ?", ("source", video_id)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM entity WHERE role = ? AND id = ?", ("source", video_id)).fetchone()
         return self._row_to_video(row)
 
     # ---- L2 lineage (PROV append on Job success) ---------------------------
@@ -405,8 +387,10 @@ class Library:
         """Return ``entity_id``'s provenance — ancestors + descendants (L3, §3.2).
 
         Thin façade over :func:`media_studio.lineage.lineage_of` (lazy import, as
-        for :meth:`record_lineage`). ``{id, entity, ancestors, descendants}`` where
-        each relation is a list of full entity dicts (or a ``missing`` stub).
+        for :meth:`record_lineage`). ``{id, entity, ancestors, descendants,
+        provenance}`` where each relation is a list of full entity dicts (or a
+        ``missing`` stub) and ``provenance`` is the producing activity + agent of
+        the queried node (``None`` for a raw source) — the L4 detail card source.
         """
         from . import lineage  # lazy import breaks the library<->lineage cycle
 
