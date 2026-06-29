@@ -63,11 +63,13 @@ def test_add_persists_to_index_and_list_reads_it(lib: Library, fake_video: Path)
     assert listed[0]["title"] == "my talk"
 
 
-def test_add_index_file_is_versioned_json(lib: Library, fake_video: Path):
+def test_add_persists_to_sqlite_db_not_json_index(lib: Library, fake_video: Path):
+    # L1 storage contract: the live store is a SQLite DB derived from index_path
+    # (`*.json` -> `*.db`), NOT a JSON index file. add() never writes the JSON.
     lib.add(str(fake_video))
-    data = json.loads(lib.index_path.read_text(encoding="utf-8"))
-    assert data["version"] == library.MANIFEST_VERSION
-    assert isinstance(data["videos"], list)
+    db = lib.index_path.with_suffix(".db")
+    assert db.exists()
+    assert not lib.index_path.exists()
 
 
 def test_add_custom_title(lib: Library, fake_video: Path):
