@@ -255,6 +255,7 @@ class Services:
     models_runners = system_ops.models_runners
     models_overview = system_ops.models_overview
     models_set_routing_policy = system_ops.models_set_routing_policy
+    models_resolve_route = system_ops.models_resolve_route
     system_self_test = system_ops.system_self_test
     phase8_signals = system_ops.phase8_signals
     phase8_select = system_ops.phase8_select

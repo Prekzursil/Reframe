@@ -283,6 +283,30 @@ class TestResolveModelId:
     def test_asset_for_mit_model(self):
         assert ca._asset_for_model("facebook/anything") == ca.MIT_ASSET_NAME
 
+    # M5 — RO alignment opt-in (gigant/romanian-wav2vec2); MMS-300m stays default.
+    def test_default_path_unchanged_when_no_ctc_model(self):
+        assert ca._resolve_model_id({}, None) == ca.DEFAULT_MODEL_ID
+        assert ca._asset_for_model(ca.DEFAULT_MODEL_ID) == ca.ASSET_NAME
+
+    def test_ro_settings_alias_resolved(self):
+        resolved = ca._resolve_model_id({"ctcModelId": "romanian-wav2vec2"}, None)
+        assert resolved == ca.RO_MODEL_IDS["romanian-wav2vec2"]
+        assert resolved == "gigant/romanian-wav2vec2"
+
+    def test_ro_explicit_arg_alias_resolved(self):
+        assert ca._resolve_model_id({}, "romanian-wav2vec2") == "gigant/romanian-wav2vec2"
+
+    def test_ro_full_id_passthrough(self):
+        assert ca._resolve_model_id({"ctcModelId": "gigant/romanian-wav2vec2"}, None) == (
+            "gigant/romanian-wav2vec2"
+        )
+
+    def test_asset_for_ro_model_is_its_own_asset(self):
+        ro_id = ca.RO_MODEL_IDS["romanian-wav2vec2"]
+        assert ca._asset_for_model(ro_id) == ca.RO_ASSET_NAME
+        # the RO asset is distinct from BOTH the default MMS and the MIT wav2vec2.
+        assert ca.RO_ASSET_NAME not in {ca.ASSET_NAME, ca.MIT_ASSET_NAME}
+
 
 # --------------------------------------------------------------------------- #
 # runner: align_words happy path + seams
@@ -568,3 +592,13 @@ class TestAssetRegistration:
         ca.register_ctc_align_assets()
         ca.register_ctc_align_assets()  # no raise on identical re-register
         assert manifest.get_asset(ca.ASSET_NAME) is not None
+
+    def test_registers_ro_model(self):
+        manifest.registry_restore({})
+        ca.register_ctc_align_assets()
+        ro = manifest.get_asset(ca.RO_ASSET_NAME)
+        assert ro is not None
+        assert ro.hf_repo == ca.RO_MODEL_IDS["romanian-wav2vec2"]
+        assert ro.installer == "hf"
+        # F3c: the snapshot revision must be a pinned 40-hex commit hash.
+        assert len(ro.hf_revision) == 40

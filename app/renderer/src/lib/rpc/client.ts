@@ -41,6 +41,7 @@ import type {
   JobHandle,
   JobInfo,
   LocalModelPlan,
+  ConcreteRoute,
   MediaApi,
   MediaPlayableResult,
   ModelsOverview,
@@ -425,6 +426,15 @@ export const client = {
       global?: RoutingMode;
       overrides?: Record<string, RoutingMode>;
     }): Promise<{ routingPolicy: RoutingPolicy }> => rpc('models.setRoutingPolicy', policy),
+    /**
+     * `models.resolveRoute {fn?}` (M5) — the CONCRETE per-function route resolver
+     * (DESIGN §2.3 step 4). With a non-empty `fn` it returns `{route}` for that
+     * function; otherwise `{routes}` for every canonical AI function. A cloud/auto
+     * route with no key on disk degrades LOUDLY to local (`degraded`+`notice`).
+     * Read-only: the sidecar makes NO provider call and never mutates settings.
+     */
+    resolveRoute: (fn?: string): Promise<{ route?: ConcreteRoute; routes?: ConcreteRoute[] }> =>
+      rpc('models.resolveRoute', fn ? { fn } : {}),
   },
 
   /**

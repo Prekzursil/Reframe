@@ -30,6 +30,7 @@ import {
   type OpenRouterUsageRow,
   type Recommendation,
   type RoutingBlock,
+  type RoutingPolicy,
   type UsageRow,
 } from '../lib/rpc';
 import { componentAsset, presetLabel, presetTier } from '../components/advisorMeta';
@@ -42,6 +43,8 @@ import { DeviceStatusStrip } from '../components/DeviceStatusStrip';
 import { DeviceModelReco } from '../components/DeviceModelReco';
 import { ReasonStrip } from '../components/ReasonStrip';
 import { AdvancedModels } from '../components/AdvancedModels';
+import { RoutingOverrideTable } from '../components/RoutingOverrideTable';
+import { AlignModelSelect } from '../components/AlignModelSelect';
 import { LocalRunners } from '../components/LocalRunners';
 import { OpenRouterUsage } from '../components/OpenRouterUsage';
 import { PresetPicker } from '../components/PresetPicker';
@@ -54,6 +57,18 @@ import type { ReadinessAction } from '../lib/rpc';
 /** Error text from an unknown thrown value (mirrors the sibling panels). */
 export function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * M5: fold a freshly-persisted RoutingPolicy back into the overview (immutably).
+ * A null overview (never composed) is returned unchanged so the override table —
+ * which only renders with an overview present — has a total, branch-tested merge.
+ */
+export function mergeOverviewRoutingPolicy(
+  prev: ModelsOverview | null,
+  routingPolicy: RoutingPolicy,
+): ModelsOverview | null {
+  return prev ? { ...prev, routingPolicy } : prev;
 }
 
 /**
@@ -172,6 +187,8 @@ interface SettingsShape {
   // M3 POINT: non-default local-runner base URLs the detector probes.
   ollamaBaseUrl?: string;
   lmStudioBaseUrl?: string;
+  // M5 RO alignment opt-in: the word-timing CTC model id ('' = MMS default).
+  ctcModelId?: string;
 }
 
 export function ModelsSystemPanel({
@@ -330,6 +347,23 @@ export function ModelsSystemPanel({
   const selectTier = useCallback(
     (tier: number) => void patchSettings({ phase8Tier: tier }),
     [patchSettings],
+  );
+
+  // M5: persist the FULL routing policy ({global, overrides}) via the fail-closed
+  // setRoutingPolicy write (NOT settings.set — the sidecar sanitises/clamps), then
+  // reflect the policy the sidecar actually persisted back into the overview so the
+  // override table + reason strip stay in sync. Best-effort: a failed write keeps
+  // the prior overview policy.
+  const applyRoutingPolicy = useCallback(
+    async (policy: RoutingPolicy): Promise<void> => {
+      try {
+        const { routingPolicy } = await api.models.setRoutingPolicy(policy);
+        setOverview((prev) => mergeOverviewRoutingPolicy(prev, routingPolicy));
+      } catch (err) {
+        setError(errText(err));
+      }
+    },
+    [api],
   );
 
   // WU-presets: apply a smart preset -> server resolves routing.perFunction.
@@ -606,6 +640,25 @@ export function ModelsSystemPanel({
           ollamaBaseUrl={settings.ollamaBaseUrl ?? ''}
           lmStudioBaseUrl={settings.lmStudioBaseUrl ?? ''}
           onApplyRunnerUrls={(patch) => void patchSettings(patch)}
+        />
+      )}
+
+      {/* M5: per-function routing override table (Settings/Advanced) — sets
+          RoutingPolicy.overrides[fn] over the M3 global toggle; degrade-to-local
+          is surfaced per-job by the sidecar concrete resolver. */}
+      {analyzed && overview && (
+        <RoutingOverrideTable
+          policy={overview.routingPolicy}
+          onApply={(policy) => void applyRoutingPolicy(policy)}
+        />
+      )}
+
+      {/* M5: RO alignment opt-in — exposes gigant/romanian-wav2vec2 (and the MIT
+          English wav2vec2) over the MMS-300m default via settings.ctcModelId. */}
+      {analyzed && (
+        <AlignModelSelect
+          value={settings.ctcModelId ?? ''}
+          onChange={(ctcModelId) => void patchSettings({ ctcModelId })}
         />
       )}
 

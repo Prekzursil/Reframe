@@ -111,10 +111,24 @@ MIT_MODEL_IDS: dict[str, str] = {
     "hubert-large": "facebook/hubert-large-ls960-ft",
 }
 
+#: M5 — Romanian-language alignment opt-in. A wav2vec2 CTC model fine-tuned on
+#: Romanian (Apache-2.0); the MMS-300m default stays unless ``settings['ctcModelId']``
+#: selects this alias (or its full HF id). Keyed by the alias the UI surfaces.
+RO_MODEL_IDS: dict[str, str] = {
+    "romanian-wav2vec2": "gigant/romanian-wav2vec2",
+}
+# F3c: pin the HF snapshot revision to a commit hash (git ls-remote, 2026-06-29).
+RO_MODEL_REVISION = "79cf603aac59501d02bfeb37f615efc3ac4ce1b3"
+
+#: every short alias -> full HF id (the package default + MIT swaps + RO opt-in).
+_MODEL_ALIASES: dict[str, str] = {**MIT_MODEL_IDS, **RO_MODEL_IDS}
+
 #: the on-demand asset name for the DEFAULT model (Wave-2 manifest entry).
 ASSET_NAME = "ctc-forced-aligner-mms"
 #: the on-demand asset name for the MIT commercial-override model.
 MIT_ASSET_NAME = "ctc-forced-aligner-wav2vec2"
+#: the on-demand asset name for the Romanian (M5) alignment opt-in.
+RO_ASSET_NAME = "ctc-forced-aligner-romanian"
 
 #: a cooperative cancel probe + progress sink (match the rest of the codebase).
 CancelProbe = Callable[[], bool]
@@ -179,20 +193,24 @@ def _resolve_model_id(settings: dict[str, Any], model_id: str | None) -> str:
 
     ``model_id`` (the call arg) wins so a caller can force a model per-job. Next
     is ``settings['ctcModelId']`` — which may be a full HF id OR one of the
-    :data:`MIT_MODEL_IDS` aliases (resolved to its id). Absent both, the
-    CC-BY-NC package default is used (fine for the local tool).
+    :data:`MIT_MODEL_IDS` / :data:`RO_MODEL_IDS` aliases (resolved to its id).
+    Absent both, the CC-BY-NC package default is used (fine for the local tool).
     """
     if model_id:
-        return MIT_MODEL_IDS.get(model_id, model_id)
+        return _MODEL_ALIASES.get(model_id, model_id)
     configured = settings.get("ctcModelId")
     if isinstance(configured, str) and configured:
-        return MIT_MODEL_IDS.get(configured, configured)
+        return _MODEL_ALIASES.get(configured, configured)
     return DEFAULT_MODEL_ID
 
 
 def _asset_for_model(model_id: str) -> str:
-    """The asset name guarding a model id (MIT override vs the default MMS)."""
-    return ASSET_NAME if model_id == DEFAULT_MODEL_ID else MIT_ASSET_NAME
+    """The asset name guarding a model id (default MMS / RO opt-in / MIT override)."""
+    if model_id == DEFAULT_MODEL_ID:
+        return ASSET_NAME
+    if model_id == RO_MODEL_IDS["romanian-wav2vec2"]:
+        return RO_ASSET_NAME
+    return MIT_ASSET_NAME
 
 
 # --------------------------------------------------------------------------- #
@@ -498,6 +516,17 @@ def register_ctc_align_assets() -> None:
             hf_revision=WAV2VEC2_REVISION,
         )
     )
+    manifest.register_asset(
+        manifest.AssetEntry(
+            name=RO_ASSET_NAME,
+            kind="model",
+            size_mb=1300,
+            label="CTC forced aligner — Romanian wav2vec2 (word timing, RO opt-in)",
+            installer="hf",
+            hf_repo=RO_MODEL_IDS["romanian-wav2vec2"],
+            hf_revision=RO_MODEL_REVISION,
+        )
+    )
 
 
 # Register the assets at import (mirrors diarize / tools_resolver).
@@ -509,6 +538,8 @@ __all__ = [
     "DEFAULT_MODEL_ID",
     "MIT_ASSET_NAME",
     "MIT_MODEL_IDS",
+    "RO_ASSET_NAME",
+    "RO_MODEL_IDS",
     "AudioLoader",
     "BackendFactory",
     "CtcAlignBackend",

@@ -366,6 +366,24 @@ export interface RoutingPolicy {
 }
 
 /**
+ * M5 (V1.1 Lane 2): one CONCRETE resolved route from `models.resolveRoute`
+ * (DESIGN §2.3 step 4). `mode` is the resolved mode; `requestedMode` is what the
+ * user asked for (differs when a cloud/auto route degraded). `runner` is the
+ * local-runner kind (xor `provider`, the cloud provider id). `degraded`+`notice`
+ * carry the LOUD "fell back to local" signal when no cloud key was on disk.
+ */
+export interface ConcreteRoute {
+  fn: string;
+  mode: RoutingMode;
+  requestedMode: RoutingMode;
+  model: string;
+  runner: string | null;
+  provider: string | null;
+  degraded: boolean;
+  notice: string | null;
+}
+
+/**
  * M1a (V1.1 Lane 2): one detected local OpenAI-compatible server
  * (`models.overview` -> `runners[]`). Emitted verbatim by the sidecar
  * `local_detect.detect_local_servers` probe, so the field names are snake_case

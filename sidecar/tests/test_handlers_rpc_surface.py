@@ -59,6 +59,7 @@ FROZEN_RPC_SURFACE: frozenset[str] = frozenset(
         "media.playable",
         "media.proxy.start",
         "models.overview",
+        "models.resolveRoute",
         "models.runners",
         "models.setRoutingPolicy",
         "nle.export",

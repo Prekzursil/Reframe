@@ -640,6 +640,24 @@ describe('client.system / recipes', () => {
     });
   });
 
+  it('models.resolveRoute sends an empty body when fn is omitted (M5)', async () => {
+    const r = installApi();
+    await client.models.resolveRoute();
+    expect(r).toHaveBeenCalledWith('models.resolveRoute', {});
+  });
+
+  it('models.resolveRoute forwards {fn} when provided (M5)', async () => {
+    const r = installApi();
+    await client.models.resolveRoute('select');
+    expect(r).toHaveBeenCalledWith('models.resolveRoute', { fn: 'select' });
+  });
+
+  it('models.resolveRoute treats a blank fn as no filter (M5)', async () => {
+    const r = installApi();
+    await client.models.resolveRoute('');
+    expect(r).toHaveBeenCalledWith('models.resolveRoute', {});
+  });
+
   it('providers.openrouterUsage calls the bare method (WU-models/device cost)', async () => {
     const r = installApi();
     await client.providers.openrouterUsage();

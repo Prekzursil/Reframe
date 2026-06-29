@@ -267,6 +267,33 @@ def models_set_routing_policy(self: Services, params: dict[str, Any], ctx: RpcCo
     return {"routingPolicy": policy}
 
 
+def models_resolve_route(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``models.resolveRoute({fn?})`` -> the CONCRETE per-function route(s). Direct.
+
+    M5 (DESIGN §2.3 step 4) — the concrete second half of routing resolution. It
+    composes the read-only :meth:`models_overview` (local plan + detected runners +
+    redacted providers) ONCE, then runs the PURE
+    :func:`routing_resolve.resolve_concrete_route` to answer, per AI function,
+    ``{mode, model, runner|provider}``. A ``cloud`` / ``auto`` function with no key
+    on disk degrades LOUDLY to local (``degraded=True`` +
+    :data:`routing_resolve.ROUTE_DEGRADED_NOTICE`), never a silent cloud route.
+
+    With a non-empty string ``fn`` it returns ``{route}`` for that one function
+    (the per-job call); otherwise ``{routes}`` for every canonical
+    :data:`routing_resolve.AI_FUNCTIONS` (the Advanced override-table preview).
+    Composes reads ONLY: ZERO provider/LLM calls, NO mutation, no full key crosses
+    RPC (the overview's providers are already redacted to last-4).
+    """
+    from ..models import routing_resolve as _routing_resolve  # local: import-light pure
+
+    settings = self.settings.get()
+    overview = self.models_overview(params, ctx)
+    fn = params.get("fn")
+    if isinstance(fn, str) and fn:
+        return {"route": _routing_resolve.resolve_concrete_route(fn, settings, overview)}
+    return {"routes": _routing_resolve.resolve_all_routes(settings, overview)}
+
+
 def system_self_test(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
     """``system.selfTest()`` -> the first-run diagnostic report. Direct-return.
 

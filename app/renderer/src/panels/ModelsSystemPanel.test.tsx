@@ -13,6 +13,7 @@ import {
   errText,
   indexAssets,
   isInstalled,
+  mergeOverviewRoutingPolicy,
   qualityFraction,
   recommendationAlreadyOptimal,
   recommendationUnavailable,
@@ -192,6 +193,7 @@ function modelsOverview(over: {
   hardware?: HardwareInfo;
   runners?: LocalModelPlan;
   eligibility?: Eligibility;
+  routingPolicy?: ModelsOverview['routingPolicy'];
 }): ModelsOverview {
   const plan = over.runners ?? localModelPlan();
   return {
@@ -202,7 +204,7 @@ function modelsOverview(over: {
     localPlan: plan,
     providers: [],
     keyPool: [],
-    routingPolicy: { global: 'local', overrides: {} },
+    routingPolicy: over.routingPolicy ?? { global: 'local', overrides: {} },
     eligibility: over.eligibility ?? metadataEligibility(),
   };
 }
@@ -287,6 +289,7 @@ function makeClient(
     rejectOpenrouter?: boolean;
     readiness?: ReadinessItem[];
     rejectEnsure?: boolean;
+    rejectRoutingPolicy?: boolean;
   } = {},
 ): FakeClient {
   const calls: FakeClient['calls'] = [];
@@ -322,6 +325,11 @@ function makeClient(
             eligibility: over.eligibility,
           })
         );
+      }),
+      setRoutingPolicy: vi.fn(async (policy: Record<string, unknown>) => {
+        calls.push({ method: 'models.setRoutingPolicy', args: [policy] });
+        if (over.rejectRoutingPolicy) throw new Error('routing write failed');
+        return { routingPolicy: { global: 'local', overrides: {}, ...policy } };
       }),
     },
     assets: {
@@ -660,6 +668,75 @@ describe('<ModelsSystemPanel />', () => {
       ollamaBaseUrl: 'http://127.0.0.1:11500/v1',
       lmStudioBaseUrl: '',
     });
+  });
+
+  // ------------------------------------------------------------------ M5
+  it('renders the per-function routing override table after analyze (M5)', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    await mount(c);
+    await analyze();
+    expect(container.querySelector('[data-section="routing-overrides"]')).not.toBeNull();
+    expect(container.querySelector('select[data-action="route-select"]')).not.toBeNull();
+  });
+
+  it('persists a per-function override via setRoutingPolicy with global preserved (M5)', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true },
+      overview: modelsOverview({ routingPolicy: { global: 'auto', overrides: {} } }),
+    });
+    await mount(c);
+    await analyze();
+    const sel = container.querySelector('select[data-action="route-select"]') as HTMLSelectElement;
+    await act(async () => {
+      sel.value = 'cloud';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+    const call = c.calls.find((x) => x.method === 'models.setRoutingPolicy');
+    expect(call?.args[0]).toEqual({ global: 'auto', overrides: { select: 'cloud' } });
+    // overview reflects the persisted policy (the row now reads cloud).
+    expect((container.querySelector('select[data-action="route-select"]') as HTMLSelectElement).value).toBe(
+      'cloud',
+    );
+  });
+
+  it('surfaces an error when the routing-policy write fails (M5)', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true },
+      rejectRoutingPolicy: true,
+    });
+    await mount(c);
+    await analyze();
+    const sel = container.querySelector('select[data-action="route-select"]') as HTMLSelectElement;
+    await act(async () => {
+      sel.value = 'cloud';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('routing write failed');
+  });
+
+  it('exposes the RO alignment opt-in and persists ctcModelId (M5)', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    await mount(c);
+    await analyze();
+    const sel = container.querySelector('select[data-action="align-model"]') as HTMLSelectElement;
+    expect(sel).not.toBeNull();
+    await act(async () => {
+      sel.value = 'romanian-wav2vec2';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(c.calls.find((x) => x.method === 'settings.set')?.args[0]).toEqual({
+      ctcModelId: 'romanian-wav2vec2',
+    });
+  });
+
+  it('mergeOverviewRoutingPolicy folds the policy in (and passes null through) (M5)', () => {
+    expect(mergeOverviewRoutingPolicy(null, { global: 'cloud', overrides: {} })).toBeNull();
+    const ov = modelsOverview({ routingPolicy: { global: 'local', overrides: {} } });
+    const merged = mergeOverviewRoutingPolicy(ov, { global: 'auto', overrides: { asr: 'cloud' } });
+    expect(merged?.routingPolicy).toEqual({ global: 'auto', overrides: { asr: 'cloud' } });
   });
 
   it('seeds blank POINT inputs when no base URLs are persisted', async () => {

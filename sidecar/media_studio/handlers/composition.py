@@ -90,6 +90,11 @@ def register_all(
     # the sanitised (fail-closed clamped) {global, overrides} via the atomic
     # settings store; the header toggle + Advanced per-function table call it.
     reg("models.setRoutingPolicy", svc.models_set_routing_policy)
+    # M5 (V1.1 Lane 2): the CONCRETE per-function route resolver (DESIGN §2.3 step
+    # 4). Direct-return; composes the read-only overview then resolves {mode, model,
+    # runner|provider} per AI function, degrading cloud/auto -> local LOUDLY when no
+    # key is on disk. No provider/LLM call, no mutation, no full key over RPC.
+    reg("models.resolveRoute", svc.models_resolve_route)
     # WU-2: the first-run self-diagnostic. Direct (no job): pure data-dir/device/
     # native-dep/ffmpeg probes behind seams — reports LOUDLY, never proceeds broken.
     reg("system.selfTest", svc.system_self_test)
