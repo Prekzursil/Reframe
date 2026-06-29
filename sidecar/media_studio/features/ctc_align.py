@@ -54,11 +54,54 @@ Word = dict[str, Any]
 Segment = dict[str, Any]
 Transcript = dict[str, Any]
 
+#: F3b user-facing notice when word-level alignment is SKIPPED due to a backend
+#: or audio-decode failure (vs a genuinely empty transcript, which is silent).
+#: Surfaced as a ``job.progress`` message so karaoke timing degrades LOUDLY.
+ALIGN_SKIPPED_NOTICE = "word-level alignment unavailable — using segment timings"
+
+#: how many trailing chars of ffmpeg stderr to fold into an :class:`AudioDecodeError`.
+_FFMPEG_STDERR_TAIL = 500
+
+
+class AudioDecodeError(RuntimeError):
+    """F3b: raised when ffmpeg fails to decode the audio (non-zero exit code).
+
+    Previously the default loader ignored ffmpeg's returncode and handed back an
+    empty/garbage buffer — a silent failure. Now a non-zero exit raises this with
+    the stderr tail so the caller can degrade with a LOUD notice.
+    """
+
+
+def _decode_pcm_or_raise(
+    returncode: int,
+    raw: bytes | None,
+    stderr: bytes | None,
+    *,
+    target_sr: int,
+) -> tuple[np.ndarray, int]:
+    """Turn an ffmpeg result into ``(samples, sr)`` — or raise on a bad exit.
+
+    The PURE, fully-tested core of :func:`_default_audio_loader`: on a non-zero
+    ``returncode`` it raises :class:`AudioDecodeError` with the stderr tail (F3b);
+    otherwise it reads the f32le PCM bytes into a float64 array.
+    """
+    import numpy as _np  # noqa: PLC0415 - numpy is in the venv; kept lazy for symmetry
+
+    if returncode != 0:
+        tail = (stderr or b"").decode("utf-8", errors="replace").strip()[-_FFMPEG_STDERR_TAIL:]
+        raise AudioDecodeError(f"ffmpeg audio decode failed (exit {returncode}): {tail}")
+    samples = _np.frombuffer(raw or b"", dtype=_np.float32).astype(_np.float64)
+    return samples, target_sr
+
+
 # --------------------------------------------------------------------------- #
 # model ids + asset (Decision #1: CC-BY-NC default, MIT override available)
 # --------------------------------------------------------------------------- #
 #: the package default — CC-BY-NC-4.0, 158-language, ungated. Local-tool default.
 DEFAULT_MODEL_ID = "MahmoudAshraf/mms-300m-1130-forced-aligner"
+# F3c: pin the HF snapshot revisions to commit hashes (verified 2026-06-28).
+DEFAULT_MODEL_REVISION = "49402e9577b1158620820667c218cd494cc44486"
+WAV2VEC2_REVISION = "54074b1c16f4de6a5ad59affb4caa8f2ea03a119"
 
 #: commercial-safe MIT wav2vec2/HuBERT alternatives (the Decision #1 swap).
 #: Keyed by a short alias the UI/settings can surface; values are the model ids.
@@ -68,10 +111,24 @@ MIT_MODEL_IDS: dict[str, str] = {
     "hubert-large": "facebook/hubert-large-ls960-ft",
 }
 
+#: M5 — Romanian-language alignment opt-in. A wav2vec2 CTC model fine-tuned on
+#: Romanian (Apache-2.0); the MMS-300m default stays unless ``settings['ctcModelId']``
+#: selects this alias (or its full HF id). Keyed by the alias the UI surfaces.
+RO_MODEL_IDS: dict[str, str] = {
+    "romanian-wav2vec2": "gigant/romanian-wav2vec2",
+}
+# F3c: pin the HF snapshot revision to a commit hash (git ls-remote, 2026-06-29).
+RO_MODEL_REVISION = "79cf603aac59501d02bfeb37f615efc3ac4ce1b3"
+
+#: every short alias -> full HF id (the package default + MIT swaps + RO opt-in).
+_MODEL_ALIASES: dict[str, str] = {**MIT_MODEL_IDS, **RO_MODEL_IDS}
+
 #: the on-demand asset name for the DEFAULT model (Wave-2 manifest entry).
 ASSET_NAME = "ctc-forced-aligner-mms"
 #: the on-demand asset name for the MIT commercial-override model.
 MIT_ASSET_NAME = "ctc-forced-aligner-wav2vec2"
+#: the on-demand asset name for the Romanian (M5) alignment opt-in.
+RO_ASSET_NAME = "ctc-forced-aligner-romanian"
 
 #: a cooperative cancel probe + progress sink (match the rest of the codebase).
 CancelProbe = Callable[[], bool]
@@ -136,20 +193,24 @@ def _resolve_model_id(settings: dict[str, Any], model_id: str | None) -> str:
 
     ``model_id`` (the call arg) wins so a caller can force a model per-job. Next
     is ``settings['ctcModelId']`` — which may be a full HF id OR one of the
-    :data:`MIT_MODEL_IDS` aliases (resolved to its id). Absent both, the
-    CC-BY-NC package default is used (fine for the local tool).
+    :data:`MIT_MODEL_IDS` / :data:`RO_MODEL_IDS` aliases (resolved to its id).
+    Absent both, the CC-BY-NC package default is used (fine for the local tool).
     """
     if model_id:
-        return MIT_MODEL_IDS.get(model_id, model_id)
+        return _MODEL_ALIASES.get(model_id, model_id)
     configured = settings.get("ctcModelId")
     if isinstance(configured, str) and configured:
-        return MIT_MODEL_IDS.get(configured, configured)
+        return _MODEL_ALIASES.get(configured, configured)
     return DEFAULT_MODEL_ID
 
 
 def _asset_for_model(model_id: str) -> str:
-    """The asset name guarding a model id (MIT override vs the default MMS)."""
-    return ASSET_NAME if model_id == DEFAULT_MODEL_ID else MIT_ASSET_NAME
+    """The asset name guarding a model id (default MMS / RO opt-in / MIT override)."""
+    if model_id == DEFAULT_MODEL_ID:
+        return ASSET_NAME
+    if model_id == RO_MODEL_IDS["romanian-wav2vec2"]:
+        return RO_ASSET_NAME
+    return MIT_ASSET_NAME
 
 
 # --------------------------------------------------------------------------- #
@@ -283,8 +344,6 @@ def _default_audio_loader(media_path: str) -> tuple[np.ndarray, int]:  # pragma:
     """
     import subprocess  # noqa: PLC0415, S404 - argv-list only, never shell=True
 
-    import numpy as np  # noqa: PLC0415
-
     from .. import ffmpeg  # noqa: PLC0415 - avoids a top-level import cycle
 
     target_sr = 16000
@@ -303,9 +362,9 @@ def _default_audio_loader(media_path: str) -> tuple[np.ndarray, int]:  # pragma:
         "-",
     ]
     completed = subprocess.run(argv, capture_output=True, check=False)  # noqa: S603 - argv list, no shell
-    raw = completed.stdout or b""
-    samples = np.frombuffer(raw, dtype=np.float32).astype(np.float64)
-    return samples, target_sr
+    # F3b: honour the returncode — a non-zero exit raises (with the stderr tail)
+    # instead of silently returning an empty/garbage buffer.
+    return _decode_pcm_or_raise(completed.returncode, completed.stdout, completed.stderr, target_sr=target_sr)
 
 
 def default_models_present(
@@ -384,7 +443,12 @@ def align_words(
         return {**transcript}
 
     _progress(2.0, "decoding audio")
-    samples, sr = loader(audio_path)
+    try:
+        samples, sr = loader(audio_path)
+    except Exception as exc:  # noqa: BLE001 - an audio-decode failure must not crash the pipeline
+        log.warning("ctc_align: audio decode failed for %s: %s", audio_path, exc)
+        _progress(100.0, ALIGN_SKIPPED_NOTICE)
+        return {**transcript}
 
     import numpy as np  # noqa: PLC0415 - numpy is in the venv
 
@@ -408,6 +472,7 @@ def align_words(
         )
     except Exception as exc:  # noqa: BLE001 - an alignment failure must not crash the pipeline
         log.warning("ctc_align: alignment failed for %s: %s", audio_path, exc)
+        _progress(100.0, ALIGN_SKIPPED_NOTICE)
         return {**transcript}
 
     _progress(95.0, "merging word timings")
@@ -437,6 +502,7 @@ def register_ctc_align_assets() -> None:
             label="CTC forced aligner — MMS-300M (word timing, CC-BY-NC)",
             installer="hf",
             hf_repo=DEFAULT_MODEL_ID,
+            hf_revision=DEFAULT_MODEL_REVISION,
         )
     )
     manifest.register_asset(
@@ -447,6 +513,18 @@ def register_ctc_align_assets() -> None:
             label="CTC forced aligner — wav2vec2 (word timing, MIT commercial)",
             installer="hf",
             hf_repo=MIT_MODEL_IDS["wav2vec2-960h-lv60"],
+            hf_revision=WAV2VEC2_REVISION,
+        )
+    )
+    manifest.register_asset(
+        manifest.AssetEntry(
+            name=RO_ASSET_NAME,
+            kind="model",
+            size_mb=1300,
+            label="CTC forced aligner — Romanian wav2vec2 (word timing, RO opt-in)",
+            installer="hf",
+            hf_repo=RO_MODEL_IDS["romanian-wav2vec2"],
+            hf_revision=RO_MODEL_REVISION,
         )
     )
 
@@ -460,6 +538,8 @@ __all__ = [
     "DEFAULT_MODEL_ID",
     "MIT_ASSET_NAME",
     "MIT_MODEL_IDS",
+    "RO_ASSET_NAME",
+    "RO_MODEL_IDS",
     "AudioLoader",
     "BackendFactory",
     "CtcAlignBackend",

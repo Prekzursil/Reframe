@@ -29,7 +29,7 @@ import time
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from .job_store import JobRecord, JobStore
 from .util import clamp_pct, get_logger
@@ -46,6 +46,23 @@ ProgressEmit = Callable[[str, int, str], None]
 DoneEmit = Callable[[str, Any], None]
 # A job handler: given a JobContext, does the work and returns a result payload.
 JobHandler = Callable[["JobContext"], Any]
+
+
+class WatchdogTimer(Protocol):
+    """The minimal one-shot timer seam the per-job watchdog needs (F3b).
+
+    A ``threading.Timer`` satisfies this structurally; tests inject a fake whose
+    callback they fire by hand so the deadline is exercised with no real
+    wall-clock wait.
+    """
+
+    def start(self) -> None: ...  # pragma: no cover - Protocol stub
+
+    def cancel(self) -> None: ...  # pragma: no cover - Protocol stub
+
+
+# Builds a (not-yet-started) :class:`WatchdogTimer` that calls ``fn`` after ``delay`` s.
+TimerFactory = Callable[[float, Callable[[], None]], WatchdogTimer]
 
 
 class JobStatus(enum.StrEnum):
@@ -81,6 +98,16 @@ class JobCancelled(Exception):
 
     Handlers may either poll ``ctx.cancelled`` and return early, or call
     ``ctx.raise_if_cancelled()`` at checkpoints to bail out via this exception.
+    """
+
+
+class JobDeadlineExceeded(Exception):
+    """Raised by the per-job watchdog (F3b) when a handler outruns its deadline.
+
+    Force-finishes the wedged job as ERROR so the bounded worker pool reclaims
+    the slot instead of starving — the handler thread may still be stuck in a
+    blocking native call (Python cannot kill it), but the job's slot is freed and
+    its outcome is reported (no silent hang).
     """
 
 
@@ -145,6 +172,9 @@ class Job:
     # _slot_held = currently counted against the pool's concurrency limits.
     _scheduled: bool = field(default=False, repr=False)
     _slot_held: bool = field(default=False, repr=False)
+    # F3b: set by the FIRST terminal transition (done/error/cancelled) so the
+    # per-job watchdog and the handler thread can never both finish the same job.
+    _finalized: bool = field(default=False, repr=False)
 
     @property
     def cancel_requested(self) -> bool:
@@ -210,10 +240,21 @@ class JobRegistry:
         max_workers: int = 2,
         max_gpu_workers: int = 1,
         store: JobStore | None = None,
+        job_timeout_sec: float | None = None,
+        timer_factory: TimerFactory | None = None,
     ) -> None:
         self._emit_progress = emit_progress
         self._emit_done = emit_done
         self._id_prefix = id_prefix
+        # F3b watchdog: a per-job wall-clock deadline (seconds). ``None`` disables
+        # the watchdog entirely (every direct-construction caller keeps today's
+        # behavior); when set, each running job is force-finished ERROR if it
+        # outruns the deadline so a wedged handler can't starve the pool. The
+        # timer is an injected seam (``timer_factory``) so the deadline is unit-
+        # testable without a real wall-clock wait; the default builds a daemon
+        # ``threading.Timer``.
+        self._job_timeout_sec = job_timeout_sec
+        self._timer_factory: TimerFactory = timer_factory or self._default_timer_factory
         # WU-6: optional persistence seam. When ``None`` the registry is purely
         # in-memory (P1/P2 behavior) so every existing caller keeps working;
         # when supplied, every create / record_request / status transition is
@@ -234,6 +275,17 @@ class JobRegistry:
     def _next_id(self) -> str:
         self._counter += 1
         return f"{self._id_prefix}-{self._counter}"
+
+    @staticmethod
+    def _default_timer_factory(delay: float, fn: Callable[[], None]) -> threading.Timer:
+        """Build a DAEMON one-shot ``threading.Timer`` for the watchdog (F3b).
+
+        Daemon so a never-cancelled timer (e.g. a job abandoned at shutdown)
+        never blocks interpreter exit for the full deadline.
+        """
+        timer = threading.Timer(delay, fn)
+        timer.daemon = True
+        return timer
 
     # -- persistence write-through (WU-6) -----------------------------------
 
@@ -361,6 +413,31 @@ class JobRegistry:
         ``request`` via a FRESH handler instead.
         """
 
+    @staticmethod
+    def _resolve_rehydrate_status(stored_status: str) -> tuple[JobStatus, bool]:
+        """Map a stored wire status to ``(JobStatus, interrupted?)`` for rehydrate.
+
+        Any non-terminal status (``pending``/``running``/``queued``) — OR an
+        UNKNOWN/garbage status (an out-of-vocabulary value would otherwise raise
+        ``ValueError`` and crash all resumption, F3b) — degrades to INTERRUPTED
+        and is re-persisted. A recognized terminal status is kept verbatim.
+        """
+        if stored_status in _NON_TERMINAL_WIRE_STATUSES:
+            return JobStatus.INTERRUPTED, True
+        try:
+            return JobStatus(stored_status), False
+        except ValueError:
+            log.warning("rehydrate: unknown stored status %r -> INTERRUPTED", stored_status)
+            return JobStatus.INTERRUPTED, True
+
+    @staticmethod
+    def _coerce_pct(raw: Any) -> int:
+        """Defensively coerce a stored ``pct`` to an int (F3b): garbage -> 0."""
+        try:
+            return int(raw or 0)
+        except (TypeError, ValueError):
+            return 0
+
     def rehydrate(self, *, handler: JobHandler | None = None) -> None:
         """Reload persisted jobs at startup; mark mid-flight jobs INTERRUPTED.
 
@@ -372,45 +449,64 @@ class JobRegistry:
         is started here — the pool is untouched (assert run-count 0). A no-op
         when no store was injected; a record without a ``jobId`` is skipped.
         ``handler`` overrides the shell handler (tests use it as a tripwire).
+
+        F3b: each record is rebuilt inside a per-record guard (mirroring
+        ``DiskJobStore.load_all``'s skip-and-warn), so ONE malformed record (a
+        non-dict, an unknown status, a non-numeric pct) is logged + skipped
+        instead of crashing ALL job resumption.
         """
         if self._store is None:
             return
         shell_handler = handler if handler is not None else self._rehydrated_noop
         max_seen = 0
         for record in self._store.load_all():
-            job_id = record.get("jobId")
-            if not isinstance(job_id, str) or not job_id:
-                log.warning("rehydrate: skipping record without jobId")
+            try:
+                job_id = self._rehydrate_one(record, shell_handler)
+            except Exception as exc:  # noqa: BLE001 - one bad record must not crash all resumption
+                log.warning("rehydrate: skipping unreadable record: %s", exc)
                 continue
-            stored_status = str(record.get("status", ""))
-            interrupted = stored_status in _NON_TERMINAL_WIRE_STATUSES
-            status = JobStatus.INTERRUPTED if interrupted else JobStatus(stored_status)
-            method = record.get("method")
-            params = record.get("params")
-            request = None
-            if isinstance(method, str):
-                request = {"method": method, "params": copy.deepcopy(params) if params is not None else {}}
-            job = Job(
-                id=job_id,
-                handler=shell_handler,
-                status=status,
-                pct=int(record.get("pct", 0) or 0),
-                feature=str(record.get("feature", "") or ""),
-                label=str(record.get("label", "") or ""),
-                video_id=record.get("videoId"),
-                request=request,
-            )
-            with self._lock:
-                self._jobs[job_id] = job
-            if interrupted:
-                # Persist the re-mark so a SECOND restart stays consistent.
-                self._persist(job)
+            if job_id is None:
+                continue
             suffix = job_id.rsplit("-", 1)[-1]
             if suffix.isdigit():
                 max_seen = max(max_seen, int(suffix))
         # New ids must not collide with rehydrated ones.
         with self._lock:
             self._counter = max(self._counter, max_seen)
+
+    def _rehydrate_one(self, record: Any, shell_handler: JobHandler) -> str | None:
+        """Rebuild ONE persisted record into a registered Job shell (F3b helper).
+
+        Returns the rehydrated ``jobId`` (so the caller can advance the id
+        counter), or ``None`` when the record carries no usable id. Raising here
+        is caught by :meth:`rehydrate`'s per-record guard.
+        """
+        job_id = record.get("jobId")
+        if not isinstance(job_id, str) or not job_id:
+            log.warning("rehydrate: skipping record without jobId")
+            return None
+        status, interrupted = self._resolve_rehydrate_status(str(record.get("status", "")))
+        method = record.get("method")
+        params = record.get("params")
+        request = None
+        if isinstance(method, str):
+            request = {"method": method, "params": copy.deepcopy(params) if params is not None else {}}
+        job = Job(
+            id=job_id,
+            handler=shell_handler,
+            status=status,
+            pct=self._coerce_pct(record.get("pct")),
+            feature=str(record.get("feature", "") or ""),
+            label=str(record.get("label", "") or ""),
+            video_id=record.get("videoId"),
+            request=request,
+        )
+        with self._lock:
+            self._jobs[job_id] = job
+        if interrupted:
+            # Persist the re-mark so a SECOND restart stays consistent.
+            self._persist(job)
+        return job_id
 
     # -- execution ---------------------------------------------------------
 
@@ -509,7 +605,28 @@ class JobRegistry:
             job.status = new_status
         self._persist(job)
 
+    def _arm_watchdog(self, job: Job) -> WatchdogTimer | None:
+        """Start the per-job wall-clock watchdog (F3b), or ``None`` if disabled."""
+        if self._job_timeout_sec is None:
+            return None
+        timer = self._timer_factory(self._job_timeout_sec, lambda: self._on_watchdog(job))
+        timer.start()
+        return timer
+
+    def _on_watchdog(self, job: Job) -> None:
+        """Deadline fired: force-finish the wedged ``job`` ERROR + free its slot.
+
+        Idempotent against the normal finish path via :meth:`_claim_terminal` —
+        if the handler completed first this is a no-op. Sets the cooperative
+        cancel flag too so a handler that DOES poll can still bail out.
+        """
+        minutes = (self._job_timeout_sec or 0.0) / 60.0
+        job.request_cancel()
+        self._finish_error(job, JobDeadlineExceeded(f"job exceeded {minutes:.0f} min and was stopped"))
+        self._release_slot(job)
+
     def _run(self, job: Job) -> None:
+        watchdog = self._arm_watchdog(job)
         try:
             self._set_status(job, JobStatus.RUNNING)
             ctx = JobContext(
@@ -533,11 +650,30 @@ class JobRegistry:
                 log.error("job %s failed: %s\n%s", job.id, exc, traceback.format_exc())
                 self._finish_error(job, exc)
         finally:
+            # Stop the watchdog (the job finished — or was force-finished by it).
+            if watchdog is not None:
+                watchdog.cancel()
             # Always return the pool slot — even if a finish/emit path raised —
             # so a bad job can never shrink the pool permanently.
             self._release_slot(job)
 
+    def _claim_terminal(self, job: Job) -> bool:
+        """Atomically claim the SINGLE terminal transition for ``job`` (F3b).
+
+        Returns True for the FIRST finisher only; a later finisher (e.g. the
+        watchdog firing as the handler completes, or vice versa) gets False and
+        must no-op. Without this the same job could emit ``job.done`` twice and
+        flip status after it was already terminal.
+        """
+        with self._lock:
+            if job._finalized:
+                return False
+            job._finalized = True
+            return True
+
     def _finish_done(self, job: Job, result: Any) -> None:
+        if not self._claim_terminal(job):
+            return
         with self._lock:
             job.pct = 100
             job.result = result
@@ -546,6 +682,8 @@ class JobRegistry:
         self._emit_done(job.id, result)
 
     def _finish_cancelled(self, job: Job) -> None:
+        if not self._claim_terminal(job):
+            return
         self._set_status(job, JobStatus.CANCELLED)
         job._done_event.set()
         # CONTRACT-NOTE: §2 only specifies job.done for *completed* long jobs.
@@ -553,6 +691,8 @@ class JobRegistry:
         # job.cancel's {ok:true} and/or job.status -> "cancelled".
 
     def _finish_error(self, job: Job, exc: Exception) -> None:
+        if not self._claim_terminal(job):
+            return
         with self._lock:
             job.error = str(exc)
         self._set_status(job, JobStatus.ERROR)  # one write-through, error set

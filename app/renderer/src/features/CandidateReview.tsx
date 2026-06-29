@@ -83,6 +83,9 @@ export function CandidateReview({
       className="sm-review"
       role="group"
       aria-label="Candidate review"
+      // Lane 0 F4 (R-M10): advertise the single-letter shortcuts to AT so they
+      // are discoverable, not just visually hinted by the legend below.
+      aria-keyshortcuts="J K Space A X ArrowLeft ArrowRight"
       tabIndex={0}
       onKeyDown={onKeyDown}
     >
@@ -161,8 +164,9 @@ export function CandidateReview({
         onNudge={onNudge}
         onReset={onReset}
       />
-      {/* T6 legend (presentation only — the handlers live in the container) */}
-      <div className="sm-kbd-hints" aria-hidden="true">
+      {/* T6 legend — exposed to AT (Lane 0 F4 / R-M10): the single-letter
+          shortcuts must be discoverable, so it is no longer aria-hidden. */}
+      <div className="sm-kbd-hints" aria-label="Keyboard shortcuts">
         <span>
           <kbd>J</kbd>
           <kbd>K</kbd> select

@@ -283,6 +283,28 @@ class TestResolveModelId:
     def test_asset_for_mit_model(self):
         assert ca._asset_for_model("facebook/anything") == ca.MIT_ASSET_NAME
 
+    # M5 — RO alignment opt-in (gigant/romanian-wav2vec2); MMS-300m stays default.
+    def test_default_path_unchanged_when_no_ctc_model(self):
+        assert ca._resolve_model_id({}, None) == ca.DEFAULT_MODEL_ID
+        assert ca._asset_for_model(ca.DEFAULT_MODEL_ID) == ca.ASSET_NAME
+
+    def test_ro_settings_alias_resolved(self):
+        resolved = ca._resolve_model_id({"ctcModelId": "romanian-wav2vec2"}, None)
+        assert resolved == ca.RO_MODEL_IDS["romanian-wav2vec2"]
+        assert resolved == "gigant/romanian-wav2vec2"
+
+    def test_ro_explicit_arg_alias_resolved(self):
+        assert ca._resolve_model_id({}, "romanian-wav2vec2") == "gigant/romanian-wav2vec2"
+
+    def test_ro_full_id_passthrough(self):
+        assert ca._resolve_model_id({"ctcModelId": "gigant/romanian-wav2vec2"}, None) == ("gigant/romanian-wav2vec2")
+
+    def test_asset_for_ro_model_is_its_own_asset(self):
+        ro_id = ca.RO_MODEL_IDS["romanian-wav2vec2"]
+        assert ca._asset_for_model(ro_id) == ca.RO_ASSET_NAME
+        # the RO asset is distinct from BOTH the default MMS and the MIT wav2vec2.
+        assert ca.RO_ASSET_NAME not in {ca.ASSET_NAME, ca.MIT_ASSET_NAME}
+
 
 # --------------------------------------------------------------------------- #
 # runner: align_words happy path + seams
@@ -459,6 +481,74 @@ class TestAlignWordsDegrade:
         assert out["segments"][0]["words"][0]["start"] == 0.0
         assert out is not t
 
+    # -- F3b: a backend/decode failure surfaces a one-line notice -------------
+    def test_backend_failure_surfaces_skip_notice(self):
+        events: list[tuple[float, str]] = []
+        ca.align_words(
+            transcript_with_words(),
+            "a.wav",
+            models_present=lambda s, m: True,
+            audio_loader=make_loader(),
+            backend_factory=make_factory([], raises=RuntimeError("boom")),
+            on_progress=lambda p, m: events.append((p, m)),
+        )
+        assert any(msg == ca.ALIGN_SKIPPED_NOTICE for _, msg in events)
+
+    def test_audio_decode_failure_surfaces_notice_and_returns_unchanged(self):
+        events: list[tuple[float, str]] = []
+
+        def boom_loader(_path: str) -> Any:
+            raise ca.AudioDecodeError("ffmpeg audio decode failed (exit 1): bad input")
+
+        out = ca.align_words(
+            transcript_with_words(),
+            "a.wav",
+            models_present=lambda s, m: True,
+            audio_loader=boom_loader,
+            backend_factory=make_factory([ca.WordSpan("x", 0.0, 1.0)] * 3),
+            on_progress=lambda p, m: events.append((p, m)),
+        )
+        # text + original timings preserved (never dropped)
+        assert out["segments"][0]["words"][0]["start"] == 0.0
+        assert any(msg == ca.ALIGN_SKIPPED_NOTICE for _, msg in events)
+
+    def test_empty_transcript_emits_no_skip_notice(self):
+        # a GENUINELY empty transcript is not a failure -> no alarming notice.
+        events: list[tuple[float, str]] = []
+        ca.align_words(
+            {"language": "x", "segments": []},
+            "a.wav",
+            models_present=lambda s, m: True,
+            audio_loader=make_loader(),
+            on_progress=lambda p, m: events.append((p, m)),
+        )
+        assert all(msg != ca.ALIGN_SKIPPED_NOTICE for _, msg in events)
+
+
+# --------------------------------------------------------------------------- #
+# F3b: ffmpeg returncode check in the default audio decoder (pure helper)
+# --------------------------------------------------------------------------- #
+class TestDecodePcmOrRaise:
+    def test_nonzero_returncode_raises_with_stderr_tail(self):
+        with pytest.raises(ca.AudioDecodeError) as ei:
+            ca._decode_pcm_or_raise(1, b"", b"line one\nffmpeg: Invalid data found", target_sr=16000)
+        message = str(ei.value)
+        assert "exit 1" in message
+        assert "Invalid data found" in message  # stderr tail surfaced
+
+    def test_success_returns_float64_samples(self):
+        raw = np.asarray([0.25, -0.5], dtype=np.float32).tobytes()
+        samples, sr = ca._decode_pcm_or_raise(0, raw, b"", target_sr=16000)
+        assert sr == 16000
+        assert samples.dtype == np.float64
+        assert samples.shape[0] == 2
+        assert samples[0] == pytest.approx(0.25)
+
+    def test_success_with_empty_stdout_yields_empty_array(self):
+        samples, sr = ca._decode_pcm_or_raise(0, b"", b"", target_sr=8000)
+        assert sr == 8000
+        assert samples.shape[0] == 0
+
 
 # --------------------------------------------------------------------------- #
 # defaults: factory / loader / probe wiring (no heavy import at module load)
@@ -500,3 +590,13 @@ class TestAssetRegistration:
         ca.register_ctc_align_assets()
         ca.register_ctc_align_assets()  # no raise on identical re-register
         assert manifest.get_asset(ca.ASSET_NAME) is not None
+
+    def test_registers_ro_model(self):
+        manifest.registry_restore({})
+        ca.register_ctc_align_assets()
+        ro = manifest.get_asset(ca.RO_ASSET_NAME)
+        assert ro is not None
+        assert ro.hf_repo == ca.RO_MODEL_IDS["romanian-wav2vec2"]
+        assert ro.installer == "hf"
+        # F3c: the snapshot revision must be a pinned 40-hex commit hash.
+        assert len(ro.hf_revision) == 40

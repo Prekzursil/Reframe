@@ -23,6 +23,7 @@
 import React from 'react';
 import './captionOverlay.css';
 import { captionVisualFor, isNoCaption, type CaptionTemplateVisual } from '../lib/captionTemplates';
+import { isKaraokeStyle, karaokeActiveColor } from '../lib/captionKaraokePreset';
 import type { Cue } from '../lib/rpc';
 import type { PlayerWindow } from './Player';
 
@@ -131,9 +132,19 @@ function positionStyle(position: CaptionTemplateVisual['position']): React.CSSPr
   }
 }
 
-/** Per-word colour given its highlight state + the template palette. */
-export function wordColor(word: OverlayWord, visual: CaptionTemplateVisual): string {
-  if (word.active) return visual.activeColor;
+/**
+ * Per-word colour given its highlight state + the template palette.
+ *
+ * `activeColorOverride` (V1.1 WU SP1) lets the karaoke preset paint the ACTIVE
+ * word with its alternating yellow/green accent instead of the static
+ * `visual.activeColor`; absent, the template's own active colour is used.
+ */
+export function wordColor(
+  word: OverlayWord,
+  visual: CaptionTemplateVisual,
+  activeColorOverride?: string,
+): string {
+  if (word.active) return activeColorOverride ?? visual.activeColor;
   if (word.spoken) return visual.spokenColor || visual.textColor;
   return visual.textColor;
 }
@@ -164,6 +175,9 @@ export function CaptionOverlay({
   if (isNoCaption(templateId)) return null;
 
   const visual = captionVisualFor(templateId);
+  // V1.1 WU SP1: the karaoke preset alternates the ACTIVE word's accent
+  // (yellow/green) per word, mirroring the libass burn's alternation.
+  const karaoke = isKaraokeStyle(templateId);
   const t = currentTime - win.start;
   const words = activeLine(cues, win, t);
   const title = (hookTitle ?? '').trim();
@@ -210,7 +224,7 @@ export function CaptionOverlay({
                 (w.spoken ? ' is-spoken' : '')
               }
               style={{
-                color: wordColor(w, visual),
+                color: wordColor(w, visual, karaoke ? karaokeActiveColor(i) : undefined),
                 backgroundColor: w.active ? visual.activeBackground : 'transparent',
               }}
             >

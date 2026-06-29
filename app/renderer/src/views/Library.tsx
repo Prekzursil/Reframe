@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { rpc, type Video } from '../components/api';
 import { useVideoThumbnail, type VideoThumbnailRpc } from '../components/useVideoThumbnail';
 import { ReadinessRollup } from '../components/ReadinessRollup';
-import type { ReadinessAction } from '../lib/rpc';
+import { LineagePanel, type LineageAsset } from '../features/LineagePanel';
+import { lineageActions } from '../features/lineageActionsClient';
+import type { LineageResult, ReadinessAction } from '../lib/rpc';
 import '../components/library-cards.css';
 
 // ---- Toasts (P2 U2) ---------------------------------------------------------
@@ -124,6 +126,15 @@ const thumbnailRpc: VideoThumbnailRpc = {
 };
 
 /**
+ * `library.lineage({id})` loader over the shared `rpc` bridge — the injected
+ * `loadLineage` the L4 `LineagePanel` drawer consumes. Module-level so it is
+ * stable across renders (the drawer's fetch effect must not re-fire each render).
+ */
+function loadLineage(id: string): Promise<LineageResult> {
+  return rpc<LineageResult>('library.lineage', { id });
+}
+
+/**
  * Library-card poster: consumes `useVideoThumbnail` (WU-4) to serve the source
  * video's `thumb:` poster as a real <img>, generating it on demand (idempotent
  * server-side). Inherits WU-4's graceful degradation: a missing / failed poster
@@ -172,6 +183,11 @@ export function Library({
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  // L4 Lineage view: an opt-in toggle (default OFF -> the flat list opens videos
+  // in the Workspace, §3.5). When ON, clicking an asset opens its provenance
+  // drawer (lineageAsset) instead. Leaving the mode closes any open drawer.
+  const [lineageView, setLineageView] = useState(false);
+  const [lineageAsset, setLineageAsset] = useState<LineageAsset | null>(null);
   const [toasts, setToasts] = useState<LocalToast[]>([]);
   const toastIdRef = useRef(0);
   const toastTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -308,6 +324,27 @@ export function Library({
     [addPaths, emitToast],
   );
 
+  const toggleLineageView = useCallback(() => {
+    setLineageView((on) => !on);
+    setLineageAsset(null);
+  }, []);
+
+  const closeLineage = useCallback(() => {
+    setLineageAsset(null);
+  }, []);
+
+  /** Click an asset: open its lineage drawer in Lineage view, else the Workspace. */
+  const handleItemClick = useCallback(
+    (video: Video) => {
+      if (lineageView) {
+        setLineageAsset({ id: video.id, title: video.title });
+      } else {
+        onOpen(video);
+      }
+    },
+    [lineageView, onOpen],
+  );
+
   const handleRemove = useCallback(
     async (id: string, event: React.MouseEvent) => {
       event.stopPropagation();
@@ -334,14 +371,24 @@ export function Library({
     >
       <header className="library__header">
         <h1 className="library__title">Library</h1>
-        <button
-          type="button"
-          className="library__add-btn"
-          onClick={() => void handlePick()}
-          disabled={adding}
-        >
-          {adding ? 'Adding…' : 'Add videos'}
-        </button>
+        <div className="library__actions">
+          <button
+            type="button"
+            className="library__lineage-toggle"
+            aria-pressed={lineageView}
+            onClick={toggleLineageView}
+          >
+            Lineage view
+          </button>
+          <button
+            type="button"
+            className="library__add-btn"
+            onClick={() => void handlePick()}
+            disabled={adding}
+          >
+            {adding ? 'Adding…' : 'Add videos'}
+          </button>
+        </div>
       </header>
 
       <ReadinessRollup title="What works right now" onAction={onReadinessAction} />
@@ -406,8 +453,8 @@ export function Library({
               <button
                 type="button"
                 className="library__item-open"
-                aria-label={`Open ${video.title}`}
-                onClick={() => onOpen(video)}
+                aria-label={lineageView ? `Show history of ${video.title}` : `Open ${video.title}`}
+                onClick={() => handleItemClick(video)}
               >
                 <VideoThumb video={video} />
                 <div className="library__item-main">
@@ -436,6 +483,15 @@ export function Library({
           ))}
         </ul>
       )}
+
+      {lineageAsset ? (
+        <LineagePanel
+          asset={lineageAsset}
+          loadLineage={loadLineage}
+          onClose={closeLineage}
+          actions={lineageActions}
+        />
+      ) : null}
     </div>
   );
 }

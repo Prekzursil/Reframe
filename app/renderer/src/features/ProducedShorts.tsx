@@ -12,11 +12,22 @@
 // announced), never silent (DESIGN §3.6). RPC/job state lives per-card here; the
 // other card actions stay container-driven callbacks (presentational).
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { Player, shortMediaUrl } from '../components/Player';
 import { ShortClipActions } from '../components/ShortClipActions';
 import { fmtSeconds, getApi } from './_api';
+// R5 virality-score dashboard: the score badge reuses the candidate-card
+// `displayVirality` (clamped 0-100 int / null); the sort order + duration format
+// reuse the shared gallery helpers (one source with views/Shorts.tsx).
+import { displayVirality } from './shortMakerLogic';
+import {
+  type ShortsSort,
+  SHORTS_SORT_MODES,
+  SHORTS_SORT_LABELS,
+  sortShorts,
+  formatShortDuration,
+} from './shortsGallery';
 import type { BestFrame, ShortInfo } from '../lib/rpc';
 
 export interface ProducedShortsProps {
@@ -152,6 +163,9 @@ function ShortThumbCard({
     pickedSec === null
       ? `Thumbnail for ${title}`
       : `Thumbnail for ${title} — frame at ${fmtSeconds(pickedSec)}`;
+  // R5: the headline virality numeral, normalised to a clamped 0-100 int (null
+  // when the clip carries no/invalid score — no badge then).
+  const virality = displayVirality(short.viralityPct);
 
   return (
     <li className="shorts__card" data-id={short.id}>
@@ -174,12 +188,13 @@ function ShortThumbCard({
             )}
           </button>
         )}
-        {typeof short.viralityPct === 'number' && (
+        {virality !== null && (
           <span className="shorts__virality" aria-label="Virality">
-            {short.viralityPct}
+            {virality}
             <span className="shorts__virality-pct">%</span>
           </span>
         )}
+        <span className="shorts__thumb-duration">{formatShortDuration(short.durationSec)}</span>
       </div>
       {short.template && (
         <span className="shorts__template" aria-label="Caption template">
@@ -231,12 +246,35 @@ export function ProducedShorts({
   onReexport,
   onDelete,
 }: ProducedShortsProps): React.JSX.Element | null {
+  // R5 dashboard: surface the best-scoring clips first by default; the toggle
+  // re-orders the cards (by score or recency) without a refetch. The sort is
+  // applied for DISPLAY only and never mutates the prop list.
+  const [sortMode, setSortMode] = useState<ShortsSort>('virality');
+  const sorted = useMemo(() => sortShorts(shorts, sortMode), [shorts, sortMode]);
   if (shorts.length === 0) return null;
   return (
     <div className="sm-video-shorts" aria-label="Produced shorts">
-      <h3>Produced shorts</h3>
+      <div className="sm-video-shorts__head">
+        <h3>Produced shorts</h3>
+        {shorts.length > 1 && (
+          <div className="shorts__sort" role="group" aria-label="Sort shorts">
+            <span className="shorts__sort-label">Sort</span>
+            {SHORTS_SORT_MODES.map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                className={`shorts__sort-btn${sortMode === mode ? ' is-active' : ''}`}
+                aria-pressed={sortMode === mode}
+                onClick={() => setSortMode(mode)}
+              >
+                {SHORTS_SORT_LABELS[mode]}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       <ul className="shorts__grid shorts__grid--inline">
-        {shorts.map((short) => (
+        {sorted.map((short) => (
           <ShortThumbCard
             key={short.id}
             short={short}

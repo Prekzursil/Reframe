@@ -20,8 +20,9 @@ from __future__ import annotations
 from typing import Any, TypedDict
 
 from ..util import get_logger
-from .provider import Transport
-from .secrets import redact
+from . import key_pool_status
+from .provider import ProviderError, Transport
+from .secrets import redact, scrub_error_body
 
 log = get_logger("media_studio.models.openrouter_usage")
 
@@ -37,7 +38,12 @@ _PROBE_TIMEOUT: float = 4.0
 
 
 class OpenRouterUsageRow(TypedDict):
-    """One OpenRouter key's cost row for the usage UI (no live key, ever)."""
+    """One OpenRouter key's cost row for the key-pool UI (no live key, ever).
+
+    ``status`` is ``active`` or ``cooldown`` (M4); a parked key is NEVER deleted
+    (cooldown-not-delete) — it stays in the pool with ``cooldownReason`` set so the
+    user sees *why* it parked (402/429, or the free-tier <10-credit cap).
+    """
 
     provider: str
     key: str  # REDACTED last-4 only
@@ -45,6 +51,8 @@ class OpenRouterUsageRow(TypedDict):
     limitUsd: float | None
     remainingUsd: float | None
     isFreeTier: bool
+    status: str
+    cooldownReason: str | None
 
 
 def _as_float(value: Any) -> float | None:
@@ -88,20 +96,48 @@ def _provider_name(entry: dict[str, Any]) -> str:
     return str(entry.get("provider") or entry.get("id") or "OpenRouter")
 
 
-def _fetch_one(provider: str, key: str, *, transport: Transport) -> OpenRouterUsageRow | None:
-    """Fetch ONE key's cost row (best-effort). The live key rides only the header.
+def _cooldown_row(provider: str, key: str, reason: str) -> OpenRouterUsageRow:
+    """A REDACTED cooldown row for a parked key (cost unknown; M4 cooldown-not-delete)."""
+    return OpenRouterUsageRow(
+        provider=provider,
+        key=redact(key),
+        costUsd=None,
+        limitUsd=None,
+        remainingUsd=None,
+        isFreeTier=False,
+        status=key_pool_status.STATUS_COOLDOWN,
+        cooldownReason=reason,
+    )
 
-    Returns ``None`` (and logs at debug) on any transport error so a single dead
-    key never breaks the whole usage read. The returned row's ``key`` is the
-    REDACTED last-4 — the live key never leaves this function.
+
+def _fetch_one(provider: str, key: str, *, transport: Transport) -> OpenRouterUsageRow | None:
+    """Fetch ONE key's cost/status row (best-effort). The live key rides only the header.
+
+    On a ``402``/``429`` the key is PARKED on cooldown (a row is still returned —
+    M4 cooldown-not-delete), so the user sees *why* it stopped serving. Any other
+    failure (bad-key ``401`` / network) returns ``None`` so a single dead key never
+    breaks the whole read. The probe error body is SCRUBBED of the live key BEFORE
+    it reaches a log line (M4), and the returned row's ``key`` is the REDACTED
+    last-4 — the live key never leaves this function.
     """
     headers = {"Authorization": f"Bearer {key}"}
     try:
         response = transport(OPENROUTER_KEY_URL, {}, headers, _PROBE_TIMEOUT)
+    except ProviderError as exc:
+        safe = scrub_error_body(str(exc), [key])
+        reason = key_pool_status.cooldown_reason_for_code(exc.status_code)
+        if reason is not None:
+            log.debug("OpenRouter key %s parked on cooldown: %s", redact(key), safe)
+            return _cooldown_row(provider, key, reason)
+        log.debug("OpenRouter usage probe failed for %s (%s): %s", provider, redact(key), safe)
+        return None
     except Exception as exc:  # noqa: BLE001 - best-effort, must not raise
-        log.debug("OpenRouter usage probe failed for %s (%s): %s", provider, redact(key), exc)
+        log.debug(
+            "OpenRouter usage probe failed for %s (%s): %s", provider, redact(key), scrub_error_body(str(exc), [key])
+        )
         return None
     parsed = parse_key_usage(response)
+    status, reason = key_pool_status.classify_success(parsed)
     return OpenRouterUsageRow(
         provider=provider,
         key=redact(key),
@@ -109,6 +145,8 @@ def _fetch_one(provider: str, key: str, *, transport: Transport) -> OpenRouterUs
         limitUsd=parsed["limitUsd"],
         remainingUsd=parsed["remainingUsd"],
         isFreeTier=parsed["isFreeTier"],
+        status=status,
+        cooldownReason=reason,
     )
 
 

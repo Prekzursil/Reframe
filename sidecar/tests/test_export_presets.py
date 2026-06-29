@@ -116,6 +116,23 @@ class TestNormalizePreset:
                 }
             )
 
+    @pytest.mark.parametrize(("raw", "norm"), [("1:1", "1:1"), ("4:5", "4:5"), ("9x16", "9:16")])
+    def test_multi_aspect_accepted_and_canonicalized(self, raw, norm):
+        # WU R3: 1:1 + 4:5 are now valid export aspects alongside 9:16, and an
+        # "WxH" form is canonicalized to "W:H".
+        p = export_presets.normalize_preset(
+            {"label": "x", "aspect": raw, "minSec": 20, "maxSec": 60, "count": 1, "captionStyle": "libass"}
+        )
+        assert p["aspect"] == norm
+
+    @pytest.mark.parametrize("bad_aspect", ["16:9", "3:4", "potato", "9", "0:0"])
+    def test_unsupported_or_garbage_aspect_rejected(self, bad_aspect):
+        # A parseable-but-uncurated ratio (16:9) AND outright garbage both fail loud.
+        with pytest.raises(RpcError):
+            export_presets.normalize_preset(
+                {"label": "x", "aspect": bad_aspect, "minSec": 20, "maxSec": 60, "count": 1, "captionStyle": "libass"}
+            )
+
     @pytest.mark.parametrize(
         "bad",
         [
@@ -143,6 +160,20 @@ class TestNormalizePreset:
             {"label": "x", "aspect": "9:16", "minSec": 20, "maxSec": 60, "count": 1, "captionStyle": "libass"}
         )
         assert p["reframeEngine"] == "auto"
+
+    def test_reframe_multispeaker_engine_accepted(self):
+        p = export_presets.normalize_preset(
+            {
+                "label": "x",
+                "aspect": "9:16",
+                "minSec": 20,
+                "maxSec": 60,
+                "count": 1,
+                "captionStyle": "libass",
+                "reframeEngine": "reframe_multispeaker",
+            }
+        )
+        assert p["reframeEngine"] == "reframe_multispeaker"
 
     def test_invalid_reframe_engine_rejected(self):
         with pytest.raises(RpcError):

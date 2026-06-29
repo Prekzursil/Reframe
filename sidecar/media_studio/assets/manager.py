@@ -55,6 +55,14 @@ MIN_SIZE_FRACTION = 0.5
 GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
 GET_PIP_SIZE_MB = 4
 PINNED_PIP = "pip==25.2"
+# F3c (security hardening): get-pip.py is DOWNLOADED then EXECUTED. The URL serves
+# whatever pypa publishes today, so we VERIFY the bytes against a pinned sha256
+# BEFORE executing them — a compromised/MITM'd get-pip.py is rejected at the
+# .part stage (sha mismatch in _finalize), never run. Pinned 2026-06-28
+# (https://bootstrap.pypa.io/get-pip.py, 2,226,848 B). Refresh this when pypa
+# rotates get-pip; the seam (AssetManager(get_pip_sha256=...)) lets ops/tests
+# override without a code edit.
+GET_PIP_SHA256 = "a341e1a43e38001c551a1508a73ff23636a11970b61d901d9a1cad2a18f57055"
 #: success sentinel written into an env dir after a full install
 ENV_SENTINEL = ".media-studio-env.json"
 
@@ -326,8 +334,12 @@ class AssetManager:
         chatterbox_python: Callable[[], str | None] | None = None,
         usage: Callable[[str], Any] | None = None,
         env_vars: Mapping[str, str] | None = None,
+        get_pip_sha256: str | None = None,
     ) -> None:
         self.root = Path(root) if root is not None else default_config_dir()
+        # F3c: the sha256 get-pip.py must match BEFORE it's executed (verify-before
+        # -exec). Injectable so tests use small fixtures; defaults to the pin above.
+        self._get_pip_sha256 = get_pip_sha256 or GET_PIP_SHA256
         self._settings_provider = settings_provider
         self._http_factory = http_factory or _default_http_client
         self._run_cmd: RunCmd = run_cmd or _default_run_cmd
@@ -606,10 +618,13 @@ class AssetManager:
         get_pip = self.root / "tools" / "get-pip.py"
         if not get_pip.is_file():
             on_frac(0.01, f"{entry.name}: fetching get-pip.py")
+            # F3c: verify-before-exec — _download_file rejects (sha mismatch) a
+            # tampered get-pip.py at the .part stage, so a bad script is never run.
             self._download_file(
                 GET_PIP_URL,
                 get_pip,
                 size_mb=GET_PIP_SIZE_MB,
+                sha256=self._get_pip_sha256,
                 should_cancel=should_cancel,
                 label="get-pip.py",
             )

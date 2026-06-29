@@ -1,0 +1,63 @@
+/* reframeOverridePanel.css — manual per-shot speaker/layout/crop correction (WU R2). */
+.reframe-override__shots {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.reframe-shot {
+  display: grid;
+  grid-template-columns: minmax(7rem, auto) 1fr;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border, #d0d5dd);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+}
+
+.reframe-shot.is-changed {
+  border-color: var(--accent, #2563eb);
+  box-shadow: inset 3px 0 0 var(--accent, #2563eb);
+}
+
+.reframe-shot__head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.reframe-shot__title {
+  font-weight: 600;
+}
+
+.reframe-shot__changed-tag {
+  font-size: 0.75rem;
+  color: var(--accent, #2563eb);
+}
+
+.reframe-shot__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.75rem;
+  align-items: center;
+}
+
+.reframe-shot__group {
+  display: inline-flex;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.reframe-shot__crop {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+  color: var(--muted, #667085);
+}
+
+.reframe-override__footer {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 0.75rem;
+}

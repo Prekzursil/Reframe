@@ -1,0 +1,1163 @@
+"""Tests for the R1 hybrid multi-speaker reframe engine (WU R1).
+
+100% line+branch coverage of the PURE decision/layout/compositor layer + the
+engine orchestration, all with hand-built fixtures and an injected FAKE backend
+(no torch / cv2 / model / real ffmpeg). The heavy backend is the seam.
+"""
+
+from __future__ import annotations
+
+import pytest
+from media_studio.features import offline as _offline
+from media_studio.features import reframe_multispeaker as ms
+from media_studio.features.reframe_eval import LAYOUTS, ReframeTrace, Segment
+
+
+# --------------------------------------------------------------------------- #
+# merge_short_shots / shot_spans
+# --------------------------------------------------------------------------- #
+class TestMergeShortShots:
+    def test_drops_close_and_short_tail_boundaries(self):
+        # fps=10, min 0.5s => min_frames=5. Cuts at 3 (too close to 0) and 8 (5
+        # past 3 but tail 100-8>=5? tail=92 ok; but 3 dropped so last=0, 8-0=8>=5 keep).
+        merged = ms.merge_short_shots([3, 8], 100, fps=10.0, min_shot_sec=0.5)
+        assert merged == (8,)
+
+    def test_dedup_sort_clamp(self):
+        merged = ms.merge_short_shots([50, 50, 0, 100, -2, 200], 100, fps=10.0, min_shot_sec=0.0)
+        assert merged == (50,)
+
+    def test_short_tail_boundary_merged_away(self):
+        # cut at 98 leaves tail 100-98=2 < 5 => merged into final shot.
+        assert ms.merge_short_shots([50, 98], 100, fps=10.0, min_shot_sec=0.5) == (50,)
+
+    def test_zero_frames_raises(self):
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.merge_short_shots([1], 0, fps=10.0)
+
+    def test_bad_fps_raises(self):
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.merge_short_shots([1], 10, fps=0.0)
+
+    def test_shot_spans_partition(self):
+        assert ms.shot_spans([5, 10], 20) == ((0, 5), (5, 10), (10, 20))
+
+    def test_shot_spans_no_cuts(self):
+        assert ms.shot_spans([], 20) == ((0, 20),)
+
+    def test_shot_spans_zero_frames_raises(self):
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.shot_spans([], 0)
+
+
+# --------------------------------------------------------------------------- #
+# MultiFaceTracker
+# --------------------------------------------------------------------------- #
+class TestMultiFaceTracker:
+    def test_first_frame_assigns_fresh_ids(self):
+        t = ms.MultiFaceTracker()
+        ids = t.update([(0, 0, 10, 10), (100, 0, 10, 10)])
+        assert ids == [0, 1]
+
+    def test_stable_id_across_frames_by_iou(self):
+        t = ms.MultiFaceTracker()
+        t.update([(0, 0, 10, 10)])
+        # nearly the same box -> same id 0
+        assert t.update([(1, 0, 10, 10)]) == [0]
+
+    def test_low_iou_gets_new_id(self):
+        t = ms.MultiFaceTracker()
+        t.update([(0, 0, 10, 10)])
+        ids = t.update([(500, 500, 10, 10)])
+        assert ids == [1]
+
+    def test_one_to_one_assignment_no_double_claim(self):
+        t = ms.MultiFaceTracker()
+        t.update([(0, 0, 10, 10), (100, 0, 10, 10)])
+        # two new boxes both overlap track 0 region the most; only one wins it.
+        ids = t.update([(0, 0, 10, 10), (2, 0, 10, 10)])
+        assert sorted(ids) == [0, 2]
+        assert len(set(ids)) == 2
+
+    def test_reset_clears_tracks(self):
+        t = ms.MultiFaceTracker()
+        t.update([(0, 0, 10, 10)])
+        t.reset()
+        assert t.update([(0, 0, 10, 10)]) == [1]
+
+
+# --------------------------------------------------------------------------- #
+# OneEuroFilter + smooth_centers_one_euro
+# --------------------------------------------------------------------------- #
+class TestOneEuro:
+    def test_first_sample_passthrough(self):
+        f = ms.OneEuroFilter()
+        assert f(0.0, 0.42) == 0.42
+
+    def test_smooths_subsequent_samples(self):
+        f = ms.OneEuroFilter(min_cutoff=1.0, beta=0.0)
+        f(0.0, 0.0)
+        out = f(0.1, 1.0)
+        assert 0.0 < out < 1.0
+
+    def test_non_monotonic_time_raises(self):
+        f = ms.OneEuroFilter()
+        f(1.0, 0.0)
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            f(1.0, 1.0)
+
+    def test_smooth_centers_length_mismatch_raises(self):
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.smooth_centers_one_euro([0.0], [0.1, 0.2])
+
+    def test_dead_zone_holds_microjitter(self):
+        ts = [i * 0.1 for i in range(6)]
+        # tiny wiggle around 0.5 -> after first emit, held flat by the dead-zone.
+        centers = [0.5, 0.5001, 0.4999, 0.5001, 0.5, 0.5001]
+        out = ms.smooth_centers_one_euro(ts, centers, dead_zone=0.01)
+        assert all(abs(v - out[0]) < 1e-9 for v in out)
+
+    def test_real_motion_passes_dead_zone(self):
+        ts = [i * 0.1 for i in range(6)]
+        centers = [0.1, 0.3, 0.5, 0.7, 0.9, 1.0]
+        out = ms.smooth_centers_one_euro(ts, centers, dead_zone=0.001)
+        assert out[-1] > out[0]
+
+
+# --------------------------------------------------------------------------- #
+# fuse_active_speaker / resolve_speaker_track
+# --------------------------------------------------------------------------- #
+class TestFusion:
+    def test_no_visual_scores_is_empty_vote(self):
+        v = ms.fuse_active_speaker({}, "x", 1.0)
+        assert v == ms.SpeakerVote("", 0.0)
+
+    def test_high_visual_and_vad_picks_speaker(self):
+        v = ms.fuse_active_speaker({"a": 0.9}, "", 1.0)
+        assert v.speaker == "a"
+        assert v.confidence >= ms.ASD_CONFIDENCE_THRESHOLD
+
+    def test_diarize_agreement_bonus(self):
+        # 0.4 visual * 0.8 vad = 0.32 < threshold; +0.25 agreement = 0.57 >= 0.55
+        v = ms.fuse_active_speaker({"a": 0.4, "b": 0.39}, "a", 0.8)
+        assert v.speaker == "a"
+
+    def test_low_confidence_empty(self):
+        v = ms.fuse_active_speaker({"a": 0.1}, "", 0.1)
+        assert v.speaker == ""
+        assert v.confidence < ms.ASD_CONFIDENCE_THRESHOLD
+
+    def test_resolve_track_holds_last_speaker(self):
+        votes = [
+            ms.SpeakerVote("a", 0.9),
+            ms.SpeakerVote("", 0.1),  # dropout -> hold "a"
+            ms.SpeakerVote("b", 0.9),
+        ]
+        assert ms.resolve_speaker_track(votes) == ["a", "a", "b"]
+
+    def test_resolve_track_blank_before_first_confident(self):
+        votes = [ms.SpeakerVote("", 0.1), ms.SpeakerVote("a", 0.9)]
+        assert ms.resolve_speaker_track(votes) == ["", "a"]
+
+
+# --------------------------------------------------------------------------- #
+# decide_layout / debounce / segments / cuts
+# --------------------------------------------------------------------------- #
+class TestLayout:
+    def test_decide_single_split_composite(self):
+        assert ms.decide_layout(0) == "single"
+        assert ms.decide_layout(1) == "single"
+        assert ms.decide_layout(2) == "split"
+        assert ms.decide_layout(3) == "composite"
+
+    def test_decide_disallow_split_composite(self):
+        assert ms.decide_layout(2, allow_split=False) == "single"
+        assert ms.decide_layout(3, allow_composite=False) == "single"
+
+    def test_debounce_empty(self):
+        assert ms.debounce_layouts([], 3) == []
+
+    def test_debounce_identity_when_dwell_le_1(self):
+        raw = ["single", "split"]
+        assert ms.debounce_layouts(raw, 1) == raw
+
+    def test_debounce_suppresses_short_run(self):
+        raw = ["single", "single", "single", "split", "single", "single", "single"]
+        out = ms.debounce_layouts(raw, 3)
+        assert out == ["single"] * 7
+
+    def test_debounce_commits_long_run(self):
+        raw = ["single", "single", "single", "split", "split", "split"]
+        out = ms.debounce_layouts(raw, 3)
+        assert out == raw
+
+    def test_layouts_to_segments_skips_filler(self):
+        per_frame = ["single", "single", "none", "split", "split"]
+        segs = ms.layouts_to_segments(per_frame)
+        assert segs == (
+            Segment(0, 2, "single"),
+            Segment(3, 5, "split"),
+        )
+
+    def test_commit_cuts_union(self):
+        assert ms.commit_cuts([5], [3, 5, 8], 20) == (3, 5, 8)
+
+    def test_commit_cuts_zero_frames_raises(self):
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.commit_cuts([1], [], 0)
+
+    def test_speaker_turn_frames(self):
+        assert ms.speaker_turn_frames(["a", "a", "b", "b", "c"]) == (2, 4)
+
+
+# --------------------------------------------------------------------------- #
+# segments_from_layout_and_speaker — break at layout AND speaker turns (Bug 1)
+# --------------------------------------------------------------------------- #
+class TestSegmentsFromLayoutAndSpeaker:
+    def test_breaks_at_layout_change(self):
+        layout = ["single", "single", "split", "split"]
+        speaker = ["0", "0", "0", "0"]
+        assert ms.segments_from_layout_and_speaker(layout, speaker) == (
+            Segment(0, 2, "single"),
+            Segment(2, 4, "split"),
+        )
+
+    def test_breaks_at_speaker_turn_within_one_layout(self):
+        # A single-layout run with an in-segment speaker turn becomes TWO single
+        # segments (each one speaker) -> static render crop per segment.
+        layout = ["single", "single", "single", "single"]
+        speaker = ["0", "0", "1", "1"]
+        assert ms.segments_from_layout_and_speaker(layout, speaker) == (
+            Segment(0, 2, "single"),
+            Segment(2, 4, "single"),
+        )
+
+    def test_skips_none_filler(self):
+        layout = ["single", "none", "split"]
+        speaker = ["0", "", "1"]
+        assert ms.segments_from_layout_and_speaker(layout, speaker) == (
+            Segment(0, 1, "single"),
+            Segment(2, 3, "split"),
+        )
+
+    def test_length_mismatch_raises(self):
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.segments_from_layout_and_speaker(["single"], ["0", "1"])
+
+    def test_empty_is_empty(self):
+        assert ms.segments_from_layout_and_speaker([], []) == ()
+
+
+# --------------------------------------------------------------------------- #
+# map_diarize_to_tracks — namespace reconciliation (Bug 3)
+# --------------------------------------------------------------------------- #
+class TestMapDiarizeToTracks:
+    def test_correlates_each_speaker_to_its_visual_track(self):
+        # SPEAKER_00 co-activates with track "0", SPEAKER_01 with track "1".
+        scores = [{"0": 0.9, "1": 0.1}, {"0": 0.1, "1": 0.9}]
+        diarize = ["SPEAKER_00", "SPEAKER_01"]
+        assert ms.map_diarize_to_tracks(scores, diarize) == {"SPEAKER_00": "0", "SPEAKER_01": "1"}
+
+    def test_accumulates_over_frames(self):
+        # SPEAKER_00 is visually strongest on track "1" across both its frames.
+        scores = [{"0": 0.2, "1": 0.8}, {"0": 0.3, "1": 0.7}, {"0": 0.9, "1": 0.1}]
+        diarize = ["SPEAKER_00", "SPEAKER_00", "SPEAKER_01"]
+        m = ms.map_diarize_to_tracks(scores, diarize)
+        assert m == {"SPEAKER_00": "1", "SPEAKER_01": "0"}
+
+    def test_empty_label_and_no_faces_contribute_nothing(self):
+        scores = [{}, {"0": 0.9}]
+        diarize = ["SPEAKER_00", ""]  # frame0 has no faces, frame1 has no diarize id
+        assert ms.map_diarize_to_tracks(scores, diarize) == {}
+
+    def test_tie_breaks_to_lowest_track_id(self):
+        # Equal accumulated co-activation -> deterministic lowest-id pick.
+        scores = [{"0": 0.5, "1": 0.5}]
+        # the per-frame best_track itself ties; max((0.5,'0'),(0.5,'1')) picks '1',
+        # so SPEAKER_00 accumulates on '1' here -> deterministic.
+        assert ms.map_diarize_to_tracks(scores, ["SPEAKER_00"]) == {"SPEAKER_00": "1"}
+
+    def test_length_mismatch_raises(self):
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.map_diarize_to_tracks([{"0": 0.9}], ["SPEAKER_00", "SPEAKER_01"])
+
+
+# --------------------------------------------------------------------------- #
+# Compositor — build_filter_complex / build_composite_argv
+# --------------------------------------------------------------------------- #
+class TestCompositor:
+    def test_single(self):
+        fc = ms.build_filter_complex("single", [(10, 0, 405, 720)], out_w=1080, out_h=1920)
+        assert fc == "[0:v]crop=405:720:10:0,scale=1080:1920:flags=lanczos,setsar=1[v]"
+
+    def test_split_vstacks_two_halves(self):
+        fc = ms.build_filter_complex("split", [(0, 0, 405, 720), (800, 0, 405, 720)], out_w=1080, out_h=1920)
+        assert "vstack=inputs=2[v]" in fc
+        assert "scale=1080:960" in fc  # each half is out_h/2
+
+    def test_composite_host_top_guests_bottom(self):
+        regs = [(0, 0, 405, 720), (500, 0, 200, 720), (800, 0, 200, 720)]
+        fc = ms.build_filter_complex("composite", regs, out_w=1080, out_h=1920)
+        assert "[host]" in fc and "hstack=inputs=2[guests]" in fc
+        assert "[host][guests]vstack=inputs=2[v]" in fc
+
+    def test_unknown_layout_raises(self):
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.build_filter_complex("mosaic", [(0, 0, 1, 1)], out_w=10, out_h=10)
+
+    def test_single_wrong_region_count_raises(self):
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.build_filter_complex("single", [], out_w=10, out_h=10)
+
+    def test_split_wrong_region_count_raises(self):
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.build_filter_complex("split", [(0, 0, 1, 1)], out_w=10, out_h=10)
+
+    def test_composite_too_few_regions_raises(self):
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.build_filter_complex("composite", [(0, 0, 1, 1)], out_w=10, out_h=10)
+
+    def test_build_composite_argv_is_argv_list(self):
+        argv = ms.build_composite_argv("in.mp4", "out.mp4", "[0:v]null[v]", total_sec=3.0)
+        assert isinstance(argv, list)
+        assert "-filter_complex" in argv and argv[-1] == "out.mp4"
+        assert "[v]" in argv  # -map [v]
+
+
+# --------------------------------------------------------------------------- #
+# build_trace — the pure director end to end
+# --------------------------------------------------------------------------- #
+def _analysis(
+    *,
+    total=6,
+    fps=30.0,
+    width=1920,
+    height=1080,
+    shots=(),
+    boxes=None,
+    scores=None,
+    diarize=None,
+    vad=None,
+):
+    boxes = boxes if boxes is not None else tuple(((100.0, 0.0, 200.0, 400.0),) for _ in range(total))
+    scores = scores if scores is not None else tuple((0.9,) for _ in range(total))
+    diarize = diarize if diarize is not None else tuple("0" for _ in range(total))
+    vad = vad if vad is not None else tuple(1.0 for _ in range(total))
+    return ms.ShotAnalysis(
+        width=width,
+        height=height,
+        fps=fps,
+        total_frames=total,
+        shot_boundaries=tuple(shots),
+        boxes_per_frame=boxes,
+        visual_scores_per_frame=scores,
+        diarize_per_frame=diarize,
+        vad_per_frame=vad,
+    )
+
+
+class TestBuildTrace:
+    def test_single_speaker_trace_shape(self):
+        trace = ms.build_trace(_analysis())
+        assert isinstance(trace, ReframeTrace)
+        assert len(trace.crops) == 6
+        assert len(trace.speaker_per_frame) == 6
+        # one talking head -> single layout throughout
+        for seg in trace.segments:
+            assert seg.layout in LAYOUTS
+
+    def test_zero_frames_raises(self):
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.build_trace(_analysis(total=0, boxes=(), scores=(), diarize=(), vad=()))
+
+    def test_length_mismatch_raises(self):
+        bad = ms.ShotAnalysis(
+            width=1920,
+            height=1080,
+            fps=30.0,
+            total_frames=2,
+            shot_boundaries=(),
+            boxes_per_frame=((),),
+            visual_scores_per_frame=((), ()),
+            diarize_per_frame=("", ""),
+            vad_per_frame=(1.0, 1.0),
+        )
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.build_trace(bad)
+
+    def test_two_concurrent_speakers_produce_split(self):
+        boxes = tuple(((100.0, 0.0, 200.0, 400.0), (1500.0, 0.0, 200.0, 400.0)) for _ in range(30))
+        scores = tuple((0.9, 0.9) for _ in range(30))
+        trace = ms.build_trace(_analysis(total=30, boxes=boxes, scores=scores))
+        assert any(seg.layout == "split" for seg in trace.segments)
+
+    def test_three_concurrent_speakers_produce_composite(self):
+        boxes = tuple(
+            ((100.0, 0.0, 100.0, 400.0), (900.0, 0.0, 100.0, 400.0), (1700.0, 0.0, 100.0, 400.0)) for _ in range(30)
+        )
+        scores = tuple((0.9, 0.9, 0.9) for _ in range(30))
+        trace = ms.build_trace(_analysis(total=30, boxes=boxes, scores=scores))
+        assert any(seg.layout == "composite" for seg in trace.segments)
+
+    def test_cold_start_no_confident_speaker_uses_dominant_not_center(self):
+        # all low VAD -> no confident vote, speaker stays "" -> cold-start center
+        # from select_dominant over the (off-center) face, NOT frame center.
+        boxes = tuple(((1400.0, 0.0, 300.0, 400.0),) for _ in range(6))
+        trace = ms.build_trace(_analysis(total=6, boxes=boxes, vad=tuple(0.0 for _ in range(6))))
+        # dominant face center ~ (1400+150)/1920 = 0.807 -> crop x near right edge.
+        crop_w = trace.crops[0][2]
+        # not a centered crop (centered x would be (1920-crop_w)/2)
+        centered_x = (1920 - crop_w) / 2
+        assert abs(trace.crops[0][0] - centered_x) > 1.0
+
+    def test_cold_start_no_faces_falls_to_center(self):
+        boxes = tuple(() for _ in range(6))
+        scores = tuple(() for _ in range(6))
+        trace = ms.build_trace(_analysis(total=6, boxes=boxes, scores=scores, vad=tuple(0.0 for _ in range(6))))
+        crop_w = trace.crops[0][2]
+        centered_x = (1920 - crop_w) / 2
+        assert abs(trace.crops[0][0] - centered_x) < 1.0
+
+    def test_speaker_held_through_dropout_uses_cold_center(self):
+        # frame 0 confident on track 0; frames 1+ the box vanishes (no faces) so
+        # the speaker is held but its track isn't visible -> cold center branch.
+        boxes = ((100.0, 0.0, 200.0, 400.0),), (), (), (), (), ()
+        scores = (0.9,), (), (), (), (), ()
+        diarize = "0", "", "", "", "", ""
+        vad = 1.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        trace = ms.build_trace(_analysis(total=6, boxes=boxes, scores=scores, diarize=diarize, vad=vad))
+        assert trace.speaker_per_frame[0] == "0"
+        assert trace.speaker_per_frame[1] == "0"  # held
+
+    def test_multi_shot_resets_tracker(self):
+        trace = ms.build_trace(_analysis(total=20, fps=10.0, shots=(10,)))
+        assert trace.shot_boundaries == (10,)
+
+    def test_within_shot_speaker_turn_hard_cuts(self):
+        # Two faces all 6 frames (one shot, no boundary). Active speaker flips
+        # 0->1 at frame 3 -> a committed turn WITHIN the shot -> the smoother
+        # resets (hard cut) AND _frame_center skips the non-matching first track.
+        left = (100.0, 0.0, 200.0, 400.0)
+        right = (1500.0, 0.0, 200.0, 400.0)
+        boxes = tuple((left, right) for _ in range(6))
+        scores = ((0.9, 0.1), (0.9, 0.1), (0.9, 0.1), (0.1, 0.9), (0.1, 0.9), (0.1, 0.9))
+        trace = ms.build_trace(_analysis(total=6, fps=10.0, boxes=boxes, scores=scores))
+        assert trace.speaker_per_frame == ("0", "0", "0", "1", "1", "1")
+        # crop jumps right when speaker 1 (right face) takes over.
+        assert trace.crops[5][0] > trace.crops[0][0]
+
+    def test_multicut_multispeaker_passes_within_segment_jitter_gate(self):
+        # Two faces, single layout throughout, the active speaker alternating every
+        # 15 frames -> in-segment speaker turns. Before the GATE-BLOCKER fix the
+        # whole clip was ONE single segment and the turn teleports were charged as
+        # jitter (>> baseline). Now each turn opens a new single segment, so the
+        # within-segment jitter is just the One-Euro residual and clears the gate.
+        from media_studio.features import reframe_eval as re_eval
+
+        left = (100.0, 0.0, 200.0, 400.0)
+        right = (1600.0, 0.0, 200.0, 400.0)
+        total = 60
+        boxes = tuple((left, right) for _ in range(total))
+        scores = tuple(((0.9, 0.1) if (f // 15) % 2 == 0 else (0.1, 0.9)) for f in range(total))
+        trace = ms.build_trace(_analysis(total=total, boxes=boxes, scores=scores))
+        # segmented at the speaker turns (every 15 frames), all single layout.
+        assert len(trace.segments) == 4
+        assert all(seg.layout == "single" for seg in trace.segments)
+        jitter = re_eval.static_shot_jitter_within_segments(trace.crops, trace.segments)
+        assert jitter <= re_eval.GATE_THRESHOLDS["static_jitter_max"]
+
+    def test_genuinely_jittery_single_segment_still_fails_gate(self):
+        # A constant-speaker single segment whose crop genuinely wobbles hard frame
+        # to frame must STILL exceed the jitter gate (the fix must not blanket-zero
+        # real wobble). A reference rect that jumps left<->right inside one segment.
+        from media_studio.features import reframe_eval as re_eval
+
+        crops = tuple(((0.0 if i % 2 == 0 else 900.0), 0.0, 405.0, 720.0) for i in range(20))
+        seg = (Segment(0, 20, "single"),)
+        jitter = re_eval.static_shot_jitter_within_segments(crops, seg)
+        assert jitter > re_eval.GATE_THRESHOLDS["static_jitter_max"]
+
+    def test_audio_agreement_raises_fusion_confidence(self):
+        # Two faces; track "0" is visually active but below the VAD-gated threshold
+        # on its own. The diarizer (SPEAKER_NN namespace) agrees via the temporal
+        # map, so the agreement bonus lifts the vote over the threshold and commits
+        # the speaker — proving the namespace mapping makes audio fusion contribute.
+        left = (100.0, 0.0, 200.0, 400.0)
+        right = (1600.0, 0.0, 200.0, 400.0)
+        boxes = tuple((left, right) for _ in range(6))
+        # visual 0.45 * vad 1.0 = 0.45 < 0.55 threshold; +0.25 agreement = 0.70.
+        scores = tuple((0.45, 0.1) for _ in range(6))
+        diarize = tuple("SPEAKER_07" for _ in range(6))  # alien namespace, maps to "0"
+        trace = ms.build_trace(_analysis(total=6, boxes=boxes, scores=scores, diarize=diarize))
+        assert trace.speaker_per_frame == ("0",) * 6  # committed only because audio agreed
+
+    def test_no_audio_means_no_agreement_bonus_so_weak_visual_does_not_commit(self):
+        # The CONTRAST to the above: identical weak visual (0.45) but NO diarize id,
+        # so there is no audio to agree with -> no bonus -> stays below threshold ->
+        # no speaker committed. Proves the agreement bonus (enabled by the mapping)
+        # is what tipped the previous case over.
+        left = (100.0, 0.0, 200.0, 400.0)
+        right = (1600.0, 0.0, 200.0, 400.0)
+        boxes = tuple((left, right) for _ in range(6))
+        scores = tuple((0.45, 0.1) for _ in range(6))
+        diarize = tuple("" for _ in range(6))  # silence -> no diarize id at all
+        trace = ms.build_trace(_analysis(total=6, boxes=boxes, scores=scores, diarize=diarize))
+        assert trace.speaker_per_frame == ("",) * 6
+
+
+# --------------------------------------------------------------------------- #
+# Availability / notices / asset registration
+# --------------------------------------------------------------------------- #
+class TestAvailability:
+    def test_available_when_wsl_and_models(self):
+        assert ms.availability_reason({}, which=lambda _x: "/usr/bin/wsl", models_present=lambda _s: True) is None
+
+    def test_no_wsl_reason(self):
+        reason = ms.availability_reason({}, which=lambda _x: None, models_present=lambda _s: True)
+        assert reason is not None and "WSL" in reason
+
+    def test_no_models_reason(self):
+        reason = ms.availability_reason({}, which=lambda _x: "/wsl", models_present=lambda _s: False)
+        assert reason is not None and ms.LIGHT_ASD_ASSET in reason
+
+    def test_default_models_present_false_when_unregistered(self, monkeypatch):
+        # A weight asset that resolves to no entry (get_asset -> None) -> False
+        # (covers the entry-is-None guard in the two-weight presence check).
+        from media_studio.assets import manager, manifest
+
+        monkeypatch.setattr(manifest, "get_asset", lambda _n: None)
+
+        class _Mgr:
+            def __init__(self, **_kw):
+                pass
+
+            def installed_path(self, _e):  # pragma: no cover - never reached (entry is None)
+                return "/unused"
+
+        monkeypatch.setattr(manager, "AssetManager", _Mgr)
+        assert ms.default_models_present({}) is False
+
+    def test_default_models_present_true_when_installed(self, monkeypatch):
+        from media_studio.assets import manager, manifest
+
+        entry = object()
+        monkeypatch.setattr(manifest, "get_asset", lambda _n: entry)
+
+        class _Mgr:
+            def __init__(self, **_kw):
+                pass
+
+            def installed_path(self, _e):
+                return "/some/path"
+
+        monkeypatch.setattr(manager, "AssetManager", _Mgr)
+        assert ms.default_models_present({}) is True
+
+    def test_default_models_present_false_when_not_installed(self, monkeypatch):
+        from media_studio.assets import manager, manifest
+
+        monkeypatch.setattr(manifest, "get_asset", lambda _n: object())
+
+        class _Mgr:
+            def __init__(self, **_kw):
+                pass
+
+            def installed_path(self, _e):
+                return None
+
+        monkeypatch.setattr(manager, "AssetManager", _Mgr)
+        assert ms.default_models_present({}) is False
+
+    def test_default_models_present_swallows_errors(self, monkeypatch):
+        from media_studio.assets import manifest
+
+        def boom(_n):
+            raise RuntimeError("asset machinery exploded")
+
+        monkeypatch.setattr(manifest, "get_asset", boom)
+        assert ms.default_models_present({}) is False
+
+    def test_engine_degrade_notice_distinct_message(self):
+        n = ms.make_engine_degrade_notice("no WSL")
+        from media_studio.features import reframe_claudeshorts as cs
+
+        assert n["type"] == cs.REFRAME_DEGRADED_NOTICE
+        assert "center crop" not in n["message"]
+        assert "single-speaker" in n["message"]
+        assert n["reason"] == "no WSL"
+
+    def test_register_assets_noop_idempotent(self):
+        ms.register_multispeaker_assets()
+        ms.register_multispeaker_assets()  # idempotent no-op
+
+
+# --------------------------------------------------------------------------- #
+# Engine orchestration — fake backend + fake runner
+# --------------------------------------------------------------------------- #
+class _FakeBackend:
+    def __init__(self, analysis, *, raise_on_analyze=None):
+        self._analysis = analysis
+        self._raise = raise_on_analyze
+        self.released = 0
+
+    def analyze(self, media_path, *, on_progress=None, should_cancel=None):
+        if self._raise is not None:
+            raise self._raise
+        return self._analysis
+
+    def release(self):
+        self.released += 1
+
+
+def _engine(**kw):
+    """An engine wired with all seams faked + host 'available'."""
+    defaults = {
+        "which": lambda _x: "/wsl",
+        "models_present": lambda _s: True,
+        "replace_fn": lambda _a, _b: None,
+        "remove_fn": lambda _p: None,
+    }
+    defaults.update(kw)
+    return ms.MultiSpeakerReframeEngine({}, **defaults)
+
+
+class TestEngineRender:
+    def test_happy_path_atomic_rename(self):
+        moves = []
+        runs = []
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_analysis()),
+            runner=lambda argv, **kw: runs.append(argv) or 0,
+            replace_fn=lambda a, b: moves.append((a, b)),
+        )
+        out = eng.reframe("in.mp4", "out.mp4")
+        assert out == "out.mp4"
+        assert moves == [("out.multispeaker.part.mp4", "out.mp4")]
+        assert runs and runs[0][-1] == "out.multispeaker.part.mp4"
+
+    def test_release_called_even_on_analyze_error(self):
+        backend = _FakeBackend(_analysis(), raise_on_analyze=RuntimeError("CUDA OOM"))
+        eng = _engine(backend_factory=lambda _s: backend)
+        with pytest.raises(RuntimeError):
+            eng.reframe("in.mp4", "out.mp4")
+        assert backend.released == 1
+
+    def test_oom_mid_encode_cleans_partial_and_raises(self):
+        removed = []
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_analysis()),
+            runner=lambda *a, **k: (_ for _ in ()).throw(MemoryError("oom")),
+            remove_fn=lambda p: removed.append(p),
+        )
+        with pytest.raises(ms.MultiSpeakerRenderError):
+            eng.reframe("in.mp4", "out.mp4")
+        assert removed == ["out.multispeaker.part.mp4"]
+
+    def test_nonzero_exit_cleans_partial_and_raises(self):
+        removed = []
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_analysis()),
+            runner=lambda *a, **k: 1,
+            remove_fn=lambda p: removed.append(p),
+        )
+        with pytest.raises(ms.MultiSpeakerRenderError):
+            eng.reframe("in.mp4", "out.mp4")
+        assert removed == ["out.multispeaker.part.mp4"]
+
+    def test_cleanup_swallows_oserror(self):
+        def boom(_p):
+            raise OSError("gone")
+
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_analysis()),
+            runner=lambda *a, **k: 1,
+            remove_fn=boom,
+        )
+        with pytest.raises(ms.MultiSpeakerRenderError):
+            eng.reframe("in.mp4", "out.mp4")
+
+
+class TestEngineFailureContract:
+    def test_explicit_unavailable_raises_typed_not_offline(self):
+        eng = _engine(which=lambda _x: None)  # no WSL, allow_degrade=False
+        with pytest.raises(ms.MultiSpeakerUnavailableError) as ei:
+            eng.reframe("in.mp4", "out.mp4")
+        assert "Offline mode" not in str(ei.value)
+        assert "WSL" in str(ei.value)
+
+    def test_offline_mode_raises_offline_error(self):
+        # offline mode ON + unavailable -> the correct OfflineError message wins.
+        eng = ms.MultiSpeakerReframeEngine(
+            {"offline": True},
+            which=lambda _x: None,
+            models_present=lambda _s: False,
+        )
+        with pytest.raises(_offline.OfflineError) as ei:
+            eng.reframe("in.mp4", "out.mp4")
+        assert "Offline mode is on" in str(ei.value)
+
+    def test_auto_degrade_falls_back_to_single_speaker(self):
+        notices = []
+        calls = []
+
+        class _FakeSingle:
+            def reframe(self, in_path, out_path, aspect, *, on_progress=None, should_cancel=None, on_notice=None):
+                calls.append((in_path, out_path))
+                return out_path
+
+        eng = ms.MultiSpeakerReframeEngine(
+            {},
+            allow_degrade=True,
+            which=lambda _x: None,  # no WSL
+            models_present=lambda _s: True,
+            single_speaker=_FakeSingle(),
+        )
+        out = eng.reframe("in.mp4", "out.mp4", on_notice=lambda n: notices.append(n))
+        assert out == "out.mp4"
+        assert calls == [("in.mp4", "out.mp4")]
+        assert notices and notices[0]["type"] == ms._cs.REFRAME_DEGRADED_NOTICE
+        assert "single-speaker" in notices[0]["message"]
+
+    def test_auto_degrade_without_notice_sink(self):
+        class _FakeSingle:
+            def reframe(self, *a, **k):
+                return a[1]
+
+        eng = ms.MultiSpeakerReframeEngine(
+            {},
+            allow_degrade=True,
+            which=lambda _x: None,
+            models_present=lambda _s: True,
+            single_speaker=_FakeSingle(),
+        )
+        assert eng.reframe("in.mp4", "out.mp4") == "out.mp4"
+
+    def test_default_construction_binds_real_seams(self):
+        # cover the default-seam branches (runner/backend/single bound lazily).
+        eng = ms.MultiSpeakerReframeEngine({})
+        assert eng._runner is not None
+        assert eng._single is not None
+        assert eng._backend_factory is ms._default_backend_factory
+
+
+# --------------------------------------------------------------------------- #
+# Registry integration (reframe.py)
+# --------------------------------------------------------------------------- #
+class TestRegistryIntegration:
+    def test_resolve_engine_name_multispeaker(self):
+        from media_studio.features import reframe as r
+
+        resolved, notice = r.resolve_engine_name("reframe_multispeaker", {})
+        assert resolved == "reframe_multispeaker"
+        assert notice is None
+
+    def test_get_engine_builds_multispeaker(self):
+        from media_studio.features import reframe as r
+
+        eng, notice = r.get_engine("reframe_multispeaker", {})
+        assert isinstance(eng, ms.MultiSpeakerReframeEngine)
+        assert notice is None
+
+    def test_in_reframe_engines_set(self):
+        from media_studio.features.export_presets import REFRAME_ENGINES
+
+        assert "reframe_multispeaker" in REFRAME_ENGINES
+
+
+# --------------------------------------------------------------------------- #
+# Multi-region geometry — segment_regions / SegmentRegions / build_segment_regions
+# --------------------------------------------------------------------------- #
+def _faces_analysis(boxes_one_frame, scores_one_frame, *, total=6, width=1920, height=1080):
+    """An analysis whose every frame has the SAME faces/scores (a stable segment)."""
+    boxes = tuple(tuple(boxes_one_frame) for _ in range(total))
+    scores = tuple(tuple(scores_one_frame) for _ in range(total))
+    return _analysis(total=total, width=width, height=height, boxes=boxes, scores=scores)
+
+
+# the canonical 9:16 crop width of a 1920x1080 source (round(1080*9/16)=608).
+_W_9_16 = 608.0
+# a split/composite half-cell (out_w:out_h//2 = 1080:960) crop width of 1920x1080.
+_W_HALF_CELL = 1215.0
+
+
+class TestSegmentRegions:
+    def test_single_one_face_centers_on_speaker(self):
+        analysis = _faces_analysis([(100.0, 0.0, 200.0, 400.0)], [0.9])
+        regions = ms.segment_regions(analysis, Segment(0, 6, "single"))
+        assert len(regions) == 1
+        x, y, w, h = regions[0]
+        assert (w, h) == (_W_9_16, 1080.0)
+        assert (x, y) == (0.0, 0.0)  # face at left -> crop clamped to left edge
+
+    def test_single_no_faces_uses_centered_cold_crop(self):
+        analysis = _analysis(total=6, boxes=tuple(() for _ in range(6)), scores=tuple(() for _ in range(6)))
+        regions = ms.segment_regions(analysis, Segment(0, 6, "single"))
+        assert len(regions) == 1
+        centered_x = float((1920 - int(_W_9_16)) // 2)
+        assert regions[0][0] == centered_x  # cold center == frame center, no faces
+
+    def test_single_picks_more_active_speaker(self):
+        # two faces in one segment; the RIGHT face is far more active -> single
+        # crop follows it (proves "active-speaker crop region", not largest/first).
+        analysis = _faces_analysis(
+            [(100.0, 0.0, 200.0, 400.0), (1500.0, 0.0, 200.0, 400.0)],
+            [0.1, 0.9],
+        )
+        regions = ms.segment_regions(analysis, Segment(0, 6, "single"))
+        assert regions[0][0] > 600.0  # crop shifted toward the right speaker
+
+    def test_split_two_faces_stable_top_bottom(self):
+        analysis = _faces_analysis(
+            [(100.0, 0.0, 200.0, 400.0), (1500.0, 0.0, 200.0, 400.0)],
+            [0.9, 0.9],
+        )
+        regions = ms.segment_regions(analysis, Segment(0, 6, "split"))
+        assert len(regions) == 2
+        assert all(r[2] == _W_HALF_CELL for r in regions)  # each half-cell width
+        # left face -> top (regions[0]), right face -> bottom (regions[1]): STABLE.
+        assert regions[0][0] < regions[1][0]
+
+    def test_split_one_face_pads_to_two(self):
+        analysis = _faces_analysis([(100.0, 0.0, 200.0, 400.0)], [0.9])
+        regions = ms.segment_regions(analysis, Segment(0, 6, "split"))
+        assert len(regions) == 2
+
+    def test_split_no_faces_pads_two_centered(self):
+        analysis = _analysis(total=6, boxes=tuple(() for _ in range(6)), scores=tuple(() for _ in range(6)))
+        regions = ms.segment_regions(analysis, Segment(0, 6, "split"))
+        assert len(regions) == 2
+
+    def test_composite_three_faces_host_top_guests_bottom(self):
+        # center face is largest -> host (full width on top); left+right are guests
+        # ordered left->right on the bottom.
+        analysis = _faces_analysis(
+            [
+                (100.0, 0.0, 100.0, 400.0),
+                (900.0, 0.0, 300.0, 500.0),
+                (1700.0, 0.0, 100.0, 400.0),
+            ],
+            [0.9, 0.9, 0.9],
+        )
+        regions = ms.segment_regions(analysis, Segment(0, 6, "composite"))
+        assert len(regions) == 3
+        assert regions[0][2] == _W_HALF_CELL  # host is the full-width half-cell
+        assert regions[1][2] == _W_9_16 and regions[2][2] == _W_9_16  # narrow guests
+        assert regions[1][0] < regions[2][0]  # guests ordered left -> right
+
+    def test_composite_two_faces_host_plus_one_guest(self):
+        analysis = _faces_analysis(
+            [(100.0, 0.0, 100.0, 400.0), (800.0, 0.0, 400.0, 500.0)],
+            [0.9, 0.9],
+        )
+        regions = ms.segment_regions(analysis, Segment(0, 6, "composite"))
+        assert len(regions) == 2
+
+    def test_composite_one_face_host_plus_cold_guest(self):
+        analysis = _faces_analysis([(800.0, 0.0, 400.0, 500.0)], [0.9])
+        regions = ms.segment_regions(analysis, Segment(0, 6, "composite"))
+        assert len(regions) == 2
+
+    def test_composite_no_faces_two_centered(self):
+        analysis = _analysis(total=6, boxes=tuple(() for _ in range(6)), scores=tuple(() for _ in range(6)))
+        regions = ms.segment_regions(analysis, Segment(0, 6, "composite"))
+        assert len(regions) == 2
+
+    def test_deterministic(self):
+        analysis = _faces_analysis(
+            [(100.0, 0.0, 200.0, 400.0), (1500.0, 0.0, 200.0, 400.0)],
+            [0.9, 0.9],
+        )
+        seg = Segment(0, 6, "split")
+        assert ms.segment_regions(analysis, seg) == ms.segment_regions(analysis, seg)
+
+    def test_unknown_layout_raises(self):
+        analysis = _faces_analysis([(100.0, 0.0, 200.0, 400.0)], [0.9])
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.segment_regions(analysis, Segment(0, 6, "mosaic"))
+
+    def test_out_of_range_segment_raises(self):
+        analysis = _faces_analysis([(100.0, 0.0, 200.0, 400.0)], [0.9])
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.segment_regions(analysis, Segment(0, 99, "single"))
+
+    def test_empty_segment_raises(self):
+        analysis = _faces_analysis([(100.0, 0.0, 200.0, 400.0)], [0.9])
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.segment_regions(analysis, Segment(3, 3, "single"))
+
+    def test_regions_feed_build_filter_complex(self):
+        # every layout's regions must be accepted by the compositor (sized for it).
+        analysis = _faces_analysis(
+            [(100.0, 0.0, 200.0, 400.0), (1500.0, 0.0, 200.0, 400.0)],
+            [0.9, 0.9],
+        )
+        for layout in LAYOUTS:
+            regs = ms.segment_regions(analysis, Segment(0, 6, layout))
+            fc = ms.build_filter_complex(layout, list(regs), out_w=1080, out_h=1920)
+            assert fc.endswith("[v]")
+
+
+class TestBuildSegmentRegions:
+    def test_attaches_regions_to_every_segment(self):
+        boxes = tuple(((100.0, 0.0, 200.0, 400.0), (1500.0, 0.0, 200.0, 400.0)) for _ in range(30))
+        scores = tuple((0.9, 0.9) for _ in range(30))
+        analysis = _analysis(total=30, boxes=boxes, scores=scores)
+        trace = ms.build_trace(analysis)
+        plan = ms.build_segment_regions(analysis, trace)
+        assert len(plan) == len(trace.segments)
+        for sr, seg in zip(plan, trace.segments, strict=True):
+            assert isinstance(sr, ms.SegmentRegions)
+            assert (sr.start_frame, sr.end_frame, sr.layout) == (seg.start_frame, seg.end_frame, seg.layout)
+            assert sr.regions  # non-empty
+            # region count matches the layout the compositor expects.
+            ms.build_filter_complex(sr.layout, list(sr.regions), out_w=1080, out_h=1920)
+
+    def test_empty_trace_no_segments(self):
+        # a single-speaker clip with no committed layout segments -> empty plan is
+        # still valid (build_segment_regions just maps over whatever segments exist).
+        analysis = _faces_analysis([(100.0, 0.0, 200.0, 400.0)], [0.9])
+        trace = ms.build_trace(analysis)
+        plan = ms.build_segment_regions(analysis, trace)
+        assert len(plan) == len(trace.segments)
+
+
+# --------------------------------------------------------------------------- #
+# Per-segment argv builders (build_segment_argv / build_concat_argv / manifest)
+# --------------------------------------------------------------------------- #
+class TestSegmentArgv:
+    def test_build_segment_argv_trims_time_range(self):
+        argv = ms.build_segment_argv("in.mp4", "seg0.mp4", "[0:v]null[v]", start_sec=1.5, duration_sec=0.5)
+        assert isinstance(argv, list)
+        # input-side -ss (accurate seek) precedes -i; -t bounds the duration.
+        assert argv[argv.index("-ss") + 1] == "1.500000"
+        assert argv.index("-ss") < argv.index("-i")
+        assert argv[argv.index("-t") + 1] == "0.500000"
+        assert "-filter_complex" in argv and argv[-1] == "seg0.mp4"
+        assert "[v]" in argv  # -map [v]
+        # codec contract MUST match build_composite_argv (clean concat stream-copy).
+        assert "libx264" in argv and "aac" in argv and "yuv420p" in argv
+
+    def test_build_concat_argv_is_demuxer_stream_copy(self):
+        argv = ms.build_concat_argv("list.txt", "out.mp4")
+        assert isinstance(argv, list)
+        assert argv[argv.index("-f") + 1] == "concat"
+        assert argv[argv.index("-safe") + 1] == "0"
+        assert argv[argv.index("-i") + 1] == "list.txt"
+        assert argv[argv.index("-c") + 1] == "copy"
+        assert argv[-1] == "out.mp4"
+
+    def test_write_concat_list_escapes_and_orders(self, tmp_path):
+        list_path = str(tmp_path / "concat.txt")
+        seg_a = str(tmp_path / "a's.mp4")  # a single quote to force escaping
+        seg_b = str(tmp_path / "b.mp4")
+        ms._write_concat_list(list_path, [seg_a, seg_b])
+        text = (tmp_path / "concat.txt").read_text(encoding="utf-8")
+        lines = text.splitlines()
+        assert len(lines) == 2
+        assert lines[0].startswith("file '") and lines[1].startswith("file '")
+        assert "'\\''" in lines[0]  # the single quote was escaped
+        # absolute paths + timeline order preserved.
+        assert lines[0].endswith(".mp4'") and "a" in lines[0]
+
+
+# --------------------------------------------------------------------------- #
+# plan_render_segments — full-coverage timeline plan (gaps -> single fill)
+# --------------------------------------------------------------------------- #
+class TestPlanRenderSegments:
+    def test_no_gaps_maps_every_segment(self):
+        left = (100.0, 0.0, 200.0, 400.0)
+        right = (1500.0, 0.0, 200.0, 400.0)
+        boxes = tuple((left, right) if f < 15 else (left,) for f in range(30))
+        scores = tuple((0.9, 0.9) if f < 15 else (0.9,) for f in range(30))
+        analysis = _analysis(total=30, boxes=boxes, scores=scores)
+        trace = ms.build_trace(analysis)
+        plan = ms.plan_render_segments(analysis, trace)
+        assert [(s.start_frame, s.end_frame, s.layout) for s in plan] == [
+            (0, 15, "split"),
+            (15, 30, "single"),
+        ]
+        # contiguous full partition + region count matches each layout.
+        for sr in plan:
+            ms.build_filter_complex(sr.layout, list(sr.regions), out_w=1080, out_h=1920)
+
+    def test_empty_segments_whole_clip_single_fill(self):
+        analysis = _faces_analysis([(100.0, 0.0, 200.0, 400.0)], [0.9], total=6)
+        trace = ReframeTrace(shot_boundaries=(), speaker_per_frame=("",) * 6, segments=(), crops=())
+        plan = ms.plan_render_segments(analysis, trace)
+        assert len(plan) == 1
+        assert (plan[0].start_frame, plan[0].end_frame, plan[0].layout) == (0, 6, "single")
+        assert len(plan[0].regions) == 1  # the single active-speaker crop
+
+    def test_leading_and_trailing_gaps_filled_single(self):
+        analysis = _faces_analysis([(100.0, 0.0, 200.0, 400.0), (1500.0, 0.0, 200.0, 400.0)], [0.9, 0.9], total=12)
+        # one concrete split segment in the MIDDLE -> gap before AND after it.
+        trace = ReframeTrace(
+            shot_boundaries=(),
+            speaker_per_frame=("0",) * 12,
+            segments=(Segment(4, 8, "split"),),
+            crops=(),
+        )
+        plan = ms.plan_render_segments(analysis, trace)
+        assert [(s.start_frame, s.end_frame, s.layout) for s in plan] == [
+            (0, 4, "single"),  # leading gap -> single active-speaker fill
+            (4, 8, "split"),
+            (8, 12, "single"),  # trailing gap -> single fill
+        ]
+
+    def test_overlapping_segments_raise(self):
+        analysis = _faces_analysis([(100.0, 0.0, 200.0, 400.0)], [0.9], total=10)
+        trace = ReframeTrace(
+            shot_boundaries=(),
+            speaker_per_frame=("0",) * 10,
+            segments=(Segment(0, 6, "single"), Segment(4, 10, "single")),
+            crops=(),
+        )
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.plan_render_segments(analysis, trace)
+
+    def test_zero_frames_raises(self):
+        analysis = _analysis(total=6)
+        bad = ms.ShotAnalysis(
+            width=1920,
+            height=1080,
+            fps=30.0,
+            total_frames=0,
+            shot_boundaries=(),
+            boxes_per_frame=(),
+            visual_scores_per_frame=(),
+            diarize_per_frame=(),
+            vad_per_frame=(),
+        )
+        trace = ReframeTrace(shot_boundaries=(), speaker_per_frame=(), segments=(), crops=())
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.plan_render_segments(bad, trace)
+        # (the in-range analysis is unused here beyond constructing a fixture)
+        assert analysis.total_frames == 6
+
+
+# --------------------------------------------------------------------------- #
+# Engine — the REAL per-segment render timeline (cut + composite + concat)
+# --------------------------------------------------------------------------- #
+def _two_segment_analysis():
+    """30 frames @ 30 fps -> split[0,15) then single[15,30) (dwell=15)."""
+    left = (100.0, 0.0, 200.0, 400.0)
+    right = (1500.0, 0.0, 200.0, 400.0)
+    boxes = tuple((left, right) if f < 15 else (left,) for f in range(30))
+    scores = tuple((0.9, 0.9) if f < 15 else (0.9,) for f in range(30))
+    return _analysis(total=30, fps=30.0, boxes=boxes, scores=scores)
+
+
+class TestEngineTimelineRender:
+    def test_multi_segment_cut_composite_concat(self):
+        runs = []
+        moves = []
+        manifests = []
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_two_segment_analysis()),
+            runner=lambda argv, **kw: runs.append(argv) or 0,
+            replace_fn=lambda a, b: moves.append((a, b)),
+            write_concat_fn=lambda lp, sp: manifests.append((lp, list(sp))),
+        )
+        out = eng.reframe("in.mp4", "out.mp4")
+        assert out == "out.mp4"
+        # three passes: seg0 (split), seg1 (single), then the concat.
+        assert len(runs) == 3
+        seg0, seg1, concat = runs
+        assert "vstack=inputs=2[v]" in " ".join(seg0)  # split layout filtergraph
+        assert seg0[-1] == "out.multispeaker.seg0.mp4"
+        assert "vstack" not in " ".join(seg1)  # single layout, no stacking
+        assert seg1[-1] == "out.multispeaker.seg1.mp4"
+        assert "concat" in concat and concat[-1] == "out.multispeaker.part.mp4"
+        # the concat manifest is the segment temps in timeline order.
+        assert manifests == [
+            ("out.multispeaker.concat.mp4.txt", ["out.multispeaker.seg0.mp4", "out.multispeaker.seg1.mp4"])
+        ]
+        # atomic rename of the concatenated result onto out_path.
+        assert moves == [("out.multispeaker.part.mp4", "out.mp4")]
+
+    def test_multi_segment_time_ranges(self):
+        runs = []
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_two_segment_analysis()),
+            runner=lambda argv, **kw: runs.append(argv) or 0,
+            write_concat_fn=lambda lp, sp: None,
+        )
+        eng.reframe("in.mp4", "out.mp4")
+        seg0, seg1, _concat = runs
+        # seg0 = [0,15) @ 30fps -> start 0.0, dur 0.5; seg1 = [15,30) -> start 0.5, dur 0.5
+        assert seg0[seg0.index("-ss") + 1] == "0.000000"
+        assert seg0[seg0.index("-t") + 1] == "0.500000"
+        assert seg1[seg1.index("-ss") + 1] == "0.500000"
+        assert seg1[seg1.index("-t") + 1] == "0.500000"
+
+    def test_multi_segment_seg_failure_cleans_all_partials(self):
+        removed = []
+        # fail on the SECOND segment pass -> seg0 + seg1 partials both cleaned.
+        calls = {"n": 0}
+
+        def runner(argv, **kw):
+            calls["n"] += 1
+            return 0 if calls["n"] == 1 else 1
+
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_two_segment_analysis()),
+            runner=runner,
+            remove_fn=lambda p: removed.append(p),
+            write_concat_fn=lambda lp, sp: None,
+        )
+        with pytest.raises(ms.MultiSpeakerRenderError):
+            eng.reframe("in.mp4", "out.mp4")
+        assert removed == ["out.multispeaker.seg0.mp4", "out.multispeaker.seg1.mp4"]
+
+    def test_multi_segment_concat_failure_cleans_segments_manifest_and_part(self):
+        removed = []
+        calls = {"n": 0}
+
+        def runner(argv, **kw):
+            calls["n"] += 1
+            # seg0, seg1 succeed; the concat (3rd) pass fails.
+            return 1 if calls["n"] == 3 else 0
+
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_two_segment_analysis()),
+            runner=runner,
+            remove_fn=lambda p: removed.append(p),
+            write_concat_fn=lambda lp, sp: None,
+        )
+        with pytest.raises(ms.MultiSpeakerRenderError):
+            eng.reframe("in.mp4", "out.mp4")
+        assert removed == [
+            "out.multispeaker.seg0.mp4",
+            "out.multispeaker.seg1.mp4",
+            "out.multispeaker.concat.mp4.txt",
+            "out.multispeaker.part.mp4",
+        ]
+
+    def test_multi_segment_manifest_write_failure_cleans_partials(self):
+        removed = []
+
+        def boom_write(_lp, _sp):
+            raise OSError("disk full")
+
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_two_segment_analysis()),
+            runner=lambda argv, **kw: 0,
+            remove_fn=lambda p: removed.append(p),
+            write_concat_fn=boom_write,
+        )
+        with pytest.raises(ms.MultiSpeakerRenderError):
+            eng.reframe("in.mp4", "out.mp4")
+        assert removed == [
+            "out.multispeaker.seg0.mp4",
+            "out.multispeaker.seg1.mp4",
+            "out.multispeaker.concat.mp4.txt",
+        ]
+
+    def test_multi_segment_oom_mid_segment_raises_render_error(self):
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_two_segment_analysis()),
+            runner=lambda *a, **k: (_ for _ in ()).throw(MemoryError("oom")),
+            write_concat_fn=lambda lp, sp: None,
+        )
+        with pytest.raises(ms.MultiSpeakerRenderError):
+            eng.reframe("in.mp4", "out.mp4")

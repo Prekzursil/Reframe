@@ -272,6 +272,98 @@ class TestEdges:
 
 
 # --------------------------------------------------------------------------- #
+# WU R3 — per-platform loudness target (~-14 LUFS social, broadcast variants)
+# --------------------------------------------------------------------------- #
+class TestPlatformLoudness:
+    def test_social_platforms_are_minus_14_lufs(self):
+        for name in ("tiktok", "reels", "shorts", "instagram", "youtube"):
+            assert am.PLATFORM_LOUDNESS[name] == -14.0
+
+    def test_broadcast_variants_have_their_own_targets(self):
+        assert am.PLATFORM_LOUDNESS["broadcast"] == -23.0  # EBU R128
+        assert am.PLATFORM_LOUDNESS["atsc"] == -24.0  # US ATSC A/85
+
+    def test_resolve_loudness_target_is_case_insensitive(self):
+        assert am.resolve_loudness_target("TikTok") == -14.0
+        assert am.resolve_loudness_target("  BroadCast ") == -23.0
+
+    def test_resolve_loudness_target_unknown_fails_loud(self):
+        with pytest.raises(RpcError, match="unknown platform"):
+            am.resolve_loudness_target("myspace")
+
+    def test_merge_platform_sets_loudness_target(self, settings, tmp_path, bg_file, registry):
+        run = RecordingRun()
+        svc = am.AudioMix(
+            resolver=lambda vid: "/lib/clip.mp4",
+            out_dir=tmp_path,
+            settings_provider=lambda: settings,
+            run=run,
+            duration=lambda p, s=None: 1.0,
+        )
+        out = svc.merge({"videoId": "v1", "bgPath": bg_file, "platform": "broadcast"}, _rpc_ctx(registry))
+        registry.get(out["jobId"]).wait(timeout=5)
+        flt = run.calls[0][run.calls[0].index("-filter_complex") + 1]
+        assert "I=-23.0" in flt
+
+    def test_explicit_loudness_target_overrides_platform(self, settings, tmp_path, bg_file, registry):
+        run = RecordingRun()
+        svc = am.AudioMix(
+            resolver=lambda vid: "/lib/clip.mp4",
+            out_dir=tmp_path,
+            settings_provider=lambda: settings,
+            run=run,
+            duration=lambda p, s=None: 1.0,
+        )
+        out = svc.merge(
+            {"videoId": "v1", "bgPath": bg_file, "platform": "broadcast", "loudnessTarget": -12},
+            _rpc_ctx(registry),
+        )
+        registry.get(out["jobId"]).wait(timeout=5)
+        flt = run.calls[0][run.calls[0].index("-filter_complex") + 1]
+        assert "I=-12.0" in flt
+
+    def test_garbage_loudness_target_falls_back_to_platform_base(self, settings, tmp_path, bg_file, registry):
+        run = RecordingRun()
+        svc = am.AudioMix(
+            resolver=lambda vid: "/lib/clip.mp4",
+            out_dir=tmp_path,
+            settings_provider=lambda: settings,
+            run=run,
+            duration=lambda p, s=None: 1.0,
+        )
+        out = svc.merge(
+            {"videoId": "v1", "bgPath": bg_file, "platform": "tiktok", "loudnessTarget": "wat"},
+            _rpc_ctx(registry),
+        )
+        registry.get(out["jobId"]).wait(timeout=5)
+        flt = run.calls[0][run.calls[0].index("-filter_complex") + 1]
+        assert "I=-14.0" in flt
+
+    def test_merge_unknown_platform_raises_before_job(self, settings, tmp_path, bg_file, registry):
+        svc = am.AudioMix(
+            resolver=lambda vid: "/lib/clip.mp4",
+            out_dir=tmp_path,
+            settings_provider=lambda: settings,
+        )
+        with pytest.raises(RpcError, match="unknown platform"):
+            svc.merge({"videoId": "v1", "bgPath": bg_file, "platform": "myspace"}, _rpc_ctx(registry))
+
+    def test_normalize_platform_sets_target(self, settings, tmp_path, registry):
+        run = RecordingRun()
+        svc = am.AudioMix(
+            resolver=lambda vid: "/lib/clip.mp4",
+            out_dir=tmp_path,
+            settings_provider=lambda: settings,
+            run=run,
+            duration=lambda p, s=None: 5.0,
+        )
+        out = svc.normalize({"path": "/x/clip.mp4", "platform": "atsc"}, _rpc_ctx(registry))
+        registry.get(out["jobId"]).wait(timeout=5)
+        af = run.calls[0][run.calls[0].index("-af") + 1]
+        assert "I=-24.0" in af
+
+
+# --------------------------------------------------------------------------- #
 # registration
 # --------------------------------------------------------------------------- #
 class TestRegister:

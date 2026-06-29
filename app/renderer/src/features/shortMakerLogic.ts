@@ -11,6 +11,17 @@
 // CONTRACT-NOTE: the wire field names here are FROZEN — identical to the
 // Python/sidecar side (§3 Candidate / §2 controls). Do not rename.
 import type { PlayerWindow } from '../components/Player';
+import { logWarn } from '../lib/logger';
+// WU SP2: the hook-card top-N default + clamp live in the drift-guarded preset
+// mirror (hookCardPreset.ts) so the renderer config can't drift from the sidecar.
+import { HOOK_CARD_DEFAULT_TOP_N, clampHookCardTopN } from '../lib/hookCardPreset';
+// F1+F2: the deferred-job wait is the SINGLE shared helper in ./_api (timeout +
+// {error} reject + AbortSignal + leak-free cleanup). This module drops its old
+// private copy and re-exports the shared one so existing importers/tests (which
+// pull `waitForJobDone` through ShortMaker) keep ONE entry point.
+import { DEFAULT_JOB_TIMEOUT_MS, waitForJobDone } from './_api';
+
+export { waitForJobDone };
 
 // ---------------------------------------------------------------------------
 // Contract types (§3) — field names identical to the Python/wire side.
@@ -62,6 +73,13 @@ export interface ShortMakerControls {
   reframeEngine: string;
   /** P3-A: render the candidate's hook as the headline overlay (default ON). */
   hookTitle: boolean;
+  /**
+   * WU SP2: render the hook as an OpusClip CARD (white box, bold black, upper
+   * third, first ~5 s) on the top-N clips by virality rank only (default ON).
+   */
+  hookCard: boolean;
+  /** WU SP2: how many top clips (by virality rank) get a hook card (default 10). */
+  hookCardTopN: number;
   /** P3-B: filler-word removal cut pass (default OFF — experimental). */
   removeFillers: boolean;
   /**
@@ -192,13 +210,48 @@ export const CAPTION_STYLES: CaptionStyleOption[] = [
   { id: 'none', engine: 'libass', label: 'No captions' },
 ];
 
+/**
+ * Libass-engine PRESETS that are NOT part of the frozen three-way Remotion
+ * TEMPLATES mirror (V1.1 WU SP1). These are first-class, SELECTABLE caption
+ * looks that route to the libass {@link CaptionEngine} (not Remotion), so they
+ * are kept OUT of {@link CAPTION_STYLES} (which the conformance test pins to
+ * `TEMPLATES ∪ {libass, none}`). The `opusclip-karaoke` preset selects the
+ * word-by-word OpusClip karaoke ASS builder on the sidecar (karaoke=True).
+ *
+ * They ARE part of the user-facing catalog ({@link ALL_CAPTION_STYLES}) and the
+ * sanitizer allowlist ({@link CAPTION_STYLE_OPTIONS}) so a chosen preset is
+ * selectable in the picker and survives both renderer sanitizers end-to-end.
+ */
+export const CAPTION_LIBASS_PRESETS: CaptionStyleOption[] = [
+  { id: 'opusclip-karaoke', engine: 'libass', label: 'OpusClip Karaoke (word pop)' },
+];
+
 /** A4: libass is the default caption engine/style. */
 export const DEFAULT_CAPTION_STYLE = 'libass';
 
-export const CAPTION_STYLE_OPTIONS: readonly string[] = CAPTION_STYLES.map((s) => s.id);
+/**
+ * The FULL selectable caption catalog = the three-way Remotion/libass mirror
+ * ({@link CAPTION_STYLES}) PLUS the libass-only presets
+ * ({@link CAPTION_LIBASS_PRESETS}). This is what the picker renders and what the
+ * sanitizers honour; {@link CAPTION_STYLES} stays the conformance-pinned mirror.
+ */
+export const ALL_CAPTION_STYLES: CaptionStyleOption[] = [
+  ...CAPTION_STYLES,
+  ...CAPTION_LIBASS_PRESETS,
+];
 
-/** A4 reframe engines + the "auto" selector (verthor with claudeshorts fallback). */
-export const REFRAME_ENGINE_OPTIONS = ['auto', 'verthor', 'claudeshorts'] as const;
+export const CAPTION_STYLE_OPTIONS: readonly string[] = ALL_CAPTION_STYLES.map((s) => s.id);
+
+/**
+ * A4 reframe engines + the "auto" selector (verthor with claudeshorts fallback)
+ * + the R1 (V1.1) flagship hybrid multi-speaker director (explicit opt-in).
+ */
+export const REFRAME_ENGINE_OPTIONS = [
+  'auto',
+  'verthor',
+  'claudeshorts',
+  'reframe_multispeaker',
+] as const;
 export type ReframeEngineChoice = (typeof REFRAME_ENGINE_OPTIONS)[number];
 export const DEFAULT_REFRAME_ENGINE: ReframeEngineChoice = 'auto';
 
@@ -206,6 +259,7 @@ export const REFRAME_ENGINE_LABELS: Record<ReframeEngineChoice, string> = {
   auto: 'Auto (verthor, falls back)',
   verthor: 'verthor (WSL)',
   claudeshorts: 'claude-shorts (in-app)',
+  reframe_multispeaker: 'Multi-speaker (hybrid, WSL/GPU)',
 };
 
 /**
@@ -231,6 +285,8 @@ export const DEFAULT_CONTROLS: ShortMakerControls = {
   captionStyle: DEFAULT_CAPTION_STYLE,
   reframeEngine: DEFAULT_REFRAME_ENGINE,
   hookTitle: true,
+  hookCard: true,
+  hookCardTopN: HOOK_CARD_DEFAULT_TOP_N,
   // V1 IA (GRILL G-4): quality features DEFAULT-ON to match the "all quality ON"
   // promise — removeFillers / autoZoom / silenceTrim / stabilize all start ON
   // (the novice front door ships its best output without touching Advanced).
@@ -287,6 +343,10 @@ export function sanitizeControls(raw: Partial<ShortMakerControls>): ShortMakerCo
     ? rawEngine
     : DEFAULT_CONTROLS.reframeEngine;
   const hookTitle = typeof raw.hookTitle === 'boolean' ? raw.hookTitle : DEFAULT_CONTROLS.hookTitle;
+  // WU SP2: hookCard is a real-bool toggle (else default ON — G-4); hookCardTopN
+  // clamps to a positive integer (else the default 10) via the preset mirror.
+  const hookCard = typeof raw.hookCard === 'boolean' ? raw.hookCard : DEFAULT_CONTROLS.hookCard;
+  const hookCardTopN = clampHookCardTopN(raw.hookCardTopN);
   const removeFillers =
     typeof raw.removeFillers === 'boolean' ? raw.removeFillers : DEFAULT_CONTROLS.removeFillers;
   const rawEmphasis = (raw.emphasis ?? '').trim().toLowerCase();
@@ -306,6 +366,8 @@ export function sanitizeControls(raw: Partial<ShortMakerControls>): ShortMakerCo
     captionStyle,
     reframeEngine,
     hookTitle,
+    hookCard,
+    hookCardTopN,
     removeFillers,
     emphasis,
     autoZoom,
@@ -511,10 +573,10 @@ export function recordFeedback(
   if (!api || typeof api.rpc !== 'function') return;
   try {
     Promise.resolve(api.rpc('feedback.record', { videoId, candidate, action })).catch((e) => {
-      console.warn('feedback.record failed (ignored)', e);
+      logWarn('feedback.record failed (ignored)', e);
     });
   } catch (e) {
-    console.warn('feedback.record failed (ignored)', e);
+    logWarn('feedback.record failed (ignored)', e);
   }
 }
 
@@ -628,18 +690,24 @@ export function errMsg(e: unknown): string {
 }
 
 /**
- * Default job.done wait timeout (HIGH #5): a dead/wedged sidecar must not hang
- * the UI forever. Exports take the longest of the short-maker jobs, so 15 min is
- * a generous ceiling — long enough for a real batch export, short enough that a
- * silent sidecar death surfaces a user-facing error instead of a frozen UI.
+ * Default job.done wait timeout (F2): a dead/wedged sidecar must not hang the UI
+ * forever. Exports take the longest of the short-maker jobs; the shared
+ * {@link DEFAULT_JOB_TIMEOUT_MS} (15 min) is a generous ceiling — long enough
+ * for a real batch export, short enough that a silent sidecar death surfaces a
+ * user-facing error instead of a frozen UI. Aliased to the shared default so
+ * there is ONE source of truth for the ceiling.
  */
-export const EXPORT_JOB_TIMEOUT_MS = 15 * 60 * 1000;
+export const EXPORT_JOB_TIMEOUT_MS = DEFAULT_JOB_TIMEOUT_MS;
 
 /**
  * Resolve an rpc result into its terminal payload (P4 §8c batch reuse): try the
  * immediate `extract`; if it's only a deferred {jobId} handle, record it on
  * `jobRef` (for progress/cancel) and wait for `job.done`. Mirrors the inline
  * extract-or-wait pattern in runSelect/runExport so the batch flow stays small.
+ *
+ * `timeoutMs`/`signal` flow straight through to the shared {@link waitForJobDone}
+ * (F2): omitting `timeoutMs` applies the shared default ceiling, and `signal`
+ * lets a cancel/unmount tear the wait down.
  */
 export async function resolveJobResult<T>(
   api: Api,
@@ -647,53 +715,13 @@ export async function resolveJobResult<T>(
   extract: (payload: unknown) => T[] | null,
   jobRef: { current: string | null },
   timeoutMs?: number,
+  signal?: AbortSignal,
 ): Promise<T[] | null> {
   const direct = extract(res);
   if (direct !== null) return direct;
   if (isJobHandle(res)) {
     jobRef.current = res.jobId;
-    return waitForJobDone(api, res.jobId, extract, timeoutMs);
+    return waitForJobDone(api, res.jobId, extract, timeoutMs, signal);
   }
   return null;
-}
-
-/**
- * Wait for a job.done notification for `jobId` and pull the payload out with
- * `extract`. If the api exposes no onJobDone hook, resolves null (the rpc
- * promise was the resolution channel and already returned only a handle).
- *
- * HIGH #5: when `timeoutMs` is given, the wait is raced against a timer that
- * REJECTS with a user-facing error if no matching `job.done` arrives in time —
- * a dead sidecar can no longer hang the UI indefinitely. The subscription and
- * timer are always cleaned up (whichever side wins). Omitting `timeoutMs`
- * preserves the original never-timing-out behavior (used where the rpc promise
- * is the real resolution channel).
- */
-export function waitForJobDone<T>(
-  api: Api,
-  jobId: string,
-  extract: (payload: unknown) => T | null,
-  timeoutMs?: number,
-): Promise<T | null> {
-  if (typeof api.onJobDone !== 'function') return Promise.resolve(null);
-  return new Promise<T | null>((resolve, reject) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const off = api.onJobDone!((d) => {
-      if (d.jobId !== jobId) return;
-      if (timer !== undefined) clearTimeout(timer);
-      off();
-      resolve(extract(d.result));
-    });
-    if (timeoutMs !== undefined && timeoutMs > 0) {
-      timer = setTimeout(() => {
-        off();
-        reject(
-          new Error(
-            'Timed out waiting for the export to finish — the sidecar may have ' +
-              'stopped responding. Please try again.',
-          ),
-        );
-      }, timeoutMs);
-    }
-  });
 }

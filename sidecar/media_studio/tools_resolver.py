@@ -263,9 +263,10 @@ def require_tool(
 # --------------------------------------------------------------------------- #
 
 # CONTRACT-NOTE: pinned to the ggml-org/llama.cpp release tag below. The asset
-# file names follow the release's win-x64 naming scheme. sha256 is optional per
-# A3/U4 ("sha-optional") and left unpinned; the human verifies URL + hash on the
-# first real download (no network allowed in build sessions) and fills them in.
+# file names follow the release's win-x64 naming scheme. F3c (security hardening):
+# every download is now sha256-pinned (verified by streaming the real release
+# zips on 2026-06-28). NOTE: release b5192 ships NO `win-cpu-x64.zip` — the CPU
+# fallback build is the AVX2 variant, so the CPU URL was corrected accordingly.
 LLAMA_RELEASE_TAG = "b5192"
 _LLAMA_BASE_URL = f"https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_RELEASE_TAG}"
 
@@ -273,12 +274,17 @@ LLAMA_CUDA_ASSET = "llama-server-cuda"
 LLAMA_CUDART_ASSET = "llama-server-cuda-cudart"
 LLAMA_CPU_ASSET = "llama-server-cpu"
 
+# F3c: verified sha256 of each release zip (streamed from GitHub, 2026-06-28).
+LLAMA_CUDA_SHA256 = "4e06e8577f3b1ca3a9ee9ecc002d6cf10c2c939db5084c0ecdfe8f90baeef238"
+LLAMA_CUDART_SHA256 = "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6"
+LLAMA_CPU_SHA256 = "8dd95fd642402a13c79c62ffcdee5736a893834109c5d7471a028b4aa53f1da2"
+
 #: where the downloaded archives land (relative to the assets root); the
 #: first-run bootstrap extracts them into TOOL_DIR_* and deletes the zip.
 _DL_DIR = "tools/downloads"
 LLAMA_CUDA_ZIP = f"{_DL_DIR}/llama-{LLAMA_RELEASE_TAG}-bin-win-cuda-cu12.4-x64.zip"
 LLAMA_CUDART_ZIP = f"{_DL_DIR}/cudart-llama-bin-win-cu12.4-x64.zip"
-LLAMA_CPU_ZIP = f"{_DL_DIR}/llama-{LLAMA_RELEASE_TAG}-bin-win-cpu-x64.zip"
+LLAMA_CPU_ZIP = f"{_DL_DIR}/llama-{LLAMA_RELEASE_TAG}-bin-win-avx2-x64.zip"
 
 
 @dataclass(frozen=True)
@@ -350,6 +356,7 @@ def register_tool_assets() -> None:
             label="llama.cpp server (CUDA, win-x64)",
             installer="download",
             url=f"{_LLAMA_BASE_URL}/llama-{LLAMA_RELEASE_TAG}-bin-win-cuda-cu12.4-x64.zip",
+            sha256=LLAMA_CUDA_SHA256,
             detect=detect_llama_cuda,
         )
     )
@@ -362,6 +369,7 @@ def register_tool_assets() -> None:
             label="CUDA runtime DLLs for llama.cpp (win-x64)",
             installer="download",
             url=f"{_LLAMA_BASE_URL}/cudart-llama-bin-win-cu12.4-x64.zip",
+            sha256=LLAMA_CUDART_SHA256,
             detect=detect_llama_cudart,
         )
     )
@@ -371,9 +379,10 @@ def register_tool_assets() -> None:
             kind="tool",
             size_mb=30,
             dest=LLAMA_CPU_ZIP,
-            label="llama.cpp server (CPU fallback, win-x64)",
+            label="llama.cpp server (CPU fallback / AVX2, win-x64)",
             installer="download",
-            url=f"{_LLAMA_BASE_URL}/llama-{LLAMA_RELEASE_TAG}-bin-win-cpu-x64.zip",
+            url=f"{_LLAMA_BASE_URL}/llama-{LLAMA_RELEASE_TAG}-bin-win-avx2-x64.zip",
+            sha256=LLAMA_CPU_SHA256,
             detect=detect_llama_cpu,
         )
     )

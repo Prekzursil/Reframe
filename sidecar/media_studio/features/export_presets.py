@@ -41,6 +41,7 @@ from typing import Any
 from .. import protocol
 from ..protocol import ErrorCode, RpcContext, RpcError
 from ..util import clamp, get_logger
+from . import aspect as aspect_mod
 from . import caption_remotion
 
 log = get_logger("media_studio.features.export_presets")
@@ -58,8 +59,9 @@ MAX_CLIP_SEC = 60
 #: :data:`caption_remotion.STYLES` so the guard tracks the real renderers.
 CAPTION_STYLES: frozenset[str] = frozenset({"libass", "none", *caption_remotion.STYLES})
 
-#: Allowed ``reframeEngine`` ids (A4 engines + the "auto" selector).
-REFRAME_ENGINES: frozenset[str] = frozenset({"auto", "verthor", "claudeshorts"})
+#: Allowed ``reframeEngine`` ids (A4 engines + the "auto" selector + the R1
+#: flagship hybrid multi-speaker director, ``reframe_multispeaker``).
+REFRAME_ENGINES: frozenset[str] = frozenset({"auto", "verthor", "claudeshorts", "reframe_multispeaker"})
 
 #: Default reframe engine when a preset omits one. "auto" now resolves to the
 #: in-sidecar claudeshorts engine (no WSL); verthor is an explicit opt-in.
@@ -77,6 +79,19 @@ def _require_str(raw: dict[str, Any], key: str) -> str:
     return value.strip()
 
 
+def _require_supported_aspect(raw_aspect: str) -> str:
+    """Canonicalize + guard an aspect against the curated social export set (R3).
+
+    Translates the shared registry's ``ValueError`` (garbage OR a parseable-but-
+    uncurated ratio like ``16:9``) into a fail-loud :class:`RpcError`, so a bad
+    save never persists an aspect the engines/UI don't offer.
+    """
+    try:
+        return aspect_mod.require_supported_aspect(raw_aspect)
+    except ValueError as exc:
+        raise _invalid(str(exc)) from exc
+
+
 def _require_int(raw: dict[str, Any], key: str) -> int:
     value = raw.get(key)
     # bool is an int subclass; reject it explicitly so True/False can't pose as a count.
@@ -92,16 +107,17 @@ def normalize_preset(raw: Any) -> ExportPreset:
     """Validate + normalize an export-preset payload into the frozen wire shape.
 
     Clamps the ``minSec``/``maxSec`` window into the hard ``[20, 60]`` range (and
-    never lets it invert), floors ``count`` at 1, and rejects an unknown
-    ``captionStyle`` / ``reframeEngine`` with a fail-loud ``RpcError`` so a bad
-    save can never persist a half-typed or unrenderable record. A missing ``id``
-    is generated.
+    never lets it invert), floors ``count`` at 1, canonicalizes ``aspect`` and
+    guards it against the curated social set (9:16 / 1:1 / 4:5 — WU R3), and
+    rejects an unknown ``captionStyle`` / ``reframeEngine`` with a fail-loud
+    ``RpcError`` so a bad save can never persist a half-typed or unrenderable
+    record. A missing ``id`` is generated.
     """
     if not isinstance(raw, dict):
         raise _invalid("preset must be an object")
 
     label = _require_str(raw, "label")
-    aspect = _require_str(raw, "aspect")
+    aspect = _require_supported_aspect(_require_str(raw, "aspect"))
     min_sec = _require_int(raw, "minSec")
     max_sec = _require_int(raw, "maxSec")
     count = _require_int(raw, "count")

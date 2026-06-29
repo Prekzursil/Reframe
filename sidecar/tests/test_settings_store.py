@@ -231,6 +231,117 @@ def test_get_tolerates_non_list_providers(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# F4b: redacted get -> set round-trip must PRESERVE the RAW key (no silent loss)
+# --------------------------------------------------------------------------- #
+def test_set_preserves_raw_cloud_key_on_redacted_round_trip(store: SettingsStore) -> None:
+    """Writing back the redacted cloudApiKey keeps the live RAW key on disk."""
+    store.set({"cloudApiKey": "sk-secret-1234"})
+    redacted = store.get()["cloudApiKey"]
+    assert redacted == "…1234"
+    # The UI reads the redacted view and writes the whole block back unchanged.
+    store.set({"cloudApiKey": redacted, "useCloud": True})
+    assert store.get_raw()["cloudApiKey"] == "sk-secret-1234"
+    assert store.get_raw()["useCloud"] is True
+
+
+def test_set_writes_a_genuinely_new_cloud_key(store: SettingsStore) -> None:
+    """A non-redacted incoming cloudApiKey REPLACES the stored one (not preserved)."""
+    store.set({"cloudApiKey": "sk-old-AAAA"})
+    store.set({"cloudApiKey": "sk-new-BBBB"})
+    assert store.get_raw()["cloudApiKey"] == "sk-new-BBBB"
+
+
+def test_set_cloud_key_no_stored_value_passes_through(store: SettingsStore) -> None:
+    """With nothing stored, an incoming cloudApiKey is written verbatim (no restore)."""
+    store.set({"cloudApiKey": "…1234"})
+    # No prior RAW key existed, so the placeholder cannot be restored; it persists.
+    assert store.get_raw()["cloudApiKey"] == "…1234"
+
+
+def test_set_non_str_cloud_key_passes_through(store: SettingsStore) -> None:
+    """A non-string cloudApiKey value bypasses the restore guard and is stored."""
+    store.set({"cloudApiKey": "sk-secret-1234"})
+    store.set({"cloudApiKey": None})
+    assert store.get_raw()["cloudApiKey"] is None
+
+
+def test_set_preserves_raw_provider_keys_on_redacted_round_trip(store: SettingsStore) -> None:
+    """Writing back redacted provider apiKeys keeps the live RAW keys on disk."""
+    store.set({"providers": [{"id": "groq", "apiKeys": ["gsk-secret-WXYZ", "gsk-second-7890"]}]})
+    redacted = store.get()["providers"]
+    assert redacted[0]["apiKeys"] == ["…WXYZ", "…7890"]
+    # Round-trip the redacted block back (UI edits an unrelated field).
+    store.set({"providers": [{"id": "groq", "apiKeys": redacted[0]["apiKeys"], "enabled": False}]})
+    raw = store.get_raw()["providers"]
+    assert raw[0]["apiKeys"] == ["gsk-secret-WXYZ", "gsk-second-7890"]
+    assert raw[0]["enabled"] is False
+
+
+def test_set_provider_mixed_new_and_redacted_keys(store: SettingsStore) -> None:
+    """A redacted key is restored while a sibling NEW key at a new index is kept."""
+    store.set({"providers": [{"id": "groq", "apiKeys": ["gsk-keep-WXYZ"]}]})
+    redacted = store.get()["providers"][0]["apiKeys"][0]
+    # Index 0 is the redacted existing key; index 1 is a brand-new raw key.
+    store.set({"providers": [{"id": "groq", "apiKeys": [redacted, "gsk-added-RAW2"]}]})
+    raw = store.get_raw()["providers"][0]["apiKeys"]
+    assert raw == ["gsk-keep-WXYZ", "gsk-added-RAW2"]
+
+
+def test_set_unknown_provider_keys_pass_through(store: SettingsStore) -> None:
+    """A provider with no stored counterpart writes its apiKeys verbatim."""
+    store.set({"providers": [{"id": "new", "apiKeys": ["…WXYZ"]}]})
+    assert store.get_raw()["providers"][0]["apiKeys"] == ["…WXYZ"]
+
+
+def test_set_provider_without_apikeys_list_passes_through(store: SettingsStore) -> None:
+    """A provider entry whose apiKeys is absent/non-list is left untouched."""
+    store.set({"providers": [{"id": "groq", "apiKeys": ["gsk-raw-WXYZ"]}]})
+    store.set({"providers": [{"id": "groq", "model": "x"}]})
+    saved = store.get_raw()["providers"][0]
+    assert saved == {"id": "groq", "model": "x"}
+
+
+def test_set_non_dict_provider_entry_passes_through(store: SettingsStore) -> None:
+    """A non-dict entry in the incoming providers list is preserved as-is."""
+    store.set({"providers": ["not-a-dict"]})
+    assert store.get_raw()["providers"] == ["not-a-dict"]
+
+
+def test_set_tolerates_corrupt_stored_providers(tmp_path: Path) -> None:
+    """A non-list / non-dict stored providers value never crashes the restore step."""
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"providers": "not-a-list"}), encoding="utf-8")
+    store = SettingsStore(path)
+    store.set({"providers": [{"id": "groq", "apiKeys": ["gsk-raw-WXYZ"]}]})
+    assert store.get_raw()["providers"][0]["apiKeys"] == ["gsk-raw-WXYZ"]
+
+
+def test_set_skips_corrupt_stored_provider_dict(tmp_path: Path) -> None:
+    """Stored provider entries that are non-dict or lack id/apiKeys are skipped."""
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps({"providers": ["bad", {"id": 5, "apiKeys": ["x"]}, {"id": "groq", "apiKeys": "nope"}]}),
+        encoding="utf-8",
+    )
+    store = SettingsStore(path)
+    # None of the corrupt stored entries map a restorable key; new write wins.
+    store.set({"providers": [{"id": "groq", "apiKeys": ["…WXYZ"]}]})
+    assert store.get_raw()["providers"][0]["apiKeys"] == ["…WXYZ"]
+
+
+def test_set_provider_non_str_id_passes_through(store: SettingsStore) -> None:
+    """An incoming provider whose id is not a string skips the restore lookup."""
+    store.set({"providers": [{"id": 5, "apiKeys": ["…WXYZ"]}]})
+    assert store.get_raw()["providers"][0]["apiKeys"] == ["…WXYZ"]
+
+
+def test_set_without_secret_keys_is_unaffected(store: SettingsStore) -> None:
+    """A plain set (no cloudApiKey / providers) skips the restore branches entirely."""
+    store.set({"useCloud": True})
+    assert store.get_raw()["useCloud"] is True
+
+
+# --------------------------------------------------------------------------- #
 # WU-0 (ux-qol): additive QoL defaults + merge behavior the downstream WUs rely on
 # --------------------------------------------------------------------------- #
 def test_qol_defaults_present_exact(store: SettingsStore) -> None:

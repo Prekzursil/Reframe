@@ -22,6 +22,8 @@ from media_studio.features.tts import edgetts as et
 from media_studio.features.tts import engine as eng
 from media_studio.features.tts import kokoro as kk
 
+from tests._import_hygiene import assert_module_import_is_light
+
 SETTINGS = {"ffmpegPath": "C:/tools/ffmpeg/ffmpeg.exe"}
 CUES = [
     {"index": 1, "start": 0.0, "end": 2.0, "text": "Hello there."},
@@ -37,9 +39,22 @@ def fake_ffmpeg(monkeypatch):
 
 
 def test_no_heavy_modules_imported_at_collection():
-    """A6 lesson 1 guard: importing the engines must NOT pull native backends."""
-    for banned in ("onnxruntime", "kokoro_onnx", "edge_tts", "torch", "aiohttp"):
-        assert banned not in sys.modules, f"{banned} leaked into module import"
+    """A6 lesson 1 guard: importing the engines must NOT pull native backends.
+
+    Checked in a CLEAN subprocess so the guard measures the engine modules' import
+    graph, not the shared pytest ``sys.modules`` (which other tests pollute by
+    exercising real backends when those happen to be installed locally).
+    """
+    assert_module_import_is_light(
+        (
+            "media_studio.features.tts.chatterbox",
+            "media_studio.features.tts.chatterbox_runner",
+            "media_studio.features.tts.edgetts",
+            "media_studio.features.tts.engine",
+            "media_studio.features.tts.kokoro",
+        ),
+        ("onnxruntime", "kokoro_onnx", "edge_tts", "torch", "aiohttp"),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -571,8 +586,9 @@ class TestChatterbox:
 # --------------------------------------------------------------------------- #
 class TestChatterboxRunner:
     def test_module_import_is_light(self):
-        assert "torch" not in sys.modules
-        assert "chatterbox" not in sys.modules
+        # Clean-subprocess import-hygiene guard (immune to cross-test pollution):
+        # importing the runner must not pull torch / the chatterbox backbone.
+        assert_module_import_is_light("media_studio.features.tts.chatterbox_runner", ("torch", "chatterbox"))
 
     def test_parse_job_valid(self):
         job = cbr.parse_job(cb.build_job_payload(CUES, "C:/s.wav", "en", "C:/o.wav", 1.0))

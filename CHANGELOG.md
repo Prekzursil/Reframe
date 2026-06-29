@@ -5,6 +5,58 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-06-29
+
+**Reframe v1.1.0 — the multi-speaker release.** The flagship is a HYBRID
+multi-speaker reframe engine that decides per-segment between **cut** (lock onto
+the single active speaker), **50-50 split**, and **3-up composite**, driven by a
+vendored, GPU-validated **LR-ASD** active-speaker model. Ships alongside tiered
+subtitles, model management, media lineage, OpusClip-parity polish, and
+foundation hardening. Both coverage gates remain at **strict 100% line + branch**
+(sidecar **and** renderer) under the single `quality` CI gate.
+
+### Added — HYBRID multi-speaker reframe engine (the flagship)
+
+- **Per-segment layout decision** — `MultiSpeakerReframeEngine.reframe` analyses
+  the active speaker over time and renders each segment as the right layout:
+  **cut** (one active speaker, static centered crop), **50-50 vertical split**
+  (two concurrently-active speakers, two independently captioned regions), or
+  **3-up composite** (host top + two guests bottom). Per-segment
+  `build_filter_complex` + ffmpeg concat; pure, unit-tested multi-region
+  geometry.
+- **LR-ASD active-speaker oracle (vendored, GPU-validated)** — vendored
+  numpy-2-clean LR-ASD (Junhua-Liao/LR-ASD, IJCV 2025, MIT) — S3FD detect → IoU
+  track → 112-crop → MFCC → windowed ASD score. Proven **bit-identical**
+  (max-abs-diff `0.000e+00`) to the reference, so it inherits LR-ASD's published
+  **Columbia ASD F1 96.4%** (TalkSet-ft) / **AVA val mAP ~94%**. Audio fusion
+  (SpeechBrain VAD + ECAPA diarization) contributes via a diarize→visual-track
+  namespace map.
+- **R0 evaluation harness** — speaker-attribution, crop-IoU, switch-latency,
+  layout-match, and within-segment static-jitter metrics; GPU-validated on real
+  footage (within-segment jitter 0.19 / 0.37 / 0.47 ≪ 3.17 baseline).
+
+### Added — Tiered subtitles, model management, media lineage, OpusClip parity
+
+- **Tiered subtitle styles** and delivery options building on the v1.0 caption
+  editor.
+- **Model management** surface for the local/bundled model catalog.
+- **Media lineage** tracking across the produce/edit pipeline.
+- **OpusClip-parity** improvements to the short-maker output.
+
+### Changed — Foundation hardening
+
+- Foundation hardening across the sidecar and renderer, with both coverage gates
+  held at strict 100% line + branch under the deterministic `quality` CI gate.
+
+### Validation (honest)
+
+- Multi-speaker engine end-to-end re-validated on real `razvan_gandu` content on
+  a local RTX 4050: single + split rendered and **frame-confirmed**, all R0
+  metric axes pass, composite render-path proven via the shared compositor (its
+  natural 3-concurrent-speaker trigger does not occur in this footage). LR-ASD
+  faithfulness is a numerical-equivalence proof, not an 87-minute re-measure.
+  Full record in `docs/V1.1-BUILD-NOTES.md`.
+
 ## [1.0.0] — 2026-06-28
 
 **Reframe v1.0.0 — the first stable release.** A plug-and-play, local-first Windows desktop

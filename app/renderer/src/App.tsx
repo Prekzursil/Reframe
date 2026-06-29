@@ -34,11 +34,12 @@ import {
 } from './components/navIcons';
 // AI Director panel (lazy: it pulls the storyboard/diff + cost-banner surface).
 const DirectorPanel = lazy(() => import('./panels/DirectorPanel'));
-import { client, hasApi, rpc, type ReadinessAction, type Video } from './lib/rpc';
+import { client, hasApi, rpc, type ReadinessAction, type RoutingMode, type Video } from './lib/rpc';
+import { RoutingToggle } from './components/RoutingToggle';
 import { actionSection } from './features/providersKeysLogic';
 import { ToastProvider } from './components/toast/ToastProvider';
 import { ToastHost } from './components/toast/ToastHost';
-import { JobQueue } from './components/JobQueue';
+import { JobQueue, JOBQUEUE_PANEL_ID } from './components/JobQueue';
 import { SidecarBanner } from './components/SidecarBanner';
 import { registerJobRetry } from './components/useJob';
 // Foundation owns the top-level CSS import (per components/shell.css note).
@@ -164,6 +165,12 @@ function useRepurposeBadge(onResume: (resumeId: string) => void): number {
 function AppShell(): React.ReactElement {
   const [route, setRoute] = useState<Route>({ name: 'library' });
   const [quality, setQuality] = useState<Quality>('local');
+  // M3: the cross-cutting RoutingPolicy.global header toggle (Local/Cloud/Auto).
+  // DECISION §4: defaults to 'local' and never auto-promotes — it only moves on an
+  // explicit user click (RoutingToggle no-ops a re-click). `routingBusy` disables
+  // the control while the setRoutingPolicy write is in flight.
+  const [routingGlobal, setRoutingGlobal] = useState<RoutingMode>('local');
+  const [routingBusy, setRoutingBusy] = useState(false);
   // The currently-open Edit video (kept in shell state so it survives tab
   // switches; null until a video is opened from the Library).
   const [editVideo, setEditVideo] = useState<Video | null>(null);
@@ -171,15 +178,20 @@ function AppShell(): React.ReactElement {
   // default — the panel polls job.list only while open.
   const [jobsOpen, setJobsOpen] = useState(false);
 
-  // Best-effort hydrate the quality toggle from persisted settings.
+  // Best-effort hydrate the quality toggle + M3 routing-policy global from
+  // persisted settings (one read). An out-of-enum / missing routingPolicy.global
+  // keeps the local default (the sidecar read is fail-closed to local anyway).
   useEffect(() => {
     if (!hasApi()) return;
     let cancelled = false;
-    void rpc<{ useCloud?: boolean }>('settings.get')
+    void rpc<{ useCloud?: boolean; routingPolicy?: { global?: string } }>('settings.get')
       .then((settings) => {
-        if (!cancelled && settings && typeof settings.useCloud === 'boolean') {
+        if (cancelled || !settings) return;
+        if (typeof settings.useCloud === 'boolean') {
           setQuality(settings.useCloud ? 'cloud' : 'local');
         }
+        const g = settings.routingPolicy?.global;
+        if (g === 'local' || g === 'cloud' || g === 'auto') setRoutingGlobal(g);
       })
       .catch(() => {
         // Settings may be unavailable early; keep the local default.
@@ -195,6 +207,22 @@ function AppShell(): React.ReactElement {
     void rpc('settings.set', { useCloud: q === 'cloud' }).catch(() => {
       // Persisting is best-effort; the in-memory toggle still reflects intent.
     });
+  }, []);
+
+  // M3: persist the global routing mode via the dedicated, fail-closed write RPC
+  // (NOT settings.set — the sidecar sanitises + clamps the policy). Best-effort:
+  // the in-memory toggle reflects intent even if the write fails; `routingBusy`
+  // gates double-writes.
+  const changeRouting = useCallback((mode: RoutingMode) => {
+    setRoutingGlobal(mode);
+    if (!hasApi()) return;
+    setRoutingBusy(true);
+    void client.models
+      .setRoutingPolicy({ global: mode })
+      .catch(() => {
+        // Persisting is best-effort; the in-memory toggle still reflects intent.
+      })
+      .finally(() => setRoutingBusy(false));
   }, []);
 
   // WU-13: restore the last-opened video on launch. Read the persisted
@@ -329,10 +357,12 @@ function AppShell(): React.ReactElement {
         <header className="app__bar">
           <span className="app__brand">Reframe - Media Studio</span>
           <QualityToggle quality={quality} onChange={changeQuality} />
+          <RoutingToggle value={routingGlobal} onChange={changeRouting} busy={routingBusy} />
           <button
             type="button"
             className="app__jobs-toggle"
             aria-expanded={jobsOpen}
+            aria-controls={JOBQUEUE_PANEL_ID}
             onClick={() => setJobsOpen((open) => !open)}
           >
             Jobs

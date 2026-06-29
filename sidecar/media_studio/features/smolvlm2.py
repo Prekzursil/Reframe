@@ -502,7 +502,9 @@ def build_reranker(
 # asset registration (mirrors diarize / parakeet_asr / ctc_align)
 # --------------------------------------------------------------------------- #
 #: pinned SmolVLM2 revision (SOTA manifest #13; transformers ==4.49.0).
-ASSET_REVISION = "482adb5"
+# F3c: expanded the abbreviated 7-char hash to the full 40-char commit (verified
+# via the HF revision API; this is also the current main).
+ASSET_REVISION = "482adb537c021c86670beed01cd58990d01e72e4"
 ASSET_SIZE_MB = 4500
 
 

@@ -52,6 +52,7 @@ import './shortmaker.css';
 import './shortmaker-p3.css';
 import '../views/shorts.css';
 import { type PlayerHandle } from '../components/Player';
+import { JobAbortedError } from './_api';
 import { defaultEmphasisForStyle } from '../lib/captionTemplates';
 import type { Cue, ShortReexportHint } from '../lib/rpc';
 import { CandidateReview } from './CandidateReview';
@@ -161,6 +162,9 @@ export function ShortMaker({
   const [phase, setPhase] = useState<Phase>('idle');
   const [progress, setProgress] = useState<JobProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // F1: which operation a "Retry" should re-run (null = no retryable failure).
+  // A DISTINCT failure state from the confirmed-zero "No candidates" empty copy.
+  const [retryAction, setRetryAction] = useState<'select' | 'batch' | 'export' | null>(null);
   const [items, dispatch] = useReducer(reviewReducer, []);
   const [exportedClips, setExportedClips] = useState<ExportedClipInfo[] | null>(null);
 
@@ -201,6 +205,9 @@ export function ShortMaker({
 
   // Track the active job so progress notifications are matched to it.
   const activeJobRef = useRef<string | null>(null);
+  // F2: aborts the in-flight job.done wait on cancel/unmount so the wait rejects
+  // (JobAbortedError) and the subscription/timer tear down instead of leaking.
+  const abortRef = useRef<AbortController | null>(null);
 
   const busy = phase === 'selecting' || phase === 'exporting';
 
@@ -449,10 +456,13 @@ export function ShortMaker({
     /* v8 ignore next */
     if (!resolvedApi || busy) return;
     setError(null);
+    setRetryAction(null);
     setExportedClips(null);
     setProgress({ jobId: '', pct: 0, message: 'Selecting candidates…' });
     setPhase('selecting');
     const clean = sanitizeControls(controls);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     try {
       const res = await resolvedApi.rpc<SelectResult | JobHandle>('shortmaker.select', {
         videoId,
@@ -463,17 +473,28 @@ export function ShortMaker({
       if (candidates === null && isJobHandle(res)) {
         activeJobRef.current = res.jobId;
         // Deferred job: wait for job.done if a hook exists, else the rpc already
-        // resolved above with the handle — fall through with empty list.
-        candidates = await waitForJobDone(resolvedApi, res.jobId, extractCandidates);
+        // resolved above with the handle — fall through with empty list. F2: the
+        // wait carries a timeout + the cancel/unmount AbortSignal.
+        candidates = await waitForJobDone(
+          resolvedApi,
+          res.jobId,
+          extractCandidates,
+          EXPORT_JOB_TIMEOUT_MS,
+          ctrl.signal,
+        );
       }
       if (candidates === null) candidates = [];
       dispatch({ type: 'load', candidates });
       setPhase('reviewing');
     } catch (e) {
+      // F2: an aborted wait is a clean cancel — cancel() already reset to idle.
+      if (e instanceof JobAbortedError) return;
       setError(errMsg(e));
+      setRetryAction('select');
       setPhase('idle');
     } finally {
       activeJobRef.current = null;
+      abortRef.current = null;
       setProgress(null);
     }
   }, [resolvedApi, busy, controls, videoId, prompt]);
@@ -545,9 +566,12 @@ export function ShortMaker({
       return;
     }
     setError(null);
+    setRetryAction(null);
     setProgress({ jobId: '', pct: 0, message: 'Exporting approved clips…' });
     setPhase('exporting');
     const clean = sanitizeControls(controls);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     try {
       // §2 sends `candidateIds`; the sidecar resolves them against its cached
       // select result. We ALSO forward the full approved `candidates` objects
@@ -569,9 +593,15 @@ export function ShortMaker({
       let clips = extractClips(res);
       if (clips === null && isJobHandle(res)) {
         activeJobRef.current = res.jobId;
-        // HIGH #5: race the wait against a timeout so a dead sidecar surfaces a
-        // user-facing error (caught below) instead of hanging the UI forever.
-        clips = await waitForJobDone(resolvedApi, res.jobId, extractClips, EXPORT_JOB_TIMEOUT_MS);
+        // F2: race the wait against a timeout (and the cancel/unmount signal) so a
+        // dead sidecar surfaces a user-facing error instead of hanging the UI.
+        clips = await waitForJobDone(
+          resolvedApi,
+          res.jobId,
+          extractClips,
+          EXPORT_JOB_TIMEOUT_MS,
+          ctrl.signal,
+        );
       }
       setExportedClips(clips ?? []);
       // P3-D: a successful export is the strongest implicit label — record
@@ -584,10 +614,14 @@ export function ShortMaker({
       void reloadVideoShorts();
       setPhase('reviewing');
     } catch (e) {
+      // F2: an aborted wait is a clean cancel — cancel() already reset to idle.
+      if (e instanceof JobAbortedError) return;
       setError(errMsg(e));
+      setRetryAction('export');
       setPhase('reviewing');
     } finally {
       activeJobRef.current = null;
+      abortRef.current = null;
       setProgress(null);
     }
   }, [resolvedApi, busy, items, videoId, controls, audioTrackId, reloadVideoShorts]);
@@ -603,23 +637,35 @@ export function ShortMaker({
     /* v8 ignore next */
     if (!resolvedApi || busy || !videoId) return;
     setError(null);
+    setRetryAction(null);
     setExportedClips(null);
     const clean = sanitizeControls(controls);
     setPhase('selecting');
     setProgress({ jobId: '', pct: 0, message: `Finding the top ${clean.count} clips…` });
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     try {
       const selRes = await resolvedApi.rpc<SelectResult | JobHandle>('shortmaker.select', {
         videoId,
         prompt,
         controls: clean,
       });
-      const found = await resolveJobResult(resolvedApi, selRes, extractCandidates, activeJobRef);
+      // F2: select also carries a timeout + the cancel/unmount AbortSignal.
+      const found = await resolveJobResult(
+        resolvedApi,
+        selRes,
+        extractCandidates,
+        activeJobRef,
+        EXPORT_JOB_TIMEOUT_MS,
+        ctrl.signal,
+      );
       const candidates = found ?? [];
       dispatch({ type: 'load', candidates }); // surface for post-hoc review
       const top = topByVirality(candidates, clean.count);
       if (top.length === 0) {
+        // F1: a confirmed zero-result is NOT an error — fall through to the
+        // "No candidates were proposed" empty state (no error/Retry surfaced).
         setPhase('reviewing');
-        setError('No candidates were proposed for the batch. Adjust the prompt or controls.');
         return;
       }
       for (const c of top) dispatch({ type: 'approve', id: candidateId(c) });
@@ -635,23 +681,42 @@ export function ShortMaker({
         extractClips,
         activeJobRef,
         EXPORT_JOB_TIMEOUT_MS,
+        ctrl.signal,
       );
       setExportedClips(clips ?? []);
       for (const c of top) recordFeedback(resolvedApi, videoId, c, 'exported');
       void reloadVideoShorts();
       setPhase('reviewing');
     } catch (e) {
+      // F2: an aborted wait is a clean cancel — cancel() already reset to idle.
+      if (e instanceof JobAbortedError) return;
       setError(errMsg(e));
+      setRetryAction('batch');
       setPhase('reviewing');
     } finally {
       activeJobRef.current = null;
+      abortRef.current = null;
       setProgress(null);
     }
   }, [resolvedApi, busy, videoId, prompt, controls, audioTrackId, reloadVideoShorts]);
 
+  // F2: abort any in-flight job.done wait (cancel/unmount) so the wait rejects
+  // with JobAbortedError and its subscription/timer tear down instead of leaking.
+  const tearDownWait = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+  }, []);
+
   // ---- cancel the active job ----------------------------------------------
+  // F2: ALWAYS resets to idle (tears down the wait + clears progress) regardless
+  // of whether a job.done ever arrives — cancelled jobs emit none, so without
+  // this the UI would wedge in 'selecting'/'exporting' forever. The aborted wait
+  // rejects with JobAbortedError, which the run loops swallow (a clean cancel).
   const cancel = useCallback(async () => {
     const jobId = activeJobRef.current;
+    tearDownWait();
+    setPhase('idle');
+    setProgress(null);
     // The Cancel button renders only while busy with an active job; defensive guard.
     /* v8 ignore next */
     if (!resolvedApi || !jobId) return;
@@ -660,7 +725,17 @@ export function ShortMaker({
     } catch (e) {
       setError(errMsg(e));
     }
-  }, [resolvedApi]);
+  }, [resolvedApi, tearDownWait]);
+
+  // ---- F1 retry: re-run the failed operation ------------------------------
+  const retry = useCallback(() => {
+    if (retryAction === 'select') void runSelect();
+    else if (retryAction === 'batch') void runBatch();
+    else void runExport(); // retryAction === 'export' (the only remaining value)
+  }, [retryAction, runSelect, runBatch, runExport]);
+
+  // F2: tear down any in-flight job wait when the panel unmounts (no leak).
+  useEffect(() => tearDownWait, [tearDownWait]);
 
   // ---- keyboard review (T6) -------------------------------------------------
   const selected = useMemo(
@@ -764,9 +839,14 @@ export function ShortMaker({
       />
 
       {error && (
-        <p className="sm-error" role="alert">
-          {error}
-        </p>
+        <div className="sm-error" role="alert">
+          <span className="sm-error-message">{error}</span>
+          {retryAction && (
+            <button type="button" className="secondary sm-retry" onClick={retry}>
+              Retry
+            </button>
+          )}
+        </div>
       )}
 
       {busy && progress && (
@@ -778,7 +858,7 @@ export function ShortMaker({
         </div>
       )}
 
-      {phase === 'reviewing' && items.length === 0 && !busy && (
+      {phase === 'reviewing' && items.length === 0 && !busy && !error && (
         <p className="sm-empty">
           No candidates were proposed. Adjust the prompt or controls and retry.
         </p>

@@ -59,6 +59,26 @@ DEFAULT_LOUDNESS_TARGET = -14.0
 DEFAULT_LOUDNESS_TP = -1.5
 DEFAULT_LOUDNESS_LRA = 11.0
 
+# WU R3 — PER-PLATFORM integrated-loudness (LUFS) targets. The social platforms
+# converge on ~-14 LUFS (YouTube/Spotify/TikTok/Reels/Shorts/IG normalize to it);
+# the broadcast variants keep their own standards (EBU R128 -23, ATSC A/85 -24).
+# A caller passes ``platform`` to pick the right export target without hard-coding
+# the number; an explicit ``loudnessTarget`` still overrides it.
+PLATFORM_LOUDNESS: dict[str, float] = {
+    "tiktok": -14.0,
+    "reels": -14.0,
+    "shorts": -14.0,
+    "instagram": -14.0,
+    "facebook": -14.0,
+    "youtube": -14.0,
+    "x": -14.0,
+    "twitter": -14.0,
+    "spotify": -14.0,
+    "broadcast": -23.0,  # EBU R128
+    "ebu": -23.0,
+    "atsc": -24.0,  # US broadcast (ATSC A/85)
+}
+
 
 class AudioMixError(RuntimeError):
     """Raised when the audio-mix ffmpeg pass fails (non-zero exit)."""
@@ -82,6 +102,19 @@ def _float(params: dict[str, Any], key: str, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def resolve_loudness_target(platform: str) -> float:
+    """Map a ``platform`` name to its integrated-loudness (LUFS) target.
+
+    Case/whitespace-insensitive. Raises a fail-loud :class:`RpcError` for an
+    unknown platform (never a silent fallback) so a typo can't quietly ship audio
+    at the wrong loudness. See :data:`PLATFORM_LOUDNESS`.
+    """
+    key = str(platform).strip().lower()
+    if key not in PLATFORM_LOUDNESS:
+        raise _invalid(f"unknown platform {platform!r}; supported: {sorted(PLATFORM_LOUDNESS)}")
+    return PLATFORM_LOUDNESS[key]
 
 
 # --------------------------------------------------------------------------- #
@@ -251,6 +284,25 @@ class AudioMix:
             raise _invalid(f"unknown video: {video_id}")
         return str(resolved)
 
+    def _loudness_opts(self, params: dict[str, Any]) -> dict[str, float]:
+        """Resolve the three loudnorm tunables, honouring an optional ``platform``.
+
+        Priority: a ``platform`` (when present) selects the integrated-loudness
+        BASE via :func:`resolve_loudness_target` (fail loud on an unknown name);
+        an explicit numeric ``loudnessTarget`` still overrides it, and a garbage
+        ``loudnessTarget`` coerces back to that base. With neither, the default
+        -14 LUFS is used. ``loudnessTp`` / ``loudnessLra`` keep their defaults.
+        """
+        base = DEFAULT_LOUDNESS_TARGET
+        platform = params.get("platform")
+        if platform is not None:
+            base = resolve_loudness_target(platform)
+        return {
+            "loudness_target": _float(params, "loudnessTarget", base),
+            "loudness_tp": _float(params, "loudnessTp", DEFAULT_LOUDNESS_TP),
+            "loudness_lra": _float(params, "loudnessLra", DEFAULT_LOUDNESS_LRA),
+        }
+
     def _out_path(self, clip_path: str, suffix: str) -> str:
         self._out_dir.mkdir(parents=True, exist_ok=True)
         stem = Path(clip_path).stem or "clip"
@@ -276,8 +328,10 @@ class AudioMix:
         Mixes ``bgPath`` (music bed / VO) UNDER the clip's audio with sidechain
         ducking, then EBU R128 loudnorm on the export. The optional tunables
         (``bgGainDb`` / ``duckThreshold`` / ``duckRatio`` / ``loudnessTarget`` /
-        ``loudnessTp`` / ``loudnessLra``) override the defaults. Long job ->
-        streams progress, ``job.done.result`` is ``{path}``.
+        ``loudnessTp`` / ``loudnessLra``) override the defaults; an optional
+        ``platform`` selects the per-platform loudness target (~-14 LUFS for the
+        social platforms) — see :meth:`_loudness_opts`. Long job -> streams
+        progress, ``job.done.result`` is ``{path}``.
         """
         if ctx.jobs is None:
             raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
@@ -289,9 +343,7 @@ class AudioMix:
             "bg_gain_db": _float(params, "bgGainDb", DEFAULT_BG_GAIN_DB),
             "duck_threshold": _float(params, "duckThreshold", DEFAULT_DUCK_THRESHOLD),
             "duck_ratio": _float(params, "duckRatio", DEFAULT_DUCK_RATIO),
-            "loudness_target": _float(params, "loudnessTarget", DEFAULT_LOUDNESS_TARGET),
-            "loudness_tp": _float(params, "loudnessTp", DEFAULT_LOUDNESS_TP),
-            "loudness_lra": _float(params, "loudnessLra", DEFAULT_LOUDNESS_LRA),
+            **self._loudness_opts(params),
         }
         settings = self._settings()
         out_path = self._out_path(clip_path, "mixed")
@@ -314,11 +366,7 @@ class AudioMix:
         if ctx.jobs is None:
             raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
         clip_path = self._resolve(params)
-        opts = {
-            "loudness_target": _float(params, "loudnessTarget", DEFAULT_LOUDNESS_TARGET),
-            "loudness_tp": _float(params, "loudnessTp", DEFAULT_LOUDNESS_TP),
-            "loudness_lra": _float(params, "loudnessLra", DEFAULT_LOUDNESS_LRA),
-        }
+        opts = self._loudness_opts(params)
         settings = self._settings()
         out_path = self._out_path(clip_path, "loudnorm")
 
@@ -370,10 +418,12 @@ __all__ = [
     "DEFAULT_LOUDNESS_LRA",
     "DEFAULT_LOUDNESS_TARGET",
     "DEFAULT_LOUDNESS_TP",
+    "PLATFORM_LOUDNESS",
     "AudioMix",
     "AudioMixError",
     "build_loudnorm_argv",
     "build_mix_argv",
     "build_mix_filter",
     "register",
+    "resolve_loudness_target",
 ]

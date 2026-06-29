@@ -11,6 +11,7 @@ the lazy import target).
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -93,7 +94,19 @@ def make_manager(tmp_path, *, client=None, run_cmd=None, hf_fetch=None, usage=bi
     )
 
 
-def download_entry(name="x", *, sha256=None, size_mb=0.001, dest=None):
+# F3c: installer='download' requires a sha256 pin at registration; default to a
+# valid placeholder so non-integrity tests keep building entries.
+_DUMMY_SHA256 = "a" * 64
+
+
+def sha_of(*parts: bytes) -> str:
+    digest = hashlib.sha256()
+    for part in parts:
+        digest.update(part)
+    return digest.hexdigest()
+
+
+def download_entry(name="x", *, sha256=_DUMMY_SHA256, size_mb=0.001, dest=None):
     return manifest.register_asset(
         name=name,
         kind="model",
@@ -265,7 +278,7 @@ def test_ensure_unknown_asset_raises(tmp_path):
 # _download_file: 416 fires on_frac (506->508)
 # --------------------------------------------------------------------------- #
 def test_416_full_part_calls_on_frac(tmp_path):
-    entry = download_entry("done416")
+    entry = download_entry("done416", sha256=sha_of(b"all-here"))
     client = FakeClient([FakeResponse(416, {}, chunks=[])])
     mgr = make_manager(tmp_path, client=client)
     dest = mgr.resolve_dest(entry)
@@ -296,7 +309,7 @@ def test_416_full_part_without_on_frac(tmp_path):
 def test_total_falls_back_to_size_mb_and_empty_chunk_skipped(tmp_path):
     # No Content-Length header -> total comes from size_mb; an interleaved empty
     # chunk must be skipped without advancing or writing.
-    entry = download_entry("nolen", size_mb=0.001)
+    entry = download_entry("nolen", size_mb=0.001, sha256=sha_of(b"part", b"more"))
     client = FakeClient([FakeResponse(200, {}, chunks=[b"part", b"", b"more"])])
     mgr = make_manager(tmp_path, client=client)
     fracs: list[float] = []

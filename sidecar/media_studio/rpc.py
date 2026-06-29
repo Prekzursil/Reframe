@@ -35,6 +35,12 @@ from .util import get_logger
 
 log = get_logger("media_studio.rpc")
 
+#: F3b: the production per-job wall-clock deadline. A handler that outruns this is
+#: force-finished ERROR by the registry watchdog so the bounded (2-slot) pool can
+#: never be permanently starved by a wedged job. 30 min comfortably clears a long
+#: real transcription/render while still bounding a true hang.
+DEFAULT_JOB_TIMEOUT_SEC = 30.0 * 60.0
+
 
 class RpcServer:
     """Newline-delimited JSON-RPC server over a pair of text streams.
@@ -51,6 +57,7 @@ class RpcServer:
         outstream: TextIO | None = None,
         *,
         store: JobStore | None = None,
+        job_timeout_sec: float | None = DEFAULT_JOB_TIMEOUT_SEC,
     ) -> None:
         self._in: TextIO = instream if instream is not None else sys.stdin
         self._out: TextIO = outstream if outstream is not None else sys.stdout
@@ -58,7 +65,15 @@ class RpcServer:
         # WU-6: the registry is RpcServer-owned, so the persistence store is
         # injected here (default None = today's in-memory behavior, back-compat)
         # and threaded down from the composition root via build_server/main.
-        self.jobs = JobRegistry(emit_progress=self._emit_progress, emit_done=self._emit_done, store=store)
+        # F3b: the production registry arms the per-job watchdog (a wedged handler
+        # is force-finished ERROR so the 2-slot pool can't starve); the real timer
+        # seam is the registry default (a daemon ``threading.Timer``).
+        self.jobs = JobRegistry(
+            emit_progress=self._emit_progress,
+            emit_done=self._emit_done,
+            store=store,
+            job_timeout_sec=job_timeout_sec,
+        )
         self.ctx = RpcContext(emit_notification=self._write_obj, jobs=self.jobs)
 
     # -- output ------------------------------------------------------------

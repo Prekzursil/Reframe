@@ -18,13 +18,18 @@ import pytest
 from media_studio.features import select as sel
 from media_studio.features.select import (
     MAX_CLIP_SEC,
+    MIDFORM_MAX_CLIP_SEC,
+    MIDFORM_MIN_CLIP_SEC,
     MIN_CLIP_SEC,
     TEMPERATURE,
+    SelectionParseError,
+    apply_overlap_ladder,
     build_rerank_user_prompt,
     build_system_prompt,
     build_user_prompt,
     extract_clips,
     render_lines,
+    resolve_duration_mode,
     select,
     strip_think,
     to_candidates,
@@ -230,10 +235,34 @@ def test_extract_clips_finds_json_amid_prose():
     assert extract_clips(raw) == [{"rank": 1}]
 
 
-def test_extract_clips_returns_empty_on_garbage():
-    assert extract_clips("no json here") == []
+def test_extract_clips_genuine_empty_returns_empty():
+    # An empty reply (nothing after stripping <think>) is a GENUINE empty result
+    # — there was nothing to parse, so [] (NOT a parse failure).
+    assert extract_clips("") == []
+    assert extract_clips("   ") == []
     assert extract_clips("<think>only thinking</think>") == []
-    assert extract_clips("{not valid json}") == []
+
+
+def test_extract_clips_explicit_empty_clips_array_returns_empty():
+    # An explicit {"clips": []} is the model saying "no clips" — genuine empty.
+    assert extract_clips('{"clips": []}') == []
+
+
+def test_extract_clips_raises_on_non_empty_unparseable_reply():
+    # A NON-empty reply that yields no parseable clips is a PARSE FAILURE: it
+    # must raise (so the job ends ERROR), NOT silently return [].
+    with pytest.raises(SelectionParseError):
+        extract_clips("no json here")
+    with pytest.raises(SelectionParseError):
+        extract_clips("{not valid json}")
+
+
+def test_extract_clips_raises_when_json_object_lacks_clips_array():
+    # JSON parsed, but no `clips` array (or it isn't a list) -> parse failure.
+    with pytest.raises(SelectionParseError):
+        extract_clips('{"foo": 1}')
+    with pytest.raises(SelectionParseError):
+        extract_clips('{"clips": "nope"}')
 
 
 # ---------------------------------------------------------------------------
@@ -388,8 +417,18 @@ def test_select_uses_default_prompt_when_blank(good_clips):
     assert "share-worthy" in user_msg.lower()
 
 
-def test_select_empty_on_unparseable_response():
+def test_select_single_pass_raises_on_unparseable_response():
+    # F1: the single-pass common path must NOT silently return [] on an LLM
+    # parse failure — it propagates SelectionParseError so the job ends ERROR.
     provider = FakeProvider(["sorry, no json"])
+    with pytest.raises(SelectionParseError):
+        select(_short_transcript(), "x", {"count": 3}, provider)
+
+
+def test_select_single_pass_genuine_empty_returns_empty():
+    # An explicit {"clips": []} from the model is a confirmed zero-result, NOT a
+    # parse failure — select() returns [] (genuine empty preserved).
+    provider = FakeProvider([_clips_json([])])
     cands = select(_short_transcript(), "x", {"count": 3}, provider)
     assert cands == []
 
@@ -536,6 +575,203 @@ def test_resolve_controls_swaps_when_min_exceeds_max():
 
 
 # ---------------------------------------------------------------------------
+# N1 (V1.1 SEL1) — duration policy relax (mid-form mode) + overlap ladder
+# ---------------------------------------------------------------------------
+def test_midform_constants_match_verified_teardown():
+    # The OpusClip teardown showed 16-160 s clips; mid-form allows up to ~180 s.
+    assert MIDFORM_MIN_CLIP_SEC == 16.0
+    assert MIDFORM_MAX_CLIP_SEC == 180.0
+
+
+def test_resolve_duration_mode_known_unknown_and_non_string():
+    assert resolve_duration_mode("midform") == "midform"
+    assert resolve_duration_mode("standard") == "standard"
+    # Unknown string + non-string both fail closed to the conservative default.
+    assert resolve_duration_mode("bogus") == "standard"
+    assert resolve_duration_mode(None) == "standard"
+    assert resolve_duration_mode(123) == "standard"
+
+
+def test_resolve_controls_default_mode_is_standard_window():
+    cfg = sel._resolve_controls({})
+    assert cfg["duration_mode"] == "standard"
+    assert cfg["min_sec"] == pytest.approx(MIN_CLIP_SEC)
+    assert cfg["max_sec"] == pytest.approx(MAX_CLIP_SEC)
+
+
+def test_resolve_controls_midform_widens_the_envelope():
+    cfg = sel._resolve_controls({"durationMode": "midform"})
+    assert cfg["duration_mode"] == "midform"
+    assert cfg["min_sec"] == pytest.approx(MIDFORM_MIN_CLIP_SEC)
+    assert cfg["max_sec"] == pytest.approx(MIDFORM_MAX_CLIP_SEC)
+
+
+def test_resolve_controls_midform_honors_window_inside_envelope():
+    cfg = sel._resolve_controls({"durationMode": "midform", "minSec": 40, "maxSec": 150})
+    assert cfg["min_sec"] == pytest.approx(40.0)
+    assert cfg["max_sec"] == pytest.approx(150.0)
+
+
+def test_resolve_controls_unknown_mode_falls_back_to_standard():
+    cfg = sel._resolve_controls({"durationMode": "epic"})
+    assert cfg["duration_mode"] == "standard"
+    assert cfg["max_sec"] == pytest.approx(MAX_CLIP_SEC)
+
+
+def test_resolve_controls_midform_non_numeric_window_uses_envelope_defaults():
+    cfg = sel._resolve_controls({"durationMode": "midform", "minSec": "x", "maxSec": None})
+    assert cfg["min_sec"] == pytest.approx(MIDFORM_MIN_CLIP_SEC)
+    assert cfg["max_sec"] == pytest.approx(MIDFORM_MAX_CLIP_SEC)
+
+
+def test_resolve_controls_ladder_defaults_disabled():
+    ladder = sel._resolve_controls({})["ladder"]
+    assert ladder == {
+        "enabled": False,
+        "top_n": sel.DEFAULT_OVERLAP_LADDER_TOP_N,
+        "punchy_sec": sel.DEFAULT_PUNCHY_SHORT_SEC,
+    }
+
+
+def test_resolve_controls_ladder_enabled_and_configured():
+    ladder = sel._resolve_controls({"overlapLadder": True, "overlapLadderTopN": 3, "punchyShortSec": 25})["ladder"]
+    assert ladder == {"enabled": True, "top_n": 3, "punchy_sec": 25.0}
+
+
+def test_resolve_controls_ladder_negative_top_n_clamps_to_zero():
+    ladder = sel._resolve_controls({"overlapLadder": True, "overlapLadderTopN": -5})["ladder"]
+    assert ladder["top_n"] == 0
+
+
+def test_resolve_controls_ladder_punchy_clamped_into_active_window():
+    # Below the standard min (20) clamps up; above the standard max (60) clamps down.
+    lo = sel._resolve_controls({"punchyShortSec": 5})["ladder"]
+    assert lo["punchy_sec"] == pytest.approx(MIN_CLIP_SEC)
+    hi = sel._resolve_controls({"punchyShortSec": 999})["ladder"]
+    assert hi["punchy_sec"] == pytest.approx(MAX_CLIP_SEC)
+
+
+def test_resolve_controls_ladder_non_numeric_punchy_uses_default():
+    ladder = sel._resolve_controls({"punchyShortSec": "nope"})["ladder"]
+    assert ladder["punchy_sec"] == pytest.approx(sel.DEFAULT_PUNCHY_SHORT_SEC)
+
+
+# --- apply_overlap_ladder / _punchy_short ----------------------------------
+def _cand(start: float, end: float, *, rank: int = 1, score: int = 90, **extra: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "rank": rank,
+        "start": start,
+        "end": end,
+        "durationSec": round(end - start, 3),
+        "hook": "h",
+        "why": "w",
+        "score": score,
+        "sourceStart": start,
+    }
+    base.update(extra)
+    return base
+
+
+def test_apply_overlap_ladder_disabled_returns_input_unchanged():
+    cands = [_cand(0.0, 90.0)]
+    out = apply_overlap_ladder(cands, enabled=False, top_n=1, punchy_sec=30.0)
+    assert out is cands  # untouched, same list object
+
+
+def test_apply_overlap_ladder_zero_top_n_returns_input_unchanged():
+    cands = [_cand(0.0, 90.0)]
+    out = apply_overlap_ladder(cands, enabled=True, top_n=0, punchy_sec=30.0)
+    assert out is cands
+
+
+def test_apply_overlap_ladder_emits_punchy_short_for_top_moment():
+    parent = _cand(10.0, 100.0, rank=1, score=95, factors={"hookStrength": 80})
+    out = apply_overlap_ladder([parent], enabled=True, top_n=1, punchy_sec=30.0)
+    assert len(out) == 2
+    long_clip, short = out
+    # parent kept (unmarked); short shares the hook start but is the punchy length.
+    assert "overlap" not in long_clip
+    assert short["overlap"] is True
+    assert short["overlapOf"] == 1
+    assert short["start"] == pytest.approx(10.0)
+    assert short["sourceStart"] == pytest.approx(10.0)
+    assert short["end"] == pytest.approx(40.0)
+    assert short["durationSec"] == pytest.approx(30.0)
+    # re-ranked 1..N in parent-then-short order.
+    assert [c["rank"] for c in out] == [1, 2]
+    # factors copied by VALUE (mutating the short must not touch the parent).
+    short["factors"]["hookStrength"] = 1
+    assert parent["factors"]["hookStrength"] == 80
+
+
+def test_apply_overlap_ladder_skips_clip_not_longer_than_punchy():
+    # A 25 s parent is not meaningfully longer than a 30 s punchy short -> no short.
+    out = apply_overlap_ladder([_cand(0.0, 25.0)], enabled=True, top_n=1, punchy_sec=30.0)
+    assert len(out) == 1
+    assert "overlap" not in out[0]
+
+
+def test_apply_overlap_ladder_only_top_n_moments_spawn_shorts():
+    cands = [_cand(0.0, 90.0, rank=1), _cand(120.0, 210.0, rank=2)]
+    out = apply_overlap_ladder(cands, enabled=True, top_n=1, punchy_sec=30.0)
+    # Only the rank-1 moment gets a short; rank-2 (idx>=top_n) is skipped.
+    overlaps = [c for c in out if c.get("overlap")]
+    assert len(overlaps) == 1
+    assert overlaps[0]["overlapOf"] == 1
+
+
+def test_apply_overlap_ladder_handles_parent_without_factors():
+    parent = _cand(0.0, 90.0)  # no factors / factorNotes
+    out = apply_overlap_ladder([parent], enabled=True, top_n=1, punchy_sec=30.0)
+    short = out[1]
+    assert "factors" not in short
+    assert "factorNotes" not in short
+
+
+def test_punchy_short_returns_none_on_unparseable_start():
+    # A candidate missing a numeric start can't anchor a short -> dropped (None).
+    assert sel._punchy_short({"end": 90.0, "rank": 1}, 30.0) is None
+
+
+def test_punchy_short_copies_factor_notes_when_present():
+    parent = _cand(0.0, 90.0, factors={"hookStrength": 70}, factorNotes={"hookStrength": "punchy"})
+    short = sel._punchy_short(parent, 30.0)
+    assert short is not None
+    assert short["factorNotes"] == {"hookStrength": "punchy"}
+    short["factorNotes"]["hookStrength"] = "x"
+    assert parent["factorNotes"]["hookStrength"] == "punchy"
+
+
+# --- select() end-to-end: mid-form prompt + overlap emission ----------------
+def test_select_midform_widens_prompt_window_and_keeps_long_clip():
+    clips = [{"start": "00:00", "end": "02:30", "score": 90, "hook": "h", "why": "w"}]  # 150 s
+    provider = FakeProvider([_clips_json(clips)])
+    cands = select(_short_transcript(), "x", {"count": 1, "durationMode": "midform"}, provider)
+    assert cands[0]["durationSec"] == pytest.approx(150.0)
+    # The system prompt now states the widened 16-180 s window.
+    assert "16-180 SECONDS" in provider.calls[0]["messages"][0]["content"]
+
+
+def test_select_overlap_ladder_emits_overlapping_candidate():
+    clips = [{"start": "00:00", "end": "02:00", "score": 95, "hook": "h", "why": "w"}]  # 120 s
+    provider = FakeProvider([_clips_json(clips)])
+    cands = select(
+        _short_transcript(),
+        "x",
+        {"count": 1, "durationMode": "midform", "overlapLadder": True, "punchyShortSec": 30},
+        provider,
+    )
+    assert len(cands) == 2  # one long + one punchy-short overlapping clip
+    shorts = [c for c in cands if c.get("overlap")]
+    assert len(shorts) == 1
+    assert shorts[0]["durationSec"] == pytest.approx(30.0)
+    # Both share the same hook start (the "same top moment" at two lengths).
+    assert shorts[0]["start"] == pytest.approx(cands[0]["start"])
+    # The ladder short still receives a batch viralityPct stamp.
+    assert "viralityPct" in shorts[0]
+
+
+# ---------------------------------------------------------------------------
 # select — non-numeric durationSec degrades to "no source-duration cap"
 # ---------------------------------------------------------------------------
 def test_select_non_numeric_duration_total_is_ignored():
@@ -674,10 +910,12 @@ def test_select_unified_returns_empty_when_no_candidates():
     assert select_unified(None, "x", {"count": 3}, None, tracks={}, duration_total=0.0) == []
 
 
-def test_select_unified_returns_empty_when_llm_unparseable():
+def test_select_unified_propagates_llm_parse_failure():
+    # F1: select_unified wraps select() on the transcript+provider path, so a
+    # single-pass LLM PARSE FAILURE propagates as a LOUD job ERROR (not silent []).
     provider = FakeProvider(["no json at all"])
-    cands = select_unified(_short_transcript(), "x", {"count": 3}, provider, duration_total=300.0)
-    assert cands == []
+    with pytest.raises(SelectionParseError):
+        select_unified(_short_transcript(), "x", {"count": 3}, provider, duration_total=300.0)
 
 
 # --- Tier-0: learned re-rank + diversity (always on, zero downloads) -------

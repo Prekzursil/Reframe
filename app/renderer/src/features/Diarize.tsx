@@ -34,15 +34,6 @@ export function extractSpeakers(result: unknown): string[] {
   return Array.isArray(transcript?.speakers) ? transcript!.speakers! : [];
 }
 
-/** Pull the §A3 job.done error payload message ({error:{message,type}}). */
-export function doneErrorMessage(result: unknown): string | null {
-  const err = pickField<{ message?: unknown }>(result, 'error');
-  if (err && typeof err === 'object' && typeof err.message === 'string') {
-    return err.message;
-  }
-  return null;
-}
-
 export interface DiarizeProps {
   videoId: string;
   /** Injectable bridge for tests; defaults to the preload-exposed api. */
@@ -87,15 +78,13 @@ export function Diarize({ videoId, api }: DiarizeProps): React.ReactElement {
       const res = await bridge.rpc<{ jobId: string }>('diarize.start', { videoId });
       const id = res?.jobId ?? null;
       setJobId(id);
+      // F1: waitForJobDone REJECTS on an {error} job.done payload (surfaced by
+      // the catch below) — no more silent doneErrorMessage swallow. A clean
+      // cancel resolves null, leaving an empty roster.
       const result = id ? await waitForJobDone<unknown>(bridge, id, (r) => r ?? null) : null;
-      const errMessage = doneErrorMessage(result);
-      if (errMessage) {
-        setError(errMessage);
-      } else {
-        setSpeakers(extractSpeakers(result));
-        setPct(100);
-        setMessage('Done');
-      }
+      setSpeakers(extractSpeakers(result));
+      setPct(100);
+      setMessage('Done');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

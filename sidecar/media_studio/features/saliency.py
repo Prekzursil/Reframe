@@ -389,24 +389,27 @@ ASSET_DEST = "models/vinet-s-saliency.pt"
 def register_saliency_assets() -> None:
     """Register the ViNet-S saliency weights as an on-demand asset (idempotent).
 
-    CC-BY-NC-SA 4.0 (non-commercial, local-only), ~36 MB. The asset name matches
-    :data:`ASSET_NAME` (and ``system_advisor.ComponentSpec``'s ``saliency`` lookup
-    key) so :func:`default_models_present` detects an already-downloaded weight.
-    Identical re-registration is a no-op (module re-import safe).
-    """
-    from ..assets import manifest  # noqa: PLC0415 - lazy: avoids an import cycle
+    F3c-ESCALATION (NOT registered): ViNet-S is hosted on a Google Drive file id
+    that now returns HTTP 404 (verified 2026-06-28 across every Drive URL form),
+    with NO live HF/GitHub mirror found. F3c makes a sha256 integrity pin MANDATORY
+    for ``installer='download'`` — and a hash cannot be computed for a file that no
+    longer exists. Rather than ship a FABRICATED hash (faking the gate) or a
+    silently-404ing entry (the exact kind of silent failure F3c removes), the entry
+    is intentionally NOT registered. ``default_models_present`` then honestly
+    reports the saliency model as unavailable. OPERATOR ACTION REQUIRED: re-host
+    the ViNet-S weight (or point to a verified mirror), then restore the
+    ``register_asset`` call below with the real ``sha256=`` of the re-hosted file.
 
-    manifest.register_asset(
-        manifest.AssetEntry(
-            name=ASSET_NAME,
-            kind="model",
-            size_mb=ASSET_SIZE_MB,
-            dest=ASSET_DEST,
-            label="ViNet-S (video saliency, CC-BY-NC-SA 4.0, local-only)",
-            installer="download",
-            url=ASSET_URL,
+        manifest.register_asset(
+            manifest.AssetEntry(
+                name=ASSET_NAME, kind="model", size_mb=ASSET_SIZE_MB,
+                dest=ASSET_DEST, label="ViNet-S (video saliency, CC-BY-NC-SA 4.0)",
+                installer="download", url=ASSET_URL, sha256="<verified hash>",
+            )
         )
-    )
+    """
+    # Intentionally a no-op until the dead upstream is replaced (see docstring).
+    return
 
 
 # Register the asset at import (mirrors diarize.register_diarize_assets()).

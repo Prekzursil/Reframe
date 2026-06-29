@@ -50,10 +50,17 @@ Cue = dict[str, Any]
 # Netflix Timed Text Style Guide constants (RULES, no model — manifest #15)
 #   https://partnerhelp.netflixstudios.com/hc/en-us/articles/217350977
 # --------------------------------------------------------------------------- #
-#: max reading speed, characters/second, adult content.
+#: max reading speed, characters/second, adult content (conservative cross-language
+#: Netflix value — the default the override starts from, §1.5).
 MAX_CPS = 17
-#: max reading speed, characters/second, children's content.
+#: max reading speed, characters/second, children's content (Netflix).
 MAX_CPS_CHILDREN = 13
+#: English adult may relax to the Netflix English-template reading speed.
+MAX_CPS_ENGLISH = 20
+#: the ``maxCps`` override clamp window (§1.5: move within 10..30). Mirrors the
+#: renderer's MAX_CPS_MIN / MAX_CPS_MAX in lib/captionOverride.ts.
+MAX_CPS_FLOOR = 10
+MAX_CPS_CEIL = 30
 #: max characters per line (Latin scripts).
 MAX_CPL = 42
 #: max lines per cue.
@@ -63,6 +70,45 @@ MIN_GAP_FRAMES = 2
 
 #: default frame rate used to convert :data:`MIN_GAP_FRAMES` into seconds.
 DEFAULT_FPS = 30.0
+
+
+def _is_english(language: str) -> bool:
+    """True when ``language`` is an English BCP-47 / ISO code (``en``, ``en-US``, …)."""
+    return language.startswith("en")
+
+
+def resolve_caption_limits(settings: dict[str, Any] | None) -> tuple[float, int]:
+    """Resolve ``(max_cps, max_lines)`` for :func:`polish_cues` from ``settings``.
+
+    The reading-speed default is **per-content / per-language** (§1.5): children's
+    content => :data:`MAX_CPS_CHILDREN` (13); else English => :data:`MAX_CPS_ENGLISH`
+    (20); else the conservative cross-language :data:`MAX_CPS` (17). An explicit
+    ``captionOverride.maxCps`` is the user's choice and **wins**, clamped into
+    ``[MAX_CPS_FLOOR, MAX_CPS_CEIL]`` (10..30). ``captionOverride.maxLines`` toggles
+    the wrap target between 1 and 2 lines (which scales the per-cue CPL capacity in
+    :func:`enforce_cps_cpl`); anything else keeps :data:`MAX_LINES`.
+
+    Pure. The language is read from ``captionLanguage`` first, then ``language``.
+    """
+    settings = settings or {}
+    override = settings.get("captionOverride")
+    if not isinstance(override, dict):
+        override = {}
+
+    if settings.get("captionChildren"):
+        max_cps: float = MAX_CPS_CHILDREN
+    else:
+        language = str(settings.get("captionLanguage") or settings.get("language") or "").strip().lower()
+        max_cps = MAX_CPS_ENGLISH if _is_english(language) else MAX_CPS
+
+    raw_cps = override.get("maxCps")
+    if isinstance(raw_cps, (int, float)) and not isinstance(raw_cps, bool) and math.isfinite(raw_cps):
+        max_cps = min(max(float(raw_cps), MAX_CPS_FLOOR), MAX_CPS_CEIL)
+
+    raw_lines = override.get("maxLines")
+    max_lines = raw_lines if (not isinstance(raw_lines, bool) and raw_lines in (1, 2)) else MAX_LINES
+    return max_cps, max_lines
+
 
 #: the tiny EN-only sherpa-onnx punctuation+casing model (manifest #15).
 PUNCT_ASSET_NAME = "sherpa-onnx-punct-en"
@@ -135,16 +181,18 @@ def cps_of(cue: Cue) -> float:
     return len(text) / duration
 
 
-def wrap_two_lines(text: str, max_cpl: int = MAX_CPL) -> str:
-    """Greedily wrap ``text`` into at most :data:`MAX_LINES` lines <= ``max_cpl``.
+def wrap_two_lines(text: str, max_cpl: int = MAX_CPL, max_lines: int = MAX_LINES) -> str:
+    """Greedily wrap ``text`` into at most ``max_lines`` lines <= ``max_cpl``.
 
     Pure + deterministic. Words are packed left-to-right; a new line opens when
-    the next word would exceed ``max_cpl``. Only the FIRST :data:`MAX_LINES`
-    lines are kept as separate lines — any overflow words are appended to the
-    last line (the caller is expected to have split the cue first via
-    :func:`enforce_cps_cpl`, so this just lays out a cue that already fits). A
-    single word longer than ``max_cpl`` is kept whole on its own line (never
-    hyphen-split — mid-word breaks read worse than an over-long line).
+    the next word would exceed ``max_cpl``. Only the FIRST ``max_lines`` lines are
+    kept as separate lines — any overflow words are appended to the last line (the
+    caller is expected to have split the cue first via :func:`enforce_cps_cpl`, so
+    this just lays out a cue that already fits). With ``max_lines == 1`` (the
+    ``maxLines`` override "prefer one line" mode) no break is ever opened, so the
+    text stays on a single line. A single word longer than ``max_cpl`` is kept
+    whole on its own line (never hyphen-split — mid-word breaks read worse than an
+    over-long line).
     """
     words = text.split()
     if not words:
@@ -153,7 +201,7 @@ def wrap_two_lines(text: str, max_cpl: int = MAX_CPL) -> str:
     current = ""
     for word in words:
         candidate = f"{current} {word}".strip()
-        if current and len(candidate) > max_cpl and len(lines) < MAX_LINES - 1:
+        if current and len(candidate) > max_cpl and len(lines) < max_lines - 1:
             lines.append(current)
             current = word
         else:
@@ -189,8 +237,9 @@ def _split_text_by_chars(text: str, limit: int) -> list[str]:
 
 def enforce_cps_cpl(
     cue: Cue,
-    max_cps: int = MAX_CPS,
+    max_cps: float = MAX_CPS,
     max_cpl: int = MAX_CPL,
+    max_lines: int = MAX_LINES,
 ) -> list[Cue]:
     """Split + retime ``cue`` so its text fits CPL<=``max_cpl`` over <=2 lines.
 
@@ -227,7 +276,7 @@ def enforce_cps_cpl(
     end = float(cue.get("end", 0.0))
     duration = max(end - start, 0.0)
 
-    two_line_capacity = max_cpl * MAX_LINES
+    two_line_capacity = max_cpl * max_lines
     # Pieces needed to satisfy CPL (each piece <= two full lines).
     cpl_pieces = (len(text) + two_line_capacity - 1) // two_line_capacity
     # Pieces sized by the CPS char-budget: a piece that reads inside its slice
@@ -252,7 +301,7 @@ def enforce_cps_cpl(
                 "index": 1,
                 "start": start,
                 "end": end,
-                "text": wrap_two_lines(text, max_cpl),
+                "text": wrap_two_lines(text, max_cpl, max_lines),
             }
         ]
 
@@ -273,7 +322,7 @@ def enforce_cps_cpl(
                 "index": i + 1,
                 "start": piece_start,
                 "end": piece_end,
-                "text": wrap_two_lines(chunk, max_cpl),
+                "text": wrap_two_lines(chunk, max_cpl, max_lines),
             }
         )
     return out
@@ -371,9 +420,10 @@ def polish_cues(
       2. **Profanity masking** (``profanity_backend``) — replace profane words
          with asterisks.
       3. **Timing + segmentation gate** (PURE, always) — split/retime each cue to
-         fit CPL<=:data:`MAX_CPL` over <=2 lines, sizing pieces against the CPS
-         char budget (``MAX_CPS_CHILDREN`` when ``settings['captionChildren']``,
-         else :data:`MAX_CPS`); see :func:`enforce_cps_cpl` for why proportional
+         fit CPL<=:data:`MAX_CPL` over the resolved line count, sizing pieces
+         against the CPS char budget. The CPS cap + line count come from
+         :func:`resolve_caption_limits` (per-content/per-language default, then an
+         explicit ``captionOverride``); see :func:`enforce_cps_cpl` for why proportional
          splitting cannot lower a too-fast cue's reading rate. Then pull ends back
          to keep the :data:`MIN_GAP_FRAMES` min gap.
       4. **Emphasis keywords** (``keyword_backend`` for the salient words, plus
@@ -388,7 +438,10 @@ def polish_cues(
     if not cues:
         return []
 
-    max_cps = MAX_CPS_CHILDREN if settings.get("captionChildren") else MAX_CPS
+    # Reading-speed (CPS) + line count are resolved per-content/per-language and
+    # then overridden by an explicit ``captionOverride`` (§1.5). ``max_lines``
+    # scales the per-cue CPL capacity in :func:`enforce_cps_cpl`.
+    max_cps, max_lines = resolve_caption_limits(settings)
 
     # Stage 1+2 operate per source cue, BEFORE the timing split (so casing +
     # masking see whole sentences). Then the timing gate splits into final cues.
@@ -399,7 +452,7 @@ def polish_cues(
             text = punct_backend.restore(text)
         if profanity_backend is not None:
             text = mask_profanity(text, profanity_backend)
-        retimed = enforce_cps_cpl({**cue, "text": text}, max_cps=max_cps, max_cpl=MAX_CPL)
+        retimed = enforce_cps_cpl({**cue, "text": text}, max_cps=max_cps, max_cpl=MAX_CPL, max_lines=max_lines)
         split_cues.extend(retimed)
 
     if not split_cues:
@@ -464,7 +517,10 @@ def _default_profanity_factory(settings: dict[str, Any]) -> ProfanityBackend:
 # asset registration (mirrors diarize / ctc_align / parakeet_asr)
 # --------------------------------------------------------------------------- #
 #: the tiny EN-only sherpa-onnx punctuation+casing model repo (manifest #15).
-PUNCT_HF_REPO = "csukuangfj/sherpa-onnx-online-punct-en-2024-08-06"
+# F3c re-point: the original csukuangfj/* repo 404s (removed upstream); re-pointed
+# to a live identical re-upload mirror, pinned to its commit hash (2026-06-28).
+PUNCT_HF_REPO = "lorneluo/sherpa-onnx-online-punct-en-2024-08-06"
+PUNCT_HF_REVISION = "aad05f2d2818122135b0667806628019cb923e84"
 PUNCT_SIZE_MB = 30
 
 
@@ -487,6 +543,7 @@ def register_caption_polish_assets() -> None:
             label="sherpa-onnx punctuation + casing (EN, Apache-2.0)",
             installer="hf",
             hf_repo=PUNCT_HF_REPO,
+            hf_revision=PUNCT_HF_REVISION,
         )
     )
 
@@ -499,7 +556,10 @@ __all__ = [
     "DEFAULT_FPS",
     "MAX_CPL",
     "MAX_CPS",
+    "MAX_CPS_CEIL",
     "MAX_CPS_CHILDREN",
+    "MAX_CPS_ENGLISH",
+    "MAX_CPS_FLOOR",
     "MAX_LINES",
     "MIN_GAP_FRAMES",
     "PUNCT_ASSET_NAME",
@@ -520,5 +580,6 @@ __all__ = [
     "mask_profanity",
     "polish_cues",
     "register_caption_polish_assets",
+    "resolve_caption_limits",
     "wrap_two_lines",
 ]

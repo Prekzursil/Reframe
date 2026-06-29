@@ -82,6 +82,8 @@ ASSET_NAME = "panns-cnn14"
 ASSET_SIZE_MB = 300
 #: PINNED PANNs CNN14 AudioSet checkpoint (the URL panns-inference resolves to).
 ASSET_URL = "https://zenodo.org/record/3987831/files/Cnn14_mAP%3D0.431.pth?download=1"
+#: F3c: verified sha256 (streamed from Zenodo, 2026-06-28, 327,428,481 B).
+ASSET_SHA256 = "0dc499e40e9761ef5ea061ffc77697697f277f6a960894903df3ada000e34b31"
 ASSET_DEST = "models/panns-cnn14.pth"
 
 #: cooperative cancel probe + progress sink (match the rest of the codebase).
@@ -505,6 +507,7 @@ def register_audio_saliency_assets() -> None:
             label="PANNs CNN14 (audio tagging, MIT)",
             installer="download",
             url=ASSET_URL,
+            sha256=ASSET_SHA256,
         )
     )
 

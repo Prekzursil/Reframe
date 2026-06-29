@@ -202,9 +202,19 @@
 }
 
 .shortmaker .sm-video-shorts h3 {
-  margin: 0 0 var(--space-4);
+  margin: 0;
   font-size: var(--type-body-size);
   color: var(--text-secondary);
+}
+
+/* R5: the gallery heading + virality-score sort toggle share one row. */
+.shortmaker .sm-video-shorts__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
 }
 
 .shortmaker .shorts__grid--inline {

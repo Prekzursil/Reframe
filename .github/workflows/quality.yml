@@ -49,9 +49,12 @@ jobs:
           # pure-logic modules + the dev extras that the tests need.
           pip install -e "sidecar[dev]" --no-deps
           # httpx: provider tests. numpy + opencv-python-headless: the reframe/
-          # face-finder unit tests exercise real cv2 image ops (light, CI-friendly;
-          # NOT heavy ML like torch/faster-whisper which stay uninstalled).
-          pip install httpx numpy opencv-python-headless
+          # face-finder unit tests exercise real cv2 image ops. blake3 (lock-pinned
+          # 1.0.9): the L5 hash-verified relink tests stream REAL bytes and assert
+          # deterministic digests, so they need the genuine native hasher. All three
+          # are light, CI-friendly wheels (NOT heavy ML like torch/faster-whisper,
+          # which stay uninstalled). --no-deps above skips these declared deps.
+          pip install httpx numpy opencv-python-headless blake3==1.0.9
 
       - name: Install app (renderer + main) deps
         working-directory: app

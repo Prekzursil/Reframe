@@ -82,7 +82,16 @@ class ProviderError(RuntimeError):
 
     Carries a human-readable message; the RPC layer maps it onto a structured
     JSON-RPC error. Never embeds an API key (the key is header-only).
+
+    ``status_code`` is the originating HTTP status when the failure was an
+    ``HTTPError`` (e.g. ``402``/``429`` for the OpenRouter key-pool cooldown
+    triggers, M4), and ``None`` for connection/parse failures. It lets a caller
+    classify a cooldown-worthy failure WITHOUT re-parsing the message string.
     """
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 # --------------------------------------------------------------------------- #
@@ -127,7 +136,7 @@ def _urllib_request_json(
         # server's error body BEFORE it ever reaches a ProviderError / a log line.
         safe_detail = scrub_error_body(detail, secrets) if detail else ""
         reason = scrub_error_body(str(exc.reason), secrets)
-        raise ProviderError(f"LLM HTTP {exc.code}: {safe_detail or reason}") from exc
+        raise ProviderError(f"LLM HTTP {exc.code}: {safe_detail or reason}", status_code=exc.code) from exc
     except urllib.error.URLError as exc:  # connection refused / DNS / timeout
         raise ProviderError(f"LLM request failed: {exc.reason}") from exc
     try:

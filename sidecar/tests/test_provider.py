@@ -355,6 +355,13 @@ def test_urllib_post_json_maps_httperror(monkeypatch):
     with pytest.raises(ProviderError) as ei:
         p.chat([{"role": "user", "content": "q"}])
     assert "500" in str(ei.value)
+    # M4: the originating HTTP status is carried on the error for cooldown triage.
+    assert ei.value.status_code == 500
+
+
+def test_provider_error_status_code_defaults_none() -> None:
+    # A non-HTTP ProviderError (connection/parse) carries no status_code.
+    assert ProviderError("boom").status_code is None
 
 
 def test_urllib_post_json_maps_urlerror(monkeypatch):

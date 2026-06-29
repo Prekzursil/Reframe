@@ -57,6 +57,16 @@ export function fmtMb(mb: number | null | undefined): string {
 }
 
 /**
+ * Like {@link fmtMb} but reads "unknown" (not the em dash) when the probe found
+ * nothing. F3: the RAM probe returns null on an undetectable host — the device
+ * card must show a readable "unknown", never an "undefined MB" / "NaN" artifact.
+ */
+export function fmtMbOrUnknown(mb: number | null | undefined): string {
+  const formatted = fmtMb(mb);
+  return formatted === '—' ? 'unknown' : formatted;
+}
+
+/**
  * Clamp a 0..1 fraction (used = used/total) into a percentage for the bar fill.
  * Guards a zero/negative/absent total (-> 0) so an unprobed machine renders an
  * empty rail instead of NaN.

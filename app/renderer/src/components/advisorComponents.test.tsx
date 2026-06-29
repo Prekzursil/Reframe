@@ -281,4 +281,23 @@ describe('<ModelsOnboarding />', () => {
     });
     expect(onDone).toHaveBeenCalledTimes(1);
   });
+
+  it('is a modal dialog that focus-traps to its first control on mount', async () => {
+    await render(<ModelsOnboarding onDone={vi.fn()} />);
+    const dialog = container.querySelector('.models-onboarding');
+    expect(dialog?.getAttribute('aria-modal')).toBe('true');
+    // Focus moves into the dialog (the first focusable control: Skip tour).
+    expect(document.activeElement).toBe(container.querySelector('button[data-action="skip"]'));
+  });
+
+  it('dismisses on Escape (like Skip tour)', async () => {
+    const onDone = vi.fn();
+    await render(<ModelsOnboarding onDone={onDone} />);
+    await act(async () => {
+      (document.activeElement ?? document.body).dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+    });
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
 });

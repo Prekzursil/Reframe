@@ -80,6 +80,17 @@ describe('<CaptionDesigner />', () => {
     expect(spans && spans.length).toBeGreaterThan(0);
   });
 
+  it('paints the opusclip-karaoke preset look with an alternating accent (V1.1 WU SP1)', () => {
+    render({ design: { style: 'opusclip-karaoke', box: DEFAULT_CAPTION_DESIGN.box } });
+    tick(container, 11.5); // inside cue 0 "Hello" — line index 0 -> yellow accent
+    const line = container.querySelector('.caption-designer__line') as HTMLElement;
+    // The karaoke preset is all-caps (Anton) — uppercase look renders live.
+    expect(line.style.textTransform).toBe('uppercase');
+    expect(line.style.fontFamily).toContain('Anton');
+    const active = [...line.querySelectorAll('span')].find((s) => s.textContent === 'Hello');
+    expect(active?.style.color.replace(/\s/g, '')).toContain('255,255,0');
+  });
+
   it('uppercases the live line for an uppercase template', () => {
     render({ design: { style: 'bold', box: DEFAULT_CAPTION_DESIGN.box } });
     tick(container, 11.5);
@@ -144,5 +155,51 @@ describe('<CaptionDesigner />', () => {
       (b) => b.textContent === 'Center',
     ) as HTMLButtonElement;
     expect(centerBtn.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('renders the T2 "Customize…" disclosure under the style row', () => {
+    render();
+    expect(container.querySelector('.caption-customizer__toggle')?.textContent).toBe('Customize…');
+  });
+
+  it('threads a customizer edit back into the design override', () => {
+    const { onChange, design } = render();
+    act(() =>
+      (container.querySelector('.caption-customizer__toggle') as HTMLButtonElement).click(),
+    );
+    const upper = container.querySelector(
+      '.caption-customizer__bool-uppercase input',
+    ) as HTMLInputElement;
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked')?.set?.call(
+      upper,
+      true,
+    );
+    act(() => upper.dispatchEvent(new Event('click', { bubbles: true })));
+    expect(onChange).toHaveBeenLastCalledWith({ ...design, override: { uppercase: true } });
+  });
+
+  it('threads the content context into the customizer per-language reading-speed default (WU S4)', () => {
+    render({ content: { language: 'en' } });
+    act(() =>
+      (container.querySelector('.caption-customizer__toggle') as HTMLButtonElement).click(),
+    );
+    const cps = container.querySelector('.caption-customizer__cps input') as HTMLInputElement;
+    expect(cps.value).toBe('20');
+    const readout = container.querySelector('.caption-customizer__resolved') as HTMLElement;
+    expect(readout.textContent?.replace(/\s+/g, ' ')).toContain('≤20 cps');
+  });
+
+  it('reflects the override (font + size scale) in the live preview line', () => {
+    render({
+      design: {
+        style: 'karaoke',
+        box: DEFAULT_CAPTION_DESIGN.box,
+        override: { fontFamily: 'Anton', sizeScale: 1.4 },
+      },
+    });
+    tick(container, 11.5);
+    const line = container.querySelector('.caption-designer__line') as HTMLElement;
+    expect(line.style.fontFamily).toContain('Anton');
+    expect(line.style.fontSize).toBe('1.4em');
   });
 });

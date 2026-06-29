@@ -19,6 +19,7 @@ from media_studio.features.boundary import (
     BoundarySet,
     SnapResult,
     build_boundary_set,
+    resolve_window,
     sentence_ends_from_words,
     snap_candidate,
     snap_candidates,
@@ -196,6 +197,23 @@ class TestSnapHappyPath:
         res = snap_candidate(cand, words, bs)
         assert res.candidate is not None
         assert res.candidate["start"] == pytest.approx(9.0)
+
+
+# --- N1 (V1.1 SEL1): duration-mode window resolution -------------------------
+class TestResolveWindow:
+    def test_standard_mode_is_the_frozen_20_60_window(self) -> None:
+        assert resolve_window("standard") == (boundary.MIN_SEC, boundary.MAX_SEC)
+
+    def test_midform_mode_relaxes_to_16_180(self) -> None:
+        assert resolve_window("midform") == (boundary.MIDFORM_MIN_SEC, boundary.MIDFORM_MAX_SEC)
+        assert resolve_window("midform") == (16.0, 180.0)
+
+    def test_unknown_string_fails_closed_to_standard(self) -> None:
+        assert resolve_window("cinematic") == (boundary.MIN_SEC, boundary.MAX_SEC)
+
+    def test_non_string_fails_closed_to_standard(self) -> None:
+        assert resolve_window(None) == (boundary.MIN_SEC, boundary.MAX_SEC)
+        assert resolve_window(99) == (boundary.MIN_SEC, boundary.MAX_SEC)
 
 
 # --- the 20-60s window -------------------------------------------------------
@@ -443,6 +461,22 @@ class TestSnapFromLists:
         assert kept[0]["start"] == pytest.approx(2.0)
         assert kept[0]["end"] == pytest.approx(32.0)
         assert dropped == []
+
+    def test_midform_duration_mode_keeps_a_long_clip_whole(self) -> None:
+        # N1 (V1.1 SEL1): a 120 s clip is DROPPED under the standard 20-60 window
+        # but KEPT whole when duration_mode="midform" (16-180 s).
+        words = [make_word("w", float(i), i + 1.0) for i in range(130)]
+        cand = make_candidate(0.1, 120.5)
+        std_kept, std_dropped = snap_from_lists([dict(cand)], words, silences=[0.0, 120.0], scene_cuts=[])
+        assert std_kept == [] and len(std_dropped) == 1  # too long for the 20-60 window
+        mid_kept, mid_dropped = snap_from_lists(
+            [dict(cand)], words, silences=[0.0, 120.0], scene_cuts=[], duration_mode="midform"
+        )
+        assert mid_dropped == []
+        assert len(mid_kept) == 1
+        assert mid_kept[0]["start"] == pytest.approx(0.0)
+        assert mid_kept[0]["end"] == pytest.approx(120.0)
+        assert mid_kept[0]["durationSec"] == pytest.approx(120.0)
 
     def test_with_providers(self) -> None:
         words = [make_word("w", float(i), i + 1.0) for i in range(40)]

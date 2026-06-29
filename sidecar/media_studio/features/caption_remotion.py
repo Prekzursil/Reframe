@@ -164,14 +164,15 @@ class RemotionCaptionError(RuntimeError):
 CHROME_HEADLESS_SHELL_ASSET = "chrome-headless-shell-win64"
 #: Chrome for Testing pinned build. CONTRACT-NOTE: A6 lesson 5 demands a pinned
 #: URL; 123.0.6312.86 is the Chrome Headless Shell major Remotion 4.0.x targets.
-#: The human verifies on first download (and fills sha256) — render.ts treats
-#: the browser as optional, so a version drift degrades to Remotion resolving
-#: its own browser rather than a broken render.
+#: render.ts treats the browser as optional, so a version drift degrades to
+#: Remotion resolving its own browser rather than a broken render.
 CHROME_HEADLESS_SHELL_VERSION = "123.0.6312.86"
 CHROME_HEADLESS_SHELL_URL = (
     "https://storage.googleapis.com/chrome-for-testing-public/"
     f"{CHROME_HEADLESS_SHELL_VERSION}/win64/chrome-headless-shell-win64.zip"
 )
+#: F3c: verified sha256 (streamed from chrome-for-testing-public, 2026-06-28).
+CHROME_HEADLESS_SHELL_SHA256 = "61638c0dcbf73e043ee0b1e89bec0715957260ace610df40922694a32dbac51f"
 CHROME_HEADLESS_SHELL_SIZE_MB = 80
 #: Where the pinned zip lands under the assets root (%APPDATA%/media-studio).
 CHROME_HEADLESS_SHELL_ZIP_DEST = "tools/chrome-headless-shell-win64.zip"
@@ -205,6 +206,7 @@ def register_assets() -> AssetEntry:
             label="Chrome Headless Shell (Remotion caption renders)",
             installer="download",
             url=CHROME_HEADLESS_SHELL_URL,
+            sha256=CHROME_HEADLESS_SHELL_SHA256,
             detect=detect_chrome_headless_shell,
         )
     )

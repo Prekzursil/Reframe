@@ -46,6 +46,9 @@ KOKORO_VOICES_ASSET = "kokoro-voices-v1.0"
 # Pinned to the kokoro-onnx project's immutable model-files-v1.0 release tag.
 KOKORO_MODEL_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx"
 KOKORO_VOICES_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
+# F3c: verified sha256 of each release asset (streamed from GitHub, 2026-06-28).
+KOKORO_MODEL_SHA256 = "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5"
+KOKORO_VOICES_SHA256 = "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
 KOKORO_MODEL_DEST = "models/kokoro-v1.0.onnx"
 KOKORO_VOICES_DEST = "models/kokoro-voices-v1.0.bin"
 KOKORO_MODEL_SIZE_MB = 326
@@ -63,6 +66,7 @@ def _register_assets() -> None:
             label="Kokoro v1.0 TTS model (onnx)",
             installer="download",
             url=KOKORO_MODEL_URL,
+            sha256=KOKORO_MODEL_SHA256,
         )
     )
     register_asset(
@@ -74,6 +78,7 @@ def _register_assets() -> None:
             label="Kokoro v1.0 voice embeddings",
             installer="download",
             url=KOKORO_VOICES_URL,
+            sha256=KOKORO_VOICES_SHA256,
         )
     )
 

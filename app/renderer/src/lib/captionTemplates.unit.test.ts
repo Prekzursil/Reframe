@@ -10,11 +10,18 @@ import { describe, it, expect } from 'vitest';
 
 import {
   CAPTION_TEMPLATE_VISUALS,
+  KARAOKE_PRESET_VISUAL,
   REMOTION_CAPTION_TEMPLATES,
   captionVisualFor,
   isNoCaption,
   defaultEmphasisForStyle,
 } from './captionTemplates';
+import {
+  KARAOKE_ACTIVE_HEX,
+  KARAOKE_FILL_HEX,
+  KARAOKE_OUTLINE_HEX,
+  OPUSCLIP_KARAOKE_STYLE,
+} from './captionKaraokePreset';
 
 describe('captionVisualFor', () => {
   it('returns the exact visual for a known remotion template id', () => {
@@ -50,6 +57,23 @@ describe('captionVisualFor', () => {
   it('falls back for the empty-string id too', () => {
     const visual = captionVisualFor('');
     expect(visual.id).toBe('libass');
+  });
+
+  it('returns the karaoke preset visual for the opusclip-karaoke id (V1.1 WU SP1)', () => {
+    // The libass-only preset is NOT in CAPTION_TEMPLATE_VISUALS (conformance-pinned)
+    // but captionVisualFor resolves it to KARAOKE_PRESET_VISUAL so the look renders live.
+    const visual = captionVisualFor(OPUSCLIP_KARAOKE_STYLE);
+    expect(visual).toBe(KARAOKE_PRESET_VISUAL);
+    expect(visual.id).toBe(OPUSCLIP_KARAOKE_STYLE);
+    expect(visual.engine).toBe('libass');
+    // Built from the shared sidecar-mirrored constants (no silent drift).
+    expect(visual.textColor).toBe(KARAOKE_FILL_HEX);
+    expect(visual.activeColor).toBe(KARAOKE_ACTIVE_HEX[0]);
+    expect(visual.shadowColor).toBe(KARAOKE_OUTLINE_HEX);
+    expect(visual.uppercase).toBe(true);
+    expect(visual.outline).toBe(true);
+    // Resolves case/space-insensitively (mirrors isKaraokeStyle).
+    expect(captionVisualFor(' OPUSCLIP-KARAOKE ')).toBe(KARAOKE_PRESET_VISUAL);
   });
 });
 

@@ -51,6 +51,8 @@ export const REFRAME_ENGINE_OPTIONS: readonly string[] = [
   'auto',
   'verthor',
   'claudeshorts',
+  // R1 (V1.1): the flagship hybrid multi-speaker director (explicit opt-in).
+  'reframe_multispeaker',
 ] as const;
 
 /** The hard duration window the pipeline enforces (§5.3): 20-60 s. */

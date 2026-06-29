@@ -7,6 +7,7 @@
 // the caption engine). Pure helpers only — unit-tested in captionDesign.test.ts.
 
 import { type CaptionBox, DEFAULT_CAPTION_BOX, boxToWire, clampBox } from './captionPosition';
+import { type CaptionOverride, sanitizeCaptionOverride } from './captionOverride';
 import { CAPTION_STYLE_OPTIONS, DEFAULT_CAPTION_STYLE } from '../features/shortMakerLogic';
 import type { Cue } from './rpc';
 
@@ -16,6 +17,8 @@ export interface CaptionDesign {
   style: string;
   /** The normalised caption region. */
   box: CaptionBox;
+  /** Optional within-template tuning patch (V1.1). Absent => template defaults. */
+  override?: CaptionOverride;
 }
 
 /** The default design: the libass classic style in the default bottom band. */
@@ -31,18 +34,28 @@ export function sanitizeCaptionDesign(
   const r = raw ?? {};
   const rawStyle = typeof r.style === 'string' ? r.style.trim() : '';
   const style = CAPTION_STYLE_OPTIONS.includes(rawStyle) ? rawStyle : DEFAULT_CAPTION_STYLE;
-  return { style, box: clampBox(r.box ?? {}) };
+  const design: CaptionDesign = { style, box: clampBox(r.box ?? {}) };
+  const override = sanitizeCaptionOverride(r.override);
+  if (override !== undefined) design.override = override;
+  return design;
 }
 
 /** The export-payload slice for a caption design (style id + wire-rounded box). */
 export interface CaptionDesignWire {
   captionStyle: string;
   captionPosition: CaptionBox;
+  /** Optional within-template tuning patch (V1.1). Sidecar ignores when absent. */
+  captionOverride?: CaptionOverride;
 }
 
 /** Convert a design to the frozen export payload fields the sidecar reads. */
 export function captionDesignWire(design: CaptionDesign): CaptionDesignWire {
-  return { captionStyle: design.style, captionPosition: boxToWire(design.box) };
+  const wire: CaptionDesignWire = {
+    captionStyle: design.style,
+    captionPosition: boxToWire(design.box),
+  };
+  if (design.override !== undefined) wire.captionOverride = design.override;
+  return wire;
 }
 
 /** The placeholder phrase the editor animates when there is no real transcript. */

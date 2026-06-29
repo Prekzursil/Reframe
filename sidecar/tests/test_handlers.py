@@ -347,7 +347,14 @@ def test_transcribe_start_unknown_video(services: Services, ctx: RpcContext) -> 
 # --------------------------------------------------------------------------- #
 def _transcribe_sync(services: Services, ctx: RpcContext, vid: str) -> None:
     services.transcribe_start({"videoId": vid}, ctx)
-    ctx.jobs.join(timeout=5)
+    # Wait for the (fake-backed, deterministic) transcribe job to COMPLETE rather
+    # than racing an arbitrary wall-clock deadline: a fixed 5 s join is fragile
+    # under the full --cov suite (coverage instrumentation + GIL contention from
+    # sibling job threads can push the fake transcribe past 5 s -> the transcript
+    # is not persisted yet -> captions.cues returns []). A generous bound keeps it
+    # CI-safe while removing that timing flake. (The job itself returns in well
+    # under a second; this only widens the safety margin.)
+    ctx.jobs.join(timeout=60)
 
 
 def test_subtitles_generate_then_edit_then_export(

@@ -9,13 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
-import Assets, {
-  type AssetInfo,
-  doneErrorMessage,
-  extractAssets,
-  fmtSize,
-  missingNames,
-} from './Assets';
+import Assets, { type AssetInfo, extractAssets, fmtSize, missingNames } from './Assets';
 import type { DoneEvent, MediaStudioApi, ProgressEvent } from './_api';
 
 // ---------------------------------------------------------------------------
@@ -115,18 +109,6 @@ describe('extractAssets', () => {
     expect(extractAssets(null)).toBeNull();
     expect(extractAssets({})).toBeNull();
     expect(extractAssets({ assets: 'nope' })).toBeNull();
-  });
-});
-
-describe('doneErrorMessage', () => {
-  it('extracts the §A3 error payload message', () => {
-    const result = { error: { message: 'insufficient disk space', type: 'AssetError' } };
-    expect(doneErrorMessage(result)).toBe('insufficient disk space');
-  });
-  it('returns null for success payloads', () => {
-    expect(doneErrorMessage({ installed: [], assets: [] })).toBeNull();
-    expect(doneErrorMessage(null)).toBeNull();
-    expect(doneErrorMessage({ error: 'flat-string' })).toBeNull();
   });
 });
 

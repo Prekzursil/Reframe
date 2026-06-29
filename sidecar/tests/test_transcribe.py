@@ -227,6 +227,38 @@ def test_transcribe_file_uses_cpu_fallback_end_to_end():
 
 
 # --------------------------------------------------------------------------- #
+# F3b: GPU->CPU fallback surfaces a loud notice (not a silent slow run)
+# --------------------------------------------------------------------------- #
+def test_load_fallback_invokes_on_fallback_notice():
+    loader = FakeLoader(_two_segment_model(), fail_on={"cuda"})
+    notices: list[str] = []
+    _inst, device = transcribe.load_model_with_cpu_fallback(loader, on_fallback=notices.append)
+    assert device == transcribe.CPU_DEVICE
+    assert notices == [transcribe.GPU_FALLBACK_NOTICE]
+
+
+def test_load_success_emits_no_fallback_notice():
+    loader = FakeLoader(_two_segment_model())
+    notices: list[str] = []
+    transcribe.load_model_with_cpu_fallback(loader, on_fallback=notices.append)
+    assert notices == []
+
+
+def test_transcribe_file_surfaces_cpu_fallback_notice_via_progress():
+    loader = FakeLoader(_two_segment_model(), fail_on={"cuda"})
+    events: list[tuple[float, str]] = []
+    transcribe.transcribe_file("/v.mp4", loader=loader, on_progress=lambda p, m: events.append((p, m)))
+    assert (0.0, transcribe.GPU_FALLBACK_NOTICE) in events
+
+
+def test_transcribe_file_no_fallback_notice_when_gpu_succeeds():
+    loader = FakeLoader(_two_segment_model())
+    events: list[tuple[float, str]] = []
+    transcribe.transcribe_file("/v.mp4", loader=loader, on_progress=lambda p, m: events.append((p, m)))
+    assert all(msg != transcribe.GPU_FALLBACK_NOTICE for _, msg in events)
+
+
+# --------------------------------------------------------------------------- #
 # progress streaming
 # --------------------------------------------------------------------------- #
 def test_progress_is_monotonic_and_ends_at_100():
@@ -827,6 +859,33 @@ def test_default_cuda_probe_false_when_torch_reports_no_cuda(monkeypatch):
     fake_torch = _types.ModuleType("torch")
     fake_torch.cuda = _types.SimpleNamespace(is_available=lambda: False)
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    assert transcribe._default_cuda_probe() is False
+
+
+def test_default_cuda_probe_false_when_torch_raises(monkeypatch):
+    # Deterministically exercise the except branch (no-torch / broken-CUDA path):
+    # a CUDA init error must degrade to False, never propagate. This keeps the
+    # branch covered REGARDLESS of whether real torch is installed in the env (a
+    # machine WITH torch never raises here, so the import-fails path would
+    # otherwise be unreachable and the gate would slip below 100%).
+    import sys
+    import types as _types
+
+    def _boom() -> bool:
+        raise RuntimeError("CUDA init failed")
+
+    fake_torch = _types.ModuleType("torch")
+    fake_torch.cuda = _types.SimpleNamespace(is_available=_boom)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    assert transcribe._default_cuda_probe() is False
+
+
+def test_default_cuda_probe_false_when_torch_import_fails(monkeypatch):
+    # The torch-ABSENT path: a sentinel ``None`` in sys.modules makes
+    # ``import torch`` raise ImportError, which the probe swallows -> False.
+    import sys
+
+    monkeypatch.setitem(sys.modules, "torch", None)
     assert transcribe._default_cuda_probe() is False
 
 

@@ -18,47 +18,17 @@ import { client, hasApi, type ShortInfo, type ShortReexportHint } from '../lib/r
 import { Player, shortMediaUrl } from '../components/Player';
 import { ShortClipActions } from '../components/ShortClipActions';
 import { useShortThumbnail } from '../components/useShortThumbnail';
+// R5: the pure gallery helpers (sort order + duration) live in
+// features/shortsGallery so the per-video ProducedShorts inline gallery shares
+// ONE source — both galleries surface the SAME virality-score dashboard. Re-
+// exported below so existing ./Shorts importers/tests keep their entry point.
+import { type ShortsSort, sortShorts, formatShortDuration } from '../features/shortsGallery';
 import './shorts.css';
 
-// ---- pure helpers (exported for unit tests; no React render) ----------------
+export { sortByCreatedAt, sortShorts, formatShortDuration } from '../features/shortsGallery';
+export type { ShortsSort } from '../features/shortsGallery';
 
-/** How the gallery is ordered (P4 §7: newest-first or by virality). */
-export type ShortsSort = 'recent' | 'virality';
-
-/** Newest-first by `createdAt`. Returns a NEW array (never mutates input). */
-export function sortByCreatedAt(shorts: readonly ShortInfo[]): ShortInfo[] {
-  return [...shorts].sort((a, b) => b.createdAt - a.createdAt);
-}
-
-/** A short's virality for SORTING: absent/invalid sinks to -1 (sorts last). */
-function shortVirality(s: ShortInfo): number {
-  return typeof s.viralityPct === 'number' && Number.isFinite(s.viralityPct) ? s.viralityPct : -1;
-}
-
-/**
- * Sort the gallery (P4 §7), NON-DESTRUCTIVELY:
- * - 'recent': newest `createdAt` first (the default).
- * - 'virality': highest viralityPct first; missing scores sink, ties fall back
- *   to newest-first so the order is always deterministic.
- */
-export function sortShorts(shorts: readonly ShortInfo[], mode: ShortsSort): ShortInfo[] {
-  if (mode === 'virality') {
-    return [...shorts].sort((a, b) => {
-      const d = shortVirality(b) - shortVirality(a);
-      return d !== 0 ? d : b.createdAt - a.createdAt;
-    });
-  }
-  return sortByCreatedAt(shorts);
-}
-
-/** mm:ss for a clip duration; "--:--" for non-finite / non-positive input. */
-export function formatShortDuration(sec: number): string {
-  if (!Number.isFinite(sec) || sec <= 0) return '--:--';
-  const total = Math.round(sec);
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
+// ---- pure helpers (no React render) -----------------------------------------
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

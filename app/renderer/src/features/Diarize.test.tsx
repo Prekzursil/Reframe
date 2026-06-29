@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
-import Diarize, { doneErrorMessage, extractSpeakers } from './Diarize';
+import Diarize, { extractSpeakers } from './Diarize';
 import type { DoneEvent, MediaStudioApi, ProgressEvent } from './_api';
 
 interface FakeApi {
@@ -63,17 +63,6 @@ describe('extractSpeakers', () => {
       extractSpeakers({ transcript: { language: 'en', segments: [], durationSec: 0 } }),
     ).toEqual([]);
     expect(extractSpeakers(null)).toEqual([]);
-  });
-});
-
-describe('doneErrorMessage', () => {
-  it('extracts the error message', () => {
-    expect(doneErrorMessage({ error: { message: 'no transcript', type: 'RpcError' } })).toBe(
-      'no transcript',
-    );
-  });
-  it('null for success', () => {
-    expect(doneErrorMessage({ transcript: {} })).toBeNull();
   });
 });
 

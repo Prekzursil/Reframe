@@ -91,7 +91,8 @@ DEFAULT_ASPECT = "9:16"
 #
 # The orchestrator-facing seam each default wraps:
 #   select_candidates(transcript, prompt, controls, *, settings) -> List[Candidate]
-#   snap_candidates(candidates, transcript, *, settings) -> (kept, dropped)
+#   snap_candidates(candidates, transcript, *, controls, settings) -> (kept, dropped)
+#       (controls carries the SEL1 durationMode so BOUNDARY shares SELECT's window)
 #       kept   = re-snapped+re-ranked candidates (sourceStart re-based)
 #       dropped = [{candidate, reason}] for clips with no valid boundary
 #   cut_clip(in_path, out_path, start, end, *, settings) -> out_path
@@ -162,10 +163,19 @@ def _lazy_select(transcript, prompt, controls, *, settings=None) -> list[Candida
     return [dict(c) for c in _select.select(transcript, prompt, controls, provider)]
 
 
-def _lazy_snap(candidates, transcript, *, settings=None) -> tuple[list[Candidate], list[dict[str, Any]]]:
+def _lazy_snap(candidates, transcript, *, controls=None, settings=None) -> tuple[list[Candidate], list[dict[str, Any]]]:
     from . import boundary as _boundary
+    from . import select as _select
 
     words = _words_of(transcript)
+    # V1.1 WU SEL1 (BLOCKER fix): thread the SELECT-side ``durationMode`` into the
+    # boundary stage so a mid-form request (16-180 s) is NOT re-clamped back to the
+    # standard 20-60 s window and silently dropped. We normalise through the SAME
+    # fail-closed clamp SELECT uses (``resolve_duration_mode``) so the two stages
+    # share ONE envelope: a typo degrades to "standard", and an absent mode leaves
+    # ``duration_mode=None`` (the boundary default window — unchanged behaviour).
+    raw_mode = (controls or {}).get("durationMode")
+    duration_mode = _select.resolve_duration_mode(raw_mode) if raw_mode is not None else None
     # CONTRACT-NOTE: silence/scene detection lives behind the boundary seam; the
     # real detectors (ffmpeg silencedetect / PySceneDetect) are wired here in
     # production. Passing empty lists makes snapping rely on sentence-end timing
@@ -175,6 +185,7 @@ def _lazy_snap(candidates, transcript, *, settings=None) -> tuple[list[Candidate
         words,
         silences=(settings or {}).get("silences"),
         scene_cuts=(settings or {}).get("sceneCuts"),
+        duration_mode=duration_mode,
     )
 
 
@@ -336,18 +347,18 @@ def _lazy_brand_overlay(in_path, out_path, logo_path, *, settings=None) -> str:
 _SUBTITLE_MODES = ("burn", "softmux", "sidecar", "none")
 
 
-def resolve_subtitle_mode(settings) -> str:
+def resolve_subtitle_mode(settings: dict[str, Any] | None) -> str:
     """The validated ``subtitleMode`` (defaults to ``burn`` — quality-ON, G-4)."""
     raw = str((settings or {}).get("subtitleMode") or "").strip().lower()
     return raw if raw in _SUBTITLE_MODES else "burn"
 
 
-def caption_embedded(settings) -> bool:
+def caption_embedded(settings: dict[str, Any] | None) -> bool:
     """True when captions are written INTO the exported video (burn or soft track)."""
     return resolve_subtitle_mode(settings) in ("burn", "softmux")
 
 
-def resolve_caption_burn(settings) -> bool:
+def resolve_caption_burn(settings: dict[str, Any] | None) -> bool:
     """True when captions are hard-burned into the pixels (``subtitleMode=burn``)."""
     return resolve_subtitle_mode(settings) == "burn"
 
@@ -363,6 +374,8 @@ def _lazy_caption(
     height,
     settings=None,
     hook_title=None,
+    hook_card=False,
+    hook_card_sec=0.0,
 ) -> str:
     """Caption-stage router (A4): style picks the engine.
 
@@ -403,6 +416,7 @@ def _lazy_caption(
             )
 
     from . import caption as _caption
+    from .caption_karaoke import is_karaoke_style
 
     engine = _caption.CaptionEngine(settings or {})
     return engine.render(
@@ -416,6 +430,12 @@ def _lazy_caption(
         hook_title=hook_title,
         # P4 §4: the libass default engine honours the caption position box.
         position=(settings or {}).get("captionPosition"),
+        # V1.1 WU SP1: the "opusclip-karaoke" libass preset (word-by-word ASS).
+        karaoke=is_karaoke_style(style),
+        # V1.1 WU SP2: render the hook as an OpusClip CARD (white box, bold black,
+        # upper third, first-~5 s) on the top-N-by-rank clips only.
+        hook_card=hook_card,
+        hook_card_sec=hook_card_sec,
     )
 
 
@@ -767,7 +787,9 @@ def run_select(
     # -- BOUNDARY-SNAP (batch) -------------------------------------------------
     ctx.progress(55, "snapping boundaries")
     ctx.raise_if_cancelled()
-    kept, dropped = stages.snap_candidates(raw, transcript, settings=settings)
+    # SEL1: forward controls so BOUNDARY-SNAP honours the same durationMode
+    # envelope SELECT used (else a mid-form clip is re-clamped to 20-60 s here).
+    kept, dropped = stages.snap_candidates(raw, transcript, controls=controls, settings=settings)
     kept = [_coerce_candidate(c, i + 1) for i, c in enumerate(kept or [])]
 
     requested = int(controls.get("count", len(raw)) or len(raw))
@@ -867,6 +889,9 @@ def _export_one(
     video_id: str = "",
     source_title: str = "",
     on_notice: Callable[[dict[str, str]], None],
+    hook_card: bool = False,
+    hook_card_sec: float = 0.0,
+    final_stem: str | None = None,
 ) -> dict[str, Any]:
     """Run CUT (-> SILENCE-TRIM -> STABILIZE -> REMOVE-FILLERS) -> REFRAME -> CAPTION -> EXPORT (-> MUX-AUDIO).
 
@@ -1033,6 +1058,9 @@ def _export_one(
     if (settings or {}).get("hookTitle", True):
         hook_text = str(candidate.get("hook", "") or "").strip()
         hook_title = hook_text or None
+    # WU SP2: a carded clip (top-N by virality rank, decided in run_export) draws
+    # the hook as a CARD — but only when there IS a hook title to draw.
+    clip_hook_card = bool(hook_card and hook_title)
     # P4 §4 subtitle DELIVERY: burn only when subtitleMode is "burn"; for the
     # soft-track / sidecar / none modes the caption stage soft-muxes or skips (the
     # stage RETURNS the path to encode — the bare clip when it skips), so capture
@@ -1048,6 +1076,8 @@ def _export_one(
         height=OUT_HEIGHT,
         settings=settings,
         hook_title=hook_title,
+        hook_card=clip_hook_card,
+        hook_card_sec=hook_card_sec,
     )
 
     # P4 §8d: BRAND-LOGO OVERLAY — composite the configured brand logo into a
@@ -1067,8 +1097,10 @@ def _export_one(
         )
         export_input = branded_path
 
-    # EXPORT — final libx264 encode.
-    final_path = str(out_dir / f"{stem}.mp4")
+    # EXPORT — final libx264 encode. WU SP2: the FINAL clip carries the
+    # rank-ordered ``NN-`` filename prefix (``final_stem``) so the exported set
+    # sorts by virality rank; intermediates keep the plain working ``stem``.
+    final_path = str(out_dir / f"{final_stem or stem}.mp4")
     if audio_track is None:
         stages.export_clip(export_input, final_path, settings=settings)
     else:
@@ -1201,13 +1233,25 @@ def run_export(
         _seen_notices.add(key)
         ctx.progress(4, notice.get("message", "stabilize: notice"))
 
+    # WU SP2: resolve the hook-card config ONCE, then gate the card to the top-N
+    # clips by virality rank and compute the rank-ordered ``NN-`` filename width.
+    from . import hook_card as _hook_card  # lazy: keep module import-light
+
+    card_cfg = _hook_card.resolve_hook_card_config(settings)
+    carded_ranks = _hook_card.select_hook_card_ranks(candidates, card_cfg)
+    max_rank = _hook_card.max_export_rank(candidates)
+    base_stem = Path(source_path).stem or "clip"
+
     items: list[dict[str, Any]] = []
     total = len(candidates)
     for i, candidate in enumerate(candidates):
         ctx.raise_if_cancelled()
         candidate = _ensure_source_start(candidate)
         rank = candidate.get("rank", i + 1)
-        stem = f"{Path(source_path).stem or 'clip'}-{rank}"
+        stem = f"{base_stem}-{rank}"
+        # WU SP2: rank-ordered output name + per-clip card gate (top-N by rank).
+        clip_rank = _hook_card.resolve_rank(candidate, i + 1)
+        final_stem = _hook_card.rank_ordered_stem(base_stem, clip_rank, max_rank)
         ctx.progress(int(100 * i / total), f"exporting clip {i + 1}/{total}")
         item = _export_one(
             candidate,
@@ -1222,6 +1266,9 @@ def run_export(
             video_id=video_id,
             source_title=source_title,
             on_notice=_emit_notice,
+            hook_card=clip_rank in carded_ranks,
+            hook_card_sec=card_cfg.duration_sec,
+            final_stem=final_stem,
         )
         items.append(item)
 

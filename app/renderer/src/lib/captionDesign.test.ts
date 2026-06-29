@@ -20,12 +20,37 @@ describe('sanitizeCaptionDesign', () => {
     expect(sanitizeCaptionDesign({ style: 'bogus' }).style).toBe(DEFAULT_CAPTION_STYLE);
   });
 
+  it('preserves the opusclip-karaoke libass preset (V1.1 WU SP1 BLOCKER fix)', () => {
+    // Before the fix the preset was absent from CAPTION_STYLE_OPTIONS, so this
+    // sanitizer reset it to the libass default and the karaoke burn was
+    // unreachable end-to-end. It must now survive sanitization to route to the
+    // sidecar with karaoke=True.
+    expect(sanitizeCaptionDesign({ style: 'opusclip-karaoke' }).style).toBe('opusclip-karaoke');
+  });
+
   it('defaults the whole design for null / non-string style / missing box', () => {
     expect(sanitizeCaptionDesign(null)).toEqual(DEFAULT_CAPTION_DESIGN);
     expect(sanitizeCaptionDesign(undefined)).toEqual(DEFAULT_CAPTION_DESIGN);
     expect(sanitizeCaptionDesign({ style: 42 as unknown as string })).toEqual(
       DEFAULT_CAPTION_DESIGN,
     );
+  });
+
+  it('attaches a validated override when present', () => {
+    const d = sanitizeCaptionDesign({
+      style: 'karaoke',
+      box: { x: 0.1, y: 0.2, w: 0.5, h: 0.2 },
+      override: { fontFamily: 'Anton', sizeScale: 9, textColor: '#ff0000' },
+    });
+    expect(d.override).toEqual({ fontFamily: 'Anton', sizeScale: 1.8, textColor: '#FF0000' });
+  });
+
+  it('omits the override key entirely when it sanitises to nothing (back-compat)', () => {
+    const d = sanitizeCaptionDesign({
+      style: 'karaoke',
+      override: { fontFamily: 'NotAFont' },
+    });
+    expect(d).not.toHaveProperty('override');
   });
 });
 
@@ -43,6 +68,20 @@ describe('captionDesignWire', () => {
       captionStyle: DEFAULT_CAPTION_STYLE,
       captionPosition: boxToWire(DEFAULT_CAPTION_BOX),
     });
+  });
+
+  it('carries the override onto the wire when present', () => {
+    const wire = captionDesignWire({
+      style: 'karaoke',
+      box: DEFAULT_CAPTION_BOX,
+      override: { uppercase: true, maxLines: 1 },
+    });
+    expect(wire.captionOverride).toEqual({ uppercase: true, maxLines: 1 });
+  });
+
+  it('omits captionOverride when the design has no override', () => {
+    const wire = captionDesignWire({ style: 'neon', box: DEFAULT_CAPTION_BOX });
+    expect(wire).not.toHaveProperty('captionOverride');
   });
 });
 

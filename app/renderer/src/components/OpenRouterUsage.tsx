@@ -28,35 +28,53 @@ export function OpenRouterUsage({ rows }: OpenRouterUsageProps): React.ReactElem
   }
   return (
     <div className="openrouter-usage" data-openrouter="rows" data-row-count={rows.length}>
-      {rows.map((row, i) => (
-        <div
-          className="openrouter-usage__row"
-          key={`${row.provider}:${row.key}:${i}`}
-          data-provider={row.provider}
-          data-free={row.isFreeTier ? 'true' : 'false'}
-        >
-          <span className="openrouter-usage__key">
-            {row.provider} key {row.key}
-          </span>
-          <span
-            className="openrouter-usage__cost"
-            data-field="cost"
-            title="Cumulative credit spend"
+      {rows.map((row, i) => {
+        const cooldown = row.status === 'cooldown';
+        return (
+          <div
+            className={`openrouter-usage__row${cooldown ? ' is-cooldown' : ''}`}
+            key={`${row.provider}:${row.key}:${i}`}
+            data-provider={row.provider}
+            data-free={row.isFreeTier ? 'true' : 'false'}
+            data-status={row.status}
           >
-            {formatUsd(row.costUsd)} spent
-          </span>
-          <span className="openrouter-usage__remaining" data-field="remaining">
-            {row.limitUsd === null
-              ? 'no credit limit'
-              : `${formatUsd(row.remainingUsd)} of ${formatUsd(row.limitUsd)} left`}
-          </span>
-          {row.isFreeTier && (
-            <span className="openrouter-usage__free" data-field="free-tier">
-              free tier
+            <span className="openrouter-usage__key">
+              {row.provider} key {row.key}
             </span>
-          )}
-        </div>
-      ))}
+            <span
+              className="openrouter-usage__cost"
+              data-field="cost"
+              title="Cumulative credit spend"
+            >
+              {formatUsd(row.costUsd)} spent
+            </span>
+            <span className="openrouter-usage__remaining" data-field="remaining">
+              {row.limitUsd === null
+                ? 'no credit limit'
+                : `${formatUsd(row.remainingUsd)} of ${formatUsd(row.limitUsd)} left`}
+            </span>
+            {row.isFreeTier && (
+              <span className="openrouter-usage__free" data-field="free-tier">
+                free tier
+              </span>
+            )}
+            {/* M4: a parked key stays in the pool (cooldown-not-delete) and shows
+                WHY it stopped serving (402/429 or the free-tier credit cap). */}
+            <span
+              className={`openrouter-usage__status openrouter-usage__status--${row.status}`}
+              data-field="status"
+              role={cooldown ? 'status' : undefined}
+            >
+              {cooldown ? 'on cooldown' : 'active'}
+            </span>
+            {cooldown && row.cooldownReason !== null && (
+              <span className="openrouter-usage__cooldown-reason" data-field="cooldown-reason">
+                {row.cooldownReason}
+              </span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

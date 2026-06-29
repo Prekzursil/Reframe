@@ -69,10 +69,41 @@ describe('<FirstRunChooser />', () => {
     for (const b of btns) expect((b as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('exposes a dialog role + an accessible label', () => {
+  it('exposes a modal dialog role + an accessible label', () => {
     mount({ onChoose: vi.fn() });
     const dialog = container.querySelector('[role="dialog"]');
     expect(dialog).not.toBeNull();
+    expect(dialog?.getAttribute('aria-modal')).toBe('true');
     expect(dialog?.getAttribute('aria-label')).toBeTruthy();
+  });
+
+  it('moves focus to the recommended privacy option on mount (focus trap)', () => {
+    mount({ onChoose: vi.fn() });
+    const local = container.querySelector('[data-choice="privacy"]');
+    expect(document.activeElement).toBe(local);
+  });
+
+  it('selects the privacy-safe default on Escape', () => {
+    const onChoose = vi.fn();
+    mount({ onChoose });
+    act(() => {
+      (document.activeElement ?? document.body).dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+    });
+    expect(onChoose).toHaveBeenCalledWith('privacy');
+  });
+
+  it('ignores Escape while busy (no choice is forced mid-apply)', () => {
+    const onChoose = vi.fn();
+    mount({ onChoose, busy: true });
+    act(() => {
+      container
+        .querySelector('[role="dialog"]')
+        ?.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+        );
+    });
+    expect(onChoose).not.toHaveBeenCalled();
   });
 });

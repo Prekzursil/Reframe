@@ -50,8 +50,11 @@ class FakeWhisperLoader:
 
 class FakeProvider:
     def chat(self, *args: Any, **kwargs: Any) -> str:
-        # never reached by the silent-path tests; present so select() has a provider.
-        return "[]"
+        # An explicit empty clips object = a GENUINE empty selection (the text
+        # path proposes nothing, so these tests exercise the vision/egress path).
+        # NOTE: a bare "[]" would now be a PARSE FAILURE (no JSON clips object,
+        # F1) and raise SelectionParseError — use the valid empty-clips object.
+        return '{"clips": []}'
 
     def exemplar_block(self, language: str | None = None) -> str | None:
         return None
@@ -587,7 +590,9 @@ def test_phase8_select_offline_text_select_routes_local_no_egress(tmp_path: Path
 
 def test_select_provider_or_local_online_honors_select_route(tmp_path: Path) -> None:
     # ONLINE (offline off) + no injected provider: the select route is honored,
-    # so a configured cloud entry is the pool's first (egress) target.
+    # so a configured cloud entry is the pool's first (egress) target. The M3
+    # RoutingPolicy global must ALLOW cloud (flipped to cloud) — otherwise the
+    # fail-closed local default would short-circuit the seam to local-only.
     from media_studio.models import provider as provider_mod
 
     svc = _phase8_services(tmp_path, provider=None)
@@ -595,6 +600,7 @@ def test_select_provider_or_local_online_honors_select_route(tmp_path: Path) -> 
     svc.settings.set(
         {
             **_vision_provider_settings(with_consent=True),
+            "routingPolicy": {"global": "cloud"},
             "routing": {"perFunction": {"select": {"provider": "gemini", "fallback": []}}},
         }
     )
@@ -797,7 +803,19 @@ def test_default_phase8_runner_is_the_module_runner(tmp_path: Path) -> None:
 
 def test_models_present_map_omits_missing_and_fails_open(tmp_path: Path, monkeypatch: Any) -> None:
     svc = _phase8_services(tmp_path)
+    # Importing smolvlm2 registers its asset (top-level register_*_assets()), so the
+    # "present-but-not-installed" branch is exercised deterministically — not reliant
+    # on another test having imported it first (prior latent ordering dependency).
     from media_studio.assets import manifest as _manifest
+    from media_studio.features import smolvlm2 as _sv  # noqa: F401 - import for its registration side effect
+
+    # Isolate the HF cache to an empty tmp dir: smolvlm2 is an installer='hf' asset
+    # whose installed-probe reads the real HF cache, so without this a dev box that
+    # has the snapshot cached would report it INSTALLED (host-dependent flake).
+    empty_hf = tmp_path / "hf-empty"
+    empty_hf.mkdir()
+    monkeypatch.setenv("HF_HUB_CACHE", str(empty_hf))
+    monkeypatch.setenv("HF_HOME", str(empty_hf))
 
     real_get = _manifest.get_asset
 

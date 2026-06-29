@@ -14,7 +14,6 @@ import Dub, {
   type AudioTrack,
   type TtsVoice,
   buildDubParams,
-  doneErrorMessage,
   dubMediaUrl,
   voicesForEngine,
 } from './Dub';
@@ -139,18 +138,6 @@ describe('dubMediaUrl', () => {
     expect(url.startsWith('mstream://media/dub%3A')).toBe(true);
     // a single path segment: no raw spaces, backslashes or extra slashes
     expect(url.split('/').length).toBe(4);
-  });
-});
-
-describe('doneErrorMessage', () => {
-  it('pulls the A3 error payload message', () => {
-    expect(doneErrorMessage({ error: { message: 'synthesis exploded', type: 'DubError' } })).toBe(
-      'synthesis exploded',
-    );
-  });
-  it('null for success payloads', () => {
-    expect(doneErrorMessage({ audioTrack: {}, path: 'x.wav' })).toBeNull();
-    expect(doneErrorMessage(undefined)).toBeNull();
   });
 });
 

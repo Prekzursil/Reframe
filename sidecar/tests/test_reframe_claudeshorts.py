@@ -344,6 +344,33 @@ def test_build_reframe_argv_keyframed_x(fake_bins):
     assert "crop=405:720:'if(lt(t," in vf  # quoted dynamic expression
 
 
+def test_output_dimensions_social_presets_square_and_portrait():
+    # WU R3: the curated 1:1 / 4:5 aspects resolve to their 1080-wide social dims
+    # (NOT the generic long-edge-1920 math), shared with the verthor engine.
+    assert cs.output_dimensions("1:1") == (1080, 1080)
+    assert cs.output_dimensions("4:5") == (1080, 1350)
+    assert cs.output_dimensions("9x16") == (1080, 1920)
+
+
+def test_crop_size_for_square_and_portrait_aspects():
+    # The crop RECTANGLE is parameterized by aspect: the same source yields a
+    # 1:1 / 4:5 / 9:16 crop window (reuse the crop solution at different ratios).
+    assert cs.crop_size(1280, 720, "1:1") == (720, 720)
+    assert cs.crop_size(1280, 720, "4:5") == (576, 720)
+    assert cs.crop_size(1280, 720, "9:16") == (405, 720)
+
+
+@pytest.mark.parametrize(
+    ("aspect", "dims"),
+    [("1:1", "1080:1080"), ("4:5", "1080:1350"), ("9:16", "1080:1920")],
+)
+def test_build_reframe_argv_scales_to_each_social_aspect(fake_bins, aspect, dims):
+    # The ONE ffmpeg pass scales to the per-aspect output dimensions.
+    crop = {"x": 100, "y": 0, "w": 405, "h": 720}
+    vf = _vf_of(cs.build_reframe_argv("/in.mp4", "/out.mp4", crop, None, aspect, fake_bins))
+    assert f"scale={dims}:flags=lanczos" in vf
+
+
 def test_build_frame_extract_argv(fake_bins):
     argv = cs.build_frame_extract_argv("/in.mp4", 1.5, "/tmp/f.jpg", fake_bins)
     assert argv[argv.index("-ss") + 1] == "1.500"
@@ -758,10 +785,14 @@ def verthor_script(tmp_path, monkeypatch):
     return {"verthorScript": str(script)}
 
 
-def test_engines_registry_has_exactly_the_two_a4_impls():
-    assert set(reframe.ENGINES) == {"verthor", "claudeshorts"}
+def test_engines_registry_has_the_a4_impls_plus_r1_multispeaker():
+    # A4: verthor + claudeshorts; R1 (V1.1) adds the hybrid multi-speaker engine.
+    from media_studio.features.reframe_multispeaker import MultiSpeakerReframeEngine
+
+    assert set(reframe.ENGINES) == {"verthor", "claudeshorts", "reframe_multispeaker"}
     assert reframe.ENGINES["verthor"] is ReframeEngine
     assert reframe.ENGINES["claudeshorts"] is ClaudeShortsReframeEngine
+    assert reframe.ENGINES["reframe_multispeaker"] is MultiSpeakerReframeEngine
 
 
 def test_wsl_available_probe_shapes():

@@ -27,8 +27,11 @@ from .manager import AssetManager
 
 log = get_logger("media_studio.assets.rpc")
 
+#: A registered RPC handler: ``(params, ctx) -> result`` (the §2 wire shape).
+RpcHandler = Callable[[dict[str, Any], RpcContext], dict[str, Any]]
 
-def make_list_handler(manager: AssetManager):
+
+def make_list_handler(manager: AssetManager) -> RpcHandler:
     """Build the ``assets.list`` handler (direct-return)."""
 
     def handler(params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
@@ -37,7 +40,7 @@ def make_list_handler(manager: AssetManager):
     return handler
 
 
-def make_ensure_handler(manager: AssetManager):
+def make_ensure_handler(manager: AssetManager) -> RpcHandler:
     """Build the ``assets.ensure`` handler (long job, returns ``{jobId}``)."""
 
     def handler(params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
@@ -63,7 +66,7 @@ def make_ensure_handler(manager: AssetManager):
     return handler
 
 
-def make_cancel_handler():
+def make_cancel_handler() -> RpcHandler:
     """Build the ``assets.cancel`` handler (delegates to the job registry)."""
 
     def handler(params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:

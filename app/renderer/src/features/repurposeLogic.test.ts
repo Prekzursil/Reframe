@@ -29,8 +29,13 @@ describe('caption-style + engine constraints', () => {
     expect(CAPTION_STYLE_OPTIONS).toContain('none');
   });
 
-  it('exposes the three reframe engines', () => {
-    expect([...REFRAME_ENGINE_OPTIONS]).toEqual(['auto', 'verthor', 'claudeshorts']);
+  it('exposes the reframe engines incl. the R1 multi-speaker director', () => {
+    expect([...REFRAME_ENGINE_OPTIONS]).toEqual([
+      'auto',
+      'verthor',
+      'claudeshorts',
+      'reframe_multispeaker',
+    ]);
   });
 
   it('isValidCaptionStyle gates by the closed set', () => {

@@ -10,7 +10,7 @@ Every track REGISTERS its artifacts here with **one call** —
         size_mb=350,
         dest="models/kokoro-v1.0.onnx",
         url="https://.../kokoro-v1.0.onnx",   # PINNED (A6 lesson 5)
-        sha256="...",                          # optional but encouraged
+        sha256="...",                          # REQUIRED for installer='download' (F3c)
     )
 
 The registry is *data only*: no network, no heavy imports. The download /
@@ -26,6 +26,7 @@ Loose specifiers are rejected at registration time.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,6 +35,18 @@ from typing import Any
 from ..util import get_logger
 
 log = get_logger("media_studio.assets.manifest")
+
+# F3c (security hardening): integrity + revision pinning is NON-NEGOTIABLE.
+#   * A 64-char lowercase/uppercase hex string is a valid sha256 digest.
+#   * A 40-char hex string is a git/HF commit hash (a branch/tag like "main"
+#     is a MOVING target and is rejected — a pinned commit can't silently change
+#     under us between the day a hash is recorded and the day a user downloads).
+_SHA256_RE = re.compile(r"\A[0-9a-fA-F]{64}\Z")
+_COMMIT_HASH_RE = re.compile(r"\A[0-9a-fA-F]{40}\Z")
+# An HF "resolve" download URL embeds the ref it pins:
+#   https://huggingface.co/<repo>/resolve/<ref>/<path>
+# The <ref> MUST be a commit hash, never a branch/tag.
+_HF_RESOLVE_RE = re.compile(r"https?://huggingface\.co/.+?/resolve/([^/]+)/")
 
 # A3: AssetInfo.kind is frozen to exactly these three.
 ASSET_KINDS: tuple[str, ...] = ("model", "env", "tool")
@@ -107,9 +120,29 @@ class AssetEntry:
                 raise ValueError(f"asset {self.name!r}: installer='download' requires a pinned url")
             if not self.dest:
                 raise ValueError(f"asset {self.name!r}: installer='download' requires a dest path")
+            # F3c: a download with no integrity pin is rejected — a downloaded
+            # blob (incl. the EXECUTED get-pip.py) must be content-verified.
+            if not self.sha256:
+                raise ValueError(f"asset {self.name!r}: installer='download' requires a sha256 integrity pin")
+            if not _SHA256_RE.match(self.sha256):
+                raise ValueError(f"asset {self.name!r}: sha256 must be 64 hex chars, got {self.sha256!r}")
+            # F3c: an HF resolve URL must pin a COMMIT HASH, never a branch/tag.
+            hf_match = _HF_RESOLVE_RE.match(self.url)
+            if hf_match and not _COMMIT_HASH_RE.match(hf_match.group(1)):
+                raise ValueError(
+                    f"asset {self.name!r}: HF download url must pin a commit hash "
+                    f"(40 hex), not branch/tag {hf_match.group(1)!r}"
+                )
         elif self.installer == "hf":
             if not self.hf_repo:
                 raise ValueError(f"asset {self.name!r}: installer='hf' requires hf_repo")
+            # F3c: an hf snapshot must pin a COMMIT HASH revision (no floating main).
+            if not self.hf_revision:
+                raise ValueError(f"asset {self.name!r}: installer='hf' requires a pinned hf_revision")
+            if not _COMMIT_HASH_RE.match(self.hf_revision):
+                raise ValueError(
+                    f"asset {self.name!r}: hf_revision must be a commit hash (40 hex), got {self.hf_revision!r}"
+                )
         elif (
             self.installer == "env"
         ):  # pragma: no branch - installer validated in INSTALLERS above; the no-match arc to exit is unreachable
@@ -183,13 +216,20 @@ WHISPER_ASSET_NAME = "whisper-large-v3-turbo"
 # faster-whisper; ensuring it through huggingface_hub lands in the SAME HF_HOME
 # cache faster-whisper reads, so transcribe.start finds it pre-downloaded.
 WHISPER_HF_REPO = "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
+# F3c: pin the HF snapshot to a COMMIT HASH (never floating "main"). Verified via
+# the HF revision API (commit of refs/heads/main on 2026-06-28).
+WHISPER_HF_REVISION = "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
 WHISPER_SIZE_MB = 1600
 
 QWEN_ASSET_NAME = "qwen3-4b-gguf"
 # CONTRACT-NOTE: §7 default model is "Qwen3-4B GGUF". The URL pins the exact
-# repo + file (Q4_K_M quant). sha256 is optional per A3/U4 ("sha-optional") and
-# left unpinned here; fill it in once the human verifies the first download.
-QWEN_GGUF_URL = "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf"
+# repo + file (Q4_K_M quant). F3c: the resolve ref is the repo's main COMMIT HASH
+# (verified via the HF revision API) and the sha256 is the file's LFS oid
+# (verified via the HF tree API, 2,497,280,256 B) — a download is now mandatorily
+# integrity-pinned (no more "fill it in later").
+QWEN_GGUF_COMMIT = "bc640142c66e1fdd12af0bd68f40445458f3869b"
+QWEN_GGUF_URL = f"https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/{QWEN_GGUF_COMMIT}/Qwen3-4B-Q4_K_M.gguf"
+QWEN_SHA256 = "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5"
 QWEN_SIZE_MB = 2500
 # Matches models/runner.py DEFAULT_GGUF_NAME so pointing settings.modelsDir at
 # "<assets root>/models" makes resolve_gguf_path find the managed copy.
@@ -225,7 +265,12 @@ EMBEDDER_ASSET_NAME = "all-minilm-l6-v2-onnx"
 # dimension ``embedder.DEFAULT_LOCAL_EMBED_DIM`` (WU-A2) — and is Apache-2.0. The
 # URL pins the exact repo + ONNX file and the sha256 is the file's LFS oid (A6
 # lesson 5: PINNED). Routed via the existing "download" installer (no new type).
-EMBEDDER_ONNX_URL = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx"
+# F3c: the resolve ref is the repo's main COMMIT HASH (verified via the HF
+# revision API 2026-06-28), not the floating "main" branch.
+EMBEDDER_COMMIT = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
+EMBEDDER_ONNX_URL = (
+    f"https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/{EMBEDDER_COMMIT}/onnx/model.onnx"
+)
 # LFS oid of onnx/model.onnx @ main (verified via the HF tree API, 90,405,214 B).
 EMBEDDER_SHA256 = "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452"
 EMBEDDER_DEST = "models/all-minilm-l6-v2.onnx"
@@ -242,6 +287,7 @@ def _register_day1() -> None:
             label="Whisper large-v3-turbo (transcription)",
             installer="hf",
             hf_repo=WHISPER_HF_REPO,
+            hf_revision=WHISPER_HF_REVISION,
         )
     )
     register_asset(
@@ -253,6 +299,7 @@ def _register_day1() -> None:
             label="Qwen3-4B GGUF (local LLM)",
             installer="download",
             url=QWEN_GGUF_URL,
+            sha256=QWEN_SHA256,
             detect=detect_existing_gguf,
         )
     )
@@ -280,17 +327,90 @@ def _register_day1() -> None:
 # --------------------------------------------------------------------------- #
 HSEMOTION_ASSET_NAME = "hsemotion-onnx"
 #: PINNED HSEmotion enet_b0_8_best_vgaf ONNX (av-savchenko/hsemotion-onnx).
+# F3c: the GitHub raw ref is pinned to a COMMIT HASH (not "main") and the file is
+# sha256-verified (both confirmed via the GitHub API + a download, 2026-06-28).
+HSEMOTION_COMMIT = "bd500bd3a685013d18883c349e8940d020cacd98"
 HSEMOTION_URL = (
-    "https://github.com/av-savchenko/hsemotion-onnx/raw/main/models/affectnet_emotions/onnx/enet_b0_8_best_vgaf.onnx"
+    f"https://github.com/av-savchenko/hsemotion-onnx/raw/{HSEMOTION_COMMIT}"
+    "/models/affectnet_emotions/onnx/enet_b0_8_best_vgaf.onnx"
 )
+HSEMOTION_SHA256 = "00085f9a8ef0bf8fc24a645550185703768951a53aff9f141c8637529eba1840"
 HSEMOTION_DEST = "models/hsemotion-enet-b0-8.onnx"
 HSEMOTION_SIZE_MB = 20
 
 RAPIDOCR_ASSET_NAME = "rapidocr-onnx"
-#: PINNED RapidOCR PP-OCRv5 detection ONNX (RapidAI/RapidOCR release assets).
-RAPIDOCR_URL = "https://github.com/RapidAI/RapidOCR/releases/download/v1.4.4/ch_PP-OCRv4_det_infer.onnx"
-RAPIDOCR_DEST = "models/rapidocr-ppocrv5-det.onnx"
+#: PINNED RapidOCR PP-OCRv4 detection ONNX.
+# F3c re-point: the previous GitHub-release URL (v1.4.4) now 404s — RapidOCR moved
+# model hosting off GitHub releases. Re-pointed to the maintainer's canonical HF
+# repo (SWHL/RapidOCR), pinned to a COMMIT HASH, with the file's LFS oid as the
+# sha256 (both verified via the HF tree + revision APIs, 4,745,517 B, 2026-06-28).
+RAPIDOCR_COMMIT = "1cfba2e90fc938db55889873735088de210cc173"
+RAPIDOCR_URL = f"https://huggingface.co/SWHL/RapidOCR/resolve/{RAPIDOCR_COMMIT}/PP-OCRv4/ch_PP-OCRv4_det_infer.onnx"
+RAPIDOCR_SHA256 = "d2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9"
+RAPIDOCR_DEST = "models/rapidocr-ppocrv4-det.onnx"
 RAPIDOCR_SIZE_MB = 20
+
+
+# --------------------------------------------------------------------------- #
+# R1 multi-speaker reframe — vendored LR-ASD visual active-speaker weights.
+# Two on-demand weights for the vendored S3FD detector + LR-ASD model
+# (sidecar/media_studio/features/_lightasd/, MIT). LR-ASD (IJCV 2025) is the
+# strictly-Pareto-better successor of Light-ASD; the ASD weight is its smaller
+# finetuning_TalkSet.model. BOTH are sha256-pinned to the exact bytes of the
+# GPU-validated copies (A6 lesson 5).
+# --------------------------------------------------------------------------- #
+LIGHTASD_S3FD_ASSET_NAME = "lightasd-s3fd"
+# The S3FD face-detector weight (sfd_face.pth). NOT in the Light-ASD GitHub repo
+# (the upstream fetches it via gdown from Google Drive, which is not a pinnable
+# direct download). Re-pointed to a loader-identical, COMMIT-pinned HF mirror; the
+# sha256 is the file's verified digest (== the ~/Light-ASD copy, 89,844,381 B,
+# downloaded + sha256-checked 2026-06-29).
+LIGHTASD_S3FD_COMMIT = "345f55fc8d94d74437095b34158c68645e113c01"
+LIGHTASD_S3FD_URL = f"https://huggingface.co/lithiumice/syncnet/resolve/{LIGHTASD_S3FD_COMMIT}/sfd_face.pth"
+LIGHTASD_S3FD_SHA256 = "d54a87c2b7543b64729c9a25eafd188da15fd3f6e02f0ecec76ae1b30d86c491"
+LIGHTASD_S3FD_DEST = "models/lightasd-sfd-face.pth"
+LIGHTASD_S3FD_SIZE_MB = 86
+
+LIGHTASD_ASD_ASSET_NAME = "lightasd-asd"
+# The LR-ASD active-speaker weight (finetuning_TalkSet.model). LR-ASD (IJCV 2025)
+# is the strictly-Pareto-better successor of Light-ASD by the same author; its
+# smaller model REPLACES the Light-ASD one. Tracked directly in the upstream
+# GitHub repo, so the URL pins a GitHub-raw COMMIT (not LFS, served verbatim); the
+# sha256 is the file's verified digest (== the ~/LR-ASD copy, 3,426,337 B,
+# sha256-checked 2026-06-29).
+LIGHTASD_ASD_COMMIT = "1b6dcd2d8fc2895683de6508ec6294ec47d388ca"
+LIGHTASD_ASD_URL = f"https://github.com/Junhua-Liao/LR-ASD/raw/{LIGHTASD_ASD_COMMIT}/weight/finetuning_TalkSet.model"
+LIGHTASD_ASD_SHA256 = "6b4ef53694e874e96cf630198dc479c78aebb3993bbf166aee3d926dfe7d9342"
+LIGHTASD_ASD_DEST = "models/lightasd-finetuning-talkset.model"
+LIGHTASD_ASD_SIZE_MB = 4
+
+
+def _register_lightasd() -> None:
+    """Register the vendored Light-ASD S3FD + ASD weights (idempotent)."""
+    register_asset(
+        AssetEntry(
+            name=LIGHTASD_S3FD_ASSET_NAME,
+            kind="model",
+            size_mb=LIGHTASD_S3FD_SIZE_MB,
+            dest=LIGHTASD_S3FD_DEST,
+            label="S3FD face detector (Light-ASD visual ASD, MIT)",
+            installer="download",
+            url=LIGHTASD_S3FD_URL,
+            sha256=LIGHTASD_S3FD_SHA256,
+        )
+    )
+    register_asset(
+        AssetEntry(
+            name=LIGHTASD_ASD_ASSET_NAME,
+            kind="model",
+            size_mb=LIGHTASD_ASD_SIZE_MB,
+            dest=LIGHTASD_ASD_DEST,
+            label="LR-ASD active-speaker model (finetuning_TalkSet, MIT)",
+            installer="download",
+            url=LIGHTASD_ASD_URL,
+            sha256=LIGHTASD_ASD_SHA256,
+        )
+    )
 
 
 def _register_phase8_optional() -> None:
@@ -304,6 +424,7 @@ def _register_phase8_optional() -> None:
             label="HSEmotion enet_b0_8 (facial emotion, Apache-2.0)",
             installer="download",
             url=HSEMOTION_URL,
+            sha256=HSEMOTION_SHA256,
         )
     )
     register_asset(
@@ -312,12 +433,14 @@ def _register_phase8_optional() -> None:
             kind="model",
             size_mb=RAPIDOCR_SIZE_MB,
             dest=RAPIDOCR_DEST,
-            label="RapidOCR PP-OCRv5 (on-screen text, Apache-2.0)",
+            label="RapidOCR PP-OCRv4 det (on-screen text, Apache-2.0)",
             installer="download",
             url=RAPIDOCR_URL,
+            sha256=RAPIDOCR_SHA256,
         )
     )
 
 
 _register_day1()
 _register_phase8_optional()
+_register_lightasd()

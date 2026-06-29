@@ -164,6 +164,19 @@ class TestCpuFallback:
         with pytest.raises(RuntimeError, match="no cpu"):
             pk.load_model_with_cpu_fallback(loader, device="cpu", compute_type="int8")
 
+    def test_fallback_invokes_on_fallback_notice(self):
+        loader = FakeLoader(FakeModel(), fail_devices={"cuda"})
+        notices: list[str] = []
+        _model, device = pk.load_model_with_cpu_fallback(loader, on_fallback=notices.append)
+        assert device == pk.CPU_DEVICE
+        assert notices == [pk.GPU_FALLBACK_NOTICE]
+
+    def test_gpu_success_emits_no_notice(self):
+        loader = FakeLoader(FakeModel())
+        notices: list[str] = []
+        pk.load_model_with_cpu_fallback(loader, on_fallback=notices.append)
+        assert notices == []
+
 
 # --------------------------------------------------------------------------- #
 # _resolve_duration (via transcribe_file paths) + direct
@@ -263,6 +276,19 @@ class TestTranscribeFile:
             models_present=lambda s: True,
         )
         assert len(out["segments"]) == 2
+
+    def test_cpu_fallback_surfaces_notice_via_progress(self):
+        progress: list[tuple[float, str]] = []
+        loader = FakeLoader(_ro_model(), fail_devices={"cuda"})
+        pk.transcribe_file(
+            "ro.wav",
+            loader=loader,
+            language="ro",
+            duration=400.0,
+            models_present=lambda s: True,
+            on_progress=lambda pct, msg: progress.append((pct, msg)),
+        )
+        assert (0.0, pk.GPU_FALLBACK_NOTICE) in progress
 
     def test_cancel_stops_after_first_chunk(self):
         calls = {"n": 0}

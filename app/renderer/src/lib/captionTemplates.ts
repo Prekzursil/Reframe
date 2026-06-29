@@ -17,6 +17,15 @@
  * Keep ids + look in sync with `vendor/remotion-captions/src/templates.ts`.
  */
 
+import {
+  KARAOKE_ACTIVE_HEX,
+  KARAOKE_FILL_HEX,
+  KARAOKE_FONT,
+  KARAOKE_OUTLINE_HEX,
+  OPUSCLIP_KARAOKE_STYLE,
+  isKaraokeStyle,
+} from './captionKaraokePreset';
+
 export type CaptionEngineKind = 'libass' | 'remotion';
 export type CaptionPosition = 'bottom' | 'center' | 'top';
 
@@ -303,11 +312,51 @@ const NONE_VISUAL: CaptionTemplateVisual = {
 /**
  * The FULL overlay map = remotion templates ∪ {libass, none} (C3 superset).
  * The live overlay looks up any picker id here; `none` produces no caption.
+ *
+ * NOTE: the libass-only `opusclip-karaoke` PRESET (V1.1 WU SP1) is deliberately
+ * NOT a key here — it would widen the conformance-pinned map. Its live-preview
+ * look is {@link KARAOKE_PRESET_VISUAL}, returned by {@link captionVisualFor}.
  */
 export const CAPTION_TEMPLATE_VISUALS: Record<string, CaptionTemplateVisual> = {
   libass: LIBASS_VISUAL,
   ...REMOTION_CAPTION_TEMPLATES,
   none: NONE_VISUAL,
+};
+
+/**
+ * Live-preview visual for the OpusClip KARAOKE libass preset (V1.1 WU SP1).
+ *
+ * This is the renderer overlay's MIRROR of the sidecar `caption_karaoke.py`
+ * burn: white all-caps condensed fill (Anton), a thick dark outline, a yellow
+ * active word (the burn alternates yellow/green per word — the overlay applies
+ * that alternation per word via `karaokeActiveColor`), and a lower-mid (safe
+ * area) position. Built from the SHARED `captionKaraokePreset` constants so the
+ * preview can never silently drift from the burn palette/casing (the same
+ * constants the drift-guard test pins against the sidecar source).
+ *
+ * It is kept out of {@link CAPTION_TEMPLATE_VISUALS} (which the conformance test
+ * pins to `TEMPLATES ∪ {libass, none}`) and surfaced via {@link captionVisualFor}
+ * so selecting `opusclip-karaoke` paints the karaoke look live in the picker
+ * swatch, the on-video overlay, and the caption designer sample.
+ */
+export const KARAOKE_PRESET_VISUAL: CaptionTemplateVisual = {
+  id: OPUSCLIP_KARAOKE_STYLE,
+  engine: 'libass',
+  textColor: KARAOKE_FILL_HEX,
+  // Yellow is the first accent; the live overlay alternates yellow/green per
+  // word via karaokeActiveColor (this is the swatch / fallback active colour).
+  activeColor: KARAOKE_ACTIVE_HEX[0],
+  // Already-spoken words reset to the white fill in the burn (no persistent
+  // "spoken" colour), so the preview mirrors that.
+  spokenColor: KARAOKE_FILL_HEX,
+  backgroundColor: 'transparent',
+  activeBackground: 'transparent',
+  shadowColor: KARAOKE_OUTLINE_HEX,
+  fontFamily: `'${KARAOKE_FONT}', sans-serif`,
+  position: 'bottom',
+  uppercase: true,
+  box: false,
+  outline: true,
 };
 
 /** Ids of the remotion templates only (must equal vendor TEMPLATES keys). */
@@ -348,6 +397,13 @@ export const isNoCaption = (templateId: string): boolean => templateId === 'none
 /**
  * Look up the overlay visual for a picker id, falling back to the libass
  * default look for any unknown id (never throws — pure).
+ *
+ * The libass-only `opusclip-karaoke` preset (V1.1 WU SP1) is NOT in the visual
+ * map (it would widen the conformance-pinned set), so it is resolved here to
+ * {@link KARAOKE_PRESET_VISUAL} — making the karaoke look render live wherever
+ * the overlay/picker/designer call this.
  */
 export const captionVisualFor = (templateId: string): CaptionTemplateVisual =>
-  CAPTION_TEMPLATE_VISUALS[templateId] ?? LIBASS_VISUAL;
+  isKaraokeStyle(templateId)
+    ? KARAOKE_PRESET_VISUAL
+    : (CAPTION_TEMPLATE_VISUALS[templateId] ?? LIBASS_VISUAL);

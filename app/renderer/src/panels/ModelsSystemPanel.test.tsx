@@ -13,6 +13,7 @@ import {
   errText,
   indexAssets,
   isInstalled,
+  mergeOverviewRoutingPolicy,
   qualityFraction,
   recommendationAlreadyOptimal,
   recommendationUnavailable,
@@ -23,8 +24,10 @@ import type {
   AssetInfo,
   CatalogResponse,
   ComponentStatus,
+  Eligibility,
   HardwareInfo,
   LocalModelPlan,
+  ModelsOverview,
   OpenRouterUsageRow,
   ReadinessItem,
   Recommendation,
@@ -153,6 +156,59 @@ function localModelPlan(): LocalModelPlan {
   };
 }
 
+// M2 — a metadata-driven eligibility (real quant + VRAM estimate) for the reason
+// strip; `ladderEligibility()` is the no-metadata fallback (advisor reason copy).
+function metadataEligibility(): Eligibility {
+  return {
+    source: 'metadata',
+    models: [
+      {
+        model: 'qwen2.5:7b-instruct-q4_K_M',
+        digest: 'DIGEST_A',
+        sizeBytes: 4700,
+        paramsB: 7.6,
+        quantBits: 4,
+        vramEstimateGb: 4.0,
+        capabilities: ['completion', 'tools'],
+        aliases: ['qwen2.5:7b'],
+        fits: true,
+      },
+    ],
+    fallback: { model: 'qwen2.5:1.5b', label: 'Qwen2.5 1.5B', reason: 'floor' },
+  };
+}
+
+function ladderEligibility(): Eligibility {
+  return {
+    source: 'ladder',
+    models: [],
+    fallback: { model: 'qwen2.5:1.5b', label: 'Qwen2.5 1.5B', reason: 'floor' },
+  };
+}
+
+// M2 — the composed Models & System overview the reason strip consumes. Defaults
+// to a GPU device + the metadata eligibility so analyze() renders a real-quant
+// reason; `over.overview` / `over.eligibility` / `over.hardware` override it.
+function modelsOverview(over: {
+  hardware?: HardwareInfo;
+  runners?: LocalModelPlan;
+  eligibility?: Eligibility;
+  routingPolicy?: ModelsOverview['routingPolicy'];
+}): ModelsOverview {
+  const plan = over.runners ?? localModelPlan();
+  return {
+    hardware: over.hardware ?? { vramMb: 6000, ramMb: 32000, cpuCount: 16, gpuPresent: true },
+    tiers: report().tiers,
+    recommendedPreset: report().recommendedPreset,
+    runners: [],
+    localPlan: plan,
+    providers: [],
+    keyPool: [],
+    routingPolicy: over.routingPolicy ?? { global: 'local', overrides: {} },
+    eligibility: over.eligibility ?? metadataEligibility(),
+  };
+}
+
 /** The G-B1 typed fallback: empty routing -> the card's "unavailable" state. */
 function unavailableRecommendation(): Recommendation {
   return {
@@ -224,6 +280,8 @@ function makeClient(
     catalog?: CatalogResponse;
     recommendation?: Recommendation;
     runners?: LocalModelPlan;
+    overview?: ModelsOverview;
+    eligibility?: Eligibility;
     openrouterUsage?: OpenRouterUsageRow[];
     initialSettings?: Record<string, unknown>;
     rejectAnalyze?: boolean;
@@ -231,6 +289,7 @@ function makeClient(
     rejectOpenrouter?: boolean;
     readiness?: ReadinessItem[];
     rejectEnsure?: boolean;
+    rejectRoutingPolicy?: boolean;
   } = {},
 ): FakeClient {
   const calls: FakeClient['calls'] = [];
@@ -255,6 +314,22 @@ function makeClient(
       runners: vi.fn(async () => {
         calls.push({ method: 'models.runners', args: [] });
         return over.runners ?? localModelPlan();
+      }),
+      overview: vi.fn(async (opts?: { commercial?: boolean }) => {
+        calls.push({ method: 'models.overview', args: [opts] });
+        return (
+          over.overview ??
+          modelsOverview({
+            hardware: over.hardware,
+            runners: over.runners,
+            eligibility: over.eligibility,
+          })
+        );
+      }),
+      setRoutingPolicy: vi.fn(async (policy: Record<string, unknown>) => {
+        calls.push({ method: 'models.setRoutingPolicy', args: [policy] });
+        if (over.rejectRoutingPolicy) throw new Error('routing write failed');
+        return { routingPolicy: { global: 'local', overrides: {}, ...policy } };
       }),
     },
     assets: {
@@ -483,6 +558,199 @@ describe('<ModelsSystemPanel />', () => {
     expect(c.calls.find((x) => x.method === 'system.advisor')?.args[0]).toEqual({
       commercial: false,
     });
+  });
+
+  // ---- M2: the "using X because Y" reason strip + device card --------------
+  it('analyze renders the reason strip naming the real quant + VRAM estimate', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    await mount(c);
+    await analyze();
+
+    const strip = container.querySelector('[data-section="reason-strip"]') as HTMLElement;
+    expect(strip).not.toBeNull();
+    expect(strip.getAttribute('data-source')).toBe('metadata');
+    const summary = strip.querySelector('[data-field="summary"]')?.textContent ?? '';
+    expect(summary).toContain('Whisper large-v3-turbo');
+    expect(summary).toContain('qwen2.5:7b-instruct-q4_K_M');
+    expect(summary).toContain('7.6B-Q4');
+    expect(summary).toContain('≈ 4.0 GB');
+    // device card facts: the real est. VRAM + the probed VRAM/RAM.
+    expect(strip.querySelector('[data-fact="vram-est"]')?.textContent).toContain('≈ 4.0 GB');
+    expect(strip.querySelector('[data-fact="ram"]')?.textContent).toContain('GB');
+    // models.overview was composed with the commercial flag (false here).
+    expect(c.calls.find((x) => x.method === 'models.overview')?.args[0]).toEqual({
+      commercial: false,
+    });
+  });
+
+  it('reason strip falls back to the advisor reason when no metadata applies', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true },
+      eligibility: ladderEligibility(),
+    });
+    await mount(c);
+    await analyze();
+
+    const strip = container.querySelector('[data-section="reason-strip"]') as HTMLElement;
+    expect(strip.getAttribute('data-source')).toBe('ladder');
+    const summary = strip.querySelector('[data-field="summary"]')?.textContent ?? '';
+    // the advisor's verbatim device-ranked LLM reason is reused (no real quant).
+    expect(summary).toContain('Qwen2.5 7B');
+    expect(strip.querySelector('[data-fact="quant"]')?.textContent).toContain('—');
+  });
+
+  it('reason strip renders null RAM gracefully ("unknown", never undefined MB)', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true },
+      hardware: { vramMb: null, ramMb: null, cpuCount: null, gpuPresent: false },
+      eligibility: ladderEligibility(),
+    });
+    await mount(c);
+    await analyze();
+
+    const strip = container.querySelector('[data-section="reason-strip"]') as HTMLElement;
+    const ram = strip.querySelector('[data-fact="ram"]')?.textContent ?? '';
+    expect(ram).toContain('unknown');
+    expect(ram).not.toContain('undefined');
+    expect(ram).not.toContain('NaN');
+  });
+
+  // ---- M3: Advanced disclosure (model SORT + manual runner POINT) ----------
+  it('is hidden before analysis and revealed (with the eligibility models) after', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    await mount(c);
+    expect(container.querySelector('details.advanced-models')).toBeNull();
+    await analyze();
+    expect(container.querySelector('details.advanced-models')).not.toBeNull();
+    const names = Array.from(
+      container.querySelectorAll('[data-section="advanced-models"] [data-model]'),
+    ).map((el) => el.getAttribute('data-model'));
+    expect(names).toEqual(['qwen2.5:7b-instruct-q4_K_M']);
+  });
+
+  it('seeds the runner POINT inputs from persisted base URLs', async () => {
+    const c = makeClient({
+      initialSettings: {
+        modelsOnboardingSeen: true,
+        ollamaBaseUrl: 'http://gpu-box:11434/v1',
+        lmStudioBaseUrl: 'http://gpu-box:1234/v1',
+      },
+    });
+    await mount(c);
+    await analyze();
+    expect(
+      (container.querySelector('input[data-action="ollama-url"]') as HTMLInputElement).value,
+    ).toBe('http://gpu-box:11434/v1');
+    expect(
+      (container.querySelector('input[data-action="lmstudio-url"]') as HTMLInputElement).value,
+    ).toBe('http://gpu-box:1234/v1');
+  });
+
+  it('persists edited runner URLs via settings.set on submit (POINT)', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    await mount(c);
+    await analyze();
+    const ollama = container.querySelector('input[data-action="ollama-url"]') as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    await act(async () => {
+      setter?.call(ollama, 'http://127.0.0.1:11500/v1');
+      ollama.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const form = container.querySelector('form.advanced-models__point') as HTMLFormElement;
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    const setCall = c.calls.find(
+      (x) => x.method === 'settings.set' && (x.args[0] as Record<string, unknown>).ollamaBaseUrl,
+    );
+    expect(setCall?.args[0]).toEqual({
+      ollamaBaseUrl: 'http://127.0.0.1:11500/v1',
+      lmStudioBaseUrl: '',
+    });
+  });
+
+  // ------------------------------------------------------------------ M5
+  it('renders the per-function routing override table after analyze (M5)', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    await mount(c);
+    await analyze();
+    expect(container.querySelector('[data-section="routing-overrides"]')).not.toBeNull();
+    expect(container.querySelector('select[data-action="route-select"]')).not.toBeNull();
+  });
+
+  it('persists a per-function override via setRoutingPolicy with global preserved (M5)', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true },
+      overview: modelsOverview({ routingPolicy: { global: 'auto', overrides: {} } }),
+    });
+    await mount(c);
+    await analyze();
+    const sel = container.querySelector('select[data-action="route-select"]') as HTMLSelectElement;
+    await act(async () => {
+      sel.value = 'cloud';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+    const call = c.calls.find((x) => x.method === 'models.setRoutingPolicy');
+    expect(call?.args[0]).toEqual({ global: 'auto', overrides: { select: 'cloud' } });
+    // overview reflects the persisted policy (the row now reads cloud).
+    expect(
+      (container.querySelector('select[data-action="route-select"]') as HTMLSelectElement).value,
+    ).toBe('cloud');
+  });
+
+  it('surfaces an error when the routing-policy write fails (M5)', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true },
+      rejectRoutingPolicy: true,
+    });
+    await mount(c);
+    await analyze();
+    const sel = container.querySelector('select[data-action="route-select"]') as HTMLSelectElement;
+    await act(async () => {
+      sel.value = 'cloud';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'routing write failed',
+    );
+  });
+
+  it('exposes the RO alignment opt-in and persists ctcModelId (M5)', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    await mount(c);
+    await analyze();
+    const sel = container.querySelector('select[data-action="align-model"]') as HTMLSelectElement;
+    expect(sel).not.toBeNull();
+    await act(async () => {
+      sel.value = 'romanian-wav2vec2';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(c.calls.find((x) => x.method === 'settings.set')?.args[0]).toEqual({
+      ctcModelId: 'romanian-wav2vec2',
+    });
+  });
+
+  it('mergeOverviewRoutingPolicy folds the policy in (and passes null through) (M5)', () => {
+    expect(mergeOverviewRoutingPolicy(null, { global: 'cloud', overrides: {} })).toBeNull();
+    const ov = modelsOverview({ routingPolicy: { global: 'local', overrides: {} } });
+    const merged = mergeOverviewRoutingPolicy(ov, { global: 'auto', overrides: { asr: 'cloud' } });
+    expect(merged?.routingPolicy).toEqual({ global: 'auto', overrides: { asr: 'cloud' } });
+  });
+
+  it('seeds blank POINT inputs when no base URLs are persisted', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    await mount(c);
+    await analyze();
+    expect(
+      (container.querySelector('input[data-action="ollama-url"]') as HTMLInputElement).value,
+    ).toBe('');
+    expect(
+      (container.querySelector('input[data-action="lmstudio-url"]') as HTMLInputElement).value,
+    ).toBe('');
   });
 
   it('model rows read exactly one unambiguous state (Installed / Download (size) / Downloading)', async () => {
@@ -1834,6 +2102,8 @@ describe('<ModelsSystemPanel /> WU-B3 card', () => {
           limitUsd: 10,
           remainingUsd: 8.5,
           isFreeTier: false,
+          status: 'active',
+          cooldownReason: null,
         },
       ],
     });
@@ -1870,5 +2140,17 @@ describe('<ModelsSystemPanel /> WU-B3 card', () => {
     expect(container.querySelector('[data-section="hardware"]')).not.toBeNull();
     expect(container.querySelector('[data-section="device-reco"]')).toBeNull();
     expect(container.querySelector('[data-section="local-runners"]')).toBeNull();
+  });
+
+  it('hides the reason strip when models.overview yields nothing', async () => {
+    const c = makeClient({ initialSettings: optedIn });
+    (c.client.models.overview as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      null as unknown as ModelsOverview,
+    );
+    await mount(c);
+    await analyze();
+    // analysis ran (hardware present) but the overview compose was empty.
+    expect(container.querySelector('[data-section="hardware"]')).not.toBeNull();
+    expect(container.querySelector('[data-section="reason-strip"]')).toBeNull();
   });
 });

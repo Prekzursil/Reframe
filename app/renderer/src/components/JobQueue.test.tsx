@@ -24,6 +24,7 @@ vi.mock('../lib/rpc', () => ({
 
 import {
   JobQueue,
+  JOBQUEUE_PANEL_ID,
   JOB_POLL_INTERVAL_MS,
   RESUME_TITLE,
   applyProgress,
@@ -412,5 +413,45 @@ describe('JobQueue', () => {
 
     await click('.jobqueue__close');
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('exposes the panel id (for the toggle aria-controls) and is focusable', async () => {
+    serveJobs([]);
+    await renderQueue(true);
+    const panel = container.querySelector('.jobqueue') as HTMLElement;
+    expect(panel.id).toBe(JOBQUEUE_PANEL_ID);
+    expect(panel.getAttribute('tabindex')).toBe('-1');
+  });
+
+  it('moves focus to the panel when it opens (R-L4)', async () => {
+    serveJobs([]);
+    await renderQueue(true);
+    expect(document.activeElement).toBe(container.querySelector('.jobqueue'));
+  });
+
+  it('closes on Escape (R-L4)', async () => {
+    serveJobs([]);
+    const onClose = vi.fn();
+    await renderQueue(true, onClose);
+    const panel = container.querySelector('.jobqueue') as HTMLElement;
+    await act(async () => {
+      panel.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores non-Escape keys (does not close)', async () => {
+    serveJobs([]);
+    const onClose = vi.fn();
+    await renderQueue(true, onClose);
+    const panel = container.querySelector('.jobqueue') as HTMLElement;
+    await act(async () => {
+      panel.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true }),
+      );
+    });
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

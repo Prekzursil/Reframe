@@ -101,6 +101,12 @@ Transcript = dict[str, Any]
 CancelProbe = Callable[[], bool]
 # A progress sink: (pct 0..100, message) -> None.
 ProgressCb = Callable[[float, str], None]
+# F3b: a one-shot notice sink invoked when a GPU load falls back to CPU.
+FallbackNotice = Callable[[str], None]
+
+#: F3b user-facing notice when the GPU is unavailable and we run on CPU instead.
+#: Surfaced as a ``job.progress`` message so the slowdown is LOUD, not silent.
+GPU_FALLBACK_NOTICE = "GPU unavailable — running on CPU, slower"
 
 
 class WhisperModel(Protocol):
@@ -167,12 +173,15 @@ def load_model_with_cpu_fallback(
     model: str = DEFAULT_MODEL,
     device: str = DEFAULT_DEVICE,
     compute_type: str = DEFAULT_GPU_COMPUTE,
+    on_fallback: FallbackNotice | None = None,
 ) -> tuple[WhisperModel, str]:
     """Load ``model`` on ``device``; fall back to CPU/int8 on any failure.
 
     Returns ``(model_instance, device_used)``. If the requested device is
     already ``cpu`` the fallback is skipped (a CPU failure is a hard error, since
-    there is nothing further to fall back to).
+    there is nothing further to fall back to). F3b: when a GPU load actually
+    falls back to CPU, ``on_fallback`` (if given) is invoked with
+    :data:`GPU_FALLBACK_NOTICE` so the caller can surface the slowdown loudly.
     """
     try:
         return loader.load(model, device, compute_type), device
@@ -185,6 +194,8 @@ def load_model_with_cpu_fallback(
             exc,
             CPU_COMPUTE,
         )
+        if on_fallback is not None:
+            on_fallback(GPU_FALLBACK_NOTICE)
         return loader.load(model, CPU_DEVICE, CPU_COMPUTE), CPU_DEVICE
 
 
@@ -328,8 +339,9 @@ def transcribe_file(
     segments; work only happens as we iterate. That is what makes per-segment
     progress + cooperative cancellation possible.
     """
+    notify = (lambda msg: on_progress(0.0, msg)) if on_progress is not None else None
     whisper_model, device_used = load_model_with_cpu_fallback(
-        loader, model=model, device=device, compute_type=compute_type
+        loader, model=model, device=device, compute_type=compute_type, on_fallback=notify
     )
     log.info("transcribing %s on %s (lang=%s)", audio_path, device_used, language or "auto")
 
@@ -490,7 +502,7 @@ def make_transcribe_handler(
     *,
     loader: WhisperLoader | None = None,
     on_transcribed: TranscribedHook | None = None,
-):
+) -> Callable[[dict[str, Any], Any], dict[str, Any]]:
     """Build the ``transcribe.start`` RPC handler.
 
     ``resolve_video`` maps a ``videoId`` to its media path (the library owns the

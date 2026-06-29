@@ -153,6 +153,15 @@ describe('wordColor', () => {
     const noSpoken = { ...visual, spokenColor: '', textColor: '#ABCDEF' };
     expect(wordColor(base({ spoken: true }), noSpoken)).toBe('#ABCDEF');
   });
+
+  it('uses the activeColorOverride for the active word when given (karaoke accent)', () => {
+    // V1.1 WU SP1: the karaoke preset paints the active word with its alternating
+    // accent instead of the template's static activeColor.
+    expect(wordColor(base({ active: true }), visual, '#00FF00')).toBe('#00FF00');
+    // The override only affects the ACTIVE word — spoken/upcoming ignore it.
+    expect(wordColor(base({ spoken: true }), visual, '#00FF00')).toBe(visual.spokenColor);
+    expect(wordColor(base({}), visual, '#00FF00')).toBe(visual.textColor);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -189,6 +198,41 @@ describe('<CaptionOverlay />', () => {
     // hormozi's active colour is the green pop (#22E84F) — palette is applied.
     expect(active.style.color.toLowerCase()).toContain('34, 232, 79');
     expect(active.style.color || REMOTION_CAPTION_TEMPLATES.hormozi.activeColor).toBeTruthy();
+  });
+
+  it('paints the karaoke preset with alternating yellow/green active accents (WU SP1)', () => {
+    // The whole phrase is one line; as currentTime advances the active word
+    // alternates yellow (#FFFF00) then green (#00FF00) by its line index.
+    render(
+      <CaptionOverlay
+        cues={CUES}
+        templateId="opusclip-karaoke"
+        currentTime={101.2}
+        window={WINDOW}
+      />,
+    );
+    // word 0 ("Hello") active -> yellow accent (KARAOKE_ACTIVE_HEX[0]).
+    expect(
+      (container.querySelector('.caption-overlay__word.is-active') as HTMLElement).style.color
+        .toLowerCase()
+        .replace(/\s/g, ''),
+    ).toContain('255,255,0');
+    // advance to word 1 ("brave") -> green accent (KARAOKE_ACTIVE_HEX[1]).
+    act(() =>
+      root.render(
+        <CaptionOverlay
+          cues={CUES}
+          templateId="opusclip-karaoke"
+          currentTime={101.6}
+          window={WINDOW}
+        />,
+      ),
+    );
+    expect(
+      (container.querySelector('.caption-overlay__word.is-active') as HTMLElement).style.color
+        .toLowerCase()
+        .replace(/\s/g, ''),
+    ).toContain('0,255,0');
   });
 
   it('reflects the template position via data-position', () => {

@@ -54,11 +54,14 @@ log = get_logger("media_studio.features.pyannote_backend")
 #: the diarization PIPELINE repo (gated). 3.1 = pure-PyTorch, no onnxruntime.
 PIPELINE_ASSET_NAME = "pyannote-speaker-diarization-31"
 PYANNOTE_PIPELINE = "pyannote/speaker-diarization-3.1"
+# F3c: pin the HF snapshot revisions to commit hashes (verified 2026-06-28).
+PYANNOTE_PIPELINE_REVISION = "84fd25912480287da0247647c3d2b4853cb3ee5d"
 PIPELINE_SIZE_MB = 1000
 
 #: the SEGMENTATION dependency repo (also gated — both terms must be accepted).
 SEGMENTATION_ASSET_NAME = "pyannote-segmentation-30"
 PYANNOTE_SEGMENTATION = "pyannote/segmentation-3.0"
+PYANNOTE_SEGMENTATION_REVISION = "e66f3d3b9eb0873085418a7b813d3b369bf160bb"
 SEGMENTATION_SIZE_MB = 600
 
 #: both gated assets must be present before pyannote diarization can run.
@@ -312,6 +315,7 @@ def register_pyannote_assets() -> None:
             label="pyannote speaker-diarization 3.1 (gated, HF token)",
             installer="hf",
             hf_repo=PYANNOTE_PIPELINE,
+            hf_revision=PYANNOTE_PIPELINE_REVISION,
         )
     )
     manifest.register_asset(
@@ -322,6 +326,7 @@ def register_pyannote_assets() -> None:
             label="pyannote segmentation 3.0 (gated, HF token; required by 3.1)",
             installer="hf",
             hf_repo=PYANNOTE_SEGMENTATION,
+            hf_revision=PYANNOTE_SEGMENTATION_REVISION,
         )
     )
 

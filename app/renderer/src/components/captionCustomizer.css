@@ -1,0 +1,103 @@
+/* CaptionCustomizer — the T2 "Customize…" disclosure (V1.1 WU S3). */
+
+.caption-customizer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.caption-customizer__toggle {
+  align-self: flex-start;
+  padding: 6px 12px;
+  border: 1.5px solid var(--border, #2a2a33);
+  border-radius: 8px;
+  background: #14141a;
+  color: var(--text, #e8e8ef);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.caption-customizer__toggle[aria-expanded="true"] {
+  border-color: var(--accent, #4c8dff);
+}
+
+.caption-customizer__panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px 16px;
+  padding: 12px;
+  border: 1px solid var(--border, #2a2a33);
+  border-radius: 10px;
+  background: #101016;
+}
+
+.caption-customizer__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted, #aab);
+}
+
+.caption-customizer__field select,
+.caption-customizer__field input[type="range"] {
+  width: 100%;
+}
+
+.caption-customizer__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.caption-customizer__swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1.5px solid var(--border, #2a2a33);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.caption-customizer__swatch.is-active {
+  border-color: var(--accent, #4c8dff);
+  box-shadow: 0 0 0 2px var(--accent, #4c8dff);
+}
+
+.caption-customizer__swatches input[type="color"] {
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  border: 1.5px solid var(--border, #2a2a33);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.caption-customizer__toggle-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text, #e8e8ef);
+}
+
+.caption-customizer__resolved {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted, #8a8a99);
+}
+
+.caption-customizer__reset {
+  grid-column: 1 / -1;
+  justify-self: flex-start;
+  padding: 4px 10px;
+  border: 1px solid var(--border, #2a2a33);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted, #aab);
+  cursor: pointer;
+  font-size: 12px;
+}

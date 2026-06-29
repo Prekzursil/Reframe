@@ -262,6 +262,20 @@ describe('client.ping / library / project', () => {
     expect(r).toHaveBeenCalledWith('library.remove', { id: 'v1' });
     await client.library.thumbnail('v1');
     expect(r).toHaveBeenCalledWith('library.thumbnail', { id: 'v1' });
+    await client.library.lineage('v1');
+    expect(r).toHaveBeenCalledWith('library.lineage', { id: 'v1' });
+  });
+
+  it('library.reveal / regenerate / pinHash / relink forward their params (L5)', async () => {
+    const r = installApi();
+    await client.library.reveal('v1');
+    expect(r).toHaveBeenCalledWith('library.reveal', { id: 'v1' });
+    await client.library.regenerate('v1');
+    expect(r).toHaveBeenCalledWith('library.regenerate', { id: 'v1' });
+    await client.library.pinHash('v1');
+    expect(r).toHaveBeenCalledWith('library.pinHash', { id: 'v1' });
+    await client.library.relink('v1', '/new/path.mp4');
+    expect(r).toHaveBeenCalledWith('library.relink', { id: 'v1', path: '/new/path.mp4' });
   });
 
   it('project.open / save / consolidate forward their params', async () => {
@@ -611,6 +625,51 @@ describe('client.system / recipes', () => {
     const r = installApi();
     await client.models.runners();
     expect(r).toHaveBeenCalledWith('models.runners', undefined);
+  });
+
+  it('models.overview sends an empty params object when commercial is omitted (M1a)', async () => {
+    const r = installApi();
+    await client.models.overview();
+    expect(r).toHaveBeenCalledWith('models.overview', {});
+    await client.models.overview({});
+    expect(r).toHaveBeenCalledWith('models.overview', {});
+  });
+
+  it('models.overview forwards {commercial} when provided (both boolean values) (M1a)', async () => {
+    const r = installApi();
+    await client.models.overview({ commercial: true });
+    expect(r).toHaveBeenCalledWith('models.overview', { commercial: true });
+    await client.models.overview({ commercial: false });
+    expect(r).toHaveBeenCalledWith('models.overview', { commercial: false });
+  });
+
+  it('models.setRoutingPolicy forwards the policy body verbatim (M3)', async () => {
+    const r = installApi();
+    await client.models.setRoutingPolicy({ global: 'cloud' });
+    expect(r).toHaveBeenCalledWith('models.setRoutingPolicy', { global: 'cloud' });
+    await client.models.setRoutingPolicy({ global: 'auto', overrides: { select: 'local' } });
+    expect(r).toHaveBeenCalledWith('models.setRoutingPolicy', {
+      global: 'auto',
+      overrides: { select: 'local' },
+    });
+  });
+
+  it('models.resolveRoute sends an empty body when fn is omitted (M5)', async () => {
+    const r = installApi();
+    await client.models.resolveRoute();
+    expect(r).toHaveBeenCalledWith('models.resolveRoute', {});
+  });
+
+  it('models.resolveRoute forwards {fn} when provided (M5)', async () => {
+    const r = installApi();
+    await client.models.resolveRoute('select');
+    expect(r).toHaveBeenCalledWith('models.resolveRoute', { fn: 'select' });
+  });
+
+  it('models.resolveRoute treats a blank fn as no filter (M5)', async () => {
+    const r = installApi();
+    await client.models.resolveRoute('');
+    expect(r).toHaveBeenCalledWith('models.resolveRoute', {});
   });
 
   it('providers.openrouterUsage calls the bare method (WU-models/device cost)', async () => {

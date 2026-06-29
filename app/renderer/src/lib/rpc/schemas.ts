@@ -1,18 +1,9 @@
-// lib/rpc.ts — the canonical typed client over the preload bridge `window.api`
-// (CONTRACTS.md §1: renderer/src/lib/rpc.ts). This is the foundation unit's
-// typed wrapper; the already-written UI improvised `components/api.ts` and
-// `features/_api.ts` while this file was missing, so those keep their own
-// thin helpers. This module does NOT replace them — it provides the canonical,
-// fully-typed surface (method-typed `rpc`, `onProgress`, `onJobDone`) plus the
-// §3 data schemas so new code can depend on one place.
-//
-// CONTRACT-NOTE: the §1 bridge surface is frozen as `window.api.rpc(method,
-// params)` + `window.api.onProgress(cb)`. The preload also exposes the optional
-// `onJobDone(cb)` (used by ShortMaker's deferred-job path). All three are typed
-// here. We deliberately do NOT `declare global { interface Window { api } }`
-// because sibling units (components/api.ts) already do, and a second merged
-// augmentation with a different shape collides (TS2717). We read the bridge via
-// a single structural accessor instead.
+// lib/rpc/schemas.ts - the section 3 data schemas + the frozen section 1 bridge
+// surface types (CONTRACTS.md section 1). Split out of the former monolithic
+// lib/rpc.ts (F4b quality cleanup): every later lane touches this surface, so the
+// type declarations live here, the runtime client lives in ./client, and ./index
+// re-exports both so existing `from '../lib/rpc'` importers keep ONE entry point.
+// Field names are identical to the Python/sidecar side - do NOT rename.
 
 // ---- §3 data schemas (field names identical to the Python side) ----------
 
@@ -222,6 +213,107 @@ export interface Video {
   hasTranscript: boolean;
 }
 
+/**
+ * L3/L4 lineage node — a full PROV entity row (`lineage._row_to_entity`). Richer
+ * than {@link Video} (carries `kind`/`role`/`contentHash`) because a node can be
+ * a source, a derived output or an export. Field names mirror the sidecar EXACTLY.
+ */
+export interface LineageEntity {
+  id: string;
+  kind: string;
+  role: string;
+  path: string;
+  title: string;
+  addedAt: string;
+  durationSec: number;
+  contentHash: string | null;
+  hasTranscript: boolean;
+  thumbnailPath: string;
+}
+
+/**
+ * L3 loud stub for a `derived_from` endpoint with no `entity` row (an input
+ * referenced by id but never added as a library source). Surfaced — never
+ * silently dropped — so the card can show "source no longer in library".
+ */
+export interface LineageMissing {
+  id: string;
+  missing: true;
+}
+
+/** One ancestor/descendant: a resolved entity OR a loud missing stub. */
+export type LineageNode = LineageEntity | LineageMissing;
+
+/**
+ * L4 provenance card data — the producing activity + agent of an asset
+ * (`lineage._load_provenance`). `null` for a raw imported source. `route` is the
+ * resolved M3 RoutingPolicy the job took; `params` is the redacted job params.
+ * Field names mirror the sidecar EXACTLY.
+ */
+export interface LineageProvenance {
+  op: string;
+  status: string;
+  startedAt: string;
+  endedAt: string;
+  params: Record<string, unknown> | null;
+  appVersion: string | null;
+  preset: string | null;
+  route: Record<string, unknown> | null;
+}
+
+/**
+ * L3/L4 `library.lineage {id}` result — the queried node plus its ancestors
+ * (what it was made from), descendants (what was made from it) and provenance
+ * card data. `entity` is `null` when the id is unknown.
+ */
+export interface LineageResult {
+  id: string;
+  entity: LineageEntity | null;
+  ancestors: LineageNode[];
+  descendants: LineageNode[];
+  provenance: LineageProvenance | null;
+}
+
+/**
+ * L5 `library.reveal {id}` source row — one by-path source the asset derives from,
+ * plus whether its file is still on disk. Field names mirror the sidecar EXACTLY.
+ */
+export interface RevealSource {
+  id: string;
+  path: string;
+  title: string;
+  exists: boolean;
+}
+
+/**
+ * L5 `library.reveal {id}` result — the by-path source file(s) to reveal in the OS
+ * file explorer. `missing` lists the source paths no longer on disk (loud — the
+ * UI offers a hash-verified relink rather than silently skipping).
+ */
+export interface RevealResult {
+  id: string;
+  sources: RevealSource[];
+  missing: string[];
+}
+
+/**
+ * L5 `library.regenerate {id}` result — the replay descriptor for an asset: the
+ * producing `op` + its redacted `params`. `ready` is `false` (and `missing` is
+ * populated) when any source file is gone; the caller must relink before re-running.
+ */
+export interface RegenerateResult {
+  id: string;
+  op: string;
+  params: Record<string, unknown> | null;
+  missing: string[];
+  ready: boolean;
+}
+
+/** L5 `library.relink {id, path}` / `library.pinHash {id}` result — the updated entity row. */
+export interface RelinkResult {
+  entity: LineageEntity;
+}
+
 /** A3 AudioTrack — one original/dub audio lane of a video. */
 export interface AudioTrack {
   id: string;
@@ -344,9 +436,142 @@ export interface LocalModelPlan {
 }
 
 /**
- * WU-models/device: one OpenRouter key's COST row (`providers.openrouterUsage`).
- * `key` is the REDACTED last-4 only (no full key crosses RPC). Money is USD.
- * Mirrors the sidecar `openrouter_usage.OpenRouterUsageRow`.
+ * M1a (V1.1 Lane 2): one REDACTED key-pool row (`models.overview` -> `keyPool`).
+ * `redactedKey` is the last-4 redaction only (never a full key); `status` starts
+ * `"active"` (M4 flips it to `"cooldown"` on a 402/429). Mirrors the sidecar
+ * `key_pool.KeyPoolEntry`.
+ */
+export interface KeyPoolEntry {
+  /** Stable `"<providerId>#<index>"` slug. */
+  id: string;
+  providerId: string;
+  /** REDACTED last-4 only (e.g. "…WXYZ") — never a full key over RPC. */
+  redactedKey: string;
+  /** Rate-limit unit ("req" / "token"). */
+  unit: string;
+  /** "active" | "cooldown" — M4 surfaces cooldown on a 402/429. */
+  status: string;
+}
+
+/**
+ * M1a (V1.1 Lane 2): the single routing policy (`models.overview` ->
+ * `routingPolicy`; M3 owns the WRITE). `global` is the header toggle mode;
+ * `overrides` maps a function name to a per-function mode. A corrupt/missing
+ * policy is read FAIL-CLOSED to `{ global: 'local', overrides: {} }` (GATE-2,
+ * zero egress). Mirrors the sidecar `routing_policy` shape.
+ */
+export type RoutingMode = 'local' | 'cloud' | 'auto';
+export interface RoutingPolicy {
+  global: RoutingMode;
+  overrides: Record<string, RoutingMode>;
+}
+
+/**
+ * M5 (V1.1 Lane 2): one CONCRETE resolved route from `models.resolveRoute`
+ * (DESIGN §2.3 step 4). `mode` is the resolved mode; `requestedMode` is what the
+ * user asked for (differs when a cloud/auto route degraded). `runner` is the
+ * local-runner kind (xor `provider`, the cloud provider id). `degraded`+`notice`
+ * carry the LOUD "fell back to local" signal when no cloud key was on disk.
+ */
+export interface ConcreteRoute {
+  fn: string;
+  mode: RoutingMode;
+  requestedMode: RoutingMode;
+  model: string;
+  runner: string | null;
+  provider: string | null;
+  degraded: boolean;
+  notice: string | null;
+}
+
+/**
+ * M1a (V1.1 Lane 2): one detected local OpenAI-compatible server
+ * (`models.overview` -> `runners[]`). Emitted verbatim by the sidecar
+ * `local_detect.detect_local_servers` probe, so the field names are snake_case
+ * (`base_url`) — this is the raw detection row, not a wire-adapted view.
+ */
+export interface PoolEntry {
+  id: string;
+  /** Server family: "ollama" | "lmstudio". */
+  kind: string;
+  base_url: string;
+  /** The first model id the server reports serving. */
+  model: string;
+  capabilities: string[];
+  /** Rate-limit unit (local servers are request-bounded -> "req"). */
+  unit: string;
+}
+
+/**
+ * M1b/M2 (V1.1 Lane 2): one deduped, metadata-enriched installed Ollama model +
+ * its VRAM-fit verdict (`models.overview` -> `eligibility.models[]`). Mirrors the
+ * sidecar `ollama_meta.ModelMeta`. `quantBits` is the resolved quant width
+ * (4 = Q4, 16 = FP16…); `vramEstimateGb` is the field VRAM fit formula's resident
+ * estimate (null when params/quant are unknown -> the model can't be asserted to
+ * fit and is excluded). M2's reason strip names the real `quantBits` +
+ * `vramEstimateGb` ("7B-Q4 ≈ 4.0 GB, fits your 8 GB GPU").
+ */
+export interface ModelMeta {
+  model: string;
+  digest: string;
+  sizeBytes: number | null;
+  /** Parameter count in BILLIONS (7.6 = 7.6B), or null when unparseable. */
+  paramsB: number | null;
+  /** Quant width in bits (4 = Q4, 8 = Q8, 16 = FP16…), or null when unknown. */
+  quantBits: number | null;
+  /** Resident VRAM estimate (GB) from params × quant + overhead + KV cache. */
+  vramEstimateGb: number | null;
+  capabilities: string[];
+  aliases: string[];
+  fits: boolean;
+}
+
+/**
+ * M1b/M2 (V1.1 Lane 2): the metadata-driven LLM eligibility (`models.overview` ->
+ * `eligibility`). Mirrors the sidecar `ollama_meta.Eligibility`. `source` is
+ * `"metadata"` when ≥1 detected Ollama model is capability-eligible AND fits the
+ * device; `"ladder"` otherwise (no runner / no metadata / nothing fits).
+ * `fallback` is ALWAYS the device-fit static-ladder pick, so a usable pick exists
+ * regardless of `source` (the reason strip uses it when no real metadata applies).
+ */
+export interface Eligibility {
+  source: string;
+  models: ModelMeta[];
+  fallback: ModelReco;
+}
+
+/**
+ * M1a (V1.1 Lane 2): the THIN `models.overview` compose — the whole "Models &
+ * System" screen in ONE read (DESIGN §2.3 step 2). Stitches the cheap probes
+ * (hardware + advisor tiers/preset + local runner detect + device-ranked plan)
+ * with the redacted providers + per-key pool + fail-closed routing policy. The
+ * sidecar makes ZERO provider/LLM calls and NEVER mutates settings.
+ */
+export interface ModelsOverview {
+  hardware: HardwareInfo;
+  tiers: TierStatus[];
+  recommendedPreset: string;
+  /** Detected local OpenAI-compatible servers (Ollama / LM Studio). */
+  runners: PoolEntry[];
+  localPlan: LocalModelPlan;
+  /** REDACTED provider entries (last-4 keys only). */
+  providers: ProviderEntry[];
+  keyPool: KeyPoolEntry[];
+  routingPolicy: RoutingPolicy;
+  /** M2: metadata-driven LLM eligibility (real quant + VRAM est, or ladder). */
+  eligibility: Eligibility;
+}
+
+/** One OpenRouter key-pool row's status: serving, or parked (NOT deleted). */
+export type KeyPoolStatus = 'active' | 'cooldown';
+
+/**
+ * WU-models/device + M4: one OpenRouter key's COST + status row
+ * (`providers.openrouterUsage`). `key` is the REDACTED last-4 only (no full key
+ * crosses RPC). Money is USD. `status` is `active`/`cooldown` — a parked key is
+ * NEVER deleted (cooldown-not-delete) and carries `cooldownReason` (402/429, or
+ * the free-tier <10-credit cap). Mirrors the sidecar
+ * `openrouter_usage.OpenRouterUsageRow`.
  */
 export interface OpenRouterUsageRow {
   provider: string;
@@ -355,6 +580,8 @@ export interface OpenRouterUsageRow {
   limitUsd: number | null;
   remainingUsd: number | null;
   isFreeTier: boolean;
+  status: KeyPoolStatus;
+  cooldownReason: string | null;
 }
 
 /** One selectable ASR engine row (`asr.engines`). */
@@ -1011,545 +1238,8 @@ export interface MediaApi {
   setDataFolder?(path: string): Promise<{ ok: boolean }>;
 }
 
-/** Read the preload-injected bridge without a global Window augmentation. */
-function bridge(): MediaApi {
-  const api = (globalThis as { window?: { api?: MediaApi } }).window?.api;
-  if (!api) {
-    throw new Error('window.api bridge is not available (preload not loaded)');
-  }
-  return api;
-}
-
-/** True when the preload bridge is present (lets the UI degrade gracefully). */
-export function hasApi(): boolean {
-  return Boolean((globalThis as { window?: { api?: MediaApi } }).window?.api);
-}
-
-/** Invoke a sidecar JSON-RPC method through the preload bridge. */
-export function rpc<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T> {
-  return bridge().rpc<T>(method, params);
-}
-
-/** Subscribe to `job.progress`. Returns an unsubscribe fn. */
-export function onProgress(cb: (event: ProgressEvent) => void): () => void {
-  return bridge().onProgress(cb);
-}
-
-/** Subscribe to `job.done`. Returns an unsubscribe fn (no-op if unsupported). */
-export function onJobDone(cb: (event: DoneEvent) => void): () => void {
-  const api = bridge();
-  if (typeof api.onJobDone !== 'function') return () => undefined;
-  return api.onJobDone(cb);
-}
-
-// ---- Method-typed convenience surface (the canonical client) -------------
-//
-// Thin, named wrappers around `rpc(...)` for the §2 method registry. New code
-// can import `client` instead of stringly-typed `rpc(...)`. These mirror the
-// frozen method names + param/result shapes exactly.
+// ---- Method-typed client handle (shared with ./client) -------------------
 
 export interface JobHandle {
   jobId: string;
 }
-
-export const client = {
-  ping: (): Promise<{ pong: boolean; version: string }> => rpc('ping'),
-
-  library: {
-    list: (): Promise<{ videos: Video[] }> => rpc('library.list'),
-    add: (path: string): Promise<{ video: Video }> => rpc('library.add', { path }),
-    remove: (id: string): Promise<{ ok: boolean }> => rpc('library.remove', { id }),
-    /** `library.thumbnail {id}` — idempotent source-video poster extraction (WU-4). */
-    thumbnail: (id: string): Promise<{ thumbnailPath: string }> => rpc('library.thumbnail', { id }),
-  },
-
-  project: {
-    open: (id: string): Promise<{ project: Project }> => rpc('project.open', { id }),
-    save: (project: Project): Promise<{ ok: boolean }> => rpc('project.save', { project }),
-    consolidate: (id: string): Promise<{ ok: boolean; folder: string }> =>
-      rpc('project.consolidate', { id }),
-  },
-
-  transcribe: {
-    start: (videoId: string, language?: string): Promise<JobHandle & { transcript?: Transcript }> =>
-      rpc('transcribe.start', language ? { videoId, language } : { videoId }),
-  },
-
-  subtitles: {
-    generate: (videoId: string): Promise<{ track: SubtitleTrack }> =>
-      rpc('subtitles.generate', { videoId }),
-    edit: (trackId: string, cues: Cue[]): Promise<{ track: SubtitleTrack }> =>
-      rpc('subtitles.edit', { trackId, cues }),
-    translate: (
-      trackId: string,
-      targetLang: string,
-      // captions-export: bilingual stacks original+translation into a NEW track.
-      opts?: { bilingual?: boolean; order?: BilingualOrder },
-    ): Promise<JobHandle & { track?: SubtitleTrack }> =>
-      rpc('subtitles.translate', { trackId, targetLang, ...(opts ?? {}) }),
-    export: (trackId: string, format: SubtitleFormat): Promise<{ path: string }> =>
-      rpc('subtitles.export', { trackId, format }),
-  },
-
-  tracks: {
-    list: (videoId: string): Promise<{ tracks: SubtitleTrack[] }> =>
-      rpc('tracks.list', { videoId }),
-    rename: (trackId: string, name: string): Promise<{ track: SubtitleTrack }> =>
-      rpc('tracks.rename', { trackId, name }),
-    relabel: (trackId: string, lang: string): Promise<{ track: SubtitleTrack }> =>
-      rpc('tracks.relabel', { trackId, lang }),
-    add: (videoId: string, trackId: string): Promise<{ ok: boolean }> =>
-      rpc('tracks.add', { videoId, trackId }),
-    remove: (videoId: string, trackId: string): Promise<{ ok: boolean }> =>
-      rpc('tracks.remove', { videoId, trackId }),
-    burn: (videoId: string, trackId: string): Promise<JobHandle & { path?: string }> =>
-      rpc('tracks.burn', { videoId, trackId }),
-    strip: (videoId: string, trackId: string): Promise<{ path: string }> =>
-      rpc('tracks.strip', { videoId, trackId }),
-  },
-
-  convert: {
-    start: (
-      target: { videoId?: string; path?: string },
-      options: ConvertOptions,
-    ): Promise<JobHandle & { path?: string }> => rpc('convert.start', { ...target, options }),
-    batch: (
-      items: { videoId?: string; path?: string; options: ConvertOptions }[],
-    ): Promise<JobHandle & { paths?: string[] }> => rpc('convert.batch', { items }),
-  },
-
-  shortmaker: {
-    select: (
-      videoId: string,
-      prompt: string,
-      controls: Record<string, unknown>,
-    ): Promise<JobHandle & { candidates?: Candidate[] }> =>
-      rpc('shortmaker.select', { videoId, prompt, controls }),
-    export: (
-      videoId: string,
-      candidateIds: string[],
-      // A2: optional audioTrackId; T4b: optional captionStyle/reframeEngine;
-      // P3: optional hookTitle/removeFillers (mirror the select controls).
-      opts?: {
-        audioTrackId?: string;
-        captionStyle?: string;
-        reframeEngine?: string;
-        hookTitle?: boolean;
-        removeFillers?: boolean;
-      },
-    ): Promise<JobHandle & { clips?: ExportedClip[] }> =>
-      rpc('shortmaker.export', { videoId, candidateIds, ...(opts ?? {}) }),
-  },
-
-  // ---- P4 shorts gallery (§2 / C6) ----------------------------------------
-
-  shorts: {
-    /** `shorts.list {videoId?}` — omitted videoId lists every source's clips. */
-    list: (videoId?: string): Promise<{ shorts: ShortInfo[] }> =>
-      rpc('shorts.list', videoId ? { videoId } : {}),
-    /** `shorts.thumbnail {path}` — idempotent poster-frame extraction. */
-    thumbnail: (path: string): Promise<{ thumbnailPath: string }> =>
-      rpc('shorts.thumbnail', { path }),
-    /** `shorts.delete {path}` — path-traversal guarded inside the output root. */
-    delete: (path: string): Promise<{ ok: boolean }> => rpc('shorts.delete', { path }),
-    /** `shorts.reexport {path}` — the reopen-in-short-maker hint (no job). */
-    reexport: (path: string): Promise<ShortReexportHint> => rpc('shorts.reexport', { path }),
-  },
-
-  // ---- WU-C4 best-frame thumbnail picker (§3.5; AI job) -------------------
-
-  thumbnail: {
-    /**
-     * `thumbnail.select {videoId?, candidateId?|path?, start?, end?}` (WU-C3) —
-     * the AI best-frame picker. A long job: rpc resolves with `{jobId}` ONLY;
-     * the terminal {@link BestFrame} arrives later via a `job.done` notification
-     * (subscribe through `onJobDone`). Either a `candidateId` (resolved from the
-     * selection cache) OR an explicit `{path,start,end}` span identifies the clip.
-     */
-    select: (params: {
-      videoId?: string;
-      candidateId?: string;
-      path?: string;
-      start?: number;
-      end?: number;
-    }): Promise<JobHandle> => rpc('thumbnail.select', { ...params }),
-  },
-
-  // ---- P4 captions (live preview overlay; §2 / C7) ------------------------
-
-  captions: {
-    /** `captions.cues {videoId}` — WORD-level cues (source-absolute seconds). */
-    cues: (videoId: string): Promise<{ cues: Cue[] }> => rpc('captions.cues', { videoId }),
-  },
-
-  // ---- captions-export: NLE timeline export (EDL / CSV) -------------------
-
-  nle: {
-    /**
-     * `nle.export {videoId, format?, fps?, title?, clips?}` — export the video's
-     * approved clips as an editable timeline (CMX3600 EDL or CSV) for
-     * Premiere / DaVinci Resolve. `clips` overrides the persisted project clips.
-     */
-    export: (
-      videoId: string,
-      opts?: { format?: NleFormat; fps?: NleFps; title?: string; clips?: unknown[] },
-    ): Promise<{ path: string; clipCount: number }> =>
-      rpc('nle.export', { videoId, ...(opts ?? {}) }),
-  },
-
-  // ---- captions-export: package-for-upload ZIP ---------------------------
-
-  package: {
-    /**
-     * `package.export {path, suggestion?}` — bundle a produced short
-     * (mp4 + thumbnail + suggested title/description/tags upload.json) into a
-     * ZIP for manual posting. `path` is the exported clip (inside exports root).
-     */
-    export: (
-      path: string,
-      suggestion?: { title?: string; description?: string; tags?: string[] | string },
-    ): Promise<{ path: string; manifest: UploadManifest }> =>
-      rpc('package.export', suggestion ? { path, suggestion } : { path }),
-  },
-
-  // ---- P3-D feedback flywheel ---------------------------------------------
-
-  feedback: {
-    record: (p: {
-      videoId: string;
-      candidate: Candidate;
-      action: FeedbackAction;
-    }): Promise<{ ok: boolean }> => rpc('feedback.record', { ...p }),
-    stats: (): Promise<FeedbackStats> => rpc('feedback.stats'),
-  },
-
-  // ---- A2 addendum methods (P2) ------------------------------------------
-
-  media: {
-    playable: (videoId: string): Promise<MediaPlayableResult> => rpc('media.playable', { videoId }),
-    proxyStart: (videoId: string): Promise<JobHandle & { path?: string }> =>
-      rpc('media.proxy.start', { videoId }),
-  },
-
-  timeline: {
-    peaks: (videoId: string): Promise<{ sampleRate: number; peaks: number[] }> =>
-      rpc('timeline.peaks', { videoId }),
-  },
-
-  tts: {
-    voices: (): Promise<{
-      voices: { id: string; engine: string; lang: string; name: string }[];
-    }> => rpc('tts.voices'),
-    sampleAdd: (path: string): Promise<{ sample: VoiceSample }> => rpc('tts.sample.add', { path }),
-    dubStart: (p: {
-      videoId: string;
-      trackId: string;
-      engine: string;
-      voice?: string;
-      sampleId?: string;
-      targetLang?: string;
-    }): Promise<JobHandle & { audioTrack?: AudioTrack; path?: string }> =>
-      rpc('tts.dub.start', { ...p }),
-  },
-
-  tracksAudio: {
-    list: (videoId: string): Promise<{ audioTracks: AudioTrack[] }> =>
-      rpc('tracks.audio.list', { videoId }),
-    mux: (p: {
-      videoId: string;
-      path: string;
-      lang: string;
-      name: string;
-      kind: string;
-    }): Promise<{ audioTrack: AudioTrack }> => rpc('tracks.audio.mux', { ...p }),
-    replace: (p: {
-      videoId: string;
-      audioTrackId: string;
-      path: string;
-    }): Promise<{ audioTrack: AudioTrack }> => rpc('tracks.audio.replace', { ...p }),
-    strip: (p: { videoId: string; audioTrackId: string }): Promise<{ path: string }> =>
-      rpc('tracks.audio.strip', { ...p }),
-  },
-
-  assets: {
-    list: (): Promise<{ assets: AssetInfo[] }> => rpc('assets.list'),
-    ensure: (names: string[]): Promise<JobHandle> => rpc('assets.ensure', { names }),
-    /** CONTRACT-NOTE (U4): thin alias over job.cancel (same params/semantics). */
-    cancel: (jobId: string): Promise<{ ok: boolean }> => rpc('assets.cancel', { jobId }),
-  },
-
-  job: {
-    cancel: (jobId: string): Promise<{ ok: boolean }> => rpc('job.cancel', { jobId }),
-    status: (jobId: string): Promise<{ status: string; pct: number }> =>
-      rpc('job.status', { jobId }),
-    list: (): Promise<{ jobs: JobInfo[] }> => rpc('job.list'),
-    retry: (jobId: string): Promise<{ jobId: string }> => rpc('job.retry', { jobId }),
-  },
-
-  settings: {
-    get: (): Promise<Record<string, unknown>> => rpc('settings.get'),
-    set: (values: Record<string, unknown>): Promise<Record<string, unknown>> =>
-      rpc('settings.set', values),
-  },
-
-  // ---- system-advanced group ----------------------------------------------
-
-  /** `system.*` — health diagnostic + Phase-8 hardware/advisor probes (direct). */
-  system: {
-    health: (): Promise<HealthReport> => rpc('system.health'),
-    /** `system.probe` — detected VRAM / RAM / CPU / GPU-present (cheap probe). */
-    probe: (): Promise<HardwareInfo> => rpc('system.probe'),
-    /**
-     * `system.advisor {commercial?}` — per-model + per-tier quality-vs-cost
-     * verdicts + recommended preset + VRAM budget + grounded notes. When
-     * `commercial` is true, non-commercial-licensed models flip to unavailable.
-     */
-    advisor: (opts?: { commercial?: boolean }): Promise<AdvisorReport> =>
-      rpc('system.advisor', opts?.commercial === undefined ? {} : { commercial: opts.commercial }),
-    /**
-     * `system.recommend {commercial?}` (WU-B3) — the device-aware auto-recommender:
-     * composes the existing cheap probes into an actionable {@link Recommendation}
-     * (preset + routing + ASR + proposed downloads + rationale). Direct-return; no
-     * provider/LLM call. The "Apply" flow reuses the EXISTING mutation RPCs
-     * (`providers.applyPreset` / `setFunctionModel` / `settings.set` / `assets.ensure`).
-     */
-    recommend: (opts?: { commercial?: boolean }): Promise<RecommendResponse> =>
-      rpc(
-        'system.recommend',
-        opts?.commercial === undefined ? {} : { commercial: opts.commercial },
-      ),
-    /**
-     * `system.selfTest` (WU-2) — the first-run self-diagnostic: validates the
-     * install END-TO-END (writable data dir, device probe, reframe deps, ASR
-     * backend, ffmpeg/ffprobe) and returns a structured pass/fail report with
-     * fix hints. Direct-return; fail-open on the sidecar (a broken probe becomes
-     * a reported problem, never an exception).
-     */
-    selfTest: (): Promise<SelfTestReport> => rpc('system.selfTest'),
-  },
-
-  /** `asr.engines` — selectable ASR engines (whisper / parakeet) + installed. */
-  asr: {
-    engines: (): Promise<{ engines: AsrEngine[] }> => rpc('asr.engines'),
-  },
-
-  /**
-   * `models.*` (WU-models/device) — the local-model brain. `runners` composes the
-   * cheap hardware probe + Ollama/LM Studio detect into a device-ranked whisper +
-   * LLM recommendation and per-runner detect/pull/install advice. Direct-return;
-   * NO provider/LLM call, and it NEVER triggers a pull (the pull hint is advice).
-   */
-  models: {
-    runners: (): Promise<LocalModelPlan> => rpc('models.runners'),
-  },
-
-  /**
-   * `readiness.*` — the unified "what works right now" roll-up (WU-8). Strictly
-   * read-only: it derives every row from the installed-weight map + redacted
-   * settings view, so it triggers no download and opens no socket.
-   */
-  readiness: {
-    /** `readiness.summary()` -> the per-capability readiness rows (WU-8). */
-    summary: (): Promise<{ items: ReadinessItem[] }> => rpc('readiness.summary'),
-  },
-
-  /**
-   * `paths.*` — the resolved on-disk data layout (WU-1). Read-only: a pure
-   * path-join the renderer SHOWS so users know WHERE everything lives.
-   */
-  paths: {
-    /** `paths.describe()` -> the resolved data layout (no I/O, no secrets). */
-    describe: (): Promise<PathsDescribe> => rpc('paths.describe'),
-  },
-
-  /** `providers.*` — Hub key/usage reads (WU-usage-ui surfaces live usage here). */
-  providers: {
-    /**
-     * `providers.list` — the configured provider pool, REDACTED (WU-keys). Every
-     * `apiKeys` entry is the last-4 only; the RPC never returns a full key.
-     */
-    list: (): Promise<ProvidersListResponse> => rpc('providers.list'),
-    /**
-     * `providers.upsert` — insert or merge a provider entry (WU-keys). RAW keys
-     * are stored server-side; the returned list is REDACTED. Pass the full entry
-     * (`{id, provider?, baseUrl?, model?, apiKeys?, ...}`); merging into an
-     * existing `id` preserves untouched fields.
-     */
-    upsert: (entry: ProviderEntry): Promise<ProvidersListResponse> =>
-      rpc('providers.upsert', { provider: entry }),
-    /** `providers.remove` — drop the provider with this id; returns the REDACTED list. */
-    remove: (id: string): Promise<ProvidersListResponse> => rpc('providers.remove', { id }),
-    /**
-     * `providers.testKey` — validate a key with one minimal completion ping
-     * (WU-keys). The key is never echoed back: only `ok` + declared
-     * `capabilities` + a scrubbed `error` on failure.
-     */
-    testKey: (args: {
-      baseUrl: string;
-      apiKey: string;
-      model?: string;
-      capabilities?: string[];
-    }): Promise<TestKeyResult> => rpc('providers.testKey', args),
-    /**
-     * `providers.setConsent` — set per-data-type egress consent for a provider
-     * (WU-keys / SE1). TEXT and FRAMES are independent: only the keys present in
-     * the patch change, so revoking `frames` leaves `text` intact. Returns the
-     * full consent block.
-     */
-    setConsent: (provider: string, patch: ProviderConsent): Promise<SetConsentResponse> =>
-      rpc('providers.setConsent', { provider, ...patch }),
-    /**
-     * `providers.usage` — per-key live usage (cached, persisted, stale-flagged;
-     * NOT a poller). Keys are redacted; req/token units are returned distinctly.
-     */
-    usage: (): Promise<{ usage: UsageRow[] }> => rpc('providers.usage'),
-    /**
-     * `providers.openrouterUsage` (WU-models/device) — per-key OpenRouter COST
-     * rows (cumulative credit usage USD): the cost axis alongside `usage`'s
-     * calls/tokens. Best-effort; keys are redacted (no full key crosses RPC).
-     */
-    openrouterUsage: (): Promise<{ usage: OpenRouterUsageRow[] }> =>
-      rpc('providers.openrouterUsage'),
-    /**
-     * `providers.spend` — month-to-date cumulative cloud spend + the configured
-     * monthly caps (WU-spend-cap). Read-only; all money is integer cents.
-     */
-    spend: (): Promise<SpendInfo> => rpc('providers.spend'),
-    /** `providers.catalog` — the static curated model catalog (WU-catalog). */
-    catalog: (): Promise<CatalogResponse> => rpc('providers.catalog'),
-    /** `providers.applyPreset` — resolve a smart preset into routing (WU-presets). */
-    applyPreset: (name: string): Promise<PresetResponse> => rpc('providers.applyPreset', { name }),
-    /** `providers.setFunctionModel` — override one function's routed provider. */
-    setFunctionModel: (function_: string, provider: string): Promise<PresetResponse> =>
-      rpc('providers.setFunctionModel', { function: function_, provider }),
-    /**
-     * `providers.firstRun` — the local-vs-cloud chooser. No arg = READ (returns
-     * the local-safe default); a `choice` applies that preset + sets the flag.
-     */
-    firstRun: (choice?: string): Promise<FirstRunResponse> =>
-      rpc('providers.firstRun', choice === undefined ? {} : { choice }),
-  },
-
-  /**
-   * `savePresets.*` — named `{autosave, exportDefaults}` bundles (WU-10/WU-11).
-   * The sidecar `settings.set` is a SHALLOW top-level merge, so every mutating
-   * handler read-modify-writes the whole `savePresets` block server-side; the
-   * client just mirrors the frozen method names + param/result shapes.
-   */
-  savePresets: {
-    /** `savePresets.list()` -> the saved bundle map + last-applied name. */
-    list: (): Promise<SavePresetsBlock> => rpc('savePresets.list'),
-    /** `savePresets.apply({name})` -> the now-active name + its resolved bundle. */
-    apply: (name: string): Promise<{ active: string; savePreset: SavePreset }> =>
-      rpc('savePresets.apply', { name }),
-    /**
-     * `savePresets.upsert({name, autosave?, exportDefaults?})` -> the bundle map.
-     * Omitted parts default to `{}` server-side (filled from live settings).
-     */
-    upsert: (
-      name: string,
-      bundle?: { autosave?: AutosaveSettings; exportDefaults?: ExportDefaults },
-    ): Promise<{ presets: Record<string, SavePreset> }> =>
-      rpc('savePresets.upsert', { name, ...(bundle ?? {}) }),
-    /** `savePresets.remove({name})` -> the surviving bundle map + active name. */
-    remove: (name: string): Promise<{ presets: Record<string, SavePreset>; active: string }> =>
-      rpc('savePresets.remove', { name }),
-  },
-
-  /** `recipes.*` — saved multi-step pipelines run in one shot. */
-  recipes: {
-    list: (): Promise<{ recipes: SavedRecipe[] }> => rpc('recipes.list'),
-    save: (recipe: SavedRecipe | Omit<SavedRecipe, 'id'>): Promise<{ recipe: SavedRecipe }> =>
-      rpc('recipes.save', { recipe }),
-    delete: (id: string): Promise<{ ok: boolean }> => rpc('recipes.delete', { id }),
-    run: (id: string): Promise<JobHandle> => rpc('recipes.run', { id }),
-  },
-
-  /** `exportPresets.*` — server-persisted platform export presets (WU11). */
-  exportPresets: {
-    list: (): Promise<{ presets: ExportPreset[] }> => rpc('exportPresets.list'),
-    save: (preset: ExportPreset | Omit<ExportPreset, 'id'>): Promise<{ preset: ExportPreset }> =>
-      rpc('exportPresets.save', { preset }),
-    delete: (id: string): Promise<{ ok: boolean }> => rpc('exportPresets.delete', { id }),
-    reset: (): Promise<{ presets: ExportPreset[] }> => rpc('exportPresets.reset'),
-  },
-
-  /** `templates.*` — reusable edit templates (recipe + controls + targets). */
-  templates: {
-    list: (): Promise<{ templates: Template[] }> => rpc('templates.list'),
-    save: (template: Template | Omit<Template, 'id'>): Promise<{ template: Template }> =>
-      rpc('templates.save', { template }),
-    delete: (id: string): Promise<{ ok: boolean }> => rpc('templates.delete', { id }),
-    apply: (templateId: string, videoId: string): Promise<JobHandle> =>
-      rpc('templates.apply', { templateId, videoId }),
-  },
-
-  /** `batch.*` — durable, resumable many-source queue (WU11). */
-  batch: {
-    create: (
-      name: string,
-      templateId: string,
-      sourceVideoIds: string[],
-    ): Promise<{ batch: BatchState }> => rpc('batch.create', { name, templateId, sourceVideoIds }),
-    start: (
-      id: string,
-      opts?: { confirmCloudBudget?: boolean; acknowledged?: boolean },
-    ): Promise<JobHandle> => rpc('batch.start', { id, ...(opts ?? {}) }),
-    status: (id: string): Promise<{ batch: BatchState }> => rpc('batch.status', { id }),
-    list: (): Promise<{ batches: BatchSummary[] }> => rpc('batch.list'),
-    cancel: (id: string): Promise<{ ok: boolean }> => rpc('batch.cancel', { id }),
-    resume: (id: string): Promise<JobHandle & { status?: BatchStatus }> =>
-      rpc('batch.resume', { id }),
-    delete: (id: string): Promise<{ ok: boolean }> => rpc('batch.delete', { id }),
-  },
-
-  /** `diarize.start` — token-free speaker labelling (long job -> {transcript}). */
-  diarize: {
-    start: (
-      videoId: string,
-      threshold?: number,
-    ): Promise<JobHandle & { transcript?: Transcript }> =>
-      rpc('diarize.start', threshold === undefined ? { videoId } : { videoId, threshold }),
-  },
-
-  /**
-   * `index.*` (WU-A5/A6) — the per-video semantic transcript index. `build` is a
-   * long job (embed every segment + persist vectors); `search` / `status` are
-   * direct-return. Params are forwarded unconditionally — `toEqual` ignores
-   * `undefined` keys, so a branch-free wrapper keeps the wire contract exact.
-   */
-  index: {
-    /** `index.build {videoId}` -> {jobId} — embed + persist the segment vectors. */
-    build: (videoId: string): Promise<JobHandle> => rpc('index.build', { videoId }),
-    /** `index.status {videoId}` -> {built,...} — pure file read (no provider call). */
-    status: (videoId: string): Promise<IndexStatus> => rpc('index.status', { videoId }),
-    /** `index.search {videoId,query,topK?}` -> {hits} — one query embed + cosine. */
-    search: (videoId: string, query: string, topK = 8): Promise<{ hits: IndexHit[] }> =>
-      rpc('index.search', { videoId, query, topK }),
-  },
-
-  /**
-   * `director.*` — the prompt-driven AI video editing spine (WU-plan-rpc /
-   * WU-evaluate). `plan`/`apply`/`undo` are JOB-based (resolve `{jobId}`; the
-   * typed result arrives on `job.done`); `previewCost`/`evaluate` are SYNCHRONOUS
-   * (resolve their payload directly). Field names are FROZEN, identical to the
-   * sidecar `director_*` handlers (`handlers.py:1778+`).
-   */
-  director: {
-    /** `director.plan {videoId, goal}` -> {jobId}; job.done = {planId, editPlan, preview}. */
-    plan: (videoId: string, goal: string): Promise<JobHandle> =>
-      rpc('director.plan', { videoId, goal }),
-    /** `director.previewCost {planId}` -> per-data-type cost/route/egress (ZERO provider calls). */
-    previewCost: (planId: string): Promise<DirectorPreview> =>
-      rpc('director.previewCost', { planId }),
-    /** `director.apply {planId, confirmBudget?}` -> {jobId}; job.done = DirectorApplyResult. */
-    apply: (planId: string, confirmBudget?: string): Promise<JobHandle> =>
-      rpc('director.apply', confirmBudget === undefined ? { planId } : { planId, confirmBudget }),
-    /** `director.undo {planId}` -> {jobId}; re-applies the recorded inverse plan. */
-    undo: (planId: string): Promise<JobHandle> => rpc('director.undo', { planId }),
-    /** `director.evaluate {planId}` -> objective before/after metrics (synchronous). */
-    evaluate: (planId: string): Promise<DirectorEval> => rpc('director.evaluate', { planId }),
-  },
-} as const;
-
-export default client;

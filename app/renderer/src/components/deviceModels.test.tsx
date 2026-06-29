@@ -83,6 +83,20 @@ describe('deviceChips', () => {
     expect(byKey.gpu).toBe('none');
     expect(byKey.eta).toBe('—');
   });
+  it('reads RAM as "unknown" (never "undefined MB") when the probe found nothing', () => {
+    // F3: Windows RAM probe -> null on an undetectable host. The RAM chip must
+    // degrade to a readable "unknown", distinct from the em dash used elsewhere.
+    const noRam: HardwareInfo = {
+      vramMb: 6000,
+      ramMb: null,
+      cpuCount: 8,
+      gpuPresent: true,
+      diskFreeMb: 250000,
+    };
+    const byKey = Object.fromEntries(deviceChips(noRam, 30).map((c) => [c.key, c.value]));
+    expect(byKey.ram).toBe('unknown');
+    expect(byKey.ram).not.toContain('undefined');
+  });
 });
 
 describe('<DeviceStatusStrip />', () => {
@@ -226,7 +240,7 @@ describe('<OpenRouterUsage />', () => {
     expect(container.querySelector('[data-openrouter="empty"]')).not.toBeNull();
   });
 
-  it('renders a paid-tier row with cost + remaining/limit', async () => {
+  it('renders a paid-tier row with cost + remaining/limit (active, no cooldown)', async () => {
     const rows: OpenRouterUsageRow[] = [
       {
         provider: 'OpenRouter',
@@ -235,6 +249,8 @@ describe('<OpenRouterUsage />', () => {
         limitUsd: 10,
         remainingUsd: 8.5,
         isFreeTier: false,
+        status: 'active',
+        cooldownReason: null,
       },
     ];
     await render(<OpenRouterUsage rows={rows} />);
@@ -244,6 +260,11 @@ describe('<OpenRouterUsage />', () => {
       '$8.50 of $10.00 left',
     );
     expect(row.querySelector('[data-field="free-tier"]')).toBeNull();
+    // M4: an active key shows the active status and no cooldown reason.
+    expect(row.dataset.status).toBe('active');
+    expect(row.classList.contains('is-cooldown')).toBe(false);
+    expect(row.querySelector('[data-field="status"]')?.textContent).toBe('active');
+    expect(row.querySelector('[data-field="cooldown-reason"]')).toBeNull();
   });
 
   it('renders a free-tier row with no credit limit', async () => {
@@ -255,11 +276,57 @@ describe('<OpenRouterUsage />', () => {
         limitUsd: null,
         remainingUsd: null,
         isFreeTier: true,
+        status: 'active',
+        cooldownReason: null,
       },
     ];
     await render(<OpenRouterUsage rows={rows} />);
     const row = container.querySelector('.openrouter-usage__row') as HTMLElement;
     expect(row.querySelector('[data-field="remaining"]')?.textContent).toBe('no credit limit');
     expect(row.querySelector('[data-field="free-tier"]')).not.toBeNull();
+  });
+
+  it('renders a parked (cooldown) key with its reason — not deleted (M4)', async () => {
+    const rows: OpenRouterUsageRow[] = [
+      {
+        provider: 'OpenRouter',
+        key: '…9876',
+        costUsd: null,
+        limitUsd: null,
+        remainingUsd: null,
+        isFreeTier: false,
+        status: 'cooldown',
+        cooldownReason: 'rate-limited (HTTP 429) — cooling down before retry',
+      },
+    ];
+    await render(<OpenRouterUsage rows={rows} />);
+    const row = container.querySelector('.openrouter-usage__row') as HTMLElement;
+    // The parked key STILL appears (cooldown-not-delete) and shows why.
+    expect(row.dataset.status).toBe('cooldown');
+    expect(row.classList.contains('is-cooldown')).toBe(true);
+    expect(row.querySelector('[data-field="status"]')?.textContent).toBe('on cooldown');
+    expect(row.querySelector('[data-field="status"]')?.getAttribute('role')).toBe('status');
+    expect(row.querySelector('[data-field="cooldown-reason"]')?.textContent).toContain('429');
+  });
+
+  it('renders a cooldown key with a null reason (defensive) without the reason chip', async () => {
+    const rows: OpenRouterUsageRow[] = [
+      {
+        provider: 'OpenRouter',
+        key: '…0000',
+        costUsd: null,
+        limitUsd: null,
+        remainingUsd: null,
+        isFreeTier: false,
+        status: 'cooldown',
+        cooldownReason: null,
+      },
+    ];
+    await render(<OpenRouterUsage rows={rows} />);
+    const row = container.querySelector('.openrouter-usage__row') as HTMLElement;
+    expect(row.dataset.status).toBe('cooldown');
+    expect(row.querySelector('[data-field="status"]')?.textContent).toBe('on cooldown');
+    // No reason text -> no reason chip rendered.
+    expect(row.querySelector('[data-field="cooldown-reason"]')).toBeNull();
   });
 });

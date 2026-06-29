@@ -737,6 +737,84 @@ describe('Library thumbnails (WU-14 useVideoThumbnail wiring)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// L4: the Lineage-view toggle + asset provenance drawer
+// ---------------------------------------------------------------------------
+
+describe('Library lineage view (L4)', () => {
+  const EMPTY_LINEAGE = {
+    id: 'v1',
+    entity: null,
+    ancestors: [],
+    descendants: [],
+    provenance: null,
+  };
+
+  function lineageToggle(): HTMLButtonElement {
+    return container.querySelector('.library__lineage-toggle') as HTMLButtonElement;
+  }
+
+  async function click(el: HTMLElement): Promise<void> {
+    await act(async () => {
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+  }
+
+  it('opens an asset provenance drawer (not the Workspace) while in Lineage view', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    const onOpen = vi.fn();
+    await renderLibrary(onOpen);
+
+    const toggle = lineageToggle();
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    await click(toggle);
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+
+    // The card open affordance re-labels itself for the history action.
+    const open = container.querySelector('.library__item-open') as HTMLButtonElement;
+    expect(open.getAttribute('aria-label')).toBe('Show history of Talk');
+
+    rpcMock.mockResolvedValueOnce(EMPTY_LINEAGE);
+    await click(open);
+
+    // Lineage view diverts the click to the drawer — onOpen is NOT called.
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(rpcMock).toHaveBeenCalledWith('library.lineage', { id: 'v1' });
+    const drawer = container.querySelector('.lineage-panel');
+    expect(drawer?.getAttribute('aria-label')).toBe('Lineage of Talk');
+  });
+
+  it('closes the drawer via its close button', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    await renderLibrary();
+
+    await click(lineageToggle());
+    rpcMock.mockResolvedValue(EMPTY_LINEAGE);
+    await click(container.querySelector('.library__item-open') as HTMLButtonElement);
+    expect(container.querySelector('.lineage-panel')).not.toBeNull();
+
+    await click(container.querySelector('.lineage-panel__close') as HTMLButtonElement);
+    expect(container.querySelector('.lineage-panel')).toBeNull();
+  });
+
+  it('closes any open drawer when leaving Lineage view', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    await renderLibrary();
+
+    const toggle = lineageToggle();
+    await click(toggle);
+    rpcMock.mockResolvedValue(EMPTY_LINEAGE);
+    await click(container.querySelector('.library__item-open') as HTMLButtonElement);
+    expect(container.querySelector('.lineage-panel')).not.toBeNull();
+
+    // Toggling the view off drops the open drawer.
+    await click(toggle);
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    expect(container.querySelector('.lineage-panel')).toBeNull();
+  });
+});
+
 describe('Library readiness roll-up (WU-14)', () => {
   it('renders the ReadinessRollup section on the library home', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });

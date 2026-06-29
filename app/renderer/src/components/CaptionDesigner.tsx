@@ -16,9 +16,13 @@ import React, { useState } from 'react';
 import { Player, type PlayerWindow } from './Player';
 import { CaptionBox } from './CaptionBox';
 import { CaptionStylePicker } from './CaptionStylePicker';
+import { CaptionCustomizer } from './CaptionCustomizer';
 import { activeLine, wordColor } from './CaptionOverlay';
-import { captionVisualFor, isNoCaption } from '../lib/captionTemplates';
+import { isNoCaption } from '../lib/captionTemplates';
+import { isKaraokeStyle, karaokeActiveColor } from '../lib/captionKaraokePreset';
+import { captionSampleStyle, previewSizeScale, previewVisual } from '../lib/captionOverridePreview';
 import { type CaptionBand, bandBox, boxBand } from '../lib/captionPosition';
+import type { CaptionContentContext } from '../lib/captionDefaults';
 import type { CaptionDesign } from '../lib/captionDesign';
 import type { CaptionStyleOption } from '../features/shortMakerLogic';
 import type { Cue } from '../lib/rpc';
@@ -41,6 +45,8 @@ export interface CaptionDesignerProps {
   hookTitle?: string;
   /** Override the style catalog (defaults to the full set). */
   styles?: readonly CaptionStyleOption[];
+  /** Project content context for the per-language reading-speed default (WU S4). */
+  content?: CaptionContentContext;
 }
 
 const BANDS: readonly { id: CaptionBand; label: string }[] = [
@@ -58,11 +64,16 @@ export function CaptionDesigner({
   onChange,
   hookTitle,
   styles,
+  content,
 }: CaptionDesignerProps): React.ReactElement {
   const [currentTime, setCurrentTime] = useState(win.start);
 
-  const visual = captionVisualFor(design.style);
+  const visual = previewVisual(design.style, design.override);
+  const scale = previewSizeScale(design.override);
+  const lineStyle = captionSampleStyle(visual, scale);
   const none = isNoCaption(design.style);
+  // V1.1 WU SP1: the karaoke preset alternates the active word accent per word.
+  const karaoke = isKaraokeStyle(design.style);
   const words = none ? [] : activeLine(cues, win, currentTime - win.start);
   const band = boxBand(design.box);
   const title = (hookTitle ?? '').trim();
@@ -84,18 +95,12 @@ export function CaptionDesigner({
             {none ? (
               <span className="caption-designer__hint">No captions</span>
             ) : words.length > 0 ? (
-              <span
-                className="caption-designer__line"
-                style={{
-                  fontFamily: visual.fontFamily,
-                  textTransform: visual.uppercase ? 'uppercase' : 'none',
-                }}
-              >
+              <span className="caption-designer__line" style={lineStyle}>
                 {words.map((w, i) => (
                   <span
                     key={`${w.text}-${w.start}-${i}`}
                     style={{
-                      color: wordColor(w, visual),
+                      color: wordColor(w, visual, karaoke ? karaokeActiveColor(i) : undefined),
                       backgroundColor: w.active ? visual.activeBackground : 'transparent',
                     }}
                   >
@@ -104,7 +109,10 @@ export function CaptionDesigner({
                 ))}
               </span>
             ) : (
-              <span className="caption-designer__hint" style={{ fontFamily: visual.fontFamily }}>
+              <span
+                className="caption-designer__hint"
+                style={{ fontFamily: visual.fontFamily, fontSize: `${scale}em` }}
+              >
                 Caption preview
               </span>
             )}
@@ -130,6 +138,12 @@ export function CaptionDesigner({
         value={design.style}
         styles={styles}
         onChange={(style) => onChange({ ...design, style })}
+      />
+
+      <CaptionCustomizer
+        value={design.override}
+        onChange={(override) => onChange({ ...design, override })}
+        content={content}
       />
     </div>
   );
