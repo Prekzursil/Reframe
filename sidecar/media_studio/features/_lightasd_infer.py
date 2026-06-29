@@ -159,7 +159,7 @@ def _crop_track(
     import numpy as np  # noqa: PLC0415
     from scipy import signal  # noqa: PLC0415
 
-    vout = cv2.VideoWriter(crop_file + ".avi", cv2.VideoWriter_fourcc(*"XVID"), ASD_FPS, (224, 224))
+    vout = cv2.VideoWriter(crop_file + ".avi", cv2.VideoWriter.fourcc(*"XVID"), ASD_FPS, (224, 224))
     dx, dy, ds = [], [], []
     for det in track["bbox"]:
         ds.append(max(det[3] - det[1], det[2] - det[0]) / 2)
@@ -171,7 +171,10 @@ def _crop_track(
     for i, fr in enumerate(track["frame"]):
         bs = ds[i]
         bsi = int(bs * (1 + 2 * CROP_SCALE))
-        img = np.pad(cv2.imread(flist[int(fr)]), ((bsi, bsi), (bsi, bsi), (0, 0)), "constant", constant_values=110)
+        src = cv2.imread(flist[int(fr)])
+        if src is None:
+            raise RuntimeError(f"failed to read frame: {flist[int(fr)]}")
+        img = np.pad(src, ((bsi, bsi), (bsi, bsi), (0, 0)), "constant", constant_values=110)
         my, mx = dy[i] + bsi, dx[i] + bsi
         face = img[
             int(my - bs) : int(my + bs * (1 + 2 * CROP_SCALE)),
@@ -282,7 +285,10 @@ def analyze_visual(  # pragma: no cover - heavy native seam
     det = S3FD(s3fd_weight, device=dev)
     scene: list[list[dict[str, Any]]] = []
     for fidx, fn in enumerate(flist):
-        img = cv2.cvtColor(cv2.imread(fn), cv2.COLOR_BGR2RGB)
+        raw = cv2.imread(fn)
+        if raw is None:
+            raise RuntimeError(f"failed to read frame: {fn}")
+        img = cv2.cvtColor(raw, cv2.COLOR_BGR2RGB)
         bboxes = det.detect_faces(img, conf_th=DET_CONF, scales=[DET_SCALE])
         scene.append([{"frame": fidx, "bbox": b[:-1].tolist(), "conf": float(b[-1])} for b in bboxes])
 
