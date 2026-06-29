@@ -53,6 +53,7 @@ FROZEN_RPC_SURFACE: frozenset[str] = frozenset(
         "index.search",
         "index.status",
         "library.add",
+        "library.lineage",
         "library.list",
         "library.remove",
         "library.thumbnail",

@@ -401,6 +401,17 @@ class Library:
 
         return lineage.record_lineage(self, job, inputs, outputs, agent)
 
+    def lineage(self, entity_id: str) -> dict[str, Any]:
+        """Return ``entity_id``'s provenance — ancestors + descendants (L3, §3.2).
+
+        Thin façade over :func:`media_studio.lineage.lineage_of` (lazy import, as
+        for :meth:`record_lineage`). ``{id, entity, ancestors, descendants}`` where
+        each relation is a list of full entity dicts (or a ``missing`` stub).
+        """
+        from . import lineage  # lazy import breaks the library<->lineage cycle
+
+        return lineage.lineage_of(self, entity_id)
+
 
 class Project:
     """A versioned JSON project manifest referencing its source video by path.

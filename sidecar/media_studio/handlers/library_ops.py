@@ -144,6 +144,19 @@ def library_thumbnail(self: Services, params: dict[str, Any], ctx: RpcContext) -
     return {"thumbnailPath": str(out)}
 
 
+def library_lineage(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``library.lineage({id})`` -> ``{id, entity, ancestors, descendants}`` (L3).
+
+    Direct-return. Surfaces an asset's PROV provenance: ``ancestors`` (what it was
+    made from) + ``descendants`` (what was made from it), each a list of full
+    entity dicts (or a ``missing`` stub for a referenced-but-absent node). A
+    purely-read query — an unknown id returns the empty structure (``entity`` is
+    ``None``), never an error (the renderer just shows "no history").
+    """
+    entity_id = _require_str(params, "id")
+    return self.library.lineage(entity_id)
+
+
 def project_open(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
     """``project.open({id})`` -> ``{project}`` (§2). Direct-return.
 

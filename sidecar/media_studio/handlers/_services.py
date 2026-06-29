@@ -182,6 +182,7 @@ class Services:
     library_add = library_ops.library_add
     library_remove = library_ops.library_remove
     library_thumbnail = library_ops.library_thumbnail
+    library_lineage = library_ops.library_lineage
     project_open = library_ops.project_open
     project_save = library_ops.project_save
     project_consolidate = library_ops.project_consolidate

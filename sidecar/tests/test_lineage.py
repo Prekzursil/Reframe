@@ -357,3 +357,107 @@ def test_library_record_lineage_facade(tmp_path: Path):
     )
     acts = _rows(_db_for(lib.index_path), "activity")
     assert acts[0]["id"] == activity_id
+
+
+# --------------------------------------------------------------------------- #
+# L3 — lineage_of() ancestors / descendants query (recursive edge walk)
+# --------------------------------------------------------------------------- #
+def _add_source(lib: Library, tmp_path: Path, name: str) -> str:
+    """Add a real (empty) media file to the library and return its source id."""
+    media = tmp_path / name
+    media.write_bytes(b"\x00")
+    return lib.add(str(media))["id"]
+
+
+def _record(lib: Library, *, inputs: list[object], outputs: list[object]) -> str:
+    return lib.record_lineage(
+        _job(method="shorts.select"),
+        inputs=inputs,
+        outputs=outputs,
+        agent={"appVersion": "1.1.0", "route": {"mode": "local"}},
+    )
+
+
+def test_lineage_of_unknown_id_returns_empty_structure(tmp_path: Path):
+    lib = _fresh_library(tmp_path)
+    out = lineage.lineage_of(lib, "nope")
+    assert out == {"id": "nope", "entity": None, "ancestors": [], "descendants": []}
+
+
+def test_lineage_of_root_entity_shape_for_source(tmp_path: Path):
+    lib = _fresh_library(tmp_path)
+    src = _add_source(lib, tmp_path, "talk.mp4")
+    out = lineage.lineage_of(lib, src)
+    entity = out["entity"]
+    assert entity is not None
+    assert entity["id"] == src
+    assert entity["kind"] == "video"
+    assert entity["role"] == "source"
+    assert entity["title"] == "talk"
+    assert entity["contentHash"] is None
+    assert entity["hasTranscript"] is False
+    assert "missing" not in entity
+
+
+def test_lineage_of_ancestors_single_hop(tmp_path: Path):
+    lib = _fresh_library(tmp_path)
+    src = _add_source(lib, tmp_path, "talk.mp4")
+    _record(lib, inputs=[{"id": src}], outputs=[{"id": "clip1", "kind": "short", "path": "/x/c.mp4"}])
+    out = lineage.lineage_of(lib, "clip1")
+    assert [a["id"] for a in out["ancestors"]] == [src]
+    assert out["ancestors"][0]["role"] == "source"
+    assert out["descendants"] == []
+
+
+def test_lineage_of_descendants_single_hop(tmp_path: Path):
+    lib = _fresh_library(tmp_path)
+    src = _add_source(lib, tmp_path, "talk.mp4")
+    _record(lib, inputs=[{"id": src}], outputs=[{"id": "clip1", "kind": "short", "path": "/x/c.mp4"}])
+    out = lineage.lineage_of(lib, src)
+    assert [d["id"] for d in out["descendants"]] == ["clip1"]
+    assert out["descendants"][0]["role"] == "output"
+    assert out["ancestors"] == []
+
+
+def test_lineage_of_multi_hop_ancestors_and_descendants(tmp_path: Path):
+    lib = _fresh_library(tmp_path)
+    src = _add_source(lib, tmp_path, "talk.mp4")
+    _record(lib, inputs=[{"id": src}], outputs=[{"id": "clip1", "path": "/x/c1.mp4"}])
+    _record(lib, inputs=[{"id": "clip1"}], outputs=[{"id": "final", "path": "/x/f.mp4"}])
+
+    anc = lineage.lineage_of(lib, "final")
+    assert [a["id"] for a in anc["ancestors"]] == ["clip1", src]  # BFS order
+
+    desc = lineage.lineage_of(lib, src)
+    assert [d["id"] for d in desc["descendants"]] == ["clip1", "final"]
+
+
+def test_lineage_of_diamond_dedups_shared_ancestor(tmp_path: Path):
+    # merged <- clipA <- src ;  merged <- clipB <- src  (src reached twice).
+    lib = _fresh_library(tmp_path)
+    src = _add_source(lib, tmp_path, "talk.mp4")
+    _record(lib, inputs=[{"id": src}], outputs=[{"id": "clipA", "path": "/x/a.mp4"}])
+    _record(lib, inputs=[{"id": src}], outputs=[{"id": "clipB", "path": "/x/b.mp4"}])
+    _record(lib, inputs=[{"id": "clipA"}, {"id": "clipB"}], outputs=[{"id": "merged", "path": "/x/m.mp4"}])
+
+    anc = lineage.lineage_of(lib, "merged")
+    ids = [a["id"] for a in anc["ancestors"]]
+    assert ids == ["clipA", "clipB", src]  # src appears exactly once (seen-guard)
+
+
+def test_lineage_of_missing_source_yields_stub(tmp_path: Path):
+    # An input that was never added to the library has no entity row -> a loud
+    # `missing` stub (never silently dropped from the derivation).
+    lib = _fresh_library(tmp_path)
+    _record(lib, inputs=[{"id": "ghost"}], outputs=[{"id": "out1", "path": "/x/o.mp4"}])
+    out = lineage.lineage_of(lib, "out1")
+    assert out["ancestors"] == [{"id": "ghost", "missing": True}]
+
+
+def test_library_lineage_facade(tmp_path: Path):
+    # The Library.lineage method delegates to lineage.lineage_of (lazy import).
+    lib = _fresh_library(tmp_path)
+    src = _add_source(lib, tmp_path, "talk.mp4")
+    _record(lib, inputs=[{"id": src}], outputs=[{"id": "clip1", "path": "/x/c.mp4"}])
+    out = lib.lineage("clip1")
+    assert [a["id"] for a in out["ancestors"]] == [src]

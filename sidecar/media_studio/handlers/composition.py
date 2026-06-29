@@ -35,6 +35,9 @@ def register_all(
     reg("library.add", svc.library_add)
     reg("library.remove", svc.library_remove)
     reg("library.thumbnail", svc.library_thumbnail)
+    # L3 (V1.1 Lane 3): read-only provenance query — ancestors (made from) +
+    # descendants (used to make) via a recursive derived_from edge walk. Direct.
+    reg("library.lineage", svc.library_lineage)
 
     reg("project.open", svc.project_open)
     reg("project.save", svc.project_save)

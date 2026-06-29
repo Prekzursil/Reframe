@@ -293,6 +293,110 @@ def record_lineage(
     return activity_id
 
 
+# --------------------------------------------------------------------------- #
+# L3 — lineage_of(): ancestors / descendants query (recursive edge walk)
+# --------------------------------------------------------------------------- #
+def _row_to_entity(row: sqlite3.Row) -> dict[str, Any]:
+    """Reconstruct a full entity dict from an ``entity`` row (all columns).
+
+    Richer than :meth:`Library._row_to_video` (carries ``kind``/``role``/
+    ``contentHash``) because a lineage node can be a source, a derived output,
+    or an export. ``duration_sec`` is always written as a float (never NULL),
+    ``content_hash`` is the only nullable column.
+    """
+    return {
+        "id": row["id"],
+        "kind": row["kind"],
+        "path": row["path"],
+        "role": row["role"],
+        "title": row["title"],
+        "addedAt": row["added_at"],
+        "durationSec": float(row["duration_sec"]),
+        "contentHash": row["content_hash"],
+        "hasTranscript": bool(row["has_transcript"]),
+        "thumbnailPath": row["thumbnail_path"],
+    }
+
+
+def _load_entity(conn: sqlite3.Connection, eid: str) -> dict[str, Any] | None:
+    """Return the full entity dict for ``eid`` (any role), or ``None`` if absent."""
+    row = conn.execute("SELECT * FROM entity WHERE id = ?", (eid,)).fetchone()
+    return _row_to_entity(row) if row is not None else None
+
+
+def _resolve_entity(conn: sqlite3.Connection, eid: str) -> dict[str, Any]:
+    """Resolve ``eid`` to its entity dict, or a loud ``{id, missing}`` stub.
+
+    A ``derived_from`` edge can point at an id with no ``entity`` row (e.g. an
+    input that was referenced by id but never added as a library source). Such a
+    node is surfaced as a ``missing`` stub — never silently dropped from the
+    derivation — so the UI can show "source no longer in library".
+    """
+    entity = _load_entity(conn, eid)
+    if entity is None:
+        return {"id": eid, "missing": True}
+    return entity
+
+
+def _step(conn: sqlite3.Connection, eid: str, *, ancestors: bool) -> list[str]:
+    """One hop along ``derived_from`` edges (deterministic ``rowid`` order).
+
+    ancestors (where it came from): follow ``src=eid -> dst`` (the parents an
+    output was derived from). descendants (what was made from it): follow
+    ``dst=eid -> src`` (the children derived from this node).
+    """
+    if ancestors:
+        rows = conn.execute(
+            "SELECT dst FROM edge WHERE src = ? AND rel = ? ORDER BY rowid",
+            (eid, REL_DERIVED_FROM),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT src FROM edge WHERE dst = ? AND rel = ? ORDER BY rowid",
+            (eid, REL_DERIVED_FROM),
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
+def _related_ids(conn: sqlite3.Connection, start_id: str, *, ancestors: bool) -> list[str]:
+    """BFS the ``derived_from`` graph from ``start_id`` (cycle-/diamond-safe).
+
+    Returns the related ids in breadth-first order, each appearing exactly once
+    (a ``seen`` set — pre-seeded with ``start_id`` — collapses shared ancestors,
+    re-convergence and any cycle back to the root).
+    """
+    seen: set[str] = {start_id}
+    order: list[str] = []
+    frontier: list[str] = [start_id]
+    while frontier:
+        nxt: list[str] = []
+        for eid in frontier:
+            for nid in _step(conn, eid, ancestors=ancestors):
+                if nid in seen:
+                    continue
+                seen.add(nid)
+                order.append(nid)
+                nxt.append(nid)
+        frontier = nxt
+    return order
+
+
+def lineage_of(library: Any, entity_id: str) -> dict[str, Any]:
+    """Return the provenance of ``entity_id`` — ancestors + descendants (DESIGN §3.2).
+
+    ``ancestors`` = where it came from (the transitive ``derived_from`` chain
+    upward); ``descendants`` = what was made from it (the chain downward). Each is
+    a list of full entity dicts (or a ``missing`` stub for a referenced-but-absent
+    node), in breadth-first order. ``entity`` is the queried node itself
+    (``None`` when the id is unknown). One read transaction over the L1 store.
+    """
+    with library._open() as conn:
+        entity = _load_entity(conn, entity_id)
+        ancestors = [_resolve_entity(conn, i) for i in _related_ids(conn, entity_id, ancestors=True)]
+        descendants = [_resolve_entity(conn, i) for i in _related_ids(conn, entity_id, ancestors=False)]
+    return {"id": entity_id, "entity": entity, "ancestors": ancestors, "descendants": descendants}
+
+
 __all__ = [
     "SECRET_KEYS",
     "LineageJob",
@@ -301,6 +405,7 @@ __all__ = [
     "job_op",
     "job_params",
     "job_status",
+    "lineage_of",
     "normalize_agent",
     "normalize_output_entity",
     "record_lineage",
