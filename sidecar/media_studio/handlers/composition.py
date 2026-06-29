@@ -261,6 +261,14 @@ def register_all(
 
     _reframe_eval.register(register_fn=reg)
 
+    # reframe.shotPlan / reframe.applyOverrides (R2): the PURE manual per-shot
+    # speaker/layout/crop override layer — derives an editable plan from a trace
+    # and resolves a user's edits into the affected-shot set R1 re-renders (the
+    # heavy per-shot compositor stays out-of-band).
+    from ..features import reframe_override as _reframe_override  # local: import-light
+
+    _reframe_override.register(register_fn=reg)
+
     # shorts.* (P4 §2/C6): the shorts library registers its own four methods,
     # bound to the same exports root + per-video out-dir layout the short-maker
     # export uses (Services.exports_dir / "shorts-<videoId>").
