@@ -578,6 +578,115 @@ def build_composite_argv(
     ]
 
 
+def build_segment_argv(
+    in_path: str,
+    out_path: str,
+    filter_complex: str,
+    *,
+    start_sec: float,
+    duration_sec: float,
+    settings: dict[str, Any] | None = None,
+) -> list[str]:
+    """The ONE ffmpeg pass for a SINGLE timeline segment's ``[start, start+dur)``.
+
+    Identical codec contract to :func:`build_composite_argv` (the concatenated
+    pieces must share libx264/aac/yuv420p so the concat-demuxer stream-copy joins
+    cleanly), but trimmed to the segment's time range with an accurate input-side
+    ``-ss`` (decode-then-discard, so the crop coordinates — which are in source
+    pixels — are unaffected) plus an output ``-t`` duration. Each segment carries
+    its own audio slice (``0:a?``) so stitching the pieces reproduces continuous
+    source audio across the whole clip.
+    """
+    return [
+        ffmpeg.ffmpeg_path(settings),
+        "-hide_banner",
+        "-nostdin",
+        "-y",
+        "-ss",
+        f"{float(start_sec):.6f}",
+        "-i",
+        in_path,
+        "-t",
+        f"{float(duration_sec):.6f}",
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "[v]",
+        "-map",
+        "0:a?",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-movflags",
+        "+faststart",
+        "-progress",
+        "pipe:1",
+        "-nostats",
+        out_path,
+    ]
+
+
+def build_concat_argv(
+    list_path: str,
+    out_path: str,
+    settings: dict[str, Any] | None = None,
+) -> list[str]:
+    """ffmpeg concat-DEMUXER argv that stitches the per-segment clips (stream copy).
+
+    Every segment was encoded with the identical codec contract
+    (:func:`build_segment_argv`), so the concat *demuxer* + ``-c copy`` joins them
+    losslessly and instantly — and, unlike the concat *filter*, it tolerates a
+    silent source (it copies whatever streams each piece has rather than requiring
+    an audio stream per input). ``list_path`` is the ``-f concat`` manifest written
+    by :func:`_write_concat_list`.
+    """
+    return [
+        ffmpeg.ffmpeg_path(settings),
+        "-hide_banner",
+        "-nostdin",
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        list_path,
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        "-progress",
+        "pipe:1",
+        "-nostats",
+        out_path,
+    ]
+
+
+def _write_concat_list(list_path: str, seg_paths: Sequence[str]) -> None:
+    """Write the ``-f concat`` manifest (one ``file '<abspath>'`` line per segment).
+
+    Absolute paths keep the manifest valid regardless of ffmpeg's CWD; single
+    quotes are escaped the way the concat demuxer expects (``'\\''``). The segment
+    ORDER is the timeline order — it is what makes the stitched output play the
+    clip front-to-back.
+    """
+    lines = []
+    for path in seg_paths:
+        escaped = os.path.abspath(path).replace("'", "'\\''")
+        lines.append(f"file '{escaped}'")
+    with open(list_path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+
+
 # --------------------------------------------------------------------------- #
 # Heavy-ML seam (Protocol — NEVER imported at module load)
 # --------------------------------------------------------------------------- #
@@ -1053,12 +1162,67 @@ def build_segment_regions(
     )
 
 
+def _single_fill_segment(analysis: ShotAnalysis, start: int, end: int, aspect: str) -> SegmentRegions:
+    """A synthesized ``single`` :class:`SegmentRegions` for an uncovered ``[start, end)`` gap.
+
+    A frame range no concrete layout segment claims (a ``"none"`` filler, or the
+    whole clip when the trace has no segments at all) is rendered as the single
+    active-speaker crop — :func:`segment_regions` over a synthetic ``single``
+    segment, which is the deterministic dominant-centre crop when the gap has no
+    faces. NEVER a blind centre crop.
+    """
+    seg = Segment(start_frame=start, end_frame=end, layout="single")
+    return SegmentRegions(start, end, "single", segment_regions(analysis, seg, aspect=aspect))
+
+
+def plan_render_segments(
+    analysis: ShotAnalysis,
+    trace: ReframeTrace,
+    *,
+    aspect: str = DEFAULT_ASPECT,
+) -> tuple[SegmentRegions, ...]:
+    """The FULL-coverage, timeline-ordered render plan for ``[0, total_frames)``.
+
+    Every concrete trace segment becomes a :class:`SegmentRegions` with its
+    Phase-1 geometry (:func:`segment_regions`); any GAP the segments leave — before
+    the first segment, between two segments, after the last, or the whole clip when
+    ``trace.segments`` is empty — is filled with a single active-speaker crop
+    (:func:`_single_fill_segment`), never a blind centre crop. The result is a
+    contiguous partition of ``[0, total_frames)`` in playback order, ready for
+    per-segment compositing + concat. Overlapping segments are a contract
+    violation (raised loud, mirroring the R0 harness).
+    """
+    total = analysis.total_frames
+    if total <= 0:
+        raise MultiSpeakerReframeError("analysis has no frames")
+    plan: list[SegmentRegions] = []
+    cursor = 0
+    for seg in sorted(trace.segments, key=lambda s: s.start_frame):
+        if seg.start_frame < cursor:
+            raise MultiSpeakerReframeError("overlapping segments")
+        if seg.start_frame > cursor:
+            plan.append(_single_fill_segment(analysis, cursor, seg.start_frame, aspect))
+        plan.append(
+            SegmentRegions(
+                start_frame=seg.start_frame,
+                end_frame=seg.end_frame,
+                layout=seg.layout,
+                regions=segment_regions(analysis, seg, aspect=aspect),
+            )
+        )
+        cursor = seg.end_frame
+    if cursor < total:
+        plan.append(_single_fill_segment(analysis, cursor, total, aspect))
+    return tuple(plan)
+
+
 # --------------------------------------------------------------------------- #
 # Render orchestration (atomic temp write; OOM cleanup; staged + freed backend)
 # --------------------------------------------------------------------------- #
 ReframeRunner = Callable[..., int]  # ffmpeg.run-shaped
 ReplaceFn = Callable[[str, str], None]
 RemoveFn = Callable[[str], None]
+WriteConcatFn = Callable[[str, Sequence[str]], None]
 
 
 class MultiSpeakerReframeEngine:
@@ -1089,6 +1253,7 @@ class MultiSpeakerReframeEngine:
         models_present: ModelsPresent | None = None,
         replace_fn: ReplaceFn = os.replace,
         remove_fn: RemoveFn = os.remove,
+        write_concat_fn: WriteConcatFn = _write_concat_list,
     ) -> None:
         self._settings = settings or {}
         self._allow_degrade = bool(allow_degrade)
@@ -1099,6 +1264,7 @@ class MultiSpeakerReframeEngine:
         self._models_present = models_present or default_models_present
         self._replace = replace_fn
         self._remove = remove_fn
+        self._write_concat = write_concat_fn
 
     def reframe(
         self,
@@ -1153,7 +1319,15 @@ class MultiSpeakerReframeEngine:
         on_progress: Callable[[float, str], None] | None,
         should_cancel: Callable[[], bool] | None,
     ) -> str:
-        """Run the staged backend + pure director + ONE atomic ffmpeg pass."""
+        """Run the staged backend + pure director + the per-segment timeline encode.
+
+        Builds the full-coverage render plan (:func:`plan_render_segments`) and
+        renders it: a single full-clip layout is ONE atomic pass; a multi-segment
+        timeline cuts + composites each segment (split/composite/single via
+        :func:`build_filter_complex`) over its own time range, then concatenates the
+        pieces — all written to temp paths and atomically renamed on success only,
+        with every partial cleaned up on any failure (OOM contract preserved).
+        """
         backend = self._backend_factory(self._settings)
         try:
             analysis = backend.analyze(in_path, on_progress=on_progress, should_cancel=should_cancel)
@@ -1161,50 +1335,146 @@ class MultiSpeakerReframeEngine:
             backend.release()  # free GPU between stages (6 GB ceiling)
         trace = build_trace(analysis, aspect=aspect)
         out_w, out_h = _aspect.output_dimensions(aspect)
-        # build_trace always emits one crop per frame for a non-empty analysis, so
-        # crops[0] is the opening committed-speaker region. The v1 encode renders
-        # that tracked single crop in ONE 9:16 pass (a faithful, never-corrupt
-        # output); per-segment split/composite compositing across the timeline
-        # (build_filter_complex's split/composite primitives, unit-tested) is the
-        # GPU-tier wiring — see the WU brief's operator note.
-        crop_box: Box = trace.crops[0]
-        filter_complex = build_filter_complex("single", [crop_box], out_w=out_w, out_h=out_h)
-        total_sec = analysis.total_frames / float(analysis.fps)
-        return self._encode(in_path, out_path, filter_complex, total_sec, on_progress, should_cancel)
+        plan = plan_render_segments(analysis, trace, aspect=aspect)
+        fps = float(analysis.fps)
+        total_sec = analysis.total_frames / fps
+        return self._render_plan(
+            in_path,
+            out_path,
+            plan,
+            out_w=out_w,
+            out_h=out_h,
+            fps=fps,
+            total_sec=total_sec,
+            on_progress=on_progress,
+            should_cancel=should_cancel,
+        )
 
-    def _encode(
+    def _render_plan(
         self,
         in_path: str,
         out_path: str,
-        filter_complex: str,
+        plan: Sequence[SegmentRegions],
+        *,
+        out_w: int,
+        out_h: int,
+        fps: float,
         total_sec: float,
         on_progress: Callable[[float, str], None] | None,
         should_cancel: Callable[[], bool] | None,
     ) -> str:
-        """Encode to a temp path; atomically rename on success, clean up on failure.
+        """Render the timeline ``plan`` to ``out_path`` (single pass or cut+concat).
 
-        The temp path PRESERVES the output extension (``out.multispeaker.part.mp4``,
-        not ``out.mp4.part``) so ffmpeg can still infer the muxer from it — a
-        ``.part`` suffix has no recognized format and ffmpeg fails with EINVAL.
+        The temp paths PRESERVE the output extension (``out.multispeaker.part.mp4``,
+        not ``out.mp4.part``) so ffmpeg can still infer the muxer — a ``.part``
+        suffix has no recognized format and ffmpeg fails with EINVAL.
         """
         root, ext = os.path.splitext(out_path)
-        tmp_path = f"{root}.multispeaker.part{ext or '.mp4'}"
-        argv = build_composite_argv(in_path, tmp_path, filter_complex, settings=self._settings)
+        ext = ext or ".mp4"
+        part_path = f"{root}.multispeaker.part{ext}"
+        if len(plan) == 1:
+            return self._render_single(
+                in_path, out_path, plan[0], part_path, out_w, out_h, total_sec, on_progress, should_cancel
+            )
+        return self._render_timeline(
+            in_path, out_path, plan, root, ext, part_path, out_w, out_h, fps, total_sec, on_progress, should_cancel
+        )
+
+    def _render_single(
+        self,
+        in_path: str,
+        out_path: str,
+        sr: SegmentRegions,
+        part_path: str,
+        out_w: int,
+        out_h: int,
+        total_sec: float,
+        on_progress: Callable[[float, str], None] | None,
+        should_cancel: Callable[[], bool] | None,
+    ) -> str:
+        """One full-clip layout -> ONE atomic ffmpeg pass (no cut/concat needed)."""
+        filter_complex = build_filter_complex(sr.layout, list(sr.regions), out_w=out_w, out_h=out_h)
+        argv = build_composite_argv(in_path, part_path, filter_complex, total_sec=total_sec, settings=self._settings)
+        self._run_pass(argv, total_sec, on_progress, should_cancel, [part_path])
+        self._replace(part_path, out_path)  # atomic: no corrupt half-clip at out_path
+        return out_path
+
+    def _render_timeline(
+        self,
+        in_path: str,
+        out_path: str,
+        plan: Sequence[SegmentRegions],
+        root: str,
+        ext: str,
+        part_path: str,
+        out_w: int,
+        out_h: int,
+        fps: float,
+        total_sec: float,
+        on_progress: Callable[[float, str], None] | None,
+        should_cancel: Callable[[], bool] | None,
+    ) -> str:
+        """Cut + composite each segment to a temp clip, then concat into ``out_path``.
+
+        Every temp piece (and the concat manifest) is tracked for cleanup; on ANY
+        failure (OOM/native crash, non-zero exit, or a manifest write error) the
+        whole set of partials is removed and a :class:`MultiSpeakerRenderError` is
+        raised — no corrupt half-clip is ever left at ``out_path``.
+        """
+        seg_paths: list[str] = []
+        cleanup: list[str] = []
+        for idx, sr in enumerate(plan):
+            seg_path = f"{root}.multispeaker.seg{idx}{ext}"
+            seg_paths.append(seg_path)
+            cleanup.append(seg_path)
+            filter_complex = build_filter_complex(sr.layout, list(sr.regions), out_w=out_w, out_h=out_h)
+            start_sec = sr.start_frame / fps
+            duration_sec = (sr.end_frame - sr.start_frame) / fps
+            argv = build_segment_argv(
+                in_path,
+                seg_path,
+                filter_complex,
+                start_sec=start_sec,
+                duration_sec=duration_sec,
+                settings=self._settings,
+            )
+            self._run_pass(argv, duration_sec, on_progress, should_cancel, list(cleanup))
+        list_path = f"{root}.multispeaker.concat{ext}.txt"
+        cleanup.append(list_path)
+        try:
+            self._write_concat(list_path, seg_paths)
+        except OSError as exc:
+            self._cleanup_all(cleanup)
+            raise MultiSpeakerRenderError(f"multi-speaker reframe failed writing the concat manifest: {exc}") from exc
+        argv = build_concat_argv(list_path, part_path, settings=self._settings)
+        self._run_pass(argv, total_sec, on_progress, should_cancel, [*cleanup, part_path])
+        self._cleanup_all(cleanup)  # drop segment temps + manifest on success
+        self._replace(part_path, out_path)  # atomic: no corrupt half-clip at out_path
+        return out_path
+
+    def _run_pass(
+        self,
+        argv: Sequence[str],
+        total_sec: float,
+        on_progress: Callable[[float, str], None] | None,
+        should_cancel: Callable[[], bool] | None,
+        cleanup: Sequence[str],
+    ) -> None:
+        """Run ONE ffmpeg pass; on failure remove every ``cleanup`` partial and raise."""
         try:
             code = self._runner(argv, total_sec=total_sec, on_progress=on_progress, should_cancel=should_cancel)
         except Exception as exc:  # noqa: BLE001 - OOM/native crash mid-encode
-            self._cleanup(tmp_path)
+            self._cleanup_all(cleanup)
             raise MultiSpeakerRenderError(f"multi-speaker reframe failed mid-render: {exc}") from exc
         if code != 0:
-            self._cleanup(tmp_path)
-            raise MultiSpeakerRenderError(f"multi-speaker reframe failed (exit {code}) for {out_path}")
-        self._replace(tmp_path, out_path)  # atomic: no corrupt half-clip at out_path
-        return out_path
+            self._cleanup_all(cleanup)
+            raise MultiSpeakerRenderError(f"multi-speaker reframe failed (exit {code})")
 
-    def _cleanup(self, tmp_path: str) -> None:
-        """Remove a partial temp output (best-effort; never masks the real failure)."""
-        with contextlib.suppress(OSError):
-            self._remove(tmp_path)
+    def _cleanup_all(self, paths: Sequence[str]) -> None:
+        """Remove partial temp outputs (best-effort; never masks the real failure)."""
+        for path in paths:
+            with contextlib.suppress(OSError):
+                self._remove(path)
 
 
 # --------------------------------------------------------------------------- #
@@ -1269,7 +1539,9 @@ __all__ = [
     "SpeakerVote",
     "availability_reason",
     "build_composite_argv",
+    "build_concat_argv",
     "build_filter_complex",
+    "build_segment_argv",
     "build_segment_regions",
     "build_trace",
     "commit_cuts",
@@ -1280,6 +1552,7 @@ __all__ = [
     "layouts_to_segments",
     "make_engine_degrade_notice",
     "merge_short_shots",
+    "plan_render_segments",
     "register_multispeaker_assets",
     "resolve_speaker_track",
     "segment_regions",

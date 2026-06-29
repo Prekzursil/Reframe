@@ -776,3 +776,245 @@ class TestBuildSegmentRegions:
         trace = ms.build_trace(analysis)
         plan = ms.build_segment_regions(analysis, trace)
         assert len(plan) == len(trace.segments)
+
+
+# --------------------------------------------------------------------------- #
+# Per-segment argv builders (build_segment_argv / build_concat_argv / manifest)
+# --------------------------------------------------------------------------- #
+class TestSegmentArgv:
+    def test_build_segment_argv_trims_time_range(self):
+        argv = ms.build_segment_argv("in.mp4", "seg0.mp4", "[0:v]null[v]", start_sec=1.5, duration_sec=0.5)
+        assert isinstance(argv, list)
+        # input-side -ss (accurate seek) precedes -i; -t bounds the duration.
+        assert argv[argv.index("-ss") + 1] == "1.500000"
+        assert argv.index("-ss") < argv.index("-i")
+        assert argv[argv.index("-t") + 1] == "0.500000"
+        assert "-filter_complex" in argv and argv[-1] == "seg0.mp4"
+        assert "[v]" in argv  # -map [v]
+        # codec contract MUST match build_composite_argv (clean concat stream-copy).
+        assert "libx264" in argv and "aac" in argv and "yuv420p" in argv
+
+    def test_build_concat_argv_is_demuxer_stream_copy(self):
+        argv = ms.build_concat_argv("list.txt", "out.mp4")
+        assert isinstance(argv, list)
+        assert argv[argv.index("-f") + 1] == "concat"
+        assert argv[argv.index("-safe") + 1] == "0"
+        assert argv[argv.index("-i") + 1] == "list.txt"
+        assert argv[argv.index("-c") + 1] == "copy"
+        assert argv[-1] == "out.mp4"
+
+    def test_write_concat_list_escapes_and_orders(self, tmp_path):
+        list_path = str(tmp_path / "concat.txt")
+        seg_a = str(tmp_path / "a's.mp4")  # a single quote to force escaping
+        seg_b = str(tmp_path / "b.mp4")
+        ms._write_concat_list(list_path, [seg_a, seg_b])
+        text = (tmp_path / "concat.txt").read_text(encoding="utf-8")
+        lines = text.splitlines()
+        assert len(lines) == 2
+        assert lines[0].startswith("file '") and lines[1].startswith("file '")
+        assert "'\\''" in lines[0]  # the single quote was escaped
+        # absolute paths + timeline order preserved.
+        assert lines[0].endswith(".mp4'") and "a" in lines[0]
+
+
+# --------------------------------------------------------------------------- #
+# plan_render_segments — full-coverage timeline plan (gaps -> single fill)
+# --------------------------------------------------------------------------- #
+class TestPlanRenderSegments:
+    def test_no_gaps_maps_every_segment(self):
+        left = (100.0, 0.0, 200.0, 400.0)
+        right = (1500.0, 0.0, 200.0, 400.0)
+        boxes = tuple((left, right) if f < 15 else (left,) for f in range(30))
+        scores = tuple((0.9, 0.9) if f < 15 else (0.9,) for f in range(30))
+        analysis = _analysis(total=30, boxes=boxes, scores=scores)
+        trace = ms.build_trace(analysis)
+        plan = ms.plan_render_segments(analysis, trace)
+        assert [(s.start_frame, s.end_frame, s.layout) for s in plan] == [
+            (0, 15, "split"),
+            (15, 30, "single"),
+        ]
+        # contiguous full partition + region count matches each layout.
+        for sr in plan:
+            ms.build_filter_complex(sr.layout, list(sr.regions), out_w=1080, out_h=1920)
+
+    def test_empty_segments_whole_clip_single_fill(self):
+        analysis = _faces_analysis([(100.0, 0.0, 200.0, 400.0)], [0.9], total=6)
+        trace = ReframeTrace(shot_boundaries=(), speaker_per_frame=("",) * 6, segments=(), crops=())
+        plan = ms.plan_render_segments(analysis, trace)
+        assert len(plan) == 1
+        assert (plan[0].start_frame, plan[0].end_frame, plan[0].layout) == (0, 6, "single")
+        assert len(plan[0].regions) == 1  # the single active-speaker crop
+
+    def test_leading_and_trailing_gaps_filled_single(self):
+        analysis = _faces_analysis([(100.0, 0.0, 200.0, 400.0), (1500.0, 0.0, 200.0, 400.0)], [0.9, 0.9], total=12)
+        # one concrete split segment in the MIDDLE -> gap before AND after it.
+        trace = ReframeTrace(
+            shot_boundaries=(),
+            speaker_per_frame=("0",) * 12,
+            segments=(Segment(4, 8, "split"),),
+            crops=(),
+        )
+        plan = ms.plan_render_segments(analysis, trace)
+        assert [(s.start_frame, s.end_frame, s.layout) for s in plan] == [
+            (0, 4, "single"),  # leading gap -> single active-speaker fill
+            (4, 8, "split"),
+            (8, 12, "single"),  # trailing gap -> single fill
+        ]
+
+    def test_overlapping_segments_raise(self):
+        analysis = _faces_analysis([(100.0, 0.0, 200.0, 400.0)], [0.9], total=10)
+        trace = ReframeTrace(
+            shot_boundaries=(),
+            speaker_per_frame=("0",) * 10,
+            segments=(Segment(0, 6, "single"), Segment(4, 10, "single")),
+            crops=(),
+        )
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.plan_render_segments(analysis, trace)
+
+    def test_zero_frames_raises(self):
+        analysis = _analysis(total=6)
+        bad = ms.ShotAnalysis(
+            width=1920,
+            height=1080,
+            fps=30.0,
+            total_frames=0,
+            shot_boundaries=(),
+            boxes_per_frame=(),
+            visual_scores_per_frame=(),
+            diarize_per_frame=(),
+            vad_per_frame=(),
+        )
+        trace = ReframeTrace(shot_boundaries=(), speaker_per_frame=(), segments=(), crops=())
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.plan_render_segments(bad, trace)
+        # (the in-range analysis is unused here beyond constructing a fixture)
+        assert analysis.total_frames == 6
+
+
+# --------------------------------------------------------------------------- #
+# Engine — the REAL per-segment render timeline (cut + composite + concat)
+# --------------------------------------------------------------------------- #
+def _two_segment_analysis():
+    """30 frames @ 30 fps -> split[0,15) then single[15,30) (dwell=15)."""
+    left = (100.0, 0.0, 200.0, 400.0)
+    right = (1500.0, 0.0, 200.0, 400.0)
+    boxes = tuple((left, right) if f < 15 else (left,) for f in range(30))
+    scores = tuple((0.9, 0.9) if f < 15 else (0.9,) for f in range(30))
+    return _analysis(total=30, fps=30.0, boxes=boxes, scores=scores)
+
+
+class TestEngineTimelineRender:
+    def test_multi_segment_cut_composite_concat(self):
+        runs = []
+        moves = []
+        manifests = []
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_two_segment_analysis()),
+            runner=lambda argv, **kw: runs.append(argv) or 0,
+            replace_fn=lambda a, b: moves.append((a, b)),
+            write_concat_fn=lambda lp, sp: manifests.append((lp, list(sp))),
+        )
+        out = eng.reframe("in.mp4", "out.mp4")
+        assert out == "out.mp4"
+        # three passes: seg0 (split), seg1 (single), then the concat.
+        assert len(runs) == 3
+        seg0, seg1, concat = runs
+        assert "vstack=inputs=2[v]" in " ".join(seg0)  # split layout filtergraph
+        assert seg0[-1] == "out.multispeaker.seg0.mp4"
+        assert "vstack" not in " ".join(seg1)  # single layout, no stacking
+        assert seg1[-1] == "out.multispeaker.seg1.mp4"
+        assert "concat" in concat and concat[-1] == "out.multispeaker.part.mp4"
+        # the concat manifest is the segment temps in timeline order.
+        assert manifests == [
+            ("out.multispeaker.concat.mp4.txt", ["out.multispeaker.seg0.mp4", "out.multispeaker.seg1.mp4"])
+        ]
+        # atomic rename of the concatenated result onto out_path.
+        assert moves == [("out.multispeaker.part.mp4", "out.mp4")]
+
+    def test_multi_segment_time_ranges(self):
+        runs = []
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_two_segment_analysis()),
+            runner=lambda argv, **kw: runs.append(argv) or 0,
+            write_concat_fn=lambda lp, sp: None,
+        )
+        eng.reframe("in.mp4", "out.mp4")
+        seg0, seg1, _concat = runs
+        # seg0 = [0,15) @ 30fps -> start 0.0, dur 0.5; seg1 = [15,30) -> start 0.5, dur 0.5
+        assert seg0[seg0.index("-ss") + 1] == "0.000000"
+        assert seg0[seg0.index("-t") + 1] == "0.500000"
+        assert seg1[seg1.index("-ss") + 1] == "0.500000"
+        assert seg1[seg1.index("-t") + 1] == "0.500000"
+
+    def test_multi_segment_seg_failure_cleans_all_partials(self):
+        removed = []
+        # fail on the SECOND segment pass -> seg0 + seg1 partials both cleaned.
+        calls = {"n": 0}
+
+        def runner(argv, **kw):
+            calls["n"] += 1
+            return 0 if calls["n"] == 1 else 1
+
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_two_segment_analysis()),
+            runner=runner,
+            remove_fn=lambda p: removed.append(p),
+            write_concat_fn=lambda lp, sp: None,
+        )
+        with pytest.raises(ms.MultiSpeakerRenderError):
+            eng.reframe("in.mp4", "out.mp4")
+        assert removed == ["out.multispeaker.seg0.mp4", "out.multispeaker.seg1.mp4"]
+
+    def test_multi_segment_concat_failure_cleans_segments_manifest_and_part(self):
+        removed = []
+        calls = {"n": 0}
+
+        def runner(argv, **kw):
+            calls["n"] += 1
+            # seg0, seg1 succeed; the concat (3rd) pass fails.
+            return 1 if calls["n"] == 3 else 0
+
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_two_segment_analysis()),
+            runner=runner,
+            remove_fn=lambda p: removed.append(p),
+            write_concat_fn=lambda lp, sp: None,
+        )
+        with pytest.raises(ms.MultiSpeakerRenderError):
+            eng.reframe("in.mp4", "out.mp4")
+        assert removed == [
+            "out.multispeaker.seg0.mp4",
+            "out.multispeaker.seg1.mp4",
+            "out.multispeaker.concat.mp4.txt",
+            "out.multispeaker.part.mp4",
+        ]
+
+    def test_multi_segment_manifest_write_failure_cleans_partials(self):
+        removed = []
+
+        def boom_write(_lp, _sp):
+            raise OSError("disk full")
+
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_two_segment_analysis()),
+            runner=lambda argv, **kw: 0,
+            remove_fn=lambda p: removed.append(p),
+            write_concat_fn=boom_write,
+        )
+        with pytest.raises(ms.MultiSpeakerRenderError):
+            eng.reframe("in.mp4", "out.mp4")
+        assert removed == [
+            "out.multispeaker.seg0.mp4",
+            "out.multispeaker.seg1.mp4",
+            "out.multispeaker.concat.mp4.txt",
+        ]
+
+    def test_multi_segment_oom_mid_segment_raises_render_error(self):
+        eng = _engine(
+            backend_factory=lambda _s: _FakeBackend(_two_segment_analysis()),
+            runner=lambda *a, **k: (_ for _ in ()).throw(MemoryError("oom")),
+            write_concat_fn=lambda lp, sp: None,
+        )
+        with pytest.raises(ms.MultiSpeakerRenderError):
+            eng.reframe("in.mp4", "out.mp4")
