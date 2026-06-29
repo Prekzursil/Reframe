@@ -454,6 +454,82 @@ def layouts_to_segments(per_frame: Sequence[str]) -> tuple[Segment, ...]:
     return tuple(segments)
 
 
+def segments_from_layout_and_speaker(
+    layout_per_frame: Sequence[str],
+    speaker_per_frame: Sequence[str],
+) -> tuple[Segment, ...]:
+    """Collapse per-frame layout into ``Segment`` runs, ALSO breaking at speaker turns.
+
+    Like :func:`layouts_to_segments`, but a new segment starts whenever the layout
+    OR the committed active speaker changes. This is the GATE-BLOCKER reconciliation
+    (see basic-memory ``reframe-r1-multi-speaker-engine-phase-4-re-validate``): the
+    GPU ``_render`` crops a STATIC region per segment, while ``build_trace.crops``
+    hard-cuts to the new speaker at every committed turn. If a single-layout run
+    spanned several speaker turns, those in-segment teleports diverged from the
+    static render AND were charged by the R0 within-segment jitter metric. Aligning
+    each segment boundary with the speaker turns makes every segment cover exactly
+    ONE speaker, so its render crop is static AND ``crops`` is still within it (only
+    the One-Euro residual, well under :data:`~media_studio.features.reframe_eval.STATIC_JITTER_BASELINE`).
+
+    Only the three concrete :data:`~media_studio.features.reframe_eval.LAYOUTS`
+    become segments; any other label (the ``"none"`` filler) is left as a gap.
+    Adjacent same-layout segments (a speaker turn inside a single-layout run) are a
+    clean contiguous partition — the R0 harness expands each back to its layout.
+    """
+    if len(layout_per_frame) != len(speaker_per_frame):
+        raise MultiSpeakerReframeError("layout/speaker length mismatch")
+    segments: list[Segment] = []
+    n = len(layout_per_frame)
+    i = 0
+    while i < n:
+        layout = layout_per_frame[i]
+        speaker = speaker_per_frame[i]
+        j = i + 1
+        while j < n and layout_per_frame[j] == layout and speaker_per_frame[j] == speaker:
+            j += 1
+        if layout in LAYOUTS:
+            segments.append(Segment(start_frame=i, end_frame=j, layout=layout))
+        i = j
+    return tuple(segments)
+
+
+def map_diarize_to_tracks(
+    visual_scores_per_frame: Sequence[Mapping[str, float]],
+    diarize_per_frame: Sequence[str],
+) -> dict[str, str]:
+    """Map each diarize ``SPEAKER_NN`` id -> the visual track id it co-occurs with.
+
+    The audio diarizer and the visual tracker live in DIFFERENT namespaces — the
+    diarizer emits ``"SPEAKER_00"``/``"SPEAKER_01"`` while the visual tracker emits
+    integer track ids (``"0"``/``"1"``). :func:`fuse_active_speaker`'s agreement
+    bonus compares the visual pick against the diarize id, so without a translation
+    the two never matched and the audio-agreement boost never fired (the Phase-4
+    namespace-mismatch defect).
+
+    The mapping is built by TEMPORAL CORRELATION: for every frame, the on-screen
+    track with the highest visual ASD score is the visually-active one; its score
+    is accumulated against that frame's diarize id. Each diarize id is then mapped
+    to the track it most strongly co-activates with (argmax accumulated score, ties
+    broken by the lowest track id for determinism). Frames with no diarize id or no
+    visible faces contribute nothing. The result translates ``diarize_per_frame``
+    into the visual-track namespace so the fusion agreement bonus actually fires.
+    """
+    if len(visual_scores_per_frame) != len(diarize_per_frame):
+        raise MultiSpeakerReframeError("visual/diarize length mismatch")
+    accum: dict[str, dict[str, float]] = {}
+    for scores, dlabel in zip(visual_scores_per_frame, diarize_per_frame, strict=True):
+        if dlabel == "" or not scores:
+            continue
+        best_track = max(scores, key=lambda k: (scores[k], k))
+        per_label = accum.setdefault(dlabel, {})
+        per_label[best_track] = per_label.get(best_track, 0.0) + float(scores[best_track])
+    mapping: dict[str, str] = {}
+    for dlabel, tracks in accum.items():
+        # argmax accumulated co-activation; tie -> lowest track id (stable/deterministic).
+        mapping[dlabel] = min(tracks, key=lambda k: (-tracks[k], k))
+    return mapping
+
+
 def commit_cuts(
     shot_boundaries: Sequence[int],
     speaker_turn_frames: Sequence[int],
@@ -872,7 +948,11 @@ def build_trace(analysis: ShotAnalysis, *, aspect: str = DEFAULT_ASPECT) -> Refr
 
     dwell = max(1, int(round(LAYOUT_MIN_DWELL_SEC * fps)))
     layout_per_frame = debounce_layouts(layout_raw, dwell)
-    segments = layouts_to_segments(layout_per_frame)
+    # Break segments at committed speaker turns too (not just layout changes), so
+    # each single-layout segment covers exactly ONE speaker: its static render crop
+    # then matches build_trace.crops AND the R0 within-segment jitter never charges
+    # an in-segment speaker-turn teleport (the GATE-BLOCKER reconciliation).
+    segments = segments_from_layout_and_speaker(layout_per_frame, speaker_per_frame)
     return ReframeTrace(
         shot_boundaries=tuple(merged),
         speaker_per_frame=tuple(speaker_per_frame),
@@ -908,17 +988,30 @@ def _render_shot(
     crops: list[tuple[float, float, float, float]],
 ) -> None:
     """Decide the speaker/layout/crop for one shot's frames (appends in place)."""
-    # Pass 1: per-frame votes + tracked ids + concurrent-active count.
-    votes: list[SpeakerVote] = []
+    # Pass 1a: tracked ids + per-frame visual scores (track-id namespace) + active count.
     ids_per_frame: list[list[int]] = []
+    scores_per_frame: list[dict[str, float]] = []
     active_per_frame: list[int] = []
     for frame in range(start, end):
         boxes = list(analysis.boxes_per_frame[frame])
         ids = tracker.update(boxes)
         ids_per_frame.append(ids)
-        scores = {str(ids[i]): float(analysis.visual_scores_per_frame[frame][i]) for i in range(len(boxes))}
-        votes.append(fuse_active_speaker(scores, analysis.diarize_per_frame[frame], analysis.vad_per_frame[frame]))
+        scores_per_frame.append(
+            {str(ids[i]): float(analysis.visual_scores_per_frame[frame][i]) for i in range(len(boxes))}
+        )
         active_per_frame.append(_concurrent_active(analysis, frame))
+
+    # Translate the diarizer's SPEAKER_NN ids into the visual-track namespace by
+    # temporal correlation, so fuse_active_speaker's audio-agreement bonus fires
+    # (the diarize ids otherwise never equal the visual track ids).
+    diarize_shot = analysis.diarize_per_frame[start:end]
+    diar_to_track = map_diarize_to_tracks(scores_per_frame, diarize_shot)
+
+    # Pass 1b: per-frame fusion vote with the namespace-aligned diarize id.
+    votes: list[SpeakerVote] = []
+    for offset, frame in enumerate(range(start, end)):
+        mapped_diarize = diar_to_track.get(diarize_shot[offset], "")
+        votes.append(fuse_active_speaker(scores_per_frame[offset], mapped_diarize, analysis.vad_per_frame[frame]))
     committed = resolve_speaker_track(votes)
 
     # Cold-start: if the FIRST frame of the shot has no confident speaker, use the
@@ -1550,11 +1643,13 @@ __all__ = [
     "fuse_active_speaker",
     "layouts_to_segments",
     "make_engine_degrade_notice",
+    "map_diarize_to_tracks",
     "merge_short_shots",
     "plan_render_segments",
     "register_multispeaker_assets",
     "resolve_speaker_track",
     "segment_regions",
+    "segments_from_layout_and_speaker",
     "shot_spans",
     "smooth_centers_one_euro",
     "speaker_turn_frames",

@@ -211,6 +211,78 @@ class TestLayout:
 
 
 # --------------------------------------------------------------------------- #
+# segments_from_layout_and_speaker — break at layout AND speaker turns (Bug 1)
+# --------------------------------------------------------------------------- #
+class TestSegmentsFromLayoutAndSpeaker:
+    def test_breaks_at_layout_change(self):
+        layout = ["single", "single", "split", "split"]
+        speaker = ["0", "0", "0", "0"]
+        assert ms.segments_from_layout_and_speaker(layout, speaker) == (
+            Segment(0, 2, "single"),
+            Segment(2, 4, "split"),
+        )
+
+    def test_breaks_at_speaker_turn_within_one_layout(self):
+        # A single-layout run with an in-segment speaker turn becomes TWO single
+        # segments (each one speaker) -> static render crop per segment.
+        layout = ["single", "single", "single", "single"]
+        speaker = ["0", "0", "1", "1"]
+        assert ms.segments_from_layout_and_speaker(layout, speaker) == (
+            Segment(0, 2, "single"),
+            Segment(2, 4, "single"),
+        )
+
+    def test_skips_none_filler(self):
+        layout = ["single", "none", "split"]
+        speaker = ["0", "", "1"]
+        assert ms.segments_from_layout_and_speaker(layout, speaker) == (
+            Segment(0, 1, "single"),
+            Segment(2, 3, "split"),
+        )
+
+    def test_length_mismatch_raises(self):
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.segments_from_layout_and_speaker(["single"], ["0", "1"])
+
+    def test_empty_is_empty(self):
+        assert ms.segments_from_layout_and_speaker([], []) == ()
+
+
+# --------------------------------------------------------------------------- #
+# map_diarize_to_tracks — namespace reconciliation (Bug 3)
+# --------------------------------------------------------------------------- #
+class TestMapDiarizeToTracks:
+    def test_correlates_each_speaker_to_its_visual_track(self):
+        # SPEAKER_00 co-activates with track "0", SPEAKER_01 with track "1".
+        scores = [{"0": 0.9, "1": 0.1}, {"0": 0.1, "1": 0.9}]
+        diarize = ["SPEAKER_00", "SPEAKER_01"]
+        assert ms.map_diarize_to_tracks(scores, diarize) == {"SPEAKER_00": "0", "SPEAKER_01": "1"}
+
+    def test_accumulates_over_frames(self):
+        # SPEAKER_00 is visually strongest on track "1" across both its frames.
+        scores = [{"0": 0.2, "1": 0.8}, {"0": 0.3, "1": 0.7}, {"0": 0.9, "1": 0.1}]
+        diarize = ["SPEAKER_00", "SPEAKER_00", "SPEAKER_01"]
+        m = ms.map_diarize_to_tracks(scores, diarize)
+        assert m == {"SPEAKER_00": "1", "SPEAKER_01": "0"}
+
+    def test_empty_label_and_no_faces_contribute_nothing(self):
+        scores = [{}, {"0": 0.9}]
+        diarize = ["SPEAKER_00", ""]  # frame0 has no faces, frame1 has no diarize id
+        assert ms.map_diarize_to_tracks(scores, diarize) == {}
+
+    def test_tie_breaks_to_lowest_track_id(self):
+        # Equal accumulated co-activation -> deterministic lowest-id pick.
+        scores = [{"0": 0.5, "1": 0.5}]
+        # the per-frame best_track itself ties; max((0.5,'0'),(0.5,'1')) picks '1',
+        # so SPEAKER_00 accumulates on '1' here -> deterministic.
+        assert ms.map_diarize_to_tracks(scores, ["SPEAKER_00"]) == {"SPEAKER_00": "1"}
+
+    def test_length_mismatch_raises(self):
+        with pytest.raises(ms.MultiSpeakerReframeError):
+            ms.map_diarize_to_tracks([{"0": 0.9}], ["SPEAKER_00", "SPEAKER_01"])
+
+
+# --------------------------------------------------------------------------- #
 # Compositor — build_filter_complex / build_composite_argv
 # --------------------------------------------------------------------------- #
 class TestCompositor:
@@ -373,6 +445,64 @@ class TestBuildTrace:
         assert trace.speaker_per_frame == ("0", "0", "0", "1", "1", "1")
         # crop jumps right when speaker 1 (right face) takes over.
         assert trace.crops[5][0] > trace.crops[0][0]
+
+    def test_multicut_multispeaker_passes_within_segment_jitter_gate(self):
+        # Two faces, single layout throughout, the active speaker alternating every
+        # 15 frames -> in-segment speaker turns. Before the GATE-BLOCKER fix the
+        # whole clip was ONE single segment and the turn teleports were charged as
+        # jitter (>> baseline). Now each turn opens a new single segment, so the
+        # within-segment jitter is just the One-Euro residual and clears the gate.
+        from media_studio.features import reframe_eval as re_eval
+
+        left = (100.0, 0.0, 200.0, 400.0)
+        right = (1600.0, 0.0, 200.0, 400.0)
+        total = 60
+        boxes = tuple((left, right) for _ in range(total))
+        scores = tuple(((0.9, 0.1) if (f // 15) % 2 == 0 else (0.1, 0.9)) for f in range(total))
+        trace = ms.build_trace(_analysis(total=total, boxes=boxes, scores=scores))
+        # segmented at the speaker turns (every 15 frames), all single layout.
+        assert len(trace.segments) == 4
+        assert all(seg.layout == "single" for seg in trace.segments)
+        jitter = re_eval.static_shot_jitter_within_segments(trace.crops, trace.segments)
+        assert jitter <= re_eval.GATE_THRESHOLDS["static_jitter_max"]
+
+    def test_genuinely_jittery_single_segment_still_fails_gate(self):
+        # A constant-speaker single segment whose crop genuinely wobbles hard frame
+        # to frame must STILL exceed the jitter gate (the fix must not blanket-zero
+        # real wobble). A reference rect that jumps left<->right inside one segment.
+        from media_studio.features import reframe_eval as re_eval
+
+        crops = tuple(((0.0 if i % 2 == 0 else 900.0), 0.0, 405.0, 720.0) for i in range(20))
+        seg = (Segment(0, 20, "single"),)
+        jitter = re_eval.static_shot_jitter_within_segments(crops, seg)
+        assert jitter > re_eval.GATE_THRESHOLDS["static_jitter_max"]
+
+    def test_audio_agreement_raises_fusion_confidence(self):
+        # Two faces; track "0" is visually active but below the VAD-gated threshold
+        # on its own. The diarizer (SPEAKER_NN namespace) agrees via the temporal
+        # map, so the agreement bonus lifts the vote over the threshold and commits
+        # the speaker — proving the namespace mapping makes audio fusion contribute.
+        left = (100.0, 0.0, 200.0, 400.0)
+        right = (1600.0, 0.0, 200.0, 400.0)
+        boxes = tuple((left, right) for _ in range(6))
+        # visual 0.45 * vad 1.0 = 0.45 < 0.55 threshold; +0.25 agreement = 0.70.
+        scores = tuple((0.45, 0.1) for _ in range(6))
+        diarize = tuple("SPEAKER_07" for _ in range(6))  # alien namespace, maps to "0"
+        trace = ms.build_trace(_analysis(total=6, boxes=boxes, scores=scores, diarize=diarize))
+        assert trace.speaker_per_frame == ("0",) * 6  # committed only because audio agreed
+
+    def test_no_audio_means_no_agreement_bonus_so_weak_visual_does_not_commit(self):
+        # The CONTRAST to the above: identical weak visual (0.45) but NO diarize id,
+        # so there is no audio to agree with -> no bonus -> stays below threshold ->
+        # no speaker committed. Proves the agreement bonus (enabled by the mapping)
+        # is what tipped the previous case over.
+        left = (100.0, 0.0, 200.0, 400.0)
+        right = (1600.0, 0.0, 200.0, 400.0)
+        boxes = tuple((left, right) for _ in range(6))
+        scores = tuple((0.45, 0.1) for _ in range(6))
+        diarize = tuple("" for _ in range(6))  # silence -> no diarize id at all
+        trace = ms.build_trace(_analysis(total=6, boxes=boxes, scores=scores, diarize=diarize))
+        assert trace.speaker_per_frame == ("",) * 6
 
 
 # --------------------------------------------------------------------------- #
