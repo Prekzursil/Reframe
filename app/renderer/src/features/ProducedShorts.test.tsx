@@ -180,6 +180,69 @@ describe('<ProducedShorts />', () => {
     expect(s.onPlay).toHaveBeenCalledWith('/out/clip-1.mp4');
   });
 
+  // ---- WU R5: virality-score CARD DASHBOARD (badge + duration + sort) ------
+
+  const cardIds = () =>
+    [...container.querySelectorAll('.shorts__card')].map((el) => el.getAttribute('data-id'));
+
+  it('clamps the virality badge to a 0-100 int (displayVirality, AC badge)', () => {
+    mount([short({ viralityPct: 150 })]);
+    expect(container.querySelector('.shorts__virality')?.textContent).toContain('100');
+    mount([short({ viralityPct: 73.6 })]);
+    expect(container.querySelector('.shorts__virality')?.textContent).toContain('74');
+  });
+
+  it('omits the virality badge for a non-finite score (NaN)', () => {
+    mount([short({ viralityPct: Number.NaN })]);
+    expect(container.querySelector('.shorts__virality')).toBeNull();
+  });
+
+  it('renders the clip duration as mm:ss on each card (AC duration)', () => {
+    mount([short({ durationSec: 95 })]);
+    expect(container.querySelector('.shorts__thumb-duration')?.textContent).toBe('01:35');
+    mount([short({ durationSec: 0 })]);
+    expect(container.querySelector('.shorts__thumb-duration')?.textContent).toBe('--:--');
+  });
+
+  it('hides the sort toggle for a single clip', () => {
+    mount([short()]);
+    expect(container.querySelector('.shorts__sort')).toBeNull();
+  });
+
+  it('shows the sort toggle for 2+ clips, defaulting to virality score (AC sort)', () => {
+    mount([
+      short({ id: 'a', path: '/out/a.mp4', viralityPct: 40 }),
+      short({ id: 'b', path: '/out/b.mp4', viralityPct: 90 }),
+    ]);
+    const toggle = container.querySelector('.shorts__sort');
+    expect(toggle).toBeTruthy();
+    const buttons = [...toggle!.querySelectorAll('.shorts__sort-btn')].map((b) => b.textContent);
+    expect(buttons).toEqual(['Virality score', 'Recent']);
+    const active = toggle!.querySelector('.shorts__sort-btn.is-active');
+    expect(active?.textContent).toBe('Virality score');
+    expect(active?.getAttribute('aria-pressed')).toBe('true');
+    // Best-scoring clip leads by default.
+    expect(cardIds()).toEqual(['b', 'a']);
+  });
+
+  it('re-orders by recency when "Recent" is chosen, by score when "Virality score" is', () => {
+    mount([
+      short({ id: 'old-hi', path: '/out/old.mp4', viralityPct: 90, createdAt: 1 }),
+      short({ id: 'new-lo', path: '/out/new.mp4', viralityPct: 40, createdAt: 2 }),
+    ]);
+    // Default: by score (high first).
+    expect(cardIds()).toEqual(['old-hi', 'new-lo']);
+    const btn = (label: string) =>
+      [...container.querySelectorAll('.shorts__sort-btn')].find(
+        (b) => b.textContent === label,
+      ) as HTMLButtonElement;
+    act(() => btn('Recent').click());
+    expect(cardIds()).toEqual(['new-lo', 'old-hi']);
+    expect(btn('Recent').getAttribute('aria-pressed')).toBe('true');
+    act(() => btn('Virality score').click());
+    expect(cardIds()).toEqual(['old-hi', 'new-lo']);
+  });
+
   // ---- WU-C4: "Pick best frame" action + thumbnail swap -------------------
 
   const pickBtn = (title = 'My talk') =>
