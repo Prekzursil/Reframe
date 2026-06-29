@@ -43,6 +43,7 @@ from typing import Any
 from ..util import get_logger
 from . import aspect as _aspect
 from .reframe_claudeshorts import ClaudeShortsReframeEngine
+from .reframe_multispeaker import MultiSpeakerReframeEngine
 
 _log = get_logger("media_studio.reframe")
 
@@ -255,11 +256,15 @@ class ReframeEngine:
 ENGINE_AUTO = "auto"
 ENGINE_VERTHOR = "verthor"
 ENGINE_CLAUDESHORTS = "claudeshorts"
+# R1 (V1.1): the flagship hybrid multi-speaker director (EXPLICIT opt-in only —
+# "auto" stays claudeshorts so the P3 no-WSL default contract is untouched).
+ENGINE_MULTISPEAKER = "reframe_multispeaker"
 
-# A4: exactly these two ReframeEngine implementations.
+# A4 + R1: the ReframeEngine implementations.
 ENGINES: dict[str, Any] = {
     ENGINE_VERTHOR: ReframeEngine,
     ENGINE_CLAUDESHORTS: ClaudeShortsReframeEngine,
+    ENGINE_MULTISPEAKER: MultiSpeakerReframeEngine,
 }
 
 
@@ -344,6 +349,11 @@ def resolve_engine_name(
     if requested in (ENGINE_AUTO, ENGINE_CLAUDESHORTS):
         # auto + claudeshorts both resolve to the no-WSL default engine.
         return ENGINE_CLAUDESHORTS, None
+    if requested == ENGINE_MULTISPEAKER:
+        # R1 EXPLICIT opt-in: resolve to itself with no probe here — the engine's
+        # own reframe() applies the availability contract (raises a typed
+        # MultiSpeakerUnavailableError / OfflineError when the host can't run it).
+        return ENGINE_MULTISPEAKER, None
     if requested != ENGINE_VERTHOR:
         raise ValueError(f"unknown reframe engine: {name!r}")
     reason = verthor_unavailable_reason(settings, which=which)

@@ -17,6 +17,13 @@ def test_scene_transnet_backend_surface_imports_light() -> None:
     assert "RealTransNetBackend" in be.__all__
 
 
+def test_reframe_multispeaker_backend_surface_imports_light() -> None:
+    import media_studio.features.reframe_multispeaker_backend as be
+
+    assert be.RealMultiSpeakerBackend.__name__ == "RealMultiSpeakerBackend"
+    assert "RealMultiSpeakerBackend" in be.__all__
+
+
 def test_vlm_backbone_backend_surface_imports_light() -> None:
     import media_studio.features.vlm_backbone_backend as be
 

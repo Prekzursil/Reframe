@@ -59,8 +59,9 @@ MAX_CLIP_SEC = 60
 #: :data:`caption_remotion.STYLES` so the guard tracks the real renderers.
 CAPTION_STYLES: frozenset[str] = frozenset({"libass", "none", *caption_remotion.STYLES})
 
-#: Allowed ``reframeEngine`` ids (A4 engines + the "auto" selector).
-REFRAME_ENGINES: frozenset[str] = frozenset({"auto", "verthor", "claudeshorts"})
+#: Allowed ``reframeEngine`` ids (A4 engines + the "auto" selector + the R1
+#: flagship hybrid multi-speaker director, ``reframe_multispeaker``).
+REFRAME_ENGINES: frozenset[str] = frozenset({"auto", "verthor", "claudeshorts", "reframe_multispeaker"})
 
 #: Default reframe engine when a preset omits one. "auto" now resolves to the
 #: in-sidecar claudeshorts engine (no WSL); verthor is an explicit opt-in.

@@ -161,6 +161,20 @@ class TestNormalizePreset:
         )
         assert p["reframeEngine"] == "auto"
 
+    def test_reframe_multispeaker_engine_accepted(self):
+        p = export_presets.normalize_preset(
+            {
+                "label": "x",
+                "aspect": "9:16",
+                "minSec": 20,
+                "maxSec": 60,
+                "count": 1,
+                "captionStyle": "libass",
+                "reframeEngine": "reframe_multispeaker",
+            }
+        )
+        assert p["reframeEngine"] == "reframe_multispeaker"
+
     def test_invalid_reframe_engine_rejected(self):
         with pytest.raises(RpcError):
             export_presets.normalize_preset(

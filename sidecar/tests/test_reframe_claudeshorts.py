@@ -785,10 +785,14 @@ def verthor_script(tmp_path, monkeypatch):
     return {"verthorScript": str(script)}
 
 
-def test_engines_registry_has_exactly_the_two_a4_impls():
-    assert set(reframe.ENGINES) == {"verthor", "claudeshorts"}
+def test_engines_registry_has_the_a4_impls_plus_r1_multispeaker():
+    # A4: verthor + claudeshorts; R1 (V1.1) adds the hybrid multi-speaker engine.
+    from media_studio.features.reframe_multispeaker import MultiSpeakerReframeEngine
+
+    assert set(reframe.ENGINES) == {"verthor", "claudeshorts", "reframe_multispeaker"}
     assert reframe.ENGINES["verthor"] is ReframeEngine
     assert reframe.ENGINES["claudeshorts"] is ClaudeShortsReframeEngine
+    assert reframe.ENGINES["reframe_multispeaker"] is MultiSpeakerReframeEngine
 
 
 def test_wsl_available_probe_shapes():

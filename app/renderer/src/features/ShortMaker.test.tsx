@@ -361,8 +361,13 @@ describe('CAPTION_STYLES / REFRAME_ENGINE_OPTIONS (T4b)', () => {
     );
   });
 
-  it('offers exactly the A4 engines plus the auto selector', () => {
-    expect([...REFRAME_ENGINE_OPTIONS]).toEqual(['auto', 'verthor', 'claudeshorts']);
+  it('offers the A4 engines + auto selector + the R1 multi-speaker director', () => {
+    expect([...REFRAME_ENGINE_OPTIONS]).toEqual([
+      'auto',
+      'verthor',
+      'claudeshorts',
+      'reframe_multispeaker',
+    ]);
     expect(DEFAULT_REFRAME_ENGINE).toBe('auto');
     expect(DEFAULT_CONTROLS.reframeEngine).toBe('auto');
   });
@@ -1422,11 +1427,16 @@ describe('<ShortMaker /> component', () => {
     expect(select.value).toBe(DEFAULT_CAPTION_STYLE);
   });
 
-  it('renders the reframe engine override with auto/verthor/claudeshorts, auto selected', () => {
+  it('renders the reframe engine override with auto/verthor/claudeshorts/multispeaker, auto selected', () => {
     render(<ShortMaker videoId="v1" api={makeApi()} />);
     const select = byLabel('Reframe engine') as HTMLSelectElement;
     expect(select).toBeTruthy();
-    expect([...select.options].map((o) => o.value)).toEqual(['auto', 'verthor', 'claudeshorts']);
+    expect([...select.options].map((o) => o.value)).toEqual([
+      'auto',
+      'verthor',
+      'claudeshorts',
+      'reframe_multispeaker',
+    ]);
     expect(select.value).toBe('auto');
   });
 
