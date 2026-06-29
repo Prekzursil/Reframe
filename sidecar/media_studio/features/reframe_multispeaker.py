@@ -53,6 +53,7 @@ basic-memory ``reframe-multi-speaker-engine-approach-decided-hybrid``.
 
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 import shutil
@@ -102,8 +103,7 @@ DEAD_ZONE_FRAC = 0.004
 #: distinct from ``make_degraded_notice`` ("used center crop"): the ENGINE-level
 #: degrade message for an AUTO multispeaker attempt that fell back to single.
 ENGINE_DEGRADE_MESSAGE = (
-    "reframe: multi-speaker engine unavailable ({reason}) — "
-    "used the single-speaker tracker instead"
+    "reframe: multi-speaker engine unavailable ({reason}) — used the single-speaker tracker instead"
 )
 
 
@@ -479,10 +479,7 @@ def speaker_turn_frames(speaker_per_frame: Sequence[str]) -> tuple[int, ...]:
 def _crop_scale_chain(region: Box, out_w: int, out_h: int, label: str) -> str:
     """One ``[0:v]crop=...,scale=...[label]`` chain for a source region."""
     x, y, w, h = region
-    return (
-        f"[0:v]crop={int(w)}:{int(h)}:{int(x)}:{int(y)},"
-        f"scale={out_w}:{out_h}:flags=lanczos,setsar=1[{label}]"
-    )
+    return f"[0:v]crop={int(w)}:{int(h)}:{int(x)}:{int(y)},scale={out_w}:{out_h}:flags=lanczos,setsar=1[{label}]"
 
 
 def build_filter_complex(
@@ -802,9 +799,7 @@ def _render_shot(
         ids = tracker.update(boxes)
         ids_per_frame.append(ids)
         scores = {str(ids[i]): float(analysis.visual_scores_per_frame[frame][i]) for i in range(len(boxes))}
-        votes.append(
-            fuse_active_speaker(scores, analysis.diarize_per_frame[frame], analysis.vad_per_frame[frame])
-        )
+        votes.append(fuse_active_speaker(scores, analysis.diarize_per_frame[frame], analysis.vad_per_frame[frame]))
         active_per_frame.append(_concurrent_active(analysis, frame))
     committed = resolve_speaker_track(votes)
 
@@ -952,9 +947,7 @@ class MultiSpeakerReframeEngine:
         """
         reason = availability_reason(self._settings, which=self._which, models_present=self._models_present)
         if reason is not None:
-            return self._handle_unavailable(
-                in_path, out_path, aspect, reason, on_progress, should_cancel, on_notice
-            )
+            return self._handle_unavailable(in_path, out_path, aspect, reason, on_progress, should_cancel, on_notice)
         return self._render(in_path, out_path, aspect, on_progress, should_cancel)
 
     def _handle_unavailable(
@@ -972,9 +965,7 @@ class MultiSpeakerReframeEngine:
         # raise OfflineError when offline mode is actually on (correct message).
         _offline.guard_network(self._settings, "the multi-speaker reframe models")
         if not self._allow_degrade:
-            raise MultiSpeakerUnavailableError(
-                f"multi-speaker reframe engine requested but unavailable: {reason}"
-            )
+            raise MultiSpeakerUnavailableError(f"multi-speaker reframe engine requested but unavailable: {reason}")
         if on_notice is not None:
             on_notice(make_engine_degrade_notice(reason))
         _log.info("multispeaker unavailable (%s); degrading to single-speaker", reason)
@@ -1039,11 +1030,9 @@ class MultiSpeakerReframeEngine:
         return out_path
 
     def _cleanup(self, tmp_path: str) -> None:
-        """Remove a partial temp output (never mask the real failure)."""
-        try:
+        """Remove a partial temp output (best-effort; never masks the real failure)."""
+        with contextlib.suppress(OSError):
             self._remove(tmp_path)
-        except OSError:  # pragma: no cover - cleanup best-effort, never re-raises
-            pass
 
 
 # --------------------------------------------------------------------------- #

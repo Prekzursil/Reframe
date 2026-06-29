@@ -8,7 +8,6 @@ engine orchestration, all with hand-built fixtures and an injected FAKE backend
 from __future__ import annotations
 
 import pytest
-
 from media_studio.features import offline as _offline
 from media_studio.features import reframe_multispeaker as ms
 from media_studio.features.reframe_eval import LAYOUTS, ReframeTrace, Segment
@@ -301,9 +300,15 @@ class TestBuildTrace:
 
     def test_length_mismatch_raises(self):
         bad = ms.ShotAnalysis(
-            width=1920, height=1080, fps=30.0, total_frames=2,
-            shot_boundaries=(), boxes_per_frame=((),), visual_scores_per_frame=((), ()),
-            diarize_per_frame=("", ""), vad_per_frame=(1.0, 1.0),
+            width=1920,
+            height=1080,
+            fps=30.0,
+            total_frames=2,
+            shot_boundaries=(),
+            boxes_per_frame=((),),
+            visual_scores_per_frame=((), ()),
+            diarize_per_frame=("", ""),
+            vad_per_frame=(1.0, 1.0),
         )
         with pytest.raises(ms.MultiSpeakerReframeError):
             ms.build_trace(bad)
@@ -316,8 +321,7 @@ class TestBuildTrace:
 
     def test_three_concurrent_speakers_produce_composite(self):
         boxes = tuple(
-            ((100.0, 0.0, 100.0, 400.0), (900.0, 0.0, 100.0, 400.0), (1700.0, 0.0, 100.0, 400.0))
-            for _ in range(30)
+            ((100.0, 0.0, 100.0, 400.0), (900.0, 0.0, 100.0, 400.0), (1700.0, 0.0, 100.0, 400.0)) for _ in range(30)
         )
         scores = tuple((0.9, 0.9, 0.9) for _ in range(30))
         trace = ms.build_trace(_analysis(total=30, boxes=boxes, scores=scores))
@@ -335,8 +339,8 @@ class TestBuildTrace:
         assert abs(trace.crops[0][0] - centered_x) > 1.0
 
     def test_cold_start_no_faces_falls_to_center(self):
-        boxes = tuple((() for _ in range(6)))
-        scores = tuple((() for _ in range(6)))
+        boxes = tuple(() for _ in range(6))
+        scores = tuple(() for _ in range(6))
         trace = ms.build_trace(_analysis(total=6, boxes=boxes, scores=scores, vad=tuple(0.0 for _ in range(6))))
         crop_w = trace.crops[0][2]
         centered_x = (1920 - crop_w) / 2
@@ -464,12 +468,12 @@ class _FakeBackend:
 
 def _engine(**kw):
     """An engine wired with all seams faked + host 'available'."""
-    defaults = dict(
-        which=lambda _x: "/wsl",
-        models_present=lambda _s: True,
-        replace_fn=lambda _a, _b: None,
-        remove_fn=lambda _p: None,
-    )
+    defaults = {
+        "which": lambda _x: "/wsl",
+        "models_present": lambda _s: True,
+        "replace_fn": lambda _a, _b: None,
+        "remove_fn": lambda _p: None,
+    }
     defaults.update(kw)
     return ms.MultiSpeakerReframeEngine({}, **defaults)
 
@@ -577,8 +581,11 @@ class TestEngineFailureContract:
                 return a[1]
 
         eng = ms.MultiSpeakerReframeEngine(
-            {}, allow_degrade=True, which=lambda _x: None,
-            models_present=lambda _s: True, single_speaker=_FakeSingle(),
+            {},
+            allow_degrade=True,
+            which=lambda _x: None,
+            models_present=lambda _s: True,
+            single_speaker=_FakeSingle(),
         )
         assert eng.reframe("in.mp4", "out.mp4") == "out.mp4"
 
