@@ -41,6 +41,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from ..util import get_logger
+from . import aspect as _aspect
 from .reframe_claudeshorts import ClaudeShortsReframeEngine
 
 _log = get_logger("media_studio.reframe")
@@ -83,47 +84,21 @@ class ReframeError(RuntimeError):
 def _parse_aspect(aspect: str) -> tuple[int, int]:
     """Parse a ``"W:H"`` aspect string into an ``(w, h)`` int tuple.
 
-    Accepts ``9:16`` (or ``9x16``). Raises ``ValueError`` for anything that is
-    not two positive integers. Only the ratio is used; the contract pins the
-    actual output to 1080x1920 for the canonical 9:16 case.
+    Thin alias over the shared :func:`media_studio.features.aspect.parse_aspect`
+    registry (kept for the engine's local/public name and existing call sites).
     """
-    raw = str(aspect).strip().replace("x", ":")
-    parts = raw.split(":")
-    if len(parts) != 2:
-        raise ValueError(f"aspect must be 'W:H', got {aspect!r}")
-    try:
-        w, h = int(parts[0]), int(parts[1])
-    except (ValueError, TypeError) as exc:
-        raise ValueError(f"aspect must be two integers, got {aspect!r}") from exc
-    if w <= 0 or h <= 0:
-        raise ValueError(f"aspect components must be positive, got {aspect!r}")
-    return w, h
+    return _aspect.parse_aspect(aspect)
 
 
 def output_dimensions(aspect: str = DEFAULT_ASPECT) -> tuple[int, int]:
     """Return the (width, height) the reframe should produce for ``aspect``.
 
-    For the canonical 9:16 the contract fixes 1080x1920. For any other ratio we
-    scale the longer side to 1920 and derive the other from the ratio (kept even
-    so h264 is happy).
+    Delegates to the shared aspect registry (WU R3): the three curated social
+    aspects resolve to their 1080-wide dimensions (9:16 -> 1080x1920,
+    1:1 -> 1080x1080, 4:5 -> 1080x1350); any other positive ratio falls back to
+    the original "fit the long edge to 1920, even" math.
     """
-    w, h = _parse_aspect(aspect)
-    if (w, h) == (9, 16):
-        return OUT_WIDTH, OUT_HEIGHT
-    # Portrait-or-square: fix height to 1920 and derive width from the ratio.
-    # Landscape: fix width to 1920 instead. Always round to an even number.
-    if h >= w:
-        height = OUT_HEIGHT
-        width = int(round(OUT_HEIGHT * (w / h)))
-    else:
-        width = OUT_HEIGHT
-        height = int(round(OUT_HEIGHT * (h / w)))
-    return _even(width), _even(height)
-
-
-def _even(n: int) -> int:
-    """Round a dimension to the nearest even value (h264 requires even sizes)."""
-    return n if n % 2 == 0 else n + 1
+    return _aspect.output_dimensions(aspect)
 
 
 # --------------------------------------------------------------------------- #

@@ -56,6 +56,7 @@ from typing import Any
 
 from .. import ffmpeg
 from ..util import get_logger
+from . import aspect as _aspect
 
 _log = get_logger("media_studio.reframe_claudeshorts")
 
@@ -166,33 +167,21 @@ def make_degraded_notice(reason: str) -> dict[str, str]:
 # aspect handling (kept in sync with features.reframe — see module docstring)
 # --------------------------------------------------------------------------- #
 def _parse_aspect(aspect: str) -> tuple[int, int]:
-    """Parse ``"W:H"`` (or ``"WxH"``) into a positive ``(w, h)`` int tuple."""
-    raw = str(aspect).strip().replace("x", ":")
-    parts = raw.split(":")
-    if len(parts) != 2:
-        raise ValueError(f"aspect must be 'W:H', got {aspect!r}")
-    try:
-        w, h = int(parts[0]), int(parts[1])
-    except (ValueError, TypeError) as exc:
-        raise ValueError(f"aspect must be two integers, got {aspect!r}") from exc
-    if w <= 0 or h <= 0:
-        raise ValueError(f"aspect components must be positive, got {aspect!r}")
-    return w, h
+    """Parse ``"W:H"`` (or ``"WxH"``) into a positive ``(w, h)`` int tuple.
 
-
-def _even(n: int) -> int:
-    """Round a dimension up to even (h264 requires even output sizes)."""
-    return n if n % 2 == 0 else n + 1
+    Thin alias over the shared aspect registry (kept for the engine's local name
+    and the ``crop_size`` / ``centered_crop`` call sites).
+    """
+    return _aspect.parse_aspect(aspect)
 
 
 def output_dimensions(aspect: str = DEFAULT_ASPECT) -> tuple[int, int]:
-    """(width, height) of the encode target for ``aspect`` (9:16 -> 1080x1920)."""
-    w, h = _parse_aspect(aspect)
-    if (w, h) == (9, 16):
-        return OUT_WIDTH, OUT_HEIGHT
-    if h >= w:
-        return _even(int(round(OUT_HEIGHT * (w / h)))), OUT_HEIGHT
-    return OUT_HEIGHT, _even(int(round(OUT_HEIGHT * (h / w))))
+    """(width, height) of the encode target for ``aspect`` via the shared registry.
+
+    WU R3: 9:16 -> 1080x1920, 1:1 -> 1080x1080, 4:5 -> 1080x1350; any other
+    positive ratio falls back to the original "fit the long edge to 1920" math.
+    """
+    return _aspect.output_dimensions(aspect)
 
 
 # --------------------------------------------------------------------------- #

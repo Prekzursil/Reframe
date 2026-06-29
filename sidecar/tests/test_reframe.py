@@ -185,6 +185,18 @@ def test_build_reframe_argv_carries_paths_and_dimensions():
     assert argv[-2:] == ["1080", "1920"]
 
 
+@pytest.mark.parametrize(
+    ("aspect", "width", "height"),
+    [("1:1", "1080", "1080"), ("4:5", "1080", "1350"), ("9:16", "1080", "1920")],
+)
+def test_build_reframe_argv_passes_each_social_aspect_dimensions(aspect, width, height):
+    # WU R3: the verthor adapter forwards the per-aspect target dimensions so the
+    # WSL script renders 1:1 / 4:5 / 9:16 (the trailing two args are w then h).
+    argv = reframe.build_reframe_argv(r"C:\in\a.mp4", r"C:\out\b.mp4", aspect, {})
+    assert aspect in argv
+    assert argv[-2:] == [width, height]
+
+
 def test_build_reframe_argv_each_path_is_one_element():
     # A path with spaces must NOT be split across argv elements.
     argv = reframe.build_reframe_argv(
