@@ -107,13 +107,20 @@ class RealMultiSpeakerBackend:  # pragma: no cover - requires the heavy native s
         """STAGE 2 — speaker diarization -> per-frame active id."""
         from . import diarize  # noqa: PLC0415 - heavy seam
 
-        turns = diarize.diarize(media_path, settings=self._settings)
+        # Real diarize API: detect_and_embed -> (regions[{start,end}], embeddings)
+        # 1:1 in time order; greedy_cluster -> a cluster id per region; speaker_label
+        # -> "SPEAKER_NN". (There is no top-level diarize.diarize(); this is the
+        # raw-media -> per-frame-speaker path, no transcript needed.)
+        backend = diarize._default_backend_factory(self._settings)
+        regions, embeddings = backend.detect_and_embed(media_path)
+        labels = diarize.greedy_cluster(embeddings, threshold=diarize.DEFAULT_THRESHOLD)
         per_frame = [""] * total
-        for turn in turns:
-            start = max(0, int(round(turn.start * fps)))
-            end = min(total, int(round(turn.end * fps)))
+        for region, label in zip(regions, labels, strict=False):
+            start = max(0, int(round(float(region.get("start", 0.0)) * fps)))
+            end = min(total, int(round(float(region.get("end", 0.0)) * fps)))
+            speaker = diarize.speaker_label(label)
             for f in range(start, end):
-                per_frame[f] = turn.speaker
+                per_frame[f] = speaker
         return tuple(per_frame)
 
     def _stage_visual(self, media_path: str, total: int) -> tuple[Any, Any, Any]:
