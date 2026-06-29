@@ -428,10 +428,10 @@ class TestManifest:
             assert entry.sha256 and len(entry.sha256) == 64, name
 
     def test_lightasd_weights_are_sha_pinned_and_commit_pinned(self):
-        # R1 Phase 3: the vendored Light-ASD S3FD + ASD weights enter the manifest
+        # R1: the vendored S3FD + LR-ASD active-speaker weights enter the manifest
         # as sha256-pinned download assets, each URL carrying a 40-hex commit (the
         # S3FD via an HF resolve commit, the ASD via a GitHub-raw commit) — never a
-        # moving branch/tag (F3c).
+        # moving branch/tag (F3c). The ASD weight is LR-ASD (the Light-ASD successor).
         s3fd = manifest.get_asset(manifest.LIGHTASD_S3FD_ASSET_NAME)
         asd = manifest.get_asset(manifest.LIGHTASD_ASD_ASSET_NAME)
         for entry in (s3fd, asd):
@@ -441,7 +441,7 @@ class TestManifest:
             assert entry.size_mb > 0
         assert "huggingface.co" in s3fd.url and "/resolve/main/" not in s3fd.url
         assert s3fd.url.endswith("sfd_face.pth")
-        assert "github.com/Junhua-Liao/Light-ASD" in asd.url
+        assert "github.com/Junhua-Liao/LR-ASD" in asd.url
         assert manifest.LIGHTASD_ASD_COMMIT in asd.url
         assert asd.url.endswith("finetuning_TalkSet.model")
         names = {a.name for a in manifest.all_assets()}

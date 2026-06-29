@@ -1,4 +1,4 @@
-"""Light-ASD visual active-speaker inference for the multi-speaker reframe backend.
+"""LR-ASD visual active-speaker inference for the multi-speaker reframe backend.
 
 Produces the per-frame contract the pure director consumes:
 ``(boxes_per_frame, visual_scores_per_frame, vad_per_frame)`` — boxes as
@@ -6,15 +6,17 @@ Produces the per-frame contract the pure director consumes:
 boxes, and a per-frame RMS voice-activity value; every array has length
 ``total_frames``.
 
-Pipeline (ported from Junhua-Liao/Light-ASD ``Columbia_test.py``, validated on
-the GPU): extract @25 fps frames + 16 kHz mono audio -> S3FD face detect ->
+Pipeline (ported from Junhua-Liao/LR-ASD ``Columbia_test.py``, validated on the
+GPU): extract @25 fps frames + 16 kHz mono audio -> S3FD face detect ->
 IoU face-track linking -> per-track 112x112 crop + MFCC -> windowed audio-visual
 ASD scoring -> map per-track 25 fps scores back to the source-fps frame grid.
 
-PRODUCTION VENDORED (R1 Phase 3): the heavy S3FD + ASD code is now the
-numpy-2-clean copy vendored into :mod:`media_studio.features._lightasd` (MIT —
-see that package's ``LICENSE``), NOT a ``$HOME`` checkout. The ``sys.path`` +
-``chdir``-to-``~/Light-ASD`` seam is GONE; the two weight files are resolved by
+PRODUCTION VENDORED (R1): the heavy S3FD + LR-ASD code is the numpy-2-clean copy
+vendored into :mod:`media_studio.features._lightasd` (MIT — see that package's
+``LICENSE``), NOT a ``$HOME`` checkout. LR-ASD (IJCV 2025) is the strictly-better
+successor of Light-ASD; the inference pipeline is identical (shared
+``Columbia_test.py`` lineage), only the model weights/architecture changed. The
+``sys.path`` + ``chdir`` seam is GONE; the two weight files are resolved by
 PATH via :func:`_resolve_weights` (a ``settings['lightAsdWeightsDir']`` override,
 else the sha256-pinned asset-manager install paths registered in
 ``assets/manifest.py``).
@@ -40,7 +42,7 @@ log = get_logger("media_studio.features._lightasd_infer")
 
 Box = tuple[float, float, float, float]  # (x, y, w, h) source px — matches reframe_multispeaker.Box
 
-ASD_FPS = 25  # Light-ASD operates at 25 fps (its trained temporal regime)
+ASD_FPS = 25  # LR-ASD operates at 25 fps (its trained temporal regime)
 AUDIO_SR = 16000
 IOU_THRES = 0.5
 NUM_FAILED_DET = 10
@@ -236,7 +238,7 @@ def analyze_visual(  # pragma: no cover - heavy native seam
     *,
     settings: dict[str, Any],
 ) -> tuple[tuple[tuple[Box, ...], ...], tuple[tuple[float, ...], ...], tuple[float, ...]]:
-    """S3FD + Light-ASD -> per-(source)-frame boxes, aligned ASD scores, VAD.
+    """S3FD + LR-ASD -> per-(source)-frame boxes, aligned ASD scores, VAD.
 
     Returns three tuples each of length ``total_frames``. Boxes are ``(x,y,w,h)``
     in source pixels; ``visual_scores_per_frame[f][i]`` is the speaking score of

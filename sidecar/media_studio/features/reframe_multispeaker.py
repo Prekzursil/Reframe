@@ -77,9 +77,11 @@ ENGINE_NAME = "reframe_multispeaker"
 #: Contract output (mirrors the other engines): vertical 9:16, h264.
 DEFAULT_ASPECT = "9:16"
 
-#: The HF assets the heavy backend needs (registered, F3c-pinned, below).
+#: The assets the heavy backend needs (registered, F3c-pinned, below). The
+#: active-speaker model is now LR-ASD (Junhua-Liao/LR-ASD, IJCV 2025), the
+#: strictly-better successor of Light-ASD vendored under ``_lightasd``.
 LIGHT_ASD_ASSET = "light-asd"
-LIGHT_ASD_REPO = "TaoRuijie/Light-ASD"
+LIGHT_ASD_REPO = "Junhua-Liao/LR-ASD"
 LIGHT_ASD_SIZE_MB = 110.0
 
 # --- Decision-layer tunables (design note) ---------------------------------- #

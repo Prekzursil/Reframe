@@ -1,8 +1,10 @@
-"""Vendored Light-ASD inference wrapper + AV loss heads.
+"""Vendored LR-ASD inference wrapper + AV loss heads.
 
-Faithful port of ``Junhua-Liao/Light-ASD`` ``loss.py`` (the ``lossAV`` / ``lossV``
+Faithful port of ``Junhua-Liao/LR-ASD`` ``loss.py`` (the ``lossAV`` / ``lossV``
 classification heads) + the inference-relevant slice of ``ASD.py`` (commit
-``ed38c232de5efe0261dbd68627c0ade7cdfe14eb``, MIT). The training-only methods
+``1b6dcd2d8fc2895683de6508ec6294ec47d388ca``, MIT). The heads are byte-identical
+to the Light-ASD predecessor (FC(128, 2) over the backend embedding), so this
+wrapper is unchanged by the LR-ASD model upgrade. The training-only methods
 (``train_network`` / ``evaluate_network`` / ``saveParameters``) are dropped; the
 hardcoded ``.cuda()`` is replaced by an explicit ``device`` argument and
 ``loadParameters`` takes the weight PATH + a ``map_location`` so the model loads

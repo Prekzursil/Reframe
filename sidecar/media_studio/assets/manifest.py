@@ -352,10 +352,12 @@ RAPIDOCR_SIZE_MB = 20
 
 
 # --------------------------------------------------------------------------- #
-# R1 multi-speaker reframe — vendored Light-ASD visual active-speaker weights.
-# Two on-demand weights for the vendored S3FD detector + Light-ASD model
-# (sidecar/media_studio/features/_lightasd/, MIT). BOTH are sha256-pinned to the
-# exact bytes of the ~/Light-ASD GPU-validated copies (A6 lesson 5).
+# R1 multi-speaker reframe — vendored LR-ASD visual active-speaker weights.
+# Two on-demand weights for the vendored S3FD detector + LR-ASD model
+# (sidecar/media_studio/features/_lightasd/, MIT). LR-ASD (IJCV 2025) is the
+# strictly-Pareto-better successor of Light-ASD; the ASD weight is its smaller
+# finetuning_TalkSet.model. BOTH are sha256-pinned to the exact bytes of the
+# GPU-validated copies (A6 lesson 5).
 # --------------------------------------------------------------------------- #
 LIGHTASD_S3FD_ASSET_NAME = "lightasd-s3fd"
 # The S3FD face-detector weight (sfd_face.pth). NOT in the Light-ASD GitHub repo
@@ -370,13 +372,15 @@ LIGHTASD_S3FD_DEST = "models/lightasd-sfd-face.pth"
 LIGHTASD_S3FD_SIZE_MB = 86
 
 LIGHTASD_ASD_ASSET_NAME = "lightasd-asd"
-# The Light-ASD active-speaker weight (finetuning_TalkSet.model). Tracked directly
-# in the upstream GitHub repo, so the URL pins a GitHub-raw COMMIT (not LFS, served
-# verbatim); the sha256 is the file's verified digest (== the ~/Light-ASD copy,
-# 4,175,289 B, downloaded + sha256-checked 2026-06-29).
-LIGHTASD_ASD_COMMIT = "ed38c232de5efe0261dbd68627c0ade7cdfe14eb"
-LIGHTASD_ASD_URL = f"https://github.com/Junhua-Liao/Light-ASD/raw/{LIGHTASD_ASD_COMMIT}/weight/finetuning_TalkSet.model"
-LIGHTASD_ASD_SHA256 = "efc375833887eefa9d209dc92810e18519b04c3c73ea35a549f2a7f40b7d94d5"
+# The LR-ASD active-speaker weight (finetuning_TalkSet.model). LR-ASD (IJCV 2025)
+# is the strictly-Pareto-better successor of Light-ASD by the same author; its
+# smaller model REPLACES the Light-ASD one. Tracked directly in the upstream
+# GitHub repo, so the URL pins a GitHub-raw COMMIT (not LFS, served verbatim); the
+# sha256 is the file's verified digest (== the ~/LR-ASD copy, 3,426,337 B,
+# sha256-checked 2026-06-29).
+LIGHTASD_ASD_COMMIT = "1b6dcd2d8fc2895683de6508ec6294ec47d388ca"
+LIGHTASD_ASD_URL = f"https://github.com/Junhua-Liao/LR-ASD/raw/{LIGHTASD_ASD_COMMIT}/weight/finetuning_TalkSet.model"
+LIGHTASD_ASD_SHA256 = "6b4ef53694e874e96cf630198dc479c78aebb3993bbf166aee3d926dfe7d9342"
 LIGHTASD_ASD_DEST = "models/lightasd-finetuning-talkset.model"
 LIGHTASD_ASD_SIZE_MB = 4
 
@@ -401,7 +405,7 @@ def _register_lightasd() -> None:
             kind="model",
             size_mb=LIGHTASD_ASD_SIZE_MB,
             dest=LIGHTASD_ASD_DEST,
-            label="Light-ASD active-speaker model (finetuning_TalkSet, MIT)",
+            label="LR-ASD active-speaker model (finetuning_TalkSet, MIT)",
             installer="download",
             url=LIGHTASD_ASD_URL,
             sha256=LIGHTASD_ASD_SHA256,

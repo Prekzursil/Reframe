@@ -25,7 +25,7 @@ def test_reframe_multispeaker_backend_surface_imports_light() -> None:
 
 
 def test_lightasd_infer_surface_imports_light() -> None:
-    # The Light-ASD inference helpers are ``# pragma: no cover`` (they need
+    # The LR-ASD inference helpers are ``# pragma: no cover`` (they need
     # torch / cv2 + real weights); the module SURFACE (imports, constants,
     # ``__all__``) imports light — cover it so the gate stays 100% without the
     # heavy stack (mirrors the Real*Backend surface-test convention).
@@ -38,7 +38,7 @@ def test_lightasd_infer_surface_imports_light() -> None:
 
 
 def test_lightasd_vendored_package_imports_light() -> None:
-    # The vendored Light-ASD package __init__ is LIGHT (no torch/cv2); it carries
+    # The vendored LR-ASD package __init__ is LIGHT (no torch/cv2); it carries
     # the upstream provenance + the weight basenames. The heavy model modules
     # (model / asd / s3fd) import torch at module top, so they are imported lazily
     # only inside analyze_visual and are NEVER imported here — we assert they SHIP
@@ -49,10 +49,11 @@ def test_lightasd_vendored_package_imports_light() -> None:
 
     import media_studio.features._lightasd as pkg
 
-    assert pkg.LIGHT_ASD_LICENSE == "MIT"
+    assert pkg.LR_ASD_LICENSE == "MIT"
     assert pkg.S3FD_WEIGHT_NAME == "sfd_face.pth"
     assert pkg.ASD_WEIGHT_NAME == "finetuning_TalkSet.model"
-    assert len(pkg.LIGHT_ASD_COMMIT) == 40
+    assert len(pkg.LR_ASD_COMMIT) == 40
+    assert "LR-ASD" in pkg.LR_ASD_UPSTREAM
     # ``find_spec`` on the LIGHT package + the top-level torch model modules locates
     # them WITHOUT executing them (it never imports the leaf), so no torch is needed.
     for mod in (
