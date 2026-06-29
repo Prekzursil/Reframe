@@ -371,13 +371,20 @@ function AppShell(): React.ReactElement {
 
         <TopTabBar tabs={tabs} active={activeTab} onSelect={selectTab} />
 
-        <main
-          className="app__main"
-          role="tabpanel"
-          id={topTabPanelId(activeTab)}
-          aria-labelledby={topTabId(activeTab)}
-        >
-          {renderRoute()}
+        {/* The shell's single MAIN landmark (fixes axe `landmark-one-main`). The
+            ARIA `tabpanel` role lives on the inner wrapper so it does NOT override
+            the <main> landmark role (a <main role="tabpanel"> is reported by axe
+            as both `landmark-one-main` and `aria-allowed-role`). The tab↔panel
+            wiring (id / aria-labelledby) rides the wrapper. */}
+        <main className="app__main">
+          <div
+            className="app__panel"
+            role="tabpanel"
+            id={topTabPanelId(activeTab)}
+            aria-labelledby={topTabId(activeTab)}
+          >
+            {renderRoute()}
+          </div>
         </main>
       </div>
       <JobQueue open={jobsOpen} onClose={() => setJobsOpen(false)} />

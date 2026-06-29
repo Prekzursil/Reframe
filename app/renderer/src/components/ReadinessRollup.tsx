@@ -44,7 +44,14 @@ export function ReadinessRollup({
     let alive = true;
     setError('');
     setItems(null);
-    Promise.resolve(api.readiness.summary())
+    // Defer the bridge call into a microtask so a SYNCHRONOUS throw from
+    // `api.readiness.summary()` (e.g. the preload `window.api` bridge is not
+    // present — it throws synchronously, see lib/rpc/client.ts `bridge()`) is
+    // routed to `.catch` instead of escaping the effect and unmounting the whole
+    // React tree. `Promise.resolve(api.readiness.summary())` would evaluate the
+    // call EAGERLY as an argument, before Promise.resolve can wrap it (P0 crash).
+    Promise.resolve()
+      .then(() => api.readiness.summary())
       .then((res) => {
         if (alive) setItems(Array.isArray(res?.items) ? res.items : []);
       })
