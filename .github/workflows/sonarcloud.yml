@@ -1,0 +1,43 @@
+name: sonarcloud
+
+# Re-points the EXISTING SonarCloud project (Prekzursil_Reframe) at the current
+# tree. SonarCloud last scanned on 2026-03-30 (commit a252ab70) against the
+# retired SaaS monorepo and then stopped when that CI was removed in the lean-gate
+# migration. Config lives in sonar-project.properties at the repo root.
+#
+# NOTE: this is intentionally a NON-blocking, informational scan — it is NOT added
+# to branch protection, so it never gates a PR. It runs on main + PRs into main,
+# and can be kicked manually via the Actions tab (workflow_dispatch).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sonarcloud-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sonarcloud:
+    name: SonarCloud
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          # Full history so SonarCloud can attribute issues to the right commits
+          # and compute the new-code period correctly.
+          fetch-depth: 0
+
+      - name: SonarQube Cloud scan
+        uses: SonarSource/sonarqube-scan-action@713881670b6b3676cda39549040e2d88c70d582e # v8.2.0
+        env:
+          # Repo secret (present since 2026-03-03). If analysis fails with an auth
+          # error, regenerate the token at sonarcloud.io and update SONAR_TOKEN.
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
