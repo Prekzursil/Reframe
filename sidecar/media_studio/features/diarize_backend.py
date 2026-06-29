@@ -45,12 +45,20 @@ HOP_SEC = 1.25
 MIN_WINDOW_SEC = 0.5
 
 #: Cosine-similarity clustering threshold for the SUB-WINDOW regime. ECAPA vectors
-#: from ~2.5 s windows sit a little lower than from full utterances, so 0.40 (vs
-#: the long-utterance default 0.50 in ``diarize.DEFAULT_THRESHOLD``) is the floor
-#: that keeps same-speaker windows together while still separating real turns
-#: (verified: the razvan 90 s sample -> exactly 2 speakers, the minority cluster a
-#: contiguous interjection turn rather than scattered noise).
-SUBWINDOW_CLUSTER_THRESHOLD = 0.40
+#: from ~2.5 s windows sit a little lower than from full utterances, so this floor
+#: (below the long-utterance default 0.50 in ``diarize.DEFAULT_THRESHOLD``) keeps
+#: same-speaker windows together while still separating real turns.
+#:
+#: Tuned to 0.45 (was 0.40): an embedding sweep over three fresh-scanned razvan
+#: windows on the RTX 4050 (Phase-4 revalidation, 2026-06-29) showed 0.40
+#: OVER-clustered the 30 s two-person window down to a SINGLE speaker, while 0.45
+#: is the floor of the stable 0.45-0.60 plateau that resolves it to the true 2
+#: speakers (the minority cluster two contiguous windows at 25.0-28.8 s — a real
+#: interjection turn, not scattered noise). 0.45 simultaneously keeps the
+#: one-speaker window at exactly 1 cluster (>= 0.50 over-fragments it into a
+#: spurious singleton) and the three-person window at 2 clusters — the only value
+#: correct for all three. Raising further fragments single speakers.
+SUBWINDOW_CLUSTER_THRESHOLD = 0.45
 
 
 class SpeechBrainDiarizer:  # pragma: no cover - requires the heavy native stack
