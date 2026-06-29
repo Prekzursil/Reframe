@@ -21,6 +21,10 @@ the next loads, so two models are never resident at once.
 
 from __future__ import annotations
 
+import contextlib
+import os
+import subprocess  # noqa: S404 - argv lists only, no shell=True
+import tempfile
 from typing import Any
 
 from ..util import get_logger
@@ -104,15 +108,34 @@ class RealMultiSpeakerBackend:  # pragma: no cover - requires the heavy native s
         return tuple(int(round(c * fps)) for c in cuts_sec)
 
     def _stage_diarize(self, media_path: str, total: int, fps: float) -> tuple[str, ...]:
-        """STAGE 2 — speaker diarization -> per-frame active id."""
+        """STAGE 2 — speaker diarization -> per-frame active id.
+
+        The SpeechBrain VAD reads audio through libsndfile, which has no video
+        demuxer, so a raw ``media_path`` (.mp4) raises "Format not recognised".
+        The video's audio is therefore first extracted to a 16 kHz mono WAV (same
+        timeline, so region seconds map straight onto the source-fps frame grid),
+        mirroring ``_lightasd_infer``'s audio extraction.
+        """
         from . import diarize  # noqa: PLC0415 - heavy seam
 
-        # Real diarize API: detect_and_embed -> (regions[{start,end}], embeddings)
-        # 1:1 in time order; greedy_cluster -> a cluster id per region; speaker_label
-        # -> "SPEAKER_NN". (There is no top-level diarize.diarize(); this is the
-        # raw-media -> per-frame-speaker path, no transcript needed.)
-        backend = diarize._default_backend_factory(self._settings)
-        regions, embeddings = backend.detect_and_embed(media_path)
+        fd, wav_path = tempfile.mkstemp(prefix="msreframe_diar_", suffix=".wav")
+        os.close(fd)
+        try:
+            subprocess.run(  # noqa: S603
+                ["ffmpeg", "-y", "-i", media_path, "-vn", "-ac", "1", "-ar", "16000", wav_path],  # noqa: S607
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            # Real diarize API: detect_and_embed -> (regions[{start,end}], embeddings)
+            # 1:1 in time order; greedy_cluster -> a cluster id per region;
+            # speaker_label -> "SPEAKER_NN". (There is no top-level diarize.diarize();
+            # this is the raw-media -> per-frame-speaker path, no transcript needed.)
+            backend = diarize._default_backend_factory(self._settings)
+            regions, embeddings = backend.detect_and_embed(wav_path)
+        finally:
+            with contextlib.suppress(OSError):
+                os.remove(wav_path)
         labels = diarize.greedy_cluster(embeddings, threshold=diarize.DEFAULT_THRESHOLD)
         per_frame = [""] * total
         for region, label in zip(regions, labels, strict=False):
