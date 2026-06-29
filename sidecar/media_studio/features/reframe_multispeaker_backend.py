@@ -136,7 +136,12 @@ class RealMultiSpeakerBackend:  # pragma: no cover - requires the heavy native s
         finally:
             with contextlib.suppress(OSError):
                 os.remove(wav_path)
-        labels = diarize.greedy_cluster(embeddings, threshold=diarize.DEFAULT_THRESHOLD)
+        # The backend emits time-resolved SUB-WINDOW embeddings (≈2.5 s each), so
+        # cluster at the sub-window-tuned floor rather than the long-utterance
+        # default (which over-fragments these shorter windows).
+        from .diarize_backend import SUBWINDOW_CLUSTER_THRESHOLD  # noqa: PLC0415 - heavy seam
+
+        labels = diarize.greedy_cluster(embeddings, threshold=SUBWINDOW_CLUSTER_THRESHOLD)
         per_frame = [""] * total
         for region, label in zip(regions, labels, strict=False):
             start = max(0, int(round(float(region.get("start", 0.0)) * fps)))
