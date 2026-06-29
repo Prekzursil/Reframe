@@ -81,7 +81,7 @@ class RealMultiSpeakerBackend:  # pragma: no cover - requires the heavy native s
         self.release()
         diarize_per_frame = self._stage_diarize(media_path, total, fps)
         self.release()
-        boxes, scores, vad = self._stage_visual(media_path, total)
+        boxes, scores, vad = self._stage_visual(media_path, total, fps)
         self.release()
 
         return ShotAnalysis(
@@ -123,18 +123,18 @@ class RealMultiSpeakerBackend:  # pragma: no cover - requires the heavy native s
                 per_frame[f] = speaker
         return tuple(per_frame)
 
-    def _stage_visual(self, media_path: str, total: int) -> tuple[Any, Any, Any]:
+    def _stage_visual(self, media_path: str, total: int, fps: float) -> tuple[Any, Any, Any]:
         """STAGE 3 — face boxes + Light-ASD visual scores + audio VAD per frame.
 
-        Returns ``(boxes_per_frame, visual_scores_per_frame, vad_per_frame)``. The
-        real Light-ASD inference is wired here per the WU brief; the
-        operator-blocker note documents that the GPU tier must validate this
-        against the R0 eval harness before the engine is marked validated.
+        Real S3FD + Light-ASD inference (GPU-validated on razvan_gandu): returns
+        ``(boxes_per_frame, visual_scores_per_frame, vad_per_frame)``, each of
+        length ``total``, boxes as ``(x, y, w, h)`` source-pixels and per-box ASD
+        scores index-aligned to the boxes. Delegates to the seam helper so the
+        heavy imports stay inside the call.
         """
-        boxes = tuple(() for _ in range(total))
-        scores = tuple(() for _ in range(total))
-        vad = tuple(0.0 for _ in range(total))
-        return boxes, scores, vad
+        from ._lightasd_infer import analyze_visual  # noqa: PLC0415 - heavy seam
+
+        return analyze_visual(media_path, total, fps, settings=self._settings)
 
 
 __all__ = ["RealMultiSpeakerBackend"]
