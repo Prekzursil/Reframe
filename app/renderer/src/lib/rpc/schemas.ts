@@ -384,6 +384,44 @@ export interface PoolEntry {
 }
 
 /**
+ * M1b/M2 (V1.1 Lane 2): one deduped, metadata-enriched installed Ollama model +
+ * its VRAM-fit verdict (`models.overview` -> `eligibility.models[]`). Mirrors the
+ * sidecar `ollama_meta.ModelMeta`. `quantBits` is the resolved quant width
+ * (4 = Q4, 16 = FP16…); `vramEstimateGb` is the field VRAM fit formula's resident
+ * estimate (null when params/quant are unknown -> the model can't be asserted to
+ * fit and is excluded). M2's reason strip names the real `quantBits` +
+ * `vramEstimateGb` ("7B-Q4 ≈ 4.0 GB, fits your 8 GB GPU").
+ */
+export interface ModelMeta {
+  model: string;
+  digest: string;
+  sizeBytes: number | null;
+  /** Parameter count in BILLIONS (7.6 = 7.6B), or null when unparseable. */
+  paramsB: number | null;
+  /** Quant width in bits (4 = Q4, 8 = Q8, 16 = FP16…), or null when unknown. */
+  quantBits: number | null;
+  /** Resident VRAM estimate (GB) from params × quant + overhead + KV cache. */
+  vramEstimateGb: number | null;
+  capabilities: string[];
+  aliases: string[];
+  fits: boolean;
+}
+
+/**
+ * M1b/M2 (V1.1 Lane 2): the metadata-driven LLM eligibility (`models.overview` ->
+ * `eligibility`). Mirrors the sidecar `ollama_meta.Eligibility`. `source` is
+ * `"metadata"` when ≥1 detected Ollama model is capability-eligible AND fits the
+ * device; `"ladder"` otherwise (no runner / no metadata / nothing fits).
+ * `fallback` is ALWAYS the device-fit static-ladder pick, so a usable pick exists
+ * regardless of `source` (the reason strip uses it when no real metadata applies).
+ */
+export interface Eligibility {
+  source: string;
+  models: ModelMeta[];
+  fallback: ModelReco;
+}
+
+/**
  * M1a (V1.1 Lane 2): the THIN `models.overview` compose — the whole "Models &
  * System" screen in ONE read (DESIGN §2.3 step 2). Stitches the cheap probes
  * (hardware + advisor tiers/preset + local runner detect + device-ranked plan)
@@ -401,6 +439,8 @@ export interface ModelsOverview {
   providers: ProviderEntry[];
   keyPool: KeyPoolEntry[];
   routingPolicy: RoutingPolicy;
+  /** M2: metadata-driven LLM eligibility (real quant + VRAM est, or ladder). */
+  eligibility: Eligibility;
 }
 
 /**

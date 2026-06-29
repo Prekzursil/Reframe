@@ -425,3 +425,79 @@ def test_eligible_models_probes_native_root_not_v1() -> None:
     assert "http://127.0.0.1:11434/api/tags" in urls
     assert "http://127.0.0.1:11434/api/show" in urls
     assert all("/v1/" not in url for url in urls)
+
+
+# --------------------------------------------------------------------------- #
+# eligibility_for_runners (M2) — the overview bridge: probe ONLY when Ollama is
+# detected, else skip straight to the static-ladder fallback (a pick always
+# exists; the probe never raises)
+# --------------------------------------------------------------------------- #
+def _ollama_entry(base_url: str = "http://127.0.0.1:11434/v1") -> dict[str, Any]:
+    return {"id": "ollama", "kind": "ollama", "base_url": base_url, "model": "qwen2.5:7b"}
+
+
+def test_ollama_base_url_picks_the_ollama_runner() -> None:
+    detected = [
+        {"id": "lmstudio", "kind": "lmstudio", "base_url": "http://127.0.0.1:1234/v1"},
+        _ollama_entry("http://host:11434/v1"),
+    ]
+    assert om._ollama_base_url(detected) == "http://host:11434/v1"
+
+
+def test_ollama_base_url_none_when_no_ollama_runner() -> None:
+    detected = [{"id": "lmstudio", "kind": "lmstudio", "base_url": "http://127.0.0.1:1234/v1"}]
+    assert om._ollama_base_url(detected) is None
+
+
+def test_ollama_base_url_skips_ollama_entry_without_a_url() -> None:
+    # an ollama entry whose base_url is missing/blank is not usable -> None.
+    assert om._ollama_base_url([{"kind": "ollama", "base_url": ""}]) is None
+    assert om._ollama_base_url([{"kind": "ollama"}]) is None
+
+
+def test_ollama_base_url_falls_back_to_id_when_kind_absent() -> None:
+    detected = [{"id": "ollama", "base_url": "http://x:11434/v1"}]
+    assert om._ollama_base_url(detected) == "http://x:11434/v1"
+
+
+def test_eligibility_for_runners_no_ollama_returns_ladder_without_probing() -> None:
+    # No Ollama detected -> the transport is NEVER called and the static-ladder
+    # pick is returned as the fallback (a usable pick always exists).
+    out = om.eligibility_for_runners(
+        [{"kind": "lmstudio", "base_url": "http://127.0.0.1:1234/v1"}],
+        {"vramMb": 8000, "gpuPresent": True},
+        _boom,  # would raise if called
+    )
+    assert out["source"] == "ladder"
+    assert out["models"] == []
+    assert out["fallback"]["model"]
+
+
+def test_eligibility_for_runners_metadata_when_ollama_detected() -> None:
+    transport = _rich_transport()
+    out = om.eligibility_for_runners(
+        [_ollama_entry()],
+        {"vramMb": 8000, "gpuPresent": True},
+        transport,
+    )
+    assert out["source"] == "metadata"
+    assert [m["model"] for m in out["models"]] == ["qwen2.5:7b-instruct-q4_K_M", "llama3.2:3b"]
+    top = out["models"][0]
+    assert top["quantBits"] == 4
+    assert top["vramEstimateGb"] is not None and top["vramEstimateGb"] > 0
+    # the native /api root (not /v1) was probed
+    assert any(url.endswith("/api/tags") for url, *_ in transport.calls)
+
+
+def test_eligibility_for_runners_forwards_capability_and_timeout() -> None:
+    transport = _rich_transport()
+    out = om.eligibility_for_runners(
+        [_ollama_entry()],
+        {"vramMb": 8000, "gpuPresent": True},
+        transport,
+        capability="tools",
+        timeout=2.0,
+    )
+    # only the model whose /api/show advertises "tools" survives the gate
+    assert [m["model"] for m in out["models"]] == ["qwen2.5:7b-instruct-q4_K_M"]
+    assert all(t == 2.0 for *_, t in transport.calls)

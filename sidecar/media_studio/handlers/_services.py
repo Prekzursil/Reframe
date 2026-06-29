@@ -60,6 +60,7 @@ class Services:
         vlm_models_present: Callable[[dict[str, Any]], bool] | None = None,
         vlm_chat_transport: Any | None = None,
         local_detector: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
+        ollama_meta_transport: Any | None = None,
         frame_scorer: Any | None = None,
         frame_backend_factory: Callable[[dict[str, Any]], Any] | None = None,
         thumbnail_writer: Any | None = None,
@@ -113,6 +114,11 @@ class Services:
         # real detector over the stdlib urllib GET transport; tests inject a fake
         # that returns canned PoolEntry dicts so no socket is opened.
         self._local_detector = local_detector
+        # M2 (models.overview eligibility): the method-aware Ollama /api/* transport
+        # used to read REAL model metadata (quant + VRAM estimate) for the reason
+        # strip. None -> the real lazy stdlib urllib adapter; tests inject a fake so
+        # the overview compose opens no socket.
+        self._ollama_meta_transport = ollama_meta_transport
 
         # WU-C3 (thumbnail.select): the best-frame scorer + writer seams. Defaults
         # resolve a CloudFrameScorer over the SAME frame-consented vision pool the
@@ -253,6 +259,7 @@ class Services:
     phase8_select = system_ops.phase8_select
     _models_present_map = system_ops._models_present_map
     _default_hardware_probe = system_ops._default_hardware_probe
+    _default_ollama_meta_transport = system_ops._default_ollama_meta_transport
     _default_phase8_runner = system_ops._default_phase8_runner
     _shortmaker = shortmaker_ops._build_shortmaker
     _detect_boundaries = shortmaker_ops._detect_boundaries

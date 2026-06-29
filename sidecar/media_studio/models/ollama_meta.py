@@ -70,6 +70,11 @@ _MB_PER_GB: float = 1024.0
 #: model"). Overridable per call (e.g. ``"tools"`` where the director needs them).
 DEFAULT_REQUIRED_CAPABILITY: str = "completion"
 
+#: The runner kind whose native ``/api/*`` metadata this module reads. LM Studio
+#: exposes the analogous fields, but only Ollama's native root is wired here today
+#: (DESIGN §2.2); a non-Ollama-only device degrades to the static ladder.
+OLLAMA_KIND: str = "ollama"
+
 #: Known quant-family → bits map. Exact tokens (``F16``) and the leading family
 #: token of a compound level (``Q4_K_M`` → ``Q4``) both resolve here; an unknown
 #: level yields ``None`` (→ ladder fallback for that model).
@@ -397,15 +402,55 @@ def eligible_models(
     return Eligibility(source=source, models=eligible, fallback=fallback)
 
 
+def _ollama_base_url(detected_local: list[dict[str, Any]], kind: str = OLLAMA_KIND) -> str | None:
+    """The base URL of the first detected runner of ``kind`` (``None`` if none).
+
+    Reads the same :class:`local_detect.PoolEntry` wire dicts the overview already
+    has, so no extra probe is needed to know whether an Ollama runner is up.
+    """
+    for entry in detected_local:
+        entry_kind = entry.get("kind") or entry.get("id")
+        if entry_kind == kind:
+            base = entry.get("base_url")
+            if isinstance(base, str) and base:
+                return base
+    return None
+
+
+def eligibility_for_runners(
+    detected_local: list[dict[str, Any]],
+    hardware: dict[str, Any],
+    transport: OllamaTransport,
+    *,
+    capability: str = DEFAULT_REQUIRED_CAPABILITY,
+    timeout: float = _PROBE_TIMEOUT,
+) -> Eligibility:
+    """Metadata-driven eligibility for the detected Ollama runner (M2, DESIGN §2.3).
+
+    The thin bridge the ``models.overview`` compose calls: when an Ollama runner is
+    detected, read its real ``/api/tags`` + ``/api/show`` metadata via
+    :func:`eligible_models` (quant + VRAM estimate + capability gate + digest
+    dedup); when NO Ollama runner is up, skip the probe entirely and return the
+    static-ladder pick as the ``fallback`` (``source="ladder"``, empty ``models``).
+    A usable pick ALWAYS exists and the probe NEVER raises.
+    """
+    base_url = _ollama_base_url(detected_local)
+    if base_url is None:
+        return Eligibility(source="ladder", models=[], fallback=recommend_llm(hardware))
+    return eligible_models(base_url, hardware, transport, capability=capability, timeout=timeout)
+
+
 __all__ = [
     "DEFAULT_KV_CACHE_GB",
     "DEFAULT_OVERHEAD",
     "DEFAULT_REQUIRED_CAPABILITY",
+    "OLLAMA_KIND",
     "Eligibility",
     "ModelMeta",
     "OllamaTransport",
     "TagRow",
     "api_root",
+    "eligibility_for_runners",
     "eligible_models",
     "estimate_vram_gb",
     "group_by_digest",

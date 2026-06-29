@@ -26,6 +26,7 @@ import {
   type ComponentStatus,
   type HardwareInfo,
   type LocalModelPlan,
+  type ModelsOverview,
   type OpenRouterUsageRow,
   type Recommendation,
   type RoutingBlock,
@@ -39,6 +40,7 @@ import { ModelsOnboarding } from '../components/ModelsOnboarding';
 import { UsageBars } from '../components/UsageBar';
 import { DeviceStatusStrip } from '../components/DeviceStatusStrip';
 import { DeviceModelReco } from '../components/DeviceModelReco';
+import { ReasonStrip } from '../components/ReasonStrip';
 import { LocalRunners } from '../components/LocalRunners';
 import { OpenRouterUsage } from '../components/OpenRouterUsage';
 import { PresetPicker } from '../components/PresetPicker';
@@ -189,6 +191,9 @@ export function ModelsSystemPanel({
   // WU-models/device: local-runner plan (device-ranked whisper+LLM + runner advice)
   // and per-key OpenRouter COST rows (the cost axis alongside the calls/tokens bars).
   const [runners, setRunners] = useState<LocalModelPlan | null>(null);
+  // M2: the composed Models & System overview drives the "using X because Y"
+  // reason strip + device card (real quant + VRAM estimate, null-RAM graceful).
+  const [overview, setOverview] = useState<ModelsOverview | null>(null);
   const [openrouterUsage, setOpenrouterUsage] = useState<OpenRouterUsageRow[]>([]);
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
   const [presetBusy, setPresetBusy] = useState<boolean>(false);
@@ -251,7 +256,7 @@ export function ModelsSystemPanel({
     setError('');
     try {
       const commercial = Boolean(settings.commercial);
-      const [hw, rep, assetRes, engineRes, usageRes, catalogRes, recRes, runnersRes] =
+      const [hw, rep, assetRes, engineRes, usageRes, catalogRes, recRes, runnersRes, overviewRes] =
         await Promise.all([
           api.system.probe(),
           api.system.advisor({ commercial }),
@@ -261,6 +266,9 @@ export function ModelsSystemPanel({
           api.providers.catalog(),
           api.system.recommend({ commercial }),
           api.models.runners(),
+          // M2: the unified compose carries the metadata-driven eligibility
+          // (real quant + VRAM est) the reason strip names.
+          api.models.overview({ commercial }),
         ]);
       setHardware(hw ?? null);
       setReport(rep ?? null);
@@ -270,6 +278,7 @@ export function ModelsSystemPanel({
       setCatalog(catalogRes ?? null);
       setRecommendation(recRes?.recommendation ?? null);
       setRunners(runnersRes ?? null);
+      setOverview(overviewRes ?? null);
       setApplyOutcome('');
       setAnalyzed(true);
       // First-run tour: show once if the user hasn't seen it.
@@ -578,6 +587,11 @@ export function ModelsSystemPanel({
           Analysing your machine…
         </p>
       )}
+
+      {/* M2: the novice "using X because Y" headline — names the real quant +
+          VRAM estimate when a detected Ollama runner exposes metadata, else the
+          advisor's verbatim device-ranked reason; RAM reads "unknown" gracefully. */}
+      {analyzed && overview && <ReasonStrip overview={overview} />}
 
       {analyzed && hardware && (
         <div className="hardware-header" data-section="hardware">

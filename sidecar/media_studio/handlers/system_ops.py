@@ -205,12 +205,18 @@ def models_overview(self: Services, params: dict[str, Any], ctx: RpcContext) -> 
         (:func:`key_pool.build_key_pool`); M4 enriches them with live usage.
       * ``routingPolicy`` — the persisted policy read FAIL-CLOSED to ``local``
         (:func:`routing_policy.read_routing_policy`; GATE-2 zero-egress).
+      * ``eligibility`` — M2: when an Ollama runner is detected, its REAL
+        ``/api/*`` metadata (quant + VRAM estimate + capability gate, deduped by
+        digest) drives the device-fit LLM ranking; with no runner it degrades to
+        the static-ladder ``fallback`` (:func:`ollama_meta.eligibility_for_runners`).
+        Feeds the "using X because Y" reason strip's real-quant copy.
 
     Composes probes/reads ONLY: ZERO provider/LLM calls, NO pull, and NO settings
     mutation (a strictly read-only screen). No full key ever crosses RPC.
     """
     from ..models import key_pool as _key_pool  # local: import-light pure
     from ..models import model_recommend as _mr  # local: import-light pure
+    from ..models import ollama_meta as _ollama_meta  # local: import-light pure
     from ..models import routing_policy as _routing_policy  # local: import-light pure
 
     settings = self.settings.get()  # REDACTED view (providers' keys already last-4)
@@ -219,6 +225,8 @@ def models_overview(self: Services, params: dict[str, Any], ctx: RpcContext) -> 
     detected_local = self._detect_local_servers(settings)
     local_plan = _mr.recommend_local_models(hardware, detected_local)
     providers = self.providers_list(params, ctx)["providers"]
+    transport = self._ollama_meta_transport or self._default_ollama_meta_transport()
+    eligibility = _ollama_meta.eligibility_for_runners(detected_local, hardware, transport)
     return {
         "hardware": hardware,
         "tiers": advisor["tiers"],
@@ -228,6 +236,7 @@ def models_overview(self: Services, params: dict[str, Any], ctx: RpcContext) -> 
         "providers": providers,
         "keyPool": _key_pool.build_key_pool(providers),
         "routingPolicy": _routing_policy.read_routing_policy(settings),
+        "eligibility": eligibility,
     }
 
 
@@ -407,6 +416,27 @@ def _default_hardware_probe(
     from ..features import system_advisor as _sa  # noqa: PLC0415 - lazy
 
     return _sa.HardwareProbe(disk_probe=lambda: _sa.default_disk_probe(str(self.data_dir)))
+
+
+def _default_ollama_meta_transport(self: Services) -> Any:
+    """Build the real method-aware Ollama ``/api/*`` transport (lazy; runtime only).
+
+    Adapts the stdlib :mod:`provider` request core to the ``ollama_meta``
+    ``(url, method, body, timeout)`` shape: GET for ``/api/tags`` (body ignored),
+    POST for ``/api/show`` (body carries ``{model}``). Built only when no transport
+    is injected; the actual socket I/O lives in the inner closure (host-only) so the
+    overview compose stays pure under test (every test injects a fake transport).
+    """
+    from ..models import provider as _provider_mod  # noqa: PLC0415 - lazy heavy seam
+
+    def _transport(
+        url: str, method: str, body: dict[str, Any], timeout: float
+    ) -> dict[str, Any]:  # pragma: no cover - host-only urllib I/O; tests inject a fake
+        if method == "POST":
+            return _provider_mod._urllib_post_json(url, body, {}, timeout)
+        return _provider_mod.urllib_get_json(url, {}, {}, timeout)
+
+    return _transport
 
 
 def _default_phase8_runner(self: Services) -> Callable[..., dict[str, Any]]:
