@@ -413,6 +413,47 @@ def _register_lightasd() -> None:
     )
 
 
+# --------------------------------------------------------------------------- #
+# v1.2.0 WU1 — YuNet face detector for the claudeshorts reframe engine.
+# YuNet (cv2.FaceDetectorYN, a tiny ONNX CNN) REPLACES the OpenCV haar-cascade /
+# HOG face+body detector in ``features.reframe_claudeshorts`` — it holds turned
+# and profile faces far better, so the crop tracks the speaker instead of
+# collapsing to a centre crop. Sourced from the OFFICIAL OpenCV HF mirror
+# (opencv/face_detection_yunet, MIT — © 2020 Shiqi Yu). F3c: the resolve URL
+# pins a COMMIT HASH (verified via the HF refs API) and the sha256 is the file's
+# LFS oid (verified by downloading + hashing the bytes, 232,589 B, 2026-07-03).
+# --------------------------------------------------------------------------- #
+YUNET_ASSET_NAME = "yunet-face-detection"
+YUNET_COMMIT = "3cc26e7f1014a5ee5d74a42acee58bafc9d0a310"
+YUNET_URL = (
+    f"https://huggingface.co/opencv/face_detection_yunet/resolve/{YUNET_COMMIT}/face_detection_yunet_2023mar.onnx"
+)
+# sha256 == the LFS oid of face_detection_yunet_2023mar.onnx @ the pinned commit
+# (== the downloaded + hashed bytes, 232,589 B).
+YUNET_SHA256 = "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4"
+YUNET_DEST = "models/yunet-face-detection-2023mar.onnx"
+# The ONNX is only ~0.23 MB; keep size_mb below ~0.44 so the manager's
+# file_size_ok floor (0.5 * size_mb) still counts the fully-downloaded file as
+# installed rather than a truncated leftover.
+YUNET_SIZE_MB = 0.3
+
+
+def _register_yunet() -> None:
+    """Register the sha256-pinned YuNet face-detection ONNX (idempotent)."""
+    register_asset(
+        AssetEntry(
+            name=YUNET_ASSET_NAME,
+            kind="model",
+            size_mb=YUNET_SIZE_MB,
+            dest=YUNET_DEST,
+            label="YuNet face detector (claudeshorts speaker tracking, MIT)",
+            installer="download",
+            url=YUNET_URL,
+            sha256=YUNET_SHA256,
+        )
+    )
+
+
 def _register_phase8_optional() -> None:
     """Register the optional Phase-8 emotion + OCR signal models (idempotent)."""
     register_asset(
@@ -444,3 +485,4 @@ def _register_phase8_optional() -> None:
 _register_day1()
 _register_phase8_optional()
 _register_lightasd()
+_register_yunet()

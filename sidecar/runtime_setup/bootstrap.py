@@ -418,6 +418,10 @@ def default_first_run_assets() -> list[str]:
         tools_resolver.LLAMA_CPU_ASSET,
         manifest.LIGHTASD_S3FD_ASSET_NAME,
         manifest.LIGHTASD_ASD_ASSET_NAME,
+        # v1.2.0 WU1: the YuNet face-detection ONNX for the claudeshorts reframe
+        # engine. Provisioned up front (sha256-pinned, ~0.23MB) so the engine's
+        # detector is present or fails LOUD — never a silent centre crop.
+        manifest.YUNET_ASSET_NAME,
     ]
 
 

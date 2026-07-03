@@ -409,6 +409,12 @@ class TestAssets:
         assert manifest.LIGHTASD_S3FD_ASSET_NAME in names
         assert manifest.LIGHTASD_ASD_ASSET_NAME in names
 
+    def test_default_first_run_assets_include_yunet(self):
+        # v1.2.0 WU1: the claudeshorts reframe engine's YuNet face detector must be
+        # provisioned up front so the detector is present or fails LOUD — never a
+        # silent center crop (NO-SILENT-FALLBACK).
+        assert manifest.YUNET_ASSET_NAME in bs.default_first_run_assets()
+
     def test_ensure_assets_delegates_to_manager(self, tmp_path):
         class FakeManager:
             def __init__(self):
