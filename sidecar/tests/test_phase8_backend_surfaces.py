@@ -24,6 +24,19 @@ def test_reframe_multispeaker_backend_surface_imports_light() -> None:
     assert "RealMultiSpeakerBackend" in be.__all__
 
 
+def test_reframe_edgetam_backend_surface_imports_light() -> None:
+    # v1.2.0 WU2: the RealEdgeTamTracker class is ``# pragma: no cover`` (it needs
+    # torch + the EdgeTAM package + real weights, loaded lazily inside its methods);
+    # the module SURFACE (imports + constants + ``__all__``) imports light — cover
+    # it so the gate stays 100% without ever touching the heavy stack.
+    import media_studio.features.reframe_edgetam_backend as be
+
+    assert be.RealEdgeTamTracker.__name__ == "RealEdgeTamTracker"
+    assert "RealEdgeTamTracker" in be.__all__
+    assert be.EDGETAM_CONFIG.endswith("edgetam.yaml")
+    assert 0.0 < be.MIN_MASK_AREA_FRAC < 1.0
+
+
 def test_lightasd_infer_surface_imports_light() -> None:
     # The LR-ASD inference helpers are ``# pragma: no cover`` (they need
     # torch / cv2 + real weights); the module SURFACE (imports, constants,

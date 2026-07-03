@@ -799,11 +799,20 @@ def test_compute_plan_backend_probe_provisioning_failure_propagates(fake_bins):
     assert notices == []  # not turned into a per-clip degrade badge
 
 
-def test_engine_default_backend_probe_is_detect_backend(fake_bins):
-    """The engine's default backend probe is the real ``detect_backend`` (so the
-    degrade cause is resolved from the live import state when not injected)."""
-    eng, _ = _engine(fake_bins, detector=lambda p, t: [(0.0, 0.5)])
-    assert eng._backend_probe is cs.detect_backend
+def test_engine_default_backend_probe_calls_detect_backend_with_settings(fake_bins, monkeypatch):
+    """The engine's default backend probe calls the real ``detect_backend`` THREADING
+    its settings through (v1.2.0 WU2), so the ``reframeTracker`` opt-in is honoured
+    from the live import state when not injected."""
+    seen: dict = {}
+
+    def fake_detect_backend(importer=None, settings=None):
+        seen["settings"] = settings
+        return "yunet"
+
+    monkeypatch.setattr(cs, "detect_backend", fake_detect_backend)
+    eng, _ = _engine({**fake_bins, "reframeTracker": "yunet"}, detector=lambda p, t: [(0.0, 0.5)])
+    assert eng._backend_probe() == "yunet"
+    assert seen["settings"] == eng._settings  # settings reach detect_backend
 
 
 def test_engine_passes_total_sec_and_argv_list(fake_bins):
@@ -1191,7 +1200,7 @@ def test_detect_subject_centers_skips_unreadable_frame(monkeypatch):
 
 def test_detect_subject_centers_no_finder_backend_returns_empty(monkeypatch):
     # When _make_subject_finder yields no finder (None) the body returns [] early.
-    monkeypatch.setattr(cs, "_make_subject_finder", lambda backend, settings=None: (None, lambda: None))
+    monkeypatch.setattr(cs, "_make_subject_finder", lambda backend, settings=None, **_kw: (None, lambda: None))
 
     def boom(*a, **k):  # pragma: no cover - must never run (no finder -> no frames)
         raise AssertionError("no frame extraction without a finder")
@@ -1238,7 +1247,7 @@ def test_detect_subject_centers_threads_settings_into_finder(monkeypatch):
     # model resolver) — a regression guard for the settings-plumbing WU1 added.
     seen: dict = {}
 
-    def fake_finder(backend, settings=None):
+    def fake_finder(backend, settings=None, **_kw):
         seen["backend"] = backend
         seen["settings"] = settings
         return (lambda img: None, lambda: None)
@@ -1420,3 +1429,212 @@ def test_single_speaker_capability_note_is_honest():
     note = cs.SINGLE_SPEAKER_CAPABILITY_NOTE
     assert "single speaker" in note.lower()
     assert "v2" in note.lower()
+
+
+# --------------------------------------------------------------------------- #
+# v1.2.0 WU2 — OPT-IN EdgeTAM occlusion-robust tracker. Every EdgeTAM seam (the
+# importer, the checkpoint resolver, the tracker factory) is MOCKED, so the suite
+# never depends on torch / the EdgeTAM package / a downloaded checkpoint (the cv2
+# whack-a-mole hardening lesson). DEFAULT stays YuNet; EdgeTAM is a settings opt-in.
+# --------------------------------------------------------------------------- #
+class _FakeTracker:
+    """A stand-in EdgeTAM tracker: scripted per-frame cx + a recorded release."""
+
+    def __init__(self, cxs):
+        self._cxs = list(cxs)
+        self.released = False
+
+    def track(self, _img):
+        return self._cxs.pop(0) if self._cxs else None
+
+    def release(self):
+        self.released = True
+
+
+def test_edgetam_error_is_a_backend_unavailable_subclass():
+    # So compute_plan's existing "except ClaudeShortsBackendUnavailableError:
+    # raise" re-raises an opted-in EdgeTAM failure LOUD (never a per-clip degrade,
+    # never a silent fall back to YuNet - WU2 req 2).
+    assert issubclass(cs.EdgeTamBackendUnavailableError, cs.ClaudeShortsBackendUnavailableError)
+    assert issubclass(cs.EdgeTamBackendUnavailableError, cs.ClaudeShortsReframeError)
+
+
+def test_detect_backend_defaults_to_yunet_without_opt_in(monkeypatch):
+    # No reframeTracker setting -> the DEFAULT YuNet path (cv2 importable).
+    monkeypatch.setattr(cs, "resolve_edgetam_model_path", lambda s=None: pytest.fail("edgetam path must not run"))
+    assert cs.detect_backend(_importer({"cv2"}), settings={}) == "yunet"
+    assert cs.detect_backend(_importer({"cv2"}), settings={"reframeTracker": "yunet"}) == "yunet"
+
+
+def test_detect_backend_blank_tracker_falls_back_to_yunet():
+    # A whitespace-only reframeTracker exercises the "strip().lower() or
+    # TRACKER_YUNET" arm -> the YuNet default, not an unknown backend.
+    assert cs.detect_backend(_importer({"cv2"}), settings={"reframeTracker": "   "}) == "yunet"
+
+
+def test_detect_backend_unknown_tracker_falls_back_to_yunet():
+    # Any non-edgetam value is the YuNet default (only "edgetam" opts in).
+    assert cs.detect_backend(_importer({"cv2"}), settings={"reframeTracker": "sam99"}) == "yunet"
+
+
+def test_detect_backend_edgetam_opt_in_all_available(monkeypatch):
+    # cv2 + torch importable AND the checkpoint provisioned -> "edgetam".
+    monkeypatch.setattr(cs, "resolve_edgetam_model_path", lambda s=None: "/models/edgetam.pt")
+    assert cs.detect_backend(_importer({"cv2", "torch"}), settings={"reframeTracker": "edgetam"}) == "edgetam"
+
+
+def test_detect_backend_edgetam_case_insensitive(monkeypatch):
+    monkeypatch.setattr(cs, "resolve_edgetam_model_path", lambda s=None: "/models/edgetam.pt")
+    assert cs.detect_backend(_importer({"cv2", "torch"}), settings={"reframeTracker": "EdgeTAM"}) == "edgetam"
+
+
+def test_detect_backend_edgetam_missing_cv2_fails_loud():
+    # cv2 (frame decode) missing -> LOUD typed error, never a silent YuNet fallback.
+    with pytest.raises(cs.EdgeTamBackendUnavailableError) as exc:
+        cs.detect_backend(_importer(set()), settings={"reframeTracker": "edgetam"})
+    assert "cv2" in str(exc.value)
+
+
+def test_detect_backend_edgetam_missing_torch_fails_loud():
+    # cv2 present but torch missing -> LOUD typed error (exercises the 2nd loop arm).
+    with pytest.raises(cs.EdgeTamBackendUnavailableError) as exc:
+        cs.detect_backend(_importer({"cv2"}), settings={"reframeTracker": "edgetam"})
+    assert "torch" in str(exc.value)
+
+
+def test_detect_backend_edgetam_unprovisioned_checkpoint_fails_loud(monkeypatch):
+    # torch+cv2 importable but the checkpoint is not downloaded -> LOUD typed error.
+    monkeypatch.setattr(cs, "resolve_edgetam_model_path", lambda s=None: None)
+    with pytest.raises(cs.EdgeTamBackendUnavailableError) as exc:
+        cs.detect_backend(_importer({"cv2", "torch"}), settings={"reframeTracker": "edgetam"})
+    assert cs._edgetam_asset_name() in str(exc.value)
+
+
+def test_edgetam_asset_name_matches_manifest():
+    from media_studio.assets import manifest
+
+    assert cs._edgetam_asset_name() == manifest.EDGETAM_ASSET_NAME
+
+
+def test_resolve_edgetam_model_path_unregistered_returns_none(monkeypatch):
+    from media_studio.assets import manifest
+
+    monkeypatch.setattr(manifest, "get_asset", lambda _name: None)
+    assert cs.resolve_edgetam_model_path() is None  # settings=None -> falsy arm
+
+
+def test_resolve_edgetam_model_path_returns_installed_path(monkeypatch):
+    from media_studio.assets import manager, manifest
+
+    monkeypatch.setattr(manifest, "get_asset", lambda _name: object())
+
+    class _Mgr:
+        def __init__(self, **_kw):
+            pass
+
+        def installed_path(self, _entry):
+            return "/models/edgetam.pt"
+
+    monkeypatch.setattr(manager, "AssetManager", _Mgr)
+    assert cs.resolve_edgetam_model_path({"modelsDir": "x"}) == "/models/edgetam.pt"
+
+
+def test_resolve_edgetam_model_path_not_installed_returns_none(monkeypatch):
+    from media_studio.assets import manager, manifest
+
+    monkeypatch.setattr(manifest, "get_asset", lambda _name: object())
+
+    class _Mgr:
+        def __init__(self, **_kw):
+            pass
+
+        def installed_path(self, _entry):
+            return None
+
+    monkeypatch.setattr(manager, "AssetManager", _Mgr)
+    assert cs.resolve_edgetam_model_path({}) is None
+
+
+def test_make_edgetam_finder_propagates_tracker_and_wires_release():
+    tracker = _FakeTracker([0.2, 0.8])
+    find, close = cs._make_edgetam_finder({"reframeTracker": "edgetam"}, lambda s: tracker)
+    assert find("f0") == pytest.approx(0.2)
+    assert find("f1") == pytest.approx(0.8)
+    assert find("f2") is None  # tracker exhausted -> lost
+    close()
+    assert tracker.released is True  # close() == the tracker's release (6 GB stage free)
+
+
+def test_make_edgetam_finder_factory_failure_propagates_loud():
+    def boom(_settings):
+        raise cs.EdgeTamBackendUnavailableError("no torch")
+
+    with pytest.raises(cs.EdgeTamBackendUnavailableError):
+        cs._make_edgetam_finder({}, boom)
+
+
+def test_subject_finder_edgetam_primary_hit_skips_motion(monkeypatch):
+    tracker = _FakeTracker([0.66])
+    monkeypatch.setattr(cs, "_motion_center", lambda prev, img: pytest.fail("motion must not run on an edgetam hit"))
+    find, close = cs._make_subject_finder("edgetam", {}, edgetam_tracker_factory=lambda s: tracker)
+    assert find(object()) == pytest.approx(0.66)
+    close()
+    assert tracker.released is True
+
+
+def test_subject_finder_edgetam_miss_falls_back_to_motion(monkeypatch):
+    # EdgeTAM lost the subject this frame (None) -> the imgproc-only motion last
+    # resort covers the gap. Motion is NOT face tracking, so this is not the
+    # "silent fall back to face tracking" WU2 req 2 forbids.
+    tracker = _FakeTracker([None, None])
+    monkeypatch.setattr(cs, "_motion_center", lambda prev, img: 0.4)
+    find, _close = cs._make_subject_finder("edgetam", {}, edgetam_tracker_factory=lambda s: tracker)
+    assert find("frame0") is None  # no previous frame yet -> motion can't run
+    assert find("frame1") == pytest.approx(0.4)  # motion vs frame0
+
+
+def test_engine_edgetam_opt_in_tracks_end_to_end(fake_bins, monkeypatch):
+    # Full opt-in path: reframeTracker="edgetam", a fake tracker + fake frames,
+    # cv2.imread stubbed. The engine crops on the tracked subject, one ffmpeg pass.
+    import cv2
+    import numpy as np
+
+    settings = {**fake_bins, "reframeTracker": "edgetam"}
+    ts = cs.window_timestamps(8.0)
+    tracker = _FakeTracker([0.8] * len(ts))
+    monkeypatch.setattr(cs, "resolve_edgetam_model_path", lambda s=None: "/models/edgetam.pt")
+    monkeypatch.setattr(cv2, "imread", lambda path: np.zeros((72, 128, 3), dtype="uint8"))
+
+    def frame_runner(argv, capture_output=True, check=False):
+        with open(argv[-1], "wb") as fh:
+            fh.write(b"x")
+        return type("C", (), {"returncode": 0})()
+
+    runner = _make_ff_runner(0)
+    eng = ClaudeShortsReframeEngine(
+        settings=settings,
+        runner=runner,
+        prober=lambda _p: (1280, 720, 8.0),
+        detector=lambda p, t: cs.detect_subject_centers(
+            p, t, settings=settings, frame_runner=frame_runner, edgetam_tracker_factory=lambda s: tracker
+        ),
+    )
+    eng.reframe("/in.mp4", "/out.mp4")
+    vf = _vf_of(runner.calls[0]["argv"])
+    x = int(vf.split(":'")[1].split("'")[0])
+    assert abs(x - cs.crop_x_for_center(0.8, 405, 1280)) <= 2  # tracked, not center (437)
+
+
+def test_engine_edgetam_opt_in_unavailable_fails_loud(fake_bins, monkeypatch):
+    # Opted IN to EdgeTAM but torch is absent -> compute_plan raises the typed
+    # EdgeTamBackendUnavailableError up front (via the real _backend_probe), never a
+    # silent fall back to the YuNet default (WU2 req 2). No ffmpeg pass runs.
+    settings = {**fake_bins, "reframeTracker": "edgetam"}
+    monkeypatch.setattr(
+        cs,
+        "detect_backend",
+        lambda importer=None, settings=None: cs._detect_edgetam_backend(_importer({"cv2"}), settings or {}),
+    )
+    eng = ClaudeShortsReframeEngine(settings=settings, runner=_make_ff_runner(0), prober=lambda _p: (1280, 720, 8.0))
+    with pytest.raises(cs.EdgeTamBackendUnavailableError):
+        eng.compute_plan("/in.mp4")
