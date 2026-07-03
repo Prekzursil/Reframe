@@ -38,11 +38,12 @@ dev = [
   "hypothesis>=6.0",   # property/fuzz tests (deterministic CI profile in conftest)
 ]
 # R1 multi-speaker reframe GPU tier (the vendored S3FD + LR-ASD active-speaker
-# stack in media_studio/features/_lightasd/). These are NOT installed by build agents and
-# NOT in the CI gate env (the unit tests are heavy-ML-free); a human installs them
-# on the GPU host. PINNED to the GPU-validated versions (A6 lesson 5). ⚠ torch /
-# torchvision / torchaudio must be installed from the CUDA wheel index to get the
-# +cuXXX builds, e.g.:
+# stack in media_studio/features/_lightasd/ PLUS the SpeechBrain diarize stage —
+# reframe_multispeaker_backend._stage_diarize -> diarize_backend.SpeechBrainDiarizer).
+# These are NOT installed by build agents and NOT in the CI gate env (the unit tests
+# are heavy-ML-free); a human installs them on the GPU host. PINNED to the
+# GPU-validated versions (A6 lesson 5). ⚠ torch / torchvision / torchaudio must be
+# installed from the CUDA wheel index to get the +cuXXX builds, e.g.:
 #   pip install "media-studio-sidecar[reframe-gpu]" \
 #     --extra-index-url https://download.pytorch.org/whl/cu124
 reframe-gpu = [
@@ -52,6 +53,21 @@ reframe-gpu = [
   "opencv-python-headless==4.13.0.92",  # frame I/O + face-crop ops (headless: no GUI libs)
   "python_speech_features==0.6",  # MFCC features for the ASD audio frontend
   "scipy==1.18.0",                # face-track interpolation + median filter + wav read
+  # DIARIZE stage (VAD + ECAPA-TDNN) — the speaker turns the director fuses with
+  # visual ASD. Uses the ``speechbrain.inference`` API (requires >= 1.0.0). PINNED
+  # to 1.0.3 (GPU-validated on the RTX 4050): loads ``speechbrain/vad-crdnn-libriparty``
+  # + ``spkrec-ecapa-voxceleb`` cleanly. 1.1.0 is DELIBERATELY AVOIDED — its
+  # ``speechbrain.integrations.k2_fsa`` LAZY module makes ``VAD.from_hparams`` fail
+  # with ``pydoc.ErrorDuringImport`` (hyperpyyaml's ``pydoc.locate`` re-imports
+  # ``lobes.models.CRDNN`` -> touches the k2 LazyModule -> ``import k2`` (no Windows
+  # wheels) blows up). speechbrain missing at runtime fails LOUD (typed
+  # ``DiarizeBackendUnavailableError``), never a silent ModuleNotFoundError.
+  "speechbrain==1.0.3",
+  # speechbrain 1.0.x calls ``hf_hub_download(use_auth_token=...)``, an argument
+  # REMOVED in huggingface_hub 1.0. Cap below 1.0 so the diarize models actually
+  # fetch/load (validated at 0.36.2, the newest 0.x). huggingface_hub is otherwise a
+  # transitive dep (faster-whisper) that resolves to 1.x and would break the VAD load.
+  "huggingface-hub>=0.30,<1.0",
 ]
 
 [project.scripts]

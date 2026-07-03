@@ -518,6 +518,90 @@ def test_diarize_backend_module_imports_light():
 
     assert db.TARGET_SR == 16000
     assert "SpeechBrainDiarizer" in db.__all__
+    assert "DiarizeBackendUnavailableError" in db.__all__
     # Construction is cheap (no models loaded until detect_and_embed).
     inst = db.SpeechBrainDiarizer({"device": "cpu"})
     assert inst is not None
+
+
+# --------------------------------------------------------------------------- #
+# diarize_backend: FAIL LOUD (typed) when speechbrain is unavailable
+# (v1.2.0 NO-SILENT-FALLBACK — a raw ModuleNotFoundError must NOT escape).
+# --------------------------------------------------------------------------- #
+def test_import_speechbrain_raises_typed_error_when_missing(monkeypatch):
+    # The speechbrain-ABSENT path: a sentinel ``None`` in sys.modules for the two
+    # leaf modules makes the guarded import raise ImportError, which the guard
+    # converts into a TYPED, actionable DiarizeBackendUnavailableError — never a
+    # raw ModuleNotFoundError. Poisoning sys.modules exercises the except branch
+    # DETERMINISTICALLY regardless of whether real speechbrain is installed here.
+    import sys
+
+    from media_studio.features import diarize_backend as db
+
+    monkeypatch.setitem(sys.modules, "speechbrain.inference.classifiers", None)
+    monkeypatch.setitem(sys.modules, "speechbrain.inference.VAD", None)
+    with pytest.raises(db.DiarizeBackendUnavailableError) as excinfo:
+        db._import_speechbrain()
+    # Actionable message NAMES speechbrain and the fix; chained from the ImportError.
+    msg = str(excinfo.value).lower()
+    assert "speechbrain" in msg
+    assert "install" in msg or "provision" in msg
+    assert isinstance(excinfo.value.__cause__, ImportError)
+
+
+def test_import_speechbrain_returns_api_when_present(monkeypatch):
+    # The speechbrain-PRESENT path: inject fake ``speechbrain.inference`` modules so
+    # the success branch is covered with no native stack. The guard must return the
+    # (VAD, EncoderClassifier) classes it imported, in that order.
+    import sys
+    import types as _types
+
+    from media_studio.features import diarize_backend as db
+
+    class _FakeVAD: ...
+
+    class _FakeEncoder: ...
+
+    sb = _types.ModuleType("speechbrain")
+    inference = _types.ModuleType("speechbrain.inference")
+    vad_mod = _types.ModuleType("speechbrain.inference.VAD")
+    cls_mod = _types.ModuleType("speechbrain.inference.classifiers")
+    vad_mod.VAD = _FakeVAD
+    cls_mod.EncoderClassifier = _FakeEncoder
+    sb.inference = inference
+    inference.VAD = vad_mod
+    inference.classifiers = cls_mod
+    monkeypatch.setitem(sys.modules, "speechbrain", sb)
+    monkeypatch.setitem(sys.modules, "speechbrain.inference", inference)
+    monkeypatch.setitem(sys.modules, "speechbrain.inference.VAD", vad_mod)
+    monkeypatch.setitem(sys.modules, "speechbrain.inference.classifiers", cls_mod)
+
+    vad_cls, encoder_cls = db._import_speechbrain()
+    assert vad_cls is _FakeVAD
+    assert encoder_cls is _FakeEncoder
+
+
+def test_ensure_models_fails_loud_when_speechbrain_missing(monkeypatch):
+    # The multi-speaker diarize path enters through SpeechBrainDiarizer._ensure_models
+    # (SpeechBrainDiarizer.detect_and_embed -> _ensure_models); with speechbrain
+    # unavailable it must surface the SAME typed error, not a raw ModuleNotFoundError.
+    import sys
+
+    from media_studio.features import diarize_backend as db
+
+    monkeypatch.setitem(sys.modules, "speechbrain.inference.classifiers", None)
+    monkeypatch.setitem(sys.modules, "speechbrain.inference.VAD", None)
+    inst = db.SpeechBrainDiarizer({"device": "cpu"})
+    with pytest.raises(db.DiarizeBackendUnavailableError):
+        inst._ensure_models()
+
+
+def test_fetch_safe_audio_path_forward_slashes_windows_paths():
+    # SpeechBrain's VAD.get_speech_segments routes the path through split_path/fetch,
+    # which mangles a Windows backslash absolute path (prepends CWD). Forward-slashing
+    # is the fix; it is a no-op on already-POSIX paths.
+    from media_studio.features import diarize_backend as db
+
+    assert db._fetch_safe_audio_path(r"C:\dir\sub\a.wav") == "C:/dir/sub/a.wav"
+    assert db._fetch_safe_audio_path("/tmp/x.wav") == "/tmp/x.wav"
+    assert db._fetch_safe_audio_path("relative/name.wav") == "relative/name.wav"
