@@ -1612,11 +1612,13 @@ def test_engine_edgetam_opt_in_tracks_end_to_end(fake_bins, monkeypatch):
         "detect_backend",
         lambda importer=None, settings=None: cs._detect_edgetam_backend(_importer({"cv2", "torch"}), settings or {}),
     )
-    monkeypatch.setattr(cv2, "imread", lambda path: np.zeros((72, 128, 3), dtype="uint8"))
 
+    # Write a REAL blank jpeg via cv2.imwrite (the finder ignores pixels; the fake
+    # tracker returns a fixed cx), so the extracted frame reads back through the
+    # genuine cv2.imread — matching the existing detect_subject_centers tests and
+    # avoiding an open()-on-argv path sink (a py/path-injection CodeQL flags).
     def frame_runner(argv, capture_output=True, check=False):
-        with open(argv[-1], "wb") as fh:
-            fh.write(b"x")
+        cv2.imwrite(argv[-1], np.zeros((72, 128, 3), dtype="uint8"))
         return type("C", (), {"returncode": 0})()
 
     runner = _make_ff_runner(0)
