@@ -632,6 +632,17 @@ def _make_face_finder(backend: str) -> tuple[Callable[[Any], float | None] | Non
     if backend == "haar":
         import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
 
+        # NO-SILENT-FALLBACK: some opencv builds (headless/objdetect-stripped) import
+        # cleanly but omit the native face-cascade class, so a bare call would raise
+        # an opaque ``AttributeError``. Fail loud with an actionable provisioning
+        # error instead — never a quiet center crop (WU no-silent-fallback).
+        if not hasattr(cv2, "CascadeClassifier"):
+            raise ClaudeShortsBackendUnavailableError(
+                "OpenCV is installed but lacks the objdetect face detector "
+                "(cv2.CascadeClassifier) — the opencv-python build is incomplete or "
+                "stripped; install the full opencv-python to enable speaker tracking "
+                "(this is a provisioning/setup error, not a per-clip degrade)"
+            )
         # cv2.data is a real runtime submodule; the opencv type stubs omit it.
         cascade_path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")  # pyright: ignore[reportAttributeAccessIssue]
         cascade = cv2.CascadeClassifier(cascade_path)  # pyright: ignore[reportAttributeAccessIssue]
@@ -688,6 +699,17 @@ def _person_center(img: Any) -> float | None:
     h, w = int(img.shape[0]), int(img.shape[1])
     if w < _HOG_MIN_W or h < _HOG_MIN_H:
         return None
+    # NO-SILENT-FALLBACK: an objdetect-stripped opencv build imports but omits the
+    # HOG people detector, so a bare call would raise an opaque ``AttributeError``.
+    # Fail loud with an actionable provisioning error rather than silently skipping
+    # the body fallback (which would masquerade as "no person" -> center crop).
+    if not hasattr(cv2, "HOGDescriptor"):
+        raise ClaudeShortsBackendUnavailableError(
+            "OpenCV is installed but lacks the HOG people detector "
+            "(cv2.HOGDescriptor) — the opencv-python build is incomplete or stripped; "
+            "install the full opencv-python to enable body-fallback subject tracking "
+            "(this is a provisioning/setup error, not a per-clip degrade)"
+        )
     hog = cv2.HOGDescriptor()  # pyright: ignore[reportAttributeAccessIssue]
     hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())  # pyright: ignore[reportAttributeAccessIssue]
     rects, weights = hog.detectMultiScale(img, winStride=(8, 8))

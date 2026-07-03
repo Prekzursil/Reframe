@@ -1101,9 +1101,24 @@ def test_make_face_finder_mediapipe_no_detection_returns_none(monkeypatch):
     assert find(np.zeros((50, 50, 3), dtype=np.uint8)) is None
 
 
-def test_make_face_finder_haar_returns_callable_finder():
+def test_make_face_finder_haar_returns_callable_finder(monkeypatch):
+    import cv2
     import numpy as np
 
+    # Mock the cascade (present, no-face) so this exercises the finder wiring
+    # WITHOUT depending on the installed cv2 build actually shipping the native
+    # objdetect class (a headless/stripped cv2 omits it — see CI).
+    class _NoFaceCascade:
+        def __init__(self, *_a):
+            pass
+
+        def empty(self):
+            return False
+
+        def detectMultiScale(self, gray, scaleFactor, minNeighbors):
+            return ()  # no faces
+
+    monkeypatch.setattr(cv2, "CascadeClassifier", _NoFaceCascade, raising=False)
     find, close = cs._make_face_finder("haar")
     assert callable(find)
     # A blank frame has no face -> the haar finder returns None (no detection).
@@ -1129,7 +1144,7 @@ def test_make_face_finder_haar_returns_normalized_center_on_detection(monkeypatc
             # two boxes; the larger (by w*h) wins. frame width below is 200.
             return [(10, 10, 20, 20), (100, 10, 40, 40)]  # second is larger
 
-    monkeypatch.setattr(cv2, "CascadeClassifier", _FaceCascade)
+    monkeypatch.setattr(cv2, "CascadeClassifier", _FaceCascade, raising=False)
     find, close = cs._make_face_finder("haar")
     img = np.zeros((120, 200, 3), dtype=np.uint8)  # width 200
     cx = find(img)
@@ -1152,7 +1167,7 @@ def test_make_face_finder_haar_no_faces_returns_none(monkeypatch):
         def detectMultiScale(self, gray, scaleFactor, minNeighbors):
             return ()  # empty -> finder returns None
 
-    monkeypatch.setattr(cv2, "CascadeClassifier", _NoFaceCascade)
+    monkeypatch.setattr(cv2, "CascadeClassifier", _NoFaceCascade, raising=False)
     find, _close = cs._make_face_finder("haar")
     assert find(np.zeros((50, 50, 3), dtype=np.uint8)) is None
 
@@ -1173,18 +1188,45 @@ def test_make_face_finder_haar_missing_cascade_raises_provisioning_error(monkeyp
         def empty(self):
             return True
 
-    monkeypatch.setattr(cv2, "CascadeClassifier", _EmptyCascade)
+    monkeypatch.setattr(cv2, "CascadeClassifier", _EmptyCascade, raising=False)
     with pytest.raises(cs.ClaudeShortsBackendUnavailableError) as exc:
         cs._make_face_finder("haar")
     assert "cascade" in str(exc.value).lower()
 
 
+def test_make_face_finder_haar_missing_cv2_objdetect_raises(monkeypatch):
+    """A cv2 build that imports but lacks cv2.CascadeClassifier (headless/stripped)
+    is a PROVISIONING failure: fail loud with the typed backend error instead of a
+    bare AttributeError or a silent center crop (WU no-silent-fallback)."""
+    import cv2
+
+    monkeypatch.delattr(cv2, "CascadeClassifier", raising=False)
+    with pytest.raises(cs.ClaudeShortsBackendUnavailableError) as exc:
+        cs._make_face_finder("haar")
+    assert "cascadeclassifier" in str(exc.value).lower()
+
+
 # --------------------------------------------------------------------------- #
 # detect_subject_centers — the non-center body (real cv2.imread of fake frames)
 # --------------------------------------------------------------------------- #
-def test_detect_subject_centers_haar_reads_extracted_frames():
+def test_detect_subject_centers_haar_reads_extracted_frames(monkeypatch):
     import cv2
     import numpy as np
+
+    # Mock a present, no-face cascade so the body runs on a cv2 build that lacks
+    # the native objdetect class (CI). Frames are 80x160 (shorter than the 64x128
+    # HOG window) so the person fallback is guarded out before touching HOG.
+    class _NoFaceCascade:
+        def __init__(self, *_a):
+            pass
+
+        def empty(self):
+            return False
+
+        def detectMultiScale(self, gray, scaleFactor, minNeighbors):
+            return ()
+
+    monkeypatch.setattr(cv2, "CascadeClassifier", _NoFaceCascade, raising=False)
 
     # A frame_runner that writes a REAL (blank) jpeg to the requested path so
     # cv2.imread succeeds; the haar finder finds no face -> no samples appended.
@@ -1199,7 +1241,23 @@ def test_detect_subject_centers_haar_reads_extracted_frames():
     assert samples == []
 
 
-def test_detect_subject_centers_skips_missing_and_unreadable_frames():
+def test_detect_subject_centers_skips_missing_and_unreadable_frames(monkeypatch):
+    import cv2
+
+    # Mock a present, no-face cascade so building the haar finder does not depend
+    # on the installed cv2 shipping the native objdetect class (CI lacks it).
+    class _NoFaceCascade:
+        def __init__(self, *_a):
+            pass
+
+        def empty(self):
+            return False
+
+        def detectMultiScale(self, gray, scaleFactor, minNeighbors):
+            return ()
+
+    monkeypatch.setattr(cv2, "CascadeClassifier", _NoFaceCascade, raising=False)
+
     # A frame_runner that NEVER writes the frame file -> os.path.exists False ->
     # the frame is skipped (the "frame not produced" continue branch).
     def no_write_runner(argv, capture_output=True, check=False):
@@ -1282,12 +1340,39 @@ def test_person_center_skips_subwindow_frame_no_crash():
     assert cs._person_center(small) is None
 
 
-def test_person_center_no_person_returns_none():
+def test_person_center_no_person_returns_none(monkeypatch):
+    import cv2
     import numpy as np
 
-    # A blank window-sized frame -> the real HOG finds no person.
+    # Mock a present HOG detector that finds no person, so this does not depend on
+    # the installed cv2 shipping the native HOG class (CI's build omits it).
+    class _HOG:
+        def setSVMDetector(self, _d):
+            pass
+
+        def detectMultiScale(self, _img, winStride):
+            return (), None  # no bodies
+
+    monkeypatch.setattr(cv2, "HOGDescriptor", lambda: _HOG(), raising=False)
+    monkeypatch.setattr(cv2, "HOGDescriptor_getDefaultPeopleDetector", lambda: object(), raising=False)
+    # A blank window-sized frame -> the (mocked) HOG finds no person.
     blank = np.zeros((256, 256, 3), dtype=np.uint8)
     assert cs._person_center(blank) is None
+
+
+def test_person_center_missing_cv2_hog_raises(monkeypatch):
+    """A cv2 build that imports but lacks cv2.HOGDescriptor (headless/stripped) is a
+    PROVISIONING failure: on a window-sized frame the body fallback must fail loud
+    with the typed backend error, never a bare AttributeError or a silent skip."""
+    import cv2
+    import numpy as np
+
+    monkeypatch.delattr(cv2, "HOGDescriptor", raising=False)
+    # window-sized frame so the sub-window guard does NOT short-circuit first.
+    frame = np.zeros((256, 256, 3), dtype=np.uint8)
+    with pytest.raises(cs.ClaudeShortsBackendUnavailableError) as exc:
+        cs._person_center(frame)
+    assert "hogdescriptor" in str(exc.value).lower()
 
 
 def test_person_center_returns_normalized_center_on_detection(monkeypatch):
@@ -1304,8 +1389,8 @@ def test_person_center_returns_normalized_center_on_detection(monkeypatch):
             weights = [0.2, 0.9]
             return rects, weights
 
-    monkeypatch.setattr(cv2, "HOGDescriptor", lambda: _HOG())
-    monkeypatch.setattr(cv2, "HOGDescriptor_getDefaultPeopleDetector", lambda: object())
+    monkeypatch.setattr(cv2, "HOGDescriptor", lambda: _HOG(), raising=False)
+    monkeypatch.setattr(cv2, "HOGDescriptor_getDefaultPeopleDetector", lambda: object(), raising=False)
     img = np.zeros((200, 400, 3), dtype=np.uint8)  # width 400
     cx = cs._person_center(img)
     # best body center x = 300 + 60/2 = 330; normalized = 330/400 = 0.825
@@ -1323,8 +1408,8 @@ def test_person_center_no_rects_returns_none(monkeypatch):
         def detectMultiScale(self, _img, winStride):
             return (), None  # no rects, no weights
 
-    monkeypatch.setattr(cv2, "HOGDescriptor", lambda: _HOG())
-    monkeypatch.setattr(cv2, "HOGDescriptor_getDefaultPeopleDetector", lambda: object())
+    monkeypatch.setattr(cv2, "HOGDescriptor", lambda: _HOG(), raising=False)
+    monkeypatch.setattr(cv2, "HOGDescriptor_getDefaultPeopleDetector", lambda: object(), raising=False)
     assert cs._person_center(np.zeros((200, 200, 3), dtype=np.uint8)) is None
 
 
@@ -1339,8 +1424,8 @@ def test_person_center_missing_weights_uses_zero(monkeypatch):
         def detectMultiScale(self, _img, winStride):
             return [(40, 0, 80, 120)], None  # rect present, weights None
 
-    monkeypatch.setattr(cv2, "HOGDescriptor", lambda: _HOG())
-    monkeypatch.setattr(cv2, "HOGDescriptor_getDefaultPeopleDetector", lambda: object())
+    monkeypatch.setattr(cv2, "HOGDescriptor", lambda: _HOG(), raising=False)
+    monkeypatch.setattr(cv2, "HOGDescriptor_getDefaultPeopleDetector", lambda: object(), raising=False)
     img = np.zeros((200, 200, 3), dtype=np.uint8)
     # single rect, center x = 40 + 80/2 = 80; normalized = 80/200 = 0.4
     assert cs._person_center(img) == pytest.approx(0.4)
@@ -1522,7 +1607,7 @@ def test_make_face_finder_haar_two_faces_picks_larger(monkeypatch):
             # left small (20x20 @x=20), right large (60x60 @x=300). width = 400.
             return [(20, 20, 20, 20), (300, 20, 60, 60)]
 
-    monkeypatch.setattr(cv2, "CascadeClassifier", _TwoFaces)
+    monkeypatch.setattr(cv2, "CascadeClassifier", _TwoFaces, raising=False)
     find, _close = cs._make_face_finder("haar")
     cx = find(np.zeros((120, 400, 3), dtype=np.uint8))
     # larger face center x = 300 + 30 = 330 -> 330/400 = 0.825.
@@ -1543,7 +1628,7 @@ def test_make_face_finder_haar_active_speaker_motion_tiebreak(monkeypatch):
         def detectMultiScale(self, gray, scaleFactor, minNeighbors):
             return [(20, 20, 40, 40), (120, 20, 40, 40)]  # equal size; width = 200
 
-    monkeypatch.setattr(cv2, "CascadeClassifier", _TwoEqual)
+    monkeypatch.setattr(cv2, "CascadeClassifier", _TwoEqual, raising=False)
     find, _close = cs._make_face_finder("haar")
     f0 = np.zeros((100, 200, 3), dtype=np.uint8)
     f1 = np.zeros((100, 200, 3), dtype=np.uint8)
@@ -1582,8 +1667,8 @@ def test_person_center_prefers_larger_closer_body_over_higher_weight(monkeypatch
             # left BIG body (closer) lower weight; right small higher weight. width=400.
             return [(10, 0, 160, 300), (320, 0, 40, 90)], [0.3, 0.95]
 
-    monkeypatch.setattr(cv2, "HOGDescriptor", lambda: _HOG())
-    monkeypatch.setattr(cv2, "HOGDescriptor_getDefaultPeopleDetector", lambda: object())
+    monkeypatch.setattr(cv2, "HOGDescriptor", lambda: _HOG(), raising=False)
+    monkeypatch.setattr(cv2, "HOGDescriptor_getDefaultPeopleDetector", lambda: object(), raising=False)
     cx = cs._person_center(np.zeros((320, 400, 3), dtype=np.uint8))
     # dominant = larger (closer) body -> center x = 10 + 80 = 90 -> 90/400 = 0.225.
     assert cx == pytest.approx(0.225)
