@@ -190,9 +190,7 @@ export function isRenderableRunners(plan: LocalModelPlan): boolean {
 
 export function isRenderableRecommendation(rec: Recommendation): boolean {
   return (
-    rec.routing?.perFunction != null &&
-    Array.isArray(rec.downloads) &&
-    Array.isArray(rec.rationale)
+    rec.routing?.perFunction != null && Array.isArray(rec.downloads) && Array.isArray(rec.rationale)
   );
 }
 

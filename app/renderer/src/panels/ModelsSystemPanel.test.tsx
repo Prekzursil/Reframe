@@ -303,9 +303,9 @@ describe('renderable-shape guards', () => {
       isRenderableRecommendation({ ...rec, routing: undefined } as unknown as Recommendation),
     ).toBe(false);
     // routing present but perFunction absent -> rejected.
-    expect(
-      isRenderableRecommendation({ ...rec, routing: {} } as unknown as Recommendation),
-    ).toBe(false);
+    expect(isRenderableRecommendation({ ...rec, routing: {} } as unknown as Recommendation)).toBe(
+      false,
+    );
     expect(
       isRenderableRecommendation({ ...rec, downloads: undefined } as unknown as Recommendation),
     ).toBe(false);
@@ -1635,9 +1635,10 @@ describe('<ModelsSystemPanel />', () => {
       ],
     });
     // The advisor re-run that the readiness action triggers returns a broken report.
-    (c.client.system.advisor as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-      { recommendedPreset: 'x', vramBudgetMb: 1 } as unknown as AdvisorReport,
-    );
+    (c.client.system.advisor as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      recommendedPreset: 'x',
+      vramBudgetMb: 1,
+    } as unknown as AdvisorReport);
     await mount(c);
     await act(async () => {
       await Promise.resolve();
@@ -2353,9 +2354,10 @@ describe('<ModelsSystemPanel /> WU-B3 card', () => {
     await mount(c);
     await analyze();
     // After the download re-runs system.advisor, a broken report must not crash.
-    (c.client.system.advisor as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-      { recommendedPreset: 'x', vramBudgetMb: 1 } as unknown as AdvisorReport,
-    );
+    (c.client.system.advisor as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      recommendedPreset: 'x',
+      vramBudgetMb: 1,
+    } as unknown as AdvisorReport);
     const dl = container.querySelector(
       '[data-section="models"] button[data-action="download"][data-state="download"]',
     ) as HTMLButtonElement | null;
