@@ -634,7 +634,7 @@ def _make_face_finder(backend: str) -> tuple[Callable[[Any], float | None] | Non
 
         # cv2.data is a real runtime submodule; the opencv type stubs omit it.
         cascade_path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")  # pyright: ignore[reportAttributeAccessIssue]
-        cascade = cv2.CascadeClassifier(cascade_path)
+        cascade = cv2.CascadeClassifier(cascade_path)  # pyright: ignore[reportAttributeAccessIssue]
         if cascade.empty():
             # NO-SILENT-FALLBACK: a missing/unreadable cascade is a broken OpenCV
             # provisioning (the cascade ships WITH opencv-python), NOT a per-clip
@@ -688,7 +688,7 @@ def _person_center(img: Any) -> float | None:
     h, w = int(img.shape[0]), int(img.shape[1])
     if w < _HOG_MIN_W or h < _HOG_MIN_H:
         return None
-    hog = cv2.HOGDescriptor()
+    hog = cv2.HOGDescriptor()  # pyright: ignore[reportAttributeAccessIssue]
     hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())  # pyright: ignore[reportAttributeAccessIssue]
     rects, weights = hog.detectMultiScale(img, winStride=(8, 8))
     if rects is None or len(rects) == 0:
