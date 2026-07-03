@@ -6,7 +6,13 @@
 // disclosure). ShortMaker re-exports these so existing importers keep one entry.
 import React, { useState } from 'react';
 
-import { type ReviewItem, displayVirality, factorEntries, fmtTime } from './shortMakerLogic';
+import {
+  type ReviewItem,
+  displaySignalScore,
+  displayVirality,
+  factorEntries,
+  fmtTime,
+} from './shortMakerLogic';
 
 interface CandidateListProps {
   items: ReviewItem[];
@@ -63,6 +69,10 @@ export function CandidateRow(props: CandidateRowProps): React.JSX.Element {
   // P3-C: virality % is the headline number; the legacy LLM score demotes to a
   // tooltip on it. Candidates from pre-P3 payloads keep the old score chip.
   const virality = displayVirality(c.viralityPct);
+  // v1.2.0 WU3: the unified scorer's HIGHLIGHT score (0..1 -> 0-100), shown as a
+  // second, distinctly-labelled badge alongside the percentile. Absent (null) on
+  // the frozen select path, so the badge only appears when the signal is present.
+  const highlight = displaySignalScore(c.signalScore);
   const factors = factorEntries(c);
   const [factorsOpen, setFactorsOpen] = useState(false);
   return (
@@ -78,13 +88,26 @@ export function CandidateRow(props: CandidateRowProps): React.JSX.Element {
       <div className="sm-rank-score">
         <span className="sm-rank">#{c.rank}</span>
         {virality !== null ? (
-          <span className="sm-virality" aria-label="Virality" title={`Legacy score: ${c.score}`}>
+          <span
+            className="sm-virality"
+            aria-label="Virality percentile"
+            title={`Virality percentile in this batch · legacy score ${c.score}`}
+          >
             {virality}
             <span className="sm-virality-pct">%</span>
           </span>
         ) : (
           <span className="sm-score" aria-label="Score">
             {c.score}
+          </span>
+        )}
+        {highlight !== null && (
+          <span
+            className="sm-highlight"
+            aria-label="Highlight score"
+            title="Highlight score (0-100): signal-fused clip strength"
+          >
+            {highlight}
           </span>
         )}
         <span className={`sm-status sm-status-${item.status}`}>{item.status}</span>

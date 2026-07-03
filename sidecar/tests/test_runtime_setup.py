@@ -72,6 +72,11 @@ class TestShippedRequirementFiles:
         assert pins["opencv-python"] == "4.13.0.92"
         assert pins["nvidia-cublas-cu12"] == "12.9.2.10"
         assert pins["nvidia-cudnn-cu12"] == "9.23.2.1"
+        # DELIBERATELY ABSENT: mediapipe. Its legacy Solutions API (used by the
+        # claudeshorts backend) only exists in wheels that pin numpy<2, which
+        # conflicts with numpy==2.5.0; numpy-2-clean mediapipe removed Solutions.
+        # Pinning it would install a mediapipe that crashes -> silent haar drop.
+        assert "mediapipe" not in pins
         assert "kokoro-onnx" in pins  # pinned TTS engine (exact version chosen by T5)
         # A6.5 / §7: torch must NEVER enter the main sidecar env
         assert "torch" not in pins
@@ -395,6 +400,21 @@ class TestAssets:
         assert tr.LLAMA_CUDA_ASSET in names
         assert tr.LLAMA_CPU_ASSET in names
 
+    def test_default_first_run_assets_include_lightasd_weights(self):
+        # WU first-run-provisioning: the multi-speaker reframe engine's S3FD +
+        # LR-ASD weights were registered but never in the first-run set, so a
+        # fresh install silently fell back to a single-speaker/center crop. They
+        # must be provisioned up front.
+        names = bs.default_first_run_assets()
+        assert manifest.LIGHTASD_S3FD_ASSET_NAME in names
+        assert manifest.LIGHTASD_ASD_ASSET_NAME in names
+
+    def test_default_first_run_assets_include_yunet(self):
+        # v1.2.0 WU1: the claudeshorts reframe engine's YuNet face detector must be
+        # provisioned up front so the detector is present or fails LOUD — never a
+        # silent center crop (NO-SILENT-FALLBACK).
+        assert manifest.YUNET_ASSET_NAME in bs.default_first_run_assets()
+
     def test_ensure_assets_delegates_to_manager(self, tmp_path):
         class FakeManager:
             def __init__(self):
@@ -409,6 +429,62 @@ class TestAssets:
         mgr = FakeManager()
         bs.ensure_assets(["a", "b"], tmp_path, manager=mgr)
         assert mgr.calls == [["a", "b"]]
+
+
+# --------------------------------------------------------------------------- #
+# fail-loud provisioning verification + first-run-complete marker
+# --------------------------------------------------------------------------- #
+class _FakeMgr:
+    """A minimal AssetManager stand-in: installed_path echoes a per-name map."""
+
+    def __init__(self, installed: dict[str, str | None]):
+        self._installed = installed
+
+    def installed_path(self, entry: Any) -> str | None:
+        return self._installed.get(entry.name)
+
+
+class TestVerifyProvisioned:
+    def test_passes_when_all_assets_installed(self, tmp_path):
+        names = [manifest.LIGHTASD_S3FD_ASSET_NAME, manifest.LIGHTASD_ASD_ASSET_NAME]
+        mgr = _FakeMgr({n: f"{tmp_path}/{n}.bin" for n in names})
+        # No raise == provisioning verified.
+        bs.verify_provisioned(names, tmp_path, manager=mgr)
+
+    def test_raises_naming_every_missing_asset(self, tmp_path):
+        names = [manifest.LIGHTASD_S3FD_ASSET_NAME, manifest.LIGHTASD_ASD_ASSET_NAME]
+        # S3FD installed, ASD missing -> only the missing one is named.
+        mgr = _FakeMgr({manifest.LIGHTASD_S3FD_ASSET_NAME: f"{tmp_path}/s3fd.bin"})
+        with pytest.raises(bs.BootstrapError, match=manifest.LIGHTASD_ASD_ASSET_NAME):
+            bs.verify_provisioned(names, tmp_path, manager=mgr)
+
+    def test_raises_for_unregistered_asset(self, tmp_path):
+        with pytest.raises(bs.BootstrapError, match="not-a-real-asset"):
+            bs.verify_provisioned(["not-a-real-asset"], tmp_path, manager=_FakeMgr({}))
+
+    def test_default_manager_is_constructed_when_none(self, tmp_path, monkeypatch):
+        seen: dict[str, Any] = {}
+
+        def fake_default(root):
+            seen["root"] = root
+            return _FakeMgr({manifest.WHISPER_ASSET_NAME: "x"})
+
+        monkeypatch.setattr(bs, "_default_asset_manager", fake_default)
+        bs.verify_provisioned([manifest.WHISPER_ASSET_NAME], tmp_path)
+        assert seen["root"] == tmp_path
+
+
+class TestFirstRunCompleteMarker:
+    def test_write_and_path_round_trip(self, tmp_path):
+        names = ["whisper-large-v3-turbo", manifest.LIGHTASD_ASD_ASSET_NAME]
+        marker = bs.write_first_run_complete(tmp_path, names)
+        assert marker == bs.first_run_complete_path(tmp_path)
+        assert marker.is_file()
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+        assert payload["assets"] == names
+
+    def test_marker_absent_before_write(self, tmp_path):
+        assert not bs.first_run_complete_path(tmp_path).exists()
 
 
 # --------------------------------------------------------------------------- #
@@ -432,6 +508,62 @@ class TestCli:
         code = bs.main(["--tools-only", "--root", str(tmp_path)])
         assert code == 0
         assert "SUCCESS:bootstrap tools-only" in capsys.readouterr().out
+
+
+class TestMainFullRunProvisioning:
+    """A full first run (no --skip flags) must VERIFY assets then write the
+    first-run-complete marker — the honest 'everything provisioned' signal the
+    Electron supervisor gates re-runs on. A verification failure must fail loud
+    AND leave NO marker (so the next launch retries instead of silently running
+    a half-provisioned app)."""
+
+    def _fake_py(self, tmp_path: Path) -> Path:
+        fake_py = tmp_path / "py" / "python.exe"
+        fake_py.parent.mkdir(parents=True)
+        fake_py.write_text("", encoding="utf-8")
+        return fake_py
+
+    def _stub_env_and_assets(self, tmp_path, monkeypatch) -> dict[str, Any]:
+        captured: dict[str, Any] = {}
+        monkeypatch.setattr(bs, "write_pth", lambda *a, **k: None)
+        monkeypatch.setattr(bs, "install_env", lambda **k: Path(k["root"]) / "envs" / "sidecar")
+        monkeypatch.setattr(bs, "activate_env_in_process", lambda *a, **k: None)
+        monkeypatch.setattr(bs, "ensure_assets", lambda names, root, **k: captured.__setitem__("ensured", list(names)))
+        monkeypatch.setattr(bs, "extract_tool_archives", lambda *a, **k: [])
+        return captured
+
+    def test_full_run_verifies_then_writes_marker(self, tmp_path, monkeypatch, capsys):
+        captured = self._stub_env_and_assets(tmp_path, monkeypatch)
+        monkeypatch.setattr(
+            bs, "verify_provisioned", lambda names, root, **k: captured.__setitem__("verified", list(names))
+        )
+        rc = bs.main(["--root", str(tmp_path), "--python", str(self._fake_py(tmp_path))])
+        assert rc == 0
+        assert "SUCCESS:bootstrap first-run setup complete" in capsys.readouterr().out
+        # verification ran over exactly the ensured asset set...
+        assert captured["verified"] == captured["ensured"]
+        # ...and the honest completion marker is written.
+        assert bs.first_run_complete_path(tmp_path).is_file()
+
+    def test_failed_verification_is_loud_and_leaves_no_marker(self, tmp_path, monkeypatch, capsys):
+        self._stub_env_and_assets(tmp_path, monkeypatch)
+
+        def boom(names, root, **k):
+            raise bs.BootstrapError("weight lightasd-asd did not install")
+
+        monkeypatch.setattr(bs, "verify_provisioned", boom)
+        rc = bs.main(["--root", str(tmp_path), "--python", str(self._fake_py(tmp_path))])
+        assert rc == 1
+        assert "FAILED:bootstrap" in capsys.readouterr().out
+        assert not bs.first_run_complete_path(tmp_path).exists()
+
+    def test_partial_run_skips_marker(self, tmp_path, monkeypatch):
+        # --skip-assets is an explicit PARTIAL provision; it must NOT mark the
+        # first run complete (that would let the supervisor skip a real re-run).
+        self._stub_env_and_assets(tmp_path, monkeypatch)
+        rc = bs.main(["--skip-assets", "--root", str(tmp_path), "--python", str(self._fake_py(tmp_path))])
+        assert rc == 0
+        assert not bs.first_run_complete_path(tmp_path).exists()
 
 
 class TestMainOrdering:

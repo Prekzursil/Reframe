@@ -33,6 +33,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
+from ..pathsafe import clean_for_log
 from ..util import get_logger
 
 log = get_logger("media_studio.models.runner")
@@ -344,7 +345,7 @@ class ModelRunner:
                 gpu_layers=DEFAULT_GPU_LAYERS if gpu_layers is None else int(gpu_layers),
                 extra_args=extra_args,
             )
-            log.info("starting llama.cpp server: %s", " ".join(argv))
+            log.info("starting llama.cpp server: %s", clean_for_log(" ".join(argv)))
             # argv list only — no shell=True (CONTRACTS.md §6 subprocess safety).
             # stdout/stderr -> DEVNULL: the server runs for the sidecar's
             # lifetime, so an inherited stdout would pollute the JSON-RPC

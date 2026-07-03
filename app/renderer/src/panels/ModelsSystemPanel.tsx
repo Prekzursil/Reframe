@@ -163,6 +163,60 @@ export function applyOutcomeText(rec: Recommendation): string {
   return `Applied: ${parts.join(', ')}.`;
 }
 
+/**
+ * HARDENING (Settings › Models crash-blank guard) — the sidecar is an UNTRUSTED
+ * boundary. The panel maps over `report.tiers/components/notes`,
+ * `overview.eligibility.models`, `runners.runners` and reads
+ * `recommendation.routing.perFunction`. A structurally-broken (NON-null) payload
+ * with a required array/object missing would throw during render and, with no
+ * top-level error boundary, blank the ENTIRE app. Each `isRenderable*` guard
+ * asserts the exact shape the panel accesses so a broken payload is rejected at
+ * INGESTION (stored as null → the section hides AND a LOUD error is surfaced),
+ * never a silent blank and never a silent degrade. `null`/`undefined` (capability
+ * legitimately absent) is NOT malformed — it hides the section quietly, the
+ * established progressive-disclosure pattern.
+ */
+export function isRenderableReport(report: AdvisorReport): boolean {
+  return [report.components, report.tiers, report.notes].every((value) => Array.isArray(value));
+}
+
+export function isRenderableOverview(overview: ModelsOverview): boolean {
+  return Array.isArray(overview.eligibility?.models) && overview.routingPolicy != null;
+}
+
+export function isRenderableRunners(plan: LocalModelPlan): boolean {
+  return plan.whisper != null && plan.llm != null && Array.isArray(plan.runners);
+}
+
+export function isRenderableRecommendation(rec: Recommendation): boolean {
+  return (
+    rec.routing?.perFunction != null && Array.isArray(rec.downloads) && Array.isArray(rec.rationale)
+  );
+}
+
+/**
+ * Store a sidecar payload ONLY when it has the shape the panel renders. A
+ * `null`/`undefined` payload passes through as null (the section hides quietly).
+ * A present-but-malformed payload is rejected (returns null) and `onMalformed`
+ * fires so the caller can raise a LOUD error — the crash-blank guard's whole
+ * point is that a broken payload degrades to an announced empty, not a blank app.
+ */
+export function ingestRenderable<T>(
+  raw: T | null | undefined,
+  isRenderable: (value: T) => boolean,
+  onMalformed: () => void,
+): T | null {
+  if (raw == null) return null;
+  if (isRenderable(raw)) return raw;
+  onMalformed();
+  return null;
+}
+
+/** The user-facing (LOUD) message when the sidecar returns malformed panel data. */
+export function malformedDataMessage(parts: readonly string[]): string {
+  return `Analysis returned unexpected data (${parts.join(', ')}). Those panels are unavailable — re-analyze or update the app.`;
+}
+
 export interface ModelsSystemPanelProps {
   /** Inject the typed client for tests; defaults to the real lib/rpc client. */
   rpcClient?: typeof client;
@@ -291,16 +345,28 @@ export function ModelsSystemPanel({
           // (real quant + VRAM est) the reason strip names.
           api.models.overview({ commercial }),
         ]);
+      // HARDENING: reject any present-but-malformed payload at ingestion so a
+      // sidecar-data-coupled break degrades to an announced empty, never a blank
+      // app. Collect the broken payload names to surface ONE loud error below.
+      const malformed: string[] = [];
+      const flag = (what: string) => (): void => void malformed.push(what);
       setHardware(hw ?? null);
-      setReport(rep ?? null);
+      setReport(ingestRenderable(rep, isRenderableReport, flag('system report')));
       setAssets(Array.isArray(assetRes?.assets) ? assetRes.assets : []);
       setEngines(Array.isArray(engineRes?.engines) ? engineRes.engines : []);
       setUsage(Array.isArray(usageRes?.usage) ? usageRes.usage : []);
       setCatalog(catalogRes ?? null);
-      setRecommendation(recRes?.recommendation ?? null);
-      setRunners(runnersRes ?? null);
-      setOverview(overviewRes ?? null);
+      setRecommendation(
+        ingestRenderable(
+          recRes?.recommendation,
+          isRenderableRecommendation,
+          flag('setup recommendation'),
+        ),
+      );
+      setRunners(ingestRenderable(runnersRes, isRenderableRunners, flag('local model plan')));
+      setOverview(ingestRenderable(overviewRes, isRenderableOverview, flag('models overview')));
       setApplyOutcome('');
+      if (malformed.length > 0) setError(malformedDataMessage(malformed));
       setAnalyzed(true);
       // First-run tour: show once if the user hasn't seen it.
       if (!settings.modelsOnboardingSeen) setShowTour(true);
@@ -493,7 +559,11 @@ export function ModelsSystemPanel({
         setAssets(Array.isArray(res?.assets) ? res.assets : []);
         // Re-run the advisor so installed-state flips the verdicts/recommendation.
         const rep = await api.system.advisor({ commercial: Boolean(settings.commercial) });
-        setReport(rep ?? null);
+        setReport(
+          ingestRenderable(rep, isRenderableReport, () =>
+            setError(malformedDataMessage(['system report'])),
+          ),
+        );
       } catch (err) {
         setError(errText(err));
       } finally {
@@ -523,7 +593,11 @@ export function ModelsSystemPanel({
         const res = await api.assets.list();
         setAssets(Array.isArray(res?.assets) ? res.assets : []);
         const rep = await api.system.advisor({ commercial: Boolean(settings.commercial) });
-        setReport(rep ?? null);
+        setReport(
+          ingestRenderable(rep, isRenderableReport, () =>
+            setError(malformedDataMessage(['system report'])),
+          ),
+        );
       } catch (err) {
         setError(errText(err));
       }

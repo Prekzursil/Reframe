@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import Any
 
 from ..assets.manifest import AssetEntry, register_asset
+from ..pathsafe import PathTraversalError, ensure_within
 from ..settings_store import default_config_dir
 from ..util import get_logger
 from . import emphasis as _emphasis
@@ -189,7 +190,7 @@ def detect_chrome_headless_shell(settings: dict[str, Any]) -> str | None:
     explicit = settings.get(SETTING_CHROME)
     if explicit and Path(str(explicit)).is_file():
         return str(Path(str(explicit)))
-    extracted = default_config_dir() / CHROME_HEADLESS_SHELL_EXE_REL
+    extracted = Path(ensure_within(default_config_dir(), CHROME_HEADLESS_SHELL_EXE_REL))
     if extracted.is_file():
         return str(extracted)
     return None
@@ -222,19 +223,24 @@ def ensure_chrome_extracted(zip_path: Path, extract_root: Path) -> Path | None:
     extraction — stdlib :mod:`zipfile`, first use only. Zip-slip is guarded by
     rejecting member paths that escape ``extract_root``.
     """
-    exe = extract_root / Path(CHROME_HEADLESS_SHELL_EXE_REL).relative_to(CHROME_HEADLESS_SHELL_EXTRACT_DIR)
+    safe_root = ensure_within(extract_root)
+    rel_exe = str(Path(CHROME_HEADLESS_SHELL_EXE_REL).relative_to(CHROME_HEADLESS_SHELL_EXTRACT_DIR))
+    exe = Path(ensure_within(safe_root, rel_exe))
     if exe.is_file():
         return exe
-    if not zip_path.is_file():
+    if not Path(ensure_within(zip_path)).is_file():
         return None
     try:
         with zipfile.ZipFile(zip_path) as zf:
-            root = extract_root.resolve()
             for member in zf.namelist():
-                target = (root / member).resolve()
-                if not str(target).startswith(str(root)):
-                    raise RemotionCaptionError(f"unsafe zip member path in {zip_path.name}: {member!r}")
-            zf.extractall(root)
+                # ensure_within canonicalises (os.path.realpath) + confirms the
+                # member stays under root: the CodeQL-recognised zip-slip guard,
+                # without the prefix-sibling bug of a bare str.startswith.
+                try:
+                    ensure_within(safe_root, member)
+                except PathTraversalError as exc:
+                    raise RemotionCaptionError(f"unsafe zip member path in {zip_path.name}: {member!r}") from exc
+            zf.extractall(safe_root)
     except (OSError, zipfile.BadZipFile) as exc:
         log.warning("chrome-headless-shell extraction failed: %s", exc)
         return None
@@ -264,8 +270,8 @@ def resolve_node_exe(
     root = dev_root if dev_root is not None else _DEV_ROOT
 
     env_val = env.get(ENV_NODE_EXE)
-    if env_val and Path(env_val).is_file():
-        return str(Path(env_val))
+    if env_val and Path(ensure_within(env_val)).is_file():
+        return ensure_within(env_val)
 
     setting_val = settings.get(SETTING_NODE_EXE)
     if setting_val and Path(str(setting_val)).is_file():
@@ -296,8 +302,8 @@ def resolve_render_js(
     root = dev_root if dev_root is not None else _DEV_ROOT
 
     env_val = env.get(ENV_RENDER_JS)
-    if env_val and Path(env_val).is_file():
-        return str(Path(env_val))
+    if env_val and Path(ensure_within(env_val)).is_file():
+        return ensure_within(env_val)
 
     setting_val = settings.get(SETTING_RENDER_JS)
     if setting_val and Path(str(setting_val)).is_file():
@@ -325,8 +331,8 @@ def resolve_bundle_dir(
     root = dev_root if dev_root is not None else _DEV_ROOT
 
     env_val = env.get(ENV_BUNDLE_DIR)
-    if env_val and Path(env_val).is_dir():
-        return str(Path(env_val))
+    if env_val and Path(ensure_within(env_val)).is_dir():
+        return ensure_within(env_val)
 
     setting_val = settings.get(SETTING_BUNDLE_DIR)
     if setting_val and Path(str(setting_val)).is_dir():
@@ -359,8 +365,8 @@ def resolve_chromium(
     root = assets_root if assets_root is not None else default_config_dir()
 
     env_val = env.get(ENV_CHROME)
-    if env_val and Path(env_val).is_file():
-        return str(Path(env_val))
+    if env_val and Path(ensure_within(env_val)).is_file():
+        return ensure_within(env_val)
 
     setting_val = settings.get(SETTING_CHROME)
     if setting_val and Path(str(setting_val)).is_file():

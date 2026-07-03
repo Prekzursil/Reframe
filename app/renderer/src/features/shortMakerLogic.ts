@@ -52,6 +52,14 @@ export interface Candidate {
   factorNotes?: Partial<Record<keyof CandidateFactors, string>>;
   /** P3-C: batch-percentile-normalized virality 0-100 within the candidate set. */
   viralityPct?: number;
+  /**
+   * v1.2.0 WU3: unified-scorer HIGHLIGHT score — a 0..1 fusion of the legacy LLM
+   * score with the present-weighted multimodal signal boost (stamped ONLY by the
+   * sidecar's `select_unified`; absent on the frozen path). The renderer
+   * normalizes it to a 0-100 badge, distinct from `viralityPct` (a within-batch
+   * percentile). Surfacing only — never read by selection/ranking logic.
+   */
+  signalScore?: number;
 }
 
 /** §2 shortmaker.select controls (+ T4b's reframe engine override).
@@ -541,6 +549,18 @@ export function factorEntries(c: Candidate): FactorEntry[] {
 export function displayVirality(pct: unknown): number | null {
   if (typeof pct !== 'number' || Number.isNaN(pct)) return null;
   return clamp(Math.round(pct), 0, 100);
+}
+
+/**
+ * v1.2.0 WU3: the unified scorer's `signalScore` (a 0..1 fusion) as a 0-100
+ * HIGHLIGHT badge int, or null when absent/invalid. Distinct from
+ * {@link displayVirality} (which takes an already-0-100 percentile): this
+ * normalizes the frozen 0..1 wire value to 0-100. Pure display — the score is
+ * never read by selection/ranking.
+ */
+export function displaySignalScore(score: unknown): number | null {
+  if (typeof score !== 'number' || Number.isNaN(score)) return null;
+  return clamp(Math.round(score * 100), 0, 100);
 }
 
 // ---------------------------------------------------------------------------

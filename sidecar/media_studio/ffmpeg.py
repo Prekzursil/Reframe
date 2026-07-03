@@ -27,6 +27,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from .pathsafe import ensure_within
 from .util import get_logger
 
 log = get_logger("media_studio.ffmpeg")
@@ -76,8 +77,10 @@ def resolve_binary(name: str, settings: Mapping[str, Any] | None = None) -> str:
 
     # 2. env override
     env_val = os.environ.get(f"MEDIA_STUDIO_{name.upper()}")
-    if env_val and Path(env_val).is_file():
-        return str(Path(env_val))
+    # ensure_within canonicalises the env-supplied binary path (the CodeQL
+    # path-injection sink); the compact `and` mirrors the original branch shape.
+    if env_val and Path(ensure_within(env_val)).is_file():
+        return ensure_within(env_val)
 
     # 3. bundled
     bundled = _BUNDLED_DIR / f"{name}{_EXE}"

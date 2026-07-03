@@ -46,6 +46,13 @@ export function readJob(jobPath: string): RenderJob {
   if (!jobPath) {
     throw new Error('usage: render.js <job.json>');
   }
+  // Path-injection barrier (CodeQL js/path-injection): reject a NUL-poisoned
+  // path or any parent-directory (`..`) segment before the read. The job path
+  // is an absolute temp file the app writes, so neither ever occurs — this is
+  // non-breaking while neutralising the tainted-path sink.
+  if (jobPath.includes('\0') || jobPath.split(/[\\/]+/).includes('..')) {
+    throw new Error('job path must not contain a NUL byte or parent-directory traversal');
+  }
   const raw = fs.readFileSync(jobPath, 'utf-8');
   const parsed: unknown = JSON.parse(raw);
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {

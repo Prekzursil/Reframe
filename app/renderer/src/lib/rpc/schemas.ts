@@ -91,6 +91,14 @@ export interface Candidate {
   factorNotes?: Partial<Record<keyof CandidateFactors, string>>;
   /** P3-C: batch-percentile-normalized virality 0-100 within the candidate set. */
   viralityPct?: number;
+  /**
+   * v1.2.0 WU3: unified-scorer HIGHLIGHT score — a 0..1 fusion of the legacy LLM
+   * score with the present-weighted multimodal signal boost. Stamped ONLY by the
+   * sidecar's `select_unified` path (absent on the frozen transcript path); the
+   * renderer normalizes it to a 0-100 badge. Distinct from `viralityPct` (a
+   * within-batch percentile) — surfacing only, never used for selection/ranking.
+   */
+  signalScore?: number;
 }
 
 /** P3-D feedback flywheel — implicit-label actions (wire values FROZEN). */

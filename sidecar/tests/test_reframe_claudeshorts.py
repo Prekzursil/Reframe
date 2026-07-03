@@ -1,8 +1,10 @@
 """Unit tests for the claudeshorts reframe engine (T4b) + the engine registry.
 
-NO mediapipe, NO cv2, NO wsl, NO real ffmpeg: every heavy seam (prober,
-detector, encode runner, wsl probe, importer) is injected. Coverage per the
-unit's DONE-WHEN:
+NO real YuNet/ONNX download, NO WSL, NO real ffmpeg: every heavy seam (prober,
+detector, encode runner, wsl probe, importer, cv2.FaceDetectorYN, the YuNet model
+resolver) is injected/mocked, so the suite never depends on the installed opencv
+build or a downloaded model (the hardening cv2 whack-a-mole lesson). Coverage per
+the unit's DONE-WHEN:
 
   * rect math — centered subject -> centered crop; moving subject -> smoothed
     (eased) track that damps jitter;
@@ -111,13 +113,18 @@ def _engine(
     detector,
     runner=None,
     dims=(1280, 720, 8.0),
+    backend_probe=None,
 ):
     runner = runner or _make_ff_runner(0)
+    kwargs = {}
+    if backend_probe is not None:
+        kwargs["backend_probe"] = backend_probe
     eng = ClaudeShortsReframeEngine(
         settings=fake_bins,
         runner=runner,
         prober=lambda _path: dims,
         detector=detector,
+        **kwargs,
     )
     return eng, runner
 
@@ -435,28 +442,20 @@ def _importer(available):
     return imp
 
 
-def test_detect_backend_prefers_mediapipe_when_both_import():
-    assert cs.detect_backend(_importer({"mediapipe", "cv2"})) == "mediapipe"
+def test_detect_backend_yunet_when_cv2_imports():
+    # v1.2.0 WU1: the sole face backend is YuNet (cv2.FaceDetectorYN). cv2
+    # importable -> "yunet"; the actual model/class presence is checked later in
+    # _make_face_finder (fail-loud), not here.
+    assert cs.detect_backend(_importer({"cv2"})) == "yunet"
 
 
-def test_detect_backend_haar_when_mediapipe_missing():
-    assert cs.detect_backend(_importer({"cv2"})) == "haar"
-
-
-def test_detect_backend_mediapipe_without_cv2_raises_setup_error():
-    # mediapipe alone cannot decode frames; cv2 is required. With cv2 absent the
-    # backend is UNAVAILABLE -> an EXPLICIT setup/provisioning error, never a
-    # silent "center" that degrades per-clip (WU-3 NO-SILENT-FALLBACK).
+def test_detect_backend_no_cv2_raises_setup_error():
+    # No cv2 -> subject tracking is impossible -> explicit setup/provisioning
+    # error (fail loud at setup), never a silent "center" the rest of the pipeline
+    # can't distinguish from a legitimate no-subject clip (WU-3 NO-SILENT-FALLBACK).
     with pytest.raises(cs.ClaudeShortsBackendUnavailableError) as exc:
-        cs.detect_backend(_importer({"mediapipe"}))
-    assert "cv2" in str(exc.value).lower() or "opencv" in str(exc.value).lower()
-
-
-def test_detect_backend_no_natives_raises_setup_error():
-    # No native modules at all -> explicit setup error (fail loud at setup), not a
-    # silent center fallback the rest of the pipeline can't distinguish.
-    with pytest.raises(cs.ClaudeShortsBackendUnavailableError):
         cs.detect_backend(_importer(set()))
+    assert "cv2" in str(exc.value).lower() or "opencv" in str(exc.value).lower()
 
 
 def test_backend_unavailable_is_a_reframe_error_subclass():
@@ -472,9 +471,56 @@ def test_detect_subject_centers_center_backend_short_circuits():
     assert cs.detect_subject_centers("/in.mp4", [0.5], frame_runner=boom, backend="center") == []
 
 
-def test_native_preimport_flag_lists_mediapipe_and_cv2():
-    # A6 lesson 1 — the wiring agent consumes this (see WIRING-T4B.md).
-    assert set(cs.NATIVE_MODULES_FOR_PREIMPORT) == {"mediapipe", "cv2"}
+def test_native_preimport_flag_lists_cv2_only():
+    # A6 lesson 1 — v1.2.0 WU1 dropped mediapipe; YuNet runs entirely through cv2,
+    # so cv2 is the only native module this engine flags for __main__ pre-import.
+    assert set(cs.NATIVE_MODULES_FOR_PREIMPORT) == {"cv2"}
+
+
+# --------------------------------------------------------------------------- #
+# resolve_yunet_model_path — asset-store resolution of the pinned YuNet ONNX.
+# The manifest + asset-manager seams are monkeypatched so no real download / disk
+# probe happens (the "mock the native backend" hardening lesson).
+# --------------------------------------------------------------------------- #
+def test_resolve_yunet_model_path_unregistered_returns_none(monkeypatch):
+    from media_studio.assets import manifest
+
+    monkeypatch.setattr(manifest, "get_asset", lambda _name: None)
+    # settings=None exercises the ``settings or {}`` falsy arm (no manager built).
+    assert cs.resolve_yunet_model_path() is None
+
+
+def test_resolve_yunet_model_path_returns_installed_path(monkeypatch):
+    from media_studio.assets import manager, manifest
+
+    monkeypatch.setattr(manifest, "get_asset", lambda _name: object())
+
+    class _Mgr:
+        def __init__(self, **_kw):
+            pass
+
+        def installed_path(self, _entry):
+            return "/models/yunet-face-detection-2023mar.onnx"
+
+    monkeypatch.setattr(manager, "AssetManager", _Mgr)
+    # a truthy settings dict exercises the ``settings or {}`` truthy arm.
+    assert cs.resolve_yunet_model_path({"modelsDir": "x"}) == "/models/yunet-face-detection-2023mar.onnx"
+
+
+def test_resolve_yunet_model_path_not_installed_returns_none(monkeypatch):
+    from media_studio.assets import manager, manifest
+
+    monkeypatch.setattr(manifest, "get_asset", lambda _name: object())
+
+    class _Mgr:
+        def __init__(self, **_kw):
+            pass
+
+        def installed_path(self, _entry):
+            return None  # registered but not yet downloaded
+
+    monkeypatch.setattr(manager, "AssetManager", _Mgr)
+    assert cs.resolve_yunet_model_path({}) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -558,37 +604,27 @@ def test_engine_offcenter_static_keeps_subject_inside_crop(fake_bins):
 
 
 # --------------------------------------------------------------------------- #
-# TDD (b): a profile/weak-face frame -> person/motion fallback still locates him
+# TDD (b): a profile/weak-face frame -> motion fallback still locates the speaker
+# (v1.2.0 WU1: the HOG person/body fallback was DROPPED — YuNet handles turned
+# faces and the imgproc-only motion fallback covers the rest; no second objdetect
+# surface). ``_make_face_finder`` now takes (backend, settings).
 # --------------------------------------------------------------------------- #
-def test_subject_finder_falls_back_to_person_when_face_absent(monkeypatch):
-    """Face detector returns None (profile/turned head) -> the PERSON (HOG body)
-    detector locates the subject so the crop stays on him."""
-    # face finder: never finds a face. person finder: body at cx=0.8.
-    monkeypatch.setattr(cs, "_make_face_finder", lambda backend: (lambda img: None, lambda: None))
-    monkeypatch.setattr(cs, "_person_center", lambda img: 0.8)
-    monkeypatch.setattr(cs, "_motion_center", lambda prev, img: pytest.fail("motion must not run when person hit"))
-    find, _close = cs._make_subject_finder("haar")
-    assert find(object()) == pytest.approx(0.8)
-
-
-def test_subject_finder_falls_back_to_motion_when_face_and_person_absent(monkeypatch):
-    """Neither face nor body detectable -> MOTION saliency (vs the previous
-    frame) still locates the moving speaker. The first frame (no prev) yields
-    None; the second resolves via motion."""
-    monkeypatch.setattr(cs, "_make_face_finder", lambda backend: (lambda img: None, lambda: None))
-    monkeypatch.setattr(cs, "_person_center", lambda img: None)
+def test_subject_finder_falls_back_to_motion_when_face_absent(monkeypatch):
+    """Face detector returns None (profile/turned head) -> MOTION saliency (vs the
+    previous frame) still locates the moving speaker. The first frame (no prev)
+    yields None; the second resolves via motion."""
+    monkeypatch.setattr(cs, "_make_face_finder", lambda backend, settings=None: (lambda img: None, lambda: None))
     monkeypatch.setattr(cs, "_motion_center", lambda prev, img: 0.35)
-    find, _close = cs._make_subject_finder("haar")
+    find, _close = cs._make_subject_finder("yunet")
     assert find("frame0") is None  # no previous frame yet -> motion can't run
     assert find("frame1") == pytest.approx(0.35)  # diff vs frame0 locates motion
 
 
-def test_subject_finder_face_hit_skips_fallbacks(monkeypatch):
-    """When the FACE is found, neither person nor motion fallback runs."""
-    monkeypatch.setattr(cs, "_make_face_finder", lambda backend: (lambda img: 0.5, lambda: None))
-    monkeypatch.setattr(cs, "_person_center", lambda img: pytest.fail("person must not run on a face hit"))
+def test_subject_finder_face_hit_skips_motion(monkeypatch):
+    """When the FACE is found, the motion fallback does not run."""
+    monkeypatch.setattr(cs, "_make_face_finder", lambda backend, settings=None: (lambda img: 0.5, lambda: None))
     monkeypatch.setattr(cs, "_motion_center", lambda prev, img: pytest.fail("motion must not run on a face hit"))
-    find, _close = cs._make_subject_finder("mediapipe")
+    find, _close = cs._make_subject_finder("yunet")
     assert find(object()) == pytest.approx(0.5)
 
 
@@ -598,13 +634,14 @@ def test_subject_finder_center_backend_has_no_finder():
     close()  # the no-op closer is callable
 
 
-def test_subject_finder_no_face_finder_goes_straight_to_person(monkeypatch):
-    """When the FACE backend yields no finder at all (e.g. missing haar cascade),
-    the subject finder skips the face step and uses the person fallback."""
-    monkeypatch.setattr(cs, "_make_face_finder", lambda backend: (None, lambda: None))
-    monkeypatch.setattr(cs, "_person_center", lambda img: 0.6)
-    find, _close = cs._make_subject_finder("haar")
-    assert find(object()) == pytest.approx(0.6)
+def test_subject_finder_no_face_finder_goes_straight_to_motion(monkeypatch):
+    """When the FACE backend yields no finder at all, the subject finder skips the
+    face step and uses the motion fallback (against the previous frame)."""
+    monkeypatch.setattr(cs, "_make_face_finder", lambda backend, settings=None: (None, lambda: None))
+    monkeypatch.setattr(cs, "_motion_center", lambda prev, img: 0.6)
+    find, _close = cs._make_subject_finder("yunet")
+    assert find("frame0") is None  # no previous frame yet
+    assert find("frame1") == pytest.approx(0.6)
 
 
 def test_engine_profile_video_tracks_via_fallback_not_center(fake_bins):
@@ -654,7 +691,7 @@ def test_engine_smoothing_lags_raw_target(fake_bins):
 
 def test_engine_detector_failure_degrades_to_center(fake_bins):
     def broken(p, t):
-        raise RuntimeError("mediapipe exploded")
+        raise RuntimeError("detector exploded")
 
     eng, runner = _engine(fake_bins, detector=broken)
     out = eng.reframe("/in.mp4", "/out.mp4")
@@ -671,7 +708,7 @@ def test_compute_plan_detection_exception_surfaces_degraded_notice(fake_bins):
     SURFACED via on_notice (structured) instead of being swallowed with a log."""
 
     def broken(p, t):
-        raise RuntimeError("mediapipe exploded")
+        raise RuntimeError("detector exploded")
 
     eng, _ = _engine(fake_bins, detector=broken)
     notices: list[dict] = []
@@ -682,7 +719,7 @@ def test_compute_plan_detection_exception_surfaces_degraded_notice(fake_bins):
     assert len(notices) == 1
     assert notices[0]["type"] == cs.REFRAME_DEGRADED_NOTICE
     assert "center crop" in notices[0]["message"].lower()
-    assert "mediapipe exploded" in notices[0]["reason"]
+    assert "detector exploded" in notices[0]["reason"]
 
 
 def test_compute_plan_trust_gate_miss_surfaces_degraded_notice(fake_bins):
@@ -730,6 +767,52 @@ def test_reframe_threads_on_notice_through_to_compute_plan(fake_bins):
     eng.reframe("/in.mp4", "/out.mp4", on_notice=notices.append)
     assert len(notices) == 1
     assert notices[0]["type"] == cs.REFRAME_DEGRADED_NOTICE
+
+
+# --------------------------------------------------------------------------- #
+# make_degraded_notice — v1.2.0 WU1 simplified (no backend/model-naming). A
+# missing YuNet model/backend fails LOUD earlier; this notice only carries a
+# genuine per-clip "no subject / detector failed" degrade, never a silent crop.
+# --------------------------------------------------------------------------- #
+def test_make_degraded_notice_carries_reason_and_type():
+    """The typed notice carries the structured type, a human 'center crop'
+    message, and the raw reason verbatim for logs/UI attribution."""
+    notice = cs.make_degraded_notice("no trackable subject located")
+    assert notice["type"] == cs.REFRAME_DEGRADED_NOTICE
+    assert "center crop" in notice["message"].lower()
+    assert notice["reason"] == "no trackable subject located"
+    # no stale model-name enrichment: a single-detector degrade names no backend.
+    assert "mediapipe" not in notice["message"].lower()
+
+
+def test_compute_plan_backend_probe_provisioning_failure_propagates(fake_bins):
+    """If the backend probe itself reports NO usable backend (no cv2/mediapipe),
+    that PROVISIONING failure propagates loudly — never a silent center crop."""
+
+    def no_backend():
+        raise cs.ClaudeShortsBackendUnavailableError("opencv (cv2) not installed")
+
+    eng, _ = _engine(fake_bins, detector=lambda p, t: [], backend_probe=no_backend)
+    notices: list[dict] = []
+    with pytest.raises(cs.ClaudeShortsBackendUnavailableError):
+        eng.compute_plan("/in.mp4", on_notice=notices.append)
+    assert notices == []  # not turned into a per-clip degrade badge
+
+
+def test_engine_default_backend_probe_calls_detect_backend_with_settings(fake_bins, monkeypatch):
+    """The engine's default backend probe calls the real ``detect_backend`` THREADING
+    its settings through (v1.2.0 WU2), so the ``reframeTracker`` opt-in is honoured
+    from the live import state when not injected."""
+    seen: dict = {}
+
+    def fake_detect_backend(importer=None, settings=None):
+        seen["settings"] = settings
+        return "yunet"
+
+    monkeypatch.setattr(cs, "detect_backend", fake_detect_backend)
+    eng, _ = _engine({**fake_bins, "reframeTracker": "yunet"}, detector=lambda p, t: [(0.0, 0.5)])
+    assert eng._backend_probe() == "yunet"
+    assert seen["settings"] == eng._settings  # settings reach detect_backend
 
 
 def test_engine_passes_total_sec_and_argv_list(fake_bins):
@@ -918,193 +1001,182 @@ def test_engine_raises_typeerror_when_argv_not_a_list(fake_bins, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# _make_face_finder — the haar (cv2) branch + the center (no-finder) branch.
+# _make_face_finder — the YuNet (cv2.FaceDetectorYN) branch + the center branch.
 #
-# cv2 IS installed; the haar cascade ships with opencv, so the finder runs REAL
-# (deterministic) inference on synthetic frames — no network, no model download.
-# The mediapipe branch is reported for pragma (legacy mp.solutions API absent in
-# the installed mediapipe build; see the deliverable report).
+# cv2.FaceDetectorYN is MOCKED (raising=False) and resolve_yunet_model_path is
+# stubbed, so these tests NEVER depend on the installed opencv build actually
+# shipping the objdetect YuNet class or on the ONNX model being downloaded — the
+# hardening "mock the native backend" lesson (CI runs opencv-python-headless).
 # --------------------------------------------------------------------------- #
+def _yunet_faces(*boxes):
+    """An Nx15 YuNet ``detect`` result (rows [x, y, w, h, 10 landmarks, score])."""
+    import numpy as np
+
+    arr = np.zeros((len(boxes), 15), dtype=np.float32)
+    for i, (x, y, w, h) in enumerate(boxes):
+        arr[i, 0:4] = (x, y, w, h)
+    return arr
+
+
+def _install_fake_yunet(monkeypatch, faces, *, model_path="/models/yunet.onnx"):
+    """Install a fake cv2.FaceDetectorYN + stub the model resolver.
+
+    ``faces`` is the fixed ``detect`` result (an Nx>=4 array, or None for no
+    detections). Returns a record of the create args + per-frame setInputSize
+    calls so tests can assert the wiring.
+    """
+    import cv2
+
+    monkeypatch.setattr(cs, "resolve_yunet_model_path", lambda settings=None: model_path)
+    rec: dict = {"created": None, "sizes": []}
+
+    class _Detector:
+        def setInputSize(self, size):
+            rec["sizes"].append(tuple(size))
+
+        def detect(self, _img):
+            return (1, faces)
+
+    class _FaceDetectorYN:
+        @staticmethod
+        def create(model, config, size, score_threshold=0.0, **_kw):
+            rec["created"] = {
+                "model": model,
+                "config": config,
+                "size": tuple(size),
+                "score_threshold": score_threshold,
+            }
+            return _Detector()
+
+    monkeypatch.setattr(cv2, "FaceDetectorYN", _FaceDetectorYN, raising=False)
+    return rec
+
+
 def test_make_face_finder_center_backend_returns_no_finder():
     find, close = cs._make_face_finder("center")
     assert find is None
     close()  # the no-op closer is safely callable
 
 
-# --------------------------------------------------------------------------- #
-# _make_face_finder — the mediapipe branch (fake mediapipe module injected).
-#
-# The installed mediapipe build lacks the legacy ``mp.solutions`` API, so we
-# inject a fake ``mediapipe`` module exposing exactly the slice the engine uses
-# (solutions.face_detection.FaceDetection -> process(rgb).detections with a
-# relative_bounding_box). cv2 stays REAL (cvtColor on a numpy frame).
-# --------------------------------------------------------------------------- #
-def _fake_mediapipe(detections):
-    import sys
-    import types
-
-    captured: dict = {"closed": False}
-
-    class _Detector:
-        def process(self, rgb):
-            captured["rgb_shape"] = getattr(rgb, "shape", None)
-            return types.SimpleNamespace(detections=detections)
-
-        def close(self):
-            captured["closed"] = True
-
-    def _factory(*, model_selection, min_detection_confidence):
-        captured["model_selection"] = model_selection
-        return _Detector()
-
-    mod = types.ModuleType("mediapipe")
-    mod.solutions = types.SimpleNamespace(  # type: ignore[attr-defined]
-        face_detection=types.SimpleNamespace(FaceDetection=_factory)
-    )
-    sys.modules["mediapipe"] = mod
-    return mod, captured
-
-
-def _bbox(xmin, width, height, ymin=0.0):
-    import types
-
-    # The real mediapipe relative_bounding_box carries ymin too (the finder uses
-    # it to build the per-face motion box for the active-speaker tie-break).
-    return types.SimpleNamespace(
-        location_data=types.SimpleNamespace(
-            relative_bounding_box=types.SimpleNamespace(xmin=xmin, ymin=ymin, width=width, height=height)
-        )
-    )
-
-
-def test_make_face_finder_mediapipe_returns_best_detection_center(monkeypatch):
+def test_make_face_finder_yunet_returns_normalized_center_on_detection(monkeypatch):
     import numpy as np
 
-    # Two detections; the larger-area one (0.4*0.4) wins over (0.2*0.2).
-    small = _bbox(0.0, 0.2, 0.2)
-    big = _bbox(0.5, 0.4, 0.4)
-    _mod, captured = _fake_mediapipe([small, big])
-    monkeypatch.setitem(__import__("sys").modules, "mediapipe", _mod)
-
-    find, close = cs._make_face_finder("mediapipe")
+    # two faces; the larger (by w*h) wins. frame width below is 400.
+    faces = _yunet_faces((10, 10, 20, 20), (300, 10, 60, 60))  # second is larger
+    rec = _install_fake_yunet(monkeypatch, faces)
+    find, close = cs._make_face_finder("yunet")
     assert callable(find)
-    cx = find(np.zeros((90, 160, 3), dtype=np.uint8))
-    # best bbox center x = xmin + width/2 = 0.5 + 0.2 = 0.7
-    assert cx == pytest.approx(0.7)
-    assert captured["model_selection"] == 1
-    close()
-    assert captured["closed"] is True
-
-
-def test_make_face_finder_mediapipe_no_detection_returns_none(monkeypatch):
-    import numpy as np
-
-    _mod, _captured = _fake_mediapipe([])  # no detections
-    monkeypatch.setitem(__import__("sys").modules, "mediapipe", _mod)
-    find, _close = cs._make_face_finder("mediapipe")
-    assert find(np.zeros((50, 50, 3), dtype=np.uint8)) is None
-
-
-def test_make_face_finder_haar_returns_callable_finder():
-    import numpy as np
-
-    find, close = cs._make_face_finder("haar")
-    assert callable(find)
-    # A blank frame has no face -> the haar finder returns None (no detection).
-    blank = np.zeros((120, 240, 3), dtype=np.uint8)
-    assert find(blank) is None
-    close()
-
-
-def test_make_face_finder_haar_returns_normalized_center_on_detection(monkeypatch):
-    import cv2
-    import numpy as np
-
-    # Stub the cascade so detectMultiScale reports a face box; this drives the
-    # "largest face -> normalized horizontal center" return (lines 437-438).
-    class _FaceCascade:
-        def __init__(self, *_a):
-            pass
-
-        def empty(self):
-            return False
-
-        def detectMultiScale(self, gray, scaleFactor, minNeighbors):
-            # two boxes; the larger (by w*h) wins. frame width below is 200.
-            return [(10, 10, 20, 20), (100, 10, 40, 40)]  # second is larger
-
-    monkeypatch.setattr(cv2, "CascadeClassifier", _FaceCascade)
-    find, close = cs._make_face_finder("haar")
-    img = np.zeros((120, 200, 3), dtype=np.uint8)  # width 200
+    img = np.zeros((120, 400, 3), dtype=np.uint8)  # width 400
     cx = find(img)
-    # largest face center x = 100 + 40/2 = 120; normalized = 120/200 = 0.6
-    assert cx == pytest.approx(0.6)
+    # largest face center x = 300 + 60/2 = 330; normalized = 330/400 = 0.825
+    assert cx == pytest.approx(0.825)
+    # wiring: created with the resolved model path + per-frame input size (w, h).
+    assert rec["created"]["model"] == "/models/yunet.onnx"
+    assert rec["created"]["score_threshold"] == pytest.approx(0.6)
+    assert rec["sizes"] == [(400, 120)]
     close()
 
 
-def test_make_face_finder_haar_no_faces_returns_none(monkeypatch):
-    import cv2
+def test_make_face_finder_yunet_no_faces_returns_none(monkeypatch):
     import numpy as np
 
-    class _NoFaceCascade:
-        def __init__(self, *_a):
-            pass
-
-        def empty(self):
-            return False
-
-        def detectMultiScale(self, gray, scaleFactor, minNeighbors):
-            return ()  # empty -> finder returns None
-
-    monkeypatch.setattr(cv2, "CascadeClassifier", _NoFaceCascade)
-    find, _close = cs._make_face_finder("haar")
-    assert find(np.zeros((50, 50, 3), dtype=np.uint8)) is None
+    # detect returns None (the "faces is not None else []" false arc) -> no subject.
+    _install_fake_yunet(monkeypatch, None)
+    find, _close = cs._make_face_finder("yunet")
+    assert find(np.zeros((60, 120, 3), dtype=np.uint8)) is None
 
 
-def test_make_face_finder_haar_missing_cascade_degrades_to_none(monkeypatch):
+def test_make_face_finder_yunet_two_faces_picks_larger(monkeypatch):
+    import numpy as np
+
+    # left small (20x20 @x=20), right large (60x60 @x=300). width = 400.
+    faces = _yunet_faces((20, 20, 20, 20), (300, 20, 60, 60))
+    _install_fake_yunet(monkeypatch, faces)
+    find, _close = cs._make_face_finder("yunet")
+    cx = find(np.zeros((120, 400, 3), dtype=np.uint8))
+    # larger face center x = 300 + 30 = 330 -> 330/400 = 0.825.
+    assert cx == pytest.approx(0.825)
+
+
+def test_make_face_finder_yunet_active_speaker_motion_tiebreak(monkeypatch):
+    import numpy as np
+
+    # two EQUAL-size faces (width 200); the active (moving) one wins the tie.
+    faces = _yunet_faces((20, 20, 40, 40), (120, 20, 40, 40))
+    _install_fake_yunet(monkeypatch, faces)
+    find, _close = cs._make_face_finder("yunet")
+    f0 = np.zeros((100, 200, 3), dtype=np.uint8)
+    f1 = np.zeros((100, 200, 3), dtype=np.uint8)
+    f1[20:60, 120:160, :] = 200  # the RIGHT face box moves (talking)
+    find(f0)  # establish previous frame (both quiet -> first/left wins)
+    cx = find(f1)
+    assert cx == pytest.approx(0.7)  # active (right) speaker: (120 + 20) / 200
+
+
+def test_make_face_finder_yunet_missing_facedetectoryn_raises(monkeypatch):
+    """A cv2 build that imports but lacks cv2.FaceDetectorYN (headless/stripped) is
+    a PROVISIONING failure: fail loud with the typed backend error instead of a
+    bare AttributeError or a silent center crop (WU no-silent-fallback)."""
     import cv2
 
-    # Force an EMPTY cascade (the "cascade file missing" branch) -> no finder.
-    class _EmptyCascade:
-        def __init__(self, *_a):
-            pass
+    monkeypatch.delattr(cv2, "FaceDetectorYN", raising=False)
+    with pytest.raises(cs.ClaudeShortsBackendUnavailableError) as exc:
+        cs._make_face_finder("yunet")
+    assert "facedetectoryn" in str(exc.value).lower()
 
-        def empty(self):
-            return True
 
-    monkeypatch.setattr(cv2, "CascadeClassifier", _EmptyCascade)
-    find, close = cs._make_face_finder("haar")
-    assert find is None
-    close()
+def test_make_face_finder_yunet_missing_model_raises(monkeypatch):
+    """The YuNet class is present but the sha256-pinned ONNX is NOT provisioned ->
+    a LOUD provisioning error (name the asset), never a silent center crop."""
+    import cv2
+
+    # FaceDetectorYN present (so the hasattr guard passes) but the model resolves
+    # to None (not downloaded).
+    monkeypatch.setattr(cv2, "FaceDetectorYN", object(), raising=False)
+    monkeypatch.setattr(cs, "resolve_yunet_model_path", lambda settings=None: None)
+    with pytest.raises(cs.ClaudeShortsBackendUnavailableError) as exc:
+        cs._make_face_finder("yunet")
+    msg = str(exc.value).lower()
+    assert "yunet" in msg and "provision" in msg
 
 
 # --------------------------------------------------------------------------- #
-# detect_subject_centers — the non-center body (real cv2.imread of fake frames)
+# detect_subject_centers — the non-center body (real cv2.imread of fake frames).
+# The YuNet backend is MOCKED via _install_fake_yunet (no ONNX download / native
+# objdetect dependency); some tests stub _make_face_finder directly.
 # --------------------------------------------------------------------------- #
-def test_detect_subject_centers_haar_reads_extracted_frames():
+def test_detect_subject_centers_yunet_reads_extracted_frames(monkeypatch):
     import cv2
     import numpy as np
+
+    # Mock a present YuNet that detects no face, so the body runs on a cv2 build
+    # that lacks the native objdetect class (CI's opencv-python-headless).
+    _install_fake_yunet(monkeypatch, None)
 
     # A frame_runner that writes a REAL (blank) jpeg to the requested path so
-    # cv2.imread succeeds; the haar finder finds no face -> no samples appended.
+    # cv2.imread succeeds; YuNet finds no face -> no samples appended.
     def frame_runner(argv, capture_output=True, check=False):
         out_path = argv[-1]
         cv2.imwrite(out_path, np.zeros((80, 160, 3), dtype=np.uint8))
         return type("C", (), {"returncode": 0})()
 
-    samples = cs.detect_subject_centers("/in.mp4", [0.5, 1.5], frame_runner=frame_runner, backend="haar")
-    # blank frames -> haar finds nothing -> empty sample list, but the body ran
-    # (frames extracted + read) without spawning real ffmpeg/cv2 download.
+    samples = cs.detect_subject_centers("/in.mp4", [0.5, 1.5], frame_runner=frame_runner, backend="yunet")
+    # blank frames -> YuNet finds nothing -> empty sample list, but the body ran
+    # (frames extracted + read) without spawning real ffmpeg / an ONNX download.
     assert samples == []
 
 
-def test_detect_subject_centers_skips_missing_and_unreadable_frames():
+def test_detect_subject_centers_skips_missing_and_unreadable_frames(monkeypatch):
+    # Stub the face finder (present, no-face) so building the finder does not touch
+    # the real YuNet class/model; exercise the "frame not produced" continue.
+    monkeypatch.setattr(cs, "_make_face_finder", lambda backend, settings=None: (lambda img: None, lambda: None))
+
     # A frame_runner that NEVER writes the frame file -> os.path.exists False ->
     # the frame is skipped (the "frame not produced" continue branch).
     def no_write_runner(argv, capture_output=True, check=False):
         return type("C", (), {"returncode": 1})()
 
-    samples = cs.detect_subject_centers("/in.mp4", [0.5], frame_runner=no_write_runner, backend="haar")
+    samples = cs.detect_subject_centers("/in.mp4", [0.5], frame_runner=no_write_runner, backend="yunet")
     assert samples == []
 
 
@@ -1113,7 +1185,7 @@ def test_detect_subject_centers_skips_unreadable_frame(monkeypatch):
     # (the "img is None" continue branch, distinct from "file not produced").
     import cv2
 
-    monkeypatch.setattr(cs, "_make_face_finder", lambda backend: (lambda img: 0.5, lambda: None))
+    monkeypatch.setattr(cs, "_make_face_finder", lambda backend, settings=None: (lambda img: 0.5, lambda: None))
     monkeypatch.setattr(cv2, "imread", lambda path: None)  # always unreadable
 
     def frame_runner(argv, capture_output=True, check=False):
@@ -1122,18 +1194,18 @@ def test_detect_subject_centers_skips_unreadable_frame(monkeypatch):
             fh.write(b"not-a-real-jpeg")
         return type("C", (), {"returncode": 0})()
 
-    samples = cs.detect_subject_centers("/in.mp4", [0.5], frame_runner=frame_runner, backend="haar")
+    samples = cs.detect_subject_centers("/in.mp4", [0.5], frame_runner=frame_runner, backend="yunet")
     assert samples == []
 
 
 def test_detect_subject_centers_no_finder_backend_returns_empty(monkeypatch):
     # When _make_subject_finder yields no finder (None) the body returns [] early.
-    monkeypatch.setattr(cs, "_make_subject_finder", lambda backend: (None, lambda: None))
+    monkeypatch.setattr(cs, "_make_subject_finder", lambda backend, settings=None, **_kw: (None, lambda: None))
 
     def boom(*a, **k):  # pragma: no cover - must never run (no finder -> no frames)
         raise AssertionError("no frame extraction without a finder")
 
-    assert cs.detect_subject_centers("/in.mp4", [0.5], frame_runner=boom, backend="haar") == []
+    assert cs.detect_subject_centers("/in.mp4", [0.5], frame_runner=boom, backend="yunet") == []
 
 
 def test_detect_subject_centers_collects_when_finder_returns_center(monkeypatch):
@@ -1142,13 +1214,13 @@ def test_detect_subject_centers_collects_when_finder_returns_center(monkeypatch)
 
     # Stub the finder to report a center for every frame so the sample-append
     # branch (cx is not None) is exercised; cv2.imread reads a real jpeg.
-    monkeypatch.setattr(cs, "_make_face_finder", lambda backend: (lambda img: 0.42, lambda: None))
+    monkeypatch.setattr(cs, "_make_face_finder", lambda backend, settings=None: (lambda img: 0.42, lambda: None))
 
     def frame_runner(argv, capture_output=True, check=False):
         cv2.imwrite(argv[-1], np.zeros((60, 120, 3), dtype=np.uint8))
         return type("C", (), {"returncode": 0})()
 
-    samples = cs.detect_subject_centers("/in.mp4", [0.5, 1.5], frame_runner=frame_runner, backend="haar")
+    samples = cs.detect_subject_centers("/in.mp4", [0.5, 1.5], frame_runner=frame_runner, backend="yunet")
     assert samples == [(0.5, 0.42), (1.5, 0.42)]
 
 
@@ -1159,90 +1231,36 @@ def test_detect_subject_centers_finder_close_failure_is_swallowed(monkeypatch):
     def boom_close():
         raise RuntimeError("close blew up")
 
-    monkeypatch.setattr(cs, "_make_face_finder", lambda backend: (lambda img: 0.5, boom_close))
+    monkeypatch.setattr(cs, "_make_face_finder", lambda backend, settings=None: (lambda img: 0.5, boom_close))
 
     def frame_runner(argv, capture_output=True, check=False):
         cv2.imwrite(argv[-1], np.zeros((40, 80, 3), dtype=np.uint8))
         return type("C", (), {"returncode": 0})()
 
     # A failing close() must never mask the collected results (cleanup-swallow).
-    samples = cs.detect_subject_centers("/in.mp4", [0.5], frame_runner=frame_runner, backend="haar")
+    samples = cs.detect_subject_centers("/in.mp4", [0.5], frame_runner=frame_runner, backend="yunet")
     assert samples == [(0.5, 0.5)]
 
 
-# --------------------------------------------------------------------------- #
-# _person_center — HOG body fallback (real cv2; sub-window guard + stubbed hit)
-# --------------------------------------------------------------------------- #
-def test_person_center_skips_subwindow_frame_no_crash():
-    import numpy as np
+def test_detect_subject_centers_threads_settings_into_finder(monkeypatch):
+    # The engine's settings must reach _make_subject_finder (and thence the YuNet
+    # model resolver) — a regression guard for the settings-plumbing WU1 added.
+    seen: dict = {}
 
-    # Frame smaller than the 64x128 HOG window -> guarded out (would segfault).
-    small = np.zeros((80, 160, 3), dtype=np.uint8)
-    assert cs._person_center(small) is None
+    def fake_finder(backend, settings=None, **_kw):
+        seen["backend"] = backend
+        seen["settings"] = settings
+        return (lambda img: None, lambda: None)
 
-
-def test_person_center_no_person_returns_none():
-    import numpy as np
-
-    # A blank window-sized frame -> the real HOG finds no person.
-    blank = np.zeros((256, 256, 3), dtype=np.uint8)
-    assert cs._person_center(blank) is None
-
-
-def test_person_center_returns_normalized_center_on_detection(monkeypatch):
-    import cv2
-    import numpy as np
-
-    class _HOG:
-        def setSVMDetector(self, _d):
-            pass
-
-        def detectMultiScale(self, _img, winStride):
-            # two bodies; the higher-weighted (second) wins. frame width = 400.
-            rects = [(10, 0, 60, 120), (300, 0, 60, 120)]
-            weights = [0.2, 0.9]
-            return rects, weights
-
-    monkeypatch.setattr(cv2, "HOGDescriptor", lambda: _HOG())
-    monkeypatch.setattr(cv2, "HOGDescriptor_getDefaultPeopleDetector", lambda: object())
-    img = np.zeros((200, 400, 3), dtype=np.uint8)  # width 400
-    cx = cs._person_center(img)
-    # best body center x = 300 + 60/2 = 330; normalized = 330/400 = 0.825
-    assert cx == pytest.approx(0.825)
-
-
-def test_person_center_no_rects_returns_none(monkeypatch):
-    import cv2
-    import numpy as np
-
-    class _HOG:
-        def setSVMDetector(self, _d):
-            pass
-
-        def detectMultiScale(self, _img, winStride):
-            return (), None  # no rects, no weights
-
-    monkeypatch.setattr(cv2, "HOGDescriptor", lambda: _HOG())
-    monkeypatch.setattr(cv2, "HOGDescriptor_getDefaultPeopleDetector", lambda: object())
-    assert cs._person_center(np.zeros((200, 200, 3), dtype=np.uint8)) is None
-
-
-def test_person_center_missing_weights_uses_zero(monkeypatch):
-    import cv2
-    import numpy as np
-
-    class _HOG:
-        def setSVMDetector(self, _d):
-            pass
-
-        def detectMultiScale(self, _img, winStride):
-            return [(40, 0, 80, 120)], None  # rect present, weights None
-
-    monkeypatch.setattr(cv2, "HOGDescriptor", lambda: _HOG())
-    monkeypatch.setattr(cv2, "HOGDescriptor_getDefaultPeopleDetector", lambda: object())
-    img = np.zeros((200, 200, 3), dtype=np.uint8)
-    # single rect, center x = 40 + 80/2 = 80; normalized = 80/200 = 0.4
-    assert cs._person_center(img) == pytest.approx(0.4)
+    monkeypatch.setattr(cs, "_make_subject_finder", fake_finder)
+    cs.detect_subject_centers(
+        "/in.mp4",
+        [0.5],
+        settings={"modelsDir": "/x"},
+        frame_runner=lambda *a, **k: type("C", (), {"returncode": 1})(),
+        backend="yunet",
+    )
+    assert seen == {"backend": "yunet", "settings": {"modelsDir": "/x"}}
 
 
 # --------------------------------------------------------------------------- #
@@ -1405,92 +1423,229 @@ def test_motion_center_two_movers_picks_dominant_not_midpoint():
     assert cx > 0.7  # right cluster, NOT the ~0.5 midpoint gap
 
 
-# face/person finders — dominant selection wired through the real detectors.
-def test_make_face_finder_haar_two_faces_picks_larger(monkeypatch):
-    import cv2
-    import numpy as np
-
-    class _TwoFaces:
-        def __init__(self, *_a):
-            pass
-
-        def empty(self):
-            return False
-
-        def detectMultiScale(self, gray, scaleFactor, minNeighbors):
-            # left small (20x20 @x=20), right large (60x60 @x=300). width = 400.
-            return [(20, 20, 20, 20), (300, 20, 60, 60)]
-
-    monkeypatch.setattr(cv2, "CascadeClassifier", _TwoFaces)
-    find, _close = cs._make_face_finder("haar")
-    cx = find(np.zeros((120, 400, 3), dtype=np.uint8))
-    # larger face center x = 300 + 30 = 330 -> 330/400 = 0.825.
-    assert cx == pytest.approx(0.825)
-
-
-def test_make_face_finder_haar_active_speaker_motion_tiebreak(monkeypatch):
-    import cv2
-    import numpy as np
-
-    class _TwoEqual:
-        def __init__(self, *_a):
-            pass
-
-        def empty(self):
-            return False
-
-        def detectMultiScale(self, gray, scaleFactor, minNeighbors):
-            return [(20, 20, 40, 40), (120, 20, 40, 40)]  # equal size; width = 200
-
-    monkeypatch.setattr(cv2, "CascadeClassifier", _TwoEqual)
-    find, _close = cs._make_face_finder("haar")
-    f0 = np.zeros((100, 200, 3), dtype=np.uint8)
-    f1 = np.zeros((100, 200, 3), dtype=np.uint8)
-    f1[20:60, 120:160, :] = 200  # the RIGHT face moves (talking)
-    find(f0)  # establish previous frame
-    cx = find(f1)
-    assert cx == pytest.approx(0.7)  # active (right) speaker: (120 + 20) / 200
-
-
-def test_make_face_finder_mediapipe_active_speaker_motion_tiebreak(monkeypatch):
-    import numpy as np
-
-    left = _bbox(0.05, 0.2, 0.4)  # equal-size faces
-    right = _bbox(0.6, 0.2, 0.4)
-    _mod, _captured = _fake_mediapipe([left, right])
-    monkeypatch.setitem(__import__("sys").modules, "mediapipe", _mod)
-    find, close = cs._make_face_finder("mediapipe")
-    f0 = np.zeros((100, 200, 3), dtype=np.uint8)
-    f1 = np.zeros((100, 200, 3), dtype=np.uint8)
-    f1[0:40, 120:160, :] = 200  # right face box (x 120..160, y 0..40) moves
-    find(f0)
-    cx = find(f1)
-    assert cx == pytest.approx(0.7)  # right active speaker: xmin + width/2 = 0.6 + 0.1
-    close()
-
-
-def test_person_center_prefers_larger_closer_body_over_higher_weight(monkeypatch):
-    import cv2
-    import numpy as np
-
-    class _HOG:
-        def setSVMDetector(self, _d):
-            pass
-
-        def detectMultiScale(self, _img, winStride):
-            # left BIG body (closer) lower weight; right small higher weight. width=400.
-            return [(10, 0, 160, 300), (320, 0, 40, 90)], [0.3, 0.95]
-
-    monkeypatch.setattr(cv2, "HOGDescriptor", lambda: _HOG())
-    monkeypatch.setattr(cv2, "HOGDescriptor_getDefaultPeopleDetector", lambda: object())
-    cx = cs._person_center(np.zeros((320, 400, 3), dtype=np.uint8))
-    # dominant = larger (closer) body -> center x = 10 + 80 = 90 -> 90/400 = 0.225.
-    assert cx == pytest.approx(0.225)
-
-
 def test_single_speaker_capability_note_is_honest():
     """The honest 'V1 follows a single speaker' capability copy is a real,
     asserted artifact (not just prose) — and points at the V2 switching roadmap."""
     note = cs.SINGLE_SPEAKER_CAPABILITY_NOTE
     assert "single speaker" in note.lower()
     assert "v2" in note.lower()
+
+
+# --------------------------------------------------------------------------- #
+# v1.2.0 WU2 — OPT-IN EdgeTAM occlusion-robust tracker. Every EdgeTAM seam (the
+# importer, the checkpoint resolver, the tracker factory) is MOCKED, so the suite
+# never depends on torch / the EdgeTAM package / a downloaded checkpoint (the cv2
+# whack-a-mole hardening lesson). DEFAULT stays YuNet; EdgeTAM is a settings opt-in.
+# --------------------------------------------------------------------------- #
+class _FakeTracker:
+    """A stand-in EdgeTAM tracker: scripted per-frame cx + a recorded release."""
+
+    def __init__(self, cxs):
+        self._cxs = list(cxs)
+        self.released = False
+
+    def track(self, _img):
+        return self._cxs.pop(0) if self._cxs else None
+
+    def release(self):
+        self.released = True
+
+
+def test_edgetam_error_is_a_backend_unavailable_subclass():
+    # So compute_plan's existing "except ClaudeShortsBackendUnavailableError:
+    # raise" re-raises an opted-in EdgeTAM failure LOUD (never a per-clip degrade,
+    # never a silent fall back to YuNet - WU2 req 2).
+    assert issubclass(cs.EdgeTamBackendUnavailableError, cs.ClaudeShortsBackendUnavailableError)
+    assert issubclass(cs.EdgeTamBackendUnavailableError, cs.ClaudeShortsReframeError)
+
+
+def test_detect_backend_defaults_to_yunet_without_opt_in(monkeypatch):
+    # No reframeTracker setting -> the DEFAULT YuNet path (cv2 importable).
+    monkeypatch.setattr(cs, "resolve_edgetam_model_path", lambda s=None: pytest.fail("edgetam path must not run"))
+    assert cs.detect_backend(_importer({"cv2"}), settings={}) == "yunet"
+    assert cs.detect_backend(_importer({"cv2"}), settings={"reframeTracker": "yunet"}) == "yunet"
+
+
+def test_detect_backend_blank_tracker_falls_back_to_yunet():
+    # A whitespace-only reframeTracker exercises the "strip().lower() or
+    # TRACKER_YUNET" arm -> the YuNet default, not an unknown backend.
+    assert cs.detect_backend(_importer({"cv2"}), settings={"reframeTracker": "   "}) == "yunet"
+
+
+def test_detect_backend_unknown_tracker_falls_back_to_yunet():
+    # Any non-edgetam value is the YuNet default (only "edgetam" opts in).
+    assert cs.detect_backend(_importer({"cv2"}), settings={"reframeTracker": "sam99"}) == "yunet"
+
+
+def test_detect_backend_edgetam_opt_in_all_available(monkeypatch):
+    # cv2 + torch importable AND the checkpoint provisioned -> "edgetam".
+    monkeypatch.setattr(cs, "resolve_edgetam_model_path", lambda s=None: "/models/edgetam.pt")
+    assert cs.detect_backend(_importer({"cv2", "torch"}), settings={"reframeTracker": "edgetam"}) == "edgetam"
+
+
+def test_detect_backend_edgetam_case_insensitive(monkeypatch):
+    monkeypatch.setattr(cs, "resolve_edgetam_model_path", lambda s=None: "/models/edgetam.pt")
+    assert cs.detect_backend(_importer({"cv2", "torch"}), settings={"reframeTracker": "EdgeTAM"}) == "edgetam"
+
+
+def test_detect_backend_edgetam_missing_cv2_fails_loud():
+    # cv2 (frame decode) missing -> LOUD typed error, never a silent YuNet fallback.
+    with pytest.raises(cs.EdgeTamBackendUnavailableError) as exc:
+        cs.detect_backend(_importer(set()), settings={"reframeTracker": "edgetam"})
+    assert "cv2" in str(exc.value)
+
+
+def test_detect_backend_edgetam_missing_torch_fails_loud():
+    # cv2 present but torch missing -> LOUD typed error (exercises the 2nd loop arm).
+    with pytest.raises(cs.EdgeTamBackendUnavailableError) as exc:
+        cs.detect_backend(_importer({"cv2"}), settings={"reframeTracker": "edgetam"})
+    assert "torch" in str(exc.value)
+
+
+def test_detect_backend_edgetam_unprovisioned_checkpoint_fails_loud(monkeypatch):
+    # torch+cv2 importable but the checkpoint is not downloaded -> LOUD typed error.
+    monkeypatch.setattr(cs, "resolve_edgetam_model_path", lambda s=None: None)
+    with pytest.raises(cs.EdgeTamBackendUnavailableError) as exc:
+        cs.detect_backend(_importer({"cv2", "torch"}), settings={"reframeTracker": "edgetam"})
+    assert cs._edgetam_asset_name() in str(exc.value)
+
+
+def test_edgetam_asset_name_matches_manifest():
+    from media_studio.assets import manifest
+
+    assert cs._edgetam_asset_name() == manifest.EDGETAM_ASSET_NAME
+
+
+def test_resolve_edgetam_model_path_unregistered_returns_none(monkeypatch):
+    from media_studio.assets import manifest
+
+    monkeypatch.setattr(manifest, "get_asset", lambda _name: None)
+    assert cs.resolve_edgetam_model_path() is None  # settings=None -> falsy arm
+
+
+def test_resolve_edgetam_model_path_returns_installed_path(monkeypatch):
+    from media_studio.assets import manager, manifest
+
+    monkeypatch.setattr(manifest, "get_asset", lambda _name: object())
+
+    class _Mgr:
+        def __init__(self, **_kw):
+            pass
+
+        def installed_path(self, _entry):
+            return "/models/edgetam.pt"
+
+    monkeypatch.setattr(manager, "AssetManager", _Mgr)
+    assert cs.resolve_edgetam_model_path({"modelsDir": "x"}) == "/models/edgetam.pt"
+
+
+def test_resolve_edgetam_model_path_not_installed_returns_none(monkeypatch):
+    from media_studio.assets import manager, manifest
+
+    monkeypatch.setattr(manifest, "get_asset", lambda _name: object())
+
+    class _Mgr:
+        def __init__(self, **_kw):
+            pass
+
+        def installed_path(self, _entry):
+            return None
+
+    monkeypatch.setattr(manager, "AssetManager", _Mgr)
+    assert cs.resolve_edgetam_model_path({}) is None
+
+
+def test_make_edgetam_finder_propagates_tracker_and_wires_release():
+    tracker = _FakeTracker([0.2, 0.8])
+    find, close = cs._make_edgetam_finder({"reframeTracker": "edgetam"}, lambda s: tracker)
+    assert find("f0") == pytest.approx(0.2)
+    assert find("f1") == pytest.approx(0.8)
+    assert find("f2") is None  # tracker exhausted -> lost
+    close()
+    assert tracker.released is True  # close() == the tracker's release (6 GB stage free)
+
+
+def test_make_edgetam_finder_factory_failure_propagates_loud():
+    def boom(_settings):
+        raise cs.EdgeTamBackendUnavailableError("no torch")
+
+    with pytest.raises(cs.EdgeTamBackendUnavailableError):
+        cs._make_edgetam_finder({}, boom)
+
+
+def test_subject_finder_edgetam_primary_hit_skips_motion(monkeypatch):
+    tracker = _FakeTracker([0.66])
+    monkeypatch.setattr(cs, "_motion_center", lambda prev, img: pytest.fail("motion must not run on an edgetam hit"))
+    find, close = cs._make_subject_finder("edgetam", {}, edgetam_tracker_factory=lambda s: tracker)
+    assert find(object()) == pytest.approx(0.66)
+    close()
+    assert tracker.released is True
+
+
+def test_subject_finder_edgetam_miss_falls_back_to_motion(monkeypatch):
+    # EdgeTAM lost the subject this frame (None) -> the imgproc-only motion last
+    # resort covers the gap. Motion is NOT face tracking, so this is not the
+    # "silent fall back to face tracking" WU2 req 2 forbids.
+    tracker = _FakeTracker([None, None])
+    monkeypatch.setattr(cs, "_motion_center", lambda prev, img: 0.4)
+    find, _close = cs._make_subject_finder("edgetam", {}, edgetam_tracker_factory=lambda s: tracker)
+    assert find("frame0") is None  # no previous frame yet -> motion can't run
+    assert find("frame1") == pytest.approx(0.4)  # motion vs frame0
+
+
+def test_engine_edgetam_opt_in_tracks_end_to_end(fake_bins, monkeypatch):
+    # Full opt-in path: reframeTracker="edgetam", a fake tracker + fake frames,
+    # cv2.imread stubbed. The engine crops on the tracked subject, one ffmpeg pass.
+    import cv2
+    import numpy as np
+
+    settings = {**fake_bins, "reframeTracker": "edgetam"}
+    ts = cs.window_timestamps(8.0)
+    tracker = _FakeTracker([0.8] * len(ts))
+    monkeypatch.setattr(cs, "resolve_edgetam_model_path", lambda s=None: "/models/edgetam.pt")
+    # Resolve the backend via the FAKE importer (cv2+torch "present") so neither the
+    # engine's backend probe nor detect_subject_centers imports the REAL torch — the
+    # heavy import is never a test dependency (the cv2 whack-a-mole lesson; real torch
+    # is absent in the CI gate env). The real _detect_edgetam_backend logic still runs.
+    monkeypatch.setattr(
+        cs,
+        "detect_backend",
+        lambda importer=None, settings=None: cs._detect_edgetam_backend(_importer({"cv2", "torch"}), settings or {}),
+    )
+
+    # Write a REAL blank jpeg via cv2.imwrite (the finder ignores pixels; the fake
+    # tracker returns a fixed cx), so the extracted frame reads back through the
+    # genuine cv2.imread — matching the existing detect_subject_centers tests and
+    # avoiding an open()-on-argv path sink (a py/path-injection CodeQL flags).
+    def frame_runner(argv, capture_output=True, check=False):
+        cv2.imwrite(argv[-1], np.zeros((72, 128, 3), dtype="uint8"))
+        return type("C", (), {"returncode": 0})()
+
+    runner = _make_ff_runner(0)
+    eng = ClaudeShortsReframeEngine(
+        settings=settings,
+        runner=runner,
+        prober=lambda _p: (1280, 720, 8.0),
+        detector=lambda p, t: cs.detect_subject_centers(
+            p, t, settings=settings, frame_runner=frame_runner, edgetam_tracker_factory=lambda s: tracker
+        ),
+    )
+    eng.reframe("/in.mp4", "/out.mp4")
+    vf = _vf_of(runner.calls[0]["argv"])
+    x = int(vf.split(":'")[1].split("'")[0])
+    assert abs(x - cs.crop_x_for_center(0.8, 405, 1280)) <= 2  # tracked, not center (437)
+
+
+def test_engine_edgetam_opt_in_unavailable_fails_loud(fake_bins, monkeypatch):
+    # Opted IN to EdgeTAM but torch is absent -> compute_plan raises the typed
+    # EdgeTamBackendUnavailableError up front (via the real _backend_probe), never a
+    # silent fall back to the YuNet default (WU2 req 2). No ffmpeg pass runs.
+    settings = {**fake_bins, "reframeTracker": "edgetam"}
+    monkeypatch.setattr(
+        cs,
+        "detect_backend",
+        lambda importer=None, settings=None: cs._detect_edgetam_backend(_importer({"cv2"}), settings or {}),
+    )
+    eng = ClaudeShortsReframeEngine(settings=settings, runner=_make_ff_runner(0), prober=lambda _p: (1280, 720, 8.0))
+    with pytest.raises(cs.EdgeTamBackendUnavailableError):
+        eng.compute_plan("/in.mp4")

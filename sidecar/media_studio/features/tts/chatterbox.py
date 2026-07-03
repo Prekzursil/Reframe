@@ -53,6 +53,7 @@ from pathlib import Path
 from typing import Any
 
 from ...assets.manifest import AssetEntry, register_asset
+from ...pathsafe import ensure_within
 from ...settings_store import default_config_dir
 from ...util import get_logger
 from .engine import Cue, TtsEngine, TtsError, Voice
@@ -255,7 +256,7 @@ class ChatterboxEngine(TtsEngine):
             raise TtsError("chatterbox synth: no cues given")
         if not voice or not Path(voice).is_file():
             raise TtsError(f"chatterbox synth: reference sample not found: {voice!r} (add one via tts.sample.add)")
-        if not Path(self.env_dir).is_dir():
+        if not Path(ensure_within(self.env_dir)).is_dir():
             raise TtsError(
                 f"chatterbox env missing at {self.env_dir} — install the "
                 f"{CHATTERBOX_ENV_ASSET!r} asset first (assets.ensure)"
