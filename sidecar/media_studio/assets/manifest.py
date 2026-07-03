@@ -454,6 +454,55 @@ def _register_yunet() -> None:
     )
 
 
+# --------------------------------------------------------------------------- #
+# v1.2.0 WU2 — EdgeTAM occlusion-robust video tracker (OPT-IN reframe backend).
+# EdgeTAM (facebookresearch/EdgeTAM, Apache-2.0) is an on-device, edge-optimized
+# SAM2 successor for "track anything" video segmentation. It is the OPT-IN
+# ``reframeTracker="edgetam"`` speaker-tracking backend for the claudeshorts
+# reframe engine: unlike the per-frame YuNet face detector (the DEFAULT), it
+# propagates a single subject mask THROUGH occlusions, so the crop keeps tracking
+# a speaker who is briefly blocked / turns fully away instead of losing them.
+#
+# LICENSE (verified 2026-07-03, task brief): Apache-2.0 — commercial use is
+# permitted under the standard attribution/NOTICE obligations (no field-of-use or
+# non-commercial restriction). EdgeTAM's checkpoint was trained on "Our mix"
+# which explicitly EXCLUDES SAM2's internal datasets, so the weights carry no
+# encumbered-data question; the research-only SA-1B *dataset* license governs raw
+# data, not these trained weights.
+#
+# F3c pinning: the checkpoint ships IN the repo (a 56 MB git blob, NOT LFS), so it
+# is pinned via a GitHub-raw URL carrying a 40-hex COMMIT HASH (never a moving
+# branch/tag) and the sha256 is the downloaded file's verified digest
+# (56,116,523 B, hashed 2026-07-03).
+# --------------------------------------------------------------------------- #
+EDGETAM_ASSET_NAME = "edgetam-video-tracker"
+EDGETAM_COMMIT = "7711e012a30a2402c4eaab637bdb00a521302c91"
+EDGETAM_URL = f"https://github.com/facebookresearch/EdgeTAM/raw/{EDGETAM_COMMIT}/checkpoints/edgetam.pt"
+# sha256 of checkpoints/edgetam.pt @ the pinned commit (== the downloaded +
+# hashed bytes, 56,116,523 B, 2026-07-03).
+EDGETAM_SHA256 = "ed2d4850b8792c239689b043c47046ec239b6e808a3d9b6ae676c803fd8780df"
+EDGETAM_DEST = "models/edgetam.pt"
+# ~53.5 MB; kept a touch below the real size so the manager's file_size_ok floor
+# (0.5 * size_mb) still counts the fully-downloaded file as installed.
+EDGETAM_SIZE_MB = 53.5
+
+
+def _register_edgetam() -> None:
+    """Register the sha256-pinned EdgeTAM tracker checkpoint (idempotent)."""
+    register_asset(
+        AssetEntry(
+            name=EDGETAM_ASSET_NAME,
+            kind="model",
+            size_mb=EDGETAM_SIZE_MB,
+            dest=EDGETAM_DEST,
+            label="EdgeTAM video tracker (opt-in occlusion-robust reframe tracking, Apache-2.0)",
+            installer="download",
+            url=EDGETAM_URL,
+            sha256=EDGETAM_SHA256,
+        )
+    )
+
+
 def _register_phase8_optional() -> None:
     """Register the optional Phase-8 emotion + OCR signal models (idempotent)."""
     register_asset(
@@ -486,3 +535,4 @@ _register_day1()
 _register_phase8_optional()
 _register_lightasd()
 _register_yunet()
+_register_edgetam()

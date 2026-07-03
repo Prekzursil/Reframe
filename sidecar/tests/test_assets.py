@@ -478,6 +478,38 @@ class TestManifest:
         floor = int(entry.size_mb * MB * MIN_SIZE_FRACTION)
         assert floor <= actual_bytes
 
+    def test_edgetam_entry_is_sha_pinned_and_commit_pinned(self):
+        # v1.2.0 WU2: the EdgeTAM occlusion-robust video tracker (opt-in reframe
+        # backend, Apache-2.0) enters the manifest as a sha256-pinned download
+        # whose GitHub-raw URL carries a 40-hex commit hash (never a moving
+        # branch/tag — F3c), pointing at the checkpoint committed in the upstream
+        # facebookresearch/EdgeTAM repo.
+        entry = manifest.get_asset(manifest.EDGETAM_ASSET_NAME)
+        assert entry is not None
+        assert entry.kind == "model"
+        assert entry.installer == "download"
+        assert entry.sha256 and len(entry.sha256) == 64
+        assert entry.size_mb > 0
+        assert "github.com/facebookresearch/EdgeTAM" in entry.url
+        assert manifest.EDGETAM_COMMIT in entry.url
+        assert "/raw/main/" not in entry.url
+        assert entry.url.endswith("edgetam.pt")
+        assert entry.dest.endswith(".pt")
+        # Apache-2.0 license surfaced in the human label (WU2 requirement 3).
+        assert "Apache-2.0" in entry.label
+        assert manifest.EDGETAM_ASSET_NAME in {a.name for a in manifest.all_assets()}
+
+    def test_edgetam_size_mb_keeps_the_checkpoint_detectable_as_installed(self):
+        # The checkpoint is ~53.5 MB; size_mb must stay below the manager's
+        # file_size_ok floor (0.5 * size_mb) so a fully-downloaded file is not
+        # mistaken for a truncated leftover.
+        from media_studio.assets.manager import MB, MIN_SIZE_FRACTION
+
+        entry = manifest.get_asset(manifest.EDGETAM_ASSET_NAME)
+        actual_bytes = 56_116_523  # the real file size (verified by download)
+        floor = int(entry.size_mb * MB * MIN_SIZE_FRACTION)
+        assert floor <= actual_bytes
+
     def test_rapidocr_url_is_a_live_pinned_hf_commit(self):
         # F3c re-point: the old GitHub-release URL 404'd; it now resolves an HF
         # commit-pinned ONNX (the resolve URL must carry a commit hash, asserted
