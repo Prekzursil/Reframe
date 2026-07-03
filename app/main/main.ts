@@ -200,25 +200,22 @@ function propagateDataRootEnv(): void {
   }
 }
 
+/** WIRING-T5 §2: the sidecar-env sentinel bootstrap.py writes on success. */
+function firstRunSentinelPath(): string {
+  return join(DATA_ROOT, 'envs', 'sidecar', '.media-studio-env.json');
+}
+
 /**
  * Path-injection barrier (CodeQL js/path-injection): the data root is derived
  * from `MEDIA_STUDIO_CONFIG_DIR` / a marker file, so any path joined onto it and
- * handed to `fs.existsSync` is a tainted sink. Reject a NUL byte or any
- * parent-directory (`..`) segment and return the value — the recognised string
- * barrier neutralises the taint. A legitimate data root never contains either,
- * so this is non-breaking.
+ * handed to `fs.existsSync` is a tainted sink. Callers reject a NUL byte or any
+ * parent-directory (`..`) segment with an INLINE `if (…) throw` immediately
+ * before the sink — the barrier shape CodeQL recognises (it must live in the
+ * SAME function as the sink, not behind a value-returning helper). Message kept
+ * shared here for a single source of truth; the check itself stays inline.
  */
-function assertSafeDataPath(p: string): string {
-  if (p.includes('\0') || p.split(/[\\/]+/).includes('..')) {
-    throw new Error('data-root path must not contain a NUL byte or parent-directory traversal');
-  }
-  return p;
-}
-
-/** WIRING-T5 §2: the sidecar-env sentinel bootstrap.py writes on success. */
-function firstRunSentinelPath(): string {
-  return assertSafeDataPath(join(DATA_ROOT, 'envs', 'sidecar', '.media-studio-env.json'));
-}
+const UNSAFE_DATA_PATH_MESSAGE =
+  'data-root path must not contain a NUL byte or parent-directory traversal';
 
 /**
  * WIRING-T5 §2 (provisioning hardening): the FIRST-RUN-COMPLETE marker
@@ -229,7 +226,7 @@ function firstRunSentinelPath(): string {
  * centre-cropping app on the next launch.
  */
 function firstRunCompletePath(): string {
-  return assertSafeDataPath(join(DATA_ROOT, FIRST_RUN_COMPLETE_MARKER));
+  return join(DATA_ROOT, FIRST_RUN_COMPLETE_MARKER);
 }
 
 /**
@@ -493,7 +490,13 @@ function bootstrap(): void {
   // run BEFORE the sidecar starts (the embeddable python cannot serve
   // `-m media_studio` until bootstrap.py rewrites its ._pth). Dev builds (and
   // already-bootstrapped packaged builds) start immediately, exactly as before.
-  const firstRun = needsFirstRunSetup(app.isPackaged, existsSync(firstRunCompletePath()));
+  // js/path-injection barrier (inline, same function as the existsSync sink):
+  // reject NUL/`..` on the env-derived data-root path before the probe.
+  const completeMarker = firstRunCompletePath();
+  if (completeMarker.includes('\0') || completeMarker.split(/[\\/]+/).includes('..')) {
+    throw new Error(UNSAFE_DATA_PATH_MESSAGE);
+  }
+  const firstRun = needsFirstRunSetup(app.isPackaged, existsSync(completeMarker));
   if (!firstRun) {
     // T5 hardening: a packaged build whose env already exists still needs THIS
     // copy's embeddable ._pth pointed at it (the sentinel is shared in appData,
@@ -594,9 +597,15 @@ function bootstrap(): void {
     const sc2 = sidecar;
     const begin = (): void => {
       void runFirstRunBootstrap().then((ok) => {
+        // js/path-injection barrier (inline, same function as the existsSync
+        // sink): reject NUL/`..` on the env-derived data-root path before probing.
+        const sentinel = firstRunSentinelPath();
+        if (sentinel.includes('\0') || sentinel.split(/[\\/]+/).includes('..')) {
+          throw new Error(UNSAFE_DATA_PATH_MESSAGE);
+        }
         if (ok) {
           sc2.start();
-        } else if (shouldStartSidecarAfterFailedFirstRun(existsSync(firstRunSentinelPath()))) {
+        } else if (shouldStartSidecarAfterFailedFirstRun(existsSync(sentinel))) {
           // Re-provision of an already-working install failed (e.g. an upgrade
           // back-filling new deps hit a transient download error). Start the
           // EXISTING env degraded rather than brick it — the loud bootstrap
