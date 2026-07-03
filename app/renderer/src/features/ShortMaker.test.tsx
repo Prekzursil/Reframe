@@ -49,6 +49,7 @@ import ShortMaker, {
   FACTOR_LABELS,
   factorEntries,
   displayVirality,
+  displaySignalScore,
   recordFeedback,
   tasteProfileLine,
   CALIBRATION_LABELS,
@@ -679,6 +680,18 @@ describe('factorEntries / displayVirality (P3-C)', () => {
     expect(displayVirality(undefined)).toBeNull();
     expect(displayVirality(NaN)).toBeNull();
     expect(displayVirality('87')).toBeNull();
+  });
+
+  it('displaySignalScore normalizes 0..1 to a 0-100 int and rejects non-numbers (WU3)', () => {
+    expect(displaySignalScore(0.73)).toBe(73);
+    expect(displaySignalScore(0.736)).toBe(74); // rounds
+    expect(displaySignalScore(0)).toBe(0);
+    expect(displaySignalScore(1)).toBe(100);
+    expect(displaySignalScore(1.4)).toBe(100); // clamps a >1 defensive value
+    expect(displaySignalScore(-0.2)).toBe(0); // clamps a <0 defensive value
+    expect(displaySignalScore(undefined)).toBeNull();
+    expect(displaySignalScore(NaN)).toBeNull();
+    expect(displaySignalScore('0.73')).toBeNull();
   });
 });
 

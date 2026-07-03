@@ -5,7 +5,19 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [1.1.0] — 2026-06-29
+### Added — virality surfacing (v1.2.0 WU3)
+
+- **Highlight-score badge (display-only)** — the candidate review list now
+  surfaces the unified scorer's `signalScore` (a 0..1 fusion of the legacy LLM
+  score with the present-weighted multimodal signal boost, stamped by
+  `select_unified`) as a distinct **0-100 "highlight" badge** next to the
+  existing within-batch **virality percentile** badge — the two are now labelled
+  distinctly (percentile vs highlight), each with its own tooltip. `signalScore`
+  is carried through `_coerce_candidate` so it reaches the renderer over the RPC,
+  added to both `Candidate` schema copies, and normalized by a pure
+  `displaySignalScore` helper. Pure surfacing — selection/ranking is unchanged;
+  the badge simply does not render on the frozen path where `signalScore` is
+  absent. Both coverage gates stay at strict 100% line + branch.
 
 **Reframe v1.1.0 — the multi-speaker release.** The flagship is a HYBRID
 multi-speaker reframe engine that decides per-segment between **cut** (lock onto

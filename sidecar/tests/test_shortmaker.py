@@ -352,6 +352,29 @@ def test_run_select_normalizes_full_candidate_schema(transcript):
     assert cand["sourceStart"] == pytest.approx(10.0)  # snap set it to start
 
 
+def test_run_select_carries_signal_score_through_coercion(transcript):
+    """WU3: the unified scorer's ``signalScore`` survives coercion so the badge
+    can read it off the wire; a candidate without one stays clean (no drift)."""
+    rec = RecordingStages(
+        [],
+        select_return=[
+            {"start": 10.0, "end": 35.0, "hook": "h", "score": 88, "signalScore": 0.73},
+            {"start": 40.0, "end": 66.0, "hook": "h2", "score": 70},
+        ],
+    )
+    out = sm.run_select(
+        make_ctx(),
+        video_id="v1",
+        prompt="p",
+        controls={"count": 2},
+        load_context=loader_for("/src.mp4", transcript),
+        stages=rec.as_stages(),
+    )
+    cands = out["candidates"]
+    assert cands[0]["signalScore"] == pytest.approx(0.73)
+    assert "signalScore" not in cands[1]
+
+
 def test_run_select_passes_coerced_candidates_to_snap(transcript):
     """select output is normalized to full §3 candidates BEFORE snap sees them."""
     seen: dict[str, Any] = {}
