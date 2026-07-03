@@ -8,14 +8,14 @@
 # explicitly below so first-run installs are deterministic where it matters.
 
 faster-whisper==1.2.1
-ctranslate2==4.8.0
+ctranslate2==4.8.1
 scenedetect==0.7
 opencv-python==4.13.0.92
 httpx==0.28.1
 numpy==2.5.0
 av==17.1.0
 onnxruntime==1.27.0
-huggingface_hub==1.21.0
+huggingface_hub==1.22.0
 tokenizers==0.23.1
 
 # TTS (kokoro default engine — the onnx build, NEVER the torch pip package; A4)
@@ -25,7 +25,7 @@ kokoro-onnx==0.5.0
 
 # CUDA runtime wheels for ctranslate2/onnxruntime GPU paths (pins = dev venv)
 nvidia-cublas-cu12==12.9.2.10
-nvidia-cudnn-cu12==9.23.2.1
+nvidia-cudnn-cu12==9.24.0.43
 
 # DELIBERATELY NOT HERE: mediapipe. The claudeshorts reframe engine's optional
 # MediaPipe backend uses the LEGACY Solutions API (`mp.solutions.face_detection`),
