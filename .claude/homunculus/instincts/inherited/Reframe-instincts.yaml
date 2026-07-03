@@ -1,0 +1,435 @@
+# Instincts generated from https://github.com/Prekzursil/Reframe
+# Generated: 2026-07-03T04:46:46.586Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: Reframe-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/Prekzursil/Reframe
+---
+
+# Reframe Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: fix
+
+## Evidence
+
+- 4 commits analyzed
+- Detected conventional commit pattern
+- Examples: fix(reframe): surface missing MediaPipe model in center-crop degrade + fail loud on broken cascade, fix(e2e): pre-import natives in the tiny-CPU launcher to end the Windows E2E hang (bug #4)
+
+---
+id: Reframe-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/Prekzursil/Reframe
+---
+
+# Reframe Commit Length
+
+## Action
+
+Write moderate-length commit messages (~93 characters)
+
+## Evidence
+
+- Average commit message length: 93 chars
+- Based on 4 commits
+
+---
+id: Reframe-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/Prekzursil/Reframe
+---
+
+# Reframe Naming Files
+
+## Action
+
+Use snake_case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: snake_case
+
+---
+id: Reframe-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/Prekzursil/Reframe
+---
+
+# Reframe Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: Reframe-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/Prekzursil/Reframe
+---
+
+# Reframe Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: Reframe-test-framework
+trigger: "when writing tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/Prekzursil/Reframe
+---
+
+# Reframe Test Framework
+
+## Action
+
+Use vitest as the test framework
+
+## Evidence
+
+- Test framework detected: vitest
+- File pattern: *.test.ts
+
+---
+id: Reframe-test-naming
+trigger: "when creating a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/Prekzursil/Reframe
+---
+
+# Reframe Test Naming
+
+## Action
+
+Name test files using the pattern: *.test.ts
+
+## Evidence
+
+- File pattern: *.test.ts
+- Consistent across test files
+
+---
+id: Reframe-test-types
+trigger: "when planning tests for a feature"
+confidence: 0.7
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/Prekzursil/Reframe
+---
+
+# Reframe Test Types
+
+## Action
+
+Write unit, e2e tests to match project standards
+
+## Evidence
+
+- Test types detected: unit, e2e
+- Coverage config: no
+
+---
+id: Reframe-workflow-feature-or-bugfix-with-tdd-and-coverage
+trigger: "when doing feature or bugfix with tdd and coverage"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/Prekzursil/Reframe
+---
+
+# Reframe Workflow Feature Or Bugfix With Tdd And Coverage
+
+## Action
+
+Follow the feature-or-bugfix-with-tdd-and-coverage workflow:
+1. Modify or add implementation logic in the relevant source file(s)
+2. Add or update corresponding test files to cover new or changed logic
+3. Ensure tests assert both expected behavior and error/failure conditions (including fail-loud, no-silent-fallback cases)
+4. Run the test suite to confirm 100% coverage (lines, branches, functions, statements)
+5. Commit both implementation and test changes together
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: sidecar/media_studio/features/reframe_claudeshorts.py, sidecar/tests/test_reframe_claudeshorts.py, sidecar/tests/e2e/_tiny_sidecar.py
+
+---
+id: Reframe-workflow-fail-loud-no-silent-fallback-hardening
+trigger: "when doing fail loud no silent fallback hardening"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/Prekzursil/Reframe
+---
+
+# Reframe Workflow Fail Loud No Silent Fallback Hardening
+
+## Action
+
+Follow the fail-loud-no-silent-fallback-hardening workflow:
+1. Identify a code path where a failure could be silently ignored or degraded
+2. Modify implementation to raise explicit errors or surface actionable messages (fail loud)
+3. Update or add tests to assert that these errors are raised and never silently degrade
+4. Document the fail-loud behavior inline or in test descriptions
+5. Commit both implementation and test changes together
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: sidecar/media_studio/features/reframe_claudeshorts.py, sidecar/tests/test_reframe_claudeshorts.py, sidecar/runtime_setup/bootstrap.py
+
+---
+id: reframe-instinct-file-naming
+trigger: "When creating or renaming a file in the codebase"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: Prekzursil/Reframe
+---
+
+# Reframe Instinct File Naming
+
+## Action
+
+Use snake_case for Python files and PascalCase for classes; use camelCase for functions and SCREAMING_SNAKE_CASE for constants
+
+## Evidence
+
+- Pattern in namingConventions: files: snake_case, classes: PascalCase, functions: camelCase, constants: SCREAMING_SNAKE_CASE
+
+---
+id: reframe-instinct-import-style
+trigger: "When importing modules in Python code"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: Prekzursil/Reframe
+---
+
+# Reframe Instinct Import Style
+
+## Action
+
+Use relative imports instead of absolute imports
+
+## Evidence
+
+- Pattern in codeStyle: importStyle: relative
+
+---
+id: reframe-instinct-export-style
+trigger: "When exporting modules or functions"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: Prekzursil/Reframe
+---
+
+# Reframe Instinct Export Style
+
+## Action
+
+Use named exports instead of default exports
+
+## Evidence
+
+- Pattern in codeStyle: exportStyle: named
+
+---
+id: reframe-instinct-test-file-pattern
+trigger: "When creating a test file for TypeScript/JavaScript code"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: Prekzursil/Reframe
+---
+
+# Reframe Instinct Test File Pattern
+
+## Action
+
+Name the file with the pattern *.test.ts
+
+## Evidence
+
+- Pattern in testing: filePattern: *.test.ts
+- Examples: app/renderer/src/panels/ModelsSystemPanel.test.tsx
+
+---
+id: reframe-instinct-test-types
+trigger: "When writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: Prekzursil/Reframe
+---
+
+# Reframe Instinct Test Types
+
+## Action
+
+Write both unit and end-to-end (e2e) tests for features
+
+## Evidence
+
+- Pattern in testing: testTypes: [unit, e2e]
+- Files: sidecar/tests/test_reframe_claudeshorts.py, sidecar/tests/e2e/_tiny_sidecar.py
+
+---
+id: reframe-instinct-tdd-coverage
+trigger: "When implementing a new feature or fixing a bug"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: Prekzursil/Reframe
+---
+
+# Reframe Instinct Tdd Coverage
+
+## Action
+
+Add or update tests immediately to cover the new or changed logic, aiming for 100% coverage, and commit implementation and test changes together
+
+## Evidence
+
+- Workflow: feature-or-bugfix-with-tdd-and-coverage
+- Commit sequences and examples in workflow
+
+---
+id: reframe-instinct-fail-loud
+trigger: "When handling errors or potential failures (e.g., missing models, broken dependencies)"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: Prekzursil/Reframe
+---
+
+# Reframe Instinct Fail Loud
+
+## Action
+
+Raise explicit errors or surface actionable messages; never silently degrade or fallback
+
+## Evidence
+
+- Workflow: fail-loud-no-silent-fallback-hardening
+- Commit examples: fix(reframe): surface missing MediaPipe model in center-crop degrade + fail loud on broken cascade
+
+---
+id: reframe-instinct-test-error-assertion
+trigger: "When writing or updating tests for error-prone code paths"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: Prekzursil/Reframe
+---
+
+# Reframe Instinct Test Error Assertion
+
+## Action
+
+Assert that errors are raised and never silently ignored in tests
+
+## Evidence
+
+- Workflow: fail-loud-no-silent-fallback-hardening (step: Update or add tests to assert that these errors are raised and never silently degrade)
+- Files: sidecar/tests/test_runtime_setup.py, app/renderer/src/panels/ModelsSystemPanel.test.tsx
+
+---
+id: reframe-instinct-conventional-commit
+trigger: "When writing a git commit message"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: Prekzursil/Reframe
+---
+
+# Reframe Instinct Conventional Commit
+
+## Action
+
+Use the conventional commit format with a type prefix (e.g., fix(scope): message)
+
+## Evidence
+
+- Pattern in commits: type: conventional, prefixes: [fix]
+- Examples: fix(reframe): surface missing MediaPipe model in center-crop degrade + fail loud on broken cascade
+
+---
+id: reframe-instinct-commit-implementation-and-tests-together
+trigger: "When committing changes for a feature or bugfix"
+confidence: 0.95
+domain: git
+source: repo-analysis
+source_repo: Prekzursil/Reframe
+---
+
+# Reframe Instinct Commit Implementation And Tests Together
+
+## Action
+
+Commit both the implementation and corresponding test changes in the same commit
+
+## Evidence
+
+- Workflow: feature-or-bugfix-with-tdd-and-coverage (step: Commit both implementation and test changes together)
+- Workflow: fail-loud-no-silent-fallback-hardening (step: Commit both implementation and test changes together)
+
+---
+id: reframe-instinct-explicit-error-handling
+trigger: "When adding error handling logic"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: Prekzursil/Reframe
+---
+
+# Reframe Instinct Explicit Error Handling
+
+## Action
+
+Use try-catch blocks for error handling, but do not create custom error classes or global handlers
+
+## Evidence
+
+- Pattern in errorHandling: style: try-catch, customErrorClasses: false, globalHandler: false
+
