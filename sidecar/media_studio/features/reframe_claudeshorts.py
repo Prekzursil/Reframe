@@ -11,12 +11,15 @@ no WSL, no node, no Remotion:
   1. probe the source geometry/duration (ffprobe, argv list);
   2. sample ~one frame per second and locate the SPEAKER's horizontal center
      with a fallback chain so the crop never collapses to a center crop the
-     moment a face turns away: **mediapipe** face detection when importable (A6:
-     it MUST be pre-imported by ``__main__._preimport_native_modules``; see
-     :data:`NATIVE_MODULES_FOR_PREIMPORT`) or an **OpenCV haar**-cascade face,
-     then a **HOG person/body** detector for profile/turned shots, then **motion
-     saliency** (inter-frame diff centroid) as a last resort, else — only when
-     all three find nothing across the clip — a plain **center** crop;
+     moment a face turns away: **YuNet** face detection (v1.2.0 WU1 — a tiny
+     sha256-pinned ONNX CNN run through ``cv2.FaceDetectorYN``; it MUST be
+     pre-imported by ``__main__._preimport_native_modules``; see
+     :data:`NATIVE_MODULES_FOR_PREIMPORT`), then **motion saliency** (inter-frame
+     diff centroid, imgproc-only) as a last resort, else — only when both find
+     nothing across the clip — a plain **center** crop. YuNet REPLACED the old
+     haar-cascade face + HOG person/body detectors: it holds turned/profile faces
+     far better (making the objdetect-dependent HOG body fallback redundant), and
+     dropping HOG leaves exactly ONE native detector surface to provision;
   3. heavily smooth the per-window centers with a zero-phase (forward+backward)
      EMA so the crop FOLLOWS the speaker steadily with no frame-to-frame jitter,
      and convert them to finely-spaced crop-x keyframes;
@@ -25,8 +28,9 @@ no WSL, no node, no Remotion:
      piecewise-linear ``x(t)`` (no stepped teleports), h264 at 1080x1920 for 9:16.
 
 A6 hard lessons honoured here:
-  * native modules (mediapipe, cv2) are imported ONLY inside job-time function
-    bodies and are flagged for ``__main__`` pre-import (deadlock proven);
+  * native modules (cv2 — incl. its bundled ONNX runtime for YuNet) are imported
+    ONLY inside job-time function bodies and are flagged for ``__main__``
+    pre-import (deadlock proven);
   * the encode subprocess runs through :func:`media_studio.ffmpeg.run`, which
     drains stderr on a thread (the proven 29-min freeze otherwise); the small
     frame-extraction/probe calls use ``subprocess.run(capture_output=True)``
@@ -116,9 +120,11 @@ SINGLE_SPEAKER_CAPABILITY_NOTE = (
 
 # A6 LESSON 1 — PRE-IMPORT FLAG (NON-NEGOTIABLE): these native C-extension
 # modules are first used INSIDE a job thread by this engine. They MUST be added
-# to ``__main__._preimport_native_modules`` (cv2 already is; mediapipe is NEW —
-# see WIRING-T4B.md). A first import on a job thread deadlocks the sidecar.
-NATIVE_MODULES_FOR_PREIMPORT: tuple[str, ...] = ("mediapipe", "cv2")
+# to ``__main__._preimport_native_modules`` (cv2 already is). A first import on a
+# job thread deadlocks the sidecar. v1.2.0 WU1 dropped ``mediapipe`` here: the
+# YuNet detector runs entirely through ``cv2`` (FaceDetectorYN + its bundled ONNX
+# runtime), so cv2 is the only native module this engine pre-imports.
+NATIVE_MODULES_FOR_PREIMPORT: tuple[str, ...] = ("cv2",)
 
 # Injectable seams.
 Runner = Callable[..., int]  # ffmpeg.run-shaped
@@ -133,12 +139,13 @@ class ClaudeShortsReframeError(RuntimeError):
 
 
 class ClaudeShortsBackendUnavailableError(ClaudeShortsReframeError):
-    """No native subject-tracking backend (cv2/mediapipe) is importable.
+    """No native subject-tracking backend is importable / provisioned.
 
     This is a SETUP/PROVISIONING failure, NOT a per-clip event: without OpenCV
-    the engine cannot decode frames to track a speaker at all. It is raised as an
-    EXPLICIT signal (never a silent ``center`` fallback) so the job surfaces an
-    actionable "install opencv-python/mediapipe" error rather than silently
+    (cv2 + its FaceDetectorYN class) or the sha256-pinned YuNet ONNX model, the
+    engine cannot track a speaker at all. It is raised as an EXPLICIT signal
+    (never a silent ``center`` fallback) so the job surfaces an actionable
+    "install opencv-python / provision the YuNet model" error rather than silently
     degrading every clip to a dumb center crop (WU-3 NO-SILENT-FALLBACK).
     """
 
@@ -149,33 +156,21 @@ class ClaudeShortsBackendUnavailableError(ClaudeShortsReframeError):
 REFRAME_DEGRADED_NOTICE = "reframe.degraded"
 
 
-# Appended to a degrade message when the active detector backend is the weaker
-# OpenCV/haar face detector because the preferred MODEL (MediaPipe) is not
-# installed. NO-SILENT-FALLBACK: a center crop caused by a missing model must
-# NAME that model (actionable) rather than reading as an unexplained "no subject".
-MEDIAPIPE_MISSING_HINT = (
-    " MediaPipe is not installed — the app fell back to lower-quality OpenCV face "
-    "detection, which often can't hold turned or profile faces; install mediapipe "
-    "for accurate speaker tracking."
-)
-
-
-def make_degraded_notice(reason: str, *, backend: str | None = None) -> dict[str, str]:
+def make_degraded_notice(reason: str) -> dict[str, str]:
     """Build the typed per-clip degraded notice (``{type, message, reason}``).
 
     ``message`` is the human line a job surfaces via ``job.progress``; ``reason``
     is the specific cause (a detector error, or no trackable subject) so the UI /
-    logs can explain WHY the crop fell back to center. When ``backend == "haar"``
-    the message also NAMES the missing MediaPipe model (:data:`MEDIAPIPE_MISSING_HINT`)
-    so a model-unavailability degrade is surfaced loudly, never silently reduced to
-    "no subject" (NO-SILENT-FALLBACK).
+    logs can explain WHY the crop fell back to center. v1.2.0 WU1 removed the old
+    "MediaPipe missing" enrichment: with a single YuNet detector there is no
+    weaker fallback backend to name — a missing model/backend is a LOUD
+    provisioning error (:class:`ClaudeShortsBackendUnavailableError`), never a
+    silent center-crop degrade, so this notice only covers genuine per-clip
+    "no subject / detector failed" degrades.
     """
-    message = f"reframe: speaker tracking unavailable ({reason}) — used center crop"
-    if backend == "haar":
-        message += MEDIAPIPE_MISSING_HINT
     return {
         "type": REFRAME_DEGRADED_NOTICE,
-        "message": message,
+        "message": f"reframe: speaker tracking unavailable ({reason}) — used center crop",
         "reason": reason,
     }
 
@@ -529,37 +524,51 @@ def probe_video(
 
 
 # --------------------------------------------------------------------------- #
-# subject detection (mediapipe -> haar -> center; natives imported lazily)
+# subject detection (YuNet face -> motion -> center; natives imported lazily)
 # --------------------------------------------------------------------------- #
 def detect_backend(importer: Callable[[str], Any] = importlib.import_module) -> str:
-    """Pick the detection backend: ``mediapipe`` | ``haar``.
+    """Verify the native detection backend is importable; return ``"yunet"``.
 
-    mediapipe needs cv2 too (frame decode), so the mediapipe backend requires
-    BOTH. ``importer`` is injectable so tests exercise the fallback chain with
-    no native modules present. NOTE (A6): in production these imports only
-    *re-find* modules already loaded by ``__main__._preimport_native_modules``.
+    v1.2.0 WU1: the sole face backend is YuNet, run through ``cv2.FaceDetectorYN``
+    on a sha256-pinned ONNX model, so ``cv2`` is REQUIRED (it also decodes the
+    sampled frames). ``importer`` is injectable so tests exercise the failure path
+    with no native modules present. NOTE (A6): in production this import only
+    *re-finds* the cv2 module already loaded by ``__main__._preimport_native_modules``.
 
-    WU-3 NO-SILENT-FALLBACK: when NEITHER mediapipe+cv2 nor cv2 alone is
-    importable, subject tracking is impossible — this raises
-    :class:`ClaudeShortsBackendUnavailableError` (an EXPLICIT setup/provisioning
-    signal) instead of returning a silent ``"center"`` that the rest of the
-    pipeline could not distinguish from a legitimate no-subject clip.
+    WU-3 NO-SILENT-FALLBACK: when cv2 is not importable, subject tracking is
+    impossible — this raises :class:`ClaudeShortsBackendUnavailableError` (an
+    EXPLICIT setup/provisioning signal) instead of returning a silent ``"center"``
+    the rest of the pipeline could not distinguish from a legitimate no-subject
+    clip.
     """
     try:
-        importer("mediapipe")
         importer("cv2")
-        return "mediapipe"
-    except Exception:  # noqa: BLE001 - any import failure -> next backend
-        pass
-    try:
-        importer("cv2")
-        return "haar"
-    except Exception as exc:  # noqa: BLE001
+        return "yunet"
+    except Exception as exc:  # noqa: BLE001 - any import failure -> loud setup error
         raise ClaudeShortsBackendUnavailableError(
-            "subject tracking requires OpenCV (cv2) — and optionally MediaPipe — "
-            "but neither is importable; install opencv-python (and mediapipe) to "
-            "enable speaker tracking, or this is a provisioning/setup error"
+            "subject tracking requires OpenCV (cv2) with the YuNet face detector "
+            "(cv2.FaceDetectorYN), but cv2 is not importable; install opencv-python "
+            "to enable speaker tracking, or this is a provisioning/setup error"
         ) from exc
+
+
+def resolve_yunet_model_path(settings: dict[str, Any] | None = None) -> str | None:
+    """On-disk path to the provisioned YuNet ONNX model, or ``None`` if absent.
+
+    Looks the sha256-pinned YuNet asset up in the manifest and asks the asset
+    manager where it is installed (a settings-driven runtime concern). Returns
+    ``None`` when the asset is unregistered or not yet downloaded — the caller
+    (:func:`_make_face_finder`) turns that into a LOUD provisioning error, never a
+    silent center crop (WU-3 NO-SILENT-FALLBACK).
+    """
+    from ..assets import manifest  # noqa: PLC0415 - lazy: keep module import light
+    from ..assets.manager import AssetManager  # noqa: PLC0415 - lazy seam
+
+    entry = manifest.get_asset(manifest.YUNET_ASSET_NAME)
+    if entry is None:
+        return None
+    mgr = AssetManager(settings_provider=lambda: settings or {})
+    return mgr.installed_path(entry)
 
 
 def _region_activity(prev_img: Any, cur_img: Any, box: tuple[int, int, int, int]) -> float:
@@ -588,7 +597,10 @@ def _region_activity(prev_img: Any, cur_img: Any, box: tuple[int, int, int, int]
     return float(cv2.absdiff(prev_gray, cur_gray).mean())
 
 
-def _make_face_finder(backend: str) -> tuple[Callable[[Any], float | None] | None, Callable[[], None]]:
+def _make_face_finder(
+    backend: str,
+    settings: dict[str, Any] | None = None,
+) -> tuple[Callable[[Any], float | None] | None, Callable[[], None]]:
     """Build ``(find(img_bgr) -> cx_norm|None, close())`` for ``backend``.
 
     ``find`` returns the DOMINANT/active face's normalized horizontal center via
@@ -599,135 +611,67 @@ def _make_face_finder(backend: str) -> tuple[Callable[[Any], float | None] | Non
     finder is stateful (it remembers the previous frame) so the motion tie-break
     has something to diff; the first frame has no previous frame, so it falls back
     to pure size selection.
-    """
-    if backend == "mediapipe":
-        import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
-        import mediapipe as mp  # noqa: PLC0415 - job-time native (pre-imported)  # pyright: ignore[reportMissingImports]  # optional runtime dep
 
-        detector = mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
+    v1.2.0 WU1: the ``"yunet"`` backend runs the sha256-pinned YuNet ONNX through
+    ``cv2.FaceDetectorYN`` — REPLACING the old haar-cascade face + HOG body
+    detectors (both objdetect-dependent and weaker on turned/profile faces). YuNet
+    itself uses ``cv2.FaceDetectorYN`` (also cv2's objdetect), so this remains
+    objdetect-dependent — but it is ONE guarded native surface plus a pinned model
+    rather than two fragile detectors relying on bundled cascade/SVM data.
+    """
+    if backend == "yunet":
+        import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
+
+        # NO-SILENT-FALLBACK: some opencv builds (headless/objdetect-stripped)
+        # import cleanly but omit the native YuNet class, so a bare call would
+        # raise an opaque ``AttributeError``. Fail loud with an actionable
+        # provisioning error instead — never a quiet center crop.
+        if not hasattr(cv2, "FaceDetectorYN"):
+            raise ClaudeShortsBackendUnavailableError(
+                "OpenCV is installed but lacks the YuNet face detector "
+                "(cv2.FaceDetectorYN) — the opencv-python build is incomplete or "
+                "stripped (needs the objdetect module); install the full "
+                "opencv-python (>=4.8) to enable speaker tracking (this is a "
+                "provisioning/setup error, not a per-clip degrade)"
+            )
+        # NO-SILENT-FALLBACK: the sha256-pinned YuNet model must be provisioned; a
+        # missing model is a SETUP failure (the first-run asset step downloads it),
+        # NOT a per-clip event — fail loud with an actionable error rather than
+        # quietly collapsing every clip to a center crop.
+        model_path = resolve_yunet_model_path(settings)
+        if model_path is None:
+            from ..assets import manifest  # noqa: PLC0415 - lazy: light data module
+
+            raise ClaudeShortsBackendUnavailableError(
+                f"the YuNet face-detection model ({manifest.YUNET_ASSET_NAME}) is not "
+                "provisioned — run first-run setup (or assets.ensure) to download the "
+                "sha256-pinned ONNX; speaker tracking cannot run without it (this is a "
+                "provisioning/setup error, not a per-clip degrade)"
+            )
+        # input_size is set per-frame via setInputSize; score_threshold keeps only
+        # confident faces so background/blurred non-speakers don't steer the crop.
+        detector = cv2.FaceDetectorYN.create(model_path, "", (0, 0), score_threshold=0.6)  # pyright: ignore[reportAttributeAccessIssue]
         prev: dict[str, Any] = {"img": None}
 
-        def find_mp(img: Any) -> float | None:
-            rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            results = detector.process(rgb)
-            detections = getattr(results, "detections", None)
+        def find_yunet(img: Any) -> float | None:
             h, w = int(img.shape[0]), int(img.shape[1])
+            detector.setInputSize((w, h))
+            _retval, faces = detector.detect(img)
             cands: list[tuple[float, float, float]] = []
-            for det in detections or []:
-                bbox = det.location_data.relative_bounding_box
-                cx = float(bbox.xmin + bbox.width / 2.0)
-                size = float(bbox.width * bbox.height)
-                box = (
-                    int(bbox.xmin * w),
-                    int(bbox.ymin * h),
-                    int((bbox.xmin + bbox.width) * w),
-                    int((bbox.ymin + bbox.height) * h),
-                )
-                cands.append((cx, size, _region_activity(prev["img"], img, box)))
-            prev["img"] = img
-            return select_dominant(cands)
-
-        return find_mp, detector.close
-
-    if backend == "haar":
-        import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
-
-        # NO-SILENT-FALLBACK: some opencv builds (headless/objdetect-stripped) import
-        # cleanly but omit the native face-cascade class, so a bare call would raise
-        # an opaque ``AttributeError``. Fail loud with an actionable provisioning
-        # error instead — never a quiet center crop (WU no-silent-fallback).
-        if not hasattr(cv2, "CascadeClassifier"):
-            raise ClaudeShortsBackendUnavailableError(
-                "OpenCV is installed but lacks the objdetect face detector "
-                "(cv2.CascadeClassifier) — the opencv-python build is incomplete or "
-                "stripped; install the full opencv-python to enable speaker tracking "
-                "(this is a provisioning/setup error, not a per-clip degrade)"
-            )
-        # cv2.data is a real runtime submodule; the opencv type stubs omit it.
-        cascade_path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")  # pyright: ignore[reportAttributeAccessIssue]
-        cascade = cv2.CascadeClassifier(cascade_path)  # pyright: ignore[reportAttributeAccessIssue]
-        if cascade.empty():
-            # NO-SILENT-FALLBACK: a missing/unreadable cascade is a broken OpenCV
-            # provisioning (the cascade ships WITH opencv-python), NOT a per-clip
-            # event — fail loud with an actionable "reinstall opencv" error rather
-            # than quietly returning a no-op finder that collapses to a center crop.
-            raise ClaudeShortsBackendUnavailableError(
-                f"OpenCV face cascade missing or unreadable at {cascade_path} — the "
-                "opencv-python install is incomplete; reinstall it to enable speaker "
-                "tracking (this is a provisioning/setup error, not a per-clip degrade)"
-            )
-        prev = {"img": None}
-
-        def find_haar(img: Any) -> float | None:
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4)
-            w_img = int(img.shape[1])
-            cands: list[tuple[float, float, float]] = []
+            # Each YuNet row is [x, y, w, h, 5 landmarks..., score]; the first four
+            # are the face bbox in source pixels.
             for face in faces if faces is not None else []:
-                x, y, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
-                cx = float((x + fw / 2.0) / w_img)
+                x, y, fw, fh = float(face[0]), float(face[1]), float(face[2]), float(face[3])
+                cx = float((x + fw / 2.0) / w)
                 size = float(fw * fh)
-                box = (x, y, x + fw, y + fh)
+                box = (int(x), int(y), int(x + fw), int(y + fh))
                 cands.append((cx, size, _region_activity(prev["img"], img, box)))
             prev["img"] = img
             return select_dominant(cands)
 
-        return find_haar, lambda: None
+        return find_yunet, lambda: None
 
     return None, lambda: None
-
-
-# OpenCV's default people detector uses a 64x128 HOG window; calling
-# detectMultiScale on a frame smaller than the window crashes the native code
-# (segfault), so we hard-skip sub-window frames.
-_HOG_MIN_W = 64
-_HOG_MIN_H = 128
-
-
-def _person_center(img: Any) -> float | None:
-    """Normalized horizontal center of the most prominent PERSON in ``img``.
-
-    Uses OpenCV's built-in HOG people detector (ships with opencv — no model
-    download, node-free). This is the fallback for profile/turned heads where
-    face detection fails but the speaker's BODY is still clearly in frame, so
-    the crop stays on the person instead of collapsing to a center crop.
-    Frames smaller than the 64x128 HOG window are skipped (calling the detector
-    on them crashes the native code). Returns ``None`` when no person is found.
-    """
-    import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
-
-    h, w = int(img.shape[0]), int(img.shape[1])
-    if w < _HOG_MIN_W or h < _HOG_MIN_H:
-        return None
-    # NO-SILENT-FALLBACK: an objdetect-stripped opencv build imports but omits the
-    # HOG people detector, so a bare call would raise an opaque ``AttributeError``.
-    # Fail loud with an actionable provisioning error rather than silently skipping
-    # the body fallback (which would masquerade as "no person" -> center crop).
-    if not hasattr(cv2, "HOGDescriptor"):
-        raise ClaudeShortsBackendUnavailableError(
-            "OpenCV is installed but lacks the HOG people detector "
-            "(cv2.HOGDescriptor) — the opencv-python build is incomplete or stripped; "
-            "install the full opencv-python to enable body-fallback subject tracking "
-            "(this is a provisioning/setup error, not a per-clip degrade)"
-        )
-    hog = cv2.HOGDescriptor()  # pyright: ignore[reportAttributeAccessIssue]
-    hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())  # pyright: ignore[reportAttributeAccessIssue]
-    rects, weights = hog.detectMultiScale(img, winStride=(8, 8))
-    if rects is None or len(rects) == 0:
-        return None
-    weights = list(weights) if weights is not None else []
-    # WU PHASE-5: in a wide / two-shot pick the DOMINANT person = the LARGEST
-    # (closest) body, breaking a same-size tie by detector confidence (weight ~
-    # how strongly a body was seen). This frames the featured speaker instead of
-    # a smaller, further person who merely scored a higher confidence.
-    cands: list[tuple[float, float, float]] = []
-    for i, rect in enumerate(rects):
-        rx, _ry, rw, rh = float(rect[0]), float(rect[1]), float(rect[2]), float(rect[3])
-        cx = float((rx + rw / 2.0) / w)
-        area = float(rw * rh)
-        activity = float(weights[i]) if i < len(weights) else 0.0
-        cands.append((cx, area, activity))
-    return select_dominant(cands)
 
 
 def _dominant_cluster_centroid(col: Sequence[float]) -> float:
@@ -786,18 +730,26 @@ def _motion_center(prev: Any, img: Any) -> float | None:
 
 def _make_subject_finder(
     backend: str,
+    settings: dict[str, Any] | None = None,
 ) -> tuple[Callable[[Any], float | None] | None, Callable[[], None]]:
-    """Build a stateful subject finder: face -> person -> motion fallback.
+    """Build a stateful subject finder: YuNet face -> motion fallback.
 
     Returns ``(find(img_bgr) -> cx_norm|None, close())``. ``find`` tries, in
-    order: the backend's FACE detector (mediapipe/haar); then a PERSON (HOG body)
-    detector for profile/turned shots where the face is weak or absent; then
-    MOTION saliency against the previous frame as a last resort. This keeps the
-    crop on the SPEAKER instead of falling back to a center-of-frame crop the
-    moment a face is not cleanly visible. ``None`` only when none of the three
-    locate anything. For the ``center`` backend there is no finder.
+    order: the backend's FACE detector (YuNet); then MOTION saliency against the
+    previous frame as a last resort. This keeps the crop on the SPEAKER instead of
+    falling back to a center-of-frame crop the moment a face is not cleanly
+    visible. ``None`` only when neither locates anything. For the ``center``
+    backend there is no finder.
+
+    v1.2.0 WU1 DECISION — the HOG person/body fallback was DROPPED (not swapped):
+    it was a SECOND objdetect-dependent native surface (cv2.HOGDescriptor), and
+    YuNet holds turned/profile faces well enough to make it redundant. The
+    remaining fallback, :func:`_motion_center`, is imgproc-only (cvtColor/absdiff/
+    threshold) — no objdetect — so the chain is one guarded objdetect detector
+    (YuNet) plus a dependency-light motion last resort, never a half-migration
+    that still hard-depends on the HOG body detector.
     """
-    face_find, face_close = _make_face_finder(backend)
+    face_find, face_close = _make_face_finder(backend, settings)
     if backend == "center":
         return None, face_close
     prev_frame: dict[str, Any] = {"img": None}
@@ -806,8 +758,6 @@ def _make_subject_finder(
         cx: float | None = None
         if face_find is not None:
             cx = face_find(img)
-        if cx is None:
-            cx = _person_center(img)
         if cx is None and prev_frame["img"] is not None:
             cx = _motion_center(prev_frame["img"], img)
         prev_frame["img"] = img
@@ -836,7 +786,7 @@ def detect_subject_centers(
         return []
     import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
 
-    find, close = _make_subject_finder(backend)
+    find, close = _make_subject_finder(backend, settings)
     if find is None:
         return []
     tmpdir = tempfile.mkdtemp(prefix="media_studio_reframe_")
@@ -895,9 +845,9 @@ class ClaudeShortsReframeEngine:
         self._detector: Detector = detector or (
             lambda path, ts: detect_subject_centers(path, ts, settings=self._settings)
         )
-        # Resolves the active detection backend ("mediapipe" | "haar") so a
-        # center-crop degrade can NAME a missing model, and so a total provisioning
-        # failure (no cv2) surfaces loudly. Injectable for deterministic tests.
+        # Verifies the native backend ("yunet") is importable so a total
+        # provisioning failure (no cv2) surfaces LOUDLY up front, before any
+        # per-clip work — never a silent center crop. Injectable for tests.
         self._backend_probe: Callable[[], str] = backend_probe or detect_backend
 
     def compute_plan(
@@ -917,34 +867,36 @@ class ClaudeShortsReframeEngine:
         :data:`REFRAME_DEGRADED_NOTICE`) so the UI can show a real/degraded badge
         — it is never swallowed into a silent center crop. A native-backend SETUP
         error (:class:`ClaudeShortsBackendUnavailableError`) is NOT a per-clip
-        degrade: it propagates so the job fails loudly (install opencv/mediapipe).
+        degrade: it propagates so the job fails loudly (install opencv-python /
+        provision the YuNet model).
         """
         src_w, src_h, duration = self._prober(in_path)
         crop = centered_crop(src_w, src_h, aspect)
         timestamps = window_timestamps(duration)
-        # Resolve the active backend up front so any degrade below can NAME a
-        # missing model. A total provisioning failure (no cv2/mediapipe) raises
-        # ClaudeShortsBackendUnavailableError here and propagates loudly — never a
-        # silent center crop (NO-SILENT-FALLBACK).
-        backend = self._backend_probe()
+        # Verify the native backend up front so a total provisioning failure (no
+        # cv2 -> no YuNet) fails LOUD before any per-clip work — never a silent
+        # center crop (NO-SILENT-FALLBACK). The result is only a fail-loud gate;
+        # a YuNet MODEL-missing failure surfaces from the detector below (same
+        # ClaudeShortsBackendUnavailableError, re-raised).
+        self._backend_probe()
         try:
             samples = list(self._detector(in_path, timestamps) or [])
         except ClaudeShortsBackendUnavailableError:
-            # SETUP/provisioning failure (no cv2/mediapipe): fail loud, never a
-            # per-clip silent degrade. Re-raise so the job surfaces an actionable
-            # "install opencv/mediapipe" error.
+            # SETUP/provisioning failure (no cv2, or the YuNet model/class absent):
+            # fail loud, never a per-clip silent degrade. Re-raise so the job
+            # surfaces an actionable "install opencv / provision YuNet" error.
             raise
         except Exception as exc:  # noqa: BLE001 - a runtime detector failure -> degrade
             # A broken detector degrades to the centered crop — the encode still
             # runs; only subject tracking is lost. SURFACE it (never swallow).
             _log.warning("subject detection failed; using centered crop", exc_info=True)
-            self._notify_degraded(on_notice, f"subject detection failed: {exc}", backend=backend)
+            self._notify_degraded(on_notice, f"subject detection failed: {exc}")
             return crop, [], duration
         # Trust gate: a couple of stray hits across many windows is detector noise,
         # not a locatable subject -> keep the centered crop rather than tracking it.
         min_hits = max(1, math.ceil(len(timestamps) * MIN_SUBJECT_HIT_FRAC))
         if len(samples) < min_hits:
-            self._notify_degraded(on_notice, "no trackable subject located", backend=backend)
+            self._notify_degraded(on_notice, "no trackable subject located")
             return crop, [], duration
 
         smoothed = smooth_centers([c for _, c in samples])
@@ -969,19 +921,17 @@ class ClaudeShortsReframeEngine:
     def _notify_degraded(
         on_notice: Callable[[dict[str, str]], None] | None,
         reason: str,
-        *,
-        backend: str | None = None,
     ) -> None:
         """Surface a per-clip degraded notice through ``on_notice`` (when wired).
 
         The degrade is ALSO logged, but the structured notice is what lets the
         orchestrator/UI render a degraded badge — the "never swallow" contract.
-        ``backend`` (the active detector backend) is passed to
-        :func:`make_degraded_notice` so a haar/no-MediaPipe degrade names the
-        missing model instead of silently reading as "no subject".
+        v1.2.0 WU1: with a single YuNet detector there is no weaker fallback
+        backend to name, so the notice just carries the reason (a missing
+        model/backend fails loud earlier, never a silent center crop).
         """
         if on_notice is not None:
-            on_notice(make_degraded_notice(reason, backend=backend))
+            on_notice(make_degraded_notice(reason))
 
     def reframe(
         self,
