@@ -1603,6 +1603,15 @@ def test_engine_edgetam_opt_in_tracks_end_to_end(fake_bins, monkeypatch):
     ts = cs.window_timestamps(8.0)
     tracker = _FakeTracker([0.8] * len(ts))
     monkeypatch.setattr(cs, "resolve_edgetam_model_path", lambda s=None: "/models/edgetam.pt")
+    # Resolve the backend via the FAKE importer (cv2+torch "present") so neither the
+    # engine's backend probe nor detect_subject_centers imports the REAL torch — the
+    # heavy import is never a test dependency (the cv2 whack-a-mole lesson; real torch
+    # is absent in the CI gate env). The real _detect_edgetam_backend logic still runs.
+    monkeypatch.setattr(
+        cs,
+        "detect_backend",
+        lambda importer=None, settings=None: cs._detect_edgetam_backend(_importer({"cv2", "torch"}), settings or {}),
+    )
     monkeypatch.setattr(cv2, "imread", lambda path: np.zeros((72, 128, 3), dtype="uint8"))
 
     def frame_runner(argv, capture_output=True, check=False):
