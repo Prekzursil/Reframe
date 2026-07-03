@@ -111,13 +111,18 @@ def _engine(
     detector,
     runner=None,
     dims=(1280, 720, 8.0),
+    backend_probe=None,
 ):
     runner = runner or _make_ff_runner(0)
+    kwargs = {}
+    if backend_probe is not None:
+        kwargs["backend_probe"] = backend_probe
     eng = ClaudeShortsReframeEngine(
         settings=fake_bins,
         runner=runner,
         prober=lambda _path: dims,
         detector=detector,
+        **kwargs,
     )
     return eng, runner
 
@@ -732,6 +737,97 @@ def test_reframe_threads_on_notice_through_to_compute_plan(fake_bins):
     assert notices[0]["type"] == cs.REFRAME_DEGRADED_NOTICE
 
 
+# --------------------------------------------------------------------------- #
+# NO-SILENT-FALLBACK: a MODEL being unavailable (mediapipe absent -> the weaker
+# OpenCV/haar backend) must NAME the missing model in the degrade notice, so the
+# center-crop fallback is never silently attributed to "no subject" alone.
+# --------------------------------------------------------------------------- #
+def test_make_degraded_notice_names_missing_mediapipe_on_haar_backend():
+    """The typed notice enriches its message when the active backend is haar
+    (mediapipe unavailable) — the CAUSE is surfaced, not swallowed."""
+    notice = cs.make_degraded_notice("no trackable subject located", backend="haar")
+    assert notice["type"] == cs.REFRAME_DEGRADED_NOTICE
+    assert "center crop" in notice["message"].lower()
+    assert "mediapipe" in notice["message"].lower()
+    # the raw reason is preserved verbatim for logs/UI attribution
+    assert notice["reason"] == "no trackable subject located"
+
+
+def test_make_degraded_notice_omits_hint_when_mediapipe_present():
+    """When mediapipe IS the active backend the message must NOT claim it is
+    missing (no false 'install mediapipe' advice)."""
+    notice = cs.make_degraded_notice("no trackable subject located", backend="mediapipe")
+    assert "mediapipe" not in notice["message"].lower()
+
+
+def test_compute_plan_haar_backend_degrade_names_missing_mediapipe(fake_bins):
+    """END-TO-END: mediapipe unavailable (haar backend) + a center-crop degrade ->
+    the surfaced notice names the missing model. Still exactly ONE notice (the
+    model cause is folded into the existing degrade, not a second badge)."""
+    eng, _ = _engine(
+        fake_bins,
+        detector=lambda p, t: [],  # no subject -> center-crop degrade
+        backend_probe=lambda: "haar",  # mediapipe absent
+    )
+    notices: list[dict] = []
+    crop, kfs, _d = eng.compute_plan("/in.mp4", on_notice=notices.append)
+    assert kfs == [] and crop["x"] == 437  # still degrades to center (encode proceeds)
+    assert len(notices) == 1
+    msg = notices[0]["message"].lower()
+    assert "center crop" in msg
+    assert "mediapipe" in msg  # the missing MODEL is surfaced, never silent
+
+
+def test_compute_plan_mediapipe_backend_degrade_omits_downgrade_hint(fake_bins):
+    """With mediapipe present, a genuine no-subject degrade must NOT falsely claim
+    the model is missing."""
+    eng, _ = _engine(
+        fake_bins,
+        detector=lambda p, t: [],
+        backend_probe=lambda: "mediapipe",
+    )
+    notices: list[dict] = []
+    eng.compute_plan("/in.mp4", on_notice=notices.append)
+    assert len(notices) == 1
+    assert "mediapipe" not in notices[0]["message"].lower()
+
+
+def test_compute_plan_detector_exception_on_haar_names_missing_model(fake_bins):
+    """A detector RUNTIME failure on the haar backend also names the missing model
+    in its surfaced degrade (the enrichment applies to every center-crop path)."""
+
+    def broken(p, t):
+        raise RuntimeError("boom")
+
+    eng, _ = _engine(fake_bins, detector=broken, backend_probe=lambda: "haar")
+    notices: list[dict] = []
+    eng.compute_plan("/in.mp4", on_notice=notices.append)
+    assert len(notices) == 1
+    assert "mediapipe" in notices[0]["message"].lower()
+    assert "boom" in notices[0]["reason"]
+
+
+def test_compute_plan_backend_probe_provisioning_failure_propagates(fake_bins):
+    """If the backend probe itself reports NO usable backend (no cv2/mediapipe),
+    that PROVISIONING failure propagates loudly — never a silent center crop."""
+
+    def no_backend():
+        raise cs.ClaudeShortsBackendUnavailableError("opencv (cv2) not installed")
+
+    eng, _ = _engine(fake_bins, detector=lambda p, t: [], backend_probe=no_backend)
+    notices: list[dict] = []
+    with pytest.raises(cs.ClaudeShortsBackendUnavailableError):
+        eng.compute_plan("/in.mp4", on_notice=notices.append)
+    assert notices == []  # not turned into a per-clip degrade badge
+
+
+def test_engine_default_backend_probe_is_detect_backend(fake_bins):
+    """The engine's default backend probe is the real ``detect_backend`` (so the
+    degrade cause is resolved from the live import state when not injected)."""
+    eng, _ = _engine(fake_bins, detector=lambda p, t: [(0.0, 0.5)])
+    assert eng._backend_probe is cs.detect_backend
+
+
 def test_engine_passes_total_sec_and_argv_list(fake_bins):
     eng, runner = _engine(fake_bins, detector=lambda p, t: [])
     eng.reframe("/in.mp4", "/out.mp4")
@@ -1061,10 +1157,15 @@ def test_make_face_finder_haar_no_faces_returns_none(monkeypatch):
     assert find(np.zeros((50, 50, 3), dtype=np.uint8)) is None
 
 
-def test_make_face_finder_haar_missing_cascade_degrades_to_none(monkeypatch):
+def test_make_face_finder_haar_missing_cascade_raises_provisioning_error(monkeypatch):
+    """A missing/empty haar cascade is a PROVISIONING failure (a broken OpenCV
+    install), NOT a silent per-clip degrade: it must raise the loud
+    ``ClaudeShortsBackendUnavailableError`` so the job surfaces an actionable
+    "reinstall opencv" error instead of quietly using a center crop
+    (WU no-silent-fallback)."""
     import cv2
 
-    # Force an EMPTY cascade (the "cascade file missing" branch) -> no finder.
+    # Force an EMPTY cascade (the "cascade file missing/unreadable" branch).
     class _EmptyCascade:
         def __init__(self, *_a):
             pass
@@ -1073,9 +1174,9 @@ def test_make_face_finder_haar_missing_cascade_degrades_to_none(monkeypatch):
             return True
 
     monkeypatch.setattr(cv2, "CascadeClassifier", _EmptyCascade)
-    find, close = cs._make_face_finder("haar")
-    assert find is None
-    close()
+    with pytest.raises(cs.ClaudeShortsBackendUnavailableError) as exc:
+        cs._make_face_finder("haar")
+    assert "cascade" in str(exc.value).lower()
 
 
 # --------------------------------------------------------------------------- #

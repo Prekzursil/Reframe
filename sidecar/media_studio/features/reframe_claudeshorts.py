@@ -149,16 +149,33 @@ class ClaudeShortsBackendUnavailableError(ClaudeShortsReframeError):
 REFRAME_DEGRADED_NOTICE = "reframe.degraded"
 
 
-def make_degraded_notice(reason: str) -> dict[str, str]:
+# Appended to a degrade message when the active detector backend is the weaker
+# OpenCV/haar face detector because the preferred MODEL (MediaPipe) is not
+# installed. NO-SILENT-FALLBACK: a center crop caused by a missing model must
+# NAME that model (actionable) rather than reading as an unexplained "no subject".
+MEDIAPIPE_MISSING_HINT = (
+    " MediaPipe is not installed — the app fell back to lower-quality OpenCV face "
+    "detection, which often can't hold turned or profile faces; install mediapipe "
+    "for accurate speaker tracking."
+)
+
+
+def make_degraded_notice(reason: str, *, backend: str | None = None) -> dict[str, str]:
     """Build the typed per-clip degraded notice (``{type, message, reason}``).
 
     ``message`` is the human line a job surfaces via ``job.progress``; ``reason``
     is the specific cause (a detector error, or no trackable subject) so the UI /
-    logs can explain WHY the crop fell back to center.
+    logs can explain WHY the crop fell back to center. When ``backend == "haar"``
+    the message also NAMES the missing MediaPipe model (:data:`MEDIAPIPE_MISSING_HINT`)
+    so a model-unavailability degrade is surfaced loudly, never silently reduced to
+    "no subject" (NO-SILENT-FALLBACK).
     """
+    message = f"reframe: speaker tracking unavailable ({reason}) — used center crop"
+    if backend == "haar":
+        message += MEDIAPIPE_MISSING_HINT
     return {
         "type": REFRAME_DEGRADED_NOTICE,
-        "message": f"reframe: speaker tracking unavailable ({reason}) — used center crop",
+        "message": message,
         "reason": reason,
     }
 
@@ -619,8 +636,15 @@ def _make_face_finder(backend: str) -> tuple[Callable[[Any], float | None] | Non
         cascade_path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")  # pyright: ignore[reportAttributeAccessIssue]
         cascade = cv2.CascadeClassifier(cascade_path)
         if cascade.empty():
-            _log.warning("haar cascade missing at %s; using center crop", cascade_path)
-            return None, lambda: None
+            # NO-SILENT-FALLBACK: a missing/unreadable cascade is a broken OpenCV
+            # provisioning (the cascade ships WITH opencv-python), NOT a per-clip
+            # event — fail loud with an actionable "reinstall opencv" error rather
+            # than quietly returning a no-op finder that collapses to a center crop.
+            raise ClaudeShortsBackendUnavailableError(
+                f"OpenCV face cascade missing or unreadable at {cascade_path} — the "
+                "opencv-python install is incomplete; reinstall it to enable speaker "
+                "tracking (this is a provisioning/setup error, not a per-clip degrade)"
+            )
         prev = {"img": None}
 
         def find_haar(img: Any) -> float | None:
@@ -839,6 +863,7 @@ class ClaudeShortsReframeEngine:
         runner: Runner | None = None,
         prober: Prober | None = None,
         detector: Detector | None = None,
+        backend_probe: Callable[[], str] | None = None,
     ) -> None:
         self._settings = settings or {}
         # A6 lesson 2: the default encode runner is ffmpeg.run — it drains
@@ -848,6 +873,10 @@ class ClaudeShortsReframeEngine:
         self._detector: Detector = detector or (
             lambda path, ts: detect_subject_centers(path, ts, settings=self._settings)
         )
+        # Resolves the active detection backend ("mediapipe" | "haar") so a
+        # center-crop degrade can NAME a missing model, and so a total provisioning
+        # failure (no cv2) surfaces loudly. Injectable for deterministic tests.
+        self._backend_probe: Callable[[], str] = backend_probe or detect_backend
 
     def compute_plan(
         self,
@@ -871,6 +900,11 @@ class ClaudeShortsReframeEngine:
         src_w, src_h, duration = self._prober(in_path)
         crop = centered_crop(src_w, src_h, aspect)
         timestamps = window_timestamps(duration)
+        # Resolve the active backend up front so any degrade below can NAME a
+        # missing model. A total provisioning failure (no cv2/mediapipe) raises
+        # ClaudeShortsBackendUnavailableError here and propagates loudly — never a
+        # silent center crop (NO-SILENT-FALLBACK).
+        backend = self._backend_probe()
         try:
             samples = list(self._detector(in_path, timestamps) or [])
         except ClaudeShortsBackendUnavailableError:
@@ -882,13 +916,13 @@ class ClaudeShortsReframeEngine:
             # A broken detector degrades to the centered crop — the encode still
             # runs; only subject tracking is lost. SURFACE it (never swallow).
             _log.warning("subject detection failed; using centered crop", exc_info=True)
-            self._notify_degraded(on_notice, f"subject detection failed: {exc}")
+            self._notify_degraded(on_notice, f"subject detection failed: {exc}", backend=backend)
             return crop, [], duration
         # Trust gate: a couple of stray hits across many windows is detector noise,
         # not a locatable subject -> keep the centered crop rather than tracking it.
         min_hits = max(1, math.ceil(len(timestamps) * MIN_SUBJECT_HIT_FRAC))
         if len(samples) < min_hits:
-            self._notify_degraded(on_notice, "no trackable subject located")
+            self._notify_degraded(on_notice, "no trackable subject located", backend=backend)
             return crop, [], duration
 
         smoothed = smooth_centers([c for _, c in samples])
@@ -910,14 +944,22 @@ class ClaudeShortsReframeEngine:
         return crop, kfs, duration
 
     @staticmethod
-    def _notify_degraded(on_notice: Callable[[dict[str, str]], None] | None, reason: str) -> None:
+    def _notify_degraded(
+        on_notice: Callable[[dict[str, str]], None] | None,
+        reason: str,
+        *,
+        backend: str | None = None,
+    ) -> None:
         """Surface a per-clip degraded notice through ``on_notice`` (when wired).
 
         The degrade is ALSO logged, but the structured notice is what lets the
         orchestrator/UI render a degraded badge — the "never swallow" contract.
+        ``backend`` (the active detector backend) is passed to
+        :func:`make_degraded_notice` so a haar/no-MediaPipe degrade names the
+        missing model instead of silently reading as "no subject".
         """
         if on_notice is not None:
-            on_notice(make_degraded_notice(reason))
+            on_notice(make_degraded_notice(reason, backend=backend))
 
     def reframe(
         self,
