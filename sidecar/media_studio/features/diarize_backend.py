@@ -61,6 +61,59 @@ MIN_WINDOW_SEC = 0.5
 SUBWINDOW_CLUSTER_THRESHOLD = 0.45
 
 
+class DiarizeBackendUnavailableError(RuntimeError):
+    """SpeechBrain (the diarizer's VAD + ECAPA backend) is not importable.
+
+    A SETUP/PROVISIONING failure, NOT a per-clip event: without ``speechbrain``
+    the diarizer cannot run VAD or embed speakers at all, so the multi-speaker
+    reframe's diarize stage (and ``diarize.start``) cannot run. It is raised as an
+    EXPLICIT, typed, actionable signal — never a raw :class:`ModuleNotFoundError`
+    bubbling out of a job thread, and never a silent fallback — so the job
+    surfaces an install/provision message (v1.2.0 NO-SILENT-FALLBACK, mirroring
+    ``reframe_claudeshorts.ClaudeShortsBackendUnavailableError``).
+    """
+
+
+def _import_speechbrain() -> tuple[type[Any], type[Any]]:
+    """Import the SpeechBrain inference API ``(VAD, EncoderClassifier)`` — or fail loud.
+
+    Wraps the two ``speechbrain.inference`` imports in a typed guard: a missing
+    (or broken) ``speechbrain`` raises :class:`DiarizeBackendUnavailableError`
+    with an actionable "install speechbrain / provision the diarizer" message,
+    rather than a raw :class:`ModuleNotFoundError` propagating from a job thread.
+    Kept a module-level seam (not inside the ``# pragma: no cover`` class body) so
+    the fail-loud contract is unit-covered without the heavy native stack. The
+    ``speechbrain.inference`` API requires speechbrain >= 1.0.0.
+    """
+    try:
+        from speechbrain.inference.classifiers import EncoderClassifier  # noqa: PLC0415
+        from speechbrain.inference.VAD import VAD  # noqa: PLC0415
+    except ImportError as exc:
+        raise DiarizeBackendUnavailableError(
+            "speaker diarization requires SpeechBrain (the VAD + ECAPA backend), "
+            "but importing 'speechbrain' failed; install speechbrain "
+            '(pip install "media-studio-sidecar[reframe-gpu]") or provision the '
+            "diarizer env to enable multi-speaker reframe / diarization"
+        ) from exc
+    return VAD, EncoderClassifier
+
+
+def _fetch_safe_audio_path(audio_path: str) -> str:
+    """Return ``audio_path`` in a form SpeechBrain's ``fetch`` handles on any OS.
+
+    ``VAD.get_speech_segments`` funnels the audio path through SpeechBrain's
+    ``split_path`` + ``fetch`` (HF-fetch machinery keyed on a POSIX ``source/name``
+    split). A Windows absolute path (``C:\\dir\\a.wav``) contains no ``/``, so
+    ``split_path`` cannot separate the directory from the filename — ``fetch`` then
+    treats the whole thing as a bare name and PREPENDS the CWD, yielding a doubled
+    path (``…\\cwd\\C:\\dir\\a.wav``) that libsndfile/soundfile cannot open. Forward-
+    slashing the path (a no-op on POSIX, whose separators are already ``/``) lets
+    ``split_path`` find the final component so ``fetch`` resolves the real file. This
+    is what makes the diarize stage runnable on native Windows, not only Linux/WSL.
+    """
+    return str(audio_path).replace("\\", "/")
+
+
 class SpeechBrainDiarizer:  # pragma: no cover - requires the heavy native stack
     """VAD + ECAPA pipeline over the pretrained SpeechBrain models.
 
@@ -86,13 +139,13 @@ class SpeechBrainDiarizer:  # pragma: no cover - requires the heavy native stack
     def _ensure_models(self) -> None:
         if self._vad is not None and self._encoder is not None:
             return
-        from speechbrain.inference.classifiers import EncoderClassifier  # noqa: PLC0415
-        from speechbrain.inference.VAD import VAD  # noqa: PLC0415
-
+        # Fail loud (typed) when speechbrain is missing — never a raw
+        # ModuleNotFoundError out of the job thread (v1.2.0 NO-SILENT-FALLBACK).
+        vad_cls, encoder_cls = _import_speechbrain()
         device = self._device()
         run_opts = {"device": device}
-        self._vad = VAD.from_hparams(source="speechbrain/vad-crdnn-libriparty", run_opts=run_opts)
-        self._encoder = EncoderClassifier.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb", run_opts=run_opts)
+        self._vad = vad_cls.from_hparams(source="speechbrain/vad-crdnn-libriparty", run_opts=run_opts)
+        self._encoder = encoder_cls.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb", run_opts=run_opts)
         log.info("speechbrain diarizer ready on %s", device)
 
     @staticmethod
@@ -141,8 +194,10 @@ class SpeechBrainDiarizer:  # pragma: no cover - requires the heavy native stack
         if on_progress is not None:
             on_progress(5.0, "running VAD")
 
-        # VAD -> a tensor of [start, end] (seconds) speech boundaries.
-        boundaries = self._vad.get_speech_segments(audio_path)
+        # VAD -> a tensor of [start, end] (seconds) speech boundaries. Feed the
+        # path forward-slashed so SpeechBrain's split_path/fetch resolves it on
+        # Windows too (see _fetch_safe_audio_path), not only POSIX/WSL.
+        boundaries = self._vad.get_speech_segments(_fetch_safe_audio_path(audio_path))
         waveform, sr = torchaudio.load(audio_path)
         if sr != TARGET_SR:
             waveform = torchaudio.functional.resample(waveform, sr, TARGET_SR)
@@ -180,5 +235,6 @@ __all__ = [
     "SUBWINDOW_CLUSTER_THRESHOLD",
     "TARGET_SR",
     "WINDOW_SEC",
+    "DiarizeBackendUnavailableError",
     "SpeechBrainDiarizer",
 ]
