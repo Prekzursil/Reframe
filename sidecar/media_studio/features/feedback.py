@@ -34,6 +34,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ..pathsafe import ensure_within
 from ..settings_store import default_config_dir
 from ..util import get_logger
 
@@ -97,7 +98,8 @@ class FeedbackStore:
     """
 
     def __init__(self, path: str | os.PathLike | None = None) -> None:
-        self.path = Path(path) if path is not None else default_feedback_path()
+        raw_path = Path(path) if path is not None else default_feedback_path()
+        self.path = Path(ensure_within(raw_path))
 
     # ------------------------------------------------------------------ I/O
     def record(self, video_id: str, candidate: Any, action: str) -> dict[str, Any]:

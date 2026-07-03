@@ -234,4 +234,35 @@ describe('<CandidateRow /> chips + factor disclosure', () => {
     act(() => toggle.click());
     expect(container.querySelector('.sm-factors')).toBeNull();
   });
+
+  it('labels the percentile badge distinctly (percentile, not highlight) with a tooltip', () => {
+    const c = cand({ rank: 1, sourceStart: 1, score: 95, viralityPct: 87 });
+    renderRow({ id: candidateId(c), original: c, current: c, status: 'pending' });
+    const pct = container.querySelector('.sm-virality') as HTMLElement;
+    expect(pct.getAttribute('aria-label')).toBe('Virality percentile');
+    const title = pct.getAttribute('title') ?? '';
+    expect(title).toContain('percentile'); // distinct from the highlight badge
+    expect(title).toContain('95'); // legacy score kept on the tooltip
+  });
+
+  it('renders a distinct 0-100 highlight badge from signalScore, with its own tooltip (WU3)', () => {
+    const c = cand({ rank: 1, sourceStart: 1, score: 95, viralityPct: 87, signalScore: 0.73 });
+    renderRow({ id: candidateId(c), original: c, current: c, status: 'pending' });
+    const highlight = container.querySelector('.sm-highlight') as HTMLElement;
+    expect(highlight).toBeTruthy();
+    expect(highlight.textContent).toBe('73'); // 0.73 -> 73, no % suffix
+    expect(highlight.getAttribute('aria-label')).toBe('Highlight score');
+    expect(highlight.getAttribute('title')).toContain('Highlight');
+    // The two scores are labelled distinctly (percentile vs highlight).
+    expect(container.querySelector('.sm-virality')?.getAttribute('aria-label')).toBe(
+      'Virality percentile',
+    );
+  });
+
+  it('omits the highlight badge when signalScore is absent (frozen-path fallback)', () => {
+    const c = cand({ rank: 1, sourceStart: 1, score: 95, viralityPct: 87 });
+    renderRow({ id: candidateId(c), original: c, current: c, status: 'pending' });
+    expect(container.querySelector('.sm-highlight')).toBeNull();
+    expect(container.querySelector('.sm-virality')).toBeTruthy();
+  });
 });

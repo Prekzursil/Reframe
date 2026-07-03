@@ -43,6 +43,7 @@ from typing import Any
 
 from . import ffmpeg as _ffmpeg
 from .assets import manifest
+from .pathsafe import ensure_within
 from .settings_store import default_config_dir
 from .util import get_logger
 
@@ -95,11 +96,13 @@ def _as_executable(candidate: str | None, exe_name: str) -> str | None:
     """
     if not candidate:
         return None
-    p = Path(str(candidate))
+    # Canonicalise the settings/env-supplied value through the recognised barrier
+    # (bare ensure_within never raises) so the file/dir probes are sanitised sinks.
+    p = Path(ensure_within(str(candidate)))
     if p.is_file():
         return str(p)
     if p.is_dir():
-        inner = p / exe_name
+        inner = Path(ensure_within(p, exe_name))
         if inner.is_file():
             return str(inner)
     return None
@@ -136,7 +139,7 @@ def resolve_llama_server(
         return found
     base = _tools_root(root)
     for sub in (TOOL_DIR_CUDA, TOOL_DIR_CPU):
-        cand = base / sub / LLAMA_EXE
+        cand = Path(ensure_within(base, sub, LLAMA_EXE))
         if cand.is_file():
             return str(cand)
     dev = Path(DEV_LLAMA_DIR) / LLAMA_EXE
@@ -306,7 +309,7 @@ TOOL_ARCHIVES: tuple[ToolArchive, ...] = (
 
 def _detect_in_tool_dir(sub: str, file_name: str) -> str | None:
     """An extracted file under the CURRENT assets root (env-overridable)."""
-    cand = default_config_dir() / sub / file_name
+    cand = Path(ensure_within(default_config_dir(), sub, file_name))
     return str(cand) if cand.is_file() else None
 
 

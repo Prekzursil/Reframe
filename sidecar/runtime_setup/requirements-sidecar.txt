@@ -26,3 +26,15 @@ kokoro-onnx==0.5.0
 # CUDA runtime wheels for ctranslate2/onnxruntime GPU paths (pins = dev venv)
 nvidia-cublas-cu12==12.9.2.10
 nvidia-cudnn-cu12==9.23.2.1
+
+# DELIBERATELY NOT HERE: mediapipe. The claudeshorts reframe engine's optional
+# MediaPipe backend uses the LEGACY Solutions API (`mp.solutions.face_detection`),
+# which only exists in mediapipe <=0.10.21 — and those wheels declare `numpy<2`,
+# a hard conflict with the `numpy==2.5.0` above (required by ctranslate2 / av /
+# onnxruntime / kokoro-onnx). mediapipe >=0.10.31 (numpy-2 clean) REMOVED the
+# Solutions API entirely, so pinning it would install a mediapipe whose
+# `mp.solutions` is missing -> the backend crashes at job time -> a SILENT drop
+# to the haar detector. Verified empirically 2026-07-03 (see basic-memory
+# "Reframe mediapipe cannot be provisioned into numpy-2 sidecar"). haar is the
+# honest baseline; a real MediaPipe path needs a Tasks-API migration (separate
+# reframe-engine WU), not a requirements pin.

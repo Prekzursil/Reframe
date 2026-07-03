@@ -600,12 +600,15 @@ def _coerce_candidate(raw: Candidate, fallback_rank: int) -> Candidate:
         # §3: sourceStart = the clip's start in the ORIGINAL video.
         "sourceStart": float(raw.get("sourceStart", start) or start),
     }
-    # P4 §3: carry the select-stamped scoring fields through coercion when present
-    # so EXPORT can persist the clip's viralityPct into its <clip>.json metadata
-    # (select() stamps viralityPct; feedback calibration may replace it with
-    # calibratedPct). Absent fields stay absent — the SELECT-phase shape is
-    # unchanged when upstream didn't set them.
-    for key in ("viralityPct", "calibratedPct"):
+    # P4 §3 / v1.2.0 WU3: carry the select-stamped scoring fields through coercion
+    # when present so EXPORT can persist the clip's viralityPct into its
+    # <clip>.json metadata (select() stamps viralityPct; feedback calibration may
+    # replace it with calibratedPct) and the review UI can badge the unified
+    # scorer's ``signalScore`` (0..1 highlight fusion, stamped only by
+    # select_unified). This is pure passthrough — no scoring/ranking happens here.
+    # Absent fields stay absent — the SELECT-phase shape is unchanged when
+    # upstream didn't set them.
+    for key in ("viralityPct", "calibratedPct", "signalScore"):
         if raw.get(key) is not None:
             out[key] = raw[key]
     return out

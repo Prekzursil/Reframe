@@ -11,12 +11,15 @@ no WSL, no node, no Remotion:
   1. probe the source geometry/duration (ffprobe, argv list);
   2. sample ~one frame per second and locate the SPEAKER's horizontal center
      with a fallback chain so the crop never collapses to a center crop the
-     moment a face turns away: **mediapipe** face detection when importable (A6:
-     it MUST be pre-imported by ``__main__._preimport_native_modules``; see
-     :data:`NATIVE_MODULES_FOR_PREIMPORT`) or an **OpenCV haar**-cascade face,
-     then a **HOG person/body** detector for profile/turned shots, then **motion
-     saliency** (inter-frame diff centroid) as a last resort, else — only when
-     all three find nothing across the clip — a plain **center** crop;
+     moment a face turns away: **YuNet** face detection (v1.2.0 WU1 — a tiny
+     sha256-pinned ONNX CNN run through ``cv2.FaceDetectorYN``; it MUST be
+     pre-imported by ``__main__._preimport_native_modules``; see
+     :data:`NATIVE_MODULES_FOR_PREIMPORT`), then **motion saliency** (inter-frame
+     diff centroid, imgproc-only) as a last resort, else — only when both find
+     nothing across the clip — a plain **center** crop. YuNet REPLACED the old
+     haar-cascade face + HOG person/body detectors: it holds turned/profile faces
+     far better (making the objdetect-dependent HOG body fallback redundant), and
+     dropping HOG leaves exactly ONE native detector surface to provision;
   3. heavily smooth the per-window centers with a zero-phase (forward+backward)
      EMA so the crop FOLLOWS the speaker steadily with no frame-to-frame jitter,
      and convert them to finely-spaced crop-x keyframes;
@@ -25,8 +28,9 @@ no WSL, no node, no Remotion:
      piecewise-linear ``x(t)`` (no stepped teleports), h264 at 1080x1920 for 9:16.
 
 A6 hard lessons honoured here:
-  * native modules (mediapipe, cv2) are imported ONLY inside job-time function
-    bodies and are flagged for ``__main__`` pre-import (deadlock proven);
+  * native modules (cv2 — incl. its bundled ONNX runtime for YuNet) are imported
+    ONLY inside job-time function bodies and are flagged for ``__main__``
+    pre-import (deadlock proven);
   * the encode subprocess runs through :func:`media_studio.ffmpeg.run`, which
     drains stderr on a thread (the proven 29-min freeze otherwise); the small
     frame-extraction/probe calls use ``subprocess.run(capture_output=True)``
@@ -116,9 +120,30 @@ SINGLE_SPEAKER_CAPABILITY_NOTE = (
 
 # A6 LESSON 1 — PRE-IMPORT FLAG (NON-NEGOTIABLE): these native C-extension
 # modules are first used INSIDE a job thread by this engine. They MUST be added
-# to ``__main__._preimport_native_modules`` (cv2 already is; mediapipe is NEW —
-# see WIRING-T4B.md). A first import on a job thread deadlocks the sidecar.
-NATIVE_MODULES_FOR_PREIMPORT: tuple[str, ...] = ("mediapipe", "cv2")
+# to ``__main__._preimport_native_modules`` (cv2 already is). A first import on a
+# job thread deadlocks the sidecar. v1.2.0 WU1 dropped ``mediapipe`` here: the
+# YuNet detector runs entirely through ``cv2`` (FaceDetectorYN + its bundled ONNX
+# runtime), so cv2 is the only native module this engine pre-imports.
+NATIVE_MODULES_FOR_PREIMPORT: tuple[str, ...] = ("cv2",)
+
+# v1.2.0 WU2 — OPT-IN speaker-tracking backend selection. The DEFAULT stays the
+# per-frame YuNet face detector; ``settings["reframeTracker"]="edgetam"`` opts IN
+# to the EdgeTAM occlusion-robust video tracker (facebookresearch/EdgeTAM,
+# Apache-2.0), which propagates ONE subject mask through occlusions rather than
+# re-detecting a face every frame. EdgeTAM being unavailable is therefore NOT a
+# degradation of the default path (YuNet never needs torch/EdgeTAM); it only
+# matters when a user has EXPLICITLY opted in — and then a missing torch/EdgeTAM/
+# checkpoint FAILS LOUD (never a silent fall back to face tracking — WU2 req 2).
+REFRAME_TRACKER_SETTING = "reframeTracker"
+TRACKER_YUNET = "yunet"
+TRACKER_EDGETAM = "edgetam"
+# EdgeTAM's torch runtime is a job-time native like the R1 multi-speaker engine's
+# torch (which likewise imports it lazily inside its heavy backend, not via
+# ``__main__._preimport_native_modules``). It is DELIBERATELY absent from
+# NATIVE_MODULES_FOR_PREIMPORT: torch is heavy and only loaded on the opt-in
+# EdgeTAM path, so eagerly pre-importing it for every session (incl. the YuNet
+# default) is the wrong trade — the tracker owns its lazy import (mirrors
+# ``reframe_multispeaker`` / ``reframe_multispeaker_backend``).
 
 # Injectable seams.
 Runner = Callable[..., int]  # ffmpeg.run-shaped
@@ -133,13 +158,29 @@ class ClaudeShortsReframeError(RuntimeError):
 
 
 class ClaudeShortsBackendUnavailableError(ClaudeShortsReframeError):
-    """No native subject-tracking backend (cv2/mediapipe) is importable.
+    """No native subject-tracking backend is importable / provisioned.
 
     This is a SETUP/PROVISIONING failure, NOT a per-clip event: without OpenCV
-    the engine cannot decode frames to track a speaker at all. It is raised as an
-    EXPLICIT signal (never a silent ``center`` fallback) so the job surfaces an
-    actionable "install opencv-python/mediapipe" error rather than silently
+    (cv2 + its FaceDetectorYN class) or the sha256-pinned YuNet ONNX model, the
+    engine cannot track a speaker at all. It is raised as an EXPLICIT signal
+    (never a silent ``center`` fallback) so the job surfaces an actionable
+    "install opencv-python / provision the YuNet model" error rather than silently
     degrading every clip to a dumb center crop (WU-3 NO-SILENT-FALLBACK).
+    """
+
+
+class EdgeTamBackendUnavailableError(ClaudeShortsBackendUnavailableError):
+    """The OPT-IN EdgeTAM tracker was requested but cannot run (WU2 req 2).
+
+    Raised ONLY when ``settings["reframeTracker"]="edgetam"`` is explicitly set but
+    the EdgeTAM stack is not usable — torch/cv2 not importable, the ``edgetam``
+    package absent, or the sha256-pinned checkpoint not provisioned. It is a typed,
+    LOUD provisioning error rather than a silent fall back to the YuNet
+    face-tracking default: opting IN to EdgeTAM and getting YuNet without being
+    told would be a silent degradation the user could not distinguish from a real
+    EdgeTAM run. A subclass of :class:`ClaudeShortsBackendUnavailableError` so the
+    engine's existing "setup failure -> re-raise loud, never a per-clip degrade"
+    handling (``compute_plan``) covers it unchanged.
     """
 
 
@@ -154,7 +195,12 @@ def make_degraded_notice(reason: str) -> dict[str, str]:
 
     ``message`` is the human line a job surfaces via ``job.progress``; ``reason``
     is the specific cause (a detector error, or no trackable subject) so the UI /
-    logs can explain WHY the crop fell back to center.
+    logs can explain WHY the crop fell back to center. v1.2.0 WU1 removed the old
+    "MediaPipe missing" enrichment: with a single YuNet detector there is no
+    weaker fallback backend to name — a missing model/backend is a LOUD
+    provisioning error (:class:`ClaudeShortsBackendUnavailableError`), never a
+    silent center-crop degrade, so this notice only covers genuine per-clip
+    "no subject / detector failed" degrades.
     """
     return {
         "type": REFRAME_DEGRADED_NOTICE,
@@ -512,37 +558,130 @@ def probe_video(
 
 
 # --------------------------------------------------------------------------- #
-# subject detection (mediapipe -> haar -> center; natives imported lazily)
+# subject detection (YuNet face -> motion -> center; natives imported lazily)
 # --------------------------------------------------------------------------- #
-def detect_backend(importer: Callable[[str], Any] = importlib.import_module) -> str:
-    """Pick the detection backend: ``mediapipe`` | ``haar``.
+def detect_backend(
+    importer: Callable[[str], Any] = importlib.import_module,
+    settings: dict[str, Any] | None = None,
+) -> str:
+    """Resolve + verify the speaker-tracking backend; return its name.
 
-    mediapipe needs cv2 too (frame decode), so the mediapipe backend requires
-    BOTH. ``importer`` is injectable so tests exercise the fallback chain with
-    no native modules present. NOTE (A6): in production these imports only
-    *re-find* modules already loaded by ``__main__._preimport_native_modules``.
+    v1.2.0 WU2 adds an OPT-IN selector: ``settings["reframeTracker"]`` picks the
+    backend, DEFAULTING to :data:`TRACKER_YUNET` (the per-frame YuNet face
+    detector). ``"edgetam"`` opts IN to the occlusion-robust EdgeTAM video tracker;
+    any other/blank value falls back to the YuNet default. ``importer`` is
+    injectable so tests exercise the failure paths with no native modules present.
 
-    WU-3 NO-SILENT-FALLBACK: when NEITHER mediapipe+cv2 nor cv2 alone is
-    importable, subject tracking is impossible — this raises
-    :class:`ClaudeShortsBackendUnavailableError` (an EXPLICIT setup/provisioning
-    signal) instead of returning a silent ``"center"`` that the rest of the
-    pipeline could not distinguish from a legitimate no-subject clip.
+    - **yunet** (default): YuNet runs through ``cv2.FaceDetectorYN`` on a
+      sha256-pinned ONNX, so ``cv2`` is REQUIRED (it also decodes the sampled
+      frames). NOTE (A6): in production this import only *re-finds* the cv2 module
+      already loaded by ``__main__._preimport_native_modules``.
+    - **edgetam** (opt-in): verified by :func:`_detect_edgetam_backend` — torch +
+      cv2 importable AND the pinned checkpoint provisioned, else a LOUD
+      :class:`EdgeTamBackendUnavailableError` (WU2 req 2 — never a silent fall back
+      to yunet).
+
+    WU-3 NO-SILENT-FALLBACK: when the DEFAULT's cv2 is not importable, subject
+    tracking is impossible — this raises :class:`ClaudeShortsBackendUnavailableError`
+    (an EXPLICIT setup/provisioning signal) instead of returning a silent
+    ``"center"`` the rest of the pipeline could not distinguish from a legitimate
+    no-subject clip.
     """
-    try:
-        importer("mediapipe")
-        importer("cv2")
-        return "mediapipe"
-    except Exception:  # noqa: BLE001 - any import failure -> next backend
-        pass
+    settings = settings or {}
+    tracker = str(settings.get(REFRAME_TRACKER_SETTING, TRACKER_YUNET)).strip().lower() or TRACKER_YUNET
+    if tracker == TRACKER_EDGETAM:
+        return _detect_edgetam_backend(importer, settings)
     try:
         importer("cv2")
-        return "haar"
-    except Exception as exc:  # noqa: BLE001
+        return "yunet"
+    except Exception as exc:  # noqa: BLE001 - any import failure -> loud setup error
         raise ClaudeShortsBackendUnavailableError(
-            "subject tracking requires OpenCV (cv2) — and optionally MediaPipe — "
-            "but neither is importable; install opencv-python (and mediapipe) to "
-            "enable speaker tracking, or this is a provisioning/setup error"
+            "subject tracking requires OpenCV (cv2) with the YuNet face detector "
+            "(cv2.FaceDetectorYN), but cv2 is not importable; install opencv-python "
+            "to enable speaker tracking, or this is a provisioning/setup error"
         ) from exc
+
+
+def _detect_edgetam_backend(
+    importer: Callable[[str], Any],
+    settings: dict[str, Any],
+) -> str:
+    """Verify the OPT-IN EdgeTAM stack is usable; return ``"edgetam"`` or fail loud.
+
+    EdgeTAM tracking needs (a) ``cv2`` to decode the sampled frames, (b) ``torch``
+    to run the tracker, and (c) the sha256-pinned EdgeTAM checkpoint provisioned on
+    disk. Any missing piece raises :class:`EdgeTamBackendUnavailableError` — a
+    typed, actionable provisioning error — rather than silently reverting to the
+    YuNet face-tracking default the user did NOT ask for (WU2 req 2). The deeper
+    ``edgetam`` package import + weight load happen in the heavy backend
+    (:class:`~media_studio.features.reframe_edgetam_backend.RealEdgeTamTracker`),
+    which raises the SAME typed error if that stack is incomplete.
+    """
+    for mod in ("cv2", "torch"):
+        try:
+            importer(mod)
+        except Exception as exc:  # noqa: BLE001 - any import failure -> loud opt-in error
+            raise EdgeTamBackendUnavailableError(
+                f"the opt-in EdgeTAM tracker (reframeTracker='edgetam') requires {mod!r}, "
+                f"but it is not importable; install the EdgeTAM runtime "
+                "(torch + opencv-python) or clear reframeTracker to use the YuNet default "
+                "(this is a provisioning/setup error, not a per-clip degrade)"
+            ) from exc
+    model_path = resolve_edgetam_model_path(settings)
+    if model_path is None:
+        raise EdgeTamBackendUnavailableError(
+            f"the opt-in EdgeTAM checkpoint ({_edgetam_asset_name()}) is not provisioned — "
+            "run first-run setup (or assets.ensure) to download the sha256-pinned checkpoint, "
+            "or clear reframeTracker to use the YuNet default (this is a provisioning/setup "
+            "error, not a per-clip degrade)"
+        )
+    return "edgetam"
+
+
+def _edgetam_asset_name() -> str:
+    """The EdgeTAM manifest asset name (lazy import keeps this module light)."""
+    from ..assets import manifest  # noqa: PLC0415 - lazy: keep module import light
+
+    return manifest.EDGETAM_ASSET_NAME
+
+
+def resolve_yunet_model_path(settings: dict[str, Any] | None = None) -> str | None:
+    """On-disk path to the provisioned YuNet ONNX model, or ``None`` if absent.
+
+    Looks the sha256-pinned YuNet asset up in the manifest and asks the asset
+    manager where it is installed (a settings-driven runtime concern). Returns
+    ``None`` when the asset is unregistered or not yet downloaded — the caller
+    (:func:`_make_face_finder`) turns that into a LOUD provisioning error, never a
+    silent center crop (WU-3 NO-SILENT-FALLBACK).
+    """
+    from ..assets import manifest  # noqa: PLC0415 - lazy: keep module import light
+    from ..assets.manager import AssetManager  # noqa: PLC0415 - lazy seam
+
+    entry = manifest.get_asset(manifest.YUNET_ASSET_NAME)
+    if entry is None:
+        return None
+    mgr = AssetManager(settings_provider=lambda: settings or {})
+    return mgr.installed_path(entry)
+
+
+def resolve_edgetam_model_path(settings: dict[str, Any] | None = None) -> str | None:
+    """On-disk path to the provisioned EdgeTAM checkpoint, or ``None`` if absent.
+
+    Looks the sha256-pinned EdgeTAM asset up in the manifest and asks the asset
+    manager where it is installed (a settings-driven runtime concern). Returns
+    ``None`` when the asset is unregistered or not yet downloaded — the caller
+    (:func:`_detect_edgetam_backend`) turns that into a LOUD
+    :class:`EdgeTamBackendUnavailableError`, never a silent fall back to YuNet
+    (WU2 req 2). Mirrors :func:`resolve_yunet_model_path`.
+    """
+    from ..assets import manifest  # noqa: PLC0415 - lazy: keep module import light
+    from ..assets.manager import AssetManager  # noqa: PLC0415 - lazy seam
+
+    entry = manifest.get_asset(manifest.EDGETAM_ASSET_NAME)
+    if entry is None:
+        return None
+    mgr = AssetManager(settings_provider=lambda: settings or {})
+    return mgr.installed_path(entry)
 
 
 def _region_activity(prev_img: Any, cur_img: Any, box: tuple[int, int, int, int]) -> float:
@@ -571,7 +710,10 @@ def _region_activity(prev_img: Any, cur_img: Any, box: tuple[int, int, int, int]
     return float(cv2.absdiff(prev_gray, cur_gray).mean())
 
 
-def _make_face_finder(backend: str) -> tuple[Callable[[Any], float | None] | None, Callable[[], None]]:
+def _make_face_finder(
+    backend: str,
+    settings: dict[str, Any] | None = None,
+) -> tuple[Callable[[Any], float | None] | None, Callable[[], None]]:
     """Build ``(find(img_bgr) -> cx_norm|None, close())`` for ``backend``.
 
     ``find`` returns the DOMINANT/active face's normalized horizontal center via
@@ -582,106 +724,67 @@ def _make_face_finder(backend: str) -> tuple[Callable[[Any], float | None] | Non
     finder is stateful (it remembers the previous frame) so the motion tie-break
     has something to diff; the first frame has no previous frame, so it falls back
     to pure size selection.
-    """
-    if backend == "mediapipe":
-        import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
-        import mediapipe as mp  # noqa: PLC0415 - job-time native (pre-imported)  # pyright: ignore[reportMissingImports]  # optional runtime dep
 
-        detector = mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
+    v1.2.0 WU1: the ``"yunet"`` backend runs the sha256-pinned YuNet ONNX through
+    ``cv2.FaceDetectorYN`` — REPLACING the old haar-cascade face + HOG body
+    detectors (both objdetect-dependent and weaker on turned/profile faces). YuNet
+    itself uses ``cv2.FaceDetectorYN`` (also cv2's objdetect), so this remains
+    objdetect-dependent — but it is ONE guarded native surface plus a pinned model
+    rather than two fragile detectors relying on bundled cascade/SVM data.
+    """
+    if backend == "yunet":
+        import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
+
+        # NO-SILENT-FALLBACK: some opencv builds (headless/objdetect-stripped)
+        # import cleanly but omit the native YuNet class, so a bare call would
+        # raise an opaque ``AttributeError``. Fail loud with an actionable
+        # provisioning error instead — never a quiet center crop.
+        if not hasattr(cv2, "FaceDetectorYN"):
+            raise ClaudeShortsBackendUnavailableError(
+                "OpenCV is installed but lacks the YuNet face detector "
+                "(cv2.FaceDetectorYN) — the opencv-python build is incomplete or "
+                "stripped (needs the objdetect module); install the full "
+                "opencv-python (>=4.8) to enable speaker tracking (this is a "
+                "provisioning/setup error, not a per-clip degrade)"
+            )
+        # NO-SILENT-FALLBACK: the sha256-pinned YuNet model must be provisioned; a
+        # missing model is a SETUP failure (the first-run asset step downloads it),
+        # NOT a per-clip event — fail loud with an actionable error rather than
+        # quietly collapsing every clip to a center crop.
+        model_path = resolve_yunet_model_path(settings)
+        if model_path is None:
+            from ..assets import manifest  # noqa: PLC0415 - lazy: light data module
+
+            raise ClaudeShortsBackendUnavailableError(
+                f"the YuNet face-detection model ({manifest.YUNET_ASSET_NAME}) is not "
+                "provisioned — run first-run setup (or assets.ensure) to download the "
+                "sha256-pinned ONNX; speaker tracking cannot run without it (this is a "
+                "provisioning/setup error, not a per-clip degrade)"
+            )
+        # input_size is set per-frame via setInputSize; score_threshold keeps only
+        # confident faces so background/blurred non-speakers don't steer the crop.
+        detector = cv2.FaceDetectorYN.create(model_path, "", (0, 0), score_threshold=0.6)  # pyright: ignore[reportAttributeAccessIssue]
         prev: dict[str, Any] = {"img": None}
 
-        def find_mp(img: Any) -> float | None:
-            rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            results = detector.process(rgb)
-            detections = getattr(results, "detections", None)
+        def find_yunet(img: Any) -> float | None:
             h, w = int(img.shape[0]), int(img.shape[1])
+            detector.setInputSize((w, h))
+            _retval, faces = detector.detect(img)
             cands: list[tuple[float, float, float]] = []
-            for det in detections or []:
-                bbox = det.location_data.relative_bounding_box
-                cx = float(bbox.xmin + bbox.width / 2.0)
-                size = float(bbox.width * bbox.height)
-                box = (
-                    int(bbox.xmin * w),
-                    int(bbox.ymin * h),
-                    int((bbox.xmin + bbox.width) * w),
-                    int((bbox.ymin + bbox.height) * h),
-                )
-                cands.append((cx, size, _region_activity(prev["img"], img, box)))
-            prev["img"] = img
-            return select_dominant(cands)
-
-        return find_mp, detector.close
-
-    if backend == "haar":
-        import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
-
-        # cv2.data is a real runtime submodule; the opencv type stubs omit it.
-        cascade_path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")  # pyright: ignore[reportAttributeAccessIssue]
-        cascade = cv2.CascadeClassifier(cascade_path)
-        if cascade.empty():
-            _log.warning("haar cascade missing at %s; using center crop", cascade_path)
-            return None, lambda: None
-        prev = {"img": None}
-
-        def find_haar(img: Any) -> float | None:
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4)
-            w_img = int(img.shape[1])
-            cands: list[tuple[float, float, float]] = []
+            # Each YuNet row is [x, y, w, h, 5 landmarks..., score]; the first four
+            # are the face bbox in source pixels.
             for face in faces if faces is not None else []:
-                x, y, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
-                cx = float((x + fw / 2.0) / w_img)
+                x, y, fw, fh = float(face[0]), float(face[1]), float(face[2]), float(face[3])
+                cx = float((x + fw / 2.0) / w)
                 size = float(fw * fh)
-                box = (x, y, x + fw, y + fh)
+                box = (int(x), int(y), int(x + fw), int(y + fh))
                 cands.append((cx, size, _region_activity(prev["img"], img, box)))
             prev["img"] = img
             return select_dominant(cands)
 
-        return find_haar, lambda: None
+        return find_yunet, lambda: None
 
     return None, lambda: None
-
-
-# OpenCV's default people detector uses a 64x128 HOG window; calling
-# detectMultiScale on a frame smaller than the window crashes the native code
-# (segfault), so we hard-skip sub-window frames.
-_HOG_MIN_W = 64
-_HOG_MIN_H = 128
-
-
-def _person_center(img: Any) -> float | None:
-    """Normalized horizontal center of the most prominent PERSON in ``img``.
-
-    Uses OpenCV's built-in HOG people detector (ships with opencv — no model
-    download, node-free). This is the fallback for profile/turned heads where
-    face detection fails but the speaker's BODY is still clearly in frame, so
-    the crop stays on the person instead of collapsing to a center crop.
-    Frames smaller than the 64x128 HOG window are skipped (calling the detector
-    on them crashes the native code). Returns ``None`` when no person is found.
-    """
-    import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
-
-    h, w = int(img.shape[0]), int(img.shape[1])
-    if w < _HOG_MIN_W or h < _HOG_MIN_H:
-        return None
-    hog = cv2.HOGDescriptor()
-    hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())  # pyright: ignore[reportAttributeAccessIssue]
-    rects, weights = hog.detectMultiScale(img, winStride=(8, 8))
-    if rects is None or len(rects) == 0:
-        return None
-    weights = list(weights) if weights is not None else []
-    # WU PHASE-5: in a wide / two-shot pick the DOMINANT person = the LARGEST
-    # (closest) body, breaking a same-size tie by detector confidence (weight ~
-    # how strongly a body was seen). This frames the featured speaker instead of
-    # a smaller, further person who merely scored a higher confidence.
-    cands: list[tuple[float, float, float]] = []
-    for i, rect in enumerate(rects):
-        rx, _ry, rw, rh = float(rect[0]), float(rect[1]), float(rect[2]), float(rect[3])
-        cx = float((rx + rw / 2.0) / w)
-        area = float(rw * rh)
-        activity = float(weights[i]) if i < len(weights) else 0.0
-        cands.append((cx, area, activity))
-    return select_dominant(cands)
 
 
 def _dominant_cluster_centroid(col: Sequence[float]) -> float:
@@ -738,36 +841,92 @@ def _motion_center(prev: Any, img: Any) -> float | None:
     return centroid / float(img.shape[1])
 
 
+# EdgeTAM tracker seam (v1.2.0 WU2). A factory ``(settings) -> tracker`` where the
+# tracker exposes ``track(img_bgr) -> cx_norm|None`` (stateful; first call seeds
+# the subject, later calls PROPAGATE the mask through occlusions) and ``release()``
+# (drop the model + free CUDA between the detect stage and the ffmpeg encode — the
+# 6 GB release-between-stages pattern). Injected in tests with a fake, so the pure
+# wiring is covered with no torch/EdgeTAM install (the cv2 whack-a-mole lesson).
+EdgeTamTrackerFactory = Callable[[dict[str, Any] | None], Any]
+
+
+def _default_edgetam_tracker_factory(settings: dict[str, Any] | None) -> Any:  # pragma: no cover - heavy native seam
+    """Build the real EdgeTAM tracker (lazy: imports the heavy torch/EdgeTAM stack).
+
+    Mirrors ``reframe_multispeaker._default_backend_factory`` — the ONE place that
+    reaches into the heavy backend module, kept out of coverage (it needs torch +
+    the EdgeTAM package + real weights). The tracker itself raises
+    :class:`EdgeTamBackendUnavailableError` if that stack is incomplete.
+    """
+    from .reframe_edgetam_backend import RealEdgeTamTracker  # noqa: PLC0415 - heavy seam
+
+    return RealEdgeTamTracker(settings)
+
+
+def _make_edgetam_finder(
+    settings: dict[str, Any] | None,
+    tracker_factory: EdgeTamTrackerFactory,
+) -> tuple[Callable[[Any], float | None], Callable[[], None]]:
+    """Build ``(find(img_bgr) -> cx_norm|None, close())`` for the EdgeTAM tracker.
+
+    The factory constructs a stateful tracker (it may raise
+    :class:`EdgeTamBackendUnavailableError` up front when the EdgeTAM stack is
+    incomplete — never a silent fall back to YuNet). ``find`` just propagates the
+    tracker frame by frame; ``close`` is the tracker's :meth:`release` so the model
+    + CUDA cache are freed BEFORE the ffmpeg encode stage (6 GB ceiling).
+    """
+    tracker = tracker_factory(settings)
+
+    def find(img: Any) -> float | None:
+        return tracker.track(img)
+
+    return find, tracker.release
+
+
 def _make_subject_finder(
     backend: str,
+    settings: dict[str, Any] | None = None,
+    *,
+    edgetam_tracker_factory: EdgeTamTrackerFactory = _default_edgetam_tracker_factory,
 ) -> tuple[Callable[[Any], float | None] | None, Callable[[], None]]:
-    """Build a stateful subject finder: face -> person -> motion fallback.
+    """Build a stateful subject finder: primary tracker -> motion fallback.
 
-    Returns ``(find(img_bgr) -> cx_norm|None, close())``. ``find`` tries, in
-    order: the backend's FACE detector (mediapipe/haar); then a PERSON (HOG body)
-    detector for profile/turned shots where the face is weak or absent; then
-    MOTION saliency against the previous frame as a last resort. This keeps the
-    crop on the SPEAKER instead of falling back to a center-of-frame crop the
-    moment a face is not cleanly visible. ``None`` only when none of the three
-    locate anything. For the ``center`` backend there is no finder.
+    Returns ``(find(img_bgr) -> cx_norm|None, close())``. ``find`` tries, in order:
+    the backend's PRIMARY subject locator — YuNet face detection (default) or the
+    opt-in EdgeTAM tracker — then MOTION saliency against the previous frame as a
+    last resort. This keeps the crop on the SPEAKER instead of falling back to a
+    center-of-frame crop the moment the primary locator is not cleanly confident.
+    ``None`` only when neither locates anything. For the ``center`` backend there
+    is no finder.
+
+    The motion last resort is imgproc-only (:func:`_motion_center`: cvtColor/
+    absdiff/threshold — no objdetect, no face model); it is NOT the YuNet
+    face-tracking path, so wiring it under EdgeTAM is not the "silent fall back to
+    face tracking" WU2 req 2 forbids (that guard is the fail-loud backend
+    selection, not a per-frame miss).
+
+    v1.2.0 WU1 DECISION — the HOG person/body fallback was DROPPED (not swapped):
+    it was a SECOND objdetect-dependent native surface (cv2.HOGDescriptor), and
+    YuNet holds turned/profile faces well enough to make it redundant.
     """
-    face_find, face_close = _make_face_finder(backend)
+    if backend == TRACKER_EDGETAM:
+        primary_find, primary_close = _make_edgetam_finder(settings, edgetam_tracker_factory)
+    else:
+        primary_find, primary_close = _make_face_finder(backend, settings)
     if backend == "center":
-        return None, face_close
+        return None, primary_close
     prev_frame: dict[str, Any] = {"img": None}
 
     def find(img: Any) -> float | None:
         cx: float | None = None
-        if face_find is not None:
-            cx = face_find(img)
-        if cx is None:
-            cx = _person_center(img)
+        if primary_find is not None:
+            cx = primary_find(img)
         if cx is None and prev_frame["img"] is not None:
             cx = _motion_center(prev_frame["img"], img)
         prev_frame["img"] = img
         return cx
 
-    return find, face_close
+    return find, primary_close
 
 
 def detect_subject_centers(
@@ -777,20 +936,24 @@ def detect_subject_centers(
     settings: dict[str, Any] | None = None,
     frame_runner: SubprocessRunner = subprocess.run,
     backend: str | None = None,
+    edgetam_tracker_factory: EdgeTamTrackerFactory = _default_edgetam_tracker_factory,
 ) -> list[tuple[float, float]]:
     """Detect the subject's normalized horizontal center per sampled window.
 
     Extracts one frame per timestamp via ffmpeg (argv list, pipes drained by
-    ``capture_output``), runs the face->person->motion subject finder, and
-    returns ``[(t, cx_norm)]`` for the frames where a subject was located. An
+    ``capture_output``), runs the primary(YuNet/EdgeTAM)->motion subject finder,
+    and returns ``[(t, cx_norm)]`` for the frames where a subject was located. An
     empty list means "no subject anywhere" -> the caller keeps the centered crop.
+
+    ``settings`` selects the backend (``reframeTracker``); ``edgetam_tracker_factory``
+    is the injectable EdgeTAM-tracker seam (a fake in tests — no torch/EdgeTAM).
     """
-    backend = backend or detect_backend()
+    backend = backend or detect_backend(settings=settings)
     if backend == "center":
         return []
     import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
 
-    find, close = _make_subject_finder(backend)
+    find, close = _make_subject_finder(backend, settings, edgetam_tracker_factory=edgetam_tracker_factory)
     if find is None:
         return []
     tmpdir = tempfile.mkdtemp(prefix="media_studio_reframe_")
@@ -839,6 +1002,7 @@ class ClaudeShortsReframeEngine:
         runner: Runner | None = None,
         prober: Prober | None = None,
         detector: Detector | None = None,
+        backend_probe: Callable[[], str] | None = None,
     ) -> None:
         self._settings = settings or {}
         # A6 lesson 2: the default encode runner is ffmpeg.run — it drains
@@ -848,6 +1012,13 @@ class ClaudeShortsReframeEngine:
         self._detector: Detector = detector or (
             lambda path, ts: detect_subject_centers(path, ts, settings=self._settings)
         )
+        # Verifies the resolved backend is usable so a total provisioning failure
+        # (no cv2 for the YuNet default; or an opted-in EdgeTAM with no torch/
+        # checkpoint) surfaces LOUDLY up front, before any per-clip work — never a
+        # silent center crop and never a silent fall back to YuNet (WU2 req 2).
+        # Passes ``settings`` so the ``reframeTracker`` opt-in is honoured here too.
+        # Injectable for tests.
+        self._backend_probe: Callable[[], str] = backend_probe or (lambda: detect_backend(settings=self._settings))
 
     def compute_plan(
         self,
@@ -866,17 +1037,24 @@ class ClaudeShortsReframeEngine:
         :data:`REFRAME_DEGRADED_NOTICE`) so the UI can show a real/degraded badge
         — it is never swallowed into a silent center crop. A native-backend SETUP
         error (:class:`ClaudeShortsBackendUnavailableError`) is NOT a per-clip
-        degrade: it propagates so the job fails loudly (install opencv/mediapipe).
+        degrade: it propagates so the job fails loudly (install opencv-python /
+        provision the YuNet model).
         """
         src_w, src_h, duration = self._prober(in_path)
         crop = centered_crop(src_w, src_h, aspect)
         timestamps = window_timestamps(duration)
+        # Verify the native backend up front so a total provisioning failure (no
+        # cv2 -> no YuNet) fails LOUD before any per-clip work — never a silent
+        # center crop (NO-SILENT-FALLBACK). The result is only a fail-loud gate;
+        # a YuNet MODEL-missing failure surfaces from the detector below (same
+        # ClaudeShortsBackendUnavailableError, re-raised).
+        self._backend_probe()
         try:
             samples = list(self._detector(in_path, timestamps) or [])
         except ClaudeShortsBackendUnavailableError:
-            # SETUP/provisioning failure (no cv2/mediapipe): fail loud, never a
-            # per-clip silent degrade. Re-raise so the job surfaces an actionable
-            # "install opencv/mediapipe" error.
+            # SETUP/provisioning failure (no cv2, or the YuNet model/class absent):
+            # fail loud, never a per-clip silent degrade. Re-raise so the job
+            # surfaces an actionable "install opencv / provision YuNet" error.
             raise
         except Exception as exc:  # noqa: BLE001 - a runtime detector failure -> degrade
             # A broken detector degrades to the centered crop — the encode still
@@ -910,11 +1088,17 @@ class ClaudeShortsReframeEngine:
         return crop, kfs, duration
 
     @staticmethod
-    def _notify_degraded(on_notice: Callable[[dict[str, str]], None] | None, reason: str) -> None:
+    def _notify_degraded(
+        on_notice: Callable[[dict[str, str]], None] | None,
+        reason: str,
+    ) -> None:
         """Surface a per-clip degraded notice through ``on_notice`` (when wired).
 
         The degrade is ALSO logged, but the structured notice is what lets the
         orchestrator/UI render a degraded badge — the "never swallow" contract.
+        v1.2.0 WU1: with a single YuNet detector there is no weaker fallback
+        backend to name, so the notice just carries the reason (a missing
+        model/backend fails loud earlier, never a silent center crop).
         """
         if on_notice is not None:
             on_notice(make_degraded_notice(reason))

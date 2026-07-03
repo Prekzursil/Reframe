@@ -13,7 +13,7 @@
 import { app, BrowserWindow, session, shell } from 'electron';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, writeFileSync, promises as fsp } from 'node:fs';
-import { extname, join, resolve as resolvePath } from 'node:path';
+import { extname, join, resolve as resolvePath, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { resolveDataRootFrom } from './dataRoot';
 import { dataDirMarkerPath, exeDataDir, isExeDataWritable, readDataDirMarker } from './dataRootIo';
@@ -34,6 +34,11 @@ import {
 } from './mediaProtocol';
 import { registerShellIpc } from './shellIpc';
 import { pthZipName, renderPthBody } from './pthActivation';
+import {
+  FIRST_RUN_COMPLETE_MARKER,
+  needsFirstRunSetup,
+  shouldStartSidecarAfterFailedFirstRun,
+} from './firstRunGate';
 import { Sidecar } from './sidecar';
 
 // mstream:// must be declared privileged BEFORE app ready (U1).
@@ -195,9 +200,41 @@ function propagateDataRootEnv(): void {
   }
 }
 
+const UNSAFE_DATA_PATH_MESSAGE = 'data-root derived path escaped the data root';
+
+/**
+ * Path-injection barrier (CodeQL js/path-injection): the data root is derived
+ * from `MEDIA_STUDIO_CONFIG_DIR` / a marker file, so any path joined onto it and
+ * handed to `fs.existsSync` is a tainted sink. Canonicalise the joined path with
+ * `path.resolve` and prove (via `startsWith(root + sep)`) it stays inside the
+ * resolved data root — the resolve+containment barrier shape CodeQL recognises
+ * (identical to `resolveScopedMediaPath`'s guard). The relative parts here are
+ * fixed constants, so the check never fires; it exists to sanitise the sink.
+ */
+function dataRootChild(...parts: string[]): string {
+  const root = resolvePath(DATA_ROOT);
+  const target = resolvePath(DATA_ROOT, ...parts);
+  if (target !== root && !target.startsWith(root + sep)) {
+    throw new Error(UNSAFE_DATA_PATH_MESSAGE);
+  }
+  return target;
+}
+
 /** WIRING-T5 §2: the sidecar-env sentinel bootstrap.py writes on success. */
 function firstRunSentinelPath(): string {
-  return join(DATA_ROOT, 'envs', 'sidecar', '.media-studio-env.json');
+  return dataRootChild('envs', 'sidecar', '.media-studio-env.json');
+}
+
+/**
+ * WIRING-T5 §2 (provisioning hardening): the FIRST-RUN-COMPLETE marker
+ * bootstrap.py writes at the data root ONLY after a full provision (env + every
+ * model + the S3FD/LR-ASD weights) succeeds. Gating first-run on THIS — not the
+ * env sentinel — is what stops a run that built the env but failed the model
+ * downloads from looking "done" and leaving a half-provisioned, silently
+ * centre-cropping app on the next launch.
+ */
+function firstRunCompletePath(): string {
+  return dataRootChild(FIRST_RUN_COMPLETE_MARKER);
 }
 
 /**
@@ -461,7 +498,7 @@ function bootstrap(): void {
   // run BEFORE the sidecar starts (the embeddable python cannot serve
   // `-m media_studio` until bootstrap.py rewrites its ._pth). Dev builds (and
   // already-bootstrapped packaged builds) start immediately, exactly as before.
-  const firstRun = app.isPackaged && !existsSync(firstRunSentinelPath());
+  const firstRun = needsFirstRunSetup(app.isPackaged, existsSync(firstRunCompletePath()));
   if (!firstRun) {
     // T5 hardening: a packaged build whose env already exists still needs THIS
     // copy's embeddable ._pth pointed at it (the sentinel is shared in appData,
@@ -563,6 +600,15 @@ function bootstrap(): void {
     const begin = (): void => {
       void runFirstRunBootstrap().then((ok) => {
         if (ok) {
+          sc2.start();
+        } else if (shouldStartSidecarAfterFailedFirstRun(existsSync(firstRunSentinelPath()))) {
+          // Re-provision of an already-working install failed (e.g. an upgrade
+          // back-filling new deps hit a transient download error). Start the
+          // EXISTING env degraded rather than brick it — the loud bootstrap
+          // error banner already surfaced what failed.
+          ensurePthActivated();
+          // eslint-disable-next-line no-console
+          console.error('[bootstrap] first-run setup failed; starting existing env (degraded)');
           sc2.start();
         } else {
           // eslint-disable-next-line no-console

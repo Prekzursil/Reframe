@@ -26,6 +26,15 @@ import sys
 
 from media_studio import handlers, rpc
 
+# REUSE the production composition root's Windows pre-serve hardening (bug #4).
+# ``_preimport_native_modules`` loads the native C-extension DLLs
+# (numpy/av/ctranslate2/cv2/...) in the MAIN thread; ``_suppress_windows_error_dialogs``
+# turns a failed DLL load into a normal exception instead of an invisible modal
+# dialog. Imported (not reimplemented) so this launcher's pre-imported native set
+# can never drift from production — see ``main`` for why the E2E harness hangs
+# without them.
+from media_studio.__main__ import _preimport_native_modules, _suppress_windows_error_dialogs
+
 
 class TinyCpuWhisperLoader:
     """A WhisperLoader whose ``load()`` forces tiny / cpu / int8 (ignores args).
@@ -55,6 +64,15 @@ def main() -> int:
     if not data_dir:
         print("MEDIA_STUDIO_E2E_DATADIR is required", file=sys.stderr)
         return 2
+    # BUG #4 (Windows E2E hang) fix — MUST run before serving, exactly as the
+    # production ``media_studio.__main__.main`` does. On Windows the FIRST import
+    # of a native C-extension DLL (numpy/av/ctranslate2/...) from a JOB THREAD
+    # deadlocks while the main thread is parked in ``sys.stdin.readline()`` (the
+    # serve loop). This launcher previously omitted the pre-import, so the real
+    # E2E harness hung forever at ``transcribe.start``. Pre-importing the natives
+    # in THIS (main) thread means no job thread ever triggers the first DLL load.
+    _suppress_windows_error_dialogs()
+    _preimport_native_modules()
     handlers.register_all(handlers.Services(data_dir=data_dir, whisper_loader=TinyCpuWhisperLoader()))
     # NOTE: the production __main__.main() injects a DiskJobStore here. We use the
     # in-memory store (store=None, a supported back-compat mode) ON PURPOSE: the
