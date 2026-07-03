@@ -89,3 +89,11 @@ python sidecar/tests/e2e/real_pipeline_smoke.py \
   `<job>.json.tmp` name; the dispatch and worker threads race on the same temp →
   `FileNotFoundError`). The media pipeline is unaffected by store choice (the
   transcript persists via the project manifest, not the job store).
+- **Windows native pre-import (bug #4):** `_tiny_sidecar.py` calls the production
+  composition root's `_suppress_windows_error_dialogs()` + `_preimport_native_modules()`
+  (imported from `media_studio.__main__`, never reimplemented) BEFORE it serves. On
+  Windows the FIRST import of a native C-extension DLL (numpy / av / ctranslate2 /
+  ...) from a JOB THREAD deadlocks while the main thread is parked in
+  `sys.stdin.readline()`; pre-importing the natives in the main thread is what stops
+  the harness hanging forever at `transcribe.start`. Production `python -m media_studio`
+  already does this — the launcher must stay in lockstep.
