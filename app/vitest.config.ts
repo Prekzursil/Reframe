@@ -26,7 +26,16 @@ export default defineConfig({
   },
   test: {
     globals: true,
-    include: ['main/**/*.test.{ts,tsx}', 'renderer/src/**/*.test.{ts,tsx}'],
+    // The render-cli is a separate commonjs workspace, but it has no test runner
+    // of its own; its pure-logic unit tests (e.g. the js/path-injection barrier in
+    // jobPath.ts) live beside the code and run under THIS vitest. They default to
+    // the node environment and are NOT part of the renderer's 100% coverage gate
+    // (coverage.include below is renderer-only).
+    include: [
+      'main/**/*.test.{ts,tsx}',
+      'renderer/src/**/*.test.{ts,tsx}',
+      'render-cli/src/**/*.test.ts',
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'text-summary'],

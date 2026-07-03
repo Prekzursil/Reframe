@@ -5,7 +5,33 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added — virality surfacing (v1.2.0 WU3)
+## [1.2.0] — 2026-07-03
+
+**Reframe v1.2.0 — detector, virality, tracking + fail-loud hardening.** A single
+native **YuNet** face detector replaces the old MediaPipe/haar + HOG path in the
+default reframer; the candidate list gains a **virality highlight badge**; an
+**EdgeTAM** opt-in tracker lands behind an explicit setting; the multi-speaker
+diarizer's **SpeechBrain** dependency is declared and pinned with a typed
+fail-loud; and the no-silent-fallback posture is hardened across the reframe and
+provisioning paths. All open **CodeQL** alerts are driven to **zero** (72 → 0,
+including the render-CLI `js/path-injection` fix in this release). Both coverage
+gates remain at **strict 100% line + branch** (sidecar **and** renderer) under the
+single `quality` CI gate.
+
+### Added — YuNet face detector (WU1)
+
+- **YuNet replaces the MediaPipe/haar detector** — the default in-sidecar
+  `claudeshorts` reframer now finds faces with **`cv2.FaceDetectorYN`** (a tiny
+  **sha256-pinned ONNX CNN** run through OpenCV's bundled ONNX runtime), replacing
+  the old haar-cascade face + HOG person/body detectors and dropping the
+  `mediapipe` dependency entirely. YuNet holds turned / profile faces far better
+  (making the objdetect-dependent HOG body fallback redundant), leaving exactly
+  **one native detector surface** to provision. The detection chain is now
+  **YuNet face → motion saliency → center** — and a truly face-less, motion-less
+  clip still degrades to a plain center crop **with a loud notice**, never
+  silently.
+
+### Added — virality highlight badge (WU3)
 
 - **Highlight-score badge (display-only)** — the candidate review list now
   surfaces the unified scorer's `signalScore` (a 0..1 fusion of the legacy LLM
@@ -18,6 +44,53 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   `displaySignalScore` helper. Pure surfacing — selection/ranking is unchanged;
   the badge simply does not render on the frozen path where `signalScore` is
   absent. Both coverage gates stay at strict 100% line + branch.
+
+### Added — EdgeTAM opt-in tracker (WU2)
+
+- **EdgeTAM is an explicit opt-in subject tracker** — setting
+  `reframeTracker = "edgetam"` opts IN to the torch-based EdgeTAM tracker; the
+  default (`yunet`, or any blank / unknown value) stays on the zero-dependency
+  per-frame YuNet face detector. Opting in on a host without the EdgeTAM stack
+  (`torch` + `opencv-python`) raises a **loud provisioning error** naming the real
+  cause — it never silently falls back to the YuNet default the user did not ask
+  for.
+
+### Added — multi-speaker diarizer: SpeechBrain declared + pinned (via #255)
+
+- **SpeechBrain is now a declared, pinned dependency of the `reframe-gpu` extra**
+  (`speechbrain==1.0.3`, with `huggingface-hub<1.0`), so the multi-speaker
+  diarizer's audio-side model load is reproducible on the GPU host and **fails
+  loud with a typed error** when the backend is unavailable rather than degrading
+  silently. See `docs/WU-R1-MULTISPEAKER-ENGINE.md` for the pin rationale and the
+  Windows `k2_fsa` gotcha. (Landed via PR #255, shipped as part of v1.2.0.)
+
+### Changed — no-silent-fallback hardening (fail loud)
+
+- **Never a silent center-crop or silent model swap.** Every reframe / tracker /
+  provisioning path that cannot run raises a **typed, actionable error** (or, on
+  the `auto` degrade path, emits a loud `reframe.degraded` notice) instead of
+  quietly producing a degraded result. First-run **provisioning** is explicit
+  about what it downloads and self-tests, and reports a missing native detector or
+  model as a loud failure — no quiet degradation anywhere in the default path.
+
+### Security — CodeQL remediation 72 → 0
+
+- **All open CodeQL alerts driven to zero (72 → 0).** Includes the render-CLI
+  **`js/path-injection`** (HIGH) fix: `render.ts` `readJob` now canonicalises the
+  argv-supplied job path and **proves it stays inside `os.tmpdir()`** (a
+  `path.resolve` + `startsWith` confine-to-base barrier — the TS analog of the
+  sidecar's `pathsafe.ensure_within`) before the `readFileSync` sink, on top of
+  the existing NUL / `..` guard. Covered by new `jobPath` unit tests.
+
+### Fixed — first-run + Windows stability
+
+- **First-run provisioning** hardened (loud, resumable, checksummed setup of the
+  native detector + chosen models).
+- **Windows E2E hang** fixed — the opt-in end-to-end suite no longer hangs on
+  Windows.
+- **Settings crash** fixed — the Settings surface no longer crashes.
+
+## [1.1.0] — 2026-06-29
 
 **Reframe v1.1.0 — the multi-speaker release.** The flagship is a HYBRID
 multi-speaker reframe engine that decides per-segment between **cut** (lock onto

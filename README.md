@@ -22,8 +22,8 @@ and pick one:
 
 | Asset | What it is |
 |-------|------------|
-| `media-studio-1.0.0-win-x64.exe` | **NSIS installer** — double-click, choose an install dir, get a Start-menu / desktop shortcut ("Reframe - Media Studio"). |
-| `media-studio-1.0.0-win-x64.zip` | **Portable** — unzip anywhere and run `Reframe - Media Studio.exe`. No install, no admin. |
+| `media-studio-1.2.0-win-x64.exe` | **NSIS installer** — double-click, choose an install dir, get a Start-menu / desktop shortcut ("Reframe - Media Studio"). |
+| `media-studio-1.2.0-win-x64.zip` | **Portable** — unzip anywhere and run `Reframe - Media Studio.exe`. No install, no admin. |
 
 **First run does the rest automatically.** The download is **slim** (the app + a bundled
 CPython + ffmpeg + the render engine). On first launch the app downloads the heavier pieces
@@ -74,7 +74,7 @@ your limit, so many small approved runs can't quietly add up.
 | Area | Features |
 |------|----------|
 | **Short-maker** (the star) | LLM moment-selection → boundary-snap → cut → vertical reframe → captions → export; subtle zoom/punch-in; brand-logo overlay; virality scoring + a feedback flywheel |
-| **Reframe** | 9:16 auto-reframe that runs **natively — no WSL required**. The in-sidecar **claudeshorts** (OpenCV/MediaPipe) engine is the default (`auto`); **verthor** (WSL2/MediaPipe) is an optional explicit opt-in for higher quality. **No silent fallback:** an explicit `verthor` request fails loudly when WSL is absent (it is never silently swapped). **V1 follows a single speaker** — in a wide / two-shot the crop locks onto the dominant/active speaker and tracks them smoothly (never an empty studio or the gap between two people). Automatic multi-speaker *switching* is a [V2 roadmap](docs/ROADMAP.md) item. |
+| **Reframe** | 9:16 auto-reframe that runs **natively — no WSL required**. The in-sidecar **claudeshorts** engine is the default (`auto`), finding faces with a single native **YuNet** detector (`cv2.FaceDetectorYN`, a sha256-pinned ONNX CNN — as of v1.2.0, replacing the old MediaPipe/haar path); **verthor** (WSL2/MediaPipe) is an optional explicit opt-in for higher quality, and **EdgeTAM** is an opt-in torch tracker (`reframeTracker="edgetam"`). **No silent fallback:** an explicit `verthor` (or `edgetam`) request fails loudly when its stack is absent — never silently swapped, never a silent center-crop. The default path **follows a single speaker**; a **HYBRID multi-speaker** engine (per-segment cut / 50-50 split / 3-up composite, shipped in v1.1.0) is an explicit opt-in — see [ROADMAP](docs/ROADMAP.md). |
 | **Caption editor** | A draggable / resizable caption box previewed on a real video frame (stored normalised → ASS alignment + margins), a previewable style-template swatch picker (karaoke + premium looks), and per-output subtitle delivery (burn-in / soft track / separate file / none) — defaults persisted in Settings and seeded into every new short. |
 | **Director** | prompt-driven edits → storyboard/diff + cost preview → real ffmpeg op-engines |
 | **Stabilize** *(differentiator)* | camera-shake removal via ffmpeg **vidstab** 2-pass — something OpusClip & peers don't do |
@@ -96,13 +96,14 @@ your limit, so many small approved runs can't quietly add up.
 - **GPU (optional, recommended):** an **NVIDIA GPU + CUDA** accelerates transcription, the
   vision stack, and **Chatterbox** voice-clone TTS. Without a GPU everything still works on
   **CPU** (slower) — there is always a CPU fallback.
-- **9:16 reframe:** the high-quality **verthor** path uses **WSL2 / MediaPipe**; if WSL2 is
-  absent the app **auto-falls back** to the in-process **claudeshorts** reframer — no setup
-  required either way. **V1 follows a single speaker:** even in a wide or two-shot the crop
-  locks onto the dominant/active speaker (largest, most-active face/person) and tracks them
-  smoothly — it never shows an empty studio or the gap between two people. Automatic
-  multi-speaker *switching* (cutting between people as they talk) is a [V2 roadmap](docs/ROADMAP.md)
-  item.
+- **9:16 reframe:** the default in-process **claudeshorts** reframer runs **natively — no
+  setup required** — and detects faces with a single native **YuNet** ONNX model
+  (`cv2.FaceDetectorYN`, as of v1.2.0); the high-quality **verthor** path (WSL2 / MediaPipe)
+  is an explicit opt-in. The default path **follows a single speaker** — even in a wide or
+  two-shot the crop locks onto the dominant/active speaker and tracks them smoothly, never an
+  empty studio or the gap between two people. Automatic **multi-speaker switching** (cutting
+  between people as they talk) shipped in **v1.1.0** as an explicit opt-in HYBRID engine; see
+  the [ROADMAP](docs/ROADMAP.md).
 - **Disk / network:** ~**a few GB** of one-time first-run download for ML wheels + the models
   you enable (into `%APPDATA%\media-studio`). **Offline after** the first-run setup.
 - **No toolchain needed:** Python, ffmpeg, and the render engine are bundled.
