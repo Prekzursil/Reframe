@@ -12,7 +12,13 @@ import {
   applyOutcomeText,
   errText,
   indexAssets,
+  ingestRenderable,
   isInstalled,
+  isRenderableOverview,
+  isRenderableRecommendation,
+  isRenderableReport,
+  isRenderableRunners,
+  malformedDataMessage,
   mergeOverviewRoutingPolicy,
   qualityFraction,
   recommendationAlreadyOptimal,
@@ -249,6 +255,90 @@ describe('pure helpers', () => {
     expect(sizeForComponent(vlm, byAsset)).toBe(4540);
     // unknown asset -> null
     expect(sizeForComponent({ ...smol, name: 'mystery' }, byAsset)).toBeNull();
+  });
+});
+
+// ---- HARDENING: renderable-shape guards (crash-blank prevention) ------------
+describe('renderable-shape guards', () => {
+  it('isRenderableReport requires components/tiers/notes arrays', () => {
+    expect(isRenderableReport(report())).toBe(true);
+    // a missing array (structurally-broken sidecar payload) is rejected.
+    expect(isRenderableReport({ ...report(), tiers: undefined } as unknown as AdvisorReport)).toBe(
+      false,
+    );
+  });
+
+  it('isRenderableOverview requires eligibility.models array + routingPolicy', () => {
+    const ov = modelsOverview({});
+    expect(isRenderableOverview(ov)).toBe(true);
+    // eligibility missing -> eligibility?.models is undefined -> rejected.
+    expect(
+      isRenderableOverview({ ...ov, eligibility: undefined } as unknown as ModelsOverview),
+    ).toBe(false);
+    // eligibility present but routingPolicy missing -> rejected.
+    expect(
+      isRenderableOverview({ ...ov, routingPolicy: undefined } as unknown as ModelsOverview),
+    ).toBe(false);
+  });
+
+  it('isRenderableRunners requires whisper, llm and a runners array', () => {
+    const plan = localModelPlan();
+    expect(isRenderableRunners(plan)).toBe(true);
+    expect(isRenderableRunners({ ...plan, whisper: undefined } as unknown as LocalModelPlan)).toBe(
+      false,
+    );
+    expect(isRenderableRunners({ ...plan, llm: undefined } as unknown as LocalModelPlan)).toBe(
+      false,
+    );
+    expect(isRenderableRunners({ ...plan, runners: undefined } as unknown as LocalModelPlan)).toBe(
+      false,
+    );
+  });
+
+  it('isRenderableRecommendation requires routing.perFunction + downloads/rationale arrays', () => {
+    const rec = recommendation();
+    expect(isRenderableRecommendation(rec)).toBe(true);
+    // routing entirely absent -> routing?.perFunction is undefined -> rejected.
+    expect(
+      isRenderableRecommendation({ ...rec, routing: undefined } as unknown as Recommendation),
+    ).toBe(false);
+    // routing present but perFunction absent -> rejected.
+    expect(
+      isRenderableRecommendation({ ...rec, routing: {} } as unknown as Recommendation),
+    ).toBe(false);
+    expect(
+      isRenderableRecommendation({ ...rec, downloads: undefined } as unknown as Recommendation),
+    ).toBe(false);
+    expect(
+      isRenderableRecommendation({ ...rec, rationale: undefined } as unknown as Recommendation),
+    ).toBe(false);
+  });
+
+  it('ingestRenderable: null passes through, valid returns as-is, malformed rejects + warns', () => {
+    const warn = vi.fn();
+    // null/undefined = capability absent (quiet), never a malformed warning.
+    expect(ingestRenderable(null, isRenderableReport, warn)).toBeNull();
+    expect(ingestRenderable(undefined, isRenderableReport, warn)).toBeNull();
+    expect(warn).not.toHaveBeenCalled();
+    // a valid payload is stored unchanged.
+    const good = report();
+    expect(ingestRenderable(good, isRenderableReport, warn)).toBe(good);
+    expect(warn).not.toHaveBeenCalled();
+    // a broken payload is rejected (null) and the LOUD warning fires.
+    expect(
+      ingestRenderable(
+        { recommendedPreset: 'x', vramBudgetMb: 1 } as unknown as AdvisorReport,
+        isRenderableReport,
+        warn,
+      ),
+    ).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('malformedDataMessage names the broken parts', () => {
+    expect(malformedDataMessage(['system report', 'models overview'])).toMatch(
+      /unexpected data \(system report, models overview\)/,
+    );
   });
 });
 
@@ -1531,6 +1621,42 @@ describe('<ModelsSystemPanel />', () => {
     expect(c.calls.some((x) => x.method === 'system.advisor')).toBe(true);
   });
 
+  it('surfaces a loud error (no blank) when a roll-up action re-run advisor is malformed', async () => {
+    const c = makeClient({
+      initialSettings: { firstRunChoiceMade: true },
+      readiness: [
+        {
+          capability: 'vis',
+          label: 'Vision',
+          status: 'needsDownload',
+          blockedBy: '',
+          action: { kind: 'assets.ensure', assets: ['saliency'] },
+        },
+      ],
+    });
+    // The advisor re-run that the readiness action triggers returns a broken report.
+    (c.client.system.advisor as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      { recommendedPreset: 'x', vramBudgetMb: 1 } as unknown as AdvisorReport,
+    );
+    await mount(c);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const fix = container.querySelector(
+      '.readiness-rollup button.readiness-badge__action',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      fix.click();
+    });
+    await act(async () => {
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+    });
+    // Panel survives (no crash-blank) and the malformed re-run is announced loudly.
+    expect(container.querySelector('.models-system-panel')).not.toBeNull();
+    const alert = container.querySelector('p.error[role="alert"]');
+    expect(alert?.textContent ?? '').toMatch(/unexpected data/i);
+  });
+
   it('surfaces an error when a roll-up assets.ensure action fails', async () => {
     const c = makeClient({
       initialSettings: { firstRunChoiceMade: true },
@@ -2152,5 +2278,95 @@ describe('<ModelsSystemPanel /> WU-B3 card', () => {
     // analysis ran (hardware present) but the overview compose was empty.
     expect(container.querySelector('[data-section="hardware"]')).not.toBeNull();
     expect(container.querySelector('[data-section="reason-strip"]')).toBeNull();
+  });
+
+  // ---- HARDENING: malformed (non-null) sidecar payloads must NOT crash-blank ---
+  // The panel maps over report.tiers/components/notes, overview.eligibility.models,
+  // runners.runners and reads recommendation.routing.perFunction. A STRUCTURALLY
+  // BROKEN (non-null) payload from the sidecar — arrays or required objects missing
+  // — would throw during render and, with no top-level error boundary, blank the
+  // ENTIRE app. These assert the panel survives (root still present), hides the
+  // affected section, and surfaces a LOUD error (never a silent blank/degrade).
+
+  it('survives a malformed system.advisor report (missing arrays) without blanking', async () => {
+    const c = makeClient({ initialSettings: optedIn });
+    (c.client.system.advisor as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      // recommendedPreset/vramBudgetMb present but tiers/components/notes ABSENT.
+      { recommendedPreset: 'tier1-multimodal', vramBudgetMb: 6000 } as unknown as AdvisorReport,
+    );
+    await mount(c);
+    await analyze();
+    // Panel root still rendered (no crash-blank) and the tier/model grid hidden.
+    expect(container.querySelector('.models-system-panel')).not.toBeNull();
+    expect(container.querySelector('[data-section="tiers"]')).toBeNull();
+    expect(container.querySelector('[data-section="models"]')).toBeNull();
+    // Loud error surfaced (not a silent degrade).
+    const alert = container.querySelector('p.error[role="alert"]');
+    expect(alert).not.toBeNull();
+    expect(alert?.textContent ?? '').toMatch(/unexpected data/i);
+  });
+
+  it('survives a malformed models.overview (missing eligibility) without blanking', async () => {
+    const c = makeClient({ initialSettings: optedIn });
+    (c.client.models.overview as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      // routingPolicy present but eligibility ABSENT -> overview.eligibility.models throws.
+      { routingPolicy: { global: 'local', overrides: {} } } as unknown as ModelsOverview,
+    );
+    await mount(c);
+    await analyze();
+    expect(container.querySelector('.models-system-panel')).not.toBeNull();
+    expect(container.querySelector('[data-section="reason-strip"]')).toBeNull();
+    expect(container.querySelector('p.error[role="alert"]')).not.toBeNull();
+  });
+
+  it('survives a malformed models.runners plan (missing runners array) without blanking', async () => {
+    const c = makeClient({ initialSettings: optedIn });
+    (c.client.models.runners as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      // whisper/llm present but the runners array ABSENT -> LocalRunners map throws.
+      {
+        whisper: { model: 'w', label: 'W', reason: 'r' },
+        llm: { model: 'l', label: 'L', reason: 'r' },
+      } as unknown as LocalModelPlan,
+    );
+    await mount(c);
+    await analyze();
+    expect(container.querySelector('.models-system-panel')).not.toBeNull();
+    expect(container.querySelector('[data-section="local-runners"]')).toBeNull();
+    expect(container.querySelector('p.error[role="alert"]')).not.toBeNull();
+  });
+
+  it('survives a malformed system.recommend payload (missing routing) without blanking', async () => {
+    const c = makeClient({ initialSettings: optedIn });
+    (c.client.system.recommend as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      // routing ABSENT -> recommendationUnavailable(Object.keys(routing.perFunction)) throws.
+      { recommendation: { preset: 'balanced' } } as unknown as { recommendation: Recommendation },
+    );
+    await mount(c);
+    await analyze();
+    expect(container.querySelector('.models-system-panel')).not.toBeNull();
+    expect(container.querySelector('[data-section="recommend"]')).toBeNull();
+    expect(container.querySelector('p.error[role="alert"]')).not.toBeNull();
+  });
+
+  it('surfaces a loud error when a re-run advisor (post-download) returns a broken report', async () => {
+    const c = makeClient({ initialSettings: optedIn });
+    await mount(c);
+    await analyze();
+    // After the download re-runs system.advisor, a broken report must not crash.
+    (c.client.system.advisor as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      { recommendedPreset: 'x', vramBudgetMb: 1 } as unknown as AdvisorReport,
+    );
+    const dl = container.querySelector(
+      '[data-section="models"] button[data-action="download"][data-state="download"]',
+    ) as HTMLButtonElement | null;
+    // A downloadable (not-installed, has-asset) model card exists in the default report.
+    expect(dl).not.toBeNull();
+    await act(async () => dl?.click());
+    // download chains ensure -> list -> advisor (3 sequential awaits); flush enough.
+    await act(async () => {
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+    });
+    expect(container.querySelector('.models-system-panel')).not.toBeNull();
+    expect(container.querySelector('p.error[role="alert"]')).not.toBeNull();
   });
 });
