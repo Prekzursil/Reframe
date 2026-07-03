@@ -31,6 +31,7 @@ import * as path from 'path';
 import type { AddressInfo } from 'net';
 import type { ChromiumOptions } from '@remotion/renderer';
 import { renderMedia, selectComposition } from '@remotion/renderer';
+import { ensureWithinBase } from './jobPath';
 import { errorMessage, withCompositorRetry } from './retry';
 
 export interface RenderJob {
@@ -46,14 +47,20 @@ export function readJob(jobPath: string): RenderJob {
   if (!jobPath) {
     throw new Error('usage: render.js <job.json>');
   }
-  // Path-injection barrier (CodeQL js/path-injection): reject a NUL-poisoned
-  // path or any parent-directory (`..`) segment before the read. The job path
-  // is an absolute temp file the app writes, so neither ever occurs — this is
-  // non-breaking while neutralising the tainted-path sink.
+  // Path-injection barrier (CodeQL js/path-injection), two layers, defence in
+  // depth. Layer 1 (fast structural reject): a NUL-poisoned path or any explicit
+  // parent-directory (`..`) segment is refused up front.
   if (jobPath.includes('\0') || jobPath.split(/[\\/]+/).includes('..')) {
     throw new Error('job path must not contain a NUL byte or parent-directory traversal');
   }
-  const raw = fs.readFileSync(jobPath, 'utf-8');
+  // Layer 2 (confine-to-base sanitizer, the TS analog of the sidecar's
+  // pathsafe.ensure_within): canonicalise the path and PROVE it stays inside
+  // os.tmpdir() — where the Python side writes it via tempfile.mkstemp (see
+  // caption_remotion.py). CodeQL recognises this `path.resolve` + `startsWith`
+  // barrier, so `safePath` (the resolved return value) is a sanitised source for
+  // the readFileSync sink below.
+  const safePath = ensureWithinBase(jobPath);
+  const raw = fs.readFileSync(safePath, 'utf-8');
   const parsed: unknown = JSON.parse(raw);
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new Error('job file must contain a JSON object');

@@ -140,3 +140,37 @@ via hand-built fixtures + a fake backend) and the backend import-surface in
 `tests/test_phase8_backend_surfaces.py`. Registry/selector/preset integration in
 `test_reframe_claudeshorts.py`, `test_reframe.py`, `test_export_presets.py`.
 Renderer mirrors: `repurposeLogic.test.ts`, `ShortMaker.test.tsx`.
+
+## 9. v1.2.0 addendum — SpeechBrain pin + detector note
+
+**SpeechBrain declared + pinned in the `reframe-gpu` extra (via #255).** The
+audio side of the active-speaker fusion (§1) loads SpeechBrain's pretrained **VAD
+(CRDNN)** + **ECAPA-TDNN** diarizer (`reframe_multispeaker_backend` →
+`diarize_backend.RealDiarizeBackend`, lazy-imported at run-time only). As of
+v1.2.0 that dependency is a **declared, pinned** member of the `reframe-gpu`
+extra rather than an implicit host package:
+
+- **`speechbrain==1.0.3`** — the GPU-validated version; a floating install can pull
+  an API-incompatible SpeechBrain and break the diarizer's model load. When it (or
+  its backend) is unavailable the diarizer **fails loud with a typed error** — it
+  never silently degrades the fusion.
+- **`huggingface-hub<1.0`** — SpeechBrain 1.0.3 uses the pre-1.0 `huggingface-hub`
+  model-fetch API; `huggingface-hub>=1.0` removed/changed it, so the pin keeps the
+  pretrained VAD/ECAPA download working.
+- **Windows `k2_fsa` gotcha** — SpeechBrain's *optional* ASR/CTC recipes pull
+  **`k2` (k2-fsa)**, which has **no prebuilt Windows wheel** and fails to
+  `pip install` there. This engine's diarizer uses **only the VAD + ECAPA path**,
+  which does **not** require `k2`, so `speechbrain==1.0.3` installs cleanly — do
+  **not** pull the k2-backed extras. The GPU tier is provisioned/validated under
+  **WSL2 Linux** (`~/reframe-gpu-venv`, torch 2.6.0+cu124; see
+  [`V1.1-BUILD-NOTES.md`](V1.1-BUILD-NOTES.md)), where k2 is a non-issue anyway.
+
+  > The `speechbrain==1.0.3` line is owned by PR #255 (it edits
+  > `sidecar/pyproject.toml` + `diarize_backend.py`); this section documents the
+  > pin, it does not introduce it.
+
+**Detector note (v1.2.0 WU1).** The **default** `claudeshorts` reframer now detects
+faces with a single native **YuNet** model (`cv2.FaceDetectorYN`), replacing the
+old MediaPipe/haar + HOG path referenced in §1–§2. The multi-speaker engine's own
+detection stack (the vendored **S3FD** face detector feeding LR-ASD, in
+`features/_lightasd/`) is unchanged.
