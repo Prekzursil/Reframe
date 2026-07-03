@@ -21,7 +21,6 @@ Other protection settings (FYI, not blockers): linear history ON, force-push OFF
 | 3 | `SonarCloud Code Analysis` | SonarCloud SaaS | **REMOVE** — replaced by local opengrep/qlty-free |
 | 4 | `Python API & worker checks` | old SaaS-platform workflow | **REMOVE** — superseded by lean `quality` |
 | 5 | `Web build` | old SaaS-platform workflow | **REMOVE** (or fold into `quality`) |
-| 6 | `DeepScan` | DeepScan SaaS | **REMOVE** — SaaS |
 | 7 | `CodeRabbit` | CodeRabbit SaaS | **REMOVE** — SaaS review bot |
 | 8 | `Codacy Static Code Analysis` | Codacy SaaS | **REMOVE** — SaaS |
 | 9 | `qlty check` | qlty SaaS | **REMOVE** — SaaS (lean uses local checks) |
@@ -33,7 +32,6 @@ Other protection settings (FYI, not blockers): linear history ON, force-push OFF
 | 15 | `shared-scanner-matrix / Codacy Zero` | old shared-matrix | **REMOVE** |
 | 16 | `shared-scanner-matrix / Semgrep Zero` | old shared-matrix | **REMOVE** |
 | 17 | `shared-scanner-matrix / Sentry Zero` | old shared-matrix | **REMOVE** |
-| 18 | `shared-scanner-matrix / DeepScan Zero` | old shared-matrix | **REMOVE** |
 | 19 | `codeql / CodeQL` | GitHub-native CodeQL | **KEEP** — native, free, runs on PR #202 |
 
 **ACTION:** Settings → Branches → `main` → Edit → "Require status checks to pass" → **remove the 18 SaaS/old-matrix contexts above**, then **add the new `quality` context** (the lean GitHub-Actions job name). Keep `codeql / CodeQL`.
@@ -99,7 +97,6 @@ Apps observed posting checks/suites to `Prekzursil/Reframe`:
 | Applitools (app_id 15368 ctx) | SaaS visual | NO | **UNINSTALL** |
 | BrowserStack | SaaS E2E | optional | **UNINSTALL** unless you keep cross-browser E2E |
 | Socket Security | SaaS dep scanning | optional (overlaps osv-scanner) | **UNINSTALL** unless wanted; osv-scanner covers deps locally |
-| DeepScan | SaaS JS analysis | NO | **UNINSTALL** |
 | `greptile-apps` | SaaS AI code search/review | NO | **UNINSTALL** unless used |
 | `netlify` | SaaS web preview deploy | only if keeping `apps/web` | **UNINSTALL** if deprecating the web app |
 | `vercel` | SaaS web preview deploy | only if keeping `apps/web` | **UNINSTALL** if deprecating the web app |
