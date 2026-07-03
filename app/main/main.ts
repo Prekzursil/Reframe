@@ -200,9 +200,24 @@ function propagateDataRootEnv(): void {
   }
 }
 
+/**
+ * Path-injection barrier (CodeQL js/path-injection): the data root is derived
+ * from `MEDIA_STUDIO_CONFIG_DIR` / a marker file, so any path joined onto it and
+ * handed to `fs.existsSync` is a tainted sink. Reject a NUL byte or any
+ * parent-directory (`..`) segment and return the value — the recognised string
+ * barrier neutralises the taint. A legitimate data root never contains either,
+ * so this is non-breaking.
+ */
+function assertSafeDataPath(p: string): string {
+  if (p.includes('\0') || p.split(/[\\/]+/).includes('..')) {
+    throw new Error('data-root path must not contain a NUL byte or parent-directory traversal');
+  }
+  return p;
+}
+
 /** WIRING-T5 §2: the sidecar-env sentinel bootstrap.py writes on success. */
 function firstRunSentinelPath(): string {
-  return join(DATA_ROOT, 'envs', 'sidecar', '.media-studio-env.json');
+  return assertSafeDataPath(join(DATA_ROOT, 'envs', 'sidecar', '.media-studio-env.json'));
 }
 
 /**
@@ -214,7 +229,7 @@ function firstRunSentinelPath(): string {
  * centre-cropping app on the next launch.
  */
 function firstRunCompletePath(): string {
-  return join(DATA_ROOT, FIRST_RUN_COMPLETE_MARKER);
+  return assertSafeDataPath(join(DATA_ROOT, FIRST_RUN_COMPLETE_MARKER));
 }
 
 /**

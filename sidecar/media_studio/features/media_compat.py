@@ -39,6 +39,7 @@ from typing import Any
 
 from .. import ffmpeg, protocol
 from ..jobs import JobContext
+from ..pathsafe import ensure_within
 from ..protocol import ErrorCode, RpcContext, RpcError
 from ..settings_store import default_config_dir
 from ..util import get_logger
@@ -204,7 +205,7 @@ def proxy_cache_path(proxies_dir: str | os.PathLike, video_id: str, mtime_ns: in
     The mtime in the name IS the invalidation: a changed source produces a
     different cache path, and stale siblings are evicted after a build.
     """
-    return Path(proxies_dir) / f"{_safe_cache_key(video_id)}-{mtime_ns}.mp4"
+    return Path(ensure_within(proxies_dir, f"{_safe_cache_key(video_id)}-{mtime_ns}.mp4"))
 
 
 def build_remux_argv(in_path: str, out_path: str, settings: dict[str, Any] | None = None) -> list[str]:

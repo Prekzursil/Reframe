@@ -19,6 +19,7 @@ from typing import Any
 
 from .models import budget as _budget
 from .models.secrets import redact, redact_keys
+from .pathsafe import ensure_within
 from .util import get_logger
 
 log = get_logger("media_studio.settings")
@@ -140,7 +141,8 @@ class SettingsStore:
     """
 
     def __init__(self, config_path: str | os.PathLike | None = None) -> None:
-        self.config_path = Path(config_path) if config_path is not None else default_config_dir() / _CONFIG_FILENAME
+        raw_config_path = Path(config_path) if config_path is not None else default_config_dir() / _CONFIG_FILENAME
+        self.config_path = Path(ensure_within(raw_config_path))
 
     # ---- I/O ---------------------------------------------------------------
     def _read(self) -> dict[str, Any]:

@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import ffmpeg, protocol
+from ..pathsafe import ensure_within
 from ..protocol import ErrorCode, RpcContext, RpcError
 from ..settings_store import default_config_dir
 from ..util import get_logger
@@ -90,7 +91,7 @@ def peaks_cache_path(peaks_dir: str | os.PathLike, video_id: str) -> Path:
     compared on read — a mismatch is a miss and the rebuild overwrites in place
     (self-evicting, never more than one file per video).
     """
-    return Path(peaks_dir) / f"{_safe_cache_key(video_id)}.json"
+    return Path(ensure_within(peaks_dir, f"{_safe_cache_key(video_id)}.json"))
 
 
 # --------------------------------------------------------------------------- #
@@ -188,7 +189,8 @@ class Timeline:
     ) -> None:
         self._resolver = resolver
         self._settings_provider = settings_provider or (lambda: {})
-        self._peaks_dir = Path(peaks_dir) if peaks_dir is not None else default_peaks_dir()
+        raw_peaks_dir = Path(peaks_dir) if peaks_dir is not None else default_peaks_dir()
+        self._peaks_dir = Path(ensure_within(raw_peaks_dir))
         self._run: RunFn = run or ffmpeg.run
         self._buckets = int(buckets)
 

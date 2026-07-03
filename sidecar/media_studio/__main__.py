@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import site
 import sys
+from pathlib import Path
 
 from . import handlers, rpc
 from .job_store import DiskJobStore
+from .pathsafe import ensure_within
 from .settings_store import default_config_dir
 
 #: the first-run env subdir under the data root. Mirrors
@@ -46,7 +48,7 @@ def _activate_sidecar_env() -> None:
     so it always matches the dir bootstrap provisioned into.
     """
     try:
-        env_dir = default_config_dir() / "envs" / _SIDECAR_ENV_DIRNAME
+        env_dir = Path(ensure_within(default_config_dir(), "envs", _SIDECAR_ENV_DIRNAME))
         if not env_dir.is_dir():
             return
         resolved = str(env_dir)
