@@ -399,7 +399,14 @@ class _ConsoleJobCtx:
 
 
 def default_first_run_assets() -> list[str]:
-    """The core asset set first run installs (models + llama-server builds)."""
+    """The core asset set first run installs (models + llama-server builds).
+
+    Includes the vendored Light-ASD / S3FD active-speaker weights: they were
+    registered on-demand but never in the first-run set, so a fresh install had
+    no way to run the multi-speaker reframe engine and silently fell back to a
+    single-speaker/centre crop. Provisioning them up front (sha256-pinned, ~90MB)
+    keeps the engine's on-demand path honest — present, or a loud failure.
+    """
     from media_studio import tools_resolver
     from media_studio.assets import manifest
 
@@ -409,6 +416,8 @@ def default_first_run_assets() -> list[str]:
         tools_resolver.LLAMA_CUDA_ASSET,
         tools_resolver.LLAMA_CUDART_ASSET,
         tools_resolver.LLAMA_CPU_ASSET,
+        manifest.LIGHTASD_S3FD_ASSET_NAME,
+        manifest.LIGHTASD_ASD_ASSET_NAME,
     ]
 
 
@@ -427,6 +436,73 @@ def activate_env_in_process(env_dir: Path) -> None:
     import site
 
     site.addsitedir(str(env_dir))
+
+
+# --------------------------------------------------------------------------- #
+# fail-loud provisioning verification + first-run-complete marker
+# --------------------------------------------------------------------------- #
+#: written at ``<root>/`` ONLY after a FULL first run (env + assets + verify)
+#: succeeds. Its presence is the honest "everything provisioned" signal the
+#: Electron supervisor gates re-runs on — distinct from the per-env sentinel
+#: (``.media-studio-env.json``), which only means "the pip env is installed".
+#: A run that installs the env but then fails on model/weight downloads leaves
+#: NO marker, so the next launch retries instead of silently running a
+#: half-provisioned (silent-centre-crop) app.
+FIRST_RUN_COMPLETE_MARKER = ".first-run-complete.json"
+
+
+def first_run_complete_path(root: Path | str) -> Path:
+    """The first-run-complete marker path under ``root``."""
+    return Path(root) / FIRST_RUN_COMPLETE_MARKER
+
+
+def _default_asset_manager(root: Path) -> Any:
+    """Construct the real :class:`AssetManager` (lazy import — httpx et al. only
+    exist once the sidecar env is installed + site-dir'd)."""
+    from media_studio.assets.manager import AssetManager
+
+    return AssetManager(root=root)
+
+
+def verify_provisioned(
+    names: Sequence[str],
+    root: Path,
+    *,
+    manager: Any | None = None,
+) -> None:
+    """FAIL LOUD if any expected asset did not actually land on disk.
+
+    ``ensure_assets`` already raises when a download fails, but this is the
+    explicit no-silent-fallback gate: a bootstrap must NOT print
+    ``SUCCESS`` (nor write the completion marker) while a model or the S3FD /
+    LR-ASD weights are missing — that is exactly the half-provisioned state that
+    left the app silently centre-cropping. Any unregistered or not-installed
+    asset raises a :class:`BootstrapError` naming EVERY offender.
+    """
+    from media_studio.assets import manifest
+
+    mgr = manager if manager is not None else _default_asset_manager(root)
+    missing: list[str] = []
+    for name in names:
+        entry = manifest.get_asset(name)
+        if entry is None or mgr.installed_path(entry) is None:
+            missing.append(name)
+    if missing:
+        raise BootstrapError(
+            "first-run provisioning incomplete — these assets did not install: "
+            f"{', '.join(missing)} | fix: relaunch to retry the download (check "
+            "network + free disk space); the app will not run half-provisioned"
+        )
+
+
+def write_first_run_complete(root: Path | str, names: Sequence[str]) -> Path:
+    """Write the first-run-complete marker recording the provisioned asset set."""
+    marker = first_run_complete_path(root)
+    marker.write_text(
+        json.dumps({"assets": list(names)}, indent=2),
+        encoding="utf-8",
+    )
+    return marker
 
 
 # --------------------------------------------------------------------------- #
@@ -600,11 +676,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 embed_dir=embed_dir,
             )
 
+        asset_names: list[str] = []
         if not args.skip_assets:
+            asset_names = list(args.assets or default_first_run_assets())
             # step 3 needs httpx from the just-installed env in THIS process.
             activate_env_in_process(env_dir)
-            ensure_assets(args.assets or default_first_run_assets(), root)
+            ensure_assets(asset_names, root)
             extract_tool_archives(root)
+            # NO SILENT FALLBACK: prove every model + the S3FD/LR-ASD weights
+            # actually landed before we ever claim success.
+            verify_provisioned(asset_names, root)
 
         if args.chatterbox:
             # The chatterbox env installs with the DEDICATED py3.14 interpreter
@@ -626,6 +707,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 req_file=CHATTERBOX_REQUIREMENTS,
                 embed_dir=chatter_embed,
             )
+
+        # Only a FULL run (env + assets) is a completed first run. Partial
+        # invocations (--skip-env / --skip-assets, used for manual repair) must
+        # NOT write the marker, or the supervisor would skip a real re-run.
+        if not args.skip_env and not args.skip_assets:
+            write_first_run_complete(root, asset_names)
 
         print("SUCCESS:bootstrap first-run setup complete")
         return 0
