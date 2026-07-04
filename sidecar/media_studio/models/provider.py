@@ -138,11 +138,19 @@ def _urllib_request_json(
         reason = scrub_error_body(str(exc.reason), secrets)
         raise ProviderError(f"LLM HTTP {exc.code}: {safe_detail or reason}", status_code=exc.code) from exc
     except urllib.error.URLError as exc:  # connection refused / DNS / timeout
-        raise ProviderError(f"LLM request failed: {exc.reason}") from exc
+        # ENFORCEABLE SCRUB (WU-F1 symmetry): ``exc.reason`` can echo a leaked
+        # bearer/key (e.g. a proxy error page carrying the URL), so it goes through
+        # the SAME guard as the HTTPError branch before reaching a ProviderError.
+        reason = scrub_error_body(str(exc.reason), secrets)
+        raise ProviderError(f"LLM request failed: {reason}") from exc
     try:
         decoded = json.loads(raw)
     except (ValueError, json.JSONDecodeError) as exc:
-        raise ProviderError(f"LLM returned non-JSON response: {raw[:200]!r}") from exc
+        # ENFORCEABLE SCRUB (WU-F1 symmetry): a non-JSON body (HTML proxy/error
+        # page) can echo the key too; scrub the slice BEFORE the ``!r`` repr so no
+        # live key survives in the surfaced/loggable error at this site either.
+        safe_raw = scrub_error_body(raw[:200], secrets)
+        raise ProviderError(f"LLM returned non-JSON response: {safe_raw!r}") from exc
     if not isinstance(decoded, dict):
         raise ProviderError("LLM response was not a JSON object")
     # Surface response headers under a reserved ``_headers`` key so the rotation
