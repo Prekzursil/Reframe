@@ -110,3 +110,51 @@ def test_ocr_list_backend_surface_imports_light() -> None:
 
     assert be.RealOcrBackend.__name__ == "RealOcrBackend"
     assert "RealOcrBackend" in be.__all__
+
+
+def test_saliency_backend_surface_imports_light() -> None:
+    # WU B4: the RealViNetSaliencyBackend needs torch + the vendored ViNet-S arch +
+    # the real weight (all loaded lazily inside its methods); the module SURFACE
+    # (imports + constants + ``__all__``) imports light — cover it so the gate stays
+    # 100% without ever touching torch (mirrors the Real*Backend convention).
+    import media_studio.features.saliency_backend as be
+
+    assert be.ViNetSaliencyBackend.__name__ == "ViNetSaliencyBackend"
+    assert "ViNetSaliencyBackend" in be.__all__
+    assert be._CLIP_LEN == 32
+    assert (be._INPUT_H, be._INPUT_W) == (224, 384)
+
+
+def test_vinet_s_vendored_package_imports_light() -> None:
+    # WU B4: the vendored ViNet-S package __init__ is LIGHT (no torch); it carries
+    # the upstream provenance + license + weight basename. The heavy model modules
+    # (model / model_utils) import torch at module top, so they are NEVER imported
+    # here — assert they SHIP on disk (filesystem check, no import) so the coverage
+    # run never needs torch (their statements are all ``# pragma: no cover``).
+    import os
+
+    import media_studio.features._vinet_s as pkg
+
+    assert pkg.VINET_S_LICENSE == "CC-BY-NC-SA-4.0"
+    assert pkg.VINET_S_WEIGHT_NAME == "vinet-s-saliency.safetensors"
+    assert "vinet_v2" in pkg.VINET_S_UPSTREAM
+    assert pkg.VINET_S_PAPER == "arXiv:2502.00397"
+    pkg_dir = os.path.dirname(pkg.__file__)
+    for fname in ("model.py", "model_utils.py", "LICENSE"):
+        assert os.path.isfile(os.path.join(pkg_dir, fname))
+
+
+def test_transnetv2_vendored_package_imports_light() -> None:
+    # WU B4: the vendored TransNetV2 package __init__ is LIGHT (no torch); the heavy
+    # model module imports torch at module top and is NEVER imported here — assert it
+    # SHIPS on disk (no import) so the coverage run never needs torch.
+    import os
+
+    import media_studio.features._transnetv2 as pkg
+
+    assert pkg.TRANSNETV2_LICENSE == "MIT"
+    assert pkg.TRANSNETV2_WEIGHT_NAME == "transnetv2.safetensors"
+    assert "soCzech/TransNetV2" in pkg.TRANSNETV2_UPSTREAM
+    pkg_dir = os.path.dirname(pkg.__file__)
+    for fname in ("transnetv2_pytorch.py", "LICENSE"):
+        assert os.path.isfile(os.path.join(pkg_dir, fname))

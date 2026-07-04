@@ -440,3 +440,39 @@ def test_no_heavy_imports_at_module_load():
     # when torch happens to be installed. Importing scene_transnet must never pull
     # a heavy native backend.
     assert_module_import_is_light("media_studio.features.scene_transnet", ("torch", "tensorflow"))
+
+
+# --------------------------------------------------------------------------- #
+# WU B4 — asset registration (the re-hosted TransNetV2 safetensors)
+# --------------------------------------------------------------------------- #
+def test_register_scene_transnet_assets_pins_rehosted_safetensors() -> None:
+    # B4: register_scene_transnet_assets() (idempotent) puts the re-hosted
+    # TransNetV2 weight in the manifest with the EXACT pinned HF-commit URL +
+    # 64-hex sha256 + a .safetensors dest (so the verify-before-load gate accepts
+    # it), tier=optional (an on-demand accuracy boost over PySceneDetect).
+    from media_studio.assets import manifest
+
+    st.register_scene_transnet_assets()  # idempotent — robust against test ordering
+    entry = manifest.get_asset(st.ASSET_NAME)
+    assert entry is not None
+    assert entry.name == "transnetv2-pytorch"
+    assert entry.installer == "download"
+    assert entry.kind == "model"
+    assert entry.tier == "optional"
+    assert entry.url == st.ASSET_URL
+    assert entry.url == (
+        "https://huggingface.co/Prekzursil/reframe-asd-weights/resolve/"
+        "a100c02a6e0891dc227762a052c4adfd151db0dc/transnetv2.safetensors"
+    )
+    assert entry.sha256 == "e2877ef6750ccbb3f02256bb4b5f4f53035111677be641d56b9723af499f881d"
+    assert len(entry.sha256) == 64
+    assert entry.dest == "models/transnetv2.safetensors"
+    assert entry.dest.endswith(".safetensors")
+
+
+def test_register_scene_transnet_assets_pins_commit_hash_not_branch() -> None:
+    # F3c: the HF resolve URL must pin a 40-hex commit (a moving branch/tag is
+    # rejected at AssetEntry construction) — so the pinned bytes cannot change.
+    assert st.ASSET_REVISION == "a100c02a6e0891dc227762a052c4adfd151db0dc"
+    assert len(st.ASSET_REVISION) == 40
+    int(st.ASSET_REVISION, 16)  # is hex

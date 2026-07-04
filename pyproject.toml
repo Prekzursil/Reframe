@@ -19,10 +19,13 @@ extend-exclude = [
   "build",
   "out",
   "vendor",
-  # Vendored third-party code (Light-ASD, MIT) kept byte-faithful to upstream so
-  # the released weights load unchanged — linted/formatted to upstream's style,
-  # not this repo's, exactly like a `vendor/` tree.
+  # Vendored third-party code (Light-ASD MIT; ViNet-S CC-BY-NC-SA; TransNetV2 MIT)
+  # kept byte-faithful to upstream so the re-hosted weights load unchanged —
+  # linted/formatted to upstream's style, not this repo's, exactly like a
+  # `vendor/` tree.
   "sidecar/media_studio/features/_lightasd",
+  "sidecar/media_studio/features/_vinet_s",
+  "sidecar/media_studio/features/_transnetv2",
   "Inspirations & Former Attempts",
 ]
 

@@ -50,6 +50,12 @@ reframe-gpu = [
   "torch==2.6.0",                 # GPU-validated LR-ASD runtime (cu124 build via the torch index)
   "torchvision==0.21.0",          # paired with torch 2.6.0
   "torchaudio==2.6.0",            # paired with torch 2.6.0
+  # WU B4 (I2): the ONLY permitted weight-container reader on the load path — the
+  # vendored ViNet-S / TransNetV2 backends load their re-hosted weights via
+  # safetensors.torch.load_file (torch.load / pickle is FORBIDDEN, an RCE surface).
+  # NOT installed in the CI gate env (the loader GATE logic is torch-free + unit
+  # tested with an injected reader; only the pragma-no-cover heavy seam imports it).
+  "safetensors==0.4.5",           # verify-before-load safetensors weight reader (B4/I2)
   "opencv-python-headless==4.13.0.92",  # frame I/O + face-crop ops (headless: no GUI libs)
   "python_speech_features==0.6",  # MFCC features for the ASD audio frontend
   "scipy==1.18.0",                # face-track interpolation + median filter + wav read
@@ -86,13 +92,18 @@ packages = [
   "media_studio.features.tts",
   "media_studio.features._lightasd",
   "media_studio.features._lightasd.s3fd",
+  "media_studio.features._vinet_s",
+  "media_studio.features._transnetv2",
   "media_studio.assets",
 ]
 
 [tool.setuptools.package-data]
-# Ship the vendored LR-ASD MIT license alongside the vendored code (the MIT
-# terms require the copyright + permission notice to travel with the source).
+# Ship the vendored licenses alongside the vendored code (the license terms
+# require the copyright + permission notice to travel with the source; ViNet-S is
+# CC-BY-NC-SA share-alike so the license MUST accompany any redistribution).
 "media_studio.features._lightasd" = ["LICENSE"]
+"media_studio.features._vinet_s" = ["LICENSE"]
+"media_studio.features._transnetv2" = ["LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

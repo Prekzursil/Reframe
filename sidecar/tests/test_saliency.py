@@ -427,3 +427,39 @@ def test_signal_is_frozen() -> None:
 def test_signaltrack_fps_hint_default() -> None:
     t = SignalTrack(channel="saliency", signals=(), present=True)
     assert t.fps_hint is None
+
+
+# --------------------------------------------------------------------------- #
+# WU B4 — asset registration (the re-hosted ViNet-S safetensors)
+# --------------------------------------------------------------------------- #
+def test_register_saliency_assets_pins_rehosted_safetensors() -> None:
+    # B4: register_saliency_assets() (idempotent) puts the re-hosted ViNet-S weight
+    # in the manifest with the EXACT pinned HF-commit URL + 64-hex sha256 + a
+    # .safetensors dest (so the verify-before-load gate accepts it), tier=optional
+    # (C2: an on-demand enhancement, never a reframe prerequisite).
+    from media_studio.assets import manifest
+
+    saliency.register_saliency_assets()  # idempotent — robust against test ordering
+    entry = manifest.get_asset(saliency.ASSET_NAME)
+    assert entry is not None
+    assert entry.name == "vinet-s-saliency"
+    assert entry.installer == "download"
+    assert entry.kind == "model"
+    assert entry.tier == "optional"
+    assert entry.url == saliency.ASSET_URL
+    assert entry.url == (
+        "https://huggingface.co/Prekzursil/reframe-asd-weights/resolve/"
+        "a100c02a6e0891dc227762a052c4adfd151db0dc/vinet-s-saliency.safetensors"
+    )
+    assert entry.sha256 == "803e6d265d46d3f4f3d7ec2c6c2f3b4511f9ba176aa12e348ac317788ca0dc68"
+    assert len(entry.sha256) == 64
+    assert entry.dest == "models/vinet-s-saliency.safetensors"
+    assert entry.dest.endswith(".safetensors")
+
+
+def test_register_saliency_assets_pins_commit_hash_not_branch() -> None:
+    # F3c: the HF resolve URL must pin a 40-hex commit (a moving branch/tag is
+    # rejected at AssetEntry construction) — so the pinned bytes cannot change.
+    assert saliency.ASSET_REVISION == "a100c02a6e0891dc227762a052c4adfd151db0dc"
+    assert len(saliency.ASSET_REVISION) == 40
+    int(saliency.ASSET_REVISION, 16)  # is hex
