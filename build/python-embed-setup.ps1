@@ -8,7 +8,8 @@
 #   build/python-embed-314/  embeddable CPython 3.14 (+ get-pip.py) — the DEDICATED
 #                            interpreter for the ISOLATED chatterbox voice-clone env
 #                            (torch 2.10 only resolves on py3.14; CONTRACTS.md A4)
-#   build/ffmpeg/            ffmpeg.exe + ffprobe.exe   (with -WithFfmpeg)
+#   build/ffmpeg/win/        ffmpeg.exe + ffprobe.exe + LICENSE   (BtbN win64-LGPL,
+#                            with -WithFfmpeg; shipped to resources/bin/)
 #
 # Everything downloaded is PINNED by exact URL (A6 lesson 5). SHA-256 of each
 # download is printed (and optionally enforced) so the pins can be hardened:
@@ -32,13 +33,18 @@ param(
     [string]$ChatterboxDest = (Join-Path $PSScriptRoot 'python-embed-314'),
     [string]$ExpectedChatterboxPythonSha256 = '',  # fill in after the first verified run
     [switch]$WithFfmpeg,
-    # Pinned ffmpeg build (GyanD essentials 7.1.1; ~80 MB zip). Served from the
-    # GyanD GitHub release (durable per-version asset) rather than gyan.dev's
-    # builds/packages/ path, which only keeps the CURRENT release and 404s for an
-    # older pinned version. Verify the sha256 on first run.
-    [string]$FfmpegUrl = 'https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip',
+    # Pinned ffmpeg build (WU A3): BtbN win64-LGPL STATIC (~138 MB zip). BtbN is
+    # the only mainstream source with a redistribution-safe LGPL static Windows
+    # build (gyan.dev main builds are all --enable-gpl); an UNMODIFIED LGPL exe
+    # invoked as a separate child process is redistribution-safe in a closed-
+    # source app. PINNED release tag: autobuild-2026-07-03-13-21 (durable dated
+    # asset, not the rolling `latest` tag), FFmpeg n7.1.5 line. The extractor
+    # below also copies the zip's LICENSE.txt next to the exes (LGPL obligation:
+    # ship the license + record this exact source tag). Fill the sha256 on the
+    # first verified offline download.
+    [string]$FfmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-03-13-21/ffmpeg-n7.1.5-1-g7d0e842004-win64-lgpl-7.1.zip',
     [string]$ExpectedFfmpegSha256 = '',
-    [string]$FfmpegDest = (Join-Path $PSScriptRoot 'ffmpeg'),
+    [string]$FfmpegDest = (Join-Path (Join-Path $PSScriptRoot 'ffmpeg') 'win'),
     [string]$GetPipUrl = 'https://bootstrap.pypa.io/get-pip.py',
     [switch]$Force
 )

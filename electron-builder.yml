@@ -7,7 +7,7 @@
 # (resources/sidecar/runtime_setup/bootstrap.py -> %APPDATA%/media-studio).
 #
 # Build (human-run; agents never run installs/builds):
-#   1. build/python-embed-setup.ps1          # stages build/python-embed + build/ffmpeg (network)
+#   1. build/python-embed-setup.ps1          # stages build/python-embed + build/ffmpeg/win (network)
 #   2. cd app && npm run build               # electron-vite -> app/out
 #   3. cd app/render-cli && npm run bundle   # T4a: writes render-cli/out/remotion-bundle
 #   4. cd app && npx electron-builder --config ../electron-builder.yml --win
@@ -61,9 +61,17 @@ extraResources:
   # ChatterboxEngine + bootstrap resolve <resources>/python-chatterbox/python.exe.
   - from: ../build/python-embed-314
     to: python-chatterbox
-  # Bundled ffmpeg/ffprobe — resolved by ffmpeg.py via MEDIA_STUDIO_FFMPEG/FFPROBE
-  # env injected by the supervisor (WIRING-T5.md) — build/python-embed-setup.ps1
-  - from: ../build/ffmpeg
+  # Bundled ffmpeg/ffprobe (WU A3) — BtbN win64-LGPL STATIC exes, redistribution-
+  # safe in a closed-source app when invoked as a separate child process (LGPL,
+  # unmodified). PINNED release tag: autobuild-2026-07-03-13-21 / asset
+  # ffmpeg-n7.1.5-1-g7d0e842004-win64-lgpl-7.1.zip (staged into build/ffmpeg/win/
+  # by build/python-embed-setup.ps1 -WithFfmpeg). Ships OUTSIDE app.asar via
+  # extraResources -> resources/bin/, resolved by ffmpeg.py's _BUNDLED_DIR and by
+  # the MEDIA_STUDIO_FFMPEG/FFPROBE env the supervisor injects (WIRING-T5 §2 /
+  # sidecar.ts buildSidecarEnv). LGPL obligation: the BtbN LICENSE.txt is shipped
+  # alongside the exes (the "*.txt" filter below), and the exact source tag is
+  # recorded here + in python-embed-setup.ps1.
+  - from: ../build/ffmpeg/win
     to: bin
     filter:
       - "ffmpeg.exe"
