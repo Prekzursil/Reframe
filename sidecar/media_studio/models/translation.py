@@ -272,6 +272,7 @@ class TieredTranslator:
         hosted_provider_factory: ProviderFactory | None = None,
         routing: dict[str, str] | None = None,
         tier2_gpu_layers: int = TIER2_GPU_LAYERS,
+        ensure: Callable[[], None] | None = None,
     ) -> None:
         self._runner = runner
         self._settings = dict(settings or {})
@@ -279,6 +280,12 @@ class TieredTranslator:
         self._hosted_factory = hosted_provider_factory
         self._routing = routing
         self._tier2_gpu_layers = int(tier2_gpu_layers)
+        # WU-B2: the injected llama-backstop ensure() callback. A local tier calls
+        # ``start_server`` then this readiness probe, so a subtitle/dub translation
+        # never hits the server before it is listening (fixes "LLM 10061"). ``None``
+        # keeps the legacy behaviour (no probe). The engine layer that owns the
+        # ModelRunner builds and injects it (this module stays runner-agnostic).
+        self._ensure = ensure
 
     # -- routing ------------------------------------------------------------
     def route(self, target_lang: str) -> str:
@@ -453,6 +460,10 @@ class TieredTranslator:
             self._runner.start_server(gguf_path=gguf, gpu_layers=self._tier2_gpu_layers)
         else:
             self._runner.start_server(gguf_path=gguf)
+        # WU-B2: bounded readiness probe AFTER the spawn so the first chat never
+        # races the not-yet-listening server; a slow/failed start raises loudly.
+        if self._ensure is not None:
+            self._ensure()
         if self._local_factory is not None:
             return self._local_factory()
         return provider_mod.LocalServerProvider(
@@ -554,6 +565,7 @@ def get_translator(
     runner: Any | None = None,
     transport: Any | None = None,
     prefer: str | None = None,
+    ensure: Callable[[], None] | None = None,
     **seams: Any,
 ) -> TieredTranslator:
     """Factory the wiring layer calls (mirrors ``provider.get_provider``).
@@ -567,7 +579,7 @@ def get_translator(
     """
     if "hosted_provider_factory" not in seams:
         seams["hosted_provider_factory"] = _default_hosted_factory(settings, transport=transport, prefer=prefer)
-    return TieredTranslator(runner=runner, settings=settings, **seams)
+    return TieredTranslator(runner=runner, settings=settings, ensure=ensure, **seams)
 
 
 # --------------------------------------------------------------------------- #

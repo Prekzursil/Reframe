@@ -597,6 +597,51 @@ def test_local_provider_builds_real_local_server_provider_without_factory():
     assert runner.calls[0]["gguf_path"] == TIER1_PATH
 
 
+def test_local_provider_fires_ensure_after_start_server():
+    # WU-B2: an injected ensure() runs AFTER start_server so the readiness probe
+    # gates the local tier (fixes subtitles "LLM 10061" refused-connection).
+    runner = FakeRunner()
+    order: list[str] = []
+    original_start = runner.start_server
+
+    def _record_start(**kwargs: Any) -> Any:
+        order.append("start")
+        return original_start(**kwargs)
+
+    runner.start_server = _record_start  # type: ignore[method-assign]
+    provider = FakeProvider()
+    t = TieredTranslator(
+        runner=runner,
+        settings=SETTINGS,
+        local_provider_factory=make_factory([provider]),
+        ensure=lambda: order.append("ensure"),
+    )
+    built = t._local_provider(TIER_LOCAL)
+    assert built is provider
+    assert order == ["start", "ensure"]  # ensure runs only after the server is asked to start
+
+
+def test_local_provider_without_ensure_skips_the_probe():
+    # ensure defaults to None -> the local tier is unchanged (back-compat).
+    runner = FakeRunner()
+    t = TieredTranslator(runner=runner, settings=SETTINGS, local_provider_factory=make_factory([FakeProvider()]))
+    t._local_provider(TIER_LOCAL)  # no ensure -> no probe, no error
+    assert runner.calls[0]["gguf_path"] == TIER1_PATH
+
+
+def test_get_translator_threads_ensure_into_translator():
+    # WU-B2: the factory the wiring layer calls forwards ensure to the translator.
+    fired: list[str] = []
+    t = get_translator(
+        SETTINGS,
+        runner=FakeRunner(),
+        ensure=lambda: fired.append("e"),
+        local_provider_factory=make_factory([FakeProvider()]),
+    )
+    t._local_provider(TIER_LOCAL)
+    assert fired == ["e"]
+
+
 def test_hosted_provider_builds_real_cloud_provider_without_factory():
     # No hosted_provider_factory + a cloudApiKey present -> _hosted_provider
     # constructs a real CloudProvider (line 448).

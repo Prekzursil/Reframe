@@ -22,7 +22,21 @@ from ._shared import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import, never executed at runtime
+    from collections.abc import Callable
+
     from ._services import Services
+
+
+def _sleep(seconds: float) -> None:
+    """The real wall-clock pacing seam for the WU-B2 readiness probe.
+
+    A thin ``time.sleep`` wrapper (``time`` imported lazily to keep this handler
+    import-light). Isolated so the probe's poll interval is a single injectable
+    seam the ``_llama_ensure`` closure passes down.
+    """
+    import time as _time  # noqa: PLC0415 - lazy so the module has no top-level time import
+
+    _time.sleep(seconds)
 
 
 def _get_provider(self: Services) -> Any:
@@ -364,6 +378,48 @@ def _get_model_runner(self: Services) -> Any:
 
         self._model_runner = _runner_mod.ModelRunner(self.settings.get())
     return self._model_runner
+
+
+def _llama_ensure(self: Services) -> Callable[[], None]:
+    """Build the injected llama-backstop ``ensure()`` callback (WU-B2: fixes LLM 10061).
+
+    Returns an opaque zero-arg callback the provider / translator seams invoke
+    lazily ONLY when a ``local`` backstop slot is actually reached (after cloud
+    keys; never for a detected Ollama / LM-Studio server). It ensures the
+    llama.cpp server (:8088) is up via the shared :class:`ModelRunner` — reuse-
+    aware (a running server is left as-is) and LaneLock-cooperative (the spawn is
+    routed through ``start_server``, so it evicts / yields to whisper/ASR) — then
+    runs the bounded ``GET /health`` readiness probe.
+
+    NO silent fallback: a ``start_server`` failure is surfaced as a
+    :class:`ProviderError` (so :class:`RotatingProvider` treats the slot as
+    exhausted and the exhausted-pool message shows the real cause), and the probe
+    RAISES a :class:`ProviderError` on timeout / child-exit rather than hanging.
+    The shared runner is captured so repeated calls single-flight onto one server.
+    """
+    from ..models import provider as _provider_mod  # local: heavy seam
+
+    runner = self._get_model_runner()
+    settings = self.settings.get()
+    base_url = str(settings.get("localBaseUrl") or _provider_mod.DEFAULT_LOCAL_BASE_URL)
+    health_url = _provider_mod.health_url_from_base(base_url)
+
+    def _ensure() -> None:
+        try:
+            runner.start_server()
+        except _provider_mod.ProviderError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - surface ANY start failure loudly as ProviderError
+            raise _provider_mod.ProviderError(f"local model server failed to start: {exc}") from exc
+        _provider_mod.readiness_probe(
+            health_url,
+            transport=_provider_mod.urllib_get_json,
+            now=self._now,
+            sleep=_sleep,
+            child_exited=lambda: not runner.server_running,
+        )
+
+    return _ensure
 
 
 def _get_translator(self: Services) -> Any | None:

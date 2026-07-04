@@ -306,5 +306,6 @@ class Services:
     _budget_request = ai_ops._budget_request
     _default_target_job_size = ai_ops._default_target_job_size
     _get_model_runner = ai_ops._get_model_runner
+    _llama_ensure = ai_ops._llama_ensure
     _get_translator = ai_ops._get_translator
     _dub_translator = ai_ops._dub_translator

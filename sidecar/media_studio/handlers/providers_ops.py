@@ -435,8 +435,12 @@ def _provider_for_function(self: Services, function: str) -> Any:
     from ..models import routing_policy as _routing_policy  # local: import-light pure
 
     if _routing_policy.resolve_route(function, self.settings.get())["mode"] == "local":
-        return _provider_mod.get_provider(self.settings.get_raw(), prefer=_provider_mod.LOCAL_PROVIDER_ID)
-    return _provider_mod.get_provider(self.settings.get_raw(), prefer=self._function_prefer(function))
+        return _provider_mod.get_provider(
+            self.settings.get_raw(), prefer=_provider_mod.LOCAL_PROVIDER_ID, ensure=self._llama_ensure()
+        )
+    return _provider_mod.get_provider(
+        self.settings.get_raw(), prefer=self._function_prefer(function), ensure=self._llama_ensure()
+    )
 
 
 def _select_provider_or_local(self: Services) -> Any:
@@ -455,7 +459,9 @@ def _select_provider_or_local(self: Services) -> Any:
     from ..models import provider as _provider_mod  # local: heavy seam
 
     if _offline.is_offline(self.settings.get()):
-        return _provider_mod.get_provider(self.settings.get_raw(), prefer=_provider_mod.LOCAL_PROVIDER_ID)
+        return _provider_mod.get_provider(
+            self.settings.get_raw(), prefer=_provider_mod.LOCAL_PROVIDER_ID, ensure=self._llama_ensure()
+        )
     return self._provider_for_function("select")
 
 
@@ -464,7 +470,10 @@ def _translator_for_function(self: Services, function: str) -> Any:
     from ..models import translation as _translation_mod  # local: heavy seam
 
     return _translation_mod.get_translator(
-        self.settings.get_raw(), runner=self._get_model_runner(), prefer=self._function_prefer(function)
+        self.settings.get_raw(),
+        runner=self._get_model_runner(),
+        prefer=self._function_prefer(function),
+        ensure=self._llama_ensure(),
     )
 
 

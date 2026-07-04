@@ -185,6 +185,86 @@ def urllib_get_json(url: str, body: dict[str, Any], headers: dict[str, str], tim
     return _urllib_request_json(url, method="GET", data=None, headers=dict(headers), timeout=timeout)
 
 
+# --------------------------------------------------------------------------- #
+# Local-server readiness probe (WU-B2: fixes "LLM 10061" refused-connection)
+# --------------------------------------------------------------------------- #
+#: Path (relative to the server ROOT) of the llama.cpp health endpoint. The chat
+#: base URL ends in ``/v1`` but ``/health`` is served at the root.
+LOCAL_HEALTH_PATH: str = "/health"
+#: HTTP status the ``/health`` endpoint returns once the model is fully loaded.
+_HEALTH_OK: int = 200
+#: Default bounded wall-clock deadline (seconds) for the readiness poll. Bounded
+#: so a slow/failed start becomes an exhausted slot rather than a hang.
+DEFAULT_READINESS_TIMEOUT: float = 60.0
+#: Default seconds between readiness polls.
+DEFAULT_READINESS_POLL_INTERVAL: float = 0.25
+#: Default per-request timeout (seconds) for one health GET.
+DEFAULT_READINESS_REQUEST_TIMEOUT: float = 5.0
+
+
+def health_url_from_base(base_url: str) -> str:
+    """Derive the llama.cpp ``/health`` URL from an OpenAI-style base URL.
+
+    The chat base URL ends in ``/v1`` (e.g. ``.../8088/v1``) but llama.cpp serves
+    ``/health`` at the SERVER ROOT (``.../8088/health``); strip a trailing ``/v1``
+    before appending the health path so the readiness probe hits the right route.
+    """
+    base = base_url.rstrip("/")
+    if base.endswith("/v1"):
+        base = base[: -len("/v1")].rstrip("/")
+    return f"{base}{LOCAL_HEALTH_PATH}"
+
+
+def _probe_health_status(transport: Transport, url: str, timeout: float) -> int:
+    """One health GET -> HTTP status (200 ready, 503 loading, 0 refused/unreachable).
+
+    Reuses the existing GET :data:`Transport` seam (default
+    :func:`urllib_get_json`): a 200 returns a JSON body (mapped to ``200``); an
+    ``HTTPError`` surfaces as a :class:`ProviderError` carrying ``status_code``
+    (``503`` while the model loads); a refused/unreachable connection has
+    ``status_code is None`` and maps to ``0`` so the caller keeps waiting.
+    """
+    try:
+        transport(url, {}, {}, timeout)
+    except ProviderError as exc:
+        return exc.status_code or 0
+    return _HEALTH_OK
+
+
+def readiness_probe(
+    health_url: str,
+    *,
+    transport: Transport,
+    now: Callable[[], float],
+    sleep: Callable[[float], None],
+    child_exited: Callable[[], bool],
+    timeout_s: float = DEFAULT_READINESS_TIMEOUT,
+    poll_interval_s: float = DEFAULT_READINESS_POLL_INTERVAL,
+    request_timeout_s: float = DEFAULT_READINESS_REQUEST_TIMEOUT,
+) -> None:
+    """Poll ``health_url`` until the local model server is ready or time runs out.
+
+    A bounded wall-clock loop that NEVER hangs (WU-B2). Each iteration first fails
+    fast if the child process has exited (``child_exited()`` -> a
+    :class:`ProviderError`), then GETs the health endpoint: HTTP ``200`` means the
+    model is loaded (return); ``503`` (loading) or a refused/unreachable
+    connection keep waiting; once ``now()`` passes the ``timeout_s`` deadline a
+    :class:`ProviderError` is RAISED so :class:`RotatingProvider` treats a slow
+    start as an exhausted slot instead of blocking forever. Every side-effecting
+    collaborator (``transport`` / ``now`` / ``sleep`` / ``child_exited``) is
+    injected so the probe is fully unit-testable with no socket and no real wait.
+    """
+    deadline = now() + timeout_s
+    while True:
+        if child_exited():
+            raise ProviderError("local model server exited before becoming ready")
+        if _probe_health_status(transport, health_url, request_timeout_s) == _HEALTH_OK:
+            return
+        if now() >= deadline:
+            raise ProviderError(f"local model server not ready within {timeout_s:g}s")
+        sleep(poll_interval_s)
+
+
 def _extract_content(response: dict[str, Any]) -> str:
     """Pull the assistant message content from an OpenAI-style chat response.
 
@@ -559,12 +639,20 @@ class RotatingProvider(Provider):
         now: Callable[[], float] = _default_now,
         transport: Transport | None = None,
         cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS,
+        ensure: Callable[[], None] | None = None,
     ) -> None:
         specs = list(pool)
         if not specs:
             raise ValueError("RotatingProvider requires a non-empty pool")
         self._now = now
         self._cooldown = float(cooldown_seconds)
+        # WU-B2: the injected opaque llama-backstop ensure() callback. Invoked
+        # lazily ONLY before the ``local`` backstop slot is tried (see ``chat``),
+        # so an all-local run auto-starts the llama.cpp server; a slow/failed
+        # start RAISES a ProviderError and is treated as an exhausted slot. The
+        # provider module stays runner-free — the engine layer that owns the
+        # ModelRunner builds and injects this callback.
+        self._ensure = ensure
         # Sort the local backstop(s) to the very end; cloud keys keep pool order.
         ordered = sorted(specs, key=lambda s: 1 if s.local else 0)
         self._slots: list[_LiveKey] = []
@@ -639,6 +727,19 @@ class RotatingProvider(Provider):
             now = self._now()
             if not slot.eligible(now=now, capability=capability):
                 continue
+            # WU-B2: lazily ensure the llama backstop is up BEFORE its first chat
+            # (never for a cloud key or a detected Ollama/LM-Studio slot). A slow
+            # start raises ProviderError -> handled exactly like a chat failure
+            # (cool + rotate), so the pool advances instead of hanging.
+            if self._ensure is not None and slot.spec.provider == LOCAL_PROVIDER_ID:
+                try:
+                    self._ensure()
+                except ProviderError as exc:
+                    self._on_failure(slot, exc, failures)
+                    if active is not None:
+                        self._emit_rotation(active, slot, str(exc))
+                    active = slot
+                    continue
             try:
                 content, response = slot.provider.chat_full(
                     messages, temperature=temperature, max_tokens=max_tokens, **kwargs
@@ -697,6 +798,7 @@ def build_pool_provider(
     probe_transport: Transport | None = None,
     detect_local: bool = True,
     prefer: str | None = None,
+    ensure: Callable[[], None] | None = None,
 ) -> RotatingProvider:
     """Build a :class:`RotatingProvider` from ``settings.providers`` + local detect.
 
@@ -722,12 +824,12 @@ def build_pool_provider(
     settings = settings or {}
     if prefer == LOCAL_PROVIDER_ID:
         # Privacy/all-local route: skip cloud specs entirely (zero cloud egress).
-        return RotatingProvider(pool=[_llama_backstop_spec(settings)], transport=transport)
+        return RotatingProvider(pool=[_llama_backstop_spec(settings)], transport=transport, ensure=ensure)
     specs = _cloud_specs_from_settings(_prefer_provider_first(settings, prefer))
     if detect_local:
         specs.extend(_detected_local_specs(settings, probe_transport=probe_transport))
     specs.append(_llama_backstop_spec(settings))
-    return RotatingProvider(pool=specs, transport=transport)
+    return RotatingProvider(pool=specs, transport=transport, ensure=ensure)
 
 
 def _prefer_provider_first(settings: dict[str, Any], prefer: str | None) -> dict[str, Any]:
@@ -819,6 +921,7 @@ def get_provider(
     *,
     transport: Transport | None = None,
     prefer: str | None = None,
+    ensure: Callable[[], None] | None = None,
 ) -> Provider:
     """Return the right :class:`Provider` for ``settings`` (CONTRACTS.md §2).
 
@@ -844,7 +947,7 @@ def get_provider(
     # single-provider routing (which stays for back-compat when no pool is set).
     # A prefer==LOCAL route is honored even with cloud providers configured.
     if prefer == LOCAL_PROVIDER_ID or _cloud_specs_from_settings(settings):
-        return build_pool_provider(settings, transport=transport, prefer=prefer)
+        return build_pool_provider(settings, transport=transport, prefer=prefer, ensure=ensure)
 
     use_cloud = bool(settings.get("useCloud"))
     api_key = settings.get("cloudApiKey") or ""
@@ -861,6 +964,14 @@ def get_provider(
         # CONTRACT-NOTE: useCloud requested but no key -> we do NOT raise; we fall
         # back to the local server so the app stays usable offline (lean, §0).
         log.warning("useCloud is set but cloudApiKey is empty; using local server")
+
+    if ensure is not None:
+        # WU-B2: the legacy bare-local fall-through has no llama-backstop slot to
+        # auto-start. When an ensure() is injected, route through a local-only
+        # pool so the injected callback can bring the llama.cpp server up first
+        # (fixes "LLM 10061" for a fresh all-local config). No cloud spec exists
+        # here, so a local-only pool is behaviourally identical for the call.
+        return build_pool_provider(settings, transport=transport, prefer=LOCAL_PROVIDER_ID, ensure=ensure)
 
     return LocalServerProvider(
         base_url=str(settings.get("localBaseUrl") or DEFAULT_LOCAL_BASE_URL),
