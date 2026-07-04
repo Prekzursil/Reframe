@@ -14,6 +14,7 @@ import pytest
 from media_studio.settings_store import (
     DEFAULT_SETTINGS,
     SettingsStore,
+    UnsafeConfigDirError,
     default_config_dir,
 )
 
@@ -102,8 +103,63 @@ def test_corrupt_file_falls_back_to_defaults(tmp_path: Path) -> None:
 
 
 def test_default_config_dir_honors_env_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # A4/R7: a SAFE absolute-local override is honored, but CANONICALIZED (realpath
+    # resolves symlinks + normalizes) before use — so compare against the realpath.
     monkeypatch.setenv("MEDIA_STUDIO_CONFIG_DIR", str(tmp_path / "cfg"))
-    assert default_config_dir() == tmp_path / "cfg"
+    assert default_config_dir() == Path(_real_os.path.realpath(tmp_path / "cfg"))
+
+
+# --------------------------------------------------------------------------- #
+# A4/R7: MEDIA_STUDIO_CONFIG_DIR is attacker-influenceable; the sidecar (a second,
+# independent consumer of the data root) must REFUSE a non-local / device / `..`
+# override rather than pip-install models into it. Defense-in-depth mirror of the
+# Electron dataRoot.ts guard.
+# --------------------------------------------------------------------------- #
+def test_default_config_dir_rejects_unc_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEDIA_STUDIO_CONFIG_DIR", "\\\\evil-host\\share\\data")
+    with pytest.raises(UnsafeConfigDirError):
+        default_config_dir()
+
+
+def test_default_config_dir_rejects_posix_unc_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A forward-slash double-separator (`//host/share`) is the same UNC shape.
+    monkeypatch.setenv("MEDIA_STUDIO_CONFIG_DIR", "//evil-host/share/data")
+    with pytest.raises(UnsafeConfigDirError):
+        default_config_dir()
+
+
+def test_default_config_dir_rejects_device_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEDIA_STUDIO_CONFIG_DIR", "\\\\.\\PhysicalDrive0")
+    with pytest.raises(UnsafeConfigDirError):
+        default_config_dir()
+
+
+def test_default_config_dir_rejects_traversal_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEDIA_STUDIO_CONFIG_DIR", "/base/../etc/passwd")
+    with pytest.raises(UnsafeConfigDirError):
+        default_config_dir()
+
+
+def test_default_config_dir_rejects_relative_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEDIA_STUDIO_CONFIG_DIR", "relative/data")
+    with pytest.raises(UnsafeConfigDirError):
+        default_config_dir()
+
+
+def test_unsafe_config_dir_error_is_a_value_error() -> None:
+    # It subclasses ValueError so existing broad `except ValueError` handlers still
+    # catch it (the store already treats bad config as a ValueError family).
+    assert issubclass(UnsafeConfigDirError, ValueError)
+
+
+def test_default_config_dir_canonicalizes_a_safe_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A safe absolute-local override with a redundant `.` segment is normalized to
+    # its realpath (the canonical form used at the filesystem sink).
+    noisy = _real_os.path.join(str(tmp_path), ".", "cfg")
+    monkeypatch.setenv("MEDIA_STUDIO_CONFIG_DIR", noisy)
+    assert default_config_dir() == Path(_real_os.path.realpath(tmp_path / "cfg"))
 
 
 class _OsShim:

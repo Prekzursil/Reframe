@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -115,16 +116,61 @@ _CONFIG_FILENAME = "settings.json"
 _APP_DIR_NAME = "media-studio"
 
 
+class UnsafeConfigDirError(ValueError):
+    """``MEDIA_STUDIO_CONFIG_DIR`` was an unsafe (non-local / device / traversal) path.
+
+    The override designates the data root the sidecar pip-installs models into and
+    reads/writes files under, so a UNC (``\\\\server\\share``), a Windows device
+    namespace (``\\\\.\\``, ``\\\\?\\``), a relative path, or a ``..`` traversal is a
+    code-exec vector and is REFUSED outright — surfacing a clear error rather than a
+    silent honoring. Subclasses :class:`ValueError` so existing broad handlers catch
+    it. Mirrors the Electron ``dataRoot.ts`` ``DataRootSecurityError`` guard (R7
+    defense-in-depth: the sidecar is a second, independent consumer of the root).
+    """
+
+
+def _canonical_local_dir(override: str) -> Path:
+    """Validate ``override`` is an absolute LOCAL path and return its realpath.
+
+    Rejects (a) UNC / device namespaces — any value beginning with two path
+    separators; (b) any ``..`` traversal segment; (c) a non-absolute path. The
+    accepted path is ``os.path.realpath``-canonicalised (symlinks + ``.``/``..``
+    and redundant separators resolved) so the value handed to the filesystem sink
+    is normalised. Raises :class:`UnsafeConfigDirError` on any rejection.
+    """
+    # (a) UNC (\\server\share) and Windows device namespaces (\\.\, \\?\) both begin
+    #     with two path separators — never a valid LOCAL data root.
+    if re.match(r"^[\\/]{2}", override):
+        raise UnsafeConfigDirError(
+            f"MEDIA_STUDIO_CONFIG_DIR {override!r} is a UNC/device path, not a local directory"
+        )
+    # (b) Any `..` segment is a traversal out of the intended tree.
+    if any(seg == ".." for seg in re.split(r"[\\/]+", override)):
+        raise UnsafeConfigDirError(
+            f"MEDIA_STUDIO_CONFIG_DIR {override!r} contains a '..' traversal segment"
+        )
+    # (c) Require an ABSOLUTE path (a drive-rooted or POSIX-rooted directory).
+    if not os.path.isabs(override):
+        raise UnsafeConfigDirError(
+            f"MEDIA_STUDIO_CONFIG_DIR {override!r} is not an absolute path"
+        )
+    return Path(os.path.realpath(override))
+
+
 def default_config_dir() -> Path:
     """Resolve the per-user config directory for media-studio (stdlib only).
 
     Order: ``MEDIA_STUDIO_CONFIG_DIR`` env override -> ``%APPDATA%`` on Windows ->
     ``$XDG_CONFIG_HOME`` -> ``~/.config``. The directory is NOT created here; the
     store creates it lazily on first write.
+
+    A4/R7: the env override is attacker-influenceable, so it is validated as an
+    absolute LOCAL path and canonicalised (:func:`_canonical_local_dir`) before use;
+    a UNC/device/``..`` value raises :class:`UnsafeConfigDirError`.
     """
     override = os.environ.get("MEDIA_STUDIO_CONFIG_DIR")
     if override:
-        return Path(override)
+        return _canonical_local_dir(override)
     if os.name == "nt":
         base = os.environ.get("APPDATA") or os.path.expanduser("~")
         return Path(base) / _APP_DIR_NAME

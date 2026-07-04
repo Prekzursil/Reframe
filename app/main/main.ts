@@ -16,7 +16,13 @@ import { existsSync, readdirSync, readFileSync, writeFileSync, promises as fsp }
 import { extname, join, resolve as resolvePath, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { resolveDataRootFrom } from './dataRoot';
-import { dataDirMarkerPath, exeDataDir, isExeDataWritable, readDataDirMarker } from './dataRootIo';
+import {
+  dataDirMarkerPath,
+  exeDataDir,
+  isExeDataWritable,
+  isProvisionedRoot,
+  readDataDirMarker,
+} from './dataRootIo';
 import { registerDataFolderIpc } from './dataFolderIpc';
 import { registerDialogIpc } from './dialogIpc';
 import { resolveScopedMediaPath } from './exportPath';
@@ -164,6 +170,10 @@ function resolveDataRoot(): string {
     appDataRoot: join(app.getPath('appData'), 'media-studio'),
     readMarker: readDataDirMarker,
     isExeDataWritable,
+    // A4 content-aware anti-brick: probe each candidate root for a provisioning
+    // marker so an EMPTY portable <exeDir>/data never wins over a provisioned
+    // %APPDATA% (clean install opens the real library, no manual data-dir.txt).
+    isProvisioned: isProvisionedRoot,
     // PORTABLE auto-pick gate (preview-blocker fix): only a PACKAGED build may
     // silently use a writable <exeDir>/data. In dev, <exeDir> is
     // node_modules/electron/dist, so that dir is empty (no library.json) — auto-
