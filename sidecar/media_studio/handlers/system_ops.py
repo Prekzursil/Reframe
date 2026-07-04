@@ -459,6 +459,34 @@ def _models_present_map(self: Services, settings: dict[str, Any]) -> dict[str, b
     return present
 
 
+def _installed_asset_names(self: Services, settings: dict[str, Any]) -> set[str]:
+    """The set of installed WU-C2 capability assets (read-only probe).
+
+    Resolves installed-state for exactly the ``_capabilities.capability_asset_names``
+    set (the reframe tracker + the on-demand saliency/scene weights) so
+    ``readiness.summary`` can roll the feature-capability family up. A de-registered
+    capability asset is skipped (never probed); fail-open per asset. Read-only: it
+    only asks ``installed_path`` (an ``is_file`` check), so it NEVER creates the data
+    dir — the read-only summary invariant holds.
+    """
+    from ..assets import manifest as _manifest  # local: import-light
+    from ..assets.manager import AssetManager  # local: import-light
+    from . import _capabilities  # local: import-light, data only
+
+    mgr = AssetManager(root=self.data_dir, settings_provider=lambda: settings)
+    installed: set[str] = set()
+    for asset_name in _capabilities.capability_asset_names():
+        entry = _manifest.get_asset(asset_name)
+        if entry is None:
+            continue
+        try:
+            if mgr.installed_path(entry) is not None:
+                installed.add(asset_name)
+        except Exception:  # noqa: BLE001 - one bad probe must not sink the report
+            continue
+    return installed
+
+
 def _default_hardware_probe(
     self: Services,
 ) -> Any:  # pragma: no cover - lazy heavy seam (pynvml/torch); tests inject a fake

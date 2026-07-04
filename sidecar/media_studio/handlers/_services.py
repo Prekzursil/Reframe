@@ -267,6 +267,7 @@ class Services:
     phase8_signals = system_ops.phase8_signals
     phase8_select = system_ops.phase8_select
     _models_present_map = system_ops._models_present_map
+    _installed_asset_names = system_ops._installed_asset_names
     _default_hardware_probe = system_ops._default_hardware_probe
     _default_ollama_meta_transport = system_ops._default_ollama_meta_transport
     _default_phase8_runner = system_ops._default_phase8_runner
