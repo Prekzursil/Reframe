@@ -6,9 +6,151 @@
    success/error/muted) but ALWAYS paired with a text label (a11y F5 — never
    color-only). Class names are test-pinned; restyle only. */
 
+/* ---- header (title + "What is Director?" tour re-open) ---------------------- */
+
+.director-panel .director-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.director-panel .director-head__tour {
+  flex: none;
+  font-size: var(--type-caption-size);
+}
+
 .director-panel .director-intro {
   color: var(--text-secondary);
   max-width: 60ch;
+}
+
+/* ---- example chips (WU-E2: prefill the prompt) ------------------------------ */
+
+.director-panel .director-examples {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  margin: 0 0 var(--space-6);
+}
+
+.director-panel .director-examples__label {
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+}
+
+.director-panel .director-examples__chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.director-panel .director-chip {
+  font: inherit;
+  font-size: var(--type-caption-size);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.director-panel .director-chip:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-strong, var(--accent));
+}
+
+.director-panel .director-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.director-panel .director-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .director-panel .director-chip {
+    transition: none;
+  }
+}
+
+/* ---- first-run tour overlay (WU-E2: DirectorOnboarding) --------------------- */
+
+.director-onboarding {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  background: rgba(8, 9, 11, 0.72);
+}
+
+.director-onboarding__card {
+  max-width: 480px;
+  width: 100%;
+  padding: var(--space-6);
+  border-radius: var(--radius-lg);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-overlay);
+}
+
+.director-onboarding__progress {
+  margin: 0 0 var(--space-2);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.director-onboarding__title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  color: var(--text-primary);
+}
+
+.director-onboarding__body {
+  margin: 0 0 var(--space-5);
+  color: var(--text-secondary);
+  line-height: var(--type-body-leading);
+}
+
+.director-onboarding__dots {
+  display: flex;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-5);
+}
+
+.director-onboarding__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-hover);
+}
+
+.director-onboarding__dot.is-active {
+  background: var(--accent);
+}
+
+.director-onboarding__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
 }
 
 /* ---- prompt ----------------------------------------------------------------- */

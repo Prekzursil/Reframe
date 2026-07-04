@@ -20,6 +20,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import '../features/panels.css';
 import './directorPanel.css';
+import { DirectorOnboarding } from '../components/DirectorOnboarding';
 import {
   client,
   onJobDone as bridgeOnJobDone,
@@ -80,6 +81,16 @@ function MoveIcon({ dir }: { dir: OpMoveDirection }): React.ReactElement {
     </svg>
   );
 }
+
+// WU-E2: clickable example goals that prefill the prompt so a first-time user
+// has a working starting point (plain-language, matched to real op kinds). Kept
+// here (exported) so the copy is single-sourced with any test that asserts it.
+export const DIRECTOR_EXAMPLES: readonly string[] = [
+  'Make the scrolling smooth and steady',
+  'Turn this into a punchy Q&A showcase',
+  'Trim the dead air and tighten the pacing',
+  'Add captions over the key moments',
+];
 
 // --- pure helpers (exported for tests) -------------------------------------
 
@@ -158,10 +169,41 @@ export function DirectorPanel({
   const [busy, setBusy] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [progress, setProgress] = useState<string>('');
+  // WU-E2: the first-run guided tour (focus-trapped DirectorOnboarding). Gated on
+  // settings.directorOnboardingSeen, and re-openable from the header at any time.
+  const [showTour, setShowTour] = useState<boolean>(false);
 
   // The active job is held in a ref so the once-mounted job.done/progress
   // subscriptions read the current pending job without re-subscribing.
   const pending = useRef<PendingJob | null>(null);
+
+  // WU-E2: on mount, read settings once and open the first-run tour when the user
+  // has not seen it. Best-effort: a failed read simply leaves the tour closed (we
+  // never nag on an unreadable settings store). Re-runs each time Director is
+  // opened (a fresh mount) until the "seen" flag is persisted.
+  useEffect(() => {
+    void api.settings
+      .get()
+      .then((s) => {
+        if (!s.directorOnboardingSeen) setShowTour(true);
+      })
+      .catch(() => {
+        // Best-effort: keep the tour closed if settings can't be read.
+      });
+  }, [api]);
+
+  // Dismiss the tour (Skip / Got it / Escape all route here) and persist the
+  // "seen" flag so it never re-opens on its own. Best-effort persistence — the
+  // tour is already closed in-memory regardless of the write's outcome.
+  const finishTour = useCallback((): void => {
+    setShowTour(false);
+    void api.settings.set({ directorOnboardingSeen: true }).catch(() => {
+      // Best-effort: the tour is closed locally even if the write fails.
+    });
+  }, [api]);
+
+  // Re-open the tour on demand (the header "What is Director?" affordance).
+  const reopenTour = useCallback((): void => setShowTour(true), []);
 
   // WU-E1: the video this panel plans against — the app-selected `video.id`, or
   // (if that video was closed while a prior plan is still on screen) the plan's
@@ -359,6 +401,24 @@ export function DirectorPanel({
   // undoes, not edits) and never mid-job. Disabled controls keep their reason.
   const controlsEnabled = !applied && opsStatus === null && !busy;
 
+  // WU-E2: one reusable header (title + a persistent "What is Director?" entry
+  // point to the tour) and the first-run overlay, shared by BOTH return branches
+  // so the explainer is reachable whether or not a video is open.
+  const header = (
+    <div className="director-head">
+      <h2>AI Director</h2>
+      <button
+        type="button"
+        className="secondary director-head__tour"
+        data-action="director-tour"
+        onClick={reopenTour}
+      >
+        What is Director?
+      </button>
+    </div>
+  );
+  const onboarding = showTour ? <DirectorOnboarding onDone={finishTour} /> : null;
+
   // WU-E1: with no video open AND no plan on screen, there is nothing to edit —
   // show a "Choose a video" empty state (wired to the real selection) instead of
   // a prompt box that would otherwise mis-fire the goal as the videoId.
@@ -368,7 +428,7 @@ export function DirectorPanel({
         className="feature-panel director-panel director-panel--empty"
         aria-label="AI Director"
       >
-        <h2>AI Director</h2>
+        {header}
         <div className="director-empty" data-section="empty">
           <p className="director-empty__title">No video open</p>
           <p className="director-empty__hint">
@@ -384,13 +444,14 @@ export function DirectorPanel({
             Choose a video
           </button>
         </div>
+        {onboarding}
       </section>
     );
   }
 
   return (
     <section className="feature-panel director-panel" aria-label="AI Director">
-      <h2>AI Director</h2>
+      {header}
       <p className="director-intro">
         Describe the change you want in plain language. The Director plans a reviewable, reversible
         edit — nothing is applied until you confirm.
@@ -416,6 +477,27 @@ export function DirectorPanel({
           {busy ? 'Working…' : 'Plan edit'}
         </button>
       </form>
+
+      {/* WU-E2: clickable example goals prefill the prompt for a first-time user. */}
+      <div className="director-examples" data-section="examples">
+        <span className="director-examples__label">Try an example:</span>
+        <ul className="director-examples__chips">
+          {DIRECTOR_EXAMPLES.map((example) => (
+            <li key={example}>
+              <button
+                type="button"
+                className="director-chip"
+                data-action="example-chip"
+                data-example={example}
+                disabled={busy}
+                onClick={() => setGoal(example)}
+              >
+                {example}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
 
       {error && (
         <p className="error" role="alert">
@@ -516,6 +598,7 @@ export function DirectorPanel({
           {evaluation && <EvalSummary evaluation={evaluation} />}
         </>
       )}
+      {onboarding}
     </section>
   );
 }

@@ -135,6 +135,8 @@ function evalFixture(over: Partial<DirectorEval> = {}): DirectorEval {
 interface FakeClient {
   client: typeof RealClient;
   calls: Array<{ method: string; args: unknown[] }>;
+  /** The live persisted settings (settings.set merges into this — for assertions). */
+  settings: Record<string, unknown>;
 }
 
 interface FakeOpts {
@@ -152,11 +154,37 @@ interface FakeOpts {
   falsyPreview?: boolean;
   /** evaluate resolves a falsy value (exercises the `?? null` arm). */
   falsyEvaluate?: boolean;
+  /**
+   * Seed persisted settings. Defaults to directorOnboardingSeen=true so the
+   * first-run tour stays CLOSED for the (unrelated) existing tests; the WU-E2
+   * tour tests seed `{}` (unseen) to open it.
+   */
+  initialSettings?: Record<string, unknown>;
+  /** settings.get rejects (best-effort read failure → tour simply stays closed). */
+  rejectSettingsGet?: boolean;
 }
 
 function makeClient(o: FakeOpts = {}): FakeClient {
   const calls: FakeClient['calls'] = [];
+  // Default to "seen" so the first-run tour stays CLOSED for the unrelated
+  // existing tests; a caller passing initialSettings (even `{}`) opts into that
+  // exact seed — so `{}` means UNSEEN and opens the tour.
+  const settings: Record<string, unknown> = o.initialSettings
+    ? { ...o.initialSettings }
+    : { directorOnboardingSeen: true };
   const fake = {
+    settings: {
+      get: vi.fn(async () => {
+        calls.push({ method: 'settings.get', args: [] });
+        if (o.rejectSettingsGet) throw new Error('settings unavailable');
+        return { ...settings };
+      }),
+      set: vi.fn(async (values: Record<string, unknown>) => {
+        calls.push({ method: 'settings.set', args: [values] });
+        Object.assign(settings, values);
+        return { ...settings };
+      }),
+    },
     director: {
       plan: vi.fn(async (videoId: string, goal: string) => {
         calls.push({ method: 'director.plan', args: [videoId, goal] });
@@ -187,7 +215,7 @@ function makeClient(o: FakeOpts = {}): FakeClient {
       }),
     },
   };
-  return { client: fake as unknown as typeof RealClient, calls };
+  return { client: fake as unknown as typeof RealClient, calls, settings };
 }
 
 /** A controllable job-event bus the test drives to emit progress / job.done. */
@@ -1122,6 +1150,110 @@ describe('DirectorPanel', () => {
     });
     await flush();
     expect(($('textarea[data-action="goal"]') as HTMLTextAreaElement).value).toBe(goalBefore);
+  });
+
+  // ---- WU-E2: onboarding (example chips + first-run tour) --------------------
+
+  it('renders clickable example chips; clicking one prefills the goal textarea', async () => {
+    const c = makeClient();
+    await mount(c);
+    const chips = $all('button[data-action="example-chip"]');
+    expect(chips.length).toBeGreaterThanOrEqual(3);
+    // The textarea starts empty; clicking a chip fills it with that chip's goal.
+    expect(($('textarea[data-action="goal"]') as HTMLTextAreaElement).value).toBe('');
+    const first = chips[0];
+    const exampleText = first.getAttribute('data-example') ?? '';
+    expect(exampleText.length).toBeGreaterThan(0);
+    expect(first.textContent).toBe(exampleText);
+    await act(async () => {
+      first.click();
+    });
+    await flush();
+    expect(($('textarea[data-action="goal"]') as HTMLTextAreaElement).value).toBe(exampleText);
+    // A prefilled goal enables the Plan button (was disabled while blank).
+    expect(($('button[data-action="plan"]') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('example chips are disabled while a job is in flight', async () => {
+    const c = makeClient();
+    await planTo(c, planFixture([op({ id: 'a' })]));
+    // Enter a busy state via apply (no job.done yet → still busy).
+    await act(async () => {
+      $('button[data-action="apply"]').click();
+    });
+    await flush();
+    for (const chip of $all('button[data-action="example-chip"]')) {
+      expect((chip as HTMLButtonElement).disabled).toBe(true);
+    }
+  });
+
+  it('first run (directorOnboardingSeen unset) shows the focus-trapped tour', async () => {
+    const c = makeClient({ initialSettings: {} });
+    await mount(c);
+    // The tour reads settings once on mount, then opens because it is unseen.
+    expect(c.calls.some((x) => x.method === 'settings.get')).toBe(true);
+    const dialog = container.querySelector('.director-onboarding');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.getAttribute('aria-modal')).toBe('true');
+  });
+
+  it('does not show the tour when directorOnboardingSeen is already set', async () => {
+    const c = makeClient({ initialSettings: { directorOnboardingSeen: true } });
+    await mount(c);
+    expect(container.querySelector('.director-onboarding')).toBeNull();
+  });
+
+  it('a settings.get failure keeps the tour closed (best-effort, no throw)', async () => {
+    const c = makeClient({ initialSettings: {}, rejectSettingsGet: true });
+    await mount(c);
+    expect(container.querySelector('.director-onboarding')).toBeNull();
+    // The panel still renders normally.
+    expect(container.querySelector('form.director-prompt')).not.toBeNull();
+  });
+
+  it('dismissing the tour persists directorOnboardingSeen and closes it', async () => {
+    const c = makeClient({ initialSettings: {} });
+    await mount(c);
+    expect(container.querySelector('.director-onboarding')).not.toBeNull();
+    await act(async () => {
+      $('button[data-action="skip"]').click();
+    });
+    await flush();
+    expect(container.querySelector('.director-onboarding')).toBeNull();
+    expect(c.settings.directorOnboardingSeen).toBe(true);
+    expect(c.calls.find((x) => x.method === 'settings.set')?.args[0]).toEqual({
+      directorOnboardingSeen: true,
+    });
+  });
+
+  it('the "What is Director?" button re-opens the tour after it was dismissed', async () => {
+    const c = makeClient({ initialSettings: { directorOnboardingSeen: true } });
+    await mount(c);
+    expect(container.querySelector('.director-onboarding')).toBeNull();
+    await act(async () => {
+      $('button[data-action="director-tour"]').click();
+    });
+    await flush();
+    expect(container.querySelector('.director-onboarding')).not.toBeNull();
+  });
+
+  it('the tour is reachable from the no-video empty state too', async () => {
+    const c = makeClient({ initialSettings: { directorOnboardingSeen: true } });
+    await mount(c, null);
+    // Empty state is shown, and the "What is Director?" button still re-opens the tour.
+    expect(container.querySelector('[data-section="empty"]')).not.toBeNull();
+    await act(async () => {
+      $('button[data-action="director-tour"]').click();
+    });
+    await flush();
+    expect(container.querySelector('.director-onboarding')).not.toBeNull();
+  });
+
+  it('first-run tour also opens over the no-video empty state', async () => {
+    const c = makeClient({ initialSettings: {} });
+    await mount(c, null);
+    expect(container.querySelector('[data-section="empty"]')).not.toBeNull();
+    expect(container.querySelector('.director-onboarding')).not.toBeNull();
   });
 
   it('unsubscribes from the job-event bus on unmount', async () => {
