@@ -21,6 +21,7 @@ import { ProvidersKeys } from '../features/ProvidersKeys';
 import { PathsPanel, type PathsBridge } from '../components/PathsPanel';
 import { SetupStatusPanel } from '../components/SetupStatusPanel';
 import { CaptionPreferences } from '../components/CaptionPreferences';
+import { ThirdPartyNotices } from '../features/ThirdPartyNotices';
 import { client } from '../lib/rpc';
 import { resolveWindowApi } from '../features/shortMakerLogic';
 import './settings.css';
@@ -106,6 +107,15 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     id: 'health',
     label: 'System Health',
     render: () => <SystemHealth />,
+  },
+  {
+    id: 'licenses',
+    label: 'Licenses',
+    // WU-F1 (security HIGH#1b): the mandatory user-facing third-party attribution
+    // surface. ViNet-S is CC-BY-NC-SA-4.0 and REQUIRES attribution + a
+    // non-commercial notice; this section reproduces it alongside the other
+    // bundled model licenses (YuNet/EdgeTAM/TransNetV2/LR-ASD).
+    render: () => <ThirdPartyNotices />,
   },
 ];
 

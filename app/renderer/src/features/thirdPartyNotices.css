@@ -1,0 +1,109 @@
+/* thirdPartyNotices.css — the Settings → Licenses surface (WU-F1).
+ * Layout + license-chip tint only; commercial vs non-commercial is ALWAYS
+ * conveyed by visible text ("Commercial OK" / "Non-commercial"), never hue alone
+ * (WCAG 1.4.1). Tokens come from the shared design system. */
+
+.tpn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.tpn__title {
+  margin: 0;
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tpn__intro {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.tpn__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.tpn__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  border: 1px solid var(--surface-edge);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+
+.tpn__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.tpn__name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tpn__chip {
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  white-space: nowrap;
+}
+
+.tpn__chip--ok {
+  background: var(--status-success-soft);
+  color: var(--status-success);
+}
+
+.tpn__chip--nc {
+  background: var(--status-error-soft);
+  color: var(--status-error);
+}
+
+.tpn__role {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.tpn__attr {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.tpn__license,
+.tpn__paper,
+.tpn__file {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--type-caption-size);
+}
+
+.tpn__license a {
+  color: var(--accent);
+}
+
+.tpn__license a:hover {
+  color: var(--accent-hover);
+}
+
+.tpn__file code {
+  color: var(--text-secondary);
+}
+
+.tpn__note {
+  margin: 0;
+  border-left: 2px solid var(--status-error);
+  padding-left: var(--space-2);
+  color: var(--text-primary);
+}

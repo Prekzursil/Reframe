@@ -24,6 +24,20 @@ EdgeTAM tracker release) on the `feat/reframe-v1.3` branch built off the clean
   sidecar-env sentinel are untouched. A brand guard test asserts no user-facing
   surface leaks "media-studio"/"Media Studio".
 
+### Legal — NON-COMMERCIAL while ViNet-S is bundled (WU B4/F1)
+
+- **Reframe v1.3 bundles the ViNet-S saliency model under CC-BY-NC-SA-4.0.**
+  ViNet-S (the no-face crop-tracking video-saliency network, ICASSP 2025,
+  arXiv:2502.00397) is licensed **Attribution-NonCommercial-ShareAlike 4.0**, so
+  **the app as shipped is NON-COMMERCIAL while that model is bundled**. A future
+  paid tier MUST remove or replace ViNet-S. Its required attribution — © 2025
+  Rohit Girmaji, Siddharth Jain, Bhav Beri, Sarthak Bansal, Vineet Gandhi (IIIT
+  Hyderabad) — plus the other bundled model licenses (YuNet MIT, EdgeTAM
+  Apache-2.0, TransNetV2 MIT, LR-ASD MIT) are now surfaced **in-app** at
+  **Settings → Licenses** and in the repo-root **`NOTICE`** file; the vendored
+  full CC-BY-NC-SA-4.0 text ships at
+  `sidecar/media_studio/features/_vinet_s/LICENSE`.
+
 ## [1.2.0] — 2026-07-03
 
 **Reframe v1.2.0 — detector, virality, tracking + fail-loud hardening.** A single
