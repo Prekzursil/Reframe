@@ -240,7 +240,7 @@ export interface LineageEntity {
 }
 
 /**
- * L3 loud stub for a `derived_from` endpoint with no `entity` row (an input
+ * L3 loud stand-in for a `derived_from` endpoint with no `entity` row (an input
  * referenced by id but never added as a library source). Surfaced — never
  * silently dropped — so the card can show "source no longer in library".
  */
@@ -249,7 +249,7 @@ export interface LineageMissing {
   missing: true;
 }
 
-/** One ancestor/descendant: a resolved entity OR a loud missing stub. */
+/** One ancestor/descendant: a resolved entity OR a loud missing stand-in. */
 export type LineageNode = LineageEntity | LineageMissing;
 
 /**
@@ -753,7 +753,7 @@ export interface SpendInfo {
   /** Master switch: only when true does an over-hard-cap run get refused. */
   enforceHardLimit: boolean;
   /**
-   * WU-D4 honesty: `true` when `monthToDateCents` is derived from PLACEHOLDER
+   * WU-D4 honesty: `true` when `monthToDateCents` is derived from STAND-IN
    * pricing (no curated model publishes a real per-request price) — so the UI
    * labels it an ESTIMATE rather than presenting it as a real invoiced charge.
    */

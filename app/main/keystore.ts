@@ -146,7 +146,7 @@ export function decryptFromBase64(safeStorage: SafeStorageLike, b64: string): st
   return safeStorage.decryptString(Buffer.from(b64, 'base64'));
 }
 
-/** True when `value` is a real raw key (non-empty and not a redacted "…last4" placeholder). */
+/** True when `value` is a real raw key (non-empty and not a redacted "…last4" stand-in). */
 function isRawKey(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && !value.startsWith('…');
 }

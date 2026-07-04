@@ -281,7 +281,7 @@ def providers_spend(self: Services, params: dict[str, Any], ctx: RpcContext) -> 
         "softLimitCents": int(settings.get("monthlySoftLimitCents") or 0),
         "hardLimitCents": int(settings.get("monthlyHardLimitCents") or 0),
         "enforceHardLimit": bool(settings.get("enforceMonthlyHardLimit")),
-        # HONESTY (WU-D4): the month-to-date total is derived from PLACEHOLDER
+        # HONESTY (WU-D4): the month-to-date total is derived from STAND-IN
         # pricing (no curated model publishes a real per-request price), so it is
         # flagged an ESTIMATE — the UI must NOT present it as a real invoiced charge.
         "isEstimate": _pricing.spend_is_estimated(),
@@ -612,7 +612,7 @@ def _vision_pool(self: Services, settings: dict[str, Any]) -> Any:
     ``settings``. The routed vision provider is tried first; detection of local
     Ollama/LM-Studio is OFF here (no socket — only the configured cloud vision
     entries + the local backstop are needed). ``None`` when the provider module
-    is a test stub without ``build_pool_provider``.
+    is a test stand-in without ``build_pool_provider``.
 
     SECURITY: callers building the cloud egress pool MUST pass settings already
     filtered through :meth:`_frame_consented_vision_settings`, so every
@@ -621,7 +621,7 @@ def _vision_pool(self: Services, settings: dict[str, Any]) -> Any:
     from ..models import provider as _provider_mod  # local: heavy seam
 
     builder = getattr(_provider_mod, "build_pool_provider", None)
-    if builder is None:  # pragma: no cover -- only when provider is a stub w/o the pool builder
+    if builder is None:  # pragma: no cover -- only when provider is a stand-in w/o the pool builder
         return None
     return builder(
         settings,
@@ -642,7 +642,7 @@ def _vision_provider_for_consent(self: Services, settings: dict[str, Any]) -> st
     so no frame is ever prepared for egress).
     """
     pool = self._vision_pool(self._frame_consented_vision_settings(settings))
-    if pool is None:  # pragma: no cover -- stub-provider guard (see _vision_pool)
+    if pool is None:  # pragma: no cover -- stand-in-provider guard (see _vision_pool)
         return None
     from ..models.provider import DEFAULT_CAPABILITY  # local: import-light
 

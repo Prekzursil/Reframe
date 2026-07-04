@@ -86,7 +86,7 @@
   color: var(--text-primary);
 }
 
-/* WU-D4: the "estimated" qualifier — the month-to-date is derived from placeholder
+/* WU-D4: the "estimated" qualifier — the month-to-date is derived from stand-in
    pricing, so it is visibly marked an estimate rather than a real invoiced charge. */
 .spend-cap__readout-estimate {
   align-self: center;

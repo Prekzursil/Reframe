@@ -8,7 +8,7 @@
 // Two responsibilities, both applied in forwardParams() before sidecar.request:
 //
 //   1. providers.upsert — pull the RAW `apiKeys` out of the request, restore any
-//      redacted last-4 placeholders back to their stored raw key (mirroring the
+//      redacted last-4 stand-ins back to their stored raw key (mirroring the
 //      sidecar's frozen get -> set round-trip contract), persist the resolved raw
 //      set into the DPAPI keystore, and forward a FULLY-REDACTED entry so the
 //      sidecar only ever sees / persists last-4 metadata — never a raw key.
@@ -52,7 +52,7 @@ export function redactKey(key: string): string {
   return key.length > VISIBLE_TAIL ? `${ELLIPSIS}${key.slice(-VISIBLE_TAIL)}` : ELLIPSIS;
 }
 
-/** True when `value` is a raw key: a non-empty string that is NOT a redacted placeholder. */
+/** True when `value` is a raw key: a non-empty string that is NOT a redacted stand-in. */
 function isRawKey(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && !value.startsWith(ELLIPSIS);
 }
@@ -118,7 +118,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * Plan a providers.upsert: locate the provider entry (the sidecar accepts a bare
- * `{id, apiKeys, …}` OR a nested `{provider: {…}}`), restore redacted placeholders
+ * `{id, apiKeys, …}` OR a nested `{provider: {…}}`), restore redacted stand-ins
  * against `storedFor(id)`, and produce the resolved raw key set + a fully-redacted
  * forward payload. Positional match by index mirrors the sidecar's frozen
  * `_restore_provider` contract the renderer was built against.
@@ -138,8 +138,8 @@ export function planUpsert(
     return { providerId, resolvedKeys: null, forwardParams: base };
   }
   const stored = storedFor(providerId);
-  // Restore each redacted placeholder to its stored raw key, then keep only the
-  // real raw keys — a placeholder with no stored counterpart is dropped rather
+  // Restore each redacted stand-in to its stored raw key, then keep only the
+  // real raw keys — a stand-in with no stored counterpart is dropped rather
   // than persisted as a bogus "key".
   const resolvedKeys = apiKeys.map((k, i) => restoreOne(k, stored[i])).filter(isRawKey);
   const redactedEntry = { ...entry, apiKeys: resolvedKeys.map(redactKey) };
