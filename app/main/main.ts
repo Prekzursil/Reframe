@@ -112,6 +112,20 @@ function getResourcesPath(): string {
   return (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath ?? '';
 }
 
+/**
+ * Resolve the runtime BrowserWindow icon (WU A2 — Concept A "Crop Pull").
+ * Packaged: the 512px PNG shipped to resources/icons/ (extraResources). Dev:
+ * the same master out of the repo build/icons tree — __dirname is
+ * <repo>/app/out/main at runtime, so three levels up reaches the repo root.
+ * The exe/installer/taskbar icon is the .ico (electron-builder win.icon); this
+ * PNG is what nativeImage loads for the live window.
+ */
+function resolveWindowIcon(): string {
+  return app.isPackaged
+    ? join(getResourcesPath(), 'icons', 'reframe-512.png')
+    : resolvePath(__dirname, '..', '..', '..', 'build', 'icons', 'reframe-512.png');
+}
+
 // ---- DATA ROOT (the one relocatable folder; default OUT of %APPDATA%) -------
 //
 // Every heavy artifact (models/envs/exports/proxies/peaks/dubs/voices/feedback/
@@ -489,6 +503,7 @@ function createWindow(): BrowserWindow {
     show: false,
     backgroundColor: '#101014',
     title: 'Reframe',
+    icon: resolveWindowIcon(),
     webPreferences: {
       preload: join(__dirname, '../preload/preload.js'),
       contextIsolation: true,

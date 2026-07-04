@@ -89,7 +89,20 @@ extraResources:
     filter:
       - "**/*.py"
       - "requirements-*.txt"
+  # Runtime BrowserWindow icon (WU A2). The .ico is embedded into the exe by
+  # win.icon above, but the running window loads a PNG via nativeImage; ship the
+  # 512px master (+ the .ico as a fallback) to resources/icons/, resolved by
+  # main.ts resolveWindowIcon() as process.resourcesPath/icons/reframe-512.png.
+  - from: ../build/icons
+    to: icons
+    filter:
+      - "reframe-512.png"
+      - "reframe.ico"
 win:
+  # App icon (WU A2 — Concept A "Crop Pull"): the multi-size .ico (16/24/32/48/
+  # 64/128/256, PNG-embedded) is the exe + taskbar icon. Path is relative to
+  # buildResources (../build), i.e. ../build/icons/reframe.ico.
+  icon: icons/reframe.ico
   # Two targets per T5: NSIS installer + portable zip (both slim).
   target:
     - target: nsis
@@ -102,6 +115,10 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  # Installer + uninstaller chrome icon (WU A2). Same buildResources-relative
+  # .ico as win.icon — replaces the default Electron icon everywhere.
+  installerIcon: icons/reframe.ico
+  uninstallerIcon: icons/reframe.ico
   # First-run state lives in %APPDATA%/media-studio (envs/models/tools);
   # uninstall keeps it so a reinstall needs no re-download.
   deleteAppDataOnUninstall: false
