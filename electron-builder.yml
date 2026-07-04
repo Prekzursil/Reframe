@@ -84,6 +84,11 @@ extraResources:
     filter:
       - "**/*.py"
       - "scripts/**"
+      # Vendored model LICENSE files (extensionless) — _lightasd (MIT),
+      # _transnetv2, _vinet_s (CC-BY-NC-SA). Attribution completeness, same as
+      # ffmpeg's LGPL LICENSE.txt above. Glob is relative to the `from` base
+      # (../sidecar/media_studio), so `**/LICENSE` resolves features/*/LICENSE.
+      - "**/LICENSE"
   - from: ../sidecar/runtime_setup
     to: sidecar/runtime_setup
     filter:

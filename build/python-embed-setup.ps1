@@ -137,7 +137,11 @@ try {
             $license = Get-ChildItem -Path $tmpDir -Recurse -Include 'LICENSE*', 'README*' |
                 Select-Object -First 2
             foreach ($doc in $license) {
-                Copy-Item $doc.FullName (Join-Path $FfmpegDest ($doc.Name + '.txt')) -Force -ErrorAction SilentlyContinue
+                # Preserve an existing extension (BtbN ships LICENSE.txt / README.txt);
+                # only append .txt when the source name is extensionless, so the doc
+                # lands as a single LICENSE.txt (not the old LICENSE.txt.txt).
+                $docName = if ([IO.Path]::GetExtension($doc.Name)) { $doc.Name } else { $doc.Name + '.txt' }
+                Copy-Item $doc.FullName (Join-Path $FfmpegDest $docName) -Force -ErrorAction SilentlyContinue
             }
             Remove-Item $tmpZip -Force
             Remove-Item $tmpDir -Recurse -Force
