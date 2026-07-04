@@ -58,6 +58,19 @@ def _seed(svc: Services, keys: list[str]) -> Services:
     return svc
 
 
+def _reveal(svc: Services, keys: list[str], params: dict[str, object]) -> dict[str, object]:
+    """Reveal under the request-scoped key overlay main injects for the reveal.
+
+    WU-D2b-2: at rest ``settings.json`` holds only redacted markers, so a real
+    ``providers.revealKey`` runs with the DPAPI-decrypted keys injected for THAT
+    request. This helper opens the same ``key_overlay`` the composition root opens
+    from ``_injectedKeys`` so the handler resolves the LIVE key (the sanctioned
+    plaintext exception), never the at-rest marker.
+    """
+    with svc.settings.key_overlay({"providers": {"groq": list(keys)}}):
+        return svc.providers_reveal_key(params, _ctx())
+
+
 def test_reveal_key_registered_through_composition_root(tmp_path: Path) -> None:
     protocol.METHODS.clear()
     register_all(Services(data_dir=tmp_path))
@@ -67,15 +80,18 @@ def test_reveal_key_registered_through_composition_root(tmp_path: Path) -> None:
 
 def test_reveal_returns_the_raw_key_at_default_index(tmp_path: Path) -> None:
     svc = _seed(_svc(tmp_path), [KEY_A])
-    out = svc.providers_reveal_key({"id": "groq"}, _ctx())
+    out = _reveal(svc, [KEY_A], {"id": "groq"})
     assert out == {"key": KEY_A}
-    # Byte-for-byte round-trip against the FACTORY accessor.
-    assert out["key"] == svc.settings.get_raw()["providers"][0]["apiKeys"][0]
+    # At rest the FACTORY accessor holds only the marker (no plaintext); the raw
+    # key is byte-for-byte recoverable via the injected overlay.
+    assert svc.settings.get_raw()["providers"][0]["apiKeys"][0] == "…AAAA"
+    with svc.settings.key_overlay({"providers": {"groq": [KEY_A]}}):
+        assert out["key"] == svc.settings.get_raw()["providers"][0]["apiKeys"][0]
 
 
 def test_reveal_selects_the_requested_index_and_leaks_no_sibling(tmp_path: Path) -> None:
     svc = _seed(_svc(tmp_path), [KEY_A, KEY_B])
-    out = svc.providers_reveal_key({"id": "groq", "index": 1}, _ctx())
+    out = _reveal(svc, [KEY_A, KEY_B], {"id": "groq", "index": 1})
     assert out == {"key": KEY_B}
     # ONLY the requested key is present — the sibling never rides along.
     assert KEY_A not in json.dumps(out)
@@ -107,10 +123,12 @@ def test_reveal_non_natural_index_is_invalid_params(tmp_path: Path, bad: object)
 
 
 def test_reveal_empty_stored_key_is_invalid_params(tmp_path: Path) -> None:
-    # A provider row whose slot holds an empty string has nothing to reveal.
+    # A provider row whose injected slot holds an empty string has nothing to
+    # reveal — the handler's defensive empty-slot guard raises rather than
+    # returning a bogus empty "key".
     svc = _seed(_svc(tmp_path), [""])
     with pytest.raises(RpcError):
-        svc.providers_reveal_key({"id": "groq", "index": 0}, _ctx())
+        _reveal(svc, [""], {"id": "groq", "index": 0})
 
 
 def test_reveal_no_providers_configured_is_invalid_params(tmp_path: Path) -> None:

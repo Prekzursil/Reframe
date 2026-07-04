@@ -212,6 +212,23 @@ def test_redact_params_hides_api_keys_list_preserving_length() -> None:
         assert full not in repr(out)
 
 
+def test_redact_params_hides_injected_keys_bundle() -> None:
+    # WU-D2b-2: the DPAPI-decrypted `_injectedKeys` bundle main puts on
+    # provider-calling params must be stripped wholesale from any diagnostic
+    # (belt-and-suspenders — the composition root already pops it before dispatch
+    # records/logs the frame).
+    out = secrets.redact_params(
+        {
+            "videoId": "vid-1",
+            "_injectedKeys": {"providers": {"groq": ["gsk-live-SECRET-9999"]}, "cloudApiKey": "sk-live-1234"},
+        }
+    )
+    assert out["videoId"] == "vid-1"  # non-secret preserved
+    assert out["_injectedKeys"] == secrets.REDACTION_PLACEHOLDER
+    assert "gsk-live-SECRET-9999" not in repr(out)
+    assert "sk-live-1234" not in repr(out)
+
+
 def test_redact_params_hides_nested_provider_block() -> None:
     # providers.upsert nests the entry under a "provider" key (providers_ops.py).
     out = secrets.redact_params(

@@ -154,10 +154,14 @@ def test_add_validate_remove_key_flow_is_locked(tmp_path: Path) -> None:
     assert validated == {"ok": True, "capabilities": ["text"]}
     assert LIVE_KEY not in json.dumps(validated)
 
-    # LIST: the RPC read is redacted, but the FACTORY get_raw() still carries the live key.
+    # LIST: the RPC read is redacted; at rest get_raw() ALSO holds only the marker
+    # (WU-D2b-2 NO-PERSIST). The live key is recoverable only via the per-request
+    # injection overlay (the FACTORY path main opens the overlay for).
     listed = svc.providers_list({}, _ctx())
     assert LIVE_KEY not in json.dumps(listed)
-    assert svc.settings.get_raw()["providers"][0]["apiKeys"] == [LIVE_KEY]
+    assert svc.settings.get_raw()["providers"][0]["apiKeys"] == ["…WXYZ"]
+    with svc.settings.key_overlay({"providers": {"groq": [LIVE_KEY]}}):
+        assert svc.settings.get_raw()["providers"][0]["apiKeys"] == [LIVE_KEY]
 
     # REMOVE: providers.remove drops the whole provider entry.
     removed = svc.providers_remove({"id": "groq"}, _ctx())
@@ -165,17 +169,18 @@ def test_add_validate_remove_key_flow_is_locked(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# G-1: keys are PLAINTEXT AT REST — the on-disk settings.json holds the raw key.
-# This is the security gap D2 (safeStorage/DPAPI) will close; locking it here
-# makes the at-rest change unmissable in review.
+# G-1 CLOSED (WU-D2b-2, ruling B): keys are NO LONGER plaintext at rest. The
+# on-disk settings.json holds ONLY the redacted last-4 marker regardless of which
+# caller reached the store (defense-in-depth) — the live key lives in the DPAPI
+# keystore + the per-request injection overlay. This inverts the old G-1 lock.
 # --------------------------------------------------------------------------- #
-def test_stored_provider_key_is_plaintext_at_rest_on_disk(tmp_path: Path) -> None:
+def test_stored_provider_key_is_marker_at_rest_on_disk(tmp_path: Path) -> None:
     svc = _with_groq(_services(tmp_path))
     on_disk = Path(svc.settings.config_path).read_text(encoding="utf-8")
-    # GAP G-1: the raw key sits unencrypted in the JSON document at rest.
-    assert LIVE_KEY in on_disk
+    # No plaintext key byte survives to disk — only the last-4 marker.
+    assert LIVE_KEY not in on_disk
     parsed = json.loads(on_disk)
-    assert parsed["providers"][0]["apiKeys"] == [LIVE_KEY]
+    assert parsed["providers"][0]["apiKeys"] == ["…WXYZ"]
 
 
 # --------------------------------------------------------------------------- #
@@ -215,7 +220,11 @@ def test_openrouter_usage_surface_is_redacted_and_key_free(tmp_path: Path) -> No
 
     svc = _services(tmp_path, openrouter_usage_transport=or_transport)
     _with_openrouter(svc)
-    out = svc.providers_openrouter_usage({}, _ctx())
+    # providers.openrouterUsage is a provider-CALLING read (main injects the live
+    # key for it), so it runs under the request-scoped overlay — get_raw() then
+    # puts the RAW key on the Authorization header, never the at-rest marker.
+    with svc.settings.key_overlay({"providers": {"openrouter": [OR_KEY]}}):
+        out = svc.providers_openrouter_usage({}, _ctx())
     rows = out["usage"]
     assert len(rows) == 1
     assert rows[0]["provider"] == "OpenRouter"

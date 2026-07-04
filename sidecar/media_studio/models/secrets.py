@@ -74,8 +74,12 @@ def scrub_error_body(text: str, keys: Sequence[str]) -> str:
 
 #: RPC param fields that carry live key material and must never reach a log line.
 #: ``apiKey`` (providers.testKey), ``apiKeys`` (providers.upsert pool), and the
-#: legacy single ``cloudApiKey`` are the only key-bearing param names in §2.
-_SECRET_PARAM_FIELDS: tuple[str, ...] = ("apiKey", "apiKeys", "cloudApiKey")
+#: legacy single ``cloudApiKey`` are the key-bearing param names in §2;
+#: ``_injectedKeys`` (WU-D2b-2) is the DPAPI-decrypted key bundle main injects on
+#: provider-calling methods — the composition root pops it BEFORE dispatch logs
+#: or records params, and listing it here is the belt-and-suspenders guarantee
+#: that ANY diagnostic that ever sees it strips it wholesale.
+_SECRET_PARAM_FIELDS: tuple[str, ...] = ("apiKey", "apiKeys", "cloudApiKey", "_injectedKeys")
 
 
 def _redact_secret_fields(entry: dict[str, Any]) -> dict[str, Any]:

@@ -88,16 +88,22 @@ def test_settings_set_response_is_key_free(tmp_path: Path) -> None:
 def test_providers_upsert_adds_then_merges(tmp_path: Path) -> None:
     svc = _services(tmp_path)
     svc.providers_upsert({"id": "groq", "provider": "Groq", "apiKeys": [LIVE_KEY]}, _ctx())
-    # The RAW store carries the live key (the factory path will read it).
-    assert svc.settings.get_raw()["providers"][0]["apiKeys"] == [LIVE_KEY]
-    # Merge a second field into the same id (keeps apiKeys, updates model).
+    # WU-D2b-2 NO-PERSIST: even a raw key handed straight to upsert is stripped to
+    # its marker at rest — the live key never persists plaintext regardless of
+    # caller (defense-in-depth). No plaintext in the on-disk settings file.
+    assert svc.settings.get_raw()["providers"][0]["apiKeys"] == ["…WXYZ"]
+    assert LIVE_KEY not in (tmp_path / "settings.json").read_text(encoding="utf-8")
+    # Merge a second field into the same id (keeps the apiKeys marker, updates model).
     out = svc.providers_upsert({"id": "groq", "model": "m2"}, _ctx())
     raw = svc.settings.get_raw()["providers"]
     assert len(raw) == 1
     assert raw[0]["model"] == "m2"
-    assert raw[0]["apiKeys"] == [LIVE_KEY]
+    assert raw[0]["apiKeys"] == ["…WXYZ"]
     # The returned list is still redacted.
     assert LIVE_KEY not in json.dumps(out)
+    # The FACTORY path recovers the live key only through the injection overlay.
+    with svc.settings.key_overlay({"providers": {"groq": [LIVE_KEY]}}):
+        assert svc.settings.get_raw()["providers"][0]["apiKeys"] == [LIVE_KEY]
 
 
 def test_providers_upsert_accepts_nested_provider_object(tmp_path: Path) -> None:

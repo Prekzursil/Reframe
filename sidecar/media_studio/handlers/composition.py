@@ -12,9 +12,35 @@ from .. import protocol
 from ..features import media_compat as _media_compat
 from ..features import timeline as _timeline
 from ..features import tracks as _tracks
+from ..protocol import Handler, RpcContext
+from ..settings_store import INJECTED_KEYS_FIELD
 from ._services import Services
 from ._shared import _invalid, log
 from ._wire import _self_ffprobe
+
+
+def _key_overlay_wrapper(svc: Services, handler: Handler) -> Handler:
+    """Wrap ``handler`` so the per-request injected DPAPI keys reach ``get_raw``.
+
+    WU-D2b-2 CONSUME (orchestrator ruling B): main injects the decrypted keys
+    under :data:`INJECTED_KEYS_FIELD` on the params of every provider-calling
+    method. This wrapper POPS that field off the params IN PLACE (the SAME dict
+    ``dispatch`` will hand to ``job.retry``'s ``record_request`` and ``rpc.py``'s
+    error logger), so a live key can never land in a job-store record or a log
+    line, then runs the handler inside :meth:`SettingsStore.key_overlay` so the
+    FACTORY seams' ``get_raw()`` see the raw keys for THAT request only — every
+    real key-consuming seam captures its provider/settings synchronously while
+    this overlay is active. A request without the field is an ordinary call (the
+    overlay is never opened)."""
+
+    def wrapped(params: dict[str, Any], ctx: RpcContext) -> Any:
+        injected = params.pop(INJECTED_KEYS_FIELD, None) if isinstance(params, dict) else None
+        if injected is None:
+            return handler(params, ctx)
+        with svc.settings.key_overlay(injected):
+            return handler(params, ctx)
+
+    return wrapped
 
 
 def register_all(
@@ -27,9 +53,17 @@ def register_all(
     Idempotent only across a fresh registry: ``protocol.register`` raises on a
     duplicate name (a typo/double-wire fails loudly at startup). ``services`` and
     ``register`` are injectable for tests (a tmp-dir Services + a fake registrar).
+
+    WU-D2b-2: every handler is registered through :func:`_key_overlay_wrapper`
+    (including the feature modules that take ``register_fn=reg``), so the
+    per-request DPAPI key injection is consumed uniformly and stripped before it
+    can reach a log line or the persisted job store.
     """
     svc = services or Services()
-    reg = register if register is not None else protocol.register
+    base_reg = register if register is not None else protocol.register
+
+    def reg(name: str, handler: Handler) -> None:
+        base_reg(name, _key_overlay_wrapper(svc, handler))
 
     reg("library.list", svc.library_list)
     reg("library.add", svc.library_add)
