@@ -767,6 +767,17 @@ export interface TestKeyResult {
 }
 
 /**
+ * `providers.revealKey` result (WU-D3): the ONE sanctioned plaintext exception to
+ * the redact-over-RPC invariant. Returns exactly ONE raw key, for a TRANSIENT,
+ * explicit-click, masked-by-default display. The renderer holds `key` ONLY in a
+ * transient ref, re-masks it on blur/timeout, and NEVER writes it into React
+ * state/store, logs, telemetry, or crash reports.
+ */
+export interface RevealKeyResult {
+  key: string;
+}
+
+/**
  * One provider's per-data-type consent (`consent.perProvider[provider]`). TEXT
  * (transcripts) and FRAMES (vision) are SEPARATE, independently-revocable
  * opt-ins (SE1). Either may be absent (treated as not-yet-granted = false).

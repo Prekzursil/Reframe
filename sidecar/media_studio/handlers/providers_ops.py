@@ -127,6 +127,49 @@ def providers_test_key(self: Services, params: dict[str, Any], ctx: RpcContext) 
     return {"ok": True, "capabilities": capabilities}
 
 
+def providers_reveal_key(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``providers.revealKey({id, index?})`` -> ``{key}`` — the ONE sanctioned plaintext exception.
+
+    Returns exactly ONE raw plaintext API key, for TRANSIENT display in direct
+    response to an EXPLICIT user click (a "reveal" affordance). This is the SOLE
+    ``providers.*`` RPC that returns a FULL key: every other provider read
+    (``providers.list`` / ``providers.usage`` / ``providers.openrouterUsage`` ...)
+    redacts to last-4. It is the deliberate, DOCUMENTED exception to the
+    redact-over-RPC invariant (PLAN §WU-D3, R7) — justified only because the user
+    is explicitly asking to see their OWN stored key to read/copy it.
+
+    SECURITY CONTRACT (enforced end-to-end, R7): the renderer holds the returned
+    value ONLY in a transient ref, shows it masked-by-default, re-masks it on
+    blur/timeout, and NEVER writes it into React state/store, logs, telemetry, or
+    crash reports. Server-side the key is read RAW via :meth:`SettingsStore.get_raw`
+    (the same FACTORY accessor the rotation pool uses), returned once, and never
+    logged: ``rpc.py``'s param redaction keeps the ``{id, index}`` REQUEST out of
+    diagnostics, and the RESPONSE is never written to a log line.
+
+    ``index`` (default 0) selects among a provider's rotation-pool keys. An unknown
+    id, an out-of-range / negative / non-``int`` (incl. ``bool``) index, or an empty
+    stored slot is a typed ``INVALID_PARAMS`` error — never a crash, and never a
+    silent empty reveal that the UI could mistake for a real key.
+    """
+    provider_id = _require_str(params, "id")
+    index = params.get("index", 0)
+    # bool is an int subclass but never a valid slot index; reject it explicitly.
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        raise _invalid("providers.revealKey index must be a non-negative integer")
+    raw_providers = self.settings.get_raw().get("providers")
+    providers = raw_providers if isinstance(raw_providers, list) else []
+    entry = next((p for p in providers if isinstance(p, dict) and p.get("id") == provider_id), None)
+    if entry is None:
+        raise _invalid(f"providers.revealKey: unknown provider {provider_id!r}")
+    keys = entry.get("apiKeys")
+    if not isinstance(keys, list) or index >= len(keys):
+        raise _invalid(f"providers.revealKey: no key at index {index} for {provider_id!r}")
+    key = keys[index]
+    if not isinstance(key, str) or not key:
+        raise _invalid(f"providers.revealKey: no key at index {index} for {provider_id!r}")
+    return {"key": key}
+
+
 def providers_set_consent(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
     """``providers.setConsent({provider, text?, frames?})`` -> ``{consent}`` (WU-keys / SE1).
 

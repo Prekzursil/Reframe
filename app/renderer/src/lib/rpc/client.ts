@@ -59,6 +59,7 @@ import type {
   ProviderConsent,
   ProviderEntry,
   ProvidersListResponse,
+  RevealKeyResult,
   ProxyStateEvent,
   ReadinessItem,
   RecommendResponse,
@@ -510,6 +511,16 @@ export const client = {
       model?: string;
       capabilities?: string[];
     }): Promise<TestKeyResult> => rpc('providers.testKey', args),
+    /**
+     * `providers.revealKey` — the ONE sanctioned plaintext exception (WU-D3).
+     * Returns exactly ONE raw key for a TRANSIENT, explicit-click, masked-by-default
+     * display. SECURITY: callers MUST hold the returned `key` in a transient ref
+     * only — never React state/store, logs, telemetry, or crash reports — and wipe
+     * it on re-mask/blur/timeout. `index` (default 0) selects among a provider's
+     * rotation-pool keys.
+     */
+    revealKey: (id: string, index = 0): Promise<RevealKeyResult> =>
+      rpc('providers.revealKey', { id, index }),
     /**
      * `providers.setConsent` — set per-data-type egress consent for a provider
      * (WU-keys / SE1). TEXT and FRAMES are independent: only the keys present in

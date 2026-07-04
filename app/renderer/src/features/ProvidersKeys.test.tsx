@@ -111,6 +111,7 @@ interface ApiOverrides {
   upsert?: ReturnType<typeof vi.fn>;
   remove?: ReturnType<typeof vi.fn>;
   testKey?: ReturnType<typeof vi.fn>;
+  revealKey?: ReturnType<typeof vi.fn>;
   setConsent?: ReturnType<typeof vi.fn>;
   settingsGet?: () => Promise<{ consent?: { perProvider?: Record<string, ProviderConsent> } }>;
 }
@@ -124,6 +125,7 @@ function makeApi(over: ApiOverrides = {}): ProvidersKeysProps['rpcClient'] {
       upsert: over.upsert ?? vi.fn(() => Promise.resolve({ providers: [] })),
       remove: over.remove ?? vi.fn(() => Promise.resolve({ providers: [] })),
       testKey: over.testKey ?? vi.fn(() => Promise.resolve({ ok: true } as TestKeyResult)),
+      revealKey: over.revealKey ?? vi.fn(() => Promise.resolve({ key: 'raw-revealed-key' })),
       setConsent:
         over.setConsent ??
         vi.fn(() => Promise.resolve({ consent: { perProvider: {} } } as SetConsentResponse)),
@@ -769,5 +771,119 @@ describe('ProvidersKeys — usage + secondary link', () => {
     expect(link).not.toBeNull();
     await act(async () => link!.click());
     expect(onOpenModels).toHaveBeenCalledTimes(1);
+  });
+});
+
+// --- WU-D3: reveal / re-validate / replace wiring --------------------------
+
+describe('ProvidersKeys — WU-D3 reveal / re-validate / replace', () => {
+  const REVEALED = 'gsk-live-RAW-SECRET-QRST';
+
+  function configuredApi(over: ApiOverrides = {}, apiKeys: string[] = ['…WXYZ']) {
+    return makeApi({
+      list: () =>
+        Promise.resolve({
+          providers: [
+            { id: 'groq', provider: 'Groq', baseUrl: 'https://b/v1', apiKeys },
+          ],
+        }),
+      ...over,
+    });
+  }
+
+  it('reveals the full key via providers.revealKey and never stores it (no leak to store/log/upsert)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const revealKey = vi.fn(() => Promise.resolve({ key: REVEALED }));
+    const upsert = vi.fn(() => Promise.resolve({ providers: [] }));
+    const api = configuredApi({ revealKey, upsert });
+    await mount({ rpcClient: api });
+
+    const revealBtn = container.querySelector<HTMLButtonElement>('.provider-key-row__reveal')!;
+    await act(async () => revealBtn.click());
+    await flush();
+
+    // Explicit-click reveal fetched exactly this provider's index-0 key.
+    expect(revealKey).toHaveBeenCalledWith('groq', 0);
+    expect(container.querySelector('.provider-key-row__value')?.textContent).toBe(REVEALED);
+    // The secret NEVER round-tripped into the store (no upsert) and never logged.
+    expect(upsert).not.toHaveBeenCalled();
+    const logged = warn.mock.calls.flat().map(String);
+    expect(logged.some((s) => s.includes(REVEALED))).toBe(false);
+  });
+
+  it('re-validates a STORED key: revealKey -> testKey with the revealed plaintext', async () => {
+    const revealKey = vi.fn(() => Promise.resolve({ key: REVEALED }));
+    const testKey = vi.fn(() => Promise.resolve({ ok: true, capabilities: ['text'] }));
+    const api = configuredApi({ revealKey, testKey });
+    await mount({ rpcClient: api });
+
+    const revalidateBtn = container.querySelector<HTMLButtonElement>(
+      '.provider-key-row__revalidate',
+    )!;
+    await act(async () => revalidateBtn.click());
+    await flush();
+
+    expect(revealKey).toHaveBeenCalledWith('groq', 0);
+    expect(testKey).toHaveBeenCalledWith({
+      baseUrl: 'https://b/v1',
+      apiKey: REVEALED,
+      // No model on the entry → resolved from PROVIDER_META["Groq"].
+      model: 'llama-3.3-70b-versatile',
+      capabilities: undefined,
+    });
+    expect(container.querySelector('.provider-key-row__status')?.textContent).toBe(
+      'Key verified — working.',
+    );
+  });
+
+  it('replaces a key in place: re-validates the NEW key then upserts it at its index', async () => {
+    const testKey = vi.fn(() => Promise.resolve({ ok: true, capabilities: ['text'] }));
+    const upsert = vi.fn(() =>
+      Promise.resolve({
+        providers: [{ id: 'groq', provider: 'Groq', apiKeys: ['…QRST', '…1234'] }],
+      }),
+    );
+    // Two keys: replacing index 0 must preserve the redacted sibling at index 1.
+    const api = configuredApi({ testKey, upsert }, ['…WXYZ', '…1234']);
+    await mount({ rpcClient: api });
+
+    // Open the first row's replace editor, type a new key, save.
+    const toggle = container.querySelector<HTMLButtonElement>('.provider-key-row__replace-toggle')!;
+    await act(async () => toggle.click());
+    const input = container.querySelector<HTMLInputElement>('.provider-key-row__replace-input')!;
+    await act(async () => setInputValue(input, 'sk-replacement-key'));
+    const save = container.querySelector<HTMLButtonElement>('.provider-key-row__replace-save')!;
+    await act(async () => save.click());
+    await flush();
+
+    expect(testKey).toHaveBeenCalledWith({
+      baseUrl: 'https://b/v1',
+      apiKey: 'sk-replacement-key',
+      model: 'llama-3.3-70b-versatile',
+      capabilities: undefined,
+    });
+    // Index 0 replaced with the raw new key; the redacted sibling round-trips.
+    expect(upsert).toHaveBeenCalledWith({
+      id: 'groq',
+      apiKeys: ['sk-replacement-key', '…1234'],
+    });
+  });
+
+  it('tolerates a malformed upsert response after replace (non-array → empty list)', async () => {
+    const upsert = vi.fn(() => Promise.resolve({} as ProvidersListResponse));
+    const api = configuredApi({ upsert });
+    await mount({ rpcClient: api });
+
+    const toggle = container.querySelector<HTMLButtonElement>('.provider-key-row__replace-toggle')!;
+    await act(async () => toggle.click());
+    const input = container.querySelector<HTMLInputElement>('.provider-key-row__replace-input')!;
+    await act(async () => setInputValue(input, 'sk-brand-new'));
+    const save = container.querySelector<HTMLButtonElement>('.provider-key-row__replace-save')!;
+    await act(async () => save.click());
+    await flush();
+
+    // Non-array providers → the panel falls back to an empty list (no crash).
+    expect(upsert).toHaveBeenCalled();
+    expect(container.querySelector('.provider-card')).toBeNull();
   });
 });

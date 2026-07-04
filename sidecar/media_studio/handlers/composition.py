@@ -160,6 +160,11 @@ def register_all(
     reg("providers.upsert", svc.providers_upsert)
     reg("providers.remove", svc.providers_remove)
     reg("providers.testKey", svc.providers_test_key)
+    # WU-D3: the ONE sanctioned plaintext exception — an explicit-click reveal that
+    # returns exactly one RAW key for a transient, masked-by-default UI display. The
+    # renderer holds it in a ref only (never state/store/logs/telemetry/crash) and
+    # re-masks on blur/timeout. Every other providers.* read stays last-4 redacted.
+    reg("providers.revealKey", svc.providers_reveal_key)
     reg("providers.setConsent", svc.providers_set_consent)
     # WU-usage-ui: per-key live usage (cached, persisted, stale-flagged; no poll
     # burst). The rotation pool already accounts usage from optimistic decrement +

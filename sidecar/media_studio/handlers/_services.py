@@ -199,6 +199,7 @@ class Services:
     providers_upsert = providers_ops.providers_upsert
     providers_remove = providers_ops.providers_remove
     providers_test_key = providers_ops.providers_test_key
+    providers_reveal_key = providers_ops.providers_reveal_key
     providers_set_consent = providers_ops.providers_set_consent
     providers_usage = providers_ops.providers_usage
     providers_openrouter_usage = providers_ops.providers_openrouter_usage

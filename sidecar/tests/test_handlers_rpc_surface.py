@@ -81,6 +81,7 @@ FROZEN_RPC_SURFACE: frozenset[str] = frozenset(
         "providers.list",
         "providers.openrouterUsage",
         "providers.remove",
+        "providers.revealKey",
         "providers.setConsent",
         "providers.setFunctionModel",
         "providers.spend",

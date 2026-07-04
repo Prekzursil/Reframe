@@ -766,6 +766,16 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('providers.setConsent', { provider: 'Groq', frames: false });
   });
 
+  it('providers.revealKey forwards id + index, defaulting index to 0 (WU-D3)', async () => {
+    const r = installApi();
+    // Explicit index rides along verbatim.
+    await client.providers.revealKey('groq', 2);
+    expect(r).toHaveBeenCalledWith('providers.revealKey', { id: 'groq', index: 2 });
+    // Omitted index defaults to 0 (the first rotation-pool key).
+    await client.providers.revealKey('openrouter');
+    expect(r).toHaveBeenCalledWith('providers.revealKey', { id: 'openrouter', index: 0 });
+  });
+
   it('savePresets.* forward their params (WU-10/WU-11)', async () => {
     const r = installApi();
     await client.savePresets.list();

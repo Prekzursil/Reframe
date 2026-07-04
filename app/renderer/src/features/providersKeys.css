@@ -193,22 +193,40 @@
 
 .provider-key-row {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
+  flex-direction: column;
+  gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--edge);
   border-radius: var(--radius-sm);
   background: var(--surface-bg);
 }
 
+.provider-key-row__main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
 .provider-key-row__value {
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-family: var(--font-mono);
   font-size: 13px;
   color: var(--text-secondary);
   letter-spacing: 0.08em;
 }
 
+/* A revealed key is the ONE moment a full secret is on screen — mark it clearly. */
+.provider-key-row__value[data-revealed='true'] {
+  color: var(--text-primary);
+  letter-spacing: 0;
+}
+
+.provider-key-row__reveal,
+.provider-key-row__revalidate,
+.provider-key-row__replace-toggle,
+.provider-key-row__replace-save,
 .provider-key-row__remove {
   padding: 4px 10px;
   border: 1px solid var(--edge);
@@ -225,10 +243,58 @@
     background var(--dur-fast) var(--ease-out);
 }
 
-.provider-key-row__remove:hover {
+.provider-key-row__reveal:hover,
+.provider-key-row__revalidate:hover,
+.provider-key-row__replace-toggle:hover,
+.provider-key-row__replace-save:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.provider-key-row__reveal[aria-pressed='true'] {
+  color: var(--text-primary);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.provider-key-row__reveal:disabled,
+.provider-key-row__revalidate:disabled,
+.provider-key-row__replace-toggle:disabled,
+.provider-key-row__replace-save:disabled,
+.provider-key-row__remove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.provider-key-row__remove:hover:not(:disabled) {
   color: var(--status-error);
   border-color: var(--status-error);
   background: var(--status-error-soft);
+}
+
+.provider-key-row__replace {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.provider-key-row__replace-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-xs);
+  background: var(--surface-bg-elevated, var(--surface-bg));
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.provider-key-row__status {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 /* --- AddKeyRow (paste-to-add) ------------------------------------------- */
@@ -547,6 +613,10 @@
 @media (prefers-reduced-motion: reduce) {
   .provider-card__remove,
   .provider-key-row__remove,
+  .provider-key-row__reveal,
+  .provider-key-row__revalidate,
+  .provider-key-row__replace-toggle,
+  .provider-key-row__replace-save,
   .add-key-row__input,
   .add-key-row__add,
   .picker-option,

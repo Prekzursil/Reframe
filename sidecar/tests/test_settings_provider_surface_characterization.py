@@ -99,7 +99,8 @@ def test_provider_key_and_usage_rpc_surface_snapshot(tmp_path: Path) -> None:
     protocol.METHODS.clear()
     register_all(Services(data_dir=tmp_path))
     surface = sorted(m for m in protocol.METHODS if m.startswith("providers."))
-    # The EXACT provider RPC surface as of v1.2.0 + Wave-1 (WS-D reconcile baseline).
+    # The provider RPC surface as of v1.2.0 + Wave-1, PLUS the D3 addition
+    # ``providers.revealKey`` (the transient masked-reveal contract that closes G-3).
     assert surface == [
         "providers.applyPreset",
         "providers.catalog",
@@ -107,6 +108,7 @@ def test_provider_key_and_usage_rpc_surface_snapshot(tmp_path: Path) -> None:
         "providers.list",
         "providers.openrouterUsage",
         "providers.remove",
+        "providers.revealKey",
         "providers.setConsent",
         "providers.setFunctionModel",
         "providers.spend",
@@ -114,8 +116,10 @@ def test_provider_key_and_usage_rpc_surface_snapshot(tmp_path: Path) -> None:
         "providers.upsert",
         "providers.usage",
     ]
-    # G-3 / G-4 gap lock: no reveal and no re-validate-stored-key handler exists yet.
-    assert "providers.revealKey" not in protocol.METHODS
+    # G-3 CLOSED (D3): the transient reveal handler now exists. Re-validate of a
+    # stored key (G-4) is orchestrated in the renderer (revealKey -> testKey), so
+    # there is deliberately NO separate ``providers.revalidateKey`` sidecar method.
+    assert "providers.revealKey" in protocol.METHODS
     assert "providers.revalidateKey" not in protocol.METHODS
 
 
