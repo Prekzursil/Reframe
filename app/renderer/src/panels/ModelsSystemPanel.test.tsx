@@ -35,6 +35,7 @@ import type {
   LocalModelPlan,
   ModelsOverview,
   OpenRouterUsageRow,
+  ProviderUsageAvailability as UsageAvailabilityRow,
   ReadinessItem,
   Recommendation,
   UsageRow,
@@ -373,10 +374,12 @@ function makeClient(
     overview?: ModelsOverview;
     eligibility?: Eligibility;
     openrouterUsage?: OpenRouterUsageRow[];
+    usageAvailability?: UsageAvailabilityRow[];
     initialSettings?: Record<string, unknown>;
     rejectAnalyze?: boolean;
     rejectUsage?: boolean;
     rejectOpenrouter?: boolean;
+    rejectUsageAvailability?: boolean;
     readiness?: ReadinessItem[];
     rejectEnsure?: boolean;
     rejectRoutingPolicy?: boolean;
@@ -460,6 +463,11 @@ function makeClient(
         calls.push({ method: 'providers.openrouterUsage', args: [] });
         if (over.rejectOpenrouter) throw new Error('openrouter usage failed');
         return { usage: over.openrouterUsage ?? [] };
+      }),
+      usageAvailability: vi.fn(async () => {
+        calls.push({ method: 'providers.usageAvailability', args: [] });
+        if (over.rejectUsageAvailability) throw new Error('usage availability failed');
+        return { availability: over.usageAvailability ?? [] };
       }),
       catalog: vi.fn(async () => {
         calls.push({ method: 'providers.catalog', args: [] });
@@ -2254,6 +2262,42 @@ describe('<ModelsSystemPanel /> WU-B3 card', () => {
     await mount(c);
     const cost = container.querySelector('[data-section="openrouter-usage"]') as HTMLElement;
     expect(cost.querySelector('[data-openrouter="empty"]')).not.toBeNull();
+  });
+
+  it('shows the honest per-provider usage-API availability notes (WU-D4)', async () => {
+    const c = makeClient({
+      usageAvailability: [
+        { provider: 'Groq', hasUsageApi: false, message: 'Usage API not available for Groq.' },
+        {
+          provider: 'OpenRouter',
+          hasUsageApi: true,
+          message: 'Live per-key credit usage is available from OpenRouter.',
+        },
+      ],
+    });
+    await mount(c);
+    const notes = container.querySelector('[data-usage-availability="rows"]') as HTMLElement;
+    expect(notes).not.toBeNull();
+    expect(notes.querySelector('[data-provider="Groq"]')?.getAttribute('data-available')).toBe(
+      'false',
+    );
+    expect(notes.textContent).toContain('Usage API not available for Groq.');
+    expect(c.calls.some((x) => x.method === 'providers.usageAvailability')).toBe(true);
+  });
+
+  it('renders no availability notes when the read rejects (degrades quietly)', async () => {
+    const c = makeClient({ rejectUsageAvailability: true });
+    await mount(c);
+    expect(container.querySelector('[data-usage-availability]')).toBeNull();
+  });
+
+  it('tolerates a non-array availability payload (degrades to empty)', async () => {
+    const c = makeClient();
+    (c.client.providers.usageAvailability as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      {} as unknown as { availability: UsageAvailabilityRow[] },
+    );
+    await mount(c);
+    expect(container.querySelector('[data-usage-availability]')).toBeNull();
   });
 
   it('hides the device-models sections when models.runners yields nothing', async () => {

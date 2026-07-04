@@ -576,6 +576,39 @@
   line-height: var(--type-body-leading);
 }
 
+/* ---- WU-D4: honest per-provider usage-API availability notes ---------------- */
+
+.usage-availability {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.usage-availability__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-body-leading);
+}
+
+.usage-availability__row.is-available {
+  color: var(--text-primary);
+}
+
+.usage-availability__glyph {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.usage-availability__row.is-available .usage-availability__glyph {
+  color: var(--status-success);
+}
+
 /* ---- M4: OpenRouter key-pool rows (per-key usage + cooldown status) --------- */
 
 .openrouter-usage {

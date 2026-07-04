@@ -271,6 +271,8 @@ def providers_spend(self: Services, params: dict[str, Any], ctx: RpcContext) -> 
     With the default off/0 settings every cap reads zero/false so an
     unconfigured install shows a benign "no cap" view.
     """
+    from ..models import provider_pricing as _pricing  # local: import-light pure
+
     ledger = self._spend_ledger()
     settings = self.settings.get()
     return {
@@ -279,7 +281,30 @@ def providers_spend(self: Services, params: dict[str, Any], ctx: RpcContext) -> 
         "softLimitCents": int(settings.get("monthlySoftLimitCents") or 0),
         "hardLimitCents": int(settings.get("monthlyHardLimitCents") or 0),
         "enforceHardLimit": bool(settings.get("enforceMonthlyHardLimit")),
+        # HONESTY (WU-D4): the month-to-date total is derived from PLACEHOLDER
+        # pricing (no curated model publishes a real per-request price), so it is
+        # flagged an ESTIMATE — the UI must NOT present it as a real invoiced charge.
+        "isEstimate": _pricing.spend_is_estimated(),
     }
+
+
+def providers_usage_availability(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``providers.usageAvailability()`` -> ``{availability:[...]}`` honest per-provider notes (WU-D4).
+
+    The LOCAL request/token counters (``providers.usage``) are always surfaced and
+    OpenRouter's per-key COST is fetched live (``providers.openrouterUsage``). This
+    read states, for every OTHER configured cloud provider, whether a provider-side
+    usage API exists — OpenAI/Anthropic gate usage behind an organization ADMIN key
+    a stored project key cannot use, and other providers publish nothing per-key.
+    Rather than fabricate a 0, each such provider gets an honest "Usage API not
+    available for <provider>" message. Rows carry the provider name only — NEVER a
+    key (the classifier reads no key material).
+    """
+    from ..models import provider_usage_availability as _availability  # local: import-light pure
+
+    raw_providers = self.settings.get_raw().get("providers")
+    providers = raw_providers if isinstance(raw_providers, list) else []
+    return {"availability": _availability.usage_availability(providers)}
 
 
 def providers_apply_preset(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:

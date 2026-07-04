@@ -67,6 +67,19 @@ function SpendMeter({ info }: { info: SpendInfo }): React.ReactElement {
         <span className="spend-cap__readout-value" data-mtd={info.monthToDateCents}>
           {mtd}
         </span>
+        {/* WU-D4 honesty: the figure is derived from placeholder pricing (no
+            provider publishes a real per-request price we can read), so it is
+            labelled an ESTIMATE — never presented as a real invoiced charge. Only
+            shown once there is a non-zero figure to qualify. */}
+        {info.isEstimate && info.monthToDateCents > 0 ? (
+          <span
+            className="spend-cap__readout-estimate"
+            data-estimate="true"
+            title="Estimated from per-request pricing — not an exact provider invoice."
+          >
+            estimated
+          </span>
+        ) : null}
         <span className="spend-cap__readout-month">{info.month}</span>
       </div>
       {bounded ? (

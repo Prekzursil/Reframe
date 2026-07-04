@@ -88,6 +88,7 @@ FROZEN_RPC_SURFACE: frozenset[str] = frozenset(
         "providers.testKey",
         "providers.upsert",
         "providers.usage",
+        "providers.usageAvailability",
         "readiness.summary",
         "recipes.delete",
         "recipes.list",

@@ -103,16 +103,18 @@ def _estimate_job_cents(self: Services, envelope: Any) -> int:
 
     A run that will not egress (cache hit / local-only pool) costs nothing. For
     an egressing cloud run the estimate is the planned request count times the
-    documented placeholder per-request rate (the catalog has no structured
-    numeric price yet — see ``spend_ledger.PLACEHOLDER_CENTS_PER_REQUEST``). The
-    SAME helper feeds both the pre-egress hard-cap check and the completion
-    record, so the predicted and recorded costs always agree.
+    per-request price for the run's model — a REAL price where the pricing table
+    has one, else the documented placeholder (see ``provider_pricing``; the catalog
+    has no structured numeric price yet, so today every estimate is placeholder-
+    derived and ``providers.spend`` flags the aggregate ``isEstimate``). The SAME
+    helper feeds both the pre-egress hard-cap check and the completion record, so
+    the predicted and recorded costs always agree.
     """
-    from ..models.spend_ledger import PLACEHOLDER_CENTS_PER_REQUEST  # local: pure
+    from ..models import provider_pricing  # local: import-light pure
 
     if not envelope.route.willEgress:
         return 0
-    return int(envelope.costEst.requests) * PLACEHOLDER_CENTS_PER_REQUEST
+    return int(envelope.costEst.requests) * provider_pricing.request_cents(envelope.inputs.model)
 
 
 def _enforce_monthly_hard_cap(self: Services, envelope: Any) -> None:

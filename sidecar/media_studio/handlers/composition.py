@@ -174,6 +174,10 @@ def register_all(
     # — the cost axis alongside providers.usage's calls/tokens. Best-effort GET per
     # RAW key through the GET-transport seam; no full key ever crosses RPC.
     reg("providers.openrouterUsage", svc.providers_openrouter_usage)
+    # WU-D4: honest per-provider usage-API availability. OpenRouter has a per-key
+    # usage API; OpenAI/Anthropic gate usage behind an org admin key and others
+    # publish nothing per-key — this states that truthfully instead of a fake 0.
+    reg("providers.usageAvailability", svc.providers_usage_availability)
     # WU-spend-cap: month-to-date cumulative spend + the configured monthly caps
     # (read-only). The persisted ledger is written at job completion; this RPC just
     # surfaces it (+ the soft/hard cap settings) for the renderer's spend view.

@@ -700,6 +700,12 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('providers.openrouterUsage', undefined);
   });
 
+  it('providers.usageAvailability calls the bare method (WU-D4 honest notes)', async () => {
+    const r = installApi();
+    await client.providers.usageAvailability();
+    expect(r).toHaveBeenCalledWith('providers.usageAvailability', undefined);
+  });
+
   it('readiness.summary calls the bare method (WU-8 roll-up)', async () => {
     const r = installApi();
     await client.readiness.summary();

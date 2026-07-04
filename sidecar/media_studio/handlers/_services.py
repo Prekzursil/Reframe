@@ -203,6 +203,7 @@ class Services:
     providers_set_consent = providers_ops.providers_set_consent
     providers_usage = providers_ops.providers_usage
     providers_openrouter_usage = providers_ops.providers_openrouter_usage
+    providers_usage_availability = providers_ops.providers_usage_availability
     providers_spend = providers_ops.providers_spend
     providers_apply_preset = providers_ops.providers_apply_preset
     providers_set_function_model = providers_ops.providers_set_function_model

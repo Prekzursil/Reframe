@@ -147,6 +147,7 @@ function makeSpendClient(): SpendCapClient {
     softLimitCents: 0,
     hardLimitCents: 0,
     enforceHardLimit: false,
+    isEstimate: false,
   };
   return {
     providers: { spend: () => Promise.resolve(spend) },

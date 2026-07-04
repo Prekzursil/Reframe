@@ -53,6 +53,7 @@ function spendInfo(over: Partial<SpendInfo> = {}): SpendInfo {
     softLimitCents: 0,
     hardLimitCents: 0,
     enforceHardLimit: false,
+    isEstimate: false,
     ...over,
   };
 }
@@ -132,6 +133,35 @@ describe('SpendCap — load + zero/empty state', () => {
     const { api } = makeApi({ spend: () => Promise.reject('nope') });
     await mount(api);
     expect($('[role="alert"]')?.textContent).toBe('nope');
+  });
+});
+
+describe('SpendCap — estimate honesty (WU-D4)', () => {
+  it('labels a non-zero month-to-date "estimated" when the figure is placeholder-derived', async () => {
+    const { api } = makeApi({
+      spend: () => Promise.resolve(spendInfo({ monthToDateCents: 2500, isEstimate: true })),
+    });
+    await mount(api);
+    const badge = $('.spend-cap__readout-estimate');
+    expect(badge).not.toBeNull();
+    expect(badge?.getAttribute('data-estimate')).toBe('true');
+    expect(badge?.textContent).toBe('estimated');
+  });
+
+  it('does not label a zero month-to-date as estimated (nothing to qualify)', async () => {
+    const { api } = makeApi({
+      spend: () => Promise.resolve(spendInfo({ monthToDateCents: 0, isEstimate: true })),
+    });
+    await mount(api);
+    expect($('.spend-cap__readout-estimate')).toBeNull();
+  });
+
+  it('does not label a figure estimated when real pricing backs it', async () => {
+    const { api } = makeApi({
+      spend: () => Promise.resolve(spendInfo({ monthToDateCents: 2500, isEstimate: false })),
+    });
+    await mount(api);
+    expect($('.spend-cap__readout-estimate')).toBeNull();
   });
 });
 

@@ -58,6 +58,7 @@ import type {
   Project,
   ProviderConsent,
   ProviderEntry,
+  ProviderUsageAvailability,
   ProvidersListResponse,
   RevealKeyResult,
   ProxyStateEvent,
@@ -541,6 +542,13 @@ export const client = {
      */
     openrouterUsage: (): Promise<{ usage: OpenRouterUsageRow[] }> =>
       rpc('providers.openrouterUsage'),
+    /**
+     * `providers.usageAvailability` (WU-D4) — honest per-provider note on whether a
+     * provider-side usage API exists (OpenRouter yes; OpenAI/Anthropic need an org
+     * admin key; others publish nothing per-key). Never a fabricated number.
+     */
+    usageAvailability: (): Promise<{ availability: ProviderUsageAvailability[] }> =>
+      rpc('providers.usageAvailability'),
     /**
      * `providers.spend` — month-to-date cumulative cloud spend + the configured
      * monthly caps (WU-spend-cap). Read-only; all money is integer cents.

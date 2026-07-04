@@ -100,7 +100,9 @@ def test_provider_key_and_usage_rpc_surface_snapshot(tmp_path: Path) -> None:
     register_all(Services(data_dir=tmp_path))
     surface = sorted(m for m in protocol.METHODS if m.startswith("providers."))
     # The provider RPC surface as of v1.2.0 + Wave-1, PLUS the D3 addition
-    # ``providers.revealKey`` (the transient masked-reveal contract that closes G-3).
+    # ``providers.revealKey`` (the transient masked-reveal contract that closes G-3)
+    # and the D4 addition ``providers.usageAvailability`` (honest per-provider
+    # provider-side-usage-API notes — never a fabricated number).
     assert surface == [
         "providers.applyPreset",
         "providers.catalog",
@@ -115,6 +117,7 @@ def test_provider_key_and_usage_rpc_surface_snapshot(tmp_path: Path) -> None:
         "providers.testKey",
         "providers.upsert",
         "providers.usage",
+        "providers.usageAvailability",
     ]
     # G-3 CLOSED (D3): the transient reveal handler now exists. Re-validate of a
     # stored key (G-4) is orchestrated in the renderer (revealKey -> testKey), so

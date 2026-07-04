@@ -752,6 +752,27 @@ export interface SpendInfo {
   hardLimitCents: number;
   /** Master switch: only when true does an over-hard-cap run get refused. */
   enforceHardLimit: boolean;
+  /**
+   * WU-D4 honesty: `true` when `monthToDateCents` is derived from PLACEHOLDER
+   * pricing (no curated model publishes a real per-request price) — so the UI
+   * labels it an ESTIMATE rather than presenting it as a real invoiced charge.
+   */
+  isEstimate: boolean;
+}
+
+/**
+ * `providers.usageAvailability` row (WU-D4): whether a configured cloud provider
+ * exposes a provider-side usage API reachable with the stored key. OpenRouter does
+ * (`hasUsageApi: true`); OpenAI/Anthropic gate usage behind an organization admin
+ * key and other providers publish nothing per-key (`hasUsageApi: false`), so the
+ * UI shows the honest `message` ("Usage API not available for <provider>") instead
+ * of a fabricated number. Carries the provider name only — never a key. Mirrors the
+ * sidecar `provider_usage_availability.UsageAvailabilityRow`.
+ */
+export interface ProviderUsageAvailability {
+  provider: string;
+  hasUsageApi: boolean;
+  message: string;
 }
 
 /**
