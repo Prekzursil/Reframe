@@ -1200,6 +1200,13 @@ export interface DoneEvent {
   result?: unknown;
 }
 
+/** WU B3: `proxy.state` push — playback-proxy build lifecycle for a videoId. */
+export interface ProxyStateEvent {
+  videoId: string;
+  state: 'building' | 'ready' | 'error';
+  detail: string;
+}
+
 /** A3 JobInfo — one entry of `job.list`'s {jobs:[...]} payload. */
 export interface JobInfo {
   jobId: string;
@@ -1230,6 +1237,8 @@ export interface MediaApi {
   onProgress(cb: (event: ProgressEvent) => void): () => void;
   /** Optional — present on the real preload; used for deferred {jobId} jobs. */
   onJobDone?(cb: (event: DoneEvent) => void): () => void;
+  /** Optional (WU B3) — playback-proxy build-state pushes (`proxy.state`). */
+  onProxyState?(cb: (event: ProxyStateEvent) => void): () => void;
   /** Optional (U2) — native multi-select video picker ([] when cancelled). */
   openVideos?(): Promise<string[]>;
   /** Optional (U2) — dropped File -> absolute path (webUtils.getPathForFile). */

@@ -3,7 +3,7 @@ import './workspace.css';
 import { TabBar, type TabDef } from '../components/TabBar';
 import { Player, type PlayerHandle } from '../components/Player';
 import { rpc, type Project, type Video } from '../components/api';
-import { onJobDone } from '../lib/rpc';
+import { onProxyState } from '../lib/rpc';
 import type { SubtitleTrack as FeatureSubtitleTrack } from '../features/_api';
 
 export interface WorkspaceProps {
@@ -88,35 +88,29 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
     void reloadProject();
   }, [reloadProject]);
 
-  // U1: when the source is not directly playable, kick the proxy build; on its
-  // job.done remount the Player — the mstream resolver then serves the cached
-  // proxy for the SAME URL. Operations keep using the original path.
+  // WU B3: the mstream resolver is now authoritative for playability — it
+  // single-flights the proxy build and NEVER streams the raw, undecodable
+  // source ("media error code 4"). We only REACT to its build-state pushes:
+  //   'building' — show the reason note while the transcode runs;
+  //   'ready'    — clear the note + reload the player (shake-free) so it picks
+  //                up the now-decodable proxy for the SAME mstream URL;
+  //   'error'    — surface the failure LOUDLY (no silent center-crop).
   useEffect(() => {
-    let alive = true;
-    let offDone: (() => void) | null = null;
-    rpc<{ playable: boolean; reason?: string; proxyPath?: string }>('media.playable', {
-      videoId: video.id,
-    })
-      .then((v) => {
-        if (!alive || v.playable) return undefined;
-        setPlayerNote(v.reason ?? 'building playback proxy…');
-        return rpc<{ jobId: string }>('media.proxy.start', { videoId: video.id }).then((job) => {
-          if (!alive || !job?.jobId) return;
-          offDone = onJobDone((evt) => {
-            if (evt.jobId !== job.jobId) return;
-            setPlayerNote(null);
-            // Clear any prior load error: the reload below re-fetches the
-            // now-ready proxy, so the stale failure no longer applies.
-            setPlayerError(null);
-            setPlayerEpoch((n) => n + 1);
-          });
-        });
-      })
-      .catch(() => undefined);
-    return () => {
-      alive = false;
-      if (offDone) offDone();
-    };
+    const off = onProxyState((evt) => {
+      if (evt.videoId !== video.id) return;
+      if (evt.state === 'building') {
+        setPlayerNote(evt.detail || 'building playback proxy…');
+        setPlayerError(null);
+      } else if (evt.state === 'ready') {
+        setPlayerNote(null);
+        setPlayerError(null);
+        setPlayerEpoch((n) => n + 1);
+      } else {
+        setPlayerNote(null);
+        setPlayerError(evt.detail || 'playback proxy build failed');
+      }
+    });
+    return off;
   }, [video.id]);
 
   // components/api types `format` as plain string while the panels' _api uses

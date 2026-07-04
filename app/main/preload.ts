@@ -27,6 +27,7 @@ const DIALOG_PICK_LOGO_CHANNEL = 'dialog.pickLogoFile'; // must match app/main/s
 const SIDECAR_RESTART_CHANNEL = 'sidecar.restart'; // must match app/main/ipc.ts
 const SIDECAR_STATUS_CHANNEL = 'sidecar.status'; // must match app/main/ipc.ts
 const BOOTSTRAP_ERROR_CHANNEL = 'bootstrap.error'; // must match app/main/main.ts
+const PROXY_STATE_CHANNEL = 'proxy.state'; // must match app/main/main.ts (WU B3)
 const DATA_FOLDER_GET_CHANNEL = 'dataFolder.get'; // must match app/main/dataFolderIpc.ts
 const DATA_FOLDER_PICK_CHANNEL = 'dataFolder.pick'; // must match app/main/dataFolderIpc.ts
 const DATA_FOLDER_SET_CHANNEL = 'dataFolder.set'; // must match app/main/dataFolderIpc.ts
@@ -42,6 +43,13 @@ export interface DoneEvent {
   result?: unknown;
 }
 
+/** WU B3: playback-proxy build lifecycle pushed per videoId to the renderer. */
+export interface ProxyStateEvent {
+  videoId: string;
+  state: 'building' | 'ready' | 'error';
+  detail: string;
+}
+
 /** Self-healing supervisor lifecycle states (mirrors sidecar.ts SidecarState). */
 export type SidecarStatus = 'running' | 'restarting' | 'down';
 
@@ -52,6 +60,12 @@ export interface MediaApi {
   onProgress(cb: (event: ProgressEvent) => void): () => void;
   /** Subscribe to `job.done` notifications. Returns an unsubscribe fn. */
   onJobDone(cb: (event: DoneEvent) => void): () => void;
+  /**
+   * WU B3: subscribe to playback-proxy build-state pushes (`proxy.state`). The
+   * Workspace shows a "building…" note, reloads the player on 'ready', and
+   * surfaces the reason LOUDLY on 'error'. Returns an unsubscribe fn.
+   */
+  onProxyState(cb: (event: ProxyStateEvent) => void): () => void;
   /** Native multi-select video picker; resolves with absolute paths ([] when cancelled). */
   openVideos(): Promise<string[]>;
   /**
@@ -117,6 +131,12 @@ const api: MediaApi = {
     const listener = (_event: IpcRendererEvent, payload: DoneEvent): void => cb(payload);
     ipcRenderer.on(DONE_CHANNEL, listener);
     return () => ipcRenderer.removeListener(DONE_CHANNEL, listener);
+  },
+
+  onProxyState(cb: (event: ProxyStateEvent) => void): () => void {
+    const listener = (_event: IpcRendererEvent, payload: ProxyStateEvent): void => cb(payload);
+    ipcRenderer.on(PROXY_STATE_CHANNEL, listener);
+    return () => ipcRenderer.removeListener(PROXY_STATE_CHANNEL, listener);
   },
 
   openVideos(): Promise<string[]> {

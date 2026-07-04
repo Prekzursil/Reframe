@@ -19,6 +19,8 @@ vi.mock('electron', () => ({
 
 import {
   MEDIA_SCHEME,
+  ProxyBuildFailedError,
+  ProxyBuildingError,
   SidecarUnavailableError,
   contentTypeFor,
   createMediaRequestHandler,
@@ -281,6 +283,28 @@ describe('createMediaRequestHandler (end-to-end against a temp file)', () => {
     expect(res.status).toBe(400);
   });
 
+  it('responds 503 (building) when the resolver throws ProxyBuildingError (WU B3)', async () => {
+    // The source needs a proxy and the bounded single-flight build is still
+    // running: transient 503, NEVER a fall-back to the undecodable original.
+    const building = createMediaRequestHandler(() =>
+      Promise.reject(new ProxyBuildingError('still building')),
+    );
+    const res = await building(new Request('mstream://media/vid1'));
+    expect(res.status).toBe(503);
+    expect(await res.text()).toContain('building playback proxy');
+  });
+
+  it('responds 502 (loud) when the resolver throws ProxyBuildFailedError (WU B3)', async () => {
+    // A failed proxy build is surfaced LOUDLY (no silent center-crop); the
+    // reason rides the response body.
+    const failed = createMediaRequestHandler(() =>
+      Promise.reject(new ProxyBuildFailedError('ffmpeg exited with code 1')),
+    );
+    const res = await failed(new Request('mstream://media/vid1'));
+    expect(res.status).toBe(502);
+    expect(await res.text()).toContain('ffmpeg exited with code 1');
+  });
+
   it('supports an async resolver', async () => {
     const res = await createMediaRequestHandler(async () => filePath)(
       new Request('mstream://media/vid1', { headers: { Range: 'bytes=0-' } }),
@@ -300,6 +324,25 @@ describe('SidecarUnavailableError', () => {
 
   it('accepts a custom message', () => {
     expect(new SidecarUnavailableError('boom').message).toBe('boom');
+  });
+});
+
+describe('ProxyBuildingError / ProxyBuildFailedError (WU B3)', () => {
+  it('default their messages and carry their names', () => {
+    const building = new ProxyBuildingError();
+    expect(building).toBeInstanceOf(Error);
+    expect(building.name).toBe('ProxyBuildingError');
+    expect(building.message).toBe('playback proxy is still building');
+
+    const failed = new ProxyBuildFailedError();
+    expect(failed).toBeInstanceOf(Error);
+    expect(failed.name).toBe('ProxyBuildFailedError');
+    expect(failed.message).toBe('playback proxy build failed');
+  });
+
+  it('accept custom messages', () => {
+    expect(new ProxyBuildingError('wait').message).toBe('wait');
+    expect(new ProxyBuildFailedError('nope').message).toBe('nope');
   });
 });
 

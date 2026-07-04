@@ -38,6 +38,8 @@ import {
   registerMediaSchemePrivileges,
   SidecarUnavailableError,
 } from './mediaProtocol';
+import { PlaybackProxy, type PlayableVerdict, type ProxyBuildState } from './playbackProxy';
+import type { DoneNotification } from './sidecar';
 import { registerShellIpc } from './shellIpc';
 import { pthZipName, renderPthBody } from './pthActivation';
 import {
@@ -85,6 +87,23 @@ const BOOTSTRAP_PROGRESS_CHANNEL = 'bootstrap.progress';
  * first run is then visible + actionable instead of a silent empty app.
  */
 const BOOTSTRAP_ERROR_CHANNEL = 'bootstrap.error';
+
+/**
+ * WU B3: ipc channel carrying the playback-proxy build state for a videoId to
+ * the renderer's Workspace (`{videoId, state, detail}`). `state` is
+ * 'building' | 'ready' | 'error' — the renderer shows a "building…" note, swaps
+ * to the now-decodable proxy on 'ready', and surfaces the reason LOUDLY on
+ * 'error'. Must match preload.ts PROXY_STATE_CHANNEL + `onProxyState`.
+ */
+const PROXY_STATE_CHANNEL = 'proxy.state';
+
+/**
+ * WU B3: the bounded await for a single-flight proxy build. Generous enough for
+ * a real transcode to finish inline (the <video> request just waits), but
+ * finite so a wedged build becomes a transient "building" 503 the renderer can
+ * retry — never an unbounded hang and never a fall-back to the raw source.
+ */
+const PROXY_BUILD_TIMEOUT_MS = 15 * 60_000;
 
 let bootstrapChild: ChildProcess | null = null;
 
@@ -319,6 +338,50 @@ function broadcastBootstrapError(message: string): void {
 }
 
 /**
+ * WU B3: push a playback-proxy build-state transition to every live renderer so
+ * the Workspace can show the "building…" note, reload on 'ready', and surface a
+ * build failure loudly on 'error'.
+ */
+function broadcastProxyState(videoId: string, state: ProxyBuildState, detail: string): void {
+  for (const win of liveWindows()) {
+    if (!win.webContents.isDestroyed()) {
+      win.webContents.send(PROXY_STATE_CHANNEL, { videoId, state, detail });
+    }
+  }
+}
+
+/**
+ * WU B3: start the sidecar `media.proxy.start` job for `videoId` and resolve
+ * with the built proxy's absolute path once its terminal `job.done` arrives.
+ * Rejects LOUDLY when the job reports an error payload (a failed transcode) or
+ * finishes without a path — so the caller never silently serves the raw source.
+ * The bounded await lives in {@link PlaybackProxy}; this just bridges the job's
+ * done-event to a promise (and always detaches its listener).
+ */
+function buildProxyJob(sc: Sidecar, videoId: string): Promise<string> {
+  return sc
+    .request<{ jobId: string }>('media.proxy.start', { videoId })
+    .then(
+      ({ jobId }) =>
+        new Promise<string>((resolveBuild, rejectBuild) => {
+          const onDone = (done: DoneNotification): void => {
+            if (done.jobId !== jobId) return;
+            sc.off('done', onDone);
+            const result = (done.result ?? {}) as { path?: string; error?: { message?: string } };
+            if (result.error) {
+              rejectBuild(new Error(result.error.message ?? `proxy build failed for ${videoId}`));
+            } else if (typeof result.path === 'string' && result.path !== '') {
+              resolveBuild(result.path);
+            } else {
+              rejectBuild(new Error(`proxy build for ${videoId} returned no path`));
+            }
+          };
+          sc.on('done', onDone);
+        }),
+    );
+}
+
+/**
  * Spawn `runtime_setup/bootstrap.py` with the bundled embeddable python and
  * relay its progress lines (`[bootstrap] ...` on stderr, the terminal
  * SUCCESS:/FAILED: line on stdout) to the renderer over 'bootstrap.progress'.
@@ -534,6 +597,38 @@ function bootstrap(): void {
   // the PLAYABLE path for a videoId: the cached remux/proxy when media.playable
   // reports one, otherwise the original library path.
   const sc = sidecar; // capture for the closure (sidecar is module-level let)
+  // WU B3: single-flight, bounded playback-proxy orchestration. A non-playable
+  // source is transcoded ONCE (concurrent <video> range requests share the same
+  // in-flight build), awaited within PROXY_BUILD_TIMEOUT_MS, and its state is
+  // pushed to the renderer — a build FAILURE is surfaced loudly (502) instead of
+  // streaming the raw, undecodable original ("media error code 4").
+  const playbackProxy = new PlaybackProxy({
+    probePlayable: async (videoId) => {
+      try {
+        return await sc.request<PlayableVerdict>('media.playable', { videoId });
+      } catch (err) {
+        throw new SidecarUnavailableError(
+          `media.playable failed for ${videoId}: ${(err as Error).message}`,
+        );
+      }
+    },
+    resolveOriginal: async (videoId) => {
+      try {
+        const { videos } = await sc.request<{ videos: { id: string; path: string }[] }>(
+          'library.list',
+        );
+        return videos.find((v) => v.id === videoId)?.path ?? null;
+      } catch (err) {
+        throw new SidecarUnavailableError(
+          `library.list failed for ${videoId}: ${(err as Error).message}`,
+        );
+      }
+    },
+    buildProxy: (videoId) => buildProxyJob(sc, videoId),
+    isPlayableFile,
+    notify: broadcastProxyState,
+    timeoutMs: PROXY_BUILD_TIMEOUT_MS,
+  });
   registerMediaProtocol(async (videoId) => {
     // T2 (WIRING-T2 §6): serve finished dub WAVs from the sidecar's dub output
     // dir ONLY (no arbitrary-disk streaming through the media scheme).
@@ -578,29 +673,13 @@ function bootstrap(): void {
       return resolveScopedMediaPath(videoId, 'thumb:', thumbnailsRoot);
     }
     if (!sc) return null;
-    // Distinguish a dead/throwing sidecar (transient -> SidecarUnavailableError ->
-    // 503) from a genuinely-absent id (-> null -> 404). Both `request` calls go to
-    // the sidecar, so any throw from them means the backend could not answer.
-    let verdict: { playable: boolean; proxyPath?: string };
-    let videos: { id: string; path: string }[];
-    try {
-      verdict = await sc.request<{ playable: boolean; proxyPath?: string }>('media.playable', {
-        videoId,
-      });
-      ({ videos } = await sc.request<{ videos: { id: string; path: string }[] }>('library.list'));
-    } catch (err) {
-      throw new SidecarUnavailableError(
-        `media resolve failed for ${videoId}: ${(err as Error).message}`,
-      );
-    }
-    // Prefer the cached proxy, but only if it ACTUALLY exists on disk + is a
-    // Chromium-decodable container; a stale/half-written verdict.proxyPath would
-    // otherwise 404 (or feed Chromium an undecodable file) and blank the player.
-    // Fall back to the original library path in that case.
-    if (verdict.proxyPath && (await isPlayableFile(verdict.proxyPath))) {
-      return verdict.proxyPath;
-    }
-    return videos.find((v) => v.id === videoId)?.path ?? null;
+    // WU B3: playability resolution + single-flight, bounded proxy build. The
+    // cached proxy is served when present + decodable; a directly-playable source
+    // streams its original; a NON-playable source is transcoded (once) and awaited
+    // — never streaming the raw, undecodable original. Throws propagate as:
+    // SidecarUnavailableError -> 503, ProxyBuildingError -> 503 (still building),
+    // ProxyBuildFailedError -> 502 (loud). A missing id resolves to null -> 404.
+    return playbackProxy.resolve(videoId);
   });
 
   const win = createWindow();

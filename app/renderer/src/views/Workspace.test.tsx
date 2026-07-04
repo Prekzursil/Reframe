@@ -29,12 +29,14 @@ vi.mock('../components/api', () => ({
   hasApi: () => true,
 }));
 
-// U1 proxy-build path: the Workspace subscribes to job.done through lib/rpc's
-// onJobDone. Mock it so the deferred-remount branch can be driven deterministically
-// (the real wrapper reads window.api, which is not present under jsdom).
-const onJobDoneMock = vi.fn<(cb: (e: { jobId: string; result?: unknown }) => void) => () => void>();
+// WU B3 proxy-build path: the Workspace subscribes to the main process's
+// `proxy.state` pushes through lib/rpc's onProxyState. Mock it so the
+// building/ready/error transitions can be driven deterministically (the real
+// wrapper reads window.api, which is not present under jsdom).
+type ProxyStateEvt = { videoId: string; state: 'building' | 'ready' | 'error'; detail: string };
+const onProxyStateMock = vi.fn<(cb: (e: ProxyStateEvt) => void) => () => void>();
 vi.mock('../lib/rpc', () => ({
-  onJobDone: (cb: (e: { jobId: string; result?: unknown }) => void) => onJobDoneMock(cb),
+  onProxyState: (cb: (e: ProxyStateEvt) => void) => onProxyStateMock(cb),
 }));
 
 // The 11 feature panels are lazily code-split. Mock each to a deterministic
@@ -99,8 +101,8 @@ let root: Root;
 beforeEach(() => {
   rpcMock.mockReset();
   rpcMock.mockResolvedValue({ project });
-  onJobDoneMock.mockReset();
-  onJobDoneMock.mockReturnValue(() => undefined);
+  onProxyStateMock.mockReset();
+  onProxyStateMock.mockReturnValue(() => undefined);
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -267,57 +269,45 @@ describe('Workspace', () => {
     }
   });
 
-  it('builds a playback proxy when the source is not directly playable, then remounts the Player on job.done', async () => {
-    let doneCb: ((e: { jobId: string; result?: unknown }) => void) | null = null;
-    onJobDoneMock.mockImplementation((cb) => {
-      doneCb = cb;
+  // WU B3: the mstream resolver builds the proxy; the Workspace only REACTS to
+  // the main process's `proxy.state` pushes. Drive the callback directly.
+  async function renderAndCaptureProxyState(): Promise<(e: ProxyStateEvt) => void> {
+    let cb: ((e: ProxyStateEvt) => void) | null = null;
+    onProxyStateMock.mockImplementation((fn) => {
+      cb = fn;
       return () => undefined;
     });
-    rpcMock.mockReset();
-    rpcMock.mockImplementation((method: string) => {
-      switch (method) {
-        case 'project.open':
-          return Promise.resolve({ project });
-        case 'media.playable':
-          return Promise.resolve({ playable: false, reason: 'needs proxy' });
-        case 'media.proxy.start':
-          return Promise.resolve({ jobId: 'job-proxy-1' });
-        default:
-          return Promise.resolve({});
-      }
-    });
-
     await act(async () => {
       root.render(<Workspace video={video} onBack={() => {}} />);
     });
     await flush();
+    expect(cb).not.toBeNull();
+    return cb as (e: ProxyStateEvt) => void;
+  }
 
-    // the reason note is shown while the proxy builds
+  it('shows the building note while the proxy builds, then reloads the player on ready (shake-free)', async () => {
+    const emit = await renderAndCaptureProxyState();
+
+    // 'building' shows the reason note.
+    await act(async () => emit({ videoId: 'v1', state: 'building', detail: 'needs proxy' }));
+    await flush();
     expect(container.querySelector('.workspace__player-note')?.textContent).toContain(
       'needs proxy',
     );
-    expect(rpcMock).toHaveBeenCalledWith('media.proxy.start', { videoId: 'v1' });
-    expect(onJobDoneMock).toHaveBeenCalledTimes(1);
 
-    // G1 shake fix: capture the live <video> so we can prove it PERSISTS across
-    // the proxy swap (no key-remount). The element identity must be stable.
+    // capture the live <video> to prove it PERSISTS across the proxy swap.
     const videoBefore = container.querySelector('.workspace__player video');
     expect(videoBefore).not.toBeNull();
     loadMock.mockClear();
 
-    // an unrelated job.done is ignored (no note clear)
-    await act(async () => {
-      doneCb?.({ jobId: 'some-other-job' });
-    });
+    // a proxy-state event for a DIFFERENT videoId is ignored (note stays).
+    await act(async () => emit({ videoId: 'other', state: 'ready', detail: '' }));
     await flush();
     expect(container.querySelector('.workspace__player-note')).not.toBeNull();
 
-    // our proxy job's done clears the note and bumps the reloadToken: the SAME
-    // <video> stays mounted and is re-fetched via load() (shake-free), NOT
-    // remounted via a key change.
-    await act(async () => {
-      doneCb?.({ jobId: 'job-proxy-1' });
-    });
+    // 'ready' clears the note and bumps the reloadToken: the SAME <video> stays
+    // mounted and is re-fetched via load() (shake-free), NOT key-remounted.
+    await act(async () => emit({ videoId: 'v1', state: 'ready', detail: '/proxies/v1.mp4' }));
     await flush();
     expect(container.querySelector('.workspace__player-note')).toBeNull();
     const videoAfter = container.querySelector('.workspace__player video');
@@ -326,31 +316,9 @@ describe('Workspace', () => {
   });
 
   it('surfaces a <video> load error (onError) and clears it on the proxy-ready reload', async () => {
-    let doneCb: ((e: { jobId: string; result?: unknown }) => void) | null = null;
-    onJobDoneMock.mockImplementation((cb) => {
-      doneCb = cb;
-      return () => undefined;
-    });
-    rpcMock.mockReset();
-    rpcMock.mockImplementation((method: string) => {
-      switch (method) {
-        case 'project.open':
-          return Promise.resolve({ project });
-        case 'media.playable':
-          return Promise.resolve({ playable: false, reason: 'needs proxy' });
-        case 'media.proxy.start':
-          return Promise.resolve({ jobId: 'job-proxy-2' });
-        default:
-          return Promise.resolve({});
-      }
-    });
+    const emit = await renderAndCaptureProxyState();
 
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
-
-    // the <video> fails to load (mstream 404 / undecodable) -> error surfaces.
+    // the <video> fails to load (undecodable source pre-proxy) -> error surfaces.
     const videoEl = container.querySelector('.workspace__player video') as HTMLVideoElement;
     await act(async () => {
       videoEl.dispatchEvent(new Event('error'));
@@ -360,98 +328,64 @@ describe('Workspace', () => {
       'media failed to load',
     );
 
-    // once the proxy is ready, the job.done reload clears the stale error.
-    await act(async () => {
-      doneCb?.({ jobId: 'job-proxy-2' });
-    });
+    // once the proxy is ready, the reload clears the stale error.
+    await act(async () => emit({ videoId: 'v1', state: 'ready', detail: '/proxies/v1.mp4' }));
     await flush();
     expect(container.querySelector('.workspace__player-error')).toBeNull();
   });
 
-  it('falls back to a default note when media.playable gives no reason', async () => {
-    rpcMock.mockReset();
-    rpcMock.mockImplementation((method: string) => {
-      switch (method) {
-        case 'project.open':
-          return Promise.resolve({ project });
-        case 'media.playable':
-          return Promise.resolve({ playable: false });
-        case 'media.proxy.start':
-          // no jobId -> the onJobDone subscription is skipped (early return branch)
-          return Promise.resolve({});
-        default:
-          return Promise.resolve({});
-      }
-    });
-
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
+  it('falls back to a default note when the building push carries no detail', async () => {
+    const emit = await renderAndCaptureProxyState();
+    await act(async () => emit({ videoId: 'v1', state: 'building', detail: '' }));
     await flush();
-
     expect(container.querySelector('.workspace__player-note')?.textContent).toContain(
       'building playback proxy',
     );
-    expect(onJobDoneMock).not.toHaveBeenCalled();
   });
 
-  it('skips the proxy build entirely when the source is already playable', async () => {
-    rpcMock.mockReset();
-    rpcMock.mockImplementation((method: string) => {
-      if (method === 'project.open') return Promise.resolve({ project });
-      if (method === 'media.playable') return Promise.resolve({ playable: true });
-      return Promise.resolve({});
-    });
+  it('surfaces a proxy BUILD FAILURE loudly (no silent center-crop)', async () => {
+    const emit = await renderAndCaptureProxyState();
 
+    // 'error' with a reason surfaces it in the player-error banner + clears the note.
+    await act(async () => emit({ videoId: 'v1', state: 'building', detail: 'needs proxy' }));
+    await act(async () => emit({ videoId: 'v1', state: 'error', detail: 'ffmpeg exited with code 1' }));
+    await flush();
+    expect(container.querySelector('.workspace__player-note')).toBeNull();
+    expect(container.querySelector('.workspace__player-error')?.textContent).toContain(
+      'ffmpeg exited with code 1',
+    );
+  });
+
+  it('falls back to a default failure message when the error push carries no detail', async () => {
+    const emit = await renderAndCaptureProxyState();
+    await act(async () => emit({ videoId: 'v1', state: 'error', detail: '' }));
+    await flush();
+    expect(container.querySelector('.workspace__player-error')?.textContent).toContain(
+      'playback proxy build failed',
+    );
+  });
+
+  it('shows no player note when the source is already playable (no build events)', async () => {
     await act(async () => {
       root.render(<Workspace video={video} onBack={() => {}} />);
     });
     await flush();
 
+    // the Workspace never kicks the build itself (the resolver does).
     expect(container.querySelector('.workspace__player-note')).toBeNull();
+    expect(rpcMock).not.toHaveBeenCalledWith('media.playable', expect.anything());
     expect(rpcMock).not.toHaveBeenCalledWith('media.proxy.start', expect.anything());
   });
 
-  it('swallows a media.playable probe failure (best-effort proxy build)', async () => {
-    rpcMock.mockReset();
-    rpcMock.mockImplementation((method: string) => {
-      if (method === 'project.open') return Promise.resolve({ project });
-      if (method === 'media.playable') return Promise.reject(new Error('probe failed'));
-      return Promise.resolve({});
-    });
-
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
-
-    // no crash, no note, no error banner — the probe failure is caught
-    expect(container.querySelector('.workspace__player-note')).toBeNull();
-    expect(container.querySelector('.workspace__error')).toBeNull();
-  });
-
-  it('unsubscribes from job.done on unmount after a proxy build starts', async () => {
+  it('unsubscribes from proxy-state on unmount', async () => {
     const off = vi.fn();
-    onJobDoneMock.mockReturnValue(off);
-    rpcMock.mockReset();
-    rpcMock.mockImplementation((method: string) => {
-      switch (method) {
-        case 'project.open':
-          return Promise.resolve({ project });
-        case 'media.playable':
-          return Promise.resolve({ playable: false, reason: 'x' });
-        case 'media.proxy.start':
-          return Promise.resolve({ jobId: 'job-9' });
-        default:
-          return Promise.resolve({});
-      }
-    });
+    onProxyStateMock.mockReturnValue(off);
 
     await act(async () => {
       root.render(<Workspace video={video} onBack={() => {}} />);
     });
     await flush();
-    expect(onJobDoneMock).toHaveBeenCalledTimes(1);
+    expect(onProxyStateMock).toHaveBeenCalledTimes(1);
 
     await act(async () => root.unmount());
     expect(off).toHaveBeenCalledTimes(1);

@@ -59,6 +59,7 @@ import type {
   ProviderConsent,
   ProviderEntry,
   ProvidersListResponse,
+  ProxyStateEvent,
   ReadinessItem,
   RecommendResponse,
   RoutingMode,
@@ -111,6 +112,16 @@ export function onJobDone(cb: (event: DoneEvent) => void): () => void {
   const api = bridge();
   if (typeof api.onJobDone !== 'function') return () => undefined;
   return api.onJobDone(cb);
+}
+
+/**
+ * WU B3: subscribe to playback-proxy build-state pushes (`proxy.state`). Returns
+ * an unsubscribe fn (a no-op when the preload bridge predates the channel).
+ */
+export function onProxyState(cb: (event: ProxyStateEvent) => void): () => void {
+  const api = bridge();
+  if (typeof api.onProxyState !== 'function') return () => undefined;
+  return api.onProxyState(cb);
 }
 
 // ---- Method-typed convenience surface (the canonical client) -------------

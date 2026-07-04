@@ -11,6 +11,7 @@ import {
   rpc,
   onProgress,
   onJobDone,
+  onProxyState,
   type AutosaveSettings,
   type Candidate,
   type ConvertOptions,
@@ -210,6 +211,27 @@ describe('bridge accessors', () => {
     const cb = vi.fn();
     const unsub = onJobDone(cb);
     // The no-op unsubscribe must be callable and return undefined.
+    expect(unsub()).toBeUndefined();
+    expect(cb).not.toHaveBeenCalled();
+  });
+
+  it('onProxyState subscribes through the bridge when the preload supports it (WU B3)', () => {
+    const off = vi.fn();
+    const onProxyStateSpy = vi.fn(() => off);
+    (globalThis as { window?: { api?: unknown } }).window = {
+      api: { rpc: vi.fn(), onProgress: vi.fn(() => () => {}), onProxyState: onProxyStateSpy },
+    };
+    const cb = vi.fn();
+    const unsub = onProxyState(cb);
+    expect(onProxyStateSpy).toHaveBeenCalledWith(cb);
+    unsub();
+    expect(off).toHaveBeenCalledTimes(1);
+  });
+
+  it('onProxyState returns a no-op unsubscribe when the bridge lacks onProxyState', () => {
+    installApi(); // bridge has rpc + onProgress, but NO onProxyState
+    const cb = vi.fn();
+    const unsub = onProxyState(cb);
     expect(unsub()).toBeUndefined();
     expect(cb).not.toHaveBeenCalled();
   });
