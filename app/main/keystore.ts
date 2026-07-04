@@ -261,6 +261,23 @@ function writeKeystore(safeStorage: SafeStorageLike, keystorePath: string, keys:
 }
 
 /**
+ * Persist the full {@link DecryptedKeys} map (re-encrypted) to `keystorePath`.
+ *
+ * The public writer used by the live providers.upsert interception (keyBridge.ts)
+ * to keep the keystore the single at-rest home of raw keys. REFUSES (throws
+ * {@link KeystoreUnavailableError} via {@link encryptToBase64}) when no secure
+ * backend exists — NEVER a silent plaintext write; the caller falls back to a
+ * session-only in-memory overlay.
+ */
+export function saveDecryptedKeys(
+  safeStorage: SafeStorageLike,
+  keystorePath: string,
+  keys: DecryptedKeys,
+): void {
+  writeKeystore(safeStorage, keystorePath, keys);
+}
+
+/**
  * Load + decrypt the keystore for main to inject into the sidecar per-request
  * over the existing stdio JSON-RPC frame (NEVER env/argv/settings.json). Returns
  * empty when no keystore exists yet.

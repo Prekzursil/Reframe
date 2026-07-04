@@ -21,6 +21,7 @@ import {
   loadDecryptedKeys,
   migrateLegacyPlaintextKeys,
   priorCopies,
+  saveDecryptedKeys,
   secureStatus,
   selectedBackend,
   shredFile,
@@ -74,6 +75,32 @@ describe('selectedBackend', () => {
   it('returns null when the query yields a non-string', () => {
     const nonString = (): string => 42 as unknown as string;
     expect(selectedBackend(makeSafeStorage({ backend: nonString }))).toBeNull();
+  });
+});
+
+describe('saveDecryptedKeys', () => {
+  it('encrypts and round-trips the full key map (providers + cloud)', () => {
+    const store = makeSafeStorage();
+    saveDecryptedKeys(store, keystorePath(), {
+      providers: { groq: ['gsk_a', 'gsk_b'] },
+      cloudApiKey: 'sk-cloud',
+    });
+    // No plaintext key byte is written to disk.
+    const onDisk = readFileSync(keystorePath(), 'utf8');
+    expect(onDisk).not.toContain('gsk_a');
+    expect(onDisk).not.toContain('sk-cloud');
+    // But it decrypts back to the raw material.
+    const loaded = loadDecryptedKeys(store, keystorePath());
+    expect(loaded.providers.groq).toEqual(['gsk_a', 'gsk_b']);
+    expect(loaded.cloudApiKey).toBe('sk-cloud');
+  });
+
+  it('refuses to persist (throws) when no secure backend exists', () => {
+    const store = makeSafeStorage({ available: false });
+    expect(() =>
+      saveDecryptedKeys(store, keystorePath(), { providers: { groq: ['gsk_a'] } }),
+    ).toThrow(KeystoreUnavailableError);
+    expect(existsSync(keystorePath())).toBe(false);
   });
 });
 

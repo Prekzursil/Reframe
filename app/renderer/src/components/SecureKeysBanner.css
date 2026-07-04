@@ -1,0 +1,44 @@
+/* WU-D2b-1 secure-key-storage session-only banner. A bottom-pinned, non-blocking
+   warning strip (no backdrop, no focus capture) telling the user that API keys
+   cannot be saved at rest on this system. All values are tokens; class names are
+   test-pinned. App.tsx (wiring) owns the top-level CSS import. */
+
+.secure-keys-banner {
+  position: fixed;
+  bottom: var(--space-5);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1050; /* above toasts (1000), below the sidecar recovery strip (1100) */
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  max-width: min(720px, calc(100vw - var(--space-5) * 2));
+  padding: var(--space-3) var(--space-5);
+  background: var(--surface-overlay);
+  border: 1px solid var(--status-warning, var(--status-error));
+  border-left: 4px solid var(--status-warning, var(--status-error));
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-overlay);
+  font-family: var(--font-ui);
+  font-size: var(--type-body-size);
+  animation: secure-keys-banner-rise var(--dur-slow) var(--ease-out);
+}
+
+@keyframes secure-keys-banner-rise {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.secure-keys-banner__message {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}

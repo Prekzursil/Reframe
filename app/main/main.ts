@@ -10,7 +10,7 @@
 // server in development (ELECTRON_RENDERER_URL) and from the built bundle
 // (out/renderer/index.html) in production. Security baseline: contextIsolation
 // ON, nodeIntegration OFF, sandbox ON — the renderer only sees `window.api`.
-import { app, BrowserWindow, session, shell } from 'electron';
+import { app, BrowserWindow, safeStorage, session, shell } from 'electron';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, writeFileSync, promises as fsp } from 'node:fs';
 import { extname, join, resolve as resolvePath, sep } from 'node:path';
@@ -48,6 +48,12 @@ import {
   needsFirstRunSetup,
   shouldStartSidecarAfterFailedFirstRun,
 } from './firstRunGate';
+import {
+  keystorePathFor,
+  migrateLegacyPlaintextKeys,
+  type SafeStorageLike,
+} from './keystore';
+import { KeyBridge } from './keyBridge';
 import { Sidecar } from './sidecar';
 
 // mstream:// must be declared privileged BEFORE app ready (U1).
@@ -268,6 +274,58 @@ function dataRootChild(...parts: string[]): string {
 /** WIRING-T5 §2: the sidecar-env sentinel bootstrap.py writes on success. */
 function firstRunSentinelPath(): string {
   return dataRootChild('envs', 'sidecar', '.media-studio-env.json');
+}
+
+/**
+ * WU-D2b-1: the sidecar's settings.json inside the data root. The Python
+ * settings_store derives its config path from `default_config_dir()`, which honors
+ * `MEDIA_STUDIO_CONFIG_DIR` (== DATA_ROOT, set by propagateDataRootEnv) — so this
+ * is exactly the file the one-time plaintext-key migration must scrub.
+ */
+function settingsJsonPath(): string {
+  return dataRootChild('settings.json');
+}
+
+/**
+ * WU-D2b-1: the DPAPI key guard wired into the `rpc` ipc channel (providers.upsert
+ * interception + per-request decrypted-key injection). Constructed in bootstrap()
+ * after the one-time migration and before the sidecar starts.
+ */
+let keyBridge: KeyBridge | null = null;
+
+/**
+ * WU-D2b-1 (defense-in-depth, ruling B): re-encrypt any legacy PLAINTEXT keys
+ * sitting in the sidecar's settings.json into the DPAPI keystore, then shred every
+ * prior plaintext copy — BEFORE the sidecar starts, so no plaintext key is ever
+ * read by (or persisted through) the running sidecar. On the `refused` path
+ * (secure storage unavailable) we do NOT destroy the user's only copy and the
+ * renderer's SecureKeysBanner surfaces the session-only warning (via
+ * getSecureStatus). Builds and returns the {@link KeyBridge} either way. Fail-open:
+ * a migration IO error is logged and key handling continues (the keystore/session
+ * overlay still guards new keys) rather than blocking app startup.
+ */
+function initKeyBridge(): KeyBridge {
+  const store = safeStorage as unknown as SafeStorageLike;
+  const keystorePath = keystorePathFor(app.getPath('userData'));
+  try {
+    const result = migrateLegacyPlaintextKeys(store, settingsJsonPath(), keystorePath);
+    if (result.status === 'refused') {
+      // Loud, actionable: keys can't be saved at rest; SecureKeysBanner shows the
+      // session-only message. Never a silent plaintext write, never a destroyed key.
+      // eslint-disable-next-line no-console
+      console.error(`[keystore] plaintext migration refused (session-only): ${result.banner ?? ''}`);
+    } else if (result.status === 'migrated') {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[keystore] migrated ${result.migratedProviderKeys} provider key(s)` +
+          `${result.migratedCloudKey ? ' + cloud key' : ''}; shredded ${result.shredded.length} stale copy(ies)`,
+      );
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[keystore] plaintext migration failed (continuing): ${(err as Error).message}`);
+  }
+  return new KeyBridge({ safeStorage: store, keystorePath });
 }
 
 /**
@@ -582,6 +640,11 @@ function bootstrap(): void {
   // F3c: install permission/CSP guards on the default session before any load.
   installSessionSecurity();
 
+  // WU-D2b-1: run the one-time plaintext-key migration + build the DPAPI key guard
+  // BEFORE the sidecar starts, so no plaintext key is ever read by the sidecar and
+  // every providers.upsert is intercepted from the very first request.
+  keyBridge = initKeyBridge();
+
   sidecar = createSidecar();
 
   // T5: in a packaged build whose runtime env was never built, stage 2 must
@@ -598,7 +661,7 @@ function bootstrap(): void {
     sidecar.start();
   }
 
-  disposeIpc = registerIpc(sidecar, liveWindows);
+  disposeIpc = registerIpc(sidecar, liveWindows, keyBridge);
   disposeDialogIpc = registerDialogIpc();
   // P4 (§6, C9): open-in-folder (shell.showItemInFolder) + brand-logo picker.
   disposeShellIpc = registerShellIpc();

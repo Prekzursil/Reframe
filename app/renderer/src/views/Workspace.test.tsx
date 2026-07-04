@@ -282,7 +282,7 @@ describe('Workspace', () => {
     });
     await flush();
     expect(cb).not.toBeNull();
-    return cb as (e: ProxyStateEvt) => void;
+    return cb as unknown as (e: ProxyStateEvt) => void;
   }
 
   it('shows the building note while the proxy builds, then reloads the player on ready (shake-free)', async () => {

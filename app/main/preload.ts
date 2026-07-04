@@ -32,6 +32,7 @@ const PROXY_STATE_CHANNEL = 'proxy.state'; // must match app/main/main.ts (WU B3
 const DATA_FOLDER_GET_CHANNEL = 'dataFolder.get'; // must match app/main/dataFolderIpc.ts
 const DATA_FOLDER_PICK_CHANNEL = 'dataFolder.pick'; // must match app/main/dataFolderIpc.ts
 const DATA_FOLDER_SET_CHANNEL = 'dataFolder.set'; // must match app/main/dataFolderIpc.ts
+const SECURE_STATUS_CHANNEL = 'secure.status'; // must match app/main/ipc.ts (WU-D2b-1)
 
 export interface ProgressEvent {
   jobId: string;
@@ -53,6 +54,18 @@ export interface ProxyStateEvent {
 
 /** Self-healing supervisor lifecycle states (mirrors sidecar.ts SidecarState). */
 export type SidecarStatus = 'running' | 'restarting' | 'down';
+
+/**
+ * WU-D2b-1: the secure-key-storage availability decision (mirrors keystore.ts
+ * SecureStatus). `sessionOnly` true means keys cannot be saved at rest on this
+ * system, so the renderer shows the loud session-only banner.
+ */
+export interface SecureStatus {
+  available: boolean;
+  backend: string | null;
+  sessionOnly: boolean;
+  banner: string | null;
+}
 
 /** WU A5: outcome of an on-demand "Retry setup / Repair" bootstrap re-run. */
 export interface RepairSetupResult {
@@ -128,6 +141,13 @@ export interface MediaApi {
    * `{ ok }`. Does NOT move files — a restart applies the new root.
    */
   setDataFolder(path: string): Promise<{ ok: boolean }>;
+  /**
+   * WU-D2b-1: query the secure-key-storage availability. When `sessionOnly` is
+   * true the OS keychain (DPAPI/Keychain/libsecret) is unavailable or plaintext,
+   * so API keys can only live in memory this session — the renderer shows the
+   * loud `banner` telling the user keys cannot be saved.
+   */
+  getSecureStatus(): Promise<SecureStatus>;
 }
 
 const api: MediaApi = {
@@ -199,6 +219,10 @@ const api: MediaApi = {
 
   setDataFolder(path: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke(DATA_FOLDER_SET_CHANNEL, path) as Promise<{ ok: boolean }>;
+  },
+
+  getSecureStatus(): Promise<SecureStatus> {
+    return ipcRenderer.invoke(SECURE_STATUS_CHANNEL) as Promise<SecureStatus>;
   },
 };
 

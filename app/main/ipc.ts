@@ -15,6 +15,7 @@
 // results. Both are best-effort fan-out to all renderer windows.
 import { ipcMain, type BrowserWindow, type WebContents } from 'electron';
 import type { DoneNotification, ProgressNotification, Sidecar, SidecarState } from './sidecar';
+import type { KeyBridge } from './keyBridge';
 
 export const RPC_CHANNEL = 'rpc';
 export const PROGRESS_CHANNEL = 'job.progress';
@@ -23,6 +24,8 @@ export const DONE_CHANNEL = 'job.done';
 export const SIDECAR_RESTART_CHANNEL = 'sidecar.restart';
 /** Self-healing supervisor: main -> renderer lifecycle state push. */
 export const SIDECAR_STATUS_CHANNEL = 'sidecar.status';
+/** WU-D2b-1: renderer query for the secure-key-storage availability decision. */
+export const SECURE_STATUS_CHANNEL = 'secure.status';
 
 export interface RpcInvocation {
   method: string;
@@ -51,13 +54,28 @@ function parseInvocation(raw: unknown): RpcInvocation {
  *
  * @param sidecar      the supervised Python process bridge
  * @param getWindows   returns the current set of windows to fan-out notifications to
+ * @param keyBridge    WU-D2b-1: the DPAPI key guard. When present, providers.upsert
+ *                     is intercepted (raw keys stripped into the keystore, redacted
+ *                     metadata forwarded) and provider-calling methods get the
+ *                     decrypted keys injected in-memory; and the `secure.status`
+ *                     query is served. Omitted in tests that don't exercise keys.
  * @returns a disposer that removes the handler + listeners
  */
-export function registerIpc(sidecar: Sidecar, getWindows: () => BrowserWindow[]): () => void {
-  // Renderer -> sidecar request/response.
+export function registerIpc(
+  sidecar: Sidecar,
+  getWindows: () => BrowserWindow[],
+  keyBridge?: KeyBridge,
+): () => void {
+  // Renderer -> sidecar request/response. When a keyBridge is wired, the params
+  // are transformed BEFORE forwarding: providers.upsert has its raw keys pulled
+  // into the DPAPI keystore (only redacted last-4 metadata reaches the sidecar),
+  // and provider-calling methods get the decrypted keys injected in-memory over
+  // this stdio frame (never env/argv/log). Without a keyBridge the params pass
+  // through verbatim (the legacy behavior).
   ipcMain.handle(RPC_CHANNEL, async (_event, raw: unknown) => {
     const { method, params } = parseInvocation(raw);
-    return sidecar.request(method, params);
+    const forwarded = keyBridge ? keyBridge.forwardParams(method, params) : params;
+    return sidecar.request(method, forwarded);
   });
 
   // Renderer -> supervisor: self-healing manual restart. Resets the crash
@@ -65,6 +83,13 @@ export function registerIpc(sidecar: Sidecar, getWindows: () => BrowserWindow[])
   // Returns {ok}; never throws (A6.3: surface, don't swallow — the boolean lets
   // the banner re-offer Restart on failure).
   ipcMain.handle(SIDECAR_RESTART_CHANNEL, async () => sidecar.restart());
+
+  // Renderer -> main: WU-D2b-1 secure-key-storage status. Drives the renderer's
+  // session-only banner (keys can't be saved at rest on this system). Registered
+  // only when the keyBridge is wired.
+  if (keyBridge) {
+    ipcMain.handle(SECURE_STATUS_CHANNEL, async () => keyBridge.secureStatus());
+  }
 
   // Sidecar -> renderer notifications (fan-out to every live window).
   const broadcast = (channel: string, payload: unknown): void => {
@@ -87,6 +112,9 @@ export function registerIpc(sidecar: Sidecar, getWindows: () => BrowserWindow[])
   return (): void => {
     ipcMain.removeHandler(RPC_CHANNEL);
     ipcMain.removeHandler(SIDECAR_RESTART_CHANNEL);
+    if (keyBridge) {
+      ipcMain.removeHandler(SECURE_STATUS_CHANNEL);
+    }
     sidecar.off('progress', onProgress);
     sidecar.off('done', onDone);
     sidecar.off('status', onStatus);
