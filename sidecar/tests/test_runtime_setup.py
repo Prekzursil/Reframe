@@ -415,6 +415,32 @@ class TestAssets:
         # silent center crop (NO-SILENT-FALLBACK).
         assert manifest.YUNET_ASSET_NAME in bs.default_first_run_assets()
 
+    def test_core_first_run_assets_are_exactly_the_face_asd_weights(self):
+        # WU C3 CORE-ONLY marker: the marker attests env + ffmpeg + the always-on
+        # face/ASD weights (YuNet tracker + S3FD + LR-ASD), NOTHING else.
+        assert bs.core_first_run_assets() == [
+            manifest.YUNET_ASSET_NAME,
+            manifest.LIGHTASD_S3FD_ASSET_NAME,
+            manifest.LIGHTASD_ASD_ASSET_NAME,
+        ]
+
+    def test_core_first_run_assets_exclude_on_demand_models(self):
+        # The on-demand GGUFs / llama builds are FETCHED AT POINT-OF-USE — they
+        # live OUTSIDE the marker so a Minimum/Custom install is not perpetually
+        # "un-provisioned" and does not re-run bootstrap every launch.
+        core = bs.core_first_run_assets()
+        assert manifest.WHISPER_ASSET_NAME not in core
+        assert manifest.QWEN_ASSET_NAME not in core
+        assert tr.LLAMA_CUDA_ASSET not in core
+        assert tr.LLAMA_CPU_ASSET not in core
+
+    def test_core_first_run_assets_are_a_strict_subset_of_default(self):
+        # Every CORE weight is still downloaded on a Default/Full run; CORE only
+        # narrows what GATES the marker, never what the run installs.
+        core = bs.core_first_run_assets()
+        default = bs.default_first_run_assets()
+        assert set(core) < set(default)
+
     def test_ensure_assets_delegates_to_manager(self, tmp_path):
         class FakeManager:
             def __init__(self):
@@ -532,7 +558,7 @@ class TestMainFullRunProvisioning:
         monkeypatch.setattr(bs, "extract_tool_archives", lambda *a, **k: [])
         return captured
 
-    def test_full_run_verifies_then_writes_marker(self, tmp_path, monkeypatch, capsys):
+    def test_full_run_verifies_core_only_then_writes_marker(self, tmp_path, monkeypatch, capsys):
         captured = self._stub_env_and_assets(tmp_path, monkeypatch)
         monkeypatch.setattr(
             bs, "verify_provisioned", lambda names, root, **k: captured.__setitem__("verified", list(names))
@@ -540,10 +566,48 @@ class TestMainFullRunProvisioning:
         rc = bs.main(["--root", str(tmp_path), "--python", str(self._fake_py(tmp_path))])
         assert rc == 0
         assert "SUCCESS:bootstrap first-run setup complete" in capsys.readouterr().out
-        # verification ran over exactly the ensured asset set...
-        assert captured["verified"] == captured["ensured"]
-        # ...and the honest completion marker is written.
-        assert bs.first_run_complete_path(tmp_path).is_file()
+        # WU C3 CORE-ONLY marker: the run STILL installs the full default set...
+        assert captured["ensured"] == bs.default_first_run_assets()
+        # ...but the marker is GATED on the CORE face/ASD weights ONLY, never on
+        # the on-demand GGUFs (the old "verify every model" gate is gone). The
+        # gated set is the CORE subset that was part of THIS run (run order).
+        assert set(captured["verified"]) == set(bs.core_first_run_assets())
+        assert set(captured["verified"]) < set(captured["ensured"])
+        # ...and the honest completion marker records exactly that CORE set.
+        marker = bs.first_run_complete_path(tmp_path)
+        assert marker.is_file()
+        assert set(json.loads(marker.read_text(encoding="utf-8"))["assets"]) == set(
+            bs.core_first_run_assets()
+        )
+
+    def test_on_demand_only_run_is_provisioned_without_core_verification(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        # A Minimum/Custom-style run that pulls ONLY on-demand assets (no CORE
+        # face/ASD weight) verifies an EMPTY core set and STILL writes the marker,
+        # so the install opens provisioned (no re-bootstrap loop) — the missing
+        # models surface as point-of-use "Needs download", not "setup incomplete".
+        captured = self._stub_env_and_assets(tmp_path, monkeypatch)
+        monkeypatch.setattr(
+            bs, "verify_provisioned", lambda names, root, **k: captured.__setitem__("verified", list(names))
+        )
+        rc = bs.main(
+            [
+                "--root",
+                str(tmp_path),
+                "--python",
+                str(self._fake_py(tmp_path)),
+                "--assets",
+                manifest.QWEN_ASSET_NAME,
+            ]
+        )
+        assert rc == 0
+        assert "SUCCESS:bootstrap first-run setup complete" in capsys.readouterr().out
+        assert captured["ensured"] == [manifest.QWEN_ASSET_NAME]
+        assert captured["verified"] == []  # no CORE weight pledged -> nothing gates
+        marker = bs.first_run_complete_path(tmp_path)
+        assert marker.is_file()
+        assert json.loads(marker.read_text(encoding="utf-8"))["assets"] == []
 
     def test_failed_verification_is_loud_and_leaves_no_marker(self, tmp_path, monkeypatch, capsys):
         self._stub_env_and_assets(tmp_path, monkeypatch)

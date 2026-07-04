@@ -426,6 +426,32 @@ def default_first_run_assets() -> list[str]:
     ]
 
 
+def core_first_run_assets() -> list[str]:
+    """The CORE-ONLY marker set — the always-on face/ASD weights (WU C3).
+
+    These are the ONLY downloaded assets the :data:`FIRST_RUN_COMPLETE_MARKER`
+    attests, alongside the structural env + bundled ffmpeg: the YuNet subject
+    tracker and the S3FD / LR-ASD active-speaker weights that make the reframe
+    engine follow a real speaker instead of silently centre-cropping (the
+    no-silent-fallback floor).
+
+    Everything else a first run may pull — the Whisper / Qwen GGUFs, the
+    llama-server builds, TTS voices, and the on-demand ViNet-S saliency /
+    TransNetV2 scene-cut weights — is FETCHED AT POINT-OF-USE and lives OUTSIDE
+    the marker. So a Minimum / Custom install that skips them opens PROVISIONED
+    (no re-bootstrap loop, never "setup incomplete"); a missing on-demand model
+    surfaces as a loud "Needs download" at its own feature, never a silent
+    degrade. Mirrors ``firstRunGate.ts`` ``CORE_FIRST_RUN_ASSETS`` (kept in sync).
+    """
+    from media_studio.assets import manifest
+
+    return [
+        manifest.YUNET_ASSET_NAME,
+        manifest.LIGHTASD_S3FD_ASSET_NAME,
+        manifest.LIGHTASD_ASD_ASSET_NAME,
+    ]
+
+
 def ensure_assets(names: Sequence[str], root: Path, *, manager: Any | None = None) -> None:
     """Run the U4 download/install machinery in-process (httpx must be importable
     by now — the sidecar env is installed + site-dir'd before this runs)."""
@@ -446,13 +472,18 @@ def activate_env_in_process(env_dir: Path) -> None:
 # --------------------------------------------------------------------------- #
 # fail-loud provisioning verification + first-run-complete marker
 # --------------------------------------------------------------------------- #
-#: written at ``<root>/`` ONLY after a FULL first run (env + assets + verify)
-#: succeeds. Its presence is the honest "everything provisioned" signal the
-#: Electron supervisor gates re-runs on — distinct from the per-env sentinel
+#: written at ``<root>/`` ONLY after the CORE-ONLY first run succeeds — the pip
+#: env + bundled ffmpeg + the always-on face/ASD weights
+#: (:func:`core_first_run_assets`), NOT "every model + weights" (WU C3). Its
+#: presence is the honest "the reframe floor is provisioned" signal the Electron
+#: supervisor gates re-runs on — distinct from the per-env sentinel
 #: (``.media-studio-env.json``), which only means "the pip env is installed".
-#: A run that installs the env but then fails on model/weight downloads leaves
-#: NO marker, so the next launch retries instead of silently running a
-#: half-provisioned (silent-centre-crop) app.
+#: A run that installs the env but then fails on a CORE face/ASD weight leaves NO
+#: marker, so the next launch retries instead of silently centre-cropping. But an
+#: on-demand model (GGUFs / TTS voices / ViNet-S saliency / TransNetV2) that fails
+#: or is skipped does NOT block the marker — those live OUTSIDE it and are fetched
+#: at point-of-use, so a Minimum/Custom install opens provisioned (no re-bootstrap
+#: loop) rather than perpetually "un-provisioned".
 FIRST_RUN_COMPLETE_MARKER = ".first-run-complete.json"
 
 
@@ -682,15 +713,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
 
         asset_names: list[str] = []
+        core_names: list[str] = []
         if not args.skip_assets:
             asset_names = list(args.assets or default_first_run_assets())
             # step 3 needs httpx from the just-installed env in THIS process.
             activate_env_in_process(env_dir)
             ensure_assets(asset_names, root)
             extract_tool_archives(root)
-            # NO SILENT FALLBACK: prove every model + the S3FD/LR-ASD weights
-            # actually landed before we ever claim success.
-            verify_provisioned(asset_names, root)
+            # CORE-ONLY marker gate (WU C3): NO SILENT FALLBACK for the always-on
+            # face/ASD weights — prove the CORE subset that was part of THIS run
+            # actually landed (a missing tracker/ASD weight is the silent
+            # centre-crop trap) before we ever claim success. On-demand models
+            # (GGUFs / TTS voices / ViNet-S saliency / TransNetV2) may fail or be
+            # skipped WITHOUT blocking the marker — ensure already logged each
+            # skip loudly and they are fetched at point-of-use, so a Minimum/
+            # Custom install opens provisioned instead of looping bootstrap.
+            core_names = [n for n in asset_names if n in core_first_run_assets()]
+            verify_provisioned(core_names, root)
 
         if args.chatterbox:
             # The chatterbox env installs with the DEDICATED py3.14 interpreter
@@ -713,11 +752,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 embed_dir=chatter_embed,
             )
 
-        # Only a FULL run (env + assets) is a completed first run. Partial
-        # invocations (--skip-env / --skip-assets, used for manual repair) must
-        # NOT write the marker, or the supervisor would skip a real re-run.
+        # A CORE-complete run (env + the always-on face/ASD weights) is a
+        # completed first run (WU C3): the marker records the CORE set it
+        # attests, not the on-demand extras. Partial invocations (--skip-env /
+        # --skip-assets, used for manual repair) must NOT write the marker, or
+        # the supervisor would skip a real re-run.
         if not args.skip_env and not args.skip_assets:
-            write_first_run_complete(root, asset_names)
+            write_first_run_complete(root, core_names)
 
         print("SUCCESS:bootstrap first-run setup complete")
         return 0
