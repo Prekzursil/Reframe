@@ -6,6 +6,20 @@
 # verified against its site-packages dist-info on 2026-06-12. Transitive deps
 # (certifi, tqdm, ...) resolve freely; every native-extension wheel is pinned
 # explicitly below so first-run installs are deterministic where it matters.
+#
+# WU C4 (verify-before-exec over the FULL transitive closure): the top-level
+# pins below are the install SOURCE only when no hashed lock is staged. When
+# ``requirements-sidecar.lock.txt`` (the SIBLING, fully-hashed lock) is present,
+# bootstrap installs from IT with
+# ``pip install --require-hashes --only-binary=:all: --no-deps -r <lock>`` so
+# EVERY wheel — incl. every transitive — is hash-verified before pip unpacks it.
+# Generate the lock at F1 BUILD-PREP (network required; like the ffmpeg binary,
+# its CONTENT is staged offline, not committed):
+#   python -m runtime_setup.generate_hashed_lock \
+#       runtime_setup/requirements-sidecar.txt \
+#       runtime_setup/requirements-sidecar.lock.txt
+# A missing lock degrades LOUDLY to these pins (transitives unhashed); a staged
+# lock is validated by media_studio.assets.manager.validate_hashed_lock first.
 
 faster-whisper==1.2.1
 ctranslate2==4.8.0

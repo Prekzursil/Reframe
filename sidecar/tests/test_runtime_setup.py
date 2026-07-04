@@ -205,6 +205,148 @@ class TestBuildPipSteps:
             assert str(spaced) in step["argv"]  # one element, not shell-split
 
 
+class TestHashedLockInstall:
+    """WU C4 — the first-run env installer can install a fully-hashed lock so
+    every wheel over the full transitive closure is hash-verified before exec."""
+
+    def test_hashed_lock_path_is_the_sibling_lock(self):
+        assert bs.hashed_lock_path(Path("x") / "requirements-sidecar.txt") == (
+            Path("x") / "requirements-sidecar.lock.txt"
+        )
+
+    def test_build_pip_steps_with_lock_uses_require_hashes(self, tmp_path):
+        lock = tmp_path / "req.lock.txt"
+        steps = bs.build_pip_steps(
+            tmp_path / "py.exe", tmp_path / "gp.py", tmp_path / "env", tmp_path / "req.txt", lock_file=lock
+        )
+        step2 = steps[1]["argv"]
+        for flag in bs.HASHED_LOCK_PIP_ARGS:
+            assert flag in step2
+        # the lock is the install source, NOT the (top-level-only) req file
+        assert step2[-2:] == ["-r", str(lock)]
+        assert str(tmp_path / "req.txt") not in step2
+
+    def test_build_pip_steps_without_lock_is_unchanged(self, tmp_path):
+        steps = bs.build_pip_steps("py", "gp.py", "env", tmp_path / "req.txt")
+        step2 = steps[1]["argv"]
+        assert "--require-hashes" not in step2
+        assert step2[-2:] == ["-r", str(tmp_path / "req.txt")]
+
+    def test_resolve_active_lock_returns_staged_valid_lock(self, tmp_path):
+        req = tmp_path / "requirements-sidecar.txt"
+        lock = tmp_path / "requirements-sidecar.lock.txt"
+        lock.write_text("numpy==2.5.0 \\\n    --hash=sha256:" + "a" * 64 + "\n", encoding="utf-8")
+        assert bs.resolve_active_lock(req, None) == lock
+
+    def test_resolve_active_lock_falls_back_loudly_when_unstaged(self, tmp_path, capsys):
+        req = tmp_path / "requirements-sidecar.txt"
+        assert bs.resolve_active_lock(req, None) is None
+        err = capsys.readouterr().err
+        assert "hashed lock not staged" in err and "UNHASHED" in err
+
+    def test_resolve_active_lock_rejects_an_unhashed_lock(self, tmp_path):
+        lock = tmp_path / "x.lock.txt"
+        lock.write_text("numpy==2.5.0\n", encoding="utf-8")  # pinned but NOT hashed
+        with pytest.raises(bs.BootstrapError, match="missing --hash"):
+            bs.resolve_active_lock(tmp_path / "x.txt", lock)
+
+    def test_install_env_uses_a_staged_sibling_lock(self, tmp_path):
+        req = tmp_path / "requirements-sidecar.txt"
+        req.write_text("numpy==2.5.0\nhttpx==0.28.1\n", encoding="utf-8")
+        lock = tmp_path / "requirements-sidecar.lock.txt"
+        lock.write_text(
+            "numpy==2.5.0 \\\n    --hash=sha256:"
+            + "a" * 64
+            + "\nhttpx==0.28.1 \\\n    --hash=sha256:"
+            + "b" * 64
+            + "\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "root" / "tools").mkdir(parents=True)
+        (tmp_path / "root" / "tools" / "get-pip.py").write_text("# gp")
+        calls: list[list[str]] = []
+
+        def fake_run(argv, extra_env):
+            calls.append(list(argv))
+            return 0
+
+        bs.install_env(
+            python_exe=tmp_path / "python.exe",
+            root=tmp_path / "root",
+            env_name="sidecar",
+            req_file=req,
+            run_step=fake_run,
+        )
+        step2 = calls[1]
+        assert "--require-hashes" in step2
+        assert step2[-2:] == ["-r", str(lock)]
+        # the sentinel still records the top-level pins (installed-detection).
+        sentinel = json.loads((tmp_path / "root" / "envs" / "sidecar" / ENV_SENTINEL).read_text(encoding="utf-8"))
+        assert sentinel["requirements"] == ["numpy==2.5.0", "httpx==0.28.1"]
+
+
+class TestGenerateHashedLock:
+    """WU C4 — the documented F1 lock-generation script (build-prep, no network
+    at test time): the pure argv builder + the injectable-runner CLI."""
+
+    def test_argv_has_generate_hashes_and_output(self):
+        from runtime_setup import generate_hashed_lock as gl
+
+        argv = gl.build_lock_gen_argv("req.txt", "req.lock.txt")
+        assert argv[:3] == ["uv", "pip", "compile"]
+        assert "--generate-hashes" in argv
+        assert argv[argv.index("--output-file") + 1] == "req.lock.txt"
+
+    def test_extra_index_url_is_forwarded(self):
+        from runtime_setup import generate_hashed_lock as gl
+
+        argv = gl.build_lock_gen_argv(
+            "r.txt", "r.lock.txt", extra_index_urls=["https://download.pytorch.org/whl/cu128"]
+        )
+        i = argv.index("--extra-index-url")
+        assert argv[i + 1] == "https://download.pytorch.org/whl/cu128"
+
+    def test_pip_compile_backend(self):
+        from runtime_setup import generate_hashed_lock as gl
+
+        argv = gl.build_lock_gen_argv("r.txt", "r.lock.txt", tool="pip-compile")
+        assert argv[0] == "pip-compile"
+
+    def test_unknown_tool_rejected(self):
+        from runtime_setup import generate_hashed_lock as gl
+
+        with pytest.raises(ValueError, match="unknown lock-gen tool"):
+            gl.build_lock_gen_argv("r.txt", "r.lock.txt", tool="poetry")
+
+    def test_main_dry_run_prints_argv(self, capsys):
+        from runtime_setup import generate_hashed_lock as gl
+
+        code = gl.main(["req.txt", "req.lock.txt", "--dry-run"])
+        assert code == 0
+        assert "DRY-RUN uv pip compile" in capsys.readouterr().out
+
+    def test_main_runs_the_injected_runner_on_success(self, capsys):
+        from runtime_setup import generate_hashed_lock as gl
+
+        seen: list[list[str]] = []
+
+        def fake_run(argv):
+            seen.append(list(argv))
+            return 0
+
+        code = gl.main(["req.txt", "out.lock.txt"], run=fake_run)
+        assert code == 0
+        assert seen and "--generate-hashes" in seen[0]
+        assert "SUCCESS:generate_hashed_lock wrote out.lock.txt" in capsys.readouterr().out
+
+    def test_main_reports_a_nonzero_exit_loudly(self, capsys):
+        from runtime_setup import generate_hashed_lock as gl
+
+        code = gl.main(["req.txt", "out.lock.txt"], run=lambda _argv: 2)
+        assert code == 2
+        assert "FAILED:generate_hashed_lock exit 2" in capsys.readouterr().out
+
+
 class TestRunSteps:
     def test_success_runs_all_steps_with_env(self):
         calls = []

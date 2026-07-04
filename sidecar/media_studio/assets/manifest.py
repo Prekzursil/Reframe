@@ -127,6 +127,15 @@ class AssetEntry:
     # installer="env": which interpreter to install with (see PYTHON_KINDS).
     # Default "host"; "chatterbox" routes to the dedicated py3.14 embeddable.
     python_kind: str = "host"
+    # installer="env" (WU C4): an optional fully-hashed lockfile over the FULL
+    # transitive closure. When set + staged, the env installs with
+    # ``pip --require-hashes --only-binary=:all: --no-deps -r <lock>`` so every
+    # wheel is hash-verified before exec (the inline ``requirements`` above are
+    # the top-level pins + the installed-detection sentinel; the lock is the
+    # verified install source). Its CONTENT is an F1 build-prep artifact (real
+    # hashes need PyPI + the cu128 torch index), staged like the ffmpeg binary —
+    # absolute path, or relative to the assets root.
+    lock_file: str | None = None
     # Optional settings-driven probe for a pre-existing copy elsewhere.
     detect: DetectFn | None = field(default=None, compare=False)
 
@@ -147,6 +156,9 @@ class AssetEntry:
             raise ValueError(f"asset {self.name!r}: tier must be one of {ASSET_TIERS}, got {self.tier!r}")
         # Normalize requirements to a tuple (frozen dataclass => object.__setattr__).
         object.__setattr__(self, "requirements", tuple(self.requirements or ()))
+        # WU C4: a hashed lockfile only means anything for a pip --target env.
+        if self.lock_file and self.installer != "env":
+            raise ValueError(f"asset {self.name!r}: lock_file is only valid for installer='env'")
         if self.installer == "download":
             if not self.url:
                 raise ValueError(f"asset {self.name!r}: installer='download' requires a pinned url")

@@ -69,6 +69,19 @@ GET_PIP_SHA256 = "a341e1a43e38001c551a1508a73ff23636a11970b61d901d9a1cad2a18f570
 #: success sentinel written into an env dir after a full install
 ENV_SENTINEL = ".media-studio-env.json"
 
+# WU C4 — verify-before-exec over the FULL transitive closure. Top-level pins
+# alone still let pip resolve UNHASHED transitives from PyPI; a fully-hashed
+# lockfile installed with these flags makes pip refuse any wheel whose bytes
+# don't match a pinned --hash BEFORE it unpacks/runs it:
+#   --require-hashes     every requirement must carry a --hash= (fail otherwise)
+#   --only-binary=:all:  no source builds — an sdist has no verifiable wheel hash
+#   --no-deps            the lock IS the closure; pip resolves nothing itself
+HASHED_LOCK_PIP_ARGS: tuple[str, ...] = ("--require-hashes", "--only-binary=:all:", "--no-deps")
+#: option lines a hashed lock may carry besides pinned+hashed requirements. The
+#: cu128 torch index is a STILL-HASHED per-index exception: the custom index URL
+#: is permitted, but every wheel it serves is hash-verified all the same.
+LOCK_ALLOWED_OPTIONS: tuple[str, ...] = ("--extra-index-url", "--index-url")
+
 # (frac 0..1, message) -> None — per-asset progress callback.
 FracCb = Callable[[float, str], None]
 # Cooperative cancel probe.
@@ -274,6 +287,57 @@ def backoff_delay(attempt: int, *, base: float, cap: float, rng: Any) -> float:
     return rng.uniform(0.0, capped)
 
 
+def _lock_logical_lines(text: str) -> list[str]:
+    """Join backslash line-continuations; drop blank + ``#`` comment lines.
+
+    pip-compile ``--generate-hashes`` emits one requirement per logical block:
+    ``pkg==ver \\`` then indented ``--hash=...`` continuation lines, then dropped
+    ``# via`` comments. Reconstruct each block as a single logical line.
+    """
+    lines: list[str] = []
+    buf = ""
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.endswith("\\"):
+            buf += stripped[:-1].strip() + " "
+            continue
+        buf += stripped
+        lines.append(buf.strip())
+        buf = ""
+    if buf.strip():
+        lines.append(buf.strip())
+    return lines
+
+
+def validate_hashed_lock(text: str) -> tuple[str, ...]:
+    """Validate a fully-hashed lockfile body; return its pinned specs (WU C4).
+
+    Every requirement must be PINNED (``pkg==version``) AND carry at least one
+    ``--hash=`` so pip verifies its wheel's bytes before unpacking; option lines
+    are limited to :data:`LOCK_ALLOWED_OPTIONS` (the still-hashed torch-index
+    exception). An unhashed/unpinned requirement, an unknown option, or an empty
+    lock raises :class:`AssetError` — the install fails LOUD rather than pulling
+    an unverified transitive.
+    """
+    pins: list[str] = []
+    for line in _lock_logical_lines(text):
+        if line.startswith("-"):
+            if not any(line.startswith(opt) for opt in LOCK_ALLOWED_OPTIONS):
+                raise AssetError(f"unsupported lock option: {line!r}")
+            continue
+        spec = line.split()[0]
+        if "==" not in spec:
+            raise AssetError(f"lock requirement not pinned (use pkg==version): {spec!r}")
+        if "--hash=" not in line:
+            raise AssetError(f"lock requirement missing --hash= (unverified wheel): {spec!r}")
+        pins.append(spec)
+    if not pins:
+        raise AssetError("hashed lock contains no pinned requirements")
+    return tuple(pins)
+
+
 def build_env_install_argvs(
     python_exe: str,
     get_pip_path: Path | str,
@@ -281,14 +345,21 @@ def build_env_install_argvs(
     requirements: Sequence[str],
     *,
     pip_pin: str = PINNED_PIP,
+    lock_file: Path | str | None = None,
 ) -> list[dict[str, Any]]:
     """The argv steps that bootstrap a ``pip --target`` env (A7; pure function).
 
     Embeddable CPython has NO ensurepip/venv, so:
       1. ``python get-pip.py <pip pin> --target <env>`` — installs a PINNED pip
          *into the env dir itself* (get-pip forwards its args to pip).
-      2. ``python -m pip install --target <env> <pinned reqs...>`` with
-         ``PYTHONPATH=<env>`` so step 1's pip is importable.
+      2. ``python -m pip install --target <env> ...`` with ``PYTHONPATH=<env>``
+         so step 1's pip is importable. When ``lock_file`` is given (WU C4) this
+         installs the fully-hashed lock with :data:`HASHED_LOCK_PIP_ARGS` —
+         ``--require-hashes --only-binary=:all: --no-deps -r <lock>`` — so every
+         wheel over the FULL transitive closure is hash-verified before exec; the
+         inline ``requirements`` are then NOT placed on the argv (the lock is the
+         sole, verified source). Without a lock, the inline pins install as before
+         (top-level pins; transitives resolve unhashed).
 
     Returns ``[{"argv": [...], "env": {...extra env vars...}}, ...]`` — argv
     LISTS only (A6 lesson 4: never a shell string; paths with spaces are safe).
@@ -305,6 +376,10 @@ def build_env_install_argvs(
         ],
         "env": {},
     }
+    if lock_file is not None:
+        install_tail = [*HASHED_LOCK_PIP_ARGS, "--no-warn-script-location", "-r", str(lock_file)]
+    else:
+        install_tail = ["--no-warn-script-location", *[str(r) for r in requirements]]
     step2 = {
         "argv": [
             str(python_exe),
@@ -313,8 +388,7 @@ def build_env_install_argvs(
             "install",
             "--target",
             env_dir_s,
-            "--no-warn-script-location",
-            *[str(r) for r in requirements],
+            *install_tail,
         ],
         "env": {"PYTHONPATH": env_dir_s},
     }
@@ -804,6 +878,39 @@ class AssetManager:
             return resolver() or self._python_exe
         return self._python_exe
 
+    def _resolve_env_lock(self, entry: AssetEntry) -> Path | None:
+        """Resolve a declared fully-hashed lockfile for an env asset (WU C4).
+
+        ``entry.lock_file`` names the hashed lock produced at F1 build-prep (like
+        the ffmpeg binary, its CONTENT is staged offline — real hashes need PyPI
+        + the cu128 torch index — not committed). Absolute, or relative to the
+        assets root. Resolution is verify-before-exec and NEVER silent:
+
+          * present + fully hashed -> the install runs ``--require-hashes`` from
+            it (every wheel hash-checked before pip unpacks it);
+          * present but NOT fully hashed -> :class:`AssetError` (fail loud);
+          * DECLARED but UNSTAGED (dev box / lock not yet generated) -> a LOUD
+            warning + ``None`` so the install falls back to the inline pins
+            (top-level pins, unhashed transitives — the pre-C4 behaviour), rather
+            than silently skipping the env;
+          * not declared -> ``None`` (inline pins, unchanged).
+        """
+        if not entry.lock_file:
+            return None
+        candidate = Path(entry.lock_file)
+        if not candidate.is_absolute():
+            candidate = self.root / entry.lock_file
+        if not candidate.is_file():
+            log.warning(
+                "hashed lock declared but not staged (F1 build-prep) for %s: %s — "
+                "falling back to the pinned (unhashed-transitive) inline install",
+                entry.name,
+                candidate,
+            )
+            return None
+        validate_hashed_lock(candidate.read_text(encoding="utf-8"))
+        return candidate
+
     def _install_env(self, entry: AssetEntry, *, on_frac: FracCb, should_cancel: CancelProbe) -> None:
         """Bootstrap a ``pip --target`` env under the assets root (A7).
 
@@ -830,7 +937,8 @@ class AssetManager:
                 should_cancel=should_cancel,
                 label="get-pip.py",
             )
-        steps = build_env_install_argvs(python_exe, get_pip, env_dir, entry.requirements)
+        lock_file = self._resolve_env_lock(entry)
+        steps = build_env_install_argvs(python_exe, get_pip, env_dir, entry.requirements, lock_file=lock_file)
         for index, step in enumerate(steps):
             if should_cancel():
                 raise JobCancelled(entry.name)

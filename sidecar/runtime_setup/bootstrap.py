@@ -55,7 +55,10 @@ if str(_SIDECAR_DIR) not in sys.path:
 from media_studio.assets.manager import (  # noqa: E402
     ENV_SENTINEL,
     GET_PIP_URL,
+    HASHED_LOCK_PIP_ARGS,
     PINNED_PIP,
+    AssetError,
+    validate_hashed_lock,
 )
 from media_studio.pathsafe import ensure_within  # noqa: E402
 from media_studio.settings_store import default_config_dir  # noqa: E402
@@ -232,19 +235,27 @@ def build_pip_steps(
     req_file: Path | str,
     *,
     pip_pin: str = PINNED_PIP,
+    lock_file: Path | str | None = None,
 ) -> list[dict[str, Any]]:
     """The two argv steps installing a pinned ``pip --target`` env (pure; A7).
 
       1. ``python get-pip.py <pip pin> --target <env>`` — embeddable CPython has
          no ensurepip; get-pip forwards its args to the pip it bootstraps.
-      2. ``python -m pip install --target <env> -r <req file>`` with
+      2. ``python -m pip install --target <env> -r <requirements>`` with
          ``PYTHONPATH=<env>`` so step 1's pip is importable. Index options
          (``--extra-index-url``) live INSIDE the requirements file — pip reads
-         them from there, no CLI plumbing.
+         them from there, no CLI plumbing. When ``lock_file`` is given (WU C4)
+         step 2 installs the fully-hashed lock instead, adding
+         :data:`HASHED_LOCK_PIP_ARGS` (``--require-hashes --only-binary=:all:
+         --no-deps``) so every wheel over the FULL transitive closure is
+         hash-verified before pip unpacks it — closing the gap where the
+         top-level ``req_file`` pins still let transitives resolve unhashed.
 
     argv LISTS only (A6 lesson 4); paths with spaces stay single elements.
     """
     env_dir_s = str(env_dir)
+    install_source = str(lock_file) if lock_file is not None else str(req_file)
+    hash_args = list(HASHED_LOCK_PIP_ARGS) if lock_file is not None else []
     return [
         {
             "argv": [
@@ -265,9 +276,10 @@ def build_pip_steps(
                 "install",
                 "--target",
                 env_dir_s,
+                *hash_args,
                 "--no-warn-script-location",
                 "-r",
-                str(req_file),
+                install_source,
             ],
             "env": {"PYTHONPATH": env_dir_s},
         },
@@ -360,6 +372,42 @@ def write_env_sentinel(env_dir: Path, name: str, reqs: Requirements) -> Path:
     return sentinel
 
 
+def hashed_lock_path(req_file: Path | str) -> Path:
+    """The sibling fully-hashed lock for a requirements file (WU C4).
+
+    ``requirements-sidecar.txt`` -> ``requirements-sidecar.lock.txt``. Its
+    CONTENT is an F1 build-prep artifact (real hashes need PyPI + the cu128 torch
+    index), staged offline like the ffmpeg binary — not committed to the tree.
+    """
+    p = Path(req_file)
+    return p.with_name(f"{p.stem}.lock.txt")
+
+
+def resolve_active_lock(req_file: Path | str, lock_file: Path | str | None) -> Path | None:
+    """Pick the hashed lock to install from — verify-before-exec, NEVER silent.
+
+    Explicit ``lock_file`` overrides; otherwise the sibling
+    :func:`hashed_lock_path` is used when staged. A present lock is validated
+    (fail LOUD on any unhashed/unpinned line); a DECLARED-but-UNSTAGED lock logs
+    a LOUD line and returns ``None`` so the caller falls back to the pinned
+    ``req_file`` (top-level pins; transitives unhashed — the pre-C4 behaviour),
+    rather than silently skipping the env.
+    """
+    candidate = Path(lock_file) if lock_file is not None else hashed_lock_path(req_file)
+    if not candidate.is_file():
+        _log(
+            f"hashed lock not staged (F1 build-prep): {candidate} — installing from "
+            f"pinned {Path(req_file).name} (top-level pins; transitives resolve UNHASHED)"
+        )
+        return None
+    try:
+        validate_hashed_lock(candidate.read_text(encoding="utf-8"))  # fail loud on a bad lock
+    except AssetError as exc:  # normalize into bootstrap's typed failure contract
+        raise BootstrapError(f"invalid hashed lock {candidate}: {exc}") from exc
+    _log(f"hashed lock staged: {candidate} — pip will hash-verify every wheel before exec")
+    return candidate
+
+
 def install_env(
     *,
     python_exe: Path | str,
@@ -369,13 +417,21 @@ def install_env(
     embed_dir: Path | None = None,
     run_step: RunStep = _default_run_step,
     urlopen: UrlOpen = urllib.request.urlopen,
+    lock_file: Path | str | None = None,
 ) -> Path:
-    """Build ``<root>/envs/<env_name>`` from a PINNED requirements file."""
+    """Build ``<root>/envs/<env_name>`` from a PINNED requirements file.
+
+    When a sibling fully-hashed lock is staged (WU C4; F1 build-prep), the env
+    installs from IT with ``--require-hashes`` so every wheel over the full
+    transitive closure is hash-verified before exec; otherwise it falls back
+    LOUDLY to the top-level pins in ``req_file``.
+    """
     reqs = load_requirements(req_file)  # validate BEFORE any subprocess runs
+    active_lock = resolve_active_lock(req_file, lock_file)
     env_dir = Path(ensure_within(root, "envs", env_name))
     env_dir.mkdir(parents=True, exist_ok=True)
     get_pip = ensure_get_pip(root, embed_dir, urlopen=urlopen)
-    steps = build_pip_steps(python_exe, get_pip, env_dir, req_file)
+    steps = build_pip_steps(python_exe, get_pip, env_dir, req_file, lock_file=active_lock)
     run_steps(steps, run_step=run_step)
     write_env_sentinel(env_dir, f"{env_name}-env", reqs)
     _log(f"env ready: {env_dir} ({len(reqs.pins)} pinned packages)")
