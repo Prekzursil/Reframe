@@ -56,6 +56,18 @@
   --status-warn: #e7c14b; /* yellow-leaning, distinct from the orange-leaning accent */
   --status-warn-soft: rgba(231, 193, 75, 0.1);
 
+  /* ---- abundance: the ONE documented exception to one-accent discipline -----
+   * The usage panel's "superpowered / high-headroom" state (>= 3 healthy keys
+   * across DISTINCT providers) gets a single celebratory hue that sits OUTSIDE
+   * the amber accent + green/amber/red status ladder. It is the only sanctioned
+   * off-ladder accent — do NOT add others without the same justification. Colour
+   * is NEVER the sole signal here: the state always ships an always-present
+   * "⚡ Superpowered" text label + tooltip, so the hue is redundant (WCAG).
+   * Consumed only by usageBar.css `.usage-group.is-superpowered`. */
+  --status-abundance: #9b6cff; /* border / emphasis edge */
+  --status-abundance-text: #c2a3ff; /* label text — lighter tint for AA on the wash */
+  --status-abundance-soft: rgba(155, 108, 255, 0.08); /* gradient wash */
+
   /* ---- type ---------------------------------------------------------------
    * Pairing: weighted system sans for UI, ui-monospace for timecode/numbers,
    * a serif voice ONLY for editorial pull-quote moments (ShortMaker hooks). */
