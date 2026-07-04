@@ -24,6 +24,7 @@ FROZEN_RPC_SURFACE: frozenset[str] = frozenset(
         "assets.cancel",
         "assets.ensure",
         "assets.list",
+        "assets.plan",
         "audiomix.merge",
         "audiomix.normalize",
         "batch.cancel",

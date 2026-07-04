@@ -40,16 +40,42 @@ def make_list_handler(manager: AssetManager) -> RpcHandler:
     return handler
 
 
+def _validate_custom(params: dict[str, Any]) -> list[str] | None:
+    """The optional ``custom`` asset-name list for a Custom profile (WU C1)."""
+    custom = params.get("custom")
+    if custom is None:
+        return None
+    if not isinstance(custom, list) or not all(isinstance(n, str) and n for n in custom):
+        raise RpcError("custom must be an array of asset names", ErrorCode.INVALID_PARAMS)
+    return custom
+
+
 def make_ensure_handler(manager: AssetManager) -> RpcHandler:
-    """Build the ``assets.ensure`` handler (long job, returns ``{jobId}``)."""
+    """Build the ``assets.ensure`` handler (long job, returns ``{jobId}``).
+
+    Accepts EITHER a ``profile`` (Minimum/Default/Full/Custom — resolved to a
+    component set via the manifest, WU C1) OR an explicit ``names`` list (the
+    original A2 surface, unchanged). A Minimum / empty-Custom profile resolves to
+    an empty set and still runs as a (no-op) job for a uniform ``{jobId}`` reply.
+    """
 
     def handler(params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
-        names = params.get("names")
-        if not isinstance(names, list) or not names or not all(isinstance(n, str) and n for n in names):
-            raise RpcError("names (non-empty array of str) is required", ErrorCode.INVALID_PARAMS)
-        unknown = [n for n in names if manifest.get_asset(n) is None]
-        if unknown:
-            raise RpcError(f"unknown asset(s): {', '.join(unknown)}", ErrorCode.INVALID_PARAMS)
+        profile = params.get("profile")
+        if profile is not None:
+            if not isinstance(profile, str) or not profile:
+                raise RpcError("profile (str) is required", ErrorCode.INVALID_PARAMS)
+            custom = _validate_custom(params)
+            try:
+                names: list[str] = manifest.resolve_profile(profile, custom)
+            except ValueError as exc:
+                raise RpcError(str(exc), ErrorCode.INVALID_PARAMS) from exc
+        else:
+            names = params.get("names")
+            if not isinstance(names, list) or not names or not all(isinstance(n, str) and n for n in names):
+                raise RpcError("names (non-empty array of str) is required", ErrorCode.INVALID_PARAMS)
+            unknown = [n for n in names if manifest.get_asset(n) is None]
+            if unknown:
+                raise RpcError(f"unknown asset(s): {', '.join(unknown)}", ErrorCode.INVALID_PARAMS)
         if ctx.jobs is None:
             raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
 
@@ -57,11 +83,34 @@ def make_ensure_handler(manager: AssetManager) -> RpcHandler:
 
         def job_body(job_ctx: Any) -> dict[str, Any]:
             # Failures (disk preflight, HTTP errors, sha mismatch, env install)
-            # raise and surface via the job.done error payload (A6 lesson 3).
+            # raise and surface via the job.done error payload (A6 lesson 3);
+            # a single failing item is skipped + noted (WU C1 graceful failure).
             return manager.ensure(requested, job_ctx)
 
         job = ctx.jobs.start(job_body)
         return {"jobId": job.id}
+
+    return handler
+
+
+def make_plan_handler(manager: AssetManager) -> RpcHandler:
+    """Build the ``assets.plan`` handler (direct-return, WU C1).
+
+    Given a ``profile`` (+ optional ``custom`` names), returns the components it
+    would install — each with plain-English what (label) / why + size + installed
+    state — plus ``totalMB`` and ``toDownloadMB`` so the UI can show what a
+    multi-GB profile buys BEFORE the download starts.
+    """
+
+    def handler(params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        profile = params.get("profile")
+        if not isinstance(profile, str) or not profile:
+            raise RpcError("profile (str) is required", ErrorCode.INVALID_PARAMS)
+        custom = _validate_custom(params)
+        try:
+            return manager.plan(profile, custom)
+        except ValueError as exc:
+            raise RpcError(str(exc), ErrorCode.INVALID_PARAMS) from exc
 
     return handler
 
@@ -98,7 +147,8 @@ def register(
     mgr = manager or AssetManager(root=root, settings_provider=settings_provider)
     reg = register_fn if register_fn is not None else protocol.register
     reg("assets.list", make_list_handler(mgr))
+    reg("assets.plan", make_plan_handler(mgr))
     reg("assets.ensure", make_ensure_handler(mgr))
     reg("assets.cancel", make_cancel_handler())
-    log.info("registered assets.list / assets.ensure / assets.cancel")
+    log.info("registered assets.list / assets.plan / assets.ensure / assets.cancel")
     return mgr

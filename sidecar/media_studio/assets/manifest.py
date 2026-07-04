@@ -27,7 +27,7 @@ Loose specifiers are rejected at registration time.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -64,6 +64,29 @@ INSTALLERS: tuple[str, ...] = ("download", "hf", "env")
 # never an absolute interpreter path.
 PYTHON_KINDS: tuple[str, ...] = ("host", "chatterbox")
 
+# WU C1 (installer profiles): every entry carries a PROFILE TIER so ``assets.ensure``
+# can materialize a whole install profile from one choice, not a hand-picked list:
+#   "core"     — the Default-profile core models (Whisper ASR, YuNet detector, the
+#                small local LLM, the always-on face/ASD reframe weights). CPU-only.
+#   "optional" — extra on-demand signals/backends (semantic embedder, emotion, OCR,
+#                the occlusion-robust tracker). Pulled only in the Full profile (or
+#                hand-picked in Custom). This is the DEFAULT tier — an unclassified
+#                entry is on-demand, never force-installed into Default.
+#   "gpu"      — GPU-only stacks (larger LLMs, dubbing/diarization envs). Full only.
+# The Minimum profile pulls NOTHING (app + slim python; everything on demand).
+ASSET_TIERS: tuple[str, ...] = ("core", "optional", "gpu")
+
+# The four installer profiles (U-facing) and the tiers each pulls. "custom" pulls
+# an explicit hand-picked component list (see :func:`resolve_profile`), so it maps
+# to no fixed tier set.
+PROFILES: tuple[str, ...] = ("minimum", "default", "full", "custom")
+PROFILE_TIERS: dict[str, tuple[str, ...]] = {
+    "minimum": (),
+    "default": ("core",),
+    "full": ("core", "optional", "gpu"),
+    "custom": (),
+}
+
 # A settings-driven existing-path probe: (settings dict) -> existing path | None.
 # Lets an entry count as installed when the user already has the artifact
 # somewhere else (e.g. the Qwen GGUF named by settings.ggufPath/modelsDir).
@@ -85,6 +108,13 @@ class AssetEntry:
     size_mb: float
     dest: str = ""
     label: str = ""
+    # WU C1: which install PROFILE tier pulls this entry (see ASSET_TIERS). Default
+    # "optional" — an unclassified entry is on-demand, never forced into Default.
+    tier: str = "optional"
+    # WU C1: a plain-English WHY this component exists — surfaced (with label=what +
+    # size_mb) by ``assets.plan`` so a user sees what a multi-GB download buys BEFORE
+    # committing to it.
+    why: str = ""
     # installer="download": the PINNED source URL + optional integrity pin.
     url: str | None = None
     sha256: str | None = None
@@ -113,6 +143,8 @@ class AssetEntry:
             raise ValueError(
                 f"asset {self.name!r}: python_kind must be one of {PYTHON_KINDS}, got {self.python_kind!r}"
             )
+        if self.tier not in ASSET_TIERS:
+            raise ValueError(f"asset {self.name!r}: tier must be one of {ASSET_TIERS}, got {self.tier!r}")
         # Normalize requirements to a tuple (frozen dataclass => object.__setattr__).
         object.__setattr__(self, "requirements", tuple(self.requirements or ()))
         if self.installer == "download":
@@ -207,6 +239,33 @@ def registry_restore(snapshot: dict[str, AssetEntry]) -> None:
     _REGISTRY.update(snapshot)
 
 
+def resolve_profile(profile: str, custom: Sequence[str] | None = None) -> list[str]:
+    """Asset names to install for an installer PROFILE (WU C1).
+
+    * ``minimum`` — nothing (app + slim python; everything on demand) -> ``[]``.
+    * ``default`` — every ``core``-tier entry.
+    * ``full``    — every ``core``/``optional``/``gpu``-tier entry.
+    * ``custom``  — the explicit ``custom`` name list (order preserved, de-duped);
+      each name MUST be a registered asset (unknown names fail loudly, never
+      silently dropped).
+
+    The profile is matched case-insensitively. An unknown profile raises
+    ``ValueError`` (fail loud — no silent empty-set fallback).
+    """
+    key = str(profile).lower()
+    if key not in PROFILES:
+        raise ValueError(f"profile must be one of {PROFILES}, got {profile!r}")
+    if key == "custom":
+        seen: dict[str, None] = {}
+        for name in custom or ():
+            if get_asset(name) is None:
+                raise ValueError(f"custom profile: unknown asset {name!r}")
+            seen.setdefault(name, None)
+        return list(seen)
+    tiers = PROFILE_TIERS[key]
+    return [entry.name for entry in all_assets() if entry.tier in tiers]
+
+
 # --------------------------------------------------------------------------- #
 # day-1 entries (U4 scope): whisper large-v3-turbo + Qwen3-4B GGUF
 # --------------------------------------------------------------------------- #
@@ -285,6 +344,8 @@ def _register_day1() -> None:
             kind="model",
             size_mb=WHISPER_SIZE_MB,
             label="Whisper large-v3-turbo (transcription)",
+            tier="core",
+            why="Transcribes speech to text — the base for captions, subtitles, and Director planning.",
             installer="hf",
             hf_repo=WHISPER_HF_REPO,
             hf_revision=WHISPER_HF_REVISION,
@@ -297,6 +358,8 @@ def _register_day1() -> None:
             size_mb=QWEN_SIZE_MB,
             dest=QWEN_DEST,
             label="Qwen3-4B GGUF (local LLM)",
+            tier="core",
+            why="Runs the local language model that powers clip selection, titles, and the Director — fully offline.",
             installer="download",
             url=QWEN_GGUF_URL,
             sha256=QWEN_SHA256,
@@ -310,6 +373,8 @@ def _register_day1() -> None:
             size_mb=EMBEDDER_SIZE_MB,
             dest=EMBEDDER_DEST,
             label="all-MiniLM-L6-v2 ONNX (semantic-index embeddings, Apache-2.0)",
+            tier="optional",
+            why="Builds the semantic index for finding related moments across your library — optional search quality boost.",
             installer="download",
             url=EMBEDDER_ONNX_URL,
             sha256=EMBEDDER_SHA256,
@@ -394,6 +459,8 @@ def _register_lightasd() -> None:
             size_mb=LIGHTASD_S3FD_SIZE_MB,
             dest=LIGHTASD_S3FD_DEST,
             label="S3FD face detector (Light-ASD visual ASD, MIT)",
+            tier="core",
+            why="Detects faces for the always-on speaker tracker so vertical reframes follow the person talking.",
             installer="download",
             url=LIGHTASD_S3FD_URL,
             sha256=LIGHTASD_S3FD_SHA256,
@@ -406,6 +473,8 @@ def _register_lightasd() -> None:
             size_mb=LIGHTASD_ASD_SIZE_MB,
             dest=LIGHTASD_ASD_DEST,
             label="LR-ASD active-speaker model (finetuning_TalkSet, MIT)",
+            tier="core",
+            why="Picks which visible face is actually speaking so multi-person reframes track the right subject.",
             installer="download",
             url=LIGHTASD_ASD_URL,
             sha256=LIGHTASD_ASD_SHA256,
@@ -447,6 +516,8 @@ def _register_yunet() -> None:
             size_mb=YUNET_SIZE_MB,
             dest=YUNET_DEST,
             label="YuNet face detector (claudeshorts speaker tracking, MIT)",
+            tier="core",
+            why="The default face detector that keeps the vertical crop centred on the speaker — no silent centre-crop.",
             installer="download",
             url=YUNET_URL,
             sha256=YUNET_SHA256,
@@ -496,6 +567,8 @@ def _register_edgetam() -> None:
             size_mb=EDGETAM_SIZE_MB,
             dest=EDGETAM_DEST,
             label="EdgeTAM video tracker (opt-in occlusion-robust reframe tracking, Apache-2.0)",
+            tier="optional",
+            why="Opt-in tracker that follows a subject through occlusions and full turn-aways — better than the default on tricky clips.",
             installer="download",
             url=EDGETAM_URL,
             sha256=EDGETAM_SHA256,
@@ -512,6 +585,8 @@ def _register_phase8_optional() -> None:
             size_mb=HSEMOTION_SIZE_MB,
             dest=HSEMOTION_DEST,
             label="HSEmotion enet_b0_8 (facial emotion, Apache-2.0)",
+            tier="optional",
+            why="Scores facial emotion to help find the most expressive moments — an optional highlight signal.",
             installer="download",
             url=HSEMOTION_URL,
             sha256=HSEMOTION_SHA256,
@@ -524,6 +599,8 @@ def _register_phase8_optional() -> None:
             size_mb=RAPIDOCR_SIZE_MB,
             dest=RAPIDOCR_DEST,
             label="RapidOCR PP-OCRv4 det (on-screen text, Apache-2.0)",
+            tier="optional",
+            why="Reads on-screen text so captions avoid covering it and text-heavy moments score higher — optional.",
             installer="download",
             url=RAPIDOCR_URL,
             sha256=RAPIDOCR_SHA256,
