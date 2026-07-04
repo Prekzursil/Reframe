@@ -8,7 +8,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { SidecarBanner, type SidecarStatus } from './SidecarBanner';
+import { SidecarBanner, type RepairSetupResult, type SidecarStatus } from './SidecarBanner';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -17,6 +17,7 @@ import { SidecarBanner, type SidecarStatus } from './SidecarBanner';
 let statusCb: ((status: SidecarStatus) => void) | null = null;
 let bootstrapErrorCb: ((message: string) => void) | null = null;
 const restartSidecar = vi.fn<() => Promise<{ ok: boolean }>>();
+const repairSetup = vi.fn<() => Promise<RepairSetupResult>>();
 
 function installBridge(): void {
   (window as unknown as { api?: unknown }).api = {
@@ -30,8 +31,11 @@ function installBridge(): void {
   };
 }
 
-/** Bridge that ALSO relays first-run bootstrap errors (WU-1 FAIL-LOUD). */
-function installBridgeWithBootstrap(): void {
+/**
+ * Bridge that ALSO relays first-run bootstrap errors (WU-1 FAIL-LOUD) and, when
+ * `withRepair` (default), exposes the on-demand `repairSetup()` action (WU A5).
+ */
+function installBridgeWithBootstrap(withRepair = true): void {
   (window as unknown as { api?: unknown }).api = {
     onSidecarStatus: (cb: (status: SidecarStatus) => void) => {
       statusCb = cb;
@@ -46,6 +50,7 @@ function installBridgeWithBootstrap(): void {
         bootstrapErrorCb = null;
       };
     },
+    ...(withRepair ? { repairSetup } : {}),
   };
 }
 
@@ -71,6 +76,8 @@ beforeEach(() => {
   bootstrapErrorCb = null;
   restartSidecar.mockReset();
   restartSidecar.mockResolvedValue({ ok: true });
+  repairSetup.mockReset();
+  repairSetup.mockResolvedValue({ ok: true });
   installBridge();
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -95,6 +102,10 @@ function banner(): Element | null {
 
 function restartBtn(): HTMLButtonElement | null {
   return container.querySelector('.sidecar-banner__action');
+}
+
+function repairBtn(): HTMLButtonElement | null {
+  return container.querySelector('[data-action="repair"]');
 }
 
 describe('SidecarBanner', () => {
@@ -236,5 +247,125 @@ describe('SidecarBanner', () => {
     // The actionable first-run failure replaces the generic status banner.
     expect(banner()!.textContent).toContain('I/O error');
     expect(restartBtn()).toBeNull();
+  });
+
+  // ---- WU A5: on-demand "Retry setup / Repair" control -----------------------
+
+  it('offers a "Retry setup" button on a first-run bootstrap error', () => {
+    installBridgeWithBootstrap();
+    mount();
+    pushBootstrapError('FAILED:bootstrap missing weights | fix: retry');
+    const btn = repairBtn();
+    expect(btn).not.toBeNull();
+    expect(btn!.textContent).toBe('Retry setup');
+    // Distinct from the sidecar Restart action (fix is a re-run, not a respawn).
+    expect(restartBtn()).toBeNull();
+  });
+
+  it('clicking Retry setup invokes repairSetup() and shows an in-flight state', async () => {
+    let resolveRepair: (r: RepairSetupResult) => void = () => {};
+    repairSetup.mockReturnValueOnce(
+      new Promise<RepairSetupResult>((res) => {
+        resolveRepair = res;
+      }),
+    );
+    installBridgeWithBootstrap();
+    mount();
+    pushBootstrapError('FAILED:bootstrap missing weights | fix: retry');
+    act(() => {
+      repairBtn()!.click();
+    });
+    expect(repairSetup).toHaveBeenCalledTimes(1);
+    // Optimistic in-flight: the button is replaced by a progress note.
+    expect(repairBtn()).toBeNull();
+    expect(banner()!.textContent).toContain('Retrying setup');
+    // Let the pending promise settle so React has no unflushed act() work.
+    await act(async () => {
+      resolveRepair({ ok: true });
+      await Promise.resolve();
+    });
+  });
+
+  it('clears the banner when repair succeeds ({ok:true})', async () => {
+    repairSetup.mockResolvedValueOnce({ ok: true });
+    installBridgeWithBootstrap();
+    mount();
+    pushBootstrapError('FAILED:bootstrap missing weights | fix: retry');
+    await act(async () => {
+      repairBtn()!.click();
+      await Promise.resolve();
+    });
+    // Success clears the actionable error → the banner falls back to the
+    // (now-healthy) sidecar status stream, which is 'running' by default.
+    expect(banner()).toBeNull();
+  });
+
+  it('re-offers Retry setup and surfaces the reason when repair fails with one', async () => {
+    repairSetup.mockResolvedValueOnce({ ok: false, reason: 'Setup failed: disk full' });
+    installBridgeWithBootstrap();
+    mount();
+    pushBootstrapError('FAILED:bootstrap missing weights | fix: retry');
+    await act(async () => {
+      repairBtn()!.click();
+      await Promise.resolve();
+    });
+    // Loud failure: the button returns AND the fresh reason replaces the message.
+    expect(repairBtn()).not.toBeNull();
+    expect(banner()!.textContent).toContain('disk full');
+  });
+
+  it('re-offers Retry setup keeping the prior message when repair fails without a reason', async () => {
+    repairSetup.mockResolvedValueOnce({ ok: false });
+    installBridgeWithBootstrap();
+    mount();
+    pushBootstrapError('FAILED:bootstrap missing weights | fix: retry');
+    await act(async () => {
+      repairBtn()!.click();
+      await Promise.resolve();
+    });
+    // No reason → keep the existing actionable message (the error channel may
+    // push a fresh one), re-offer the button.
+    expect(repairBtn()).not.toBeNull();
+    expect(banner()!.textContent).toContain('missing weights');
+  });
+
+  it('re-offers Retry setup when repairSetup rejects (failure not swallowed)', async () => {
+    repairSetup.mockRejectedValueOnce(new Error('spawn failed'));
+    installBridgeWithBootstrap();
+    mount();
+    pushBootstrapError('FAILED:bootstrap missing weights | fix: retry');
+    await act(async () => {
+      repairBtn()!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(repairBtn()).not.toBeNull();
+    expect(banner()!.textContent).toContain('missing weights');
+  });
+
+  it('Retry setup no-ops when the bridge lacks repairSetup', () => {
+    installBridgeWithBootstrap(false);
+    mount();
+    pushBootstrapError('FAILED:bootstrap missing weights | fix: retry');
+    // The button renders, but with no repairSetup callable the click is inert.
+    expect(repairBtn()).not.toBeNull();
+    act(() => {
+      repairBtn()!.click();
+    });
+    expect(repairBtn()).not.toBeNull();
+    expect(banner()!.textContent).toContain('missing weights');
+  });
+
+  it('Retry setup no-ops when the bridge disappears before the click', () => {
+    installBridgeWithBootstrap();
+    mount();
+    pushBootstrapError('FAILED:bootstrap missing weights | fix: retry');
+    // The bridge vanishes (e.g. teardown race) after the button rendered.
+    delete (window as unknown as { api?: unknown }).api;
+    act(() => {
+      repairBtn()!.click();
+    });
+    expect(repairSetup).not.toHaveBeenCalled();
+    expect(repairBtn()).not.toBeNull();
   });
 });

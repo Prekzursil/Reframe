@@ -24,6 +24,7 @@ import {
   readDataDirMarker,
 } from './dataRootIo';
 import { registerDataFolderIpc } from './dataFolderIpc';
+import { registerRepairSetupIpc } from './repairSetupIpc';
 import { registerDialogIpc } from './dialogIpc';
 import { resolveScopedMediaPath } from './exportPath';
 import {
@@ -61,6 +62,7 @@ let disposeIpc: (() => void) | null = null;
 let disposeDialogIpc: (() => void) | null = null;
 let disposeShellIpc: (() => void) | null = null;
 let disposeDataFolderIpc: (() => void) | null = null;
+let disposeRepairSetupIpc: (() => void) | null = null;
 
 /** All live, non-destroyed windows (for notification fan-out). */
 function liveWindows(): BrowserWindow[] {
@@ -608,6 +610,21 @@ function bootstrap(): void {
     markerPath: dataDirMarkerPath(),
   });
 
+  // WU A5: on-demand "Retry setup / Repair". Re-runs the idempotent first-run
+  // bootstrap (pip re-checks satisfied deps, only missing assets re-download) so
+  // a user whose first run partially failed recovers in place — without waiting
+  // for the next launch. Single-flight on the live bootstrap child; on success
+  // it re-activates THIS copy's embeddable ._pth and (re)starts the sidecar so
+  // the freshly-provisioned runtime is picked up.
+  disposeRepairSetupIpc = registerRepairSetupIpc({
+    isBootstrapInFlight: () => bootstrapChild !== null,
+    runBootstrap: runFirstRunBootstrap,
+    onBootstrapSucceeded: () => {
+      ensurePthActivated();
+      sidecar?.restart();
+    },
+  });
+
   // U1: stream local media to <video> with Range support. The resolver returns
   // the PLAYABLE path for a videoId: the cached remux/proxy when media.playable
   // reports one, otherwise the original library path.
@@ -781,6 +798,10 @@ app.on('will-quit', (event) => {
   if (disposeDataFolderIpc) {
     disposeDataFolderIpc();
     disposeDataFolderIpc = null;
+  }
+  if (disposeRepairSetupIpc) {
+    disposeRepairSetupIpc();
+    disposeRepairSetupIpc = null;
   }
   event.preventDefault();
   void sc.stop().finally(() => app.exit(0));

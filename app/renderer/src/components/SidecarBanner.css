@@ -55,7 +55,8 @@
   overflow-wrap: anywhere;
 }
 
-.sidecar-banner__action {
+.sidecar-banner__action,
+.sidecar-banner__repair {
   appearance: none;
   padding: var(--space-2) var(--space-4);
   border: none;
@@ -70,15 +71,27 @@
   transition: background var(--dur-fast) var(--ease-out);
 }
 
-.sidecar-banner__action:hover {
+.sidecar-banner__action:hover,
+.sidecar-banner__repair:hover {
   background: var(--accent-hover);
 }
 
-.sidecar-banner__action:active {
+.sidecar-banner__action:active,
+.sidecar-banner__repair:active {
   background: var(--accent-pressed);
 }
 
-.sidecar-banner__action:focus-visible {
+.sidecar-banner__action:focus-visible,
+.sidecar-banner__repair:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
+}
+
+/* WU A5: the in-flight "Retrying setup…" note replacing the Retry button while a
+   re-run bootstrap is underway — a muted, non-interactive progress label. */
+.sidecar-banner__repairing {
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
 }

@@ -27,6 +27,7 @@ const DIALOG_PICK_LOGO_CHANNEL = 'dialog.pickLogoFile'; // must match app/main/s
 const SIDECAR_RESTART_CHANNEL = 'sidecar.restart'; // must match app/main/ipc.ts
 const SIDECAR_STATUS_CHANNEL = 'sidecar.status'; // must match app/main/ipc.ts
 const BOOTSTRAP_ERROR_CHANNEL = 'bootstrap.error'; // must match app/main/main.ts
+const SETUP_REPAIR_CHANNEL = 'setup.repair'; // must match app/main/repairSetupIpc.ts
 const PROXY_STATE_CHANNEL = 'proxy.state'; // must match app/main/main.ts (WU B3)
 const DATA_FOLDER_GET_CHANNEL = 'dataFolder.get'; // must match app/main/dataFolderIpc.ts
 const DATA_FOLDER_PICK_CHANNEL = 'dataFolder.pick'; // must match app/main/dataFolderIpc.ts
@@ -52,6 +53,12 @@ export interface ProxyStateEvent {
 
 /** Self-healing supervisor lifecycle states (mirrors sidecar.ts SidecarState). */
 export type SidecarStatus = 'running' | 'restarting' | 'down';
+
+/** WU A5: outcome of an on-demand "Retry setup / Repair" bootstrap re-run. */
+export interface RepairSetupResult {
+  ok: boolean;
+  reason?: string;
+}
 
 export interface MediaApi {
   /** Forward a JSON-RPC method to the sidecar; resolves with its result. */
@@ -99,6 +106,13 @@ export interface MediaApi {
    * unsubscribe fn.
    */
   onBootstrapError(cb: (message: string) => void): () => void;
+  /**
+   * WU A5: re-run the idempotent first-run bootstrap on demand ("Retry setup /
+   * Repair"). Recovers a partially-failed first run in place — pip re-checks
+   * satisfied deps, only missing assets re-download — and (re)starts the sidecar
+   * on success. Resolves `{ ok, reason? }`.
+   */
+  repairSetup(): Promise<RepairSetupResult>;
   /**
    * DATA ROOT: the data folder (models/envs/exports/...) in use THIS session.
    * Resolves with the absolute path the sidecar also derives its tree from.
@@ -169,6 +183,10 @@ const api: MediaApi = {
     const listener = (_event: IpcRendererEvent, message: string): void => cb(message);
     ipcRenderer.on(BOOTSTRAP_ERROR_CHANNEL, listener);
     return () => ipcRenderer.removeListener(BOOTSTRAP_ERROR_CHANNEL, listener);
+  },
+
+  repairSetup(): Promise<RepairSetupResult> {
+    return ipcRenderer.invoke(SETUP_REPAIR_CHANNEL) as Promise<RepairSetupResult>;
   },
 
   getDataFolder(): Promise<string> {
