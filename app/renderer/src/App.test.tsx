@@ -58,9 +58,16 @@ vi.mock('./views/MakeShorts', () => ({
   ),
 }));
 
-// Stub the lazy AI Director panel (it owns its own tests).
+// Stub the lazy AI Director panel (it owns its own tests). The marker echoes the
+// threaded video id + exposes the empty-state CTA so App's WU-E1 wiring is testable.
 vi.mock('./panels/DirectorPanel', () => ({
-  default: () => <div data-testid="director" />,
+  default: ({ video, onChooseVideo }: { video: Video | null; onChooseVideo?: () => void }) => (
+    <div data-testid="director" data-video-id={video?.id ?? ''}>
+      <button type="button" onClick={onChooseVideo}>
+        choose-video
+      </button>
+    </div>
+  ),
 }));
 
 // Stub the Settings view; expose the initialSection App wired in (it owns tests).
@@ -190,6 +197,45 @@ describe('App top-level tabs', () => {
     await flush();
     expect(container.querySelector('[data-testid="director"]')).not.toBeNull();
     expect(tab('Director').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('WU-E1: threads the open video into the Director and the CTA routes to Library', async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    // Open a video from the Library, then switch to the Director tab.
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="library"] button')!.click();
+    });
+    await flush();
+    await act(async () => {
+      tab('Director').click();
+    });
+    await flush();
+    // The app-selected video id is threaded into the panel.
+    const director = container.querySelector('[data-testid="director"]')!;
+    expect(director.getAttribute('data-video-id')).toBe('v1');
+    // The empty-state CTA is wired to route back to the Library (real selection).
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="director"] button')!.click();
+    });
+    await flush();
+    expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
+    expect(tab('Library').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('WU-E1: opening the Director with no video threads a null video (empty id)', async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    await act(async () => {
+      tab('Director').click();
+    });
+    await flush();
+    const director = container.querySelector('[data-testid="director"]')!;
+    expect(director.getAttribute('data-video-id')).toBe('');
   });
 
   it('navigates to Settings (default section) via the tab', async () => {

@@ -339,7 +339,10 @@ function AppShell(): React.ReactElement {
       case 'director':
         return (
           <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>
-            <DirectorPanel />
+            {/* WU-E1: thread the app-selected video so the Director plans against
+                video.id (never the goal text); the empty-state CTA routes to the
+                Library to pick one. */}
+            <DirectorPanel video={editVideo} onChooseVideo={backToLibrary} />
           </Suspense>
         );
       case 'settings':

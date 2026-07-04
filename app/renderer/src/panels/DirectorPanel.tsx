@@ -26,6 +26,7 @@ import {
   onProgress as bridgeOnProgress,
   type DoneEvent,
   type ProgressEvent,
+  type Video,
 } from '../lib/rpc';
 import {
   canMoveOp,
@@ -119,6 +120,16 @@ export interface DirectorPanelProps {
   rpcClient?: typeof client;
   /** Inject the job-event seam for tests; defaults to the real preload bridge. */
   jobEvents?: JobEventBridge;
+  /**
+   * The app-selected video this panel edits (App's `editVideo`, set by
+   * `openVideo`), or null when none is open. Its `id` is the plan target — WU-E1:
+   * the goal string is NEVER used as the videoId. When null (and no prior plan is
+   * on screen) the panel shows a "Choose a video" empty state instead of the
+   * prompt form, so a first run can never mis-fire the goal as the videoId.
+   */
+  video?: Video | null;
+  /** Route to the real video selection (the Library) from the empty-state CTA. */
+  onChooseVideo?: () => void;
 }
 
 /** The id of the in-flight director job + what it represents (plan vs apply/undo). */
@@ -127,7 +138,12 @@ interface PendingJob {
   kind: 'plan' | 'apply' | 'undo';
 }
 
-export function DirectorPanel({ rpcClient, jobEvents }: DirectorPanelProps): React.ReactElement {
+export function DirectorPanel({
+  rpcClient,
+  jobEvents,
+  video,
+  onChooseVideo,
+}: DirectorPanelProps): React.ReactElement {
   /* v8 ignore next 2 -- the `?? real` defaults only run in the real app; every test injects both. */
   const api = useMemo(() => rpcClient ?? client, [rpcClient]);
   const events = useMemo(() => jobEvents ?? realJobEvents, [jobEvents]);
@@ -146,6 +162,12 @@ export function DirectorPanel({ rpcClient, jobEvents }: DirectorPanelProps): Rea
   // The active job is held in a ref so the once-mounted job.done/progress
   // subscriptions read the current pending job without re-subscribing.
   const pending = useRef<PendingJob | null>(null);
+
+  // WU-E1: the video this panel plans against — the app-selected `video.id`, or
+  // (if that video was closed while a prior plan is still on screen) the plan's
+  // own `videoId`. NEVER the goal text. `null` == no video and no plan → the
+  // panel renders the "Choose a video" empty state instead of the prompt form.
+  const activeVideoId: string | null = video?.id ?? plan?.videoId ?? null;
 
   // Fetch the per-data-type cost/egress preview for a freshly-planned plan (F3).
   const loadPreview = useCallback(
@@ -219,11 +241,14 @@ export function DirectorPanel({ rpcClient, jobEvents }: DirectorPanelProps): Rea
   const submit = useCallback(async (): Promise<void> => {
     const trimmed = goal.trim();
     if (!trimmed || busy) return;
+    /* v8 ignore next -- presence guard: the prompt form (hence submit) only renders when activeVideoId is non-null, so this never fires in practice. */
+    if (activeVideoId === null) return;
     setBusy(true);
     setError('');
     setProgress('Planning…');
     try {
-      const job = await api.director.plan(plan?.videoId ?? trimmed, trimmed);
+      // WU-E1: plan against the resolved video id — NEVER the goal string.
+      const job = await api.director.plan(activeVideoId, trimmed);
       pending.current = { jobId: job.jobId, kind: 'plan' };
     } catch (err) {
       pending.current = null;
@@ -231,7 +256,7 @@ export function DirectorPanel({ rpcClient, jobEvents }: DirectorPanelProps): Rea
       setProgress('');
       setError(errText(err));
     }
-  }, [api, busy, goal, plan]);
+  }, [api, busy, goal, activeVideoId]);
 
   // Apply the current plan (F4: echo the budget cacheKey as confirmBudget). The
   // ack is the first per-function cacheKey from the preview (apply's gate mirrors
@@ -333,6 +358,35 @@ export function DirectorPanel({ rpcClient, jobEvents }: DirectorPanelProps): Rea
   // BEFORE an apply (once applied, the op statuses are server truth — the user
   // undoes, not edits) and never mid-job. Disabled controls keep their reason.
   const controlsEnabled = !applied && opsStatus === null && !busy;
+
+  // WU-E1: with no video open AND no plan on screen, there is nothing to edit —
+  // show a "Choose a video" empty state (wired to the real selection) instead of
+  // a prompt box that would otherwise mis-fire the goal as the videoId.
+  if (activeVideoId === null) {
+    return (
+      <section
+        className="feature-panel director-panel director-panel--empty"
+        aria-label="AI Director"
+      >
+        <h2>AI Director</h2>
+        <div className="director-empty" data-section="empty">
+          <p className="director-empty__title">No video open</p>
+          <p className="director-empty__hint">
+            Open a video from your Library to plan a reviewable, reversible AI edit for it — the
+            Director always edits the video you have selected.
+          </p>
+          <button
+            type="button"
+            data-action="choose-video"
+            className="director-empty__cta"
+            onClick={onChooseVideo}
+          >
+            Choose a video
+          </button>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="feature-panel director-panel" aria-label="AI Director">

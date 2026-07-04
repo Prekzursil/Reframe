@@ -290,3 +290,30 @@
   color: var(--text-secondary);
   font-size: var(--type-caption-size);
 }
+
+/* ---- empty state (WU-E1: no video open) ------------------------------------ */
+
+.director-panel--empty .director-empty {
+  margin-top: var(--space-5);
+  padding: var(--space-6) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  text-align: center;
+  display: grid;
+  gap: var(--space-3);
+  justify-items: center;
+}
+
+.director-panel--empty .director-empty__title {
+  font-weight: 600;
+  font-size: var(--type-body-lg-size, 1.125rem);
+}
+
+.director-panel--empty .director-empty__hint {
+  max-width: 42ch;
+  color: var(--text-secondary);
+}
+
+.director-panel--empty .director-empty__cta {
+  margin-top: var(--space-2);
+}

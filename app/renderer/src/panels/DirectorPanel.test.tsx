@@ -31,6 +31,7 @@ import type {
   DirectorPreview,
   DoneEvent,
   ProgressEvent,
+  Video,
   client as RealClient,
 } from '../lib/rpc';
 
@@ -77,6 +78,19 @@ function op(over: Partial<DirectorOp> = {}): DirectorOp {
 
 function planFixture(ops: DirectorOp[], goal = 'make it smooth'): DirectorEditPlan {
   return { planId: 'plan-1', videoId: 'vid-1', goal, sourceHash: 'h', ops, inverse: [] };
+}
+
+/** The app-selected video threaded into the panel (its id is the plan target). */
+function videoFixture(over: Partial<Video> = {}): Video {
+  return {
+    id: 'vid-1',
+    path: '/movies/talk.mp4',
+    title: 'Talk',
+    addedAt: '2026-06-11T00:00:00Z',
+    durationSec: 600,
+    hasTranscript: false,
+    ...over,
+  };
 }
 
 function previewFixture(over: Partial<DirectorPreview> = {}): DirectorPreview {
@@ -235,9 +249,20 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function mount(c: FakeClient): Promise<void> {
+async function mount(
+  c: FakeClient,
+  video: Video | null = videoFixture(),
+  onChooseVideo?: () => void,
+): Promise<void> {
   await act(async () => {
-    root.render(<DirectorPanel rpcClient={c.client} jobEvents={events} />);
+    root.render(
+      <DirectorPanel
+        rpcClient={c.client}
+        jobEvents={events}
+        video={video}
+        onChooseVideo={onChooseVideo}
+      />,
+    );
   });
   await flush();
 }
@@ -300,15 +325,17 @@ async function planTo(c: FakeClient, plan: DirectorEditPlan): Promise<void> {
 // ---- tests -----------------------------------------------------------------
 
 describe('DirectorPanel', () => {
-  it('(a) submitting the prompt calls director.plan with the goal', async () => {
+  it('(a) submitting plans against the SELECTED video id, never the goal text', async () => {
     const c = makeClient();
-    await mount(c);
+    // The panel is given the app-selected video (id 'vid-1'); a first run (no
+    // prior plan) must dispatch that id as the videoId — NOT the goal string.
+    await mount(c, videoFixture({ id: 'vid-1' }));
     expect(events.progressSubs).toBe(1);
     expect(events.doneSubs).toBe(1);
     await setGoal('make it smooth');
     await clickPlan();
     expect(c.calls.find((x) => x.method === 'director.plan')?.args).toEqual([
-      'make it smooth',
+      'vid-1',
       'make it smooth',
     ]);
     // F5: progress region is SR-announced.
@@ -331,6 +358,57 @@ describe('DirectorPanel', () => {
     });
     await flush();
     expect(c.calls.some((x) => x.method === 'director.plan')).toBe(false);
+  });
+
+  // ---- WU-E1: the "no video open" gate + Choose-a-video CTA -----------------
+
+  it('with NO video open shows the empty state + Choose-a-video CTA and no prompt form', async () => {
+    const c = makeClient();
+    const onChoose = vi.fn();
+    await mount(c, null, onChoose);
+    // Empty state visible; the prompt form is GONE (nothing can mis-fire).
+    expect(container.querySelector('[data-section="empty"]')).not.toBeNull();
+    expect(container.querySelector('form.director-prompt')).toBeNull();
+    expect(container.querySelector('textarea[data-action="goal"]')).toBeNull();
+    // The CTA wires to the real video selection.
+    const cta = $('button[data-action="choose-video"]');
+    expect(cta.textContent).toBe('Choose a video');
+    await act(async () => {
+      cta.click();
+    });
+    expect(onChoose).toHaveBeenCalledTimes(1);
+    // No plan can be dispatched without a video.
+    expect(c.calls.some((x) => x.method === 'director.plan')).toBe(false);
+  });
+
+  it('opening a video swaps the empty state for the prompt form', async () => {
+    const c = makeClient();
+    await mount(c, null);
+    expect(container.querySelector('[data-section="empty"]')).not.toBeNull();
+    // Re-render with a selected video → the editor (prompt form) appears.
+    await act(async () => {
+      root.render(<DirectorPanel rpcClient={c.client} jobEvents={events} video={videoFixture()} />);
+    });
+    await flush();
+    expect(container.querySelector('[data-section="empty"]')).toBeNull();
+    expect(container.querySelector('form.director-prompt')).not.toBeNull();
+  });
+
+  it('a video closed AFTER planning keeps the plan and re-plans against the plan video (never the goal)', async () => {
+    const c = makeClient();
+    await planTo(c, planFixture([op({ id: 'a', kind: 'trim' })], 'q&a'));
+    // The open video is cleared (video prop → null) while the plan is on screen.
+    await act(async () => {
+      root.render(<DirectorPanel rpcClient={c.client} jobEvents={events} video={null} />);
+    });
+    await flush();
+    // The prior plan (and its editor) stays visible — no empty state.
+    expect(container.querySelector('[data-section="empty"]')).toBeNull();
+    expect($('[data-testid="plan-summary"]').textContent).toBe('1 trim');
+    // Re-plan now targets the plan's own videoId — NOT the goal text.
+    await clickPlan();
+    const planCalls = c.calls.filter((x) => x.method === 'director.plan');
+    expect(planCalls[planCalls.length - 1].args[0]).toBe('vid-1');
   });
 
   it('(b) a 50-op plan renders grouped collapsible sections, not 50 flat rows', async () => {
