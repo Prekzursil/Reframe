@@ -1,11 +1,18 @@
-// Brand-rename guard for WU-FND-RENAME (P4 §0 / C13).
+// Brand-rename + version guard for WU A1 (Reframe v1.3 naming lock).
 //
-// The rename touches EXACTLY four brand surfaces and ZERO path literals. This
-// test reads the REAL source files (not copies) so that:
-//   1. all four brand surfaces read "Reframe - Media Studio", and
-//   2. the appData/path literals still read "media-studio" — renaming a path
-//      literal would break first-run state, proxy/peak/dub caches, and the
-//      sidecar-env sentinel (a known regression class — P4 C13).
+// v1.3 unifies the user-facing display name to a single word "Reframe" across
+// EVERY user-visible surface (window title, in-app header, the Electron About
+// panel, and the installer/shortcut names) while KEEPING the internal id
+// "media-studio" (package `name`, reverse-DNS `appId`, the `${name}` artifact
+// filename, and every appData/path literal) unchanged — renaming a path literal
+// would break first-run state, proxy/peak/dub caches, and the sidecar-env
+// sentinel (a known regression class — P4 C13).
+//
+// This test reads the REAL source files (not copies) so that:
+//   1. all user-facing brand surfaces read "Reframe",
+//   2. NO user-facing surface leaks "media-studio"/"Media Studio", and
+//   3. app/package.json declares version 1.3.0 + productName "Reframe" while the
+//      internal `name` stays "media-studio".
 // Runs in the default node environment (filesystem access, no jsdom). Tests run
 // with cwd = app/, so repo paths are resolved via import.meta.url.
 import { describe, it, expect } from 'vitest';
@@ -19,33 +26,95 @@ const REPO_ROOT = resolve(HERE, '..', '..');
 
 const MAIN_TS = resolve(REPO_ROOT, 'app', 'main', 'main.ts');
 const APP_TSX = resolve(REPO_ROOT, 'app', 'renderer', 'src', 'App.tsx');
+const PACKAGE_JSON = resolve(REPO_ROOT, 'app', 'package.json');
 const ELECTRON_BUILDER = resolve(REPO_ROOT, 'electron-builder.yml');
 const SETTINGS_STORE = resolve(REPO_ROOT, 'sidecar', 'media_studio', 'settings_store.py');
 const ASSETS_MANAGER = resolve(REPO_ROOT, 'sidecar', 'media_studio', 'assets', 'manager.py');
 
 const read = (p: string): string => readFileSync(p, 'utf8');
 
-const BRAND = 'Reframe - Media Studio';
+const BRAND = 'Reframe';
 
-describe('brand rename — four brand surfaces (P4 §0 / C13)', () => {
+// Extract the exact display strings from the real source. Each helper fails
+// loudly (throws) if the anchor it depends on is gone, so a moved/renamed
+// surface can never silently pass the audit below.
+const capture = (src: string, re: RegExp, label: string): string => {
+  const m = re.exec(src);
+  if (!m) throw new Error(`brand surface not found: ${label}`);
+  return m[1];
+};
+
+const windowTitle = (): string => capture(read(MAIN_TS), /title: '([^']*)'/, 'window title');
+const aboutName = (): string =>
+  capture(read(MAIN_TS), /applicationName: '([^']*)'/, 'About panel applicationName');
+const headerBrand = (): string =>
+  capture(read(APP_TSX), /<span className="app__brand">([^<]*)<\/span>/, 'in-app header');
+const productName = (): string =>
+  capture(read(ELECTRON_BUILDER), /^productName: (.+)$/m, 'electron-builder productName');
+const shortcutName = (): string =>
+  capture(read(ELECTRON_BUILDER), /shortcutName: (.+)$/m, 'nsis shortcutName');
+
+describe('brand rename — user-facing surfaces read "Reframe" (WU A1)', () => {
   it('window title reads the new brand (main.ts)', () => {
-    expect(read(MAIN_TS)).toContain(`title: '${BRAND}'`);
+    expect(windowTitle()).toBe(BRAND);
   });
 
-  it('renderer brand string reads the new brand (App.tsx)', () => {
-    expect(read(APP_TSX)).toContain(`<span className="app__brand">${BRAND}</span>`);
+  it('Electron About panel applicationName reads the new brand (main.ts)', () => {
+    expect(aboutName()).toBe(BRAND);
+  });
+
+  it('renderer in-app header reads the new brand (App.tsx)', () => {
+    expect(headerBrand()).toBe(BRAND);
   });
 
   it('electron-builder productName reads the new brand', () => {
-    expect(read(ELECTRON_BUILDER)).toContain(`productName: ${BRAND}`);
+    expect(productName()).toBe(BRAND);
   });
 
   it('nsis shortcutName reads the new brand', () => {
-    expect(read(ELECTRON_BUILDER)).toContain(`shortcutName: ${BRAND}`);
+    expect(shortcutName()).toBe(BRAND);
   });
 });
 
-describe('brand rename — path literals stay "media-studio" (P4 C13 guard)', () => {
+describe('brand rename — NO user-facing "media-studio" leak (WU A1 / R8 audit)', () => {
+  const surfaces: ReadonlyArray<readonly [string, () => string]> = [
+    ['window title', windowTitle],
+    ['About panel', aboutName],
+    ['in-app header', headerBrand],
+    ['productName', productName],
+    ['shortcutName', shortcutName],
+  ];
+
+  for (const [label, get] of surfaces) {
+    it(`${label} shows no "media-studio"/"Media Studio" to the user`, () => {
+      const shown = get().toLowerCase();
+      expect(shown).not.toContain('media-studio');
+      expect(shown).not.toContain('media studio');
+    });
+  }
+});
+
+describe('app/package.json — v1.3 version + productName (WU A1)', () => {
+  const pkg = JSON.parse(read(PACKAGE_JSON)) as {
+    version: string;
+    productName: string;
+    name: string;
+  };
+
+  it('version is bumped to 1.3.0', () => {
+    expect(pkg.version).toBe('1.3.0');
+  });
+
+  it('productName is the display brand "Reframe"', () => {
+    expect(pkg.productName).toBe(BRAND);
+  });
+
+  it('internal package name stays "media-studio"', () => {
+    expect(pkg.name).toBe('media-studio');
+  });
+});
+
+describe('brand rename — internal id stays "media-studio" (P4 C13 guard)', () => {
   it('main.ts appData first-run sentinel root stays media-studio', () => {
     const src = read(MAIN_TS);
     // resolveDataRoot()'s appData fallback: join(app.getPath('appData'),

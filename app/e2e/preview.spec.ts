@@ -53,7 +53,7 @@ test('renderer loads with no console errors', async () => {
   });
   win.on('pageerror', (e) => consoleErrors.push(`PAGEERROR: ${e.message}`));
   await win.waitForLoadState('domcontentloaded');
-  await expect(win.locator('.app__brand')).toHaveText('Reframe - Media Studio');
+  await expect(win.locator('.app__brand')).toHaveText('Reframe');
   // Let the library list + readiness rollup settle (RPCs to the live sidecar).
   await win.waitForTimeout(1500);
   expect(consoleErrors, `console errors: ${JSON.stringify(consoleErrors)}`).toEqual([]);

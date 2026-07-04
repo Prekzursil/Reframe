@@ -5,6 +5,25 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### [1.3.0] — in development
+
+**Reframe v1.3 — naming lock + provenance reconcile.** v1.3 continues the
+`1.1.0 → 1.2.0 → 1.3` lineage (v1.2.0 = the YuNet detector / virality badge /
+EdgeTAM tracker release) on the `feat/reframe-v1.3` branch built off the clean
+`v1.2.0` base. The final `1.3.0` tag is cut at release (workstream F).
+
+### Changed — display name unified to "Reframe" (WU A1)
+
+- **One user-facing name: "Reframe".** The window title, the in-app header, the
+  Electron About panel, and the installer/Start-menu shortcut now all read
+  **"Reframe"** (previously "Reframe - Media Studio"). `app/package.json` gains a
+  **`productName: "Reframe"`** key and bumps to **1.3.0**. The internal id
+  **`media-studio`** is deliberately unchanged — the package `name`, the
+  `local.media-studio` appId, the `${name}` installer-artifact filename, and every
+  appData/path literal keep it so first-run state, proxy/peak/dub caches, and the
+  sidecar-env sentinel are untouched. A brand guard test asserts no user-facing
+  surface leaks "media-studio"/"Media Studio".
+
 ## [1.2.0] — 2026-07-03
 
 **Reframe v1.2.0 — detector, virality, tracking + fail-loud hardening.** A single

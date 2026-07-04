@@ -17,7 +17,7 @@
 # from app/ with `--config ../electron-builder.yml`.
 
 appId: local.media-studio
-productName: Reframe - Media Studio
+productName: Reframe
 # no publish/update/signing — local personal app (§0: no platform creep)
 publish: null
 
@@ -97,7 +97,7 @@ nsis:
   # First-run state lives in %APPDATA%/media-studio (envs/models/tools);
   # uninstall keeps it so a reinstall needs no re-download.
   deleteAppDataOnUninstall: false
-  shortcutName: Reframe - Media Studio
+  shortcutName: Reframe
 
 # Nothing native to rebuild in the app package itself (natives live in
 # render-cli's own node_modules, shipped as-is, and in the first-run envs).

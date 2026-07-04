@@ -355,7 +355,7 @@ function AppShell(): React.ReactElement {
     <>
       <div className="app">
         <header className="app__bar">
-          <span className="app__brand">Reframe - Media Studio</span>
+          <span className="app__brand">Reframe</span>
           <QualityToggle quality={quality} onChange={changeQuality} />
           <RoutingToggle value={routingGlobal} onChange={changeRouting} busy={routingBusy} />
           <button

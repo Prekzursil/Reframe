@@ -415,7 +415,7 @@ function createWindow(): BrowserWindow {
     minHeight: 600,
     show: false,
     backgroundColor: '#101014',
-    title: 'Reframe - Media Studio',
+    title: 'Reframe',
     webPreferences: {
       preload: join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
@@ -626,6 +626,10 @@ function bootstrap(): void {
 }
 
 app.whenReady().then(() => {
+  // The native "About Reframe" panel (Help ▸ About / macOS app menu) — the single
+  // user-facing About surface. applicationName is the display brand "Reframe";
+  // applicationVersion reads package.json.version (1.3.0) via Electron.
+  app.setAboutPanelOptions({ applicationName: 'Reframe', applicationVersion: app.getVersion() });
   bootstrap();
 
   app.on('activate', () => {

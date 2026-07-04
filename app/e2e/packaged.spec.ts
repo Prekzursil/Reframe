@@ -90,7 +90,7 @@ test.describe('packaged (shipped binary) E2E', () => {
     await win.waitForLoadState('domcontentloaded');
     // The brand renders from the PACKAGED renderer bundle, driven by the bundled
     // Python sidecar (library + readiness rollup settle after the boot RPCs).
-    await expect(win.locator('.app__brand')).toHaveText('Reframe - Media Studio');
+    await expect(win.locator('.app__brand')).toHaveText('Reframe');
     await expect(win.locator('.library__title')).toHaveText('Library');
     await win.waitForTimeout(1500);
     expect(consoleErrors, `console errors: ${JSON.stringify(consoleErrors)}`).toEqual([]);
