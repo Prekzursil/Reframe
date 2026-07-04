@@ -186,3 +186,83 @@ def test_redact_keys_skips_non_dict_entries() -> None:
 
 def test_redact_keys_empty_is_empty() -> None:
     assert secrets.redact_keys([]) == []
+
+
+# --------------------------------------------------------------------------- #
+# WU-D2 (R7): redact_params — the RPC no-log formatter. A key-bearing RPC frame's
+# params must be safe to write to a diagnostic log line: NO key material survives.
+# --------------------------------------------------------------------------- #
+def test_redact_params_hides_top_level_api_key() -> None:
+    out = secrets.redact_params({"baseUrl": "https://x/v1", "apiKey": "sk-live-SECRET-9999"})
+    assert out["baseUrl"] == "https://x/v1"  # non-secret preserved
+    assert "sk-live-SECRET-9999" not in repr(out)
+    assert out["apiKey"] == secrets.REDACTION_PLACEHOLDER
+
+
+def test_redact_params_hides_cloud_api_key() -> None:
+    out = secrets.redact_params({"cloudApiKey": "sk-cloud-1234", "useCloud": True})
+    assert out["useCloud"] is True
+    assert out["cloudApiKey"] == secrets.REDACTION_PLACEHOLDER
+
+
+def test_redact_params_hides_api_keys_list_preserving_length() -> None:
+    out = secrets.redact_params({"apiKeys": ["gsk-aaaa1111", "gsk-bbbb2222"]})
+    assert out["apiKeys"] == [secrets.REDACTION_PLACEHOLDER, secrets.REDACTION_PLACEHOLDER]
+    for full in ("gsk-aaaa1111", "gsk-bbbb2222"):
+        assert full not in repr(out)
+
+
+def test_redact_params_hides_nested_provider_block() -> None:
+    # providers.upsert nests the entry under a "provider" key (providers_ops.py).
+    out = secrets.redact_params(
+        {"provider": {"id": "groq", "provider": "Groq", "apiKeys": ["gsk-nested-KEY7"]}}
+    )
+    assert out["provider"]["id"] == "groq"
+    assert out["provider"]["provider"] == "Groq"
+    assert out["provider"]["apiKeys"] == [secrets.REDACTION_PLACEHOLDER]
+    assert "gsk-nested-KEY7" not in repr(out)
+
+
+def test_redact_params_hides_keys_in_providers_list() -> None:
+    out = secrets.redact_params(
+        {"providers": [{"id": "a", "apiKeys": ["k-aaaa"]}, {"id": "b", "cloudApiKey": "k-bbbb"}]}
+    )
+    assert out["providers"][0]["apiKeys"] == [secrets.REDACTION_PLACEHOLDER]
+    assert out["providers"][1]["cloudApiKey"] == secrets.REDACTION_PLACEHOLDER
+    for full in ("k-aaaa", "k-bbbb"):
+        assert full not in repr(out)
+
+
+def test_redact_params_does_not_mutate_input() -> None:
+    params = {"apiKey": "sk-orig-KEY9", "apiKeys": ["gsk-orig-1"], "provider": {"apiKeys": ["p-1"]}}
+    secrets.redact_params(params)
+    # The caller's live params object is untouched (the sidecar still needs the key).
+    assert params["apiKey"] == "sk-orig-KEY9"
+    assert params["apiKeys"] == ["gsk-orig-1"]
+    assert params["provider"]["apiKeys"] == ["p-1"]
+
+
+def test_redact_params_passes_through_non_secret_only_params() -> None:
+    out = secrets.redact_params({"jobId": "job-1", "pct": 50})
+    assert out == {"jobId": "job-1", "pct": 50}
+
+
+def test_redact_params_tolerates_non_dict_params() -> None:
+    # Defensive: a malformed (non-dict) params value is returned unchanged, never crashes.
+    assert secrets.redact_params("not-a-dict") == "not-a-dict"  # type: ignore[arg-type]
+
+
+def test_redact_params_tolerates_non_list_api_keys_and_non_dict_entries() -> None:
+    out = secrets.redact_params(
+        {"apiKeys": "not-a-list", "providers": ["garbage", {"id": "ok", "apiKeys": ["k-ok"]}]}
+    )
+    # A non-list apiKeys is redacted wholesale (still a secret-bearing field).
+    assert out["apiKeys"] == secrets.REDACTION_PLACEHOLDER
+    # Non-dict list entries are passed through; dict entries are redacted.
+    assert out["providers"][0] == "garbage"
+    assert out["providers"][1]["apiKeys"] == [secrets.REDACTION_PLACEHOLDER]
+
+
+def test_redact_params_tolerates_non_dict_nested_provider() -> None:
+    out = secrets.redact_params({"provider": "not-a-dict"})
+    assert out["provider"] == "not-a-dict"

@@ -21,6 +21,7 @@ from typing import Any, TextIO
 from . import protocol
 from .job_store import JobStore
 from .jobs import JobRegistry
+from .models.secrets import redact_params
 from .protocol import (
     ErrorCode,
     RpcContext,
@@ -126,10 +127,26 @@ class RpcServer:
             if not req.is_notification:
                 self._write_obj(make_error(req.id, exc))
             else:
-                log.warning("notification %s failed: %s", req.method, exc)
+                # R7 (WU D2): a key-bearing frame's params are redacted before they
+                # reach this diagnostic — NO live key ever lands in a log line.
+                log.warning(
+                    "notification %s failed (params=%s): %s",
+                    req.method,
+                    redact_params(req.params),
+                    exc,
+                )
             return
         except Exception as exc:  # noqa: BLE001 - never let one call kill the loop
-            log.error("handler %s crashed: %s", req.method, exc, exc_info=True)
+            # R7 (WU D2): redact_params scrubs apiKey/apiKeys/cloudApiKey so the
+            # crash diagnostic keeps the useful method+params shape without leaking
+            # any key material to stderr.
+            log.error(
+                "handler %s crashed (params=%s): %s",
+                req.method,
+                redact_params(req.params),
+                exc,
+                exc_info=True,
+            )
             if not req.is_notification:
                 wrapped = RpcError(f"internal error in {req.method}: {exc}", ErrorCode.INTERNAL_ERROR)
                 self._write_obj(make_error(req.id, wrapped))

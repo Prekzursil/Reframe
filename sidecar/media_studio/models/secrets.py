@@ -72,6 +72,60 @@ def scrub_error_body(text: str, keys: Sequence[str]) -> str:
     return scrubbed
 
 
+#: RPC param fields that carry live key material and must never reach a log line.
+#: ``apiKey`` (providers.testKey), ``apiKeys`` (providers.upsert pool), and the
+#: legacy single ``cloudApiKey`` are the only key-bearing param names in §2.
+_SECRET_PARAM_FIELDS: tuple[str, ...] = ("apiKey", "apiKeys", "cloudApiKey")
+
+
+def _redact_secret_fields(entry: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of ``entry`` with every known secret field value hidden.
+
+    ``apiKeys`` (a list) is replaced element-for-element with
+    :data:`REDACTION_PLACEHOLDER` so the field's SHAPE (how many keys) still
+    reads in a log while NO character of any key survives; a non-list ``apiKeys``
+    and the scalar ``apiKey`` / ``cloudApiKey`` fields are replaced wholesale.
+    Non-secret fields are copied through verbatim.
+    """
+    out = dict(entry)
+    for field in _SECRET_PARAM_FIELDS:
+        if field not in out:
+            continue
+        value = out[field]
+        if field == "apiKeys" and isinstance(value, list):
+            out[field] = [REDACTION_PLACEHOLDER for _ in value]
+        else:
+            out[field] = REDACTION_PLACEHOLDER
+    return out
+
+
+def redact_params(params: Any) -> Any:
+    """Return a log-safe copy of an RPC ``params`` object with NO key material.
+
+    R7 (PLAN §WU D2 "DPAPI no-log"): a diagnostic that wants to record the
+    originating RPC frame (``rpc.py`` crash/notification-failure paths) must not
+    leak a live key. This strips every key-bearing field
+    (:data:`_SECRET_PARAM_FIELDS`) — at the top level, inside a nested
+    ``provider`` dict (``providers.upsert``'s single-entry shape), and inside a
+    ``providers`` list (each dict entry) — replacing each with
+    :data:`REDACTION_PLACEHOLDER`.
+
+    PURE + defensive: the input is never mutated (the sidecar still needs the raw
+    key), and a non-dict ``params`` (or a non-dict nested ``provider`` / list
+    entry) is passed through unchanged rather than crashing the log path.
+    """
+    if not isinstance(params, dict):
+        return params
+    out = _redact_secret_fields(params)
+    nested = out.get("provider")
+    if isinstance(nested, dict):
+        out["provider"] = _redact_secret_fields(nested)
+    providers = out.get("providers")
+    if isinstance(providers, list):
+        out["providers"] = [_redact_secret_fields(p) if isinstance(p, dict) else p for p in providers]
+    return out
+
+
 def redact_keys(providers: Iterable[Any]) -> list[dict[str, Any]]:
     """Return a copy of ``providers`` with every ``apiKeys`` entry redacted to last-4.
 
