@@ -15,12 +15,26 @@ deterministic on any machine.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from media_studio import handlers
 from media_studio.handlers import Services, _missing_tier_assets, _provider_has_key
 from media_studio.protocol import RpcContext
+
+
+def _register_all(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin every mapped tier asset as manifest-KNOWN (deterministic readiness).
+
+    B1 filters the ``assets.ensure`` target list to manifest-registered assets.
+    Tests asserting a tier goes ``needsDownload`` pin its assets as registered
+    here so they do not depend on which feature modules register assets on the
+    real tree (the readiness tiers reference re-host assets not yet registered).
+    """
+    from media_studio.assets import manifest as _manifest
+
+    monkeypatch.setattr(_manifest, "get_asset", lambda _n: SimpleNamespace(label="", size_mb=0))
 
 _ALL_MODELS = (
     "saliency",
@@ -70,8 +84,12 @@ def test_tier_all_models_present_online_is_ready(tmp_path: Path, ctx: RpcContext
     assert tier1["action"] is None
 
 
-def test_tier_missing_weight_online_needs_download(tmp_path: Path, ctx: RpcContext) -> None:
-    # A missing weight + online -> needsDownload with an assets.ensure action.
+def test_tier_missing_weight_online_needs_download(
+    tmp_path: Path, ctx: RpcContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A missing (but REGISTERED) weight + online -> needsDownload with an
+    # assets.ensure action targeting the registered asset names.
+    _register_all(monkeypatch)
     svc = _services(tmp_path, models_present={})
     items = _by_cap(svc.readiness_summary({}, ctx))
     tier1 = items["tier1-multimodal"]
@@ -99,9 +117,12 @@ def test_tier0_numeric_is_always_ready(tmp_path: Path, ctx: RpcContext) -> None:
     assert items["tier0-numeric"]["action"] is None
 
 
-def test_tier2_only_needs_its_own_model(tmp_path: Path, ctx: RpcContext) -> None:
+def test_tier2_only_needs_its_own_model(
+    tmp_path: Path, ctx: RpcContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Tier-2 (smolvlm2 only): present that one weight and it is ready even though
     # tier-1 weights are missing (per-tier independence is the falsifiable claim).
+    _register_all(monkeypatch)
     svc = _services(tmp_path, models_present={"smolvlm2": True})
     items = _by_cap(svc.readiness_summary({}, ctx))
     assert items["tier2-vlm"]["status"] == "ready"
@@ -249,14 +270,77 @@ def test_summary_leaks_no_full_key(tmp_path: Path, ctx: RpcContext) -> None:
         assert "sk-super-secret-full-key" not in value
 
 
-def test_missing_tier_assets_dedups_and_skips_assetless(tmp_path: Path, ctx: RpcContext) -> None:
+def test_missing_tier_assets_dedups_and_skips_assetless(
+    tmp_path: Path, ctx: RpcContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # ``aesthetic`` and ``vlm_backbone`` SHARE the SigLIP-2 asset, and ``motion``
     # is a zero-download floor with no asset: a tier mixing them collapses the
     # shared asset to ONE name and skips the asset-less component entirely.
+    _register_all(monkeypatch)
     missing = _missing_tier_assets(("vlm_backbone", "aesthetic", "motion"), {})
     assert missing == ["siglip2-so400m"]
     # When the shared weight IS installed, nothing is reported missing.
     assert _missing_tier_assets(("vlm_backbone", "aesthetic"), {"vlm_backbone": True, "aesthetic": True}) == []
+
+
+def test_missing_tier_assets_filters_deregistered(monkeypatch: pytest.MonkeyPatch) -> None:
+    # B1: a mapped-but-DE-REGISTERED asset (manifest.get_asset is None) is dropped
+    # from the missing list — only manifest-known asset names are ever emitted.
+    from media_studio.assets import manifest as _manifest
+
+    monkeypatch.setattr(
+        _manifest,
+        "get_asset",
+        lambda n: SimpleNamespace(label="", size_mb=0) if n == "siglip2-so400m" else None,
+    )
+    # saliency -> vinet-s-saliency (de-registered) is dropped; vlm_backbone ->
+    # siglip2-so400m (registered) survives.
+    assert _missing_tier_assets(("saliency", "vlm_backbone"), {}) == ["siglip2-so400m"]
+
+
+def test_tier_deregistered_assets_dropped_from_ensure_action(
+    tmp_path: Path, ctx: RpcContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # B1: a tier whose missing weights are a MIX of registered + de-registered
+    # assets emits an assets.ensure action listing ONLY the registered names; the
+    # de-registered names never surface (they would trip the "unknown asset" gate).
+    from media_studio.assets import manifest as _manifest
+
+    monkeypatch.setattr(
+        _manifest,
+        "get_asset",
+        lambda n: SimpleNamespace(label="", size_mb=0) if n == "siglip2-so400m" else None,
+    )
+    svc = _services(tmp_path, models_present={})  # every tier-1 weight missing
+    items = _by_cap(svc.readiness_summary({}, ctx))
+    tier1 = items["tier1-multimodal"]
+    assert tier1["status"] == "needsDownload"
+    assert tier1["action"]["kind"] == "assets.ensure"
+    assert tier1["action"]["assets"] == ["siglip2-so400m"]
+    blob = repr(tier1)
+    for deregistered in ("vinet-s-saliency", "panns-cnn14", "transnetv2-pytorch", "dover-mobile-quality"):
+        assert deregistered not in blob
+    assert "unknown asset" not in blob
+
+
+def test_tier_all_deregistered_missing_is_unavailable_no_action(
+    tmp_path: Path, ctx: RpcContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # B1: when EVERY missing weight maps to a de-registered asset, the tier cannot
+    # offer a working download button (that would emit an unknown asset name), so
+    # it reports `unavailable` with NO action rather than a false `ready`. Pinned
+    # via monkeypatch (all assets de-registered) so it is isolation-proof.
+    from media_studio.assets import manifest as _manifest
+
+    monkeypatch.setattr(_manifest, "get_asset", lambda _n: None)
+    svc = _services(tmp_path, models_present={})
+    items = _by_cap(svc.readiness_summary({}, ctx))
+    tier1 = items["tier1-multimodal"]
+    assert tier1["status"] == "unavailable"
+    assert tier1["action"] is None
+    blob = repr(tier1)
+    assert "unknown asset" not in blob
+    assert "vinet-s-saliency" not in blob
 
 
 def test_provider_has_key_skips_non_matching_entries(tmp_path: Path, ctx: RpcContext) -> None:

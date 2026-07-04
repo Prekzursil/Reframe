@@ -316,12 +316,23 @@ def test_download_uses_asset_name_when_manifest_label_blank(monkeypatch: pytest.
     assert item["sizeMb"] == 12
 
 
-def test_runnable_missing_component_without_manifest_entry_falls_back_to_name(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # When the mapped asset has NO manifest entry, the proposal falls back to the
-    # asset name + a zero size so it stays actionable. Pinned via monkeypatch so the
-    # branch is deterministic regardless of which feature modules registered assets.
+def _register_all(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin every mapped asset as manifest-KNOWN (deterministic download proposals).
+
+    B1 gates download proposals on ``manifest.get_asset`` being non-None. Tests
+    that assert a runnable-but-missing component IS proposed pin its asset as
+    registered here, decoupling them from which feature modules happen to have
+    registered assets on the real tree.
+    """
+    from media_studio.assets import manifest as _manifest
+
+    monkeypatch.setattr(_manifest, "get_asset", lambda _name: SimpleNamespace(label="", size_mb=0))
+
+
+def test_deregistered_asset_component_is_not_proposed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # B1: a component whose mapped asset is DE-REGISTERED (manifest.get_asset is
+    # None) must NOT be proposed as a download — emitting its name would trip the
+    # assets.ensure "unknown asset(s)" gate. It is silently dropped (no crash).
     from media_studio.assets import manifest as _manifest
 
     monkeypatch.setattr(_manifest, "get_asset", lambda _name: None)
@@ -329,10 +340,31 @@ def test_runnable_missing_component_without_manifest_entry_falls_back_to_name(
         report=_report(components=[_component("saliency", verdict="ok")]),
         present={"saliency": False},
     )
-    item = next(d for d in rec["downloads"] if d["assetName"] == "vinet-s-saliency")
-    assert set(item) == {"assetName", "label", "sizeMb", "reason"}
-    assert item["sizeMb"] == 0
-    assert item["label"] == "vinet-s-saliency"
+    assert rec["downloads"] == []
+    # FALSIFIABLE: the de-registered asset name never reaches the download list.
+    assert "vinet-s-saliency" not in [d["assetName"] for d in rec["downloads"]]
+
+
+def test_mixed_registered_and_deregistered_only_registered_proposed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # B1: with BOTH a registered-asset component (ocr -> rapidocr-onnx) and a
+    # de-registered one (saliency -> vinet-s-saliency) missing, only the KNOWN
+    # asset flows into downloads; the unknown one is dropped.
+    from media_studio.assets import manifest as _manifest
+
+    monkeypatch.setattr(
+        _manifest,
+        "get_asset",
+        lambda name: SimpleNamespace(label="", size_mb=0) if name == "rapidocr-onnx" else None,
+    )
+    rec = _rec(
+        report=_report(
+            components=[_component("ocr", verdict="ok"), _component("saliency", verdict="ok")],
+        ),
+        present={"ocr": False, "saliency": False},
+    )
+    names = [d["assetName"] for d in rec["downloads"]]
+    assert names == ["rapidocr-onnx"]
+    assert "vinet-s-saliency" not in names
 
 
 def test_offline_drops_all_downloads() -> None:
@@ -362,7 +394,8 @@ def test_unavailable_component_is_not_proposed() -> None:
     assert rec["downloads"] == []
 
 
-def test_degraded_component_is_still_runnable_and_proposed() -> None:
+def test_degraded_component_is_still_runnable_and_proposed(monkeypatch: pytest.MonkeyPatch) -> None:
+    _register_all(monkeypatch)
     rec = _rec(
         report=_report(components=[_component("saliency", verdict="degraded")]),
         present={"saliency": False},
@@ -379,8 +412,9 @@ def test_component_without_registered_asset_is_skipped() -> None:
     assert rec["downloads"] == []
 
 
-def test_missing_present_entry_treated_as_not_installed() -> None:
+def test_missing_present_entry_treated_as_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:
     # component absent from the present map => treated as missing => proposed.
+    _register_all(monkeypatch)
     rec = _rec(
         report=_report(components=[_component("saliency", verdict="ok")]),
         present={},
@@ -402,8 +436,9 @@ def test_download_covered_by_detected_server_is_dropped() -> None:
     assert "siglip2-so400m" not in [d["assetName"] for d in rec["downloads"]]
 
 
-def test_text_component_download_not_covered_by_vision_only_server() -> None:
+def test_text_component_download_not_covered_by_vision_only_server(monkeypatch: pytest.MonkeyPatch) -> None:
     # a text-only detected server does NOT cover a vision component's download.
+    _register_all(monkeypatch)
     rec = _rec(
         report=_report(components=[_component("vlm_backbone", verdict="ok")]),
         present={"vlm_backbone": False},
@@ -524,8 +559,9 @@ def test_rationale_names_the_preset() -> None:
     assert any("balanced" in line.lower() for line in rec["rationale"])
 
 
-def test_malformed_components_entry_is_ignored() -> None:
+def test_malformed_components_entry_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
     # a non-dict component entry must not crash download derivation.
+    _register_all(monkeypatch)
     rec = _rec(
         report=_report(components=[_component("saliency", present=False), "not-a-dict"]),  # type: ignore[list-item]
         present={"saliency": False},
