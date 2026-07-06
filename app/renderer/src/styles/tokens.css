@@ -19,26 +19,35 @@
 :root {
   color-scheme: dark;
 
-  /* ---- surface ladder (depth via tone, not borders) ---------------------- */
-  --surface-deep: #08090b; /* media wells: player strip, thumbs, timeline lane, progress tracks */
-  --surface-bg: #0e0f12; /* the app canvas */
-  --surface-raised: #16181d; /* cards, headers, panels — one step toward the user */
-  --surface-overlay: #1d2026; /* slide-overs, toasts, popovers — floats above everything */
-  --surface-hover: #22252d; /* interaction tint on raised surfaces */
-  --surface-active: #2a2e38; /* pressed tint */
+  /* ---- surface ladder (depth via tone, not borders) -----------------------
+   * Recalibrated (WU-2a): the base is lifted OFF pure near-black toward a faint
+   * COOL blue-gray (blue channel dominant), and the rungs are WIDENED so a media
+   * well, the canvas, a card/panel, and an overlay read as four VISIBLY distinct
+   * planes instead of collapsing into one flat black sheet. Every value carries
+   * the same cool cast; luminance climbs monotonically deep -> active. The
+   * tokens.conformance test pins the lift + cool cast + minimum rung gaps so this
+   * can never silently decay back to flat near-black. */
+  --surface-deep: #0b0d12; /* media wells: player strip, thumbs, timeline lane, progress tracks */
+  --surface-bg: #121620; /* the app canvas — lifted + cool, no longer pure black */
+  --surface-raised: #1b212e; /* cards, headers, panels — a clear step toward the user */
+  --surface-overlay: #252d3d; /* slide-overs, toasts, popovers — floats above everything */
+  --surface-hover: #2c3448; /* interaction tint on raised surfaces — a perceptible lift */
+  --surface-active: #353f56; /* pressed tint */
 
   /* ---- edges (used sparingly — hairlines, not boxes) ---------------------- */
-  --edge: rgba(255, 255, 255, 0.07);
+  --edge: rgba(255, 255, 255, 0.09); /* nudged up for the lifted (lighter) surfaces */
   --edge-strong: rgba(255, 255, 255, 0.15);
 
   /* ---- text ladder (real contrast steps, not one gray) -------------------- */
   --text-primary: #f4f5f7; /* titles, numbers, content */
   --text-secondary: #b0b6c0; /* supporting copy, values */
-  --text-muted: #7d8390; /* labels, captions */
-  /* faint: quietest readable step — timestamps, paths, disabled. Held at AA
-   * (>=4.5:1 on every surface in the ladder; was #50555f at ~2.4:1, which failed
-   * WCAG 1.4.3 for the real content it labels, e.g. library file paths). */
-  --text-faint: #838892;
+  --text-muted: #8a929e; /* labels, captions — lifted + cooled to track the lifted surfaces */
+  /* faint: quietest readable step — timestamps, paths, disabled. Re-tuned (WU-2a)
+   * UP from #838892 because the surface ladder was lifted: held at AA (>=4.5:1) on
+   * every ELEVATION PLANE it renders on — deep 7.0, bg 6.6, raised 5.8, overlay 5.0
+   * (the transient hover/active PRESS tints sit lighter and are not read-at-rest).
+   * (Was #50555f at ~2.4:1, which failed WCAG 1.4.3 for real content it labels.) */
+  --text-faint: #949cab;
 
   /* ---- the ONE accent: signal amber (progress / active / approve only) ---- */
   --accent: #f2a33c;
@@ -115,9 +124,32 @@
   /* ---- focus ring (double ring: canvas gap + accent edge) ------------------ */
   --focus-ring: 0 0 0 2px var(--surface-bg), 0 0 0 4px var(--accent-edge);
 
-  /* ---- depth ---------------------------------------------------------------- */
-  --shadow-raise: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 6px 20px rgba(0, 0, 0, 0.35);
-  --shadow-overlay: 0 16px 48px rgba(0, 0, 0, 0.55);
+  /* ---- depth ----------------------------------------------------------------
+   * A raised thing gets an inset top-highlight (light catches its top edge) PLUS
+   * a contact shadow AND an ambient drop — layered so it reads as physically
+   * closer, not just a lighter rectangle. Strengthened (WU-2a) so a hovered card
+   * visibly LIFTS off the canvas. */
+  --shadow-raise:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.4),
+    0 10px 28px rgba(0, 0, 0, 0.5);
+  --shadow-overlay: 0 24px 60px rgba(0, 0, 0, 0.6);
+
+  /* ---- elevation scale (e0 flush -> e3 lifted) ------------------------------
+   * Pair a TONE step (surface ladder) with a SHADOW step so height reads twice.
+   * e1 = cards/panels at rest (seated), e2 = hovered/selected cards (lifted),
+   * e3 = overlays/toasts/popovers (floating). Consume as box-shadow. */
+  --elev-0: none;
+  --elev-1: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --elev-2: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 6px 18px rgba(0, 0, 0, 0.48);
+  --elev-3: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 20px 48px rgba(0, 0, 0, 0.6);
+
+  /* ---- atmosphere: a cheap top-lit sheen laid OVER a solid surface (as the
+   * first background layer) so the app bar catches light from above and the
+   * media wells get a lit-from-top vignette instead of reading as flat fills.
+   * Compose: `background: var(--atmos-toplight), var(--surface-…);`. The well
+   * variant uses a cool slate highlight to keep the locked blue-gray mood. */
+  --atmos-toplight: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0) 62%);
+  --atmos-well: linear-gradient(180deg, rgba(148, 163, 184, 0.06), rgba(0, 0, 0, 0.12));
 
   /* ---- motion ---------------------------------------------------------------- */
   --dur-fast: 120ms; /* hovers, color shifts */

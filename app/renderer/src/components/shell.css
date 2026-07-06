@@ -75,7 +75,8 @@ body,
   padding: 0 var(--space-5);
   height: 46px;
   flex: none;
-  background: var(--surface-raised);
+  /* Top-lit: the sheen sits OVER the raised fill so the bar catches light. */
+  background: var(--atmos-toplight), var(--surface-raised);
   box-shadow: var(--shadow-raise);
   position: relative;
   z-index: 10;
@@ -638,7 +639,9 @@ button {
 .workspace__player {
   margin: 0 var(--space-6) var(--space-4);
   padding: var(--space-3);
-  background: var(--surface-deep);
+  /* Lit-from-top well: cool slate sheen over the deepest surface so footage
+     floats in atmosphere, not a flat black box. */
+  background: var(--atmos-well), var(--surface-deep);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-raise);
   position: relative;
@@ -963,7 +966,7 @@ button {
 .sm-preview {
   padding: var(--space-3);
   margin: 0 0 var(--space-5);
-  background: var(--surface-deep);
+  background: var(--atmos-well), var(--surface-deep);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-raise);
 }
@@ -1176,7 +1179,7 @@ button {
 .timeline__lane {
   position: relative;
   padding: var(--space-3);
-  background: var(--surface-deep);
+  background: var(--atmos-well), var(--surface-deep);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-raise);
 }

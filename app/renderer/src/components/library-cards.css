@@ -25,6 +25,8 @@ li.library__item {
   gap: var(--space-3);
   padding: var(--space-3);
   background: var(--surface-raised);
+  /* Seated at rest (e1); hover lifts to e2 below — depth reads at every state. */
+  box-shadow: var(--elev-1);
   transition:
     background var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-base) var(--ease-out),
@@ -50,7 +52,7 @@ li.library__item {
 
 li.library__item:hover {
   background: var(--surface-hover);
-  box-shadow: var(--shadow-raise);
+  box-shadow: var(--elev-2);
   transform: translateY(-2px);
 }
 
