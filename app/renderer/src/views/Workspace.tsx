@@ -73,6 +73,12 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
   // element mid-load (the "shakiness" bug).
   const [playerEpoch, setPlayerEpoch] = useState(0);
   const [playerError, setPlayerError] = useState<string | null>(null);
+  // The last proxy.state phase we heard from the mstream resolver. It gates how a
+  // raw <video> `error` is surfaced (see handlePlayerError): before the resolver
+  // has spoken ('initial') the raw source may legitimately be undecodable, so a
+  // Chromium "media error (code 4)" is EXPECTED and must not flash the loud
+  // banner — a calm "Building preview…" placeholder stands in for that window.
+  const proxyPhaseRef = useRef<'initial' | 'building' | 'ready' | 'error'>('initial');
 
   const reloadProject = useCallback(async () => {
     setError(null);
@@ -96,22 +102,49 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
   //                up the now-decodable proxy for the SAME mstream URL;
   //   'error'    — surface the failure LOUDLY (no silent center-crop).
   useEffect(() => {
+    // A new video's resolver has not spoken yet: reset the phase so a stale
+    // 'ready' from the previous video can't make this one's initial raw-source
+    // error surface loudly.
+    proxyPhaseRef.current = 'initial';
     const off = onProxyState((evt) => {
       if (evt.videoId !== video.id) return;
       if (evt.state === 'building') {
+        proxyPhaseRef.current = 'building';
         setPlayerNote(evt.detail || 'building playback proxy…');
         setPlayerError(null);
       } else if (evt.state === 'ready') {
+        proxyPhaseRef.current = 'ready';
         setPlayerNote(null);
         setPlayerError(null);
         setPlayerEpoch((n) => n + 1);
       } else {
+        proxyPhaseRef.current = 'error';
         setPlayerNote(null);
         setPlayerError(evt.detail || 'playback proxy build failed');
       }
     });
     return off;
   }, [video.id]);
+
+  // Route the raw <video>'s load/decode `error` by proxy phase so the initial
+  // pre-resolver window never flashes Chromium's "media error (code 4)":
+  //   'ready'            — the proxy already reported the source playable, so a
+  //                        decode error now is a GENUINE failure → surface loudly
+  //                        (never a silent fallback);
+  //   'error'           — a specific build-failure reason is already shown; the
+  //                        raw error is a downstream echo → keep the real reason;
+  //   'initial'/'building' — the resolver has not (yet) produced a decodable
+  //                        proxy, so the raw-source error is expected → show a
+  //                        calm placeholder note instead of the loud banner.
+  const handlePlayerError = useCallback((message: string) => {
+    const phase = proxyPhaseRef.current;
+    if (phase === 'ready') {
+      setPlayerError(message);
+      return;
+    }
+    if (phase === 'error') return;
+    setPlayerNote((prev) => prev ?? 'Building preview…');
+  }, []);
 
   // components/api types `format` as plain string while the panels' _api uses
   // the SubtitleFormat union — identical wire shape, divergent TS layers
@@ -172,7 +205,7 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
           videoId={video.id}
           key={video.id}
           reloadToken={playerEpoch}
-          onError={setPlayerError}
+          onError={handlePlayerError}
         />
         {playerNote ? <div className="workspace__player-note">{playerNote}</div> : null}
         {playerError ? (

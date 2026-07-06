@@ -642,12 +642,21 @@ button {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-raise);
   position: relative;
+  /* The footage well keeps its natural height in the workspace flex column: it
+     must NOT be compressed by a short window (that clipped the top of the frame
+     — "halfway cut at top"). The body below owns the remaining space and scrolls. */
+  flex: none;
 }
 
 .player__video {
   display: block;
   width: 100%;
+  /* Size from the frame's own aspect ratio (capped by max-height), then letterbox
+     inside that box. `object-fit: contain` guarantees the WHOLE frame is visible —
+     never cropped or stretched — regardless of the source ratio vs the well. */
+  height: auto;
   max-height: 280px;
+  object-fit: contain;
   border-radius: var(--radius-md);
   background: var(--surface-deep);
 }

@@ -315,10 +315,51 @@ describe('Workspace', () => {
     expect(loadMock).toHaveBeenCalledTimes(1); // proxy re-fetched in place
   });
 
-  it('surfaces a <video> load error (onError) and clears it on the proxy-ready reload', async () => {
+  it('shows a calm placeholder (NOT the loud error) for a raw <video> error BEFORE the resolver speaks', async () => {
     const emit = await renderAndCaptureProxyState();
 
-    // the <video> fails to load (undecodable source pre-proxy) -> error surfaces.
+    // Initial window: no proxy.state event yet. Chromium fires an `error` on the
+    // still-undecodable raw source ("media error (code 4)"). This must surface as
+    // a calm "Building preview…" placeholder note, NOT the loud red banner.
+    const videoEl = container.querySelector('.workspace__player video') as HTMLVideoElement;
+    await act(async () => {
+      videoEl.dispatchEvent(new Event('error'));
+    });
+    await flush();
+    expect(container.querySelector('.workspace__player-error')).toBeNull();
+    expect(container.querySelector('.workspace__player-note')?.textContent).toContain(
+      'Building preview',
+    );
+
+    // once the proxy is ready, the reload clears the placeholder note.
+    await act(async () => emit({ videoId: 'v1', state: 'ready', detail: '/proxies/v1.mp4' }));
+    await flush();
+    expect(container.querySelector('.workspace__player-note')).toBeNull();
+  });
+
+  it('keeps the existing building note when the raw <video> errors DURING a proxy build', async () => {
+    const emit = await renderAndCaptureProxyState();
+
+    // The resolver is mid-build: its detail note is showing. A raw-source error
+    // in this window must not replace that specific note nor go loud.
+    await act(async () => emit({ videoId: 'v1', state: 'building', detail: 'needs proxy' }));
+    await flush();
+    const videoEl = container.querySelector('.workspace__player video') as HTMLVideoElement;
+    await act(async () => {
+      videoEl.dispatchEvent(new Event('error'));
+    });
+    await flush();
+    expect(container.querySelector('.workspace__player-error')).toBeNull();
+    expect(container.querySelector('.workspace__player-note')?.textContent).toContain('needs proxy');
+  });
+
+  it('surfaces a raw <video> error LOUDLY once the proxy is ready (genuine decode failure, no silent fallback)', async () => {
+    const emit = await renderAndCaptureProxyState();
+
+    // After 'ready' the source is supposed to be decodable; if the <video> still
+    // errors it is a genuine failure and must be surfaced loudly.
+    await act(async () => emit({ videoId: 'v1', state: 'ready', detail: '/proxies/v1.mp4' }));
+    await flush();
     const videoEl = container.querySelector('.workspace__player video') as HTMLVideoElement;
     await act(async () => {
       videoEl.dispatchEvent(new Event('error'));
@@ -327,11 +368,23 @@ describe('Workspace', () => {
     expect(container.querySelector('.workspace__player-error')?.textContent).toContain(
       'media failed to load',
     );
+  });
 
-    // once the proxy is ready, the reload clears the stale error.
-    await act(async () => emit({ videoId: 'v1', state: 'ready', detail: '/proxies/v1.mp4' }));
+  it('does not overwrite a specific proxy build-failure reason with a raw <video> echo error', async () => {
+    const emit = await renderAndCaptureProxyState();
+
+    // A build failure surfaced its precise reason. A subsequent raw-source error
+    // is a downstream echo of the same failure — the specific reason must stand.
+    await act(async () => emit({ videoId: 'v1', state: 'error', detail: 'ffmpeg exited with code 1' }));
     await flush();
-    expect(container.querySelector('.workspace__player-error')).toBeNull();
+    const videoEl = container.querySelector('.workspace__player video') as HTMLVideoElement;
+    await act(async () => {
+      videoEl.dispatchEvent(new Event('error'));
+    });
+    await flush();
+    expect(container.querySelector('.workspace__player-error')?.textContent).toContain(
+      'ffmpeg exited with code 1',
+    );
   });
 
   it('falls back to a default note when the building push carries no detail', async () => {
