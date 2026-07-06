@@ -26,6 +26,7 @@ const REPO_ROOT = resolve(HERE, '..', '..');
 
 const MAIN_TS = resolve(REPO_ROOT, 'app', 'main', 'main.ts');
 const APP_TSX = resolve(REPO_ROOT, 'app', 'renderer', 'src', 'App.tsx');
+const INDEX_HTML = resolve(REPO_ROOT, 'app', 'renderer', 'index.html');
 const PACKAGE_JSON = resolve(REPO_ROOT, 'app', 'package.json');
 const ELECTRON_BUILDER = resolve(REPO_ROOT, 'electron-builder.yml');
 const SETTINGS_STORE = resolve(REPO_ROOT, 'sidecar', 'media_studio', 'settings_store.py');
@@ -45,6 +46,11 @@ const capture = (src: string, re: RegExp, label: string): string => {
 };
 
 const windowTitle = (): string => capture(read(MAIN_TS), /title: '([^']*)'/, 'window title');
+// index.html <title> becomes document.title once the renderer loads, which
+// OVERRIDES the BrowserWindow `title` set in main.ts — so the running window's
+// title bar shows THIS string, not main.ts's. It is the true user-facing title.
+const indexHtmlTitle = (): string =>
+  capture(read(INDEX_HTML), /<title>([^<]*)<\/title>/, 'renderer index.html title');
 const aboutName = (): string =>
   capture(read(MAIN_TS), /applicationName: '([^']*)'/, 'About panel applicationName');
 const headerBrand = (): string =>
@@ -57,6 +63,10 @@ const shortcutName = (): string =>
 describe('brand rename — user-facing surfaces read "Reframe" (WU A1)', () => {
   it('window title reads the new brand (main.ts)', () => {
     expect(windowTitle()).toBe(BRAND);
+  });
+
+  it('renderer index.html <title> (document.title override) reads the new brand', () => {
+    expect(indexHtmlTitle()).toBe(BRAND);
   });
 
   it('Electron About panel applicationName reads the new brand (main.ts)', () => {
@@ -79,6 +89,7 @@ describe('brand rename — user-facing surfaces read "Reframe" (WU A1)', () => {
 describe('brand rename — NO user-facing "media-studio" leak (WU A1 / R8 audit)', () => {
   const surfaces: ReadonlyArray<readonly [string, () => string]> = [
     ['window title', windowTitle],
+    ['index.html title', indexHtmlTitle],
     ['About panel', aboutName],
     ['in-app header', headerBrand],
     ['productName', productName],
