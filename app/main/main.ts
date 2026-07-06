@@ -55,6 +55,14 @@ import {
 } from './keystore';
 import { KeyBridge } from './keyBridge';
 import { Sidecar } from './sidecar';
+import { autoUpdater } from 'electron-updater';
+import {
+  registerUpdater,
+  UPDATE_STATUS_CHANNEL,
+  type AutoUpdaterLike,
+  type UpdateStatus,
+  type UpdaterHandle,
+} from './updater';
 
 // mstream:// must be declared privileged BEFORE app ready (U1).
 // NOTE: registerSchemesAsPrivileged may only be called ONCE per app — if
@@ -69,6 +77,7 @@ let disposeDialogIpc: (() => void) | null = null;
 let disposeShellIpc: (() => void) | null = null;
 let disposeDataFolderIpc: (() => void) | null = null;
 let disposeRepairSetupIpc: (() => void) | null = null;
+let disposeUpdater: (() => void) | null = null;
 
 /** All live, non-destroyed windows (for notification fan-out). */
 function liveWindows(): BrowserWindow[] {
@@ -422,6 +431,54 @@ function broadcastProxyState(videoId: string, state: ProxyBuildState, detail: st
       win.webContents.send(PROXY_STATE_CHANNEL, { videoId, state, detail });
     }
   }
+}
+
+/**
+ * WU-U: push an in-place auto-update lifecycle status to every live renderer so
+ * the UpdateBanner can surface 'Update available -> Download', download progress,
+ * 'Ready -> Restart to update', or an error.
+ */
+function broadcastUpdateStatus(status: UpdateStatus): void {
+  for (const win of liveWindows()) {
+    if (!win.webContents.isDestroyed()) {
+      win.webContents.send(UPDATE_STATUS_CHANNEL, status);
+    }
+  }
+}
+
+/**
+ * WU-U: wire electron-updater to a GitHub-Releases feed and auto-check on launch.
+ *
+ * PACKAGED-ONLY: electron-updater reads `app-update.yml` (emitted into the app by
+ * electron-builder's github `publish` block), which exists only in a packaged
+ * build; a dev run has no feed and `checkForUpdates()` would throw. The real
+ * singleton is cast to {@link AutoUpdaterLike} (the same structural-cast seam used
+ * for safeStorage) and injected into the testable {@link registerUpdater} state
+ * machine. autoDownload stays OFF — the user confirms the download in the
+ * UpdateBanner; quitAndInstall() then runs the NSIS in-place upgrade, which
+ * PRESERVES userData (the DPAPI keystore secure-keys.json + settings + the data
+ * root). The app is UNSIGNED (no CSC in electron-builder.yml), so Windows
+ * SmartScreen may warn when the downloaded installer runs — expected; we
+ * deliberately do not add signing. The launch check is deferred until the
+ * renderer has loaded so it can observe the status stream, and it degrades
+ * quietly (never crashes) when offline or when no release exists yet.
+ */
+function wireAutoUpdater(win: BrowserWindow): UpdaterHandle {
+  const handle = registerUpdater({
+    autoUpdater: autoUpdater as unknown as AutoUpdaterLike,
+    broadcast: broadcastUpdateStatus,
+    // eslint-disable-next-line no-console
+    log: (message) => console.error(message),
+  });
+  const kickoff = (): void => {
+    void handle.checkForUpdates();
+  };
+  if (win.webContents.isLoading()) {
+    win.webContents.once('did-finish-load', kickoff);
+  } else {
+    kickoff();
+  }
+  return handle;
 }
 
 /**
@@ -807,6 +864,14 @@ function bootstrap(): void {
       begin();
     }
   }
+
+  // WU-U: IN-PLACE AUTO-UPDATE — packaged-only (electron-updater needs the
+  // app-update.yml a packaged build carries; a dev run has no feed). Checks
+  // GitHub Releases on launch and drives the renderer's UpdateBanner. See
+  // wireAutoUpdater for the autoDownload/quitAndInstall + unsigned/userData notes.
+  if (app.isPackaged) {
+    disposeUpdater = wireAutoUpdater(win).dispose;
+  }
 }
 
 app.whenReady().then(() => {
@@ -865,6 +930,10 @@ app.on('will-quit', (event) => {
   if (disposeRepairSetupIpc) {
     disposeRepairSetupIpc();
     disposeRepairSetupIpc = null;
+  }
+  if (disposeUpdater) {
+    disposeUpdater();
+    disposeUpdater = null;
   }
   event.preventDefault();
   void sc.stop().finally(() => app.exit(0));

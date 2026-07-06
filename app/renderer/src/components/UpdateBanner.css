@@ -1,0 +1,124 @@
+/* WU-U: IN-PLACE AUTO-UPDATE banner (non-intrusive, dismissible, top-pinned).
+   Mirrors SidecarBanner's overlay strip but with the accent edge for a routine,
+   good-news notification (an available/ready update) rather than an error. It
+   does NOT trap the UI (no backdrop, no focus capture). All values are tokens;
+   class names are test-pinned. App.tsx (wiring) owns the top-level CSS import. */
+
+.update-banner {
+  position: fixed;
+  top: var(--space-5);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1100; /* above toasts (1000); peer of the sidecar recovery strip */
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  max-width: min(640px, calc(100vw - var(--space-5) * 2));
+  padding: var(--space-3) var(--space-5);
+  background: var(--surface-overlay);
+  border: 1px solid var(--accent);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-overlay);
+  font-family: var(--font-ui);
+  font-size: var(--type-body-size);
+  animation: update-banner-drop var(--dur-slow) var(--ease-out);
+}
+
+/* Ready-to-install: a slightly stronger accent edge to read as "action ready". */
+.update-banner--ready {
+  border-left-width: 4px;
+}
+
+/* A user-initiated update failure (offline launch checks stay silent). */
+.update-banner--error {
+  border-color: var(--status-error);
+  border-left: 4px solid var(--status-error);
+}
+
+.update-banner--error .update-banner__message {
+  white-space: normal;
+}
+
+@keyframes update-banner-drop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.update-banner__message {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.update-banner__action {
+  appearance: none;
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-ink);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.update-banner__action:hover {
+  background: var(--accent-hover);
+}
+
+.update-banner__action:active {
+  background: var(--accent-pressed);
+}
+
+.update-banner__action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The in-flight "Starting download…" / "Restarting…" note that replaces the
+   action button while the async op is underway — muted, non-interactive. */
+.update-banner__note {
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+}
+
+/* The dismiss (×) affordance — a subtle icon button that hides the current
+   state until a new lifecycle state arrives. */
+.update-banner__dismiss {
+  appearance: none;
+  flex: none;
+  width: var(--space-6);
+  height: var(--space-6);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--type-body-size);
+  line-height: 1;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.update-banner__dismiss:hover {
+  color: var(--text-primary);
+}
+
+.update-banner__dismiss:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}

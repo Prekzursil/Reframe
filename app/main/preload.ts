@@ -33,6 +33,10 @@ const DATA_FOLDER_GET_CHANNEL = 'dataFolder.get'; // must match app/main/dataFol
 const DATA_FOLDER_PICK_CHANNEL = 'dataFolder.pick'; // must match app/main/dataFolderIpc.ts
 const DATA_FOLDER_SET_CHANNEL = 'dataFolder.set'; // must match app/main/dataFolderIpc.ts
 const SECURE_STATUS_CHANNEL = 'secure.status'; // must match app/main/ipc.ts (WU-D2b-1)
+const UPDATE_STATUS_CHANNEL = 'update.status'; // must match app/main/updater.ts (WU-U)
+const UPDATE_CHECK_CHANNEL = 'update.check'; // must match app/main/updater.ts (WU-U)
+const UPDATE_DOWNLOAD_CHANNEL = 'update.download'; // must match app/main/updater.ts (WU-U)
+const UPDATE_INSTALL_CHANNEL = 'update.quitAndInstall'; // must match app/main/updater.ts (WU-U)
 
 export interface ProgressEvent {
   jobId: string;
@@ -69,6 +73,24 @@ export interface SecureStatus {
 
 /** WU A5: outcome of an on-demand "Retry setup / Repair" bootstrap re-run. */
 export interface RepairSetupResult {
+  ok: boolean;
+  reason?: string;
+}
+
+/**
+ * WU-U: the in-place auto-update lifecycle (mirrors updater.ts UpdateStatus).
+ * Pushed on `update.status`; drives the renderer's non-intrusive UpdateBanner.
+ */
+export type UpdateStatus =
+  | { state: 'checking' }
+  | { state: 'available'; version: string }
+  | { state: 'none' }
+  | { state: 'progress'; percent: number }
+  | { state: 'downloaded'; version: string }
+  | { state: 'error'; message: string };
+
+/** WU-U: outcome of a renderer-triggered update check/download (never throws). */
+export interface UpdateActionResult {
   ok: boolean;
   reason?: string;
 }
@@ -148,6 +170,30 @@ export interface MediaApi {
    * loud `banner` telling the user keys cannot be saved.
    */
   getSecureStatus(): Promise<SecureStatus>;
+  /**
+   * WU-U: subscribe to in-place auto-update lifecycle pushes (`update.status`).
+   * The renderer's UpdateBanner shows 'Update vX available -> Download',
+   * 'Downloading N%', 'Ready -> Restart to update', or an error. Returns an
+   * unsubscribe fn. Only ever fires in a packaged build (dev/tests: silent).
+   */
+  onUpdateStatus(cb: (status: UpdateStatus) => void): () => void;
+  /**
+   * WU-U: trigger a GitHub-Releases check now. Also fired once automatically on
+   * launch by the main process. Resolves `{ ok, reason? }` — never rejects (an
+   * offline/no-release check degrades quietly).
+   */
+  checkForUpdate(): Promise<UpdateActionResult>;
+  /**
+   * WU-U: start downloading the available update (user-confirmed — autoDownload
+   * is OFF). Progress arrives via `onUpdateStatus`. Resolves `{ ok, reason? }`.
+   */
+  downloadUpdate(): Promise<UpdateActionResult>;
+  /**
+   * WU-U: quit and run the NSIS in-place upgrade for a downloaded update. The
+   * upgrade PRESERVES userData (DPAPI keystore + settings + the data root). The
+   * app is UNSIGNED, so Windows SmartScreen may warn when the installer runs.
+   */
+  quitAndInstall(): Promise<UpdateActionResult>;
 }
 
 const api: MediaApi = {
@@ -223,6 +269,24 @@ const api: MediaApi = {
 
   getSecureStatus(): Promise<SecureStatus> {
     return ipcRenderer.invoke(SECURE_STATUS_CHANNEL) as Promise<SecureStatus>;
+  },
+
+  onUpdateStatus(cb: (status: UpdateStatus) => void): () => void {
+    const listener = (_event: IpcRendererEvent, status: UpdateStatus): void => cb(status);
+    ipcRenderer.on(UPDATE_STATUS_CHANNEL, listener);
+    return () => ipcRenderer.removeListener(UPDATE_STATUS_CHANNEL, listener);
+  },
+
+  checkForUpdate(): Promise<UpdateActionResult> {
+    return ipcRenderer.invoke(UPDATE_CHECK_CHANNEL) as Promise<UpdateActionResult>;
+  },
+
+  downloadUpdate(): Promise<UpdateActionResult> {
+    return ipcRenderer.invoke(UPDATE_DOWNLOAD_CHANNEL) as Promise<UpdateActionResult>;
+  },
+
+  quitAndInstall(): Promise<UpdateActionResult> {
+    return ipcRenderer.invoke(UPDATE_INSTALL_CHANNEL) as Promise<UpdateActionResult>;
   },
 };
 

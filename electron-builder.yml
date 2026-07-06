@@ -18,8 +18,18 @@
 
 appId: local.media-studio
 productName: Reframe
-# no publish/update/signing — local personal app (§0: no platform creep)
-publish: null
+# WU-U: IN-PLACE AUTO-UPDATE via electron-updater + GitHub Releases. The github
+# publish provider makes electron-builder (a) emit `latest.yml` (the update feed
+# manifest electron-updater polls) and the NSIS `.blockmap` (enables delta
+# downloads — only changed blocks are fetched) alongside the installer, and (b)
+# bundle `app-update.yml` INTO the app so a running copy knows where to check.
+# Signing stays OFF (no CSC): this is an unsigned build, so Windows SmartScreen
+# may warn when the downloaded installer runs. Publishing is a human/CI step
+# (`electron-builder --publish` with a GH_TOKEN); the build itself never auto-uploads.
+publish:
+  provider: github
+  owner: Prekzursil
+  repo: Reframe
 
 directories:
   output: ../dist

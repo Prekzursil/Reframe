@@ -42,6 +42,7 @@ import { ToastHost } from './components/toast/ToastHost';
 import { JobQueue, JOBQUEUE_PANEL_ID } from './components/JobQueue';
 import { SidecarBanner } from './components/SidecarBanner';
 import { SecureKeysBanner } from './components/SecureKeysBanner';
+import { UpdateBanner } from './components/UpdateBanner';
 import { registerJobRetry } from './components/useJob';
 // Foundation owns the top-level CSS import (per components/shell.css note).
 // Tokens FIRST so every sheet can consume the custom properties.
@@ -50,6 +51,7 @@ import './components/shell.css';
 import './components/toast/toast.css';
 import './components/SidecarBanner.css';
 import './components/SecureKeysBanner.css';
+import './components/UpdateBanner.css';
 
 // U3 §2: error toasts show a Retry button only when a retry callable is
 // registered. U5's job.retry RPC is a protocol.py built-in, so wire it once.
@@ -388,6 +390,7 @@ function AppShell(): React.ReactElement {
       <JobQueue open={jobsOpen} onClose={() => setJobsOpen(false)} />
       <SidecarBanner />
       <SecureKeysBanner />
+      <UpdateBanner />
       <ToastHost />
     </>
   );
