@@ -77,11 +77,11 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
   // raw <video> `error` is surfaced (see handlePlayerError): before the resolver
   // has spoken ('initial') the raw source may legitimately be undecodable, so a
   // Chromium "media error (code 4)" is EXPECTED and must not flash the loud
-  // banner — a calm "Building preview…" placeholder stands in for that window.
+  // banner — a calm "Building preview…" note stands in for that window.
   // WU-1e-fix: 'direct' is the resolver's DEFINITIVE "plays without a build"
   // verdict — it advances the phase past 'initial', so a genuine decode error on
   // a source the resolver MISJUDGED as playable goes LOUD (like 'ready') instead
-  // of masking behind a "Building preview…" placeholder that never resolves.
+  // of masking behind a "Building preview…" note that never resolves.
   const proxyPhaseRef = useRef<'initial' | 'direct' | 'building' | 'ready' | 'error'>('initial');
 
   const reloadProject = useCallback(async () => {
@@ -145,12 +145,12 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
   //                        finished proxy, a directly-playable original, or a
   //                        valid cached proxy), so a decode error now is a GENUINE
   //                        failure → surface loudly (never a silent fallback, and
-  //                        never a "Building preview…" placeholder that hangs);
+  //                        never a "Building preview…" note that hangs);
   //   'error'           — a specific build-failure reason is already shown; the
   //                        raw error is a downstream echo → keep the real reason;
   //   'initial'/'building' — the resolver has not (yet) produced a decodable
   //                        proxy, so the raw-source error is expected → show a
-  //                        calm placeholder note instead of the loud banner.
+  //                        calm note instead of the loud banner.
   const handlePlayerError = useCallback((message: string) => {
     const phase = proxyPhaseRef.current;
     if (phase === 'ready' || phase === 'direct') {
