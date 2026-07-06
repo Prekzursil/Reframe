@@ -150,6 +150,9 @@ function baseView(over: Partial<FirstRunSetupView> = {}): FirstRunSetupView {
     ready: true,
     visible: true,
     awaitingProfile: false,
+    showChooser: false,
+    choosingRouting: false,
+    choiceError: null,
     phase: 'building',
     pct: 0,
     line: '',
@@ -158,6 +161,7 @@ function baseView(over: Partial<FirstRunSetupView> = {}): FirstRunSetupView {
     online: true,
     onRetry: () => {},
     onChooseProfile: () => {},
+    onChooseRouting: () => {},
     ...over,
   };
 }
@@ -256,6 +260,45 @@ describe('FirstRunSetup (presentational)', () => {
     expect(container.querySelector('.profile-picker')).toBeNull();
     expect(container.querySelector('.first-run-setup__progress')).not.toBeNull();
   });
+
+  // ---- WU-1d: the local-vs-cloud routing chooser step -------------------------
+
+  it('renders the routing chooser (not progress) as the final step, after the picker', () => {
+    const onChooseRouting = vi.fn();
+    renderView(baseView({ showChooser: true, onChooseRouting }));
+    // the shared FirstRunChooser is shown, replacing progress/picker/error
+    expect(container.querySelector('.first-run-chooser')).not.toBeNull();
+    expect(container.querySelector('.first-run-setup__progress')).toBeNull();
+    expect(container.querySelector('.profile-picker')).toBeNull();
+    // the header swaps to the setup-choice copy with an AI-routing subtitle
+    expect(container.querySelector('.first-run-setup__title')!.textContent).toBe('Set up Reframe');
+    expect(container.querySelector('.first-run-setup__subtitle')!.textContent).toContain(
+      'how Reframe runs AI',
+    );
+    // picking cloud (the opt-in path) bubbles through onChooseRouting
+    act(() => container.querySelector<HTMLButtonElement>('[data-choice="bestFreeCloud"]')!.click());
+    expect(onChooseRouting).toHaveBeenCalledWith('bestFreeCloud');
+  });
+
+  it('disables the chooser while the choice is being applied (busy)', () => {
+    renderView(baseView({ showChooser: true, choosingRouting: true }));
+    const cloud = container.querySelector<HTMLButtonElement>('[data-choice="bestFreeCloud"]')!;
+    expect(cloud.disabled).toBe(true);
+  });
+
+  it('renders a LOUD inline error when applying the routing choice failed', () => {
+    renderView(baseView({ showChooser: true, choiceError: 'Could not save your choice.' }));
+    const err = container.querySelector('.first-run-setup__choice-error')!;
+    expect(err.getAttribute('role')).toBe('alert');
+    expect(err.textContent).toContain('Could not save your choice.');
+    // the chooser stays up alongside the error (retry, not a silent hand-off)
+    expect(container.querySelector('.first-run-chooser')).not.toBeNull();
+  });
+
+  it('omits the inline choice error when there is none', () => {
+    renderView(baseView({ showChooser: true, choiceError: null }));
+    expect(container.querySelector('.first-run-setup__choice-error')).toBeNull();
+  });
 });
 
 // ---- useFirstRunSetup hook (through a Probe) --------------------------------
@@ -266,6 +309,10 @@ let errorCb: ((message: string) => void) | null = null;
 const repairSetup = vi.fn<() => Promise<RepairSetupResult>>();
 const chooseInstallProfile = vi.fn<() => Promise<ChooseInstallProfileResult>>();
 const getProvisioningState = vi.fn<() => Promise<ProvisioningState>>();
+// WU-1d: the SAME `rpc('providers.firstRun', …)` transport the Settings chooser
+// uses — the gate applies the local-vs-cloud AI-routing choice through it.
+const providersRpc =
+  vi.fn<(method: string, params?: Record<string, unknown>) => Promise<unknown>>();
 
 interface BridgeOpts {
   omitProvisioning?: boolean;
@@ -273,6 +320,8 @@ interface BridgeOpts {
   omitError?: boolean;
   omitRepair?: boolean;
   omitChoose?: boolean;
+  /** WU-1d: omit the `rpc` transport used to apply the routing choice. */
+  omitRpc?: boolean;
   /** Include the mount-time `getProvisioningState` query on the bridge. */
   withQuery?: boolean;
 }
@@ -280,6 +329,7 @@ interface BridgeOpts {
 function installBridge(opts: BridgeOpts = {}): void {
   (window as unknown as { api?: unknown }).api = {
     ...(opts.withQuery ? { getProvisioningState } : {}),
+    ...(opts.omitRpc ? {} : { rpc: providersRpc }),
     ...(opts.omitProvisioning
       ? {}
       : {
@@ -329,6 +379,9 @@ function Probe(): React.ReactElement {
       data-error={view.error ?? ''}
       data-retrying={String(view.retrying)}
       data-online={String(view.online)}
+      data-showchooser={String(view.showChooser)}
+      data-choosing-routing={String(view.choosingRouting)}
+      data-choice-error={view.choiceError ?? ''}
     >
       {view.visible ? <FirstRunSetup view={view} /> : <div data-testid="shell" />}
       <button type="button" data-testid="probe-retry" onClick={view.onRetry}>
@@ -340,6 +393,13 @@ function Probe(): React.ReactElement {
         onClick={() => view.onChooseProfile('custom', ['ai-director'])}
       >
         choose
+      </button>
+      <button
+        type="button"
+        data-testid="probe-route-cloud"
+        onClick={() => view.onChooseRouting('bestFreeCloud')}
+      >
+        route cloud
       </button>
     </div>
   );
@@ -379,6 +439,22 @@ function clickChoose(): void {
   });
 }
 
+function clickRouteCloud(): void {
+  act(() => {
+    container.querySelector<HTMLButtonElement>('[data-testid="probe-route-cloud"]')!.click();
+  });
+}
+
+/** Drive a first-ever run to the point where the routing chooser step is shown:
+ *  the profile picker latches sawProfile, bootstrap spawns, then provisioning
+ *  finishes (the sidecar reached 'running') — exactly when providers.firstRun is
+ *  reachable. */
+function reachRoutingStep(): void {
+  pushProvisioning({ active: true, awaitingProfile: true });
+  pushProvisioning({ active: true, awaitingProfile: false });
+  pushProvisioning({ active: false });
+}
+
 describe('useFirstRunSetup', () => {
   beforeEach(() => {
     provisioningCb = null;
@@ -390,6 +466,8 @@ describe('useFirstRunSetup', () => {
     chooseInstallProfile.mockResolvedValue({ ok: true });
     getProvisioningState.mockReset();
     getProvisioningState.mockResolvedValue({ active: false });
+    providersRpc.mockReset();
+    providersRpc.mockResolvedValue({ firstRunChoiceMade: true });
     installBridge();
   });
 
@@ -760,5 +838,144 @@ describe('useFirstRunSetup', () => {
     delete (window as unknown as { api?: unknown }).api;
     clickChoose();
     expect(chooseInstallProfile).not.toHaveBeenCalled();
+  });
+
+  // ---- WU-1d: the local-vs-cloud routing chooser step -----------------------
+
+  it('shows the routing chooser as the FINAL step once provisioning finishes on a first-ever run', () => {
+    mountProbe();
+    // During the picker + the download the chooser is NOT shown.
+    pushProvisioning({ active: true, awaitingProfile: true });
+    expect(probe().getAttribute('data-showchooser')).toBe('false');
+    expect(container.querySelector('.first-run-chooser')).toBeNull();
+    pushProvisioning({ active: true, awaitingProfile: false });
+    expect(probe().getAttribute('data-showchooser')).toBe('false');
+    // The sidecar reached 'running' → provisioning drops → the routing step shows
+    // (the sidecar is now up, so providers.firstRun is reachable).
+    pushProvisioning({ active: false });
+    expect(probe().getAttribute('data-showchooser')).toBe('true');
+    expect(probe().getAttribute('data-visible')).toBe('true');
+    expect(container.querySelector('.first-run-chooser')).not.toBeNull();
+    expect(container.querySelector('[data-testid="shell"]')).toBeNull();
+  });
+
+  it('latches the first-ever run from the mount-time query too (chooser after provisioning)', async () => {
+    getProvisioningState.mockResolvedValueOnce({ active: true, awaitingProfile: true });
+    installBridge({ withQuery: true });
+    mountProbe();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // First frame: the picker. Then provisioning runs and finishes.
+    expect(container.querySelector('.profile-picker')).not.toBeNull();
+    pushProvisioning({ active: true, awaitingProfile: false });
+    pushProvisioning({ active: false });
+    expect(probe().getAttribute('data-showchooser')).toBe('true');
+  });
+
+  it('a returning user / silent re-bootstrap is NEVER shown the routing chooser', () => {
+    mountProbe();
+    // A WU-S2 re-bootstrap never sets awaitingProfile, so sawProfile never latches.
+    pushProvisioning({ active: true });
+    pushProvisioning({ active: false });
+    expect(probe().getAttribute('data-showchooser')).toBe('false');
+    // It hands straight off to the shell — no double-prompt.
+    expect(container.querySelector('.first-run-chooser')).toBeNull();
+    expect(container.querySelector('[data-testid="shell"]')).not.toBeNull();
+  });
+
+  it('applies the LOCAL (privacy) choice via the SAME providers.firstRun path, then hands off', async () => {
+    mountProbe();
+    reachRoutingStep();
+    // Picking the recommended local option applies it via providers.firstRun.
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-choice="privacy"]')!.click();
+      await Promise.resolve();
+    });
+    expect(providersRpc).toHaveBeenCalledWith('providers.firstRun', { choice: 'privacy' });
+    // On success the step drops and the gate hands off to the shell.
+    expect(probe().getAttribute('data-showchooser')).toBe('false');
+    expect(probe().getAttribute('data-visible')).toBe('false');
+    expect(container.querySelector('[data-testid="shell"]')).not.toBeNull();
+  });
+
+  it('applies the opt-in CLOUD choice via providers.firstRun', async () => {
+    mountProbe();
+    reachRoutingStep();
+    await act(async () => {
+      clickRouteCloud();
+      await Promise.resolve();
+    });
+    expect(providersRpc).toHaveBeenCalledWith('providers.firstRun', { choice: 'bestFreeCloud' });
+    expect(probe().getAttribute('data-visible')).toBe('false');
+  });
+
+  it('shows a busy in-flight state while the routing choice is applied', async () => {
+    let resolveRpc: (v: unknown) => void = () => {};
+    providersRpc.mockReturnValueOnce(
+      new Promise((res) => {
+        resolveRpc = res;
+      }),
+    );
+    mountProbe();
+    reachRoutingStep();
+    clickRouteCloud();
+    // In-flight: busy true, the chooser stays up (buttons disabled).
+    expect(probe().getAttribute('data-choosing-routing')).toBe('true');
+    expect(container.querySelector<HTMLButtonElement>('[data-choice="privacy"]')!.disabled).toBe(
+      true,
+    );
+    await act(async () => {
+      resolveRpc({ firstRunChoiceMade: true });
+      await Promise.resolve();
+    });
+    expect(probe().getAttribute('data-choosing-routing')).toBe('false');
+    expect(probe().getAttribute('data-visible')).toBe('false');
+  });
+
+  it('surfaces a LOUD inline error and keeps the chooser up when the apply rejects (no silent fallback)', async () => {
+    providersRpc.mockRejectedValueOnce(new Error('sidecar rpc failed'));
+    mountProbe();
+    reachRoutingStep();
+    await act(async () => {
+      clickRouteCloud();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // The choice was NOT recorded — the step stays up with a loud error for retry.
+    expect(probe().getAttribute('data-choosing-routing')).toBe('false');
+    expect(probe().getAttribute('data-choice-error')).toContain('Could not save your choice');
+    expect(probe().getAttribute('data-showchooser')).toBe('true');
+    expect(probe().getAttribute('data-visible')).toBe('true');
+    expect(container.querySelector('.first-run-setup__choice-error')).not.toBeNull();
+  });
+
+  it('routing choice no-ops when the bridge lacks the rpc transport', () => {
+    installBridge({ omitRpc: true });
+    mountProbe();
+    reachRoutingStep();
+    clickRouteCloud();
+    expect(providersRpc).not.toHaveBeenCalled();
+    // Still on the chooser (no crash, no silent hand-off).
+    expect(probe().getAttribute('data-showchooser')).toBe('true');
+  });
+
+  it('routing choice no-ops when the bridge disappears before the click', () => {
+    mountProbe();
+    reachRoutingStep();
+    delete (window as unknown as { api?: unknown }).api;
+    clickRouteCloud();
+    expect(providersRpc).not.toHaveBeenCalled();
+  });
+
+  it('a bootstrap error takes precedence over the routing chooser (error owns the gate)', () => {
+    mountProbe();
+    reachRoutingStep();
+    expect(probe().getAttribute('data-showchooser')).toBe('true');
+    // A late bootstrap error must win: the chooser yields to the actionable body.
+    pushError('FAILED:bootstrap late failure | fix: retry');
+    expect(probe().getAttribute('data-showchooser')).toBe('false');
+    expect(container.querySelector('.first-run-chooser')).toBeNull();
+    expect(container.querySelector('.first-run-setup__error')).not.toBeNull();
   });
 });

@@ -1,0 +1,65 @@
+/* FirstRunChooser — the first-run local-vs-cloud chooser (WU-presets P1 #6).
+   Co-located leaf sheet (the component self-imports it) so EVERY consumer gets
+   the styling: the Settings → Models & System change-later instance AND the
+   WU-1d first-run setup step. Moved out of panels/modelsSystem.css so it is no
+   longer tied to that one panel's stylesheet. All values are tokens; class names
+   are test-pinned. */
+
+.first-run-chooser {
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.first-run-chooser__intro {
+  margin: var(--space-2) 0 var(--space-4);
+  color: var(--text-secondary);
+  line-height: var(--type-body-leading);
+}
+
+.first-run-chooser__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.first-run-chooser__option {
+  flex: 1 1 16rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  text-align: left;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+.first-run-chooser__option.is-local {
+  border-color: var(--accent);
+}
+
+.first-run-chooser__badge {
+  align-self: flex-start;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  /* The ink color FOR accent fills. Was var(--on-accent) — an undefined token,
+   * so the badge inherited --text-secondary on amber (~1.02:1, failing AA);
+   * --accent-ink is the defined on-accent color (~8.6:1). */
+  color: var(--accent-ink);
+  font-size: var(--type-small-size);
+  font-weight: 600;
+}
+
+.first-run-chooser__name {
+  font-weight: 600;
+}
+
+.first-run-chooser__desc {
+  color: var(--text-secondary);
+  font-size: var(--type-small-size);
+}

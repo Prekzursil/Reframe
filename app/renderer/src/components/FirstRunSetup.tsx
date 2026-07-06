@@ -28,8 +28,17 @@ import React, { useCallback, useEffect, useState } from 'react';
 
 import { ProgressBar, clampPct } from './ProgressBar';
 import { ProfilePicker } from './ProfilePicker';
+import { FirstRunChooser } from './FirstRunChooser';
 import type { BundleId, InstallProfileId } from '../../../main/installProfiles';
 import './firstRunSetup.css';
+
+/**
+ * WU-1d: the first-run AI-routing choice. `'privacy'` = fully LOCAL (the safe
+ * default); `'bestFreeCloud'` = opt-in free-provider rotation. Mirrors the
+ * FirstRunChooser prop + the `providers.firstRun` argument the Settings chooser
+ * already sends — this gate step reuses that SAME path, it does not add a new one.
+ */
+export type RoutingChoice = 'privacy' | 'bestFreeCloud';
 
 /** The three ordered first-run phases surfaced to the user. */
 export type SetupPhase = 'building' | 'downloading' | 'finishing';
@@ -88,6 +97,11 @@ interface SetupBridge {
     profile: InstallProfileId,
     bundles: BundleId[],
   ) => Promise<ChooseInstallProfileResult>;
+  // WU-1d: the SAME JSON-RPC transport lib/rpc drives, used to apply the
+  // local-vs-cloud AI-routing choice via `providers.firstRun` — the exact path
+  // the Settings → Models & System chooser uses. Only reachable once provisioning
+  // completes (the sidecar is 'running'), which is precisely when this step shows.
+  rpc?: <T = unknown>(method: string, params?: Record<string, unknown>) => Promise<T>;
 }
 
 /** Read the preload-injected bridge without a global Window augmentation. */
@@ -192,6 +206,19 @@ export interface FirstRunSetupView {
    * the gate shows the ProfilePicker (before any download) instead of progress.
    */
   awaitingProfile: boolean;
+  /**
+   * WU-1d: true once provisioning has FINISHED on a FIRST-EVER run and the
+   * local-vs-cloud AI-routing choice is still pending — the gate shows the
+   * FirstRunChooser as the final step (AFTER the profile picker, so it never
+   * changes what provisions; it is purely routing). Only ever true when the
+   * profile picker was seen this session (a silent re-bootstrap / returning user
+   * never sees it), so a returning user is never double-prompted.
+   */
+  showChooser: boolean;
+  /** WU-1d: true while the routing choice is being applied (disables the chooser). */
+  choosingRouting: boolean;
+  /** WU-1d: LOUD inline failure if applying the routing choice failed (never swallowed). */
+  choiceError: string | null;
   phase: SetupPhase;
   pct: number;
   line: string;
@@ -205,6 +232,12 @@ export interface FirstRunSetupView {
   onRetry: () => void;
   /** WU-1c: commit the chosen install profile (wired to chooseInstallProfile). */
   onChooseProfile: (profile: InstallProfileId, bundles: BundleId[]) => void;
+  /**
+   * WU-1d: apply the local-vs-cloud AI-routing choice — wired to the SAME
+   * `providers.firstRun` path (and thus the SAME `firstRunChoiceMade` flag) the
+   * Settings chooser uses. Local stays the default; cloud is strictly opt-in.
+   */
+  onChooseRouting: (choice: RoutingChoice) => void;
 }
 
 /**
@@ -223,6 +256,17 @@ export function useFirstRunSetup(): FirstRunSetupView {
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [online, setOnline] = useState<boolean>(() => readOnline());
+  // WU-1d: latches true the moment the install-profile step is seen — i.e. this
+  // is a FIRST-EVER run (a silent re-bootstrap never sets awaitingProfile). Gating
+  // the routing chooser on this proves "never double-prompt a returning user"
+  // without needing a sidecar read (the sidecar is down for the whole gate window
+  // except the final handoff frame, so firstRunChoiceMade cannot be read earlier).
+  const [sawProfile, setSawProfile] = useState(false);
+  // WU-1d: true once the routing choice has been applied (providers.firstRun ok),
+  // so the chooser step drops and the gate hands off to the shell.
+  const [routingChosen, setRoutingChosen] = useState(false);
+  const [choosingRouting, setChoosingRouting] = useState(false);
+  const [choiceError, setChoiceError] = useState<string | null>(null);
 
   // Resolve the INITIAL provisioning state at mount (push events miss the first
   // frame). A missing bridge/query resolves `ready` immediately so the app is
@@ -240,6 +284,7 @@ export function useFirstRunSetup(): FirstRunSetupView {
         if (cancelled) return;
         setActive(Boolean(state?.active));
         setAwaitingProfile(Boolean(state?.awaitingProfile));
+        if (state?.awaitingProfile) setSawProfile(true);
         setReady(true);
       })
       .catch(() => {
@@ -256,6 +301,7 @@ export function useFirstRunSetup(): FirstRunSetupView {
     return api.onProvisioningState((state) => {
       setActive(Boolean(state?.active));
       setAwaitingProfile(Boolean(state?.awaitingProfile));
+      if (state?.awaitingProfile) setSawProfile(true);
     });
   }, []);
 
@@ -327,11 +373,47 @@ export function useFirstRunSetup(): FirstRunSetupView {
       });
   }, []);
 
-  const visible = active || error !== null || retrying || awaitingProfile;
+  // WU-1d: apply the local-vs-cloud AI-routing choice through the SAME
+  // `providers.firstRun` path the Settings chooser uses (it flips the shared
+  // `firstRunChoiceMade` flag sidecar-side). Reachable here because this step only
+  // shows once provisioning finished — the sidecar is 'running'. On success the
+  // step drops (routingChosen) and the gate hands off to the shell. A failure is
+  // surfaced LOUDLY inline and the chooser stays up for a retry — never a silent
+  // fallback, never a silent hand-off as if a choice were made.
+  const onChooseRouting = useCallback((choice: RoutingChoice) => {
+    const api = bridge();
+    if (!api || typeof api.rpc !== 'function') return;
+    setChoosingRouting(true);
+    setChoiceError(null);
+    api
+      .rpc('providers.firstRun', { choice })
+      .then(() => {
+        setChoosingRouting(false);
+        setRoutingChosen(true);
+      })
+      .catch(() => {
+        setChoosingRouting(false);
+        setChoiceError('Could not save your choice. Please try again.');
+      });
+  }, []);
+
+  // WU-1d: the routing chooser is the FINAL first-run step — shown only after
+  // provisioning finished (!active), on a first-ever run (sawProfile), while the
+  // choice is still pending (!routingChosen), and never while a bootstrap error
+  // owns the gate (error === null). The picker (awaitingProfile) and a retry both
+  // imply active/error, so those are covered transitively; the presentational
+  // layer also checks the error + picker branches BEFORE this one, so it can never
+  // render on top of them.
+  const showChooser = sawProfile && !routingChosen && !active && error === null;
+
+  const visible = active || error !== null || retrying || awaitingProfile || showChooser;
   return {
     ready,
     visible,
     awaitingProfile,
+    showChooser,
+    choosingRouting,
+    choiceError,
     phase: progress.phase,
     pct: progress.pct,
     line: progress.line,
@@ -340,6 +422,7 @@ export function useFirstRunSetup(): FirstRunSetupView {
     online,
     onRetry,
     onChooseProfile,
+    onChooseRouting,
   };
 }
 
@@ -413,41 +496,96 @@ function FirstRunError({ message, online, onRetry }: ErrorViewProps): React.Reac
   );
 }
 
+interface RoutingStepProps {
+  busy: boolean;
+  choiceError: string | null;
+  onChoose: (choice: RoutingChoice) => void;
+}
+
+/**
+ * WU-1d: the final first-run step — the local-vs-cloud AI-routing chooser. Reuses
+ * the SAME FirstRunChooser the Settings panel renders (local is the always-labelled
+ * recommended default; cloud is opt-in), plus a LOUD inline error if the apply
+ * failed so the choice is never silently swallowed.
+ */
+function FirstRunRoutingStep({
+  busy,
+  choiceError,
+  onChoose,
+}: RoutingStepProps): React.ReactElement {
+  return (
+    <div className="first-run-setup__chooser">
+      <FirstRunChooser onChoose={onChoose} busy={busy} />
+      {choiceError !== null ? (
+        <p className="first-run-setup__choice-error" role="alert" aria-live="assertive">
+          {choiceError}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export interface FirstRunSetupProps {
   view: FirstRunSetupView;
 }
 
 /**
- * The full-screen first-run gate. Renders the failure body when a bootstrap
- * error is unresolved (and not mid-retry); otherwise the progress body. App
- * mounts this INSTEAD of the tabbed shell whenever `view.visible` is true.
+ * The full-screen first-run gate. Renders the failure body when a bootstrap error
+ * is unresolved (and not mid-retry); the profile PICKER before any download; the
+ * routing CHOOSER once provisioning finished (WU-1d); otherwise the progress body.
+ * App mounts this INSTEAD of the tabbed shell whenever `view.visible` is true.
  */
 export function FirstRunSetup({ view }: FirstRunSetupProps): React.ReactElement {
-  const { awaitingProfile, phase, pct, line, error, retrying, online, onRetry, onChooseProfile } =
-    view;
+  const {
+    awaitingProfile,
+    showChooser,
+    choosingRouting,
+    choiceError,
+    phase,
+    pct,
+    line,
+    error,
+    retrying,
+    online,
+    onRetry,
+    onChooseProfile,
+    onChooseRouting,
+  } = view;
   const showError = error !== null && !retrying;
   // WU-1c: before any download, a first-ever run shows the profile PICKER. A
   // failure (e.g. the folder became busy after launch) takes precedence so the
   // user isn't stuck on a picker whose choice can't proceed.
   const showPicker = awaitingProfile && !showError && !retrying;
+  // WU-1d: the routing chooser is the LAST step (after provisioning). `showChooser`
+  // from the hook already excludes the error / picker / retry states, so it never
+  // collides with the branches above.
+  const choosing = showPicker || showChooser;
   return (
     <div className="first-run-setup">
       <div className="first-run-setup__panel">
         <header className="first-run-setup__header">
           <span className="first-run-setup__brand">Reframe</span>
           <h1 className="first-run-setup__title">
-            {showPicker ? 'Set up Reframe' : 'Setting up Reframe'}
+            {choosing ? 'Set up Reframe' : 'Setting up Reframe'}
           </h1>
           <p className="first-run-setup__subtitle">
             {showPicker
               ? 'Choose what to install now. This one-time setup runs once.'
-              : `This one-time setup takes about ${SETUP_ESTIMATE_MIN} minutes. You only see it once.`}
+              : showChooser
+                ? 'Almost done — choose how Reframe runs AI. You can change this later.'
+                : `This one-time setup takes about ${SETUP_ESTIMATE_MIN} minutes. You only see it once.`}
           </p>
         </header>
         {showError ? (
           <FirstRunError message={error} online={online} onRetry={onRetry} />
         ) : showPicker ? (
           <ProfilePicker onChoose={onChooseProfile} />
+        ) : showChooser ? (
+          <FirstRunRoutingStep
+            busy={choosingRouting}
+            choiceError={choiceError}
+            onChoose={onChooseRouting}
+          />
         ) : (
           <FirstRunProgress
             phase={phase}

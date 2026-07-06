@@ -147,3 +147,23 @@
   outline: none;
   box-shadow: var(--focus-ring);
 }
+
+/* WU-1d: the final routing-chooser step. The FirstRunChooser owns its own card
+   styling (components/firstRunChooser.css); this wrapper just stacks it above the
+   LOUD inline apply-error so a failed choice is never silently swallowed. */
+.first-run-setup__chooser {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.first-run-setup__choice-error {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--status-error-soft);
+  border-left: 3px solid var(--status-error);
+  border-radius: var(--radius-sm);
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
