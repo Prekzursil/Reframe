@@ -8,11 +8,17 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import {
   CORE_FIRST_RUN_ASSETS,
+  classifyFirstRun,
   FIRST_RUN_COMPLETE_MARKER,
+  FIRST_RUN_REQUIREMENTS_FINGERPRINT_FILE,
+  fingerprintInSync,
   firstRunReadinessRollup,
   isCoreFirstRunAsset,
   isProfileFirstRunComplete,
   needsFirstRunSetup,
+  normalizeRequirements,
+  requirementsFingerprint,
+  shouldBackfillFingerprint,
   shouldStartSidecarAfterFailedFirstRun,
 } from './firstRunGate';
 
@@ -150,6 +156,117 @@ describe('needsFirstRunSetup', () => {
   it('never runs bootstrap in dev (unpackaged), marker or not', () => {
     expect(needsFirstRunSetup(false, false)).toBe(false);
     expect(needsFirstRunSetup(false, true)).toBe(false);
+  });
+
+  it('re-runs bootstrap when the marker exists but the fingerprint drifted (WU-S2)', () => {
+    // The insurance path: an auto-update changed the sidecar requirements, so the
+    // persisted fingerprint no longer matches -> re-provision instead of stale.
+    expect(needsFirstRunSetup(true, true, false)).toBe(true);
+  });
+
+  it('stays skipped when the marker exists and the fingerprint is in sync', () => {
+    expect(needsFirstRunSetup(true, true, true)).toBe(false);
+  });
+
+  it('ignores a fingerprint drift in dev (unpackaged never bootstraps)', () => {
+    expect(needsFirstRunSetup(false, true, false)).toBe(false);
+  });
+});
+
+describe('normalizeRequirements — the dependency-set signal (WU-S2)', () => {
+  it('drops blank lines and full-line + inline comments, then sorts', () => {
+    expect(
+      normalizeRequirements('# header\n\nnumpy==2.5.0\nhttpx==0.28.1  # pinned\n   \n'),
+    ).toEqual(['httpx==0.28.1', 'numpy==2.5.0']);
+  });
+
+  it('is order-independent (reordering the file does not change the set)', () => {
+    expect(normalizeRequirements('b==2\na==1')).toEqual(normalizeRequirements('a==1\nb==2'));
+  });
+});
+
+describe('requirementsFingerprint — stable version hash (WU-S2)', () => {
+  const base = 'numpy==2.5.0\nhttpx==0.28.1\n';
+
+  it('is a 64-char sha256 hex digest', () => {
+    expect(requirementsFingerprint(base)).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('is deterministic for the same requirements', () => {
+    expect(requirementsFingerprint(base)).toBe(requirementsFingerprint(base));
+  });
+
+  it('is insensitive to comment / whitespace / reorder churn', () => {
+    const churned = '# a note\nhttpx==0.28.1   # inline\nnumpy==2.5.0\n\n';
+    expect(requirementsFingerprint(churned)).toBe(requirementsFingerprint(base));
+  });
+
+  it('CHANGES when a pin is bumped (the drift trigger)', () => {
+    expect(requirementsFingerprint('numpy==2.5.1\nhttpx==0.28.1\n')).not.toBe(
+      requirementsFingerprint(base),
+    );
+  });
+
+  it('CHANGES when a dependency is added', () => {
+    expect(requirementsFingerprint(`${base}av==17.1.0\n`)).not.toBe(requirementsFingerprint(base));
+  });
+});
+
+describe('fingerprintInSync — persisted vs shipped (WU-S2)', () => {
+  it('is in sync when the persisted fingerprint equals the shipped one', () => {
+    expect(fingerprintInSync('abc', 'abc')).toBe(true);
+  });
+
+  it('is OUT of sync when they differ (an update changed the env)', () => {
+    expect(fingerprintInSync('old', 'new')).toBe(false);
+  });
+
+  it('treats a missing (null) persisted fingerprint as in sync (legacy marker)', () => {
+    // A pre-feature install must NOT be forced into a surprise re-bootstrap.
+    expect(fingerprintInSync(null, 'new')).toBe(true);
+  });
+});
+
+describe('shouldBackfillFingerprint — arm drift-detection for legacy installs (WU-S2)', () => {
+  it('backfills when a marker exists but no fingerprint was persisted', () => {
+    expect(shouldBackfillFingerprint(true, null)).toBe(true);
+  });
+
+  it('does not backfill when a fingerprint is already persisted', () => {
+    expect(shouldBackfillFingerprint(true, 'abc')).toBe(false);
+  });
+
+  it('does not backfill with no marker (first-ever bootstrap writes it on success)', () => {
+    expect(shouldBackfillFingerprint(false, null)).toBe(false);
+  });
+});
+
+describe('classifyFirstRun — the single first-run decision point (WU-S2)', () => {
+  it('is `none` in dev regardless of marker / fingerprint state', () => {
+    expect(classifyFirstRun(false, false, false)).toBe('none');
+    expect(classifyFirstRun(false, true, false)).toBe('none');
+  });
+
+  it('is `first-ever` (interactive) on a packaged build with no marker', () => {
+    expect(classifyFirstRun(true, false, true)).toBe('first-ever');
+    // the fingerprint is irrelevant with no marker — nothing is provisioned yet.
+    expect(classifyFirstRun(true, false, false)).toBe('first-ever');
+  });
+
+  it('is `re-bootstrap` (silent) when the marker exists but the fingerprint drifted', () => {
+    expect(classifyFirstRun(true, true, false)).toBe('re-bootstrap');
+  });
+
+  it('is `none` when the marker exists and the fingerprint is in sync', () => {
+    expect(classifyFirstRun(true, true, true)).toBe('none');
+  });
+});
+
+describe('FIRST_RUN_REQUIREMENTS_FINGERPRINT_FILE', () => {
+  it('is a hidden sibling of the completion marker at the data root', () => {
+    expect(FIRST_RUN_REQUIREMENTS_FINGERPRINT_FILE).toBe('.first-run-requirements.json');
+    // sibling of, but DISTINCT from, the CORE-floor marker.
+    expect(FIRST_RUN_REQUIREMENTS_FINGERPRINT_FILE).not.toBe(FIRST_RUN_COMPLETE_MARKER);
   });
 });
 

@@ -14,10 +14,23 @@
 // launch retries instead of silently centre-cropping. The marker is still the
 // honest signal — distinct from the per-env sentinel (`.media-studio-env.json`),
 // which only means "the pip env installed".
+import { createHash } from 'node:crypto';
 //
 // This name MUST stay in sync with bootstrap.py FIRST_RUN_COMPLETE_MARKER
 // (firstRunGate.test.ts asserts they match by reading bootstrap.py).
 export const FIRST_RUN_COMPLETE_MARKER = '.first-run-complete.json';
+
+// WU-S2 (version-aware re-bootstrap): the persisted requirements FINGERPRINT the
+// supervisor writes at the DATA ROOT, next to FIRST_RUN_COMPLETE_MARKER, after a
+// successful bootstrap. Comparing it against the CURRENT shipped fingerprint lets
+// an auto-update that CHANGED the sidecar env silently re-provision instead of
+// starting a stale env against the old pip target. Single-owner by design: the
+// Electron supervisor both computes AND reads this fingerprint (TS `crypto`), so
+// there is NO cross-language hash-parity contract with bootstrap.py — the marker
+// stays the only cross-file name the test pins. blake3 already ships in the lock,
+// so v1.4 changes no dep and this is INSURANCE that arms drift-detection for
+// FUTURE bumps.
+export const FIRST_RUN_REQUIREMENTS_FINGERPRINT_FILE = '.first-run-requirements.json';
 
 // The CORE-ONLY asset set the marker attests: the always-on face/ASD weights
 // that make the reframe engine track a real subject instead of silently
@@ -101,13 +114,115 @@ export function isProfileFirstRunComplete(
 }
 
 /**
- * True when packaged AND the full first run has NOT completed yet — the only
- * time stage-2 bootstrap.py must run. An existing (pre-marker) install missing
- * the marker re-runs bootstrap, which is idempotent (pip re-checks satisfied,
- * ensure_assets skips downloaded assets) and back-fills anything newly added.
+ * Normalise a sidecar requirements file body to the lines that actually
+ * determine the installed env — mirroring bootstrap.py `parse_requirements`:
+ * drop blank lines and `#` comments (inline ` #…` too), then SORT so
+ * comment / whitespace / reorder churn never triggers a spurious re-bootstrap,
+ * while any real pin change (a bumped `pkg==version`, an added / removed dep)
+ * always does. Pure — the input is the shipped file's text.
  */
-export function needsFirstRunSetup(isPackaged: boolean, completeMarkerExists: boolean): boolean {
-  return isPackaged && !completeMarkerExists;
+export function normalizeRequirements(requirementsText: string): string[] {
+  const lines: string[] = [];
+  for (const raw of requirementsText.split('\n')) {
+    let line = raw.trim();
+    if (line === '' || line.startsWith('#')) {
+      continue;
+    }
+    const inline = line.indexOf(' #');
+    if (inline !== -1) {
+      line = line.slice(0, inline).trim();
+    }
+    if (line !== '') {
+      lines.push(line);
+    }
+  }
+  return lines.sort();
+}
+
+/**
+ * Stable fingerprint (sha256 hex) of the shipped sidecar requirements — the
+ * version signal for the re-bootstrap decision. Computed over
+ * {@link normalizeRequirements} so it is sensitive to any dependency change but
+ * insensitive to comment / whitespace / reorder churn.
+ */
+export function requirementsFingerprint(requirementsText: string): string {
+  return createHash('sha256')
+    .update(normalizeRequirements(requirementsText).join('\n'))
+    .digest('hex');
+}
+
+/**
+ * WU-S2: whether the persisted requirements fingerprint is IN SYNC with the
+ * current shipped one. A `null` persisted value — a legacy marker written before
+ * this feature existed, or a fingerprint write that failed — is treated as IN
+ * SYNC so an update that changes NO dependency never forces a surprise
+ * re-bootstrap; the supervisor BACKFILLS the current fingerprint instead
+ * ({@link shouldBackfillFingerprint}).
+ */
+export function fingerprintInSync(persisted: string | null, currentShipped: string): boolean {
+  return persisted === null || persisted === currentShipped;
+}
+
+/**
+ * WU-S2: backfill the fingerprint (WITHOUT re-bootstrapping) exactly when a
+ * completed install has a marker but NO persisted fingerprint — a legacy install
+ * upgraded to a build that added this feature. Its env is assumed to match the
+ * currently-shipped requirements (it was provisioned + working), so recording the
+ * current fingerprint arms drift-detection for FUTURE bumps without a needless
+ * re-provision now. No marker -> nothing is provisioned to describe, so no
+ * backfill (the first-ever bootstrap will write it on success).
+ */
+export function shouldBackfillFingerprint(
+  completeMarkerExists: boolean,
+  persisted: string | null,
+): boolean {
+  return completeMarkerExists && persisted === null;
+}
+
+/** WU-S2: the kind of first-run work a launch must do. */
+export type FirstRunKind = 'none' | 'first-ever' | 're-bootstrap';
+
+/**
+ * WU-S2: classify a launch's first-run work — the single decision point.
+ *   - unpackaged (dev) -> `none` (dev behaviour is byte-identical).
+ *   - packaged, NO marker -> `first-ever`: the INTERACTIVE first run (nothing is
+ *     provisioned yet; the renderer's local-vs-cloud chooser may prompt, gated on
+ *     its own `firstRunChoiceMade` settings flag).
+ *   - packaged, marker present but fingerprint DRIFTED -> `re-bootstrap`: a
+ *     SILENT / headless re-provision that reuses the persisted install profile
+ *     and never re-prompts the chooser (the chooser flag is untouched, so it
+ *     stays satisfied).
+ *   - packaged, marker present and IN SYNC -> `none`.
+ */
+export function classifyFirstRun(
+  isPackaged: boolean,
+  completeMarkerExists: boolean,
+  fingerprintIsInSync: boolean,
+): FirstRunKind {
+  if (!isPackaged) {
+    return 'none';
+  }
+  if (!completeMarkerExists) {
+    return 'first-ever';
+  }
+  return fingerprintIsInSync ? 'none' : 're-bootstrap';
+}
+
+/**
+ * True when packaged AND a stage-2 bootstrap.py run is needed — either the full
+ * first run has NOT completed yet (no marker) OR the marker exists but the shipped
+ * sidecar requirements fingerprint DRIFTED from the persisted one (an auto-update
+ * changed the env — WU-S2). Both cases re-run bootstrap, which is idempotent (pip
+ * re-checks satisfied deps, ensure_assets skips downloaded assets) and back-fills
+ * anything newly added. `fingerprintIsInSync` defaults to `true` so an existing
+ * install with a marker is unaffected until a real drift is observed.
+ */
+export function needsFirstRunSetup(
+  isPackaged: boolean,
+  completeMarkerExists: boolean,
+  fingerprintIsInSync = true,
+): boolean {
+  return classifyFirstRun(isPackaged, completeMarkerExists, fingerprintIsInSync) !== 'none';
 }
 
 /**

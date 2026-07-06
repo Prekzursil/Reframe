@@ -58,8 +58,12 @@ import type { DoneNotification } from './sidecar';
 import { registerShellIpc } from './shellIpc';
 import { pthZipName, renderPthBody } from './pthActivation';
 import {
+  classifyFirstRun,
   FIRST_RUN_COMPLETE_MARKER,
-  needsFirstRunSetup,
+  FIRST_RUN_REQUIREMENTS_FINGERPRINT_FILE,
+  fingerprintInSync,
+  requirementsFingerprint,
+  shouldBackfillFingerprint,
   shouldStartSidecarAfterFailedFirstRun,
 } from './firstRunGate';
 import {
@@ -438,6 +442,68 @@ function firstRunCompletePath(): string {
 }
 
 /**
+ * WU-S2 (version-aware re-bootstrap): the persisted requirements-fingerprint file
+ * at the DATA ROOT, next to the completion marker. The DECISION logic (hash,
+ * compare, backfill, classify) is the fully-tested pure firstRunGate.ts; the four
+ * helpers below are only the thin read/write/compute IO seams around it.
+ */
+function firstRunFingerprintPath(): string {
+  return dataRootChild(FIRST_RUN_REQUIREMENTS_FINGERPRINT_FILE);
+}
+
+/**
+ * The fingerprint of the sidecar requirements SHIPPED with THIS build, or `null`
+ * when it cannot be read (dev/unpackaged where resources are absent). A `null`
+ * result is treated as in-sync, so an unreadable shipped file never forces a
+ * re-bootstrap — the drift check fails SAFE, never silently loops.
+ */
+function shippedRequirementsFingerprint(): string | null {
+  try {
+    const res = getResourcesPath();
+    if (!res) return null;
+    const reqFile = join(res, 'sidecar', 'runtime_setup', 'requirements-sidecar.txt');
+    if (!existsSync(reqFile)) return null;
+    return requirementsFingerprint(readFileSync(reqFile, 'utf8'));
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[bootstrap] could not fingerprint shipped requirements: ${(err as Error).message}`);
+    return null;
+  }
+}
+
+/** The requirements fingerprint persisted by the last successful bootstrap, or `null`. */
+function readPersistedRequirementsFingerprint(): string | null {
+  try {
+    const path = firstRunFingerprintPath();
+    if (!existsSync(path)) return null;
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    const fp = (parsed as { fingerprint?: unknown }).fingerprint;
+    return typeof fp === 'string' && fp !== '' ? fp : null;
+  } catch {
+    // A corrupt/unreadable fingerprint file is treated as absent (null) -> the
+    // supervisor backfills the current fingerprint rather than looping bootstrap.
+    return null;
+  }
+}
+
+/**
+ * Record the CURRENT shipped requirements fingerprint at the data root (WU-S2).
+ * Called after a successful bootstrap (first-ever OR re-bootstrap) and on a
+ * legacy-marker backfill. FAIL-OPEN: a write failure is logged, never fatal — a
+ * missing fingerprint just re-arms as a backfill on the next launch.
+ */
+function persistRequirementsFingerprint(): void {
+  const fp = shippedRequirementsFingerprint();
+  if (fp === null) return;
+  try {
+    writeFileSync(firstRunFingerprintPath(), `${JSON.stringify({ fingerprint: fp }, null, 2)}\n`, 'utf8');
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[bootstrap] could not persist requirements fingerprint: ${(err as Error).message}`);
+  }
+}
+
+/**
  * WIRING-T5 §2 (packaging hardening): re-activate THIS copy's embeddable `._pth`.
  *
  * The embeddable interpreter runs ISOLATED — it ignores PYTHONPATH and does not
@@ -812,13 +878,34 @@ function bootstrap(): void {
   // `-m media_studio` until bootstrap.py rewrites its ._pth). Dev builds (and
   // already-bootstrapped packaged builds) start immediately, exactly as before.
   // WU-S1: only when we HOLD the data-root lock — a busy folder starts aborted.
-  const firstRun = lock.ok && needsFirstRunSetup(app.isPackaged, existsSync(firstRunCompletePath()));
+  // WU-S2 (version-aware re-bootstrap): a completed install re-provisions when the
+  // shipped sidecar requirements fingerprint DRIFTED from the one persisted at the
+  // last successful bootstrap (an auto-update changed the env). A `null` shipped
+  // fingerprint (unreadable resources) or `null` persisted (legacy pre-feature
+  // marker) is treated as in-sync — the latter is BACKFILLED below so future bumps
+  // are caught without a surprise re-provision now.
+  const markerExists = existsSync(firstRunCompletePath());
+  const shippedFp = shippedRequirementsFingerprint();
+  const persistedFp = markerExists ? readPersistedRequirementsFingerprint() : null;
+  const inSync = shippedFp === null ? true : fingerprintInSync(persistedFp, shippedFp);
+  const firstRunKind = classifyFirstRun(app.isPackaged, markerExists, inSync);
+  if (firstRunKind === 're-bootstrap') {
+    // eslint-disable-next-line no-console
+    console.error('[bootstrap] shipped sidecar requirements changed — re-provisioning (silent)');
+  }
+  const firstRun = lock.ok && firstRunKind !== 'none';
   if (lock.ok && !firstRun) {
     // T5 hardening: a packaged build whose env already exists still needs THIS
     // copy's embeddable ._pth pointed at it (the sentinel is shared in appData,
     // the ._pth is per-copy — see ensurePthActivated). The first-run path lets
     // bootstrap.py write the ._pth instead.
     ensurePthActivated();
+    // WU-S2: a legacy install (marker present, no persisted fingerprint) is
+    // assumed to match the currently-shipped requirements — record it so a FUTURE
+    // bump is detected, without re-provisioning now.
+    if (app.isPackaged && shippedFp !== null && shouldBackfillFingerprint(markerExists, persistedFp)) {
+      persistRequirementsFingerprint();
+    }
     sidecar.start();
   }
 
@@ -844,6 +931,9 @@ function bootstrap(): void {
     isBootstrapInFlight: () => bootstrapChild !== null,
     runBootstrap: runFirstRunBootstrap,
     onBootstrapSucceeded: () => {
+      // WU-S2: a repair re-runs the full bootstrap against the CURRENTLY-shipped
+      // requirements, so record their fingerprint — the env now matches this build.
+      persistRequirementsFingerprint();
       ensurePthActivated();
       sidecar?.restart();
     },
@@ -958,6 +1048,10 @@ function bootstrap(): void {
     const begin = (): void => {
       void runFirstRunBootstrap().then((ok) => {
         if (ok) {
+          // WU-S2: the env now matches THIS build's shipped requirements — persist
+          // their fingerprint so a later auto-update that changes them re-provisions
+          // instead of starting stale.
+          persistRequirementsFingerprint();
           sc2.start();
         } else if (shouldStartSidecarAfterFailedFirstRun(existsSync(firstRunSentinelPath()))) {
           // Re-provision of an already-working install failed (e.g. an upgrade
