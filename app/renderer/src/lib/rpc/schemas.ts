@@ -291,6 +291,13 @@ export interface RevealSource {
   path: string;
   title: string;
   exists: boolean;
+  /**
+   * WU-1f: whether a whole-file `content_hash` was already pinned for this source
+   * (a hash-verified relink has a baseline to match). A MISSING source with
+   * `relinkable: false` is surfaced as "relink unavailable" — the original was gone
+   * before it could be verified, so a re-imported copy cannot be matched to it.
+   */
+  relinkable: boolean;
 }
 
 /**

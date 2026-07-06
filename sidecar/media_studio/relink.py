@@ -112,10 +112,23 @@ def content_hash_of(path: str, *, hash_file: HashFile | None = None) -> str:
 # source resolution (reuses the lineage derived_from walk)
 # --------------------------------------------------------------------------- #
 def _source_status(entity: dict[str, Any]) -> dict[str, Any]:
-    """A reveal row for one source entity: id/path/title + whether the file exists."""
+    """A reveal row for one source entity: id/path/title + on-disk + relink status.
+
+    ``exists`` is whether the by-path file is still on disk; ``relinkable`` is
+    whether a whole-file ``content_hash`` was already pinned for it (the baseline a
+    hash-verified :func:`relink` needs). A MISSING source with ``relinkable`` false
+    is surfaced as "relink unavailable" by the UI — the original vanished before it
+    could be verified, so there is nothing to match a re-imported copy against.
+    """
     path = entity["path"]
     exists = bool(path) and Path(path).exists()
-    return {"id": entity["id"], "path": path, "title": entity["title"], "exists": exists}
+    return {
+        "id": entity["id"],
+        "path": path,
+        "title": entity["title"],
+        "exists": exists,
+        "relinkable": bool(entity["contentHash"]),
+    }
 
 
 def _source_entities(conn: sqlite3.Connection, entity_id: str) -> list[dict[str, Any]]:
@@ -144,10 +157,12 @@ def _source_entities(conn: sqlite3.Connection, entity_id: str) -> list[dict[str,
 def reveal_source(library: Any, entity_id: str) -> dict[str, Any]:
     """Resolve ``entity_id`` to its by-path source file(s) for OS-reveal (DESIGN §3.4).
 
-    Returns ``{id, sources:[{id,path,title,exists}], missing:[path,…]}``. ``missing``
-    lists every source whose file is no longer on disk (the ``find_missing_sources``
-    contract — surfaced loudly so the UI can offer a relink, never silently
-    skipped). An unknown id raises :class:`RelinkError`.
+    Returns ``{id, sources:[{id,path,title,exists,relinkable}], missing:[path,…]}``.
+    ``missing`` lists every source whose file is no longer on disk (the
+    ``find_missing_sources`` contract — surfaced loudly so the UI can offer a
+    relink, never silently skipped); ``relinkable`` says whether each source has a
+    pinned ``content_hash`` (a hash-verified relink is possible). An unknown id
+    raises :class:`RelinkError`.
     """
     with library._open() as conn:
         if _load_entity(conn, entity_id) is None:

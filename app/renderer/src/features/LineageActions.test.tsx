@@ -17,7 +17,7 @@ const ASSET = { id: 'clip1', title: 'My clip' };
 function revealResult(over: Partial<RevealResult> = {}): RevealResult {
   return {
     id: 'clip1',
-    sources: [{ id: 'src1', path: '/movies/talk.mp4', title: 'Talk', exists: true }],
+    sources: [{ id: 'src1', path: '/movies/talk.mp4', title: 'Talk', exists: true, relinkable: true }],
     missing: [],
     ...over,
   };
@@ -144,7 +144,7 @@ describe('<LineageActions />', () => {
     const h = handlers({
       reveal: vi.fn(async () =>
         revealResult({
-          sources: [{ id: 'src1', path: '/gone/talk.mp4', title: 'Talk', exists: false }],
+          sources: [{ id: 'src1', path: '/gone/talk.mp4', title: 'Talk', exists: false, relinkable: true }],
           missing: ['/gone/talk.mp4'],
         }),
       ),

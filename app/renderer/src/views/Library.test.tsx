@@ -815,6 +815,46 @@ describe('Library lineage view (L4)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// WU-1f: per-card source provenance (path + on-disk/missing badge + relink)
+// ---------------------------------------------------------------------------
+
+describe('Library source provenance (WU-1f)', () => {
+  function provenanceHandlers() {
+    return {
+      reveal: vi.fn(async () => ({
+        id: 'v1',
+        sources: [
+          { id: 'v1', path: '/movies/talk.mp4', title: 'Talk', exists: true, relinkable: true },
+        ],
+        missing: [] as string[],
+      })),
+      pinHash: vi.fn(async () => ({})),
+      relink: vi.fn(async () => {}),
+      openInFolder: vi.fn(async () => true),
+      pickRelinkTarget: vi.fn(async () => null),
+    };
+  }
+
+  it('renders a provenance row per card and drops the legacy compact path line', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    const handlers = provenanceHandlers();
+    await act(async () => {
+      root.render(<Library onOpen={() => {}} provenance={handlers} />);
+    });
+    await flush();
+
+    // The provenance row renders (with the clear full path) and calls reveal.
+    expect(container.querySelector('.library-provenance')).not.toBeNull();
+    expect(container.querySelector('.library-provenance__path')?.textContent).toBe(
+      '/movies/talk.mp4',
+    );
+    expect(handlers.reveal).toHaveBeenCalledWith('v1');
+    // The legacy tiny grey path line is replaced by the provenance row.
+    expect(container.querySelector('.library__item-path')).toBeNull();
+  });
+});
+
 describe('Library readiness roll-up (WU-14)', () => {
   it('renders the ReadinessRollup section on the library home', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });

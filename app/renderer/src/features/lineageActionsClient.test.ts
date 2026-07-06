@@ -40,6 +40,11 @@ describe('lineageActions — rpc forwards', () => {
     expect(rpcMock).toHaveBeenCalledWith('library.relink', { id: 'v1', path: '/new.mp4' });
   });
 
+  it('pinHash forwards the id (WU-1f relink baseline)', async () => {
+    await lineageActions.pinHash('v1');
+    expect(rpcMock).toHaveBeenCalledWith('library.pinHash', { id: 'v1' });
+  });
+
   it('runRegenerate re-dispatches the op with its params', async () => {
     await lineageActions.runRegenerate({
       id: 'v1',

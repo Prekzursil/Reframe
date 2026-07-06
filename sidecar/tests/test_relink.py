@@ -143,7 +143,19 @@ def test_reveal_source_for_a_present_source_itself(tmp_path: Path):
     assert out["sources"][0]["id"] == src
     assert out["sources"][0]["path"] == str(media.resolve())
     assert out["sources"][0]["exists"] is True
+    # A freshly-added source has NULL content_hash (pinned lazily on view).
+    assert out["sources"][0]["relinkable"] is False
     assert out["missing"] == []
+
+
+def test_reveal_source_relinkable_true_after_pin(tmp_path: Path):
+    # Once a whole-file hash is pinned, reveal reports the source as relinkable
+    # (a hash-verified relink now has a baseline to match against).
+    lib = _fresh_library(tmp_path)
+    src, media = _add_source(lib, tmp_path, "talk.mp4")
+    relink.pin_source_hash(lib, src)
+    out = relink.reveal_source(lib, src)
+    assert out["sources"][0]["relinkable"] is True
 
 
 def test_reveal_source_for_a_derived_short_resolves_its_source(tmp_path: Path):

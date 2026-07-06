@@ -3,6 +3,7 @@ import { rpc, type Video } from '../components/api';
 import { useVideoThumbnail, type VideoThumbnailRpc } from '../components/useVideoThumbnail';
 import { ReadinessRollup } from '../components/ReadinessRollup';
 import { LineagePanel, type LineageAsset } from '../features/LineagePanel';
+import { LibraryProvenance, type ProvenanceHandlers } from '../features/LibraryProvenance';
 import { lineageActions } from '../features/lineageActionsClient';
 import type { LineageResult, ReadinessAction } from '../lib/rpc';
 import '../components/library-cards.css';
@@ -44,6 +45,14 @@ export interface LibraryProps {
    * action is simply a no-op.
    */
   onReadinessAction?: (action: ReadinessAction) => void;
+  /**
+   * WU-1f: the injected L5 provenance handlers (`library.reveal`/`pinHash`/
+   * `relink` + the reveal/pick bridges). When provided, each card renders its
+   * source-file provenance row (clear path + on-disk/missing badge + reveal/relink
+   * actions, and the lazy pin-on-view hash back-fill); absent -> cards keep the
+   * legacy compact path line and no provenance row (the app wires the real one).
+   */
+  provenance?: ProvenanceHandlers;
 }
 
 interface ListResult {
@@ -177,6 +186,7 @@ export function Library({
   onOpen,
   toast: externalToast,
   onReadinessAction,
+  provenance,
 }: LibraryProps): React.ReactElement {
   const [videos, setVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
@@ -459,11 +469,21 @@ export function Library({
                 <VideoThumb video={video} />
                 <div className="library__item-main">
                   <span className="library__item-title">{video.title}</span>
-                  <span className="library__item-path" title={video.path}>
-                    {video.path}
-                  </span>
+                  {/* WU-1f: the clear source path moves into <LibraryProvenance>;
+                      without the provenance handlers, keep the legacy compact line. */}
+                  {provenance ? null : (
+                    <span className="library__item-path" title={video.path}>
+                      {video.path}
+                    </span>
+                  )}
                 </div>
               </button>
+              {provenance ? (
+                <LibraryProvenance
+                  video={{ id: video.id, path: video.path, title: video.title }}
+                  handlers={provenance}
+                />
+              ) : null}
               <div className="library__item-meta">
                 {video.hasTranscript ? (
                   <span className="library__badge" title="Has transcript">

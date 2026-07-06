@@ -1,0 +1,116 @@
+/* library-provenance.css — WU-1f: the per-card source-file provenance row.
+ *
+ * The user's "where are my videos?" answer lives here: a READABLE full source
+ * path (not the tiny truncated grey line the card title area used), an on-disk /
+ * missing badge, and the reveal / relink actions. All values are tokens
+ * (styles/tokens.css); class names are test-pinned. */
+
+.library-provenance {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) 0 0;
+}
+
+/* The source path, shown in full and legibly — mono, secondary (not faint),
+   wrapping on the path separators rather than an ellipsis that hides the folder. */
+.library-provenance__path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.library-provenance__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* Status pill: colour carries the meaning (success = on disk, error = missing). */
+.library-provenance__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-xs);
+  font-size: var(--type-caption-size);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.library-provenance__badge--ondisk {
+  color: var(--status-success);
+  background: var(--status-success-soft);
+}
+
+.library-provenance__badge--missing {
+  color: var(--status-error);
+  background: var(--status-error-soft);
+}
+
+.library-provenance__badge--checking,
+.library-provenance__badge--unknown {
+  color: var(--text-muted);
+  background: var(--surface-hover);
+}
+
+/* Actions: quiet outline buttons; relink leans on the accent to signal recovery. */
+.library-provenance__btn {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--surface-active);
+  border-radius: var(--radius-xs);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--type-caption-size);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.library-provenance__btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--text-muted);
+}
+
+.library-provenance__btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.library-provenance__btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.library-provenance__btn--relink {
+  color: var(--accent);
+  border-color: var(--accent-edge);
+}
+
+.library-provenance__note {
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+}
+
+.library-provenance__status {
+  margin: 0;
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+}
+
+.library-provenance__status--success {
+  color: var(--status-success);
+}
+
+.library-provenance__status--error {
+  color: var(--status-error);
+}
+
+.library-provenance__status--info {
+  color: var(--text-muted);
+}

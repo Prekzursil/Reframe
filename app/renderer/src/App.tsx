@@ -23,6 +23,7 @@ import { Edit } from './views/Edit';
 import { MakeShorts } from './views/MakeShorts';
 import { Settings } from './views/Settings';
 import { incompleteBatches, remainingCount } from './features/repurposeLogic';
+import { lineageActions } from './features/lineageActionsClient';
 import { useToast } from './components/toast/useToast';
 import { TopTabBar, topTabId, topTabPanelId, type TopTab } from './components/TopTabBar';
 import {
@@ -355,7 +356,15 @@ function AppShell(): React.ReactElement {
       case 'library':
       default:
         // WU-14: a readiness fix action routes to Settings → Models & System.
-        return <Library onOpen={openVideo} onReadinessAction={handleReadinessAction} />;
+        // WU-1f: the L5 provenance handlers drive each card's source-file row
+        // (path + on-disk/missing badge + reveal/relink) and the lazy hash back-fill.
+        return (
+          <Library
+            onOpen={openVideo}
+            onReadinessAction={handleReadinessAction}
+            provenance={lineageActions}
+          />
+        );
     }
   }
 
