@@ -53,10 +53,15 @@ export interface DoneEvent {
   result?: unknown;
 }
 
-/** WU B3: playback-proxy build lifecycle pushed per videoId to the renderer. */
+/**
+ * WU B3: playback-proxy build lifecycle pushed per videoId to the renderer.
+ * WU-1e-fix: 'direct' is the DEFINITIVE "resolver decided this plays without a
+ * build" verdict (directly-playable source or a valid cached proxy) — it lets
+ * the renderer distinguish that from "the resolver hasn't spoken yet".
+ */
 export interface ProxyStateEvent {
   videoId: string;
-  state: 'building' | 'ready' | 'error';
+  state: 'direct' | 'building' | 'ready' | 'error';
   detail: string;
 }
 

@@ -66,8 +66,8 @@ async function tick(): Promise<void> {
 }
 
 describe('PlaybackProxy.resolve — verdict short-circuits', () => {
-  it('returns a valid cached proxy path without building', async () => {
-    const { deps } = makeDeps({
+  it('returns a valid cached proxy path without building, notifying a DEFINITIVE direct verdict', async () => {
+    const { deps, notify } = makeDeps({
       probePlayable: vi.fn(async () => ({ playable: true, proxyPath: '/cache/v1.mp4' })),
       isPlayableFile: vi.fn(async () => true),
     });
@@ -75,10 +75,14 @@ describe('PlaybackProxy.resolve — verdict short-circuits', () => {
     expect(await proxy.resolve('v1')).toBe('/cache/v1.mp4');
     expect(deps.buildProxy).not.toHaveBeenCalled();
     expect(deps.resolveOriginal).not.toHaveBeenCalled();
+    // WU-1e-fix: the resolver DECIDED the cached proxy is playable — announce it
+    // so the renderer advances past 'initial' and a later genuine decode error
+    // goes LOUD instead of masking behind a "Building preview…" placeholder.
+    expect(notify).toHaveBeenCalledWith('v1', 'direct', '/cache/v1.mp4');
   });
 
-  it('ignores a stale (non-playable-file) cached proxyPath and returns the original', async () => {
-    const { deps } = makeDeps({
+  it('ignores a stale (non-playable-file) cached proxyPath and returns the original, notifying direct with the ORIGINAL path', async () => {
+    const { deps, notify } = makeDeps({
       probePlayable: vi.fn(async () => ({ playable: true, proxyPath: '/cache/gone.mp4' })),
       isPlayableFile: vi.fn(async () => false),
       resolveOriginal: vi.fn(async () => '/library/v1.mp4'),
@@ -86,25 +90,31 @@ describe('PlaybackProxy.resolve — verdict short-circuits', () => {
     const proxy = new PlaybackProxy(deps);
     expect(await proxy.resolve('v1')).toBe('/library/v1.mp4');
     expect(deps.buildProxy).not.toHaveBeenCalled();
+    // The stale proxyPath is NOT announced — the actually-served original is.
+    expect(notify).toHaveBeenCalledWith('v1', 'direct', '/library/v1.mp4');
+    expect(notify).not.toHaveBeenCalledWith('v1', 'direct', '/cache/gone.mp4');
   });
 
-  it('returns the original path when playable with no cached proxy', async () => {
-    const { deps } = makeDeps({
+  it('returns the original path when playable with no cached proxy, notifying a direct verdict', async () => {
+    const { deps, notify } = makeDeps({
       probePlayable: vi.fn(async () => ({ playable: true })),
       resolveOriginal: vi.fn(async () => '/library/v1.mp4'),
     });
     const proxy = new PlaybackProxy(deps);
     expect(await proxy.resolve('v1')).toBe('/library/v1.mp4');
     expect(deps.buildProxy).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith('v1', 'direct', '/library/v1.mp4');
   });
 
-  it('returns null when playable but the original is unknown (-> 404 upstream)', async () => {
-    const { deps } = makeDeps({
+  it('returns null when playable but the original is unknown (-> 404 upstream), notifying NOTHING (no source to decode)', async () => {
+    const { deps, notify } = makeDeps({
       probePlayable: vi.fn(async () => ({ playable: true })),
       resolveOriginal: vi.fn(async () => null),
     });
     const proxy = new PlaybackProxy(deps);
     expect(await proxy.resolve('v1')).toBeNull();
+    // A 404 has nothing to decode — a 'direct' verdict would be a lie.
+    expect(notify).not.toHaveBeenCalled();
   });
 });
 

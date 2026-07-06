@@ -33,7 +33,11 @@ vi.mock('../components/api', () => ({
 // `proxy.state` pushes through lib/rpc's onProxyState. Mock it so the
 // building/ready/error transitions can be driven deterministically (the real
 // wrapper reads window.api, which is not present under jsdom).
-type ProxyStateEvt = { videoId: string; state: 'building' | 'ready' | 'error'; detail: string };
+type ProxyStateEvt = {
+  videoId: string;
+  state: 'building' | 'direct' | 'ready' | 'error';
+  detail: string;
+};
 const onProxyStateMock = vi.fn<(cb: (e: ProxyStateEvt) => void) => () => void>();
 vi.mock('../lib/rpc', () => ({
   onProxyState: (cb: (e: ProxyStateEvt) => void) => onProxyStateMock(cb),
@@ -365,6 +369,42 @@ describe('Workspace', () => {
       videoEl.dispatchEvent(new Event('error'));
     });
     await flush();
+    expect(container.querySelector('.workspace__player-error')?.textContent).toContain(
+      'media failed to load',
+    );
+  });
+
+  it('shows no note for a direct (already-playable) verdict, and does not reload the player', async () => {
+    const emit = await renderAndCaptureProxyState();
+    const videoBefore = container.querySelector('.workspace__player video');
+    loadMock.mockClear();
+
+    // WU-1e-fix: the resolver decided the source is directly playable (or a valid
+    // cached proxy) WITHOUT a build. No building note, and NO reload (the source
+    // is already correct — reloading would restart playback needlessly).
+    await act(async () => emit({ videoId: 'v1', state: 'direct', detail: '/library/v1.mp4' }));
+    await flush();
+    expect(container.querySelector('.workspace__player-note')).toBeNull();
+    expect(container.querySelector('.workspace__player-error')).toBeNull();
+    expect(container.querySelector('.workspace__player video')).toBe(videoBefore);
+    expect(loadMock).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a raw <video> error LOUDLY after a DIRECT verdict (resolver misjudged: corrupt moov / odd profile — never a silent "Building preview…" forever)', async () => {
+    const emit = await renderAndCaptureProxyState();
+
+    // The resolver said the source is directly playable, so it emits 'direct'
+    // (advancing past 'initial'). If the <video> then genuinely fails to decode,
+    // the resolver misjudged — this MUST go loud, not mask behind the calm
+    // placeholder that (pre-fix) never resolved because no proxy.state ever fired.
+    await act(async () => emit({ videoId: 'v1', state: 'direct', detail: '/library/v1.mp4' }));
+    await flush();
+    const videoEl = container.querySelector('.workspace__player video') as HTMLVideoElement;
+    await act(async () => {
+      videoEl.dispatchEvent(new Event('error'));
+    });
+    await flush();
+    expect(container.querySelector('.workspace__player-note')).toBeNull();
     expect(container.querySelector('.workspace__player-error')?.textContent).toContain(
       'media failed to load',
     );

@@ -78,7 +78,11 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
   // has spoken ('initial') the raw source may legitimately be undecodable, so a
   // Chromium "media error (code 4)" is EXPECTED and must not flash the loud
   // banner — a calm "Building preview…" placeholder stands in for that window.
-  const proxyPhaseRef = useRef<'initial' | 'building' | 'ready' | 'error'>('initial');
+  // WU-1e-fix: 'direct' is the resolver's DEFINITIVE "plays without a build"
+  // verdict — it advances the phase past 'initial', so a genuine decode error on
+  // a source the resolver MISJUDGED as playable goes LOUD (like 'ready') instead
+  // of masking behind a "Building preview…" placeholder that never resolves.
+  const proxyPhaseRef = useRef<'initial' | 'direct' | 'building' | 'ready' | 'error'>('initial');
 
   const reloadProject = useCallback(async () => {
     setError(null);
@@ -112,6 +116,15 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
         proxyPhaseRef.current = 'building';
         setPlayerNote(evt.detail || 'building playback proxy…');
         setPlayerError(null);
+      } else if (evt.state === 'direct') {
+        // WU-1e-fix: the resolver decided the source is directly playable (or a
+        // valid cached proxy) WITHOUT a build. Advance past 'initial' so a later
+        // genuine decode error goes loud (handlePlayerError). No reload (the
+        // source is already correct) and we DON'T clear playerError — a decode
+        // error that raced ahead of this push must stay loud, and repeated
+        // per-range-request 'direct' pushes must never wipe it.
+        proxyPhaseRef.current = 'direct';
+        setPlayerNote(null);
       } else if (evt.state === 'ready') {
         proxyPhaseRef.current = 'ready';
         setPlayerNote(null);
@@ -128,9 +141,11 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
 
   // Route the raw <video>'s load/decode `error` by proxy phase so the initial
   // pre-resolver window never flashes Chromium's "media error (code 4)":
-  //   'ready'            — the proxy already reported the source playable, so a
-  //                        decode error now is a GENUINE failure → surface loudly
-  //                        (never a silent fallback);
+  //   'ready'/'direct'  — the resolver already DECIDED the source is playable (a
+  //                        finished proxy, a directly-playable original, or a
+  //                        valid cached proxy), so a decode error now is a GENUINE
+  //                        failure → surface loudly (never a silent fallback, and
+  //                        never a "Building preview…" placeholder that hangs);
   //   'error'           — a specific build-failure reason is already shown; the
   //                        raw error is a downstream echo → keep the real reason;
   //   'initial'/'building' — the resolver has not (yet) produced a decodable
@@ -138,7 +153,7 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
   //                        calm placeholder note instead of the loud banner.
   const handlePlayerError = useCallback((message: string) => {
     const phase = proxyPhaseRef.current;
-    if (phase === 'ready') {
+    if (phase === 'ready' || phase === 'direct') {
       setPlayerError(message);
       return;
     }

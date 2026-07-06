@@ -1232,10 +1232,15 @@ export interface DoneEvent {
   result?: unknown;
 }
 
-/** WU B3: `proxy.state` push — playback-proxy build lifecycle for a videoId. */
+/**
+ * WU B3: `proxy.state` push — playback-proxy build lifecycle for a videoId.
+ * WU-1e-fix: 'direct' is the DEFINITIVE "plays without a build" verdict (a
+ * directly-playable source or a valid cached proxy), distinct from the
+ * pre-resolution 'initial' window the renderer starts in.
+ */
 export interface ProxyStateEvent {
   videoId: string;
-  state: 'building' | 'ready' | 'error';
+  state: 'direct' | 'building' | 'ready' | 'error';
   detail: string;
 }
 

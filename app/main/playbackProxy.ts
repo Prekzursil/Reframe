@@ -14,10 +14,15 @@
 //     SINGLE-FLIGHT map keyed by videoId so concurrent <video> range requests
 //     for one id can never kick duplicate transcodes, and AWAITED with a bound
 //     so the request never hangs unbounded;
-//   * the build is surfaced to the renderer as an explicit "building" -> "ready"
-//     / "error" state (the `notify` seam), and a build FAILURE throws loudly
-//     (ProxyBuildFailedError -> HTTP 502) instead of falling back to the raw,
-//     undecodable original.
+//   * EVERY resolution is surfaced to the renderer over the `notify` seam: a
+//     directly-playable source (or a valid cached proxy) emits a DEFINITIVE
+//     "direct" verdict, and a non-playable source emits "building" -> "ready" /
+//     "error". The "direct" verdict is what lets the renderer tell "resolver
+//     decided playable" from "resolver hasn't spoken yet" — so a genuine decode
+//     error on a misjudged-playable source goes LOUD instead of masking behind a
+//     "Building preview…" placeholder that never resolves (WU-1e-fix).
+//   * a build FAILURE throws loudly (ProxyBuildFailedError -> HTTP 502) instead
+//     of falling back to the raw, undecodable original.
 //
 // Every I/O seam is injected (the mstream handler wires the real sidecar RPC +
 // fs), so the orchestration is unit-tested with no Electron/sidecar/ffmpeg.
@@ -33,8 +38,18 @@ export interface PlayableVerdict {
   reason?: string;
 }
 
-/** The build lifecycle surfaced to the renderer over the proxy-state channel. */
-export type ProxyBuildState = 'building' | 'ready' | 'error';
+/**
+ * The playability verdict surfaced to the renderer over the proxy-state channel.
+ *   'direct'   — the resolver DECIDED the source (or a valid cached proxy) plays
+ *                directly, with NO build; a DEFINITIVE verdict that advances the
+ *                renderer past its 'initial' window so a subsequent genuine decode
+ *                error goes LOUD instead of masking behind a "Building preview…"
+ *                placeholder that never resolves (WU-1e-fix).
+ *   'building' — a non-playable source is being transcoded (show the reason note);
+ *   'ready'    — the transcode finished (reload the player onto the new proxy);
+ *   'error'    — the transcode FAILED (surface the reason loudly).
+ */
+export type ProxyBuildState = 'direct' | 'building' | 'ready' | 'error';
 
 /** A one-shot timer cancel handle (returned by {@link PlaybackProxyDeps.setTimer}). */
 export type CancelTimer = () => void;
@@ -98,11 +113,23 @@ export class PlaybackProxy {
     // A cached remux/proxy wins — but only if it truly exists + is decodable
     // (a stale/half-written verdict.proxyPath must never be served).
     if (verdict.proxyPath && (await this.deps.isPlayableFile(verdict.proxyPath))) {
+      // WU-1e-fix: announce the DEFINITIVE 'direct' verdict so the renderer
+      // advances past 'initial'. If Chromium later fails to decode this proxy
+      // (the resolver misjudged), that error now goes LOUD rather than sitting
+      // under a calm "Building preview…" placeholder that never resolves.
+      this.deps.notify(videoId, 'direct', verdict.proxyPath);
       return verdict.proxyPath;
     }
     // Directly playable source (no proxy needed): stream the original file.
     if (verdict.playable) {
-      return this.deps.resolveOriginal(videoId);
+      const original = await this.deps.resolveOriginal(videoId);
+      if (original) {
+        // Same DEFINITIVE 'direct' verdict as the cached-proxy branch — skipped
+        // when the id is unknown (original === null -> 404 upstream): there is
+        // no source to decode, so a 'direct' verdict would be a lie.
+        this.deps.notify(videoId, 'direct', original);
+      }
+      return original;
     }
     // Not playable + no cached proxy: build one (single-flight) and await it.
     this.deps.notify(videoId, 'building', verdict.reason ?? 'building playback proxy');
