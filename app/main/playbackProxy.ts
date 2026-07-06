@@ -20,7 +20,7 @@
 //     "error". The "direct" verdict is what lets the renderer tell "resolver
 //     decided playable" from "resolver hasn't spoken yet" — so a genuine decode
 //     error on a misjudged-playable source goes LOUD instead of masking behind a
-//     "Building preview…" placeholder that never resolves (WU-1e-fix).
+//     "Building preview…" note that never resolves (WU-1e-fix).
 //   * a build FAILURE throws loudly (ProxyBuildFailedError -> HTTP 502) instead
 //     of falling back to the raw, undecodable original.
 //
@@ -44,7 +44,7 @@ export interface PlayableVerdict {
  *                directly, with NO build; a DEFINITIVE verdict that advances the
  *                renderer past its 'initial' window so a subsequent genuine decode
  *                error goes LOUD instead of masking behind a "Building preview…"
- *                placeholder that never resolves (WU-1e-fix).
+ *                note that never resolves (WU-1e-fix).
  *   'building' — a non-playable source is being transcoded (show the reason note);
  *   'ready'    — the transcode finished (reload the player onto the new proxy);
  *   'error'    — the transcode FAILED (surface the reason loudly).
@@ -116,7 +116,7 @@ export class PlaybackProxy {
       // WU-1e-fix: announce the DEFINITIVE 'direct' verdict so the renderer
       // advances past 'initial'. If Chromium later fails to decode this proxy
       // (the resolver misjudged), that error now goes LOUD rather than sitting
-      // under a calm "Building preview…" placeholder that never resolves.
+      // under a calm "Building preview…" note that never resolves.
       this.deps.notify(videoId, 'direct', verdict.proxyPath);
       return verdict.proxyPath;
     }
