@@ -59,8 +59,11 @@ import {
   hashedLockFilename,
   requirementsFingerprint,
   shouldBackfillFingerprint,
+  shouldClearProvisioningOnSidecarStatus,
+  shouldSpawnBootstrap,
   shouldStartSidecarAfterFailedFirstRun,
 } from './firstRunGate';
+import { broadcastToLiveWindows } from './windowsBroadcast';
 import {
   keystorePathFor,
   migrateLegacyPlaintextKeys,
@@ -579,11 +582,7 @@ function ensurePthActivated(): void {
 }
 
 function broadcastBootstrap(state: 'running' | 'done' | 'error', line: string): void {
-  for (const win of liveWindows()) {
-    if (!win.webContents.isDestroyed()) {
-      win.webContents.send(BOOTSTRAP_PROGRESS_CHANNEL, { state, line });
-    }
-  }
+  broadcastToLiveWindows(liveWindows(), BOOTSTRAP_PROGRESS_CHANNEL, { state, line });
 }
 
 /**
@@ -593,11 +592,7 @@ function broadcastBootstrap(state: 'running' | 'done' | 'error', line: string): 
  * terminal, user-facing error — not a progress line.
  */
 function broadcastBootstrapError(message: string): void {
-  for (const win of liveWindows()) {
-    if (!win.webContents.isDestroyed()) {
-      win.webContents.send(BOOTSTRAP_ERROR_CHANNEL, message);
-    }
-  }
+  broadcastToLiveWindows(liveWindows(), BOOTSTRAP_ERROR_CHANNEL, message);
 }
 
 /**
@@ -611,11 +606,7 @@ function broadcastProvisioning(active: boolean): void {
   // WU-1b: latch the state so the `provisioning.get` query stays authoritative
   // for renderers that mount AFTER this push (which they otherwise miss).
   provisioningActive = active;
-  for (const win of liveWindows()) {
-    if (!win.webContents.isDestroyed()) {
-      win.webContents.send(PROVISIONING_STATE_CHANNEL, { active });
-    }
-  }
+  broadcastToLiveWindows(liveWindows(), PROVISIONING_STATE_CHANNEL, { active });
 }
 
 /**
@@ -624,11 +615,7 @@ function broadcastProvisioning(active: boolean): void {
  * build failure loudly on 'error'.
  */
 function broadcastProxyState(videoId: string, state: ProxyBuildState, detail: string): void {
-  for (const win of liveWindows()) {
-    if (!win.webContents.isDestroyed()) {
-      win.webContents.send(PROXY_STATE_CHANNEL, { videoId, state, detail });
-    }
-  }
+  broadcastToLiveWindows(liveWindows(), PROXY_STATE_CHANNEL, { videoId, state, detail });
 }
 
 /**
@@ -637,11 +624,7 @@ function broadcastProxyState(videoId: string, state: ProxyBuildState, detail: st
  * 'Ready -> Restart to update', or an error.
  */
 function broadcastUpdateStatus(status: UpdateStatus): void {
-  for (const win of liveWindows()) {
-    if (!win.webContents.isDestroyed()) {
-      win.webContents.send(UPDATE_STATUS_CHANNEL, status);
-    }
-  }
+  broadcastToLiveWindows(liveWindows(), UPDATE_STATUS_CHANNEL, status);
 }
 
 /**
@@ -726,12 +709,15 @@ function runFirstRunBootstrap(): Promise<boolean> {
   // (no spawn) — and, because this resolves false, performRepairSetup never calls
   // onBootstrapSucceeded, so the sidecar is never (re)started against the shared tree.
   const lock = acquireDataRootLockNow();
-  if (!lock.ok) {
+  if (!shouldSpawnBootstrap(lock.ok)) {
     // eslint-disable-next-line no-console
     console.error(
       `[lock] refusing bootstrap: data folder busy (held by live pid ${lock.heldBy ?? 'unknown'})`,
     );
     broadcastBootstrapError(dataRootBusyMessage());
+    // WU-1a: return BEFORE broadcastProvisioning(true) below — a busy copy must
+    // never fan a provisioning signal out (it would raise a setup gate it can
+    // never finish); only the loud busy banner surfaces.
     return Promise.resolve(false);
   }
   return new Promise((resolveRun) => {
@@ -829,11 +815,15 @@ function createSidecar(): Sidecar {
   sc.on('status', (state: string) => {
     // eslint-disable-next-line no-console
     console.error(`[sidecar] status: ${state}`);
-    // WU-1a: the sidecar reaching 'running' is the success terminal for first-run
-    // provisioning — clear the explicit provisioning signal. A 'down'/'restarting'
-    // is a CRASH, not provisioning, and is left to the sidecar-status channel /
-    // SidecarBanner (this is why the two signals are deliberately separate).
-    if (state === 'running') broadcastProvisioning(false);
+    // WU-1a-FIX: the FIRST sidecar status transition of ANY kind ends first-run
+    // provisioning — the supervisor only starts the sidecar AFTER bootstrap
+    // succeeded, so 'running' is the success terminal AND 'restarting'/'down' mean
+    // the sidecar crashed AFTER a successful bootstrap. Clearing on all three stops
+    // a post-bootstrap crash (which reaches 'down' but never 'running') from
+    // masquerading as provisioning behind the FirstRunSetup gate forever; the crash
+    // now surfaces via the sidecar-status channel / SidecarBanner instead (the two
+    // signals stay deliberately separate — this just stops provisioning latching).
+    if (shouldClearProvisioningOnSidecarStatus(state)) broadcastProvisioning(false);
   });
   sc.on('error', (err: Error) => {
     // eslint-disable-next-line no-console

@@ -20,6 +20,8 @@ import {
   normalizeRequirements,
   requirementsFingerprint,
   shouldBackfillFingerprint,
+  shouldClearProvisioningOnSidecarStatus,
+  shouldSpawnBootstrap,
   shouldStartSidecarAfterFailedFirstRun,
 } from './firstRunGate';
 
@@ -304,5 +306,39 @@ describe('shouldStartSidecarAfterFailedFirstRun', () => {
 
   it('stays down on a truly empty first run (nothing installed to start)', () => {
     expect(shouldStartSidecarAfterFailedFirstRun(false)).toBe(false);
+  });
+});
+
+describe('shouldSpawnBootstrap — provisioning fans out only past the busy-lock (WU-1a)', () => {
+  it('spawns (and so may raise provisioning) when we HOLD the data-root lock', () => {
+    expect(shouldSpawnBootstrap(true)).toBe(true);
+  });
+
+  it('REFUSES to spawn when the folder is busy — no provisioning fan-out, only the busy banner', () => {
+    // runFirstRunBootstrap early-returns on this false BEFORE broadcastProvisioning(true),
+    // so a busy copy never raises a setup gate it could never finish.
+    expect(shouldSpawnBootstrap(false)).toBe(false);
+  });
+});
+
+describe('shouldClearProvisioningOnSidecarStatus — post-bootstrap crash unmasks the gate (WU-1a-FIX)', () => {
+  it("clears on 'running' (the success terminal)", () => {
+    expect(shouldClearProvisioningOnSidecarStatus('running')).toBe(true);
+  });
+
+  it("clears on 'restarting' (a crash right after bootstrap, auto-recovering)", () => {
+    expect(shouldClearProvisioningOnSidecarStatus('restarting')).toBe(true);
+  });
+
+  it("clears on 'down' (the stuck-gate bug: a post-bootstrap crash that never reached 'running')", () => {
+    // This is the fix: previously only 'running' cleared the signal, so a sidecar
+    // that crashed after a successful bootstrap and went straight to 'down' left
+    // the FirstRunSetup gate up forever, masking the crash as "still setting up".
+    expect(shouldClearProvisioningOnSidecarStatus('down')).toBe(true);
+  });
+
+  it('does NOT clear on an unknown / unrecognised status string', () => {
+    expect(shouldClearProvisioningOnSidecarStatus('starting')).toBe(false);
+    expect(shouldClearProvisioningOnSidecarStatus('')).toBe(false);
   });
 });

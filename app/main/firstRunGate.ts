@@ -270,3 +270,36 @@ export function needsFirstRunSetup(
 export function shouldStartSidecarAfterFailedFirstRun(envSentinelExists: boolean): boolean {
   return envSentinelExists;
 }
+
+/**
+ * WU-1a: whether runFirstRunBootstrap should SPAWN bootstrap.py — and therefore
+ * RAISE the explicit provisioning signal — given the data-root lock result. A busy
+ * folder (`lockOk` false: another LIVE copy holds the tree) REFUSES: no spawn, so
+ * the `provisioning.state` fan-out never fires and this copy surfaces only the loud
+ * busy banner instead of a spurious "setting up" gate it could never finish.
+ * Provisioning is broadcast ONLY past this busy-lock guard.
+ */
+export function shouldSpawnBootstrap(lockOk: boolean): boolean {
+  return lockOk;
+}
+
+/**
+ * WU-1a-FIX: whether a sidecar lifecycle status transition should CLEAR the
+ * first-run provisioning signal. The supervisor only STARTS the sidecar (so it
+ * only ever emits a status) AFTER a bootstrap succeeded — a first-ever / re-bootstrap
+ * run that resolved ok, or a launch that needed no first run at all — so the FIRST
+ * status transition of ANY kind is the terminal for provisioning:
+ *   - 'running'    — the runtime came up (the success terminal).
+ *   - 'restarting' — the sidecar crashed right after bootstrap and is auto-recovering.
+ *   - 'down'       — it crashed after bootstrap and auto-restart gave up.
+ * Clearing on all three closes the stuck-gate bug: previously only 'running'
+ * cleared the signal, so a post-bootstrap crash that reached 'down' WITHOUT ever
+ * reaching 'running' (e.g. the interpreter path became a directory / an invalid
+ * cwd) left provisioning latched TRUE and the FirstRunSetup gate up FOREVER —
+ * masking a crash as "still setting up". A post-bootstrap crash now correctly
+ * surfaces via the in-shell SidecarBanner instead. Any other/unknown string is not
+ * a recognised lifecycle state and does not clear.
+ */
+export function shouldClearProvisioningOnSidecarStatus(state: string): boolean {
+  return state === 'running' || state === 'restarting' || state === 'down';
+}
