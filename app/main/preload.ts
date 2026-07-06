@@ -27,6 +27,8 @@ const DIALOG_PICK_LOGO_CHANNEL = 'dialog.pickLogoFile'; // must match app/main/s
 const SIDECAR_RESTART_CHANNEL = 'sidecar.restart'; // must match app/main/ipc.ts
 const SIDECAR_STATUS_CHANNEL = 'sidecar.status'; // must match app/main/ipc.ts
 const BOOTSTRAP_ERROR_CHANNEL = 'bootstrap.error'; // must match app/main/main.ts
+const BOOTSTRAP_PROGRESS_CHANNEL = 'bootstrap.progress'; // must match app/main/main.ts (WU-1a)
+const PROVISIONING_STATE_CHANNEL = 'provisioning.state'; // must match app/main/main.ts (WU-1a)
 const SETUP_REPAIR_CHANNEL = 'setup.repair'; // must match app/main/repairSetupIpc.ts
 const PROXY_STATE_CHANNEL = 'proxy.state'; // must match app/main/main.ts (WU B3)
 const DATA_FOLDER_GET_CHANNEL = 'dataFolder.get'; // must match app/main/dataFolderIpc.ts
@@ -75,6 +77,30 @@ export interface SecureStatus {
 export interface RepairSetupResult {
   ok: boolean;
   reason?: string;
+}
+
+/**
+ * WU-1a: a first-run provisioning progress line relayed from main's
+ * `broadcastBootstrap` over `bootstrap.progress`. `state` is 'running' (a live
+ * progress line — a pip step or `assets NN.N%`), 'done' (bootstrap exited 0), or
+ * 'error' (non-zero exit / spawn failure); `line` is the human-readable text.
+ * Lets the renderer show live first-run setup progress instead of a blank window.
+ */
+export interface BootstrapProgressEvent {
+  state: 'running' | 'done' | 'error';
+  line: string;
+}
+
+/**
+ * WU-1a: the explicit first-run PROVISIONING signal (`provisioning.state`),
+ * DISTINCT from a crashed sidecar (`sidecar.status` = 'down'). `active` true
+ * means first-run setup is in progress (the heavy env/model provisioning); it
+ * flips false once the sidecar reaches 'running' or bootstrap fails terminally.
+ * Lets the renderer tell "first-run provisioning in progress" apart from
+ * "sidecar down/error".
+ */
+export interface ProvisioningState {
+  active: boolean;
 }
 
 /**
@@ -141,6 +167,21 @@ export interface MediaApi {
    * unsubscribe fn.
    */
   onBootstrapError(cb: (message: string) => void): () => void;
+  /**
+   * WU-1a: subscribe to first-run provisioning progress (`bootstrap.progress`).
+   * Mirrors main's `broadcastBootstrap` {state, line} stream (pip 'step k/2' +
+   * 'assets NN.N%' lines) so the renderer can show live setup progress during a
+   * first run instead of a blank window. Returns an unsubscribe fn.
+   */
+  onBootstrapProgress(cb: (event: BootstrapProgressEvent) => void): () => void;
+  /**
+   * WU-1a: subscribe to the explicit PROVISIONING signal (`provisioning.state`),
+   * DISTINCT from the sidecar 'down'/crash status. `active` true = first-run
+   * setup in progress; false once the sidecar reaches 'running' or bootstrap
+   * failed terminally. Lets the renderer distinguish "provisioning in progress"
+   * from "sidecar down/error". Returns an unsubscribe fn.
+   */
+  onProvisioningState(cb: (state: ProvisioningState) => void): () => void;
   /**
    * WU A5: re-run the idempotent first-run bootstrap on demand ("Retry setup /
    * Repair"). Recovers a partially-failed first run in place — pip re-checks
@@ -249,6 +290,19 @@ const api: MediaApi = {
     const listener = (_event: IpcRendererEvent, message: string): void => cb(message);
     ipcRenderer.on(BOOTSTRAP_ERROR_CHANNEL, listener);
     return () => ipcRenderer.removeListener(BOOTSTRAP_ERROR_CHANNEL, listener);
+  },
+
+  onBootstrapProgress(cb: (event: BootstrapProgressEvent) => void): () => void {
+    const listener = (_event: IpcRendererEvent, payload: BootstrapProgressEvent): void =>
+      cb(payload);
+    ipcRenderer.on(BOOTSTRAP_PROGRESS_CHANNEL, listener);
+    return () => ipcRenderer.removeListener(BOOTSTRAP_PROGRESS_CHANNEL, listener);
+  },
+
+  onProvisioningState(cb: (state: ProvisioningState) => void): () => void {
+    const listener = (_event: IpcRendererEvent, state: ProvisioningState): void => cb(state);
+    ipcRenderer.on(PROVISIONING_STATE_CHANNEL, listener);
+    return () => ipcRenderer.removeListener(PROVISIONING_STATE_CHANNEL, listener);
   },
 
   repairSetup(): Promise<RepairSetupResult> {

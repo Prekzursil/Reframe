@@ -132,6 +132,18 @@ const BOOTSTRAP_PROGRESS_CHANNEL = 'bootstrap.progress';
 const BOOTSTRAP_ERROR_CHANNEL = 'bootstrap.error';
 
 /**
+ * WU-1a: ipc channel carrying the EXPLICIT first-run PROVISIONING signal
+ * (`{active}`) to the renderer — DISTINCT from a crashed sidecar
+ * (`sidecar.status` = 'down') and from the terminal bootstrap error
+ * (`bootstrap.error`). `active:true` is emitted when first-run bootstrap starts;
+ * `active:false` when the sidecar reaches 'running' or bootstrap fails
+ * terminally. This lets the renderer tell "first-run provisioning in progress"
+ * apart from "sidecar down/error". Must match preload.ts PROVISIONING_STATE_CHANNEL
+ * + the renderer bridge `onProvisioningState`.
+ */
+const PROVISIONING_STATE_CHANNEL = 'provisioning.state';
+
+/**
  * WU B3: ipc channel carrying the playback-proxy build state for a videoId to
  * the renderer's Workspace (`{videoId, state, detail}`). `state` is
  * 'building' | 'ready' | 'error' — the renderer shows a "building…" note, swaps
@@ -568,6 +580,21 @@ function broadcastBootstrapError(message: string): void {
 }
 
 /**
+ * WU-1a: push the EXPLICIT first-run PROVISIONING signal to every live renderer.
+ * `active:true` means first-run setup is under way (emitted at bootstrap start);
+ * `active:false` means it finished (the sidecar reached 'running') or failed
+ * terminally. Kept SEPARATE from the bootstrap-error + sidecar-status channels so
+ * the renderer can distinguish "provisioning in progress" from "sidecar crashed".
+ */
+function broadcastProvisioning(active: boolean): void {
+  for (const win of liveWindows()) {
+    if (!win.webContents.isDestroyed()) {
+      win.webContents.send(PROVISIONING_STATE_CHANNEL, { active });
+    }
+  }
+}
+
+/**
  * WU B3: push a playback-proxy build-state transition to every live renderer so
  * the Workspace can show the "building…" note, reload on 'ready', and surface a
  * build failure loudly on 'error'.
@@ -688,6 +715,10 @@ function runFirstRunBootstrap(): Promise<boolean> {
     const python = process.env.MEDIA_STUDIO_PYTHON?.trim() || join(res, 'python', 'python.exe');
     const script = join(res, 'sidecar', 'runtime_setup', 'bootstrap.py');
     broadcastBootstrap('running', 'first-run setup starting');
+    // WU-1a: raise the EXPLICIT provisioning signal now that a real bootstrap is
+    // spawning (past the busy-lock guard above). It is cleared when the sidecar
+    // reaches 'running' or on the terminal error branches below.
+    broadcastProvisioning(true);
     const child = spawn(python, [script], {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
@@ -727,6 +758,9 @@ function runFirstRunBootstrap(): Promise<boolean> {
         `First-run setup could not start: ${err.message}. ` +
           'Reinstall to a writable location, or set MEDIA_STUDIO_PYTHON, then relaunch.',
       );
+      // WU-1a: terminal provisioning failure — clear the provisioning signal so
+      // the renderer drops the "setting up" state and surfaces the error banner.
+      broadcastProvisioning(false);
       resolveRun(false);
     });
     child.on('exit', (code: number | null) => {
@@ -742,6 +776,11 @@ function runFirstRunBootstrap(): Promise<boolean> {
             : `First-run setup failed (exit ${code ?? 'null'}). Check that the data ` +
                 'folder is writable and has free disk space, then relaunch.',
         );
+        // WU-1a: terminal provisioning failure — clear the provisioning signal.
+        // On success (ok) the signal instead clears when the sidecar reaches
+        // 'running' (createSidecar's status handler), so it stays raised across
+        // the sidecar spawn until the runtime is actually up.
+        broadcastProvisioning(false);
       }
       resolveRun(ok);
     });
@@ -766,6 +805,11 @@ function createSidecar(): Sidecar {
   sc.on('status', (state: string) => {
     // eslint-disable-next-line no-console
     console.error(`[sidecar] status: ${state}`);
+    // WU-1a: the sidecar reaching 'running' is the success terminal for first-run
+    // provisioning — clear the explicit provisioning signal. A 'down'/'restarting'
+    // is a CRASH, not provisioning, and is left to the sidecar-status channel /
+    // SidecarBanner (this is why the two signals are deliberately separate).
+    if (state === 'running') broadcastProvisioning(false);
   });
   sc.on('error', (err: Error) => {
     // eslint-disable-next-line no-console
