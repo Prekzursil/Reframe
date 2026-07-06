@@ -24,12 +24,20 @@ export const FIRST_RUN_COMPLETE_MARKER = '.first-run-complete.json';
 // supervisor writes at the DATA ROOT, next to FIRST_RUN_COMPLETE_MARKER, after a
 // successful bootstrap. Comparing it against the CURRENT shipped fingerprint lets
 // an auto-update that CHANGED the sidecar env silently re-provision instead of
-// starting a stale env against the old pip target. Single-owner by design: the
-// Electron supervisor both computes AND reads this fingerprint (TS `crypto`), so
-// there is NO cross-language hash-parity contract with bootstrap.py — the marker
-// stays the only cross-file name the test pins. blake3 already ships in the lock,
-// so v1.4 changes no dep and this is INSURANCE that arms drift-detection for
-// FUTURE bumps.
+// starting a stale env against the old pip target. The fingerprint hashes the
+// ACTIVE install source — bootstrap.py installs the env from the sibling hashed
+// lock (`requirements-sidecar.lock.txt`, `pip --require-hashes`) when it is
+// staged, else the loose pins — so a lock-only / transitive bump is caught too
+// (WU-S2-FIX; see `hashedLockFilename`). SCOPE: drift detection is the SIDECAR
+// env ONLY — the default bootstrap the supervisor spawns builds just that env.
+// The isolated chatterbox (torch) env is provisioned on demand at its own
+// point-of-use (`bootstrap.py --chatterbox` / a U4 env asset), so its own
+// requirements are NOT part of this signal and re-provision there, not here.
+// Single-owner by design: the Electron supervisor both computes AND reads this
+// fingerprint (TS `crypto`), so there is NO cross-language hash-parity contract
+// with bootstrap.py — the marker stays the only cross-file name the test pins.
+// blake3 already ships in the lock, so v1.4 changes no dep and this is INSURANCE
+// that arms drift-detection for FUTURE bumps.
 export const FIRST_RUN_REQUIREMENTS_FINGERPRINT_FILE = '.first-run-requirements.json';
 
 // The CORE-ONLY asset set the marker attests: the always-on face/ASD weights
@@ -140,15 +148,40 @@ export function normalizeRequirements(requirementsText: string): string[] {
 }
 
 /**
- * Stable fingerprint (sha256 hex) of the shipped sidecar requirements — the
- * version signal for the re-bootstrap decision. Computed over
- * {@link normalizeRequirements} so it is sensitive to any dependency change but
- * insensitive to comment / whitespace / reorder churn.
+ * Stable fingerprint (sha256 hex) of the sidecar requirements body — the version
+ * signal for the re-bootstrap decision. The caller hashes the ACTIVE install
+ * source (the sibling hashed lock when staged, else the loose pins — see
+ * {@link hashedLockFilename}), so a lock-only / transitive-dependency bump is
+ * caught too. Computed over {@link normalizeRequirements} so it is sensitive to
+ * any dependency change (a bumped pin, a changed `--hash=`, an added / removed
+ * line) but insensitive to comment / whitespace / reorder churn — for the loose
+ * pins AND the lock's hashed lines alike.
  */
 export function requirementsFingerprint(requirementsText: string): string {
   return createHash('sha256')
     .update(normalizeRequirements(requirementsText).join('\n'))
     .digest('hex');
+}
+
+/**
+ * WU-S2-FIX: the sibling fully-hashed lock filename for a loose sidecar
+ * requirements filename — the TS mirror of bootstrap.py `hashed_lock_path`
+ * (`requirements-sidecar.txt` -> `requirements-sidecar.lock.txt`): drop the final
+ * extension (Python `Path.stem`) and append `.lock.txt`.
+ *
+ * The packaged env is installed from THIS lock with `pip --require-hashes` when
+ * it is staged (bootstrap.py `install_env` -> `resolve_active_lock`), so the
+ * drift fingerprint MUST hash the lock — not the loose `.txt` — whenever it is
+ * present; otherwise a lock-only / transitive bump (which never edits the loose
+ * pins) would slip past and start a stale env against the new pip target. Pure:
+ * the caller owns the existence check + read (it prefers the lock when present,
+ * else falls back to the loose file). Filename-only (no directory separators),
+ * mirroring `Path.stem` on a basename.
+ */
+export function hashedLockFilename(requirementsFilename: string): string {
+  const lastDot = requirementsFilename.lastIndexOf('.');
+  const stem = lastDot === -1 ? requirementsFilename : requirementsFilename.slice(0, lastDot);
+  return `${stem}.lock.txt`;
 }
 
 /**

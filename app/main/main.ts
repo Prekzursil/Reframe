@@ -56,6 +56,7 @@ import {
   FIRST_RUN_COMPLETE_MARKER,
   FIRST_RUN_REQUIREMENTS_FINGERPRINT_FILE,
   fingerprintInSync,
+  hashedLockFilename,
   requirementsFingerprint,
   shouldBackfillFingerprint,
   shouldStartSidecarAfterFailedFirstRun,
@@ -436,14 +437,26 @@ function firstRunFingerprintPath(): string {
  * when it cannot be read (dev/unpackaged where resources are absent). A `null`
  * result is treated as in-sync, so an unreadable shipped file never forces a
  * re-bootstrap — the drift check fails SAFE, never silently loops.
+ *
+ * WU-S2-FIX: fingerprint the ACTIVE install source, mirroring bootstrap.py
+ * `install_env` -> `resolve_active_lock`. The packaged env is installed from the
+ * SIBLING fully-hashed lock (`requirements-sidecar.lock.txt`, `pip
+ * --require-hashes`) when it is staged, so we hash THAT when present — else the
+ * loose pinned `requirements-sidecar.txt`. Hashing only the loose file missed a
+ * lock-only / transitive-dependency bump, starting a stale env against the new
+ * pip target. Scope is the sidecar env only (chatterbox re-provisions at its own
+ * point-of-use — see firstRunGate.ts).
  */
 function shippedRequirementsFingerprint(): string | null {
   try {
     const res = getResourcesPath();
     if (!res) return null;
-    const reqFile = join(res, 'sidecar', 'runtime_setup', 'requirements-sidecar.txt');
-    if (!existsSync(reqFile)) return null;
-    return requirementsFingerprint(readFileSync(reqFile, 'utf8'));
+    const runtimeSetup = join(res, 'sidecar', 'runtime_setup');
+    const reqName = 'requirements-sidecar.txt';
+    const lockFile = join(runtimeSetup, hashedLockFilename(reqName));
+    const activeFile = existsSync(lockFile) ? lockFile : join(runtimeSetup, reqName);
+    if (!existsSync(activeFile)) return null;
+    return requirementsFingerprint(readFileSync(activeFile, 'utf8'));
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(`[bootstrap] could not fingerprint shipped requirements: ${(err as Error).message}`);

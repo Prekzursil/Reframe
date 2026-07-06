@@ -13,6 +13,7 @@ import {
   FIRST_RUN_REQUIREMENTS_FINGERPRINT_FILE,
   fingerprintInSync,
   firstRunReadinessRollup,
+  hashedLockFilename,
   isCoreFirstRunAsset,
   isProfileFirstRunComplete,
   needsFirstRunSetup,
@@ -209,6 +210,32 @@ describe('requirementsFingerprint — stable version hash (WU-S2)', () => {
 
   it('CHANGES when a dependency is added', () => {
     expect(requirementsFingerprint(`${base}av==17.1.0\n`)).not.toBe(requirementsFingerprint(base));
+  });
+});
+
+describe('hashedLockFilename — the active install source (WU-S2-FIX)', () => {
+  it('maps the loose sidecar requirements to its sibling hashed lock', () => {
+    // The packaged env installs from the lock (`pip --require-hashes`) when it is
+    // staged, so the drift fingerprint must hash THAT, not the loose .txt.
+    expect(hashedLockFilename('requirements-sidecar.txt')).toBe('requirements-sidecar.lock.txt');
+  });
+
+  it('is the TS mirror of bootstrap.py hashed_lock_path', () => {
+    // Cross-file parity: bootstrap.py derives the lock via
+    // `p.with_name(f"{p.stem}.lock.txt")`. A drift here would fingerprint a
+    // different file than the env is actually installed from.
+    const src = readFileSync(BOOTSTRAP_PY, 'utf8');
+    expect(src).toContain('p.with_name(f"{p.stem}.lock.txt")');
+  });
+
+  it('drops only the FINAL extension before appending .lock.txt (mirrors Path.stem)', () => {
+    expect(hashedLockFilename('requirements-chatterbox.txt')).toBe(
+      'requirements-chatterbox.lock.txt',
+    );
+  });
+
+  it('handles a filename with no extension (stem is the whole name)', () => {
+    expect(hashedLockFilename('requirements')).toBe('requirements.lock.txt');
   });
 });
 
