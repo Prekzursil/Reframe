@@ -12,7 +12,15 @@
 // ON, nodeIntegration OFF, sandbox ON — the renderer only sees `window.api`.
 import { app, BrowserWindow, safeStorage, session, shell } from 'electron';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, writeFileSync, promises as fsp } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+  promises as fsp,
+} from 'node:fs';
 import { extname, join, resolve as resolvePath, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { resolveDataRootFrom } from './dataRoot';
@@ -23,6 +31,12 @@ import {
   isProvisionedRoot,
   readDataDirMarker,
 } from './dataRootIo';
+import {
+  acquireDataRootLock,
+  DATA_ROOT_LOCK_FILE,
+  type LockIo,
+  releaseDataRootLock,
+} from './dataRootLock';
 import { registerDataFolderIpc } from './dataFolderIpc';
 import { registerRepairSetupIpc } from './repairSetupIpc';
 import { registerDialogIpc } from './dialogIpc';
@@ -82,6 +96,19 @@ let disposeUpdater: (() => void) | null = null;
 /** All live, non-destroyed windows (for notification fan-out). */
 function liveWindows(): BrowserWindow[] {
   return BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
+}
+
+/**
+ * WU-S1: bring the already-running instance's window to the foreground. Called
+ * from the `second-instance` handler when a second launch of THIS app copy is
+ * rejected by `requestSingleInstanceLock` — restore it if minimized, then focus.
+ */
+function focusPrimaryWindow(): void {
+  const [win] = BrowserWindow.getAllWindows();
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
 }
 
 // ---- WIRING-T5 §2: packaged-mode first-run setup ---------------------------
@@ -283,6 +310,67 @@ function dataRootChild(...parts: string[]): string {
 /** WIRING-T5 §2: the sidecar-env sentinel bootstrap.py writes on success. */
 function firstRunSentinelPath(): string {
   return dataRootChild('envs', 'sidecar', '.media-studio-env.json');
+}
+
+// ---- WU-S1: DATA-ROOT single-holder lock ----------------------------------
+//
+// `app.requestSingleInstanceLock()` (wired at the bottom of this file) only
+// excludes two launches of THIS app copy. The data root is RELOCATABLE, so two
+// DIFFERENT installs can point at the SAME folder — a second bootstrap/sidecar
+// there would race the first over the pip env + library.db. The lockfile below
+// (in the resolved DATA_ROOT, holding the owner pid) is the cross-copy guard: a
+// second copy that finds a LIVE holder does NOT spawn — it surfaces the loud
+// contention message via the existing bootstrap-error banner and starts aborted.
+// A stale lock from a crashed/dead holder is reclaimed. The DECISION logic lives
+// in the fully-tested pure dataRootLock.ts; this is only the fs/process seam.
+
+/** Absolute path of the DATA-ROOT lockfile (traversal-guarded, in DATA_ROOT). */
+function dataRootLockPath(): string {
+  return dataRootChild(DATA_ROOT_LOCK_FILE);
+}
+
+/**
+ * OS liveness probe: `process.kill(pid, 0)` sends no signal but throws when the
+ * pid does not exist (`ESRCH` -> dead). `EPERM` means the process exists but is
+ * owned by another user — still ALIVE, so the lock is NOT reclaimable.
+ */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/** The filesystem seam the pure dataRootLock acquire/release inject. */
+const dataRootLockIo: LockIo = {
+  readLock: () => {
+    try {
+      return readFileSync(dataRootLockPath(), 'utf8');
+    } catch {
+      return undefined; // absent/unreadable -> parseLock treats as "no lock"
+    }
+  },
+  writeLock: (body) => {
+    mkdirSync(DATA_ROOT, { recursive: true });
+    writeFileSync(dataRootLockPath(), body, 'utf8');
+  },
+  removeLock: () => {
+    try {
+      unlinkSync(dataRootLockPath());
+    } catch {
+      /* already gone — best-effort */
+    }
+  },
+};
+
+/** The loud, actionable message shown when the data folder is held by a live copy. */
+function dataRootBusyMessage(): string {
+  return (
+    `Another Reframe is already using this data folder (${DATA_ROOT}). ` +
+    'Close the other Reframe window, or choose a different data folder, then relaunch.'
+  );
 }
 
 /**
@@ -704,12 +792,28 @@ function bootstrap(): void {
 
   sidecar = createSidecar();
 
+  // WU-S1: acquire the DATA-ROOT lock BEFORE spawning bootstrap/the sidecar, so a
+  // SECOND app copy pointed at the SAME data folder never races the first over the
+  // pip env build / library.db. A LIVE holder (`ok:false`) aborts spawning: the
+  // window + IPC still come up so the loud contention banner is visible, but no
+  // sidecar/bootstrap starts against the shared tree. A crashed holder's stale
+  // lock is reclaimed. Decision logic is the fully-tested pure dataRootLock.ts.
+  const lock = acquireDataRootLock(dataRootLockIo, process.pid, Date.now(), isPidAlive);
+  if (lock.stale) {
+    // eslint-disable-next-line no-console
+    console.error(`[lock] reclaimed a stale data-root lock (dead pid ${lock.heldBy ?? 'unknown'})`);
+  } else if (!lock.ok) {
+    // eslint-disable-next-line no-console
+    console.error(`[lock] data folder busy (held by live pid ${lock.heldBy ?? 'unknown'}); aborting spawn`);
+  }
+
   // T5: in a packaged build whose runtime env was never built, stage 2 must
   // run BEFORE the sidecar starts (the embeddable python cannot serve
   // `-m media_studio` until bootstrap.py rewrites its ._pth). Dev builds (and
   // already-bootstrapped packaged builds) start immediately, exactly as before.
-  const firstRun = needsFirstRunSetup(app.isPackaged, existsSync(firstRunCompletePath()));
-  if (!firstRun) {
+  // WU-S1: only when we HOLD the data-root lock — a busy folder starts aborted.
+  const firstRun = lock.ok && needsFirstRunSetup(app.isPackaged, existsSync(firstRunCompletePath()));
+  if (lock.ok && !firstRun) {
     // T5 hardening: a packaged build whose env already exists still needs THIS
     // copy's embeddable ._pth pointed at it (the sentinel is shared in appData,
     // the ._pth is per-copy — see ensurePthActivated). The first-run path lets
@@ -836,6 +940,19 @@ function bootstrap(): void {
 
   const win = createWindow();
 
+  // WU-S1: the data folder is held by another LIVE Reframe — surface the loud,
+  // actionable contention message on the SidecarBanner (reusing the bootstrap-
+  // error channel) once the renderer is up. No sidecar/bootstrap was started
+  // above, so the app opens read-only/aborted instead of racing the other copy.
+  if (!lock.ok) {
+    const surfaceBusy = (): void => broadcastBootstrapError(dataRootBusyMessage());
+    if (win.webContents.isLoading()) {
+      win.webContents.once('did-finish-load', surfaceBusy);
+    } else {
+      surfaceBusy();
+    }
+  }
+
   if (firstRun) {
     const sc2 = sidecar;
     const begin = (): void => {
@@ -874,20 +991,34 @@ function bootstrap(): void {
   }
 }
 
-app.whenReady().then(() => {
-  // The native "About Reframe" panel (Help ▸ About / macOS app menu) — the single
-  // user-facing About surface. applicationName is the display brand "Reframe";
-  // applicationVersion reads package.json.version (1.3.0) via Electron.
-  app.setAboutPanelOptions({ applicationName: 'Reframe', applicationVersion: app.getVersion() });
-  bootstrap();
+// WU-S1: SINGLE-INSTANCE GUARD (same app copy). Acquire Electron's per-copy
+// instance lock BEFORE creating any window or spawning the sidecar. A second
+// launch of THIS copy loses the lock: it focuses the running window (via the
+// primary's `second-instance` handler) and quits immediately, so only one
+// process ever drives the app + sidecar. This is COMPLEMENTARY to the DATA-ROOT
+// lock in bootstrap(): this guards one copy launched twice; the data-root lock
+// guards two DIFFERENT copies aimed at the same relocatable data folder.
+if (!app.requestSingleInstanceLock()) {
+  // Losing the instance lock means a primary is already running — hand off and go.
+  app.quit();
+} else {
+  app.on('second-instance', focusPrimaryWindow);
 
-  app.on('activate', () => {
-    // macOS: re-create a window when the dock icon is clicked and none are open.
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
+  app.whenReady().then(() => {
+    // The native "About Reframe" panel (Help ▸ About / macOS app menu) — the single
+    // user-facing About surface. applicationName is the display brand "Reframe";
+    // applicationVersion reads package.json.version (1.3.0) via Electron.
+    app.setAboutPanelOptions({ applicationName: 'Reframe', applicationVersion: app.getVersion() });
+    bootstrap();
+
+    app.on('activate', () => {
+      // macOS: re-create a window when the dock icon is clicked and none are open.
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
   });
-});
+}
 
 app.on('window-all-closed', () => {
   // Quit on all platforms except macOS (standard Electron convention).
@@ -898,6 +1029,9 @@ app.on('window-all-closed', () => {
 
 // Ensure the sidecar is torn down before the process exits.
 app.on('will-quit', (event) => {
+  // WU-S1: release the DATA-ROOT lock — but only when it is still OURS (a busy/
+  // aborted launch that never acquired it leaves the live holder's lock intact).
+  releaseDataRootLock(dataRootLockIo, process.pid);
   // Don't orphan a half-finished first-run setup (it retries next launch —
   // the sentinel is only written on success).
   if (bootstrapChild && bootstrapChild.exitCode === null) {
