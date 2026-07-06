@@ -10,7 +10,7 @@
 // server in development (ELECTRON_RENDERER_URL) and from the built bundle
 // (out/renderer/index.html) in production. Security baseline: contextIsolation
 // ON, nodeIntegration OFF, sandbox ON — the renderer only sees `window.api`.
-import { app, BrowserWindow, safeStorage, session, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, safeStorage, session, shell } from 'electron';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, writeFileSync, promises as fsp } from 'node:fs';
 import { extname, join, resolve as resolvePath, sep } from 'node:path';
@@ -90,7 +90,16 @@ let disposeDialogIpc: (() => void) | null = null;
 let disposeShellIpc: (() => void) | null = null;
 let disposeDataFolderIpc: (() => void) | null = null;
 let disposeRepairSetupIpc: (() => void) | null = null;
+let disposeProvisioningIpc: (() => void) | null = null;
 let disposeUpdater: (() => void) | null = null;
+
+/**
+ * WU-1b: the CURRENT latched first-run provisioning state, mirrored by every
+ * `broadcastProvisioning` call and seeded from `firstRun` in bootstrap() BEFORE
+ * the window loads. `provisioning.get` returns this so the renderer's first frame
+ * can withhold the shell until provisioning is definitively over.
+ */
+let provisioningActive = false;
 
 /** All live, non-destroyed windows (for notification fan-out). */
 function liveWindows(): BrowserWindow[] {
@@ -142,6 +151,18 @@ const BOOTSTRAP_ERROR_CHANNEL = 'bootstrap.error';
  * + the renderer bridge `onProvisioningState`.
  */
 const PROVISIONING_STATE_CHANNEL = 'provisioning.state';
+
+/**
+ * WU-1b: request/response ipc channel for the CURRENT latched provisioning state
+ * (`{active}`). The `provisioning.state` PUSH above can't cover the renderer's
+ * FIRST frame — a first run raises it at did-finish-load (after React has already
+ * mounted the shell), and a normal launch fires its `running`/`active:false`
+ * before the window even exists (both MISSED). The renderer therefore QUERIES
+ * this at mount to decide, deterministically, whether to withhold the shell (and
+ * its sidecar RPCs) — killing the frame-0 "sidecar is not running" banner. Must
+ * match preload.ts PROVISIONING_GET_CHANNEL + the bridge `getProvisioningState`.
+ */
+const PROVISIONING_GET_CHANNEL = 'provisioning.get';
 
 /**
  * WU B3: ipc channel carrying the playback-proxy build state for a videoId to
@@ -587,6 +608,9 @@ function broadcastBootstrapError(message: string): void {
  * the renderer can distinguish "provisioning in progress" from "sidecar crashed".
  */
 function broadcastProvisioning(active: boolean): void {
+  // WU-1b: latch the state so the `provisioning.get` query stays authoritative
+  // for renderers that mount AFTER this push (which they otherwise miss).
+  provisioningActive = active;
   for (const win of liveWindows()) {
     if (!win.webContents.isDestroyed()) {
       win.webContents.send(PROVISIONING_STATE_CHANNEL, { active });
@@ -947,6 +971,15 @@ function bootstrap(): void {
     console.error('[bootstrap] shipped sidecar requirements changed — re-provisioning (silent)');
   }
   const firstRun = lock.ok && firstRunKind !== 'none';
+  // WU-1b: seed the provisioning latch BEFORE the window loads so the renderer's
+  // mount-time `provisioning.get` query is correct on the very first frame — a
+  // first/re- run withholds the shell (no sidecar to serve its RPCs yet), an
+  // already-provisioned launch mounts it immediately.
+  provisioningActive = firstRun;
+  disposeProvisioningIpc = ((): (() => void) => {
+    ipcMain.handle(PROVISIONING_GET_CHANNEL, () => ({ active: provisioningActive }));
+    return () => ipcMain.removeHandler(PROVISIONING_GET_CHANNEL);
+  })();
   if (lock.ok && !firstRun) {
     // T5 hardening: a packaged build whose env already exists still needs THIS
     // copy's embeddable ._pth pointed at it (the sentinel is shared in appData,
@@ -1211,6 +1244,10 @@ app.on('will-quit', (event) => {
   if (disposeRepairSetupIpc) {
     disposeRepairSetupIpc();
     disposeRepairSetupIpc = null;
+  }
+  if (disposeProvisioningIpc) {
+    disposeProvisioningIpc();
+    disposeProvisioningIpc = null;
   }
   if (disposeUpdater) {
     disposeUpdater();

@@ -565,3 +565,59 @@ describe('App M3 header routing toggle', () => {
     expect(routingBtn('auto').getAttribute('aria-pressed')).toBe('true');
   });
 });
+
+// WU-1b: the AppGate renders the full-screen FirstRunSetup INSTEAD of the shell
+// while first-run provisioning is in flight, so the Library (+ its mount-time
+// RPCs) never mount against a dead sidecar.
+describe('App first-run provisioning gate (WU-1b)', () => {
+  let provisioningCb: ((state: { active: boolean }) => void) | null = null;
+
+  function installGateBridge(initialActive: boolean): void {
+    provisioningCb = null;
+    (window as unknown as { api?: unknown }).api = {
+      // The mount-time query decides the FIRST frame (push events miss it).
+      getProvisioningState: () => Promise.resolve({ active: initialActive }),
+      onProvisioningState: (cb: (state: { active: boolean }) => void) => {
+        provisioningCb = cb;
+        return () => {
+          provisioningCb = null;
+        };
+      },
+    };
+  }
+
+  afterEach(() => {
+    delete (window as unknown as { api?: unknown }).api;
+  });
+
+  it('renders FirstRunSetup and blocks the Library while provisioning is active', async () => {
+    installGateBridge(true);
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    // The full-screen gate replaces the shell — no Library, no tab strip.
+    expect(container.querySelector('.first-run-setup')).not.toBeNull();
+    expect(container.querySelector('[data-testid="library"]')).toBeNull();
+    expect(container.querySelector('.toptab')).toBeNull();
+    // The shell's mount-time RPCs never fired (blocked behind the gate).
+    expect(libraryListMock).not.toHaveBeenCalled();
+    expect(batchListMock).not.toHaveBeenCalled();
+  });
+
+  it('auto-transitions to the normal shell when provisioning clears', async () => {
+    installGateBridge(true);
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    expect(container.querySelector('.first-run-setup')).not.toBeNull();
+    // Sidecar reached running → provisioning drops → the shell mounts.
+    await act(async () => {
+      provisioningCb?.({ active: false });
+    });
+    await flush();
+    expect(container.querySelector('.first-run-setup')).toBeNull();
+    expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
+  });
+});

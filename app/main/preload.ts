@@ -29,6 +29,7 @@ const SIDECAR_STATUS_CHANNEL = 'sidecar.status'; // must match app/main/ipc.ts
 const BOOTSTRAP_ERROR_CHANNEL = 'bootstrap.error'; // must match app/main/main.ts
 const BOOTSTRAP_PROGRESS_CHANNEL = 'bootstrap.progress'; // must match app/main/main.ts (WU-1a)
 const PROVISIONING_STATE_CHANNEL = 'provisioning.state'; // must match app/main/main.ts (WU-1a)
+const PROVISIONING_GET_CHANNEL = 'provisioning.get'; // must match app/main/main.ts (WU-1b)
 const SETUP_REPAIR_CHANNEL = 'setup.repair'; // must match app/main/repairSetupIpc.ts
 const PROXY_STATE_CHANNEL = 'proxy.state'; // must match app/main/main.ts (WU B3)
 const DATA_FOLDER_GET_CHANNEL = 'dataFolder.get'; // must match app/main/dataFolderIpc.ts
@@ -183,6 +184,15 @@ export interface MediaApi {
    */
   onProvisioningState(cb: (state: ProvisioningState) => void): () => void;
   /**
+   * WU-1b: query the CURRENT latched provisioning state (`provisioning.get`). The
+   * `provisioning.state` PUSH can't cover the renderer's first frame (a first run
+   * raises it after React mounts; a normal launch fires its `active:false` before
+   * the window exists). The FirstRunSetup gate calls this at mount to withhold the
+   * shell — and its sidecar RPCs — until provisioning is definitively over,
+   * killing the frame-0 "sidecar is not running" banner. Resolves `{ active }`.
+   */
+  getProvisioningState(): Promise<ProvisioningState>;
+  /**
    * WU A5: re-run the idempotent first-run bootstrap on demand ("Retry setup /
    * Repair"). Recovers a partially-failed first run in place — pip re-checks
    * satisfied deps, only missing assets re-download — and (re)starts the sidecar
@@ -303,6 +313,10 @@ const api: MediaApi = {
     const listener = (_event: IpcRendererEvent, state: ProvisioningState): void => cb(state);
     ipcRenderer.on(PROVISIONING_STATE_CHANNEL, listener);
     return () => ipcRenderer.removeListener(PROVISIONING_STATE_CHANNEL, listener);
+  },
+
+  getProvisioningState(): Promise<ProvisioningState> {
+    return ipcRenderer.invoke(PROVISIONING_GET_CHANNEL) as Promise<ProvisioningState>;
   },
 
   repairSetup(): Promise<RepairSetupResult> {

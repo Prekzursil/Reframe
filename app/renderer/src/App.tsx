@@ -41,6 +41,7 @@ import { ToastProvider } from './components/toast/ToastProvider';
 import { ToastHost } from './components/toast/ToastHost';
 import { JobQueue, JOBQUEUE_PANEL_ID } from './components/JobQueue';
 import { SidecarBanner } from './components/SidecarBanner';
+import { FirstRunSetup, useFirstRunSetup } from './components/FirstRunSetup';
 import { SecureKeysBanner } from './components/SecureKeysBanner';
 import { UpdateBanner } from './components/UpdateBanner';
 import { registerJobRetry } from './components/useJob';
@@ -396,11 +397,35 @@ function AppShell(): React.ReactElement {
   );
 }
 
-/** Root: provides the toast context, then renders the app shell. */
+/**
+ * WU-1b: the first-run provisioning GATE. While the sidecar is being provisioned
+ * (the ~3-min env/model build on a first launch) we render the full-screen
+ * FirstRunSetup INSTEAD of the shell, so the Library — and its mount-time RPCs
+ * (library.list, the readiness roll-up) — never mount against a dead sidecar and
+ * the "sidecar is not running" banner can't fire. When provisioning finishes
+ * (the sidecar reaches 'running', the signal drops, no error) `visible` becomes
+ * false and the normal shell mounts. A post-provisioning sidecar CRASH is NOT a
+ * bootstrap error, so it surfaces via the in-shell SidecarBanner instead.
+ */
+function AppGate(): React.ReactElement | null {
+  const setup = useFirstRunSetup();
+  if (setup.visible) {
+    return <FirstRunSetup view={setup} />;
+  }
+  // Withhold the shell until the initial provisioning query resolves: mounting it
+  // now would fire the Library's RPCs on the very first frame of a first run,
+  // before the sidecar exists — the exact "sidecar is not running" banner we kill.
+  if (!setup.ready) {
+    return null;
+  }
+  return <AppShell />;
+}
+
+/** Root: provides the toast context, then renders the first-run gate. */
 export function App(): React.ReactElement {
   return (
     <ToastProvider>
-      <AppShell />
+      <AppGate />
     </ToastProvider>
   );
 }
