@@ -12,15 +12,7 @@
 // ON, nodeIntegration OFF, sandbox ON — the renderer only sees `window.api`.
 import { app, BrowserWindow, safeStorage, session, shell } from 'electron';
 import { spawn, type ChildProcess } from 'node:child_process';
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-  promises as fsp,
-} from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync, promises as fsp } from 'node:fs';
 import { extname, join, resolve as resolvePath, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { resolveDataRootFrom } from './dataRoot';
@@ -34,9 +26,11 @@ import {
 import {
   acquireDataRootLock,
   DATA_ROOT_LOCK_FILE,
+  type LockDecision,
   type LockIo,
   releaseDataRootLock,
 } from './dataRootLock';
+import { bootProbe, createLockIo, selfLockOwner } from './dataRootLockIo';
 import { registerDataFolderIpc } from './dataFolderIpc';
 import { registerRepairSetupIpc } from './repairSetupIpc';
 import { registerDialogIpc } from './dialogIpc';
@@ -334,40 +328,26 @@ function dataRootLockPath(): string {
 }
 
 /**
- * OS liveness probe: `process.kill(pid, 0)` sends no signal but throws when the
- * pid does not exist (`ESRCH` -> dead). `EPERM` means the process exists but is
- * owned by another user — still ALIVE, so the lock is NOT reclaimable.
+ * The filesystem/process seam the pure dataRootLock acquire/release inject
+ * (exclusive-create/read/overwrite/remove of the lockfile). The liveness probe,
+ * per-boot id and host id also live in dataRootLockIo.ts (bootProbe/selfLockOwner)
+ * — all Electron-free + unit-tested there.
  */
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
+const dataRootLockIo: LockIo = createLockIo({
+  lockPath: dataRootLockPath,
+  dataRoot: () => DATA_ROOT,
+});
 
-/** The filesystem seam the pure dataRootLock acquire/release inject. */
-const dataRootLockIo: LockIo = {
-  readLock: () => {
-    try {
-      return readFileSync(dataRootLockPath(), 'utf8');
-    } catch {
-      return undefined; // absent/unreadable -> parseLock treats as "no lock"
-    }
-  },
-  writeLock: (body) => {
-    mkdirSync(DATA_ROOT, { recursive: true });
-    writeFileSync(dataRootLockPath(), body, 'utf8');
-  },
-  removeLock: () => {
-    try {
-      unlinkSync(dataRootLockPath());
-    } catch {
-      /* already gone — best-effort */
-    }
-  },
-};
+/**
+ * ATOMICALLY (re)acquire the DATA-ROOT lock for THIS process. The single choke
+ * point: bootstrap() calls it before starting the sidecar, and runFirstRunBootstrap
+ * re-checks it before EVERY bootstrap spawn — so a CONTENDED copy can never spawn
+ * bootstrap.py / restart the sidecar against a folder a live copy holds, even via
+ * the "Retry setup" banner. Decision logic is the fully-tested pure dataRootLock.ts.
+ */
+function acquireDataRootLockNow(): LockDecision {
+  return acquireDataRootLock(dataRootLockIo, selfLockOwner(), Date.now(), bootProbe);
+}
 
 /** The loud, actionable message shown when the data folder is held by a live copy. */
 function dataRootBusyMessage(): string {
@@ -674,6 +654,22 @@ function buildProxyJob(sc: Sidecar, videoId: string): Promise<string> {
  * `true` on exit code 0 — only then is the sidecar startable.
  */
 function runFirstRunBootstrap(): Promise<boolean> {
+  // WU-S1-FIX (HIGH): the DATA-ROOT lock is the SINGLE choke point. RE-CHECK it
+  // before EVERY bootstrap spawn — not just at startup — so a CONTENDED copy can
+  // never spawn bootstrap.py against a data folder a live copy holds, even when the
+  // user hits "Retry setup" on the busy banner (repairSetup -> runFirstRunBootstrap).
+  // A non-ours lock REFUSES loudly: re-surface the busy message and resolve false
+  // (no spawn) — and, because this resolves false, performRepairSetup never calls
+  // onBootstrapSucceeded, so the sidecar is never (re)started against the shared tree.
+  const lock = acquireDataRootLockNow();
+  if (!lock.ok) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[lock] refusing bootstrap: data folder busy (held by live pid ${lock.heldBy ?? 'unknown'})`,
+    );
+    broadcastBootstrapError(dataRootBusyMessage());
+    return Promise.resolve(false);
+  }
   return new Promise((resolveRun) => {
     const res = getResourcesPath();
     const python = process.env.MEDIA_STUDIO_PYTHON?.trim() || join(res, 'python', 'python.exe');
@@ -864,7 +860,7 @@ function bootstrap(): void {
   // window + IPC still come up so the loud contention banner is visible, but no
   // sidecar/bootstrap starts against the shared tree. A crashed holder's stale
   // lock is reclaimed. Decision logic is the fully-tested pure dataRootLock.ts.
-  const lock = acquireDataRootLock(dataRootLockIo, process.pid, Date.now(), isPidAlive);
+  const lock = acquireDataRootLockNow();
   if (lock.stale) {
     // eslint-disable-next-line no-console
     console.error(`[lock] reclaimed a stale data-root lock (dead pid ${lock.heldBy ?? 'unknown'})`);
@@ -1125,7 +1121,7 @@ app.on('window-all-closed', () => {
 app.on('will-quit', (event) => {
   // WU-S1: release the DATA-ROOT lock — but only when it is still OURS (a busy/
   // aborted launch that never acquired it leaves the live holder's lock intact).
-  releaseDataRootLock(dataRootLockIo, process.pid);
+  releaseDataRootLock(dataRootLockIo, selfLockOwner());
   // Don't orphan a half-finished first-run setup (it retries next launch —
   // the sentinel is only written on success).
   if (bootstrapChild && bootstrapChild.exitCode === null) {
