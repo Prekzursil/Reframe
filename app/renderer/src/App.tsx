@@ -41,6 +41,7 @@ import { actionSection } from './features/providersKeysLogic';
 import { ToastProvider } from './components/toast/ToastProvider';
 import { ToastHost } from './components/toast/ToastHost';
 import { JobQueue, JOBQUEUE_PANEL_ID } from './components/JobQueue';
+import { useActiveJobs } from './components/useActiveJobs';
 import { SidecarBanner } from './components/SidecarBanner';
 import { FirstRunSetup, useFirstRunSetup } from './components/FirstRunSetup';
 import { SecureKeysBanner } from './components/SecureKeysBanner';
@@ -93,7 +94,35 @@ function routeTab(route: Route): TabId {
   }
 }
 
-/** Local/Cloud quality toggle. Maps to settings.useCloud (CONTRACTS.md §2). */
+/** A small monitor glyph for the "Runs on" label (decorative — aria-hidden). */
+function RunsOnIcon(): React.ReactElement {
+  return (
+    <svg
+      className="quality-toggle__icon"
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      focusable="false"
+      aria-hidden="true"
+    >
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <path d="M8 21h8" />
+      <path d="M12 17v4" />
+    </svg>
+  );
+}
+
+/**
+ * Local/Cloud quality toggle. Maps to settings.useCloud (CONTRACTS.md §2).
+ * WU-2c: humanised copy — "Runs on:" + "This computer" / "Cloud" — so the
+ * segmented control reads as plain language, not engineer jargon. The underlying
+ * 'local'/'cloud' values + handler are unchanged (relabel only).
+ */
 function QualityToggle({
   quality,
   onChange,
@@ -102,15 +131,18 @@ function QualityToggle({
   onChange: (q: Quality) => void;
 }): React.ReactElement {
   return (
-    <div className="quality-toggle" role="group" aria-label="Quality">
-      <span className="quality-toggle__label">Quality</span>
+    <div className="quality-toggle" role="group" aria-label="Runs on">
+      <span className="quality-toggle__label">
+        <RunsOnIcon />
+        Runs on
+      </span>
       <button
         type="button"
         className={`quality-toggle__btn${quality === 'local' ? ' is-active' : ''}`}
         aria-pressed={quality === 'local'}
         onClick={() => onChange('local')}
       >
-        Local
+        This computer
       </button>
       <button
         type="button"
@@ -183,6 +215,10 @@ function AppShell(): React.ReactElement {
   // T6: the global job-queue slide-over (components/JobQueue.tsx). Closed by
   // default — the panel polls job.list only while open.
   const [jobsOpen, setJobsOpen] = useState(false);
+  // WU-2c: the collapsed "Jobs" pill's live heartbeat — a slow job.list poll so
+  // the header shows an in-flight count + a pulse even while the panel is shut.
+  const jobCount = useActiveJobs();
+  const jobsActive = jobCount > 0;
 
   // Best-effort hydrate the quality toggle + M3 routing-policy global from
   // persisted settings (one read). An out-of-enum / missing routingPolicy.global
@@ -377,12 +413,20 @@ function AppShell(): React.ReactElement {
           <RoutingToggle value={routingGlobal} onChange={changeRouting} busy={routingBusy} />
           <button
             type="button"
-            className="app__jobs-toggle"
+            className={`app__jobs-toggle${jobsActive ? ' app__jobs-toggle--active' : ''}`}
             aria-expanded={jobsOpen}
             aria-controls={JOBQUEUE_PANEL_ID}
             onClick={() => setJobsOpen((open) => !open)}
           >
-            Jobs
+            {/* The dot pulses amber only while work is in motion (CSS-gated on
+                the --active modifier); it sits idle-hidden otherwise. */}
+            <span className="app__jobs-dot" aria-hidden="true" />
+            <span className="app__jobs-label">Jobs</span>
+            {jobsActive ? (
+              <span className="app__jobs-count" aria-label={`${jobCount} running`}>
+                {jobCount}
+              </span>
+            ) : null}
           </button>
         </header>
 

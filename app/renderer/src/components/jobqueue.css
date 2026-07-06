@@ -3,9 +3,14 @@
  * running = accent (work in motion), done = success, error = error.
  * All values are tokens (styles/tokens.css); class names are test-pinned. */
 
+/* Live status pill: a dot + "Jobs" + an in-flight count chip. The dot pulses
+   amber only while the --active modifier is set (work in motion). */
 .app__jobs-toggle {
   appearance: none;
-  padding: 5px 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 5px 12px;
   border: none;
   border-radius: var(--radius-pill);
   background: var(--surface-deep);
@@ -27,6 +32,53 @@
 .app__jobs-toggle[aria-expanded="true"] {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* Status dot: idle-hidden; appears (and pulses) only when work is in motion. */
+.app__jobs-dot {
+  display: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  flex: none;
+}
+
+.app__jobs-toggle--active .app__jobs-dot {
+  display: block;
+  animation: jobs-pulse 1.6s var(--ease-in-out) infinite;
+}
+
+/* A subtle amber breathing halo — reduced-motion collapses it globally. */
+@keyframes jobs-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--accent-soft);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 0 4px var(--accent-soft);
+    opacity: 0.7;
+  }
+}
+
+.app__jobs-label {
+  font-weight: 600;
+}
+
+/* Count chip: a tabular amber number — the glanceable fact of the pill. */
+.app__jobs-count {
+  min-width: 18px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .jobqueue {

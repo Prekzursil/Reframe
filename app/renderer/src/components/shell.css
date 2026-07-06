@@ -118,11 +118,20 @@ body,
 }
 
 .quality-toggle__label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   font-size: var(--type-caption-size);
   font-weight: var(--type-caption-weight);
   letter-spacing: var(--type-caption-tracking);
   text-transform: uppercase;
   color: var(--text-muted);
+}
+
+/* The monitor glyph tracks the label's muted tone. */
+.quality-toggle__icon {
+  flex: none;
+  color: var(--text-faint);
 }
 
 .quality-toggle__btn {
@@ -159,8 +168,10 @@ body,
 }
 
 /* M3 header routing toggle — mirrors the quality toggle's pill group, with a
-   small "may egress" hint surfaced on the cloud/auto modes. */
+   tokenized egress-warning dot on the cloud/auto modes and a one-line inline
+   helper for Auto revealed on hover/focus. */
 .routing-toggle {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: var(--space-3);
@@ -212,12 +223,47 @@ body,
   cursor: progress;
 }
 
+/* Egress-warning dot: a small tokenized amber signal that a cloud-capable mode
+   is active (data could leave the machine). Colour is redundant — the element
+   carries an accessible label + title. A soft ring lifts it off the bar. */
 .routing-toggle__egress {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--warn, #c9772a);
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--status-warn);
+  box-shadow: 0 0 0 3px var(--status-warn-soft);
+}
+
+/* One-line inline helper for the Auto segment. Floats just below the toggle,
+   hidden at rest, revealed when the Auto button is hovered or focused. */
+.routing-toggle__helper {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 20;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-leading);
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-2px);
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out),
+    visibility var(--dur-fast) var(--ease-out);
+}
+
+.routing-toggle:has(.routing-toggle__btn[data-mode="auto"]:hover) .routing-toggle__helper,
+.routing-toggle:has(.routing-toggle__btn[data-mode="auto"]:focus-visible) .routing-toggle__helper {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
 }
 
 /* .app__jobs-toggle lives in jobqueue.css; both consume the same tokens. */

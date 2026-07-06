@@ -166,8 +166,10 @@ async function mount(): Promise<void> {
 }
 
 function qualityBtn(label: 'Local' | 'Cloud'): HTMLButtonElement {
+  // WU-2c relabel: the local segment now reads "This computer" (Cloud unchanged).
+  const text = label === 'Local' ? 'This computer' : 'Cloud';
   const btns = Array.from(container.querySelectorAll<HTMLButtonElement>('.quality-toggle__btn'));
-  const found = btns.find((b) => b.textContent === label);
+  const found = btns.find((b) => b.textContent === text);
   if (!found) throw new Error(`quality button "${label}" not found`);
   return found;
 }
@@ -331,6 +333,34 @@ describe('App jobs slide-over toggle', () => {
     });
     await flush();
     expect(jobsToggle.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('shows a live count + the active pulse modifier when jobs are in flight', async () => {
+    rpcMock.mockImplementation((method: string) =>
+      method === 'job.list'
+        ? Promise.resolve({
+            jobs: [
+              { jobId: 'a', feature: 'reframe', label: 'a.mp4', status: 'running', pct: 40 },
+              { jobId: 'b', feature: 'reframe', label: 'b.mp4', status: 'queued', pct: 0 },
+              { jobId: 'c', feature: 'reframe', label: 'c.mp4', status: 'done', pct: 100 },
+            ],
+          })
+        : Promise.resolve({}),
+    );
+    await mount();
+    const jobsToggle = container.querySelector<HTMLButtonElement>('.app__jobs-toggle')!;
+    expect(jobsToggle.classList.contains('app__jobs-toggle--active')).toBe(true);
+    const count = jobsToggle.querySelector('.app__jobs-count');
+    expect(count).not.toBeNull();
+    expect(count!.textContent).toBe('2'); // running + queued (done excluded)
+  });
+
+  it('shows no count chip or pulse when there are no active jobs', async () => {
+    await mount(); // default rpc resolves {} → job.list has no jobs
+    const jobsToggle = container.querySelector<HTMLButtonElement>('.app__jobs-toggle')!;
+    expect(jobsToggle.classList.contains('app__jobs-toggle--active')).toBe(false);
+    expect(jobsToggle.querySelector('.app__jobs-count')).toBeNull();
+    expect(jobsToggle.querySelector('.app__jobs-label')!.textContent).toBe('Jobs');
   });
 
   it('closes the JobQueue via its own onClose handler', async () => {
