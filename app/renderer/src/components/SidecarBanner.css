@@ -1,7 +1,12 @@
 /* Self-healing "Restart sidecar" banner (non-blocking recovery surface).
-   A top-pinned overlay strip with an error edge — visible but it does NOT trap
-   the UI (no backdrop, no focus capture). All values are tokens; class names
-   are test-pinned. App.tsx (wiring) owns the top-level CSS import. */
+   A top-pinned overlay strip — visible but it does NOT trap the UI (no backdrop,
+   no focus capture). All values are tokens; class names are test-pinned.
+   App.tsx (wiring) owns the top-level CSS import.
+
+   COLOR SEMANTICS (WU-2b): the ROUTINE sidecar reconnect is a WARM AMBER caution
+   — a transient, self-healing state, NOT an alarm. Hard alarm-red is reserved
+   strictly for the unrecoverable first-run FAILURE (`--error`). A pulsing amber
+   dot marks the strip as a live "reconnecting" state rather than a dead error. */
 
 .sidecar-banner {
   position: fixed;
@@ -14,9 +19,10 @@
   gap: var(--space-4);
   max-width: min(640px, calc(100vw - var(--space-5) * 2));
   padding: var(--space-3) var(--space-5);
-  background: var(--surface-overlay);
-  border: 1px solid var(--status-error);
-  border-left: 3px solid var(--status-error);
+  /* Warm caution wash over the overlay surface — reads amber, not red. */
+  background: linear-gradient(var(--status-warn-soft), var(--status-warn-soft)), var(--surface-overlay);
+  border: 1px solid var(--status-warn);
+  border-left: 3px solid var(--status-warn);
   border-radius: var(--radius-md);
   color: var(--text-primary);
   box-shadow: var(--shadow-overlay);
@@ -25,11 +31,39 @@
   animation: sidecar-banner-drop var(--dur-slow) var(--ease-out);
 }
 
-/* First-run setup FAILURE (WU-1): a louder edge so a broken first run reads as
-   an actionable error, not the routine "Sidecar stopped" recovery strip. The
-   message itself carries the fix; the strip wraps long, multi-clause text. */
+/* Live "reconnecting" pulse: a warm amber lamp that marks the routine recovery
+   strip as an ACTIVE, self-healing state — never shown on the hard-red failure
+   (the failure is static and actionable, not in-flight). Reduced-motion is
+   handled globally in shell.css (animation-duration collapses to ~0). */
+.sidecar-banner:not(.sidecar-banner--error)::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--status-warn);
+  box-shadow: 0 0 0 4px var(--status-warn-soft);
+  animation: sidecar-pulse 1.6s var(--ease-in-out) infinite;
+}
+
+@keyframes sidecar-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* First-run setup FAILURE (WU-1): the LOUD alarm-red edge — a broken first run
+   is unrecoverable-until-fixed, so it earns the hard error color the routine
+   reconnect no longer uses. The message itself carries the fix; the strip wraps
+   long, multi-clause text. */
 .sidecar-banner--error {
+  background: var(--surface-overlay);
   border-color: var(--status-error);
+  border-left-color: var(--status-error);
   border-left-width: 4px;
   max-width: min(720px, calc(100vw - var(--space-5) * 2));
 }

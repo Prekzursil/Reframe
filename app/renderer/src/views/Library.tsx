@@ -438,7 +438,27 @@ export function Library({
       )}
 
       {loading ? (
-        <div className="library__loading">Loading…</div>
+        // Skeleton-shimmer placeholders shaped like the real library rows —
+        // never a bare "LOADING…". aria-busy + label carry the state to AT while
+        // the ghost rows (aria-hidden) hold the layout so it doesn't jump.
+        <div
+          className="library__loading"
+          role="status"
+          aria-busy="true"
+          aria-label="Loading your videos"
+        >
+          <ul className="library__skeleton" aria-hidden="true">
+            {[0, 1, 2, 3].map((i) => (
+              <li key={i} className="library__skeleton-row">
+                <span className="skeleton library__skeleton-thumb" />
+                <span className="library__skeleton-lines">
+                  <span className="skeleton library__skeleton-line library__skeleton-line--title" />
+                  <span className="skeleton library__skeleton-line library__skeleton-line--path" />
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : videos.length === 0 ? (
         <div className="library__empty">
           <div className="library__empty-poster" aria-hidden="true">

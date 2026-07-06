@@ -66,13 +66,55 @@
   font-size: var(--type-caption-size);
 }
 
+/* Loading: a grid of portrait card-ghosts (thumb well + title line) that mirror
+   the real .shorts__grid — no more bare uppercase "LOADING…". The .skeleton
+   pulse + reduced-motion handling live in components/shell.css. */
 .shorts__loading {
-  padding: var(--space-8) var(--space-6);
-  color: var(--text-muted);
-  font-size: var(--type-caption-size);
-  font-weight: var(--type-caption-weight);
-  letter-spacing: var(--type-caption-tracking);
-  text-transform: uppercase;
+  padding: var(--space-4) var(--space-6) var(--space-7);
+}
+
+.shorts__skeleton {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-5);
+  align-content: start;
+}
+
+.shorts__skeleton-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--elev-1);
+}
+
+.shorts__skeleton-thumb {
+  aspect-ratio: 9 / 16;
+  border-radius: var(--radius-sm);
+}
+
+.shorts__skeleton-line {
+  height: 10px;
+  width: 60%;
+  border-radius: var(--radius-pill);
+}
+
+/* Stagger the pulse across the grid so it reads as alive, not a frozen block. */
+.shorts__skeleton-card:nth-child(2) .skeleton {
+  animation-delay: 0.15s;
+}
+
+.shorts__skeleton-card:nth-child(3) .skeleton {
+  animation-delay: 0.3s;
+}
+
+.shorts__skeleton-card:nth-child(4) .skeleton {
+  animation-delay: 0.45s;
 }
 
 /* ---- empty state: a ghost portrait poster (echoes the real card well) ---- */

@@ -422,13 +422,95 @@ button {
   background: var(--status-error-soft);
 }
 
+/* ---- skeleton shimmer (loading placeholders shaped like the real thing) -----
+   A quiet PULSE off --surface-hover — a placeholder that echoes the card/panel
+   anatomy so the layout doesn't jump when data lands. Reduced-motion is handled
+   globally at the top of this sheet (animation-duration collapses to ~0), so the
+   pulse simply holds still for motion-sensitive users. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-hover);
+  border-radius: var(--radius-xs);
+  animation: skeleton-pulse 1.5s var(--ease-in-out) infinite;
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* The loading well: no more bare uppercase "LOADING…" — a stack of card-shaped
+   ghosts that mirror the real library rows (thumb + two text lines). */
 .library__loading {
-  padding: var(--space-8) var(--space-6);
-  color: var(--text-muted);
-  font-size: var(--type-caption-size);
-  font-weight: var(--type-caption-weight);
-  letter-spacing: var(--type-caption-tracking);
-  text-transform: uppercase;
+  padding: var(--space-3);
+}
+
+.library__skeleton {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.library__skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--elev-1);
+}
+
+.library__skeleton-thumb {
+  flex: none;
+  width: 96px;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-sm);
+}
+
+.library__skeleton-lines {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.library__skeleton-line {
+  height: 10px;
+  border-radius: var(--radius-pill);
+}
+
+.library__skeleton-line--title {
+  width: 45%;
+}
+
+.library__skeleton-line--path {
+  width: 70%;
+  opacity: 0.7;
+}
+
+/* Stagger the pulse down the stack so the placeholder reads as alive, not a
+   frozen block. Each row's inner pieces share its beat via negative delays. */
+.library__skeleton-row:nth-child(2) .skeleton {
+  animation-delay: 0.15s;
+}
+
+.library__skeleton-row:nth-child(3) .skeleton {
+  animation-delay: 0.3s;
+}
+
+.library__skeleton-row:nth-child(4) .skeleton {
+  animation-delay: 0.45s;
 }
 
 /* Empty state with character: a ghost poster that echoes the real card
@@ -1170,7 +1252,121 @@ button {
   color: var(--text-secondary);
 }
 
+/* Considered empty state (WU-2b): a ghost poster echoing the review card well
+   instead of a bare grey sentence — the surface reads "nothing here YET", not
+   "broken". Mirrors the .library__empty / .shorts__empty ghost language. */
 .sm-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-6) var(--space-6);
+  text-align: center;
+}
+
+.sm-empty__poster {
+  position: relative;
+  width: 200px;
+  aspect-ratio: 16 / 9;
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--atmos-well), var(--surface-deep);
+  box-shadow:
+    inset 0 0 0 1px var(--edge),
+    var(--shadow-raise);
+}
+
+.sm-empty__poster::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  transform: translate(12px, -10px) rotate(2deg);
+}
+
+.sm-empty__glyph {
+  font-size: 22px;
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.sm-empty__title {
+  margin: var(--space-2) 0 0;
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+  color: var(--text-secondary);
+}
+
+.sm-empty__hint {
+  margin: 0;
+  max-width: 46ch;
+  font-size: var(--type-body-size);
+  color: var(--text-muted);
+}
+
+/* Assets ghost empty: same considered treatment on the .asset-empty container
+   (an added modifier, so the plain .asset-empty text reused elsewhere — Recipes
+   — is untouched). A stacked "chip" ghost echoing the installed-asset rows. */
+.asset-empty--ghost {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-6) var(--space-6);
+  text-align: center;
+}
+
+.asset-empty__poster {
+  position: relative;
+  width: 200px;
+  height: 64px;
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--surface-deep);
+  box-shadow:
+    inset 0 0 0 1px var(--edge),
+    var(--shadow-raise);
+}
+
+.asset-empty__poster::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  transform: translate(10px, -8px) rotate(-2deg);
+}
+
+.asset-empty__glyph {
+  font-size: 20px;
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.asset-empty__title {
+  margin: var(--space-2) 0 0;
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+  color: var(--text-secondary);
+}
+
+.asset-empty__hint {
+  margin: 0;
+  max-width: 46ch;
+  font-size: var(--type-body-size);
   color: var(--text-muted);
 }
 

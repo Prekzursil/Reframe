@@ -859,9 +859,13 @@ export function ShortMaker({
       )}
 
       {phase === 'reviewing' && items.length === 0 && !busy && !error && (
-        <p className="sm-empty">
-          No candidates were proposed. Adjust the prompt or controls and retry.
-        </p>
+        <div className="sm-empty">
+          <div className="sm-empty__poster" aria-hidden="true">
+            <span className="sm-empty__glyph">▶</span>
+          </div>
+          <p className="sm-empty__title">No candidates were proposed</p>
+          <p className="sm-empty__hint">Adjust the prompt or controls and retry.</p>
+        </div>
       )}
 
       <CandidateReview
