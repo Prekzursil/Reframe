@@ -31,6 +31,7 @@ const BOOTSTRAP_PROGRESS_CHANNEL = 'bootstrap.progress'; // must match app/main/
 const PROVISIONING_STATE_CHANNEL = 'provisioning.state'; // must match app/main/main.ts (WU-1a)
 const PROVISIONING_GET_CHANNEL = 'provisioning.get'; // must match app/main/main.ts (WU-1b)
 const SETUP_REPAIR_CHANNEL = 'setup.repair'; // must match app/main/repairSetupIpc.ts
+const INSTALL_PROFILE_CHOOSE_CHANNEL = 'installProfile.choose'; // must match app/main/installProfileIpc.ts (WU-1c)
 const PROXY_STATE_CHANNEL = 'proxy.state'; // must match app/main/main.ts (WU B3)
 const DATA_FOLDER_GET_CHANNEL = 'dataFolder.get'; // must match app/main/dataFolderIpc.ts
 const DATA_FOLDER_PICK_CHANNEL = 'dataFolder.pick'; // must match app/main/dataFolderIpc.ts
@@ -102,6 +103,18 @@ export interface BootstrapProgressEvent {
  */
 export interface ProvisioningState {
   active: boolean;
+  /**
+   * WU-1c: true on a FIRST-EVER run while the supervisor waits for the user's
+   * install-profile choice BEFORE spawning bootstrap. A silent WU-S2 re-bootstrap
+   * reuses the persisted profile and leaves this false (no picker).
+   */
+  awaitingProfile?: boolean;
+}
+
+/** WU-1c: outcome of committing a first-run install-profile choice. */
+export interface ChooseInstallProfileResult {
+  ok: boolean;
+  reason?: string;
 }
 
 /**
@@ -199,6 +212,14 @@ export interface MediaApi {
    * on success. Resolves `{ ok, reason? }`.
    */
   repairSetup(): Promise<RepairSetupResult>;
+  /**
+   * WU-1c: commit the FIRST-EVER-run install profile the user picked
+   * (Minimum / Default / Full / Custom, plus any Custom feature bundles). The main
+   * process validates + persists it, then spawns bootstrap.py with the resolved
+   * `--assets`. Resolves `{ ok, reason? }` — an invalid choice fails loud rather
+   * than silently installing a default set.
+   */
+  chooseInstallProfile(profile: string, bundles: string[]): Promise<ChooseInstallProfileResult>;
   /**
    * DATA ROOT: the data folder (models/envs/exports/...) in use THIS session.
    * Resolves with the absolute path the sidecar also derives its tree from.
@@ -321,6 +342,13 @@ const api: MediaApi = {
 
   repairSetup(): Promise<RepairSetupResult> {
     return ipcRenderer.invoke(SETUP_REPAIR_CHANNEL) as Promise<RepairSetupResult>;
+  },
+
+  chooseInstallProfile(profile: string, bundles: string[]): Promise<ChooseInstallProfileResult> {
+    return ipcRenderer.invoke(INSTALL_PROFILE_CHOOSE_CHANNEL, {
+      profile,
+      bundles,
+    }) as Promise<ChooseInstallProfileResult>;
   },
 
   getDataFolder(): Promise<string> {

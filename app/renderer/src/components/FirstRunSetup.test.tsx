@@ -20,6 +20,7 @@ import {
   INITIAL_PROGRESS,
   SETUP_ESTIMATE_MIN,
   type BootstrapProgressEvent,
+  type ChooseInstallProfileResult,
   type FirstRunSetupView,
   type ProvisioningState,
   type RepairSetupResult,
@@ -56,7 +57,9 @@ describe('parseBootstrapLine', () => {
 
 describe('cleanLine', () => {
   it('strips the [bootstrap] prefix and collapses whitespace', () => {
-    expect(cleanLine('[bootstrap] assets  12.3%  downloading x')).toBe('assets 12.3% downloading x');
+    expect(cleanLine('[bootstrap] assets  12.3%  downloading x')).toBe(
+      'assets 12.3% downloading x',
+    );
   });
 
   it('leaves an unprefixed line intact (just trimmed)', () => {
@@ -66,9 +69,9 @@ describe('cleanLine', () => {
 
 describe('reduceProgress', () => {
   it("maps a 'done' event to the finishing phase at 100% with no detail", () => {
-    expect(reduceProgress(INITIAL_PROGRESS, { state: 'done', line: 'bootstrap exited (code 0)' })).toEqual(
-      { phase: 'finishing', pct: 100, line: '' },
-    );
+    expect(
+      reduceProgress(INITIAL_PROGRESS, { state: 'done', line: 'bootstrap exited (code 0)' }),
+    ).toEqual({ phase: 'finishing', pct: 100, line: '' });
   });
 
   it("leaves state unchanged for an 'error' event (message arrives elsewhere)", () => {
@@ -146,6 +149,7 @@ function baseView(over: Partial<FirstRunSetupView> = {}): FirstRunSetupView {
   return {
     ready: true,
     visible: true,
+    awaitingProfile: false,
     phase: 'building',
     pct: 0,
     line: '',
@@ -153,6 +157,7 @@ function baseView(over: Partial<FirstRunSetupView> = {}): FirstRunSetupView {
     retrying: false,
     online: true,
     onRetry: () => {},
+    onChooseProfile: () => {},
     ...over,
   };
 }
@@ -221,6 +226,36 @@ describe('FirstRunSetup (presentational)', () => {
     expect(container.querySelector('.first-run-setup__offline')).not.toBeNull();
     expect(container.querySelector('.first-run-setup__hint')).toBeNull();
   });
+
+  // ---- WU-1c: the profile picker slot -----------------------------------------
+
+  it('renders the ProfilePicker (not progress) while awaiting the profile choice', () => {
+    const onChooseProfile = vi.fn();
+    renderView(baseView({ awaitingProfile: true, onChooseProfile }));
+    expect(container.querySelector('.profile-picker')).not.toBeNull();
+    // the picker replaces the progress + error bodies
+    expect(container.querySelector('.first-run-setup__progress')).toBeNull();
+    expect(container.querySelector('.first-run-setup__error')).toBeNull();
+    // the picker heading + subtitle swap to the setup-choice copy
+    expect(container.querySelector('.first-run-setup__title')!.textContent).toBe('Set up Reframe');
+    // committing a choice bubbles through onChooseProfile
+    act(() =>
+      container.querySelector<HTMLButtonElement>('[data-action="confirm-profile"]')!.click(),
+    );
+    expect(onChooseProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it('an error takes precedence over the picker (busy folder after launch)', () => {
+    renderView(baseView({ awaitingProfile: true, error: 'FAILED:bootstrap folder busy' }));
+    expect(container.querySelector('.profile-picker')).toBeNull();
+    expect(container.querySelector('.first-run-setup__error')).not.toBeNull();
+  });
+
+  it('a retry-in-flight takes precedence over the picker', () => {
+    renderView(baseView({ awaitingProfile: true, retrying: true }));
+    expect(container.querySelector('.profile-picker')).toBeNull();
+    expect(container.querySelector('.first-run-setup__progress')).not.toBeNull();
+  });
 });
 
 // ---- useFirstRunSetup hook (through a Probe) --------------------------------
@@ -229,6 +264,7 @@ let provisioningCb: ((state: ProvisioningState | null) => void) | null = null;
 let progressCb: ((event: BootstrapProgressEvent) => void) | null = null;
 let errorCb: ((message: string) => void) | null = null;
 const repairSetup = vi.fn<() => Promise<RepairSetupResult>>();
+const chooseInstallProfile = vi.fn<() => Promise<ChooseInstallProfileResult>>();
 const getProvisioningState = vi.fn<() => Promise<ProvisioningState>>();
 
 interface BridgeOpts {
@@ -236,6 +272,7 @@ interface BridgeOpts {
   omitProgress?: boolean;
   omitError?: boolean;
   omitRepair?: boolean;
+  omitChoose?: boolean;
   /** Include the mount-time `getProvisioningState` query on the bridge. */
   withQuery?: boolean;
 }
@@ -274,6 +311,7 @@ function installBridge(opts: BridgeOpts = {}): void {
           },
         }),
     ...(opts.omitRepair ? {} : { repairSetup }),
+    ...(opts.omitChoose ? {} : { chooseInstallProfile }),
   };
 }
 
@@ -284,6 +322,7 @@ function Probe(): React.ReactElement {
       data-testid="probe"
       data-ready={String(view.ready)}
       data-visible={String(view.visible)}
+      data-awaiting={String(view.awaitingProfile)}
       data-phase={view.phase}
       data-pct={String(view.pct)}
       data-line={view.line}
@@ -294,6 +333,13 @@ function Probe(): React.ReactElement {
       {view.visible ? <FirstRunSetup view={view} /> : <div data-testid="shell" />}
       <button type="button" data-testid="probe-retry" onClick={view.onRetry}>
         retry
+      </button>
+      <button
+        type="button"
+        data-testid="probe-choose"
+        onClick={() => view.onChooseProfile('custom', ['ai-director'])}
+      >
+        choose
       </button>
     </div>
   );
@@ -327,6 +373,12 @@ function clickRetry(): void {
   });
 }
 
+function clickChoose(): void {
+  act(() => {
+    container.querySelector<HTMLButtonElement>('[data-testid="probe-choose"]')!.click();
+  });
+}
+
 describe('useFirstRunSetup', () => {
   beforeEach(() => {
     provisioningCb = null;
@@ -334,6 +386,8 @@ describe('useFirstRunSetup', () => {
     errorCb = null;
     repairSetup.mockReset();
     repairSetup.mockResolvedValue({ ok: true });
+    chooseInstallProfile.mockReset();
+    chooseInstallProfile.mockResolvedValue({ ok: true });
     getProvisioningState.mockReset();
     getProvisioningState.mockResolvedValue({ active: false });
     installBridge();
@@ -602,10 +656,109 @@ describe('useFirstRunSetup', () => {
       omitProgress: true,
       omitError: true,
       omitRepair: true,
+      omitChoose: true,
     });
     mountProbe();
     expect(probe().getAttribute('data-visible')).toBe('false');
     clickRetry();
+    clickChoose();
     expect(repairSetup).not.toHaveBeenCalled();
+    expect(chooseInstallProfile).not.toHaveBeenCalled();
+  });
+
+  // ---- WU-1c: awaiting-profile state + choose wiring ------------------------
+
+  it('shows the picker when provisioning arrives awaitingProfile, and hides it once bootstrap spawns', () => {
+    mountProbe();
+    pushProvisioning({ active: true, awaitingProfile: true });
+    expect(probe().getAttribute('data-awaiting')).toBe('true');
+    expect(probe().getAttribute('data-visible')).toBe('true');
+    expect(container.querySelector('.profile-picker')).not.toBeNull();
+    // The choose -> spawn transition arrives as active:true, awaitingProfile:false.
+    pushProvisioning({ active: true, awaitingProfile: false });
+    expect(probe().getAttribute('data-awaiting')).toBe('false');
+    expect(container.querySelector('.profile-picker')).toBeNull();
+    expect(container.querySelector('.first-run-setup__progress')).not.toBeNull();
+  });
+
+  it('reads awaitingProfile from the mount-time query (first frame of a first-ever run)', async () => {
+    getProvisioningState.mockResolvedValueOnce({ active: true, awaitingProfile: true });
+    installBridge({ withQuery: true });
+    mountProbe();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(probe().getAttribute('data-awaiting')).toBe('true');
+    expect(container.querySelector('.profile-picker')).not.toBeNull();
+  });
+
+  it('choosing a profile invokes chooseInstallProfile with the profile + bundles', () => {
+    mountProbe();
+    pushProvisioning({ active: true, awaitingProfile: true });
+    clickChoose();
+    expect(chooseInstallProfile).toHaveBeenCalledTimes(1);
+    expect(chooseInstallProfile).toHaveBeenCalledWith('custom', ['ai-director']);
+  });
+
+  it('surfaces a LOUD reason when the chosen profile is rejected (no silent stall)', async () => {
+    chooseInstallProfile.mockResolvedValueOnce({ ok: false, reason: 'Invalid install profile: x' });
+    mountProbe();
+    pushProvisioning({ active: true, awaitingProfile: true });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="probe-choose"]')!.click();
+      await Promise.resolve();
+    });
+    expect(probe().getAttribute('data-error')).toBe('Invalid install profile: x');
+    expect(container.querySelector('.first-run-setup__error')).not.toBeNull();
+  });
+
+  it('does not set an error when the choice is accepted (ok:true)', async () => {
+    chooseInstallProfile.mockResolvedValueOnce({ ok: true });
+    mountProbe();
+    pushProvisioning({ active: true, awaitingProfile: true });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="probe-choose"]')!.click();
+      await Promise.resolve();
+    });
+    expect(probe().getAttribute('data-error')).toBe('');
+  });
+
+  it('does not set an error when a rejected choice carries no reason', async () => {
+    chooseInstallProfile.mockResolvedValueOnce({ ok: false });
+    mountProbe();
+    pushProvisioning({ active: true, awaitingProfile: true });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="probe-choose"]')!.click();
+      await Promise.resolve();
+    });
+    expect(probe().getAttribute('data-error')).toBe('');
+  });
+
+  it('surfaces a generic error when chooseInstallProfile rejects (never swallowed)', async () => {
+    chooseInstallProfile.mockRejectedValueOnce(new Error('ipc down'));
+    mountProbe();
+    pushProvisioning({ active: true, awaitingProfile: true });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="probe-choose"]')!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(probe().getAttribute('data-error')).toContain('Could not start setup');
+  });
+
+  it('choose no-ops when the bridge lacks chooseInstallProfile', () => {
+    installBridge({ omitChoose: true });
+    mountProbe();
+    pushProvisioning({ active: true, awaitingProfile: true });
+    clickChoose();
+    expect(chooseInstallProfile).not.toHaveBeenCalled();
+  });
+
+  it('choose no-ops when the bridge disappears before the click', () => {
+    mountProbe();
+    pushProvisioning({ active: true, awaitingProfile: true });
+    delete (window as unknown as { api?: unknown }).api;
+    clickChoose();
+    expect(chooseInstallProfile).not.toHaveBeenCalled();
   });
 });

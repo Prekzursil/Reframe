@@ -67,6 +67,17 @@ describe('onProvisioningState — forwards only the payload + returns an unsubsc
   });
 });
 
+describe('chooseInstallProfile — invokes the choose channel with the payload (WU-1c)', () => {
+  it('invokes installProfile.choose with { profile, bundles }', () => {
+    mocks.invoke.mockClear();
+    void api.chooseInstallProfile('custom', ['ai-director']);
+    expect(mocks.invoke).toHaveBeenCalledWith('installProfile.choose', {
+      profile: 'custom',
+      bundles: ['ai-director'],
+    });
+  });
+});
+
 describe('onBootstrapProgress — forwards only the payload + returns an unsubscribe', () => {
   it('subscribes on bootstrap.progress and forwards ONLY the payload', () => {
     const cb = vi.fn();

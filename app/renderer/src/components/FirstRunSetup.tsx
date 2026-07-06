@@ -27,6 +27,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 
 import { ProgressBar, clampPct } from './ProgressBar';
+import { ProfilePicker } from './ProfilePicker';
+import type { BundleId, InstallProfileId } from '../../../main/installProfiles';
 import './firstRunSetup.css';
 
 /** The three ordered first-run phases surfaced to the user. */
@@ -53,13 +55,24 @@ export interface BootstrapProgressEvent {
   line: string;
 }
 
-/** Mirror of preload ProvisioningState (WU-1a). */
+/**
+ * Mirror of preload ProvisioningState (WU-1a + WU-1c). `awaitingProfile` is true
+ * ONLY on a FIRST-EVER run while the supervisor waits for the user's install-profile
+ * choice before spawning bootstrap; a silent WU-S2 re-bootstrap leaves it false.
+ */
 export interface ProvisioningState {
   active: boolean;
+  awaitingProfile?: boolean;
 }
 
 /** Mirror of preload/SidecarBanner RepairSetupResult (WU A5). */
 export interface RepairSetupResult {
+  ok: boolean;
+  reason?: string;
+}
+
+/** Mirror of preload ChooseInstallProfileResult (WU-1c). */
+export interface ChooseInstallProfileResult {
   ok: boolean;
   reason?: string;
 }
@@ -71,6 +84,10 @@ interface SetupBridge {
   onBootstrapProgress?: (cb: (event: BootstrapProgressEvent) => void) => () => void;
   onBootstrapError?: (cb: (message: string) => void) => () => void;
   repairSetup?: () => Promise<RepairSetupResult>;
+  chooseInstallProfile?: (
+    profile: InstallProfileId,
+    bundles: BundleId[],
+  ) => Promise<ChooseInstallProfileResult>;
 }
 
 /** Read the preload-injected bridge without a global Window augmentation. */
@@ -170,6 +187,11 @@ export interface FirstRunSetupView {
   ready: boolean;
   /** True while the full-screen gate must replace the shell. */
   visible: boolean;
+  /**
+   * WU-1c: true on a FIRST-EVER run while awaiting the install-profile choice —
+   * the gate shows the ProfilePicker (before any download) instead of progress.
+   */
+  awaitingProfile: boolean;
   phase: SetupPhase;
   pct: number;
   line: string;
@@ -181,6 +203,8 @@ export interface FirstRunSetupView {
   online: boolean;
   /** Re-run the idempotent bootstrap (wired to the existing repairSetup). */
   onRetry: () => void;
+  /** WU-1c: commit the chosen install profile (wired to chooseInstallProfile). */
+  onChooseProfile: (profile: InstallProfileId, bundles: BundleId[]) => void;
 }
 
 /**
@@ -194,6 +218,7 @@ export interface FirstRunSetupView {
 export function useFirstRunSetup(): FirstRunSetupView {
   const [ready, setReady] = useState(false);
   const [active, setActive] = useState(false);
+  const [awaitingProfile, setAwaitingProfile] = useState(false);
   const [progress, setProgress] = useState<ProgressState>(INITIAL_PROGRESS);
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
@@ -214,6 +239,7 @@ export function useFirstRunSetup(): FirstRunSetupView {
       .then((state) => {
         if (cancelled) return;
         setActive(Boolean(state?.active));
+        setAwaitingProfile(Boolean(state?.awaitingProfile));
         setReady(true);
       })
       .catch(() => {
@@ -227,7 +253,10 @@ export function useFirstRunSetup(): FirstRunSetupView {
   useEffect(() => {
     const api = bridge();
     if (!api || typeof api.onProvisioningState !== 'function') return;
-    return api.onProvisioningState((state) => setActive(Boolean(state?.active)));
+    return api.onProvisioningState((state) => {
+      setActive(Boolean(state?.active));
+      setAwaitingProfile(Boolean(state?.awaitingProfile));
+    });
   }, []);
 
   useEffect(() => {
@@ -277,10 +306,32 @@ export function useFirstRunSetup(): FirstRunSetupView {
       });
   }, []);
 
-  const visible = active || error !== null || retrying;
+  // WU-1c: commit the install-profile choice. The supervisor validates + persists
+  // it and flips the gate from awaiting-profile to provisioning (via the
+  // provisioning push), so success needs no local state change here. A LOUD
+  // validation failure (an invalid choice) is surfaced as the actionable error so
+  // the user isn't stranded on a frozen picker — no silent swallow.
+  const onChooseProfile = useCallback((profile: InstallProfileId, bundles: BundleId[]) => {
+    const api = bridge();
+    if (!api || typeof api.chooseInstallProfile !== 'function') return;
+    api
+      .chooseInstallProfile(profile, bundles)
+      .then((result) => {
+        if (result && result.ok === false && result.reason) {
+          setError(result.reason);
+        }
+      })
+      .catch(() => {
+        // Never swallow silently: surface a generic actionable failure.
+        setError('Could not start setup for the selected profile. Please retry.');
+      });
+  }, []);
+
+  const visible = active || error !== null || retrying || awaitingProfile;
   return {
     ready,
     visible,
+    awaitingProfile,
     phase: progress.phase,
     pct: progress.pct,
     line: progress.line,
@@ -288,6 +339,7 @@ export function useFirstRunSetup(): FirstRunSetupView {
     retrying,
     online,
     onRetry,
+    onChooseProfile,
   };
 }
 
@@ -371,20 +423,31 @@ export interface FirstRunSetupProps {
  * mounts this INSTEAD of the tabbed shell whenever `view.visible` is true.
  */
 export function FirstRunSetup({ view }: FirstRunSetupProps): React.ReactElement {
-  const { phase, pct, line, error, retrying, online, onRetry } = view;
+  const { awaitingProfile, phase, pct, line, error, retrying, online, onRetry, onChooseProfile } =
+    view;
   const showError = error !== null && !retrying;
+  // WU-1c: before any download, a first-ever run shows the profile PICKER. A
+  // failure (e.g. the folder became busy after launch) takes precedence so the
+  // user isn't stuck on a picker whose choice can't proceed.
+  const showPicker = awaitingProfile && !showError && !retrying;
   return (
     <div className="first-run-setup">
       <div className="first-run-setup__panel">
         <header className="first-run-setup__header">
           <span className="first-run-setup__brand">Reframe</span>
-          <h1 className="first-run-setup__title">Setting up Reframe</h1>
+          <h1 className="first-run-setup__title">
+            {showPicker ? 'Set up Reframe' : 'Setting up Reframe'}
+          </h1>
           <p className="first-run-setup__subtitle">
-            This one-time setup takes about {SETUP_ESTIMATE_MIN} minutes. You only see it once.
+            {showPicker
+              ? 'Choose what to install now. This one-time setup runs once.'
+              : `This one-time setup takes about ${SETUP_ESTIMATE_MIN} minutes. You only see it once.`}
           </p>
         </header>
         {showError ? (
           <FirstRunError message={error} online={online} onRetry={onRetry} />
+        ) : showPicker ? (
+          <ProfilePicker onChoose={onChooseProfile} />
         ) : (
           <FirstRunProgress
             phase={phase}

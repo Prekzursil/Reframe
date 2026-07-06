@@ -33,6 +33,13 @@ import {
 import { bootProbe, createLockIo, selfLockOwner } from './dataRootLockIo';
 import { registerDataFolderIpc } from './dataFolderIpc';
 import { registerRepairSetupIpc } from './repairSetupIpc';
+import { registerInstallProfileIpc } from './installProfileIpc';
+import {
+  INSTALL_PROFILE_FILE,
+  parsePersistedInstallProfile,
+  resolveInstallChoice,
+  type ResolvedInstallChoice,
+} from './installProfiles';
 import { registerDialogIpc } from './dialogIpc';
 import { resolveScopedMediaPath } from './exportPath';
 import {
@@ -64,11 +71,7 @@ import {
   shouldStartSidecarAfterFailedFirstRun,
 } from './firstRunGate';
 import { broadcastToLiveWindows } from './windowsBroadcast';
-import {
-  keystorePathFor,
-  migrateLegacyPlaintextKeys,
-  type SafeStorageLike,
-} from './keystore';
+import { keystorePathFor, migrateLegacyPlaintextKeys, type SafeStorageLike } from './keystore';
 import { KeyBridge } from './keyBridge';
 import { Sidecar } from './sidecar';
 import { autoUpdater } from 'electron-updater';
@@ -93,6 +96,7 @@ let disposeDialogIpc: (() => void) | null = null;
 let disposeShellIpc: (() => void) | null = null;
 let disposeDataFolderIpc: (() => void) | null = null;
 let disposeRepairSetupIpc: (() => void) | null = null;
+let disposeInstallProfileIpc: (() => void) | null = null;
 let disposeProvisioningIpc: (() => void) | null = null;
 let disposeUpdater: (() => void) | null = null;
 
@@ -103,6 +107,16 @@ let disposeUpdater: (() => void) | null = null;
  * can withhold the shell until provisioning is definitively over.
  */
 let provisioningActive = false;
+
+/**
+ * WU-1c: true on a FIRST-EVER run while the supervisor is WAITING for the user's
+ * install-profile choice before spawning bootstrap. Mirrored into every
+ * `broadcastProvisioning` fan-out + returned by `provisioning.get` so the renderer
+ * shows the ProfilePicker (not a progress bar) on the first frame. Flips false the
+ * moment a profile is chosen and bootstrap actually spawns. A silent WU-S2
+ * re-bootstrap never sets it (it reuses the persisted profile).
+ */
+let awaitingProfileActive = false;
 
 /** All live, non-destroyed windows (for notification fan-out). */
 function liveWindows(): BrowserWindow[] {
@@ -431,7 +445,9 @@ function initKeyBridge(): KeyBridge {
       // Loud, actionable: keys can't be saved at rest; SecureKeysBanner shows the
       // session-only message. Never a silent plaintext write, never a destroyed key.
       // eslint-disable-next-line no-console
-      console.error(`[keystore] plaintext migration refused (session-only): ${result.banner ?? ''}`);
+      console.error(
+        `[keystore] plaintext migration refused (session-only): ${result.banner ?? ''}`,
+      );
     } else if (result.status === 'migrated') {
       // eslint-disable-next-line no-console
       console.error(
@@ -495,7 +511,9 @@ function shippedRequirementsFingerprint(): string | null {
     return requirementsFingerprint(readFileSync(activeFile, 'utf8'));
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error(`[bootstrap] could not fingerprint shipped requirements: ${(err as Error).message}`);
+    console.error(
+      `[bootstrap] could not fingerprint shipped requirements: ${(err as Error).message}`,
+    );
     return null;
   }
 }
@@ -525,10 +543,69 @@ function persistRequirementsFingerprint(): void {
   const fp = shippedRequirementsFingerprint();
   if (fp === null) return;
   try {
-    writeFileSync(firstRunFingerprintPath(), `${JSON.stringify({ fingerprint: fp }, null, 2)}\n`, 'utf8');
+    writeFileSync(
+      firstRunFingerprintPath(),
+      `${JSON.stringify({ fingerprint: fp }, null, 2)}\n`,
+      'utf8',
+    );
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error(`[bootstrap] could not persist requirements fingerprint: ${(err as Error).message}`);
+    console.error(
+      `[bootstrap] could not persist requirements fingerprint: ${(err as Error).message}`,
+    );
+  }
+}
+
+/**
+ * WU-1c: the persisted install-profile file at the DATA ROOT (sibling of the
+ * completion marker). Written when the user picks a profile on a first-ever run so
+ * a later SILENT WU-S2 re-bootstrap can REPLAY the same profile instead of
+ * re-prompting. The DECISION logic (validate/parse/resolve) is the fully-tested
+ * pure installProfiles.ts; this is only the thin read/write IO seam.
+ */
+function installProfilePath(): string {
+  return dataRootChild(INSTALL_PROFILE_FILE);
+}
+
+/**
+ * Persist the chosen install profile at the data root. FAIL-OPEN: a write failure
+ * is logged, never fatal — a missing profile file just makes a later re-bootstrap
+ * fall back to the argless default set (which still includes the core floor).
+ */
+function persistInstallProfile(choice: ResolvedInstallChoice): void {
+  try {
+    writeFileSync(
+      installProfilePath(),
+      `${JSON.stringify({ profile: choice.profile, bundles: choice.bundles }, null, 2)}\n`,
+      'utf8',
+    );
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[bootstrap] could not persist install profile: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * WU-1c: the assets a re-bootstrap / repair should install, resolved from the
+ * PERSISTED profile. Returns `null` when no valid profile is persisted (a legacy
+ * pre-WU-1c install, a corrupt file, or an unreadable data root) so the caller
+ * spawns bootstrap ARGLESS — replicating the pre-WU-1c default_first_run_assets()
+ * behaviour, which still includes the core floor. Never throws: a bad file
+ * degrades to the safe default rather than blocking a re-provision.
+ */
+function readPersistedInstallAssets(): readonly string[] | null {
+  try {
+    const path = installProfilePath();
+    if (!existsSync(path)) return null;
+    const persisted = parsePersistedInstallProfile(JSON.parse(readFileSync(path, 'utf8')));
+    if (persisted === null) return null;
+    return resolveInstallChoice(persisted.profile, persisted.bundles).assets;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[bootstrap] could not read persisted install profile: ${(err as Error).message}`,
+    );
+    return null;
   }
 }
 
@@ -602,11 +679,15 @@ function broadcastBootstrapError(message: string): void {
  * terminally. Kept SEPARATE from the bootstrap-error + sidecar-status channels so
  * the renderer can distinguish "provisioning in progress" from "sidecar crashed".
  */
-function broadcastProvisioning(active: boolean): void {
+function broadcastProvisioning(active: boolean, awaitingProfile = false): void {
   // WU-1b: latch the state so the `provisioning.get` query stays authoritative
   // for renderers that mount AFTER this push (which they otherwise miss).
+  // WU-1c: `awaitingProfile` rides the same signal — every non-profile call
+  // defaults it false, so spawning bootstrap (which calls broadcastProvisioning(true))
+  // flips the renderer from the ProfilePicker to the progress view automatically.
   provisioningActive = active;
-  broadcastToLiveWindows(liveWindows(), PROVISIONING_STATE_CHANNEL, { active });
+  awaitingProfileActive = awaitingProfile;
+  broadcastToLiveWindows(liveWindows(), PROVISIONING_STATE_CHANNEL, { active, awaitingProfile });
 }
 
 /**
@@ -671,26 +752,24 @@ function wireAutoUpdater(win: BrowserWindow): UpdaterHandle {
  * done-event to a promise (and always detaches its listener).
  */
 function buildProxyJob(sc: Sidecar, videoId: string): Promise<string> {
-  return sc
-    .request<{ jobId: string }>('media.proxy.start', { videoId })
-    .then(
-      ({ jobId }) =>
-        new Promise<string>((resolveBuild, rejectBuild) => {
-          const onDone = (done: DoneNotification): void => {
-            if (done.jobId !== jobId) return;
-            sc.off('done', onDone);
-            const result = (done.result ?? {}) as { path?: string; error?: { message?: string } };
-            if (result.error) {
-              rejectBuild(new Error(result.error.message ?? `proxy build failed for ${videoId}`));
-            } else if (typeof result.path === 'string' && result.path !== '') {
-              resolveBuild(result.path);
-            } else {
-              rejectBuild(new Error(`proxy build for ${videoId} returned no path`));
-            }
-          };
-          sc.on('done', onDone);
-        }),
-    );
+  return sc.request<{ jobId: string }>('media.proxy.start', { videoId }).then(
+    ({ jobId }) =>
+      new Promise<string>((resolveBuild, rejectBuild) => {
+        const onDone = (done: DoneNotification): void => {
+          if (done.jobId !== jobId) return;
+          sc.off('done', onDone);
+          const result = (done.result ?? {}) as { path?: string; error?: { message?: string } };
+          if (result.error) {
+            rejectBuild(new Error(result.error.message ?? `proxy build failed for ${videoId}`));
+          } else if (typeof result.path === 'string' && result.path !== '') {
+            resolveBuild(result.path);
+          } else {
+            rejectBuild(new Error(`proxy build for ${videoId} returned no path`));
+          }
+        };
+        sc.on('done', onDone);
+      }),
+  );
 }
 
 /**
@@ -699,8 +778,15 @@ function buildProxyJob(sc: Sidecar, videoId: string): Promise<string> {
  * SUCCESS:/FAILED: line on stdout) to the renderer over 'bootstrap.progress'.
  * Both pipes are line-drained (A6.2: never hold an unread PIPE). Resolves
  * `true` on exit code 0 — only then is the sidecar startable.
+ *
+ * WU-1c: `assets` routes the chosen install profile into bootstrap.py's
+ * `--assets`. A non-empty list installs EXACTLY that set (always ⊇ the core floor
+ * — the resolver guarantees it); `null`/empty spawns ARGLESS, which bootstrap.py
+ * treats as its default_first_run_assets() set (the pre-WU-1c behaviour, still
+ * core-floor-complete) — used by repair / a legacy re-bootstrap with no persisted
+ * profile.
  */
-function runFirstRunBootstrap(): Promise<boolean> {
+function runFirstRunBootstrap(assets: readonly string[] | null = null): Promise<boolean> {
   // WU-S1-FIX (HIGH): the DATA-ROOT lock is the SINGLE choke point. RE-CHECK it
   // before EVERY bootstrap spawn — not just at startup — so a CONTENDED copy can
   // never spawn bootstrap.py against a data folder a live copy holds, even when the
@@ -724,12 +810,17 @@ function runFirstRunBootstrap(): Promise<boolean> {
     const res = getResourcesPath();
     const python = process.env.MEDIA_STUDIO_PYTHON?.trim() || join(res, 'python', 'python.exe');
     const script = join(res, 'sidecar', 'runtime_setup', 'bootstrap.py');
+    // WU-1c: route the chosen profile's assets into bootstrap.py's `--assets`.
+    // Empty/null spawns argless (bootstrap.py's default_first_run_assets()).
+    const argv = assets && assets.length > 0 ? [script, '--assets', ...assets] : [script];
     broadcastBootstrap('running', 'first-run setup starting');
     // WU-1a: raise the EXPLICIT provisioning signal now that a real bootstrap is
     // spawning (past the busy-lock guard above). It is cleared when the sidecar
     // reaches 'running' or on the terminal error branches below.
+    // WU-1c: awaitingProfile defaults false here, so this spawn transitions the
+    // renderer from the ProfilePicker to the live progress view.
     broadcastProvisioning(true);
-    const child = spawn(python, [script], {
+    const child = spawn(python, argv, {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -937,7 +1028,9 @@ function bootstrap(): void {
     console.error(`[lock] reclaimed a stale data-root lock (dead pid ${lock.heldBy ?? 'unknown'})`);
   } else if (!lock.ok) {
     // eslint-disable-next-line no-console
-    console.error(`[lock] data folder busy (held by live pid ${lock.heldBy ?? 'unknown'}); aborting spawn`);
+    console.error(
+      `[lock] data folder busy (held by live pid ${lock.heldBy ?? 'unknown'}); aborting spawn`,
+    );
   }
 
   // T5: in a packaged build whose runtime env was never built, stage 2 must
@@ -961,13 +1054,22 @@ function bootstrap(): void {
     console.error('[bootstrap] shipped sidecar requirements changed — re-provisioning (silent)');
   }
   const firstRun = lock.ok && firstRunKind !== 'none';
+  // WU-1c: a FIRST-EVER run is INTERACTIVE — the supervisor waits for the user's
+  // install-profile choice before spawning bootstrap (awaitingProfile). A silent
+  // WU-S2 re-bootstrap reuses the persisted profile and auto-spawns (no picker).
+  const awaitingProfile = firstRun && firstRunKind === 'first-ever';
   // WU-1b: seed the provisioning latch BEFORE the window loads so the renderer's
   // mount-time `provisioning.get` query is correct on the very first frame — a
   // first/re- run withholds the shell (no sidecar to serve its RPCs yet), an
-  // already-provisioned launch mounts it immediately.
+  // already-provisioned launch mounts it immediately. WU-1c: awaitingProfile rides
+  // the same query so a first-ever run shows the ProfilePicker on the first frame.
   provisioningActive = firstRun;
+  awaitingProfileActive = awaitingProfile;
   disposeProvisioningIpc = ((): (() => void) => {
-    ipcMain.handle(PROVISIONING_GET_CHANNEL, () => ({ active: provisioningActive }));
+    ipcMain.handle(PROVISIONING_GET_CHANNEL, () => ({
+      active: provisioningActive,
+      awaitingProfile: awaitingProfileActive,
+    }));
     return () => ipcMain.removeHandler(PROVISIONING_GET_CHANNEL);
   })();
   if (lock.ok && !firstRun) {
@@ -979,7 +1081,11 @@ function bootstrap(): void {
     // WU-S2: a legacy install (marker present, no persisted fingerprint) is
     // assumed to match the currently-shipped requirements — record it so a FUTURE
     // bump is detected, without re-provisioning now.
-    if (app.isPackaged && shippedFp !== null && shouldBackfillFingerprint(markerExists, persistedFp)) {
+    if (
+      app.isPackaged &&
+      shippedFp !== null &&
+      shouldBackfillFingerprint(markerExists, persistedFp)
+    ) {
       persistRequirementsFingerprint();
     }
     sidecar.start();
@@ -1003,15 +1109,63 @@ function bootstrap(): void {
   // for the next launch. Single-flight on the live bootstrap child; on success
   // it re-activates THIS copy's embeddable ._pth and (re)starts the sidecar so
   // the freshly-provisioned runtime is picked up.
+  // WU-1c: the shared post-bootstrap settle — the first-ever profile-choice spawn
+  // AND the silent re-bootstrap both funnel through it. On success persist the
+  // fingerprint + start the sidecar; on a re-provision failure of an already-working
+  // install, start the existing env DEGRADED (never brick it); a truly-empty failed
+  // first run stays down + loud (the bootstrap-error banner said what to fix).
+  const sc2 = sidecar;
+  const onFirstRunBootstrapSettled = (ok: boolean): void => {
+    if (ok) {
+      // WU-S2: the env now matches THIS build's shipped requirements.
+      persistRequirementsFingerprint();
+      sc2.start();
+    } else if (shouldStartSidecarAfterFailedFirstRun(existsSync(firstRunSentinelPath()))) {
+      ensurePthActivated();
+      // eslint-disable-next-line no-console
+      console.error('[bootstrap] first-run setup failed; starting existing env (degraded)');
+      sc2.start();
+    } else {
+      // eslint-disable-next-line no-console
+      console.error('[bootstrap] first-run setup failed; sidecar not started');
+    }
+  };
+  const kickoffBootstrap = (assets: readonly string[] | null): void => {
+    void runFirstRunBootstrap(assets).then(onFirstRunBootstrapSettled);
+  };
+
+  // WU A5: on-demand "Retry setup / Repair". Re-runs the idempotent first-run
+  // bootstrap (pip re-checks satisfied deps, only missing assets re-download) so
+  // a user whose first run partially failed recovers in place — without waiting
+  // for the next launch. Single-flight on the live bootstrap child; on success
+  // it re-activates THIS copy's embeddable ._pth and (re)starts the sidecar so
+  // the freshly-provisioned runtime is picked up. WU-1c: repair REUSES the
+  // persisted install profile (argless default when none was persisted).
   disposeRepairSetupIpc = registerRepairSetupIpc({
     isBootstrapInFlight: () => bootstrapChild !== null,
-    runBootstrap: runFirstRunBootstrap,
+    runBootstrap: () => runFirstRunBootstrap(readPersistedInstallAssets()),
     onBootstrapSucceeded: () => {
       // WU-S2: a repair re-runs the full bootstrap against the CURRENTLY-shipped
       // requirements, so record their fingerprint — the env now matches this build.
       persistRequirementsFingerprint();
       ensurePthActivated();
       sidecar?.restart();
+    },
+  });
+
+  // WU-1c: the FIRST-EVER-run install-profile choice. On a first-ever run the
+  // renderer shows the ProfilePicker (gated on awaitingProfile) and invokes this
+  // when the user picks; the handler validates + PERSISTS the profile, then flips
+  // the gate to provisioning and spawns bootstrap.py with the resolved `--assets`.
+  disposeInstallProfileIpc = registerInstallProfileIpc({
+    isBootstrapInFlight: () => bootstrapChild !== null,
+    resolveChoice: resolveInstallChoice,
+    persist: persistInstallProfile,
+    beginBootstrap: (assets) => {
+      // Flip the gate picker->progress deterministically (even if the busy-lock
+      // guard inside runFirstRunBootstrap early-returns), then spawn + settle.
+      broadcastProvisioning(true, false);
+      kickoffBootstrap(assets);
     },
   });
 
@@ -1119,31 +1273,13 @@ function bootstrap(): void {
     }
   }
 
-  if (firstRun) {
-    const sc2 = sidecar;
-    const begin = (): void => {
-      void runFirstRunBootstrap().then((ok) => {
-        if (ok) {
-          // WU-S2: the env now matches THIS build's shipped requirements — persist
-          // their fingerprint so a later auto-update that changes them re-provisions
-          // instead of starting stale.
-          persistRequirementsFingerprint();
-          sc2.start();
-        } else if (shouldStartSidecarAfterFailedFirstRun(existsSync(firstRunSentinelPath()))) {
-          // Re-provision of an already-working install failed (e.g. an upgrade
-          // back-filling new deps hit a transient download error). Start the
-          // EXISTING env degraded rather than brick it — the loud bootstrap
-          // error banner already surfaced what failed.
-          ensurePthActivated();
-          // eslint-disable-next-line no-console
-          console.error('[bootstrap] first-run setup failed; starting existing env (degraded)');
-          sc2.start();
-        } else {
-          // eslint-disable-next-line no-console
-          console.error('[bootstrap] first-run setup failed; sidecar not started');
-        }
-      });
-    };
+  // WU-1c: branch the first-run kick-off on interactivity.
+  //   * FIRST-EVER (awaitingProfile) — do NOT auto-spawn. The renderer's
+  //     ProfilePicker drives it: installProfile.choose -> beginBootstrap above.
+  //   * RE-BOOTSTRAP (silent WU-S2 drift) — auto-spawn, REUSING the persisted
+  //     profile (argless default when a legacy install has none). Never re-prompts.
+  if (firstRun && !awaitingProfile) {
+    const begin = (): void => kickoffBootstrap(readPersistedInstallAssets());
     // Spawn once the renderer is up so it can observe bootstrap.progress.
     if (win.webContents.isLoading()) {
       win.webContents.once('did-finish-load', begin);
@@ -1234,6 +1370,10 @@ app.on('will-quit', (event) => {
   if (disposeRepairSetupIpc) {
     disposeRepairSetupIpc();
     disposeRepairSetupIpc = null;
+  }
+  if (disposeInstallProfileIpc) {
+    disposeInstallProfileIpc();
+    disposeInstallProfileIpc = null;
   }
   if (disposeProvisioningIpc) {
     disposeProvisioningIpc();
