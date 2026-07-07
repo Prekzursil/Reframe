@@ -79,6 +79,14 @@ def register_all(
     reg("library.regenerate", svc.library_regenerate)
     reg("library.pinHash", svc.library_pin_hash)
     reg("library.relink", svc.library_relink)
+    # WU-3b1: OPT-IN keep-a-copy managed store. keepCopy copies the source bytes into
+    # the app-managed store (atomic, preflight, cap+LRU, dedup) and re-points lineage to
+    # the copy; managedStatus is read-only; managedEvict/managedClear free the bytes and
+    # re-point each entity back to its original source. Direct.
+    reg("library.keepCopy", svc.library_keep_copy)
+    reg("library.managedStatus", svc.library_managed_status)
+    reg("library.managedEvict", svc.library_managed_evict)
+    reg("library.managedClear", svc.library_managed_clear)
 
     reg("project.open", svc.project_open)
     reg("project.save", svc.project_save)

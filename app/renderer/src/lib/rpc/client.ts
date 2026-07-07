@@ -42,6 +42,10 @@ import type {
   JobInfo,
   LineageResult,
   RegenerateResult,
+  KeepCopyResult,
+  ManagedClearResult,
+  ManagedEvictResult,
+  ManagedStatus,
   RelinkResult,
   RevealResult,
   LocalModelPlan,
@@ -152,6 +156,14 @@ export const client = {
     /** `library.relink {id, path}` — hash-verified re-point of a moved source (L5). */
     relink: (id: string, path: string): Promise<RelinkResult> =>
       rpc('library.relink', { id, path }),
+    /** `library.keepCopy {id}` — OPT-IN: copy the source into the managed store (WU-3b1). */
+    keepCopy: (id: string): Promise<KeepCopyResult> => rpc('library.keepCopy', { id }),
+    /** `library.managedStatus` — the managed store's used/cap/count snapshot (WU-3b1). */
+    managedStatus: (): Promise<ManagedStatus> => rpc('library.managedStatus'),
+    /** `library.managedEvict {id}` — evict ONE managed copy back to its original (WU-3b1). */
+    managedEvict: (id: string): Promise<ManagedEvictResult> => rpc('library.managedEvict', { id }),
+    /** `library.managedClear` — evict EVERY managed copy (WU-3b1). */
+    managedClear: (): Promise<ManagedClearResult> => rpc('library.managedClear'),
   },
 
   project: {

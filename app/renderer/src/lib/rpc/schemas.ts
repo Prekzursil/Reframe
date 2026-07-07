@@ -329,6 +329,62 @@ export interface RelinkResult {
   entity: LineageEntity;
 }
 
+/**
+ * WU-3b1/3b2 — one row of the OPT-IN managed byte-copy store (`keepcopy._row_to_managed`).
+ * A kept copy re-points the library entity's `path` to `managedPath` (AUTHORITATIVE for
+ * playback/relink) while recording `originalPath` as provenance, so the video survives the
+ * original being moved or deleted. Field names mirror the sidecar EXACTLY.
+ */
+export interface ManagedCopy {
+  /** The library entity id whose bytes are kept. */
+  entityId: string;
+  /** The ORIGINAL by-path source (provenance; where an evict re-points back to). */
+  originalPath: string;
+  /** The content-addressed managed file the entity now points at. */
+  managedPath: string;
+  /** Whole-file BLAKE3 digest keying the store (identical bytes are shared, not re-copied). */
+  contentHash: string;
+  /** The kept file's size in bytes. */
+  sizeBytes: number;
+  /** ISO timestamp the copy was first kept. */
+  keptAt: string;
+  /** ISO timestamp of the most recent access (drives LRU eviction). */
+  lastAccess: string;
+}
+
+/**
+ * WU-3b1 `library.managedStatus()` snapshot — the managed store's cumulative size vs its cap
+ * plus the kept rows. `sizeBytes` sums DISTINCT content (a deduped file counts once), so it can
+ * be below `count × per-file` when entities share bytes. Read-only.
+ */
+export interface ManagedStatus {
+  /** Total managed bytes on disk (distinct content). */
+  sizeBytes: number;
+  /** The cumulative ceiling the store evicts (LRU) to stay under. */
+  capBytes: number;
+  /** How many entities have a managed copy. */
+  count: number;
+  /** One row per kept entity. */
+  entries: ManagedCopy[];
+}
+
+/** WU-3b1 `library.keepCopy {id}` result — the (new or existing/idempotent) managed row. */
+export interface KeepCopyResult {
+  managed: ManagedCopy;
+}
+
+/** WU-3b1 `library.managedEvict {id}` result — one entity re-pointed back to its original. */
+export interface ManagedEvictResult {
+  ok: boolean;
+  entityId: string;
+}
+
+/** WU-3b1 `library.managedClear()` result — every managed copy evicted (`cleared` = how many). */
+export interface ManagedClearResult {
+  ok: boolean;
+  cleared: number;
+}
+
 /** A3 AudioTrack — one original/dub audio lane of a video. */
 export interface AudioTrack {
   id: string;

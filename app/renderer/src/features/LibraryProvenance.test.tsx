@@ -246,6 +246,35 @@ describe('LibraryProvenance', () => {
     expect(handlers.relink).not.toHaveBeenCalled();
   });
 
+  // ---- WU-3b2: the opt-in keep-a-copy control ------------------------------
+
+  it('renders the keep-a-copy control when the managed handlers are wired', async () => {
+    const managed = {
+      status: vi.fn(async () => ({ sizeBytes: 0, capBytes: 1, count: 0, entries: [] })),
+      keep: vi.fn(),
+      evict: vi.fn(),
+    };
+    const handlers = makeHandlers({
+      reveal: vi.fn(async () => revealResult({ sources: [source({ exists: true, relinkable: true })] })),
+      managed,
+    });
+    await render(handlers);
+    expect(container.querySelector('.keep-copy')).not.toBeNull();
+    // The control reads the store snapshot to learn this video's managed state.
+    expect(managed.status).toHaveBeenCalled();
+    // An on-disk, un-managed source offers the opt-in.
+    expect(container.querySelector('.keep-copy__btn--keep')).not.toBeNull();
+  });
+
+  it('omits the keep-a-copy control when no managed handlers are wired', async () => {
+    await render(
+      makeHandlers({
+        reveal: vi.fn(async () => revealResult({ sources: [source({ exists: true, relinkable: true })] })),
+      }),
+    );
+    expect(container.querySelector('.keep-copy')).toBeNull();
+  });
+
   it('does not setState after the card unmounts mid-reveal', async () => {
     let resolveReveal: (r: RevealResult) => void = () => {};
     const reveal = vi.fn(() => new Promise<RevealResult>((res) => (resolveReveal = res)));

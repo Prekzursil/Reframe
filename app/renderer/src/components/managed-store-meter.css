@@ -1,0 +1,160 @@
+/* managed-store-meter.css — WU-3b2: the Settings > Storage managed-copy meter.
+ * A used/cap gauge + per-copy and clear-all evict affordances. Colour never the
+ * sole signal; values are tokens (styles/tokens.css); class names are test-pinned. */
+
+.managed-meter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) 0 0;
+}
+
+.managed-meter__title {
+  margin: 0;
+  font-size: var(--type-title-size, 15px);
+  color: var(--text-primary);
+}
+
+.managed-meter__lead {
+  margin: 0;
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.managed-meter__error {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-xs);
+  background: var(--status-error-soft);
+  color: var(--status-error);
+  font-size: var(--type-caption-size);
+}
+
+.managed-meter__loading {
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+}
+
+.managed-meter__gauge {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.managed-meter__bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-hover);
+  overflow: hidden;
+}
+
+.managed-meter__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width var(--dur-normal, 240ms) var(--ease-out);
+}
+
+.managed-meter__readout {
+  margin: 0;
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+}
+
+.managed-meter__used,
+.managed-meter__cap,
+.managed-meter__count {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.managed-meter__empty {
+  margin: 0;
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+}
+
+.managed-meter__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.managed-meter__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--surface-active);
+}
+
+.managed-meter__row-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.managed-meter__row-size {
+  flex: 0 0 auto;
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.managed-meter__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.managed-meter__confirm {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.managed-meter__confirm-q {
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+}
+
+.managed-meter__btn {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--surface-active);
+  border-radius: var(--radius-xs);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--type-caption-size);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.managed-meter__btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--text-muted);
+}
+
+.managed-meter__btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.managed-meter__btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.managed-meter__btn--danger {
+  color: var(--status-error);
+  border-color: var(--status-error);
+}

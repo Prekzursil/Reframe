@@ -9,7 +9,13 @@
 // "could not reveal" state rather than crashing.
 
 import { rpc } from '../components/api';
-import type { RegenerateResult, RelinkResult, RevealResult } from '../lib/rpc';
+import type {
+  KeepCopyResult,
+  ManagedStatus,
+  RegenerateResult,
+  RelinkResult,
+  RevealResult,
+} from '../lib/rpc';
 import type { LineageActionHandlers } from './LineageActions';
 import type { ProvenanceHandlers } from './LibraryProvenance';
 
@@ -50,6 +56,21 @@ export const lineageActions: LineageActionHandlers & ProvenanceHandlers = {
     if (!bridge?.openVideos) return null;
     const paths = await bridge.openVideos();
     return Array.isArray(paths) && paths.length > 0 ? paths[0] : null;
+  },
+  // WU-3b2: the OPT-IN keep-a-copy managed-store slice. Reuses the existing
+  // sidecar RPCs (`library.managedStatus/keepCopy/managedEvict`, WU-3b1) — no
+  // parallel copy machinery. `keep` unwraps the `{managed}` envelope so the
+  // component consumes the row directly; `evict` discards the `{ok,entityId}`
+  // ack (the UI re-reads state from the resolved managed row it holds).
+  managed: {
+    status: () => rpc<ManagedStatus>('library.managedStatus'),
+    keep: async (id) => {
+      const { managed } = await rpc<KeepCopyResult>('library.keepCopy', { id });
+      return managed;
+    },
+    evict: async (id) => {
+      await rpc('library.managedEvict', { id });
+    },
   },
 };
 
