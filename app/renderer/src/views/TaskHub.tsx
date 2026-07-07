@@ -99,6 +99,12 @@ export function TaskHub({ video, lastChoice, onChoose }: TaskHubProps): React.Re
               </span>
               <span className="task-hub__card-title">{card.title}</span>
               <span className="task-hub__card-blurb">{card.blurb}</span>
+              {/* DUAL-HOMING cue (design-review P2): the dual-homed destinations
+                  (Make shorts / Director) also live as general top-level tabs, so
+                  mark that THIS card is scoped to the opened video. */}
+              {card.alsoTopLevel ? (
+                <span className="task-hub__scope">for this video</span>
+              ) : null}
               {isLast ? <span className="task-hub__last">Last used</span> : null}
             </button>
           );

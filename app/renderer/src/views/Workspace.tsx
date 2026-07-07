@@ -91,6 +91,15 @@ export const WORKSPACE_TAB_GROUPS: TabGroup[] = [
  */
 export const DEFAULT_WORKSPACE_TAB = 'subtitles';
 
+/**
+ * design-review P1: the primary Export/Deliver destination. EXPORT is the user's
+ * terminal goal — it lives in the "Deliver" cluster (collapsed behind Advanced),
+ * so the persistent Export action jumps straight to the Convert panel (produces
+ * the final rendered file) AND reveals the Deliver cluster so the sibling deliver
+ * tools become visible. A member of WORKSPACE_TAB_GROUPS.deliver.tabIds.
+ */
+export const WORKSPACE_EXPORT_TAB = 'convert';
+
 interface OpenResult {
   project: Project;
 }
@@ -117,6 +126,14 @@ export function Workspace({
   // lives here so the presentational TabBar stays a pure, hook-free component.
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const toggleAdvanced = useCallback(() => setAdvancedOpen((open) => !open), []);
+  // design-review P1: the persistent Export action surfaces the terminal deliver
+  // goal from the default view — it activates the primary export panel (Convert)
+  // and opens the Deliver cluster so its sibling tools are reachable at once,
+  // without un-hiding the cluster by default.
+  const handleExport = useCallback(() => {
+    setActive(WORKSPACE_EXPORT_TAB);
+    setAdvancedOpen(true);
+  }, []);
   const [project, setProject] = useState<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
   // U1: the workspace player strip + its imperative handle (Timeline seeks it).
@@ -315,6 +332,7 @@ export function Workspace({
         groups={WORKSPACE_TAB_GROUPS}
         advancedOpen={advancedOpen}
         onToggleAdvanced={toggleAdvanced}
+        onExport={handleExport}
       />
 
       {error ? (
