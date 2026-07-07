@@ -22,14 +22,14 @@
 # lock is validated by media_studio.assets.manager.validate_hashed_lock first.
 
 faster-whisper==1.2.1
-ctranslate2==4.8.0
+ctranslate2==4.8.1
 scenedetect==0.7
 opencv-python==4.13.0.92
 httpx==0.28.1
 numpy==2.5.0
 av==17.1.0
 onnxruntime==1.27.0
-huggingface_hub==1.21.0
+huggingface_hub==1.22.0
 tokenizers==0.23.1
 
 # TTS (kokoro default engine — the onnx build, NEVER the torch pip package; A4)

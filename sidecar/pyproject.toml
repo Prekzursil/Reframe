@@ -68,12 +68,12 @@ reframe-gpu = [
   # ``lobes.models.CRDNN`` -> touches the k2 LazyModule -> ``import k2`` (no Windows
   # wheels) blows up). speechbrain missing at runtime fails LOUD (typed
   # ``DiarizeBackendUnavailableError``), never a silent ModuleNotFoundError.
-  "speechbrain==1.0.3",
+  "speechbrain==1.1.0",
   # speechbrain 1.0.x calls ``hf_hub_download(use_auth_token=...)``, an argument
   # REMOVED in huggingface_hub 1.0. Cap below 1.0 so the diarize models actually
   # fetch/load (validated at 0.36.2, the newest 0.x). huggingface_hub is otherwise a
   # transitive dep (faster-whisper) that resolves to 1.x and would break the VAD load.
-  "huggingface-hub>=0.30,<1.0",
+  "huggingface-hub>=0.30,<2.0",
 ]
 
 [project.scripts]
