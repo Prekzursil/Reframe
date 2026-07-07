@@ -340,8 +340,11 @@ describe('type / weight / control token scale (WU-D1)', () => {
     const shell = stripComments(readFileSync(SHELL_CSS, 'utf8'));
     const toptab = stripComments(readFileSync(TOPTAB_CSS, 'utf8'));
     const cards = stripComments(readFileSync(LIB_CARDS_CSS, 'utf8'));
-    // Weight ramp (regular is the token default via --type-body-weight; the rest
-    // are consumed explicitly in the shell).
+    // Weight ramp: the regular rung is consumed by the body-weight token itself
+    // (--type-body-weight routes through var(--weight-regular), so the ramp is DRY
+    // and no rung is a defined-then-abandoned orphan); the rest are consumed
+    // explicitly in the shell.
+    expect(readTokens().get('--type-body-weight')).toBe('var(--weight-regular)');
     for (const name of [
       '--weight-medium',
       '--weight-semibold',
