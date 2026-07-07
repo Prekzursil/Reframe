@@ -35,6 +35,15 @@ export interface TabBarProps {
   advancedOpen?: boolean;
   /** Toggle handler for the "Advanced" disclosure. Ignored without `groups`. */
   onToggleAdvanced?: () => void;
+  /**
+   * ADDITIVE (design-review P1): a persistent Export/Deliver action rendered in
+   * the grouped strip. EXPORT is the user's terminal goal, so it gets a standing
+   * affordance even though the full Deliver cluster stays collapsed behind
+   * "Advanced". When provided (grouped mode only), a prominent "Export" button
+   * renders; omitted → nothing extra (unchanged). The host owns what Export does
+   * (jump to the deliver panel), keeping this component presentational.
+   */
+  onExport?: () => void;
 }
 
 /** One tab button. Shared by the flat strip and the grouped clusters so the
@@ -93,6 +102,7 @@ export function TabBar({
   groups,
   advancedOpen = false,
   onToggleAdvanced,
+  onExport,
 }: TabBarProps): React.ReactElement {
   if (!groups) {
     return (
@@ -126,6 +136,11 @@ export function TabBar({
             {advanced.map((group) => renderGroup(group, byId, active, onSelect))}
           </div>
         </section>
+      ) : null}
+      {onExport ? (
+        <button type="button" className="tabbar__export" onClick={onExport}>
+          Export
+        </button>
       ) : null}
     </div>
   );

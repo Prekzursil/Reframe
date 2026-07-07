@@ -13,7 +13,7 @@
   padding: 0.6rem 0.75rem;
   border: 1px solid var(--border, #d0d5dd);
   border-radius: 8px;
-  background: var(--surface, #fff);
+  background: var(--surface-raised);
 }
 
 .reframe-shot.is-changed {
@@ -52,7 +52,7 @@
 .reframe-shot__crop {
   font-variant-numeric: tabular-nums;
   font-size: 0.8rem;
-  color: var(--muted, #667085);
+  color: var(--text-muted);
 }
 
 .reframe-override__footer {

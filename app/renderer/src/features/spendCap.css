@@ -91,7 +91,7 @@
 .spend-cap__readout-estimate {
   align-self: center;
   padding: 2px var(--space-2);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--edge);
   border-radius: var(--radius-pill);
   font-size: var(--type-caption-size);
   font-weight: 600;

@@ -69,7 +69,8 @@
   grid-template-columns: auto 1fr;
   grid-template-areas:
     "icon title"
-    "icon blurb";
+    "icon blurb"
+    "icon cue";
   gap: var(--space-1) var(--space-4);
   align-items: start;
   text-align: left;
@@ -136,6 +137,24 @@
   color: var(--text-secondary);
   font-size: var(--type-body-size);
   line-height: var(--type-body-leading);
+}
+
+/* dual-homing cue (design-review P2): a quiet, video-scoped whisper under the
+   blurb on the cards that also live as top-level surfaces. A hairline pill so it
+   reads as a scope tag, never competing with the card title. */
+.task-hub__scope {
+  grid-area: cue;
+  align-self: start;
+  justify-self: start;
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
 }
 
 .task-hub__last {

@@ -19,6 +19,15 @@ export interface HubCard {
   id: Exclude<HubChoice, 'advanced'>;
   title: string;
   blurb: string;
+  /**
+   * DUAL-HOMING cue (design-review P2): this destination ALSO exists as a
+   * general top-level surface (the Make Shorts / Director nav tabs). When true,
+   * the card wears a subtle "for this video" cue so the user reads that the CARD
+   * is scoped to the opened video, while the matching top-level tab is the
+   * general surface. reframe/subtitles route in-place into the per-video
+   * Workspace (no top-level twin), so they carry no cue.
+   */
+  alsoTopLevel?: boolean;
 }
 
 /**
@@ -40,6 +49,7 @@ export const HUB_CARDS: readonly HubCard[] = [
     id: 'shorts',
     title: 'Make shorts',
     blurb: 'Let AI find the best moments — or pick your own — and export ready-to-post shorts.',
+    alsoTopLevel: true,
   },
   {
     id: 'subtitles',
@@ -50,6 +60,7 @@ export const HUB_CARDS: readonly HubCard[] = [
     id: 'director',
     title: 'Director',
     blurb: 'Describe the edit you want and let the AI Director plan and cut it.',
+    alsoTopLevel: true,
   },
 ];
 

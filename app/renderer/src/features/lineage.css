@@ -227,9 +227,9 @@
 
 .lineage-actions__btn {
   padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--edge);
   border-radius: var(--radius-md);
-  background: var(--surface-default);
+  background: var(--surface-raised);
   color: var(--text-primary);
   font-size: var(--type-body-size);
   cursor: pointer;
@@ -245,8 +245,8 @@
 }
 
 .lineage-actions__btn--relink {
-  border-color: var(--status-warning, var(--accent-ink));
-  color: var(--status-warning, var(--accent-ink));
+  border-color: var(--status-warn);
+  color: var(--status-warn);
 }
 
 .lineage-actions__status {
@@ -255,7 +255,7 @@
 }
 
 .lineage-actions__status--error {
-  color: var(--status-error, crimson);
+  color: var(--status-error);
 }
 
 .lineage-actions__status--success {

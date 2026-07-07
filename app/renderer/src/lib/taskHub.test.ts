@@ -17,6 +17,17 @@ describe('taskHub model', () => {
         expect(card.blurb.length).toBeGreaterThan(0);
       }
     });
+
+    it('flags the dual-homed destinations (shorts/director) as also top-level, not the in-place ones', () => {
+      // design-review P2: shorts + director ALSO exist as general top-level tabs,
+      // so their cards wear the "for this video" cue; reframe + subtitles route
+      // in-place into the per-video Workspace and carry no cue.
+      const byId = Object.fromEntries(HUB_CARDS.map((c) => [c.id, c] as const));
+      expect(byId.shorts.alsoTopLevel).toBe(true);
+      expect(byId.director.alsoTopLevel).toBe(true);
+      expect(byId.reframe.alsoTopLevel).toBeUndefined();
+      expect(byId.subtitles.alsoTopLevel).toBeUndefined();
+    });
   });
 
   describe('resumeFor', () => {

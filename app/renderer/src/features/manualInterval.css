@@ -2,30 +2,30 @@
 .manual-interval {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm, 0.5rem);
+  gap: var(--space-3);
 }
 
 .manual-interval__add {
   display: flex;
   align-items: flex-end;
-  gap: var(--space-sm, 0.5rem);
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
 .manual-interval__field {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs, 0.25rem);
+  gap: var(--space-2);
 }
 
 .manual-interval__arrow {
-  padding-bottom: var(--space-xs, 0.25rem);
+  padding-bottom: var(--space-2);
 }
 
 .manual-interval__error {
   margin: 0;
-  color: var(--color-error-fg, #b00020);
-  font-size: var(--text-sm, 0.8125rem);
+  color: var(--status-error);
+  font-size: var(--type-body-size);
 }
 
 .manual-interval__list {
@@ -34,15 +34,15 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs, 0.25rem);
+  gap: var(--space-2);
 }
 
 .manual-interval__range {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-sm, 0.5rem);
-  padding: var(--space-xs, 0.25rem) var(--space-sm, 0.5rem);
-  border: 1px solid var(--color-border, #d0d0d0);
-  border-radius: var(--radius-sm, 4px);
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
 }

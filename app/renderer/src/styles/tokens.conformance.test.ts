@@ -15,9 +15,9 @@
 // This file imports no TS source; it is a pure style-file conformance check and
 // is excluded from the renderer coverage scope (styles are .css, not .ts/.tsx).
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, join, relative } from 'node:path';
 
 import { describe, it, expect } from 'vitest';
 
@@ -340,8 +340,11 @@ describe('type / weight / control token scale (WU-D1)', () => {
     const shell = stripComments(readFileSync(SHELL_CSS, 'utf8'));
     const toptab = stripComments(readFileSync(TOPTAB_CSS, 'utf8'));
     const cards = stripComments(readFileSync(LIB_CARDS_CSS, 'utf8'));
-    // Weight ramp (regular is the token default via --type-body-weight; the rest
-    // are consumed explicitly in the shell).
+    // Weight ramp: the regular rung is consumed by the body-weight token itself
+    // (--type-body-weight routes through var(--weight-regular), so the ramp is DRY
+    // and no rung is a defined-then-abandoned orphan); the rest are consumed
+    // explicitly in the shell.
+    expect(readTokens().get('--type-body-weight')).toBe('var(--weight-regular)');
     for (const name of [
       '--weight-medium',
       '--weight-semibold',
@@ -378,5 +381,87 @@ describe('type / weight / control token scale (WU-D1)', () => {
       expect(shell).toContain(`var(${name})`);
     }
     expect(toptab).toContain('var(--control-pad-toptab)');
+  });
+});
+
+// --- WU-D7: no undefined custom-property references anywhere in renderer CSS -----
+//
+// The design review found REPO-WIDE token sprawl: ~17 renderer sheets referenced
+// custom properties that tokens.css never defines (e.g. --surface-1/2,
+// --border-subtle, --type-small-size, --surface-edge, --status-danger,
+// --status-warning, --muted, --text, --surface, --color-*). Several had NO
+// fallback, so the whole declaration was INVALID and silently dropped — broken /
+// off-theme styling that no test caught. WU-D7 remaps every one onto a REAL token
+// (surface ladder / text ladder / --edge / --status-* / --type-* / --weight-* /
+// --space-* / --radius-*).
+//
+// This is the REAL guard so it can never regress: it walks EVERY renderer *.css,
+// collects the union of all DEFINED custom properties (tokens.css plus the handful
+// of locally-scoped ones like --timeline-wave), then asserts that EVERY var(--x)
+// reference — including tokens nested inside fallbacks — resolves to a defined
+// property. A single stray var(--not-a-token) fails the suite with the offending
+// token + file, so the sprawl cannot silently creep back.
+
+const RENDERER_SRC = resolve(HERE, '..');
+
+/** Recursively collect every `*.css` file path under a directory. */
+function collectCssFiles(dir: string): readonly string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...collectCssFiles(full));
+    } else if (entry.isFile() && entry.name.endsWith('.css')) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
+/** All custom-property NAMES defined (`--name: value;`) in a stylesheet body. */
+function definedProps(css: string): readonly string[] {
+  const decl = /(--[\w-]+)\s*:/g;
+  const names: string[] = [];
+  for (let m = decl.exec(css); m !== null; m = decl.exec(css)) {
+    names.push(m[1]);
+  }
+  return names;
+}
+
+describe('no undefined custom-property references in renderer CSS (WU-D7)', () => {
+  const cssFiles = collectCssFiles(RENDERER_SRC);
+
+  it('finds the renderer stylesheets (guard is actually scanning something)', () => {
+    // A dead scan that matches zero files would vacuously "pass" — pin a floor so
+    // the guard proves it is exercising the real sheet set (there are dozens).
+    expect(cssFiles.length).toBeGreaterThan(20);
+    expect(cssFiles.some((f) => f.endsWith('tokens.css'))).toBe(true);
+  });
+
+  it('resolves EVERY var(--x) to a token defined somewhere in the renderer CSS', () => {
+    // Union of every defined custom property: the tokens.css design system plus any
+    // locally-scoped props a sheet declares for its own use (e.g. --timeline-wave).
+    const defined = new Set<string>();
+    for (const file of cssFiles) {
+      for (const name of definedProps(stripComments(readFileSync(file, 'utf8')))) {
+        defined.add(name);
+      }
+    }
+
+    // Collect every reference that does NOT resolve, tagged with its file so a
+    // failure names exactly what to fix.
+    const offenders: string[] = [];
+    for (const file of cssFiles) {
+      const css = stripComments(readFileSync(file, 'utf8'));
+      const ref = /var\(\s*(--[\w-]+)/g;
+      for (let m = ref.exec(css); m !== null; m = ref.exec(css)) {
+        if (!defined.has(m[1])) {
+          offenders.push(`${relative(RENDERER_SRC, file).replace(/\\/g, '/')}: var(${m[1]})`);
+        }
+      }
+    }
+
+    // Empty is the only acceptable state — every consumed token must be real.
+    expect(offenders).toEqual([]);
   });
 });

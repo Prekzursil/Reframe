@@ -88,6 +88,37 @@ describe('TabBar (grouped clusters, WU-3a2)', () => {
     expect((html.match(/role="tab"/g) ?? []).length).toBe(3);
   });
 
+  it('renders a persistent Export action only when onExport is provided', () => {
+    // design-review P1: EXPORT is the terminal goal, so it gets a standing button
+    // in the grouped strip — absent by default (no onExport).
+    const without = renderToStaticMarkup(
+      <TabBar tabs={GROUP_TABS} active="t1" onSelect={() => {}} groups={GROUPS} />,
+    );
+    expect(without).not.toContain('tabbar__export');
+
+    const withExport = renderToStaticMarkup(
+      <TabBar tabs={GROUP_TABS} active="t1" onSelect={() => {}} groups={GROUPS} onExport={() => {}} />,
+    );
+    expect(withExport).toContain('tabbar__export');
+    expect(withExport).toContain('Export');
+  });
+
+  it('invokes onExport when the Export action is clicked', () => {
+    const onExport = vi.fn();
+    const el = TabBar({
+      tabs: GROUP_TABS,
+      active: 't1',
+      onSelect: () => {},
+      groups: GROUPS,
+      onExport,
+    }) as React.ReactElement;
+    const children = el.props.children as React.ReactNode[];
+    // The Export button is the last child of the grouped root.
+    const exportButton = children[children.length - 1] as React.ReactElement;
+    exportButton.props.onClick();
+    expect(onExport).toHaveBeenCalledTimes(1);
+  });
+
   it('invokes onToggleAdvanced when the disclosure toggle is clicked', () => {
     const onToggle = vi.fn();
     const el = TabBar({
@@ -98,10 +129,16 @@ describe('TabBar (grouped clusters, WU-3a2)', () => {
       advancedOpen: false,
       onToggleAdvanced: onToggle,
     }) as React.ReactElement;
-    // Walk the grouped tree: div → [primaryGroups, advancedSection] →
-    // advancedSection → [toggleButton, advancedPanel].
-    const children = el.props.children as React.ReactNode[];
-    const advancedSection = children[children.length - 1] as React.ReactElement;
+    // Walk the grouped tree: div → [primaryGroups, advancedSection, exportOrNull]
+    // → advancedSection → [toggleButton, advancedPanel]. Locate the advanced
+    // <section> by its stable class (robust to the appended Export slot).
+    const children = (el.props.children as React.ReactNode[]).flat();
+    const advancedSection = children.find(
+      (c): c is React.ReactElement =>
+        typeof c === 'object' &&
+        c !== null &&
+        String((c as React.ReactElement).props?.className ?? '').includes('tabbar__group--advanced'),
+    ) as React.ReactElement;
     const sectionChildren = advancedSection.props.children as React.ReactElement[];
     const toggleButton = sectionChildren[0];
     toggleButton.props.onClick();

@@ -12,7 +12,7 @@
   border: 1.5px solid var(--border, #2a2a33);
   border-radius: 8px;
   background: #14141a;
-  color: var(--text, #e8e8ef);
+  color: var(--text-primary);
   cursor: pointer;
   font-size: 13px;
 }
@@ -36,7 +36,7 @@
   flex-direction: column;
   gap: 4px;
   font-size: 12px;
-  color: var(--muted, #aab);
+  color: var(--text-muted);
 }
 
 .caption-customizer__field select,
@@ -80,14 +80,14 @@
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--text, #e8e8ef);
+  color: var(--text-primary);
 }
 
 .caption-customizer__resolved {
   grid-column: 1 / -1;
   margin: 0;
   font-size: 11px;
-  color: var(--muted, #8a8a99);
+  color: var(--text-muted);
 }
 
 .caption-customizer__reset {
@@ -97,7 +97,7 @@
   border: 1px solid var(--border, #2a2a33);
   border-radius: 6px;
   background: transparent;
-  color: var(--muted, #aab);
+  color: var(--text-muted);
   cursor: pointer;
   font-size: 12px;
 }

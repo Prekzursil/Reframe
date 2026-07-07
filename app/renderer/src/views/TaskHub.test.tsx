@@ -55,6 +55,19 @@ describe('<TaskHub />', () => {
     expect(container.querySelector('.task-hub__last')).toBeNull();
   });
 
+  it('shows the "for this video" cue only on the dual-homed cards (shorts/director)', () => {
+    // design-review P2: shorts + director also live as top-level tabs, so their
+    // cards carry the video-scope cue; reframe + subtitles do not.
+    act(() => root.render(<TaskHub video={makeVideo()} lastChoice={null} onChoose={() => undefined} />));
+    const cues = container.querySelectorAll('.task-hub__scope');
+    expect(cues.length).toBe(2);
+    for (const cue of cues) expect(cue.textContent).toBe('for this video');
+    expect(cardByText('Make shorts').querySelector('.task-hub__scope')).not.toBeNull();
+    expect(cardByText('Director').querySelector('.task-hub__scope')).not.toBeNull();
+    expect(cardByText('Reframe to vertical').querySelector('.task-hub__scope')).toBeNull();
+    expect(cardByText('Add subtitles').querySelector('.task-hub__scope')).toBeNull();
+  });
+
   it('emits the chosen card id', () => {
     const onChoose = vi.fn();
     act(() => root.render(<TaskHub video={makeVideo()} lastChoice={null} onChoose={onChoose} />));

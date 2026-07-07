@@ -72,7 +72,13 @@ vi.mock('../features/Refine', () => stubPanel('Refine'));
 vi.mock('../features/Recipes', () => stubPanel('Recipes'));
 vi.mock('../features/SemanticSearch', () => stubPanel('SemanticSearch'));
 
-import { Workspace, WORKSPACE_TABS, WORKSPACE_TAB_GROUPS, DEFAULT_WORKSPACE_TAB } from './Workspace';
+import {
+  Workspace,
+  WORKSPACE_TABS,
+  WORKSPACE_TAB_GROUPS,
+  DEFAULT_WORKSPACE_TAB,
+  WORKSPACE_EXPORT_TAB,
+} from './Workspace';
 import type { Video, Project } from '../components/api';
 
 // CONTRACT-NOTE: the feature panels (../features/*) are authored by a sibling unit
@@ -593,6 +599,60 @@ describe('Workspace tab clusters (WU-3a2)', () => {
     await flush();
     expect(tracks.getAttribute('aria-selected')).toBe('true');
     expect(container.querySelector('[data-panel="Tracks"]')).not.toBeNull();
+  });
+});
+
+// design-review P1: EXPORT is the terminal goal but the "Deliver" cluster
+// (Convert/Timeline export/Recipes/Assets/Tracks) is collapsed behind Advanced.
+// A persistent Export action surfaces it from the default view WITHOUT un-hiding
+// the whole cluster by default — clicking it jumps to the primary export panel
+// (Convert) and reveals the Deliver cluster so its siblings are reachable.
+describe('Workspace Export affordance (design-review P1)', () => {
+  async function mount(): Promise<void> {
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} />);
+    });
+    await flush();
+  }
+
+  it('targets a real Deliver-cluster tab as the export destination', () => {
+    expect(WORKSPACE_EXPORT_TAB).toBe('convert');
+    const deliver = WORKSPACE_TAB_GROUPS.find((g) => g.id === 'deliver');
+    expect(deliver?.tabIds).toContain(WORKSPACE_EXPORT_TAB);
+    expect(WORKSPACE_TABS.some((t) => t.id === WORKSPACE_EXPORT_TAB)).toBe(true);
+  });
+
+  it('surfaces a persistent Export action in the default view with the Deliver cluster still collapsed', async () => {
+    await mount();
+    const exportBtn = container.querySelector('button.tabbar__export');
+    expect(exportBtn).not.toBeNull();
+    expect(exportBtn?.textContent).toContain('Export');
+    // The Deliver cluster is NOT un-hidden by default (advanced stays collapsed).
+    const toggle = container.querySelector('.tabbar__advanced-toggle') as HTMLButtonElement;
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    // The Convert panel is not active yet.
+    expect(container.querySelector('[data-panel="Convert"]')).toBeNull();
+  });
+
+  it('jumps to the Convert export panel and reveals the Deliver cluster on click', async () => {
+    await mount();
+    const exportBtn = container.querySelector('button.tabbar__export') as HTMLButtonElement;
+    await act(async () => {
+      exportBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+
+    // The primary export panel (Convert) is now active + rendered in the body.
+    expect(container.querySelector('[data-panel="Convert"]')).not.toBeNull();
+    expect(
+      container
+        .querySelector('[role="tab"][data-tab-id="convert"]')
+        ?.getAttribute('aria-selected'),
+    ).toBe('true');
+    // The Deliver cluster is revealed so the sibling deliver tools are reachable.
+    const toggle = container.querySelector('.tabbar__advanced-toggle') as HTMLButtonElement;
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect((container.querySelector('.tabbar__advanced-panel') as HTMLElement).hidden).toBe(false);
   });
 });
 

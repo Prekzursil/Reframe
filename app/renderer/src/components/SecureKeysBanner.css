@@ -15,8 +15,8 @@
   max-width: min(720px, calc(100vw - var(--space-5) * 2));
   padding: var(--space-3) var(--space-5);
   background: var(--surface-overlay);
-  border: 1px solid var(--status-warning, var(--status-error));
-  border-left: 4px solid var(--status-warning, var(--status-error));
+  border: 1px solid var(--status-warn);
+  border-left: 4px solid var(--status-warn);
   border-radius: var(--radius-md);
   color: var(--text-primary);
   box-shadow: var(--shadow-overlay);

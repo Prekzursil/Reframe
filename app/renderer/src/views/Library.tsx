@@ -401,7 +401,9 @@ export function Library({
         </div>
       </header>
 
-      <ReadinessRollup title="What works right now" onAction={onReadinessAction} />
+      {/* design-review P2: the cryptic "What works right now" eyebrow relabelled
+          to read as device/model readiness on THIS machine. */}
+      <ReadinessRollup title="Ready on this computer" onAction={onReadinessAction} />
 
       {dragOver ? (
         <div className="library__drophint" aria-hidden="true">
