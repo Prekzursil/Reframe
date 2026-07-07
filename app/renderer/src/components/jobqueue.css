@@ -217,7 +217,7 @@
 
 /* Interrupted: a crash-recovery state, not a failure — distinct from error. */
 .jobqueue__status--interrupted {
-  color: var(--status-warning, var(--text-secondary));
+  color: var(--status-warn);
 }
 
 .jobqueue__label {

@@ -12,7 +12,7 @@
 
 .caption-prefs__hint {
   margin: 0;
-  color: var(--color-text-2, #777);
+  color: var(--text-secondary);
   font-size: 0.875rem;
 }
 
@@ -54,9 +54,9 @@
 }
 
 .caption-prefs__status {
-  color: var(--color-success, #2e7d32);
+  color: var(--status-success);
 }
 
 .caption-prefs__error {
-  color: var(--color-error, #c62828);
+  color: var(--status-error);
 }

@@ -100,7 +100,7 @@
   border-radius: var(--radius-sm);
   background: var(--accent);
   color: var(--accent-ink);
-  font-size: var(--type-micro-size, var(--type-caption-size));
+  font-size: var(--type-chip-size);
   font-weight: var(--type-caption-weight);
   text-transform: uppercase;
   letter-spacing: var(--type-caption-tracking);

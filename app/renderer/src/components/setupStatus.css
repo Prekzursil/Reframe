@@ -69,7 +69,7 @@
 .setup-status__summary {
   border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3);
-  font-weight: var(--type-body-strong-weight, 600);
+  font-weight: var(--weight-medium);
 }
 
 .setup-status__summary.is-ok {
@@ -92,8 +92,8 @@
 }
 
 .setup-status__check {
-  border: 1px solid var(--surface-edge);
-  border-left: 3px solid var(--surface-edge);
+  border: 1px solid var(--edge);
+  border-left: 3px solid var(--edge);
   border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3);
   display: flex;
@@ -118,7 +118,7 @@
 
 .setup-status__check-name {
   color: var(--text-primary);
-  font-weight: var(--type-body-strong-weight, 600);
+  font-weight: var(--weight-medium);
 }
 
 .setup-status__check-state {

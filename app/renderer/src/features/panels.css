@@ -406,7 +406,7 @@
 }
 
 .health-verdict.bad {
-  color: var(--status-danger, var(--text-secondary));
+  color: var(--status-error);
 }
 
 .health-list,
@@ -428,7 +428,7 @@
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-2, 6px);
+  border-radius: var(--radius-sm);
   background: var(--surface-raised, transparent);
 }
 
@@ -469,6 +469,6 @@
   font-family: var(--font-mono);
   font-size: var(--type-caption-size);
   color: var(--text-secondary);
-  border-radius: var(--radius-2, 6px);
+  border-radius: var(--radius-sm);
   background: var(--surface-raised, transparent);
 }

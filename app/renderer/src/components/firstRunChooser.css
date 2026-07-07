@@ -10,7 +10,7 @@
   padding: var(--space-4);
   border: 1px solid var(--accent);
   border-radius: var(--radius-md);
-  background: var(--surface-1);
+  background: var(--surface-raised);
 }
 
 .first-run-chooser__intro {
@@ -32,9 +32,9 @@
   gap: var(--space-1);
   padding: var(--space-3);
   text-align: left;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--edge);
   border-radius: var(--radius-md);
-  background: var(--surface-2);
+  background: var(--surface-overlay);
   cursor: pointer;
 }
 
@@ -51,7 +51,7 @@
    * so the badge inherited --text-secondary on amber (~1.02:1, failing AA);
    * --accent-ink is the defined on-accent color (~8.6:1). */
   color: var(--accent-ink);
-  font-size: var(--type-small-size);
+  font-size: var(--type-caption-size);
   font-weight: 600;
 }
 
@@ -61,5 +61,5 @@
 
 .first-run-chooser__desc {
   color: var(--text-secondary);
-  font-size: var(--type-small-size);
+  font-size: var(--type-caption-size);
 }
