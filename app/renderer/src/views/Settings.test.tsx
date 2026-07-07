@@ -35,6 +35,10 @@ vi.mock('../components/PathsPanel', () => ({
   PathsPanel: () => <div data-testid="storage" />,
   default: () => <div data-testid="storage" />,
 }));
+vi.mock('../components/ManagedStoreMeter', () => ({
+  ManagedStoreMeter: () => <div data-testid="managed-meter" />,
+  default: () => <div data-testid="managed-meter" />,
+}));
 vi.mock('../components/SetupStatusPanel', () => ({
   SetupStatusPanel: () => <div data-testid="setup" />,
 }));
@@ -133,6 +137,8 @@ describe('Settings sub-nav', () => {
     });
     await flush();
     expect(container.querySelector('[data-testid="storage"]')).not.toBeNull();
+    // WU-3b2: the Storage section now also renders the managed-copy store meter.
+    expect(container.querySelector('[data-testid="managed-meter"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="models"]')).toBeNull();
     expect(subtab('Storage').classList.contains('tab--active')).toBe(true);
   });

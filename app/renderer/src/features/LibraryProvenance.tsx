@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { RevealResult } from '../lib/rpc';
+import { KeepCopyControl, type ManagedCopyHandlers } from './KeepCopyControl';
 import './library-provenance.css';
 
 // LibraryProvenance.tsx — WU-1f: per-card source PROVENANCE for the Library home.
@@ -46,6 +47,13 @@ export interface ProvenanceHandlers {
   openInFolder?(path: string): Promise<boolean>;
   /** Pick the moved file when relinking (null when cancelled). Optional -> degrades. */
   pickRelinkTarget?(): Promise<string | null>;
+  /**
+   * WU-3b2: the OPT-IN keep-a-copy managed-store handlers (`library.managedStatus`
+   * / `keepCopy` / `managedEvict`). When present, the card renders a per-video
+   * keep-a-copy control (managed-status chip + keep/evict actions); absent -> the
+   * control is not rendered (the app wires the real one).
+   */
+  managed?: ManagedCopyHandlers;
 }
 
 export interface LibraryProvenanceProps {
@@ -244,6 +252,16 @@ export function LibraryProvenance({
           {status.message}
         </p>
       )}
+      {/* WU-3b2: the OPT-IN keep-a-copy control. Only once the source state is
+          resolved (`ok`) do we know whether keeping a copy is possible — the
+          managed-store snapshot then reports this video's managed/linked state. */}
+      {phase.status === 'ok' && handlers.managed ? (
+        <KeepCopyControl
+          videoId={video.id}
+          sourceExists={phase.exists}
+          handlers={handlers.managed}
+        />
+      ) : null}
     </div>
   );
 }

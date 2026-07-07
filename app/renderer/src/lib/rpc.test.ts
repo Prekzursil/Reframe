@@ -300,6 +300,18 @@ describe('client.ping / library / project', () => {
     expect(r).toHaveBeenCalledWith('library.relink', { id: 'v1', path: '/new/path.mp4' });
   });
 
+  it('library.keepCopy / managedStatus / managedEvict / managedClear forward their params (WU-3b1)', async () => {
+    const r = installApi();
+    await client.library.keepCopy('v1');
+    expect(r).toHaveBeenCalledWith('library.keepCopy', { id: 'v1' });
+    await client.library.managedStatus();
+    expect(r).toHaveBeenCalledWith('library.managedStatus', undefined);
+    await client.library.managedEvict('v1');
+    expect(r).toHaveBeenCalledWith('library.managedEvict', { id: 'v1' });
+    await client.library.managedClear();
+    expect(r).toHaveBeenCalledWith('library.managedClear', undefined);
+  });
+
   it('project.open / save / consolidate forward their params', async () => {
     const r = installApi();
     const video: Video = {
