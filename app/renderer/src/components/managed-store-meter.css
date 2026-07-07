@@ -52,7 +52,7 @@
   height: 100%;
   border-radius: inherit;
   background: var(--accent);
-  transition: width var(--dur-normal, 240ms) var(--ease-out);
+  transition: width var(--dur-base) var(--ease-out);
 }
 
 .managed-meter__readout {
