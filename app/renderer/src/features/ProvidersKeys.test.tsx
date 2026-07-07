@@ -183,6 +183,21 @@ describe('ProvidersKeys — load + empty state', () => {
     expect(alert?.textContent).toBe('boom');
   });
 
+  it('degrades to an inline error (no thrown-through blank) when window.api is missing', async () => {
+    // WU2 resilience: no injected rpcClient -> the real `client`, whose bridge()
+    // throws SYNCHRONOUSLY when window.api is undefined (before Promise.all can
+    // wrap it, so the effect's `.catch` never sees it). The sync-safe guard must
+    // surface it inline rather than let it unmount the tree.
+    expect((globalThis as { window?: { api?: unknown } }).window?.api).toBeUndefined();
+    await act(async () => {
+      root.render(<ProvidersKeys />);
+    });
+    await flush();
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert).not.toBeNull();
+    expect(alert?.textContent).toContain('window.api');
+  });
+
   it('tolerates malformed list/catalog/usage payloads (non-array → empty)', async () => {
     const api = makeApi({
       list: () => Promise.resolve({} as ProvidersListResponse),

@@ -214,6 +214,22 @@ describe('<ReadinessRollup /> — WU-14 wiring', () => {
     expect(container.textContent).toContain('What works right now');
   });
 
+  it('degrades to an inline error (no thrown-through blank) when window.api is missing', async () => {
+    // WU2 resilience: with no injected rpcClient the component uses the real
+    // `client`, whose bridge() throws SYNCHRONOUSLY when window.api is undefined.
+    // That sync throw escapes the effect's `.catch()`; the sync-safe guard must
+    // surface it inline instead of letting it unmount the tree.
+    expect((globalThis as { window?: { api?: unknown } }).window?.api).toBeUndefined();
+    await act(async () => {
+      root.render(<ReadinessRollup />);
+    });
+    await flush();
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert).not.toBeNull();
+    expect(alert?.textContent).toContain('window.api');
+    expect(container.querySelector('.jobqueue__empty')).toBeNull();
+  });
+
   it('ignores a late resolve after unmount (no state update warning)', async () => {
     let resolve: (v: { items: ReadinessItem[] }) => void = () => {};
     const rpcClient = makeClient(
