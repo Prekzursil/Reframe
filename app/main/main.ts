@@ -15,14 +15,9 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, writeFileSync, promises as fsp } from 'node:fs';
 import { extname, join, resolve as resolvePath, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { resolveDataRootFrom } from './dataRoot';
-import {
-  dataDirMarkerPath,
-  exeDataDir,
-  isExeDataWritable,
-  isProvisionedRoot,
-  readDataDirMarker,
-} from './dataRootIo';
+import { migratedRoot, type MigrationSeam, planDataRoot, runMigration } from './dataRootPlan';
+import { dataDirMarkerPath, exeDataDir, readDataDirMarker } from './dataRootIo';
+import { atomicMoveDir, dirHasContent, dirSizeBytes, freeSpaceBytes } from './dataRootMigrateIo';
 import {
   acquireDataRootLock,
   DATA_ROOT_LOCK_FILE,
@@ -224,24 +219,22 @@ function resolveWindowIcon(): string {
 // Every heavy artifact (models/envs/exports/proxies/peaks/dubs/voices/feedback/
 // chrome) derives from the sidecar's settings_store.default_config_dir(), which
 // honors MEDIA_STUDIO_CONFIG_DIR first and otherwise falls back to
-// %APPDATA%/media-studio. We resolve the data root HERE (chooseDataRoot is the
+// %APPDATA%/media-studio. We resolve the data root HERE (planDataRoot is the
 // pure part) and propagate it to the sidecar + first-run bootstrap by setting
 // process.env.MEDIA_STUDIO_CONFIG_DIR before either spawns (both inherit
 // process.env — buildSidecarEnv spreads it; bootstrap inherits it).
 //
-// BEHAVIOR (G1 preview fix + dev-trap hardening): dev consults the data-dir.txt
-// MARKER and MEDIA_STUDIO_CONFIG_DIR the SAME way as a packaged build (the old
-// code gated the marker on app.isPackaged, so a dev run ignored it and landed on
-// %APPDATA% — empty, no library.json -> empty library -> getPathForVideoId null ->
-// mstream 404 -> <video> never loads -> no subtitles, since subtitles are
-// downstream of timeupdate). HOWEVER, the writable <exeDir>/data PORTABLE auto-pick
-// is gated on app.isPackaged (see resolveDataRoot's preferExeDataDir): in dev,
-// process.execPath is node_modules/electron/dist/electron.exe, so <exeDir>/data is
-// a writable but EMPTY folder — auto-picking it would re-break preview exactly the
-// same way. So a dev run with NO env/marker now falls to %APPDATA% (the historical
-// default) instead of the node_modules trap; to point dev at a real data folder,
-// set MEDIA_STUDIO_CONFIG_DIR or write a data-dir.txt marker. An explicit env
-// override still wins in both modes (chooseDataRoot priority order).
+// BEHAVIOR (WU-R1 data-loss fix): the safe default home is %APPDATA%/media-studio
+// in BOTH dev and packaged builds. A packaged build NO LONGER auto-picks the
+// writable <exeDir>/data — that dir is INSIDE $INSTDIR and electron-updater's
+// in-place NSIS upgrade REPLACES $INSTDIR, so a default install's library.db +
+// multi-GB model envs were wiped on the very auto-update the app relies on. The
+// data-dir.txt MARKER and MEDIA_STUDIO_CONFIG_DIR override still WIN, verbatim, in
+// both modes (a user pointing at D:/Reframe/data keeps it). A packaged build that
+// finds a legacy <exeDir>/data from a prior default install MIGRATES it out to
+// %APPDATA%/media-studio on first launch (atomic + space-checked; on any failure
+// it stays put UNCHANGED with a loud warning — never a partial move). Dev is
+// unchanged (it already resolved to %APPDATA% with no env/marker). See resolveDataRoot.
 
 /**
  * Containers Chromium can decode (subset of mediaProtocol's MIME map limited to
@@ -280,33 +273,54 @@ async function isPlayableFile(path: string): Promise<boolean> {
 }
 
 /**
- * Resolve the data root to USE this session (IO wrapper over chooseDataRoot).
+ * Resolve the data root to USE this session (IO wrapper over the pure plan).
  *
- * The env override + marker are consulted in BOTH dev and packaged builds (G1
- * preview fix): the env override wins, then the marker. The writable <exeDir>/data
- * auto-pick is PACKAGED-ONLY (preferExeDataDir below). The pure priority logic
- * lives in chooseDataRoot; the FILESYSTEM seam (exeDir/marker/writability probe)
- * lives in dataRootIo.ts (directly unit-tested); this wrapper only joins them with
- * the Electron-specific bits (process.env, app.getPath, app.isPackaged).
+ * DATA-LOSS FIX (WU-R1): a PACKAGED build no longer auto-picks the writable
+ * `<exeDir>/data` — that dir is INSIDE $INSTDIR and electron-updater's in-place
+ * NSIS upgrade REPLACES $INSTDIR, wiping a default install's library.db + model
+ * envs on the very auto-update the app relies on. The safe home is
+ * `%APPDATA%/media-studio` (the location electron-builder.yml + bootstrap.py
+ * already document). Precedence (see planDataRoot):
+ *   1. an explicit MEDIA_STUDIO_CONFIG_DIR / data-dir.txt override still WINS,
+ *      verbatim (a user pointing at D:/Reframe/data keeps it);
+ *   2. a packaged build with a legacy `<exeDir>/data` from a prior default install
+ *      MIGRATES it OUT to %APPDATA%/media-studio (atomic + space-checked; on ANY
+ *      failure it stays put UNCHANGED with a loud warning — never a partial move);
+ *   3. everything else (fresh packaged install, an already-occupied appData home,
+ *      or DEV) uses %APPDATA%/media-studio directly.
+ *
+ * The pure DECISION is planDataRoot (env-free, 100% unit-tested); the filesystem
+ * probes + atomic move are the dataRootMigrateIo seam; this wrapper joins them
+ * with the Electron-specific bits (process.env, app.getPath, app.isPackaged).
  */
 function resolveDataRoot(): string {
-  return resolveDataRootFrom({
+  const legacyExeDataDir = exeDataDir();
+  // The safe home literal MUST stay `join(app.getPath('appData'), 'media-studio')`
+  // (brand.test.ts guard): stable across upgrades, independent of productName.
+  const appDataRoot = join(app.getPath('appData'), 'media-studio');
+  const plan = planDataRoot({
     envOverride: process.env.MEDIA_STUDIO_CONFIG_DIR,
-    exeDataDir: exeDataDir(),
-    appDataRoot: join(app.getPath('appData'), 'media-studio'),
-    readMarker: readDataDirMarker,
-    isExeDataWritable,
-    // A4 content-aware anti-brick: probe each candidate root for a provisioning
-    // marker so an EMPTY portable <exeDir>/data never wins over a provisioned
-    // %APPDATA% (clean install opens the real library, no manual data-dir.txt).
-    isProvisioned: isProvisionedRoot,
-    // PORTABLE auto-pick gate (preview-blocker fix): only a PACKAGED build may
-    // silently use a writable <exeDir>/data. In dev, <exeDir> is
-    // node_modules/electron/dist, so that dir is empty (no library.json) — auto-
-    // picking it re-broke preview. Dev falls back to %APPDATA% unless the user
-    // sets MEDIA_STUDIO_CONFIG_DIR or a data-dir.txt marker (both still honored).
-    preferExeDataDir: app.isPackaged,
+    markerContent: readDataDirMarker(),
+    packaged: app.isPackaged,
+    legacyExeDataDir,
+    legacyExeDataExists: dirHasContent(legacyExeDataDir),
+    appDataRoot,
+    appDataOccupied: dirHasContent(appDataRoot),
   });
+  if (plan.kind === 'use') return plan.root;
+
+  // A packaged legacy tree must be moved out of $INSTDIR before use. The seam
+  // measures the tree, probes free space on the destination volume (%APPDATA%'s
+  // parent always exists), and moves atomically; runMigration owns the abort /
+  // failure -> loud-fallback branches so no data is ever partially moved or lost.
+  const seam: MigrationSeam = {
+    sourceSize: () => dirSizeBytes(plan.from),
+    destFree: () => freeSpaceBytes(app.getPath('appData')),
+    move: () => atomicMoveDir(plan.from, plan.to),
+    warn: (message) => console.error(message),
+  };
+  const migrated = runMigration(plan.from, plan.to, seam);
+  return migratedRoot(plan.from, plan.to, migrated);
 }
 
 /** The data root resolved once at startup; all data paths below derive from it. */
