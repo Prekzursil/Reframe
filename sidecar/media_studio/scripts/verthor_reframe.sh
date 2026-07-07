@@ -28,6 +28,14 @@ cd /mnt/d/tools/reframe/verthor
 # (a 23s TV-studio clip reset 5x). Calmer scene detection (higher threshold,
 # longer min scene length) cuts the spurious resets; --post-restore eases back
 # to the prior framing across a real cut instead of snapping. Env-overridable.
+# verthor's native deps (mediapipe/tflite/torch) can SIGSEGV at INTERPRETER
+# TEARDOWN *after* the reframe is fully rendered and flushed to $OUT (observed:
+# exit 139 with a valid 1080x1920 h264 file already on disk). So we DISABLE
+# errexit around the call and make the real success gate EXTERNAL: a genuinely
+# valid video at $OUT. A missing / zero-byte / undecodable output is still a hard
+# failure with verthor's exit code -- we only tolerate a post-render teardown
+# crash, never a lost render.
+set +e
 python -m verthor "$IN" "$OUT" \
   --preset talking_head \
   --saliency-model handcrafted \
@@ -35,7 +43,17 @@ python -m verthor "$IN" "$OUT" \
   --scene-threshold "${MS_SCENE_THRESHOLD:-8.0}" \
   --min-scene-len "${MS_MIN_SCENE_LEN:-30}" \
   --post-restore
+code=$?
+set -e
 
-W=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$OUT")
-H=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$OUT")
+W=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$OUT" 2>/dev/null || true)
+H=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$OUT" 2>/dev/null || true)
+DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$OUT" 2>/dev/null || true)
+if [ ! -s "$OUT" ] || [ -z "$W" ] || [ -z "$H" ] || [ -z "$DUR" ]; then
+  echo "verthor produced no valid output at $OUT (exit $code; W=${W:-} H=${H:-} DUR=${DUR:-})" >&2
+  if [ "$code" -ne 0 ]; then exit "$code"; else exit 1; fi
+fi
+if [ "$code" -ne 0 ]; then
+  echo "verthor exited $code but wrote a valid ${W}x${H} video (tolerated: native teardown crash after a completed reframe)" >&2
+fi
 printf 'REFRAME_OK out=%s %sx%s\n' "$OUT" "$W" "$H"
