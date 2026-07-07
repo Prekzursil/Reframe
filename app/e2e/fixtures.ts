@@ -13,7 +13,7 @@
 // app lists + opens + plays the exact same library record either way.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, existsSync, readdirSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -210,7 +210,14 @@ function sidecarCall(python: string, dataRoot: string, method: string, params: u
  */
 export function seedEnvironment(): SeededEnv {
   const python = resolvePython();
-  const dataRoot = mkdtempSync(join(tmpdir(), 'reframe-e2e-data-'));
+  // realpathSync.NATIVE expands the tmp path's 8.3 SHORT name to its LONG form.
+  // os.tmpdir() on Windows returns the SHORT name (C:\Users\PREKZU~1\...), which
+  // becomes main's DATA_ROOT — but the sidecar canonicalises its thumbnail path to
+  // the LONG form (C:\Users\Prekzursil\...). The mstream `thumb:` containment guard
+  // (startsWith) then rejects the poster (short root vs long path) → a 404. Plain
+  // realpathSync does NOT expand short names (verified); .native does. A real
+  // install's %APPDATA% root has no short/long split; canonicalising here matches it.
+  const dataRoot = realpathSync.native(mkdtempSync(join(tmpdir(), 'reframe-e2e-data-')));
   const samplePath = join(dataRoot, 'sample.mp4');
   generateSample(samplePath);
 
