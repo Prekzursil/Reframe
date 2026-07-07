@@ -516,8 +516,8 @@ button {
   background: var(--status-error-soft);
 }
 
-/* ---- skeleton shimmer (loading placeholders shaped like the real thing) -----
-   A quiet PULSE off --surface-hover — a placeholder that echoes the card/panel
+/* ---- skeleton shimmer (loading skeletons shaped like the real thing) -----
+   A quiet PULSE off --surface-hover — a skeleton that echoes the card/panel
    anatomy so the layout doesn't jump when data lands. Reduced-motion is handled
    globally at the top of this sheet (animation-duration collapses to ~0), so the
    pulse simply holds still for motion-sensitive users. */
@@ -593,7 +593,7 @@ button {
   opacity: 0.7;
 }
 
-/* Stagger the pulse down the stack so the placeholder reads as alive, not a
+/* Stagger the pulse down the stack so the skeleton reads as alive, not a
    frozen block. Each row's inner pieces share its beat via negative delays. */
 .library__skeleton-row:nth-child(2) .skeleton {
   animation-delay: 0.15s;
