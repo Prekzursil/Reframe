@@ -219,6 +219,14 @@ export function seedEnvironment(): SeededEnv {
   };
   const videoId = added.video.id;
 
+  // Generate the source poster frame so the Library card's `thumb:` request resolves
+  // instead of 404-ing in the sandboxed renderer. `library.thumbnail` is a SYNC RPC
+  // (verified: it runs ffmpeg and writes data_dir/thumbnails/<id>.jpg before
+  // returning), so the one-shot sidecarCall completes the write. The app does this
+  // on demand (useVideoThumbnail); an out-of-band seed must do it too. Not swallowed:
+  // a thumbnail failure is a real setup problem worth surfacing, not hiding.
+  sidecarCall(python, dataRoot, 'library.thumbnail', { id: videoId });
+
   const appEnv = definedEnv({
     MEDIA_STUDIO_PYTHON: python,
     MEDIA_STUDIO_SIDECAR_DIR: SIDECAR_DIR,

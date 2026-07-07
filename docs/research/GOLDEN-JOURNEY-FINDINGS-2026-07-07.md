@@ -58,16 +58,21 @@ unblock Make Shorts. The `auto`/claudeshorts default additionally needs the YuNe
 - **Primary test GREEN** — `Make Shorts produces a real vertical short file on disk` PASSES on the
   DEFAULT `auto`→claudeshorts path after the E2E provisions YuNet in `beforeAll` (`provisionAssets`
   in `fixtures.ts`, mirroring a real first-run). A real user's Make Shorts genuinely works.
-- **Secondary `no console errors` test — one known FAIL (cosmetic).** It surfaces a single 404, now
-  precisely captured (the spec logs the failing URL): `mstream://media/thumb:<dataRoot>\thumbnails\
-  <videoId>.jpg` — the Library card's SOURCE-video poster frame for the freshly-seeded sample. The
-  poster `.jpg` is never generated for an out-of-band-seeded video (a real import generates it on
-  demand via `useVideoThumbnail`→`library.thumbnail`). It is **cosmetic** (the card degrades to the
-  ▶ glyph) and **tangential to Make Shorts**. Fix options for the finishing session: (a) seed the
-  poster in the E2E — `library.thumbnail` is an ASYNC job, so it needs a job-wait like
-  `provisionAssets` (a one-shot RPC returns before the `.jpg` is written); or (b) have the renderer
-  suppress/guard the `thumb:` request until the poster exists. Keep `golden-journey.spec.ts` as the
-  Make Shorts merge gate: coverage is necessary, never sufficient.
+- **Secondary `no console errors` test — one known FAIL, now narrowed to a main-process resolver bug.**
+  It surfaces a single 404, captured by URL: `mstream://media/thumb:<dataRoot>\thumbnails\<videoId>.jpg`
+  — the Library card's SOURCE-video poster for the seeded sample. Investigation (2026-07-08, facts not
+  inferences):
+  - `library.thumbnail` is a **SYNC** RPC (not a job — verified: it runs ffmpeg and writes
+    `data_dir/thumbnails/<id>.jpg` before returning). `fixtures.ts` now seeds it, and the poster is
+    **confirmed on disk** in the E2E data root (`ls .../thumbnails/<id>.jpg` = 11504 bytes).
+  - **Yet the 404 persists** — so it is NOT a poster-generation bug. The mstream `thumb:` resolver
+    (`main.ts:1261-1263` → `exportPath.resolveScopedMediaPath` inside `DATA_ROOT/thumbnails`) 404s
+    for an EXISTING, correctly-located file. `resolveScopedMediaPath` reads correct on static analysis
+    (extract → contain → realpath → return), so the cause is in the protocol handler's serve step or a
+    `DATA_ROOT`/timing subtlety — it needs RUNTIME instrumentation of the mstream handler (log the
+    resolved path + why it returns null/404), which is finishing-session renderer/main work (WU2).
+  - Still **cosmetic** (card degrades to ▶ glyph) and tangential to the GREEN Make Shorts signal.
+  Keep `golden-journey.spec.ts` as the Make Shorts merge gate: coverage is necessary, never sufficient.
 
 ## The reusable lesson
 A held-out golden-journey that drives the **real** app and asserts a **real artifact on disk** is the
