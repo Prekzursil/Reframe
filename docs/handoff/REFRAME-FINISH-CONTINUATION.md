@@ -9,9 +9,9 @@ and a few small residuals. Do not redo the completed work below.
   (see `docs/research/GOLDEN-JOURNEY-FINDINGS-2026-07-07.md`): CRLF in the WSL scripts (`789300d`), verthor
   teardown SIGSEGV tolerance (`789300d`), vidstab `.trf` filtergraph path → bare-basename+cwd (`b2deba8`),
   and a stabilize abspath guard (`f74b8cc`). The full pipeline produces a real vertical short.
-- **The golden-journey exists + is GREEN on its primary signal.** `app/e2e/golden-journey.spec.ts` drives
-  the real Electron GUI + sidecar, provisions YuNet (a real first-run), and asserts a real 1080x1920 short
-  on disk — passing on the default `auto`→claudeshorts path.
+- **The golden-journey is FULLY GREEN (both tests, `37dd956`).** `app/e2e/golden-journey.spec.ts` drives
+  the real Electron GUI + sidecar, provisions YuNet (a real first-run), asserts a real 1080x1920 short on
+  disk (default `auto`→claudeshorts path), AND passes the "no console errors" check. Wire it into CI (B6).
 - **The whole harness gem/skill program is built + merged + live** (agent-skills-toolchain) — you can USE
   these on this work: skills `seed-golden-journey`, `two-tier-verify`, `acceptance-review` (cross-model:
   codex/gemini/fresh-Claude), `mutation-check`, `triage-dispatch`, `fresh-context-verify`; Stop-hooks
@@ -35,14 +35,13 @@ and a few small residuals. Do not redo the completed work below.
   un-runnable in-harness, hand back an exact repro script; do NOT claim success.
 
 ## DEFERRED RESIDUALS (mine, handed to you)
-- **B1 (cosmetic 404 → a main-process resolver bug):** the golden-journey's secondary "no console errors"
-  test catches a 404 for the seeded video's SOURCE poster (`mstream://media/thumb:...<id>.jpg`). NARROWED
-  (2026-07-08, `ee824ba`): the poster IS now generated — `fixtures.ts` seeds `library.thumbnail` (a SYNC
-  RPC) and the `.jpg` is confirmed on disk. The 404 PERSISTS anyway, so it is the mstream `thumb:` resolver
-  (`main.ts:1261-1263` → `exportPath.resolveScopedMediaPath` inside `DATA_ROOT/thumbnails`) 404-ing an
-  EXISTING file. `resolveScopedMediaPath` reads correct statically — instrument the mstream protocol
-  handler at runtime (log the resolved path + null/404 reason) to pin it. Fits WU2 (renderer/main). Then
-  the golden-journey is fully green. Then the whole spec is green.
+- **B1 (poster 404) — DONE (`37dd956`), golden-journey fully green.** Root-caused by runtime
+  instrumentation: `os.tmpdir()` gave main a 8.3 SHORT-name `DATA_ROOT` (`PREKZU~1`) while the sidecar
+  canonicalized its poster path to the LONG name (`Prekzursil`), so the mstream `thumb:` containment guard
+  rejected the existing poster → 404. Fixed by canonicalizing the E2E data root with
+  `realpathSync.native`. Optional WU2 hardening: `exportPath.resolveScopedMediaPath` compares LEXICALLY
+  before its realpath re-check, so it would 404 for ANY short/long-form split — canonicalize the guard's
+  inputs if a short-name `DATA_ROOT` could reach production.
 - **B4 (auto→verthor fallback): a DESIGN DECISION, not a bug.** `resolve_engine_name` is deliberate (P3
   flip: claudeshorts default, verthor explicit-only, "no silent substitution"). If YuNet is unprovisioned,
   `auto` raises rather than falling back. DECIDE whether to keep that (provisioning is first-run's job) or

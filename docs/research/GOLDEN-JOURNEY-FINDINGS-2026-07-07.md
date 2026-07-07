@@ -58,20 +58,20 @@ unblock Make Shorts. The `auto`/claudeshorts default additionally needs the YuNe
 - **Primary test GREEN** — `Make Shorts produces a real vertical short file on disk` PASSES on the
   DEFAULT `auto`→claudeshorts path after the E2E provisions YuNet in `beforeAll` (`provisionAssets`
   in `fixtures.ts`, mirroring a real first-run). A real user's Make Shorts genuinely works.
-- **Secondary `no console errors` test — one known FAIL, now narrowed to a main-process resolver bug.**
-  It surfaces a single 404, captured by URL: `mstream://media/thumb:<dataRoot>\thumbnails\<videoId>.jpg`
-  — the Library card's SOURCE-video poster for the seeded sample. Investigation (2026-07-08, facts not
-  inferences):
-  - `library.thumbnail` is a **SYNC** RPC (not a job — verified: it runs ffmpeg and writes
-    `data_dir/thumbnails/<id>.jpg` before returning). `fixtures.ts` now seeds it, and the poster is
-    **confirmed on disk** in the E2E data root (`ls .../thumbnails/<id>.jpg` = 11504 bytes).
-  - **Yet the 404 persists** — so it is NOT a poster-generation bug. The mstream `thumb:` resolver
-    (`main.ts:1261-1263` → `exportPath.resolveScopedMediaPath` inside `DATA_ROOT/thumbnails`) 404s
-    for an EXISTING, correctly-located file. `resolveScopedMediaPath` reads correct on static analysis
-    (extract → contain → realpath → return), so the cause is in the protocol handler's serve step or a
-    `DATA_ROOT`/timing subtlety — it needs RUNTIME instrumentation of the mstream handler (log the
-    resolved path + why it returns null/404), which is finishing-session renderer/main work (WU2).
-  - Still **cosmetic** (card degrades to ▶ glyph) and tangential to the GREEN Make Shorts signal.
+- **Secondary `no console errors` test — GREEN (poster 404 fixed, `37dd956`).** Both golden-journey
+  tests now pass (`2 passed`). The 404 was root-caused by RUNTIME instrumentation of the mstream handler
+  (facts, not inference): `os.tmpdir()` on Windows returns the 8.3 **SHORT** name (`C:\Users\PREKZU~1\...`),
+  which the E2E passed as `MEDIA_STUDIO_CONFIG_DIR` → main's `DATA_ROOT`; the **sidecar canonicalizes** its
+  `library.thumbnail` path to the **LONG** name (`C:\Users\Prekzursil\...`). The `thumb:` containment guard
+  (`exportPath.resolveScopedMediaPath`'s lexical `startsWith`) then rejected the existing poster — short
+  root vs long path → null → 404. (`library.thumbnail` is a SYNC RPC and the poster was on disk the whole
+  time; generation was never the issue.)
+  - **Fix:** `fixtures.ts` uses `realpathSync.NATIVE(mkdtempSync(...))` — plain `realpathSync` does NOT
+    expand 8.3 short names on Windows (verified), `.native` does — so the data root matches the sidecar.
+  - **App-robustness note (finishing session / WU2):** a real install uses `%APPDATA%` (consistent form),
+    so this was an E2E artifact — but `resolveScopedMediaPath` compares LEXICALLY before its realpath
+    re-check, so it would 404 for ANY short/long split. Canonicalizing the guard's inputs is a real
+    hardening if a short-name `DATA_ROOT` ever reaches production.
   Keep `golden-journey.spec.ts` as the Make Shorts merge gate: coverage is necessary, never sufficient.
 
 ## The reusable lesson
