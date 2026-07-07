@@ -110,6 +110,29 @@ body,
   flex: none;
 }
 
+/* WU-D5: the two local-vs-cloud controls (AI-model quality + job routing) share
+   one cluster so the header reads as ONE settings block, not four loose amber
+   chips. The controls sit slightly closer to each other than to the rest of the
+   bar, and an explicit vertical SEAM marks the scope boundary between them so the
+   shared Local/Cloud vocabulary can never blur the two axes together. */
+.app__routing-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+/* The scope boundary: a short vertical hairline between the two toggles. Uses the
+   stronger edge token so it registers as a deliberate divider (not the ambient
+   surface-ladder edge), and is decorative — the two role="group" labels carry the
+   meaning for assistive tech. */
+.app__routing-seam {
+  flex: none;
+  width: 1px;
+  height: var(--space-6);
+  background: var(--edge-strong);
+  border-radius: var(--radius-pill);
+}
+
 /* Quality segmented control: a pill well with a raised active segment. */
 .quality-toggle {
   display: inline-flex;

@@ -96,8 +96,8 @@ function routeTab(route: Route): TabId {
   }
 }
 
-/** A small monitor glyph for the "Runs on" label (decorative — aria-hidden). */
-function RunsOnIcon(): React.ReactElement {
+/** A small monitor glyph anchoring the "AI model" scope (decorative — aria-hidden). */
+function ModelIcon(): React.ReactElement {
   return (
     <svg
       className="quality-toggle__icon"
@@ -120,10 +120,15 @@ function RunsOnIcon(): React.ReactElement {
 }
 
 /**
- * Local/Cloud quality toggle. Maps to settings.useCloud (CONTRACTS.md §2).
- * WU-2c: humanised copy — "Runs on:" + "This computer" / "Cloud" — so the
- * segmented control reads as plain language, not engineer jargon. The underlying
- * 'local'/'cloud' values + handler are unchanged (relabel only).
+ * The "AI model" quality toggle. Maps to settings.useCloud (CONTRACTS.md §2) —
+ * the coarse cloud-vs-local switch for the model backends (LLM/embedder/
+ * translation/media). WU-D5: this control sits directly beside the routing toggle
+ * and both are about local-vs-cloud, so it is scoped as a DISTINCT axis — "AI
+ * model" (which model tier runs) vs the routing toggle's "Where jobs run" — and
+ * shares the routing toggle's Local/Cloud vocabulary so the axis reads identically
+ * in both. WU-2c's "This computer" wording is replaced by the shared "Local" label
+ * (design-review P0: divergent vocab across the twin controls). The underlying
+ * 'local'/'cloud' values + handler are unchanged (relabel + rescope only).
  */
 function QualityToggle({
   quality,
@@ -133,10 +138,10 @@ function QualityToggle({
   onChange: (q: Quality) => void;
 }): React.ReactElement {
   return (
-    <div className="quality-toggle" role="group" aria-label="Runs on">
+    <div className="quality-toggle" role="group" aria-label="AI model">
       <span className="quality-toggle__label">
-        <RunsOnIcon />
-        Runs on
+        <ModelIcon />
+        AI model
       </span>
       <button
         type="button"
@@ -144,7 +149,7 @@ function QualityToggle({
         aria-pressed={quality === 'local'}
         onClick={() => onChange('local')}
       >
-        This computer
+        Local
       </button>
       <button
         type="button"
@@ -434,8 +439,16 @@ function AppShell(): React.ReactElement {
       <div className="app">
         <header className="app__bar">
           <span className="app__brand">Reframe</span>
-          <QualityToggle quality={quality} onChange={changeQuality} />
-          <RoutingToggle value={routingGlobal} onChange={changeRouting} busy={routingBusy} />
+          {/* WU-D5: the two local-vs-cloud controls are DISTINCT scopes (AI model
+              quality vs job routing) that used to sit adjacent with no boundary,
+              reading as ~4 near-identical amber chips. They now live in one cluster
+              split by an explicit vertical SEAM, each carrying its own scope label,
+              sharing the Local/Cloud axis vocabulary. */}
+          <div className="app__routing-cluster">
+            <QualityToggle quality={quality} onChange={changeQuality} />
+            <span className="app__routing-seam" aria-hidden="true" />
+            <RoutingToggle value={routingGlobal} onChange={changeRouting} busy={routingBusy} />
+          </div>
           <button
             type="button"
             className={`app__jobs-toggle${jobsActive ? ' app__jobs-toggle--active' : ''}`}
