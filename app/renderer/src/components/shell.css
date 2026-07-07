@@ -162,9 +162,17 @@ body,
   background: var(--surface-hover);
 }
 
+/* WU-D4 accent rationing: the active segment used a full amber-soft fill + amber
+   text, so the two header toggles lit TWO amber pills in the same corner (+ the
+   brand tick = 3 amber touchpoints), crowding the accent and pulling the eye off
+   the page title. Quieter treatment: the selected segment RAISES on tone
+   (--surface-active over the deep well) with the brightest text, and keeps only a
+   thin accent underline as its rationed accent — so it still reads as active
+   without a second amber fill. */
 .quality-toggle__btn.is-active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--surface-active);
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px 0 var(--accent-edge);
 }
 
 /* M3 header routing toggle — mirrors the quality toggle's pill group, with a
@@ -213,9 +221,12 @@ body,
   background: var(--surface-hover);
 }
 
+/* Same quieter active treatment as the quality toggle (WU-D4): raised tone +
+   primary text + a thin rationed accent underline, not a second amber fill. */
 .routing-toggle__btn.is-active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--surface-active);
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px 0 var(--accent-edge);
 }
 
 .routing-toggle__btn:disabled {
@@ -478,6 +489,16 @@ button {
   line-height: var(--type-display-leading);
 }
 
+/* WU-D4 gutter unify: the "what works right now" roll-up ships from its shared
+   component with NO inset, so at rest its eyebrow + status line sit flush at x=0
+   — left of the title, the skeleton, and the card list (four ragged left edges).
+   Library-scope a --space-6 inset so those two lines land on the SAME left gutter
+   as the header title and the card column, reading the home view as one column.
+   Scoped to `.library >` so the identical roll-up on the model panel is untouched. */
+.library > .readiness-rollup {
+  padding: 0 var(--space-6);
+}
+
 .library__add {
   display: flex;
   gap: var(--space-3);
@@ -540,9 +561,13 @@ button {
 }
 
 /* The loading well: no more bare uppercase "LOADING…" — a stack of card-shaped
-   ghosts that mirror the real library rows (thumb + two text lines). */
+   ghosts that mirror the real library rows (thumb + two text lines).
+   WU-D4: padding MATCHES `ul.library__list` (--space-4 --space-6 --space-6) so
+   the ghost column shares the card column's exact left gutter — the previous
+   --space-3 well shifted the column 16px right (--space-6 minus --space-3) the
+   instant real data landed. Matched padding = no load-shift. */
 .library__loading {
-  padding: var(--space-3);
+  padding: var(--space-4) var(--space-6) var(--space-6);
 }
 
 .library__skeleton {
