@@ -40,12 +40,29 @@ vi.mock('./views/Library', () => ({
   ),
 }));
 
-// Edit hosts the per-video surface; the marker exposes the open video + back.
+// Edit hosts the per-video surface; the marker exposes the open video + back, and
+// the Task Hub section callbacks (WU-3a1: Make shorts / Director job cards).
 vi.mock('./views/Edit', () => ({
-  Edit: ({ video, onBack }: { video: Video | null; onBack: () => void }) => (
+  Edit: ({
+    video,
+    onBack,
+    onMakeShorts,
+    onDirector,
+  }: {
+    video: Video | null;
+    onBack: () => void;
+    onMakeShorts?: () => void;
+    onDirector?: () => void;
+  }) => (
     <div data-testid="edit" data-video-id={video?.id ?? ''}>
       <button type="button" onClick={onBack}>
         back
+      </button>
+      <button type="button" onClick={() => onMakeShorts?.()}>
+        hub-make-shorts
+      </button>
+      <button type="button" onClick={() => onDirector?.()}>
+        hub-director
       </button>
     </div>
   ),
@@ -277,6 +294,51 @@ describe('App top-level tabs', () => {
     await flush();
     expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="edit"]')).toBeNull();
+  });
+
+  // WU-3a1: the Task Hub's section job cards route out of Edit to the top-level
+  // surfaces. Drive the Edit mock's callbacks and assert the route switch.
+  function hubButton(text: string): HTMLButtonElement {
+    const btns = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-testid="edit"] button'),
+    );
+    const found = btns.find((b) => b.textContent === text);
+    if (!found) throw new Error(`hub button "${text}" not found`);
+    return found;
+  }
+
+  it('WU-3a1: the Make shorts job card routes to the Make Shorts section', async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="library"] button')!.click();
+    });
+    await flush();
+    await act(async () => {
+      hubButton('hub-make-shorts').click();
+    });
+    await flush();
+    expect(container.querySelector('[data-testid="makeshorts"]')).not.toBeNull();
+    expect(tab('Make Shorts').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('WU-3a1: the Director job card routes to the Director section', async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="library"] button')!.click();
+    });
+    await flush();
+    await act(async () => {
+      hubButton('hub-director').click();
+    });
+    await flush();
+    expect(container.querySelector('[data-testid="director"]')).not.toBeNull();
+    expect(tab('Director').getAttribute('aria-selected')).toBe('true');
   });
 
   it('shows the Edit empty state (no video) when the Edit tab is opened directly', async () => {

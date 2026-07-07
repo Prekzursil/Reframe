@@ -11,6 +11,11 @@ export interface WorkspaceProps {
   video: Video;
   /** Return to the Library home. */
   onBack: () => void;
+  /**
+   * The tab to open on (a Task Hub deep-link, e.g. 'shortmaker' / 'subtitles').
+   * ADDITIVE: omitted → the existing default (the first tab, Transcribe).
+   */
+  initialTab?: string;
 }
 
 // STATIC lazy imports (punch #3): all 8 panels exist now, so the old
@@ -60,8 +65,8 @@ interface OpenResult {
  * Opens the project (project.open) and mounts the active feature panel, passing
  * each the props it declares (videoId + project-derived optionals).
  */
-export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement {
-  const [active, setActive] = useState<string>(WORKSPACE_TABS[0].id);
+export function Workspace({ video, onBack, initialTab }: WorkspaceProps): React.ReactElement {
+  const [active, setActive] = useState<string>(initialTab ?? WORKSPACE_TABS[0].id);
   const [project, setProject] = useState<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
   // U1: the workspace player strip + its imperative handle (Timeline seeks it).

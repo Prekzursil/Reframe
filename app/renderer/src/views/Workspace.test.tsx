@@ -182,6 +182,19 @@ describe('Workspace', () => {
     expect(tabs[0].getAttribute('aria-selected')).toBe('false');
   });
 
+  it('honours an initial tab deep-link (Task Hub) instead of the first tab', async () => {
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} initialTab="subtitles" />);
+    });
+    await flush();
+
+    const idx = WORKSPACE_TABS.findIndex((t) => t.id === 'subtitles');
+    const tabs = container.querySelectorAll('[role="tab"]');
+    expect(tabs[idx].getAttribute('aria-selected')).toBe('true');
+    expect(tabs[0].getAttribute('aria-selected')).toBe('false');
+    expect(container.querySelector('[data-panel="Subtitles"]')).not.toBeNull();
+  });
+
   it('calls onBack when the back button is pressed', async () => {
     const onBack = vi.fn();
     await act(async () => {

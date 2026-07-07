@@ -399,8 +399,8 @@ describe('App lastOpenedVideoId — bridge-absent branches (WU-13)', () => {
     });
     await flush();
     expect(rpcMock).not.toHaveBeenCalledWith('settings.set', { lastOpenedVideoId: 'v1' });
-    expect(
-      container.querySelector('[data-testid="workspace"]')!.getAttribute('data-video-id'),
-    ).toBe('v1');
+    // WU-3a1: opening a video now lands on the per-video Task Hub (not straight
+    // into the Workspace). With no bridge, it stays on the hub for the video.
+    expect(container.querySelector('.task-hub__title')?.textContent).toBe('Talk');
   });
 });

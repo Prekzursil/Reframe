@@ -313,6 +313,12 @@ function AppShell(): React.ReactElement {
     setRoute({ name: 'makeshorts', resumeId });
   }, []);
 
+  // WU-3a1: the Task Hub's "Director" job card routes to the top-level Director
+  // section (the open video is already threaded from shell state).
+  const openDirector = useCallback(() => {
+    setRoute({ name: 'director' });
+  }, []);
+
   // Open Settings, optionally pre-selecting a sub-section (e.g. a readiness fix
   // jumps straight to Models & System).
   const openSettings = useCallback((section?: string) => {
@@ -377,7 +383,16 @@ function AppShell(): React.ReactElement {
       case 'makeshorts':
         return <MakeShorts resumeId={route.resumeId} />;
       case 'edit':
-        return <Edit video={editVideo} onBack={backToLibrary} />;
+        // WU-3a1: the Task Hub's section cards route to the top-level Make Shorts
+        // / Director surfaces; workspace-scoped cards stay inside Edit.
+        return (
+          <Edit
+            video={editVideo}
+            onBack={backToLibrary}
+            onMakeShorts={openMakeShorts}
+            onDirector={openDirector}
+          />
+        );
       case 'director':
         return (
           <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>
