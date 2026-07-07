@@ -294,6 +294,14 @@ class StabilizeEngine:
         if not self.available():
             raise StabilizeError(make_unavailable_notice()["message"])
 
+        # Absolutize in/out so running ffmpeg with cwd=<trf dir> (needed for the
+        # bare-basename .trf on Windows, see build_detect_argv) can never misresolve
+        # a RELATIVE in/out path against that cwd. The .trf is the only filtergraph-
+        # embedded path (bare basename under cwd); in/out are argv and must stay
+        # absolute regardless of cwd. No-op for the pipeline's already-absolute paths.
+        in_path = os.path.abspath(in_path)
+        out_path = os.path.abspath(out_path)
+
         try:
             total = float(self._duration(in_path, self._settings))
         except Exception:  # noqa: BLE001 - probe failure only coarsens progress

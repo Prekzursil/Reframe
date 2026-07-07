@@ -193,6 +193,19 @@ class TestEngine:
         assert f"result={trf_name}" in det_vf and trf_dir not in det_vf
         assert f"input={trf_name}" in tr_vf and trf_dir not in tr_vf
 
+    def test_stabilize_absolutizes_relative_in_out(self, settings, tmp_path, monkeypatch):
+        # Guard: ffmpeg runs with cwd=<trf dir>, so a RELATIVE in/out must be
+        # absolutized first or it would misresolve against that cwd.
+        monkeypatch.chdir(tmp_path)
+        run = RecordingRun()
+        engine = st.StabilizeEngine(
+            settings, run=run, duration=lambda p, s=None: 1.0, probe_runner=probe_with(VIDSTAB_FILTERS)
+        )
+        engine.stabilize("in.mp4", "sub/out.mp4")  # both relative
+        det = run.calls[0]
+        assert Path(det[det.index("-i") + 1]).is_absolute()  # input absolutized
+        assert Path(run.calls[1][-1]).is_absolute()  # transform output absolutized
+
     def test_stabilize_raises_when_unavailable(self, settings):
         engine = st.StabilizeEngine(settings, run=RecordingRun(), probe_runner=probe_with(NO_VIDSTAB_FILTERS))
         with pytest.raises(st.StabilizeError, match="libvidstab"):
