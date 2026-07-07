@@ -72,7 +72,7 @@ vi.mock('../features/Refine', () => stubPanel('Refine'));
 vi.mock('../features/Recipes', () => stubPanel('Recipes'));
 vi.mock('../features/SemanticSearch', () => stubPanel('SemanticSearch'));
 
-import { Workspace, WORKSPACE_TABS } from './Workspace';
+import { Workspace, WORKSPACE_TABS, WORKSPACE_TAB_GROUPS, DEFAULT_WORKSPACE_TAB } from './Workspace';
 import type { Video, Project } from '../components/api';
 
 // CONTRACT-NOTE: the feature panels (../features/*) are authored by a sibling unit
@@ -161,7 +161,8 @@ describe('Workspace', () => {
       root.render(<Workspace video={video} onBack={() => {}} />);
     });
     await flush();
-    // The default (Transcribe) tab renders either the real panel or the fallback.
+    // WU-3a2: the default tab is now Subtitles, but the Transcribe tab LABEL is
+    // still present in the (grouped) strip — a body slot renders regardless.
     expect(container.querySelector('.workspace__body')).not.toBeNull();
     expect(container.textContent).toContain('Transcribe');
   });
@@ -271,10 +272,14 @@ describe('Workspace', () => {
     });
     await flush();
 
-    const idx = WORKSPACE_TABS.findIndex((t) => t.id === tabId);
-    const tabs = container.querySelectorAll('[role="tab"]');
+    // WU-3a2: tabs render in NAMED clusters, so DOM order no longer mirrors the
+    // WORKSPACE_TABS array — locate the tab by its stable id, not a positional
+    // index. Every tab stays a real role="tab" (Advanced/Deliver ones live in the
+    // collapsed panel but remain in the DOM and reachable).
+    const tab = container.querySelector(`[role="tab"][data-tab-id="${tabId}"]`);
+    expect(tab).not.toBeNull();
     await act(async () => {
-      (tabs[idx] as HTMLButtonElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      (tab as HTMLButtonElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await flush();
 
@@ -497,5 +502,96 @@ describe('Workspace', () => {
     expect(off).toHaveBeenCalledTimes(1);
     // re-render so afterEach's unmount is a no-op safe path
     root = createRoot(container);
+  });
+});
+
+// WU-3a2: the 13 flat tabs are regrouped into 4 NAMED clusters behind
+// progressive disclosure. ADDITIVE — every tab stays a real role="tab" and every
+// panel reachable; only the visual grouping + the default tab change.
+describe('Workspace tab clusters (WU-3a2)', () => {
+  function groupLabels(): string[] {
+    return Array.from(container.querySelectorAll('.tabbar__group-label')).map(
+      (el) => el.textContent ?? '',
+    );
+  }
+
+  async function mount(): Promise<void> {
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} />);
+    });
+    await flush();
+  }
+
+  it('defaults to the Subtitles tab (off Transcribe)', async () => {
+    expect(DEFAULT_WORKSPACE_TAB).toBe('subtitles');
+    await mount();
+
+    const subtitles = container.querySelector('[role="tab"][data-tab-id="subtitles"]');
+    const transcribe = container.querySelector('[role="tab"][data-tab-id="transcribe"]');
+    expect(subtitles?.getAttribute('aria-selected')).toBe('true');
+    expect(transcribe?.getAttribute('aria-selected')).toBe('false');
+    expect(container.querySelector('[data-panel="Subtitles"]')).not.toBeNull();
+  });
+
+  it('renders the four named clusters as section labels', async () => {
+    await mount();
+    expect(groupLabels()).toEqual(WORKSPACE_TAB_GROUPS.map((g) => g.label));
+    expect(groupLabels()).toEqual(['Speech & Text', 'Frame & Cut', 'Audio', 'Deliver']);
+  });
+
+  it('keeps every tab reachable: all 13 ids stay in the tablist across clusters', async () => {
+    await mount();
+    const ids = Array.from(container.querySelectorAll('[role="tab"]'))
+      .map((t) => t.getAttribute('data-tab-id'))
+      .sort();
+    expect(ids).toEqual(WORKSPACE_TABS.map((t) => t.id).sort());
+  });
+
+  it('collapses the Deliver cluster behind Advanced by default and toggles it open/closed', async () => {
+    await mount();
+
+    const toggle = container.querySelector('.tabbar__advanced-toggle') as HTMLButtonElement;
+    const panel = container.querySelector('.tabbar__advanced-panel') as HTMLElement;
+    expect(toggle).not.toBeNull();
+    // collapsed by default; the Deliver group lives inside the collapsed panel.
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(panel.hidden).toBe(true);
+    expect(panel.querySelector('[data-tab-id="tracks"]')).not.toBeNull();
+
+    // expand
+    await act(async () => {
+      toggle.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(panel.hidden).toBe(false);
+
+    // collapse again (covers the toggle updater in both directions)
+    await act(async () => {
+      toggle.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(panel.hidden).toBe(true);
+  });
+
+  it('reaches an Advanced (Deliver) panel after expanding the disclosure', async () => {
+    await mount();
+
+    const toggle = container.querySelector('.tabbar__advanced-toggle') as HTMLButtonElement;
+    await act(async () => {
+      toggle.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+
+    const tracks = container.querySelector(
+      '[role="tab"][data-tab-id="tracks"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      tracks.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+    expect(tracks.getAttribute('aria-selected')).toBe('true');
+    expect(container.querySelector('[data-panel="Tracks"]')).not.toBeNull();
   });
 });

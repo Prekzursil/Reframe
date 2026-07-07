@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import './workspace.css';
-import { TabBar, type TabDef } from '../components/TabBar';
+import { TabBar, type TabDef, type TabGroup } from '../components/TabBar';
 import { Player, type PlayerHandle } from '../components/Player';
 import { rpc, type Project, type Video } from '../components/api';
 import { onProxyState } from '../lib/rpc';
@@ -13,7 +13,7 @@ export interface WorkspaceProps {
   onBack: () => void;
   /**
    * The tab to open on (a Task Hub deep-link, e.g. 'shortmaker' / 'subtitles').
-   * ADDITIVE: omitted → the existing default (the first tab, Transcribe).
+   * ADDITIVE: omitted → the workspace default (DEFAULT_WORKSPACE_TAB, Subtitles).
    */
   initialTab?: string;
 }
@@ -56,6 +56,31 @@ export const WORKSPACE_TABS: TabDef[] = [
   { id: 'assets', label: 'Assets' },
 ];
 
+/**
+ * WU-3a2: the 13 flat tabs regrouped into 4 NAMED clusters for progressive
+ * disclosure. This is an ADDITIVE VISUAL layer over WORKSPACE_TABS — every tab
+ * id above appears in exactly one group and every panel stays reachable; the
+ * ids/labels/behaviour are unchanged. "Deliver" is flagged `advanced` so it
+ * collapses behind the "Advanced" disclosure; the other three show expanded.
+ */
+export const WORKSPACE_TAB_GROUPS: TabGroup[] = [
+  { id: 'speech', label: 'Speech & Text', tabIds: ['transcribe', 'search', 'subtitles', 'diarize', 'refine'] },
+  { id: 'frame', label: 'Frame & Cut', tabIds: ['shortmaker', 'timeline'] },
+  { id: 'audio', label: 'Audio', tabIds: ['dub'] },
+  {
+    id: 'deliver',
+    label: 'Deliver',
+    tabIds: ['convert', 'nle', 'recipes', 'assets', 'tracks'],
+    advanced: true,
+  },
+];
+
+/**
+ * WU-3a2: the workspace lands on Subtitles (the most-used editing surface),
+ * NOT Transcribe (a one-time prerequisite). Deep-links (initialTab) still win.
+ */
+export const DEFAULT_WORKSPACE_TAB = 'subtitles';
+
 interface OpenResult {
   project: Project;
 }
@@ -66,7 +91,11 @@ interface OpenResult {
  * each the props it declares (videoId + project-derived optionals).
  */
 export function Workspace({ video, onBack, initialTab }: WorkspaceProps): React.ReactElement {
-  const [active, setActive] = useState<string>(initialTab ?? WORKSPACE_TABS[0].id);
+  const [active, setActive] = useState<string>(initialTab ?? DEFAULT_WORKSPACE_TAB);
+  // WU-3a2: the "Advanced" (Deliver) cluster is collapsed by default; the toggle
+  // lives here so the presentational TabBar stays a pure, hook-free component.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const toggleAdvanced = useCallback(() => setAdvancedOpen((open) => !open), []);
   const [project, setProject] = useState<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
   // U1: the workspace player strip + its imperative handle (Timeline seeks it).
@@ -235,7 +264,14 @@ export function Workspace({ video, onBack, initialTab }: WorkspaceProps): React.
         ) : null}
       </div>
 
-      <TabBar tabs={WORKSPACE_TABS} active={active} onSelect={setActive} />
+      <TabBar
+        tabs={WORKSPACE_TABS}
+        active={active}
+        onSelect={setActive}
+        groups={WORKSPACE_TAB_GROUPS}
+        advancedOpen={advancedOpen}
+        onToggleAdvanced={toggleAdvanced}
+      />
 
       {error ? (
         <div className="workspace__error" role="alert">

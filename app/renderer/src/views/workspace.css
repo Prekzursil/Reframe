@@ -61,6 +61,87 @@
   background: var(--accent);
 }
 
+/* ---- grouped strip (WU-3a2): named clusters + Advanced disclosure ---------
+   ADDITIVE visual layer. The clusters sit in a row; each wears a quiet tracked
+   caption and a hairline seam so the eye reads Speech · Frame · Audio without a
+   loud divider. "Deliver" collapses behind the Advanced toggle. */
+
+.tabbar.tabbar--grouped {
+  align-items: stretch;
+  gap: 0;
+}
+
+.tabbar--grouped .tabbar__group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-right: var(--space-4);
+}
+
+/* hairline seam BETWEEN clusters (not after the last) — a tonal separator */
+.tabbar--grouped .tabbar__group + .tabbar__group {
+  padding-left: var(--space-4);
+  box-shadow: inset 1px 0 0 var(--edge);
+}
+
+/* the cluster name: a whisper, never competing with the tab labels */
+.tabbar--grouped .tabbar__group-label {
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  opacity: 0.62;
+  white-space: nowrap;
+  align-self: center;
+}
+
+.tabbar--grouped .tabbar__group--advanced {
+  align-items: center;
+}
+
+/* Advanced disclosure: shares the tab voice but reads as a control, not a tab */
+.tabbar--grouped .tabbar__advanced-toggle {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  padding: 11px 12px;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.tabbar--grouped .tabbar__advanced-toggle:hover {
+  color: var(--text-secondary);
+}
+
+.tabbar--grouped .tabbar__advanced-toggle[aria-expanded="true"] {
+  color: var(--text-primary);
+}
+
+/* a small caret cue that flips when the cluster opens (shape, not colour-only) */
+.tabbar--grouped .tabbar__advanced-toggle::after {
+  content: "▸";
+  display: inline-block;
+  margin-left: var(--space-2);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.tabbar--grouped .tabbar__advanced-toggle[aria-expanded="true"]::after {
+  transform: rotate(90deg);
+}
+
+.tabbar--grouped .tabbar__advanced-panel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 /* ---- body: panels breathe; the footage well stays the focus --------------- */
 
 .workspace .workspace__body {
