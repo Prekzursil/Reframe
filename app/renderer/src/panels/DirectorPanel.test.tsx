@@ -1252,10 +1252,19 @@ describe('DirectorPanel', () => {
     expect(container.querySelector('.director-onboarding')).not.toBeNull();
   });
 
-  it('first-run tour also opens over the no-video empty state', async () => {
+  it('WU-D6a: first-run tour does NOT auto-open over the no-video empty state, but fires once a video opens', async () => {
     const c = makeClient({ initialSettings: {} });
     await mount(c, null);
+    // Unseen, but no video open → the focus-trap must NOT auto-open over the
+    // "Choose a video" empty state (it would block the only actionable control).
     expect(container.querySelector('[data-section="empty"]')).not.toBeNull();
+    expect(container.querySelector('.director-onboarding')).toBeNull();
+    // Opening a video (now there IS something to edit) fires the first-run tour.
+    await act(async () => {
+      root.render(<DirectorPanel rpcClient={c.client} jobEvents={events} video={videoFixture()} />);
+    });
+    await flush();
+    expect(container.querySelector('[data-section="empty"]')).toBeNull();
     expect(container.querySelector('.director-onboarding')).not.toBeNull();
   });
 
