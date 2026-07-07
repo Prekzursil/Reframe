@@ -25,7 +25,7 @@ kokoro-onnx==0.5.0
 
 # CUDA runtime wheels for ctranslate2/onnxruntime GPU paths (pins = dev venv)
 nvidia-cublas-cu12==12.9.2.10
-nvidia-cudnn-cu12==9.24.0.43
+nvidia-cudnn-cu12==9.23.2.1
 
 # DELIBERATELY NOT HERE: mediapipe. The claudeshorts reframe engine's optional
 # MediaPipe backend uses the LEGACY Solutions API (`mp.solutions.face_detection`),

@@ -66,7 +66,7 @@ class TestShippedRequirementFiles:
         pins = dict(p.split("==", 1) for p in reqs.pins)
         # the T5 brief's KNOWN dev-venv versions
         assert pins["faster-whisper"] == "1.2.1"
-        assert pins["ctranslate2"] == "4.8.0"
+        assert pins["ctranslate2"] == "4.8.1"
         assert pins["scenedetect"] == "0.7"
         assert pins["httpx"] == "0.28.1"
         assert pins["opencv-python"] == "4.13.0.92"
@@ -88,6 +88,19 @@ class TestShippedRequirementFiles:
         # The new py3.14 trio (torch 2.11 cu128).
         assert pins["torch"] == "2.11.0+cu128"
         assert pins["torchaudio"] == "2.11.0+cu128"
+        # HARDENING (WU1, dependabot #259 regression class): torch/torchaudio must
+        # stay PAIRED (identical version) and BOTH must keep the +cu128 CUDA local
+        # tag. #259 bumped torch->2.12.1 (stripped +cu128) while leaving torchaudio
+        # at 2.11.0+cu128 — an incompatible pair that would install CPU torch for
+        # the GPU dub env. These invariants fail LOUDLY on any such desync/strip,
+        # independent of the exact pinned version above.
+        assert pins["torch"] == pins["torchaudio"], (
+            f"torch ({pins['torch']}) and torchaudio ({pins['torchaudio']}) must be the same version"
+        )
+        assert pins["torch"].endswith("+cu128"), f"torch must keep the +cu128 CUDA tag, got {pins['torch']}"
+        assert pins["torchaudio"].endswith("+cu128"), (
+            f"torchaudio must keep the +cu128 CUDA tag, got {pins['torchaudio']}"
+        )
         assert pins["chatterbox-tts"] == "0.1.7"
         assert reqs.options == ("--extra-index-url https://download.pytorch.org/whl/cu128",)
         # ORDER MATTERS: mirror the CHATTERBOX_REQUIREMENTS tuple order so a
