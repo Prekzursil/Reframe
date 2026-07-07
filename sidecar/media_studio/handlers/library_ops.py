@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .. import keepcopy as _keepcopy
 from .. import library as _library
 from .. import relink as _relink
 from ..features import offline as _offline
@@ -219,6 +220,54 @@ def library_relink(self: Services, params: dict[str, Any], ctx: RpcContext) -> d
         return {"entity": self.library.relink(entity_id, new_path)}
     except (_relink.RelinkError, FileNotFoundError) as exc:
         raise _invalid(str(exc)) from exc
+
+
+def library_keep_copy(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``library.keepCopy({id})`` -> ``{managed}`` (WU-3b1). Direct-return.
+
+    OPT-IN: copies the video's ORIGINAL bytes into the app-managed store under the
+    data-root (atomic temp+replace, free-space preflight, cap+LRU eviction, content
+    dedup) and re-points lineage so the managed copy is the AUTHORITATIVE source
+    while the original path is recorded as provenance. An unknown/missing source, a
+    failed preflight, or an over-cap file all raise INVALID_PARAMS (loud).
+    """
+    entity_id = _require_str(params, "id")
+    try:
+        return {"managed": self.library.keep_copy(entity_id)}
+    except _keepcopy.KeepCopyError as exc:
+        raise _invalid(str(exc)) from exc
+
+
+def library_managed_status(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``library.managedStatus()`` -> ``{sizeBytes, capBytes, count, entries}`` (WU-3b1). Direct-return.
+
+    Read-only: exposes the managed store's current size + the cap ceiling + the kept
+    entries (each with its original path as provenance), so the UI can show "used / cap".
+    """
+    return self.library.managed_status()
+
+
+def library_managed_evict(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``library.managedEvict({id})`` -> ``{ok, entityId}`` (WU-3b1). Direct-return.
+
+    Evicts ONE video's managed copy: re-points its entity BACK to the original source
+    (provenance) and frees the managed bytes (unless another entity shares them). An
+    entity with no managed copy raises INVALID_PARAMS (loud).
+    """
+    entity_id = _require_str(params, "id")
+    try:
+        return self.library.managed_evict(entity_id)
+    except _keepcopy.KeepCopyError as exc:
+        raise _invalid(str(exc)) from exc
+
+
+def library_managed_clear(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``library.managedClear()`` -> ``{ok, cleared}`` (WU-3b1). Direct-return.
+
+    Evicts EVERY managed copy (re-points each entity to its original path). Idempotent
+    on an empty store (``cleared`` is 0).
+    """
+    return self.library.managed_clear()
 
 
 def project_open(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:

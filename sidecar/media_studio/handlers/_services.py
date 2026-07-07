@@ -187,6 +187,10 @@ class Services:
     library_regenerate = library_ops.library_regenerate
     library_pin_hash = library_ops.library_pin_hash
     library_relink = library_ops.library_relink
+    library_keep_copy = library_ops.library_keep_copy
+    library_managed_status = library_ops.library_managed_status
+    library_managed_evict = library_ops.library_managed_evict
+    library_managed_clear = library_ops.library_managed_clear
     project_open = library_ops.project_open
     project_save = library_ops.project_save
     project_consolidate = library_ops.project_consolidate
