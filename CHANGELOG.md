@@ -137,6 +137,26 @@ sidecar pytest) under the single `quality` CI gate.
   reframe-to-vertical to a first-class action and wires the existing override
   controls; the fuller prompt-driven Reframe Director surface is planned for **1.5**.
 
+## [1.3.0] — 2026-07-06
+
+**Reframe v1.3.0 — branding, encrypted keys, re-hosted models, auto-update.**
+Personal / non-commercial build; unsigned (SmartScreen click-through on first launch).
+
+### Added
+
+- Unified **"Reframe"** branding + new app icon (fixed the window title still reading
+  "media-studio").
+- **API keys encrypted at rest** (Windows DPAPI) with reveal + validate in
+  **Settings → Providers & Keys**.
+- **Third-party licenses** screen (**Settings → Licenses**).
+- **AI Director onboarding** + a "what works right now" capability matrix.
+- **In-place auto-update** via GitHub Releases (`electron-updater`).
+
+### Fixed
+
+- **Re-hosted the AI models** (ViNet-S saliency, TransNetV2 scene-cut) — the "unknown
+  asset" first-launch errors are gone.
+
 ## [1.2.0] — 2026-07-03
 
 **Reframe v1.2.0 — detector, virality, tracking + fail-loud hardening.** A single
