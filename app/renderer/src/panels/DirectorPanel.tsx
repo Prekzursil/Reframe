@@ -430,6 +430,10 @@ export function DirectorPanel({
       >
         {header}
         <div className="director-empty" data-section="empty">
+          <div className="director-empty__poster" aria-hidden="true">
+            <span className="director-empty__glyph">▶</span>
+            <span className="director-empty__timecode">--:--</span>
+          </div>
           <p className="director-empty__title">No video open</p>
           <p className="director-empty__hint">
             Open a video from your Library to plan a reviewable, reversible AI edit for it — the

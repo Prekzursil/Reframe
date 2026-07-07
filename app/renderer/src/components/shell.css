@@ -680,6 +680,82 @@ button {
   color: var(--text-muted);
 }
 
+/* Edit (Task Hub) empty (WU-D3): the primary per-video landing with no video
+   open used to be the app's WEAKEST empty — a bare left-aligned sentence with
+   zero CSS. Brought up to the shared ghost-poster language: a display-scale
+   poster anchor (deep 16:9 well + play glyph + mono timecode) with a second
+   poster peeking behind, then a title + hint. Mirrors .library__empty /
+   .sm-empty; no accent (an empty landing is not an active state). */
+.edit--empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-6) var(--space-6);
+  text-align: center;
+}
+
+.edit__empty-poster {
+  position: relative;
+  width: 240px;
+  aspect-ratio: 16 / 9;
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--atmos-well), var(--surface-deep);
+  box-shadow:
+    inset 0 0 0 1px var(--edge),
+    var(--elev-2);
+}
+
+.edit__empty-poster::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  transform: translate(12px, -10px) rotate(2deg);
+}
+
+.edit__empty-glyph {
+  font-size: var(--type-display-size);
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.edit__empty-timecode {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--surface-raised);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--type-caption-leading);
+}
+
+.edit__empty-title {
+  margin: var(--space-2) 0 0;
+  font-size: var(--type-subhead-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+  color: var(--text-secondary);
+}
+
+.edit__empty-hint {
+  margin: 0;
+  max-width: 46ch;
+  font-size: var(--type-body-size);
+  color: var(--text-muted);
+}
+
 .library__list {
   list-style: none;
   margin: 0;

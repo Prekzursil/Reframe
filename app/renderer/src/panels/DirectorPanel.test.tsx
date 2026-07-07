@@ -396,6 +396,9 @@ describe('DirectorPanel', () => {
     await mount(c, null, onChoose);
     // Empty state visible; the prompt form is GONE (nothing can mis-fire).
     expect(container.querySelector('[data-section="empty"]')).not.toBeNull();
+    // WU-D3: the empty carries the shared ghost-poster anchor (poster + glyph).
+    expect(container.querySelector('.director-empty__poster')).not.toBeNull();
+    expect(container.querySelector('.director-empty__glyph')).not.toBeNull();
     expect(container.querySelector('form.director-prompt')).toBeNull();
     expect(container.querySelector('textarea[data-action="goal"]')).toBeNull();
     // The CTA wires to the real video selection.
