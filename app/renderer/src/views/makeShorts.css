@@ -1,38 +1,85 @@
-/* makeShorts.css — the Make Shorts section layout. */
+/* makeShorts.css — the Make Shorts section layout.
+   CONTRACT-NOTE: tokens come from styles/tokens.css (imported first in App.tsx).
+   Consume real tokens only — the earlier fallback literals (--space-xs/-sm/-md,
+   --text-base, --color-error-fg, --color-text-2) were NON-EXISTENT custom
+   properties that silently dropped to off-system light-theme hex; they are
+   replaced here with the audited spacing / type / color ladder. Class names are
+   test-pinned; restyle only. */
 .make-shorts {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm, 0.5rem);
+  gap: var(--space-3);
 }
 
 .make-shorts__make {
   display: flex;
   flex-direction: column;
-  gap: var(--space-md, 1rem);
+  gap: var(--space-5);
 }
 
 .make-shorts__picker {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs, 0.25rem);
+  gap: var(--space-2);
   max-width: 24rem;
 }
 
+/* Source picker: the shared input rule (shell.css) styles .feature-panel /
+   .shortmaker selects but NOT this view, so the picker fell back to a raw native
+   OS <select> (light fill, square corners, default arrow) that broke the
+   dark-editorial theme. Style it onto the token system — deep-well fill, hairline
+   edge, small radius, focus glow — matching the app's other inputs, and draw a
+   custom caret (appearance:none removes the native one). The caret SVG stroke
+   mirrors --text-muted (a data: URI can't read a CSS custom property). */
+.make-shorts__picker select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  padding: var(--control-pad-input);
+  padding-right: var(--space-7);
+  background-color: var(--surface-deep);
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='12'%20height='12'%20viewBox='0%200%2012%2012'%20fill='none'%20stroke='%23adb4c2'%20stroke-width='1.5'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M2.5%204.5%206%208%209.5%204.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-4) center;
+  background-size: 12px 12px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--type-body-size);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.make-shorts__picker select:hover {
+  border-color: var(--edge-strong);
+}
+
+.make-shorts__picker select:focus-visible {
+  outline: none;
+  border-color: var(--accent-edge);
+  box-shadow: var(--focus-glow);
+}
+
 .make-shorts__heading {
-  margin: 0 0 var(--space-xs, 0.25rem);
-  font-size: var(--text-base, 1rem);
+  margin: 0 0 var(--space-2);
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
 }
 
 .make-shorts__error {
   margin: 0;
-  color: var(--color-error-fg, #b00020);
+  color: var(--status-error);
 }
 
 .make-shorts__note {
   margin: 0;
-  color: var(--color-text-2, #555);
+  color: var(--text-secondary);
 }
 
 .make-shorts__hint {
-  color: var(--color-text-2, #555);
+  color: var(--text-secondary);
 }

@@ -57,7 +57,7 @@
   border-left: 3px solid var(--status-success);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  background: var(--surface-raised, var(--surface));
+  background: var(--surface-raised);
   word-break: break-all;
 }
 
