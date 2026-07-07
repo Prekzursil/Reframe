@@ -288,6 +288,176 @@ def test_keep_copy_mid_write_failure_leaves_no_corrupt_state(tmp_path: Path) -> 
 
 
 # --------------------------------------------------------------------------- #
+# durability — NEVER destroy the only surviving copy (original source gone)
+# --------------------------------------------------------------------------- #
+def test_lru_eviction_skips_a_copy_whose_original_is_gone(tmp_path: Path) -> None:
+    """LRU cap-eviction must SKIP an irreplaceable copy (its original is gone) and evict
+    a replaceable one instead — evicting the irreplaceable copy would silently destroy
+    the only surviving copy of that video (the exact loss keep-a-copy exists to prevent).
+    """
+    lib = _fresh_library(tmp_path)
+    a, ma = _add_source(lib, tmp_path, "a.mp4", data=b"aaaa")  # A: loses its original
+    b, mb = _add_source(lib, tmp_path, "b.mp4", data=b"bbbb")  # B: original stays
+    c, _mc = _add_source(lib, tmp_path, "c.mp4", data=b"cccc")  # C: the incoming keep
+    stamps = iter(["t0", "t1", "t2"])
+    store = ManagedStore(
+        lib,
+        cap_bytes=8,  # holds exactly two 4-byte copies
+        copier=lambda s, d: Path(d).write_bytes(Path(s).read_bytes()),
+        now=lambda: next(stamps),
+    )
+    ka = store.keep_copy(a)  # {A}=4 (A is the LRU)
+    kb = store.keep_copy(b)  # {A,B}=8
+    ma.unlink()  # A's ORIGINAL is now gone -> A's managed copy is IRREPLACEABLE
+
+    store.keep_copy(c)  # 8+4>8 -> must evict; A (LRU) is skipped -> B is evicted instead
+
+    kept = {e["entityId"] for e in store.status()["entries"]}
+    assert kept == {a, c}  # A (irreplaceable) survived; B (replaceable) was evicted
+    assert Path(ka["managedPath"]).exists()  # A's only-surviving bytes preserved
+    assert not Path(kb["managedPath"]).exists()  # B's replaceable bytes freed
+    assert _entity_path(lib, a) == ka["managedPath"]  # A stays authoritative on its copy
+    assert _entity_path(lib, b) == str(mb.resolve())  # B reverts to its (present) original
+
+
+def test_lru_eviction_refuses_loud_when_only_irreplaceable_copies_could_be_freed(tmp_path: Path) -> None:
+    """When fitting a new keep would require evicting an IRREPLACEABLE copy (original
+    gone), keep_copy must refuse LOUD rather than destroy the only surviving copy — and
+    every irreplaceable copy must survive untouched.
+    """
+    lib = _fresh_library(tmp_path)
+    a, ma = _add_source(lib, tmp_path, "a.mp4", data=b"aaaa")
+    b, mb = _add_source(lib, tmp_path, "b.mp4", data=b"bbbb")
+    c, mc = _add_source(lib, tmp_path, "c.mp4", data=b"cccc")
+    store = ManagedStore(
+        lib,
+        cap_bytes=8,
+        copier=lambda s, d: Path(d).write_bytes(Path(s).read_bytes()),
+    )
+    ka = store.keep_copy(a)
+    kb = store.keep_copy(b)  # store full: {A,B}=8
+    ma.unlink()
+    mb.unlink()  # BOTH originals gone -> every kept copy is irreplaceable
+
+    with pytest.raises(KeepCopyError, match="only surviving copy"):
+        store.keep_copy(c)  # cannot free space without destroying an irreplaceable copy
+
+    # both irreplaceable copies survive; C was never kept / re-pointed.
+    assert Path(ka["managedPath"]).exists()
+    assert Path(kb["managedPath"]).exists()
+    assert {e["entityId"] for e in store.status()["entries"]} == {a, b}
+    assert _entity_path(lib, c) == str(mc.resolve())  # C still on its original
+
+
+def test_explicit_evict_of_original_gone_copy_fails_loud(tmp_path: Path) -> None:
+    """An EXPLICIT evict of a copy whose original is gone must FAIL LOUD (the managed
+    copy is the only surviving copy) — never silently destroy it.
+    """
+    lib = _fresh_library(tmp_path)
+    src, media = _add_source(lib, tmp_path, "talk.mp4", data=b"only-copy")
+    store = ManagedStore(lib, copier=lambda s, d: Path(d).write_bytes(Path(s).read_bytes()))
+    managed = store.keep_copy(src)
+    media.unlink()  # the original is gone -> the managed copy is irreplaceable
+
+    with pytest.raises(KeepCopyError, match="only surviving copy"):
+        store.evict(src)
+
+    # the only-surviving copy is untouched (loud refusal, no destruction).
+    assert Path(managed["managedPath"]).exists()
+    assert store.status()["count"] == 1
+    assert _entity_path(lib, src) == managed["managedPath"]  # still authoritative
+
+
+def test_explicit_evict_with_force_destroys_the_only_copy(tmp_path: Path) -> None:
+    """force=True is the explicit escape hatch: it evicts even an irreplaceable copy."""
+    lib = _fresh_library(tmp_path)
+    src, media = _add_source(lib, tmp_path, "talk.mp4", data=b"only-copy")
+    store = ManagedStore(lib, copier=lambda s, d: Path(d).write_bytes(Path(s).read_bytes()))
+    managed = store.keep_copy(src)
+    media.unlink()
+
+    out = store.evict(src, force=True)
+    assert out == {"ok": True, "entityId": src}
+    assert not Path(managed["managedPath"]).exists()  # forced destruction
+    assert store.status()["count"] == 0
+
+
+def test_clear_refuses_loud_when_a_copy_is_irreplaceable(tmp_path: Path) -> None:
+    """clear() must refuse LOUD (destroying nothing) when any managed copy's original is
+    gone — it would be the only surviving copy — unless force=True is passed.
+    """
+    lib = _fresh_library(tmp_path)
+    a, ma = _add_source(lib, tmp_path, "a.mp4", data=b"aaa")
+    b, _mb = _add_source(lib, tmp_path, "b.mp4", data=b"bbb")
+    store = ManagedStore(lib, copier=lambda s, d: Path(d).write_bytes(Path(s).read_bytes()))
+    ka = store.keep_copy(a)
+    kb = store.keep_copy(b)
+    ma.unlink()  # A's original gone -> A is irreplaceable
+
+    with pytest.raises(KeepCopyError, match="missing original source"):
+        store.clear()
+    # nothing destroyed: both copies still present.
+    assert Path(ka["managedPath"]).exists()
+    assert Path(kb["managedPath"]).exists()
+    assert store.status()["count"] == 2
+
+
+def test_clear_with_force_removes_even_irreplaceable_copies(tmp_path: Path) -> None:
+    lib = _fresh_library(tmp_path)
+    a, ma = _add_source(lib, tmp_path, "a.mp4", data=b"aaa")
+    b, _mb = _add_source(lib, tmp_path, "b.mp4", data=b"bbb")
+    store = ManagedStore(lib, copier=lambda s, d: Path(d).write_bytes(Path(s).read_bytes()))
+    ka = store.keep_copy(a)
+    kb = store.keep_copy(b)
+    ma.unlink()  # A irreplaceable
+
+    out = store.clear(force=True)
+    assert out == {"ok": True, "cleared": 2}
+    assert not Path(ka["managedPath"]).exists()
+    assert not Path(kb["managedPath"]).exists()
+    assert store.status()["count"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# atomicity — the keep_copy mutation sequence is all-or-nothing
+# --------------------------------------------------------------------------- #
+def test_keep_copy_sequence_is_atomic_on_mid_sequence_failure(tmp_path: Path) -> None:
+    """A crash mid keep_copy (AFTER eviction, before the INSERT + re-point commit) must
+    roll the WHOLE sequence back: the evicted victim is NOT destroyed and the failed
+    keep leaves no partial row / re-point / orphan managed file.
+    """
+    lib = _fresh_library(tmp_path)
+    a, _ma = _add_source(lib, tmp_path, "a.mp4", data=b"aaaa")  # the LRU victim
+    b, mb = _add_source(lib, tmp_path, "b.mp4", data=b"bbbb")  # the keep that fails
+    calls = {"n": 0}
+
+    def flaky_now() -> str:
+        calls["n"] += 1
+        if calls["n"] >= 2:  # fail on the SECOND keep, after eviction has already run
+            raise RuntimeError("crash mid-sequence")
+        return "t0"
+
+    store = ManagedStore(
+        lib,
+        cap_bytes=4,  # holds exactly ONE 4-byte copy -> keeping B must first evict A
+        copier=lambda s, d: Path(d).write_bytes(Path(s).read_bytes()),
+        now=flaky_now,
+    )
+    ka = store.keep_copy(a)  # {A}=4 (now call #1)
+
+    with pytest.raises(RuntimeError, match="crash mid-sequence"):
+        store.keep_copy(b)  # evicts A, then now() raises -> ROLLBACK the whole sequence
+
+    # ATOMIC: A's eviction was rolled back (A intact + still authoritative), and B left
+    # no partial state (no managed row, entity still on its original, no orphan file).
+    assert Path(ka["managedPath"]).exists()  # A's bytes NOT destroyed
+    assert _entity_path(lib, a) == ka["managedPath"]  # A still authoritative
+    assert {e["entityId"] for e in store.status()["entries"]} == {a}
+    assert _entity_path(lib, b) == str(mb.resolve())  # B never re-pointed
+    assert {p.name for p in store.store_dir.glob("*")} == {Path(ka["managedPath"]).name}
+
+
+# --------------------------------------------------------------------------- #
 # status / evict / clear
 # --------------------------------------------------------------------------- #
 def test_status_exposes_size_cap_and_count(tmp_path: Path) -> None:

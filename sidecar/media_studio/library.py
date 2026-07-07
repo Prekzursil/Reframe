@@ -460,17 +460,25 @@ class Library:
 
         return keepcopy.ManagedStore(self).status()
 
-    def managed_evict(self, entity_id: str) -> dict[str, Any]:
-        """WU-3b1: evict ``entity_id``'s managed copy (re-point to original, free the bytes)."""
+    def managed_evict(self, entity_id: str, *, force: bool = False) -> dict[str, Any]:
+        """WU-3b1: evict ``entity_id``'s managed copy (re-point to original, free the bytes).
+
+        Refuses LOUD when the original source is gone (the managed copy is the only
+        surviving copy) unless ``force=True`` — never silently destroys the only copy.
+        """
         from . import keepcopy  # lazy import keeps keepcopy (which imports library) cycle-free
 
-        return keepcopy.ManagedStore(self).evict(entity_id)
+        return keepcopy.ManagedStore(self).evict(entity_id, force=force)
 
-    def managed_clear(self) -> dict[str, Any]:
-        """WU-3b1: evict EVERY managed copy (re-point each entity to its original)."""
+    def managed_clear(self, *, force: bool = False) -> dict[str, Any]:
+        """WU-3b1: evict EVERY managed copy (re-point each entity to its original).
+
+        Refuses LOUD (destroying nothing) when any managed copy's original source is gone
+        unless ``force=True`` — never silently destroys the only surviving copy of a video.
+        """
         from . import keepcopy  # lazy import keeps keepcopy (which imports library) cycle-free
 
-        return keepcopy.ManagedStore(self).clear()
+        return keepcopy.ManagedStore(self).clear(force=force)
 
 
 class Project:

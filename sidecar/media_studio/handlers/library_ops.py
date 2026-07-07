@@ -248,26 +248,35 @@ def library_managed_status(self: Services, params: dict[str, Any], ctx: RpcConte
 
 
 def library_managed_evict(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
-    """``library.managedEvict({id})`` -> ``{ok, entityId}`` (WU-3b1). Direct-return.
+    """``library.managedEvict({id, force?})`` -> ``{ok, entityId}`` (WU-3b1). Direct-return.
 
     Evicts ONE video's managed copy: re-points its entity BACK to the original source
-    (provenance) and frees the managed bytes (unless another entity shares them). An
-    entity with no managed copy raises INVALID_PARAMS (loud).
+    (provenance) and frees the managed bytes (unless another entity shares them). Refuses
+    LOUD (INVALID_PARAMS) when the original source is gone — the managed copy is then the
+    ONLY surviving copy — unless ``force=true`` is sent to destroy it anyway. An entity
+    with no managed copy also raises INVALID_PARAMS (loud).
     """
     entity_id = _require_str(params, "id")
+    force = bool(params.get("force", False))
     try:
-        return self.library.managed_evict(entity_id)
+        return self.library.managed_evict(entity_id, force=force)
     except _keepcopy.KeepCopyError as exc:
         raise _invalid(str(exc)) from exc
 
 
 def library_managed_clear(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
-    """``library.managedClear()`` -> ``{ok, cleared}`` (WU-3b1). Direct-return.
+    """``library.managedClear({force?})`` -> ``{ok, cleared}`` (WU-3b1). Direct-return.
 
-    Evicts EVERY managed copy (re-points each entity to its original path). Idempotent
-    on an empty store (``cleared`` is 0).
+    Evicts EVERY managed copy (re-points each entity to its original path). Idempotent on
+    an empty store (``cleared`` is 0). Refuses LOUD (INVALID_PARAMS), destroying nothing,
+    when any managed copy's original source is gone — it would be the only surviving copy —
+    unless ``force=true`` is sent to destroy those irreplaceable copies too.
     """
-    return self.library.managed_clear()
+    force = bool(params.get("force", False))
+    try:
+        return self.library.managed_clear(force=force)
+    except _keepcopy.KeepCopyError as exc:
+        raise _invalid(str(exc)) from exc
 
 
 def project_open(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:

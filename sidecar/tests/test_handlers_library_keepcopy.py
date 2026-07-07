@@ -126,6 +126,47 @@ def test_managed_clear_removes_all(tmp_path: Path, ctx: RpcContext) -> None:
     assert svc.library_managed_status({}, ctx)["count"] == 0
 
 
+def test_managed_evict_original_gone_refuses_loud(tmp_path: Path, ctx: RpcContext) -> None:
+    """RPC managedEvict of a copy whose original is gone fails LOUD (INVALID_PARAMS): the
+    managed copy is the only surviving copy and must not be silently destroyed."""
+    svc = _services(tmp_path)
+    src, media = _add_source(svc, tmp_path, "talk.mp4", data=b"only-copy")
+    managed = svc.library_keep_copy({"id": src}, ctx)["managed"]
+    media.unlink()  # original gone -> irreplaceable
+    with pytest.raises(RpcError) as exc:
+        svc.library_managed_evict({"id": src}, ctx)
+    assert exc.value.code == ErrorCode.INVALID_PARAMS
+    assert Path(managed["managedPath"]).exists()  # not destroyed
+
+
+def test_managed_evict_force_destroys_only_copy(tmp_path: Path, ctx: RpcContext) -> None:
+    """RPC managedEvict with force=true is the explicit escape hatch (destroys it)."""
+    svc = _services(tmp_path)
+    src, media = _add_source(svc, tmp_path, "talk.mp4", data=b"only-copy")
+    managed = svc.library_keep_copy({"id": src}, ctx)["managed"]
+    media.unlink()
+    out = svc.library_managed_evict({"id": src, "force": True}, ctx)
+    assert out == {"ok": True, "entityId": src}
+    assert not Path(managed["managedPath"]).exists()
+
+
+def test_managed_clear_refuses_when_irreplaceable(tmp_path: Path, ctx: RpcContext) -> None:
+    """RPC managedClear refuses LOUD (INVALID_PARAMS), destroying nothing, when any copy's
+    original is gone — unless force=true."""
+    svc = _services(tmp_path)
+    a, ma = _add_source(svc, tmp_path, "a.mp4", data=b"aaa")
+    managed = svc.library_keep_copy({"id": a}, ctx)["managed"]
+    ma.unlink()  # irreplaceable
+    with pytest.raises(RpcError) as exc:
+        svc.library_managed_clear({}, ctx)
+    assert exc.value.code == ErrorCode.INVALID_PARAMS
+    assert Path(managed["managedPath"]).exists()  # nothing destroyed
+    # force=true clears it.
+    out = svc.library_managed_clear({"force": True}, ctx)
+    assert out == {"ok": True, "cleared": 1}
+    assert not Path(managed["managedPath"]).exists()
+
+
 # --------------------------------------------------------------------------- #
 # registration
 # --------------------------------------------------------------------------- #
