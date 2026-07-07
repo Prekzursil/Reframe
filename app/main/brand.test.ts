@@ -11,7 +11,7 @@
 // This test reads the REAL source files (not copies) so that:
 //   1. all user-facing brand surfaces read "Reframe",
 //   2. NO user-facing surface leaks "media-studio"/"Media Studio", and
-//   3. app/package.json declares version 1.3.0 + productName "Reframe" while the
+//   3. app/package.json declares version 1.4.0 + productName "Reframe" while the
 //      internal `name` stays "media-studio".
 // Runs in the default node environment (filesystem access, no jsdom). Tests run
 // with cwd = app/, so repo paths are resolved via import.meta.url.
@@ -105,15 +105,15 @@ describe('brand rename — NO user-facing "media-studio" leak (WU A1 / R8 audit)
   }
 });
 
-describe('app/package.json — v1.3 version + productName (WU A1)', () => {
+describe('app/package.json — v1.4 version + productName (WU A1 / WU-R2)', () => {
   const pkg = JSON.parse(read(PACKAGE_JSON)) as {
     version: string;
     productName: string;
     name: string;
   };
 
-  it('version is bumped to 1.3.0', () => {
-    expect(pkg.version).toBe('1.3.0');
+  it('version is bumped to 1.4.0', () => {
+    expect(pkg.version).toBe('1.4.0');
   });
 
   it('productName is the display brand "Reframe"', () => {

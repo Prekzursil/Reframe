@@ -3,40 +3,139 @@
 All notable changes to Reframe — Media Studio are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.4.0] — 2026-07-07
 
-### [1.3.0] — in development
+**Reframe v1.4 — the experience overhaul.** One big release that turns the raw
+first-run into a plug-and-play experience: it kills the three errors that greeted
+new installs, makes setup visible and choosable, surfaces where every clip came
+from, and re-skins the whole app in a calm cool blue-gray. Almost all of it is
+wiring + making existing machinery visible, not new capability. Ships **in place**
+over the existing GitHub-Releases auto-update feed (the bump to **1.4.0** is what
+lets that feed report an update at all — 1.3.0 reports "no update" to itself).
+Both coverage gates stay at **strict 100% line + branch** (renderer vitest **and**
+sidecar pytest) under the single `quality` CI gate.
 
-**Reframe v1.3 — naming lock + provenance reconcile.** v1.3 continues the
-`1.1.0 → 1.2.0 → 1.3` lineage (v1.2.0 = the YuNet detector / virality badge /
-EdgeTAM tracker release) on the `feat/reframe-v1.3` branch built off the clean
-`v1.2.0` base. The final `1.3.0` tag is cut at release (workstream F).
+### Fixed — the three first-launch errors are gone
 
-### Changed — display name unified to "Reframe" (WU A1)
+- **"Sidecar is not running" on first launch** — the app no longer drops you into
+  a dead Library while Python and the models are still installing. A full-screen
+  **"Setting up Reframe"** first-run screen now stands in for the tabbed shell
+  while provisioning, driven by the real `bootstrap.progress` stream (phase +
+  progress bar), and auto-transitions into the app the moment the sidecar reports
+  **running**. Setup failures / offline / partial states are first-class in that
+  view with a **Retry** (no dead-end, no raw crash banner).
+- **Player preview "code 4" / clipped-at-the-top** — the preview is now
+  sidecar-state-aware: while the playback proxy is still building it shows
+  **"Building preview…"** (not a raw exit-code), reloads when `proxy.state` goes
+  ready, and reports a real error loudly with its actual reason. The
+  fixed-height/overflow CSS that cut the frame "in half at the top" is fixed.
+- **Settings / first-run confusion** — the local-vs-cloud **FirstRunChooser** that
+  was buried in Settings is surfaced into the first-run flow, so the choice is made
+  up front instead of failing later.
 
-- **One user-facing name: "Reframe".** The window title, the in-app header, the
-  Electron About panel, and the installer/Start-menu shortcut now all read
-  **"Reframe"** (previously "Reframe - Media Studio"). `app/package.json` gains a
-  **`productName: "Reframe"`** key and bumps to **1.3.0**. The internal id
-  **`media-studio`** is deliberately unchanged — the package `name`, the
-  `local.media-studio` appId, the `${name}` installer-artifact filename, and every
-  appData/path literal keep it so first-run state, proxy/peak/dub caches, and the
-  sidecar-env sentinel are untouched. A brand guard test asserts no user-facing
-  surface leaks "media-studio"/"Media Studio".
+### Added — in-app install profiles (Min / Default / Full / Custom)
 
-### Legal — NON-COMMERCIAL while ViNet-S is bundled (WU B4/F1)
+- **Choose what gets installed, in the app, on first run.** A first-run profile
+  picker (**Minimum · Default · Full · Custom**) shows what each level includes,
+  why, and its approximate download size, then routes the choice into first-run
+  bootstrap (which previously spawned with no arguments and always fetched the same
+  set). The profile→asset map is a **single source of truth** with a conformance
+  test asserting it stays a superset of the CORE model floor (YuNet / S3FD / LR-ASD)
+  and matches the sidecar — every level keeps that floor so the app never silently
+  falls back to a plain center crop.
 
-- **Reframe v1.3 bundles the ViNet-S saliency model under CC-BY-NC-SA-4.0.**
+### Added — Library provenance, relink & keep-a-copy
+
+- **See where every clip came from.** Each library item now shows its **source
+  path**, an **on-disk / MISSING** badge, and **open-in-folder**; a moved or
+  renamed source can be **relinked** with a content-hash verify so you re-point to
+  the right file, not just any file. Existing videos get their `content_hash`
+  back-filled lazily (pin-on-view) so relink works for the clips you already have,
+  not only new adds; a source that is already gone surfaces "relink unavailable"
+  honestly.
+- **Keep a managed copy of originals (opt-in).** An opt-in keep-a-copy imports a
+  managed duplicate of source files with a **free-space preflight**, content-hash
+  dedup, a cumulative size cap + meter, and an **atomic** copy (temp + replace with
+  rollback) so it never half-writes or silently doubles your disk use.
+
+### Added — API keys: reveal & live usage
+
+- **Providers & Keys** lets you **reveal** a stored key on demand and shows
+  **per-key live usage**, so you can confirm the right key is set and watch spend —
+  while the key stays redacted over the RPC/IPC bridge by default and is never
+  logged.
+
+### Changed — cool blue-gray visual overhaul
+
+- **A calm, cool blue-gray re-skin, token-first.** Design tokens v2 lift the base
+  off near-black toward a faint cool blue-gray and **widen the surface ladder** so
+  cards, panels, and wells stratify with real elevation and a top-lit atmosphere;
+  every component inherits it. A humanized header replaces the QUALITY/ROUTING
+  jargon with plain-language iconed toggles ("Runs on: This computer / Cloud",
+  "Where jobs run: …") plus an egress dot and a Jobs status pill (same values and
+  handlers — relabel only, **local stays default, cloud strictly opt-in**). A
+  designed state system lands skeleton-shimmer loading, ghost-poster empties, a
+  calm-amber **"Reconnecting…"** (hard-red reserved for true failure), and a framed
+  player error card; cards, buttons, tabs, and inputs get signature hover / focus /
+  active states. **AA contrast is re-verified and the `tokens.conformance` test
+  stays green.**
+
+### Added — in-place auto-update (safe by construction)
+
+- **Updates land in place over GitHub Releases** — a packaged build checks the feed
+  on launch and drives an in-app update banner (electron-updater;
+  download-then-quit-and-install). Because a working install can be bricked by a bad
+  update, v1.4 lands its safety net **first**: a **single-instance lock** (plus a
+  data-root-scoped lock so two distinct copies pointed at one relocatable data
+  folder also mutually exclude) prevents two bootstraps racing into the same env /
+  `library.db`, and a **version-aware re-bootstrap** gates first-run on a persisted
+  shipped-requirements **fingerprint** (not just marker existence) so an update that
+  adds Python deps re-provisions the env instead of starting the sidecar against a
+  stale one ("No module X"). A version-triggered re-bootstrap is **silent** and
+  reuses the saved profile — it never re-prompts.
+
+### Changed — display name & icon unified to "Reframe"
+
+- **One user-facing name and a real app icon.** The window title, in-app header,
+  Electron About panel, and installer / Start-menu shortcut all read **"Reframe"**,
+  and the app ships its production multi-size icon. The About panel reads the
+  version **dynamically** via `app.getVersion()`, so it tracks the package version
+  with no hardcoded string. The internal id **`media-studio`** is deliberately
+  unchanged — the package `name`, the `local.media-studio` appId, the `${name}`
+  installer-artifact filename, and every appData/path literal keep it so **first-run
+  state, the data root, proxy/peak/dub caches, and the sidecar-env sentinel survive
+  the upgrade untouched**. A brand guard test asserts no user-facing surface leaks
+  "media-studio" / "Media Studio".
+
+### Legal — NON-COMMERCIAL while ViNet-S is bundled
+
+- **Reframe v1.4 still bundles the ViNet-S saliency model under CC-BY-NC-SA-4.0.**
   ViNet-S (the no-face crop-tracking video-saliency network, ICASSP 2025,
   arXiv:2502.00397) is licensed **Attribution-NonCommercial-ShareAlike 4.0**, so
   **the app as shipped is NON-COMMERCIAL while that model is bundled**. A future
   paid tier MUST remove or replace ViNet-S. Its required attribution — © 2025
   Rohit Girmaji, Siddharth Jain, Bhav Beri, Sarthak Bansal, Vineet Gandhi (IIIT
   Hyderabad) — plus the other bundled model licenses (YuNet MIT, EdgeTAM
-  Apache-2.0, TransNetV2 MIT, LR-ASD MIT) are now surfaced **in-app** at
+  Apache-2.0, TransNetV2 MIT, LR-ASD MIT) are surfaced **in-app** at
   **Settings → Licenses** and in the repo-root **`NOTICE`** file; the vendored
   full CC-BY-NC-SA-4.0 text ships at
   `sidecar/media_studio/features/_vinet_s/LICENSE`.
+
+### Rolling back to 1.3.0
+
+- **If a 1.4 update ever misbehaves, you can go back.** Download and re-run the
+  **1.3.0** installer from the
+  [Releases page](https://github.com/Prekzursil/Reframe/releases) — it installs
+  over the top and, because the internal id, appId, and every appData/path literal
+  are unchanged across the upgrade, your **userData and the data root (library,
+  keys, proxies, caches, installed models) are preserved**. Nothing is migrated
+  destructively, so a downgrade re-uses the same data folder.
+
+### Roadmap
+
+- **A dedicated Reframe Director panel is a v1.5 item.** v1.4 promotes
+  reframe-to-vertical to a first-class action and wires the existing override
+  controls; the fuller prompt-driven Reframe Director surface is planned for **1.5**.
 
 ## [1.2.0] — 2026-07-03
 

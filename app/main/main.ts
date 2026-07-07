@@ -1327,7 +1327,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     // The native "About Reframe" panel (Help ▸ About / macOS app menu) — the single
     // user-facing About surface. applicationName is the display brand "Reframe";
-    // applicationVersion reads package.json.version (1.3.0) via Electron.
+    // applicationVersion reads package.json.version (1.4.0) via Electron.
     app.setAboutPanelOptions({ applicationName: 'Reframe', applicationVersion: app.getVersion() });
     bootstrap();
 
