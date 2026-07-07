@@ -288,6 +288,8 @@ button {
   font-family: inherit;
 }
 
+/* RAISED voice (default): a real control — surface + hairline edge + a seated
+   drop shadow, so it reads as a physical, pressable object, not a flat tint. */
 .library__add-btn,
 .library__remove-btn,
 .workspace__back,
@@ -296,25 +298,28 @@ button {
 .timeline__toolbar button {
   appearance: none;
   padding: 6px 14px;
-  border: 1px solid transparent;
+  border: 1px solid var(--edge);
   border-radius: var(--radius-sm);
-  background: var(--surface-hover);
+  background: var(--surface-raised);
   color: var(--text-secondary);
+  box-shadow: var(--elev-1);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition:
     background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out),
     transform var(--dur-fast) var(--ease-out);
 }
 
-.library__remove-btn:hover,
-.workspace__back:hover,
 .feature-panel button:hover:not(:disabled),
 .shortmaker button:hover:not(:disabled),
 .timeline__toolbar button:hover:not(:disabled) {
-  background: var(--surface-active);
+  background: var(--surface-hover);
+  border-color: var(--edge-strong);
+  box-shadow: var(--elev-2);
   color: var(--text-primary);
 }
 
@@ -324,6 +329,23 @@ button {
 .shortmaker button:active:not(:disabled),
 .timeline__toolbar button:active:not(:disabled) {
   transform: translateY(1px);
+  box-shadow: var(--elev-1);
+}
+
+/* GHOST voice: truly quiet — no fill, no edge, no shadow at rest; a low-key nav /
+   secondary action that only lifts a whisper of tint on hover. Overrides the
+   raised base for these two. (Remove's hover is the destructive-red rule below.) */
+.library__remove-btn,
+.workspace__back {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+}
+
+.workspace__back:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 
 .feature-panel button:disabled,
@@ -333,7 +355,9 @@ button {
   cursor: default;
 }
 
-/* Accent voice: the primary/approve actions ONLY (one per surface). */
+/* ACCENT voice: the primary/approve actions ONLY (one per surface). Lit from
+   within — an inset top highlight over a soft amber halo — so it reads as the
+   energised, raised primary, not a flat orange rectangle. */
 .library__add-btn,
 .feature-panel form button[type="submit"],
 .feature-panel .actions > button:first-child:not(.secondary),
@@ -341,6 +365,8 @@ button {
 .sm-export button,
 .sm-row-decide button[aria-label="Approve"] {
   background: var(--accent);
+  border-color: transparent;
+  box-shadow: var(--accent-glow);
   color: var(--accent-ink);
   font-weight: 700;
 }
@@ -352,6 +378,7 @@ button {
 .sm-export button:hover:not(:disabled),
 .sm-row-decide button[aria-label="Approve"]:hover:not(:disabled) {
   background: var(--accent-hover);
+  box-shadow: var(--accent-glow-hover);
   color: var(--accent-ink);
 }
 
@@ -400,6 +427,27 @@ button {
 .shortmaker select:hover,
 .shortmaker textarea:hover {
   border-color: var(--edge-strong);
+}
+
+/* Focus: an accent GLOW ring (box-shadow halo) on top of the border-color shift,
+   so a focused field reads as live-and-selected — not just a 1px edge change.
+   Class-scoped so it beats the global :where() focus-visible ring on these fields.
+   The transition includes box-shadow so the glow eases in. */
+.library__add-input:focus-visible,
+.feature-panel input:focus-visible,
+.feature-panel select:focus-visible,
+.feature-panel textarea:focus-visible,
+.shortmaker input:focus-visible,
+.shortmaker select:focus-visible,
+.shortmaker textarea:focus-visible,
+.timeline__editor input:focus-visible,
+.timeline__editor textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent-edge);
+  box-shadow: var(--focus-glow);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
 }
 
 /* ---- Library ------------------------------------------------------------------ */
@@ -680,18 +728,47 @@ button {
   color: var(--text-muted);
 }
 
-/* "Has transcript" mark: quiet success chip, not an accent grab. */
-.library__badge {
+/* Provenance chip row: quiet, labelled pills that read what a card CARRIES
+   (derived artifacts), sitting under the title. A tonal seam + tracked micro-caps,
+   never an accent grab. */
+.library__chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.library__chip {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: var(--radius-xs);
+  gap: var(--space-2);
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1.4;
+}
+
+/* A leading status dot gives the chip a second (non-colour-only) signal. */
+.library__chip::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  opacity: 0.7;
+}
+
+/* "Has transcript" chip: quiet success voice — an available artifact, not an
+   accent grab. (`.library__badge` is test-pinned; kept as the transcript chip.) */
+.library__badge.library__chip {
   background: var(--status-success-soft);
   color: var(--status-success);
-  font-size: 11px;
-  font-weight: 700;
 }
 
 /* Library's inline fallback toast strip (when the app-level host is absent). */
@@ -833,6 +910,7 @@ button {
   appearance: none;
   position: relative;
   padding: 11px 14px;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   background: transparent;
   border: none;
   color: var(--text-muted);
@@ -842,7 +920,9 @@ button {
   font-weight: var(--type-caption-weight);
   letter-spacing: var(--type-caption-tracking);
   text-transform: uppercase;
-  transition: color var(--dur-fast) var(--ease-out);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 
 .tab::after {
@@ -865,8 +945,12 @@ button {
   background: var(--edge-strong);
 }
 
+/* Active: a gentle accent wash + accent underline seats the active tab into the
+   strip — softer than a stark colour block, and not colour-alone (the underline
+   is a second, shape signal). */
 .tab--active {
   color: var(--text-primary);
+  background: var(--accent-soft);
 }
 
 .tab--active::after {

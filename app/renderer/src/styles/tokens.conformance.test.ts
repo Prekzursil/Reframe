@@ -129,6 +129,12 @@ const ELEVATION_PLANES = [
   '--surface-overlay',
 ] as const;
 
+// The transient interaction tints a card swaps its background to while the user
+// hovers/presses it. They sit LIGHTER than the rest planes, so quiet text on a
+// card must still clear AA against them — otherwise a timecode/label goes
+// sub-4.5:1 the instant the card is touched. (WU-2d.)
+const INTERACTION_PLANES = ['--surface-hover', '--surface-active'] as const;
+
 describe('dark-editorial surface ladder recalibration (WU-2a)', () => {
   it('lifts the base OFF pure near-black (canvas is a real, not-black surface)', () => {
     const tokens = readTokens();
@@ -193,6 +199,17 @@ describe('dark-editorial surface ladder recalibration (WU-2a)', () => {
     }
   });
 
+  it('holds --text-faint at AA (>=4.5:1) on the hover + active interaction tints too', () => {
+    // WU-2d: cards flip their bg to --surface-hover / --surface-active on
+    // interaction, so faint (its quietest text) must still clear AA there — not
+    // just on the seated elevation planes.
+    const tokens = readTokens();
+    const faint = toRgb(tokens, '--text-faint');
+    for (const plane of INTERACTION_PLANES) {
+      expect(contrast(faint, toRgb(tokens, plane))).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it('keeps a legible text hierarchy above the quiet steps', () => {
     const tokens = readTokens();
     const primary = relLum(toRgb(tokens, '--text-primary'));
@@ -203,6 +220,9 @@ describe('dark-editorial surface ladder recalibration (WU-2a)', () => {
     expect(primary).toBeGreaterThan(secondary);
     expect(secondary).toBeGreaterThan(muted);
     expect(secondary).toBeGreaterThan(faint);
+    // WU-2d: muted is the LOUDER quiet step — it must sit lighter than faint
+    // (fixes the WU-2a luminance inversion where muted was darker than faint).
+    expect(muted).toBeGreaterThan(faint);
   });
 
   it('defines a layered elevation scale (e0 flush -> e3 lifted) for real depth', () => {

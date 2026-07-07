@@ -489,6 +489,16 @@ export function Library({
                 <VideoThumb video={video} />
                 <div className="library__item-main">
                   <span className="library__item-title">{video.title}</span>
+                  {/* WU-2d: quiet provenance chip row — reads what the card CARRIES,
+                      derived from real card data (transcript). Wiring further
+                      provenance signals is a later WU; no fabricated chips. */}
+                  {video.hasTranscript ? (
+                    <div className="library__chips">
+                      <span className="library__badge library__chip" title="Has transcript">
+                        Transcript
+                      </span>
+                    </div>
+                  ) : null}
                   {/* WU-1f: the clear source path moves into <LibraryProvenance>;
                       without the provenance handlers, keep the legacy compact line. */}
                   {provenance ? null : (
@@ -505,11 +515,6 @@ export function Library({
                 />
               ) : null}
               <div className="library__item-meta">
-                {video.hasTranscript ? (
-                  <span className="library__badge" title="Has transcript">
-                    T
-                  </span>
-                ) : null}
                 <button
                   type="button"
                   className="library__remove-btn"

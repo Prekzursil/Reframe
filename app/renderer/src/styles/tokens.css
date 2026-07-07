@@ -38,16 +38,24 @@
   --edge: rgba(255, 255, 255, 0.09); /* nudged up for the lifted (lighter) surfaces */
   --edge-strong: rgba(255, 255, 255, 0.15);
 
-  /* ---- text ladder (real contrast steps, not one gray) -------------------- */
+  /* ---- text ladder (real contrast steps, not one gray) --------------------
+   * Louder -> quieter: primary > secondary > MUTED > faint. Muted is the LOUDER
+   * label voice, faint the quietest readable step — so muted MUST sit lighter
+   * than faint. WU-2a shipped an inversion (muted #8a929e was DARKER than faint
+   * #949cab); WU-2d re-orders it: muted is lifted above faint and both are pinned
+   * by the tokens.conformance ladder test (muted>faint, and faint AA on every
+   * plane it can render on — the four elevation planes PLUS the hover/active
+   * interaction tints, since a card swaps its bg to hover/active while pressed). */
   --text-primary: #f4f5f7; /* titles, numbers, content */
   --text-secondary: #b0b6c0; /* supporting copy, values */
-  --text-muted: #8a929e; /* labels, captions — lifted + cooled to track the lifted surfaces */
-  /* faint: quietest readable step — timestamps, paths, disabled. Re-tuned (WU-2a)
-   * UP from #838892 because the surface ladder was lifted: held at AA (>=4.5:1) on
-   * every ELEVATION PLANE it renders on — deep 7.0, bg 6.6, raised 5.8, overlay 5.0
-   * (the transient hover/active PRESS tints sit lighter and are not read-at-rest).
-   * (Was #50555f at ~2.4:1, which failed WCAG 1.4.3 for real content it labels.) */
-  --text-faint: #949cab;
+  --text-muted: #adb4c2; /* labels, captions — the LOUDER quiet step; lifted above faint */
+  /* faint: quietest readable step — timestamps, paths, disabled. Nudged UP again
+   * (WU-2d, from #949cab) so it clears AA (>=4.5:1) not only on the four elevation
+   * planes but on the LIGHTER hover/active interaction tints too (card bg switches
+   * to --surface-hover 5.6:1 / --surface-active 4.7:1 on hover/press — where its
+   * quiet text is still read). (Originally #50555f at ~2.4:1, a real WCAG 1.4.3
+   * fail for the content it labels.) */
+  --text-faint: #a6aebd;
 
   /* ---- the ONE accent: signal amber (progress / active / approve only) ---- */
   --accent: #f2a33c;
@@ -123,6 +131,27 @@
 
   /* ---- focus ring (double ring: canvas gap + accent edge) ------------------ */
   --focus-ring: 0 0 0 2px var(--surface-bg), 0 0 0 4px var(--accent-edge);
+
+  /* focus GLOW: for text fields, a crisp accent hairline + a soft amber halo
+   * (box-shadow, not just a border-color shift) so a focused input reads as
+   * live-and-selected. The 1px accent edge is the AA-visible indicator; the 4px
+   * soft wash is the glow. Composed alongside a border-color:accent shift. */
+  --focus-glow: 0 0 0 1px var(--accent-edge), 0 0 0 4px var(--accent-soft);
+
+  /* accent GLOW: the "lit from within" treatment for an accent (primary) button —
+   * an inset top highlight (light catches the top bevel = the inner glow) over a
+   * soft amber ambient halo, so the fill reads as a raised, energised control. */
+  --accent-glow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28), inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 2px 10px rgba(242, 163, 60, 0.3);
+  --accent-glow-hover:
+    inset 0 1px 0 rgba(255, 255, 255, 0.34), inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 3px 14px rgba(242, 163, 60, 0.4);
+
+  /* bottom SCRIM: a top-transparent -> darker gradient laid over the foot of a
+   * media thumbnail so an overlaid timecode badge stays legible on any frame
+   * (bright skies included) without darkening the whole poster. */
+  --scrim-bottom: linear-gradient(180deg, rgba(0, 0, 0, 0) 42%, rgba(0, 0, 0, 0.62));
 
   /* ---- depth ----------------------------------------------------------------
    * A raised thing gets an inset top-highlight (light catches its top edge) PLUS

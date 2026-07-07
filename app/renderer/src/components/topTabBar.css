@@ -23,6 +23,7 @@
   gap: var(--space-3);
   padding: 10px 14px;
   border: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   background: transparent;
   color: var(--text-muted);
   font-family: var(--font-ui);
@@ -91,10 +92,13 @@
   background: var(--edge-strong);
 }
 
-/* Active: accent text + icon + a solid accent underline. Unmistakable, and not
-   color-alone (the underline is a second, shape signal). */
+/* Active: accent text + icon + a gentle accent WASH seating it into the strip +
+   an accent underline. Softer than a stark text-flip — the wash reads as a
+   designed, integrated active state; the underline is a second (shape) signal so
+   it is never colour-alone. */
 .toptab--active {
   color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .toptab--active:hover {
