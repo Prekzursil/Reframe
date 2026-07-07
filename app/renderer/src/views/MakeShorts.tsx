@@ -44,6 +44,13 @@ const SECTIONS: TabDef[] = [
 export interface MakeShortsProps {
   /** A deep-link batch id to resume on mount (forwarded to the Batch surface). */
   resumeId?: string;
+  /**
+   * WU-3a4: a deep-linked source video to pre-select on the Make front door. The
+   * Workspace "Short-maker" tab routes here (this section is the single ShortMaker
+   * owner) with the open video threaded through so AI moment-pick is immediately
+   * revealed — no re-picking. Omitted → the picker starts empty (unchanged).
+   */
+  videoId?: string;
 }
 
 function errText(err: unknown): string {
@@ -51,11 +58,13 @@ function errText(err: unknown): string {
 }
 
 /** The Make Shorts section: AI/manual making + the single gallery + batch. */
-export function MakeShorts({ resumeId }: MakeShortsProps): React.ReactElement {
+export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactElement {
   // Resume deep-links land on the Batch surface; otherwise the Make front door.
   const [active, setActive] = useState<string>(resumeId ? 'batch' : 'make');
   const [videos, setVideos] = useState<Video[]>([]);
-  const [selectedId, setSelectedId] = useState('');
+  // WU-3a4: seed the picker from a deep-linked source video (the Workspace
+  // Short-maker tab redirect) so AI moment-pick is revealed on arrival.
+  const [selectedId, setSelectedId] = useState(videoId ?? '');
   const [manualBusy, setManualBusy] = useState(false);
   const [manualNote, setManualNote] = useState<string | null>(null);
   const [manualError, setManualError] = useState<string | null>(null);

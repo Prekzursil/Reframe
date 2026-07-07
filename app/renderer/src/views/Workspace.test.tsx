@@ -595,3 +595,77 @@ describe('Workspace tab clusters (WU-3a2)', () => {
     expect(container.querySelector('[data-panel="Tracks"]')).not.toBeNull();
   });
 });
+
+// WU-3a4: the "Short-maker" tab is a SINGLE-OWNER deep-link. When the Make Shorts
+// thread is wired (App→Edit→Workspace via onOpenMakeShorts), selecting it — by
+// click OR an initialTab='shortmaker' deep-link (the Task Hub "Reframe to vertical"
+// card / a remembered 'reframe' choice) — navigates to the top-level Make Shorts
+// section (the ONE ShortMaker owner) with this video pre-selected, instead of
+// mounting a SECOND ShortMaker copy here. ADDITIVE: the tab entry stays, and
+// without the callback it still mounts ShortMaker in place (backward-compatible).
+describe('Short-maker tab single-owner deep-link (WU-3a4)', () => {
+  function shortmakerTab(): HTMLButtonElement {
+    return container.querySelector(
+      '[role="tab"][data-tab-id="shortmaker"]',
+    ) as HTMLButtonElement;
+  }
+  function selected(tabId: string): string | null | undefined {
+    return container
+      .querySelector(`[role="tab"][data-tab-id="${tabId}"]`)
+      ?.getAttribute('aria-selected');
+  }
+
+  it('redirects the Short-maker TAB CLICK to Make Shorts (no second ShortMaker mounted)', async () => {
+    const onOpenMakeShorts = vi.fn();
+    await act(async () => {
+      root.render(
+        <Workspace video={video} onBack={() => {}} onOpenMakeShorts={onOpenMakeShorts} />,
+      );
+    });
+    await flush();
+
+    await act(async () => {
+      shortmakerTab().dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+
+    expect(onOpenMakeShorts).toHaveBeenCalledTimes(1);
+    expect(onOpenMakeShorts).toHaveBeenCalledWith('v1');
+    // No second ShortMaker copy is mounted; the active tab stays the default.
+    expect(container.querySelector('[data-panel="ShortMaker"]')).toBeNull();
+    expect(selected('subtitles')).toBe('true');
+    expect(selected('shortmaker')).toBe('false');
+  });
+
+  it('redirects an initialTab="shortmaker" deep-link on mount instead of mounting ShortMaker', async () => {
+    const onOpenMakeShorts = vi.fn();
+    await act(async () => {
+      root.render(
+        <Workspace
+          video={video}
+          onBack={() => {}}
+          initialTab="shortmaker"
+          onOpenMakeShorts={onOpenMakeShorts}
+        />,
+      );
+    });
+    await flush();
+
+    expect(onOpenMakeShorts).toHaveBeenCalledTimes(1);
+    expect(onOpenMakeShorts).toHaveBeenCalledWith('v1');
+    expect(container.querySelector('[data-panel="ShortMaker"]')).toBeNull();
+    // Falls back to the workspace default rather than the redirected tab.
+    expect(selected('subtitles')).toBe('true');
+    expect(selected('shortmaker')).toBe('false');
+  });
+
+  it('still MOUNTS ShortMaker in place for an initialTab="shortmaker" when no redirect is wired (additive fallback)', async () => {
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} initialTab="shortmaker" />);
+    });
+    await flush();
+
+    expect(container.querySelector('[data-panel="ShortMaker"]')).not.toBeNull();
+    expect(selected('shortmaker')).toBe('true');
+  });
+});

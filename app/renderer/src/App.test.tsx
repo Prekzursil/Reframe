@@ -47,11 +47,13 @@ vi.mock('./views/Edit', () => ({
     video,
     onBack,
     onMakeShorts,
+    onMakeShortsForVideo,
     onDirector,
   }: {
     video: Video | null;
     onBack: () => void;
     onMakeShorts?: () => void;
+    onMakeShortsForVideo?: (videoId: string) => void;
     onDirector?: () => void;
   }) => (
     <div data-testid="edit" data-video-id={video?.id ?? ''}>
@@ -61,6 +63,11 @@ vi.mock('./views/Edit', () => ({
       <button type="button" onClick={() => onMakeShorts?.()}>
         hub-make-shorts
       </button>
+      {/* WU-3a4: the Workspace Short-maker tab deep-links to Make Shorts with the
+          open video pre-selected (the single ShortMaker owner). */}
+      <button type="button" onClick={() => onMakeShortsForVideo?.('v1')}>
+        workspace-shortmaker
+      </button>
       <button type="button" onClick={() => onDirector?.()}>
         hub-director
       </button>
@@ -68,10 +75,11 @@ vi.mock('./views/Edit', () => ({
   ),
 }));
 
-// Make Shorts marker exposes the batch resume id App wired (it owns its tests).
+// Make Shorts marker exposes the batch resume id + the deep-linked videoId App
+// wired (it owns its tests).
 vi.mock('./views/MakeShorts', () => ({
-  MakeShorts: ({ resumeId }: { resumeId?: string }) => (
-    <div data-testid="makeshorts" data-resume={resumeId ?? ''} />
+  MakeShorts: ({ resumeId, videoId }: { resumeId?: string; videoId?: string }) => (
+    <div data-testid="makeshorts" data-resume={resumeId ?? ''} data-video-id={videoId ?? ''} />
   ),
 }));
 
@@ -321,6 +329,27 @@ describe('App top-level tabs', () => {
     });
     await flush();
     expect(container.querySelector('[data-testid="makeshorts"]')).not.toBeNull();
+    expect(tab('Make Shorts').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('WU-3a4: the Workspace Short-maker deep-link routes to Make Shorts pre-selected to the video', async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="library"] button')!.click();
+    });
+    await flush();
+    await act(async () => {
+      hubButton('workspace-shortmaker').click();
+    });
+    await flush();
+    const view = container.querySelector('[data-testid="makeshorts"]');
+    expect(view).not.toBeNull();
+    expect(view!.getAttribute('data-video-id')).toBe('v1');
+    // No batch resume on this deep-link.
+    expect(view!.getAttribute('data-resume')).toBe('');
     expect(tab('Make Shorts').getAttribute('aria-selected')).toBe('true');
   });
 

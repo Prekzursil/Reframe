@@ -16,6 +16,16 @@ export interface WorkspaceProps {
    * ADDITIVE: omitted → the workspace default (DEFAULT_WORKSPACE_TAB, Subtitles).
    */
   initialTab?: string;
+  /**
+   * WU-3a4: the SINGLE-OWNER deep-link into the top-level Make Shorts section.
+   * When wired (the App→Edit thread), selecting the "Short-maker" tab — by click
+   * OR an `initialTab='shortmaker'` deep-link (the Task Hub "Reframe to vertical"
+   * card / a remembered 'reframe' choice) — navigates to Make Shorts (the ONE
+   * ShortMaker owner) with this video pre-selected, INSTEAD of mounting a second
+   * ShortMaker copy here. ADDITIVE: omitted → the tab falls back to mounting
+   * ShortMaker in place (backward-compatible; nothing is deleted).
+   */
+  onOpenMakeShorts?: (videoId: string) => void;
 }
 
 // STATIC lazy imports (punch #3): all 8 panels exist now, so the old
@@ -90,8 +100,19 @@ interface OpenResult {
  * Opens the project (project.open) and mounts the active feature panel, passing
  * each the props it declares (videoId + project-derived optionals).
  */
-export function Workspace({ video, onBack, initialTab }: WorkspaceProps): React.ReactElement {
-  const [active, setActive] = useState<string>(initialTab ?? DEFAULT_WORKSPACE_TAB);
+export function Workspace({
+  video,
+  onBack,
+  initialTab,
+  onOpenMakeShorts,
+}: WorkspaceProps): React.ReactElement {
+  // WU-3a4: when the Make Shorts deep-link is wired, the 'shortmaker' tab NEVER
+  // becomes the active in-workspace panel (it redirects to the single owner), so a
+  // 'shortmaker' initialTab falls back to the workspace default instead.
+  const redirectShortmaker = initialTab === 'shortmaker' && onOpenMakeShorts != null;
+  const [active, setActive] = useState<string>(
+    redirectShortmaker ? DEFAULT_WORKSPACE_TAB : (initialTab ?? DEFAULT_WORKSPACE_TAB),
+  );
   // WU-3a2: the "Advanced" (Deliver) cluster is collapsed by default; the toggle
   // lives here so the presentational TabBar stays a pure, hook-free component.
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -131,6 +152,29 @@ export function Workspace({ video, onBack, initialTab }: WorkspaceProps): React.
   useEffect(() => {
     void reloadProject();
   }, [reloadProject]);
+
+  // WU-3a4: an `initialTab='shortmaker'` deep-link with the Make Shorts thread
+  // wired redirects to the single owner on mount — the tab never renders a second
+  // ShortMaker copy here (the active tab already fell back to the default above).
+  useEffect(() => {
+    if (initialTab === 'shortmaker' && onOpenMakeShorts) {
+      onOpenMakeShorts(video.id);
+    }
+  }, [initialTab, onOpenMakeShorts, video.id]);
+
+  // WU-3a4: intercept the 'shortmaker' selection → deep-link to the single Make
+  // Shorts owner (when wired); every other tab activates in place. Without the
+  // callback, 'shortmaker' activates like any tab and mounts ShortMaker (fallback).
+  const handleSelect = useCallback(
+    (id: string) => {
+      if (id === 'shortmaker' && onOpenMakeShorts) {
+        onOpenMakeShorts(video.id);
+        return;
+      }
+      setActive(id);
+    },
+    [onOpenMakeShorts, video.id],
+  );
 
   // WU B3: the mstream resolver is now authoritative for playability — it
   // single-flights the proxy build and NEVER streams the raw, undecodable
@@ -267,7 +311,7 @@ export function Workspace({ video, onBack, initialTab }: WorkspaceProps): React.
       <TabBar
         tabs={WORKSPACE_TABS}
         active={active}
-        onSelect={setActive}
+        onSelect={handleSelect}
         groups={WORKSPACE_TAB_GROUPS}
         advancedOpen={advancedOpen}
         onToggleAdvanced={toggleAdvanced}

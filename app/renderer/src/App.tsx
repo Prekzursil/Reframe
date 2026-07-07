@@ -69,7 +69,9 @@ type Route =
   // The Library home.
   | { name: 'library' }
   // Make Shorts: AI/manual making + the gallery + batch (resume deep-link).
-  | { name: 'makeshorts'; resumeId?: string }
+  // WU-3a4: `videoId` pre-selects a source video (the Workspace Short-maker tab
+  // deep-links here — the single ShortMaker owner — with the open video threaded).
+  | { name: 'makeshorts'; resumeId?: string; videoId?: string }
   // Edit: the per-video manual surface (the open video lives in shell state).
   | { name: 'edit' }
   // Director: the prompt-driven AI video-editing panel.
@@ -313,6 +315,13 @@ function AppShell(): React.ReactElement {
     setRoute({ name: 'makeshorts', resumeId });
   }, []);
 
+  // WU-3a4: the Workspace "Short-maker" tab is a single-owner deep-link — it routes
+  // to the Make Shorts section (the ONE ShortMaker owner) with the open video
+  // pre-selected, instead of mounting a second ShortMaker copy inside the Workspace.
+  const openMakeShortsForVideo = useCallback((videoId: string) => {
+    setRoute({ name: 'makeshorts', videoId });
+  }, []);
+
   // WU-3a1: the Task Hub's "Director" job card routes to the top-level Director
   // section (the open video is already threaded from shell state).
   const openDirector = useCallback(() => {
@@ -381,7 +390,7 @@ function AppShell(): React.ReactElement {
   function renderRoute(): React.ReactElement {
     switch (route.name) {
       case 'makeshorts':
-        return <MakeShorts resumeId={route.resumeId} />;
+        return <MakeShorts resumeId={route.resumeId} videoId={route.videoId} />;
       case 'edit':
         // WU-3a1: the Task Hub's section cards route to the top-level Make Shorts
         // / Director surfaces; workspace-scoped cards stay inside Edit.
@@ -390,6 +399,7 @@ function AppShell(): React.ReactElement {
             video={editVideo}
             onBack={backToLibrary}
             onMakeShorts={openMakeShorts}
+            onMakeShortsForVideo={openMakeShortsForVideo}
             onDirector={openDirector}
           />
         );

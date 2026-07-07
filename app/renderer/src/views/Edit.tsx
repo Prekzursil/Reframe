@@ -36,6 +36,12 @@ export interface EditProps {
   onBack: () => void;
   /** Route to the top-level Make Shorts section (the "Make shorts" job card). */
   onMakeShorts?: () => void;
+  /**
+   * WU-3a4: route to the top-level Make Shorts section PRE-SELECTED to a video —
+   * the Workspace "Short-maker" tab deep-links here (the single ShortMaker owner)
+   * rather than mounting a second copy in the Workspace.
+   */
+  onMakeShortsForVideo?: (videoId: string) => void;
   /** Route to the top-level AI Director section (the "Director" job card). */
   onDirector?: () => void;
 }
@@ -49,6 +55,7 @@ function EditVideo({
   video,
   onBack,
   onMakeShorts,
+  onMakeShortsForVideo,
   onDirector,
 }: EditProps & { video: Video }): React.ReactElement {
   const [mode, setMode] = useState<'hub' | 'workspace'>('hub');
@@ -126,13 +133,26 @@ function EditVideo({
   );
 
   if (mode === 'workspace') {
-    return <Workspace video={video} onBack={onBack} initialTab={tab ?? undefined} />;
+    return (
+      <Workspace
+        video={video}
+        onBack={onBack}
+        initialTab={tab ?? undefined}
+        onOpenMakeShorts={onMakeShortsForVideo}
+      />
+    );
   }
   return <TaskHub video={video} lastChoice={lastChoice} onChoose={handleChoose} />;
 }
 
 /** The Edit section: the per-video Task Hub / Workspace, or an empty state. */
-export function Edit({ video, onBack, onMakeShorts, onDirector }: EditProps): React.ReactElement {
+export function Edit({
+  video,
+  onBack,
+  onMakeShorts,
+  onMakeShortsForVideo,
+  onDirector,
+}: EditProps): React.ReactElement {
   if (!video) {
     return (
       <div className="edit edit--empty" aria-label="Edit">
@@ -145,7 +165,13 @@ export function Edit({ video, onBack, onMakeShorts, onDirector }: EditProps): Re
     );
   }
   return (
-    <EditVideo video={video} onBack={onBack} onMakeShorts={onMakeShorts} onDirector={onDirector} />
+    <EditVideo
+      video={video}
+      onBack={onBack}
+      onMakeShorts={onMakeShorts}
+      onMakeShortsForVideo={onMakeShortsForVideo}
+      onDirector={onDirector}
+    />
   );
 }
 
