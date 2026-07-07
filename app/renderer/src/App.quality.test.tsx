@@ -166,10 +166,11 @@ async function mount(): Promise<void> {
 }
 
 function qualityBtn(label: 'Local' | 'Cloud'): HTMLButtonElement {
-  // WU-2c relabel: the local segment now reads "This computer" (Cloud unchanged).
-  const text = label === 'Local' ? 'This computer' : 'Cloud';
+  // WU-D5: the segment labels now share the routing toggle's Local/Cloud axis
+  // vocabulary (the WU-2c "This computer" wording is retired so the twin controls
+  // read the same axis). The label text IS the button text.
   const btns = Array.from(container.querySelectorAll<HTMLButtonElement>('.quality-toggle__btn'));
-  const found = btns.find((b) => b.textContent === text);
+  const found = btns.find((b) => b.textContent === label);
   if (!found) throw new Error(`quality button "${label}" not found`);
   return found;
 }
@@ -281,6 +282,38 @@ describe('App quality toggle — persist on change', () => {
     });
     await flush();
     expect(qualityBtn('Cloud').classList.contains('is-active')).toBe(true);
+  });
+});
+
+describe('App twin local/cloud controls — scope disambiguation (WU-D5)', () => {
+  it('scopes the model toggle as "AI model" (distinct from the routing toggle)', async () => {
+    await mount();
+    const quality = container.querySelector('.quality-toggle');
+    expect(quality).not.toBeNull();
+    // The scope label names THIS control's axis; aria-label carries it for AT.
+    expect(quality!.getAttribute('aria-label')).toBe('AI model');
+    expect(quality!.querySelector('.quality-toggle__label')?.textContent).toContain('AI model');
+  });
+
+  it('shares the Local/Cloud vocabulary across both controls', async () => {
+    await mount();
+    // Both segmented controls read the same axis words for local vs cloud.
+    expect(qualityBtn('Local').textContent).toBe('Local');
+    expect(qualityBtn('Cloud').textContent).toBe('Cloud');
+    const routingLocal = container.querySelector('.routing-toggle button[data-mode="local"]');
+    const routingCloud = container.querySelector('.routing-toggle button[data-mode="cloud"]');
+    expect(routingLocal?.textContent).toBe('Local');
+    expect(routingCloud?.textContent).toBe('Cloud');
+  });
+
+  it('separates the two controls with an explicit seam inside one cluster', async () => {
+    await mount();
+    const cluster = container.querySelector('.app__routing-cluster');
+    expect(cluster).not.toBeNull();
+    // The cluster holds both toggles and the boundary seam between them.
+    expect(cluster!.querySelector('.quality-toggle')).not.toBeNull();
+    expect(cluster!.querySelector('.routing-toggle')).not.toBeNull();
+    expect(cluster!.querySelector('.app__routing-seam')).not.toBeNull();
   });
 });
 

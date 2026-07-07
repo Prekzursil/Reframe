@@ -177,11 +177,25 @@ export function DirectorPanel({
   // subscriptions read the current pending job without re-subscribing.
   const pending = useRef<PendingJob | null>(null);
 
-  // WU-E2: on mount, read settings once and open the first-run tour when the user
-  // has not seen it. Best-effort: a failed read simply leaves the tour closed (we
-  // never nag on an unreadable settings store). Re-runs each time Director is
-  // opened (a fresh mount) until the "seen" flag is persisted.
+  // WU-E1: the video this panel plans against — the app-selected `video.id`, or
+  // (if that video was closed while a prior plan is still on screen) the plan's
+  // own `videoId`. NEVER the goal text. `null` == no video and no plan → the
+  // panel renders the "Choose a video" empty state instead of the prompt form.
+  const activeVideoId: string | null = video?.id ?? plan?.videoId ?? null;
+
+  // WU-E2 + WU-D6a: read settings and open the first-run tour when the user has
+  // not seen it — but ONLY once a video is actually open. Best-effort: a failed
+  // read simply leaves the tour closed (we never nag on an unreadable settings
+  // store). Re-runs when the active video changes, so the tour fires the first
+  // time the user has something to edit, until the "seen" flag is persisted.
   useEffect(() => {
+    // WU-D6a: never auto-open the focus-trapped tour over the "No video open"
+    // empty state. With nothing to edit, its copy ("it reads the video you have
+    // open", "press Plan edit") is wrong and the trap would sit OVER the only
+    // actionable control ("Choose a video"). Gate on a video being open; the tour
+    // then fires the moment the user actually has something to edit. The header
+    // "What is Director?" affordance still re-opens it on demand in either state.
+    if (activeVideoId === null) return;
     void api.settings
       .get()
       .then((s) => {
@@ -190,7 +204,7 @@ export function DirectorPanel({
       .catch(() => {
         // Best-effort: keep the tour closed if settings can't be read.
       });
-  }, [api]);
+  }, [api, activeVideoId]);
 
   // Dismiss the tour (Skip / Got it / Escape all route here) and persist the
   // "seen" flag so it never re-opens on its own. Best-effort persistence — the
@@ -204,12 +218,6 @@ export function DirectorPanel({
 
   // Re-open the tour on demand (the header "What is Director?" affordance).
   const reopenTour = useCallback((): void => setShowTour(true), []);
-
-  // WU-E1: the video this panel plans against — the app-selected `video.id`, or
-  // (if that video was closed while a prior plan is still on screen) the plan's
-  // own `videoId`. NEVER the goal text. `null` == no video and no plan → the
-  // panel renders the "Choose a video" empty state instead of the prompt form.
-  const activeVideoId: string | null = video?.id ?? plan?.videoId ?? null;
 
   // Fetch the per-data-type cost/egress preview for a freshly-planned plan (F3).
   const loadPreview = useCallback(
@@ -430,6 +438,10 @@ export function DirectorPanel({
       >
         {header}
         <div className="director-empty" data-section="empty">
+          <div className="director-empty__poster" aria-hidden="true">
+            <span className="director-empty__glyph">▶</span>
+            <span className="director-empty__timecode">--:--</span>
+          </div>
           <p className="director-empty__title">No video open</p>
           <p className="director-empty__hint">
             Open a video from your Library to plan a reviewable, reversible AI edit for it — the

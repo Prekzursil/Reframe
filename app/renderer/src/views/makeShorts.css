@@ -80,6 +80,76 @@
   color: var(--text-secondary);
 }
 
-.make-shorts__hint {
+/* Make front-door empty (WU-D3): the "pick a video" state used to be a lone
+   muted hint line. Brought up to the shared ghost-poster language — a
+   display-scale poster anchor (deep 16:9 well + play glyph + mono timecode) with
+   a second poster peeking behind, then a title + the hint. Mirrors
+   .library__empty / .sm-empty. */
+.make-shorts__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-6) var(--space-6);
+  text-align: center;
+}
+
+.make-shorts__empty-poster {
+  position: relative;
+  width: 240px;
+  aspect-ratio: 16 / 9;
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--atmos-well), var(--surface-deep);
+  box-shadow:
+    inset 0 0 0 1px var(--edge),
+    var(--elev-2);
+}
+
+.make-shorts__empty-poster::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  transform: translate(12px, -10px) rotate(2deg);
+}
+
+.make-shorts__empty-glyph {
+  font-size: var(--type-display-size);
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.make-shorts__empty-timecode {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--surface-raised);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--type-caption-leading);
+}
+
+.make-shorts__empty-title {
+  margin: var(--space-2) 0 0;
+  font-size: var(--type-subhead-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
   color: var(--text-secondary);
+}
+
+.make-shorts__hint {
+  margin: 0;
+  max-width: 46ch;
+  color: var(--text-muted);
 }

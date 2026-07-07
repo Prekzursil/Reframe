@@ -227,9 +227,16 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
                 </section>
               </>
             ) : (
-              <p className="make-shorts__hint">
-                Pick a video to make shorts — AI moment-pick or your own time ranges.
-              </p>
+              <div className="make-shorts__empty">
+                <div className="make-shorts__empty-poster" aria-hidden="true">
+                  <span className="make-shorts__empty-glyph">▶</span>
+                  <span className="make-shorts__empty-timecode">--:--</span>
+                </div>
+                <p className="make-shorts__empty-title">No video selected</p>
+                <p className="make-shorts__hint">
+                  Pick a video to make shorts — AI moment-pick or your own time ranges.
+                </p>
+              </div>
             )}
           </div>
         ) : null}

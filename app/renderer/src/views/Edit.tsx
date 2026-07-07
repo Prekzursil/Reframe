@@ -156,6 +156,10 @@ export function Edit({
   if (!video) {
     return (
       <div className="edit edit--empty" aria-label="Edit">
+        <div className="edit__empty-poster" aria-hidden="true">
+          <span className="edit__empty-glyph">▶</span>
+          <span className="edit__empty-timecode">--:--</span>
+        </div>
         <p className="edit__empty-title">No video open</p>
         <p className="edit__empty-hint">
           Open a video from the Library to trim, cut, join, reframe, caption, and more — every edit

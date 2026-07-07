@@ -437,7 +437,7 @@
 
 .director-panel--empty .director-empty {
   margin-top: var(--space-5);
-  padding: var(--space-6) var(--space-4);
+  padding: var(--space-8) var(--space-4) var(--space-6);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
   text-align: center;
@@ -446,9 +446,60 @@
   justify-items: center;
 }
 
+/* WU-D3: the Director "no video open" card was a plain centered card with no
+   poster — the last content-tab empty off the shared ghost-poster language. Add
+   the display-scale poster anchor (deep 16:9 well + play glyph + mono timecode)
+   with a second poster peeking behind, so it reads in the same vocabulary as
+   .library__empty / .sm-empty / the Edit + Make front-door empties. */
+.director-panel--empty .director-empty__poster {
+  position: relative;
+  width: 240px;
+  aspect-ratio: 16 / 9;
+  margin-bottom: var(--space-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--atmos-well), var(--surface-deep);
+  box-shadow:
+    inset 0 0 0 1px var(--edge),
+    var(--elev-2);
+}
+
+.director-panel--empty .director-empty__poster::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--radius-md);
+  background: var(--surface-overlay);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  transform: translate(12px, -10px) rotate(2deg);
+}
+
+.director-panel--empty .director-empty__glyph {
+  font-size: var(--type-display-size);
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.director-panel--empty .director-empty__timecode {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--surface-overlay);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--type-caption-leading);
+}
+
 .director-panel--empty .director-empty__title {
   font-weight: var(--weight-medium);
-  font-size: var(--type-title-size);
+  font-size: var(--type-subhead-size);
 }
 
 .director-panel--empty .director-empty__hint {

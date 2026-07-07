@@ -112,6 +112,10 @@ describe('<Edit />', () => {
     act(() => root.render(<Edit video={null} onBack={() => undefined} />));
     expect(container.querySelector('.edit--empty')).toBeTruthy();
     expect(container.querySelector('.edit__empty-title')?.textContent).toBe('No video open');
+    // WU-D3: the empty carries the shared ghost-poster anchor (poster + glyph),
+    // not the old bare sentence.
+    expect(container.querySelector('.edit__empty-poster')).toBeTruthy();
+    expect(container.querySelector('.edit__empty-glyph')).toBeTruthy();
     expect(hub()).toBeNull();
     expect(workspace()).toBeNull();
   });

@@ -204,6 +204,10 @@ describe('<MakeShorts />', () => {
     await mount();
     expect(picker()).toBeTruthy();
     expect(container.querySelector('.make-shorts__hint')).toBeTruthy();
+    // WU-D3: the "pick a video" state is now the shared ghost-poster empty, not a
+    // lone hint line.
+    expect(container.querySelector('.make-shorts__empty-poster')).toBeTruthy();
+    expect(container.querySelector('.make-shorts__empty-glyph')).toBeTruthy();
     expect(container.querySelector('[data-testid="shortmaker"]')).toBeNull();
     // The picker is populated from library.list.
     expect([...picker().options].map((o) => o.value)).toContain('v1');
