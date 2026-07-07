@@ -48,6 +48,7 @@ import { findBuiltApp, provisionAssets, seedEnvironment, type SeededEnv } from '
 let seeded: SeededEnv;
 let app: ElectronApplication;
 const consoleErrors: string[] = [];
+const failedRequests: string[] = [];
 
 /** The subset of ShortInfo (§3, features/shorts.py) this test reads off shorts.list. */
 interface BridgeShort {
@@ -130,6 +131,16 @@ test.beforeAll(async () => {
     if (m.type() === 'error') consoleErrors.push(m.text());
   });
   win.on('pageerror', (e) => consoleErrors.push(`PAGEERROR: ${e.message}`));
+  // Chromium's "Failed to load resource: 404" console line omits the URL — capture
+  // the failing response's URL + status here so a resource error is self-diagnosing
+  // (which asset 404'd) instead of an anonymous console string.
+  win.on('response', (r) => {
+    const s = r.status();
+    if (s >= 400) failedRequests.push(`${s} ${r.url()}`);
+  });
+  win.on('requestfailed', (req) => {
+    failedRequests.push(`FAILED ${req.url()} (${req.failure()?.errorText ?? 'unknown'})`);
+  });
   await win.waitForLoadState('domcontentloaded');
 });
 
@@ -224,6 +235,7 @@ test('no console errors across the golden-journey session', async () => {
   // never masks the primary "did a real short get produced?" verdict.
   expect(
     consoleErrors,
-    `console errors across session: ${JSON.stringify(consoleErrors)}`,
+    `console errors across session: ${JSON.stringify(consoleErrors)}\n` +
+      `failed requests (URLs behind any "Failed to load resource" line): ${JSON.stringify(failedRequests)}`,
   ).toEqual([]);
 });

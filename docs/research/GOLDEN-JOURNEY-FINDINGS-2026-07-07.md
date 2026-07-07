@@ -54,12 +54,20 @@ export **completes and returns a real short**:
 `job.done → {"clips":[{"path":".../01-sample.mp4"}], "items":[...]}`. So the three code fixes genuinely
 unblock Make Shorts. The `auto`/claudeshorts default additionally needs the YuNet model provisioned.
 
-## To make the golden-journey go GREEN (for the finishing session)
-The spec sends the UI default (`auto`), so it currently red-repros on the YuNet provisioning (blocker
-4). Either (a) provision the reframe model in the E2E setup (`assets.ensure` for
-`yunet-face-detection`, matching a real first-run), or (b) additionally exercise the verthor path
-(proven green). Keep `e2e/golden-journey.spec.ts` as the Make Shorts merge gate: coverage is
-necessary, never sufficient.
+## Golden-journey status (2026-07-07)
+- **Primary test GREEN** — `Make Shorts produces a real vertical short file on disk` PASSES on the
+  DEFAULT `auto`→claudeshorts path after the E2E provisions YuNet in `beforeAll` (`provisionAssets`
+  in `fixtures.ts`, mirroring a real first-run). A real user's Make Shorts genuinely works.
+- **Secondary `no console errors` test — one known FAIL (cosmetic).** It surfaces a single 404, now
+  precisely captured (the spec logs the failing URL): `mstream://media/thumb:<dataRoot>\thumbnails\
+  <videoId>.jpg` — the Library card's SOURCE-video poster frame for the freshly-seeded sample. The
+  poster `.jpg` is never generated for an out-of-band-seeded video (a real import generates it on
+  demand via `useVideoThumbnail`→`library.thumbnail`). It is **cosmetic** (the card degrades to the
+  ▶ glyph) and **tangential to Make Shorts**. Fix options for the finishing session: (a) seed the
+  poster in the E2E — `library.thumbnail` is an ASYNC job, so it needs a job-wait like
+  `provisionAssets` (a one-shot RPC returns before the `.jpg` is written); or (b) have the renderer
+  suppress/guard the `thumb:` request until the poster exists. Keep `golden-journey.spec.ts` as the
+  Make Shorts merge gate: coverage is necessary, never sufficient.
 
 ## The reusable lesson
 A held-out golden-journey that drives the **real** app and asserts a **real artifact on disk** is the
