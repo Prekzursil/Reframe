@@ -12,7 +12,7 @@
 // drive headlessly. Seeding the data root the sidecar reads is equivalent — the
 // app lists + opens + plays the exact same library record either way.
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -226,6 +226,60 @@ export function seedEnvironment(): SeededEnv {
   });
 
   return { dataRoot, samplePath, videoId, python, appEnv };
+}
+
+/**
+ * Provision assets (a LONG job) by driving a live sidecar until the ensure job
+ * reports `job.done`. Unlike `sidecarCall` (one-shot spawnSync, which would kill
+ * the download when the RPC returns), this keeps the sidecar alive and streams its
+ * stdout until the `assets.ensure` job completes. Used to seed the core reframe
+ * model (YuNet) into the data root — the SAME step a real first-run performs —
+ * so the default `reframeEngine:"auto"` (claudeshorts) path can actually reframe.
+ */
+export function provisionAssets(python: string, dataRoot: string, names: string[]): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const proc = spawn(python, ['-m', 'media_studio'], {
+      cwd: SIDECAR_DIR,
+      env: { ...process.env, MEDIA_STUDIO_CONFIG_DIR: dataRoot },
+    });
+    let buf = '';
+    let jobId = '';
+    const timer = setTimeout(() => {
+      proc.kill();
+      reject(new Error(`provisionAssets(${names.join(',')}) timed out`));
+    }, 300_000);
+    const done = (err?: Error): void => {
+      clearTimeout(timer);
+      proc.kill();
+      if (err) reject(err);
+      else resolve();
+    };
+    proc.stdout.setEncoding('utf8');
+    proc.stdout.on('data', (chunk: string) => {
+      buf += chunk;
+      let nl: number;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith('{')) continue;
+        let msg: { id?: number; method?: string; result?: { jobId?: string }; params?: { jobId?: string } };
+        try {
+          msg = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (msg.id === 1 && msg.result?.jobId) jobId = msg.result.jobId;
+        if (msg.params?.jobId === jobId && msg.method === 'job.done') done();
+        if (msg.params?.jobId === jobId && msg.method === 'job.error') {
+          done(new Error(`provisionAssets job.error: ${JSON.stringify(msg.params)}`));
+        }
+      }
+    });
+    proc.on('error', reject);
+    proc.stdin.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'assets.ensure', params: { names } })}\n`,
+    );
+  });
 }
 
 /** Direct `media.playable` probe (used to label the preview path honestly). */

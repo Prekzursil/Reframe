@@ -43,7 +43,7 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { findBuiltApp, seedEnvironment, type SeededEnv } from './fixtures';
+import { findBuiltApp, provisionAssets, seedEnvironment, type SeededEnv } from './fixtures';
 
 let seeded: SeededEnv;
 let app: ElectronApplication;
@@ -107,6 +107,11 @@ test.beforeAll(async () => {
   // so this spec still gives local GUI coverage (see fixtures.findBuiltApp).
   const built = findBuiltApp();
   seeded = seedEnvironment();
+  // Provision the core reframe model (YuNet) into the data root — the SAME step a
+  // real first-run performs — so the default reframeEngine:"auto" (claudeshorts)
+  // path can actually reframe. Without it, "auto" raises ClaudeShortsBackend-
+  // UnavailableError and no short is ever produced (a provisioning gap, not a bug).
+  await provisionAssets(seeded.python, seeded.dataRoot, ['yunet-face-detection']);
   app = await electron.launch({
     args: [
       built.main,
