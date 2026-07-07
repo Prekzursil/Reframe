@@ -35,11 +35,14 @@ and a few small residuals. Do not redo the completed work below.
   un-runnable in-harness, hand back an exact repro script; do NOT claim success.
 
 ## DEFERRED RESIDUALS (mine, handed to you)
-- **B1 (cosmetic 404):** the golden-journey's secondary "no console errors" test catches a 404 for the
-  seeded video's SOURCE poster (`mstream://media/thumb:...<id>.jpg`) — the poster isn't generated for an
-  out-of-band seed. Fix: job-WAIT the poster seed in `fixtures.ts` (`library.thumbnail` is an ASYNC job, so
-  a one-shot RPC returns before the `.jpg` is written — mirror `provisionAssets`), OR guard the renderer's
-  `thumb:` request. Then the whole spec is green.
+- **B1 (cosmetic 404 → a main-process resolver bug):** the golden-journey's secondary "no console errors"
+  test catches a 404 for the seeded video's SOURCE poster (`mstream://media/thumb:...<id>.jpg`). NARROWED
+  (2026-07-08, `ee824ba`): the poster IS now generated — `fixtures.ts` seeds `library.thumbnail` (a SYNC
+  RPC) and the `.jpg` is confirmed on disk. The 404 PERSISTS anyway, so it is the mstream `thumb:` resolver
+  (`main.ts:1261-1263` → `exportPath.resolveScopedMediaPath` inside `DATA_ROOT/thumbnails`) 404-ing an
+  EXISTING file. `resolveScopedMediaPath` reads correct statically — instrument the mstream protocol
+  handler at runtime (log the resolved path + null/404 reason) to pin it. Fits WU2 (renderer/main). Then
+  the golden-journey is fully green. Then the whole spec is green.
 - **B4 (auto→verthor fallback): a DESIGN DECISION, not a bug.** `resolve_engine_name` is deliberate (P3
   flip: claudeshorts default, verthor explicit-only, "no silent substitution"). If YuNet is unprovisioned,
   `auto` raises rather than falling back. DECIDE whether to keep that (provisioning is first-run's job) or
