@@ -24,6 +24,10 @@ import { describe, it, expect } from 'vitest';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOKENS_CSS = resolve(HERE, 'tokens.css');
 const USAGE_BAR_CSS = resolve(HERE, '..', 'components', 'usageBar.css');
+// Component sheets the WU-D1 TYPE/WEIGHT/CONTROL scale routes through.
+const SHELL_CSS = resolve(HERE, '..', 'components', 'shell.css');
+const TOPTAB_CSS = resolve(HERE, '..', 'components', 'topTabBar.css');
+const LIB_CARDS_CSS = resolve(HERE, '..', 'components', 'library-cards.css');
 
 /** Every raw color literal in a stylesheet: #rgb/#rrggbb(/aa) and rgb()/rgba(). */
 const RAW_COLOR = /#[0-9a-fA-F]{3,8}\b|\brgba?\(/g;
@@ -233,5 +237,146 @@ describe('dark-editorial surface ladder recalibration (WU-2a)', () => {
     for (const name of ['--elev-1', '--elev-2', '--elev-3']) {
       expect(tokens.get(name)).toContain('inset 0 1px 0');
     }
+  });
+});
+
+// --- WU-D1: TYPE / WEIGHT / CONTROL token-scale completeness guard ---------------
+//
+// The design review found the type layer incomplete: NO font-weight tokens (raw
+// 400/600/650/700/800 scattered through the component CSS) and a spray of orphan
+// font-sizes outside the 4-rung scale (the 12px control size on every
+// button/tab/toggle, plus 10/14/15/24px roles and a 17->30 subhead gap), and the
+// control geometry (18px icon, 5/8px dots, the off-grid control paddings) sat as
+// raw px. WU-D1 pulls all of it onto ONE token vocabulary. These tests are the
+// REAL guard: they pin the ramp order + the exact role/control values AND assert
+// the component sheets carry NO raw font-weight/font-size (so nobody can silently
+// re-scatter raw values), and that every new token is actually CONSUMED — not just
+// defined then abandoned.
+
+/** A raw numeric font-weight (`font-weight: 600`), i.e. NOT `var(--weight-…)`. */
+const RAW_FONT_WEIGHT = /font-weight:\s*\d/g;
+/** A raw pixel font-size (`font-size: 12px`), i.e. NOT `var(--type-…)`. */
+const RAW_FONT_SIZE = /font-size:\s*\d+px/g;
+
+describe('type / weight / control token scale (WU-D1)', () => {
+  it('defines an ordered font-weight ramp (regular -> heavy), monotonically increasing', () => {
+    const tokens = readTokens();
+    const ramp = [
+      '--weight-regular',
+      '--weight-medium',
+      '--weight-semibold',
+      '--weight-bold',
+      '--weight-heavy',
+    ] as const;
+    const values = ramp.map((name) => {
+      const raw = tokens.get(name);
+      if (raw === undefined) throw new Error(`missing weight token ${name}`);
+      return Number.parseInt(raw, 10);
+    });
+    // Exact numeric contract — the scattered raw weights the ramp replaces.
+    expect(values).toEqual([400, 600, 650, 700, 800]);
+    // Strictly increasing, so the ladder can never invert.
+    for (let i = 1; i < values.length; i += 1) {
+      expect(values[i]).toBeGreaterThan(values[i - 1]);
+    }
+    // The display composite sits inside the heavy tier: bold < display(750) < heavy.
+    const display = Number.parseInt(tokens.get('--type-display-weight') ?? '', 10);
+    expect(display).toBeGreaterThan(values[3]);
+    expect(display).toBeLessThan(values[4]);
+  });
+
+  it('defines the role type-size tokens the design review pulled back onto the scale', () => {
+    const tokens = readTokens();
+    const sizes: Readonly<Record<string, string>> = {
+      '--type-subhead-size': '22px',
+      '--type-control-size': '12px',
+      '--type-card-title-size': '14px',
+      '--type-hook-size': '15px',
+      '--type-rank-size': '24px',
+      '--type-chip-size': '10px',
+    };
+    for (const [name, px] of Object.entries(sizes)) {
+      expect(tokens.get(name)).toBe(px);
+    }
+    // The subhead rung genuinely fills the title(17) -> display(30) gap.
+    const px = (name: string): number => Number.parseInt(tokens.get(name) ?? '', 10);
+    expect(px('--type-subhead-size')).toBeGreaterThan(px('--type-title-size'));
+    expect(px('--type-subhead-size')).toBeLessThan(px('--type-display-size'));
+  });
+
+  it('defines the control-sizing tokens (icon + glyph + dots + control padding)', () => {
+    const tokens = readTokens();
+    expect(tokens.get('--size-icon')).toBe('18px');
+    expect(tokens.get('--size-glyph')).toBe('20px');
+    expect(tokens.get('--size-glyph-lg')).toBe('26px');
+    expect(tokens.get('--size-dot')).toBe('8px');
+    expect(tokens.get('--size-dot-sm')).toBe('5px');
+    // A dot is smaller than a control icon (geometry sanity, not just presence).
+    expect(Number.parseInt(tokens.get('--size-dot') ?? '', 10)).toBeLessThan(
+      Number.parseInt(tokens.get('--size-icon') ?? '', 10),
+    );
+    // Control paddings are `<y>px <x>px` shorthands (value preserved, no restyle).
+    for (const name of [
+      '--control-pad-toggle',
+      '--control-pad-btn',
+      '--control-pad-input',
+      '--control-pad-toptab',
+      '--control-pad-tab',
+      '--control-pad-mini',
+    ]) {
+      expect(tokens.get(name)).toMatch(/^\d+px \d+px$/);
+    }
+  });
+
+  it('routes the component sheets through the tokens — NO raw font-weight/size survives', () => {
+    for (const path of [SHELL_CSS, TOPTAB_CSS, LIB_CARDS_CSS]) {
+      const css = stripComments(readFileSync(path, 'utf8'));
+      expect(css.match(RAW_FONT_WEIGHT) ?? []).toEqual([]);
+      expect(css.match(RAW_FONT_SIZE) ?? []).toEqual([]);
+    }
+  });
+
+  it('proves the ramp + role + control tokens are actually CONSUMED (a real guard)', () => {
+    const shell = stripComments(readFileSync(SHELL_CSS, 'utf8'));
+    const toptab = stripComments(readFileSync(TOPTAB_CSS, 'utf8'));
+    const cards = stripComments(readFileSync(LIB_CARDS_CSS, 'utf8'));
+    // Weight ramp (regular is the token default via --type-body-weight; the rest
+    // are consumed explicitly in the shell).
+    for (const name of [
+      '--weight-medium',
+      '--weight-semibold',
+      '--weight-bold',
+      '--weight-heavy',
+    ]) {
+      expect(shell).toContain(`var(${name})`);
+    }
+    // Type role sizes.
+    for (const name of [
+      '--type-control-size',
+      '--type-card-title-size',
+      '--type-hook-size',
+      '--type-rank-size',
+      '--type-chip-size',
+      '--type-subhead-size',
+    ]) {
+      expect(shell).toContain(`var(${name})`);
+    }
+    // Control sizing: dots + glyphs in the shell/cards, the icon slot in the top tabs.
+    expect(shell).toContain('var(--size-dot)');
+    expect(shell).toContain('var(--size-dot-sm)');
+    expect(shell).toContain('var(--size-glyph)');
+    expect(cards).toContain('var(--size-glyph-lg)');
+    expect(toptab).toContain('var(--size-icon)');
+    // Control padding role tokens.
+    for (const name of [
+      '--control-pad-toggle',
+      '--control-pad-btn',
+      '--control-pad-input',
+      '--control-pad-tab',
+      '--control-pad-mini',
+    ]) {
+      expect(shell).toContain(`var(${name})`);
+    }
+    expect(toptab).toContain('var(--control-pad-toptab)');
   });
 });

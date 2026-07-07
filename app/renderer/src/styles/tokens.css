@@ -92,11 +92,30 @@
   --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
   --font-editorial: Georgia, "Iowan Old Style", "Times New Roman", serif;
 
-  /* scale: display / title / body / caption — big ends BIG, small ends quiet */
+  /* ---- font-weight ramp (WU-D1) -------------------------------------------
+   * ONE ordered weight ladder so component CSS never hard-codes a raw numeric
+   * weight. regular -> heavy, monotonically increasing; the tokens.conformance
+   * weight-ramp guard pins the order + numeric values so the ladder can never
+   * silently drift. The display composite weight (750, defined below) sits
+   * inside the heavy tier (750-800). */
+  --weight-regular: 400; /* body copy */
+  --weight-medium: 600; /* control labels, quiet buttons */
+  --weight-semibold: 650; /* card titles, panel headings, chips */
+  --weight-bold: 700; /* primary/accent actions, count badges */
+  --weight-heavy: 800; /* the display voice on a surface (e.g. rank number) */
+
+  /* scale: display / subhead / title / body / caption — big ends BIG, small
+   * ends quiet. Plus the role sizes the design review pulled back onto the
+   * ladder: control/card-title/hook/chip/rank (WU-D1). */
   --type-display-size: 30px;
   --type-display-weight: 750;
   --type-display-tracking: -0.022em;
   --type-display-leading: 1.1;
+
+  /* subhead: the rung that fills the title(17)->display(30) gap. Also the size
+   * the empty-state ghost glyphs are drawn to (a decorative mark sized to a
+   * type rung), so the rung is a live consumer, not a reserved orphan. */
+  --type-subhead-size: 22px;
 
   --type-title-size: 17px;
   --type-title-weight: 650;
@@ -111,6 +130,16 @@
   --type-caption-weight: 600;
   --type-caption-tracking: 0.08em; /* tracked CAPS — the label voice */
   --type-caption-leading: 1.35;
+
+  /* Role sizes (single-value): the recurring off-scale sizes the design review
+   * flagged, now named so every button/tab/toggle/chip/title/hook/rank reads
+   * from ONE vocabulary instead of scattered raw px. Rendered result is
+   * unchanged — pure tokenization. */
+  --type-control-size: 12px; /* buttons, tabs, toggles + their labels */
+  --type-card-title-size: 14px; /* library card title (and close-glyph) */
+  --type-hook-size: 15px; /* the editorial pull-quote hook */
+  --type-rank-size: 24px; /* the BIG rank number on a review card */
+  --type-chip-size: 10px; /* micro-cap provenance chip */
 
   /* ---- spacing rhythm (4px base, deliberately non-uniform use) ------------ */
   --space-1: 2px;
@@ -128,6 +157,28 @@
   --radius-md: 10px; /* cards, panels */
   --radius-lg: 14px; /* overlays, the player well */
   --radius-pill: 999px; /* tracks, segmented controls */
+
+  /* ---- control sizing (WU-D1) ---------------------------------------------
+   * The discrete control geometry the design review flagged as raw px: the
+   * chrome icon slot, the decorative empty-state glyph sizes, and the status /
+   * chip dots. Named so the control layer is Figma-codifiable and can never
+   * silently drift off these sizes. */
+  --size-icon: 18px; /* chrome tab icon + count-badge box */
+  --size-glyph: 20px; /* small empty-state ghost glyph */
+  --size-glyph-lg: 26px; /* thumbnail fallback glyph */
+  --size-dot: 8px; /* brand tick + status/egress dots */
+  --size-dot-sm: 5px; /* chip lead dot */
+
+  /* Control padding (role shorthands): the compact control paddings sit off the
+   * 4px rhythm ON PURPOSE (a dense editing UI — a segmented toggle is tighter
+   * than a tab). Named per control role so the exact rendered box is preserved
+   * (tokenization, not a restyle) while the raw px leave the component sheets. */
+  --control-pad-toggle: 5px 14px; /* segmented quality/routing toggle */
+  --control-pad-btn: 6px 14px; /* the raised button voice */
+  --control-pad-input: 7px 10px; /* text inputs / selects */
+  --control-pad-toptab: 10px 14px; /* chrome-level top tab */
+  --control-pad-tab: 11px 14px; /* in-view sub-tab */
+  --control-pad-mini: 3px 8px; /* row-action mini buttons */
 
   /* ---- focus ring (double ring: canvas gap + accent edge) ------------------ */
   --focus-ring: 0 0 0 2px var(--surface-bg), 0 0 0 4px var(--accent-edge);

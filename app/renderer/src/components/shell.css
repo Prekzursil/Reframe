@@ -103,8 +103,8 @@ body,
 
 .app__brand::before {
   content: "";
-  width: 8px;
-  height: 8px;
+  width: var(--size-dot);
+  height: var(--size-dot);
   border-radius: 2px;
   background: var(--accent);
   flex: none;
@@ -137,12 +137,12 @@ body,
 .quality-toggle__btn {
   appearance: none;
   border: none;
-  padding: 5px 14px;
+  padding: var(--control-pad-toggle);
   background: var(--surface-deep);
   color: var(--text-muted);
   font-family: inherit;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
   cursor: pointer;
   transition:
     background var(--dur-fast) var(--ease-out),
@@ -188,12 +188,12 @@ body,
 .routing-toggle__btn {
   appearance: none;
   border: none;
-  padding: 5px 14px;
+  padding: var(--control-pad-toggle);
   background: var(--surface-deep);
   color: var(--text-muted);
   font-family: inherit;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
   cursor: pointer;
   transition:
     background var(--dur-fast) var(--ease-out),
@@ -228,8 +228,8 @@ body,
    carries an accessible label + title. A soft ring lifts it off the bar. */
 .routing-toggle__egress {
   flex: none;
-  width: 8px;
-  height: 8px;
+  width: var(--size-dot);
+  height: var(--size-dot);
   border-radius: var(--radius-pill);
   background: var(--status-warn);
   box-shadow: 0 0 0 3px var(--status-warn-soft);
@@ -297,14 +297,14 @@ button {
 .shortmaker button,
 .timeline__toolbar button {
   appearance: none;
-  padding: 6px 14px;
+  padding: var(--control-pad-btn);
   border: 1px solid var(--edge);
   border-radius: var(--radius-sm);
   background: var(--surface-raised);
   color: var(--text-secondary);
   box-shadow: var(--elev-1);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
   cursor: pointer;
   transition:
     background var(--dur-fast) var(--ease-out),
@@ -368,7 +368,7 @@ button {
   border-color: transparent;
   box-shadow: var(--accent-glow);
   color: var(--accent-ink);
-  font-weight: 700;
+  font-weight: var(--weight-bold);
 }
 
 .library__add-btn:hover:not(:disabled),
@@ -410,7 +410,7 @@ button {
 .timeline__editor input,
 .timeline__editor textarea {
   appearance: none;
-  padding: 7px 10px;
+  padding: var(--control-pad-input);
   background: var(--surface-deep);
   border: 1px solid var(--edge);
   border-radius: var(--radius-sm);
@@ -502,7 +502,7 @@ button {
   border-radius: var(--radius-md);
   background: var(--accent-soft);
   color: var(--accent);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
   text-align: center;
 }
 
@@ -647,7 +647,7 @@ button {
 }
 
 .library__empty-glyph {
-  font-size: 22px;
+  font-size: var(--type-subhead-size);
   color: var(--text-faint);
   user-select: none;
 }
@@ -706,15 +706,15 @@ button {
 }
 
 .library__item-title {
-  font-weight: 650;
-  font-size: 14px;
+  font-weight: var(--weight-semibold);
+  font-size: var(--type-card-title-size);
   letter-spacing: -0.01em;
   color: var(--text-primary);
 }
 
 .library__item-path {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-caption-size);
   color: var(--text-faint);
   white-space: nowrap;
   overflow: hidden;
@@ -743,12 +743,12 @@ button {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 2px var(--space-3);
+  padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-pill);
   background: var(--surface-hover);
   color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 650;
+  font-size: var(--type-chip-size);
+  font-weight: var(--weight-semibold);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   line-height: 1.4;
@@ -757,8 +757,8 @@ button {
 /* A leading status dot gives the chip a second (non-colour-only) signal. */
 .library__chip::before {
   content: "";
-  width: 5px;
-  height: 5px;
+  width: var(--size-dot-sm);
+  height: var(--size-dot-sm);
   border-radius: var(--radius-pill);
   background: currentColor;
   opacity: 0.7;
@@ -809,7 +809,7 @@ button {
   border: none;
   background: transparent;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: var(--type-card-title-size);
   line-height: 1;
   padding: var(--space-1) var(--space-2);
   cursor: pointer;
@@ -909,7 +909,7 @@ button {
 .tab {
   appearance: none;
   position: relative;
-  padding: 11px 14px;
+  padding: var(--control-pad-tab);
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   background: transparent;
   border: none;
@@ -1257,8 +1257,8 @@ button {
 
 /* BIG number, quiet neighbors: rank is the display voice of this surface. */
 .sm-rank {
-  font-size: 24px;
-  font-weight: 800;
+  font-size: var(--type-rank-size);
+  font-weight: var(--weight-heavy);
   letter-spacing: var(--type-display-tracking);
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
@@ -1297,7 +1297,7 @@ button {
 .sm-hook {
   margin: 0 0 var(--space-2);
   font-family: var(--font-editorial);
-  font-size: 15px;
+  font-size: var(--type-hook-size);
   font-style: italic;
   line-height: 1.4;
   color: var(--text-primary);
@@ -1333,7 +1333,7 @@ button {
 }
 
 .sm-row-actions button {
-  padding: 3px 8px;
+  padding: var(--control-pad-mini);
   font-size: var(--type-caption-size);
   font-family: var(--font-mono);
   background: transparent;
@@ -1356,7 +1356,7 @@ button {
 }
 
 .sm-export > span {
-  font-weight: 650;
+  font-weight: var(--weight-semibold);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1421,7 +1421,7 @@ button {
 }
 
 .sm-empty__glyph {
-  font-size: 22px;
+  font-size: var(--type-subhead-size);
   color: var(--text-faint);
   user-select: none;
 }
@@ -1480,7 +1480,7 @@ button {
 }
 
 .asset-empty__glyph {
-  font-size: 20px;
+  font-size: var(--size-glyph);
   color: var(--text-faint);
   user-select: none;
 }

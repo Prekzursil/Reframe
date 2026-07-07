@@ -21,14 +21,14 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-3);
-  padding: 10px 14px;
+  padding: var(--control-pad-toptab);
   border: none;
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   background: transparent;
   color: var(--text-muted);
   font-family: var(--font-ui);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
   cursor: pointer;
   /* Color/background shift only — no layout-bound props, so no hover jump. */
   transition:
@@ -52,8 +52,8 @@
 
 .toptab__icon {
   display: inline-flex;
-  width: 18px;
-  height: 18px;
+  width: var(--size-icon);
+  height: var(--size-icon);
 }
 
 /* 24×24 source SVGs scaled down to the 18px chrome slot. */
@@ -72,14 +72,14 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 18px;
-  height: 18px;
+  min-width: var(--size-icon);
+  height: var(--size-icon);
   padding: 0 var(--space-2);
   border-radius: var(--radius-pill);
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 11px;
-  font-weight: 700;
+  font-size: var(--type-caption-size);
+  font-weight: var(--weight-bold);
   font-variant-numeric: tabular-nums;
 }
 
