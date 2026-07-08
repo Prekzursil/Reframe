@@ -249,7 +249,11 @@ export function priorCopies(settingsPath: string): string[] {
 }
 
 /** Persist the encrypted keystore (base64 ciphertext) atomically to `keystorePath`. */
-function writeKeystore(safeStorage: SafeStorageLike, keystorePath: string, keys: DecryptedKeys): void {
+function writeKeystore(
+  safeStorage: SafeStorageLike,
+  keystorePath: string,
+  keys: DecryptedKeys,
+): void {
   const file: KeystoreFile = { version: 1, providers: {} };
   for (const [id, rawKeys] of Object.entries(keys.providers)) {
     file.providers[id] = rawKeys.map((k) => encryptToBase64(safeStorage, k));
@@ -282,7 +286,10 @@ export function saveDecryptedKeys(
  * over the existing stdio JSON-RPC frame (NEVER env/argv/settings.json). Returns
  * empty when no keystore exists yet.
  */
-export function loadDecryptedKeys(safeStorage: SafeStorageLike, keystorePath: string): DecryptedKeys {
+export function loadDecryptedKeys(
+  safeStorage: SafeStorageLike,
+  keystorePath: string,
+): DecryptedKeys {
   const raw = readJson(keystorePath);
   const out: DecryptedKeys = { providers: {} };
   if (!raw || typeof raw !== 'object') {
@@ -303,10 +310,9 @@ export function loadDecryptedKeys(safeStorage: SafeStorageLike, keystorePath: st
 
 /** Rewrite a settings object with every raw key stripped (metadata preserved). */
 export function stripKeysFromSettings(settings: unknown): Record<string, unknown> {
-  const obj = (settings && typeof settings === 'object' ? { ...(settings as Record<string, unknown>) } : {}) as Record<
-    string,
-    unknown
-  >;
+  const obj = (
+    settings && typeof settings === 'object' ? { ...(settings as Record<string, unknown>) } : {}
+  ) as Record<string, unknown>;
   const providers = obj.providers;
   if (Array.isArray(providers)) {
     obj.providers = providers.map((entry) => {

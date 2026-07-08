@@ -36,6 +36,7 @@ def _register_all(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(_manifest, "get_asset", lambda _n: SimpleNamespace(label="", size_mb=0))
 
+
 _ALL_MODELS = (
     "saliency",
     "audio_saliency",
@@ -117,9 +118,7 @@ def test_tier0_numeric_is_always_ready(tmp_path: Path, ctx: RpcContext) -> None:
     assert items["tier0-numeric"]["action"] is None
 
 
-def test_tier2_only_needs_its_own_model(
-    tmp_path: Path, ctx: RpcContext, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_tier2_only_needs_its_own_model(tmp_path: Path, ctx: RpcContext, monkeypatch: pytest.MonkeyPatch) -> None:
     # Tier-2 (smolvlm2 only): present that one weight and it is ready even though
     # tier-1 weights are missing (per-tier independence is the falsifiable claim).
     _register_all(monkeypatch)

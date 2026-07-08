@@ -26,7 +26,11 @@
 //
 // Every I/O seam is injected (the mstream handler wires the real sidecar RPC +
 // fs), so the orchestration is unit-tested with no Electron/sidecar/ffmpeg.
-import { ProxyBuildFailedError, ProxyBuildingError, SidecarUnavailableError } from './mediaProtocol';
+import {
+  ProxyBuildFailedError,
+  ProxyBuildingError,
+  SidecarUnavailableError,
+} from './mediaProtocol';
 
 /** The `media.playable` verdict shape the resolver consumes. */
 export interface PlayableVerdict {

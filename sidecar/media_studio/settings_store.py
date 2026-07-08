@@ -153,19 +153,13 @@ def _canonical_local_dir(override: str) -> Path:
     # (a) UNC (\\server\share) and Windows device namespaces (\\.\, \\?\) both begin
     #     with two path separators — never a valid LOCAL data root.
     if re.match(r"^[\\/]{2}", override):
-        raise UnsafeConfigDirError(
-            f"MEDIA_STUDIO_CONFIG_DIR {override!r} is a UNC/device path, not a local directory"
-        )
+        raise UnsafeConfigDirError(f"MEDIA_STUDIO_CONFIG_DIR {override!r} is a UNC/device path, not a local directory")
     # (b) Any `..` segment is a traversal out of the intended tree.
     if any(seg == ".." for seg in re.split(r"[\\/]+", override)):
-        raise UnsafeConfigDirError(
-            f"MEDIA_STUDIO_CONFIG_DIR {override!r} contains a '..' traversal segment"
-        )
+        raise UnsafeConfigDirError(f"MEDIA_STUDIO_CONFIG_DIR {override!r} contains a '..' traversal segment")
     # (c) Require an ABSOLUTE path (a drive-rooted or POSIX-rooted directory).
     if not os.path.isabs(override):
-        raise UnsafeConfigDirError(
-            f"MEDIA_STUDIO_CONFIG_DIR {override!r} is not an absolute path"
-        )
+        raise UnsafeConfigDirError(f"MEDIA_STUDIO_CONFIG_DIR {override!r} is not an absolute path")
     return Path(os.path.realpath(override))
 
 

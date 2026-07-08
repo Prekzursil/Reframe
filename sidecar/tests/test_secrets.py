@@ -231,9 +231,7 @@ def test_redact_params_hides_injected_keys_bundle() -> None:
 
 def test_redact_params_hides_nested_provider_block() -> None:
     # providers.upsert nests the entry under a "provider" key (providers_ops.py).
-    out = secrets.redact_params(
-        {"provider": {"id": "groq", "provider": "Groq", "apiKeys": ["gsk-nested-KEY7"]}}
-    )
+    out = secrets.redact_params({"provider": {"id": "groq", "provider": "Groq", "apiKeys": ["gsk-nested-KEY7"]}})
     assert out["provider"]["id"] == "groq"
     assert out["provider"]["provider"] == "Groq"
     assert out["provider"]["apiKeys"] == [secrets.REDACTION_PLACEHOLDER]
@@ -270,9 +268,7 @@ def test_redact_params_tolerates_non_dict_params() -> None:
 
 
 def test_redact_params_tolerates_non_list_api_keys_and_non_dict_entries() -> None:
-    out = secrets.redact_params(
-        {"apiKeys": "not-a-list", "providers": ["garbage", {"id": "ok", "apiKeys": ["k-ok"]}]}
-    )
+    out = secrets.redact_params({"apiKeys": "not-a-list", "providers": ["garbage", {"id": "ok", "apiKeys": ["k-ok"]}]})
     # A non-list apiKeys is redacted wholesale (still a secret-bearing field).
     assert out["apiKeys"] == secrets.REDACTION_PLACEHOLDER
     # Non-dict list entries are passed through; dict entries are redacted.

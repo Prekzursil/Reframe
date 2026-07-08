@@ -57,9 +57,7 @@ class TestValidateHashedLock:
         pins = validate_hashed_lock(
             "--extra-index-url https://download.pytorch.org/whl/cu128\n"
             "torch==2.10.0+cu128 \\\n"
-            "    --hash=sha256:"
-            + "a" * 64
-            + "\n"
+            "    --hash=sha256:" + "a" * 64 + "\n"
         )
         assert pins == ("torch==2.10.0+cu128",)
 
@@ -102,9 +100,7 @@ class TestValidateHashedLock:
 class TestHashedLockArgv:
     def test_lock_file_switches_step2_to_require_hashes(self, tmp_path):
         lock = tmp_path / "env.lock.txt"
-        steps = build_env_install_argvs(
-            "py", tmp_path / "gp.py", tmp_path / "env", ("numpy==2.5.0",), lock_file=lock
-        )
+        steps = build_env_install_argvs("py", tmp_path / "gp.py", tmp_path / "env", ("numpy==2.5.0",), lock_file=lock)
         step2 = steps[1]["argv"]
         # the hardening trio is present, in order, before the -r lock ref
         for flag in HASHED_LOCK_PIP_ARGS:

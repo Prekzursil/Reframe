@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  HUB_CARDS,
-  HUB_CHOICE_KEY,
-  mergeHubChoice,
-  readHubChoice,
-  resumeFor,
-} from './taskHub';
+import { HUB_CARDS, HUB_CHOICE_KEY, mergeHubChoice, readHubChoice, resumeFor } from './taskHub';
 
 describe('taskHub model', () => {
   describe('HUB_CARDS', () => {

@@ -69,18 +69,13 @@ type Phase =
   | { status: 'unavailable' }
   | { status: 'ok'; exists: boolean; relinkable: boolean; sourcePath: string };
 
-type ActionStatus =
-  | { kind: 'idle' }
-  | { kind: 'info' | 'success' | 'error'; message: string };
+type ActionStatus = { kind: 'idle' } | { kind: 'info' | 'success' | 'error'; message: string };
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function LibraryProvenance({
-  video,
-  handlers,
-}: LibraryProvenanceProps): React.ReactElement {
+export function LibraryProvenance({ video, handlers }: LibraryProvenanceProps): React.ReactElement {
   const [phase, setPhase] = useState<Phase>({ status: 'checking' });
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<ActionStatus>({ kind: 'idle' });

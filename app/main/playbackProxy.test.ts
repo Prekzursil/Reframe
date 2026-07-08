@@ -3,12 +3,12 @@
 // sidecar's media.playable / media.proxy.start. Every seam is injected, so no
 // Electron app, sidecar, or ffmpeg ever runs.
 import { describe, it, expect, vi } from 'vitest';
+import { PlaybackProxy, type PlayableVerdict, type PlaybackProxyDeps } from './playbackProxy';
 import {
-  PlaybackProxy,
-  type PlayableVerdict,
-  type PlaybackProxyDeps,
-} from './playbackProxy';
-import { ProxyBuildFailedError, ProxyBuildingError, SidecarUnavailableError } from './mediaProtocol';
+  ProxyBuildFailedError,
+  ProxyBuildingError,
+  SidecarUnavailableError,
+} from './mediaProtocol';
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -41,7 +41,9 @@ function makeDeps(overrides: Partial<PlaybackProxyDeps> = {}): {
   const notify = vi.fn();
   const timers: CapturedTimer[] = [];
   const deps: PlaybackProxyDeps = {
-    probePlayable: vi.fn(async () => ({ playable: false, reason: 'needs proxy' }) as PlayableVerdict),
+    probePlayable: vi.fn(
+      async () => ({ playable: false, reason: 'needs proxy' }) as PlayableVerdict,
+    ),
     buildProxy: vi.fn(async () => '/proxies/v1.mp4'),
     resolveOriginal: vi.fn(async () => '/library/v1.mkv'),
     isPlayableFile: vi.fn(async () => true),

@@ -45,9 +45,7 @@ export interface KeepCopyControlProps {
   handlers: ManagedCopyHandlers;
 }
 
-type ActionStatus =
-  | { kind: 'idle' }
-  | { kind: 'info' | 'success' | 'error'; message: string };
+type ActionStatus = { kind: 'idle' } | { kind: 'info' | 'success' | 'error'; message: string };
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -140,7 +138,10 @@ export function KeepCopyControl({
       } catch (err) {
         guard(() => {
           setBusy(false);
-          setStatus({ kind: 'error', message: `Could not remove the managed copy: ${errText(err)}` });
+          setStatus({
+            kind: 'error',
+            message: `Could not remove the managed copy: ${errText(err)}`,
+          });
         });
       }
     })();
@@ -157,7 +158,11 @@ export function KeepCopyControl({
             A copy is kept, so this survives the original being moved or deleted.
           </p>
           {confirming ? (
-            <div className="keep-copy__confirm" role="group" aria-label="Confirm removing the managed copy">
+            <div
+              className="keep-copy__confirm"
+              role="group"
+              aria-label="Confirm removing the managed copy"
+            >
               <span className="keep-copy__confirm-q">Remove the managed copy?</span>
               <button
                 type="button"

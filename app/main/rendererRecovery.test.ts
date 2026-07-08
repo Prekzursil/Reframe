@@ -64,7 +64,12 @@ describe('decideDidFailLoad', () => {
 
   it('ignores a subframe load failure', () => {
     const d = decideDidFailLoad(
-      { errorCode: -6, errorDescription: 'ERR_FILE_NOT_FOUND', validatedURL: 'x', isMainFrame: false },
+      {
+        errorCode: -6,
+        errorDescription: 'ERR_FILE_NOT_FOUND',
+        validatedURL: 'x',
+        isMainFrame: false,
+      },
       0,
     );
     expect(d.reload).toBe(false);
@@ -72,7 +77,12 @@ describe('decideDidFailLoad', () => {
 
   it('stops reloading once the cap is reached', () => {
     const d = decideDidFailLoad(
-      { errorCode: -6, errorDescription: 'ERR_FILE_NOT_FOUND', validatedURL: 'x', isMainFrame: true },
+      {
+        errorCode: -6,
+        errorDescription: 'ERR_FILE_NOT_FOUND',
+        validatedURL: 'x',
+        isMainFrame: true,
+      },
       MAX_RENDERER_RELOADS,
     );
     expect(d.reload).toBe(false);

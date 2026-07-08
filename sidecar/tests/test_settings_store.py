@@ -158,9 +158,7 @@ def test_unsafe_config_dir_error_is_a_value_error() -> None:
     assert issubclass(UnsafeConfigDirError, ValueError)
 
 
-def test_default_config_dir_canonicalizes_a_safe_override(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_default_config_dir_canonicalizes_a_safe_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # A safe absolute-local override with a redundant `.` segment is normalized to
     # its realpath (the canonical form used at the filesystem sink).
     noisy = _real_os.path.join(str(tmp_path), ".", "cfg")

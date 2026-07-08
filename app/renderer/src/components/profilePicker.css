@@ -40,9 +40,9 @@
   display: grid;
   grid-template-columns: auto 1fr;
   grid-template-areas:
-    'radio head'
-    'radio what'
-    'radio why';
+    "radio head"
+    "radio what"
+    "radio why";
   column-gap: var(--space-3);
   row-gap: var(--space-1);
   padding: var(--space-4);

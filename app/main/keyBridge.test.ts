@@ -102,7 +102,10 @@ describe('planUpsert', () => {
     );
     expect(plan.providerId).toBe('openai');
     expect(plan.resolvedKeys).toEqual(['sk-liveKEY9']);
-    expect(plan.forwardParams).toEqual({ provider: { id: 'openai', apiKeys: ['…KEY9'] }, extra: 1 });
+    expect(plan.forwardParams).toEqual({
+      provider: { id: 'openai', apiKeys: ['…KEY9'] },
+      extra: 1,
+    });
   });
 
   it('restores a redacted placeholder back to the stored raw key (positional)', () => {
@@ -191,7 +194,9 @@ describe('KeyBridge.interceptUpsert', () => {
     // No keystore file was written (no secure backend -> refuse to persist).
     expect(existsSync(keystorePath())).toBe(false);
     // But the session overlay still injects the raw key this run.
-    const injected = bridge.inject({}) as { [INJECTED_KEYS_FIELD]: { providers: Record<string, string[]> } };
+    const injected = bridge.inject({}) as {
+      [INJECTED_KEYS_FIELD]: { providers: Record<string, string[]> };
+    };
     expect(injected[INJECTED_KEYS_FIELD].providers.groq).toEqual(['gsk_sessKEY1']);
   });
 
@@ -239,7 +244,9 @@ describe('KeyBridge.inject', () => {
 
   it('tolerates undefined params', () => {
     const bridge = new KeyBridge({ safeStorage: makeSafeStorage(), keystorePath: keystorePath() });
-    const out = bridge.inject() as { [INJECTED_KEYS_FIELD]: { providers: Record<string, string[]> } };
+    const out = bridge.inject() as {
+      [INJECTED_KEYS_FIELD]: { providers: Record<string, string[]> };
+    };
     expect(out[INJECTED_KEYS_FIELD]).toEqual({ providers: {} });
   });
 
@@ -259,7 +266,10 @@ describe('KeyBridge.forwardParams routing', () => {
   it('routes providers.upsert through the interceptor', () => {
     const store = makeSafeStorage();
     const bridge = new KeyBridge({ safeStorage: store, keystorePath: keystorePath() });
-    const out = bridge.forwardParams('providers.upsert', { id: 'groq', apiKeys: ['gsk_routeKEY1'] });
+    const out = bridge.forwardParams('providers.upsert', {
+      id: 'groq',
+      apiKeys: ['gsk_routeKEY1'],
+    });
     expect(out).toEqual({ id: 'groq', apiKeys: ['…KEY1'] });
     expect(loadDecryptedKeys(store, keystorePath()).providers.groq).toEqual(['gsk_routeKEY1']);
   });

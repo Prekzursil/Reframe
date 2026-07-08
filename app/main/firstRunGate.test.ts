@@ -70,7 +70,9 @@ describe('CORE_FIRST_RUN_ASSETS — the marker means CORE-ONLY (WU C3)', () => {
   it('gates the marker on the CORE subset of the run, not the full ensured set', () => {
     // The write-condition narrows verification to core_first_run_assets(): a
     // failed on-demand model can no longer block the marker (the old bug).
-    expect(src).toMatch(/core_names\s*=\s*\[\s*n\s+for\s+n\s+in\s+asset_names\s+if\s+n\s+in\s+core_first_run_assets\(\)\s*\]/);
+    expect(src).toMatch(
+      /core_names\s*=\s*\[\s*n\s+for\s+n\s+in\s+asset_names\s+if\s+n\s+in\s+core_first_run_assets\(\)\s*\]/,
+    );
     expect(src).toContain('verify_provisioned(core_names, root)');
     expect(src).toContain('write_first_run_complete(root, core_names)');
   });
@@ -132,17 +134,22 @@ describe('isProfileFirstRunComplete — per-profile completion signal', () => {
     );
     // one weight missing -> not complete (leaves no marker -> retry).
     expect(
-      isProfileFirstRunComplete(true, ['yunet-face-detection', 'lightasd-s3fd'], CORE_FIRST_RUN_ASSETS),
+      isProfileFirstRunComplete(
+        true,
+        ['yunet-face-detection', 'lightasd-s3fd'],
+        CORE_FIRST_RUN_ASSETS,
+      ),
     ).toBe(false);
   });
 
   it('ignores on-demand names in the pledged set (they never gate completion)', () => {
     // A missing on-demand GGUF does not hold up completion.
     expect(
-      isProfileFirstRunComplete(true, ['yunet-face-detection', 'lightasd-s3fd', 'lightasd-asd'], [
-        ...CORE_FIRST_RUN_ASSETS,
-        'qwen3-4b-gguf',
-      ]),
+      isProfileFirstRunComplete(
+        true,
+        ['yunet-face-detection', 'lightasd-s3fd', 'lightasd-asd'],
+        [...CORE_FIRST_RUN_ASSETS, 'qwen3-4b-gguf'],
+      ),
     ).toBe(true);
   });
 });

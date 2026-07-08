@@ -128,9 +128,7 @@ describe('isProvisionedRoot (A4 content-aware probe)', () => {
   });
 
   it('returns true when the first-run-complete marker exists', () => {
-    vi.mocked(existsSync).mockImplementation(
-      (p) => p === join(ROOT, FIRST_RUN_COMPLETE_MARKER),
-    );
+    vi.mocked(existsSync).mockImplementation((p) => p === join(ROOT, FIRST_RUN_COMPLETE_MARKER));
     expect(isProvisionedRoot(ROOT)).toBe(true);
   });
 

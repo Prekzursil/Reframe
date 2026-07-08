@@ -60,7 +60,11 @@ async function render(
 ): Promise<void> {
   await act(async () => {
     root.render(
-      <KeepCopyControl videoId="v1" sourceExists={props.sourceExists ?? true} handlers={handlers} />,
+      <KeepCopyControl
+        videoId="v1"
+        sourceExists={props.sourceExists ?? true}
+        handlers={handlers}
+      />,
     );
   });
   await flush();
@@ -87,7 +91,9 @@ describe('KeepCopyControl', () => {
     let resolveStatus: (s: ManagedStatus) => void = () => {};
     const statusFn = vi.fn(() => new Promise<ManagedStatus>((res) => (resolveStatus = res)));
     await act(async () => {
-      root.render(<KeepCopyControl videoId="v1" sourceExists handlers={makeHandlers({ status: statusFn })} />);
+      root.render(
+        <KeepCopyControl videoId="v1" sourceExists handlers={makeHandlers({ status: statusFn })} />,
+      );
     });
     expect(container.querySelector('.keep-copy__loading')?.textContent).toContain(
       'Checking managed copy…',
@@ -159,7 +165,9 @@ describe('KeepCopyControl', () => {
     });
     // Progress is announced (role=status), and the button is disabled mid-flight.
     expect(statusText()).toContain('Keeping a copy…');
-    expect((container.querySelector('.keep-copy__btn--keep') as HTMLButtonElement).disabled).toBe(true);
+    expect((container.querySelector('.keep-copy__btn--keep') as HTMLButtonElement).disabled).toBe(
+      true,
+    );
     await act(async () => resolveKeep(managedRow()));
     await flush();
     expect(badge()).toContain('Managed copy');
@@ -234,7 +242,9 @@ describe('KeepCopyControl', () => {
     let resolveStatus: (s: ManagedStatus) => void = () => {};
     const statusFn = vi.fn(() => new Promise<ManagedStatus>((res) => (resolveStatus = res)));
     await act(async () => {
-      root.render(<KeepCopyControl videoId="v1" sourceExists handlers={makeHandlers({ status: statusFn })} />);
+      root.render(
+        <KeepCopyControl videoId="v1" sourceExists handlers={makeHandlers({ status: statusFn })} />,
+      );
     });
     await act(async () => root.unmount());
     await act(async () => resolveStatus(status()));

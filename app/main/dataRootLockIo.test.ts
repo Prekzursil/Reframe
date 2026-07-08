@@ -134,9 +134,7 @@ describe('createLockIo.createLock (exclusive)', () => {
 
 describe('createLockIo.readLock', () => {
   it('returns the lockfile contents on a successful read', () => {
-    vi.mocked(readFileSync).mockReturnValue(
-      'BODY' as unknown as ReturnType<typeof readFileSync>,
-    );
+    vi.mocked(readFileSync).mockReturnValue('BODY' as unknown as ReturnType<typeof readFileSync>);
     expect(createLockIo(paths).readLock()).toBe('BODY');
     expect(readFileSync).toHaveBeenCalledWith(LOCK_PATH, 'utf8');
   });

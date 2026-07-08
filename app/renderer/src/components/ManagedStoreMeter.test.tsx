@@ -105,13 +105,23 @@ describe('ManagedStoreMeter', () => {
   });
 
   it('caps the fill at 100% when the store is over cap', async () => {
-    await render(makeRpc({ managedStatus: vi.fn(async () => status({ sizeBytes: 30 * GB, count: 0, entries: [] })) }));
+    await render(
+      makeRpc({
+        managedStatus: vi.fn(async () => status({ sizeBytes: 30 * GB, count: 0, entries: [] })),
+      }),
+    );
     const fill = container.querySelector('.managed-meter__fill') as HTMLElement;
     expect(fill.style.width).toBe('100%');
   });
 
   it('reads 0% fill when the cap is zero (no divide-by-zero)', async () => {
-    await render(makeRpc({ managedStatus: vi.fn(async () => status({ sizeBytes: 0, capBytes: 0, count: 0, entries: [] })) }));
+    await render(
+      makeRpc({
+        managedStatus: vi.fn(async () =>
+          status({ sizeBytes: 0, capBytes: 0, count: 0, entries: [] }),
+        ),
+      }),
+    );
     const fill = container.querySelector('.managed-meter__fill') as HTMLElement;
     expect(fill.style.width).toBe('0%');
     expect(readout()).toContain('0 B');
@@ -132,7 +142,9 @@ describe('ManagedStoreMeter', () => {
         ),
       }),
     );
-    const sizes = [...container.querySelectorAll('.managed-meter__row-size')].map((e) => e.textContent);
+    const sizes = [...container.querySelectorAll('.managed-meter__row-size')].map(
+      (e) => e.textContent,
+    );
     expect(sizes).toEqual(['512 B', '3.0 KB', '5.0 MB']);
   });
 
@@ -148,7 +160,11 @@ describe('ManagedStoreMeter', () => {
   });
 
   it('shows the empty state when no copies are kept', async () => {
-    await render(makeRpc({ managedStatus: vi.fn(async () => status({ sizeBytes: 0, count: 0, entries: [] })) }));
+    await render(
+      makeRpc({
+        managedStatus: vi.fn(async () => status({ sizeBytes: 0, count: 0, entries: [] })),
+      }),
+    );
     expect(container.querySelector('.managed-meter__empty')?.textContent).toContain(
       'No managed copies yet',
     );
@@ -156,17 +172,21 @@ describe('ManagedStoreMeter', () => {
   });
 
   it('uses the singular "1 copy" label + count in the clear-all confirm', async () => {
-    const rpc = makeRpc({ managedStatus: vi.fn(async () => status({ count: 1, entries: [row()] })) });
+    const rpc = makeRpc({
+      managedStatus: vi.fn(async () => status({ count: 1, entries: [row()] })),
+    });
     await render(rpc);
     expect(readout()).toContain('1 copy');
     await click('.managed-meter__btn--clear');
-    expect(container.querySelector('.managed-meter__actions .managed-meter__confirm')?.textContent).toContain(
-      'Remove all 1 managed copies?',
-    );
+    expect(
+      container.querySelector('.managed-meter__actions .managed-meter__confirm')?.textContent,
+    ).toContain('Remove all 1 managed copies?');
   });
 
   it('surfaces a snapshot-read failure LOUDLY (and shows no gauge)', async () => {
-    await render(makeRpc({ managedStatus: vi.fn(async () => Promise.reject(new Error('sidecar offline'))) }));
+    await render(
+      makeRpc({ managedStatus: vi.fn(async () => Promise.reject(new Error('sidecar offline'))) }),
+    );
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('sidecar offline');
     expect(container.querySelector('.managed-meter__gauge')).toBeNull();
     expect(container.querySelector('.managed-meter__loading')).toBeNull();
@@ -181,9 +201,9 @@ describe('ManagedStoreMeter', () => {
     await render(rpc);
 
     await click('.managed-meter__row .managed-meter__btn--evict');
-    expect(container.querySelector('.managed-meter__row .managed-meter__confirm')?.textContent).toContain(
-      'Remove copy?',
-    );
+    expect(
+      container.querySelector('.managed-meter__row .managed-meter__confirm')?.textContent,
+    ).toContain('Remove copy?');
     expect(rpc.managedEvict).not.toHaveBeenCalled();
 
     await click('.managed-meter__row .managed-meter__confirm .managed-meter__btn--danger');
@@ -196,9 +216,13 @@ describe('ManagedStoreMeter', () => {
     const rpc = makeRpc();
     await render(rpc);
     await click('.managed-meter__row .managed-meter__btn--evict');
-    await click('.managed-meter__row .managed-meter__confirm .managed-meter__btn:not(.managed-meter__btn--danger)');
+    await click(
+      '.managed-meter__row .managed-meter__confirm .managed-meter__btn:not(.managed-meter__btn--danger)',
+    );
     expect(rpc.managedEvict).not.toHaveBeenCalled();
-    expect(container.querySelector('.managed-meter__row .managed-meter__btn--evict')).not.toBeNull();
+    expect(
+      container.querySelector('.managed-meter__row .managed-meter__btn--evict'),
+    ).not.toBeNull();
   });
 
   it('surfaces an evict failure LOUDLY', async () => {
@@ -233,7 +257,9 @@ describe('ManagedStoreMeter', () => {
   });
 
   it('surfaces a clear failure LOUDLY', async () => {
-    const rpc = makeRpc({ managedClear: vi.fn(async () => Promise.reject(new Error('clear blew up'))) });
+    const rpc = makeRpc({
+      managedClear: vi.fn(async () => Promise.reject(new Error('clear blew up'))),
+    });
     await render(rpc);
     await click('.managed-meter__btn--clear');
     await click('.managed-meter__actions .managed-meter__btn--danger');

@@ -646,8 +646,14 @@ def test_crashed_key_bearing_handler_logs_redacted_params_not_the_key(make_strea
     try:
         server, streams = _server_for(
             make_streams,
-            [{"jsonrpc": "2.0", "id": 1, "method": "test.upsert_boom",
-              "params": {"provider": {"id": "groq", "apiKeys": [_LIVE_KEY]}}}],
+            [
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "test.upsert_boom",
+                    "params": {"provider": {"id": "groq", "apiKeys": [_LIVE_KEY]}},
+                }
+            ],
         )
         server.serve()
     finally:
@@ -673,8 +679,7 @@ def test_failed_key_bearing_notification_logs_redacted_params_not_the_key(make_s
         # A NOTIFICATION (no id) whose handler raises RpcError is logged, not written.
         server, streams = _server_for(
             make_streams,
-            [{"jsonrpc": "2.0", "method": "test.upsert_note_fail",
-              "params": {"apiKey": _LIVE_KEY}}],
+            [{"jsonrpc": "2.0", "method": "test.upsert_note_fail", "params": {"apiKey": _LIVE_KEY}}],
         )
         server.serve()
     finally:

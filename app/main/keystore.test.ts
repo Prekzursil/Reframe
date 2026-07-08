@@ -29,10 +29,9 @@ import {
 } from './keystore';
 
 /** A reversible fake: ciphertext = "enc:" + plaintext (survives a base64 round-trip). */
-function makeSafeStorage(opts: {
-  available?: boolean;
-  backend?: string | null | (() => string);
-} = {}): SafeStorageLike {
+function makeSafeStorage(
+  opts: { available?: boolean; backend?: string | null | (() => string) } = {},
+): SafeStorageLike {
   const available = opts.available ?? true;
   const store: SafeStorageLike = {
     isEncryptionAvailable: () => available,
@@ -64,7 +63,9 @@ describe('selectedBackend', () => {
     expect(selectedBackend(makeSafeStorage())).toBeNull();
   });
   it('returns the backend string on Linux', () => {
-    expect(selectedBackend(makeSafeStorage({ backend: 'gnome_libsecret' }))).toBe('gnome_libsecret');
+    expect(selectedBackend(makeSafeStorage({ backend: 'gnome_libsecret' }))).toBe(
+      'gnome_libsecret',
+    );
   });
   it('returns null when the query throws (win/mac not implemented)', () => {
     const throwing = (): string => {
@@ -107,7 +108,12 @@ describe('saveDecryptedKeys', () => {
 describe('secureStatus', () => {
   it('is secure when encryption is available and backend is not basic_text', () => {
     const status = secureStatus(makeSafeStorage({ backend: 'kwallet' }));
-    expect(status).toEqual({ available: true, backend: 'kwallet', sessionOnly: false, banner: null });
+    expect(status).toEqual({
+      available: true,
+      backend: 'kwallet',
+      sessionOnly: false,
+      banner: null,
+    });
   });
   it('is secure on win/mac (no backend query) when encryption is available', () => {
     const status = secureStatus(makeSafeStorage());
@@ -158,7 +164,9 @@ describe('extractPlaintextKeys', () => {
     expect(extractPlaintextKeys(null)).toEqual({ providers: {} });
     expect(extractPlaintextKeys({ providers: 'nope' })).toEqual({ providers: {} });
     expect(
-      extractPlaintextKeys({ providers: ['x', { id: 5, apiKeys: ['k'] }, { id: 'p', apiKeys: 'no' }] }),
+      extractPlaintextKeys({
+        providers: ['x', { id: 5, apiKeys: ['k'] }, { id: 'p', apiKeys: 'no' }],
+      }),
     ).toEqual({ providers: {} });
   });
 });
@@ -192,9 +200,15 @@ describe('loadDecryptedKeys', () => {
   });
   it('round-trips provider + cloud keys written by a migration', () => {
     const ss = makeSafeStorage();
-    writeFileSync(settingsPath(), JSON.stringify({ providers: [{ id: 'groq', apiKeys: ['gsk-1'] }], cloudApiKey: 'sk-c' }));
+    writeFileSync(
+      settingsPath(),
+      JSON.stringify({ providers: [{ id: 'groq', apiKeys: ['gsk-1'] }], cloudApiKey: 'sk-c' }),
+    );
     migrateLegacyPlaintextKeys(ss, settingsPath(), keystorePath());
-    expect(loadDecryptedKeys(ss, keystorePath())).toEqual({ providers: { groq: ['gsk-1'] }, cloudApiKey: 'sk-c' });
+    expect(loadDecryptedKeys(ss, keystorePath())).toEqual({
+      providers: { groq: ['gsk-1'] },
+      cloudApiKey: 'sk-c',
+    });
   });
   it('tolerates a malformed keystore file / non-array provider values', () => {
     writeFileSync(keystorePath(), '{not json');
@@ -219,9 +233,16 @@ describe('migrateLegacyPlaintextKeys', () => {
     // Seed the legacy plaintext settings + a stale .tmp + two backups all holding the key.
     writeFileSync(
       settingsPath(),
-      JSON.stringify({ useCloud: true, providers: [{ id: 'groq', apiKeys: [LIVE] }], cloudApiKey: LIVE }),
+      JSON.stringify({
+        useCloud: true,
+        providers: [{ id: 'groq', apiKeys: [LIVE] }],
+        cloudApiKey: LIVE,
+      }),
     );
-    writeFileSync(`${settingsPath()}.tmp`, JSON.stringify({ providers: [{ id: 'groq', apiKeys: [LIVE] }] }));
+    writeFileSync(
+      `${settingsPath()}.tmp`,
+      JSON.stringify({ providers: [{ id: 'groq', apiKeys: [LIVE] }] }),
+    );
     writeFileSync(`${settingsPath()}.bak`, `stale backup ${LIVE}`);
     writeFileSync(`${settingsPath()}.backup`, `older backup ${LIVE}`);
 
@@ -231,14 +252,22 @@ describe('migrateLegacyPlaintextKeys', () => {
     expect(res.migratedProviderKeys).toBe(1);
     expect(res.migratedCloudKey).toBe(true);
     // The encrypted keystore now holds the key (recoverable only via safeStorage).
-    expect(loadDecryptedKeys(ss, keystorePath())).toEqual({ providers: { groq: [LIVE] }, cloudApiKey: LIVE });
+    expect(loadDecryptedKeys(ss, keystorePath())).toEqual({
+      providers: { groq: [LIVE] },
+      cloudApiKey: LIVE,
+    });
     // Non-secret settings survived the strip.
     const scrubbed = JSON.parse(readFileSync(settingsPath(), 'utf8'));
     expect(scrubbed.useCloud).toBe(true);
     expect(scrubbed.providers[0].apiKeys).toEqual([]);
     expect('cloudApiKey' in scrubbed).toBe(false);
     // HEADLINE (§D2 acceptance a): scan every on-disk copy — no plaintext key byte survives.
-    const survivors = [settingsPath(), `${settingsPath()}.tmp`, `${settingsPath()}.bak`, `${settingsPath()}.backup`]
+    const survivors = [
+      settingsPath(),
+      `${settingsPath()}.tmp`,
+      `${settingsPath()}.bak`,
+      `${settingsPath()}.backup`,
+    ]
       .filter((p) => existsSync(p))
       .map((p) => readFileSync(p, 'utf8'));
     for (const text of survivors) {

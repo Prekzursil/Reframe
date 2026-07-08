@@ -378,7 +378,9 @@ describe('Workspace', () => {
     });
     await flush();
     expect(container.querySelector('.workspace__player-error')).toBeNull();
-    expect(container.querySelector('.workspace__player-note')?.textContent).toContain('needs proxy');
+    expect(container.querySelector('.workspace__player-note')?.textContent).toContain(
+      'needs proxy',
+    );
   });
 
   it('surfaces a raw <video> error LOUDLY once the proxy is ready (genuine decode failure, no silent fallback)', async () => {
@@ -439,7 +441,9 @@ describe('Workspace', () => {
 
     // A build failure surfaced its precise reason. A subsequent raw-source error
     // is a downstream echo of the same failure — the specific reason must stand.
-    await act(async () => emit({ videoId: 'v1', state: 'error', detail: 'ffmpeg exited with code 1' }));
+    await act(async () =>
+      emit({ videoId: 'v1', state: 'error', detail: 'ffmpeg exited with code 1' }),
+    );
     await flush();
     const videoEl = container.querySelector('.workspace__player video') as HTMLVideoElement;
     await act(async () => {
@@ -465,7 +469,9 @@ describe('Workspace', () => {
 
     // 'error' with a reason surfaces it in the player-error banner + clears the note.
     await act(async () => emit({ videoId: 'v1', state: 'building', detail: 'needs proxy' }));
-    await act(async () => emit({ videoId: 'v1', state: 'error', detail: 'ffmpeg exited with code 1' }));
+    await act(async () =>
+      emit({ videoId: 'v1', state: 'error', detail: 'ffmpeg exited with code 1' }),
+    );
     await flush();
     expect(container.querySelector('.workspace__player-note')).toBeNull();
     expect(container.querySelector('.workspace__player-error')?.textContent).toContain(
@@ -645,9 +651,7 @@ describe('Workspace Export affordance (design-review P1)', () => {
     // The primary export panel (Convert) is now active + rendered in the body.
     expect(container.querySelector('[data-panel="Convert"]')).not.toBeNull();
     expect(
-      container
-        .querySelector('[role="tab"][data-tab-id="convert"]')
-        ?.getAttribute('aria-selected'),
+      container.querySelector('[role="tab"][data-tab-id="convert"]')?.getAttribute('aria-selected'),
     ).toBe('true');
     // The Deliver cluster is revealed so the sibling deliver tools are reachable.
     const toggle = container.querySelector('.tabbar__advanced-toggle') as HTMLButtonElement;
@@ -665,9 +669,7 @@ describe('Workspace Export affordance (design-review P1)', () => {
 // without the callback it still mounts ShortMaker in place (backward-compatible).
 describe('Short-maker tab single-owner deep-link (WU-3a4)', () => {
   function shortmakerTab(): HTMLButtonElement {
-    return container.querySelector(
-      '[role="tab"][data-tab-id="shortmaker"]',
-    ) as HTMLButtonElement;
+    return container.querySelector('[role="tab"][data-tab-id="shortmaker"]') as HTMLButtonElement;
   }
   function selected(tabId: string): string | null | undefined {
     return container

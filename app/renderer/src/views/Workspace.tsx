@@ -74,7 +74,11 @@ export const WORKSPACE_TABS: TabDef[] = [
  * collapses behind the "Advanced" disclosure; the other three show expanded.
  */
 export const WORKSPACE_TAB_GROUPS: TabGroup[] = [
-  { id: 'speech', label: 'Speech & Text', tabIds: ['transcribe', 'search', 'subtitles', 'diarize', 'refine'] },
+  {
+    id: 'speech',
+    label: 'Speech & Text',
+    tabIds: ['transcribe', 'search', 'subtitles', 'diarize', 'refine'],
+  },
   { id: 'frame', label: 'Frame & Cut', tabIds: ['shortmaker', 'timeline'] },
   { id: 'audio', label: 'Audio', tabIds: ['dub'] },
   {

@@ -125,7 +125,8 @@ export function chooseDataRoot(input: ChooseDataRootInput): string {
 
   const marker = nonEmpty(input.markerContent);
   if (marker !== undefined) {
-    if (!isSafeLocalDataRoot(marker)) throw new DataRootSecurityError('data-dir.txt marker', marker);
+    if (!isSafeLocalDataRoot(marker))
+      throw new DataRootSecurityError('data-dir.txt marker', marker);
     return marker;
   }
 

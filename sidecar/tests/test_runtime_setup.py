@@ -767,13 +767,9 @@ class TestMainFullRunProvisioning:
         # ...and the honest completion marker records exactly that CORE set.
         marker = bs.first_run_complete_path(tmp_path)
         assert marker.is_file()
-        assert set(json.loads(marker.read_text(encoding="utf-8"))["assets"]) == set(
-            bs.core_first_run_assets()
-        )
+        assert set(json.loads(marker.read_text(encoding="utf-8"))["assets"]) == set(bs.core_first_run_assets())
 
-    def test_on_demand_only_run_is_provisioned_without_core_verification(
-        self, tmp_path, monkeypatch, capsys
-    ):
+    def test_on_demand_only_run_is_provisioned_without_core_verification(self, tmp_path, monkeypatch, capsys):
         # A Minimum/Custom-style run that pulls ONLY on-demand assets (no CORE
         # face/ASD weight) verifies an EMPTY core set and STILL writes the marker,
         # so the install opens provisioned (no re-bootstrap loop) — the missing

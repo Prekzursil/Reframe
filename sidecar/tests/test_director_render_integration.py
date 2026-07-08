@@ -43,10 +43,20 @@ def _drawtext_works() -> bool:
     try:
         proc = subprocess.run(
             [
-                "ffmpeg", "-hide_banner", "-nostdin", "-f", "lavfi",
-                "-i", "color=c=black:s=64x64:d=0.1",
-                "-vf", "drawtext=text=probe:fontsize=10",
-                "-frames:v", "1", "-f", "null", "-",
+                "ffmpeg",
+                "-hide_banner",
+                "-nostdin",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:s=64x64:d=0.1",
+                "-vf",
+                "drawtext=text=probe:fontsize=10",
+                "-frames:v",
+                "1",
+                "-f",
+                "null",
+                "-",
             ],
             capture_output=True,
             timeout=30,
@@ -57,9 +67,7 @@ def _drawtext_works() -> bool:
 
 
 _HAVE_DRAWTEXT = _drawtext_works()
-_SKIP_DRAWTEXT = pytest.mark.skipif(
-    not _HAVE_DRAWTEXT, reason="ffmpeg drawtext/fontconfig unavailable on this host"
-)
+_SKIP_DRAWTEXT = pytest.mark.skipif(not _HAVE_DRAWTEXT, reason="ffmpeg drawtext/fontconfig unavailable on this host")
 
 _CUES = [{"index": 1, "start": 0.2, "end": 1.0, "text": "real burn"}]
 

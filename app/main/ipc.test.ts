@@ -20,12 +20,7 @@ vi.mock('electron', () => ({
 
 import { KEYSTORE_FILENAME, loadDecryptedKeys, type SafeStorageLike } from './keystore';
 import { INJECTED_KEYS_FIELD, KeyBridge } from './keyBridge';
-import {
-  RPC_CHANNEL,
-  SECURE_STATUS_CHANNEL,
-  SIDECAR_RESTART_CHANNEL,
-  registerIpc,
-} from './ipc';
+import { RPC_CHANNEL, SECURE_STATUS_CHANNEL, SIDECAR_RESTART_CHANNEL, registerIpc } from './ipc';
 import type { Sidecar } from './sidecar';
 
 function makeSafeStorage(available = true): SafeStorageLike {
@@ -76,7 +71,10 @@ describe('registerIpc — key guard wiring', () => {
     const bridge = new KeyBridge({ safeStorage: makeSafeStorage(), keystorePath: keystorePath() });
     registerIpc(sidecar, () => [], bridge);
 
-    await invoke(RPC_CHANNEL, { method: 'providers.upsert', params: { id: 'groq', apiKeys: ['gsk_topSECRET1'] } });
+    await invoke(RPC_CHANNEL, {
+      method: 'providers.upsert',
+      params: { id: 'groq', apiKeys: ['gsk_topSECRET1'] },
+    });
 
     const [method, forwarded] = request.mock.calls[0];
     expect(method).toBe('providers.upsert');
@@ -93,7 +91,10 @@ describe('registerIpc — key guard wiring', () => {
     const bridge = new KeyBridge({ safeStorage: makeSafeStorage(), keystorePath: keystorePath() });
     registerIpc(sidecar, () => [], bridge);
     // Seed a key so injection carries something.
-    await invoke(RPC_CHANNEL, { method: 'providers.upsert', params: { id: 'groq', apiKeys: ['gsk_liveKEY1'] } });
+    await invoke(RPC_CHANNEL, {
+      method: 'providers.upsert',
+      params: { id: 'groq', apiKeys: ['gsk_liveKEY1'] },
+    });
 
     await invoke(RPC_CHANNEL, { method: 'ai.planJob', params: { goal: 'x' } });
     const call = request.mock.calls.find(([m]) => m === 'ai.planJob');
@@ -115,7 +116,10 @@ describe('registerIpc — key guard wiring', () => {
   it('forwards params verbatim when no keyBridge is wired (legacy behavior)', async () => {
     const { sidecar, request } = makeSidecar();
     registerIpc(sidecar, () => []);
-    await invoke(RPC_CHANNEL, { method: 'providers.upsert', params: { id: 'groq', apiKeys: ['gsk_raw'] } });
+    await invoke(RPC_CHANNEL, {
+      method: 'providers.upsert',
+      params: { id: 'groq', apiKeys: ['gsk_raw'] },
+    });
     expect(request).toHaveBeenCalledWith('providers.upsert', { id: 'groq', apiKeys: ['gsk_raw'] });
     // Without a bridge there is no secure.status channel.
     expect(registeredChannels()).not.toContain(SECURE_STATUS_CHANNEL);

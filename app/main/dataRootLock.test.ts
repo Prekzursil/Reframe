@@ -149,17 +149,21 @@ describe('decideLock', () => {
 
   it('lock is OURS -> ok, heldBy us, not stale (never probes liveness)', () => {
     const probe = vi.fn(bootOf(1));
-    expect(
-      decideLock({ pid: 100, time: 1, boot: 5000, host: 'hostA' }, OWNER, probe),
-    ).toEqual({ ok: true, heldBy: 100, stale: false });
+    expect(decideLock({ pid: 100, time: 1, boot: 5000, host: 'hostA' }, OWNER, probe)).toEqual({
+      ok: true,
+      heldBy: 100,
+      stale: false,
+    });
     expect(probe).not.toHaveBeenCalled();
   });
 
   it('DIFFERENT-host holder -> blocked, not stale (non-reclaimable, never probes)', () => {
     const probe = vi.fn(bootOf(5000));
-    expect(
-      decideLock({ pid: 200, time: 1, boot: 5000, host: 'hostB' }, OWNER, probe),
-    ).toEqual({ ok: false, heldBy: 200, stale: false });
+    expect(decideLock({ pid: 200, time: 1, boot: 5000, host: 'hostB' }, OWNER, probe)).toEqual({
+      ok: false,
+      heldBy: 200,
+      stale: false,
+    });
     expect(probe).not.toHaveBeenCalled();
   });
 
@@ -170,9 +174,11 @@ describe('decideLock', () => {
   });
 
   it('DEAD holder (probe null) -> ok (reclaim), heldBy that pid, stale', () => {
-    expect(
-      decideLock({ pid: 200, time: 1, boot: 5000, host: 'hostA' }, OWNER, dead),
-    ).toEqual({ ok: true, heldBy: 200, stale: true });
+    expect(decideLock({ pid: 200, time: 1, boot: 5000, host: 'hostA' }, OWNER, dead)).toEqual({
+      ok: true,
+      heldBy: 200,
+      stale: true,
+    });
   });
 
   it('REUSED pid (alive but boot id differs) -> ok (reclaim), stale', () => {
@@ -222,9 +228,7 @@ describe('acquireDataRootLock', () => {
     const io = makeIo(ourRecord());
     const decision = acquireDataRootLock(io, OWNER, 5000, bootOf(1));
     expect(decision).toEqual({ ok: true, heldBy: 100, stale: false });
-    expect(io.writeLock).toHaveBeenCalledWith(
-      '{"pid":100,"time":5000,"boot":5000,"host":"hostA"}',
-    );
+    expect(io.writeLock).toHaveBeenCalledWith('{"pid":100,"time":5000,"boot":5000,"host":"hostA"}');
     expect(parseLock(io.body)).toEqual({ pid: 100, time: 5000, boot: 5000, host: 'hostA' });
   });
 

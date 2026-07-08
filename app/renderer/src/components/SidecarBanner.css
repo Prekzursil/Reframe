@@ -20,7 +20,8 @@
   max-width: min(640px, calc(100vw - var(--space-5) * 2));
   padding: var(--space-3) var(--space-5);
   /* Warm caution wash over the overlay surface — reads amber, not red. */
-  background: linear-gradient(var(--status-warn-soft), var(--status-warn-soft)), var(--surface-overlay);
+  background:
+    linear-gradient(var(--status-warn-soft), var(--status-warn-soft)), var(--surface-overlay);
   border: 1px solid var(--status-warn);
   border-left: 3px solid var(--status-warn);
   border-radius: var(--radius-md);

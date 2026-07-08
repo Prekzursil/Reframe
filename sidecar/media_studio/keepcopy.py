@@ -172,9 +172,7 @@ class ManagedStore:
         Returns ``None`` when EVERY remaining copy is irreplaceable (original gone) — the
         caller then refuses LOUD rather than destroying the only surviving copy.
         """
-        rows = conn.execute(
-            f"SELECT * FROM {_MANAGED_TABLE} ORDER BY last_access ASC, rowid ASC"
-        ).fetchall()
+        rows = conn.execute(f"SELECT * FROM {_MANAGED_TABLE} ORDER BY last_access ASC, rowid ASC").fetchall()
         for row in rows:
             if self._original_exists(row):
                 return row
@@ -224,17 +222,13 @@ class ManagedStore:
 
         with self._library._open() as conn:
             conn.execute(_CREATE_MANAGED)
-            existing = conn.execute(
-                f"SELECT * FROM {_MANAGED_TABLE} WHERE entity_id = ?", (entity_id,)
-            ).fetchone()
+            existing = conn.execute(f"SELECT * FROM {_MANAGED_TABLE} WHERE entity_id = ?", (entity_id,)).fetchone()
             if existing is not None:
                 return _row_to_managed(existing)  # idempotent: already kept
 
             src = video.get("path") or ""
             if not src or not Path(src).exists():
-                raise KeepCopyError(
-                    f"cannot keep a copy: the source file for {entity_id} is missing: {src!r}"
-                )
+                raise KeepCopyError(f"cannot keep a copy: the source file for {entity_id} is missing: {src!r}")
 
             digest = _relink.content_hash_of(src, hash_file=self._hash_file)
             size = Path(src).stat().st_size
@@ -285,9 +279,7 @@ class ManagedStore:
                     # back the eviction + INSERT + re-point above (and the copier rolls back
                     # its own temp), so no partial state survives a mid-write crash.
                     _project_copy.copy_file_atomic(src, managed_path, copier=self._copier)
-                row = conn.execute(
-                    f"SELECT * FROM {_MANAGED_TABLE} WHERE entity_id = ?", (entity_id,)
-                ).fetchone()
+                row = conn.execute(f"SELECT * FROM {_MANAGED_TABLE} WHERE entity_id = ?", (entity_id,)).fetchone()
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
@@ -318,9 +310,7 @@ class ManagedStore:
         """
         with self._library._open() as conn:
             conn.execute(_CREATE_MANAGED)
-            row = conn.execute(
-                f"SELECT * FROM {_MANAGED_TABLE} WHERE entity_id = ?", (entity_id,)
-            ).fetchone()
+            row = conn.execute(f"SELECT * FROM {_MANAGED_TABLE} WHERE entity_id = ?", (entity_id,)).fetchone()
             if row is None:
                 raise KeepCopyError(f"no managed copy to evict for {entity_id}")
             if not force and not self._original_exists(row):

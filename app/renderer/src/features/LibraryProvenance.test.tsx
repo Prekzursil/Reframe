@@ -9,7 +9,14 @@ import type { RevealResult, RevealSource } from '../lib/rpc';
 const VIDEO = { id: 'v1', path: '/movies/talk.mp4', title: 'Talk' };
 
 function source(over: Partial<RevealSource> = {}): RevealSource {
-  return { id: 'v1', path: '/movies/talk.mp4', title: 'Talk', exists: true, relinkable: false, ...over };
+  return {
+    id: 'v1',
+    path: '/movies/talk.mp4',
+    title: 'Talk',
+    exists: true,
+    relinkable: false,
+    ...over,
+  };
 }
 
 function revealResult(over: Partial<RevealResult> = {}): RevealResult {
@@ -73,7 +80,9 @@ async function click(selector: string): Promise<void> {
 describe('LibraryProvenance', () => {
   it('always shows the full source path', async () => {
     await render(makeHandlers());
-    expect(container.querySelector('.library-provenance__path')?.textContent).toBe('/movies/talk.mp4');
+    expect(container.querySelector('.library-provenance__path')?.textContent).toBe(
+      '/movies/talk.mp4',
+    );
   });
 
   it('shows a Checking… badge until the reveal resolves', async () => {
@@ -90,7 +99,9 @@ describe('LibraryProvenance', () => {
   });
 
   it('surfaces a reveal failure loudly (Error message)', async () => {
-    await render(makeHandlers({ reveal: vi.fn(async () => Promise.reject(new Error('sidecar down'))) }));
+    await render(
+      makeHandlers({ reveal: vi.fn(async () => Promise.reject(new Error('sidecar down'))) }),
+    );
     const alert = container.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain('Could not check the source file');
     expect(alert?.textContent).toContain('sidecar down');
@@ -110,17 +121,23 @@ describe('LibraryProvenance', () => {
 
   it('shows On disk + Show in folder for a present source and does NOT re-pin when already relinkable', async () => {
     const handlers = makeHandlers({
-      reveal: vi.fn(async () => revealResult({ sources: [source({ exists: true, relinkable: true })] })),
+      reveal: vi.fn(async () =>
+        revealResult({ sources: [source({ exists: true, relinkable: true })] }),
+      ),
     });
     await render(handlers);
     expect(badge()).toContain('On disk');
-    expect(container.querySelector('.library-provenance__btn')?.textContent).toContain('Show in folder');
+    expect(container.querySelector('.library-provenance__btn')?.textContent).toContain(
+      'Show in folder',
+    );
     expect(handlers.pinHash).not.toHaveBeenCalled();
   });
 
   it('lazily pins the hash of a present, not-yet-relinkable source (pin-on-view back-fill)', async () => {
     const handlers = makeHandlers({
-      reveal: vi.fn(async () => revealResult({ sources: [source({ exists: true, relinkable: false })] })),
+      reveal: vi.fn(async () =>
+        revealResult({ sources: [source({ exists: true, relinkable: false })] }),
+      ),
     });
     await render(handlers);
     expect(handlers.pinHash).toHaveBeenCalledWith('v1');
@@ -130,7 +147,9 @@ describe('LibraryProvenance', () => {
 
   it('tolerates a pin-on-view failure (best-effort baseline, no crash)', async () => {
     const handlers = makeHandlers({
-      reveal: vi.fn(async () => revealResult({ sources: [source({ exists: true, relinkable: false })] })),
+      reveal: vi.fn(async () =>
+        revealResult({ sources: [source({ exists: true, relinkable: false })] }),
+      ),
       pinHash: vi.fn(async () => Promise.reject(new Error('hash read failed'))),
     });
     await render(handlers);
@@ -142,7 +161,9 @@ describe('LibraryProvenance', () => {
 
   it('opens the source location on Show in folder (success)', async () => {
     const handlers = makeHandlers({
-      reveal: vi.fn(async () => revealResult({ sources: [source({ exists: true, relinkable: true })] })),
+      reveal: vi.fn(async () =>
+        revealResult({ sources: [source({ exists: true, relinkable: true })] }),
+      ),
     });
     await render(handlers);
     await click('.library-provenance__btn');
@@ -152,7 +173,9 @@ describe('LibraryProvenance', () => {
 
   it('reports a failed Show in folder (bridge returned false)', async () => {
     const handlers = makeHandlers({
-      reveal: vi.fn(async () => revealResult({ sources: [source({ exists: true, relinkable: true })] })),
+      reveal: vi.fn(async () =>
+        revealResult({ sources: [source({ exists: true, relinkable: true })] }),
+      ),
       openInFolder: vi.fn(async () => false),
     });
     await render(handlers);
@@ -164,7 +187,9 @@ describe('LibraryProvenance', () => {
 
   it('says revealing is unavailable when the openInFolder bridge is absent', async () => {
     const handlers = makeHandlers({
-      reveal: vi.fn(async () => revealResult({ sources: [source({ exists: true, relinkable: true })] })),
+      reveal: vi.fn(async () =>
+        revealResult({ sources: [source({ exists: true, relinkable: true })] }),
+      ),
       openInFolder: undefined,
     });
     await render(handlers);
@@ -176,11 +201,18 @@ describe('LibraryProvenance', () => {
 
   it('offers Relink… for a missing but relinkable source', async () => {
     const handlers = makeHandlers({
-      reveal: vi.fn(async () => revealResult({ sources: [source({ exists: false, relinkable: true })], missing: ['/movies/talk.mp4'] })),
+      reveal: vi.fn(async () =>
+        revealResult({
+          sources: [source({ exists: false, relinkable: true })],
+          missing: ['/movies/talk.mp4'],
+        }),
+      ),
     });
     await render(handlers);
     expect(badge()).toContain('Missing');
-    expect(container.querySelector('.library-provenance__btn--relink')?.textContent).toContain('Relink…');
+    expect(container.querySelector('.library-provenance__btn--relink')?.textContent).toContain(
+      'Relink…',
+    );
     // A missing source is never pinned (nothing to hash).
     expect(handlers.pinHash).not.toHaveBeenCalled();
   });
@@ -188,7 +220,12 @@ describe('LibraryProvenance', () => {
   it('shows "relink unavailable" for a missing source with no pinned hash', async () => {
     await render(
       makeHandlers({
-        reveal: vi.fn(async () => revealResult({ sources: [source({ exists: false, relinkable: false })], missing: ['/movies/talk.mp4'] })),
+        reveal: vi.fn(async () =>
+          revealResult({
+            sources: [source({ exists: false, relinkable: false })],
+            missing: ['/movies/talk.mp4'],
+          }),
+        ),
       }),
     );
     expect(badge()).toContain('Missing');
@@ -200,7 +237,12 @@ describe('LibraryProvenance', () => {
 
   function missingRelinkable(over: Partial<ProvenanceHandlers> = {}): ProvenanceHandlers {
     return makeHandlers({
-      reveal: vi.fn(async () => revealResult({ sources: [source({ exists: false, relinkable: true })], missing: ['/movies/talk.mp4'] })),
+      reveal: vi.fn(async () =>
+        revealResult({
+          sources: [source({ exists: false, relinkable: true })],
+          missing: ['/movies/talk.mp4'],
+        }),
+      ),
       ...over,
     });
   }
@@ -213,12 +255,16 @@ describe('LibraryProvenance', () => {
     expect(handlers.relink).toHaveBeenCalledWith('v1', '/moved/talk.mp4');
     expect(badge()).toContain('On disk');
     expect(statusText()).toContain('Relinked and verified the source file');
-    expect(container.querySelector('.library-provenance__path')?.textContent).toBe('/moved/talk.mp4');
+    expect(container.querySelector('.library-provenance__path')?.textContent).toBe(
+      '/moved/talk.mp4',
+    );
   });
 
   it('surfaces a hash-mismatch relink refusal loudly', async () => {
     const handlers = missingRelinkable({
-      relink: vi.fn(async () => Promise.reject(new Error('does not match the recorded content hash'))),
+      relink: vi.fn(async () =>
+        Promise.reject(new Error('does not match the recorded content hash')),
+      ),
     });
     await render(handlers);
     await click('.library-provenance__btn--relink');
@@ -255,7 +301,9 @@ describe('LibraryProvenance', () => {
       evict: vi.fn(),
     };
     const handlers = makeHandlers({
-      reveal: vi.fn(async () => revealResult({ sources: [source({ exists: true, relinkable: true })] })),
+      reveal: vi.fn(async () =>
+        revealResult({ sources: [source({ exists: true, relinkable: true })] }),
+      ),
       managed,
     });
     await render(handlers);
@@ -269,7 +317,9 @@ describe('LibraryProvenance', () => {
   it('omits the keep-a-copy control when no managed handlers are wired', async () => {
     await render(
       makeHandlers({
-        reveal: vi.fn(async () => revealResult({ sources: [source({ exists: true, relinkable: true })] })),
+        reveal: vi.fn(async () =>
+          revealResult({ sources: [source({ exists: true, relinkable: true })] }),
+        ),
       }),
     );
     expect(container.querySelector('.keep-copy')).toBeNull();

@@ -116,9 +116,7 @@ export function isProfileFirstRunComplete(
     return false;
   }
   const present = new Set(presentAssets);
-  return requiredCoreAssets
-    .filter(isCoreFirstRunAsset)
-    .every((asset) => present.has(asset));
+  return requiredCoreAssets.filter(isCoreFirstRunAsset).every((asset) => present.has(asset));
 }
 
 /**

@@ -50,9 +50,7 @@ class RecordingRun:
         self.calls: list[list[str]] = []
         self.cwds: list[str | None] = []
 
-    def __call__(
-        self, argv, *, total_sec: float = 0.0, on_progress=None, should_cancel=None, cwd=None
-    ) -> int:
+    def __call__(self, argv, *, total_sec: float = 0.0, on_progress=None, should_cancel=None, cwd=None) -> int:
         self.calls.append(list(argv))
         self.cwds.append(cwd)
         if self.write_output and self.code == 0 and argv[-1] != "-":
@@ -227,9 +225,7 @@ class TestEngine:
             def __init__(self) -> None:
                 self.calls: list[list[str]] = []
 
-            def __call__(
-                self, argv, *, total_sec=0.0, on_progress=None, should_cancel=None, cwd=None
-            ) -> int:
+            def __call__(self, argv, *, total_sec=0.0, on_progress=None, should_cancel=None, cwd=None) -> int:
                 self.calls.append(list(argv))
                 return 0 if len(self.calls) == 1 else 1
 

@@ -218,7 +218,7 @@
 }
 
 /* A revealed key is the ONE moment a full secret is on screen — mark it clearly. */
-.provider-key-row__value[data-revealed='true'] {
+.provider-key-row__value[data-revealed="true"] {
   color: var(--text-primary);
   letter-spacing: 0;
 }
@@ -251,7 +251,7 @@
   border-color: var(--accent);
 }
 
-.provider-key-row__reveal[aria-pressed='true'] {
+.provider-key-row__reveal[aria-pressed="true"] {
   color: var(--text-primary);
   border-color: var(--accent);
   background: var(--accent-soft);

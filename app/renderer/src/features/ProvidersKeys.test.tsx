@@ -799,9 +799,7 @@ describe('ProvidersKeys — WU-D3 reveal / re-validate / replace', () => {
     return makeApi({
       list: () =>
         Promise.resolve({
-          providers: [
-            { id: 'groq', provider: 'Groq', baseUrl: 'https://b/v1', apiKeys },
-          ],
+          providers: [{ id: 'groq', provider: 'Groq', baseUrl: 'https://b/v1', apiKeys }],
         }),
       ...over,
     });

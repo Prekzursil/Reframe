@@ -291,7 +291,9 @@ describe('<Edit />', () => {
     act(() => root.render(<Edit video={makeVideo()} onBack={onBack} />));
     await flush();
     pick('advanced');
-    act(() => (container.querySelector('[data-testid="workspace"] button') as HTMLButtonElement).click());
+    act(() =>
+      (container.querySelector('[data-testid="workspace"] button') as HTMLButtonElement).click(),
+    );
     expect(onBack).toHaveBeenCalled();
   });
 });

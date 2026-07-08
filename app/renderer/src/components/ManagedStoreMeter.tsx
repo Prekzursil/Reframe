@@ -171,13 +171,21 @@ export function ManagedStoreMeter({ rpc }: ManagedStoreMeterProps): React.ReactE
             <>
               <ul className="managed-meter__list">
                 {snapshot.entries.map((entry) => (
-                  <li key={entry.entityId} className="managed-meter__row" data-entity={entry.entityId}>
+                  <li
+                    key={entry.entityId}
+                    className="managed-meter__row"
+                    data-entity={entry.entityId}
+                  >
                     <span className="managed-meter__row-name" title={entry.originalPath}>
                       {baseName(entry.originalPath)}
                     </span>
                     <span className="managed-meter__row-size">{formatBytes(entry.sizeBytes)}</span>
                     {confirmEvict === entry.entityId ? (
-                      <span className="managed-meter__confirm" role="group" aria-label="Confirm removing this copy">
+                      <span
+                        className="managed-meter__confirm"
+                        role="group"
+                        aria-label="Confirm removing this copy"
+                      >
                         <span className="managed-meter__confirm-q">Remove copy?</span>
                         <button
                           type="button"
@@ -213,7 +221,11 @@ export function ManagedStoreMeter({ rpc }: ManagedStoreMeterProps): React.ReactE
 
               <div className="managed-meter__actions">
                 {confirmClear ? (
-                  <span className="managed-meter__confirm" role="group" aria-label="Confirm clearing all copies">
+                  <span
+                    className="managed-meter__confirm"
+                    role="group"
+                    aria-label="Confirm clearing all copies"
+                  >
                     <span className="managed-meter__confirm-q">
                       Remove all {snapshot.count} managed copies?
                     </span>

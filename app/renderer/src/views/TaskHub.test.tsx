@@ -41,9 +41,13 @@ describe('<TaskHub />', () => {
   }
 
   it('renders the video title + the four job cards and the advanced escape', () => {
-    act(() => root.render(<TaskHub video={makeVideo()} lastChoice={null} onChoose={() => undefined} />));
+    act(() =>
+      root.render(<TaskHub video={makeVideo()} lastChoice={null} onChoose={() => undefined} />),
+    );
     expect(container.querySelector('.task-hub__title')?.textContent).toBe('A Long Talk');
-    expect(container.querySelector('.task-hub__title')?.getAttribute('title')).toBe('/movies/talk.mp4');
+    expect(container.querySelector('.task-hub__title')?.getAttribute('title')).toBe(
+      '/movies/talk.mp4',
+    );
     expect(container.querySelectorAll('.task-hub__card').length).toBe(4);
     expect(cardByText('Reframe to vertical')).toBeTruthy();
     expect(cardByText('Make shorts')).toBeTruthy();
@@ -58,7 +62,9 @@ describe('<TaskHub />', () => {
   it('shows the "for this video" cue only on the dual-homed cards (shorts/director)', () => {
     // design-review P2: shorts + director also live as top-level tabs, so their
     // cards carry the video-scope cue; reframe + subtitles do not.
-    act(() => root.render(<TaskHub video={makeVideo()} lastChoice={null} onChoose={() => undefined} />));
+    act(() =>
+      root.render(<TaskHub video={makeVideo()} lastChoice={null} onChoose={() => undefined} />),
+    );
     const cues = container.querySelectorAll('.task-hub__scope');
     expect(cues.length).toBe(2);
     for (const cue of cues) expect(cue.textContent).toBe('for this video');
@@ -85,17 +91,23 @@ describe('<TaskHub />', () => {
   });
 
   it('marks the last-used job card', () => {
-    act(() => root.render(<TaskHub video={makeVideo()} lastChoice="reframe" onChoose={() => undefined} />));
+    act(() =>
+      root.render(<TaskHub video={makeVideo()} lastChoice="reframe" onChoose={() => undefined} />),
+    );
     expect(cardByText('Reframe to vertical').classList.contains('is-last')).toBe(true);
     // exactly one "Last used" badge, on the reframe card.
     const badges = container.querySelectorAll('.task-hub__last');
     expect(badges.length).toBe(1);
     expect(cardByText('Reframe to vertical').querySelector('.task-hub__last')).not.toBeNull();
-    expect(container.querySelector('.task-hub__advanced')?.classList.contains('is-last')).toBe(false);
+    expect(container.querySelector('.task-hub__advanced')?.classList.contains('is-last')).toBe(
+      false,
+    );
   });
 
   it('marks the advanced escape as last-used when it was the last choice', () => {
-    act(() => root.render(<TaskHub video={makeVideo()} lastChoice="advanced" onChoose={() => undefined} />));
+    act(() =>
+      root.render(<TaskHub video={makeVideo()} lastChoice="advanced" onChoose={() => undefined} />),
+    );
     const advanced = container.querySelector('.task-hub__advanced') as HTMLButtonElement;
     expect(advanced.classList.contains('is-last')).toBe(true);
     expect(advanced.querySelector('.task-hub__last')).not.toBeNull();

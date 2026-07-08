@@ -205,9 +205,7 @@ def test_ensure_fires_for_local_backstop_and_warms_it() -> None:
 def test_ensure_only_after_cloud_entries_are_exhausted() -> None:
     fired: list[str] = []
     # cloud key fails (429) -> rotate to the local backstop -> ensure() then fires.
-    transport = ScriptedTransport(
-        {"ck": [ProviderError("LLM HTTP 429", status_code=429)], None: [_ok("fallback")]}
-    )
+    transport = ScriptedTransport({"ck": [ProviderError("LLM HTTP 429", status_code=429)], None: [_ok("fallback")]})
     rp = _rp(
         [_spec(provider="Groq", keys=("ck",)), _spec(provider="local", local=True)],
         transport,
@@ -284,7 +282,10 @@ def test_rotating_provider_ensure_defaults_to_none() -> None:
 def test_build_pool_provider_threads_ensure_into_local_only_pool() -> None:
     fired: list[str] = []
     rp = prov.build_pool_provider(
-        {}, transport=ScriptedTransport({None: [_ok("y")]}), prefer=prov.LOCAL_PROVIDER_ID, ensure=lambda: fired.append("e")
+        {},
+        transport=ScriptedTransport({None: [_ok("y")]}),
+        prefer=prov.LOCAL_PROVIDER_ID,
+        ensure=lambda: fired.append("e"),
     )
     assert rp.chat([{"role": "user", "content": "q"}]) == "y"
     assert fired == ["e"]
@@ -294,9 +295,7 @@ def test_get_provider_bare_local_fallthrough_uses_ensure_pool() -> None:
     fired: list[str] = []
     # No cloud providers configured, no prefer -> the legacy bare-local fall-through,
     # but an injected ensure reroutes it through a local-only pool so auto-start works.
-    provider = prov.get_provider(
-        {}, transport=ScriptedTransport({None: [_ok("z")]}), ensure=lambda: fired.append("e")
-    )
+    provider = prov.get_provider({}, transport=ScriptedTransport({None: [_ok("z")]}), ensure=lambda: fired.append("e"))
     assert provider.chat([{"role": "user", "content": "q"}]) == "z"
     assert fired == ["e"]
 

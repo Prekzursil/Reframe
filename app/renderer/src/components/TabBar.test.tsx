@@ -97,7 +97,13 @@ describe('TabBar (grouped clusters, WU-3a2)', () => {
     expect(without).not.toContain('tabbar__export');
 
     const withExport = renderToStaticMarkup(
-      <TabBar tabs={GROUP_TABS} active="t1" onSelect={() => {}} groups={GROUPS} onExport={() => {}} />,
+      <TabBar
+        tabs={GROUP_TABS}
+        active="t1"
+        onSelect={() => {}}
+        groups={GROUPS}
+        onExport={() => {}}
+      />,
     );
     expect(withExport).toContain('tabbar__export');
     expect(withExport).toContain('Export');
@@ -137,7 +143,9 @@ describe('TabBar (grouped clusters, WU-3a2)', () => {
       (c): c is React.ReactElement =>
         typeof c === 'object' &&
         c !== null &&
-        String((c as React.ReactElement).props?.className ?? '').includes('tabbar__group--advanced'),
+        String((c as React.ReactElement).props?.className ?? '').includes(
+          'tabbar__group--advanced',
+        ),
     ) as React.ReactElement;
     const sectionChildren = advancedSection.props.children as React.ReactElement[];
     const toggleButton = sectionChildren[0];

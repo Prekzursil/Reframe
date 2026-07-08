@@ -65,9 +65,7 @@ function render(
         onReveal={h.onReveal}
         onRevalidate={h.onRevalidate}
         onReplace={h.onReplace}
-        {...(props.revealTimeoutMs !== undefined
-          ? { revealTimeoutMs: props.revealTimeoutMs }
-          : {})}
+        {...(props.revealTimeoutMs !== undefined ? { revealTimeoutMs: props.revealTimeoutMs } : {})}
       />,
     );
   });
@@ -133,7 +131,9 @@ describe('ProviderKeyRow — reveal (transient, masked-by-default)', () => {
     expect(q('.provider-key-row__value').textContent).toBe(SECRET);
 
     // React's onBlur delegates to the bubbling `focusout` event.
-    act(() => q('.provider-key-row__value').dispatchEvent(new FocusEvent('focusout', { bubbles: true })));
+    act(() =>
+      q('.provider-key-row__value').dispatchEvent(new FocusEvent('focusout', { bubbles: true })),
+    );
     await flush();
     expect(q('.provider-key-row__value').textContent).toBe('…WXYZ');
     expect(container.innerHTML).not.toContain(SECRET);
@@ -219,7 +219,9 @@ describe('ProviderKeyRow — Re-validate stored key', () => {
 
   it('surfaces a scrubbed failure status (and defaults a missing error to "invalid")', async () => {
     const withError = makeHandlers({
-      onRevalidate: vi.fn(() => Promise.resolve<KeyCheckResult>({ ok: false, error: '401 unauthorized' })),
+      onRevalidate: vi.fn(() =>
+        Promise.resolve<KeyCheckResult>({ ok: false, error: '401 unauthorized' }),
+      ),
     });
     render(withError);
     click('.provider-key-row__revalidate');

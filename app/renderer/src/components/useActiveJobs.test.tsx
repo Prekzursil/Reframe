@@ -18,12 +18,7 @@ vi.mock('../lib/rpc', () => ({
   hasApi: () => hasApiValue,
 }));
 
-import {
-  isActiveJob,
-  activeJobCount,
-  useActiveJobs,
-  JOBS_HEARTBEAT_MS,
-} from './useActiveJobs';
+import { isActiveJob, activeJobCount, useActiveJobs, JOBS_HEARTBEAT_MS } from './useActiveJobs';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -115,7 +110,11 @@ describe('useActiveJobs (hook)', () => {
 
   it('reports the active count from an initial job.list read', async () => {
     rpcMock.mockResolvedValue({
-      jobs: [job({ status: 'running' }), job({ jobId: 'j2', status: 'queued' }), job({ jobId: 'j3', status: 'done' })],
+      jobs: [
+        job({ status: 'running' }),
+        job({ jobId: 'j2', status: 'queued' }),
+        job({ jobId: 'j3', status: 'done' }),
+      ],
     });
     await mount();
     expect(rpcMock).toHaveBeenCalledWith('job.list');
