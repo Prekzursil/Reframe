@@ -109,6 +109,42 @@ class TestShippedRequirementFiles:
         assert reqs.pins[1] == "torch==2.11.0+cu128"
         assert reqs.pins[2] == "torchaudio==2.11.0+cu128"
 
+    def test_pyproject_reframe_gpu_torch_pinned_and_paired(self):
+        """Lock the pyproject ``reframe-gpu`` extra (LR-ASD cu124 runtime) too.
+
+        dependabot #259 desynced torch/torchvision INSIDE pyproject (torch
+        2.6.0->2.12.1, torchvision duplicated, torchaudio wrongly added) and slipped
+        CI because the pin test only covered the requirements .txt files. Locking the
+        extra here makes that whole class fail loudly instead of shipping a broken
+        GPU LR-ASD env.
+        """
+        import tomllib
+
+        pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        deps = data["project"]["optional-dependencies"]["reframe-gpu"]
+        pins: dict[str, str] = {}
+        for dep in deps:
+            if "==" not in dep:
+                continue
+            name, ver = dep.split("==", 1)
+            assert name not in pins, f"{name} pinned twice in reframe-gpu (merge/bump artifact)"
+            pins[name] = ver
+        # GPU-validated cu124 trio: torch==torchaudio (paired), torchvision 0.21.0
+        # <-> torch 2.6.0, and NONE carry a +cu128 tag (CUDA comes from the
+        # extra-index-url, not a local version). #259 broke all three: torch->2.12.1,
+        # torchvision duplicated->0.27.1, torchaudio injected as 2.11.0+cu128.
+        assert pins["torch"] == "2.6.0", f"reframe-gpu torch must stay 2.6.0, got {pins.get('torch')}"
+        assert pins["torchvision"] == "0.21.0", (
+            f"reframe-gpu torchvision must stay 0.21.0 (paired w/ torch 2.6.0), got {pins.get('torchvision')}"
+        )
+        assert pins["torchaudio"] == "2.6.0", (
+            f"reframe-gpu torchaudio must stay 2.6.0 (paired w/ torch), got {pins.get('torchaudio')}"
+        )
+        assert pins["torch"] == pins["torchaudio"], "reframe-gpu torch/torchaudio must be paired"
+        for pkg in ("torch", "torchvision", "torchaudio"):
+            assert "+cu128" not in pins[pkg], f"reframe-gpu {pkg} is cu124, must not carry +cu128: {pins[pkg]}"
+
 
 # --------------------------------------------------------------------------- #
 # ._pth rendering / writing (A7 activation)
