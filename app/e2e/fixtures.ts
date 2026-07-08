@@ -259,9 +259,18 @@ export function provisionAssets(python: string, dataRoot: string, names: string[
     });
     let buf = '';
     let jobId = '';
+    // Capture the sidecar's stderr so a SILENT provisioning failure (e.g. a missing
+    // download dep -> assets.ensure gracefully SKIPS the item but still reports
+    // job.done) is surfaced in the rejection instead of only manifesting later as a
+    // mysterious "model not provisioned" at reframe time.
+    let stderr = '';
+    proc.stderr.setEncoding('utf8');
+    proc.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
     const timer = setTimeout(() => {
       proc.kill();
-      reject(new Error(`provisionAssets(${names.join(',')}) timed out`));
+      reject(new Error(`provisionAssets(${names.join(',')}) timed out\n${stderr}`));
     }, 300_000);
     const done = (err?: Error): void => {
       clearTimeout(timer);
@@ -277,16 +286,38 @@ export function provisionAssets(python: string, dataRoot: string, names: string[
         const line = buf.slice(0, nl).trim();
         buf = buf.slice(nl + 1);
         if (!line.startsWith('{')) continue;
-        let msg: { id?: number; method?: string; result?: { jobId?: string }; params?: { jobId?: string } };
+        let msg: {
+          id?: number;
+          method?: string;
+          result?: { jobId?: string };
+          params?: { jobId?: string; result?: { installed?: string[] } };
+        };
         try {
           msg = JSON.parse(line);
         } catch {
           continue;
         }
         if (msg.id === 1 && msg.result?.jobId) jobId = msg.result.jobId;
-        if (msg.params?.jobId === jobId && msg.method === 'job.done') done();
+        if (msg.params?.jobId === jobId && msg.method === 'job.done') {
+          // VERIFY the requested assets actually installed. assets.ensure emits
+          // job.done even when it GRACEFULLY SKIPS a failed item (WU C1), so a silent
+          // download failure would otherwise pass as success here and only surface
+          // as "model not provisioned" deep in the reframe stage.
+          const installed = msg.params.result?.installed ?? [];
+          const missing = names.filter((n) => !installed.includes(n));
+          if (missing.length > 0) {
+            done(
+              new Error(
+                `provisionAssets: ${missing.join(', ')} did not install ` +
+                  `(installed=${JSON.stringify(installed)}); sidecar stderr:\n${stderr}`,
+              ),
+            );
+          } else {
+            done();
+          }
+        }
         if (msg.params?.jobId === jobId && msg.method === 'job.error') {
-          done(new Error(`provisionAssets job.error: ${JSON.stringify(msg.params)}`));
+          done(new Error(`provisionAssets job.error: ${JSON.stringify(msg.params)}\n${stderr}`));
         }
       }
     });

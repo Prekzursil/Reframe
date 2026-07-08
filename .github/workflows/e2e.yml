@@ -155,21 +155,26 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e "sidecar[dev]" --no-deps
 
-      - name: Install the reframe runtime dep (OpenCV) for the real Make-Shorts pipeline
+      - name: Install the reframe + asset-provisioning runtime deps for the real Make-Shorts pipeline
         # golden-journey.spec.ts drives the REAL reframe→export pipeline against the
         # dev-build sidecar (RF_PY = this system python on EVERY leg, incl. Windows —
-        # only packaged.spec drives the shipped .exe). The final vertical-reframe stage
-        # (reframe_claudeshorts) HARD-requires cv2 and fails LOUD when it is missing
-        # (no silent center-crop fallback — the WU-3 no-silent-fallback contract), so
-        # without this the export job errors at REFRAME after producing the cut/
-        # stabilize intermediates and no 9:16 short is ever written. opencv-python-
-        # headless bundles FaceDetectorYN + the ONNX runtime YuNet uses (no GUI libs);
-        # numpy rides along. PINNED to the reframe-validated version (pyproject
-        # reframe-gpu extra, A6 lesson 5) — unpinned resolves to OpenCV 5.x, a
-        # cv2.FaceDetectorYN/YuNet major-version break that fails the reframe. In
-        # production the packaged app installs this on first-run bootstrap. Mirrors
+        # only packaged.spec drives the shipped .exe). Two runtime needs the
+        # `sidecar[dev] --no-deps` install above deliberately omits:
+        #  * cv2 — the final vertical-reframe stage (reframe_claudeshorts) HARD-requires
+        #    it and fails LOUD when missing (no silent center-crop — the WU-3 contract).
+        #    PINNED to the reframe-validated version (pyproject reframe-gpu extra, A6
+        #    lesson 5); unpinned resolves to OpenCV 5.x, a FaceDetectorYN/YuNet
+        #    major-version break. opencv-python-headless bundles FaceDetectorYN + the
+        #    ONNX runtime YuNet uses (no GUI libs); numpy rides along.
+        #  * httpx — the asset downloader (manager._default_http_client) lazily imports
+        #    it. golden-journey provisions the YuNet model via a live sidecar
+        #    (fixtures.provisionAssets → assets.ensure); WITHOUT httpx that download
+        #    throws, assets.ensure GRACEFULLY SKIPS the item but still emits job.done,
+        #    so YuNet never lands and the reframe reports "not provisioned". huggingface_hub
+        #    covers the HF-snapshot install path for completeness.
+        # In production the packaged app installs these on first-run bootstrap. Mirrors
         # the e2e-sidecar job's install.
-        run: pip install "opencv-python-headless==4.13.0.92" numpy
+        run: pip install "opencv-python-headless==4.13.0.92" numpy httpx huggingface_hub
 
       - name: Install app deps
         working-directory: app
