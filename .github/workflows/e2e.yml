@@ -151,6 +151,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e "sidecar[dev]" --no-deps
 
+      - name: Install the reframe runtime dep (OpenCV) for the real Make-Shorts pipeline
+        # golden-journey.spec.ts drives the REAL reframe→export pipeline against the
+        # dev-build sidecar (RF_PY = this system python on EVERY leg, incl. Windows —
+        # only packaged.spec drives the shipped .exe). The final vertical-reframe stage
+        # (reframe_claudeshorts) HARD-requires cv2 and fails LOUD when it is missing
+        # (no silent center-crop fallback — the WU-3 no-silent-fallback contract), so
+        # without this the export job errors at REFRAME after producing the cut/
+        # stabilize intermediates and no 9:16 short is ever written. opencv-python-
+        # headless bundles FaceDetectorYN + the ONNX runtime YuNet uses (no GUI libs);
+        # numpy rides along. In production the packaged app installs this on first-run
+        # bootstrap. Mirrors the e2e-sidecar job's install.
+        run: pip install opencv-python-headless numpy
+
       - name: Install app deps
         working-directory: app
         run: npm ci
@@ -181,7 +194,13 @@ jobs:
       - name: Package the Windows app (electron-builder → dist/)
         if: runner.os == 'Windows'
         working-directory: app
-        run: npx electron-builder --config ../electron-builder.yml --win
+        # `--publish never`: this is an E2E BUILD, not a release. Without it,
+        # electron-builder detects CI and implicitly tries to publish, which
+        # fails with "GitHub Personal Access Token is not set" (no GH_TOKEN) —
+        # AFTER it has already built + signed dist/. We only need dist/ to exist
+        # for packaged.spec.ts to drive the shipped .exe; publishing is the
+        # release workflow's job, not this gate's.
+        run: npx electron-builder --config ../electron-builder.yml --win --publish never
 
       - name: E2E GUI — vitest DOM caption + nasty-caption proofs
         working-directory: app
