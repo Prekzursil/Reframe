@@ -68,6 +68,51 @@ def _is_vision_request(body: dict[str, Any]) -> bool:
     return False
 
 
+def _is_select_request(body: dict[str, Any]) -> bool:
+    """True when the chat is the moment-finder SELECT planner (clips JSON expected).
+
+    The select prompt (features/select.build_system_prompt) is the elite
+    short-form-editor two-pass THINK/THEN system message; its user message pins
+    the ``{"clips":[...]}`` schema. Detecting it lets the mock reply with a
+    parseable clips object so the REAL select_unified parser accepts it."""
+    for msg in body.get("messages") or []:
+        content = str(msg.get("content", ""))
+        if msg.get("role") == "system" and "short-form video editor" in content:
+            return True
+    return False
+
+
+def _select_clips_json() -> str:
+    """A valid, schema-shaped SELECT reply (one clip) the real parser accepts.
+
+    Carries the frozen Candidate wire fields (rank/start/end/duration_sec/hook/
+    why/score + factors + factorNotes). A <think> block exercises strip_think on
+    the real parser. Downstream duration validation may drop a clip that is too
+    short for the request's min/max — that is fine: the SELECT ROUTE egress (the
+    RAW-key assertion) is what this reply lets the test prove end-to-end."""
+    clips = {
+        "clips": [
+            {
+                "rank": 1,
+                "start": "00:00",
+                "end": "00:03",
+                "duration_sec": 3,
+                "hook": "the single most important pricing insight",
+                "why": "leads with the strongest, most quotable pricing claim",
+                "score": 82,
+                "factors": {"hookStrength": 88, "emotionalFlow": 70, "perceivedValue": 90, "shareability": 75},
+                "factorNotes": {
+                    "hookStrength": "opens on the core claim",
+                    "emotionalFlow": "steady build",
+                    "perceivedValue": "concrete insight",
+                    "shareability": "quotable one-liner",
+                },
+            }
+        ]
+    }
+    return "<think>rank the moments</think>\n" + json.dumps(clips)
+
+
 def _edit_plan_json() -> str:
     """A valid EditPlan object (kinds from edit_plan.OP_KINDS; spans in ms)."""
     plan = {
@@ -185,6 +230,8 @@ class MockModelServer:
             self.auth_headers["chat"] = handler.headers.get("Authorization")
         if _is_director_request(body):
             content = _edit_plan_json()
+        elif _is_select_request(body):
+            content = _select_clips_json()
         elif vision:
             # Best-frame picker asks for the best 1-based frame index; "2" -> idx 1.
             content = "Frame 2 is the most eye-catching and in-focus."

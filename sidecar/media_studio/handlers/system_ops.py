@@ -373,6 +373,13 @@ def phase8_select(self: Services, params: dict[str, Any], ctx: RpcContext) -> di
     if not path:
         raise _invalid(f"unknown video: {video_id}")
     settings = self.settings.get()
+    # FACTORY PATH (WU-D2b-2): the Tier-2 vlm_reranker's cloud vision egress needs
+    # the RAW apiKey on the wire, but it resolves on the job WORKER thread — AFTER
+    # the per-request key overlay closes. Capture the RAW settings NOW (while the
+    # overlay is still open) so the off-thread :meth:`_resolve_vlm_reranker` sees
+    # live keys; the broad ``settings`` stays redacted for the runner/select seams
+    # (narrow the raw-key blast radius to the factory consumer only).
+    raw_settings = dict(self.settings.get_raw())
     tier = _coerce_tier(params.get("tier"), settings)
     prompt = str(params.get("prompt") or "")
     controls = params.get("controls") or {}
@@ -389,7 +396,7 @@ def phase8_select(self: Services, params: dict[str, Any], ctx: RpcContext) -> di
         # entirely (so no vision pool is built / no consent read). Cloud-vision
         # + frame consent -> a CloudVlmBackend closure over the vision pool;
         # else local weights -> the local reranker; else None (transcript-only).
-        vlm_reranker = self._resolve_vlm_reranker(settings, media_path=path) if tier >= 2 else None
+        vlm_reranker = self._resolve_vlm_reranker(raw_settings, media_path=path) if tier >= 2 else None
         tracks = runner(
             path,
             tier=tier,
