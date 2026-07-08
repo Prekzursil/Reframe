@@ -315,13 +315,24 @@ describe('shredFile', () => {
   it('is a no-op (false) for a missing file', () => {
     expect(shredFile(join(dir, 'nope.json'))).toBe(false);
   });
-  it('swallows overwrite/unlink failures on a directory path and still reports handled', () => {
-    // A directory cannot be written-as-file nor unlinked-as-file: both arms throw
-    // and are swallowed (best-effort), returning true because the path existed.
+  it('truncates + removes a real plaintext file and reports it shredded (true)', () => {
+    const f = join(dir, 'plain.json');
+    writeFileSync(f, '{"cloudApiKey":"sk-live-should-be-scrubbed"}');
+    expect(shredFile(f)).toBe(true);
+    expect(existsSync(f)).toBe(false); // the plaintext copy is genuinely gone
+  });
+  it('returns false for a path that exists but cannot be scrubbed — never falsely reports an intact plaintext copy as shredded', () => {
+    // SECURITY (Codex stop-time review): a target that EXISTS but where BOTH the
+    // truncate and the unlink fail — a locked / read-only / unwritable plaintext
+    // copy, or a directory — is still fully recoverable on disk, so shredFile must
+    // NOT report it handled (the migration would wrongly list it in `shredded[]`).
+    // "Existed" is not "shredded". A directory is the deterministic cross-platform
+    // instance of that class: openSync(dir,'r+') -> EISDIR and unlinkSync(dir) ->
+    // EISDIR/EPERM, so both arms fail exactly as they would for a locked file.
     const asDir = join(dir, 'a-directory');
     mkdirSync(asDir);
-    expect(shredFile(asDir)).toBe(true);
-    expect(existsSync(asDir)).toBe(true); // still there — failure was swallowed, not fatal
+    expect(shredFile(asDir)).toBe(false); // NOT falsely reported as shredded
+    expect(existsSync(asDir)).toBe(true); // the intact copy is still on disk
   });
 });
 

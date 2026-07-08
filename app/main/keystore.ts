@@ -242,19 +242,26 @@ function writeJsonAtomic(path: string, data: unknown): void {
 
 /**
  * Truncate a file's bytes to zero then delete it, so a plaintext copy cannot be
- * recovered from the freed inode by a casual read. Best-effort: a missing file
- * is a no-op and any failure after the truncate is swallowed (the secret bytes are
- * already gone). Exported for direct unit coverage of its defensive arms.
+ * recovered from the freed inode by a casual read.
  *
- * TOCTOU-free (CodeQL js/file-system-race): there is NO `existsSync`-then-write
- * check-and-use window. We open with the `r+` flag — a single atomic syscall that
- * REQUIRES the file to already exist and never creates it — so a truly-absent file
- * fails `ENOENT` here (returning false) instead of being silently created by a
- * later write, and any other target (e.g. a directory -> `EISDIR`) falls through to
- * the best-effort unlink below, preserving the prior "existed -> true" contract.
+ * SECURITY CONTRACT (returns whether the plaintext was actually made unrecoverable):
+ *   - `true`  ONLY when the bytes were truncated OR the file was removed — i.e. the
+ *             plaintext at that path is genuinely gone. The caller (migration) lists
+ *             these in `shredded[]` as "plaintext key material destroyed".
+ *   - `false` when the target is absent (nothing to shred) OR still fully intact on
+ *             disk — a LOCKED / read-only / unwritable file, or a directory, where
+ *             BOTH the truncate and the unlink failed. Reporting such a file as
+ *             shredded would let the caller wrongly believe a recoverable plaintext
+ *             copy is gone. "Existed" is NOT "shredded".
+ *
+ * TOCTOU-free (CodeQL js/file-system-race): NO `existsSync`-then-write window. We
+ * open with the `r+` flag — a single atomic syscall that REQUIRES the file to exist
+ * and never creates it — so a truly-absent file fails `ENOENT` (returning false)
+ * instead of being silently created by a later write.
  */
 export function shredFile(path: string): boolean {
   const safe = safeFilePath(path);
+  let scrubbed = false;
   let fd: number | undefined;
   try {
     fd = openSync(safe, 'r+');
@@ -262,13 +269,14 @@ export function shredFile(path: string): boolean {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       return false; // truly absent — nothing to shred
     }
-    /* EISDIR/EACCES/…: the target exists but can't be opened r+; unlink below */
+    /* EISDIR/EACCES/EBUSY/…: exists but can't be opened r+; try the unlink below */
   }
   if (fd !== undefined) {
     try {
       ftruncateSync(fd, 0); // scrub the bytes in place before unlinking
+      scrubbed = true; // the plaintext bytes are now zeroed
     } catch {
-      /* best-effort: attempt the unlink regardless */
+      /* truncate failed (e.g. lock acquired) — fall through to the unlink attempt */
     } finally {
       try {
         closeSync(fd);
@@ -279,10 +287,13 @@ export function shredFile(path: string): boolean {
   }
   try {
     unlinkSync(safe);
+    scrubbed = true; // the file is gone — no plaintext left at this path
   } catch {
-    /* best-effort: the truncate already scrubbed the bytes */
+    /* unlink failed; `scrubbed` reflects whether the truncate succeeded */
   }
-  return true;
+  // Only report a real shred: a locked/unwritable/intact file (both arms failed)
+  // returns false so the caller never lists a still-recoverable copy as destroyed.
+  return scrubbed;
 }
 
 /**
