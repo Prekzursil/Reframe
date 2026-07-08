@@ -49,6 +49,12 @@ let seeded: SeededEnv;
 let app: ElectronApplication;
 const consoleErrors: string[] = [];
 const failedRequests: string[] = [];
+// Buffer the packaged/dev MAIN process stdout+stderr — the spawned sidecar's
+// export-job errors (e.g. a reframe ClaudeShortsBackendUnavailableError, a cv2
+// FaceDetectorYN failure, a missing model) surface there, NOT in Playwright's
+// error-context.md. We fold the tail into the done-signal failure message so a
+// red repro names the stage that broke instead of only the on-disk snapshot.
+const mainLog: string[] = [];
 
 /** The subset of ShortInfo (§3, features/shorts.py) this test reads off shorts.list. */
 interface BridgeShort {
@@ -123,6 +129,12 @@ test.beforeAll(async () => {
     ...(built.executablePath ? { executablePath: built.executablePath } : {}),
     env: seeded.appEnv,
   });
+
+  // Capture the main process (and its spawned sidecar) stdout/stderr so a failed
+  // export job's real error is recoverable in CI (see mainLog note above).
+  const proc = app.process();
+  proc.stdout?.on('data', (d: Buffer) => mainLog.push(d.toString()));
+  proc.stderr?.on('data', (d: Buffer) => mainLog.push(d.toString()));
 
   // Bind the console/pageerror collectors from the very first frame so they cover
   // the WHOLE session (load + navigation + making the short).
@@ -204,10 +216,22 @@ test('Make Shorts produces a real vertical short file on disk (golden journey)',
 
   // PRIMARY DONE-SIGNAL — wait for the FINISHED short, then assert the real file.
   const { final, snapshot } = await pollForFinalShort(win, seeded.videoId, Date.now() + 200_000);
+  // On a red repro, surface the sidecar's own error tail (the export job's real
+  // failure — reframe/cv2/model) alongside the on-disk snapshot so the failing
+  // stage is named, not guessed.
+  const sidecarErr = mainLog
+    .join('')
+    .split(/\r?\n/)
+    .filter((l) =>
+      /error|traceback|reframe|yunet|cv2|facedetector|claudeshorts|opencv|backend|provision|not provisioned/i.test(l),
+    )
+    .slice(-30)
+    .join('\n');
   expect(
     final,
     `no finished short appeared for videoId=${seeded.videoId} within 200s — the export ` +
-      `job never completed (shorts.list snapshot, incl. intermediates: ${JSON.stringify(snapshot)})`,
+      `job never completed (shorts.list snapshot, incl. intermediates: ${JSON.stringify(snapshot)})` +
+      (sidecarErr ? `\n--- sidecar error tail ---\n${sidecarErr}` : ''),
   ).not.toBeNull();
 
   const producedPath = resolve(final!.path);

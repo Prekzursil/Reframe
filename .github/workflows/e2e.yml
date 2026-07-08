@@ -73,8 +73,12 @@ jobs:
           # The CPU runtime deps the opt-in E2E flows actually exercise. Unlike the
           # standard gate, the E2E suite IS allowed the heavier (still CPU-only)
           # stack: real tiny faster-whisper, scenedetect, av, onnxruntime, cv2.
+          # opencv is PINNED to the version the reframe engine is validated against
+          # (pyproject reframe-gpu extra, A6 lesson 5). Unpinned resolves to OpenCV
+          # 5.x, whose cv2.FaceDetectorYN/YuNet path is a major-version break and
+          # fails the claudeshorts reframe.
           pip install \
-            httpx numpy opencv-python-headless \
+            httpx numpy opencv-python-headless==4.13.0.92 \
             faster-whisper scenedetect av onnxruntime \
             huggingface_hub tokenizers
 
@@ -160,9 +164,12 @@ jobs:
         # without this the export job errors at REFRAME after producing the cut/
         # stabilize intermediates and no 9:16 short is ever written. opencv-python-
         # headless bundles FaceDetectorYN + the ONNX runtime YuNet uses (no GUI libs);
-        # numpy rides along. In production the packaged app installs this on first-run
-        # bootstrap. Mirrors the e2e-sidecar job's install.
-        run: pip install opencv-python-headless numpy
+        # numpy rides along. PINNED to the reframe-validated version (pyproject
+        # reframe-gpu extra, A6 lesson 5) — unpinned resolves to OpenCV 5.x, a
+        # cv2.FaceDetectorYN/YuNet major-version break that fails the reframe. In
+        # production the packaged app installs this on first-run bootstrap. Mirrors
+        # the e2e-sidecar job's install.
+        run: pip install "opencv-python-headless==4.13.0.92" numpy
 
       - name: Install app deps
         working-directory: app
