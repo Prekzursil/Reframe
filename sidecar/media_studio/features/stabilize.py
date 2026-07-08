@@ -126,9 +126,13 @@ def build_detect_argv(
     argv LIST only (paths with spaces are single elements; never ``shell=True``).
     """
     cfg = _stab_settings(settings)
-    # vidstab paths use ':' as the option separator, so a Windows ``C:\...`` trf
-    # path must be made forward-slashed (':' would be read as an option break).
-    trf = str(trf_path).replace("\\", "/")
+    # The .trf path is embedded INSIDE the -vf filtergraph, where ':' separates
+    # filter options. An absolute Windows path (``C:\...``) breaks the parser — the
+    # drive colon reads as an option break and NO escaping form works (empirically
+    # verified against ffmpeg 8). So we emit the BARE basename and run ffmpeg with
+    # cwd=<trf dir> (see StabilizeEngine.stabilize); the .trf lands beside the
+    # output, colon-free. On POSIX the basename is equally correct under that cwd.
+    trf = Path(trf_path).name
     detect = f"{DETECT_FILTER}=shakiness={cfg['shakiness']}:accuracy={cfg['accuracy']}:result={trf}"
     return [
         ffmpeg.ffmpeg_path(settings),
@@ -162,7 +166,9 @@ def build_transform_argv(
     pre-step never touches the soundtrack). argv LIST only.
     """
     cfg = _stab_settings(settings)
-    trf = str(trf_path).replace("\\", "/")
+    # Bare basename — the engine runs ffmpeg with cwd=<trf dir>; an absolute Windows
+    # path's drive colon breaks the -vf filtergraph parser (see build_detect_argv).
+    trf = Path(trf_path).name
     transform = f"{TRANSFORM_FILTER}=input={trf}:smoothing={cfg['smoothing']}:optzoom={cfg['optzoom']}"
     return [
         ffmpeg.ffmpeg_path(settings),
@@ -288,6 +294,14 @@ class StabilizeEngine:
         if not self.available():
             raise StabilizeError(make_unavailable_notice()["message"])
 
+        # Absolutize in/out so running ffmpeg with cwd=<trf dir> (needed for the
+        # bare-basename .trf on Windows, see build_detect_argv) can never misresolve
+        # a RELATIVE in/out path against that cwd. The .trf is the only filtergraph-
+        # embedded path (bare basename under cwd); in/out are argv and must stay
+        # absolute regardless of cwd. No-op for the pipeline's already-absolute paths.
+        in_path = os.path.abspath(in_path)
+        out_path = os.path.abspath(out_path)
+
         try:
             total = float(self._duration(in_path, self._settings))
         except Exception:  # noqa: BLE001 - probe failure only coarsens progress
@@ -295,6 +309,11 @@ class StabilizeEngine:
 
         trf_path = self._trf_path(out_path)
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        # ffmpeg runs from the .trf's directory so the filtergraph can reference it
+        # by BARE basename — an absolute Windows path's drive colon breaks the -vf
+        # parser and no escaping works (see build_detect_argv). in/out paths stay
+        # absolute (they are argv, not filtergraph, so cwd does not affect them).
+        trf_dir = str(Path(trf_path).parent)
 
         def _half(lo: float, hi: float) -> Callable[[float, str], None] | None:
             if on_progress is None:
@@ -310,6 +329,7 @@ class StabilizeEngine:
                 total_sec=total,
                 on_progress=_half(0.0, 50.0),
                 should_cancel=should_cancel,
+                cwd=trf_dir,
             )
             if code != 0:
                 raise StabilizeError(f"vidstabdetect failed (ffmpeg exit {code}) for {in_path}")
@@ -321,6 +341,7 @@ class StabilizeEngine:
                 total_sec=total,
                 on_progress=_half(50.0, 100.0),
                 should_cancel=should_cancel,
+                cwd=trf_dir,
             )
             if code != 0:
                 raise StabilizeError(f"vidstabtransform failed (ffmpeg exit {code}) for {in_path}")

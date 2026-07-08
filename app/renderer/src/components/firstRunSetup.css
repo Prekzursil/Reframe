@@ -1,0 +1,168 @@
+/* FirstRunSetup — the full-screen first-run provisioning gate (WU-1b).
+   A calm, centred cover that REPLACES the tabbed shell while the ~3-min env/model
+   build runs, so the Library's mount-time RPCs never hit a dead sidecar. All
+   values are tokens; class names are test-pinned. Co-located import (leaf
+   convention); the component self-imports this sheet. */
+
+.first-run-setup {
+  position: fixed;
+  inset: 0;
+  z-index: 1200; /* above the recovery banner (1100) — it owns the whole viewport */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  background:
+    radial-gradient(120% 90% at 50% -10%, var(--surface-raised), transparent 60%), var(--surface-bg);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+}
+
+.first-run-setup__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  width: min(560px, 100%);
+  padding: var(--space-7) var(--space-6);
+  background: var(--surface-overlay);
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
+}
+
+.first-run-setup__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.first-run-setup__brand {
+  font-family: var(--font-editorial);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.first-run-setup__title {
+  margin: 0;
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  line-height: var(--type-title-leading);
+  letter-spacing: var(--type-title-tracking);
+}
+
+.first-run-setup__subtitle {
+  margin: 0;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+  color: var(--text-secondary);
+}
+
+.first-run-setup__progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.first-run-setup__phase {
+  margin: 0;
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-weight);
+  color: var(--text-primary);
+}
+
+.first-run-setup__detail {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.first-run-setup__offline {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--status-warn-soft);
+  border-left: 3px solid var(--status-warn);
+  border-radius: var(--radius-sm);
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.first-run-setup__error {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--status-error-soft);
+  border: 1px solid var(--status-error);
+  border-left: 4px solid var(--status-error);
+  border-radius: var(--radius-md);
+}
+
+.first-run-setup__error-title {
+  margin: 0;
+  font-size: var(--type-body-size);
+  font-weight: var(--type-title-weight);
+}
+
+.first-run-setup__error-message,
+.first-run-setup__hint {
+  margin: 0;
+  font-size: var(--type-caption-size);
+  line-height: var(--type-body-leading);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.first-run-setup__retry {
+  align-self: flex-start;
+  appearance: none;
+  margin-top: var(--space-1);
+  padding: var(--space-2) var(--space-5);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-ink);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.first-run-setup__retry:hover {
+  background: var(--accent-hover);
+}
+
+.first-run-setup__retry:active {
+  background: var(--accent-pressed);
+}
+
+.first-run-setup__retry:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* WU-1d: the final routing-chooser step. The FirstRunChooser owns its own card
+   styling (components/firstRunChooser.css); this wrapper just stacks it above the
+   LOUD inline apply-error so a failed choice is never silently swallowed. */
+.first-run-setup__chooser {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.first-run-setup__choice-error {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--status-error-soft);
+  border-left: 3px solid var(--status-error);
+  border-radius: var(--radius-sm);
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}

@@ -27,7 +27,7 @@ import './providersKeys.css';
 import { KeyIcon } from './providersKeysIcon';
 import { ExternalLinkIcon } from './providerLinkIcon';
 import { AddKeyRow } from '../components/AddKeyRow';
-import { ProviderKeyRow } from '../components/ProviderKeyRow';
+import { ProviderKeyRow, type KeyCheckResult } from '../components/ProviderKeyRow';
 import { ConsentToggle, type ConsentType } from '../components/ConsentToggle';
 import { UsageBars } from '../components/UsageBar';
 import { SpendCap, type SpendCapClient } from './SpendCap';
@@ -71,6 +71,27 @@ type SettingsConsentRead = {
   consent?: { perProvider?: Record<string, ProviderConsent> };
 };
 
+/** A provider's validation target (baseUrl/model/capabilities) for testKey. */
+interface KeyTarget {
+  baseUrl: string;
+  model: string | undefined;
+  capabilities: string[] | undefined;
+}
+
+/**
+ * Resolve the baseUrl + model + capabilities a testKey ping needs from a provider
+ * entry, falling back to the provider's connection meta (a picker-added entry
+ * already carries both, but a key added before either was set still validates).
+ */
+function resolveKeyTarget(entry: ProviderEntry): KeyTarget {
+  const meta = entry.provider ? PROVIDER_META[entry.provider] : undefined;
+  return {
+    baseUrl: entry.baseUrl || meta?.baseUrl || '',
+    model: entry.model || meta?.defaultModel,
+    capabilities: entry.capabilities,
+  };
+}
+
 export interface ProvidersKeysProps {
   /** Inject the typed client for tests; defaults to the real lib/rpc client. */
   rpcClient?: Pick<typeof client, 'providers'> & {
@@ -113,6 +134,9 @@ interface ProviderCardProps {
   onRemoveKey: (id: string, index: number) => void;
   onRemoveProvider: (id: string) => void;
   onConsentChange: (provider: string, type: ConsentType, value: boolean) => void;
+  onRevealKey: (id: string, index: number) => Promise<string>;
+  onRevalidateKey: (id: string, index: number) => Promise<KeyCheckResult>;
+  onReplaceKey: (id: string, index: number, newKey: string) => Promise<KeyCheckResult>;
 }
 
 function ProviderCard({
@@ -125,6 +149,9 @@ function ProviderCard({
   onRemoveKey,
   onRemoveProvider,
   onConsentChange,
+  onRevealKey,
+  onRevalidateKey,
+  onReplaceKey,
 }: ProviderCardProps): React.ReactElement {
   const name = entry.provider || entry.id;
   const keys = Array.isArray(entry.apiKeys) ? entry.apiKeys : [];
@@ -155,6 +182,9 @@ function ProviderCard({
               redactedKey={redactedKey}
               index={index}
               onRemove={onRemoveKey}
+              onReveal={onRevealKey}
+              onRevalidate={onRevalidateKey}
+              onReplace={onReplaceKey}
             />
           ))}
         </ul>
@@ -240,7 +270,7 @@ export function ProvidersKeys({
   spendClient,
   onOpenModels,
 }: ProvidersKeysProps): React.ReactElement {
-  /* v8 ignore next -- the `?? client` default only runs in the real app; every test injects rpcClient. */
+  /* v8 ignore next -- the `?? client` default runs in the real app + the WU2 resilience test (window.api missing); most tests inject rpcClient. */
   const api = rpcClient ?? client;
 
   const [providers, setProviders] = useState<ProviderEntry[]>([]);
@@ -260,28 +290,37 @@ export function ProvidersKeys({
     let alive = true;
     setLoading(true);
     setError('');
-    Promise.all([
-      Promise.resolve(api.providers.list()),
-      Promise.resolve(api.providers.catalog()),
-      Promise.resolve(api.providers.usage()),
-      /* v8 ignore next -- the optional-chaining fallback only fires when a test omits settings.get; every meaningful test injects it. */
-      Promise.resolve<SettingsConsentRead>(api.settings?.get?.() ?? {}),
-    ])
-      .then(([list, cat, use, settings]) => {
-        if (alive) {
-          setProviders(Array.isArray(list?.providers) ? list.providers : []);
-          setCatalog(Array.isArray(cat?.providers) ? cat.providers : []);
-          setUsage(Array.isArray(use?.usage) ? use.usage : []);
-          setConsentMap(settings?.consent?.perProvider ?? {});
-          setLoading(false);
-        }
-      })
-      .catch((err: unknown) => {
-        if (alive) {
-          setError(errText(err));
-          setLoading(false);
-        }
-      });
+    // WU2 resilience: each eager bridge access (api.providers.*) throws
+    // SYNCHRONOUSLY when window.api is missing — before Promise.all can wrap it,
+    // so the `.catch` below never sees it. Guard it sync-safely so a missing
+    // bridge shows an inline error here instead of a thrown-through blank screen.
+    try {
+      Promise.all([
+        Promise.resolve(api.providers.list()),
+        Promise.resolve(api.providers.catalog()),
+        Promise.resolve(api.providers.usage()),
+        /* v8 ignore next -- the optional-chaining fallback only fires when a test omits settings.get; every meaningful test injects it. */
+        Promise.resolve<SettingsConsentRead>(api.settings?.get?.() ?? {}),
+      ])
+        .then(([list, cat, use, settings]) => {
+          if (alive) {
+            setProviders(Array.isArray(list?.providers) ? list.providers : []);
+            setCatalog(Array.isArray(cat?.providers) ? cat.providers : []);
+            setUsage(Array.isArray(use?.usage) ? use.usage : []);
+            setConsentMap(settings?.consent?.perProvider ?? {});
+            setLoading(false);
+          }
+        })
+        .catch((err: unknown) => {
+          if (alive) {
+            setError(errText(err));
+            setLoading(false);
+          }
+        });
+    } catch (err) {
+      setError(errText(err));
+      setLoading(false);
+    }
     return () => {
       alive = false;
     };
@@ -322,12 +361,7 @@ export function ProvidersKeys({
       const entry = providers.find((p) => p.id === id);
       /* v8 ignore next -- addKey is only invoked from a card bound to a live entry; the guard is defensive. */
       if (!entry) return;
-      // Resolve baseUrl + a REAL model id from the entry, falling back to the
-      // provider's connection meta (a picker-added entry already carries both,
-      // but a key pasted before either was set still validates correctly).
-      const meta = entry.provider ? PROVIDER_META[entry.provider] : undefined;
-      const baseUrl = entry.baseUrl || meta?.baseUrl || '';
-      const model = entry.model || meta?.defaultModel;
+      const { baseUrl, model, capabilities } = resolveKeyTarget(entry);
       setBusy(true);
       setError('');
       setAddStatus((s) => ({ ...s, [id]: 'Validating key…' }));
@@ -336,7 +370,7 @@ export function ProvidersKeys({
           baseUrl,
           apiKey: key,
           model,
-          capabilities: entry.capabilities,
+          capabilities,
         });
         setTested((t) => ({ ...t, [id]: result.ok }));
         setAddStatus((s) => ({
@@ -379,6 +413,59 @@ export function ProvidersKeys({
       } finally {
         setBusy(false);
       }
+    },
+    [api, providers],
+  );
+
+  // WU-D3 reveal: fetch the ONE full key for a transient, masked-by-default display.
+  // The plaintext is RETURNED to the row (held in its ref only) — never stored in
+  // this panel's state/store, never logged. This is the sole full-key RPC.
+  const revealKey = useCallback(
+    async (id: string, index: number): Promise<string> => {
+      const res = await api.providers.revealKey(id, index);
+      return res.key;
+    },
+    [api],
+  );
+
+  // WU-D3 Re-validate: re-check an ALREADY-STORED key. The plaintext is revealed
+  // then piped straight into testKey as a LOCAL const — it is never assigned to
+  // state/store nor surfaced in an error (testKey scrubs its own error of the key).
+  const revalidateKey = useCallback(
+    async (id: string, index: number): Promise<KeyCheckResult> => {
+      const entry = providers.find((p) => p.id === id);
+      /* v8 ignore next -- bound to a live key row; the guard is defensive. */
+      if (!entry) return { ok: false, error: 'unknown provider' };
+      const { baseUrl, model, capabilities } = resolveKeyTarget(entry);
+      const revealed = await api.providers.revealKey(id, index);
+      const result = await api.providers.testKey({
+        baseUrl,
+        apiKey: revealed.key,
+        model,
+        capabilities,
+      });
+      setTested((t) => ({ ...t, [id]: result.ok }));
+      return result;
+    },
+    [api, providers],
+  );
+
+  // WU-D3 Replace: edit a key by re-running validation on a NEW value, then storing
+  // it in place of the old one (preferred over silent in-place mutation). The
+  // surviving redacted siblings round-trip back to their RAW form server-side; the
+  // new raw key is written at its index.
+  const replaceKey = useCallback(
+    async (id: string, index: number, newKey: string): Promise<KeyCheckResult> => {
+      const entry = providers.find((p) => p.id === id);
+      /* v8 ignore next -- bound to a live key row, so entry AND its apiKeys array exist; defensive. */
+      if (!entry || !Array.isArray(entry.apiKeys)) return { ok: false, error: 'unknown provider' };
+      const { baseUrl, model, capabilities } = resolveKeyTarget(entry);
+      const result = await api.providers.testKey({ baseUrl, apiKey: newKey, model, capabilities });
+      setTested((t) => ({ ...t, [id]: result.ok }));
+      const keys = entry.apiKeys.map((k, i) => (i === index ? newKey : k));
+      const res = await api.providers.upsert({ id, apiKeys: keys });
+      setProviders(Array.isArray(res?.providers) ? res.providers : []);
+      return result;
     },
     [api, providers],
   );
@@ -472,6 +559,9 @@ export function ProvidersKeys({
               onRemoveKey={(id, index) => void removeKey(id, index)}
               onRemoveProvider={(id) => void removeProvider(id)}
               onConsentChange={(provider, type, value) => void changeConsent(provider, type, value)}
+              onRevealKey={revealKey}
+              onRevalidateKey={revalidateKey}
+              onReplaceKey={replaceKey}
             />
           ))}
         </ul>

@@ -166,6 +166,9 @@ async function mount(): Promise<void> {
 }
 
 function qualityBtn(label: 'Local' | 'Cloud'): HTMLButtonElement {
+  // WU-D5: the segment labels now share the routing toggle's Local/Cloud axis
+  // vocabulary (the WU-2c "This computer" wording is retired so the twin controls
+  // read the same axis). The label text IS the button text.
   const btns = Array.from(container.querySelectorAll<HTMLButtonElement>('.quality-toggle__btn'));
   const found = btns.find((b) => b.textContent === label);
   if (!found) throw new Error(`quality button "${label}" not found`);
@@ -282,6 +285,38 @@ describe('App quality toggle — persist on change', () => {
   });
 });
 
+describe('App twin local/cloud controls — scope disambiguation (WU-D5)', () => {
+  it('scopes the model toggle as "AI model" (distinct from the routing toggle)', async () => {
+    await mount();
+    const quality = container.querySelector('.quality-toggle');
+    expect(quality).not.toBeNull();
+    // The scope label names THIS control's axis; aria-label carries it for AT.
+    expect(quality!.getAttribute('aria-label')).toBe('AI model');
+    expect(quality!.querySelector('.quality-toggle__label')?.textContent).toContain('AI model');
+  });
+
+  it('shares the Local/Cloud vocabulary across both controls', async () => {
+    await mount();
+    // Both segmented controls read the same axis words for local vs cloud.
+    expect(qualityBtn('Local').textContent).toBe('Local');
+    expect(qualityBtn('Cloud').textContent).toBe('Cloud');
+    const routingLocal = container.querySelector('.routing-toggle button[data-mode="local"]');
+    const routingCloud = container.querySelector('.routing-toggle button[data-mode="cloud"]');
+    expect(routingLocal?.textContent).toBe('Local');
+    expect(routingCloud?.textContent).toBe('Cloud');
+  });
+
+  it('separates the two controls with an explicit seam inside one cluster', async () => {
+    await mount();
+    const cluster = container.querySelector('.app__routing-cluster');
+    expect(cluster).not.toBeNull();
+    // The cluster holds both toggles and the boundary seam between them.
+    expect(cluster!.querySelector('.quality-toggle')).not.toBeNull();
+    expect(cluster!.querySelector('.routing-toggle')).not.toBeNull();
+    expect(cluster!.querySelector('.app__routing-seam')).not.toBeNull();
+  });
+});
+
 describe('App readiness deep-link → Settings', () => {
   it('routes a download (assets.ensure) fix to the Models & System section', async () => {
     await mount();
@@ -333,6 +368,34 @@ describe('App jobs slide-over toggle', () => {
     expect(jobsToggle.getAttribute('aria-expanded')).toBe('false');
   });
 
+  it('shows a live count + the active pulse modifier when jobs are in flight', async () => {
+    rpcMock.mockImplementation((method: string) =>
+      method === 'job.list'
+        ? Promise.resolve({
+            jobs: [
+              { jobId: 'a', feature: 'reframe', label: 'a.mp4', status: 'running', pct: 40 },
+              { jobId: 'b', feature: 'reframe', label: 'b.mp4', status: 'queued', pct: 0 },
+              { jobId: 'c', feature: 'reframe', label: 'c.mp4', status: 'done', pct: 100 },
+            ],
+          })
+        : Promise.resolve({}),
+    );
+    await mount();
+    const jobsToggle = container.querySelector<HTMLButtonElement>('.app__jobs-toggle')!;
+    expect(jobsToggle.classList.contains('app__jobs-toggle--active')).toBe(true);
+    const count = jobsToggle.querySelector('.app__jobs-count');
+    expect(count).not.toBeNull();
+    expect(count!.textContent).toBe('2'); // running + queued (done excluded)
+  });
+
+  it('shows no count chip or pulse when there are no active jobs', async () => {
+    await mount(); // default rpc resolves {} → job.list has no jobs
+    const jobsToggle = container.querySelector<HTMLButtonElement>('.app__jobs-toggle')!;
+    expect(jobsToggle.classList.contains('app__jobs-toggle--active')).toBe(false);
+    expect(jobsToggle.querySelector('.app__jobs-count')).toBeNull();
+    expect(jobsToggle.querySelector('.app__jobs-label')!.textContent).toBe('Jobs');
+  });
+
   it('closes the JobQueue via its own onClose handler', async () => {
     await mount();
     const jobsToggle = container.querySelector<HTMLButtonElement>('.app__jobs-toggle')!;
@@ -369,8 +432,8 @@ describe('App lastOpenedVideoId — bridge-absent branches (WU-13)', () => {
     });
     await flush();
     expect(rpcMock).not.toHaveBeenCalledWith('settings.set', { lastOpenedVideoId: 'v1' });
-    expect(
-      container.querySelector('[data-testid="workspace"]')!.getAttribute('data-video-id'),
-    ).toBe('v1');
+    // WU-3a1: opening a video now lands on the per-video Task Hub (not straight
+    // into the Workspace). With no bridge, it stays on the hub for the video.
+    expect(container.querySelector('.task-hub__title')?.textContent).toBe('Talk');
   });
 });

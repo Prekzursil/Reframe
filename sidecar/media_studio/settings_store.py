@@ -14,6 +14,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +26,16 @@ from .pathsafe import ensure_within
 from .util import get_logger
 
 log = get_logger("media_studio.settings")
+
+#: WU-D2b-2: the per-request field main injects the DPAPI-decrypted keys under
+#: (mirrors ``keyBridge.ts`` ``INJECTED_KEYS_FIELD``). Its value is a
+#: :class:`DecryptedKeys`-shaped dict ``{providers: {id: [rawKey, ...]},
+#: cloudApiKey?}`` carrying the LIVE keys for THAT request only. The composition
+#: root pops it off the params BEFORE the handler runs (so it never reaches a
+#: log line, a job-store record, or a handler body) and feeds it to
+#: :meth:`SettingsStore.key_overlay` so the factory ``get_raw()`` sees raw keys
+#: in-memory — never from disk.
+INJECTED_KEYS_FIELD = "_injectedKeys"
 
 # CONTRACT-NOTE: §2 names {useCloud, cloudApiKey?, modelsDir, ffmpegPath}. These
 # defaults are the lean baseline the UI reads on first launch (App.tsx reads
@@ -49,10 +62,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "brandFontFamily": "",
     # Provider Hub (WU-keys): the user-supplied rotation pool. Each entry is
     # {id, provider, kind, baseUrl, model, apiKeys[], enabled, capabilities[],
-    # unit}. apiKeys are stored RAW in the per-user config file (never a project
-    # folder) but SettingsStore.get() redacts them to last-4 before they cross
-    # RPC — only SettingsStore.get_raw() (the factory path, never registered)
-    # returns the live keys.
+    # unit}. WU-D2b-2: apiKeys are persisted only as redacted last-4 MARKERS (the
+    # NO-PERSIST invariant — zero plaintext key bytes at rest); the live keys ride
+    # the DPAPI keystore + the per-request injection overlay and surface only via
+    # SettingsStore.get_raw() (the factory path, never registered over RPC).
     "providers": [],
     # Per-data-type consent (WU-keys / SE1): TEXT (transcripts) and FRAMES
     # (vision) are SEPARATE, independently-revocable opt-ins per provider.
@@ -115,16 +128,55 @@ _CONFIG_FILENAME = "settings.json"
 _APP_DIR_NAME = "media-studio"
 
 
+class UnsafeConfigDirError(ValueError):
+    """``MEDIA_STUDIO_CONFIG_DIR`` was an unsafe (non-local / device / traversal) path.
+
+    The override designates the data root the sidecar pip-installs models into and
+    reads/writes files under, so a UNC (``\\\\server\\share``), a Windows device
+    namespace (``\\\\.\\``, ``\\\\?\\``), a relative path, or a ``..`` traversal is a
+    code-exec vector and is REFUSED outright — surfacing a clear error rather than a
+    silent honoring. Subclasses :class:`ValueError` so existing broad handlers catch
+    it. Mirrors the Electron ``dataRoot.ts`` ``DataRootSecurityError`` guard (R7
+    defense-in-depth: the sidecar is a second, independent consumer of the root).
+    """
+
+
+def _canonical_local_dir(override: str) -> Path:
+    """Validate ``override`` is an absolute LOCAL path and return its realpath.
+
+    Rejects (a) UNC / device namespaces — any value beginning with two path
+    separators; (b) any ``..`` traversal segment; (c) a non-absolute path. The
+    accepted path is ``os.path.realpath``-canonicalised (symlinks + ``.``/``..``
+    and redundant separators resolved) so the value handed to the filesystem sink
+    is normalised. Raises :class:`UnsafeConfigDirError` on any rejection.
+    """
+    # (a) UNC (\\server\share) and Windows device namespaces (\\.\, \\?\) both begin
+    #     with two path separators — never a valid LOCAL data root.
+    if re.match(r"^[\\/]{2}", override):
+        raise UnsafeConfigDirError(f"MEDIA_STUDIO_CONFIG_DIR {override!r} is a UNC/device path, not a local directory")
+    # (b) Any `..` segment is a traversal out of the intended tree.
+    if any(seg == ".." for seg in re.split(r"[\\/]+", override)):
+        raise UnsafeConfigDirError(f"MEDIA_STUDIO_CONFIG_DIR {override!r} contains a '..' traversal segment")
+    # (c) Require an ABSOLUTE path (a drive-rooted or POSIX-rooted directory).
+    if not os.path.isabs(override):
+        raise UnsafeConfigDirError(f"MEDIA_STUDIO_CONFIG_DIR {override!r} is not an absolute path")
+    return Path(os.path.realpath(override))
+
+
 def default_config_dir() -> Path:
     """Resolve the per-user config directory for media-studio (stdlib only).
 
     Order: ``MEDIA_STUDIO_CONFIG_DIR`` env override -> ``%APPDATA%`` on Windows ->
     ``$XDG_CONFIG_HOME`` -> ``~/.config``. The directory is NOT created here; the
     store creates it lazily on first write.
+
+    A4/R7: the env override is attacker-influenceable, so it is validated as an
+    absolute LOCAL path and canonicalised (:func:`_canonical_local_dir`) before use;
+    a UNC/device/``..`` value raises :class:`UnsafeConfigDirError`.
     """
     override = os.environ.get("MEDIA_STUDIO_CONFIG_DIR")
     if override:
-        return Path(override)
+        return _canonical_local_dir(override)
     if os.name == "nt":
         base = os.environ.get("APPDATA") or os.path.expanduser("~")
         return Path(base) / _APP_DIR_NAME
@@ -143,6 +195,32 @@ class SettingsStore:
     def __init__(self, config_path: str | os.PathLike | None = None) -> None:
         raw_config_path = Path(config_path) if config_path is not None else default_config_dir() / _CONFIG_FILENAME
         self.config_path = Path(ensure_within(raw_config_path))
+        # WU-D2b-2: the request-scoped in-memory key overlay. ``None`` outside a
+        # key-bearing request; set to the injected ``{providers, cloudApiKey?}``
+        # for the duration of the handler via :meth:`key_overlay`. NEVER persisted
+        # (``_write`` strips at-rest keys) — it exists only so :meth:`get_raw`
+        # returns the live keys for the factory path during THAT one request.
+        self._key_overlay: dict[str, Any] | None = None
+
+    # ---- request-scoped key overlay (WU-D2b-2 CONSUME) ---------------------
+    @contextmanager
+    def key_overlay(self, overlay: Mapping[str, Any] | None) -> Iterator[None]:
+        """Make ``get_raw`` return the injected RAW keys for the enclosed request.
+
+        ``overlay`` is the DPAPI-decrypted ``{providers: {id: [rawKey, ...]},
+        cloudApiKey?}`` main injects (:data:`INJECTED_KEYS_FIELD`). While the
+        context is active, :meth:`get_raw` layers those raw keys over the
+        at-rest (redacted-marker) settings so the provider/translator FACTORY
+        seams see live keys — WITHOUT the keys ever touching disk. The prior
+        overlay is restored on exit (re-entrant-safe), so a nested call never
+        leaks keys past its own scope. A ``None`` overlay is a no-op context
+        (the non-key-bearing request path)."""
+        prior = self._key_overlay
+        self._key_overlay = dict(overlay) if isinstance(overlay, Mapping) else None
+        try:
+            yield
+        finally:
+            self._key_overlay = prior
 
     # ---- I/O ---------------------------------------------------------------
     def _read(self) -> dict[str, Any]:
@@ -158,11 +236,55 @@ class SettingsStore:
         return data if isinstance(data, dict) else {}
 
     def _write(self, data: dict[str, Any]) -> None:
-        """Atomically persist ``data`` (temp file + os.replace)."""
+        """Atomically persist ``data`` (temp file + os.replace), keys STRIPPED.
+
+        WU-D2b-2 NO-PERSIST (orchestrator ruling B, defense-in-depth): every
+        ``providers[].apiKeys`` entry and the legacy single ``cloudApiKey`` are
+        redacted to their last-4 marker (:func:`secrets.redact`) BEFORE the JSON
+        is written, so a RAW key is NEVER persisted plaintext regardless of which
+        caller reached ``set`` — main already strips on the UI flow, and this is
+        the second, independent guarantee that the at-rest "zero plaintext key
+        bytes" invariant holds on EVERY path (settings.json AND its ``.tmp``).
+        The live keys live only in the DPAPI keystore + the per-request
+        :meth:`key_overlay`; nothing plaintext touches disk here.
+        """
+        safe = self._strip_secrets_for_persist(data)
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.config_path.with_name(self.config_path.name + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp.write_text(json.dumps(safe, indent=2, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, self.config_path)
+
+    @staticmethod
+    def _redact_provider_keys(prov: Any) -> Any:
+        """Return ``prov`` with its ``apiKeys`` redacted to last-4 markers.
+
+        A non-dict entry, or one whose ``apiKeys`` is absent / not a list, is
+        returned unchanged (shape-preserving: a hand-edited/corrupt entry is not
+        reshaped, only real key lists are stripped)."""
+        if not isinstance(prov, dict):
+            return prov
+        keys = prov.get("apiKeys")
+        if not isinstance(keys, list):
+            return prov
+        return {**prov, "apiKeys": [redact(str(k)) for k in keys]}
+
+    @classmethod
+    def _strip_secrets_for_persist(cls, data: dict[str, Any]) -> dict[str, Any]:
+        """A copy of ``data`` with every at-rest key redacted to a last-4 marker.
+
+        Providers' ``apiKeys`` and the legacy ``cloudApiKey`` are the only
+        key-bearing fields (§2); each is replaced with its :func:`secrets.redact`
+        marker so no plaintext key byte survives to disk. Idempotent — a value
+        that is already a marker redacts to itself. PURE: the input dict is never
+        mutated."""
+        out = dict(data)
+        providers = out.get("providers")
+        if isinstance(providers, list):
+            out["providers"] = [cls._redact_provider_keys(p) for p in providers]
+        cloud = out.get("cloudApiKey")
+        if isinstance(cloud, str) and cloud:
+            out["cloudApiKey"] = redact(cloud)
+        return out
 
     # ---- public surface (matches settings.* methods) ----------------------
     def get(self) -> dict[str, Any]:
@@ -187,16 +309,58 @@ class SettingsStore:
         return merged
 
     def get_raw(self) -> dict[str, Any]:
-        """Return the full §2 settings object with RAW (unredacted) keys.
+        """Return the full §2 settings object with RAW keys from the LIVE overlay.
 
         NEVER exposed over RPC — this is the provider/translator FACTORY path
         ONLY (PLAN §WU-keys: ``get_provider``, ``TieredTranslator._hosted_provider``,
         the ``RotatingProvider`` pool build, and the handler ``__init__`` /
         ``_get_translator`` construction all consume RAW keys via this accessor).
         Every settings read that crosses RPC must use :meth:`get` instead.
+
+        WU-D2b-2 CONSUME: the on-disk store now holds only redacted MARKERS (the
+        NO-PERSIST invariant), so the RAW keys come from the request-scoped
+        :meth:`key_overlay` — the DPAPI-decrypted keys main injects for THAT
+        request. When an overlay is active, each provider's ``apiKeys`` (matched
+        by ``id``) and the legacy ``cloudApiKey`` are swapped to their live
+        values in-memory; outside a key-bearing request the overlay is ``None``
+        and this returns the at-rest markers (the factory then builds a
+        local-only pool — no cloud egress with a marker "key").
         """
         merged = dict(DEFAULT_SETTINGS)
         merged.update(self._read())
+        return self._apply_key_overlay(merged)
+
+    @staticmethod
+    def _overlay_provider(prov: Any, providers_overlay: Mapping[str, Any]) -> Any:
+        """Swap ``prov``'s ``apiKeys`` to the overlay's raw keys (matched by id).
+
+        A non-dict entry, an entry whose ``id`` is not a string, or an ``id`` the
+        overlay does not carry is returned unchanged. PURE: a new dict is built;
+        the stored (marker) entry is never mutated."""
+        if not isinstance(prov, dict):
+            return prov
+        pid = prov.get("id")
+        if isinstance(pid, str) and pid in providers_overlay:
+            return {**prov, "apiKeys": list(providers_overlay[pid])}
+        return prov
+
+    def _apply_key_overlay(self, merged: dict[str, Any]) -> dict[str, Any]:
+        """Layer the request-scoped RAW keys over the at-rest (marker) ``merged``.
+
+        No-op when no :meth:`key_overlay` is active. When one is, each provider's
+        ``apiKeys`` is replaced by the overlay's per-id raw list and the legacy
+        ``cloudApiKey`` by the overlay's live value (only when the overlay carries
+        that field). The keys exist only in this returned dict (in-memory) — never
+        persisted, never re-read from disk."""
+        overlay = self._key_overlay
+        if overlay is None:
+            return merged
+        providers_overlay = overlay.get("providers")
+        providers = merged.get("providers")
+        if isinstance(providers_overlay, Mapping) and isinstance(providers, list):
+            merged["providers"] = [self._overlay_provider(p, providers_overlay) for p in providers]
+        if "cloudApiKey" in overlay:
+            merged["cloudApiKey"] = overlay["cloudApiKey"]
         return merged
 
     @staticmethod

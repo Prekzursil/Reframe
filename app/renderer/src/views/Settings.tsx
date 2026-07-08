@@ -19,8 +19,10 @@ import { TabBar, type TabDef } from '../components/TabBar';
 import { SystemHealth } from '../features/SystemHealth';
 import { ProvidersKeys } from '../features/ProvidersKeys';
 import { PathsPanel, type PathsBridge } from '../components/PathsPanel';
+import { ManagedStoreMeter } from '../components/ManagedStoreMeter';
 import { SetupStatusPanel } from '../components/SetupStatusPanel';
 import { CaptionPreferences } from '../components/CaptionPreferences';
+import { ThirdPartyNotices } from '../features/ThirdPartyNotices';
 import { client } from '../lib/rpc';
 import { resolveWindowApi } from '../features/shortMakerLogic';
 import './settings.css';
@@ -92,8 +94,14 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     // Wires the previously-orphaned PathsPanel: SHOW where data lives, change the
     // data root, and open folders in the OS explorer. Read-only layout via
     // `client.paths`; the data-root flow + open-in-folder via the window.api
-    // bridge (fail-soft per control when the preload is absent).
-    render: () => <PathsPanel rpc={client.paths} bridge={pathsBridge()} />,
+    // bridge (fail-soft per control when the preload is absent). WU-3b2 appends
+    // the managed-copy store meter (used/cap + evict/clear) beneath it.
+    render: () => (
+      <>
+        <PathsPanel rpc={client.paths} bridge={pathsBridge()} />
+        <ManagedStoreMeter rpc={client.library} />
+      </>
+    ),
   },
   {
     id: 'preferences',
@@ -106,6 +114,15 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     id: 'health',
     label: 'System Health',
     render: () => <SystemHealth />,
+  },
+  {
+    id: 'licenses',
+    label: 'Licenses',
+    // WU-F1 (security HIGH#1b): the mandatory user-facing third-party attribution
+    // surface. ViNet-S is CC-BY-NC-SA-4.0 and REQUIRES attribution + a
+    // non-commercial notice; this section reproduces it alongside the other
+    // bundled model licenses (YuNet/EdgeTAM/TransNetV2/LR-ASD).
+    render: () => <ThirdPartyNotices />,
   },
 ];
 

@@ -373,6 +373,13 @@ def phase8_select(self: Services, params: dict[str, Any], ctx: RpcContext) -> di
     if not path:
         raise _invalid(f"unknown video: {video_id}")
     settings = self.settings.get()
+    # FACTORY PATH (WU-D2b-2): the Tier-2 vlm_reranker's cloud vision egress needs
+    # the RAW apiKey on the wire, but it resolves on the job WORKER thread — AFTER
+    # the per-request key overlay closes. Capture the RAW settings NOW (while the
+    # overlay is still open) so the off-thread :meth:`_resolve_vlm_reranker` sees
+    # live keys; the broad ``settings`` stays redacted for the runner/select seams
+    # (narrow the raw-key blast radius to the factory consumer only).
+    raw_settings = dict(self.settings.get_raw())
     tier = _coerce_tier(params.get("tier"), settings)
     prompt = str(params.get("prompt") or "")
     controls = params.get("controls") or {}
@@ -389,7 +396,7 @@ def phase8_select(self: Services, params: dict[str, Any], ctx: RpcContext) -> di
         # entirely (so no vision pool is built / no consent read). Cloud-vision
         # + frame consent -> a CloudVlmBackend closure over the vision pool;
         # else local weights -> the local reranker; else None (transcript-only).
-        vlm_reranker = self._resolve_vlm_reranker(settings, media_path=path) if tier >= 2 else None
+        vlm_reranker = self._resolve_vlm_reranker(raw_settings, media_path=path) if tier >= 2 else None
         tracks = runner(
             path,
             tier=tier,
@@ -457,6 +464,34 @@ def _models_present_map(self: Services, settings: dict[str, Any]) -> dict[str, b
         except Exception:  # noqa: BLE001 - one bad probe must not sink the report
             present[component] = False
     return present
+
+
+def _installed_asset_names(self: Services, settings: dict[str, Any]) -> set[str]:
+    """The set of installed WU-C2 capability assets (read-only probe).
+
+    Resolves installed-state for exactly the ``_capabilities.capability_asset_names``
+    set (the reframe tracker + the on-demand saliency/scene weights) so
+    ``readiness.summary`` can roll the feature-capability family up. A de-registered
+    capability asset is skipped (never probed); fail-open per asset. Read-only: it
+    only asks ``installed_path`` (an ``is_file`` check), so it NEVER creates the data
+    dir — the read-only summary invariant holds.
+    """
+    from ..assets import manifest as _manifest  # local: import-light
+    from ..assets.manager import AssetManager  # local: import-light
+    from . import _capabilities  # local: import-light, data only
+
+    mgr = AssetManager(root=self.data_dir, settings_provider=lambda: settings)
+    installed: set[str] = set()
+    for asset_name in _capabilities.capability_asset_names():
+        entry = _manifest.get_asset(asset_name)
+        if entry is None:
+            continue
+        try:
+            if mgr.installed_path(entry) is not None:
+                installed.add(asset_name)
+        except Exception:  # noqa: BLE001 - one bad probe must not sink the report
+            continue
+    return installed
 
 
 def _default_hardware_probe(

@@ -624,6 +624,13 @@ def _install_fake_models(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return FakeProvider()
 
     fake_provider_mod.get_provider = _get_provider  # type: ignore[attr-defined]
+    # WU-B2: the local chat paths now build a llama-backstop ensure() callback,
+    # which reads these two attrs at build time — keep the fake module a faithful
+    # stand-in for the real provider surface (the callback itself is never invoked
+    # here, so the probe seams stay unneeded).
+    fake_provider_mod.DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:8088/v1"  # type: ignore[attr-defined]
+    fake_provider_mod.LOCAL_PROVIDER_ID = "local"  # type: ignore[attr-defined]
+    fake_provider_mod.health_url_from_base = lambda base: "http://127.0.0.1:8088/health"  # type: ignore[attr-defined]
 
     fake_runner_mod = types.ModuleType("media_studio.models.runner")
     fake_runner_mod.ModelRunner = FakeRunner  # type: ignore[attr-defined]

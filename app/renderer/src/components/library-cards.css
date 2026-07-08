@@ -25,6 +25,8 @@ li.library__item {
   gap: var(--space-3);
   padding: var(--space-3);
   background: var(--surface-raised);
+  /* Seated at rest (e1); hover lifts to e2 below — depth reads at every state. */
+  box-shadow: var(--elev-1);
   transition:
     background var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-base) var(--ease-out),
@@ -50,8 +52,10 @@ li.library__item {
 
 li.library__item:hover {
   background: var(--surface-hover);
+  /* A stronger lift than e2: --shadow-raise adds a deep ambient drop so the card
+     visibly detaches from the canvas on hover (depth, not a blue outline). */
   box-shadow: var(--shadow-raise);
-  transform: translateY(-2px);
+  transform: translateY(-3px);
 }
 
 .library__item-open:focus-visible {
@@ -66,7 +70,9 @@ li.library__item:active {
 }
 
 li.library__item .library__item-meta {
-  justify-content: space-between;
+  /* Provenance chips now live in the card body; the meta strip is the footer
+     action lane, so the Remove control seats to the trailing edge. */
+  justify-content: flex-end;
 }
 
 /* ---- poster-frame thumbnail ---- */
@@ -77,6 +83,18 @@ li.library__item .library__item-meta {
   border-radius: var(--radius-sm);
   overflow: hidden;
   background: var(--surface-deep);
+}
+
+/* Legibility scrim: a bottom-anchored gradient that keeps the timecode badge
+   readable over a bright frame without dimming the whole poster. Sits ABOVE the
+   image but BELOW the badge (badge carries a higher z-index). */
+.library__thumb::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 55%;
+  background: var(--scrim-bottom);
+  pointer-events: none;
 }
 
 .library__thumb-img {
@@ -99,21 +117,24 @@ li.library__item:hover .library__thumb-img {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 26px;
+  font-size: var(--size-glyph-lg);
   color: var(--text-faint);
   background: var(--surface-deep);
   user-select: none;
 }
 
-/* Timecode badge: mono + tabular, the editing-room voice. */
+/* Timecode badge: mono + tabular, the editing-room voice. Rides ABOVE the scrim
+   (z-index) so it stays crisp; the scrim beneath it guarantees contrast on any
+   frame, so the chip reads clearly at primary weight. */
 .library__thumb-duration {
   position: absolute;
+  z-index: 1;
   right: var(--space-2);
   bottom: var(--space-2);
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-xs);
   background: var(--surface-deep);
-  color: var(--text-secondary);
+  color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: var(--type-caption-size);
   font-weight: var(--type-caption-weight);

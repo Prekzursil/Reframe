@@ -3,6 +3,7 @@ import { rpc, type Video } from '../components/api';
 import { useVideoThumbnail, type VideoThumbnailRpc } from '../components/useVideoThumbnail';
 import { ReadinessRollup } from '../components/ReadinessRollup';
 import { LineagePanel, type LineageAsset } from '../features/LineagePanel';
+import { LibraryProvenance, type ProvenanceHandlers } from '../features/LibraryProvenance';
 import { lineageActions } from '../features/lineageActionsClient';
 import type { LineageResult, ReadinessAction } from '../lib/rpc';
 import '../components/library-cards.css';
@@ -44,6 +45,14 @@ export interface LibraryProps {
    * action is simply a no-op.
    */
   onReadinessAction?: (action: ReadinessAction) => void;
+  /**
+   * WU-1f: the injected L5 provenance handlers (`library.reveal`/`pinHash`/
+   * `relink` + the reveal/pick bridges). When provided, each card renders its
+   * source-file provenance row (clear path + on-disk/missing badge + reveal/relink
+   * actions, and the lazy pin-on-view hash back-fill); absent -> cards keep the
+   * legacy compact path line and no provenance row (the app wires the real one).
+   */
+  provenance?: ProvenanceHandlers;
 }
 
 interface ListResult {
@@ -177,6 +186,7 @@ export function Library({
   onOpen,
   toast: externalToast,
   onReadinessAction,
+  provenance,
 }: LibraryProps): React.ReactElement {
   const [videos, setVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
@@ -391,7 +401,9 @@ export function Library({
         </div>
       </header>
 
-      <ReadinessRollup title="What works right now" onAction={onReadinessAction} />
+      {/* design-review P2: the cryptic "What works right now" eyebrow relabelled
+          to read as device/model readiness on THIS machine. */}
+      <ReadinessRollup title="Ready on this computer" onAction={onReadinessAction} />
 
       {dragOver ? (
         <div className="library__drophint" aria-hidden="true">
@@ -428,7 +440,27 @@ export function Library({
       )}
 
       {loading ? (
-        <div className="library__loading">Loading…</div>
+        // Skeleton-shimmer placeholders shaped like the real library rows —
+        // never a bare "LOADING…". aria-busy + label carry the state to AT while
+        // the ghost rows (aria-hidden) hold the layout so it doesn't jump.
+        <div
+          className="library__loading"
+          role="status"
+          aria-busy="true"
+          aria-label="Loading your videos"
+        >
+          <ul className="library__skeleton" aria-hidden="true">
+            {[0, 1, 2, 3].map((i) => (
+              <li key={i} className="library__skeleton-row">
+                <span className="skeleton library__skeleton-thumb" />
+                <span className="library__skeleton-lines">
+                  <span className="skeleton library__skeleton-line library__skeleton-line--title" />
+                  <span className="skeleton library__skeleton-line library__skeleton-line--path" />
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : videos.length === 0 ? (
         <div className="library__empty">
           <div className="library__empty-poster" aria-hidden="true">
@@ -459,17 +491,32 @@ export function Library({
                 <VideoThumb video={video} />
                 <div className="library__item-main">
                   <span className="library__item-title">{video.title}</span>
-                  <span className="library__item-path" title={video.path}>
-                    {video.path}
-                  </span>
+                  {/* WU-2d: quiet provenance chip row — reads what the card CARRIES,
+                      derived from real card data (transcript). Wiring further
+                      provenance signals is a later WU; no fabricated chips. */}
+                  {video.hasTranscript ? (
+                    <div className="library__chips">
+                      <span className="library__badge library__chip" title="Has transcript">
+                        Transcript
+                      </span>
+                    </div>
+                  ) : null}
+                  {/* WU-1f: the clear source path moves into <LibraryProvenance>;
+                      without the provenance handlers, keep the legacy compact line. */}
+                  {provenance ? null : (
+                    <span className="library__item-path" title={video.path}>
+                      {video.path}
+                    </span>
+                  )}
                 </div>
               </button>
+              {provenance ? (
+                <LibraryProvenance
+                  video={{ id: video.id, path: video.path, title: video.title }}
+                  handlers={provenance}
+                />
+              ) : null}
               <div className="library__item-meta">
-                {video.hasTranscript ? (
-                  <span className="library__badge" title="Has transcript">
-                    T
-                  </span>
-                ) : null}
                 <button
                   type="button"
                   className="library__remove-btn"

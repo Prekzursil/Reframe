@@ -243,7 +243,17 @@ def test_weird_aspect_ratios_probe_and_resolve(tmp_path: Path, name: str, size: 
 # 7. no-speech audio export — real CUT->REFRAME->CAPTION->EXPORT on a clip that
 #    carries no transcript/speech still produces a VALID playable mp4.
 # --------------------------------------------------------------------------- #
-def test_no_speech_export_still_produces_valid_mp4(tmp_path: Path) -> None:
+def test_no_speech_export_still_produces_valid_mp4(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Unify the sidecar DATA ROOT so first-run provisioning and the export-time
+    # model lookup agree. ``assets.ensure`` installs YuNet under the Services
+    # ``data_dir`` (registered with ``root=svc.data_dir``), but the claudeshorts
+    # reframe resolves the model at export time via ``default_config_dir()``
+    # (``MEDIA_STUDIO_CONFIG_DIR`` -> %APPDATA%/XDG). In production those are the
+    # SAME dir (``register_all()`` leaves ``data_dir=None`` -> ``default_config_dir()``);
+    # this test passes an explicit ``data_dir``, so point the config-dir env at it
+    # too. Without this the download lands in ``tmp_path/data`` while the resolver
+    # looks under the real per-user config dir and reports YuNet as "not provisioned".
+    monkeypatch.setenv("MEDIA_STUDIO_CONFIG_DIR", str(tmp_path / "data"))
     rpc = _new_rpc(tmp_path)
     media = tmp_path / "nospeech.mp4"
     assert _ffmpeg(
@@ -267,6 +277,15 @@ def test_no_speech_export_still_produces_valid_mp4(tmp_path: Path) -> None:
         media,
     )
     vid = _add(rpc, media)
+    # Provision the sha256-pinned YuNet face-detection ONNX exactly as a real
+    # first-run does (mirrors app/e2e ``provisionAssets`` -> the same ``assets.ensure``).
+    # The claudeshorts vertical-reframe stage hard-requires YuNet (cv2.FaceDetectorYN)
+    # and fails LOUD when it is absent — by design, never a silent center crop. On
+    # this no-face/no-speech input YuNet legitimately detects nothing, so the reframe
+    # then center-crops; the model just has to be PRESENT for the stage to run at all
+    # (~230 KB download from the pinned HF mirror on first run).
+    ensured = rpc.run_job("assets.ensure", {"names": ["yunet-face-detection"]}, timeout=180.0)
+    assert ensured.get("installed") == ["yunet-face-detection"], f"YuNet provisioning failed: {ensured!r}"
     candidate = {
         "rank": 1,
         "start": 1.0,

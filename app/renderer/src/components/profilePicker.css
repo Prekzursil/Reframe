@@ -1,0 +1,182 @@
+/* ProfilePicker — the first-ever-run install-profile chooser (WU-1c), shown inside
+   the FirstRunSetup panel BEFORE any download. All values are tokens; class names
+   are test-pinned. Co-located import (leaf convention). */
+
+.profile-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.profile-picker__lead {
+  margin: 0;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+  color: var(--text-secondary);
+}
+
+.profile-picker__options,
+.profile-picker__bundles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.profile-picker__legend {
+  padding: 0;
+  margin-bottom: var(--space-2);
+  font-family: var(--font-editorial);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.profile-picker__option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    "radio head"
+    "radio what"
+    "radio why";
+  column-gap: var(--space-3);
+  row-gap: var(--space-1);
+  padding: var(--space-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.profile-picker__option:hover {
+  border-color: var(--accent);
+}
+
+.profile-picker__option.is-selected {
+  border-color: var(--accent);
+  background: var(--surface-overlay);
+  box-shadow: var(--focus-ring);
+}
+
+.profile-picker__radio {
+  grid-area: radio;
+  align-self: start;
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+
+.profile-picker__check {
+  accent-color: var(--accent);
+}
+
+.profile-picker__head,
+.profile-picker__bundle-head {
+  grid-area: head;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.profile-picker__name,
+.profile-picker__bundle-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-title-weight);
+  color: var(--text-primary);
+}
+
+.profile-picker__badge {
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--type-chip-size);
+  font-weight: var(--type-caption-weight);
+  text-transform: uppercase;
+  letter-spacing: var(--type-caption-tracking);
+}
+
+.profile-picker__size,
+.profile-picker__bundle-size {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.profile-picker__what {
+  grid-area: what;
+  margin: 0;
+  font-size: var(--type-caption-size);
+  line-height: var(--type-body-leading);
+  color: var(--text-secondary);
+}
+
+.profile-picker__why {
+  grid-area: why;
+  margin: 0;
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+}
+
+.profile-picker__bundle {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: var(--space-3);
+  row-gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.profile-picker__bundle-head {
+  grid-column: 2;
+}
+
+.profile-picker__bundle-what {
+  grid-column: 2;
+  margin: 0;
+  font-size: var(--type-caption-size);
+  color: var(--text-muted);
+}
+
+.profile-picker__confirm {
+  align-self: flex-start;
+  appearance: none;
+  margin-top: var(--space-2);
+  padding: var(--space-3) var(--space-6);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-ink);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--type-body-size);
+  font-weight: var(--type-caption-weight);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.profile-picker__confirm:hover {
+  background: var(--accent-hover);
+}
+
+.profile-picker__confirm:active {
+  background: var(--accent-pressed);
+}
+
+.profile-picker__confirm:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}

@@ -31,6 +31,11 @@ name: e2e
 
 on:
   workflow_dispatch:
+    inputs:
+      update_visual_baselines:
+        description: "Regenerate the Windows (*-win32.png) visual baselines instead of diffing (uploads them as the 'updated-visual-baselines' artifact; does NOT commit)"
+        type: boolean
+        default: false
   schedule:
     # Nightly at 04:17 UTC (off the hour to avoid GitHub's scheduler congestion).
     - cron: "17 4 * * *"
@@ -62,14 +67,23 @@ jobs:
       - name: Install sidecar + E2E runtime deps (CPU)
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-cov
+          # hypothesis is imported by sidecar/tests/conftest.py at collection time
+          # (it registers the deterministic "ci" profile), so EVERY pytest run —
+          # including `pytest -m e2e` — needs it. `sidecar[dev]` declares it, but the
+          # `--no-deps` install below skips the extra's transitives, so install the
+          # test tools explicitly here.
+          pip install pytest pytest-cov hypothesis
           # Package itself (pure-logic modules) + dev extras, no heavy transitives.
           pip install -e "sidecar[dev]" --no-deps
           # The CPU runtime deps the opt-in E2E flows actually exercise. Unlike the
           # standard gate, the E2E suite IS allowed the heavier (still CPU-only)
           # stack: real tiny faster-whisper, scenedetect, av, onnxruntime, cv2.
+          # opencv is PINNED to the version the reframe engine is validated against
+          # (pyproject reframe-gpu extra, A6 lesson 5). Unpinned resolves to OpenCV
+          # 5.x, whose cv2.FaceDetectorYN/YuNet path is a major-version break and
+          # fails the claudeshorts reframe.
           pip install \
-            httpx numpy opencv-python-headless \
+            httpx numpy opencv-python-headless==4.13.0.92 \
             faster-whisper scenedetect av onnxruntime \
             huggingface_hub tokenizers
 
@@ -146,6 +160,27 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e "sidecar[dev]" --no-deps
 
+      - name: Install the reframe + asset-provisioning runtime deps for the real Make-Shorts pipeline
+        # golden-journey.spec.ts drives the REAL reframe→export pipeline against the
+        # dev-build sidecar (RF_PY = this system python on EVERY leg, incl. Windows —
+        # only packaged.spec drives the shipped .exe). Two runtime needs the
+        # `sidecar[dev] --no-deps` install above deliberately omits:
+        #  * cv2 — the final vertical-reframe stage (reframe_claudeshorts) HARD-requires
+        #    it and fails LOUD when missing (no silent center-crop — the WU-3 contract).
+        #    PINNED to the reframe-validated version (pyproject reframe-gpu extra, A6
+        #    lesson 5); unpinned resolves to OpenCV 5.x, a FaceDetectorYN/YuNet
+        #    major-version break. opencv-python-headless bundles FaceDetectorYN + the
+        #    ONNX runtime YuNet uses (no GUI libs); numpy rides along.
+        #  * httpx — the asset downloader (manager._default_http_client) lazily imports
+        #    it. golden-journey provisions the YuNet model via a live sidecar
+        #    (fixtures.provisionAssets → assets.ensure); WITHOUT httpx that download
+        #    throws, assets.ensure GRACEFULLY SKIPS the item but still emits job.done,
+        #    so YuNet never lands and the reframe reports "not provisioned". huggingface_hub
+        #    covers the HF-snapshot install path for completeness.
+        # In production the packaged app installs these on first-run bootstrap. Mirrors
+        # the e2e-sidecar job's install.
+        run: pip install "opencv-python-headless==4.13.0.92" numpy httpx huggingface_hub
+
       - name: Install app deps
         working-directory: app
         run: npm ci
@@ -176,7 +211,13 @@ jobs:
       - name: Package the Windows app (electron-builder → dist/)
         if: runner.os == 'Windows'
         working-directory: app
-        run: npx electron-builder --config ../electron-builder.yml --win
+        # `--publish never`: this is an E2E BUILD, not a release. Without it,
+        # electron-builder detects CI and implicitly tries to publish, which
+        # fails with "GitHub Personal Access Token is not set" (no GH_TOKEN) —
+        # AFTER it has already built + signed dist/. We only need dist/ to exist
+        # for packaged.spec.ts to drive the shipped .exe; publishing is the
+        # release workflow's job, not this gate's.
+        run: npx electron-builder --config ../electron-builder.yml --win --publish never
 
       - name: E2E GUI — vitest DOM caption + nasty-caption proofs
         working-directory: app
@@ -225,12 +266,40 @@ jobs:
       # Windows leg to reuse the already-built dev app. Runs against the dev build
       # (RF_E2E_DEV=1) — the same target the baselines were captured against.
       - name: E2E GUI — VISUAL screenshot-diff + A11Y (axe) [Windows only]
-        if: runner.os == 'Windows'
+        # Normal (blocking) path: diff against the committed `*-win32.png` baselines.
+        # Unchanged for the nightly schedule and any dispatch that leaves the
+        # `update_visual_baselines` box unchecked (input is '' on schedule, 'false'
+        # when unchecked — either way not 'true', so this diff run fires as before).
+        if: runner.os == 'Windows' && github.event.inputs.update_visual_baselines != 'true'
         working-directory: app
         env:
           RF_PY: ${{ steps.setup-python.outputs.python-path }}
           RF_E2E_DEV: "1"
         run: npm run test:e2e:visual
+
+      # On-demand baseline REGEN: only when the workflow_dispatch box is checked.
+      # `--update-snapshots` REWRITES the `*-win32.png` baselines in-place (Playwright
+      # exits 0 after writing), so this run is non-blocking by design; the regenerated
+      # PNGs are uploaded below for the maintainer to download + commit. Never runs on
+      # the schedule (input is '' there), so the nightly gate stays a real diff.
+      - name: E2E GUI — VISUAL baseline REGEN (--update-snapshots) [Windows only, on demand]
+        if: runner.os == 'Windows' && github.event.inputs.update_visual_baselines == 'true'
+        working-directory: app
+        env:
+          RF_PY: ${{ steps.setup-python.outputs.python-path }}
+          RF_E2E_DEV: "1"
+        run: npm run test:e2e:visual:update
+
+      - name: Upload regenerated visual baselines
+        if: always() && runner.os == 'Windows' && github.event.inputs.update_visual_baselines == 'true'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: updated-visual-baselines
+          # Playwright stores baselines next to each spec (playwright.visual.config.ts
+          # testDir: ./e2e/visual) as `<spec>.spec.ts-snapshots/<name>-win32.png`.
+          path: app/e2e/visual/**/*-win32.png
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Upload Playwright report
         if: always()

@@ -204,6 +204,10 @@ describe('<MakeShorts />', () => {
     await mount();
     expect(picker()).toBeTruthy();
     expect(container.querySelector('.make-shorts__hint')).toBeTruthy();
+    // WU-D3: the "pick a video" state is now the shared ghost-poster empty, not a
+    // lone hint line.
+    expect(container.querySelector('.make-shorts__empty-poster')).toBeTruthy();
+    expect(container.querySelector('.make-shorts__empty-glyph')).toBeTruthy();
     expect(container.querySelector('[data-testid="shortmaker"]')).toBeNull();
     // The picker is populated from library.list.
     expect([...picker().options].map((o) => o.value)).toContain('v1');
@@ -233,6 +237,23 @@ describe('<MakeShorts />', () => {
       container.querySelector('[data-testid="shortmaker"]')!.getAttribute('data-video-id'),
     ).toBe('v1');
     expect(container.querySelector('[data-testid="manual"]')).toBeTruthy();
+  });
+
+  // WU-3a4: the Workspace "Short-maker" tab deep-links here pre-selected to the
+  // video (single ShortMaker owner) via the `videoId` prop — the Make front door
+  // lands with AI moment-pick already revealed, no manual picker step.
+  it('pre-selects a deep-linked video (Short-maker tab redirect) and reveals AI moment-pick on mount', async () => {
+    await act(async () => {
+      root.render(<MakeShorts videoId="v1" />);
+    });
+    await flush();
+    // The one ShortMaker owner is mounted for the deep-linked video on the Make tab.
+    expect(
+      container.querySelector('[data-testid="shortmaker"]')!.getAttribute('data-video-id'),
+    ).toBe('v1');
+    expect(container.querySelector('[data-testid="manual"]')).toBeTruthy();
+    // The picker reflects the pre-selection once the library list resolves.
+    expect(picker().value).toBe('v1');
   });
 
   it('re-export from the gallery jumps to Make primed with the source video', async () => {

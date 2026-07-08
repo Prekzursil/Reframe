@@ -1,4 +1,10 @@
 * text=auto eol=lf
+# Shell scripts executed under WSL MUST stay LF: a CRLF `set -euo pipefail\r`
+# makes WSL bash abort with "set: pipefail: invalid option name", which silently
+# broke the verthor vertical-reframe path in v1.4 (shorts never generated).
+# `* text=auto eol=lf` already implies this; this explicit rule documents the
+# hard requirement and survives edits to the wildcard line.
+*.sh text eol=lf
 *.png binary
 *.jpg binary
 *.jpeg binary

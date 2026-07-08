@@ -21,7 +21,10 @@ from __future__ import annotations
 
 import copy as _copy
 import json
+import os
+import shutil
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -34,6 +37,15 @@ COPY_MANIFEST_NAME = "project.json"
 
 #: An injectable manifest writer ``(path, data) -> None`` (the disk seam).
 Writer = Callable[[Path, dict[str, Any]], None]
+
+#: Streaming chunk for the atomic BYTE copy (1 MiB) — bounded memory on multi-GB media.
+_COPY_CHUNK = 1 << 20
+
+#: Suffix of the temp file a managed byte-copy streams to before the atomic replace.
+COPY_PART_SUFFIX = ".part"
+
+#: An injectable BYTE copier ``(src, tmp_dest) -> None`` (the real-filesystem seam).
+FileCopier = Callable[[str, str], None]
 
 
 class _ProjectLike(Protocol):
@@ -91,3 +103,49 @@ def copy_project(
     write = writer if writer is not None else _default_writer
     write(manifest_path, data)
     return ProjectCopy(data=data, manifest_path=manifest_path)
+
+
+def _default_file_copier(src: str, dst: str) -> None:  # pragma: no cover - disk I/O seam
+    """Stream ``src`` bytes into ``dst`` in bounded chunks (the real-filesystem seam)."""
+    with open(src, "rb") as fsrc, open(dst, "wb") as fdst:
+        shutil.copyfileobj(fsrc, fdst, _COPY_CHUNK)
+
+
+def copy_file_atomic(
+    src: str | os.PathLike,
+    dest: str | os.PathLike,
+    *,
+    copier: FileCopier | None = None,
+) -> Path:
+    """Atomically copy ``src`` bytes onto ``dest`` (temp sibling + ``os.replace``).
+
+    The bytes are streamed to a ``<dest>.part`` temp file in the SAME directory,
+    then ``os.replace``d onto ``dest`` — atomic on a single filesystem, so a reader
+    never observes a half-written file. On ANY failure the partial temp is removed
+    and the exception re-raised (ROLLBACK): a mid-write crash can never leave a
+    corrupt/truncated file at ``dest``. A missing ``src`` fails LOUD *before* any
+    temp is created (no silent skip).
+
+    Shared byte-copy machinery (reused by the managed-copy store) — the actual
+    read/write is the single injectable ``copier`` seam (default
+    :func:`_default_file_copier`) so the atomic/rollback logic is unit-tested
+    without moving real gigabytes.
+    """
+    src_path = Path(src)
+    dest_path = Path(dest)
+    if not src_path.exists():
+        raise FileNotFoundError(f"cannot copy a file that does not exist: {src}")
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest_path.with_name(dest_path.name + COPY_PART_SUFFIX)
+    copy = copier if copier is not None else _default_file_copier
+    try:
+        copy(str(src_path), str(tmp))
+        os.replace(tmp, dest_path)
+    except Exception:
+        # ROLLBACK: drop any partial temp so `dest` is never left corrupt. The temp
+        # may not exist yet (copier raised before creating it) — that unlink raises
+        # FileNotFoundError, which is suppressed (nothing to roll back).
+        with suppress(OSError):
+            tmp.unlink()
+        raise
+    return dest_path

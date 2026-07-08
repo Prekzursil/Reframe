@@ -53,7 +53,7 @@ test('renderer loads with no console errors', async () => {
   });
   win.on('pageerror', (e) => consoleErrors.push(`PAGEERROR: ${e.message}`));
   await win.waitForLoadState('domcontentloaded');
-  await expect(win.locator('.app__brand')).toHaveText('Reframe - Media Studio');
+  await expect(win.locator('.app__brand')).toHaveText('Reframe');
   // Let the library list + readiness rollup settle (RPCs to the live sidecar).
   await win.waitForTimeout(1500);
   expect(consoleErrors, `console errors: ${JSON.stringify(consoleErrors)}`).toEqual([]);
@@ -75,12 +75,14 @@ test('Library panel mounts and shows the imported sample', async () => {
   await expect(win.locator('.library__item-title').first()).toHaveText('sample');
 });
 
-test('Create (Shorts) panel mounts via the top-level tabs', async () => {
+test('Make Shorts panel mounts via the top-level tabs', async () => {
   const win = await app.firstWindow();
-  await win.locator('.toptab', { hasText: 'Create' }).click();
-  // The Create tab becomes the selected top-level tab.
+  // v1.4 renamed the shorts-making top tab "Create" -> "Make Shorts" (App.tsx
+  // makeshorts nav label). Drive the current label so this stops timing out.
+  await win.locator('.toptab', { hasText: 'Make Shorts' }).click();
+  // The Make Shorts tab becomes the selected top-level tab.
   await expect(
-    win.locator('.toptab[aria-selected="true"]', { hasText: 'Create' }),
+    win.locator('.toptab[aria-selected="true"]', { hasText: 'Make Shorts' }),
   ).toBeVisible();
   // Return to Library for the Workspace test.
   await win.locator('.toptab', { hasText: 'Library' }).click();
@@ -95,8 +97,11 @@ test('preview <video> PLAYS the imported sample (real playback)', async () => {
   const verdict = probePlayable(seeded.python, seeded.dataRoot, seeded.videoId);
   expect(verdict.playable, 'media.playable should report the H.264 source playable').toBe(true);
 
-  // Open the sample into the Workspace.
+  // Open the sample into the Workspace. Opening a video now lands on the
+  // per-video Task Hub (WU-3a1); take the "Advanced / all tools" escape button
+  // into the full Workspace, where <h1 class="workspace__title"> lives.
   await win.locator('.library__item-title', { hasText: 'sample' }).click();
+  await win.locator('button.task-hub__advanced').click();
   await expect(win.locator('.workspace__title')).toHaveText('sample');
 
   const video = win.locator('.workspace__player video');

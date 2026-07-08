@@ -223,7 +223,17 @@ export function Assets({ api }: AssetsProps): React.ReactElement {
           </li>
         ))}
       </ul>
-      {assets.length === 0 && !listError && <p className="asset-empty">No assets registered.</p>}
+      {assets.length === 0 && !listError && (
+        <div className="asset-empty asset-empty--ghost">
+          <div className="asset-empty__poster" aria-hidden="true">
+            <span className="asset-empty__glyph">◇</span>
+          </div>
+          <p className="asset-empty__title">No assets registered</p>
+          <p className="asset-empty__hint">
+            Installed models and resources appear here once you add them.
+          </p>
+        </div>
+      )}
     </section>
   );
 }

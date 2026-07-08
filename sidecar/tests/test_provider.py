@@ -499,6 +499,64 @@ def test_local_provider_no_secret_still_scrubs_bearer(monkeypatch):
     assert "[REDACTED]" in msg
 
 
+# --------------------------------------------------------------------------- #
+# WU-F1 SCRUB SYMMETRY: the URLError branch and the non-JSON branch construct a
+# ProviderError from attacker/server-influenced text (``exc.reason`` / the raw
+# response body) exactly like the HTTPError branch — so they MUST route through
+# the same ``scrub_error_body`` guard. A live key echoed there must never survive.
+# --------------------------------------------------------------------------- #
+def test_urlerror_reason_scrubs_live_key(monkeypatch):
+    live_key = "sk-live-URLERR-9988"
+
+    def fake_urlopen(request, timeout):  # noqa: ANN001
+        # A URLError whose reason string echoes the bearer we sent (e.g. a proxy
+        # error page URL carrying the key) — the leak this scrub site must close.
+        reason = f"tunnel refused (Authorization: Bearer {live_key}; raw {live_key})"
+        raise prov.urllib.error.URLError(reason)
+
+    monkeypatch.setattr(prov.urllib.request, "urlopen", fake_urlopen)
+    p = CloudProvider(api_key=live_key)  # default transport binds secrets=[key]
+    with pytest.raises(ProviderError) as ei:
+        p.chat([{"role": "user", "content": "q"}])
+    msg = str(ei.value)
+    assert "failed" in msg.lower()
+    assert live_key not in msg  # the live key is gone — enforced at construction
+    assert "[REDACTED]" in msg  # and visibly scrubbed, not silently dropped
+
+
+def test_non_json_body_scrubs_live_key(monkeypatch):
+    live_key = "sk-live-NONJSON-4321"
+
+    def fake_urlopen(request, timeout):  # noqa: ANN001
+        # A 200 with a non-JSON HTML/text body that happens to echo the key.
+        body = f"<html>proxy error, key={live_key} Authorization: Bearer {live_key}</html>"
+        return _FakeResp(body.encode("utf-8"))
+
+    monkeypatch.setattr(prov.urllib.request, "urlopen", fake_urlopen)
+    p = CloudProvider(api_key=live_key)  # default transport binds secrets=[key]
+    with pytest.raises(ProviderError) as ei:
+        p.chat([{"role": "user", "content": "q"}])
+    msg = str(ei.value)
+    assert "non-JSON" in msg
+    assert live_key not in msg  # the live key is gone — enforced at construction
+    assert "[REDACTED]" in msg  # and visibly scrubbed, not silently dropped
+
+
+def test_non_json_body_keyless_still_scrubs_bearer(monkeypatch):
+    # A keyless provider (secrets=()) still strips an echoed bearer token from a
+    # non-JSON body via scrub_error_body's bearer regex (symmetry with HTTPError).
+    def fake_urlopen(request, timeout):  # noqa: ANN001
+        return _FakeResp(b"not json: Authorization: Bearer leaked-nonjson-token tail")
+
+    monkeypatch.setattr(prov.urllib.request, "urlopen", fake_urlopen)
+    p = LocalServerProvider()  # keyless; secrets=()
+    with pytest.raises(ProviderError) as ei:
+        p.chat([{"role": "user", "content": "q"}])
+    msg = str(ei.value)
+    assert "leaked-nonjson-token" not in msg
+    assert "[REDACTED]" in msg
+
+
 def test_abstract_chat_body_raises_not_implemented():
     # A subclass that defers to Provider.chat reaches the abstract method body
     # (the bare ``raise NotImplementedError`` on line 167).

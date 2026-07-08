@@ -31,6 +31,7 @@ import type {
   DirectorPreview,
   DoneEvent,
   ProgressEvent,
+  Video,
   client as RealClient,
 } from '../lib/rpc';
 
@@ -79,6 +80,19 @@ function planFixture(ops: DirectorOp[], goal = 'make it smooth'): DirectorEditPl
   return { planId: 'plan-1', videoId: 'vid-1', goal, sourceHash: 'h', ops, inverse: [] };
 }
 
+/** The app-selected video threaded into the panel (its id is the plan target). */
+function videoFixture(over: Partial<Video> = {}): Video {
+  return {
+    id: 'vid-1',
+    path: '/movies/talk.mp4',
+    title: 'Talk',
+    addedAt: '2026-06-11T00:00:00Z',
+    durationSec: 600,
+    hasTranscript: false,
+    ...over,
+  };
+}
+
 function previewFixture(over: Partial<DirectorPreview> = {}): DirectorPreview {
   return {
     perFunction: [
@@ -121,6 +135,8 @@ function evalFixture(over: Partial<DirectorEval> = {}): DirectorEval {
 interface FakeClient {
   client: typeof RealClient;
   calls: Array<{ method: string; args: unknown[] }>;
+  /** The live persisted settings (settings.set merges into this — for assertions). */
+  settings: Record<string, unknown>;
 }
 
 interface FakeOpts {
@@ -138,11 +154,37 @@ interface FakeOpts {
   falsyPreview?: boolean;
   /** evaluate resolves a falsy value (exercises the `?? null` arm). */
   falsyEvaluate?: boolean;
+  /**
+   * Seed persisted settings. Defaults to directorOnboardingSeen=true so the
+   * first-run tour stays CLOSED for the (unrelated) existing tests; the WU-E2
+   * tour tests seed `{}` (unseen) to open it.
+   */
+  initialSettings?: Record<string, unknown>;
+  /** settings.get rejects (best-effort read failure → tour simply stays closed). */
+  rejectSettingsGet?: boolean;
 }
 
 function makeClient(o: FakeOpts = {}): FakeClient {
   const calls: FakeClient['calls'] = [];
+  // Default to "seen" so the first-run tour stays CLOSED for the unrelated
+  // existing tests; a caller passing initialSettings (even `{}`) opts into that
+  // exact seed — so `{}` means UNSEEN and opens the tour.
+  const settings: Record<string, unknown> = o.initialSettings
+    ? { ...o.initialSettings }
+    : { directorOnboardingSeen: true };
   const fake = {
+    settings: {
+      get: vi.fn(async () => {
+        calls.push({ method: 'settings.get', args: [] });
+        if (o.rejectSettingsGet) throw new Error('settings unavailable');
+        return { ...settings };
+      }),
+      set: vi.fn(async (values: Record<string, unknown>) => {
+        calls.push({ method: 'settings.set', args: [values] });
+        Object.assign(settings, values);
+        return { ...settings };
+      }),
+    },
     director: {
       plan: vi.fn(async (videoId: string, goal: string) => {
         calls.push({ method: 'director.plan', args: [videoId, goal] });
@@ -173,7 +215,7 @@ function makeClient(o: FakeOpts = {}): FakeClient {
       }),
     },
   };
-  return { client: fake as unknown as typeof RealClient, calls };
+  return { client: fake as unknown as typeof RealClient, calls, settings };
 }
 
 /** A controllable job-event bus the test drives to emit progress / job.done. */
@@ -235,9 +277,20 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function mount(c: FakeClient): Promise<void> {
+async function mount(
+  c: FakeClient,
+  video: Video | null = videoFixture(),
+  onChooseVideo?: () => void,
+): Promise<void> {
   await act(async () => {
-    root.render(<DirectorPanel rpcClient={c.client} jobEvents={events} />);
+    root.render(
+      <DirectorPanel
+        rpcClient={c.client}
+        jobEvents={events}
+        video={video}
+        onChooseVideo={onChooseVideo}
+      />,
+    );
   });
   await flush();
 }
@@ -300,15 +353,17 @@ async function planTo(c: FakeClient, plan: DirectorEditPlan): Promise<void> {
 // ---- tests -----------------------------------------------------------------
 
 describe('DirectorPanel', () => {
-  it('(a) submitting the prompt calls director.plan with the goal', async () => {
+  it('(a) submitting plans against the SELECTED video id, never the goal text', async () => {
     const c = makeClient();
-    await mount(c);
+    // The panel is given the app-selected video (id 'vid-1'); a first run (no
+    // prior plan) must dispatch that id as the videoId — NOT the goal string.
+    await mount(c, videoFixture({ id: 'vid-1' }));
     expect(events.progressSubs).toBe(1);
     expect(events.doneSubs).toBe(1);
     await setGoal('make it smooth');
     await clickPlan();
     expect(c.calls.find((x) => x.method === 'director.plan')?.args).toEqual([
-      'make it smooth',
+      'vid-1',
       'make it smooth',
     ]);
     // F5: progress region is SR-announced.
@@ -331,6 +386,60 @@ describe('DirectorPanel', () => {
     });
     await flush();
     expect(c.calls.some((x) => x.method === 'director.plan')).toBe(false);
+  });
+
+  // ---- WU-E1: the "no video open" gate + Choose-a-video CTA -----------------
+
+  it('with NO video open shows the empty state + Choose-a-video CTA and no prompt form', async () => {
+    const c = makeClient();
+    const onChoose = vi.fn();
+    await mount(c, null, onChoose);
+    // Empty state visible; the prompt form is GONE (nothing can mis-fire).
+    expect(container.querySelector('[data-section="empty"]')).not.toBeNull();
+    // WU-D3: the empty carries the shared ghost-poster anchor (poster + glyph).
+    expect(container.querySelector('.director-empty__poster')).not.toBeNull();
+    expect(container.querySelector('.director-empty__glyph')).not.toBeNull();
+    expect(container.querySelector('form.director-prompt')).toBeNull();
+    expect(container.querySelector('textarea[data-action="goal"]')).toBeNull();
+    // The CTA wires to the real video selection.
+    const cta = $('button[data-action="choose-video"]');
+    expect(cta.textContent).toBe('Choose a video');
+    await act(async () => {
+      cta.click();
+    });
+    expect(onChoose).toHaveBeenCalledTimes(1);
+    // No plan can be dispatched without a video.
+    expect(c.calls.some((x) => x.method === 'director.plan')).toBe(false);
+  });
+
+  it('opening a video swaps the empty state for the prompt form', async () => {
+    const c = makeClient();
+    await mount(c, null);
+    expect(container.querySelector('[data-section="empty"]')).not.toBeNull();
+    // Re-render with a selected video → the editor (prompt form) appears.
+    await act(async () => {
+      root.render(<DirectorPanel rpcClient={c.client} jobEvents={events} video={videoFixture()} />);
+    });
+    await flush();
+    expect(container.querySelector('[data-section="empty"]')).toBeNull();
+    expect(container.querySelector('form.director-prompt')).not.toBeNull();
+  });
+
+  it('a video closed AFTER planning keeps the plan and re-plans against the plan video (never the goal)', async () => {
+    const c = makeClient();
+    await planTo(c, planFixture([op({ id: 'a', kind: 'trim' })], 'q&a'));
+    // The open video is cleared (video prop → null) while the plan is on screen.
+    await act(async () => {
+      root.render(<DirectorPanel rpcClient={c.client} jobEvents={events} video={null} />);
+    });
+    await flush();
+    // The prior plan (and its editor) stays visible — no empty state.
+    expect(container.querySelector('[data-section="empty"]')).toBeNull();
+    expect($('[data-testid="plan-summary"]').textContent).toBe('1 trim');
+    // Re-plan now targets the plan's own videoId — NOT the goal text.
+    await clickPlan();
+    const planCalls = c.calls.filter((x) => x.method === 'director.plan');
+    expect(planCalls[planCalls.length - 1].args[0]).toBe('vid-1');
   });
 
   it('(b) a 50-op plan renders grouped collapsible sections, not 50 flat rows', async () => {
@@ -1044,6 +1153,119 @@ describe('DirectorPanel', () => {
     });
     await flush();
     expect(($('textarea[data-action="goal"]') as HTMLTextAreaElement).value).toBe(goalBefore);
+  });
+
+  // ---- WU-E2: onboarding (example chips + first-run tour) --------------------
+
+  it('renders clickable example chips; clicking one prefills the goal textarea', async () => {
+    const c = makeClient();
+    await mount(c);
+    const chips = $all('button[data-action="example-chip"]');
+    expect(chips.length).toBeGreaterThanOrEqual(3);
+    // The textarea starts empty; clicking a chip fills it with that chip's goal.
+    expect(($('textarea[data-action="goal"]') as HTMLTextAreaElement).value).toBe('');
+    const first = chips[0];
+    const exampleText = first.getAttribute('data-example') ?? '';
+    expect(exampleText.length).toBeGreaterThan(0);
+    expect(first.textContent).toBe(exampleText);
+    await act(async () => {
+      first.click();
+    });
+    await flush();
+    expect(($('textarea[data-action="goal"]') as HTMLTextAreaElement).value).toBe(exampleText);
+    // A prefilled goal enables the Plan button (was disabled while blank).
+    expect(($('button[data-action="plan"]') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('example chips are disabled while a job is in flight', async () => {
+    const c = makeClient();
+    await planTo(c, planFixture([op({ id: 'a' })]));
+    // Enter a busy state via apply (no job.done yet → still busy).
+    await act(async () => {
+      $('button[data-action="apply"]').click();
+    });
+    await flush();
+    for (const chip of $all('button[data-action="example-chip"]')) {
+      expect((chip as HTMLButtonElement).disabled).toBe(true);
+    }
+  });
+
+  it('first run (directorOnboardingSeen unset) shows the focus-trapped tour', async () => {
+    const c = makeClient({ initialSettings: {} });
+    await mount(c);
+    // The tour reads settings once on mount, then opens because it is unseen.
+    expect(c.calls.some((x) => x.method === 'settings.get')).toBe(true);
+    const dialog = container.querySelector('.director-onboarding');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.getAttribute('aria-modal')).toBe('true');
+  });
+
+  it('does not show the tour when directorOnboardingSeen is already set', async () => {
+    const c = makeClient({ initialSettings: { directorOnboardingSeen: true } });
+    await mount(c);
+    expect(container.querySelector('.director-onboarding')).toBeNull();
+  });
+
+  it('a settings.get failure keeps the tour closed (best-effort, no throw)', async () => {
+    const c = makeClient({ initialSettings: {}, rejectSettingsGet: true });
+    await mount(c);
+    expect(container.querySelector('.director-onboarding')).toBeNull();
+    // The panel still renders normally.
+    expect(container.querySelector('form.director-prompt')).not.toBeNull();
+  });
+
+  it('dismissing the tour persists directorOnboardingSeen and closes it', async () => {
+    const c = makeClient({ initialSettings: {} });
+    await mount(c);
+    expect(container.querySelector('.director-onboarding')).not.toBeNull();
+    await act(async () => {
+      $('button[data-action="skip"]').click();
+    });
+    await flush();
+    expect(container.querySelector('.director-onboarding')).toBeNull();
+    expect(c.settings.directorOnboardingSeen).toBe(true);
+    expect(c.calls.find((x) => x.method === 'settings.set')?.args[0]).toEqual({
+      directorOnboardingSeen: true,
+    });
+  });
+
+  it('the "What is Director?" button re-opens the tour after it was dismissed', async () => {
+    const c = makeClient({ initialSettings: { directorOnboardingSeen: true } });
+    await mount(c);
+    expect(container.querySelector('.director-onboarding')).toBeNull();
+    await act(async () => {
+      $('button[data-action="director-tour"]').click();
+    });
+    await flush();
+    expect(container.querySelector('.director-onboarding')).not.toBeNull();
+  });
+
+  it('the tour is reachable from the no-video empty state too', async () => {
+    const c = makeClient({ initialSettings: { directorOnboardingSeen: true } });
+    await mount(c, null);
+    // Empty state is shown, and the "What is Director?" button still re-opens the tour.
+    expect(container.querySelector('[data-section="empty"]')).not.toBeNull();
+    await act(async () => {
+      $('button[data-action="director-tour"]').click();
+    });
+    await flush();
+    expect(container.querySelector('.director-onboarding')).not.toBeNull();
+  });
+
+  it('WU-D6a: first-run tour does NOT auto-open over the no-video empty state, but fires once a video opens', async () => {
+    const c = makeClient({ initialSettings: {} });
+    await mount(c, null);
+    // Unseen, but no video open → the focus-trap must NOT auto-open over the
+    // "Choose a video" empty state (it would block the only actionable control).
+    expect(container.querySelector('[data-section="empty"]')).not.toBeNull();
+    expect(container.querySelector('.director-onboarding')).toBeNull();
+    // Opening a video (now there IS something to edit) fires the first-run tour.
+    await act(async () => {
+      root.render(<DirectorPanel rpcClient={c.client} jobEvents={events} video={videoFixture()} />);
+    });
+    await flush();
+    expect(container.querySelector('[data-section="empty"]')).toBeNull();
+    expect(container.querySelector('.director-onboarding')).not.toBeNull();
   });
 
   it('unsubscribes from the job-event bus on unmount', async () => {

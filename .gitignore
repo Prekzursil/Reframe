@@ -9,6 +9,9 @@ app/.vite/
 # never commit. Screenshot BASELINES under e2e/**/-snapshots/ ARE tracked.
 app/playwright-report/
 app/test-results/
+# Ad-hoc end-to-end scratch outputs (probe scripts + runner datadirs/library.db
+# written under e2e_artifacts/ during manual E2E drives) — regenerable, never commit.
+e2e_artifacts/
 
 # Python
 __pycache__/
@@ -87,6 +90,10 @@ build/ffmpeg/
 # regenerable by the same prep script — never commit it (mirrors build/ffmpeg/).
 # NOTE: build/python-embed/ (py3.12) IS tracked historically; this only covers 3.14.
 build/python-embed-314/
+# Stray duplicate icon dir — the REAL app icons live in build/icons/ (plural,
+# committed by WU A2). build/icon/ (singular) is a regenerable leftover dup an
+# icon step emits; never commit it (the tracked build/icons/ is the source of truth).
+build/icon/
 
 # Runtime data root (models/exports/envs — relocatable via MEDIA_STUDIO_CONFIG_DIR)
 /data/

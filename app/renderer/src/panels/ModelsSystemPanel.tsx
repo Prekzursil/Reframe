@@ -28,6 +28,7 @@ import {
   type LocalModelPlan,
   type ModelsOverview,
   type OpenRouterUsageRow,
+  type ProviderUsageAvailability as UsageAvailabilityRow,
   type Recommendation,
   type RoutingBlock,
   type RoutingPolicy,
@@ -47,6 +48,7 @@ import { RoutingOverrideTable } from '../components/RoutingOverrideTable';
 import { AlignModelSelect } from '../components/AlignModelSelect';
 import { LocalRunners } from '../components/LocalRunners';
 import { OpenRouterUsage } from '../components/OpenRouterUsage';
+import { ProviderUsageAvailability } from '../components/ProviderUsageAvailability';
 import { PresetPicker } from '../components/PresetPicker';
 import { FirstRunChooser } from '../components/FirstRunChooser';
 import { ReadinessRollup } from '../components/ReadinessRollup';
@@ -270,6 +272,10 @@ export function ModelsSystemPanel({
   // reason strip + device card (real quant + VRAM estimate, null-RAM graceful).
   const [overview, setOverview] = useState<ModelsOverview | null>(null);
   const [openrouterUsage, setOpenrouterUsage] = useState<OpenRouterUsageRow[]>([]);
+  // WU-D4: honest per-provider note on whether a provider-side usage API exists
+  // (OpenRouter yes; OpenAI/Anthropic need an org admin key; others none). Shown so
+  // a provider without a usage API says so instead of implying a fabricated 0.
+  const [usageAvailability, setUsageAvailability] = useState<UsageAvailabilityRow[]>([]);
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
   const [presetBusy, setPresetBusy] = useState<boolean>(false);
   // WU-B3 device-aware recommendation card + one-click Apply.
@@ -307,13 +313,16 @@ export function ModelsSystemPanel({
       api.asr.engines().catch(() => null),
       api.providers.usage().catch(() => null),
       api.providers.openrouterUsage().catch(() => null),
+      api.providers.usageAvailability().catch(() => null),
     ])
-      .then(([catalogRes, engineRes, usageRes, orRes]) => {
+      .then(([catalogRes, engineRes, usageRes, orRes, availRes]) => {
         if (alive) {
           if (catalogRes) setCatalog(catalogRes);
           if (engineRes) setEngines(Array.isArray(engineRes.engines) ? engineRes.engines : []);
           if (usageRes) setUsage(Array.isArray(usageRes.usage) ? usageRes.usage : []);
           if (orRes) setOpenrouterUsage(Array.isArray(orRes.usage) ? orRes.usage : []);
+          if (availRes)
+            setUsageAvailability(Array.isArray(availRes.availability) ? availRes.availability : []);
         }
       })
       /* v8 ignore next 2 -- every inner read already .catch()es to null, so the outer Promise.all never rejects; this is a belt-and-braces guard. */
@@ -987,6 +996,10 @@ export function ModelsSystemPanel({
           <h4 className="usage-section__cost-head">OpenRouter spend</h4>
           <OpenRouterUsage rows={openrouterUsage} />
         </div>
+        {/* WU-D4: honest per-provider note on provider-side usage APIs — a provider
+            without one (OpenAI/Anthropic without an org admin key, or others) says
+            so plainly instead of implying a fabricated number. */}
+        <ProviderUsageAvailability rows={usageAvailability} />
       </div>
 
       {catalog && (

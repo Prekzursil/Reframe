@@ -31,6 +31,44 @@ pytestmark = pytest.mark.integration
 _HAVE_FFMPEG = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
 _SKIP = pytest.mark.skipif(not _HAVE_FFMPEG, reason="ffmpeg/ffprobe not installed")
 
+
+def _drawtext_works() -> bool:
+    """ffmpeg ``drawtext`` needs fontconfig. On a host that has ffmpeg but NO
+    fontconfig (common on bare Windows) drawtext CRASHES (access violation
+    0xC0000005) instead of failing cleanly — hard-red-failing the overlayText /
+    lowerThird render tests. Probe a tiny drawtext render so such a host SKIPS the
+    drawtext-only tests instead (Linux CI has fontconfig, so it runs there)."""
+    if not _HAVE_FFMPEG:
+        return False
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-nostdin",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:s=64x64:d=0.1",
+                "-vf",
+                "drawtext=text=probe:fontsize=10",
+                "-frames:v",
+                "1",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):  # pragma: no cover - host probe
+        return False
+    return proc.returncode == 0
+
+
+_HAVE_DRAWTEXT = _drawtext_works()
+_SKIP_DRAWTEXT = pytest.mark.skipif(not _HAVE_DRAWTEXT, reason="ffmpeg drawtext/fontconfig unavailable on this host")
+
 _CUES = [{"index": 1, "start": 0.2, "end": 1.0, "text": "real burn"}]
 
 
@@ -253,7 +291,7 @@ def test_zoom_pan_renders_valid_motion(sample: Path, tmp_path: Path) -> None:
     assert Path(pc.data["video"]["path"]) == Path(source_before)
 
 
-@_SKIP
+@_SKIP_DRAWTEXT
 @pytest.mark.parametrize("kind", ["overlayText", "lowerThird"])
 def test_drawtext_ops_render_valid_mp4(kind: str, sample: Path, tmp_path: Path) -> None:
     pc = _project_copy(tmp_path, sample)
@@ -272,7 +310,7 @@ def test_drawtext_ops_render_valid_mp4(kind: str, sample: Path, tmp_path: Path) 
     assert Path(pc.data["video"]["path"]) == Path(source_before)
 
 
-@_SKIP
+@_SKIP_DRAWTEXT
 @pytest.mark.parametrize("kind", ["overlayText", "lowerThird"])
 def test_drawtext_op_survives_validation_then_applies(kind: str, sample: Path, tmp_path: Path) -> None:
     # INTEGRATED contract: overlayText/lowerThird are _TRACK_KINDS, so a real op

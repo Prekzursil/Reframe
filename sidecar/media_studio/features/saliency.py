@@ -376,40 +376,60 @@ def _default_frame_loader(
 # --------------------------------------------------------------------------- #
 # asset registration (mirrors diarize / parakeet_asr / ctc_align)
 # --------------------------------------------------------------------------- #
-#: pinned ViNet-S commit (SOTA manifest #1) — the GDrive-hosted ICASSP-2025 .pt.
-ASSET_REVISION = "d09066b"
-#: PINNED direct-download URL for the ~36 MB ViNet-S weight (A6 lesson 5).
+#: pinned 40-hex HF commit of the ViNet-S re-host (WU I1 -> B4). ``_HF_RESOLVE_RE``
+#: rejects a moving branch/tag, so this MUST be the full commit hash.
+ASSET_REVISION = "a100c02a6e0891dc227762a052c4adfd151db0dc"
+#: PINNED re-host URL for the ViNet-S saliency weight (F3c: a download is
+#: mandatorily integrity-pinned). The dead Google-Drive id (404 since 2026-06-28)
+#: is replaced by the verified safetensors on HF ``Prekzursil/reframe-asd-weights``.
 ASSET_URL = (
-    "https://drive.usercontent.google.com/download?id=1Tt5pPq4La8a-Nm5oN2g0K3sQ8aJpVfXk&export=download&confirm=t"
+    f"https://huggingface.co/Prekzursil/reframe-asd-weights/resolve/{ASSET_REVISION}/vinet-s-saliency.safetensors"
 )
-#: relative dest under the assets root (download installer needs a dest path).
-ASSET_DEST = "models/vinet-s-saliency.pt"
+#: sha256 of the HOSTED ``.safetensors`` bytes (WU I1: hosted bytes re-downloaded +
+#: re-hashed = MATCH; NOT a fabricated hash). Provenance anchor for the original
+#: ``.pt``: 5d097a6b145b2cff7f08aa141a91e7aec4ac967504b439f4b04110c7e475cbbd
+#: (visual-only DHF1K checkpoint, the no-face crop-track model).
+ASSET_SHA256 = "803e6d265d46d3f4f3d7ec2c6c2f3b4511f9ba176aa12e348ac317788ca0dc68"
+#: relative dest under the assets root — a ``.safetensors`` extension so the
+#: verify-before-load gate (``_safetensors_loader``) accepts it (pickle is refused).
+ASSET_DEST = "models/vinet-s-saliency.safetensors"
 
 
 def register_saliency_assets() -> None:
-    """Register the ViNet-S saliency weights as an on-demand asset (idempotent).
+    """Register the re-hosted ViNet-S saliency weight as an on-demand asset (idempotent).
 
-    F3c-ESCALATION (NOT registered): ViNet-S is hosted on a Google Drive file id
-    that now returns HTTP 404 (verified 2026-06-28 across every Drive URL form),
-    with NO live HF/GitHub mirror found. F3c makes a sha256 integrity pin MANDATORY
-    for ``installer='download'`` — and a hash cannot be computed for a file that no
-    longer exists. Rather than ship a FABRICATED hash (faking the gate) or a
-    silently-404ing entry (the exact kind of silent failure F3c removes), the entry
-    is intentionally NOT registered. ``default_models_present`` then honestly
-    reports the saliency model as unavailable. OPERATOR ACTION REQUIRED: re-host
-    the ViNet-S weight (or point to a verified mirror), then restore the
-    ``register_asset`` call below with the real ``sha256=`` of the re-hosted file.
+    WU B4 (re-host RESTORED): the dead Google-Drive file id (404 since 2026-06-28)
+    is replaced by the verified safetensors re-host on HF ``Prekzursil/reframe-asd-
+    weights`` (WU I1: tensor-equality proven + hosted bytes re-downloaded + re-hashed
+    = MATCH). The URL pins the 40-hex HF commit (``_HF_RESOLVE_RE`` rejects a moving
+    branch/tag) and the sha256 is the hosted ``.safetensors`` bytes (F3c: a download
+    is mandatorily integrity-pinned).
 
-        manifest.register_asset(
-            manifest.AssetEntry(
-                name=ASSET_NAME, kind="model", size_mb=ASSET_SIZE_MB,
-                dest=ASSET_DEST, label="ViNet-S (video saliency, CC-BY-NC-SA 4.0)",
-                installer="download", url=ASSET_URL, sha256="<verified hash>",
-            )
-        )
+    LICENSE: CC-BY-NC-SA 4.0 — personal / NON-COMMERCIAL only, with attribution +
+    share-alike; the HF repo card carries the license + attribution. This is an
+    ``optional``-tier, on-demand asset: it ENHANCES the always-on YuNet crop-track
+    (C2 invariant) and is NEVER a prerequisite for reframe.
     """
-    # Intentionally a no-op until the dead upstream is replaced (see docstring).
-    return
+    from ..assets import manifest  # noqa: PLC0415 - lazy: avoids an import cycle
+
+    manifest.register_asset(
+        manifest.AssetEntry(
+            name=ASSET_NAME,
+            kind="model",
+            size_mb=ASSET_SIZE_MB,
+            dest=ASSET_DEST,
+            label="ViNet-S video saliency (ICASSP 2025, CC-BY-NC-SA 4.0)",
+            tier="optional",
+            why=(
+                "Finds the most eye-catching region so footage with no faces still crops to "
+                "the action — an on-demand boost that ENHANCES the always-on speaker tracker, "
+                "never a requirement."
+            ),
+            installer="download",
+            url=ASSET_URL,
+            sha256=ASSET_SHA256,
+        )
+    )
 
 
 # Register the asset at import (mirrors diarize.register_diarize_assets()).
@@ -420,6 +440,7 @@ __all__ = [
     "ASSET_DEST",
     "ASSET_NAME",
     "ASSET_REVISION",
+    "ASSET_SHA256",
     "ASSET_SIZE_MB",
     "ASSET_URL",
     "CHANNEL",

@@ -35,11 +35,18 @@ vi.mock('../components/PathsPanel', () => ({
   PathsPanel: () => <div data-testid="storage" />,
   default: () => <div data-testid="storage" />,
 }));
+vi.mock('../components/ManagedStoreMeter', () => ({
+  ManagedStoreMeter: () => <div data-testid="managed-meter" />,
+  default: () => <div data-testid="managed-meter" />,
+}));
 vi.mock('../components/SetupStatusPanel', () => ({
   SetupStatusPanel: () => <div data-testid="setup" />,
 }));
 vi.mock('../components/CaptionPreferences', () => ({
   CaptionPreferences: () => <div data-testid="preferences" />,
+}));
+vi.mock('../features/ThirdPartyNotices', () => ({
+  ThirdPartyNotices: () => <div data-testid="licenses" />,
 }));
 
 import { Settings, SETTINGS_SECTIONS } from './Settings';
@@ -89,6 +96,7 @@ describe('Settings sub-nav', () => {
       'storage',
       'preferences',
       'health',
+      'licenses',
     ]);
     expect(SETTINGS_SECTIONS.map((s) => s.label)).toEqual([
       'Models & System',
@@ -97,6 +105,7 @@ describe('Settings sub-nav', () => {
       'Storage',
       'Caption defaults',
       'System Health',
+      'Licenses',
     ]);
   });
 
@@ -128,8 +137,21 @@ describe('Settings sub-nav', () => {
     });
     await flush();
     expect(container.querySelector('[data-testid="storage"]')).not.toBeNull();
+    // WU-3b2: the Storage section now also renders the managed-copy store meter.
+    expect(container.querySelector('[data-testid="managed-meter"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="models"]')).toBeNull();
     expect(subtab('Storage').classList.contains('tab--active')).toBe(true);
+  });
+
+  it('opens the Licenses section (third-party notices) via the sub-tab', async () => {
+    await mount();
+    await act(async () => {
+      subtab('Licenses').click();
+    });
+    await flush();
+    expect(container.querySelector('[data-testid="licenses"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="models"]')).toBeNull();
+    expect(subtab('Licenses').classList.contains('tab--active')).toBe(true);
   });
 
   it('defaults to the first section (Models & System) and marks its sub-tab active', async () => {

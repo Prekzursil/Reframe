@@ -6,6 +6,18 @@
 #
 # pip reads the index option from THIS file, so the cu12 wheels resolve without
 # any CLI flag plumbing.
+#
+# WU C4 (hashed lock, cu128 STILL-HASHED per-index exception): when the sibling
+# ``requirements-chatterbox.lock.txt`` is staged (F1 build-prep, network), the
+# env installs from it with ``--require-hashes --only-binary=:all: --no-deps``.
+# The cu128 torch index below is NOT a hashing exemption — it is a still-hashed
+# per-index exception: the custom index URL is carried into the lock (so pip
+# finds the +cu128 wheels), but every wheel it serves is hash-verified all the
+# same. Generate with the same index forwarded:
+#   python -m runtime_setup.generate_hashed_lock \
+#       runtime_setup/requirements-chatterbox.txt \
+#       runtime_setup/requirements-chatterbox.lock.txt \
+#       --extra-index-url https://download.pytorch.org/whl/cu128
 --extra-index-url https://download.pytorch.org/whl/cu128
 
 # CONTRACT-NOTE: cu128 / torch 2.11.0 / py3.14 DEDICATED interpreter. chatterbox

@@ -86,6 +86,20 @@
   color: var(--text-primary);
 }
 
+/* WU-D4: the "estimated" qualifier — the month-to-date is derived from stand-in
+   pricing, so it is visibly marked an estimate rather than a real invoiced charge. */
+.spend-cap__readout-estimate {
+  align-self: center;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-pill);
+  font-size: var(--type-caption-size);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
 .spend-cap__readout-month {
   margin-left: auto;
   font-family: var(--font-mono);

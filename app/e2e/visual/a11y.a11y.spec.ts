@@ -6,7 +6,7 @@
 // OS-INDEPENDENT — it would pass identically on any runner. It rides the visual
 // config/job only to reuse the single built app.
 //
-// What it proves on each panel (Library/Create/Director/Repurpose, Settings →
+// What it proves on each panel (Library/Make Shorts/Director/Edit, Settings →
 // Models & System / Providers & Keys incl. SpendCap, Workspace preview):
 //   * ZERO serious/critical axe violations (WCAG 2.0/2.1 A+AA tag set),
 //   * keyboard navigation reaches interactive controls (Tab moves focus),
@@ -59,9 +59,11 @@ test('Library — zero serious/critical axe violations', async () => {
   await expectNoSeriousViolations(win, '.app');
 });
 
-test('Create — zero serious/critical axe violations', async () => {
-  await openTopTab(win, 'Create');
-  await expect(win.locator('.shorts, .create')).toBeVisible();
+test('Make Shorts — zero serious/critical axe violations', async () => {
+  await openTopTab(win, 'Make Shorts');
+  // `.make-shorts` is the always-present section root (MakeShorts.tsx:161); the old
+  // `.shorts` class now only mounts inside the 'gallery' sub-tab (not the default).
+  await expect(win.locator('.make-shorts')).toBeVisible();
   await expectNoSeriousViolations(win, '.app__main');
 });
 
@@ -71,10 +73,11 @@ test('Director — zero serious/critical axe violations', async () => {
   await expectNoSeriousViolations(win, 'section.director-panel');
 });
 
-test('Repurpose — zero serious/critical axe violations', async () => {
-  await openTopTab(win, 'Repurpose');
+test('Edit — zero serious/critical axe violations', async () => {
+  // Formerly the 'Repurpose' tab (id `edit`; App.tsx:386).
+  await openTopTab(win, 'Edit');
   await expect(
-    win.locator('.toptab[aria-selected="true"]', { hasText: 'Repurpose' }),
+    win.locator('.toptab[aria-selected="true"]', { hasText: 'Edit' }),
   ).toBeVisible();
   await expectNoSeriousViolations(win, '.app__main');
 });

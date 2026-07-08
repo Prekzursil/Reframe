@@ -1235,7 +1235,7 @@ class TestRpcRegistration:
     def test_register_wires_exactly_the_assets_methods(self, tmp_path):
         registered: dict[str, Any] = {}
         mgr = assets_rpc.register(make_manager(tmp_path), register_fn=lambda n, h: registered.update({n: h}))
-        assert set(registered) == {"assets.list", "assets.ensure", "assets.cancel"}
+        assert set(registered) == {"assets.list", "assets.plan", "assets.ensure", "assets.cancel"}
         assert isinstance(mgr, AssetManager)
 
     def test_register_defaults_to_protocol_registry(self, tmp_path):

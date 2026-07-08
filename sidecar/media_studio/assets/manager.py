@@ -25,10 +25,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
 import re
 import shutil
 import subprocess  # noqa: S404 - argv-list subprocess only, never shell=True
 import sys
+import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -67,6 +69,19 @@ GET_PIP_SHA256 = "a341e1a43e38001c551a1508a73ff23636a11970b61d901d9a1cad2a18f570
 #: success sentinel written into an env dir after a full install
 ENV_SENTINEL = ".media-studio-env.json"
 
+# WU C4 — verify-before-exec over the FULL transitive closure. Top-level pins
+# alone still let pip resolve UNHASHED transitives from PyPI; a fully-hashed
+# lockfile installed with these flags makes pip refuse any wheel whose bytes
+# don't match a pinned --hash BEFORE it unpacks/runs it:
+#   --require-hashes     every requirement must carry a --hash= (fail otherwise)
+#   --only-binary=:all:  no source builds — an sdist has no verifiable wheel hash
+#   --no-deps            the lock IS the closure; pip resolves nothing itself
+HASHED_LOCK_PIP_ARGS: tuple[str, ...] = ("--require-hashes", "--only-binary=:all:", "--no-deps")
+#: option lines a hashed lock may carry besides pinned+hashed requirements. The
+#: cu128 torch index is a STILL-HASHED per-index exception: the custom index URL
+#: is permitted, but every wheel it serves is hash-verified all the same.
+LOCK_ALLOWED_OPTIONS: tuple[str, ...] = ("--extra-index-url", "--index-url")
+
 # (frac 0..1, message) -> None — per-asset progress callback.
 FracCb = Callable[[float, str], None]
 # Cooperative cancel probe.
@@ -79,6 +94,27 @@ HfFetch = Callable[[str, str | None], str]
 
 class AssetError(RuntimeError):
     """A typed asset failure; surfaces via the job.done error payload (A6.3)."""
+
+
+class AssetIntegrityError(AssetError):
+    """A sha256 mismatch on a downloaded artifact (WU C1).
+
+    A distinct subclass so the retry loop treats it as DEFINITIVE (a wrong pin
+    or corrupt source, not a transient network hiccup) — it is NEVER retried,
+    it surfaces loudly at once.
+    """
+
+
+# WU C1 automatic-retry defaults. A transient transport drop mid-download is
+# retried with exponential backoff + full jitter, reusing the ``.part`` so the
+# next attempt RESUMES via a Range request instead of restarting. Definitive
+# failures (HTTP status errors, sha mismatch, cancellation) are never retried.
+DEFAULT_MAX_DOWNLOAD_RETRIES = 4
+RETRY_BASE_SEC = 0.5
+RETRY_CAP_SEC = 30.0
+#: transport-level exceptions worth retrying (a dropped/half-read connection).
+#: HTTP-status failures raise ``AssetError`` (definitive) and are NOT here.
+DEFAULT_RETRY_ERRORS: tuple[type[BaseException], ...] = (ConnectionError, TimeoutError)
 
 
 # --------------------------------------------------------------------------- #
@@ -192,6 +228,116 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def download_speed_eta(
+    done_bytes: float, remaining_bytes: float, elapsed_sec: float
+) -> tuple[float | None, float | None]:
+    """Live download speed (bytes/sec) + ETA (sec) for the progress payload (WU C1).
+
+    ``done_bytes`` is the bytes transferred THIS session and ``elapsed_sec`` the
+    time they took, so a resumed download reports the current run's speed, not an
+    average diluted by the already-present ``.part``. Returns ``(None, None)``
+    until there is a real sample (some bytes over some time); a zero remainder
+    yields a ``0.0`` ETA (nothing left to fetch).
+    """
+    if elapsed_sec <= 0 or done_bytes <= 0:
+        return None, None
+    speed = done_bytes / elapsed_sec
+    eta = remaining_bytes / speed if speed > 0 else None
+    return speed, eta
+
+
+def format_eta(seconds: float) -> str:
+    """Human ``ETA`` string: ``45s`` / ``2m05s`` / ``1h02m`` (WU C1)."""
+    total = int(seconds)
+    if total < 60:
+        return f"{total}s"
+    if total < 3600:
+        return f"{total // 60}m{total % 60:02d}s"
+    return f"{total // 3600}h{(total % 3600) // 60:02d}m"
+
+
+def format_bytes_progress(
+    name: str,
+    done_bytes: float,
+    total_bytes: float,
+    speed_bps: float | None,
+    eta_sec: float | None,
+) -> str:
+    """The per-chunk progress message: ``name: 500/2500 MB · 12.5 MB/s · ETA 2m40s``.
+
+    Speed / ETA segments are appended only when known (WU C1) — a server that
+    hides Content-Length still gets a clean ``done/total MB`` line.
+    """
+    msg = f"{name}: {int(done_bytes) // MB}/{int(total_bytes) // MB} MB"
+    if speed_bps is not None:
+        msg += f" · {speed_bps / MB:.1f} MB/s"
+    if eta_sec is not None:
+        msg += f" · ETA {format_eta(eta_sec)}"
+    return msg
+
+
+def backoff_delay(attempt: int, *, base: float, cap: float, rng: Any) -> float:
+    """Exponential-backoff-with-full-jitter delay for retry ``attempt`` (0-based).
+
+    ``base * 2**attempt`` capped at ``cap``, then full-jitter randomized in
+    ``[0, capped]`` via ``rng.uniform`` (WU C1) — jitter de-synchronizes retries
+    so a flaky mirror isn't hammered in lockstep.
+    """
+    capped = min(base * (2**attempt), cap)
+    return rng.uniform(0.0, capped)
+
+
+def _lock_logical_lines(text: str) -> list[str]:
+    """Join backslash line-continuations; drop blank + ``#`` comment lines.
+
+    pip-compile ``--generate-hashes`` emits one requirement per logical block:
+    ``pkg==ver \\`` then indented ``--hash=...`` continuation lines, then dropped
+    ``# via`` comments. Reconstruct each block as a single logical line.
+    """
+    lines: list[str] = []
+    buf = ""
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.endswith("\\"):
+            buf += stripped[:-1].strip() + " "
+            continue
+        buf += stripped
+        lines.append(buf.strip())
+        buf = ""
+    if buf.strip():
+        lines.append(buf.strip())
+    return lines
+
+
+def validate_hashed_lock(text: str) -> tuple[str, ...]:
+    """Validate a fully-hashed lockfile body; return its pinned specs (WU C4).
+
+    Every requirement must be PINNED (``pkg==version``) AND carry at least one
+    ``--hash=`` so pip verifies its wheel's bytes before unpacking; option lines
+    are limited to :data:`LOCK_ALLOWED_OPTIONS` (the still-hashed torch-index
+    exception). An unhashed/unpinned requirement, an unknown option, or an empty
+    lock raises :class:`AssetError` — the install fails LOUD rather than pulling
+    an unverified transitive.
+    """
+    pins: list[str] = []
+    for line in _lock_logical_lines(text):
+        if line.startswith("-"):
+            if not any(line.startswith(opt) for opt in LOCK_ALLOWED_OPTIONS):
+                raise AssetError(f"unsupported lock option: {line!r}")
+            continue
+        spec = line.split()[0]
+        if "==" not in spec:
+            raise AssetError(f"lock requirement not pinned (use pkg==version): {spec!r}")
+        if "--hash=" not in line:
+            raise AssetError(f"lock requirement missing --hash= (unverified wheel): {spec!r}")
+        pins.append(spec)
+    if not pins:
+        raise AssetError("hashed lock contains no pinned requirements")
+    return tuple(pins)
+
+
 def build_env_install_argvs(
     python_exe: str,
     get_pip_path: Path | str,
@@ -199,14 +345,21 @@ def build_env_install_argvs(
     requirements: Sequence[str],
     *,
     pip_pin: str = PINNED_PIP,
+    lock_file: Path | str | None = None,
 ) -> list[dict[str, Any]]:
     """The argv steps that bootstrap a ``pip --target`` env (A7; pure function).
 
     Embeddable CPython has NO ensurepip/venv, so:
       1. ``python get-pip.py <pip pin> --target <env>`` — installs a PINNED pip
          *into the env dir itself* (get-pip forwards its args to pip).
-      2. ``python -m pip install --target <env> <pinned reqs...>`` with
-         ``PYTHONPATH=<env>`` so step 1's pip is importable.
+      2. ``python -m pip install --target <env> ...`` with ``PYTHONPATH=<env>``
+         so step 1's pip is importable. When ``lock_file`` is given (WU C4) this
+         installs the fully-hashed lock with :data:`HASHED_LOCK_PIP_ARGS` —
+         ``--require-hashes --only-binary=:all: --no-deps -r <lock>`` — so every
+         wheel over the FULL transitive closure is hash-verified before exec; the
+         inline ``requirements`` are then NOT placed on the argv (the lock is the
+         sole, verified source). Without a lock, the inline pins install as before
+         (top-level pins; transitives resolve unhashed).
 
     Returns ``[{"argv": [...], "env": {...extra env vars...}}, ...]`` — argv
     LISTS only (A6 lesson 4: never a shell string; paths with spaces are safe).
@@ -223,6 +376,10 @@ def build_env_install_argvs(
         ],
         "env": {},
     }
+    if lock_file is not None:
+        install_tail = [*HASHED_LOCK_PIP_ARGS, "--no-warn-script-location", "-r", str(lock_file)]
+    else:
+        install_tail = ["--no-warn-script-location", *[str(r) for r in requirements]]
     step2 = {
         "argv": [
             str(python_exe),
@@ -231,8 +388,7 @@ def build_env_install_argvs(
             "install",
             "--target",
             env_dir_s,
-            "--no-warn-script-location",
-            *[str(r) for r in requirements],
+            *install_tail,
         ],
         "env": {"PYTHONPATH": env_dir_s},
     }
@@ -340,8 +496,25 @@ class AssetManager:
         usage: Callable[[str], Any] | None = None,
         env_vars: Mapping[str, str] | None = None,
         get_pip_sha256: str | None = None,
+        clock: Callable[[], float] | None = None,
+        sleep: Callable[[float], None] | None = None,
+        rng: Any | None = None,
+        max_download_retries: int = DEFAULT_MAX_DOWNLOAD_RETRIES,
+        retry_base: float = RETRY_BASE_SEC,
+        retry_cap: float = RETRY_CAP_SEC,
+        retry_on: tuple[type[BaseException], ...] = DEFAULT_RETRY_ERRORS,
     ) -> None:
         self.root = Path(root) if root is not None else default_config_dir()
+        # WU C1 seams: monotonic clock for download speed/ETA math, sleep + rng for
+        # exponential-backoff-with-jitter retry. All injectable so tests are
+        # deterministic and never touch the wall clock or real randomness.
+        self._clock = clock or time.monotonic
+        self._sleep = sleep or time.sleep
+        self._rng = rng if rng is not None else random.SystemRandom()
+        self._max_download_retries = max(0, int(max_download_retries))
+        self._retry_base = float(retry_base)
+        self._retry_cap = float(retry_cap)
+        self._retry_on = retry_on
         # F3c: the sha256 get-pip.py must match BEFORE it's executed (verify-before
         # -exec). Injectable so tests use small fixtures; defaults to the pin above.
         self._get_pip_sha256 = get_pip_sha256 or GET_PIP_SHA256
@@ -427,6 +600,46 @@ class AssetManager:
         """``assets.list`` payload body: every manifest entry as AssetInfo."""
         return [self.info(entry) for entry in manifest.all_assets()]
 
+    # -- profile plan / explain surface (WU C1) ------------------------------
+    def component(self, entry: AssetEntry) -> dict[str, Any]:
+        """The ``assets.plan`` component view: AssetInfo + tier/label(what)/why.
+
+        A SUPERSET of the frozen A3 ``AssetInfo`` (kept unchanged) that adds the
+        WU C1 explain fields so a user sees WHAT each component is, WHY it exists,
+        and its SIZE before committing to a multi-GB download.
+        """
+        found = self.installed_path(entry)
+        return {
+            "name": entry.name,
+            "kind": entry.kind,
+            "tier": entry.tier,
+            "label": entry.label,
+            "why": entry.why,
+            "sizeMB": entry.size_mb,
+            "installed": found is not None,
+            "dest": found if found is not None else str(self.resolve_dest(entry)),
+        }
+
+    def plan(self, profile: str, custom: Sequence[str] | None = None) -> dict[str, Any]:
+        """What a PROFILE would install: components + total + still-to-download size.
+
+        ``totalMB`` is every component's size; ``toDownloadMB`` counts only the
+        not-yet-installed ones (already-present components are free). An unknown
+        profile / unknown custom name raises ``ValueError`` (surfaced loudly by
+        the RPC layer) — never a silent empty plan.
+        """
+        names = manifest.resolve_profile(profile, custom)
+        entries = [manifest.get_asset(name) for name in names]
+        components = [self.component(entry) for entry in entries if entry is not None]
+        total_mb = sum(float(c["sizeMB"]) for c in components)
+        to_download_mb = sum(float(c["sizeMB"]) for c in components if not c["installed"])
+        return {
+            "profile": str(profile).lower(),
+            "components": components,
+            "totalMB": total_mb,
+            "toDownloadMB": to_download_mb,
+        }
+
     # -- ensure (the long job body) ------------------------------------------
     def ensure(self, names: Sequence[str], job_ctx: Any) -> dict[str, Any]:
         """Install every named asset that's missing; the ``assets.ensure`` job body.
@@ -438,8 +651,9 @@ class AssetManager:
         their ``.part`` for a later resume).
 
         CONTRACT-NOTE: A2 leaves assets.ensure's job.done.result unspecified;
-        we return ``{installed:[name], assets:[AssetInfo]}`` so the panel can
-        refresh its list straight from the done payload.
+        we return ``{installed:[name], failed:[{name,error}], assets:[AssetInfo]}``
+        so the panel can refresh its list straight from the done payload and show
+        which components were skipped (WU C1 graceful per-item failure).
         """
         entries: list[AssetEntry] = []
         for name in names:
@@ -458,15 +672,16 @@ class AssetManager:
 
             guard_network(self._settings(), "downloading assets")
 
-        for entry in todo:
-            dest = self.resolve_dest(entry)
-            target_dir = dest if entry.installer in ("hf", "env") else dest.parent
-            preflight_disk(target_dir, entry.size_mb, usage=self._usage)
-
         total_weight = sum(max(float(e.size_mb), 1.0) for e in todo) or 1.0
         done_weight = 0.0
         job_ctx.progress(0.0, "starting" if todo else "all assets already installed")
 
+        # WU C1 graceful per-item failure: a single failing item is SKIPPED +
+        # NOTED (never silently), the rest keep installing. Cancellation still
+        # aborts the whole job (re-raised). If EVERY requested item is unusable
+        # (nothing installed, none pre-existing) the failure surfaces as a job
+        # error so the caller isn't told a bricked install "succeeded".
+        failed: list[dict[str, str]] = []
         for entry in todo:
             job_ctx.raise_if_cancelled()
             weight = max(float(entry.size_mb), 1.0)
@@ -481,11 +696,57 @@ class AssetManager:
                 pct = (_base + clamp(frac, 0.0, 1.0) * _w) / total_weight * 100.0
                 job_ctx.progress(pct, message or f"installing {_name}")
 
-            self._install(entry, on_frac=on_frac, should_cancel=lambda: job_ctx.cancelled)
+            try:
+                dest = self.resolve_dest(entry)
+                target_dir = dest if entry.installer in ("hf", "env") else dest.parent
+                preflight_disk(target_dir, entry.size_mb, usage=self._usage)
+                self._install_with_retry(entry, on_frac=on_frac, should_cancel=lambda: job_ctx.cancelled)
+            except JobCancelled:
+                raise
+            except Exception as exc:  # noqa: BLE001 - per-item skip: recorded + surfaced, never silent
+                log.warning("asset install failed for %s: %s", clean_for_log(entry.name), exc)
+                failed.append({"name": entry.name, "error": str(exc)})
             done_weight += weight
 
+        failed_names = {f["name"] for f in failed}
+        installed_names = [e.name for e in entries if e.name not in failed_names]
+        if failed and not installed_names:
+            # Nothing usable came out of this ensure -> a real job error (A6.3).
+            raise AssetError("; ".join(f"{f['name']}: {f['error']}" for f in failed))
+
         job_ctx.progress(100.0, "done")
-        return {"installed": [e.name for e in entries], "assets": self.list_assets()}
+        return {"installed": installed_names, "failed": failed, "assets": self.list_assets()}
+
+    def _install_with_retry(self, entry: AssetEntry, *, on_frac: FracCb, should_cancel: CancelProbe) -> None:
+        """Install ``entry``, retrying TRANSIENT transport failures (WU C1).
+
+        A dropped/half-read connection (``self._retry_on``) is retried with
+        exponential backoff + full jitter; because the partial ``.part`` is left
+        in place, each retry RESUMES via a Range request rather than restarting.
+        Cancellation and integrity failures are DEFINITIVE — re-raised at once,
+        never retried. After the retry budget is spent the last error propagates.
+        """
+        attempt = 0
+        while True:
+            try:
+                self._install(entry, on_frac=on_frac, should_cancel=should_cancel)
+                return
+            except (JobCancelled, AssetIntegrityError):
+                raise
+            except self._retry_on as exc:
+                if attempt >= self._max_download_retries:
+                    raise
+                delay = backoff_delay(attempt, base=self._retry_base, cap=self._retry_cap, rng=self._rng)
+                log.warning(
+                    "transient download failure for %s (attempt %d/%d): %s; retrying in %.2fs",
+                    clean_for_log(entry.name),
+                    attempt + 1,
+                    self._max_download_retries,
+                    exc,
+                    delay,
+                )
+                self._sleep(delay)
+                attempt += 1
 
     # -- installers -----------------------------------------------------------
     def _install(self, entry: AssetEntry, *, on_frac: FracCb, should_cancel: CancelProbe) -> None:
@@ -547,6 +808,9 @@ class AssetManager:
             if total is None and size_mb:
                 total = int(float(size_mb) * MB)
             done = offset
+            # WU C1: measure THIS session's transfer (done - offset) against the
+            # elapsed wall time for a live speed + ETA in the progress message.
+            start = self._clock()
             with open(part, mode) as fh:
                 for chunk in resp.iter_bytes(CHUNK_SIZE):
                     if should_cancel is not None and should_cancel():
@@ -558,10 +822,8 @@ class AssetManager:
                     fh.write(chunk)
                     done += len(chunk)
                     if on_frac and total:
-                        on_frac(
-                            min(done / total, 0.99),
-                            f"{name}: {done // MB}/{total // MB} MB",
-                        )
+                        speed, eta = download_speed_eta(done - offset, total - done, self._clock() - start)
+                        on_frac(min(done / total, 0.99), format_bytes_progress(name, done, total, speed, eta))
 
         self._finalize(part, dest, sha256, name)
         if on_frac:
@@ -575,7 +837,9 @@ class AssetManager:
             actual = sha256_file(part)
             if actual.lower() != sha256.lower():
                 part.unlink(missing_ok=True)  # corrupt: force a clean restart
-                raise AssetError(f"sha256 mismatch for {name}: expected {sha256}, got {actual}")
+                # AssetIntegrityError => the retry loop treats this as DEFINITIVE
+                # (wrong pin / corrupt source), never a transient hiccup to retry.
+                raise AssetIntegrityError(f"sha256 mismatch for {name}: expected {sha256}, got {actual}")
         dest.parent.mkdir(parents=True, exist_ok=True)
         os.replace(part, dest)
 
@@ -614,6 +878,39 @@ class AssetManager:
             return resolver() or self._python_exe
         return self._python_exe
 
+    def _resolve_env_lock(self, entry: AssetEntry) -> Path | None:
+        """Resolve a declared fully-hashed lockfile for an env asset (WU C4).
+
+        ``entry.lock_file`` names the hashed lock produced at F1 build-prep (like
+        the ffmpeg binary, its CONTENT is staged offline — real hashes need PyPI
+        + the cu128 torch index — not committed). Absolute, or relative to the
+        assets root. Resolution is verify-before-exec and NEVER silent:
+
+          * present + fully hashed -> the install runs ``--require-hashes`` from
+            it (every wheel hash-checked before pip unpacks it);
+          * present but NOT fully hashed -> :class:`AssetError` (fail loud);
+          * DECLARED but UNSTAGED (dev box / lock not yet generated) -> a LOUD
+            warning + ``None`` so the install falls back to the inline pins
+            (top-level pins, unhashed transitives — the pre-C4 behaviour), rather
+            than silently skipping the env;
+          * not declared -> ``None`` (inline pins, unchanged).
+        """
+        if not entry.lock_file:
+            return None
+        candidate = Path(entry.lock_file)
+        if not candidate.is_absolute():
+            candidate = self.root / entry.lock_file
+        if not candidate.is_file():
+            log.warning(
+                "hashed lock declared but not staged (F1 build-prep) for %s: %s — "
+                "falling back to the pinned (unhashed-transitive) inline install",
+                entry.name,
+                candidate,
+            )
+            return None
+        validate_hashed_lock(candidate.read_text(encoding="utf-8"))
+        return candidate
+
     def _install_env(self, entry: AssetEntry, *, on_frac: FracCb, should_cancel: CancelProbe) -> None:
         """Bootstrap a ``pip --target`` env under the assets root (A7).
 
@@ -640,7 +937,8 @@ class AssetManager:
                 should_cancel=should_cancel,
                 label="get-pip.py",
             )
-        steps = build_env_install_argvs(python_exe, get_pip, env_dir, entry.requirements)
+        lock_file = self._resolve_env_lock(entry)
+        steps = build_env_install_argvs(python_exe, get_pip, env_dir, entry.requirements, lock_file=lock_file)
         for index, step in enumerate(steps):
             if should_cancel():
                 raise JobCancelled(entry.name)

@@ -127,6 +127,49 @@ def providers_test_key(self: Services, params: dict[str, Any], ctx: RpcContext) 
     return {"ok": True, "capabilities": capabilities}
 
 
+def providers_reveal_key(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``providers.revealKey({id, index?})`` -> ``{key}`` — the ONE sanctioned plaintext exception.
+
+    Returns exactly ONE raw plaintext API key, for TRANSIENT display in direct
+    response to an EXPLICIT user click (a "reveal" affordance). This is the SOLE
+    ``providers.*`` RPC that returns a FULL key: every other provider read
+    (``providers.list`` / ``providers.usage`` / ``providers.openrouterUsage`` ...)
+    redacts to last-4. It is the deliberate, DOCUMENTED exception to the
+    redact-over-RPC invariant (PLAN §WU-D3, R7) — justified only because the user
+    is explicitly asking to see their OWN stored key to read/copy it.
+
+    SECURITY CONTRACT (enforced end-to-end, R7): the renderer holds the returned
+    value ONLY in a transient ref, shows it masked-by-default, re-masks it on
+    blur/timeout, and NEVER writes it into React state/store, logs, telemetry, or
+    crash reports. Server-side the key is read RAW via :meth:`SettingsStore.get_raw`
+    (the same FACTORY accessor the rotation pool uses), returned once, and never
+    logged: ``rpc.py``'s param redaction keeps the ``{id, index}`` REQUEST out of
+    diagnostics, and the RESPONSE is never written to a log line.
+
+    ``index`` (default 0) selects among a provider's rotation-pool keys. An unknown
+    id, an out-of-range / negative / non-``int`` (incl. ``bool``) index, or an empty
+    stored slot is a typed ``INVALID_PARAMS`` error — never a crash, and never a
+    silent empty reveal that the UI could mistake for a real key.
+    """
+    provider_id = _require_str(params, "id")
+    index = params.get("index", 0)
+    # bool is an int subclass but never a valid slot index; reject it explicitly.
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        raise _invalid("providers.revealKey index must be a non-negative integer")
+    raw_providers = self.settings.get_raw().get("providers")
+    providers = raw_providers if isinstance(raw_providers, list) else []
+    entry = next((p for p in providers if isinstance(p, dict) and p.get("id") == provider_id), None)
+    if entry is None:
+        raise _invalid(f"providers.revealKey: unknown provider {provider_id!r}")
+    keys = entry.get("apiKeys")
+    if not isinstance(keys, list) or index >= len(keys):
+        raise _invalid(f"providers.revealKey: no key at index {index} for {provider_id!r}")
+    key = keys[index]
+    if not isinstance(key, str) or not key:
+        raise _invalid(f"providers.revealKey: no key at index {index} for {provider_id!r}")
+    return {"key": key}
+
+
 def providers_set_consent(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
     """``providers.setConsent({provider, text?, frames?})`` -> ``{consent}`` (WU-keys / SE1).
 
@@ -228,6 +271,8 @@ def providers_spend(self: Services, params: dict[str, Any], ctx: RpcContext) -> 
     With the default off/0 settings every cap reads zero/false so an
     unconfigured install shows a benign "no cap" view.
     """
+    from ..models import provider_pricing as _pricing  # local: import-light pure
+
     ledger = self._spend_ledger()
     settings = self.settings.get()
     return {
@@ -236,7 +281,30 @@ def providers_spend(self: Services, params: dict[str, Any], ctx: RpcContext) -> 
         "softLimitCents": int(settings.get("monthlySoftLimitCents") or 0),
         "hardLimitCents": int(settings.get("monthlyHardLimitCents") or 0),
         "enforceHardLimit": bool(settings.get("enforceMonthlyHardLimit")),
+        # HONESTY (WU-D4): the month-to-date total is derived from STAND-IN
+        # pricing (no curated model publishes a real per-request price), so it is
+        # flagged an ESTIMATE — the UI must NOT present it as a real invoiced charge.
+        "isEstimate": _pricing.spend_is_estimated(),
     }
+
+
+def providers_usage_availability(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``providers.usageAvailability()`` -> ``{availability:[...]}`` honest per-provider notes (WU-D4).
+
+    The LOCAL request/token counters (``providers.usage``) are always surfaced and
+    OpenRouter's per-key COST is fetched live (``providers.openrouterUsage``). This
+    read states, for every OTHER configured cloud provider, whether a provider-side
+    usage API exists — OpenAI/Anthropic gate usage behind an organization ADMIN key
+    a stored project key cannot use, and other providers publish nothing per-key.
+    Rather than fabricate a 0, each such provider gets an honest "Usage API not
+    available for <provider>" message. Rows carry the provider name only — NEVER a
+    key (the classifier reads no key material).
+    """
+    from ..models import provider_usage_availability as _availability  # local: import-light pure
+
+    raw_providers = self.settings.get_raw().get("providers")
+    providers = raw_providers if isinstance(raw_providers, list) else []
+    return {"availability": _availability.usage_availability(providers)}
 
 
 def providers_apply_preset(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
@@ -435,8 +503,12 @@ def _provider_for_function(self: Services, function: str) -> Any:
     from ..models import routing_policy as _routing_policy  # local: import-light pure
 
     if _routing_policy.resolve_route(function, self.settings.get())["mode"] == "local":
-        return _provider_mod.get_provider(self.settings.get_raw(), prefer=_provider_mod.LOCAL_PROVIDER_ID)
-    return _provider_mod.get_provider(self.settings.get_raw(), prefer=self._function_prefer(function))
+        return _provider_mod.get_provider(
+            self.settings.get_raw(), prefer=_provider_mod.LOCAL_PROVIDER_ID, ensure=self._llama_ensure()
+        )
+    return _provider_mod.get_provider(
+        self.settings.get_raw(), prefer=self._function_prefer(function), ensure=self._llama_ensure()
+    )
 
 
 def _select_provider_or_local(self: Services) -> Any:
@@ -455,7 +527,9 @@ def _select_provider_or_local(self: Services) -> Any:
     from ..models import provider as _provider_mod  # local: heavy seam
 
     if _offline.is_offline(self.settings.get()):
-        return _provider_mod.get_provider(self.settings.get_raw(), prefer=_provider_mod.LOCAL_PROVIDER_ID)
+        return _provider_mod.get_provider(
+            self.settings.get_raw(), prefer=_provider_mod.LOCAL_PROVIDER_ID, ensure=self._llama_ensure()
+        )
     return self._provider_for_function("select")
 
 
@@ -464,7 +538,10 @@ def _translator_for_function(self: Services, function: str) -> Any:
     from ..models import translation as _translation_mod  # local: heavy seam
 
     return _translation_mod.get_translator(
-        self.settings.get_raw(), runner=self._get_model_runner(), prefer=self._function_prefer(function)
+        self.settings.get_raw(),
+        runner=self._get_model_runner(),
+        prefer=self._function_prefer(function),
+        ensure=self._llama_ensure(),
     )
 
 
@@ -535,7 +612,7 @@ def _vision_pool(self: Services, settings: dict[str, Any]) -> Any:
     ``settings``. The routed vision provider is tried first; detection of local
     Ollama/LM-Studio is OFF here (no socket — only the configured cloud vision
     entries + the local backstop are needed). ``None`` when the provider module
-    is a test stub without ``build_pool_provider``.
+    is a test stand-in without ``build_pool_provider``.
 
     SECURITY: callers building the cloud egress pool MUST pass settings already
     filtered through :meth:`_frame_consented_vision_settings`, so every
@@ -544,7 +621,7 @@ def _vision_pool(self: Services, settings: dict[str, Any]) -> Any:
     from ..models import provider as _provider_mod  # local: heavy seam
 
     builder = getattr(_provider_mod, "build_pool_provider", None)
-    if builder is None:  # pragma: no cover -- only when provider is a stub w/o the pool builder
+    if builder is None:  # pragma: no cover -- only when provider is a stand-in w/o the pool builder
         return None
     return builder(
         settings,
@@ -565,7 +642,7 @@ def _vision_provider_for_consent(self: Services, settings: dict[str, Any]) -> st
     so no frame is ever prepared for egress).
     """
     pool = self._vision_pool(self._frame_consented_vision_settings(settings))
-    if pool is None:  # pragma: no cover -- stub-provider guard (see _vision_pool)
+    if pool is None:  # pragma: no cover -- stand-in-provider guard (see _vision_pool)
         return None
     from ..models.provider import DEFAULT_CAPABILITY  # local: import-light
 

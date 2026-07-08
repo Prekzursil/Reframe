@@ -230,6 +230,7 @@ def run(
     on_progress: ProgressCb | None = None,
     should_cancel: Callable[[], bool] | None = None,
     popen: Callable[..., Any] = subprocess.Popen,
+    cwd: str | None = None,
 ) -> int:
     """Run an ffmpeg argv list, streaming ``-progress`` lines to ``on_progress``.
 
@@ -252,6 +253,7 @@ def run(
         stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
+        cwd=cwd,
     )
 
     # Phase-0 spine finding (the 29-min "stuck clip 1/5"): ffmpeg chats on

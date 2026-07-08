@@ -242,6 +242,13 @@ def main() -> int:
     # ----------------------------------------------------------------- #
     benv = dict(env)
     benv["MEDIA_STUDIO_E2E_DATADIR"] = str(data_dir)
+    # Point the config dir at the SAME data root the tiny sidecar uses as its
+    # Services.data_dir, so first-run asset provisioning (assets.ensure writes under
+    # Services.data_dir) and the reframe's export-time model lookup
+    # (default_config_dir()) agree. Production keeps them equal (register_all leaves
+    # data_dir=None -> default_config_dir()); the tiny launcher passes an explicit
+    # data_dir, so mirror that invariant here.
+    benv["MEDIA_STUDIO_CONFIG_DIR"] = str(data_dir)
     launcher = str(repo / "sidecar" / "tests" / "e2e" / "_tiny_sidecar.py")
     client = SidecarClient(
         [sys.executable, launcher],
@@ -323,6 +330,22 @@ def main() -> int:
             "score": 100,
         }
         print("STEP_SELECT: ok -- LLM-selection STUBBED (inline candidate 1.0s-6.0s); real ffmpeg export pipeline runs")
+
+        # 4b. PROVISION the reframe model (YuNet) the claudeshorts engine
+        # hard-requires — exactly as a real first-run does (assets.ensure ->
+        # ~230KB sha256-pinned HF ONNX). Without it the export errors at REFRAME
+        # ("not provisioned"). Verify it ACTUALLY installed: assets.ensure emits
+        # job.done even when it GRACEFULLY SKIPS a failed item, so a silent
+        # download failure must fail loud here, not deep in the reframe stage.
+        try:
+            ensured = client.run_job("assets.ensure", {"names": ["yunet-face-detection"]}, timeout=300.0)
+            installed = ensured.get("installed") or []
+            assert "yunet-face-detection" in installed, f"YuNet did not install: {ensured!r}"
+            print(f"STEP_PROVISION: ok -- installed={installed}")
+        except Exception as exc:  # noqa: BLE001
+            overall_ok = False
+            breakages.append(f"PROVISION: {exc}")
+            print(f"STEP_PROVISION: FAIL -- {exc}\nstderr:\n{client.stderr_tail()}")
 
         # 5. EXPORT a captioned vertical short -> assert valid mp4 ------ #
         try:

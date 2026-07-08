@@ -22,6 +22,7 @@ function info(over: Partial<SpendInfo> = {}): SpendInfo {
     softLimitCents: 0,
     hardLimitCents: 0,
     enforceHardLimit: false,
+    isEstimate: false,
     ...over,
   };
 }

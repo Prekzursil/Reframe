@@ -40,27 +40,59 @@ vi.mock('./views/Library', () => ({
   ),
 }));
 
-// Edit hosts the per-video surface; the marker exposes the open video + back.
+// Edit hosts the per-video surface; the marker exposes the open video + back, and
+// the Task Hub section callbacks (WU-3a1: Make shorts / Director job cards).
 vi.mock('./views/Edit', () => ({
-  Edit: ({ video, onBack }: { video: Video | null; onBack: () => void }) => (
+  Edit: ({
+    video,
+    onBack,
+    onMakeShorts,
+    onMakeShortsForVideo,
+    onDirector,
+  }: {
+    video: Video | null;
+    onBack: () => void;
+    onMakeShorts?: () => void;
+    onMakeShortsForVideo?: (videoId: string) => void;
+    onDirector?: () => void;
+  }) => (
     <div data-testid="edit" data-video-id={video?.id ?? ''}>
       <button type="button" onClick={onBack}>
         back
+      </button>
+      <button type="button" onClick={() => onMakeShorts?.()}>
+        hub-make-shorts
+      </button>
+      {/* WU-3a4: the Workspace Short-maker tab deep-links to Make Shorts with the
+          open video pre-selected (the single ShortMaker owner). */}
+      <button type="button" onClick={() => onMakeShortsForVideo?.('v1')}>
+        workspace-shortmaker
+      </button>
+      <button type="button" onClick={() => onDirector?.()}>
+        hub-director
       </button>
     </div>
   ),
 }));
 
-// Make Shorts marker exposes the batch resume id App wired (it owns its tests).
+// Make Shorts marker exposes the batch resume id + the deep-linked videoId App
+// wired (it owns its tests).
 vi.mock('./views/MakeShorts', () => ({
-  MakeShorts: ({ resumeId }: { resumeId?: string }) => (
-    <div data-testid="makeshorts" data-resume={resumeId ?? ''} />
+  MakeShorts: ({ resumeId, videoId }: { resumeId?: string; videoId?: string }) => (
+    <div data-testid="makeshorts" data-resume={resumeId ?? ''} data-video-id={videoId ?? ''} />
   ),
 }));
 
-// Stub the lazy AI Director panel (it owns its own tests).
+// Stub the lazy AI Director panel (it owns its own tests). The marker echoes the
+// threaded video id + exposes the empty-state CTA so App's WU-E1 wiring is testable.
 vi.mock('./panels/DirectorPanel', () => ({
-  default: () => <div data-testid="director" />,
+  default: ({ video, onChooseVideo }: { video: Video | null; onChooseVideo?: () => void }) => (
+    <div data-testid="director" data-video-id={video?.id ?? ''}>
+      <button type="button" onClick={onChooseVideo}>
+        choose-video
+      </button>
+    </div>
+  ),
 }));
 
 // Stub the Settings view; expose the initialSection App wired in (it owns tests).
@@ -192,6 +224,45 @@ describe('App top-level tabs', () => {
     expect(tab('Director').getAttribute('aria-selected')).toBe('true');
   });
 
+  it('WU-E1: threads the open video into the Director and the CTA routes to Library', async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    // Open a video from the Library, then switch to the Director tab.
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="library"] button')!.click();
+    });
+    await flush();
+    await act(async () => {
+      tab('Director').click();
+    });
+    await flush();
+    // The app-selected video id is threaded into the panel.
+    const director = container.querySelector('[data-testid="director"]')!;
+    expect(director.getAttribute('data-video-id')).toBe('v1');
+    // The empty-state CTA is wired to route back to the Library (real selection).
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="director"] button')!.click();
+    });
+    await flush();
+    expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
+    expect(tab('Library').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('WU-E1: opening the Director with no video threads a null video (empty id)', async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    await act(async () => {
+      tab('Director').click();
+    });
+    await flush();
+    const director = container.querySelector('[data-testid="director"]')!;
+    expect(director.getAttribute('data-video-id')).toBe('');
+  });
+
   it('navigates to Settings (default section) via the tab', async () => {
     await act(async () => {
       root.render(<App />);
@@ -231,6 +302,72 @@ describe('App top-level tabs', () => {
     await flush();
     expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="edit"]')).toBeNull();
+  });
+
+  // WU-3a1: the Task Hub's section job cards route out of Edit to the top-level
+  // surfaces. Drive the Edit mock's callbacks and assert the route switch.
+  function hubButton(text: string): HTMLButtonElement {
+    const btns = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-testid="edit"] button'),
+    );
+    const found = btns.find((b) => b.textContent === text);
+    if (!found) throw new Error(`hub button "${text}" not found`);
+    return found;
+  }
+
+  it('WU-3a1: the Make shorts job card routes to the Make Shorts section', async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="library"] button')!.click();
+    });
+    await flush();
+    await act(async () => {
+      hubButton('hub-make-shorts').click();
+    });
+    await flush();
+    expect(container.querySelector('[data-testid="makeshorts"]')).not.toBeNull();
+    expect(tab('Make Shorts').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('WU-3a4: the Workspace Short-maker deep-link routes to Make Shorts pre-selected to the video', async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="library"] button')!.click();
+    });
+    await flush();
+    await act(async () => {
+      hubButton('workspace-shortmaker').click();
+    });
+    await flush();
+    const view = container.querySelector('[data-testid="makeshorts"]');
+    expect(view).not.toBeNull();
+    expect(view!.getAttribute('data-video-id')).toBe('v1');
+    // No batch resume on this deep-link.
+    expect(view!.getAttribute('data-resume')).toBe('');
+    expect(tab('Make Shorts').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('WU-3a1: the Director job card routes to the Director section', async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="library"] button')!.click();
+    });
+    await flush();
+    await act(async () => {
+      hubButton('hub-director').click();
+    });
+    await flush();
+    expect(container.querySelector('[data-testid="director"]')).not.toBeNull();
+    expect(tab('Director').getAttribute('aria-selected')).toBe('true');
   });
 
   it('shows the Edit empty state (no video) when the Edit tab is opened directly', async () => {
@@ -517,5 +654,61 @@ describe('App M3 header routing toggle', () => {
     await flush();
     expect(setRoutingPolicyMock).toHaveBeenCalledWith({ global: 'auto' });
     expect(routingBtn('auto').getAttribute('aria-pressed')).toBe('true');
+  });
+});
+
+// WU-1b: the AppGate renders the full-screen FirstRunSetup INSTEAD of the shell
+// while first-run provisioning is in flight, so the Library (+ its mount-time
+// RPCs) never mount against a dead sidecar.
+describe('App first-run provisioning gate (WU-1b)', () => {
+  let provisioningCb: ((state: { active: boolean }) => void) | null = null;
+
+  function installGateBridge(initialActive: boolean): void {
+    provisioningCb = null;
+    (window as unknown as { api?: unknown }).api = {
+      // The mount-time query decides the FIRST frame (push events miss it).
+      getProvisioningState: () => Promise.resolve({ active: initialActive }),
+      onProvisioningState: (cb: (state: { active: boolean }) => void) => {
+        provisioningCb = cb;
+        return () => {
+          provisioningCb = null;
+        };
+      },
+    };
+  }
+
+  afterEach(() => {
+    delete (window as unknown as { api?: unknown }).api;
+  });
+
+  it('renders FirstRunSetup and blocks the Library while provisioning is active', async () => {
+    installGateBridge(true);
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    // The full-screen gate replaces the shell — no Library, no tab strip.
+    expect(container.querySelector('.first-run-setup')).not.toBeNull();
+    expect(container.querySelector('[data-testid="library"]')).toBeNull();
+    expect(container.querySelector('.toptab')).toBeNull();
+    // The shell's mount-time RPCs never fired (blocked behind the gate).
+    expect(libraryListMock).not.toHaveBeenCalled();
+    expect(batchListMock).not.toHaveBeenCalled();
+  });
+
+  it('auto-transitions to the normal shell when provisioning clears', async () => {
+    installGateBridge(true);
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    expect(container.querySelector('.first-run-setup')).not.toBeNull();
+    // Sidecar reached running → provisioning drops → the shell mounts.
+    await act(async () => {
+      provisioningCb?.({ active: false });
+    });
+    await flush();
+    expect(container.querySelector('.first-run-setup')).toBeNull();
+    expect(container.querySelector('[data-testid="library"]')).not.toBeNull();
   });
 });

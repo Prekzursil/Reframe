@@ -1,0 +1,216 @@
+/* taskHub.css — the per-video Task Hub landing (WU-3a1).
+   Dark-editorial, tokens only (styles/tokens.css). The hub is a calm destination:
+   a quiet title leads, four raised job cards give the primary actions real target
+   area + hierarchy, and the "all tools" escape reads as secondary chrome below.
+   ADDITIVE — no existing selector is touched or renamed. */
+
+.task-hub {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+  max-width: 880px;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6);
+}
+
+/* ---- header: which video, and the one question ---------------------------- */
+
+.task-hub__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.task-hub__eyebrow {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+}
+
+.task-hub__title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--type-display-size);
+  font-weight: var(--type-display-weight);
+  letter-spacing: var(--type-display-tracking);
+  line-height: var(--type-display-leading);
+  /* long titles truncate rather than shove the cards down */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-hub__sub {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--type-body-size);
+}
+
+/* ---- the four job cards --------------------------------------------------- */
+
+.task-hub__cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-5);
+}
+
+@media (max-width: 640px) {
+  .task-hub__cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.task-hub__card {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    "icon title"
+    "icon blurb"
+    "icon cue";
+  gap: var(--space-1) var(--space-4);
+  align-items: start;
+  text-align: left;
+  padding: var(--space-6);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--atmos-toplight), var(--surface-raised);
+  box-shadow: var(--elev-1);
+  cursor: pointer;
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.task-hub__card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--elev-2);
+  border-color: var(--edge-strong);
+  background: var(--atmos-toplight), var(--surface-hover);
+}
+
+.task-hub__card:active {
+  transform: translateY(0);
+  background: var(--atmos-toplight), var(--surface-active);
+}
+
+.task-hub__card:focus-visible,
+.task-hub__advanced:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* last-used gets the single semantic accent: a soft wash + an amber rail */
+.task-hub__card.is-last,
+.task-hub__advanced.is-last {
+  border-color: var(--accent-edge);
+  background: var(--accent-soft), var(--surface-raised);
+}
+
+.task-hub__card-icon {
+  grid-area: icon;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+  color: var(--accent);
+}
+
+.task-hub__card-title {
+  grid-area: title;
+  color: var(--text-primary);
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+}
+
+.task-hub__card-blurb {
+  grid-area: blurb;
+  color: var(--text-secondary);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+}
+
+/* dual-homing cue (design-review P2): a quiet, video-scoped whisper under the
+   blurb on the cards that also live as top-level surfaces. A hairline pill so it
+   reads as a scope tag, never competing with the card title. */
+.task-hub__scope {
+  grid-area: cue;
+  align-self: start;
+  justify-self: start;
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+}
+
+.task-hub__last {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+}
+
+/* ---- the persistent "all tools" escape (secondary chrome) ----------------- */
+
+.task-hub__advanced {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  text-align: left;
+  padding: var(--space-5) var(--space-6);
+  border: 1px dashed var(--edge-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.task-hub__advanced:hover {
+  border-color: var(--accent-edge);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.task-hub__advanced .task-hub__card-icon {
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  color: currentColor;
+}
+
+.task-hub__advanced-label {
+  font-size: var(--type-body-size);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.task-hub__advanced-hint {
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+}

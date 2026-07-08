@@ -2,7 +2,7 @@
 .lang-select {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs, 0.25rem);
+  gap: var(--space-2);
 }
 
 .lang-select__control {
@@ -11,6 +11,6 @@
 
 .lang-select__advice {
   margin: 0;
-  font-size: var(--text-sm, 0.8125rem);
-  color: var(--color-warn-fg, #8a6d00);
+  font-size: var(--type-body-size);
+  color: var(--status-warn);
 }

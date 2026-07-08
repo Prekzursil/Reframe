@@ -12,9 +12,35 @@ from .. import protocol
 from ..features import media_compat as _media_compat
 from ..features import timeline as _timeline
 from ..features import tracks as _tracks
+from ..protocol import Handler, RpcContext
+from ..settings_store import INJECTED_KEYS_FIELD
 from ._services import Services
 from ._shared import _invalid, log
 from ._wire import _self_ffprobe
+
+
+def _key_overlay_wrapper(svc: Services, handler: Handler) -> Handler:
+    """Wrap ``handler`` so the per-request injected DPAPI keys reach ``get_raw``.
+
+    WU-D2b-2 CONSUME (orchestrator ruling B): main injects the decrypted keys
+    under :data:`INJECTED_KEYS_FIELD` on the params of every provider-calling
+    method. This wrapper POPS that field off the params IN PLACE (the SAME dict
+    ``dispatch`` will hand to ``job.retry``'s ``record_request`` and ``rpc.py``'s
+    error logger), so a live key can never land in a job-store record or a log
+    line, then runs the handler inside :meth:`SettingsStore.key_overlay` so the
+    FACTORY seams' ``get_raw()`` see the raw keys for THAT request only — every
+    real key-consuming seam captures its provider/settings synchronously while
+    this overlay is active. A request without the field is an ordinary call (the
+    overlay is never opened)."""
+
+    def wrapped(params: dict[str, Any], ctx: RpcContext) -> Any:
+        injected = params.pop(INJECTED_KEYS_FIELD, None) if isinstance(params, dict) else None
+        if injected is None:
+            return handler(params, ctx)
+        with svc.settings.key_overlay(injected):
+            return handler(params, ctx)
+
+    return wrapped
 
 
 def register_all(
@@ -27,9 +53,17 @@ def register_all(
     Idempotent only across a fresh registry: ``protocol.register`` raises on a
     duplicate name (a typo/double-wire fails loudly at startup). ``services`` and
     ``register`` are injectable for tests (a tmp-dir Services + a fake registrar).
+
+    WU-D2b-2: every handler is registered through :func:`_key_overlay_wrapper`
+    (including the feature modules that take ``register_fn=reg``), so the
+    per-request DPAPI key injection is consumed uniformly and stripped before it
+    can reach a log line or the persisted job store.
     """
     svc = services or Services()
-    reg = register if register is not None else protocol.register
+    base_reg = register if register is not None else protocol.register
+
+    def reg(name: str, handler: Handler) -> None:
+        base_reg(name, _key_overlay_wrapper(svc, handler))
 
     reg("library.list", svc.library_list)
     reg("library.add", svc.library_add)
@@ -45,6 +79,14 @@ def register_all(
     reg("library.regenerate", svc.library_regenerate)
     reg("library.pinHash", svc.library_pin_hash)
     reg("library.relink", svc.library_relink)
+    # WU-3b1: OPT-IN keep-a-copy managed store. keepCopy copies the source bytes into
+    # the app-managed store (atomic, preflight, cap+LRU, dedup) and re-points lineage to
+    # the copy; managedStatus is read-only; managedEvict/managedClear free the bytes and
+    # re-point each entity back to its original source. Direct.
+    reg("library.keepCopy", svc.library_keep_copy)
+    reg("library.managedStatus", svc.library_managed_status)
+    reg("library.managedEvict", svc.library_managed_evict)
+    reg("library.managedClear", svc.library_managed_clear)
 
     reg("project.open", svc.project_open)
     reg("project.save", svc.project_save)
@@ -160,6 +202,11 @@ def register_all(
     reg("providers.upsert", svc.providers_upsert)
     reg("providers.remove", svc.providers_remove)
     reg("providers.testKey", svc.providers_test_key)
+    # WU-D3: the ONE sanctioned plaintext exception — an explicit-click reveal that
+    # returns exactly one RAW key for a transient, masked-by-default UI display. The
+    # renderer holds it in a ref only (never state/store/logs/telemetry/crash) and
+    # re-masks on blur/timeout. Every other providers.* read stays last-4 redacted.
+    reg("providers.revealKey", svc.providers_reveal_key)
     reg("providers.setConsent", svc.providers_set_consent)
     # WU-usage-ui: per-key live usage (cached, persisted, stale-flagged; no poll
     # burst). The rotation pool already accounts usage from optimistic decrement +
@@ -169,6 +216,10 @@ def register_all(
     # — the cost axis alongside providers.usage's calls/tokens. Best-effort GET per
     # RAW key through the GET-transport seam; no full key ever crosses RPC.
     reg("providers.openrouterUsage", svc.providers_openrouter_usage)
+    # WU-D4: honest per-provider usage-API availability. OpenRouter has a per-key
+    # usage API; OpenAI/Anthropic gate usage behind an org admin key and others
+    # publish nothing per-key — this states that truthfully instead of a fake 0.
+    reg("providers.usageAvailability", svc.providers_usage_availability)
     # WU-spend-cap: month-to-date cumulative spend + the configured monthly caps
     # (read-only). The persisted ledger is written at job completion; this RPC just
     # surfaces it (+ the soft/hard cap settings) for the renderer's spend view.

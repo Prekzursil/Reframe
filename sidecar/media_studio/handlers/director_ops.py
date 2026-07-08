@@ -86,7 +86,9 @@ def _editplan_provider_or_refuse(self: Services) -> Any:
 
     prefer = self._function_prefer("editPlan")
     raw = self.settings.get_raw()
-    consented_provider = _provider_mod.get_provider(self._text_consented_settings(raw), prefer=prefer)
+    consented_provider = _provider_mod.get_provider(
+        self._text_consented_settings(raw), prefer=prefer, ensure=self._llama_ensure()
+    )
 
     builder = getattr(_provider_mod, "build_pool_provider", None)
     if builder is not None:  # pragma: no branch -- always present off the stub

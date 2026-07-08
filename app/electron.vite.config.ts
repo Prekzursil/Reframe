@@ -13,7 +13,14 @@ import react from '@vitejs/plugin-react';
 // preload (`out/preload/preload.js`), which main.ts references by relative path.
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // WU-U: electron-updater is BUNDLED into main.js (excluded from
+    // externalization) rather than kept as a runtime `require`. The packaging
+    // config (electron-builder.yml `files`) excludes node_modules, so an
+    // externalized electron-updater would be MODULE-NOT-FOUND at runtime;
+    // bundling makes main.js self-contained (its transitive deps —
+    // builder-util-runtime/js-yaml/semver/lodash.* — are pure JS and bundle
+    // cleanly).
+    plugins: [externalizeDepsPlugin({ exclude: ['electron-updater'] })],
     build: {
       outDir: 'out/main',
       lib: {

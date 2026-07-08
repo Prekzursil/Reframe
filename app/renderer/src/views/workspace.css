@@ -61,6 +61,136 @@
   background: var(--accent);
 }
 
+/* ---- grouped strip (WU-3a2): named clusters + Advanced disclosure ---------
+   ADDITIVE visual layer. The clusters sit in a row; each wears a quiet tracked
+   caption and a hairline seam so the eye reads Speech · Frame · Audio without a
+   loud divider. "Deliver" collapses behind the Advanced toggle. */
+
+.tabbar.tabbar--grouped {
+  align-items: stretch;
+  gap: 0;
+}
+
+/* The real role="tablist" is an INNER wrapper that holds ONLY the tab clusters
+   (the Advanced/Export controls are its siblings, kept out of the list so it
+   owns only tabs). It lays the clusters out inline exactly as the flat strip
+   did — no visual change to the cluster row itself. */
+.tabbar--grouped .tabbar__tablist {
+  display: flex;
+  align-items: stretch;
+}
+
+.tabbar--grouped .tabbar__group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-right: var(--space-4);
+}
+
+/* hairline seam BETWEEN clusters (not after the last) — a tonal separator */
+.tabbar--grouped .tabbar__group + .tabbar__group {
+  padding-left: var(--space-4);
+  box-shadow: inset 1px 0 0 var(--edge);
+}
+
+/* the cluster name: a whisper, never competing with the tab labels. NOTE: no
+   `opacity` dimming — the muted token alone reads at 7.7:1 on the raised surface,
+   but multiplying it by an alpha collapsed the label to ~3.85:1 (a real WCAG 1.4.3
+   AA fail). Quietness comes from the small tracked-caps size, not a transparency
+   that eats contrast. */
+.tabbar--grouped .tabbar__group-label {
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  white-space: nowrap;
+  align-self: center;
+}
+
+/* Advanced disclosure: shares the tab voice but reads as a control, not a tab */
+.tabbar--grouped .tabbar__advanced-toggle {
+  appearance: none;
+  align-self: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  padding: 11px 12px;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.tabbar--grouped .tabbar__advanced-toggle:hover {
+  color: var(--text-secondary);
+}
+
+.tabbar--grouped .tabbar__advanced-toggle[aria-expanded="true"] {
+  color: var(--text-primary);
+}
+
+/* a small caret cue that flips when the cluster opens (shape, not colour-only) */
+.tabbar--grouped .tabbar__advanced-toggle::after {
+  content: "▸";
+  display: inline-block;
+  margin-left: var(--space-2);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.tabbar--grouped .tabbar__advanced-toggle[aria-expanded="true"]::after {
+  transform: rotate(90deg);
+}
+
+.tabbar--grouped .tabbar__advanced-panel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Export (design-review P1): the terminal deliver goal gets a standing, primary
+   affordance pushed to the far end of the strip. The single amber accent in the
+   chrome already belongs to the active tab, so Export wears an amber-edged outline
+   (not a filled block) to read as the primary action without shouting. */
+.tabbar--grouped .tabbar__export {
+  appearance: none;
+  margin-left: auto;
+  align-self: center;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--type-caption-tracking);
+  padding: var(--control-pad-btn);
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.tabbar--grouped .tabbar__export:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--surface-deep);
+}
+
+.tabbar--grouped .tabbar__export:active {
+  transform: translateY(1px);
+}
+
+.tabbar--grouped .tabbar__export:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 /* ---- body: panels breathe; the footage well stays the focus --------------- */
 
 .workspace .workspace__body {

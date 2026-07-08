@@ -22,9 +22,10 @@
 }
 
 .usage-group.is-superpowered {
-  /* A distinct purple, separate from the orange accent + the status colors. */
-  box-shadow: inset 0 0 0 1px #9b6cff;
-  background: linear-gradient(180deg, rgba(155, 108, 255, 0.08), var(--surface-deep));
+  /* The single DOCUMENTED off-ladder accent (tokens.css §abundance) — the hue is
+   * redundant with the always-present "⚡ Superpowered" text label + glyph. */
+  box-shadow: inset 0 0 0 1px var(--status-abundance);
+  background: linear-gradient(180deg, var(--status-abundance-soft), var(--surface-deep));
 }
 
 .usage-group__head {
@@ -44,7 +45,7 @@
 }
 
 .usage-group__superpowered {
-  color: #c2a3ff;
+  color: var(--status-abundance-text);
   font-weight: 600;
   font-size: 0.85em;
 }

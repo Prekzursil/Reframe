@@ -20,12 +20,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import '../features/panels.css';
 import './directorPanel.css';
+import { DirectorOnboarding } from '../components/DirectorOnboarding';
 import {
   client,
   onJobDone as bridgeOnJobDone,
   onProgress as bridgeOnProgress,
   type DoneEvent,
   type ProgressEvent,
+  type Video,
 } from '../lib/rpc';
 import {
   canMoveOp,
@@ -80,6 +82,16 @@ function MoveIcon({ dir }: { dir: OpMoveDirection }): React.ReactElement {
   );
 }
 
+// WU-E2: clickable example goals that prefill the prompt so a first-time user
+// has a working starting point (plain-language, matched to real op kinds). Kept
+// here (exported) so the copy is single-sourced with any test that asserts it.
+export const DIRECTOR_EXAMPLES: readonly string[] = [
+  'Make the scrolling smooth and steady',
+  'Turn this into a punchy Q&A showcase',
+  'Trim the dead air and tighten the pacing',
+  'Add captions over the key moments',
+];
+
 // --- pure helpers (exported for tests) -------------------------------------
 
 /** Error text from an unknown thrown value (mirrors the sibling panels). */
@@ -119,6 +131,16 @@ export interface DirectorPanelProps {
   rpcClient?: typeof client;
   /** Inject the job-event seam for tests; defaults to the real preload bridge. */
   jobEvents?: JobEventBridge;
+  /**
+   * The app-selected video this panel edits (App's `editVideo`, set by
+   * `openVideo`), or null when none is open. Its `id` is the plan target — WU-E1:
+   * the goal string is NEVER used as the videoId. When null (and no prior plan is
+   * on screen) the panel shows a "Choose a video" empty state instead of the
+   * prompt form, so a first run can never mis-fire the goal as the videoId.
+   */
+  video?: Video | null;
+  /** Route to the real video selection (the Library) from the empty-state CTA. */
+  onChooseVideo?: () => void;
 }
 
 /** The id of the in-flight director job + what it represents (plan vs apply/undo). */
@@ -127,7 +149,12 @@ interface PendingJob {
   kind: 'plan' | 'apply' | 'undo';
 }
 
-export function DirectorPanel({ rpcClient, jobEvents }: DirectorPanelProps): React.ReactElement {
+export function DirectorPanel({
+  rpcClient,
+  jobEvents,
+  video,
+  onChooseVideo,
+}: DirectorPanelProps): React.ReactElement {
   /* v8 ignore next 2 -- the `?? real` defaults only run in the real app; every test injects both. */
   const api = useMemo(() => rpcClient ?? client, [rpcClient]);
   const events = useMemo(() => jobEvents ?? realJobEvents, [jobEvents]);
@@ -142,10 +169,55 @@ export function DirectorPanel({ rpcClient, jobEvents }: DirectorPanelProps): Rea
   const [busy, setBusy] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [progress, setProgress] = useState<string>('');
+  // WU-E2: the first-run guided tour (focus-trapped DirectorOnboarding). Gated on
+  // settings.directorOnboardingSeen, and re-openable from the header at any time.
+  const [showTour, setShowTour] = useState<boolean>(false);
 
   // The active job is held in a ref so the once-mounted job.done/progress
   // subscriptions read the current pending job without re-subscribing.
   const pending = useRef<PendingJob | null>(null);
+
+  // WU-E1: the video this panel plans against — the app-selected `video.id`, or
+  // (if that video was closed while a prior plan is still on screen) the plan's
+  // own `videoId`. NEVER the goal text. `null` == no video and no plan → the
+  // panel renders the "Choose a video" empty state instead of the prompt form.
+  const activeVideoId: string | null = video?.id ?? plan?.videoId ?? null;
+
+  // WU-E2 + WU-D6a: read settings and open the first-run tour when the user has
+  // not seen it — but ONLY once a video is actually open. Best-effort: a failed
+  // read simply leaves the tour closed (we never nag on an unreadable settings
+  // store). Re-runs when the active video changes, so the tour fires the first
+  // time the user has something to edit, until the "seen" flag is persisted.
+  useEffect(() => {
+    // WU-D6a: never auto-open the focus-trapped tour over the "No video open"
+    // empty state. With nothing to edit, its copy ("it reads the video you have
+    // open", "press Plan edit") is wrong and the trap would sit OVER the only
+    // actionable control ("Choose a video"). Gate on a video being open; the tour
+    // then fires the moment the user actually has something to edit. The header
+    // "What is Director?" affordance still re-opens it on demand in either state.
+    if (activeVideoId === null) return;
+    void api.settings
+      .get()
+      .then((s) => {
+        if (!s.directorOnboardingSeen) setShowTour(true);
+      })
+      .catch(() => {
+        // Best-effort: keep the tour closed if settings can't be read.
+      });
+  }, [api, activeVideoId]);
+
+  // Dismiss the tour (Skip / Got it / Escape all route here) and persist the
+  // "seen" flag so it never re-opens on its own. Best-effort persistence — the
+  // tour is already closed in-memory regardless of the write's outcome.
+  const finishTour = useCallback((): void => {
+    setShowTour(false);
+    void api.settings.set({ directorOnboardingSeen: true }).catch(() => {
+      // Best-effort: the tour is closed locally even if the write fails.
+    });
+  }, [api]);
+
+  // Re-open the tour on demand (the header "What is Director?" affordance).
+  const reopenTour = useCallback((): void => setShowTour(true), []);
 
   // Fetch the per-data-type cost/egress preview for a freshly-planned plan (F3).
   const loadPreview = useCallback(
@@ -219,11 +291,14 @@ export function DirectorPanel({ rpcClient, jobEvents }: DirectorPanelProps): Rea
   const submit = useCallback(async (): Promise<void> => {
     const trimmed = goal.trim();
     if (!trimmed || busy) return;
+    /* v8 ignore next -- presence guard: the prompt form (hence submit) only renders when activeVideoId is non-null, so this never fires in practice. */
+    if (activeVideoId === null) return;
     setBusy(true);
     setError('');
     setProgress('Planning…');
     try {
-      const job = await api.director.plan(plan?.videoId ?? trimmed, trimmed);
+      // WU-E1: plan against the resolved video id — NEVER the goal string.
+      const job = await api.director.plan(activeVideoId, trimmed);
       pending.current = { jobId: job.jobId, kind: 'plan' };
     } catch (err) {
       pending.current = null;
@@ -231,7 +306,7 @@ export function DirectorPanel({ rpcClient, jobEvents }: DirectorPanelProps): Rea
       setProgress('');
       setError(errText(err));
     }
-  }, [api, busy, goal, plan]);
+  }, [api, busy, goal, activeVideoId]);
 
   // Apply the current plan (F4: echo the budget cacheKey as confirmBudget). The
   // ack is the first per-function cacheKey from the preview (apply's gate mirrors
@@ -334,9 +409,61 @@ export function DirectorPanel({ rpcClient, jobEvents }: DirectorPanelProps): Rea
   // undoes, not edits) and never mid-job. Disabled controls keep their reason.
   const controlsEnabled = !applied && opsStatus === null && !busy;
 
+  // WU-E2: one reusable header (title + a persistent "What is Director?" entry
+  // point to the tour) and the first-run overlay, shared by BOTH return branches
+  // so the explainer is reachable whether or not a video is open.
+  const header = (
+    <div className="director-head">
+      <h2>AI Director</h2>
+      <button
+        type="button"
+        className="secondary director-head__tour"
+        data-action="director-tour"
+        onClick={reopenTour}
+      >
+        What is Director?
+      </button>
+    </div>
+  );
+  const onboarding = showTour ? <DirectorOnboarding onDone={finishTour} /> : null;
+
+  // WU-E1: with no video open AND no plan on screen, there is nothing to edit —
+  // show a "Choose a video" empty state (wired to the real selection) instead of
+  // a prompt box that would otherwise mis-fire the goal as the videoId.
+  if (activeVideoId === null) {
+    return (
+      <section
+        className="feature-panel director-panel director-panel--empty"
+        aria-label="AI Director"
+      >
+        {header}
+        <div className="director-empty" data-section="empty">
+          <div className="director-empty__poster" aria-hidden="true">
+            <span className="director-empty__glyph">▶</span>
+            <span className="director-empty__timecode">--:--</span>
+          </div>
+          <p className="director-empty__title">No video open</p>
+          <p className="director-empty__hint">
+            Open a video from your Library to plan a reviewable, reversible AI edit for it — the
+            Director always edits the video you have selected.
+          </p>
+          <button
+            type="button"
+            data-action="choose-video"
+            className="director-empty__cta"
+            onClick={onChooseVideo}
+          >
+            Choose a video
+          </button>
+        </div>
+        {onboarding}
+      </section>
+    );
+  }
+
   return (
     <section className="feature-panel director-panel" aria-label="AI Director">
-      <h2>AI Director</h2>
+      {header}
       <p className="director-intro">
         Describe the change you want in plain language. The Director plans a reviewable, reversible
         edit — nothing is applied until you confirm.
@@ -362,6 +489,27 @@ export function DirectorPanel({ rpcClient, jobEvents }: DirectorPanelProps): Rea
           {busy ? 'Working…' : 'Plan edit'}
         </button>
       </form>
+
+      {/* WU-E2: clickable example goals prefill the prompt for a first-time user. */}
+      <div className="director-examples" data-section="examples">
+        <span className="director-examples__label">Try an example:</span>
+        <ul className="director-examples__chips">
+          {DIRECTOR_EXAMPLES.map((example) => (
+            <li key={example}>
+              <button
+                type="button"
+                className="director-chip"
+                data-action="example-chip"
+                data-example={example}
+                disabled={busy}
+                onClick={() => setGoal(example)}
+              >
+                {example}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
 
       {error && (
         <p className="error" role="alert">
@@ -462,6 +610,7 @@ export function DirectorPanel({ rpcClient, jobEvents }: DirectorPanelProps): Rea
           {evaluation && <EvalSummary evaluation={evaluation} />}
         </>
       )}
+      {onboarding}
     </section>
   );
 }

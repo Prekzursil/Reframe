@@ -23,6 +23,7 @@ import { Edit } from './views/Edit';
 import { MakeShorts } from './views/MakeShorts';
 import { Settings } from './views/Settings';
 import { incompleteBatches, remainingCount } from './features/repurposeLogic';
+import { lineageActions } from './features/lineageActionsClient';
 import { useToast } from './components/toast/useToast';
 import { TopTabBar, topTabId, topTabPanelId, type TopTab } from './components/TopTabBar';
 import {
@@ -40,7 +41,11 @@ import { actionSection } from './features/providersKeysLogic';
 import { ToastProvider } from './components/toast/ToastProvider';
 import { ToastHost } from './components/toast/ToastHost';
 import { JobQueue, JOBQUEUE_PANEL_ID } from './components/JobQueue';
+import { useActiveJobs } from './components/useActiveJobs';
 import { SidecarBanner } from './components/SidecarBanner';
+import { FirstRunSetup, useFirstRunSetup } from './components/FirstRunSetup';
+import { SecureKeysBanner } from './components/SecureKeysBanner';
+import { UpdateBanner } from './components/UpdateBanner';
 import { registerJobRetry } from './components/useJob';
 // Foundation owns the top-level CSS import (per components/shell.css note).
 // Tokens FIRST so every sheet can consume the custom properties.
@@ -48,6 +53,8 @@ import './styles/tokens.css';
 import './components/shell.css';
 import './components/toast/toast.css';
 import './components/SidecarBanner.css';
+import './components/SecureKeysBanner.css';
+import './components/UpdateBanner.css';
 
 // U3 §2: error toasts show a Retry button only when a retry callable is
 // registered. U5's job.retry RPC is a protocol.py built-in, so wire it once.
@@ -62,7 +69,9 @@ type Route =
   // The Library home.
   | { name: 'library' }
   // Make Shorts: AI/manual making + the gallery + batch (resume deep-link).
-  | { name: 'makeshorts'; resumeId?: string }
+  // WU-3a4: `videoId` pre-selects a source video (the Workspace Short-maker tab
+  // deep-links here — the single ShortMaker owner — with the open video threaded).
+  | { name: 'makeshorts'; resumeId?: string; videoId?: string }
   // Edit: the per-video manual surface (the open video lives in shell state).
   | { name: 'edit' }
   // Director: the prompt-driven AI video-editing panel.
@@ -87,7 +96,40 @@ function routeTab(route: Route): TabId {
   }
 }
 
-/** Local/Cloud quality toggle. Maps to settings.useCloud (CONTRACTS.md §2). */
+/** A small monitor glyph anchoring the "AI model" scope (decorative — aria-hidden). */
+function ModelIcon(): React.ReactElement {
+  return (
+    <svg
+      className="quality-toggle__icon"
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      focusable="false"
+      aria-hidden="true"
+    >
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <path d="M8 21h8" />
+      <path d="M12 17v4" />
+    </svg>
+  );
+}
+
+/**
+ * The "AI model" quality toggle. Maps to settings.useCloud (CONTRACTS.md §2) —
+ * the coarse cloud-vs-local switch for the model backends (LLM/embedder/
+ * translation/media). WU-D5: this control sits directly beside the routing toggle
+ * and both are about local-vs-cloud, so it is scoped as a DISTINCT axis — "AI
+ * model" (which model tier runs) vs the routing toggle's "Where jobs run" — and
+ * shares the routing toggle's Local/Cloud vocabulary so the axis reads identically
+ * in both. WU-2c's "This computer" wording is replaced by the shared "Local" label
+ * (design-review P0: divergent vocab across the twin controls). The underlying
+ * 'local'/'cloud' values + handler are unchanged (relabel + rescope only).
+ */
 function QualityToggle({
   quality,
   onChange,
@@ -96,8 +138,11 @@ function QualityToggle({
   onChange: (q: Quality) => void;
 }): React.ReactElement {
   return (
-    <div className="quality-toggle" role="group" aria-label="Quality">
-      <span className="quality-toggle__label">Quality</span>
+    <div className="quality-toggle" role="group" aria-label="AI model">
+      <span className="quality-toggle__label">
+        <ModelIcon />
+        AI model
+      </span>
       <button
         type="button"
         className={`quality-toggle__btn${quality === 'local' ? ' is-active' : ''}`}
@@ -177,6 +222,10 @@ function AppShell(): React.ReactElement {
   // T6: the global job-queue slide-over (components/JobQueue.tsx). Closed by
   // default — the panel polls job.list only while open.
   const [jobsOpen, setJobsOpen] = useState(false);
+  // WU-2c: the collapsed "Jobs" pill's live heartbeat — a slow job.list poll so
+  // the header shows an in-flight count + a pulse even while the panel is shut.
+  const jobCount = useActiveJobs();
+  const jobsActive = jobCount > 0;
 
   // Best-effort hydrate the quality toggle + M3 routing-policy global from
   // persisted settings (one read). An out-of-enum / missing routingPolicy.global
@@ -271,6 +320,19 @@ function AppShell(): React.ReactElement {
     setRoute({ name: 'makeshorts', resumeId });
   }, []);
 
+  // WU-3a4: the Workspace "Short-maker" tab is a single-owner deep-link — it routes
+  // to the Make Shorts section (the ONE ShortMaker owner) with the open video
+  // pre-selected, instead of mounting a second ShortMaker copy inside the Workspace.
+  const openMakeShortsForVideo = useCallback((videoId: string) => {
+    setRoute({ name: 'makeshorts', videoId });
+  }, []);
+
+  // WU-3a1: the Task Hub's "Director" job card routes to the top-level Director
+  // section (the open video is already threaded from shell state).
+  const openDirector = useCallback(() => {
+    setRoute({ name: 'director' });
+  }, []);
+
   // Open Settings, optionally pre-selecting a sub-section (e.g. a readiness fix
   // jumps straight to Models & System).
   const openSettings = useCallback((section?: string) => {
@@ -333,13 +395,26 @@ function AppShell(): React.ReactElement {
   function renderRoute(): React.ReactElement {
     switch (route.name) {
       case 'makeshorts':
-        return <MakeShorts resumeId={route.resumeId} />;
+        return <MakeShorts resumeId={route.resumeId} videoId={route.videoId} />;
       case 'edit':
-        return <Edit video={editVideo} onBack={backToLibrary} />;
+        // WU-3a1: the Task Hub's section cards route to the top-level Make Shorts
+        // / Director surfaces; workspace-scoped cards stay inside Edit.
+        return (
+          <Edit
+            video={editVideo}
+            onBack={backToLibrary}
+            onMakeShorts={openMakeShorts}
+            onMakeShortsForVideo={openMakeShortsForVideo}
+            onDirector={openDirector}
+          />
+        );
       case 'director':
         return (
           <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>
-            <DirectorPanel />
+            {/* WU-E1: thread the app-selected video so the Director plans against
+                video.id (never the goal text); the empty-state CTA routes to the
+                Library to pick one. */}
+            <DirectorPanel video={editVideo} onChooseVideo={backToLibrary} />
           </Suspense>
         );
       case 'settings':
@@ -347,7 +422,15 @@ function AppShell(): React.ReactElement {
       case 'library':
       default:
         // WU-14: a readiness fix action routes to Settings → Models & System.
-        return <Library onOpen={openVideo} onReadinessAction={handleReadinessAction} />;
+        // WU-1f: the L5 provenance handlers drive each card's source-file row
+        // (path + on-disk/missing badge + reveal/relink) and the lazy hash back-fill.
+        return (
+          <Library
+            onOpen={openVideo}
+            onReadinessAction={handleReadinessAction}
+            provenance={lineageActions}
+          />
+        );
     }
   }
 
@@ -355,17 +438,33 @@ function AppShell(): React.ReactElement {
     <>
       <div className="app">
         <header className="app__bar">
-          <span className="app__brand">Reframe - Media Studio</span>
-          <QualityToggle quality={quality} onChange={changeQuality} />
-          <RoutingToggle value={routingGlobal} onChange={changeRouting} busy={routingBusy} />
+          <span className="app__brand">Reframe</span>
+          {/* WU-D5: the two local-vs-cloud controls are DISTINCT scopes (AI model
+              quality vs job routing) that used to sit adjacent with no boundary,
+              reading as ~4 near-identical amber chips. They now live in one cluster
+              split by an explicit vertical SEAM, each carrying its own scope label,
+              sharing the Local/Cloud axis vocabulary. */}
+          <div className="app__routing-cluster">
+            <QualityToggle quality={quality} onChange={changeQuality} />
+            <span className="app__routing-seam" aria-hidden="true" />
+            <RoutingToggle value={routingGlobal} onChange={changeRouting} busy={routingBusy} />
+          </div>
           <button
             type="button"
-            className="app__jobs-toggle"
+            className={`app__jobs-toggle${jobsActive ? ' app__jobs-toggle--active' : ''}`}
             aria-expanded={jobsOpen}
             aria-controls={JOBQUEUE_PANEL_ID}
             onClick={() => setJobsOpen((open) => !open)}
           >
-            Jobs
+            {/* The dot pulses amber only while work is in motion (CSS-gated on
+                the --active modifier); it sits idle-hidden otherwise. */}
+            <span className="app__jobs-dot" aria-hidden="true" />
+            <span className="app__jobs-label">Jobs</span>
+            {jobsActive ? (
+              <span className="app__jobs-count" aria-label={`${jobCount} running`}>
+                {jobCount}
+              </span>
+            ) : null}
           </button>
         </header>
 
@@ -382,16 +481,42 @@ function AppShell(): React.ReactElement {
       </div>
       <JobQueue open={jobsOpen} onClose={() => setJobsOpen(false)} />
       <SidecarBanner />
+      <SecureKeysBanner />
+      <UpdateBanner />
       <ToastHost />
     </>
   );
 }
 
-/** Root: provides the toast context, then renders the app shell. */
+/**
+ * WU-1b: the first-run provisioning GATE. While the sidecar is being provisioned
+ * (the ~3-min env/model build on a first launch) we render the full-screen
+ * FirstRunSetup INSTEAD of the shell, so the Library — and its mount-time RPCs
+ * (library.list, the readiness roll-up) — never mount against a dead sidecar and
+ * the "sidecar is not running" banner can't fire. When provisioning finishes
+ * (the sidecar reaches 'running', the signal drops, no error) `visible` becomes
+ * false and the normal shell mounts. A post-provisioning sidecar CRASH is NOT a
+ * bootstrap error, so it surfaces via the in-shell SidecarBanner instead.
+ */
+function AppGate(): React.ReactElement | null {
+  const setup = useFirstRunSetup();
+  if (setup.visible) {
+    return <FirstRunSetup view={setup} />;
+  }
+  // Withhold the shell until the initial provisioning query resolves: mounting it
+  // now would fire the Library's RPCs on the very first frame of a first run,
+  // before the sidecar exists — the exact "sidecar is not running" banner we kill.
+  if (!setup.ready) {
+    return null;
+  }
+  return <AppShell />;
+}
+
+/** Root: provides the toast context, then renders the first-run gate. */
 export function App(): React.ReactElement {
   return (
     <ToastProvider>
-      <AppShell />
+      <AppGate />
     </ToastProvider>
   );
 }

@@ -10,9 +10,29 @@
 // it slipped through every gate. These functions are Electron-free (only
 // `process.execPath`, `node:fs`, `node:path`), so they live here and are tested in
 // dataRootIo.test.ts; main.ts just wires them into resolveDataRootFrom.
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { DATA_DIR_MARKER } from './dataRoot';
+import { FIRST_RUN_COMPLETE_MARKER } from './firstRunGate';
+
+/**
+ * Files whose presence at a data root PROVES it was already provisioned: the
+ * first-run-complete marker bootstrap.py writes after a full provision, and the
+ * library index in either its legacy (`library.json`) or migrated (`library.db`)
+ * form. A4 content-aware selection prefers a root holding any of these over an
+ * EMPTY writable `<exeDir>/data`, so a clean portable install never opens a blank
+ * library when a provisioned tree already exists in a lower tier.
+ */
+export const PROVISIONING_MARKERS = [
+  FIRST_RUN_COMPLETE_MARKER,
+  'library.json',
+  'library.db',
+] as const;
+
+/** True when `root` holds any {@link PROVISIONING_MARKERS} file (already set up). */
+export function isProvisionedRoot(root: string): boolean {
+  return PROVISIONING_MARKERS.some((name) => existsSync(join(root, name)));
+}
 
 /** Directory holding the running executable (where the marker file lives). */
 export function exeDir(): string {

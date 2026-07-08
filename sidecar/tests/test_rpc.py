@@ -6,6 +6,7 @@ No heavy-ML imports. The server is driven with in-memory streams (FakeStreams).
 from __future__ import annotations
 
 import json
+import logging as _logging
 import threading
 import time
 
@@ -601,3 +602,92 @@ def test_main_returns_130_on_keyboard_interrupt(monkeypatch):
 
     monkeypatch.setattr(rpc_mod, "build_server", _build)
     assert rpc_mod.main() == 130
+
+
+# ===========================================================================
+# rpc.py — WU-D2 (R7): a key-bearing frame's diagnostic log NEVER leaks a key
+# ===========================================================================
+
+
+class _RecordingHandler(_logging.Handler):
+    """Capture fully-FORMATTED records off the media_studio.rpc logger.
+
+    The package logger sets ``propagate=False`` (util.get_logger), so pytest's
+    ``caplog`` (which listens on the root logger) never sees these records; we
+    attach directly to the ``media_studio.rpc`` logger and format each record so
+    the assertion runs against the exact bytes a log sink would receive.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.messages: list[str] = []
+
+    def emit(self, record: _logging.LogRecord) -> None:
+        self.messages.append(self.format(record))
+
+
+def _capture_rpc_logs() -> tuple[_RecordingHandler, object]:
+    handler = _RecordingHandler()
+    handler.setFormatter(_logging.Formatter("%(levelname)s %(message)s"))
+    logger = _logging.getLogger("media_studio.rpc")
+    logger.addHandler(handler)
+    return handler, logger
+
+
+_LIVE_KEY = "sk-live-DO-NOT-LOG-4242"
+
+
+def test_crashed_key_bearing_handler_logs_redacted_params_not_the_key(make_streams):
+    @protocol.method("test.upsert_boom")
+    def _boom(params, ctx):
+        raise RuntimeError("explode")
+
+    handler, logger = _capture_rpc_logs()
+    try:
+        server, streams = _server_for(
+            make_streams,
+            [
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "test.upsert_boom",
+                    "params": {"provider": {"id": "groq", "apiKeys": [_LIVE_KEY]}},
+                }
+            ],
+        )
+        server.serve()
+    finally:
+        logger.removeHandler(handler)
+
+    blob = "\n".join(handler.messages)
+    # The crash WAS logged with useful diagnostics (method name present)...
+    assert "test.upsert_boom" in blob
+    # ...but the live key material is scrubbed from the log line.
+    assert _LIVE_KEY not in blob
+    assert "[REDACTED]" in blob
+    # And the client still got a clean INTERNAL_ERROR (loop survived).
+    assert streams.output_objects()[0]["error"]["code"] == ErrorCode.INTERNAL_ERROR
+
+
+def test_failed_key_bearing_notification_logs_redacted_params_not_the_key(make_streams):
+    @protocol.method("test.upsert_note_fail")
+    def _fail(params, ctx):
+        raise RpcError("bad key", ErrorCode.INVALID_PARAMS)
+
+    handler, logger = _capture_rpc_logs()
+    try:
+        # A NOTIFICATION (no id) whose handler raises RpcError is logged, not written.
+        server, streams = _server_for(
+            make_streams,
+            [{"jsonrpc": "2.0", "method": "test.upsert_note_fail", "params": {"apiKey": _LIVE_KEY}}],
+        )
+        server.serve()
+    finally:
+        logger.removeHandler(handler)
+
+    blob = "\n".join(handler.messages)
+    assert "test.upsert_note_fail" in blob
+    assert _LIVE_KEY not in blob
+    assert "[REDACTED]" in blob
+    # No response object for a notification.
+    assert streams.output_objects() == []

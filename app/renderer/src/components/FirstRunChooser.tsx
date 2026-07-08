@@ -19,6 +19,7 @@
 import React from 'react';
 
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import './firstRunChooser.css';
 
 export interface FirstRunChooserProps {
   /** Apply the chosen first-run preset ("privacy" local-safe | "bestFreeCloud"). */

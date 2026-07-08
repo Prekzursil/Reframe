@@ -12,8 +12,8 @@
 // drive headlessly. Seeding the data root the sidecar reads is equivalent — the
 // app lists + opens + plays the exact same library record either way.
 
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, existsSync, readdirSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdtempSync, existsSync, readdirSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -210,7 +210,14 @@ function sidecarCall(python: string, dataRoot: string, method: string, params: u
  */
 export function seedEnvironment(): SeededEnv {
   const python = resolvePython();
-  const dataRoot = mkdtempSync(join(tmpdir(), 'reframe-e2e-data-'));
+  // realpathSync.NATIVE expands the tmp path's 8.3 SHORT name to its LONG form.
+  // os.tmpdir() on Windows returns the SHORT name (C:\Users\PREKZU~1\...), which
+  // becomes main's DATA_ROOT — but the sidecar canonicalises its thumbnail path to
+  // the LONG form (C:\Users\Prekzursil\...). The mstream `thumb:` containment guard
+  // (startsWith) then rejects the poster (short root vs long path) → a 404. Plain
+  // realpathSync does NOT expand short names (verified); .native does. A real
+  // install's %APPDATA% root has no short/long split; canonicalising here matches it.
+  const dataRoot = realpathSync.native(mkdtempSync(join(tmpdir(), 'reframe-e2e-data-')));
   const samplePath = join(dataRoot, 'sample.mp4');
   generateSample(samplePath);
 
@@ -219,6 +226,14 @@ export function seedEnvironment(): SeededEnv {
   };
   const videoId = added.video.id;
 
+  // Generate the source poster frame so the Library card's `thumb:` request resolves
+  // instead of 404-ing in the sandboxed renderer. `library.thumbnail` is a SYNC RPC
+  // (verified: it runs ffmpeg and writes data_dir/thumbnails/<id>.jpg before
+  // returning), so the one-shot sidecarCall completes the write. The app does this
+  // on demand (useVideoThumbnail); an out-of-band seed must do it too. Not swallowed:
+  // a thumbnail failure is a real setup problem worth surfacing, not hiding.
+  sidecarCall(python, dataRoot, 'library.thumbnail', { id: videoId });
+
   const appEnv = definedEnv({
     MEDIA_STUDIO_PYTHON: python,
     MEDIA_STUDIO_SIDECAR_DIR: SIDECAR_DIR,
@@ -226,6 +241,91 @@ export function seedEnvironment(): SeededEnv {
   });
 
   return { dataRoot, samplePath, videoId, python, appEnv };
+}
+
+/**
+ * Provision assets (a LONG job) by driving a live sidecar until the ensure job
+ * reports `job.done`. Unlike `sidecarCall` (one-shot spawnSync, which would kill
+ * the download when the RPC returns), this keeps the sidecar alive and streams its
+ * stdout until the `assets.ensure` job completes. Used to seed the core reframe
+ * model (YuNet) into the data root — the SAME step a real first-run performs —
+ * so the default `reframeEngine:"auto"` (claudeshorts) path can actually reframe.
+ */
+export function provisionAssets(python: string, dataRoot: string, names: string[]): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const proc = spawn(python, ['-m', 'media_studio'], {
+      cwd: SIDECAR_DIR,
+      env: { ...process.env, MEDIA_STUDIO_CONFIG_DIR: dataRoot },
+    });
+    let buf = '';
+    let jobId = '';
+    // Capture the sidecar's stderr so a SILENT provisioning failure (e.g. a missing
+    // download dep -> assets.ensure gracefully SKIPS the item but still reports
+    // job.done) is surfaced in the rejection instead of only manifesting later as a
+    // mysterious "model not provisioned" at reframe time.
+    let stderr = '';
+    proc.stderr.setEncoding('utf8');
+    proc.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    const timer = setTimeout(() => {
+      proc.kill();
+      reject(new Error(`provisionAssets(${names.join(',')}) timed out\n${stderr}`));
+    }, 300_000);
+    const done = (err?: Error): void => {
+      clearTimeout(timer);
+      proc.kill();
+      if (err) reject(err);
+      else resolve();
+    };
+    proc.stdout.setEncoding('utf8');
+    proc.stdout.on('data', (chunk: string) => {
+      buf += chunk;
+      let nl: number;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith('{')) continue;
+        let msg: {
+          id?: number;
+          method?: string;
+          result?: { jobId?: string };
+          params?: { jobId?: string; result?: { installed?: string[] } };
+        };
+        try {
+          msg = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (msg.id === 1 && msg.result?.jobId) jobId = msg.result.jobId;
+        if (msg.params?.jobId === jobId && msg.method === 'job.done') {
+          // VERIFY the requested assets actually installed. assets.ensure emits
+          // job.done even when it GRACEFULLY SKIPS a failed item (WU C1), so a silent
+          // download failure would otherwise pass as success here and only surface
+          // as "model not provisioned" deep in the reframe stage.
+          const installed = msg.params.result?.installed ?? [];
+          const missing = names.filter((n) => !installed.includes(n));
+          if (missing.length > 0) {
+            done(
+              new Error(
+                `provisionAssets: ${missing.join(', ')} did not install ` +
+                  `(installed=${JSON.stringify(installed)}); sidecar stderr:\n${stderr}`,
+              ),
+            );
+          } else {
+            done();
+          }
+        }
+        if (msg.params?.jobId === jobId && msg.method === 'job.error') {
+          done(new Error(`provisionAssets job.error: ${JSON.stringify(msg.params)}\n${stderr}`));
+        }
+      }
+    });
+    proc.on('error', reject);
+    proc.stdin.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'assets.ensure', params: { names } })}\n`,
+    );
+  });
 }
 
 /** Direct `media.playable` probe (used to label the preview path honestly). */

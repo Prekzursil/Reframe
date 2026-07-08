@@ -49,6 +49,35 @@ export class SidecarUnavailableError extends Error {
 }
 
 /**
+ * Thrown by a resolver (WU B3) when a source needs a playback proxy and the
+ * single-flight build has not finished within the bounded await. The build is
+ * STILL running — the handler maps this to a transient HTTP 503 ("building")
+ * distinct from a 404 (absent) or a 502 (build failed), so a slow transcode
+ * never falls back to streaming the raw, non-Chromium-decodable original (the
+ * "media error code 4" bug). The renderer's proxy-state channel shows a
+ * "building…" note and reloads once the build completes.
+ */
+export class ProxyBuildingError extends Error {
+  constructor(message = 'playback proxy is still building') {
+    super(message);
+    this.name = 'ProxyBuildingError';
+  }
+}
+
+/**
+ * Thrown by a resolver (WU B3) when the playback-proxy build FAILED (e.g.
+ * ffmpeg exited non-zero). Mapped to HTTP 502 so the failure is surfaced
+ * LOUDLY — never silently falling back to the undecodable original. Pairs with
+ * the renderer's proxy-state "error" push so the reason reaches the UI.
+ */
+export class ProxyBuildFailedError extends Error {
+  constructor(message = 'playback proxy build failed') {
+    super(message);
+    this.name = 'ProxyBuildFailedError';
+  }
+}
+
+/**
  * Resolve a library videoId to the absolute path of the file to stream, or
  * null/undefined when unknown. May be async (the wiring implementation asks
  * the sidecar). Returning the PLAYABLE path (original or cached proxy) is the
@@ -247,6 +276,19 @@ export function createMediaRequestHandler(
       // treated conservatively as "could not resolve" -> 404 (unchanged).
       if (err instanceof SidecarUnavailableError) {
         return new Response(`sidecar unavailable: ${videoId}`, { status: 503 });
+      }
+      // WU B3: the source needs a playback proxy and the bounded single-flight
+      // build is still running -> transient 503 (never stream the raw,
+      // undecodable original). Distinct body so DevTools/renderer can tell it
+      // apart from a dead sidecar.
+      if (err instanceof ProxyBuildingError) {
+        return new Response(`building playback proxy: ${videoId}`, { status: 503 });
+      }
+      // WU B3: the proxy build FAILED -> loud 502 (no silent fallback to the
+      // undecodable source). The reason rides the response body + the renderer's
+      // proxy-state channel.
+      if (err instanceof ProxyBuildFailedError) {
+        return new Response(`proxy build failed for ${videoId}: ${err.message}`, { status: 502 });
       }
       filePath = null;
     }

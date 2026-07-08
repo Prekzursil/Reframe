@@ -11,6 +11,7 @@ import {
   rpc,
   onProgress,
   onJobDone,
+  onProxyState,
   type AutosaveSettings,
   type Candidate,
   type ConvertOptions,
@@ -213,6 +214,27 @@ describe('bridge accessors', () => {
     expect(unsub()).toBeUndefined();
     expect(cb).not.toHaveBeenCalled();
   });
+
+  it('onProxyState subscribes through the bridge when the preload supports it (WU B3)', () => {
+    const off = vi.fn();
+    const onProxyStateSpy = vi.fn(() => off);
+    (globalThis as { window?: { api?: unknown } }).window = {
+      api: { rpc: vi.fn(), onProgress: vi.fn(() => () => {}), onProxyState: onProxyStateSpy },
+    };
+    const cb = vi.fn();
+    const unsub = onProxyState(cb);
+    expect(onProxyStateSpy).toHaveBeenCalledWith(cb);
+    unsub();
+    expect(off).toHaveBeenCalledTimes(1);
+  });
+
+  it('onProxyState returns a no-op unsubscribe when the bridge lacks onProxyState', () => {
+    installApi(); // bridge has rpc + onProgress, but NO onProxyState
+    const cb = vi.fn();
+    const unsub = onProxyState(cb);
+    expect(unsub()).toBeUndefined();
+    expect(cb).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -276,6 +298,18 @@ describe('client.ping / library / project', () => {
     expect(r).toHaveBeenCalledWith('library.pinHash', { id: 'v1' });
     await client.library.relink('v1', '/new/path.mp4');
     expect(r).toHaveBeenCalledWith('library.relink', { id: 'v1', path: '/new/path.mp4' });
+  });
+
+  it('library.keepCopy / managedStatus / managedEvict / managedClear forward their params (WU-3b1)', async () => {
+    const r = installApi();
+    await client.library.keepCopy('v1');
+    expect(r).toHaveBeenCalledWith('library.keepCopy', { id: 'v1' });
+    await client.library.managedStatus();
+    expect(r).toHaveBeenCalledWith('library.managedStatus', undefined);
+    await client.library.managedEvict('v1');
+    expect(r).toHaveBeenCalledWith('library.managedEvict', { id: 'v1' });
+    await client.library.managedClear();
+    expect(r).toHaveBeenCalledWith('library.managedClear', undefined);
   });
 
   it('project.open / save / consolidate forward their params', async () => {
@@ -678,6 +712,12 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('providers.openrouterUsage', undefined);
   });
 
+  it('providers.usageAvailability calls the bare method (WU-D4 honest notes)', async () => {
+    const r = installApi();
+    await client.providers.usageAvailability();
+    expect(r).toHaveBeenCalledWith('providers.usageAvailability', undefined);
+  });
+
   it('readiness.summary calls the bare method (WU-8 roll-up)', async () => {
     const r = installApi();
     await client.readiness.summary();
@@ -742,6 +782,16 @@ describe('client.system / recipes', () => {
     expect(r).toHaveBeenCalledWith('providers.setConsent', { provider: 'Groq', text: true });
     await client.providers.setConsent('Groq', { frames: false });
     expect(r).toHaveBeenCalledWith('providers.setConsent', { provider: 'Groq', frames: false });
+  });
+
+  it('providers.revealKey forwards id + index, defaulting index to 0 (WU-D3)', async () => {
+    const r = installApi();
+    // Explicit index rides along verbatim.
+    await client.providers.revealKey('groq', 2);
+    expect(r).toHaveBeenCalledWith('providers.revealKey', { id: 'groq', index: 2 });
+    // Omitted index defaults to 0 (the first rotation-pool key).
+    await client.providers.revealKey('openrouter');
+    expect(r).toHaveBeenCalledWith('providers.revealKey', { id: 'openrouter', index: 0 });
   });
 
   it('savePresets.* forward their params (WU-10/WU-11)', async () => {

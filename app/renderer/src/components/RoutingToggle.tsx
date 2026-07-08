@@ -24,10 +24,13 @@ export interface RoutingToggleProps {
   busy?: boolean;
 }
 
+/** Id linking the Auto segment to its inline helper (aria-describedby). */
+const AUTO_HELP_ID = 'routing-auto-help';
+
 export function RoutingToggle({ value, onChange, busy }: RoutingToggleProps): React.ReactElement {
   return (
     <div className="routing-toggle" role="group" aria-label="AI routing">
-      <span className="routing-toggle__label">Routing</span>
+      <span className="routing-toggle__label">Where jobs run</span>
       {MODES.map(({ mode, label }) => (
         <button
           key={mode}
@@ -35,6 +38,7 @@ export function RoutingToggle({ value, onChange, busy }: RoutingToggleProps): Re
           data-mode={mode}
           className={`routing-toggle__btn${value === mode ? ' is-active' : ''}`}
           aria-pressed={value === mode}
+          aria-describedby={mode === 'auto' ? AUTO_HELP_ID : undefined}
           disabled={Boolean(busy)}
           // No-op on the active mode so the toggle never re-writes the same value.
           onClick={() => value !== mode && onChange(mode)}
@@ -42,15 +46,23 @@ export function RoutingToggle({ value, onChange, busy }: RoutingToggleProps): Re
           {label}
         </button>
       ))}
+      {/* Cloud-capable modes (cloud/auto) get the tokenized egress-warning DOT:
+          data could leave the machine. The accessible name carries the meaning;
+          the dot itself is decorative colour. */}
       {value !== 'local' && (
         <span
           className="routing-toggle__egress"
           data-testid="routing-egress-hint"
+          role="img"
+          aria-label="Cloud routing can send data off this machine"
           title="Cloud routing can send data to a provider"
-        >
-          may egress
-        </span>
+        />
       )}
+      {/* One-line inline helper, revealed on hover/focus of the Auto segment
+          (CSS-driven). Always in the DOM so it can describe the Auto button. */}
+      <span id={AUTO_HELP_ID} className="routing-toggle__helper" role="note">
+        Auto = fastest available, may use cloud
+      </span>
     </div>
   );
 }

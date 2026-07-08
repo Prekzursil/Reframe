@@ -1,9 +1,9 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import './workspace.css';
-import { TabBar, type TabDef } from '../components/TabBar';
+import { TabBar, type TabDef, type TabGroup } from '../components/TabBar';
 import { Player, type PlayerHandle } from '../components/Player';
 import { rpc, type Project, type Video } from '../components/api';
-import { onJobDone } from '../lib/rpc';
+import { onProxyState } from '../lib/rpc';
 import type { SubtitleTrack as FeatureSubtitleTrack } from '../features/_api';
 
 export interface WorkspaceProps {
@@ -11,6 +11,21 @@ export interface WorkspaceProps {
   video: Video;
   /** Return to the Library home. */
   onBack: () => void;
+  /**
+   * The tab to open on (a Task Hub deep-link, e.g. 'shortmaker' / 'subtitles').
+   * ADDITIVE: omitted → the workspace default (DEFAULT_WORKSPACE_TAB, Subtitles).
+   */
+  initialTab?: string;
+  /**
+   * WU-3a4: the SINGLE-OWNER deep-link into the top-level Make Shorts section.
+   * When wired (the App→Edit thread), selecting the "Short-maker" tab — by click
+   * OR an `initialTab='shortmaker'` deep-link (the Task Hub "Reframe to vertical"
+   * card / a remembered 'reframe' choice) — navigates to Make Shorts (the ONE
+   * ShortMaker owner) with this video pre-selected, INSTEAD of mounting a second
+   * ShortMaker copy here. ADDITIVE: omitted → the tab falls back to mounting
+   * ShortMaker in place (backward-compatible; nothing is deleted).
+   */
+  onOpenMakeShorts?: (videoId: string) => void;
 }
 
 // STATIC lazy imports (punch #3): all 8 panels exist now, so the old
@@ -51,6 +66,44 @@ export const WORKSPACE_TABS: TabDef[] = [
   { id: 'assets', label: 'Assets' },
 ];
 
+/**
+ * WU-3a2: the 13 flat tabs regrouped into 4 NAMED clusters for progressive
+ * disclosure. This is an ADDITIVE VISUAL layer over WORKSPACE_TABS — every tab
+ * id above appears in exactly one group and every panel stays reachable; the
+ * ids/labels/behaviour are unchanged. "Deliver" is flagged `advanced` so it
+ * collapses behind the "Advanced" disclosure; the other three show expanded.
+ */
+export const WORKSPACE_TAB_GROUPS: TabGroup[] = [
+  {
+    id: 'speech',
+    label: 'Speech & Text',
+    tabIds: ['transcribe', 'search', 'subtitles', 'diarize', 'refine'],
+  },
+  { id: 'frame', label: 'Frame & Cut', tabIds: ['shortmaker', 'timeline'] },
+  { id: 'audio', label: 'Audio', tabIds: ['dub'] },
+  {
+    id: 'deliver',
+    label: 'Deliver',
+    tabIds: ['convert', 'nle', 'recipes', 'assets', 'tracks'],
+    advanced: true,
+  },
+];
+
+/**
+ * WU-3a2: the workspace lands on Subtitles (the most-used editing surface),
+ * NOT Transcribe (a one-time prerequisite). Deep-links (initialTab) still win.
+ */
+export const DEFAULT_WORKSPACE_TAB = 'subtitles';
+
+/**
+ * design-review P1: the primary Export/Deliver destination. EXPORT is the user's
+ * terminal goal — it lives in the "Deliver" cluster (collapsed behind Advanced),
+ * so the persistent Export action jumps straight to the Convert panel (produces
+ * the final rendered file) AND reveals the Deliver cluster so the sibling deliver
+ * tools become visible. A member of WORKSPACE_TAB_GROUPS.deliver.tabIds.
+ */
+export const WORKSPACE_EXPORT_TAB = 'convert';
+
 interface OpenResult {
   project: Project;
 }
@@ -60,8 +113,31 @@ interface OpenResult {
  * Opens the project (project.open) and mounts the active feature panel, passing
  * each the props it declares (videoId + project-derived optionals).
  */
-export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement {
-  const [active, setActive] = useState<string>(WORKSPACE_TABS[0].id);
+export function Workspace({
+  video,
+  onBack,
+  initialTab,
+  onOpenMakeShorts,
+}: WorkspaceProps): React.ReactElement {
+  // WU-3a4: when the Make Shorts deep-link is wired, the 'shortmaker' tab NEVER
+  // becomes the active in-workspace panel (it redirects to the single owner), so a
+  // 'shortmaker' initialTab falls back to the workspace default instead.
+  const redirectShortmaker = initialTab === 'shortmaker' && onOpenMakeShorts != null;
+  const [active, setActive] = useState<string>(
+    redirectShortmaker ? DEFAULT_WORKSPACE_TAB : (initialTab ?? DEFAULT_WORKSPACE_TAB),
+  );
+  // WU-3a2: the "Advanced" (Deliver) cluster is collapsed by default; the toggle
+  // lives here so the presentational TabBar stays a pure, hook-free component.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const toggleAdvanced = useCallback(() => setAdvancedOpen((open) => !open), []);
+  // design-review P1: the persistent Export action surfaces the terminal deliver
+  // goal from the default view — it activates the primary export panel (Convert)
+  // and opens the Deliver cluster so its sibling tools are reachable at once,
+  // without un-hiding the cluster by default.
+  const handleExport = useCallback(() => {
+    setActive(WORKSPACE_EXPORT_TAB);
+    setAdvancedOpen(true);
+  }, []);
   const [project, setProject] = useState<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
   // U1: the workspace player strip + its imperative handle (Timeline seeks it).
@@ -73,6 +149,16 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
   // element mid-load (the "shakiness" bug).
   const [playerEpoch, setPlayerEpoch] = useState(0);
   const [playerError, setPlayerError] = useState<string | null>(null);
+  // The last proxy.state phase we heard from the mstream resolver. It gates how a
+  // raw <video> `error` is surfaced (see handlePlayerError): before the resolver
+  // has spoken ('initial') the raw source may legitimately be undecodable, so a
+  // Chromium "media error (code 4)" is EXPECTED and must not flash the loud
+  // banner — a calm "Building preview…" note stands in for that window.
+  // WU-1e-fix: 'direct' is the resolver's DEFINITIVE "plays without a build"
+  // verdict — it advances the phase past 'initial', so a genuine decode error on
+  // a source the resolver MISJUDGED as playable goes LOUD (like 'ready') instead
+  // of masking behind a "Building preview…" note that never resolves.
+  const proxyPhaseRef = useRef<'initial' | 'direct' | 'building' | 'ready' | 'error'>('initial');
 
   const reloadProject = useCallback(async () => {
     setError(null);
@@ -88,36 +174,91 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
     void reloadProject();
   }, [reloadProject]);
 
-  // U1: when the source is not directly playable, kick the proxy build; on its
-  // job.done remount the Player — the mstream resolver then serves the cached
-  // proxy for the SAME URL. Operations keep using the original path.
+  // WU-3a4: an `initialTab='shortmaker'` deep-link with the Make Shorts thread
+  // wired redirects to the single owner on mount — the tab never renders a second
+  // ShortMaker copy here (the active tab already fell back to the default above).
   useEffect(() => {
-    let alive = true;
-    let offDone: (() => void) | null = null;
-    rpc<{ playable: boolean; reason?: string; proxyPath?: string }>('media.playable', {
-      videoId: video.id,
-    })
-      .then((v) => {
-        if (!alive || v.playable) return undefined;
-        setPlayerNote(v.reason ?? 'building playback proxy…');
-        return rpc<{ jobId: string }>('media.proxy.start', { videoId: video.id }).then((job) => {
-          if (!alive || !job?.jobId) return;
-          offDone = onJobDone((evt) => {
-            if (evt.jobId !== job.jobId) return;
-            setPlayerNote(null);
-            // Clear any prior load error: the reload below re-fetches the
-            // now-ready proxy, so the stale failure no longer applies.
-            setPlayerError(null);
-            setPlayerEpoch((n) => n + 1);
-          });
-        });
-      })
-      .catch(() => undefined);
-    return () => {
-      alive = false;
-      if (offDone) offDone();
-    };
+    if (initialTab === 'shortmaker' && onOpenMakeShorts) {
+      onOpenMakeShorts(video.id);
+    }
+  }, [initialTab, onOpenMakeShorts, video.id]);
+
+  // WU-3a4: intercept the 'shortmaker' selection → deep-link to the single Make
+  // Shorts owner (when wired); every other tab activates in place. Without the
+  // callback, 'shortmaker' activates like any tab and mounts ShortMaker (fallback).
+  const handleSelect = useCallback(
+    (id: string) => {
+      if (id === 'shortmaker' && onOpenMakeShorts) {
+        onOpenMakeShorts(video.id);
+        return;
+      }
+      setActive(id);
+    },
+    [onOpenMakeShorts, video.id],
+  );
+
+  // WU B3: the mstream resolver is now authoritative for playability — it
+  // single-flights the proxy build and NEVER streams the raw, undecodable
+  // source ("media error code 4"). We only REACT to its build-state pushes:
+  //   'building' — show the reason note while the transcode runs;
+  //   'ready'    — clear the note + reload the player (shake-free) so it picks
+  //                up the now-decodable proxy for the SAME mstream URL;
+  //   'error'    — surface the failure LOUDLY (no silent center-crop).
+  useEffect(() => {
+    // A new video's resolver has not spoken yet: reset the phase so a stale
+    // 'ready' from the previous video can't make this one's initial raw-source
+    // error surface loudly.
+    proxyPhaseRef.current = 'initial';
+    const off = onProxyState((evt) => {
+      if (evt.videoId !== video.id) return;
+      if (evt.state === 'building') {
+        proxyPhaseRef.current = 'building';
+        setPlayerNote(evt.detail || 'building playback proxy…');
+        setPlayerError(null);
+      } else if (evt.state === 'direct') {
+        // WU-1e-fix: the resolver decided the source is directly playable (or a
+        // valid cached proxy) WITHOUT a build. Advance past 'initial' so a later
+        // genuine decode error goes loud (handlePlayerError). No reload (the
+        // source is already correct) and we DON'T clear playerError — a decode
+        // error that raced ahead of this push must stay loud, and repeated
+        // per-range-request 'direct' pushes must never wipe it.
+        proxyPhaseRef.current = 'direct';
+        setPlayerNote(null);
+      } else if (evt.state === 'ready') {
+        proxyPhaseRef.current = 'ready';
+        setPlayerNote(null);
+        setPlayerError(null);
+        setPlayerEpoch((n) => n + 1);
+      } else {
+        proxyPhaseRef.current = 'error';
+        setPlayerNote(null);
+        setPlayerError(evt.detail || 'playback proxy build failed');
+      }
+    });
+    return off;
   }, [video.id]);
+
+  // Route the raw <video>'s load/decode `error` by proxy phase so the initial
+  // pre-resolver window never flashes Chromium's "media error (code 4)":
+  //   'ready'/'direct'  — the resolver already DECIDED the source is playable (a
+  //                        finished proxy, a directly-playable original, or a
+  //                        valid cached proxy), so a decode error now is a GENUINE
+  //                        failure → surface loudly (never a silent fallback, and
+  //                        never a "Building preview…" note that hangs);
+  //   'error'           — a specific build-failure reason is already shown; the
+  //                        raw error is a downstream echo → keep the real reason;
+  //   'initial'/'building' — the resolver has not (yet) produced a decodable
+  //                        proxy, so the raw-source error is expected → show a
+  //                        calm note instead of the loud banner.
+  const handlePlayerError = useCallback((message: string) => {
+    const phase = proxyPhaseRef.current;
+    if (phase === 'ready' || phase === 'direct') {
+      setPlayerError(message);
+      return;
+    }
+    if (phase === 'error') return;
+    setPlayerNote((prev) => prev ?? 'Building preview…');
+  }, []);
 
   // components/api types `format` as plain string while the panels' _api uses
   // the SubtitleFormat union — identical wire shape, divergent TS layers
@@ -178,7 +319,7 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
           videoId={video.id}
           key={video.id}
           reloadToken={playerEpoch}
-          onError={setPlayerError}
+          onError={handlePlayerError}
         />
         {playerNote ? <div className="workspace__player-note">{playerNote}</div> : null}
         {playerError ? (
@@ -188,7 +329,15 @@ export function Workspace({ video, onBack }: WorkspaceProps): React.ReactElement
         ) : null}
       </div>
 
-      <TabBar tabs={WORKSPACE_TABS} active={active} onSelect={setActive} />
+      <TabBar
+        tabs={WORKSPACE_TABS}
+        active={active}
+        onSelect={handleSelect}
+        groups={WORKSPACE_TAB_GROUPS}
+        advancedOpen={advancedOpen}
+        onToggleAdvanced={toggleAdvanced}
+        onExport={handleExport}
+      />
 
       {error ? (
         <div className="workspace__error" role="alert">

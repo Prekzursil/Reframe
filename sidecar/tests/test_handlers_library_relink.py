@@ -59,7 +59,17 @@ def test_reveal_returns_present_source(tmp_path: Path, ctx: RpcContext) -> None:
     out = svc.library_reveal({"id": src}, ctx)
     assert out["sources"][0]["path"] == str(media.resolve())
     assert out["sources"][0]["exists"] is True
+    # A newly-added source is not yet relinkable (content_hash pinned lazily).
+    assert out["sources"][0]["relinkable"] is False
     assert out["missing"] == []
+
+
+def test_reveal_reports_relinkable_after_pin(tmp_path: Path, ctx: RpcContext) -> None:
+    svc = _services(tmp_path)
+    src, _media = _add_source(svc, tmp_path, "talk.mp4", data=b"abc")
+    svc.library_pin_hash({"id": src}, ctx)
+    out = svc.library_reveal({"id": src}, ctx)
+    assert out["sources"][0]["relinkable"] is True
 
 
 def test_reveal_unknown_id_is_invalid_params(tmp_path: Path, ctx: RpcContext) -> None:

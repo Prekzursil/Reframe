@@ -1,6 +1,7 @@
 {
   "name": "media-studio",
-  "version": "1.2.0",
+  "productName": "Reframe",
+  "version": "1.4.1",
   "description": "Local personal video-manager desktop app (Electron + Python sidecar)",
   "private": true,
   "type": "module",
@@ -26,6 +27,7 @@
     "test:e2e:visual:update": "playwright test --config playwright.visual.config.ts --update-snapshots"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -35,13 +37,13 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",
-    "@playwright/test": "^1.61.1",
-    "axe-core": "^4.12.1",
+    "@playwright/test": "^1.61.0",
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.7.0",
     "@vitest/coverage-v8": "^3.2.6",
+    "axe-core": "^4.12.1",
     "electron": "^39.0.0",
     "electron-builder": "^26.15.3",
     "electron-playwright-helpers": "^2.1.0",

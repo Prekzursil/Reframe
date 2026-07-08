@@ -27,9 +27,20 @@ const DIALOG_PICK_LOGO_CHANNEL = 'dialog.pickLogoFile'; // must match app/main/s
 const SIDECAR_RESTART_CHANNEL = 'sidecar.restart'; // must match app/main/ipc.ts
 const SIDECAR_STATUS_CHANNEL = 'sidecar.status'; // must match app/main/ipc.ts
 const BOOTSTRAP_ERROR_CHANNEL = 'bootstrap.error'; // must match app/main/main.ts
+const BOOTSTRAP_PROGRESS_CHANNEL = 'bootstrap.progress'; // must match app/main/main.ts (WU-1a)
+const PROVISIONING_STATE_CHANNEL = 'provisioning.state'; // must match app/main/main.ts (WU-1a)
+const PROVISIONING_GET_CHANNEL = 'provisioning.get'; // must match app/main/main.ts (WU-1b)
+const SETUP_REPAIR_CHANNEL = 'setup.repair'; // must match app/main/repairSetupIpc.ts
+const INSTALL_PROFILE_CHOOSE_CHANNEL = 'installProfile.choose'; // must match app/main/installProfileIpc.ts (WU-1c)
+const PROXY_STATE_CHANNEL = 'proxy.state'; // must match app/main/main.ts (WU B3)
 const DATA_FOLDER_GET_CHANNEL = 'dataFolder.get'; // must match app/main/dataFolderIpc.ts
 const DATA_FOLDER_PICK_CHANNEL = 'dataFolder.pick'; // must match app/main/dataFolderIpc.ts
 const DATA_FOLDER_SET_CHANNEL = 'dataFolder.set'; // must match app/main/dataFolderIpc.ts
+const SECURE_STATUS_CHANNEL = 'secure.status'; // must match app/main/ipc.ts (WU-D2b-1)
+const UPDATE_STATUS_CHANNEL = 'update.status'; // must match app/main/updater.ts (WU-U)
+const UPDATE_CHECK_CHANNEL = 'update.check'; // must match app/main/updater.ts (WU-U)
+const UPDATE_DOWNLOAD_CHANNEL = 'update.download'; // must match app/main/updater.ts (WU-U)
+const UPDATE_INSTALL_CHANNEL = 'update.quitAndInstall'; // must match app/main/updater.ts (WU-U)
 
 export interface ProgressEvent {
   jobId: string;
@@ -42,8 +53,92 @@ export interface DoneEvent {
   result?: unknown;
 }
 
+/**
+ * WU B3: playback-proxy build lifecycle pushed per videoId to the renderer.
+ * WU-1e-fix: 'direct' is the DEFINITIVE "resolver decided this plays without a
+ * build" verdict (directly-playable source or a valid cached proxy) — it lets
+ * the renderer distinguish that from "the resolver hasn't spoken yet".
+ */
+export interface ProxyStateEvent {
+  videoId: string;
+  state: 'direct' | 'building' | 'ready' | 'error';
+  detail: string;
+}
+
 /** Self-healing supervisor lifecycle states (mirrors sidecar.ts SidecarState). */
 export type SidecarStatus = 'running' | 'restarting' | 'down';
+
+/**
+ * WU-D2b-1: the secure-key-storage availability decision (mirrors keystore.ts
+ * SecureStatus). `sessionOnly` true means keys cannot be saved at rest on this
+ * system, so the renderer shows the loud session-only banner.
+ */
+export interface SecureStatus {
+  available: boolean;
+  backend: string | null;
+  sessionOnly: boolean;
+  banner: string | null;
+}
+
+/** WU A5: outcome of an on-demand "Retry setup / Repair" bootstrap re-run. */
+export interface RepairSetupResult {
+  ok: boolean;
+  reason?: string;
+}
+
+/**
+ * WU-1a: a first-run provisioning progress line relayed from main's
+ * `broadcastBootstrap` over `bootstrap.progress`. `state` is 'running' (a live
+ * progress line — a pip step or `assets NN.N%`), 'done' (bootstrap exited 0), or
+ * 'error' (non-zero exit / spawn failure); `line` is the human-readable text.
+ * Lets the renderer show live first-run setup progress instead of a blank window.
+ */
+export interface BootstrapProgressEvent {
+  state: 'running' | 'done' | 'error';
+  line: string;
+}
+
+/**
+ * WU-1a: the explicit first-run PROVISIONING signal (`provisioning.state`),
+ * DISTINCT from a crashed sidecar (`sidecar.status` = 'down'). `active` true
+ * means first-run setup is in progress (the heavy env/model provisioning); it
+ * flips false once the sidecar reaches 'running' or bootstrap fails terminally.
+ * Lets the renderer tell "first-run provisioning in progress" apart from
+ * "sidecar down/error".
+ */
+export interface ProvisioningState {
+  active: boolean;
+  /**
+   * WU-1c: true on a FIRST-EVER run while the supervisor waits for the user's
+   * install-profile choice BEFORE spawning bootstrap. A silent WU-S2 re-bootstrap
+   * reuses the persisted profile and leaves this false (no picker).
+   */
+  awaitingProfile?: boolean;
+}
+
+/** WU-1c: outcome of committing a first-run install-profile choice. */
+export interface ChooseInstallProfileResult {
+  ok: boolean;
+  reason?: string;
+}
+
+/**
+ * WU-U: the in-place auto-update lifecycle (mirrors updater.ts UpdateStatus).
+ * Pushed on `update.status`; drives the renderer's non-intrusive UpdateBanner.
+ */
+export type UpdateStatus =
+  | { state: 'checking' }
+  | { state: 'available'; version: string }
+  | { state: 'none' }
+  | { state: 'progress'; percent: number }
+  | { state: 'downloaded'; version: string }
+  | { state: 'error'; message: string };
+
+/** WU-U: outcome of a renderer-triggered update check/download (never throws). */
+export interface UpdateActionResult {
+  ok: boolean;
+  reason?: string;
+}
 
 export interface MediaApi {
   /** Forward a JSON-RPC method to the sidecar; resolves with its result. */
@@ -52,6 +147,12 @@ export interface MediaApi {
   onProgress(cb: (event: ProgressEvent) => void): () => void;
   /** Subscribe to `job.done` notifications. Returns an unsubscribe fn. */
   onJobDone(cb: (event: DoneEvent) => void): () => void;
+  /**
+   * WU B3: subscribe to playback-proxy build-state pushes (`proxy.state`). The
+   * Workspace shows a "building…" note, reloads the player on 'ready', and
+   * surfaces the reason LOUDLY on 'error'. Returns an unsubscribe fn.
+   */
+  onProxyState(cb: (event: ProxyStateEvent) => void): () => void;
   /** Native multi-select video picker; resolves with absolute paths ([] when cancelled). */
   openVideos(): Promise<string[]>;
   /**
@@ -86,6 +187,45 @@ export interface MediaApi {
    */
   onBootstrapError(cb: (message: string) => void): () => void;
   /**
+   * WU-1a: subscribe to first-run provisioning progress (`bootstrap.progress`).
+   * Mirrors main's `broadcastBootstrap` {state, line} stream (pip 'step k/2' +
+   * 'assets NN.N%' lines) so the renderer can show live setup progress during a
+   * first run instead of a blank window. Returns an unsubscribe fn.
+   */
+  onBootstrapProgress(cb: (event: BootstrapProgressEvent) => void): () => void;
+  /**
+   * WU-1a: subscribe to the explicit PROVISIONING signal (`provisioning.state`),
+   * DISTINCT from the sidecar 'down'/crash status. `active` true = first-run
+   * setup in progress; false once the sidecar reaches 'running' or bootstrap
+   * failed terminally. Lets the renderer distinguish "provisioning in progress"
+   * from "sidecar down/error". Returns an unsubscribe fn.
+   */
+  onProvisioningState(cb: (state: ProvisioningState) => void): () => void;
+  /**
+   * WU-1b: query the CURRENT latched provisioning state (`provisioning.get`). The
+   * `provisioning.state` PUSH can't cover the renderer's first frame (a first run
+   * raises it after React mounts; a normal launch fires its `active:false` before
+   * the window exists). The FirstRunSetup gate calls this at mount to withhold the
+   * shell — and its sidecar RPCs — until provisioning is definitively over,
+   * killing the frame-0 "sidecar is not running" banner. Resolves `{ active }`.
+   */
+  getProvisioningState(): Promise<ProvisioningState>;
+  /**
+   * WU A5: re-run the idempotent first-run bootstrap on demand ("Retry setup /
+   * Repair"). Recovers a partially-failed first run in place — pip re-checks
+   * satisfied deps, only missing assets re-download — and (re)starts the sidecar
+   * on success. Resolves `{ ok, reason? }`.
+   */
+  repairSetup(): Promise<RepairSetupResult>;
+  /**
+   * WU-1c: commit the FIRST-EVER-run install profile the user picked
+   * (Minimum / Default / Full / Custom, plus any Custom feature bundles). The main
+   * process validates + persists it, then spawns bootstrap.py with the resolved
+   * `--assets`. Resolves `{ ok, reason? }` — an invalid choice fails loud rather
+   * than silently installing a default set.
+   */
+  chooseInstallProfile(profile: string, bundles: string[]): Promise<ChooseInstallProfileResult>;
+  /**
    * DATA ROOT: the data folder (models/envs/exports/...) in use THIS session.
    * Resolves with the absolute path the sidecar also derives its tree from.
    */
@@ -100,6 +240,37 @@ export interface MediaApi {
    * `{ ok }`. Does NOT move files — a restart applies the new root.
    */
   setDataFolder(path: string): Promise<{ ok: boolean }>;
+  /**
+   * WU-D2b-1: query the secure-key-storage availability. When `sessionOnly` is
+   * true the OS keychain (DPAPI/Keychain/libsecret) is unavailable or plaintext,
+   * so API keys can only live in memory this session — the renderer shows the
+   * loud `banner` telling the user keys cannot be saved.
+   */
+  getSecureStatus(): Promise<SecureStatus>;
+  /**
+   * WU-U: subscribe to in-place auto-update lifecycle pushes (`update.status`).
+   * The renderer's UpdateBanner shows 'Update vX available -> Download',
+   * 'Downloading N%', 'Ready -> Restart to update', or an error. Returns an
+   * unsubscribe fn. Only ever fires in a packaged build (dev/tests: silent).
+   */
+  onUpdateStatus(cb: (status: UpdateStatus) => void): () => void;
+  /**
+   * WU-U: trigger a GitHub-Releases check now. Also fired once automatically on
+   * launch by the main process. Resolves `{ ok, reason? }` — never rejects (an
+   * offline/no-release check degrades quietly).
+   */
+  checkForUpdate(): Promise<UpdateActionResult>;
+  /**
+   * WU-U: start downloading the available update (user-confirmed — autoDownload
+   * is OFF). Progress arrives via `onUpdateStatus`. Resolves `{ ok, reason? }`.
+   */
+  downloadUpdate(): Promise<UpdateActionResult>;
+  /**
+   * WU-U: quit and run the NSIS in-place upgrade for a downloaded update. The
+   * upgrade PRESERVES userData (DPAPI keystore + settings + the data root). The
+   * app is UNSIGNED, so Windows SmartScreen may warn when the installer runs.
+   */
+  quitAndInstall(): Promise<UpdateActionResult>;
 }
 
 const api: MediaApi = {
@@ -117,6 +288,12 @@ const api: MediaApi = {
     const listener = (_event: IpcRendererEvent, payload: DoneEvent): void => cb(payload);
     ipcRenderer.on(DONE_CHANNEL, listener);
     return () => ipcRenderer.removeListener(DONE_CHANNEL, listener);
+  },
+
+  onProxyState(cb: (event: ProxyStateEvent) => void): () => void {
+    const listener = (_event: IpcRendererEvent, payload: ProxyStateEvent): void => cb(payload);
+    ipcRenderer.on(PROXY_STATE_CHANNEL, listener);
+    return () => ipcRenderer.removeListener(PROXY_STATE_CHANNEL, listener);
   },
 
   openVideos(): Promise<string[]> {
@@ -151,6 +328,34 @@ const api: MediaApi = {
     return () => ipcRenderer.removeListener(BOOTSTRAP_ERROR_CHANNEL, listener);
   },
 
+  onBootstrapProgress(cb: (event: BootstrapProgressEvent) => void): () => void {
+    const listener = (_event: IpcRendererEvent, payload: BootstrapProgressEvent): void =>
+      cb(payload);
+    ipcRenderer.on(BOOTSTRAP_PROGRESS_CHANNEL, listener);
+    return () => ipcRenderer.removeListener(BOOTSTRAP_PROGRESS_CHANNEL, listener);
+  },
+
+  onProvisioningState(cb: (state: ProvisioningState) => void): () => void {
+    const listener = (_event: IpcRendererEvent, state: ProvisioningState): void => cb(state);
+    ipcRenderer.on(PROVISIONING_STATE_CHANNEL, listener);
+    return () => ipcRenderer.removeListener(PROVISIONING_STATE_CHANNEL, listener);
+  },
+
+  getProvisioningState(): Promise<ProvisioningState> {
+    return ipcRenderer.invoke(PROVISIONING_GET_CHANNEL) as Promise<ProvisioningState>;
+  },
+
+  repairSetup(): Promise<RepairSetupResult> {
+    return ipcRenderer.invoke(SETUP_REPAIR_CHANNEL) as Promise<RepairSetupResult>;
+  },
+
+  chooseInstallProfile(profile: string, bundles: string[]): Promise<ChooseInstallProfileResult> {
+    return ipcRenderer.invoke(INSTALL_PROFILE_CHOOSE_CHANNEL, {
+      profile,
+      bundles,
+    }) as Promise<ChooseInstallProfileResult>;
+  },
+
   getDataFolder(): Promise<string> {
     return ipcRenderer.invoke(DATA_FOLDER_GET_CHANNEL) as Promise<string>;
   },
@@ -162,6 +367,42 @@ const api: MediaApi = {
   setDataFolder(path: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke(DATA_FOLDER_SET_CHANNEL, path) as Promise<{ ok: boolean }>;
   },
+
+  getSecureStatus(): Promise<SecureStatus> {
+    return ipcRenderer.invoke(SECURE_STATUS_CHANNEL) as Promise<SecureStatus>;
+  },
+
+  onUpdateStatus(cb: (status: UpdateStatus) => void): () => void {
+    const listener = (_event: IpcRendererEvent, status: UpdateStatus): void => cb(status);
+    ipcRenderer.on(UPDATE_STATUS_CHANNEL, listener);
+    return () => ipcRenderer.removeListener(UPDATE_STATUS_CHANNEL, listener);
+  },
+
+  checkForUpdate(): Promise<UpdateActionResult> {
+    return ipcRenderer.invoke(UPDATE_CHECK_CHANNEL) as Promise<UpdateActionResult>;
+  },
+
+  downloadUpdate(): Promise<UpdateActionResult> {
+    return ipcRenderer.invoke(UPDATE_DOWNLOAD_CHANNEL) as Promise<UpdateActionResult>;
+  },
+
+  quitAndInstall(): Promise<UpdateActionResult> {
+    return ipcRenderer.invoke(UPDATE_INSTALL_CHANNEL) as Promise<UpdateActionResult>;
+  },
 };
 
-contextBridge.exposeInMainWorld('api', api);
+// WU2 resilience: a contextBridge construction failure must not be a FATAL,
+// un-caught preload crash (which would leave the renderer with no window.api and
+// no diagnosis). Catch + log it so the window still loads and the renderer
+// degrades gracefully — hasApi() reports false and the eager-RPC sites / the
+// top-level ErrorBoundary surface an inline error instead of a silent blank.
+try {
+  contextBridge.exposeInMainWorld('api', api);
+} catch (err) {
+  // eslint-disable-next-line no-console
+  console.error(
+    `[preload] failed to expose the window.api bridge (renderer will degrade): ${
+      (err as Error).message
+    }`,
+  );
+}

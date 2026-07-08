@@ -576,6 +576,39 @@
   line-height: var(--type-body-leading);
 }
 
+/* ---- WU-D4: honest per-provider usage-API availability notes ---------------- */
+
+.usage-availability {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.usage-availability__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-body-leading);
+}
+
+.usage-availability__row.is-available {
+  color: var(--text-primary);
+}
+
+.usage-availability__glyph {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.usage-availability__row.is-available .usage-availability__glyph {
+  color: var(--status-success);
+}
+
 /* ---- M4: OpenRouter key-pool rows (per-key usage + cooldown status) --------- */
 
 .openrouter-usage {
@@ -590,9 +623,9 @@
   align-items: center;
   gap: var(--space-2) var(--space-3);
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--surface-edge);
+  border: 1px solid var(--edge);
   border-radius: var(--radius-md);
-  background: var(--surface-1);
+  background: var(--surface-raised);
 }
 
 /* A parked key stays listed (cooldown-not-delete) but reads as paused. */
@@ -655,9 +688,9 @@
   gap: var(--space-1);
   padding: var(--space-3);
   text-align: left;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--edge);
   border-radius: var(--radius-md);
-  background: var(--surface-1);
+  background: var(--surface-raised);
   cursor: pointer;
 }
 
@@ -689,7 +722,7 @@
 
 .preset-picker__preset-hint {
   color: var(--text-secondary);
-  font-size: var(--type-small-size);
+  font-size: var(--type-caption-size);
 }
 
 .preset-picker__functions {
@@ -708,66 +741,10 @@
   min-width: 18rem;
 }
 
-/* ---- WU-presets: first-run local-vs-cloud chooser ---------------------------- */
-
-.first-run-chooser {
-  margin-top: var(--space-4);
-  padding: var(--space-4);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-md);
-  background: var(--surface-1);
-}
-
-.first-run-chooser__intro {
-  margin: var(--space-2) 0 var(--space-4);
-  color: var(--text-secondary);
-  line-height: var(--type-body-leading);
-}
-
-.first-run-chooser__options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-}
-
-.first-run-chooser__option {
-  flex: 1 1 16rem;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-3);
-  text-align: left;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-  cursor: pointer;
-}
-
-.first-run-chooser__option.is-local {
-  border-color: var(--accent);
-}
-
-.first-run-chooser__badge {
-  align-self: flex-start;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-sm);
-  background: var(--accent);
-  /* The ink color FOR accent fills. Was var(--on-accent) — an undefined token,
-   * so the badge inherited --text-secondary on amber (~1.02:1, failing AA);
-   * --accent-ink is the defined on-accent color (~8.6:1). */
-  color: var(--accent-ink);
-  font-size: var(--type-small-size);
-  font-weight: 600;
-}
-
-.first-run-chooser__name {
-  font-weight: 600;
-}
-
-.first-run-chooser__desc {
-  color: var(--text-secondary);
-  font-size: var(--type-small-size);
-}
+/* WU-presets: the first-run local-vs-cloud chooser styles now live co-located
+   with the component (components/firstRunChooser.css) so BOTH consumers — this
+   panel's change-later instance AND the WU-1d first-run setup step — pick them
+   up from the component's own import. */
 
 /* WU-B3 — device-aware recommendation card + one-click Apply. */
 .recommend-card {
@@ -777,7 +754,7 @@
   padding: var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--surface-2);
+  background: var(--surface-overlay);
 }
 
 .recommend-card__plan {
@@ -803,7 +780,7 @@
 
 .recommend-card__why-heading {
   margin: var(--space-1) 0 0;
-  font-size: var(--type-small-size);
+  font-size: var(--type-caption-size);
   color: var(--text-secondary);
 }
 
@@ -811,7 +788,7 @@
   margin: 0;
   padding-left: var(--space-3);
   color: var(--text-secondary);
-  font-size: var(--type-small-size);
+  font-size: var(--type-caption-size);
 }
 
 .recommend-card__apply {
@@ -822,7 +799,7 @@
 .recommend-card__outcome,
 .recommend-card__unavailable {
   margin: 0;
-  font-size: var(--type-small-size);
+  font-size: var(--type-caption-size);
   color: var(--text-secondary);
 }
 
@@ -859,7 +836,7 @@
 }
 
 .models-system-panel .reason-strip__label {
-  font-size: var(--type-small-size);
+  font-size: var(--type-caption-size);
   color: var(--text-secondary);
 }
 
@@ -873,7 +850,7 @@
 /* M3 Advanced disclosure: model SORT + manual runner POINT. */
 .advanced-models {
   margin-top: var(--space-4);
-  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  border-top: 1px solid var(--edge);
   padding-top: var(--space-3);
 }
 
@@ -908,7 +885,7 @@
 }
 
 .advanced-models__fit {
-  font-size: var(--type-small-size);
+  font-size: var(--type-caption-size);
   color: var(--text-secondary);
 }
 
@@ -923,7 +900,7 @@
 
 .advanced-models__empty {
   color: var(--text-secondary);
-  font-size: var(--type-small-size);
+  font-size: var(--type-caption-size);
 }
 
 .advanced-models__point {
@@ -935,14 +912,14 @@
 
 .advanced-models__point-intro {
   margin: 0;
-  font-size: var(--type-small-size);
+  font-size: var(--type-caption-size);
   color: var(--text-secondary);
 }
 
 /* M5 — per-function routing override table (Settings/Advanced). */
 .routing-overrides {
   margin-top: var(--space-4);
-  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  border-top: 1px solid var(--edge);
   padding-top: var(--space-3);
 }
 
@@ -954,7 +931,7 @@
 
 .routing-overrides__intro {
   margin: var(--space-2) 0 var(--space-3);
-  font-size: var(--type-small-size);
+  font-size: var(--type-caption-size);
   color: var(--text-secondary);
 }
 
@@ -975,8 +952,8 @@
 }
 
 .routing-overrides__egress {
-  font-size: var(--type-small-size);
-  color: var(--warning, #d8a657);
+  font-size: var(--type-caption-size);
+  color: var(--status-warn);
 }
 
 /* M5 — word-timing alignment model opt-in (incl. Romanian). */
@@ -989,7 +966,7 @@
 }
 
 .align-model__custom {
-  font-size: var(--type-small-size);
+  font-size: var(--type-caption-size);
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }

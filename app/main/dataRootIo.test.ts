@@ -11,20 +11,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // node:fs is mocked so the writability probe + marker read never touch a real
 // disk (deterministic + no side effects on the test runner's filesystem).
 vi.mock('node:fs', () => ({
+  existsSync: vi.fn(),
   mkdirSync: vi.fn(),
   readFileSync: vi.fn(),
   unlinkSync: vi.fn(),
   writeFileSync: vi.fn(),
 }));
 
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DATA_DIR_MARKER } from './dataRoot';
+import { FIRST_RUN_COMPLETE_MARKER } from './firstRunGate';
 import {
   dataDirMarkerPath,
   exeDataDir,
   exeDir,
   isExeDataWritable,
+  isProvisionedRoot,
+  PROVISIONING_MARKERS,
   readDataDirMarker,
 } from './dataRootIo';
 
@@ -102,5 +106,39 @@ describe('isExeDataWritable', () => {
       throw new Error('EACCES');
     });
     expect(isExeDataWritable(DIR)).toBe(false);
+  });
+});
+
+describe('isProvisionedRoot (A4 content-aware probe)', () => {
+  const ROOT = '/data/root';
+
+  it('includes the first-run + library markers in PROVISIONING_MARKERS', () => {
+    expect(PROVISIONING_MARKERS).toContain(FIRST_RUN_COMPLETE_MARKER);
+    expect(PROVISIONING_MARKERS).toContain('library.json');
+    expect(PROVISIONING_MARKERS).toContain('library.db');
+  });
+
+  it('returns false when NO provisioning marker exists at the root', () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    expect(isProvisionedRoot(ROOT)).toBe(false);
+    // Every candidate marker was probed under the root.
+    for (const name of PROVISIONING_MARKERS) {
+      expect(existsSync).toHaveBeenCalledWith(join(ROOT, name));
+    }
+  });
+
+  it('returns true when the first-run-complete marker exists', () => {
+    vi.mocked(existsSync).mockImplementation((p) => p === join(ROOT, FIRST_RUN_COMPLETE_MARKER));
+    expect(isProvisionedRoot(ROOT)).toBe(true);
+  });
+
+  it('returns true when a migrated library.db exists', () => {
+    vi.mocked(existsSync).mockImplementation((p) => p === join(ROOT, 'library.db'));
+    expect(isProvisionedRoot(ROOT)).toBe(true);
+  });
+
+  it('returns true when a legacy library.json exists', () => {
+    vi.mocked(existsSync).mockImplementation((p) => p === join(ROOT, 'library.json'));
+    expect(isProvisionedRoot(ROOT)).toBe(true);
   });
 });

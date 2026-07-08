@@ -567,7 +567,11 @@ def test_index_build_egresses_raw_apikey_not_redacted(tmp_path: Path) -> None:
     _set_settings(svc, _cloud_settings(text_consent=True))
     vid = _add_video_with_transcript(svc, tmp_path)
     ctx = _ctx()
-    svc.index_build({"videoId": vid}, ctx)
+    # WU-D2b-2: the embedder settings are captured synchronously at dispatch, so
+    # main's per-request key injection must be active for that capture — the
+    # overlay puts the RAW key into the captured settings the job's embedder uses.
+    with svc.settings.key_overlay({"providers": {"openai": [_RAW_INDEX_KEY]}}):
+        svc.index_build({"videoId": vid}, ctx)
     ctx.jobs.join(timeout=5)
     _done_result(ctx)
     assert spy.calls, "consent granted but no egress happened (embedder wired wrong)"
@@ -583,7 +587,10 @@ def test_index_search_egresses_raw_apikey_not_redacted(tmp_path: Path) -> None:
     _set_settings(svc, _cloud_settings(text_consent=True))
     _build_then_clear_spy(svc, spy, vid)
 
-    svc.index_search({"videoId": vid, "query": "find pricing"}, _ctx())
+    # WU-D2b-2: the query-embedder settings are captured under the injection
+    # overlay (main injects the live key for the provider-calling search).
+    with svc.settings.key_overlay({"providers": {"openai": [_RAW_INDEX_KEY]}}):
+        svc.index_search({"videoId": vid, "query": "find pricing"}, _ctx())
     assert spy.calls, "consent granted but query never egressed"
     auth = spy.calls[0]["headers"]["Authorization"]
     assert auth == f"Bearer {_RAW_INDEX_KEY}", auth

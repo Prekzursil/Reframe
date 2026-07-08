@@ -67,6 +67,19 @@ function SpendMeter({ info }: { info: SpendInfo }): React.ReactElement {
         <span className="spend-cap__readout-value" data-mtd={info.monthToDateCents}>
           {mtd}
         </span>
+        {/* WU-D4 honesty: the figure is derived from stand-in pricing (no
+            provider publishes a real per-request price we can read), so it is
+            labelled an ESTIMATE — never presented as a real invoiced charge. Only
+            shown once there is a non-zero figure to qualify. */}
+        {info.isEstimate && info.monthToDateCents > 0 ? (
+          <span
+            className="spend-cap__readout-estimate"
+            data-estimate="true"
+            title="Estimated from per-request pricing — not an exact provider invoice."
+          >
+            estimated
+          </span>
+        ) : null}
         <span className="spend-cap__readout-month">{info.month}</span>
       </div>
       {bounded ? (
@@ -99,7 +112,7 @@ function SpendMeter({ info }: { info: SpendInfo }): React.ReactElement {
  * + the enforce toggle locally, and saves through `settings.set`.
  */
 export function SpendCap({ rpcClient }: SpendCapProps): React.ReactElement {
-  /* v8 ignore next -- the `?? client` default only runs in the real app; every test injects rpcClient. */
+  /* v8 ignore next -- the `?? client` default runs in the real app + the WU2 resilience test (window.api missing); most tests inject rpcClient. */
   const api = rpcClient ?? client;
 
   const [info, setInfo] = useState<SpendInfo | null>(null);
@@ -116,20 +129,29 @@ export function SpendCap({ rpcClient }: SpendCapProps): React.ReactElement {
     (signal: { alive: boolean }) => {
       setLoading(true);
       setError('');
-      Promise.resolve(api.providers.spend())
-        .then((s) => {
-          if (!signal.alive) return;
-          setInfo(s);
-          setSoft(centsToDollars(s.softLimitCents));
-          setHard(centsToDollars(s.hardLimitCents));
-          setEnforce(s.enforceHardLimit);
-          setLoading(false);
-        })
-        .catch((err: unknown) => {
-          if (!signal.alive) return;
-          setError(errText(err));
-          setLoading(false);
-        });
+      // WU2 resilience: the eager bridge access throws SYNCHRONOUSLY when
+      // window.api is missing (before Promise.resolve wraps it), so `.catch`
+      // below never sees it. Guard it sync-safely so a missing bridge shows an
+      // inline error here instead of a thrown-through blank screen.
+      try {
+        Promise.resolve(api.providers.spend())
+          .then((s) => {
+            if (!signal.alive) return;
+            setInfo(s);
+            setSoft(centsToDollars(s.softLimitCents));
+            setHard(centsToDollars(s.hardLimitCents));
+            setEnforce(s.enforceHardLimit);
+            setLoading(false);
+          })
+          .catch((err: unknown) => {
+            if (!signal.alive) return;
+            setError(errText(err));
+            setLoading(false);
+          });
+      } catch (err) {
+        setError(errText(err));
+        setLoading(false);
+      }
     },
     [api],
   );

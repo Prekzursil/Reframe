@@ -53,6 +53,7 @@ function spendInfo(over: Partial<SpendInfo> = {}): SpendInfo {
     softLimitCents: 0,
     hardLimitCents: 0,
     enforceHardLimit: false,
+    isEstimate: false,
     ...over,
   };
 }
@@ -128,10 +129,53 @@ describe('SpendCap — load + zero/empty state', () => {
     expect($('.spend-cap__meter')).toBeNull();
   });
 
+  it('degrades to an inline error (no thrown-through blank) when window.api is missing', async () => {
+    // WU2 resilience: no injected rpcClient -> the real `client`, whose bridge()
+    // throws SYNCHRONOUSLY when window.api is undefined. The sync-safe guard must
+    // surface it inline rather than let it unmount the tree.
+    expect((globalThis as { window?: { api?: unknown } }).window?.api).toBeUndefined();
+    await act(async () => {
+      root.render(<SpendCap />);
+    });
+    await flush();
+    const alert = $('[role="alert"]');
+    expect(alert).not.toBeNull();
+    expect(alert?.textContent).toContain('window.api');
+  });
+
   it('stringifies a non-Error rejection', async () => {
     const { api } = makeApi({ spend: () => Promise.reject('nope') });
     await mount(api);
     expect($('[role="alert"]')?.textContent).toBe('nope');
+  });
+});
+
+describe('SpendCap — estimate honesty (WU-D4)', () => {
+  it('labels a non-zero month-to-date "estimated" when the figure is placeholder-derived', async () => {
+    const { api } = makeApi({
+      spend: () => Promise.resolve(spendInfo({ monthToDateCents: 2500, isEstimate: true })),
+    });
+    await mount(api);
+    const badge = $('.spend-cap__readout-estimate');
+    expect(badge).not.toBeNull();
+    expect(badge?.getAttribute('data-estimate')).toBe('true');
+    expect(badge?.textContent).toBe('estimated');
+  });
+
+  it('does not label a zero month-to-date as estimated (nothing to qualify)', async () => {
+    const { api } = makeApi({
+      spend: () => Promise.resolve(spendInfo({ monthToDateCents: 0, isEstimate: true })),
+    });
+    await mount(api);
+    expect($('.spend-cap__readout-estimate')).toBeNull();
+  });
+
+  it('does not label a figure estimated when real pricing backs it', async () => {
+    const { api } = makeApi({
+      spend: () => Promise.resolve(spendInfo({ monthToDateCents: 2500, isEstimate: false })),
+    });
+    await mount(api);
+    expect($('.spend-cap__readout-estimate')).toBeNull();
   });
 });
 

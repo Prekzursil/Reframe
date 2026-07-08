@@ -7,7 +7,7 @@
 # (resources/sidecar/runtime_setup/bootstrap.py -> %APPDATA%/media-studio).
 #
 # Build (human-run; agents never run installs/builds):
-#   1. build/python-embed-setup.ps1          # stages build/python-embed + build/ffmpeg (network)
+#   1. build/python-embed-setup.ps1          # stages build/python-embed + build/ffmpeg/win (network)
 #   2. cd app && npm run build               # electron-vite -> app/out
 #   3. cd app/render-cli && npm run bundle   # T4a: writes render-cli/out/remotion-bundle
 #   4. cd app && npx electron-builder --config ../electron-builder.yml --win
@@ -17,9 +17,19 @@
 # from app/ with `--config ../electron-builder.yml`.
 
 appId: local.media-studio
-productName: Reframe - Media Studio
-# no publish/update/signing — local personal app (§0: no platform creep)
-publish: null
+productName: Reframe
+# WU-U: IN-PLACE AUTO-UPDATE via electron-updater + GitHub Releases. The github
+# publish provider makes electron-builder (a) emit `latest.yml` (the update feed
+# manifest electron-updater polls) and the NSIS `.blockmap` (enables delta
+# downloads — only changed blocks are fetched) alongside the installer, and (b)
+# bundle `app-update.yml` INTO the app so a running copy knows where to check.
+# Signing stays OFF (no CSC): this is an unsigned build, so Windows SmartScreen
+# may warn when the downloaded installer runs. Publishing is a human/CI step
+# (`electron-builder --publish` with a GH_TOKEN); the build itself never auto-uploads.
+publish:
+  provider: github
+  owner: Prekzursil
+  repo: Reframe
 
 directories:
   output: ../dist
@@ -61,9 +71,17 @@ extraResources:
   # ChatterboxEngine + bootstrap resolve <resources>/python-chatterbox/python.exe.
   - from: ../build/python-embed-314
     to: python-chatterbox
-  # Bundled ffmpeg/ffprobe — resolved by ffmpeg.py via MEDIA_STUDIO_FFMPEG/FFPROBE
-  # env injected by the supervisor (WIRING-T5.md) — build/python-embed-setup.ps1
-  - from: ../build/ffmpeg
+  # Bundled ffmpeg/ffprobe (WU A3) — BtbN win64-LGPL STATIC exes, redistribution-
+  # safe in a closed-source app when invoked as a separate child process (LGPL,
+  # unmodified). PINNED release tag: autobuild-2026-07-03-13-21 / asset
+  # ffmpeg-n7.1.5-1-g7d0e842004-win64-lgpl-7.1.zip (staged into build/ffmpeg/win/
+  # by build/python-embed-setup.ps1 -WithFfmpeg). Ships OUTSIDE app.asar via
+  # extraResources -> resources/bin/, resolved by ffmpeg.py's _BUNDLED_DIR and by
+  # the MEDIA_STUDIO_FFMPEG/FFPROBE env the supervisor injects (WIRING-T5 §2 /
+  # sidecar.ts buildSidecarEnv). LGPL obligation: the BtbN LICENSE.txt is shipped
+  # alongside the exes (the "*.txt" filter below), and the exact source tag is
+  # recorded here + in python-embed-setup.ps1.
+  - from: ../build/ffmpeg/win
     to: bin
     filter:
       - "ffmpeg.exe"
@@ -76,12 +94,30 @@ extraResources:
     filter:
       - "**/*.py"
       - "scripts/**"
+      # Vendored model LICENSE files (extensionless) — _lightasd (MIT),
+      # _transnetv2, _vinet_s (CC-BY-NC-SA). Attribution completeness, same as
+      # ffmpeg's LGPL LICENSE.txt above. Glob is relative to the `from` base
+      # (../sidecar/media_studio), so `**/LICENSE` resolves features/*/LICENSE.
+      - "**/LICENSE"
   - from: ../sidecar/runtime_setup
     to: sidecar/runtime_setup
     filter:
       - "**/*.py"
       - "requirements-*.txt"
+  # Runtime BrowserWindow icon (WU A2). The .ico is embedded into the exe by
+  # win.icon above, but the running window loads a PNG via nativeImage; ship the
+  # 512px master (+ the .ico as a fallback) to resources/icons/, resolved by
+  # main.ts resolveWindowIcon() as process.resourcesPath/icons/reframe-512.png.
+  - from: ../build/icons
+    to: icons
+    filter:
+      - "reframe-512.png"
+      - "reframe.ico"
 win:
+  # App icon (WU A2 — Concept A "Crop Pull"): the multi-size .ico (16/24/32/48/
+  # 64/128/256, PNG-embedded) is the exe + taskbar icon. Path is relative to
+  # buildResources (../build), i.e. ../build/icons/reframe.ico.
+  icon: icons/reframe.ico
   # Two targets per T5: NSIS installer + portable zip (both slim).
   target:
     - target: nsis
@@ -94,10 +130,14 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  # Installer + uninstaller chrome icon (WU A2). Same buildResources-relative
+  # .ico as win.icon — replaces the default Electron icon everywhere.
+  installerIcon: icons/reframe.ico
+  uninstallerIcon: icons/reframe.ico
   # First-run state lives in %APPDATA%/media-studio (envs/models/tools);
   # uninstall keeps it so a reinstall needs no re-download.
   deleteAppDataOnUninstall: false
-  shortcutName: Reframe - Media Studio
+  shortcutName: Reframe
 
 # Nothing native to rebuild in the app package itself (natives live in
 # render-cli's own node_modules, shipped as-is, and in the first-run envs).

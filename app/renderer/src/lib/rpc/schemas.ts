@@ -240,7 +240,7 @@ export interface LineageEntity {
 }
 
 /**
- * L3 loud stub for a `derived_from` endpoint with no `entity` row (an input
+ * L3 loud stand-in for a `derived_from` endpoint with no `entity` row (an input
  * referenced by id but never added as a library source). Surfaced — never
  * silently dropped — so the card can show "source no longer in library".
  */
@@ -249,7 +249,7 @@ export interface LineageMissing {
   missing: true;
 }
 
-/** One ancestor/descendant: a resolved entity OR a loud missing stub. */
+/** One ancestor/descendant: a resolved entity OR a loud missing stand-in. */
 export type LineageNode = LineageEntity | LineageMissing;
 
 /**
@@ -291,6 +291,13 @@ export interface RevealSource {
   path: string;
   title: string;
   exists: boolean;
+  /**
+   * WU-1f: whether a whole-file `content_hash` was already pinned for this source
+   * (a hash-verified relink has a baseline to match). A MISSING source with
+   * `relinkable: false` is surfaced as "relink unavailable" — the original was gone
+   * before it could be verified, so a re-imported copy cannot be matched to it.
+   */
+  relinkable: boolean;
 }
 
 /**
@@ -320,6 +327,62 @@ export interface RegenerateResult {
 /** L5 `library.relink {id, path}` / `library.pinHash {id}` result — the updated entity row. */
 export interface RelinkResult {
   entity: LineageEntity;
+}
+
+/**
+ * WU-3b1/3b2 — one row of the OPT-IN managed byte-copy store (`keepcopy._row_to_managed`).
+ * A kept copy re-points the library entity's `path` to `managedPath` (AUTHORITATIVE for
+ * playback/relink) while recording `originalPath` as provenance, so the video survives the
+ * original being moved or deleted. Field names mirror the sidecar EXACTLY.
+ */
+export interface ManagedCopy {
+  /** The library entity id whose bytes are kept. */
+  entityId: string;
+  /** The ORIGINAL by-path source (provenance; where an evict re-points back to). */
+  originalPath: string;
+  /** The content-addressed managed file the entity now points at. */
+  managedPath: string;
+  /** Whole-file BLAKE3 digest keying the store (identical bytes are shared, not re-copied). */
+  contentHash: string;
+  /** The kept file's size in bytes. */
+  sizeBytes: number;
+  /** ISO timestamp the copy was first kept. */
+  keptAt: string;
+  /** ISO timestamp of the most recent access (drives LRU eviction). */
+  lastAccess: string;
+}
+
+/**
+ * WU-3b1 `library.managedStatus()` snapshot — the managed store's cumulative size vs its cap
+ * plus the kept rows. `sizeBytes` sums DISTINCT content (a deduped file counts once), so it can
+ * be below `count × per-file` when entities share bytes. Read-only.
+ */
+export interface ManagedStatus {
+  /** Total managed bytes on disk (distinct content). */
+  sizeBytes: number;
+  /** The cumulative ceiling the store evicts (LRU) to stay under. */
+  capBytes: number;
+  /** How many entities have a managed copy. */
+  count: number;
+  /** One row per kept entity. */
+  entries: ManagedCopy[];
+}
+
+/** WU-3b1 `library.keepCopy {id}` result — the (new or existing/idempotent) managed row. */
+export interface KeepCopyResult {
+  managed: ManagedCopy;
+}
+
+/** WU-3b1 `library.managedEvict {id}` result — one entity re-pointed back to its original. */
+export interface ManagedEvictResult {
+  ok: boolean;
+  entityId: string;
+}
+
+/** WU-3b1 `library.managedClear()` result — every managed copy evicted (`cleared` = how many). */
+export interface ManagedClearResult {
+  ok: boolean;
+  cleared: number;
 }
 
 /** A3 AudioTrack — one original/dub audio lane of a video. */
@@ -752,6 +815,27 @@ export interface SpendInfo {
   hardLimitCents: number;
   /** Master switch: only when true does an over-hard-cap run get refused. */
   enforceHardLimit: boolean;
+  /**
+   * WU-D4 honesty: `true` when `monthToDateCents` is derived from STAND-IN
+   * pricing (no curated model publishes a real per-request price) — so the UI
+   * labels it an ESTIMATE rather than presenting it as a real invoiced charge.
+   */
+  isEstimate: boolean;
+}
+
+/**
+ * `providers.usageAvailability` row (WU-D4): whether a configured cloud provider
+ * exposes a provider-side usage API reachable with the stored key. OpenRouter does
+ * (`hasUsageApi: true`); OpenAI/Anthropic gate usage behind an organization admin
+ * key and other providers publish nothing per-key (`hasUsageApi: false`), so the
+ * UI shows the honest `message` ("Usage API not available for <provider>") instead
+ * of a fabricated number. Carries the provider name only — never a key. Mirrors the
+ * sidecar `provider_usage_availability.UsageAvailabilityRow`.
+ */
+export interface ProviderUsageAvailability {
+  provider: string;
+  hasUsageApi: boolean;
+  message: string;
 }
 
 /**
@@ -764,6 +848,17 @@ export interface TestKeyResult {
   ok: boolean;
   capabilities?: string[];
   error?: string;
+}
+
+/**
+ * `providers.revealKey` result (WU-D3): the ONE sanctioned plaintext exception to
+ * the redact-over-RPC invariant. Returns exactly ONE raw key, for a TRANSIENT,
+ * explicit-click, masked-by-default display. The renderer holds `key` ONLY in a
+ * transient ref, re-masks it on blur/timeout, and NEVER writes it into React
+ * state/store, logs, telemetry, or crash reports.
+ */
+export interface RevealKeyResult {
+  key: string;
 }
 
 /**
@@ -1200,6 +1295,18 @@ export interface DoneEvent {
   result?: unknown;
 }
 
+/**
+ * WU B3: `proxy.state` push — playback-proxy build lifecycle for a videoId.
+ * WU-1e-fix: 'direct' is the DEFINITIVE "plays without a build" verdict (a
+ * directly-playable source or a valid cached proxy), distinct from the
+ * pre-resolution 'initial' window the renderer starts in.
+ */
+export interface ProxyStateEvent {
+  videoId: string;
+  state: 'direct' | 'building' | 'ready' | 'error';
+  detail: string;
+}
+
 /** A3 JobInfo — one entry of `job.list`'s {jobs:[...]} payload. */
 export interface JobInfo {
   jobId: string;
@@ -1230,6 +1337,8 @@ export interface MediaApi {
   onProgress(cb: (event: ProgressEvent) => void): () => void;
   /** Optional — present on the real preload; used for deferred {jobId} jobs. */
   onJobDone?(cb: (event: DoneEvent) => void): () => void;
+  /** Optional (WU B3) — playback-proxy build-state pushes (`proxy.state`). */
+  onProxyState?(cb: (event: ProxyStateEvent) => void): () => void;
   /** Optional (U2) — native multi-select video picker ([] when cancelled). */
   openVideos?(): Promise<string[]>;
   /** Optional (U2) — dropped File -> absolute path (webUtils.getPathForFile). */

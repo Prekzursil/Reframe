@@ -440,6 +440,46 @@ class Library:
 
         return relink.relink(self, entity_id, new_path, hash_file=hash_file)
 
+    # ---- WU-3b1 managed-copy store (opt-in keep-a-copy) --------------------
+    def keep_copy(self, entity_id: str) -> dict[str, Any]:
+        """WU-3b1: keep an app-managed byte-copy of ``entity_id``'s source (lineage re-point).
+
+        Thin façade over :class:`media_studio.keepcopy.ManagedStore` (lazy import, as
+        for :meth:`relink`). Copies the original bytes into the managed store under the
+        data-root, makes the copy AUTHORITATIVE for playback/relink, and records the
+        original path as provenance. Raises :class:`~media_studio.keepcopy.KeepCopyError`
+        for an unknown/missing source, a failed free-space preflight, or an over-cap file.
+        """
+        from . import keepcopy  # lazy import keeps keepcopy (which imports library) cycle-free
+
+        return keepcopy.ManagedStore(self).keep_copy(entity_id)
+
+    def managed_status(self) -> dict[str, Any]:
+        """WU-3b1: the managed store's ``{sizeBytes, capBytes, count, entries}`` snapshot."""
+        from . import keepcopy  # lazy import keeps keepcopy (which imports library) cycle-free
+
+        return keepcopy.ManagedStore(self).status()
+
+    def managed_evict(self, entity_id: str, *, force: bool = False) -> dict[str, Any]:
+        """WU-3b1: evict ``entity_id``'s managed copy (re-point to original, free the bytes).
+
+        Refuses LOUD when the original source is gone (the managed copy is the only
+        surviving copy) unless ``force=True`` — never silently destroys the only copy.
+        """
+        from . import keepcopy  # lazy import keeps keepcopy (which imports library) cycle-free
+
+        return keepcopy.ManagedStore(self).evict(entity_id, force=force)
+
+    def managed_clear(self, *, force: bool = False) -> dict[str, Any]:
+        """WU-3b1: evict EVERY managed copy (re-point each entity to its original).
+
+        Refuses LOUD (destroying nothing) when any managed copy's original source is gone
+        unless ``force=True`` — never silently destroys the only surviving copy of a video.
+        """
+        from . import keepcopy  # lazy import keeps keepcopy (which imports library) cycle-free
+
+        return keepcopy.ManagedStore(self).clear(force=force)
+
 
 class Project:
     """A versioned JSON project manifest referencing its source video by path.

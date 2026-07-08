@@ -11,6 +11,11 @@ every RPC-facing read returns the REDACTED (last-4) view. The four feed callers:
 
 This test holds the partition: each feed path carries the full key; every
 RPC read (``settings.get`` / ``providers.list``) carries only last-4.
+
+WU-D2b-2: the on-disk store now holds only redacted markers (NO-PERSIST), so the
+Services feed callers (#4) read the RAW key through the per-request injection
+overlay (``SettingsStore.key_overlay``) main opens from the injected keys; the
+direct-dict feed callers (#1-3) are handed a raw settings dict and are unchanged.
 """
 
 from __future__ import annotations
@@ -95,17 +100,23 @@ def test_feed2_hosted_provider_legacy_cloud_key_is_raw() -> None:
 def test_feed4_handler_get_provider_carries_raw_key(tmp_path: Path) -> None:
     svc = Services(data_dir=tmp_path)
     svc.settings.set(_settings_with_pool())
-    pool = svc._get_provider()
+    # WU-D2b-2: at rest only the marker persists; the FACTORY (get_raw) sees the
+    # RAW key through the per-request injection overlay main opens for the call.
+    with svc.settings.key_overlay({"providers": {"groq": [RAW_KEY]}}):
+        pool = svc._get_provider()
     assert isinstance(pool, RotatingProvider)
     assert RAW_KEY in _pool_keys(pool)
+    # Outside the overlay the factory builds from the marker only — no plaintext key.
+    assert RAW_KEY not in _pool_keys(svc._get_provider())
 
 
 def test_feed4_handler_get_translator_carries_raw_key(tmp_path: Path) -> None:
     svc = Services(data_dir=tmp_path)
     svc.settings.set(_settings_with_pool())
-    translator = svc._get_translator()
-    assert translator is not None
-    hosted = translator._hosted_provider()  # noqa: SLF001
+    with svc.settings.key_overlay({"providers": {"groq": [RAW_KEY]}}):
+        translator = svc._get_translator()
+        assert translator is not None
+        hosted = translator._hosted_provider()  # noqa: SLF001
     assert RAW_KEY in _pool_keys(hosted)
 
 
@@ -127,5 +138,9 @@ def test_rpc_reads_return_redacted_not_raw(tmp_path: Path) -> None:
     assert providers_view["providers"][0]["apiKeys"] == ["…PQRS"]
     assert settings_view["providers"][0]["apiKeys"] == ["…PQRS"]
 
-    # And the FACTORY truth still has the RAW key (the two sides genuinely differ).
-    assert RAW_KEY in svc.settings.get_raw()["providers"][0]["apiKeys"]
+    # WU-D2b-2: at rest the FACTORY accessor also holds only the marker (no
+    # plaintext key persisted); the RAW key surfaces ONLY under the request-scoped
+    # injection overlay — the two sides genuinely differ there.
+    assert svc.settings.get_raw()["providers"][0]["apiKeys"] == ["…PQRS"]
+    with svc.settings.key_overlay({"providers": {"groq": [RAW_KEY]}}):
+        assert RAW_KEY in svc.settings.get_raw()["providers"][0]["apiKeys"]

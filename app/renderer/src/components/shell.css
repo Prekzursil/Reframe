@@ -75,7 +75,8 @@ body,
   padding: 0 var(--space-5);
   height: 46px;
   flex: none;
-  background: var(--surface-raised);
+  /* Top-lit: the sheen sits OVER the raised fill so the bar catches light. */
+  background: var(--atmos-toplight), var(--surface-raised);
   box-shadow: var(--shadow-raise);
   position: relative;
   z-index: 10;
@@ -102,11 +103,34 @@ body,
 
 .app__brand::before {
   content: "";
-  width: 8px;
-  height: 8px;
+  width: var(--size-dot);
+  height: var(--size-dot);
   border-radius: 2px;
   background: var(--accent);
   flex: none;
+}
+
+/* WU-D5: the two local-vs-cloud controls (AI-model quality + job routing) share
+   one cluster so the header reads as ONE settings block, not four loose amber
+   chips. The controls sit slightly closer to each other than to the rest of the
+   bar, and an explicit vertical SEAM marks the scope boundary between them so the
+   shared Local/Cloud vocabulary can never blur the two axes together. */
+.app__routing-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+/* The scope boundary: a short vertical hairline between the two toggles. Uses the
+   stronger edge token so it registers as a deliberate divider (not the ambient
+   surface-ladder edge), and is decorative — the two role="group" labels carry the
+   meaning for assistive tech. */
+.app__routing-seam {
+  flex: none;
+  width: 1px;
+  height: var(--space-6);
+  background: var(--edge-strong);
+  border-radius: var(--radius-pill);
 }
 
 /* Quality segmented control: a pill well with a raised active segment. */
@@ -117,6 +141,9 @@ body,
 }
 
 .quality-toggle__label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   font-size: var(--type-caption-size);
   font-weight: var(--type-caption-weight);
   letter-spacing: var(--type-caption-tracking);
@@ -124,15 +151,21 @@ body,
   color: var(--text-muted);
 }
 
+/* The monitor glyph tracks the label's muted tone. */
+.quality-toggle__icon {
+  flex: none;
+  color: var(--text-faint);
+}
+
 .quality-toggle__btn {
   appearance: none;
   border: none;
-  padding: 5px 14px;
+  padding: var(--control-pad-toggle);
   background: var(--surface-deep);
   color: var(--text-muted);
   font-family: inherit;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
   cursor: pointer;
   transition:
     background var(--dur-fast) var(--ease-out),
@@ -152,14 +185,24 @@ body,
   background: var(--surface-hover);
 }
 
+/* WU-D4 accent rationing: the active segment used a full amber-soft fill + amber
+   text, so the two header toggles lit TWO amber pills in the same corner (+ the
+   brand tick = 3 amber touchpoints), crowding the accent and pulling the eye off
+   the page title. Quieter treatment: the selected segment RAISES on tone
+   (--surface-active over the deep well) with the brightest text, and keeps only a
+   thin accent underline as its rationed accent — so it still reads as active
+   without a second amber fill. */
 .quality-toggle__btn.is-active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--surface-active);
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px 0 var(--accent-edge);
 }
 
 /* M3 header routing toggle — mirrors the quality toggle's pill group, with a
-   small "may egress" hint surfaced on the cloud/auto modes. */
+   tokenized egress-warning dot on the cloud/auto modes and a one-line inline
+   helper for Auto revealed on hover/focus. */
 .routing-toggle {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: var(--space-3);
@@ -176,12 +219,12 @@ body,
 .routing-toggle__btn {
   appearance: none;
   border: none;
-  padding: 5px 14px;
+  padding: var(--control-pad-toggle);
   background: var(--surface-deep);
   color: var(--text-muted);
   font-family: inherit;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
   cursor: pointer;
   transition:
     background var(--dur-fast) var(--ease-out),
@@ -201,9 +244,12 @@ body,
   background: var(--surface-hover);
 }
 
+/* Same quieter active treatment as the quality toggle (WU-D4): raised tone +
+   primary text + a thin rationed accent underline, not a second amber fill. */
 .routing-toggle__btn.is-active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--surface-active);
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px 0 var(--accent-edge);
 }
 
 .routing-toggle__btn:disabled {
@@ -211,12 +257,47 @@ body,
   cursor: progress;
 }
 
+/* Egress-warning dot: a small tokenized amber signal that a cloud-capable mode
+   is active (data could leave the machine). Colour is redundant — the element
+   carries an accessible label + title. A soft ring lifts it off the bar. */
 .routing-toggle__egress {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--warn, #c9772a);
+  flex: none;
+  width: var(--size-dot);
+  height: var(--size-dot);
+  border-radius: var(--radius-pill);
+  background: var(--status-warn);
+  box-shadow: 0 0 0 3px var(--status-warn-soft);
+}
+
+/* One-line inline helper for the Auto segment. Floats just below the toggle,
+   hidden at rest, revealed when the Auto button is hovered or focused. */
+.routing-toggle__helper {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 20;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-leading);
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-2px);
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out),
+    visibility var(--dur-fast) var(--ease-out);
+}
+
+.routing-toggle:has(.routing-toggle__btn[data-mode="auto"]:hover) .routing-toggle__helper,
+.routing-toggle:has(.routing-toggle__btn[data-mode="auto"]:focus-visible) .routing-toggle__helper {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
 }
 
 /* .app__jobs-toggle lives in jobqueue.css; both consume the same tokens. */
@@ -241,6 +322,8 @@ button {
   font-family: inherit;
 }
 
+/* RAISED voice (default): a real control — surface + hairline edge + a seated
+   drop shadow, so it reads as a physical, pressable object, not a flat tint. */
 .library__add-btn,
 .library__remove-btn,
 .workspace__back,
@@ -248,26 +331,29 @@ button {
 .shortmaker button,
 .timeline__toolbar button {
   appearance: none;
-  padding: 6px 14px;
-  border: 1px solid transparent;
+  padding: var(--control-pad-btn);
+  border: 1px solid var(--edge);
   border-radius: var(--radius-sm);
-  background: var(--surface-hover);
+  background: var(--surface-raised);
   color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 600;
+  box-shadow: var(--elev-1);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
   cursor: pointer;
   transition:
     background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out),
     transform var(--dur-fast) var(--ease-out);
 }
 
-.library__remove-btn:hover,
-.workspace__back:hover,
 .feature-panel button:hover:not(:disabled),
 .shortmaker button:hover:not(:disabled),
 .timeline__toolbar button:hover:not(:disabled) {
-  background: var(--surface-active);
+  background: var(--surface-hover);
+  border-color: var(--edge-strong);
+  box-shadow: var(--elev-2);
   color: var(--text-primary);
 }
 
@@ -277,6 +363,23 @@ button {
 .shortmaker button:active:not(:disabled),
 .timeline__toolbar button:active:not(:disabled) {
   transform: translateY(1px);
+  box-shadow: var(--elev-1);
+}
+
+/* GHOST voice: truly quiet — no fill, no edge, no shadow at rest; a low-key nav /
+   secondary action that only lifts a whisper of tint on hover. Overrides the
+   raised base for these two. (Remove's hover is the destructive-red rule below.) */
+.library__remove-btn,
+.workspace__back {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+}
+
+.workspace__back:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 
 .feature-panel button:disabled,
@@ -286,7 +389,9 @@ button {
   cursor: default;
 }
 
-/* Accent voice: the primary/approve actions ONLY (one per surface). */
+/* ACCENT voice: the primary/approve actions ONLY (one per surface). Lit from
+   within — an inset top highlight over a soft amber halo — so it reads as the
+   energised, raised primary, not a flat orange rectangle. */
 .library__add-btn,
 .feature-panel form button[type="submit"],
 .feature-panel .actions > button:first-child:not(.secondary),
@@ -294,8 +399,10 @@ button {
 .sm-export button,
 .sm-row-decide button[aria-label="Approve"] {
   background: var(--accent);
+  border-color: transparent;
+  box-shadow: var(--accent-glow);
   color: var(--accent-ink);
-  font-weight: 700;
+  font-weight: var(--weight-bold);
 }
 
 .library__add-btn:hover:not(:disabled),
@@ -305,6 +412,7 @@ button {
 .sm-export button:hover:not(:disabled),
 .sm-row-decide button[aria-label="Approve"]:hover:not(:disabled) {
   background: var(--accent-hover);
+  box-shadow: var(--accent-glow-hover);
   color: var(--accent-ink);
 }
 
@@ -336,7 +444,7 @@ button {
 .timeline__editor input,
 .timeline__editor textarea {
   appearance: none;
-  padding: 7px 10px;
+  padding: var(--control-pad-input);
   background: var(--surface-deep);
   border: 1px solid var(--edge);
   border-radius: var(--radius-sm);
@@ -353,6 +461,27 @@ button {
 .shortmaker select:hover,
 .shortmaker textarea:hover {
   border-color: var(--edge-strong);
+}
+
+/* Focus: an accent GLOW ring (box-shadow halo) on top of the border-color shift,
+   so a focused field reads as live-and-selected — not just a 1px edge change.
+   Class-scoped so it beats the global :where() focus-visible ring on these fields.
+   The transition includes box-shadow so the glow eases in. */
+.library__add-input:focus-visible,
+.feature-panel input:focus-visible,
+.feature-panel select:focus-visible,
+.feature-panel textarea:focus-visible,
+.shortmaker input:focus-visible,
+.shortmaker select:focus-visible,
+.shortmaker textarea:focus-visible,
+.timeline__editor input:focus-visible,
+.timeline__editor textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent-edge);
+  box-shadow: var(--focus-glow);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
 }
 
 /* ---- Library ------------------------------------------------------------------ */
@@ -383,6 +512,16 @@ button {
   line-height: var(--type-display-leading);
 }
 
+/* WU-D4 gutter unify: the "what works right now" roll-up ships from its shared
+   component with NO inset, so at rest its eyebrow + status line sit flush at x=0
+   — left of the title, the skeleton, and the card list (four ragged left edges).
+   Library-scope a --space-6 inset so those two lines land on the SAME left gutter
+   as the header title and the card column, reading the home view as one column.
+   Scoped to `.library >` so the identical roll-up on the model panel is untouched. */
+.library > .readiness-rollup {
+  padding: 0 var(--space-6);
+}
+
 .library__add {
   display: flex;
   gap: var(--space-3);
@@ -407,7 +546,7 @@ button {
   border-radius: var(--radius-md);
   background: var(--accent-soft);
   color: var(--accent);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
   text-align: center;
 }
 
@@ -421,13 +560,99 @@ button {
   background: var(--status-error-soft);
 }
 
+/* ---- skeleton shimmer (loading skeletons shaped like the real thing) -----
+   A quiet PULSE off --surface-hover — a skeleton that echoes the card/panel
+   anatomy so the layout doesn't jump when data lands. Reduced-motion is handled
+   globally at the top of this sheet (animation-duration collapses to ~0), so the
+   pulse simply holds still for motion-sensitive users. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-hover);
+  border-radius: var(--radius-xs);
+  animation: skeleton-pulse 1.5s var(--ease-in-out) infinite;
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* The loading well: no more bare uppercase "LOADING…" — a stack of card-shaped
+   ghosts that mirror the real library rows (thumb + two text lines).
+   WU-D4: padding MATCHES `ul.library__list` (--space-4 --space-6 --space-6) so
+   the ghost column shares the card column's exact left gutter — the previous
+   --space-3 well shifted the column 16px right (--space-6 minus --space-3) the
+   instant real data landed. Matched padding = no load-shift. */
 .library__loading {
-  padding: var(--space-8) var(--space-6);
-  color: var(--text-muted);
-  font-size: var(--type-caption-size);
-  font-weight: var(--type-caption-weight);
-  letter-spacing: var(--type-caption-tracking);
-  text-transform: uppercase;
+  padding: var(--space-4) var(--space-6) var(--space-6);
+}
+
+.library__skeleton {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.library__skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--elev-1);
+}
+
+.library__skeleton-thumb {
+  flex: none;
+  width: 96px;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-sm);
+}
+
+.library__skeleton-lines {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.library__skeleton-line {
+  height: 10px;
+  border-radius: var(--radius-pill);
+}
+
+.library__skeleton-line--title {
+  width: 45%;
+}
+
+.library__skeleton-line--path {
+  width: 70%;
+  opacity: 0.7;
+}
+
+/* Stagger the pulse down the stack so the skeleton reads as alive, not a
+   frozen block. Each row's inner pieces share its beat via negative delays. */
+.library__skeleton-row:nth-child(2) .skeleton {
+  animation-delay: 0.15s;
+}
+
+.library__skeleton-row:nth-child(3) .skeleton {
+  animation-delay: 0.3s;
+}
+
+.library__skeleton-row:nth-child(4) .skeleton {
+  animation-delay: 0.45s;
 }
 
 /* Empty state with character: a ghost poster that echoes the real card
@@ -470,7 +695,7 @@ button {
 }
 
 .library__empty-glyph {
-  font-size: 22px;
+  font-size: var(--type-subhead-size);
   color: var(--text-faint);
   user-select: none;
 }
@@ -503,6 +728,82 @@ button {
   color: var(--text-muted);
 }
 
+/* Edit (Task Hub) empty (WU-D3): the primary per-video landing with no video
+   open used to be the app's WEAKEST empty — a bare left-aligned sentence with
+   zero CSS. Brought up to the shared ghost-poster language: a display-scale
+   poster anchor (deep 16:9 well + play glyph + mono timecode) with a second
+   poster peeking behind, then a title + hint. Mirrors .library__empty /
+   .sm-empty; no accent (an empty landing is not an active state). */
+.edit--empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-6) var(--space-6);
+  text-align: center;
+}
+
+.edit__empty-poster {
+  position: relative;
+  width: 240px;
+  aspect-ratio: 16 / 9;
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--atmos-well), var(--surface-deep);
+  box-shadow:
+    inset 0 0 0 1px var(--edge),
+    var(--elev-2);
+}
+
+.edit__empty-poster::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  transform: translate(12px, -10px) rotate(2deg);
+}
+
+.edit__empty-glyph {
+  font-size: var(--type-display-size);
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.edit__empty-timecode {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--surface-raised);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--type-caption-leading);
+}
+
+.edit__empty-title {
+  margin: var(--space-2) 0 0;
+  font-size: var(--type-subhead-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+  color: var(--text-secondary);
+}
+
+.edit__empty-hint {
+  margin: 0;
+  max-width: 46ch;
+  font-size: var(--type-body-size);
+  color: var(--text-muted);
+}
+
 .library__list {
   list-style: none;
   margin: 0;
@@ -529,15 +830,15 @@ button {
 }
 
 .library__item-title {
-  font-weight: 650;
-  font-size: 14px;
+  font-weight: var(--weight-semibold);
+  font-size: var(--type-card-title-size);
   letter-spacing: -0.01em;
   color: var(--text-primary);
 }
 
 .library__item-path {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-caption-size);
   color: var(--text-faint);
   white-space: nowrap;
   overflow: hidden;
@@ -551,18 +852,47 @@ button {
   color: var(--text-muted);
 }
 
-/* "Has transcript" mark: quiet success chip, not an accent grab. */
-.library__badge {
+/* Provenance chip row: quiet, labelled pills that read what a card CARRIES
+   (derived artifacts), sitting under the title. A tonal seam + tracked micro-caps,
+   never an accent grab. */
+.library__chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.library__chip {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: var(--radius-xs);
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  font-size: var(--type-chip-size);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1.4;
+}
+
+/* A leading status dot gives the chip a second (non-colour-only) signal. */
+.library__chip::before {
+  content: "";
+  width: var(--size-dot-sm);
+  height: var(--size-dot-sm);
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  opacity: 0.7;
+}
+
+/* "Has transcript" chip: quiet success voice — an available artifact, not an
+   accent grab. (`.library__badge` is test-pinned; kept as the transcript chip.) */
+.library__badge.library__chip {
   background: var(--status-success-soft);
   color: var(--status-success);
-  font-size: 11px;
-  font-weight: 700;
 }
 
 /* Library's inline fallback toast strip (when the app-level host is absent). */
@@ -603,7 +933,7 @@ button {
   border: none;
   background: transparent;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: var(--type-card-title-size);
   line-height: 1;
   padding: var(--space-1) var(--space-2);
   cursor: pointer;
@@ -638,16 +968,27 @@ button {
 .workspace__player {
   margin: 0 var(--space-6) var(--space-4);
   padding: var(--space-3);
-  background: var(--surface-deep);
+  /* Lit-from-top well: cool slate sheen over the deepest surface so footage
+     floats in atmosphere, not a flat black box. */
+  background: var(--atmos-well), var(--surface-deep);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-raise);
   position: relative;
+  /* The footage well keeps its natural height in the workspace flex column: it
+     must NOT be compressed by a short window (that clipped the top of the frame
+     — "halfway cut at top"). The body below owns the remaining space and scrolls. */
+  flex: none;
 }
 
 .player__video {
   display: block;
   width: 100%;
+  /* Size from the frame's own aspect ratio (capped by max-height), then letterbox
+     inside that box. `object-fit: contain` guarantees the WHOLE frame is visible —
+     never cropped or stretched — regardless of the source ratio vs the well. */
+  height: auto;
   max-height: 280px;
+  object-fit: contain;
   border-radius: var(--radius-md);
   background: var(--surface-deep);
 }
@@ -692,7 +1033,8 @@ button {
 .tab {
   appearance: none;
   position: relative;
-  padding: 11px 14px;
+  padding: var(--control-pad-tab);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   background: transparent;
   border: none;
   color: var(--text-muted);
@@ -702,7 +1044,9 @@ button {
   font-weight: var(--type-caption-weight);
   letter-spacing: var(--type-caption-tracking);
   text-transform: uppercase;
-  transition: color var(--dur-fast) var(--ease-out);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 
 .tab::after {
@@ -725,8 +1069,12 @@ button {
   background: var(--edge-strong);
 }
 
+/* Active: a gentle accent wash + accent underline seats the active tab into the
+   strip — softer than a stark colour block, and not colour-alone (the underline
+   is a second, shape signal). */
 .tab--active {
   color: var(--text-primary);
+  background: var(--accent-soft);
 }
 
 .tab--active::after {
@@ -954,7 +1302,7 @@ button {
 .sm-preview {
   padding: var(--space-3);
   margin: 0 0 var(--space-5);
-  background: var(--surface-deep);
+  background: var(--atmos-well), var(--surface-deep);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-raise);
 }
@@ -1033,8 +1381,8 @@ button {
 
 /* BIG number, quiet neighbors: rank is the display voice of this surface. */
 .sm-rank {
-  font-size: 24px;
-  font-weight: 800;
+  font-size: var(--type-rank-size);
+  font-weight: var(--weight-heavy);
   letter-spacing: var(--type-display-tracking);
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
@@ -1073,7 +1421,7 @@ button {
 .sm-hook {
   margin: 0 0 var(--space-2);
   font-family: var(--font-editorial);
-  font-size: 15px;
+  font-size: var(--type-hook-size);
   font-style: italic;
   line-height: 1.4;
   color: var(--text-primary);
@@ -1109,7 +1457,7 @@ button {
 }
 
 .sm-row-actions button {
-  padding: 3px 8px;
+  padding: var(--control-pad-mini);
   font-size: var(--type-caption-size);
   font-family: var(--font-mono);
   background: transparent;
@@ -1132,7 +1480,7 @@ button {
 }
 
 .sm-export > span {
-  font-weight: 650;
+  font-weight: var(--weight-semibold);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1158,7 +1506,121 @@ button {
   color: var(--text-secondary);
 }
 
+/* Considered empty state (WU-2b): a ghost poster echoing the review card well
+   instead of a bare grey sentence — the surface reads "nothing here YET", not
+   "broken". Mirrors the .library__empty / .shorts__empty ghost language. */
 .sm-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-6) var(--space-6);
+  text-align: center;
+}
+
+.sm-empty__poster {
+  position: relative;
+  width: 200px;
+  aspect-ratio: 16 / 9;
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--atmos-well), var(--surface-deep);
+  box-shadow:
+    inset 0 0 0 1px var(--edge),
+    var(--shadow-raise);
+}
+
+.sm-empty__poster::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  transform: translate(12px, -10px) rotate(2deg);
+}
+
+.sm-empty__glyph {
+  font-size: var(--type-subhead-size);
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.sm-empty__title {
+  margin: var(--space-2) 0 0;
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+  color: var(--text-secondary);
+}
+
+.sm-empty__hint {
+  margin: 0;
+  max-width: 46ch;
+  font-size: var(--type-body-size);
+  color: var(--text-muted);
+}
+
+/* Assets ghost empty: same considered treatment on the .asset-empty container
+   (an added modifier, so the plain .asset-empty text reused elsewhere — Recipes
+   — is untouched). A stacked "chip" ghost echoing the installed-asset rows. */
+.asset-empty--ghost {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-6) var(--space-6);
+  text-align: center;
+}
+
+.asset-empty__poster {
+  position: relative;
+  width: 200px;
+  height: 64px;
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--surface-deep);
+  box-shadow:
+    inset 0 0 0 1px var(--edge),
+    var(--shadow-raise);
+}
+
+.asset-empty__poster::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--edge);
+  transform: translate(10px, -8px) rotate(-2deg);
+}
+
+.asset-empty__glyph {
+  font-size: var(--size-glyph);
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.asset-empty__title {
+  margin: var(--space-2) 0 0;
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+  color: var(--text-secondary);
+}
+
+.asset-empty__hint {
+  margin: 0;
+  max-width: 46ch;
+  font-size: var(--type-body-size);
   color: var(--text-muted);
 }
 
@@ -1167,7 +1629,7 @@ button {
 .timeline__lane {
   position: relative;
   padding: var(--space-3);
-  background: var(--surface-deep);
+  background: var(--atmos-well), var(--surface-deep);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-raise);
 }

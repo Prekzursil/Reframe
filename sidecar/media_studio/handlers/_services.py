@@ -187,6 +187,10 @@ class Services:
     library_regenerate = library_ops.library_regenerate
     library_pin_hash = library_ops.library_pin_hash
     library_relink = library_ops.library_relink
+    library_keep_copy = library_ops.library_keep_copy
+    library_managed_status = library_ops.library_managed_status
+    library_managed_evict = library_ops.library_managed_evict
+    library_managed_clear = library_ops.library_managed_clear
     project_open = library_ops.project_open
     project_save = library_ops.project_save
     project_consolidate = library_ops.project_consolidate
@@ -199,9 +203,11 @@ class Services:
     providers_upsert = providers_ops.providers_upsert
     providers_remove = providers_ops.providers_remove
     providers_test_key = providers_ops.providers_test_key
+    providers_reveal_key = providers_ops.providers_reveal_key
     providers_set_consent = providers_ops.providers_set_consent
     providers_usage = providers_ops.providers_usage
     providers_openrouter_usage = providers_ops.providers_openrouter_usage
+    providers_usage_availability = providers_ops.providers_usage_availability
     providers_spend = providers_ops.providers_spend
     providers_apply_preset = providers_ops.providers_apply_preset
     providers_set_function_model = providers_ops.providers_set_function_model
@@ -265,6 +271,7 @@ class Services:
     phase8_signals = system_ops.phase8_signals
     phase8_select = system_ops.phase8_select
     _models_present_map = system_ops._models_present_map
+    _installed_asset_names = system_ops._installed_asset_names
     _default_hardware_probe = system_ops._default_hardware_probe
     _default_ollama_meta_transport = system_ops._default_ollama_meta_transport
     _default_phase8_runner = system_ops._default_phase8_runner
@@ -306,5 +313,6 @@ class Services:
     _budget_request = ai_ops._budget_request
     _default_target_job_size = ai_ops._default_target_job_size
     _get_model_runner = ai_ops._get_model_runner
+    _llama_ensure = ai_ops._llama_ensure
     _get_translator = ai_ops._get_translator
     _dub_translator = ai_ops._dub_translator

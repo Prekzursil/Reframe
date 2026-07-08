@@ -48,7 +48,13 @@ def _resolve_vlm_reranker(self: Services, settings: dict[str, Any], *, media_pat
     """
     from ..features import smolvlm2 as _sv  # local: import-light (no heavy import)
 
-    raw_settings = self.settings.get_raw()
+    # WU-D2b-2 THREAD-SAFETY: ``settings`` is the RAW settings the CALLER captured
+    # SYNCHRONOUSLY while the per-request key overlay was still open (the
+    # ``_key_overlay_wrapper`` overlay is closed by the time this reranker resolves
+    # on the job WORKER thread). Re-reading ``get_raw()`` here would run off-thread
+    # after the overlay closed and return only the redacted at-rest MARKERS, so the
+    # cloud egress would carry a corrupt ``Bearer …-key``. Use the caller's snapshot.
+    raw_settings = settings
     # OFFLINE GATE: offline forbids ALL cloud frame egress, even for a fully
     # frame-consented + routed provider (offline is authoritative over consent).
     # Skip the cloud branch so the resolver degrades to local weights / None —
@@ -108,7 +114,13 @@ def _resolve_frame_scorer(self: Services, settings: dict[str, Any]) -> Any:
     from ..features import best_frame as _bf  # local: import-light (no cv2/model)
     from ..features import smolvlm2 as _sv  # local: import-light
 
-    raw_settings = self.settings.get_raw()
+    # WU-D2b-2 THREAD-SAFETY: ``settings`` is the RAW settings the CALLER captured
+    # SYNCHRONOUSLY while the per-request key overlay was still open. This scorer
+    # resolves on the job WORKER thread, AFTER ``_key_overlay_wrapper`` closed the
+    # overlay — re-reading ``get_raw()`` here would return only the redacted at-rest
+    # MARKERS, so the vision egress would carry a corrupt ``Bearer …-key`` (a
+    # UnicodeEncodeError on the wire). Use the caller's synchronous snapshot.
+    raw_settings = settings
     # OFFLINE GATE: offline forbids ALL cloud frame egress, even for a fully
     # frame-consented + routed provider — skip the cloud branch so the resolver
     # degrades to local weights / None (degrade-to-midpoint), exactly the
@@ -212,7 +224,12 @@ def thumbnail_select(self: Services, params: dict[str, Any], ctx: RpcContext) ->
         raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
     video_id = _require_str(params, "videoId")
     media_path, start, end = self._resolve_thumbnail_span(params, video_id)
-    settings = dict(self.settings.get())
+    # FACTORY PATH (WU-D2b-2): the frame scorer needs the RAW apiKey on the wire,
+    # and it resolves on the job WORKER thread — AFTER the per-request key overlay
+    # closes. Capture the RAW settings NOW (synchronously, while the overlay is
+    # still open) so the off-thread :meth:`_resolve_frame_scorer` sees live keys,
+    # exactly as ``index.build`` captures ``get_raw()`` up front (handlers.py).
+    settings = dict(self.settings.get_raw())
     prompt = str(params.get("prompt") or "")
 
     def work(job_ctx: Any, _envelope: Any, _provider: Any) -> dict[str, Any]:

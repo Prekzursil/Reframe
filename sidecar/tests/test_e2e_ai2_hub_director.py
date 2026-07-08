@@ -18,7 +18,7 @@ HUB coverage:
   * A REAL AI job (``director.plan``) makes a REAL HTTP call through the routed
     pool: the mock receives the OpenAI chat shape, the response is parsed, and
     the chat path's ``Authorization`` header carries the RAW key (the get_raw()
-    contract — contrasted with agent-2's embedder redacted-key xfail).
+    contract, fed by the per-request key injection main performs — WU-D2b-2).
   * ROTATION: two providers; provider-1 (a real 429 server) fails, the
     RotatingProvider fails over to provider-2 (the working mock) over a real
     socket, emitting exactly one rotation event.
@@ -28,19 +28,16 @@ HUB coverage:
 DIRECTOR coverage (real sample mp4 via ffmpeg):
   * ``director.plan`` -> a valid EditPlan from the mock, validated + stored.
   * ``director.previewCost`` -> per-function route/cost (pure, zero egress).
-  * ``director.apply`` -> the apply SPINE over a project COPY, with a real
-    ffmpeg op-engine injected behind the documented ``_director_engines`` seam
-    (the same seam the product's own director tests use): each op RENDERS a real
-    mp4 segment from the source over the COPY; the source is never touched.
+  * ``director.apply`` -> the apply SPINE over a project COPY. Two proofs: the
+    DEFAULT ``_director_engines()`` now wires the REAL ffmpeg op-engine adapters
+    (see ``test_director_apply_default_engine_table_wires_real_engines``), so a
+    real client gets an edited mp4, not a no-op copy; and a test-injected engine
+    behind the same documented ``_director_engines`` seam proves the apply
+    ordering / inverse recording / COPY isolation / undo round-trip. The source
+    is never touched.
   * ffprobe confirms the applied output is a valid mp4.
   * ``director.undo`` re-applies the recorded inverse to restore the pre-apply
     COPY.
-
-TOP_BREAKAGE surfaced here (see ``test_director_apply_default_engine_table_is_empty``):
-the SHIPPED ``_director_engines()`` returns ``{}`` — so the DEFAULT RPC apply
-path renders NO media (every op -> ``failed`` + rollback). The apply spine is
-real and shippable, but no op-engine adapters are wired in v1, so a client
-calling ``director.apply`` today gets a no-op manifest copy, not an edited mp4.
 
 Run: ``python -m pytest sidecar/tests/test_e2e_ai2_hub_director.py``.
 """
@@ -62,6 +59,7 @@ from media_studio.jobs import JobRegistry
 from media_studio.models.edit_plan import EditOp
 from media_studio.models.provider import RotationEvent
 from media_studio.protocol import RpcContext
+from media_studio.settings_store import INJECTED_KEYS_FIELD
 
 from tests.e2e_ai2_mock_model import Always429Server, MockModelServer
 
@@ -85,8 +83,21 @@ _RAW_KEY = "sk-e2e-ai2-hub-rawkey-9999"
 # in-process JSON-RPC drive (mirrors the sibling suite's real parse->dispatch)
 # --------------------------------------------------------------------------- #
 class Rpc:
-    def __init__(self, svc: Services) -> None:
+    """In-process JSON-RPC drive that STANDS IN for the Electron main process.
+
+    WU-D2b-2 CONSUME: main persists provider keys only as redacted MARKERS and
+    re-injects the DPAPI-decrypted raw keys under :data:`INJECTED_KEYS_FIELD` on
+    the params of EVERY provider-calling request; the ``_key_overlay_wrapper``
+    then makes ``get_raw()`` see them for THAT request only. This drive replicates
+    that: it LEARNS each provider's raw keys as they pass through
+    ``providers.upsert`` / ``settings.set`` and re-injects them on every
+    subsequent call, so the real factory seams egress with the live key exactly as
+    they do in production (never from disk, which holds only markers).
+    """
+
+    def __init__(self, svc: Services, *, keys: dict[str, list[str]] | None = None) -> None:
         self.svc = svc
+        self.keys: dict[str, list[str]] = {k: list(v) for k, v in (keys or {}).items()}
         self.events: list[Any] = []
         self.jobs = JobRegistry(
             emit_progress=lambda jid, pct, msg: self.events.append(("progress", jid, pct, msg)),
@@ -99,8 +110,32 @@ class Rpc:
         assert fn is not None, f"method not registered: {method}"
         return fn
 
+    def _learn_keys(self, method: str, params: dict[str, Any]) -> None:
+        """Capture raw keys from provider WRITES (as main does on upsert/save)."""
+        if not isinstance(params, dict):
+            return
+        entries: list[Any]
+        if method == "providers.upsert":
+            nested = params.get("provider")
+            entries = [nested if isinstance(nested, dict) else params]
+        elif isinstance(params.get("providers"), list):
+            entries = [p for p in params["providers"] if isinstance(p, dict)]
+        else:
+            entries = []
+        for entry in entries:
+            pid, api_keys = entry.get("id"), entry.get("apiKeys")
+            if isinstance(pid, str) and isinstance(api_keys, list):
+                self.keys[pid] = [str(k) for k in api_keys]
+
+    def _inject(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Attach the learned raw keys as ``_injectedKeys`` (main's per-request path)."""
+        if self.keys and isinstance(params, dict) and INJECTED_KEYS_FIELD not in params:
+            return {**params, INJECTED_KEYS_FIELD: {"providers": {k: list(v) for k, v in self.keys.items()}}}
+        return params
+
     def call(self, method: str, params: dict[str, Any]) -> Any:
-        return self._handler(method)(params, self.ctx)
+        self._learn_keys(method, params)
+        return self._handler(method)(self._inject(params), self.ctx)
 
     def run_job(self, method: str, params: dict[str, Any], *, timeout: float = 30.0) -> dict[str, Any]:
         out = self.call(method, params)
@@ -204,10 +239,18 @@ def _base_settings(*provider_ids: str, **extra: Any) -> dict[str, Any]:
     The shipped default ``confirmCloudBudget`` is True (settings_store.py:64), so
     every non-budget test must turn it OFF or every egress is refused. The
     budget-gate test sets it back True explicitly.
+
+    The M3 ``routingPolicy`` is set to ``auto`` (prefer cloud, degrade local): the
+    :meth:`_provider_for_function` egress gate (``select``/``vision`` seams) fails
+    CLOSED to local when NO policy is persisted, so a "routed to cloud" fixture
+    must also permit cloud through the policy for those seams to egress. (The
+    ``director.plan`` editPlan path resolves its own consent-gated pool and is not
+    routed through this policy, so this is inert there.)
     """
     consent = {pid: {"text": True, "frames": True} for pid in provider_ids}
     base: dict[str, Any] = {
         "routing": _routing(*provider_ids),
+        "routingPolicy": {"global": "auto", "overrides": {}},
         "consent": {"perProvider": consent},
         "confirmCloudBudget": False,
         "cloudModel": "mock-model",
@@ -245,9 +288,18 @@ def test_hub_upsert_stores_raw_list_redacts_and_testkey(tmp_path: Path) -> None:
         assert _RAW_KEY not in json.dumps(prov), "providers.list leaked the RAW key"
         assert any(_RAW_KEY[-4:] in str(k) for k in prov["apiKeys"]), "redacted key lost its last-4"
 
-        # ...but the RAW key is PERSISTED: settings.get_raw() carries it verbatim.
-        raw = svc.settings.get_raw()["providers"][0]
-        assert raw["apiKeys"] == [_RAW_KEY], "upsert did not store the RAW key"
+        # WU-D2b-2 NO-PERSIST: the RAW key is NEVER written to disk — the at-rest
+        # store keeps only the redacted last-4 MARKER (zero plaintext key bytes on
+        # disk). So a plain get_raw() (no active overlay) returns the MARKER, not
+        # the raw key — this is the security invariant, not a bug.
+        at_rest = svc.settings.get_raw()["providers"][0]
+        assert at_rest["apiKeys"] != [_RAW_KEY], "RAW key leaked to disk (WU-D2b-2 no-persist violated)"
+        assert any(_RAW_KEY[-4:] in str(k) for k in at_rest["apiKeys"]), "at-rest marker lost its last-4"
+        # The RAW key is recoverable ONLY under a request-scoped key_overlay — the
+        # DPAPI-decrypted keys main re-injects per request (:meth:`key_overlay`).
+        with svc.settings.key_overlay({"providers": {"mock": [_RAW_KEY]}}):
+            live = svc.settings.get_raw()["providers"][0]
+            assert live["apiKeys"] == [_RAW_KEY], "overlay did not surface the RAW key to get_raw()"
 
         # testKey issues one minimal completion through the provider seam (real socket).
         res = rpc.call("providers.testKey", {"baseUrl": server.base_url, "model": "mock-model", "apiKey": _RAW_KEY})
@@ -355,18 +407,20 @@ def test_hub_rotation_on_real_429(tmp_path: Path) -> None:
         svc.settings.set(_base_settings("bad", "good"))
         vid = _add_video(svc, media)
 
-        # Capture rotation events from the REAL pool (director.plan builds the pool
-        # via get_raw()); we wrap _provider_for_function so we can attach the hook.
+        # Capture rotation events from the REAL pool. director.plan builds its
+        # editPlan pool through the TEXT-consent-gated _editplan_provider_or_refuse
+        # (get_provider over the consent-filtered get_raw() settings) — we wrap THAT
+        # seam so we can attach the on_rotation hook to the pool it actually uses.
         events: list[RotationEvent] = []
-        orig = svc._provider_for_function
+        orig = svc._editplan_provider_or_refuse
 
-        def _hooked(function: str) -> Any:
-            pool = orig(function)
+        def _hooked() -> Any:
+            pool = orig()
             if hasattr(pool, "on_rotation"):
                 pool.on_rotation(events.append)
             return pool
 
-        svc._provider_for_function = _hooked  # type: ignore[method-assign]
+        svc._editplan_provider_or_refuse = _hooked  # type: ignore[method-assign]
 
         done = rpc.run_job("director.plan", {"videoId": vid, "goal": "tighten into a punchy short"})
 
@@ -405,8 +459,12 @@ def test_hub_usage_updates_after_real_egress(tmp_path: Path) -> None:
         rpc.call("providers.upsert", {"provider": _provider_entry(server.base_url)})
         svc.settings.set(_base_settings("mock"))
 
-        # The product factory path: RAW keys -> a RotatingProvider over a real socket.
-        pool = _provider_mod.get_provider(svc.settings.get_raw())
+        # The product factory path: RAW keys -> a RotatingProvider over a real
+        # socket. WU-D2b-2: the RAW key lives ONLY under a request-scoped overlay
+        # (the DPAPI keys main re-injects per request); at rest the store holds a
+        # marker, so get_raw() must run INSIDE the overlay to carry the live key.
+        with svc.settings.key_overlay({"providers": {"mock": [_RAW_KEY]}}):
+            pool = _provider_mod.get_provider(svc.settings.get_raw())
         assert isinstance(pool, _provider_mod.RotatingProvider), f"not a pool: {pool!r}"
 
         before = [r for r in pool.usage() if r.get("provider") == "mock"][0]
@@ -485,27 +543,16 @@ def test_hub_text_consent_gate_blocks_egress(tmp_path: Path) -> None:
         svc.settings.set({"consent": {"perProvider": {"mock": {"text": True}}}})
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "PRODUCT BUG (TOP_BREAKAGE): the director.plan CHAT/editPlan egress path is "
-        "NOT text-consent gated. The index embedder filters providers via "
-        "_text_consented_settings and the vision paths via "
-        "_frame_consented_vision_settings, but director.plan builds its provider "
-        "with _provider_for_function('editPlan') -> get_provider(get_raw()) with NO "
-        "consent filter. build_understanding folds the TRANSCRIPT into the prompt, "
-        "so with TEXT consent REVOKED director.plan still ships the transcript text "
-        "to the cloud (verified: chat hit + transcript bytes on the wire). Candidate "
-        "fix: filter the editPlan pool through _text_consented_settings like the "
-        "index path. Strict xfail -> flips to a hard fail the moment it is fixed."
-    ),
-)
-def test_hub_director_chat_path_honors_text_consent_xfail(tmp_path: Path) -> None:
-    """The chat (director.plan) egress SHOULD be blocked when TEXT consent is off.
+def test_hub_director_chat_path_honors_text_consent(tmp_path: Path) -> None:
+    """The chat (director.plan) egress IS blocked when TEXT consent is off.
 
-    This is the consent equivalent of agent-2's redacted-key xfail: the SECURE
-    behavior is asserted, and it currently FAILS because the editPlan chat path
-    skips the per-provider TEXT-consent filter the index/vision paths apply.
+    The director.plan editPlan chat path is text-consent gated exactly like the
+    index embedder: :meth:`_editplan_provider_or_refuse` builds the pool from
+    :meth:`_text_consented_settings`, and when the RAW routed pool HAD a cloud
+    egress target but the consent-filtered pool has NONE, it REFUSES before any
+    chat (a typed RpcError). ``build_understanding`` folds the transcript into the
+    planner prompt, so this refusal is what keeps the transcript text from ever
+    reaching a non-consented cloud target — ZERO bytes leave the machine.
     """
     media = tmp_path / "talk.mp4"
     _make_sample_mp4(media)
@@ -524,8 +571,12 @@ def test_hub_director_chat_path_honors_text_consent_xfail(tmp_path: Path) -> Non
         }
         project.save()
 
-        rpc.run_job("director.plan", {"videoId": vid, "goal": "tighten"})
-        # SECURE expectation (currently violated): zero chat egress with consent off.
+        # The SECURE behavior: a per-provider TEXT-consent-revoked cloud route is
+        # REFUSED synchronously (before any chat), with a consent-explaining error.
+        with pytest.raises(Exception) as exc:  # noqa: PT011 - typed RpcError surfaced generically
+            rpc.run_job("director.plan", {"videoId": vid, "goal": "tighten"})
+        assert "consent" in str(exc.value).lower(), f"refusal was not the TEXT-consent gate: {exc.value!r}"
+        # ZERO chat egress: the transcript text never left the machine.
         assert server.hits["chat"] == 0, "director.plan egressed transcript text despite TEXT consent revoked"
 
 
@@ -597,18 +648,24 @@ def test_hub_budget_ack_token_admits_gated_run(tmp_path: Path) -> None:
 
 
 # ========================================================================== #
-# DIRECTOR — the SHIPPED default engine table is EMPTY (TOP_BREAKAGE control)
+# DIRECTOR — the SHIPPED default engine table WIRES real ffmpeg adapters
 # ========================================================================== #
-def test_director_apply_default_engine_table_is_empty(tmp_path: Path) -> None:
-    """PROOF that the shipped director.apply renders NO media in v1.
+def test_director_apply_default_engine_table_wires_real_engines(tmp_path: Path) -> None:
+    """PROOF the shipped director.apply RENDERS real media via the default engines.
 
-    With the DEFAULT ``_director_engines()`` (``{}``), every op has no engine ->
-    ``failed`` + auto-rollback. No ffmpeg runs; the project COPY is an unchanged
-    JSON manifest. This is the honest TOP_BREAKAGE: the apply spine is real, but
-    no op-engine adapters are wired, so a real client gets a no-op apply.
+    The DEFAULT ``_director_engines()`` now returns ``build_engines()`` — the real
+    ffmpeg op-engine adapters (``features.director_op_engines``), NOT an empty
+    table. So a real client calling ``director.apply`` (no injected engine seam)
+    gets an EDITED mp4, not a no-op manifest copy: the mock plan's wired ops
+    (removeSilence + trim) each render a real, span-bounded mp4 segment over the
+    project COPY, and ffprobe confirms the applied output is a valid mp4.
     """
+    from media_studio.features import director_op_engines as _engines
+
     media = tmp_path / "talk.mp4"
-    _make_sample_mp4(media)
+    # A 10s clip so the plan's trim span [2000,8000] passes the real validator (a
+    # 6s clip would drop it) — exercising BOTH wired ops through the default table.
+    _make_sample_mp4(media, seconds=10)
     with MockModelServer() as server:
         svc, rpc = _wire(tmp_path)
         rpc.call("providers.upsert", {"provider": _provider_entry(server.base_url)})
@@ -616,12 +673,27 @@ def test_director_apply_default_engine_table_is_empty(tmp_path: Path) -> None:
         vid = _add_video(svc, media)
 
         plan = rpc.run_job("director.plan", {"videoId": vid, "goal": "tighten"})
-        assert svc._director_engines() == {}, "default engine table is no longer empty (update the breakage note)"
 
-        applied = rpc.run_job("director.apply", {"planId": plan["planId"]})
+        # The default table is the REAL wired adapters — the mock plan's op kinds
+        # (removeSilence + trim + caption) all have a concrete ffmpeg engine.
+        engines = svc._director_engines()
+        assert engines, "default engine table is EMPTY (the shipped no-op regressed)"
+        assert set(_engines.WIRED_KINDS) <= set(engines), f"wired kinds missing from the table: {engines.keys()!r}"
+        assert {"removeSilence", "trim", "caption"} <= set(engines), "the plan's op kinds are not all wired"
+
+        applied = rpc.run_job("director.apply", {"planId": plan["planId"]}, timeout=120.0)
         statuses = [op["status"] for op in applied["opsStatus"]]
-        assert "failed" in statuses, f"expected the no-engine failure, got {statuses!r}"
-        assert all(s in ("failed", "planned", "dropped") for s in statuses), f"unexpected applied op: {statuses!r}"
+        # NOT all-failed: at least one wired op RENDERED real media (the trackless
+        # caption op is correctly DROPPED by validate_and_reject — that is expected).
+        assert "applied" in statuses, f"no wired op rendered (all-failed regression): {statuses!r}"
+        assert "failed" not in statuses, f"a wired op failed to render: {statuses!r}"
+
+        # The applied media is REAL: the COPY manifest now points at an ffprobe-valid mp4.
+        copy_manifest = Path(applied["projectCopyPath"])
+        assert ".director-copy" in str(copy_manifest), f"COPY not isolated from source: {copy_manifest}"
+        rendered_path = json.loads(copy_manifest.read_text(encoding="utf-8"))["video"]["path"]
+        width, duration = _ffprobe_ok(rendered_path)
+        assert width > 0 and duration > 0, f"applied output is not a valid mp4: {rendered_path} -> {width}x/{duration}s"
 
 
 # ========================================================================== #

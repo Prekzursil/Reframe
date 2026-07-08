@@ -203,7 +203,24 @@ export function Shorts({ onReexport }: ShortsProps): React.ReactElement {
       ) : null}
 
       {loading ? (
-        <div className="shorts__loading">Loading…</div>
+        // Skeleton-shimmer placeholders shaped like the real portrait cards —
+        // never a bare "LOADING…". aria-busy + label carry the state to AT while
+        // the ghost cards (aria-hidden) hold the grid so it doesn't jump.
+        <div
+          className="shorts__loading"
+          role="status"
+          aria-busy="true"
+          aria-label="Loading your shorts"
+        >
+          <ul className="shorts__skeleton" aria-hidden="true">
+            {[0, 1, 2, 3].map((i) => (
+              <li key={i} className="shorts__skeleton-card">
+                <span className="skeleton shorts__skeleton-thumb" />
+                <span className="skeleton shorts__skeleton-line" />
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : shorts.length === 0 ? (
         <div className="shorts__empty">
           <div className="shorts__empty-poster" aria-hidden="true">

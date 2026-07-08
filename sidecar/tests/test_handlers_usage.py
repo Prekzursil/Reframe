@@ -187,7 +187,11 @@ def test_openrouter_usage_returns_cost_rows_no_full_key(tmp_path: Path) -> None:
 
     svc = Services(data_dir=tmp_path, openrouter_usage_transport=fake_transport)
     _with_openrouter(svc)
-    res = svc.providers_openrouter_usage({}, _ctx())
+    # WU-D2b-2: providers.openrouterUsage GETs /key per RAW key, so main injects
+    # the live key for it — run under the same request-scoped overlay so get_raw()
+    # puts the RAW key on the Authorization header (never the at-rest marker).
+    with svc.settings.key_overlay({"providers": {"openrouter": [OR_KEY]}}):
+        res = svc.providers_openrouter_usage({}, _ctx())
     rows = res["usage"]
     assert len(rows) == 1
     assert rows[0]["provider"] == "OpenRouter"

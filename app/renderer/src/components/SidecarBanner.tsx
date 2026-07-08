@@ -14,6 +14,17 @@ import React, { useCallback, useEffect, useState } from 'react';
 /** Mirror of sidecar.ts SidecarState / preload SidecarStatus. */
 export type SidecarStatus = 'running' | 'restarting' | 'down';
 
+/** Mirror of preload MediaApi RepairSetupResult (WU A5). */
+export interface RepairSetupResult {
+  /** true when the re-run bootstrap fully provisioned the core runtime. */
+  ok: boolean;
+  /**
+   * Human-readable reason when `ok` is false — surfaced in the banner. Absent
+   * when the loud failure arrives separately via the bootstrap-error channel.
+   */
+  reason?: string;
+}
+
 interface SidecarBridge {
   restartSidecar?: () => Promise<{ ok: boolean }>;
   onSidecarStatus?: (cb: (status: SidecarStatus) => void) => () => void;
@@ -24,6 +35,14 @@ interface SidecarBridge {
    * empty app. Returns an unsubscribe fn.
    */
   onBootstrapError?: (cb: (message: string) => void) => () => void;
+  /**
+   * WU A5: re-run the idempotent first-run bootstrap on demand ("Retry setup /
+   * Repair"). Lets a user whose first run partially failed recover WITHOUT
+   * waiting for the next launch. Resolves `{ ok }` — true once the core runtime
+   * is provisioned and the sidecar (re)started; false (with an optional reason)
+   * on a failed or already-running attempt.
+   */
+  repairSetup?: () => Promise<RepairSetupResult>;
 }
 
 /** Read the preload-injected bridge without a global Window augmentation. */
@@ -44,6 +63,9 @@ export function SidecarBanner(): React.ReactElement | null {
   // First-run setup failure message (WU-1). null = no failure; a non-empty
   // string is the actionable error to surface (takes precedence over status).
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  // WU A5: true while a re-run bootstrap ("Retry setup") is in flight, so the
+  // banner shows progress instead of re-offering the button.
+  const [repairing, setRepairing] = useState(false);
 
   useEffect(() => {
     const api = bridge();
@@ -80,12 +102,52 @@ export function SidecarBanner(): React.ReactElement | null {
       });
   }, []);
 
-  // First-run setup failure wins: it means there is no sidecar to restart, so we
-  // show the ACTIONABLE message (no Restart button — the fix is in the message).
+  const onRepair = useCallback(() => {
+    const api = bridge();
+    if (!api || typeof api.repairSetup !== 'function') return;
+    setRepairing(true);
+    api
+      .repairSetup()
+      .then((result) => {
+        setRepairing(false);
+        if (result.ok === true) {
+          // Success: clear the actionable error so the banner falls back to the
+          // (now-healthy) sidecar status stream.
+          setBootstrapError(null);
+        } else if (result.reason) {
+          // Loud failure with a fresh reason — replace the message; the button
+          // returns for another attempt.
+          setBootstrapError(result.reason);
+        }
+        // A reason-less failure keeps the prior actionable message (the
+        // bootstrap-error channel may push a fresh one) and re-offers the button.
+      })
+      .catch(() => {
+        // Never swallow: re-offer Retry by dropping the in-flight state.
+        setRepairing(false);
+      });
+  }, []);
+
+  // First-run setup failure wins: it means there is no sidecar to restart. We
+  // show the ACTIONABLE message plus a "Retry setup" button that re-runs the
+  // idempotent bootstrap on demand (WU A5) — so a half-failed first run is
+  // recoverable in place, without waiting for the next launch.
   if (bootstrapError !== null) {
     return (
       <div className="sidecar-banner sidecar-banner--error" role="alert" aria-live="assertive">
         <span className="sidecar-banner__message">{bootstrapError}</span>
+        {repairing ? (
+          <span className="sidecar-banner__repairing">Retrying setup…</span>
+        ) : (
+          <button
+            type="button"
+            className="sidecar-banner__repair"
+            data-action="repair"
+            onClick={onRepair}
+          >
+            Retry setup
+          </button>
+        )}
       </div>
     );
   }

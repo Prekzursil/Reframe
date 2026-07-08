@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import React from 'react';
-import { TabBar, type TabDef } from './TabBar';
+import { TabBar, type TabDef, type TabGroup } from './TabBar';
 
 const TABS: TabDef[] = [
   { id: 'a', label: 'Alpha' },
@@ -32,5 +32,121 @@ describe('TabBar', () => {
     const children = el.props.children as React.ReactElement[];
     children[1].props.onClick();
     expect(onSelect).toHaveBeenCalledWith('b');
+  });
+});
+
+// WU-3a2: the optional `groups` prop renders tabs in NAMED clusters with an
+// "Advanced" disclosure. Purely ADDITIVE — the flat path above is unchanged.
+const GROUP_TABS: TabDef[] = [
+  { id: 't1', label: 'One' },
+  { id: 't2', label: 'Two' },
+  { id: 't3', label: 'Three' },
+];
+const GROUPS: TabGroup[] = [
+  { id: 'g1', label: 'Primary', tabIds: ['t1', 't2'] },
+  { id: 'g2', label: 'More', tabIds: ['t3'], advanced: true },
+];
+
+describe('TabBar (grouped clusters, WU-3a2)', () => {
+  it('renders named clusters with section labels and stable data-tab-id', () => {
+    const html = renderToStaticMarkup(
+      <TabBar tabs={GROUP_TABS} active="t1" onSelect={() => {}} groups={GROUPS} />,
+    );
+    expect(html).toContain('tabbar--grouped');
+    expect(html).toContain('tabbar__group-label');
+    expect(html).toContain('Primary');
+    expect(html).toContain('More');
+    expect(html).toContain('data-tab-id="t1"');
+    expect(html).toContain('data-tab-id="t3"');
+    // All 3 tabs stay real role="tab" buttons even with one cluster collapsed.
+    expect((html.match(/role="tab"/g) ?? []).length).toBe(3);
+  });
+
+  it('collapses the advanced cluster by default (aria-expanded=false, panel hidden)', () => {
+    const html = renderToStaticMarkup(
+      <TabBar tabs={GROUP_TABS} active="t1" onSelect={() => {}} groups={GROUPS} />,
+    );
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toMatch(/class="tabbar__advanced-panel"[^>]*hidden/);
+  });
+
+  it('expands the advanced cluster when advancedOpen is true (panel not hidden)', () => {
+    const html = renderToStaticMarkup(
+      <TabBar tabs={GROUP_TABS} active="t1" onSelect={() => {}} groups={GROUPS} advancedOpen />,
+    );
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).not.toMatch(/class="tabbar__advanced-panel"[^>]*hidden/);
+  });
+
+  it('omits the Advanced toggle when no cluster is flagged advanced', () => {
+    const primaryOnly: TabGroup[] = [{ id: 'g1', label: 'Primary', tabIds: ['t1', 't2', 't3'] }];
+    const html = renderToStaticMarkup(
+      <TabBar tabs={GROUP_TABS} active="t2" onSelect={() => {}} groups={primaryOnly} />,
+    );
+    expect(html).not.toContain('tabbar__advanced-toggle');
+    expect(html).toContain('tabbar--grouped');
+    expect((html.match(/role="tab"/g) ?? []).length).toBe(3);
+  });
+
+  it('renders a persistent Export action only when onExport is provided', () => {
+    // design-review P1: EXPORT is the terminal goal, so it gets a standing button
+    // in the grouped strip — absent by default (no onExport).
+    const without = renderToStaticMarkup(
+      <TabBar tabs={GROUP_TABS} active="t1" onSelect={() => {}} groups={GROUPS} />,
+    );
+    expect(without).not.toContain('tabbar__export');
+
+    const withExport = renderToStaticMarkup(
+      <TabBar
+        tabs={GROUP_TABS}
+        active="t1"
+        onSelect={() => {}}
+        groups={GROUPS}
+        onExport={() => {}}
+      />,
+    );
+    expect(withExport).toContain('tabbar__export');
+    expect(withExport).toContain('Export');
+  });
+
+  it('invokes onExport when the Export action is clicked', () => {
+    const onExport = vi.fn();
+    const el = TabBar({
+      tabs: GROUP_TABS,
+      active: 't1',
+      onSelect: () => {},
+      groups: GROUPS,
+      onExport,
+    }) as React.ReactElement;
+    const children = el.props.children as React.ReactNode[];
+    // The Export button is the last child of the grouped root.
+    const exportButton = children[children.length - 1] as React.ReactElement;
+    exportButton.props.onClick();
+    expect(onExport).toHaveBeenCalledTimes(1);
+  });
+
+  it('invokes onToggleAdvanced when the disclosure toggle is clicked', () => {
+    const onToggle = vi.fn();
+    const el = TabBar({
+      tabs: GROUP_TABS,
+      active: 't1',
+      onSelect: () => {},
+      groups: GROUPS,
+      advancedOpen: false,
+      onToggleAdvanced: onToggle,
+    }) as React.ReactElement;
+    // The Advanced disclosure toggle now sits as a direct SIBLING of the tablist
+    // (moved OUT of role="tablist" so the list owns only tabs). The grouped root's
+    // children are [tablistDiv, toggleOrNull, exportOrNull]; locate the toggle by
+    // its stable class rather than by position.
+    const children = (el.props.children as React.ReactNode[]).flat();
+    const toggleButton = children.find(
+      (c): c is React.ReactElement =>
+        typeof c === 'object' &&
+        c !== null &&
+        String((c as React.ReactElement).props?.className ?? '') === 'tabbar__advanced-toggle',
+    ) as React.ReactElement;
+    toggleButton.props.onClick();
+    expect(onToggle).toHaveBeenCalledTimes(1);
   });
 });

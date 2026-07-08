@@ -29,6 +29,7 @@ from media_studio import library as _library
 from media_studio.handlers import Services
 from media_studio.jobs import JobRegistry
 from media_studio.protocol import RpcContext
+from media_studio.settings_store import INJECTED_KEYS_FIELD
 
 from tests.e2e_ai2_mock_model import MockModelServer
 
@@ -57,8 +58,14 @@ class Rpc:
     returning the done result.
     """
 
-    def __init__(self, svc: Services) -> None:
+    def __init__(self, svc: Services, *, keys: dict[str, list[str]] | None = None) -> None:
         self.svc = svc
+        # WU-D2b-2 CONSUME: this drive STANDS IN for the Electron main process,
+        # which persists provider keys only as redacted MARKERS and re-injects the
+        # DPAPI-decrypted raw keys under ``_injectedKeys`` on EVERY provider-calling
+        # request (``_key_overlay_wrapper`` then makes ``get_raw()`` see them for
+        # that request only). We LEARN keys from provider writes and re-inject them.
+        self.keys: dict[str, list[str]] = {k: list(v) for k, v in (keys or {}).items()}
         self.events: list[Any] = []
         self.jobs = JobRegistry(
             emit_progress=lambda jid, pct, msg: self.events.append(("progress", jid, pct, msg)),
@@ -71,8 +78,32 @@ class Rpc:
         assert fn is not None, f"method not registered: {method}"
         return fn
 
+    def _learn_keys(self, method: str, params: dict[str, Any]) -> None:
+        """Capture raw keys from provider WRITES (as main does on upsert/save)."""
+        if not isinstance(params, dict):
+            return
+        entries: list[Any]
+        if method == "providers.upsert":
+            nested = params.get("provider")
+            entries = [nested if isinstance(nested, dict) else params]
+        elif isinstance(params.get("providers"), list):
+            entries = [p for p in params["providers"] if isinstance(p, dict)]
+        else:
+            entries = []
+        for entry in entries:
+            pid, api_keys = entry.get("id"), entry.get("apiKeys")
+            if isinstance(pid, str) and isinstance(api_keys, list):
+                self.keys[pid] = [str(k) for k in api_keys]
+
+    def _inject(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Attach the learned raw keys as ``_injectedKeys`` (main's per-request path)."""
+        if self.keys and isinstance(params, dict) and INJECTED_KEYS_FIELD not in params:
+            return {**params, INJECTED_KEYS_FIELD: {"providers": {k: list(v) for k, v in self.keys.items()}}}
+        return params
+
     def call(self, method: str, params: dict[str, Any]) -> Any:
-        return self._handler(method)(params, self.ctx)
+        self._learn_keys(method, params)
+        return self._handler(method)(self._inject(params), self.ctx)
 
     def run_job(self, method: str, params: dict[str, Any], *, timeout: float = 30.0) -> dict[str, Any]:
         out = self.call(method, params)
@@ -194,6 +225,22 @@ def _cloud_settings(base_url: str, *, capabilities: list[str], model: str = "moc
     }
 
 
+def _keyring(settings: dict[str, Any]) -> dict[str, list[str]]:
+    """The ``{providerId: [rawKey, ...]}`` main would DPAPI-inject per request.
+
+    Extracted from a settings dict's provider entries so the :class:`Rpc` drive
+    re-injects the raw keys (the at-rest store keeps only redacted markers under
+    WU-D2b-2, so the factory seams only egress with a live key when it is
+    re-injected — exactly the production main-process behaviour)."""
+    providers = settings.get("providers")
+    out: dict[str, list[str]] = {}
+    for prov in providers if isinstance(providers, list) else []:
+        pid, api_keys = prov.get("id"), prov.get("apiKeys")
+        if isinstance(pid, str) and isinstance(api_keys, list):
+            out[pid] = [str(k) for k in api_keys]
+    return out
+
+
 def _new_services(tmp: Path, **over: Any) -> Services:
     return Services(data_dir=tmp / "data", **over)
 
@@ -255,9 +302,10 @@ def test_intel_semantic_positive_control_real_embedder_over_http(tmp_path: Path)
     The capability itself (real /v1/embeddings egress -> persisted vectors ->
     cosine-ranked search) is proven by injecting a REAL
     :class:`embedder.CloudEmbedder` with a VALID raw key and NO transport (so it
-    opens a real socket to the mock). The ONLY thing bypassed is the buggy line
-    that hands the embedder a REDACTED key (see the xfail companion below); the
-    wire protocol, vector persistence, and cosine ranking are all genuine.
+    opens a real socket to the mock). This pins the wire protocol / vector
+    persistence / cosine ranking directly at the embedder seam; the sibling
+    ``test_intel_semantic_settings_driven_egress_over_http`` proves the SAME egress
+    through the full settings-driven resolver (with the per-request key injection).
     """
     from media_studio.models import embedder as _embedder
 
@@ -291,27 +339,20 @@ def test_intel_semantic_positive_control_real_embedder_over_http(tmp_path: Path)
         assert out["hits"][0]["score"] >= out["hits"][1]["score"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "PRODUCT BUG (TOP_BREAKAGE): index_build/index_search resolve the embedder "
-        "from self.settings.get() (REDACTED apiKeys, last-4 '…-key') instead of "
-        "get_raw(), so on the REAL HTTP egress path the Authorization header is a "
-        "corrupted 'Bearer …-key' that crashes (non-latin-1 ellipsis) / would be "
-        "rejected by a real cloud server. The vision/director factories correctly "
-        "use get_raw() (handlers.py:833/1025); the embedder path does not. Unit "
-        "tests miss it because they inject embed_transport (the key never hits the "
-        "wire). Candidate fix: _resolve_index_embedder should read "
-        "self.settings.get_raw()."
-    ),
-)
-def test_intel_semantic_settings_driven_egress_redacted_key_bug(tmp_path: Path) -> None:
-    """The settings-DRIVEN index egress (no injected embedder) — XFAIL on the bug.
+def test_intel_semantic_settings_driven_egress_over_http(tmp_path: Path) -> None:
+    """The settings-DRIVEN index egress (no injected embedder) — the real client path.
 
-    This is the path a real client takes: providers/consent/routing in settings,
-    no seam override. It SHOULD egress the transcript to /v1/embeddings with the
-    configured key. It does not — the redacted-key defect above. Strict xfail so
-    this flips to a hard failure the moment the product is fixed.
+    Providers/consent/routing live in settings, no seam override. ``index.build``
+    resolves the embedder through :meth:`_resolve_index_embedder`, which reads the
+    RAW keys via ``get_raw()`` (handlers ``index_build`` captures ``get_raw()``
+    synchronously up front). Under WU-D2b-2 the at-rest store keeps only redacted
+    MARKERS, so the RAW key reaches the wire ONLY when main re-injects it per
+    request under ``_injectedKeys`` — which the :class:`Rpc` drive replicates (it
+    LEARNS the keys the settings carry and re-injects them on every call). With the
+    key present the transcript egresses cleanly to /v1/embeddings with the routed
+    model; OMITTING the injection is what leaves a corrupt ``Bearer …-key`` marker
+    on the wire (the historical "redacted key" symptom), so this test proves the
+    real client path egresses correctly when the key is injected as in production.
     """
     media = tmp_path / "talk.mp4"
     _make_landscape_clip(media)
@@ -319,14 +360,19 @@ def test_intel_semantic_settings_driven_egress_redacted_key_bug(tmp_path: Path) 
         svc = _new_services(tmp_path)
         protocol.clear_methods()
         handlers.register_all(services=svc)
-        svc.settings.set(_cloud_settings(server.base_url, capabilities=["text"]))
+        cloud = _cloud_settings(server.base_url, capabilities=["text"])
+        svc.settings.set(cloud)
         vid = _add_video(svc, media, transcript=_transcript())
-        rpc = Rpc(svc)
+        rpc = Rpc(svc, keys=_keyring(cloud))
 
         built = rpc.run_job("index.build", {"videoId": vid})
-        # Expected (post-fix): a real cloud egress with the routed model.
+        # A real cloud egress with the routed model (NOT the "local" no-egress fallback).
         assert built["model"] == "mock-model"
         assert server.hits["embeddings"] >= 1
+        # The egress carried the RAW key (re-injected per request), never a marker.
+        assert server.auth_headers.get("embeddings") == "Bearer sk-e2e-ai2-mock-key", (
+            f"index egress did not carry the RAW key: {server.auth_headers.get('embeddings')!r}"
+        )
 
 
 # ========================================================================== #
@@ -343,9 +389,10 @@ def test_intel_director_plan_real_chat_editplan_over_http(tmp_path: Path) -> Non
         svc = _new_services(tmp_path)
         protocol.clear_methods()
         handlers.register_all(services=svc)
-        svc.settings.set(_cloud_settings(server.base_url, capabilities=["text"]))
+        cloud = _cloud_settings(server.base_url, capabilities=["text"])
+        svc.settings.set(cloud)
         vid = _add_video(svc, media, transcript=_transcript())
-        rpc = Rpc(svc)
+        rpc = Rpc(svc, keys=_keyring(cloud))
 
         done = rpc.run_job("director.plan", {"videoId": vid, "goal": "tighten this into a punchy short"})
         # The mock returned a valid EditPlan JSON; the real parser + validator accepted it.
@@ -416,9 +463,10 @@ def test_intel_bestframe_thumbnail_real_jpg(tmp_path: Path) -> None:
         )
         protocol.clear_methods()
         handlers.register_all(services=svc)
-        svc.settings.set(_cloud_settings(server.base_url, capabilities=["text", "vision"]))
+        cloud = _cloud_settings(server.base_url, capabilities=["text", "vision"])
+        svc.settings.set(cloud)
         vid = _add_video(svc, media, transcript=_transcript())
-        rpc = Rpc(svc)
+        rpc = Rpc(svc, keys=_keyring(cloud))
 
         done = rpc.run_job(
             "thumbnail.select",

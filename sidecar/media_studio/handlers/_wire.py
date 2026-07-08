@@ -133,42 +133,79 @@ _LOCAL_ROUTE = "local"
 
 
 def _missing_tier_assets(component_names: tuple[str, ...], models_present: dict[str, bool]) -> list[str]:
-    """The de-duplicated asset names a tier needs that are NOT installed.
+    """The de-duplicated, ENSURABLE asset names a tier needs that are NOT installed.
 
     Maps each member component to its pinned asset (``_COMPONENT_ASSETS``) and
-    keeps only the assets whose weight is not present. Components sharing an asset
+    keeps only the assets whose weight is not present AND that the manifest still
+    knows (``manifest.get_asset`` is not None). Components sharing an asset
     (e.g. ``vlm_backbone``/``aesthetic`` both use SigLIP-2) collapse to one name.
+
+    B1: a mapped-but-DE-REGISTERED asset is dropped here so it never reaches an
+    ``assets.ensure`` action — emitting it would trip the manager's "unknown
+    asset(s)" gate. Only manifest-known targets are ever emitted.
     """
+    from ..assets import manifest as _manifest  # local: import-light, data only
+
     missing: list[str] = []
     for name in component_names:
         if models_present.get(name, False):
             continue
         asset = _COMPONENT_ASSETS.get(name)
-        if asset is not None and asset not in missing:
-            missing.append(asset)
+        if asset is None or asset in missing:
+            continue
+        if _manifest.get_asset(asset) is None:
+            continue  # de-registered: never emit an un-ensurable asset name
+        missing.append(asset)
     return missing
+
+
+def _tier_has_missing_weight(component_names: tuple[str, ...], models_present: dict[str, bool]) -> bool:
+    """True when any model-backed member component's weight is not installed.
+
+    Unlike :func:`_missing_tier_assets` (which reports only ENSURABLE assets), this
+    counts a missing component even when its asset is de-registered — so a tier
+    with an un-downloadable missing weight is never falsely reported ``ready``.
+    """
+    return any(name in _COMPONENT_ASSETS and not models_present.get(name, False) for name in component_names)
+
+
+def _missing_weights_phrase(ensurable: list[str]) -> str:
+    """The human ``blockedBy`` phrase for a tier with missing weights.
+
+    Names the ensurable (manifest-known) assets when there are any; otherwise a
+    generic phrase (the missing weights map only to de-registered assets, so no
+    concrete download target can be named yet — B4 re-registers them).
+    """
+    if ensurable:
+        return f"missing model weights: {', '.join(ensurable)}"
+    return "missing model weights (not yet available for download)"
 
 
 def _tier_readiness_items(models_present: dict[str, bool], *, offline: bool) -> list[dict[str, Any]]:
     """Roll each runnable tier up to a :class:`ReadinessItem` from installed state.
 
     ``ready`` when every member weight is installed; ``needsDownload`` (with an
-    ``assets.ensure`` action over the missing names) when one is missing online;
-    ``unavailable`` when one is missing AND Offline mode is on (download blocked).
+    ``assets.ensure`` action over the missing, manifest-KNOWN asset names) when a
+    weight is missing online AND at least one is ensurable; ``unavailable`` when a
+    weight is missing but Offline mode is on (download blocked) OR none of the
+    missing weights map to a registered asset yet (B1: emit no un-ensurable name,
+    no false ``ready``).
     """
     items: list[dict[str, Any]] = []
     for tier_id, label, components in _READINESS_TIERS:
-        missing = _missing_tier_assets(components, models_present)
-        if not missing:
+        if not _tier_has_missing_weight(components, models_present):
             items.append(_readiness_item(tier_id, label, "ready", "", None))
             continue
-        blocked = f"missing model weights: {', '.join(missing)}"
+        ensurable = _missing_tier_assets(components, models_present)
+        blocked = _missing_weights_phrase(ensurable)
         if offline:
             items.append(
                 _readiness_item(tier_id, label, "unavailable", f"{blocked} (Offline mode blocks downloads)", None)
             )
+        elif not ensurable:
+            items.append(_readiness_item(tier_id, label, "unavailable", blocked, None))
         else:
-            action = {"kind": "assets.ensure", "assets": missing}
+            action = {"kind": "assets.ensure", "assets": ensurable}
             items.append(_readiness_item(tier_id, label, "needsDownload", blocked, action))
     return items
 

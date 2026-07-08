@@ -469,36 +469,60 @@ def _has_cut_source(
 # --------------------------------------------------------------------------- #
 # asset registration (mirrors diarize / parakeet_asr / ctc_align)
 # --------------------------------------------------------------------------- #
-#: pinned TransNetV2 commit (SOTA manifest #4).
-ASSET_REVISION: str = "85cef72"
-ASSET_SIZE_MB: int = 40
+#: pinned 40-hex HF commit of the TransNetV2 re-host (WU I1 -> B4). ``_HF_RESOLVE_RE``
+#: rejects a moving branch/tag, so this MUST be the full commit hash.
+ASSET_REVISION: str = "a100c02a6e0891dc227762a052c4adfd151db0dc"
+#: ~30.5 MB converted safetensors (30,481,608 B) — the vendored 40 was an overestimate.
+ASSET_SIZE_MB: int = 30
+#: PINNED re-host URL for the converted TransNetV2 weight. The "upstream HF 404"
+#: framing was wrong (``soCzech/TransNetV2`` is a GitHub repo, never a HF model
+#: repo); the weight is re-hosted as verified safetensors on HF
+#: ``Prekzursil/reframe-asd-weights`` (WU I1: bytes from the Sn4kehead mirror,
+#: hash matches the dossier; TF-regen infeasible on py3.14 / no-TF-wheels).
+ASSET_URL: str = (
+    f"https://huggingface.co/Prekzursil/reframe-asd-weights/resolve/{ASSET_REVISION}/transnetv2.safetensors"
+)
+#: sha256 of the HOSTED ``.safetensors`` bytes (WU I1: re-downloaded + re-hashed =
+#: MATCH; NOT a fabricated hash).
+ASSET_SHA256: str = "e2877ef6750ccbb3f02256bb4b5f4f53035111677be641d56b9723af499f881d"
+#: relative dest under the assets root — a ``.safetensors`` extension so the
+#: verify-before-load gate (``_safetensors_loader``) accepts it (pickle is refused).
+ASSET_DEST: str = "models/transnetv2.safetensors"
 
 
 def register_scene_transnet_assets() -> None:
-    """Register the TransNetV2 PyTorch weights as an on-demand asset (idempotent).
+    """Register the re-hosted TransNetV2 PyTorch weight as an on-demand asset (idempotent).
 
-    F3c-ESCALATION (NOT registered): the upstream ``soCzech/TransNetV2`` HF repo now
-    returns HTTP 404 (removed; verified 2026-06-28), so its commit revision can no
-    longer be pinned. F3c makes a pinned commit-hash ``hf_revision`` MANDATORY. Live
-    re-uploads exist (``Sn4kehead/TransNetV2`` and ``MiaoshouAI/transnetv2-pytorch-
-    weights`` both host ``transnetv2-pytorch-weights.pth``) but their snapshot
-    LAYOUT differs from the original this module's loader was written against, so a
-    blind re-point risks a silent scene-detection break — out of scope for a
-    security WU. The entry is intentionally NOT registered (``default_models_present``
-    honestly reports it unavailable) rather than pinning a dead/unverified repo.
-    OPERATOR ACTION REQUIRED: confirm a mirror is loader-compatible, then restore the
-    ``register_asset`` call below with ``hf_repo=<mirror>`` + its pinned commit hash.
+    WU B4 (re-host RESTORED): the "upstream HF 404" framing was wrong —
+    ``soCzech/TransNetV2`` is a GitHub repo (MIT), never a HF model repo, and the
+    ``.pth`` is a derived artifact. The weight is re-hosted as verified safetensors
+    on HF ``Prekzursil/reframe-asd-weights`` (WU I1). The URL pins the 40-hex HF
+    commit (``_HF_RESOLVE_RE`` rejects a moving branch/tag) and the sha256 is the
+    hosted ``.safetensors`` bytes (F3c: a download is mandatorily integrity-pinned).
 
-        manifest.register_asset(
-            manifest.AssetEntry(
-                name=ASSET_NAME, kind="model", size_mb=ASSET_SIZE_MB,
-                label="TransNetV2 (scene-cut detection, MIT)",
-                installer="hf", hf_repo=HF_REPO, hf_revision="<full 40-hex commit>",
-            )
-        )
+    LICENSE: MIT (© Tomáš Souček & Jakub Lokoč; attribution on the HF repo card).
+    This is an ``optional``-tier, on-demand detector that ENHANCES the always-on
+    PySceneDetect fallback (soft/dissolve transitions), never a prerequisite.
     """
-    # Intentionally a no-op until the dead upstream is replaced (see docstring).
-    return
+    from ..assets import manifest  # noqa: PLC0415 - lazy: avoids an import cycle
+
+    manifest.register_asset(
+        manifest.AssetEntry(
+            name=ASSET_NAME,
+            kind="model",
+            size_mb=ASSET_SIZE_MB,
+            dest=ASSET_DEST,
+            label="TransNetV2 shot-transition detector (MIT)",
+            tier="optional",
+            why=(
+                "Catches soft / dissolve scene transitions the CPU PySceneDetect fallback "
+                "misses — an on-demand accuracy boost for clip boundaries, never required."
+            ),
+            installer="download",
+            url=ASSET_URL,
+            sha256=ASSET_SHA256,
+        )
+    )
 
 
 # Register the asset at import (mirrors diarize.register_diarize_assets()).
@@ -506,9 +530,12 @@ register_scene_transnet_assets()
 
 
 __all__ = [
+    "ASSET_DEST",
     "ASSET_NAME",
     "ASSET_REVISION",
+    "ASSET_SHA256",
     "ASSET_SIZE_MB",
+    "ASSET_URL",
     "DEFAULT_MERGE_EPS",
     "DEFAULT_THRESHOLD",
     "HF_REPO",

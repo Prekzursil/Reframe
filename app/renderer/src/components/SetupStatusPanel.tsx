@@ -28,7 +28,7 @@ export function SetupStatusPanel({
   rpcClient,
   title = 'Setup status',
 }: SetupStatusPanelProps): React.ReactElement {
-  /* v8 ignore next -- the `?? client` default only runs in the real app; every test injects rpcClient. */
+  /* v8 ignore next -- the `?? client` default runs in the real app + the WU2 resilience test (window.api missing); most tests inject rpcClient. */
   const api = rpcClient ?? client;
   const [report, setReport] = useState<SelfTestReport | null>(null);
   const [error, setError] = useState<string>('');
@@ -41,19 +41,28 @@ export function SetupStatusPanel({
     setLoading(true);
     setError('');
     setReport(null);
-    Promise.resolve(api.system.selfTest())
-      .then((res) => {
-        if (alive) {
-          setReport(res ?? null);
-          setLoading(false);
-        }
-      })
-      .catch((err: unknown) => {
-        if (alive) {
-          setError(errText(err));
-          setLoading(false);
-        }
-      });
+    // WU2 resilience: the eager bridge access throws SYNCHRONOUSLY when
+    // window.api is missing (before Promise.resolve wraps it), so `.catch` below
+    // never sees it. Guard it sync-safely so a missing bridge shows an inline
+    // error here instead of a thrown-through blank screen.
+    try {
+      Promise.resolve(api.system.selfTest())
+        .then((res) => {
+          if (alive) {
+            setReport(res ?? null);
+            setLoading(false);
+          }
+        })
+        .catch((err: unknown) => {
+          if (alive) {
+            setError(errText(err));
+            setLoading(false);
+          }
+        });
+    } catch (err) {
+      setError(errText(err));
+      setLoading(false);
+    }
     return () => {
       alive = false;
     };

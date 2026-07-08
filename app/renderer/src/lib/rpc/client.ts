@@ -42,6 +42,10 @@ import type {
   JobInfo,
   LineageResult,
   RegenerateResult,
+  KeepCopyResult,
+  ManagedClearResult,
+  ManagedEvictResult,
+  ManagedStatus,
   RelinkResult,
   RevealResult,
   LocalModelPlan,
@@ -58,7 +62,10 @@ import type {
   Project,
   ProviderConsent,
   ProviderEntry,
+  ProviderUsageAvailability,
   ProvidersListResponse,
+  RevealKeyResult,
+  ProxyStateEvent,
   ReadinessItem,
   RecommendResponse,
   RoutingMode,
@@ -113,6 +120,16 @@ export function onJobDone(cb: (event: DoneEvent) => void): () => void {
   return api.onJobDone(cb);
 }
 
+/**
+ * WU B3: subscribe to playback-proxy build-state pushes (`proxy.state`). Returns
+ * an unsubscribe fn (a no-op when the preload bridge predates the channel).
+ */
+export function onProxyState(cb: (event: ProxyStateEvent) => void): () => void {
+  const api = bridge();
+  if (typeof api.onProxyState !== 'function') return () => undefined;
+  return api.onProxyState(cb);
+}
+
 // ---- Method-typed convenience surface (the canonical client) -------------
 //
 // Thin, named wrappers around `rpc(...)` for the §2 method registry. New code
@@ -139,6 +156,14 @@ export const client = {
     /** `library.relink {id, path}` — hash-verified re-point of a moved source (L5). */
     relink: (id: string, path: string): Promise<RelinkResult> =>
       rpc('library.relink', { id, path }),
+    /** `library.keepCopy {id}` — OPT-IN: copy the source into the managed store (WU-3b1). */
+    keepCopy: (id: string): Promise<KeepCopyResult> => rpc('library.keepCopy', { id }),
+    /** `library.managedStatus` — the managed store's used/cap/count snapshot (WU-3b1). */
+    managedStatus: (): Promise<ManagedStatus> => rpc('library.managedStatus'),
+    /** `library.managedEvict {id}` — evict ONE managed copy back to its original (WU-3b1). */
+    managedEvict: (id: string): Promise<ManagedEvictResult> => rpc('library.managedEvict', { id }),
+    /** `library.managedClear` — evict EVERY managed copy (WU-3b1). */
+    managedClear: (): Promise<ManagedClearResult> => rpc('library.managedClear'),
   },
 
   project: {
@@ -500,6 +525,16 @@ export const client = {
       capabilities?: string[];
     }): Promise<TestKeyResult> => rpc('providers.testKey', args),
     /**
+     * `providers.revealKey` — the ONE sanctioned plaintext exception (WU-D3).
+     * Returns exactly ONE raw key for a TRANSIENT, explicit-click, masked-by-default
+     * display. SECURITY: callers MUST hold the returned `key` in a transient ref
+     * only — never React state/store, logs, telemetry, or crash reports — and wipe
+     * it on re-mask/blur/timeout. `index` (default 0) selects among a provider's
+     * rotation-pool keys.
+     */
+    revealKey: (id: string, index = 0): Promise<RevealKeyResult> =>
+      rpc('providers.revealKey', { id, index }),
+    /**
      * `providers.setConsent` — set per-data-type egress consent for a provider
      * (WU-keys / SE1). TEXT and FRAMES are independent: only the keys present in
      * the patch change, so revoking `frames` leaves `text` intact. Returns the
@@ -519,6 +554,13 @@ export const client = {
      */
     openrouterUsage: (): Promise<{ usage: OpenRouterUsageRow[] }> =>
       rpc('providers.openrouterUsage'),
+    /**
+     * `providers.usageAvailability` (WU-D4) — honest per-provider note on whether a
+     * provider-side usage API exists (OpenRouter yes; OpenAI/Anthropic need an org
+     * admin key; others publish nothing per-key). Never a fabricated number.
+     */
+    usageAvailability: (): Promise<{ availability: ProviderUsageAvailability[] }> =>
+      rpc('providers.usageAvailability'),
     /**
      * `providers.spend` — month-to-date cumulative cloud spend + the configured
      * monthly caps (WU-spend-cap). Read-only; all money is integer cents.

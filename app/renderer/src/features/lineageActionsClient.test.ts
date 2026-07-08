@@ -40,6 +40,11 @@ describe('lineageActions — rpc forwards', () => {
     expect(rpcMock).toHaveBeenCalledWith('library.relink', { id: 'v1', path: '/new.mp4' });
   });
 
+  it('pinHash forwards the id (WU-1f relink baseline)', async () => {
+    await lineageActions.pinHash('v1');
+    expect(rpcMock).toHaveBeenCalledWith('library.pinHash', { id: 'v1' });
+  });
+
   it('runRegenerate re-dispatches the op with its params', async () => {
     await lineageActions.runRegenerate({
       id: 'v1',
@@ -60,6 +65,27 @@ describe('lineageActions — rpc forwards', () => {
       ready: true,
     });
     expect(rpcMock).toHaveBeenCalledWith('shorts.select', {});
+  });
+});
+
+describe('lineageActions — managed keep-a-copy slice (WU-3b2)', () => {
+  it('status forwards to library.managedStatus', async () => {
+    rpcMock.mockResolvedValue({ sizeBytes: 0, capBytes: 1, count: 0, entries: [] });
+    await lineageActions.managed!.status();
+    expect(rpcMock).toHaveBeenCalledWith('library.managedStatus', undefined);
+  });
+
+  it('keep forwards the id and UNWRAPS the {managed} envelope', async () => {
+    const managed = { entityId: 'v1', originalPath: '/o.mp4', managedPath: '/m.mp4' };
+    rpcMock.mockResolvedValue({ managed });
+    const row = await lineageActions.managed!.keep('v1');
+    expect(rpcMock).toHaveBeenCalledWith('library.keepCopy', { id: 'v1' });
+    expect(row).toBe(managed);
+  });
+
+  it('evict forwards the id to library.managedEvict', async () => {
+    await lineageActions.managed!.evict('v1');
+    expect(rpcMock).toHaveBeenCalledWith('library.managedEvict', { id: 'v1' });
   });
 });
 

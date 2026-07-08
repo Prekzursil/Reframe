@@ -48,11 +48,18 @@ class RecordingRun:
         self.code = code
         self.write_output = write_output
         self.calls: list[list[str]] = []
+        self.cwds: list[str | None] = []
 
-    def __call__(self, argv, *, total_sec: float = 0.0, on_progress=None, should_cancel=None) -> int:
+    def __call__(self, argv, *, total_sec: float = 0.0, on_progress=None, should_cancel=None, cwd=None) -> int:
         self.calls.append(list(argv))
+        self.cwds.append(cwd)
         if self.write_output and self.code == 0 and argv[-1] != "-":
-            Path(argv[-1]).write_bytes(b"\x00mp4")
+            # Mirror the real runner: the .trf/output filename in the filtergraph is
+            # a BARE basename resolved against cwd, so write the output there too.
+            out = argv[-1]
+            if cwd is not None and not Path(out).is_absolute():
+                out = str(Path(cwd) / out)
+            Path(out).write_bytes(b"\x00mp4")
         if on_progress is not None:
             on_progress(100.0, "done")
         return self.code
@@ -82,9 +89,11 @@ class TestArgvBuilders:
         assert isinstance(argv, list)
         vf = argv[argv.index("-vf") + 1]
         assert vf.startswith("vidstabdetect=")
-        # Windows backslashes in the trf path are forward-slashed (':' is the
-        # vidstab option separator) — and the drive ':' survives as a path token.
-        assert "result=C:/out/clip.trf" in vf
+        # The .trf is referenced by BARE basename (the engine runs ffmpeg with
+        # cwd=<trf dir>); an absolute Windows path's drive colon would break the -vf
+        # filtergraph parser, and no escaping form works (verified against ffmpeg 8).
+        assert "result=clip.trf" in vf
+        assert "C:/out/clip.trf" not in vf and "/out/" not in vf
         # PASS 1 decodes to null (no output video).
         assert argv[-1] == "-" and "null" in argv
 
@@ -92,7 +101,8 @@ class TestArgvBuilders:
         argv = st.build_transform_argv("/in.mp4", "/out.trf", "/out.mp4", settings=settings)
         vf = argv[argv.index("-vf") + 1]
         assert vf.startswith("vidstabtransform=")
-        assert "input=/out.trf" in vf
+        # BARE basename (see the detect test) — ffmpeg runs with cwd=<trf dir>.
+        assert "input=out.trf" in vf
         # audio copied through; video re-encoded h264.
         assert argv[argv.index("-c:a") + 1] == "copy"
         assert argv[argv.index("-c:v") + 1] == "libx264"
@@ -163,6 +173,37 @@ class TestEngine:
         # The intermediate .trf was cleaned up.
         assert not Path(out).with_suffix(".trf").exists()
 
+    def test_stabilize_runs_ffmpeg_in_trf_dir_with_bare_basename(self, settings, tmp_path):
+        # Windows regression (v1.4): an absolute drive-colon .trf path breaks the
+        # -vf filtergraph parser and NO escaping form works, so BOTH ffmpeg passes
+        # must run with cwd=<trf dir> and reference the .trf by BARE basename.
+        run = RecordingRun()
+        engine = st.StabilizeEngine(
+            settings, run=run, duration=lambda p, s=None: 5.0, probe_runner=probe_with(VIDSTAB_FILTERS)
+        )
+        out = str(tmp_path / "clip.stabilized.mp4")
+        engine.stabilize(str(tmp_path / "in.mp4"), out)
+        trf_dir = str(tmp_path)
+        trf_name = Path(out).with_suffix(".trf").name
+        assert run.cwds == [trf_dir, trf_dir]
+        det_vf = run.calls[0][run.calls[0].index("-vf") + 1]
+        tr_vf = run.calls[1][run.calls[1].index("-vf") + 1]
+        assert f"result={trf_name}" in det_vf and trf_dir not in det_vf
+        assert f"input={trf_name}" in tr_vf and trf_dir not in tr_vf
+
+    def test_stabilize_absolutizes_relative_in_out(self, settings, tmp_path, monkeypatch):
+        # Guard: ffmpeg runs with cwd=<trf dir>, so a RELATIVE in/out must be
+        # absolutized first or it would misresolve against that cwd.
+        monkeypatch.chdir(tmp_path)
+        run = RecordingRun()
+        engine = st.StabilizeEngine(
+            settings, run=run, duration=lambda p, s=None: 1.0, probe_runner=probe_with(VIDSTAB_FILTERS)
+        )
+        engine.stabilize("in.mp4", "sub/out.mp4")  # both relative
+        det = run.calls[0]
+        assert Path(det[det.index("-i") + 1]).is_absolute()  # input absolutized
+        assert Path(run.calls[1][-1]).is_absolute()  # transform output absolutized
+
     def test_stabilize_raises_when_unavailable(self, settings):
         engine = st.StabilizeEngine(settings, run=RecordingRun(), probe_runner=probe_with(NO_VIDSTAB_FILTERS))
         with pytest.raises(st.StabilizeError, match="libvidstab"):
@@ -184,7 +225,7 @@ class TestEngine:
             def __init__(self) -> None:
                 self.calls: list[list[str]] = []
 
-            def __call__(self, argv, *, total_sec=0.0, on_progress=None, should_cancel=None) -> int:
+            def __call__(self, argv, *, total_sec=0.0, on_progress=None, should_cancel=None, cwd=None) -> int:
                 self.calls.append(list(argv))
                 return 0 if len(self.calls) == 1 else 1
 

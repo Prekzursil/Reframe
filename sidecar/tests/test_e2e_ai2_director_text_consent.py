@@ -238,7 +238,17 @@ def test_director_plan_never_egresses_to_a_non_consented_provider_in_a_mixed_poo
         vid = _add_video(svc, media)
         _set_transcript(svc, vid)
 
-        done = rpc.run_job("director.plan", {"videoId": vid, "goal": "tighten"})
+        # WU-D2b-2: main injects the live keys for BOTH configured providers; the
+        # per-entry consent filter still drops the non-consented "no" before the
+        # pool is built, so only the consented "yes" ever receives the RAW key.
+        done = rpc.run_job(
+            "director.plan",
+            {
+                "videoId": vid,
+                "goal": "tighten",
+                "_injectedKeys": {"providers": {"no": [_RAW_KEY], "yes": [_RAW_KEY]}},
+            },
+        )
 
         assert no_srv.hits["chat"] == 0, (
             "transcript egressed to the NON-consented provider despite revoked text consent"
@@ -264,7 +274,17 @@ def test_director_plan_egresses_when_text_consent_granted(tmp_path: Path) -> Non
         vid = _add_video(svc, media)
         _set_transcript(svc, vid)
 
-        done = rpc.run_job("director.plan", {"videoId": vid, "goal": "tighten into a punchy short"})
+        # WU-D2b-2: at rest only the marker persists; main injects the DPAPI key
+        # under `_injectedKeys`, which the composition root turns into the
+        # request-scoped overlay the editPlan factory reads for the RAW egress key.
+        done = rpc.run_job(
+            "director.plan",
+            {
+                "videoId": vid,
+                "goal": "tighten into a punchy short",
+                "_injectedKeys": {"providers": {"mock": [_RAW_KEY]}},
+            },
+        )
 
         assert server.hits["chat"] >= 1, "consent granted but the chat never reached the mock"
         assert isinstance(done.get("planId"), str) and done["planId"]

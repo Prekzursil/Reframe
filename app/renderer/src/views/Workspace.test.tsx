@@ -29,12 +29,18 @@ vi.mock('../components/api', () => ({
   hasApi: () => true,
 }));
 
-// U1 proxy-build path: the Workspace subscribes to job.done through lib/rpc's
-// onJobDone. Mock it so the deferred-remount branch can be driven deterministically
-// (the real wrapper reads window.api, which is not present under jsdom).
-const onJobDoneMock = vi.fn<(cb: (e: { jobId: string; result?: unknown }) => void) => () => void>();
+// WU B3 proxy-build path: the Workspace subscribes to the main process's
+// `proxy.state` pushes through lib/rpc's onProxyState. Mock it so the
+// building/ready/error transitions can be driven deterministically (the real
+// wrapper reads window.api, which is not present under jsdom).
+type ProxyStateEvt = {
+  videoId: string;
+  state: 'building' | 'direct' | 'ready' | 'error';
+  detail: string;
+};
+const onProxyStateMock = vi.fn<(cb: (e: ProxyStateEvt) => void) => () => void>();
 vi.mock('../lib/rpc', () => ({
-  onJobDone: (cb: (e: { jobId: string; result?: unknown }) => void) => onJobDoneMock(cb),
+  onProxyState: (cb: (e: ProxyStateEvt) => void) => onProxyStateMock(cb),
 }));
 
 // The 11 feature panels are lazily code-split. Mock each to a deterministic
@@ -66,7 +72,13 @@ vi.mock('../features/Refine', () => stubPanel('Refine'));
 vi.mock('../features/Recipes', () => stubPanel('Recipes'));
 vi.mock('../features/SemanticSearch', () => stubPanel('SemanticSearch'));
 
-import { Workspace, WORKSPACE_TABS } from './Workspace';
+import {
+  Workspace,
+  WORKSPACE_TABS,
+  WORKSPACE_TAB_GROUPS,
+  DEFAULT_WORKSPACE_TAB,
+  WORKSPACE_EXPORT_TAB,
+} from './Workspace';
 import type { Video, Project } from '../components/api';
 
 // CONTRACT-NOTE: the feature panels (../features/*) are authored by a sibling unit
@@ -99,8 +111,8 @@ let root: Root;
 beforeEach(() => {
   rpcMock.mockReset();
   rpcMock.mockResolvedValue({ project });
-  onJobDoneMock.mockReset();
-  onJobDoneMock.mockReturnValue(() => undefined);
+  onProxyStateMock.mockReset();
+  onProxyStateMock.mockReturnValue(() => undefined);
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -155,7 +167,8 @@ describe('Workspace', () => {
       root.render(<Workspace video={video} onBack={() => {}} />);
     });
     await flush();
-    // The default (Transcribe) tab renders either the real panel or the fallback.
+    // WU-3a2: the default tab is now Subtitles, but the Transcribe tab LABEL is
+    // still present in the (grouped) strip — a body slot renders regardless.
     expect(container.querySelector('.workspace__body')).not.toBeNull();
     expect(container.textContent).toContain('Transcribe');
   });
@@ -174,6 +187,19 @@ describe('Workspace', () => {
     await flush();
     expect(tabs[1].getAttribute('aria-selected')).toBe('true');
     expect(tabs[0].getAttribute('aria-selected')).toBe('false');
+  });
+
+  it('honours an initial tab deep-link (Task Hub) instead of the first tab', async () => {
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} initialTab="subtitles" />);
+    });
+    await flush();
+
+    const idx = WORKSPACE_TABS.findIndex((t) => t.id === 'subtitles');
+    const tabs = container.querySelectorAll('[role="tab"]');
+    expect(tabs[idx].getAttribute('aria-selected')).toBe('true');
+    expect(tabs[0].getAttribute('aria-selected')).toBe('false');
+    expect(container.querySelector('[data-panel="Subtitles"]')).not.toBeNull();
   });
 
   it('calls onBack when the back button is pressed', async () => {
@@ -252,10 +278,14 @@ describe('Workspace', () => {
     });
     await flush();
 
-    const idx = WORKSPACE_TABS.findIndex((t) => t.id === tabId);
-    const tabs = container.querySelectorAll('[role="tab"]');
+    // WU-3a2: tabs render in NAMED clusters, so DOM order no longer mirrors the
+    // WORKSPACE_TABS array — locate the tab by its stable id, not a positional
+    // index. Every tab stays a real role="tab" (Advanced/Deliver ones live in the
+    // collapsed panel but remain in the DOM and reachable).
+    const tab = container.querySelector(`[role="tab"][data-tab-id="${tabId}"]`);
+    expect(tab).not.toBeNull();
     await act(async () => {
-      (tabs[idx] as HTMLButtonElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      (tab as HTMLButtonElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await flush();
 
@@ -267,57 +297,45 @@ describe('Workspace', () => {
     }
   });
 
-  it('builds a playback proxy when the source is not directly playable, then remounts the Player on job.done', async () => {
-    let doneCb: ((e: { jobId: string; result?: unknown }) => void) | null = null;
-    onJobDoneMock.mockImplementation((cb) => {
-      doneCb = cb;
+  // WU B3: the mstream resolver builds the proxy; the Workspace only REACTS to
+  // the main process's `proxy.state` pushes. Drive the callback directly.
+  async function renderAndCaptureProxyState(): Promise<(e: ProxyStateEvt) => void> {
+    let cb: ((e: ProxyStateEvt) => void) | null = null;
+    onProxyStateMock.mockImplementation((fn) => {
+      cb = fn;
       return () => undefined;
     });
-    rpcMock.mockReset();
-    rpcMock.mockImplementation((method: string) => {
-      switch (method) {
-        case 'project.open':
-          return Promise.resolve({ project });
-        case 'media.playable':
-          return Promise.resolve({ playable: false, reason: 'needs proxy' });
-        case 'media.proxy.start':
-          return Promise.resolve({ jobId: 'job-proxy-1' });
-        default:
-          return Promise.resolve({});
-      }
-    });
-
     await act(async () => {
       root.render(<Workspace video={video} onBack={() => {}} />);
     });
     await flush();
+    expect(cb).not.toBeNull();
+    return cb as unknown as (e: ProxyStateEvt) => void;
+  }
 
-    // the reason note is shown while the proxy builds
+  it('shows the building note while the proxy builds, then reloads the player on ready (shake-free)', async () => {
+    const emit = await renderAndCaptureProxyState();
+
+    // 'building' shows the reason note.
+    await act(async () => emit({ videoId: 'v1', state: 'building', detail: 'needs proxy' }));
+    await flush();
     expect(container.querySelector('.workspace__player-note')?.textContent).toContain(
       'needs proxy',
     );
-    expect(rpcMock).toHaveBeenCalledWith('media.proxy.start', { videoId: 'v1' });
-    expect(onJobDoneMock).toHaveBeenCalledTimes(1);
 
-    // G1 shake fix: capture the live <video> so we can prove it PERSISTS across
-    // the proxy swap (no key-remount). The element identity must be stable.
+    // capture the live <video> to prove it PERSISTS across the proxy swap.
     const videoBefore = container.querySelector('.workspace__player video');
     expect(videoBefore).not.toBeNull();
     loadMock.mockClear();
 
-    // an unrelated job.done is ignored (no note clear)
-    await act(async () => {
-      doneCb?.({ jobId: 'some-other-job' });
-    });
+    // a proxy-state event for a DIFFERENT videoId is ignored (note stays).
+    await act(async () => emit({ videoId: 'other', state: 'ready', detail: '' }));
     await flush();
     expect(container.querySelector('.workspace__player-note')).not.toBeNull();
 
-    // our proxy job's done clears the note and bumps the reloadToken: the SAME
-    // <video> stays mounted and is re-fetched via load() (shake-free), NOT
-    // remounted via a key change.
-    await act(async () => {
-      doneCb?.({ jobId: 'job-proxy-1' });
-    });
+    // 'ready' clears the note and bumps the reloadToken: the SAME <video> stays
+    // mounted and is re-fetched via load() (shake-free), NOT key-remounted.
+    await act(async () => emit({ videoId: 'v1', state: 'ready', detail: '/proxies/v1.mp4' }));
     await flush();
     expect(container.querySelector('.workspace__player-note')).toBeNull();
     const videoAfter = container.querySelector('.workspace__player video');
@@ -325,32 +343,53 @@ describe('Workspace', () => {
     expect(loadMock).toHaveBeenCalledTimes(1); // proxy re-fetched in place
   });
 
-  it('surfaces a <video> load error (onError) and clears it on the proxy-ready reload', async () => {
-    let doneCb: ((e: { jobId: string; result?: unknown }) => void) | null = null;
-    onJobDoneMock.mockImplementation((cb) => {
-      doneCb = cb;
-      return () => undefined;
-    });
-    rpcMock.mockReset();
-    rpcMock.mockImplementation((method: string) => {
-      switch (method) {
-        case 'project.open':
-          return Promise.resolve({ project });
-        case 'media.playable':
-          return Promise.resolve({ playable: false, reason: 'needs proxy' });
-        case 'media.proxy.start':
-          return Promise.resolve({ jobId: 'job-proxy-2' });
-        default:
-          return Promise.resolve({});
-      }
-    });
+  it('shows a calm placeholder (NOT the loud error) for a raw <video> error BEFORE the resolver speaks', async () => {
+    const emit = await renderAndCaptureProxyState();
 
+    // Initial window: no proxy.state event yet. Chromium fires an `error` on the
+    // still-undecodable raw source ("media error (code 4)"). This must surface as
+    // a calm "Building preview…" placeholder note, NOT the loud red banner.
+    const videoEl = container.querySelector('.workspace__player video') as HTMLVideoElement;
     await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
+      videoEl.dispatchEvent(new Event('error'));
     });
     await flush();
+    expect(container.querySelector('.workspace__player-error')).toBeNull();
+    expect(container.querySelector('.workspace__player-note')?.textContent).toContain(
+      'Building preview',
+    );
 
-    // the <video> fails to load (mstream 404 / undecodable) -> error surfaces.
+    // once the proxy is ready, the reload clears the placeholder note.
+    await act(async () => emit({ videoId: 'v1', state: 'ready', detail: '/proxies/v1.mp4' }));
+    await flush();
+    expect(container.querySelector('.workspace__player-note')).toBeNull();
+  });
+
+  it('keeps the existing building note when the raw <video> errors DURING a proxy build', async () => {
+    const emit = await renderAndCaptureProxyState();
+
+    // The resolver is mid-build: its detail note is showing. A raw-source error
+    // in this window must not replace that specific note nor go loud.
+    await act(async () => emit({ videoId: 'v1', state: 'building', detail: 'needs proxy' }));
+    await flush();
+    const videoEl = container.querySelector('.workspace__player video') as HTMLVideoElement;
+    await act(async () => {
+      videoEl.dispatchEvent(new Event('error'));
+    });
+    await flush();
+    expect(container.querySelector('.workspace__player-error')).toBeNull();
+    expect(container.querySelector('.workspace__player-note')?.textContent).toContain(
+      'needs proxy',
+    );
+  });
+
+  it('surfaces a raw <video> error LOUDLY once the proxy is ready (genuine decode failure, no silent fallback)', async () => {
+    const emit = await renderAndCaptureProxyState();
+
+    // After 'ready' the source is supposed to be decodable; if the <video> still
+    // errors it is a genuine failure and must be surfaced loudly.
+    await act(async () => emit({ videoId: 'v1', state: 'ready', detail: '/proxies/v1.mp4' }));
+    await flush();
     const videoEl = container.querySelector('.workspace__player video') as HTMLVideoElement;
     await act(async () => {
       videoEl.dispatchEvent(new Event('error'));
@@ -359,103 +398,336 @@ describe('Workspace', () => {
     expect(container.querySelector('.workspace__player-error')?.textContent).toContain(
       'media failed to load',
     );
-
-    // once the proxy is ready, the job.done reload clears the stale error.
-    await act(async () => {
-      doneCb?.({ jobId: 'job-proxy-2' });
-    });
-    await flush();
-    expect(container.querySelector('.workspace__player-error')).toBeNull();
   });
 
-  it('falls back to a default note when media.playable gives no reason', async () => {
-    rpcMock.mockReset();
-    rpcMock.mockImplementation((method: string) => {
-      switch (method) {
-        case 'project.open':
-          return Promise.resolve({ project });
-        case 'media.playable':
-          return Promise.resolve({ playable: false });
-        case 'media.proxy.start':
-          // no jobId -> the onJobDone subscription is skipped (early return branch)
-          return Promise.resolve({});
-        default:
-          return Promise.resolve({});
-      }
-    });
+  it('shows no note for a direct (already-playable) verdict, and does not reload the player', async () => {
+    const emit = await renderAndCaptureProxyState();
+    const videoBefore = container.querySelector('.workspace__player video');
+    loadMock.mockClear();
 
+    // WU-1e-fix: the resolver decided the source is directly playable (or a valid
+    // cached proxy) WITHOUT a build. No building note, and NO reload (the source
+    // is already correct — reloading would restart playback needlessly).
+    await act(async () => emit({ videoId: 'v1', state: 'direct', detail: '/library/v1.mp4' }));
+    await flush();
+    expect(container.querySelector('.workspace__player-note')).toBeNull();
+    expect(container.querySelector('.workspace__player-error')).toBeNull();
+    expect(container.querySelector('.workspace__player video')).toBe(videoBefore);
+    expect(loadMock).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a raw <video> error LOUDLY after a DIRECT verdict (resolver misjudged: corrupt moov / odd profile — never a silent "Building preview…" forever)', async () => {
+    const emit = await renderAndCaptureProxyState();
+
+    // The resolver said the source is directly playable, so it emits 'direct'
+    // (advancing past 'initial'). If the <video> then genuinely fails to decode,
+    // the resolver misjudged — this MUST go loud, not mask behind the calm
+    // placeholder that (pre-fix) never resolved because no proxy.state ever fired.
+    await act(async () => emit({ videoId: 'v1', state: 'direct', detail: '/library/v1.mp4' }));
+    await flush();
+    const videoEl = container.querySelector('.workspace__player video') as HTMLVideoElement;
     await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
+      videoEl.dispatchEvent(new Event('error'));
     });
     await flush();
+    expect(container.querySelector('.workspace__player-note')).toBeNull();
+    expect(container.querySelector('.workspace__player-error')?.textContent).toContain(
+      'media failed to load',
+    );
+  });
 
+  it('does not overwrite a specific proxy build-failure reason with a raw <video> echo error', async () => {
+    const emit = await renderAndCaptureProxyState();
+
+    // A build failure surfaced its precise reason. A subsequent raw-source error
+    // is a downstream echo of the same failure — the specific reason must stand.
+    await act(async () =>
+      emit({ videoId: 'v1', state: 'error', detail: 'ffmpeg exited with code 1' }),
+    );
+    await flush();
+    const videoEl = container.querySelector('.workspace__player video') as HTMLVideoElement;
+    await act(async () => {
+      videoEl.dispatchEvent(new Event('error'));
+    });
+    await flush();
+    expect(container.querySelector('.workspace__player-error')?.textContent).toContain(
+      'ffmpeg exited with code 1',
+    );
+  });
+
+  it('falls back to a default note when the building push carries no detail', async () => {
+    const emit = await renderAndCaptureProxyState();
+    await act(async () => emit({ videoId: 'v1', state: 'building', detail: '' }));
+    await flush();
     expect(container.querySelector('.workspace__player-note')?.textContent).toContain(
       'building playback proxy',
     );
-    expect(onJobDoneMock).not.toHaveBeenCalled();
   });
 
-  it('skips the proxy build entirely when the source is already playable', async () => {
-    rpcMock.mockReset();
-    rpcMock.mockImplementation((method: string) => {
-      if (method === 'project.open') return Promise.resolve({ project });
-      if (method === 'media.playable') return Promise.resolve({ playable: true });
-      return Promise.resolve({});
-    });
+  it('surfaces a proxy BUILD FAILURE loudly (no silent center-crop)', async () => {
+    const emit = await renderAndCaptureProxyState();
 
+    // 'error' with a reason surfaces it in the player-error banner + clears the note.
+    await act(async () => emit({ videoId: 'v1', state: 'building', detail: 'needs proxy' }));
+    await act(async () =>
+      emit({ videoId: 'v1', state: 'error', detail: 'ffmpeg exited with code 1' }),
+    );
+    await flush();
+    expect(container.querySelector('.workspace__player-note')).toBeNull();
+    expect(container.querySelector('.workspace__player-error')?.textContent).toContain(
+      'ffmpeg exited with code 1',
+    );
+  });
+
+  it('falls back to a default failure message when the error push carries no detail', async () => {
+    const emit = await renderAndCaptureProxyState();
+    await act(async () => emit({ videoId: 'v1', state: 'error', detail: '' }));
+    await flush();
+    expect(container.querySelector('.workspace__player-error')?.textContent).toContain(
+      'playback proxy build failed',
+    );
+  });
+
+  it('shows no player note when the source is already playable (no build events)', async () => {
     await act(async () => {
       root.render(<Workspace video={video} onBack={() => {}} />);
     });
     await flush();
 
+    // the Workspace never kicks the build itself (the resolver does).
     expect(container.querySelector('.workspace__player-note')).toBeNull();
+    expect(rpcMock).not.toHaveBeenCalledWith('media.playable', expect.anything());
     expect(rpcMock).not.toHaveBeenCalledWith('media.proxy.start', expect.anything());
   });
 
-  it('swallows a media.playable probe failure (best-effort proxy build)', async () => {
-    rpcMock.mockReset();
-    rpcMock.mockImplementation((method: string) => {
-      if (method === 'project.open') return Promise.resolve({ project });
-      if (method === 'media.playable') return Promise.reject(new Error('probe failed'));
-      return Promise.resolve({});
-    });
-
-    await act(async () => {
-      root.render(<Workspace video={video} onBack={() => {}} />);
-    });
-    await flush();
-
-    // no crash, no note, no error banner — the probe failure is caught
-    expect(container.querySelector('.workspace__player-note')).toBeNull();
-    expect(container.querySelector('.workspace__error')).toBeNull();
-  });
-
-  it('unsubscribes from job.done on unmount after a proxy build starts', async () => {
+  it('unsubscribes from proxy-state on unmount', async () => {
     const off = vi.fn();
-    onJobDoneMock.mockReturnValue(off);
-    rpcMock.mockReset();
-    rpcMock.mockImplementation((method: string) => {
-      switch (method) {
-        case 'project.open':
-          return Promise.resolve({ project });
-        case 'media.playable':
-          return Promise.resolve({ playable: false, reason: 'x' });
-        case 'media.proxy.start':
-          return Promise.resolve({ jobId: 'job-9' });
-        default:
-          return Promise.resolve({});
-      }
-    });
+    onProxyStateMock.mockReturnValue(off);
 
     await act(async () => {
       root.render(<Workspace video={video} onBack={() => {}} />);
     });
     await flush();
-    expect(onJobDoneMock).toHaveBeenCalledTimes(1);
+    expect(onProxyStateMock).toHaveBeenCalledTimes(1);
 
     await act(async () => root.unmount());
     expect(off).toHaveBeenCalledTimes(1);
     // re-render so afterEach's unmount is a no-op safe path
     root = createRoot(container);
+  });
+});
+
+// WU-3a2: the 13 flat tabs are regrouped into 4 NAMED clusters behind
+// progressive disclosure. ADDITIVE — every tab stays a real role="tab" and every
+// panel reachable; only the visual grouping + the default tab change.
+describe('Workspace tab clusters (WU-3a2)', () => {
+  function groupLabels(): string[] {
+    return Array.from(container.querySelectorAll('.tabbar__group-label')).map(
+      (el) => el.textContent ?? '',
+    );
+  }
+
+  async function mount(): Promise<void> {
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} />);
+    });
+    await flush();
+  }
+
+  it('defaults to the Subtitles tab (off Transcribe)', async () => {
+    expect(DEFAULT_WORKSPACE_TAB).toBe('subtitles');
+    await mount();
+
+    const subtitles = container.querySelector('[role="tab"][data-tab-id="subtitles"]');
+    const transcribe = container.querySelector('[role="tab"][data-tab-id="transcribe"]');
+    expect(subtitles?.getAttribute('aria-selected')).toBe('true');
+    expect(transcribe?.getAttribute('aria-selected')).toBe('false');
+    expect(container.querySelector('[data-panel="Subtitles"]')).not.toBeNull();
+  });
+
+  it('renders the four named clusters as section labels', async () => {
+    await mount();
+    expect(groupLabels()).toEqual(WORKSPACE_TAB_GROUPS.map((g) => g.label));
+    expect(groupLabels()).toEqual(['Speech & Text', 'Frame & Cut', 'Audio', 'Deliver']);
+  });
+
+  it('keeps every tab reachable: all 13 ids stay in the tablist across clusters', async () => {
+    await mount();
+    const ids = Array.from(container.querySelectorAll('[role="tab"]'))
+      .map((t) => t.getAttribute('data-tab-id'))
+      .sort();
+    expect(ids).toEqual(WORKSPACE_TABS.map((t) => t.id).sort());
+  });
+
+  it('collapses the Deliver cluster behind Advanced by default and toggles it open/closed', async () => {
+    await mount();
+
+    const toggle = container.querySelector('.tabbar__advanced-toggle') as HTMLButtonElement;
+    const panel = container.querySelector('.tabbar__advanced-panel') as HTMLElement;
+    expect(toggle).not.toBeNull();
+    // collapsed by default; the Deliver group lives inside the collapsed panel.
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(panel.hidden).toBe(true);
+    expect(panel.querySelector('[data-tab-id="tracks"]')).not.toBeNull();
+
+    // expand
+    await act(async () => {
+      toggle.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(panel.hidden).toBe(false);
+
+    // collapse again (covers the toggle updater in both directions)
+    await act(async () => {
+      toggle.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(panel.hidden).toBe(true);
+  });
+
+  it('reaches an Advanced (Deliver) panel after expanding the disclosure', async () => {
+    await mount();
+
+    const toggle = container.querySelector('.tabbar__advanced-toggle') as HTMLButtonElement;
+    await act(async () => {
+      toggle.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+
+    const tracks = container.querySelector(
+      '[role="tab"][data-tab-id="tracks"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      tracks.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+    expect(tracks.getAttribute('aria-selected')).toBe('true');
+    expect(container.querySelector('[data-panel="Tracks"]')).not.toBeNull();
+  });
+});
+
+// design-review P1: EXPORT is the terminal goal but the "Deliver" cluster
+// (Convert/Timeline export/Recipes/Assets/Tracks) is collapsed behind Advanced.
+// A persistent Export action surfaces it from the default view WITHOUT un-hiding
+// the whole cluster by default — clicking it jumps to the primary export panel
+// (Convert) and reveals the Deliver cluster so its siblings are reachable.
+describe('Workspace Export affordance (design-review P1)', () => {
+  async function mount(): Promise<void> {
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} />);
+    });
+    await flush();
+  }
+
+  it('targets a real Deliver-cluster tab as the export destination', () => {
+    expect(WORKSPACE_EXPORT_TAB).toBe('convert');
+    const deliver = WORKSPACE_TAB_GROUPS.find((g) => g.id === 'deliver');
+    expect(deliver?.tabIds).toContain(WORKSPACE_EXPORT_TAB);
+    expect(WORKSPACE_TABS.some((t) => t.id === WORKSPACE_EXPORT_TAB)).toBe(true);
+  });
+
+  it('surfaces a persistent Export action in the default view with the Deliver cluster still collapsed', async () => {
+    await mount();
+    const exportBtn = container.querySelector('button.tabbar__export');
+    expect(exportBtn).not.toBeNull();
+    expect(exportBtn?.textContent).toContain('Export');
+    // The Deliver cluster is NOT un-hidden by default (advanced stays collapsed).
+    const toggle = container.querySelector('.tabbar__advanced-toggle') as HTMLButtonElement;
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    // The Convert panel is not active yet.
+    expect(container.querySelector('[data-panel="Convert"]')).toBeNull();
+  });
+
+  it('jumps to the Convert export panel and reveals the Deliver cluster on click', async () => {
+    await mount();
+    const exportBtn = container.querySelector('button.tabbar__export') as HTMLButtonElement;
+    await act(async () => {
+      exportBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+
+    // The primary export panel (Convert) is now active + rendered in the body.
+    expect(container.querySelector('[data-panel="Convert"]')).not.toBeNull();
+    expect(
+      container.querySelector('[role="tab"][data-tab-id="convert"]')?.getAttribute('aria-selected'),
+    ).toBe('true');
+    // The Deliver cluster is revealed so the sibling deliver tools are reachable.
+    const toggle = container.querySelector('.tabbar__advanced-toggle') as HTMLButtonElement;
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect((container.querySelector('.tabbar__advanced-panel') as HTMLElement).hidden).toBe(false);
+  });
+});
+
+// WU-3a4: the "Short-maker" tab is a SINGLE-OWNER deep-link. When the Make Shorts
+// thread is wired (App→Edit→Workspace via onOpenMakeShorts), selecting it — by
+// click OR an initialTab='shortmaker' deep-link (the Task Hub "Reframe to vertical"
+// card / a remembered 'reframe' choice) — navigates to the top-level Make Shorts
+// section (the ONE ShortMaker owner) with this video pre-selected, instead of
+// mounting a SECOND ShortMaker copy here. ADDITIVE: the tab entry stays, and
+// without the callback it still mounts ShortMaker in place (backward-compatible).
+describe('Short-maker tab single-owner deep-link (WU-3a4)', () => {
+  function shortmakerTab(): HTMLButtonElement {
+    return container.querySelector('[role="tab"][data-tab-id="shortmaker"]') as HTMLButtonElement;
+  }
+  function selected(tabId: string): string | null | undefined {
+    return container
+      .querySelector(`[role="tab"][data-tab-id="${tabId}"]`)
+      ?.getAttribute('aria-selected');
+  }
+
+  it('redirects the Short-maker TAB CLICK to Make Shorts (no second ShortMaker mounted)', async () => {
+    const onOpenMakeShorts = vi.fn();
+    await act(async () => {
+      root.render(
+        <Workspace video={video} onBack={() => {}} onOpenMakeShorts={onOpenMakeShorts} />,
+      );
+    });
+    await flush();
+
+    await act(async () => {
+      shortmakerTab().dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+
+    expect(onOpenMakeShorts).toHaveBeenCalledTimes(1);
+    expect(onOpenMakeShorts).toHaveBeenCalledWith('v1');
+    // No second ShortMaker copy is mounted; the active tab stays the default.
+    expect(container.querySelector('[data-panel="ShortMaker"]')).toBeNull();
+    expect(selected('subtitles')).toBe('true');
+    expect(selected('shortmaker')).toBe('false');
+  });
+
+  it('redirects an initialTab="shortmaker" deep-link on mount instead of mounting ShortMaker', async () => {
+    const onOpenMakeShorts = vi.fn();
+    await act(async () => {
+      root.render(
+        <Workspace
+          video={video}
+          onBack={() => {}}
+          initialTab="shortmaker"
+          onOpenMakeShorts={onOpenMakeShorts}
+        />,
+      );
+    });
+    await flush();
+
+    expect(onOpenMakeShorts).toHaveBeenCalledTimes(1);
+    expect(onOpenMakeShorts).toHaveBeenCalledWith('v1');
+    expect(container.querySelector('[data-panel="ShortMaker"]')).toBeNull();
+    // Falls back to the workspace default rather than the redirected tab.
+    expect(selected('subtitles')).toBe('true');
+    expect(selected('shortmaker')).toBe('false');
+  });
+
+  it('still MOUNTS ShortMaker in place for an initialTab="shortmaker" when no redirect is wired (additive fallback)', async () => {
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} initialTab="shortmaker" />);
+    });
+    await flush();
+
+    expect(container.querySelector('[data-panel="ShortMaker"]')).not.toBeNull();
+    expect(selected('shortmaker')).toBe('true');
   });
 });

@@ -113,7 +113,7 @@ app runs `bootstrap.py` BY FILE PATH. If the wiring agent prefers
 
 ```text
 1. build\check-python.ps1                          # CI gate: dev python pinned 3.12
-2. build\python-embed-setup.ps1 -WithFfmpeg        # NETWORK: stages build/python-embed + build/ffmpeg
+2. build\python-embed-setup.ps1 -WithFfmpeg        # NETWORK: stages build/python-embed + build/ffmpeg/win (BtbN LGPL)
 3. cd app && npm run render-cli:install            # WIRING-T4A §2 script hooks
 4. cd app && npm run build && npm run render-cli:bundle
 5. cd app && npx electron-builder --config ..\electron-builder.yml --win

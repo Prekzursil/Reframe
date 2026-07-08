@@ -9,8 +9,15 @@
 // "could not reveal" state rather than crashing.
 
 import { rpc } from '../components/api';
-import type { RegenerateResult, RelinkResult, RevealResult } from '../lib/rpc';
+import type {
+  KeepCopyResult,
+  ManagedStatus,
+  RegenerateResult,
+  RelinkResult,
+  RevealResult,
+} from '../lib/rpc';
 import type { LineageActionHandlers } from './LineageActions';
+import type { ProvenanceHandlers } from './LibraryProvenance';
 
 /** The optional preload-bridge members the L5 actions use (read structurally). */
 interface ActionBridge {
@@ -23,12 +30,16 @@ function actionBridge(): ActionBridge | null {
   return api && typeof api === 'object' ? (api as ActionBridge) : null;
 }
 
-export const lineageActions: LineageActionHandlers = {
+export const lineageActions: LineageActionHandlers & ProvenanceHandlers = {
   reveal: (id) => rpc<RevealResult>('library.reveal', { id }),
   regenerate: (id) => rpc<RegenerateResult>('library.regenerate', { id }),
   relink: async (id, path) => {
     await rpc<RelinkResult>('library.relink', { id, path });
   },
+  // WU-1f: pin the whole-file hash of an on-disk source (the relink baseline) —
+  // fired lazily on view by <LibraryProvenance> so the user's EXISTING videos
+  // (whose content_hash was NULL) become relinkable if they later go missing.
+  pinHash: (id) => rpc<RelinkResult>('library.pinHash', { id }),
   runRegenerate: async (descriptor) => {
     // Replay the producing op against the still-by-path source. `params` was
     // stored redacted (keys come from settings at run time, never params), so
@@ -45,6 +56,21 @@ export const lineageActions: LineageActionHandlers = {
     if (!bridge?.openVideos) return null;
     const paths = await bridge.openVideos();
     return Array.isArray(paths) && paths.length > 0 ? paths[0] : null;
+  },
+  // WU-3b2: the OPT-IN keep-a-copy managed-store slice. Reuses the existing
+  // sidecar RPCs (`library.managedStatus/keepCopy/managedEvict`, WU-3b1) — no
+  // parallel copy machinery. `keep` unwraps the `{managed}` envelope so the
+  // component consumes the row directly; `evict` discards the `{ok,entityId}`
+  // ack (the UI re-reads state from the resolved managed row it holds).
+  managed: {
+    status: () => rpc<ManagedStatus>('library.managedStatus'),
+    keep: async (id) => {
+      const { managed } = await rpc<KeepCopyResult>('library.keepCopy', { id });
+      return managed;
+    },
+    evict: async (id) => {
+      await rpc('library.managedEvict', { id });
+    },
   },
 };
 

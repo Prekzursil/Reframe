@@ -754,12 +754,24 @@ def _make_face_finder(
         model_path = resolve_yunet_model_path(settings)
         if model_path is None:
             from ..assets import manifest  # noqa: PLC0415 - lazy: light data module
+            from ..assets.manager import AssetManager  # noqa: PLC0415 - lazy seam
+            from ..settings_store import default_config_dir  # noqa: PLC0415 - lazy
 
+            # Self-diagnosing detail: name the ROOT the resolver looked under so a
+            # CI / first-run failure reveals the exact path divergence (the resolver
+            # builds an AssetManager with no explicit root -> default_config_dir(),
+            # which honors MEDIA_STUDIO_CONFIG_DIR) instead of only "not provisioned".
+            _root = AssetManager(settings_provider=lambda: settings or {}).root
+            _diag = (
+                f" [resolver root={_root}; "
+                f"MEDIA_STUDIO_CONFIG_DIR={os.environ.get('MEDIA_STUDIO_CONFIG_DIR', '<unset>')}; "
+                f"default_config_dir={default_config_dir()}]"
+            )
             raise ClaudeShortsBackendUnavailableError(
                 f"the YuNet face-detection model ({manifest.YUNET_ASSET_NAME}) is not "
                 "provisioned — run first-run setup (or assets.ensure) to download the "
                 "sha256-pinned ONNX; speaker tracking cannot run without it (this is a "
-                "provisioning/setup error, not a per-clip degrade)"
+                "provisioning/setup error, not a per-clip degrade)" + _diag
             )
         # input_size is set per-frame via setInputSize; score_threshold keeps only
         # confident faces so background/blurred non-speakers don't steer the crop.

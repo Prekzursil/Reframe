@@ -1,0 +1,49 @@
+Reframe — Third-Party Notices
+=============================
+
+Reframe bundles the third-party machine-learning models listed below. Their
+licenses and required attributions are reproduced here and are also surfaced
+in-app at Settings -> Licenses. The full text of the vendored copyleft license
+ships alongside the code at the paths noted below.
+
+NON-COMMERCIAL NOTICE
+---------------------
+Reframe v1.3 bundles the ViNet-S saliency model, which is licensed under
+Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+(CC-BY-NC-SA-4.0). As a direct consequence, THE APP AS SHIPPED IS
+NON-COMMERCIAL for as long as ViNet-S is bundled. A future paid/commercial tier
+MUST remove or replace ViNet-S before any commercial distribution.
+
+
+Bundled models
+--------------
+
+ViNet-S / ViNet — video saliency (no-face crop tracking)
+  License:      CC-BY-NC-SA-4.0 (NON-COMMERCIAL)
+                https://creativecommons.org/licenses/by-nc-sa/4.0/
+  Attribution:  (c) 2025 Rohit Girmaji, Siddharth Jain, Bhav Beri,
+                Sarthak Bansal, Vineet Gandhi (IIIT Hyderabad)
+  Paper:        ViNet-S / ViNet (ICASSP 2025), arXiv:2502.00397
+  Source:       https://github.com/ViNet-Saliency/vinet_v2
+  Full license: sidecar/media_studio/features/_vinet_s/LICENSE
+
+YuNet — face detector (default speaker tracking)
+  License:      MIT — https://opensource.org/license/mit
+  Attribution:  (c) 2020 Shiqi Yu (opencv/face_detection_yunet)
+  Source:       https://github.com/opencv/opencv_zoo
+
+EdgeTAM — opt-in occlusion-robust video tracker
+  License:      Apache-2.0 — https://www.apache.org/licenses/LICENSE-2.0
+  Attribution:  (c) Meta Platforms, Inc. (facebookresearch/EdgeTAM)
+  Source:       https://github.com/facebookresearch/EdgeTAM
+
+TransNetV2 — shot-transition / scene-cut detector
+  License:      MIT — https://opensource.org/license/mit
+  Attribution:  (c) 2020 Tomas Soucek (soCzech/TransNetV2)
+  Source:       https://github.com/soCzech/TransNetV2
+  Full license: sidecar/media_studio/features/_transnetv2/LICENSE
+
+LR-ASD — visual active-speaker detection
+  License:      MIT — https://opensource.org/license/mit
+  Attribution:  (c) 2025 Liao Junhua (Junhua-Liao/LR-ASD)
+  Source:       https://github.com/Junhua-Liao/LR-ASD

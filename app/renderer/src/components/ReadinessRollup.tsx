@@ -35,7 +35,7 @@ export function ReadinessRollup({
   title = 'Readiness',
   onAction,
 }: ReadinessRollupProps): React.ReactElement {
-  /* v8 ignore next -- the `?? client` default only runs in the real app; every test injects rpcClient. */
+  /* v8 ignore next -- the `?? client` default runs in the real app + the WU2 resilience test (window.api missing); most tests inject rpcClient. */
   const api = rpcClient ?? client;
   const [items, setItems] = useState<ReadinessItem[] | null>(null);
   const [error, setError] = useState<string>('');
@@ -44,13 +44,22 @@ export function ReadinessRollup({
     let alive = true;
     setError('');
     setItems(null);
-    Promise.resolve(api.readiness.summary())
-      .then((res) => {
-        if (alive) setItems(Array.isArray(res?.items) ? res.items : []);
-      })
-      .catch((err: unknown) => {
-        if (alive) setError(errText(err));
-      });
+    // WU2 resilience: the bridge access is EAGER — `api.readiness.summary()`
+    // reaches through the preload bridge, which throws SYNCHRONOUSLY when
+    // window.api is missing (before Promise.resolve can wrap it, so `.catch`
+    // below never sees it). Guard it sync-safely so a missing bridge degrades to
+    // an inline error here instead of a thrown-through blank screen.
+    try {
+      Promise.resolve(api.readiness.summary())
+        .then((res) => {
+          if (alive) setItems(Array.isArray(res?.items) ? res.items : []);
+        })
+        .catch((err: unknown) => {
+          if (alive) setError(errText(err));
+        });
+    } catch (err) {
+      setError(errText(err));
+    }
     return () => {
       alive = false;
     };

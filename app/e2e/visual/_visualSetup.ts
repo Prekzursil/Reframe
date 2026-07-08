@@ -123,6 +123,9 @@ export async function openTopTab(win: Page, label: string): Promise<void> {
 /** Open the Library video named `title` into its Workspace. */
 export async function openVideo(win: Page, title: string): Promise<void> {
   await win.locator('.library__item-title', { hasText: title }).click();
+  // WU-3a1: opening a video lands on the per-video Task Hub; take the
+  // "Advanced / all tools" escape into the full Workspace.
+  await win.locator('button.task-hub__advanced').click();
   await win.locator('.workspace__title').waitFor({ state: 'visible' });
 }
 

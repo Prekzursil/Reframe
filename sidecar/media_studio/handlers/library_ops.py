@@ -13,11 +13,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .. import keepcopy as _keepcopy
 from .. import library as _library
 from .. import relink as _relink
 from ..features import offline as _offline
 from ..features import shorts as _shorts_meta
 from ..protocol import ErrorCode, RpcContext, RpcError
+from . import _capabilities
 from ._shared import (
     _invalid,
     _require_str,
@@ -220,6 +222,63 @@ def library_relink(self: Services, params: dict[str, Any], ctx: RpcContext) -> d
         raise _invalid(str(exc)) from exc
 
 
+def library_keep_copy(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``library.keepCopy({id})`` -> ``{managed}`` (WU-3b1). Direct-return.
+
+    OPT-IN: copies the video's ORIGINAL bytes into the app-managed store under the
+    data-root (atomic temp+replace, free-space preflight, cap+LRU eviction, content
+    dedup) and re-points lineage so the managed copy is the AUTHORITATIVE source
+    while the original path is recorded as provenance. An unknown/missing source, a
+    failed preflight, or an over-cap file all raise INVALID_PARAMS (loud).
+    """
+    entity_id = _require_str(params, "id")
+    try:
+        return {"managed": self.library.keep_copy(entity_id)}
+    except _keepcopy.KeepCopyError as exc:
+        raise _invalid(str(exc)) from exc
+
+
+def library_managed_status(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``library.managedStatus()`` -> ``{sizeBytes, capBytes, count, entries}`` (WU-3b1). Direct-return.
+
+    Read-only: exposes the managed store's current size + the cap ceiling + the kept
+    entries (each with its original path as provenance), so the UI can show "used / cap".
+    """
+    return self.library.managed_status()
+
+
+def library_managed_evict(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``library.managedEvict({id, force?})`` -> ``{ok, entityId}`` (WU-3b1). Direct-return.
+
+    Evicts ONE video's managed copy: re-points its entity BACK to the original source
+    (provenance) and frees the managed bytes (unless another entity shares them). Refuses
+    LOUD (INVALID_PARAMS) when the original source is gone — the managed copy is then the
+    ONLY surviving copy — unless ``force=true`` is sent to destroy it anyway. An entity
+    with no managed copy also raises INVALID_PARAMS (loud).
+    """
+    entity_id = _require_str(params, "id")
+    force = bool(params.get("force", False))
+    try:
+        return self.library.managed_evict(entity_id, force=force)
+    except _keepcopy.KeepCopyError as exc:
+        raise _invalid(str(exc)) from exc
+
+
+def library_managed_clear(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``library.managedClear({force?})`` -> ``{ok, cleared}`` (WU-3b1). Direct-return.
+
+    Evicts EVERY managed copy (re-points each entity to its original path). Idempotent on
+    an empty store (``cleared`` is 0). Refuses LOUD (INVALID_PARAMS), destroying nothing,
+    when any managed copy's original source is gone — it would be the only surviving copy —
+    unless ``force=true`` is sent to destroy those irreplaceable copies too.
+    """
+    force = bool(params.get("force", False))
+    try:
+        return self.library.managed_clear(force=force)
+    except _keepcopy.KeepCopyError as exc:
+        raise _invalid(str(exc)) from exc
+
+
 def project_open(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
     """``project.open({id})`` -> ``{project}`` (§2). Direct-return.
 
@@ -335,4 +394,9 @@ def readiness_summary(self: Services, params: dict[str, Any], ctx: RpcContext) -
     providers = self.providers_list(params, ctx)["providers"]
     items = _tier_readiness_items(models_present, offline=offline)
     items.extend(_function_readiness_items(settings, providers))
+    # WU-C2: the per-feature capability family (reframe invariant + the on-demand
+    # saliency/scene enhancements) rides the SAME roll-up so each feature's
+    # point-of-use "Needs download -> [button]" state renders through the existing
+    # ReadinessRollup without a parallel readiness system.
+    items.extend(_capabilities.feature_readiness_items(self._installed_asset_names(settings), offline=offline))
     return {"items": items}
