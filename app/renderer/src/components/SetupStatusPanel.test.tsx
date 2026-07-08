@@ -206,6 +206,20 @@ describe('<SetupStatusPanel /> — WU-2 first-run diagnostic', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('plain failure');
   });
 
+  it('degrades to an inline error (no thrown-through blank) when window.api is missing', async () => {
+    // WU2 resilience: no injected rpcClient -> the real `client`, whose bridge()
+    // throws SYNCHRONOUSLY when window.api is undefined. The sync-safe guard must
+    // surface it inline rather than let it unmount the tree.
+    expect((globalThis as { window?: { api?: unknown } }).window?.api).toBeUndefined();
+    await act(async () => {
+      root.render(<SetupStatusPanel />);
+    });
+    await flush();
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert).not.toBeNull();
+    expect(alert?.textContent).toContain('window.api');
+  });
+
   it('shows a neutral empty state when the diagnostic resolves to nothing', async () => {
     await mount(() => Promise.resolve(undefined as unknown as SelfTestReport));
     expect(container.querySelector('.setup-status__empty')).not.toBeNull();

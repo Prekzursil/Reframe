@@ -129,6 +129,20 @@ describe('SpendCap — load + zero/empty state', () => {
     expect($('.spend-cap__meter')).toBeNull();
   });
 
+  it('degrades to an inline error (no thrown-through blank) when window.api is missing', async () => {
+    // WU2 resilience: no injected rpcClient -> the real `client`, whose bridge()
+    // throws SYNCHRONOUSLY when window.api is undefined. The sync-safe guard must
+    // surface it inline rather than let it unmount the tree.
+    expect((globalThis as { window?: { api?: unknown } }).window?.api).toBeUndefined();
+    await act(async () => {
+      root.render(<SpendCap />);
+    });
+    await flush();
+    const alert = $('[role="alert"]');
+    expect(alert).not.toBeNull();
+    expect(alert?.textContent).toContain('window.api');
+  });
+
   it('stringifies a non-Error rejection', async () => {
     const { api } = makeApi({ spend: () => Promise.reject('nope') });
     await mount(api);

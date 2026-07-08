@@ -270,7 +270,7 @@ export function ProvidersKeys({
   spendClient,
   onOpenModels,
 }: ProvidersKeysProps): React.ReactElement {
-  /* v8 ignore next -- the `?? client` default only runs in the real app; every test injects rpcClient. */
+  /* v8 ignore next -- the `?? client` default runs in the real app + the WU2 resilience test (window.api missing); most tests inject rpcClient. */
   const api = rpcClient ?? client;
 
   const [providers, setProviders] = useState<ProviderEntry[]>([]);
@@ -290,28 +290,37 @@ export function ProvidersKeys({
     let alive = true;
     setLoading(true);
     setError('');
-    Promise.all([
-      Promise.resolve(api.providers.list()),
-      Promise.resolve(api.providers.catalog()),
-      Promise.resolve(api.providers.usage()),
-      /* v8 ignore next -- the optional-chaining fallback only fires when a test omits settings.get; every meaningful test injects it. */
-      Promise.resolve<SettingsConsentRead>(api.settings?.get?.() ?? {}),
-    ])
-      .then(([list, cat, use, settings]) => {
-        if (alive) {
-          setProviders(Array.isArray(list?.providers) ? list.providers : []);
-          setCatalog(Array.isArray(cat?.providers) ? cat.providers : []);
-          setUsage(Array.isArray(use?.usage) ? use.usage : []);
-          setConsentMap(settings?.consent?.perProvider ?? {});
-          setLoading(false);
-        }
-      })
-      .catch((err: unknown) => {
-        if (alive) {
-          setError(errText(err));
-          setLoading(false);
-        }
-      });
+    // WU2 resilience: each eager bridge access (api.providers.*) throws
+    // SYNCHRONOUSLY when window.api is missing — before Promise.all can wrap it,
+    // so the `.catch` below never sees it. Guard it sync-safely so a missing
+    // bridge shows an inline error here instead of a thrown-through blank screen.
+    try {
+      Promise.all([
+        Promise.resolve(api.providers.list()),
+        Promise.resolve(api.providers.catalog()),
+        Promise.resolve(api.providers.usage()),
+        /* v8 ignore next -- the optional-chaining fallback only fires when a test omits settings.get; every meaningful test injects it. */
+        Promise.resolve<SettingsConsentRead>(api.settings?.get?.() ?? {}),
+      ])
+        .then(([list, cat, use, settings]) => {
+          if (alive) {
+            setProviders(Array.isArray(list?.providers) ? list.providers : []);
+            setCatalog(Array.isArray(cat?.providers) ? cat.providers : []);
+            setUsage(Array.isArray(use?.usage) ? use.usage : []);
+            setConsentMap(settings?.consent?.perProvider ?? {});
+            setLoading(false);
+          }
+        })
+        .catch((err: unknown) => {
+          if (alive) {
+            setError(errText(err));
+            setLoading(false);
+          }
+        });
+    } catch (err) {
+      setError(errText(err));
+      setLoading(false);
+    }
     return () => {
       alive = false;
     };

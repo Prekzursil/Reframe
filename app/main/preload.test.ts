@@ -43,6 +43,21 @@ describe('preload exposes the api on window (contextBridge)', () => {
   it('registered exactly one bridge named "api"', () => {
     expect(mocks.exposeInMainWorld).toHaveBeenCalledWith('api', expect.any(Object));
   });
+
+  it('does NOT throw (logs instead) when contextBridge.exposeInMainWorld fails', async () => {
+    // WU2 resilience: a bridge-construction failure must not be a fatal, un-caught
+    // preload crash — it must be caught + logged so the window still loads (and the
+    // renderer degrades via hasApi()/the ErrorBoundary) rather than dying silently.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mocks.exposeInMainWorld.mockImplementationOnce(() => {
+      throw new Error('contextBridge unavailable');
+    });
+    vi.resetModules();
+    // Re-importing re-runs preload.ts, which now calls the throwing expose.
+    await expect(import('./preload')).resolves.toBeDefined();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('window.api'));
+    errorSpy.mockRestore();
+  });
 });
 
 describe('onProvisioningState — forwards only the payload + returns an unsubscribe', () => {

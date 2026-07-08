@@ -66,6 +66,12 @@ import {
   shouldStartSidecarAfterFailedFirstRun,
 } from './firstRunGate';
 import { broadcastToLiveWindows } from './windowsBroadcast';
+import {
+  decideDidFailLoad,
+  decideRenderProcessGone,
+  describeUncaughtException,
+  describeUnhandledRejection,
+} from './rendererRecovery';
 import { keystorePathFor, migrateLegacyPlaintextKeys, type SafeStorageLike } from './keystore';
 import { KeyBridge } from './keyBridge';
 import { Sidecar } from './sidecar';
@@ -986,6 +992,45 @@ function createWindow(): BrowserWindow {
     }
   });
 
+  // WU2 resilience (defense-in-depth): recover a renderer that the in-app
+  // <ErrorBoundary> cannot — a crashed/OOM'd render PROCESS, or a failed load of
+  // index.html — by reloading the window (bounded, so a persistently-broken bundle
+  // never becomes a reload storm). The pure decision/log lives in
+  // rendererRecovery.ts; this is only the Electron event seam.
+  let rendererReloadCount = 0;
+  win.webContents.on('did-finish-load', () => {
+    // A successful load clears the recovery budget so later, unrelated transient
+    // failures each get their own fresh set of retries.
+    rendererReloadCount = 0;
+  });
+  win.webContents.on('render-process-gone', (_event, details) => {
+    const decision = decideRenderProcessGone(
+      { reason: details.reason, exitCode: details.exitCode },
+      rendererReloadCount,
+    );
+    // eslint-disable-next-line no-console
+    console.error(decision.log);
+    if (decision.reload && !win.isDestroyed()) {
+      rendererReloadCount += 1;
+      win.webContents.reload();
+    }
+  });
+  win.webContents.on(
+    'did-fail-load',
+    (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      const decision = decideDidFailLoad(
+        { errorCode, errorDescription, validatedURL, isMainFrame },
+        rendererReloadCount,
+      );
+      // eslint-disable-next-line no-console
+      console.error(decision.log);
+      if (decision.reload && !win.isDestroyed()) {
+        rendererReloadCount += 1;
+        win.webContents.reload();
+      }
+    },
+  );
+
   if (isDev && devUrl) {
     void win.loadURL(devUrl);
   } else {
@@ -1310,6 +1355,20 @@ function bootstrap(): void {
     disposeUpdater = wireAutoUpdater(win).dispose;
   }
 }
+
+// WU2 resilience (defense-in-depth): keep the MAIN process alive on an otherwise-
+// fatal uncaughtException / unhandledRejection. A single stray throw or unobserved
+// promise rejection (e.g. in an async IPC callback) must not tear down the whole
+// app + sidecar — log it loudly for diagnosis and keep running so the user's work
+// survives. The pure log-string decisions live in rendererRecovery.ts.
+process.on('uncaughtException', (err) => {
+  // eslint-disable-next-line no-console
+  console.error(describeUncaughtException(err));
+});
+process.on('unhandledRejection', (reason) => {
+  // eslint-disable-next-line no-console
+  console.error(describeUnhandledRejection(reason));
+});
 
 // WU-S1: SINGLE-INSTANCE GUARD (same app copy). Acquire Electron's per-copy
 // instance lock BEFORE creating any window or spawning the sidecar. A second

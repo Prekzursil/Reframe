@@ -391,4 +391,18 @@ const api: MediaApi = {
   },
 };
 
-contextBridge.exposeInMainWorld('api', api);
+// WU2 resilience: a contextBridge construction failure must not be a FATAL,
+// un-caught preload crash (which would leave the renderer with no window.api and
+// no diagnosis). Catch + log it so the window still loads and the renderer
+// degrades gracefully — hasApi() reports false and the eager-RPC sites / the
+// top-level ErrorBoundary surface an inline error instead of a silent blank.
+try {
+  contextBridge.exposeInMainWorld('api', api);
+} catch (err) {
+  // eslint-disable-next-line no-console
+  console.error(
+    `[preload] failed to expose the window.api bridge (renderer will degrade): ${
+      (err as Error).message
+    }`,
+  );
+}
