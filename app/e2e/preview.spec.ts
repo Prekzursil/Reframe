@@ -75,12 +75,14 @@ test('Library panel mounts and shows the imported sample', async () => {
   await expect(win.locator('.library__item-title').first()).toHaveText('sample');
 });
 
-test('Create (Shorts) panel mounts via the top-level tabs', async () => {
+test('Make Shorts panel mounts via the top-level tabs', async () => {
   const win = await app.firstWindow();
-  await win.locator('.toptab', { hasText: 'Create' }).click();
-  // The Create tab becomes the selected top-level tab.
+  // v1.4 renamed the shorts-making top tab "Create" -> "Make Shorts" (App.tsx
+  // makeshorts nav label). Drive the current label so this stops timing out.
+  await win.locator('.toptab', { hasText: 'Make Shorts' }).click();
+  // The Make Shorts tab becomes the selected top-level tab.
   await expect(
-    win.locator('.toptab[aria-selected="true"]', { hasText: 'Create' }),
+    win.locator('.toptab[aria-selected="true"]', { hasText: 'Make Shorts' }),
   ).toBeVisible();
   // Return to Library for the Workspace test.
   await win.locator('.toptab', { hasText: 'Library' }).click();
