@@ -112,8 +112,8 @@ describe('app/package.json — v1.4 version + productName (WU A1 / WU-R2)', () =
     name: string;
   };
 
-  it('version is bumped to 1.4.0', () => {
-    expect(pkg.version).toBe('1.4.0');
+  it('version is bumped to 1.4.1', () => {
+    expect(pkg.version).toBe('1.4.1');
   });
 
   it('productName is the display brand "Reframe"', () => {
