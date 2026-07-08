@@ -31,6 +31,11 @@ name: e2e
 
 on:
   workflow_dispatch:
+    inputs:
+      update_visual_baselines:
+        description: "Regenerate the Windows (*-win32.png) visual baselines instead of diffing (uploads them as the 'updated-visual-baselines' artifact; does NOT commit)"
+        type: boolean
+        default: false
   schedule:
     # Nightly at 04:17 UTC (off the hour to avoid GitHub's scheduler congestion).
     - cron: "17 4 * * *"
@@ -261,12 +266,40 @@ jobs:
       # Windows leg to reuse the already-built dev app. Runs against the dev build
       # (RF_E2E_DEV=1) — the same target the baselines were captured against.
       - name: E2E GUI — VISUAL screenshot-diff + A11Y (axe) [Windows only]
-        if: runner.os == 'Windows'
+        # Normal (blocking) path: diff against the committed `*-win32.png` baselines.
+        # Unchanged for the nightly schedule and any dispatch that leaves the
+        # `update_visual_baselines` box unchecked (input is '' on schedule, 'false'
+        # when unchecked — either way not 'true', so this diff run fires as before).
+        if: runner.os == 'Windows' && github.event.inputs.update_visual_baselines != 'true'
         working-directory: app
         env:
           RF_PY: ${{ steps.setup-python.outputs.python-path }}
           RF_E2E_DEV: "1"
         run: npm run test:e2e:visual
+
+      # On-demand baseline REGEN: only when the workflow_dispatch box is checked.
+      # `--update-snapshots` REWRITES the `*-win32.png` baselines in-place (Playwright
+      # exits 0 after writing), so this run is non-blocking by design; the regenerated
+      # PNGs are uploaded below for the maintainer to download + commit. Never runs on
+      # the schedule (input is '' there), so the nightly gate stays a real diff.
+      - name: E2E GUI — VISUAL baseline REGEN (--update-snapshots) [Windows only, on demand]
+        if: runner.os == 'Windows' && github.event.inputs.update_visual_baselines == 'true'
+        working-directory: app
+        env:
+          RF_PY: ${{ steps.setup-python.outputs.python-path }}
+          RF_E2E_DEV: "1"
+        run: npm run test:e2e:visual:update
+
+      - name: Upload regenerated visual baselines
+        if: always() && runner.os == 'Windows' && github.event.inputs.update_visual_baselines == 'true'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: updated-visual-baselines
+          # Playwright stores baselines next to each spec (playwright.visual.config.ts
+          # testDir: ./e2e/visual) as `<spec>.spec.ts-snapshots/<name>-win32.png`.
+          path: app/e2e/visual/**/*-win32.png
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Upload Playwright report
         if: always()

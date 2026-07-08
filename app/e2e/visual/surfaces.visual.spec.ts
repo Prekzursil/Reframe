@@ -1,9 +1,11 @@
 // surfaces.visual.spec.ts — VISUAL screenshot-diff baselines for the rest of the
 // Wave-2b surfaces (Library is its own spike in library.visual.spec.ts):
 //
-//   * Create tab           (the global generated-Shorts gallery + ShortMaker),
+//   * Make Shorts tab      (the make front door + produced-shorts gallery + batch;
+//                           formerly the 'Create' Shorts gallery),
 //   * Director tab         (the prompt-driven AI editing panel),
-//   * Repurpose tab        (batch/template/export-preset surface),
+//   * Edit tab             (the per-video Edit surface; formerly 'Repurpose' —
+//                           batch/templates/export presets moved into Make Shorts),
 //   * Settings → Models & System   (panels/ModelsSystemPanel),
 //   * Settings → Providers & Keys  (features/ProvidersKeys — hosts SpendCap),
 //   * Settings → Providers & Keys → Spend-cap UI (scoped to the SpendCap card),
@@ -36,10 +38,14 @@ test.afterAll(async () => {
   await launched?.app.close();
 });
 
-test('Create tab — Shorts gallery + ShortMaker', async () => {
-  await openTopTab(win, 'Create');
-  // The Create surface is the Shorts view; its root container marks the gallery.
-  await expect(win.locator('.shorts, .create')).toBeVisible();
+test('Make Shorts tab — make front door + gallery/batch sections', async () => {
+  await openTopTab(win, 'Make Shorts');
+  // The Make Shorts surface root (id `makeshorts`, formerly 'Create'). MakeShorts
+  // renders `.make-shorts` unconditionally (renderer/src/views/MakeShorts.tsx:161);
+  // the old `.shorts` class now only mounts inside its 'gallery' sub-tab (default
+  // sub-section is 'make', MakeShorts.tsx:63/164), so assert the always-present root.
+  // Screenshot name kept as `create.png` to preserve the committed Windows baseline.
+  await expect(win.locator('.make-shorts')).toBeVisible();
   await expect(win).toHaveScreenshot('create.png', shotOptions(win));
 });
 
@@ -50,10 +56,14 @@ test('Director tab — AI editing panel', async () => {
   await expect(win).toHaveScreenshot('director.png', shotOptions(win));
 });
 
-test('Repurpose tab — batch / templates / export presets', async () => {
-  await openTopTab(win, 'Repurpose');
+test('Edit tab — selected state (batch/templates now live in Make Shorts → Batch)', async () => {
+  // Formerly the 'Repurpose' tab (id `edit`, still uses RepurposeIcon; App.tsx:386).
+  // This asserts the tab's selected state; the batch/templates surface it once
+  // captured moved into Make Shorts → Batch. Screenshot name kept as `repurpose.png`
+  // to preserve the committed Windows baseline.
+  await openTopTab(win, 'Edit');
   await expect(
-    win.locator('.toptab[aria-selected="true"]', { hasText: 'Repurpose' }),
+    win.locator('.toptab[aria-selected="true"]', { hasText: 'Edit' }),
   ).toBeVisible();
   await expect(win).toHaveScreenshot('repurpose.png', shotOptions(win));
 });
