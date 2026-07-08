@@ -3,6 +3,39 @@
 All notable changes to Reframe — Media Studio are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.1] — 2026-07-08
+
+**Reframe v1.4.1 — post-v1.4 hardening.** A focused patch over 1.4.0: it fixes a real
+cloud-vision egress bug, hardens the renderer against a white-screen, corrects the
+Workspace tab-strip accessibility, and re-pairs the GPU/reframe runtime pins — all
+surfaced by driving the (never-before-CI'd) v1.4 line through the full `quality` +
+`e2e` gauntlet. Ships **in place** over the GitHub-Releases auto-update feed. Both
+coverage gates stay at **strict 100% line + branch** (renderer vitest **and** sidecar
+pytest), and the golden-journey end-to-end acceptance test now passes on CI (Windows +
+Linux), proving Make-Shorts produces a real vertical short.
+
+### Fixed
+
+- **Cloud vision in Make-Shorts jobs no longer crashes/degrades.** The per-request key
+  overlay closed before a job's worker thread resolved the cloud provider, so tier≥2
+  vision in `thumbnail.select` / `phase8.select` read redacted key markers off-thread.
+  Keys are now captured synchronously in the handler and snapshotted onto the worker
+  thread (mirroring `index.build`).
+- **No more white screen on a renderer/RPC hiccup.** An `ErrorBoundary` now wraps the
+  whole app and every eager-RPC mount site guards the synchronous preload-bridge throw,
+  so a transient failure renders an inline error instead of a blank window; the main
+  process gains render-process-gone / uncaught-exception recovery.
+- **Workspace tab-strip accessibility (WCAG).** The grouped tab strip exposed its
+  `role="tab"` buttons under `region` wrappers with non-tab controls inside the
+  `role="tablist"` (critical `aria-required-parent` / `aria-required-children`), and a
+  cluster caption sat at 3.85:1 contrast. The tablist now owns only tabs, and the
+  caption meets AA.
+- **Reframe/GPU runtime pins re-paired.** `torch`/`torchaudio` are re-pinned to the
+  paired `+cu128` build and `opencv` to the reframe-validated `4.13.0.92`, so the
+  first-run reframe stack installs a consistent, validated set (the claudeshorts
+  vertical-reframe engine now fails LOUD with an actionable message if its YuNet model
+  is not provisioned, instead of degrading silently).
+
 ## [1.4.0] — 2026-07-07
 
 **Reframe v1.4 — the experience overhaul.** One big release that turns the raw

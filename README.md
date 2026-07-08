@@ -22,8 +22,8 @@ and pick one:
 
 | Asset | What it is |
 |-------|------------|
-| `media-studio-1.4.0-win-x64.exe` | **NSIS installer** — double-click, choose an install dir, get a Start-menu / desktop shortcut ("Reframe - Media Studio"). Auto-updates in place from here on. |
-| `media-studio-1.4.0-win-x64.zip` | **Portable** — unzip anywhere and run `Reframe - Media Studio.exe`. No install, no admin. |
+| `media-studio-1.4.1-win-x64.exe` | **NSIS installer** — double-click, choose an install dir, get a Start-menu / desktop shortcut ("Reframe - Media Studio"). Auto-updates in place from here on. |
+| `media-studio-1.4.1-win-x64.zip` | **Portable** — unzip anywhere and run `Reframe - Media Studio.exe`. No install, no admin. |
 
 **First run does the rest automatically.** The download is **slim** (the app + a bundled
 CPython + ffmpeg + the render engine). On first launch the app downloads the heavier pieces
