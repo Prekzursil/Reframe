@@ -338,9 +338,7 @@ def main() -> int:
         # job.done even when it GRACEFULLY SKIPS a failed item, so a silent
         # download failure must fail loud here, not deep in the reframe stage.
         try:
-            ensured = client.run_job(
-                "assets.ensure", {"names": ["yunet-face-detection"]}, timeout=300.0
-            )
+            ensured = client.run_job("assets.ensure", {"names": ["yunet-face-detection"]}, timeout=300.0)
             installed = ensured.get("installed") or []
             assert "yunet-face-detection" in installed, f"YuNet did not install: {ensured!r}"
             print(f"STEP_PROVISION: ok -- installed={installed}")
