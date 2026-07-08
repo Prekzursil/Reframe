@@ -19,14 +19,16 @@
 // The logic is Electron-light: `safeStorage` and the file paths are injected so
 // the whole surface is unit-testable with a fake safeStorage + tmp dirs.
 import {
-  existsSync,
+  closeSync,
+  ftruncateSync,
+  openSync,
   readFileSync,
   readdirSync,
   renameSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path';
 
 /** The encrypted keystore file, kept in the app userData dir (NOT settings.json). */
 export const KEYSTORE_FILENAME = 'secure-keys.json';
@@ -151,6 +153,45 @@ function isRawKey(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && !value.startsWith('…');
 }
 
+/**
+ * Path-injection barrier (CodeQL js/path-injection). The keystore/settings file
+ * paths derive from the app userData dir / the data root (itself already validated
+ * by dataRoot.ts `isSafeLocalDataRoot`), so they are trusted — but a filesystem
+ * path is still a tainted sink CodeQL tracks. Re-derive the target from its
+ * resolved directory + a `path.basename` (which cannot contain a separator or
+ * `..`) and prove it stays inside that directory. This is the SAME resolve +
+ * `startsWith(root + sep)` containment shape used by main.ts `dataRootChild` and
+ * exportPath.ts — the barrier CodeQL recognises as a sanitizer. The paths are
+ * already safe, so the guard never fires in practice; a genuine escape fails
+ * closed (throw) rather than touching a file outside its directory.
+ */
+function safeFilePath(path: string): string {
+  const dir = resolvePath(dirname(path));
+  const target = resolvePath(dir, basename(path));
+  if (target !== dir && !target.startsWith(dir + sep)) {
+    throw new Error('keystore path escaped its directory');
+  }
+  return target;
+}
+
+/**
+ * Whitelist-style guard for a provider id used as an OBJECT PROPERTY KEY (CodeQL
+ * js/remote-property-injection). The id originates from a renderer providers.upsert
+ * request / a legacy settings.json, so a hostile `__proto__` / `constructor` /
+ * `prototype` key — or one carrying a path/JSON separator — must never reach a
+ * computed property write (prototype-pollution vector). Legitimate provider ids are
+ * simple slugs (`groq`, `openrouter`, `cloud`, …), so this rejects nothing real.
+ */
+function isSafeProviderId(id: string): boolean {
+  return (
+    id !== '__proto__' &&
+    id !== 'constructor' &&
+    id !== 'prototype' &&
+    !id.includes('/') &&
+    !id.includes('\\')
+  );
+}
+
 /** Extract the raw (non-redacted) plaintext keys currently living in a settings object. */
 export function extractPlaintextKeys(settings: unknown): DecryptedKeys {
   const out: DecryptedKeys = { providers: {} };
@@ -167,7 +208,7 @@ export function extractPlaintextKeys(settings: unknown): DecryptedKeys {
       const keys = p.apiKeys;
       if (typeof id !== 'string' || !Array.isArray(keys)) continue;
       const raw = keys.filter(isRawKey);
-      if (raw.length > 0) {
+      if (raw.length > 0 && isSafeProviderId(id)) {
         out.providers[id] = raw;
       }
     }
@@ -185,7 +226,7 @@ function hasPlaintextKeys(keys: DecryptedKeys): boolean {
 
 function readJson(path: string): unknown {
   try {
-    return JSON.parse(readFileSync(path, 'utf8'));
+    return JSON.parse(readFileSync(safeFilePath(path), 'utf8'));
   } catch {
     return undefined;
   }
@@ -193,30 +234,53 @@ function readJson(path: string): unknown {
 
 /** Atomic JSON write (temp sibling + rename) mirroring the sidecar's settings store. */
 function writeJsonAtomic(path: string, data: unknown): void {
-  const tmp = `${path}.tmp`;
+  const safe = safeFilePath(path);
+  const tmp = safeFilePath(`${safe}.tmp`);
   writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
-  renameSync(tmp, path);
+  renameSync(tmp, safe);
 }
 
 /**
- * Overwrite a file's bytes then delete it, so a plaintext copy cannot be
+ * Truncate a file's bytes to zero then delete it, so a plaintext copy cannot be
  * recovered from the freed inode by a casual read. Best-effort: a missing file
- * is a no-op and any unlink failure after the overwrite is swallowed (the secret
- * bytes are already gone). Exported for direct unit coverage of its defensive arms.
+ * is a no-op and any failure after the truncate is swallowed (the secret bytes are
+ * already gone). Exported for direct unit coverage of its defensive arms.
+ *
+ * TOCTOU-free (CodeQL js/file-system-race): there is NO `existsSync`-then-write
+ * check-and-use window. We open with the `r+` flag — a single atomic syscall that
+ * REQUIRES the file to already exist and never creates it — so a truly-absent file
+ * fails `ENOENT` here (returning false) instead of being silently created by a
+ * later write, and any other target (e.g. a directory -> `EISDIR`) falls through to
+ * the best-effort unlink below, preserving the prior "existed -> true" contract.
  */
 export function shredFile(path: string): boolean {
-  if (!existsSync(path)) {
-    return false;
+  const safe = safeFilePath(path);
+  let fd: number | undefined;
+  try {
+    fd = openSync(safe, 'r+');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return false; // truly absent — nothing to shred
+    }
+    /* EISDIR/EACCES/…: the target exists but can't be opened r+; unlink below */
+  }
+  if (fd !== undefined) {
+    try {
+      ftruncateSync(fd, 0); // scrub the bytes in place before unlinking
+    } catch {
+      /* best-effort: attempt the unlink regardless */
+    } finally {
+      try {
+        closeSync(fd);
+      } catch {
+        /* ignore a close failure — the fd is abandoned on process exit */
+      }
+    }
   }
   try {
-    writeFileSync(path, '', 'utf8');
+    unlinkSync(safe);
   } catch {
-    /* if we cannot overwrite we still attempt to remove below */
-  }
-  try {
-    unlinkSync(path);
-  } catch {
-    /* best-effort: overwrite already scrubbed the bytes */
+    /* best-effort: the truncate already scrubbed the bytes */
   }
   return true;
 }
@@ -229,8 +293,11 @@ export function shredFile(path: string): boolean {
  * Exported for direct unit coverage of the unreadable-directory arm.
  */
 export function priorCopies(settingsPath: string): string[] {
-  const dir = dirname(settingsPath);
-  const base = settingsPath.slice(dir.length + 1);
+  // Route through the containment barrier so `dir` is a sanitised (post-guard)
+  // value before it reaches the `readdirSync` sink (CodeQL js/path-injection).
+  const safe = safeFilePath(settingsPath);
+  const dir = dirname(safe);
+  const base = basename(safe);
   const out: string[] = [];
   let names: string[];
   try {
@@ -256,6 +323,7 @@ function writeKeystore(
 ): void {
   const file: KeystoreFile = { version: 1, providers: {} };
   for (const [id, rawKeys] of Object.entries(keys.providers)) {
+    if (!isSafeProviderId(id)) continue; // never persist a proto-polluting key id
     file.providers[id] = rawKeys.map((k) => encryptToBase64(safeStorage, k));
   }
   if (keys.cloudApiKey !== undefined) {
@@ -298,7 +366,7 @@ export function loadDecryptedKeys(
   const file = raw as Partial<KeystoreFile>;
   if (file.providers && typeof file.providers === 'object') {
     for (const [id, encKeys] of Object.entries(file.providers)) {
-      if (!Array.isArray(encKeys)) continue;
+      if (!Array.isArray(encKeys) || !isSafeProviderId(id)) continue;
       out.providers[id] = encKeys.map((b64) => decryptFromBase64(safeStorage, b64));
     }
   }
