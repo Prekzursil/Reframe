@@ -14,6 +14,11 @@ suite. Every top-level statement carries ``# pragma: no cover``; being
 never-imported it contributes zero measurable statements to the 100% gate.
 """
 
+# pyright: reportUndefinedVariable=false
+#   Vendored third-party arch: the ``DecoderConvUp*`` decoder classes come from
+#   ``from .model_utils import *`` (a star import basedpyright can't resolve). This
+#   file is never imported by the heavy-ML-free gate (see the per-line pragmas).
+
 import torch  # pragma: no cover - vendored ViNet-S arch (never imported by the gate)
 from torch import nn  # pragma: no cover - vendored ViNet-S arch (never imported by the gate)
 import math  # pragma: no cover - vendored ViNet-S arch (never imported by the gate)

@@ -14,6 +14,11 @@ suite. Every top-level statement carries ``# pragma: no cover``; being
 never-imported it contributes zero measurable statements to the 100% gate.
 """
 
+# pyright: reportOperatorIssue=false
+#   Vendored third-party arch: torch Tensor operators against partially-resolved
+#   (Any | None) types basedpyright can't narrow without torch's stubs. This file is
+#   never imported by the heavy-ML-free gate (see the per-line pragmas).
+
 import torch  # pragma: no cover - vendored TransNetV2 arch (never imported by the gate)
 import torch.nn as nn  # pragma: no cover - vendored TransNetV2 arch (never imported by the gate)
 import torch.nn.functional as functional  # pragma: no cover - vendored TransNetV2 arch (never imported by the gate)

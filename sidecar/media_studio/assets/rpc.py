@@ -70,9 +70,10 @@ def make_ensure_handler(manager: AssetManager) -> RpcHandler:
             except ValueError as exc:
                 raise RpcError(str(exc), ErrorCode.INVALID_PARAMS) from exc
         else:
-            names = params.get("names")
-            if not isinstance(names, list) or not names or not all(isinstance(n, str) and n for n in names):
+            raw = params.get("names")
+            if not isinstance(raw, list) or not raw or not all(isinstance(n, str) and n for n in raw):
                 raise RpcError("names (non-empty array of str) is required", ErrorCode.INVALID_PARAMS)
+            names = raw
             unknown = [n for n in names if manifest.get_asset(n) is None]
             if unknown:
                 raise RpcError(f"unknown asset(s): {', '.join(unknown)}", ErrorCode.INVALID_PARAMS)
