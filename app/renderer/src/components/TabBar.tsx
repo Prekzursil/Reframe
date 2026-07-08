@@ -69,7 +69,15 @@ function renderTab(
   );
 }
 
-/** One labelled cluster of tab buttons. */
+/** One labelled cluster of tab buttons. The `<section>` is a PURELY VISUAL
+ *  wrapper, so it carries `role="presentation"` to flatten it out of the
+ *  accessibility tree — this exposes its `role="tab"` children as DIRECT children
+ *  of the enclosing `role="tablist"` (satisfying WCAG aria-required-parent /
+ *  aria-required-children, which resolve ownership on the presentation-flattened
+ *  tree). It deliberately has NO `aria-label`: a labelled section maps to
+ *  `role="region"`, which would (a) revoke `role="presentation"` and (b) sit as a
+ *  non-tab node between the tablist and its tabs. The visible cluster name stays
+ *  as the decorative, `aria-hidden` caption below. */
 function renderGroup(
   group: TabGroup,
   byId: Record<string, TabDef>,
@@ -77,7 +85,7 @@ function renderGroup(
   onSelect: (id: string) => void,
 ): React.ReactElement {
   return (
-    <section className="tabbar__group" key={group.id} aria-label={group.label}>
+    <section className="tabbar__group" key={group.id} role="presentation">
       <span className="tabbar__group-label" aria-hidden="true">
         {group.label}
       </span>
@@ -120,22 +128,30 @@ export function TabBar({
   const advanced = groups.filter((group) => group.advanced);
 
   return (
-    <div className="tabbar tabbar--grouped" role="tablist">
-      {primary.map((group) => renderGroup(group, byId, active, onSelect))}
-      {advanced.length > 0 ? (
-        <section className="tabbar__group tabbar__group--advanced">
-          <button
-            type="button"
-            className="tabbar__advanced-toggle"
-            aria-expanded={advancedOpen}
-            onClick={onToggleAdvanced}
-          >
-            Advanced
-          </button>
+    <div className="tabbar tabbar--grouped">
+      {/* The role="tablist" is an INNER wrapper holding ONLY the tab clusters, so
+          in the accessibility tree it owns EXCLUSIVELY role="tab" elements
+          (surfaced through the presentation group wrappers). The non-tab controls
+          — the Advanced disclosure toggle and Export — are rendered as SIBLINGS of
+          the tablist, never descendants, so the tablist never owns a non-tab
+          child (WCAG aria-required-children). */}
+      <div className="tabbar__tablist" role="tablist">
+        {primary.map((group) => renderGroup(group, byId, active, onSelect))}
+        {advanced.length > 0 ? (
           <div className="tabbar__advanced-panel" hidden={!advancedOpen}>
             {advanced.map((group) => renderGroup(group, byId, active, onSelect))}
           </div>
-        </section>
+        ) : null}
+      </div>
+      {advanced.length > 0 ? (
+        <button
+          type="button"
+          className="tabbar__advanced-toggle"
+          aria-expanded={advancedOpen}
+          onClick={onToggleAdvanced}
+        >
+          Advanced
+        </button>
       ) : null}
       {onExport ? (
         <button type="button" className="tabbar__export" onClick={onExport}>

@@ -135,20 +135,17 @@ describe('TabBar (grouped clusters, WU-3a2)', () => {
       advancedOpen: false,
       onToggleAdvanced: onToggle,
     }) as React.ReactElement;
-    // Walk the grouped tree: div → [primaryGroups, advancedSection, exportOrNull]
-    // → advancedSection → [toggleButton, advancedPanel]. Locate the advanced
-    // <section> by its stable class (robust to the appended Export slot).
+    // The Advanced disclosure toggle now sits as a direct SIBLING of the tablist
+    // (moved OUT of role="tablist" so the list owns only tabs). The grouped root's
+    // children are [tablistDiv, toggleOrNull, exportOrNull]; locate the toggle by
+    // its stable class rather than by position.
     const children = (el.props.children as React.ReactNode[]).flat();
-    const advancedSection = children.find(
+    const toggleButton = children.find(
       (c): c is React.ReactElement =>
         typeof c === 'object' &&
         c !== null &&
-        String((c as React.ReactElement).props?.className ?? '').includes(
-          'tabbar__group--advanced',
-        ),
+        String((c as React.ReactElement).props?.className ?? '') === 'tabbar__advanced-toggle',
     ) as React.ReactElement;
-    const sectionChildren = advancedSection.props.children as React.ReactElement[];
-    const toggleButton = sectionChildren[0];
     toggleButton.props.onClick();
     expect(onToggle).toHaveBeenCalledTimes(1);
   });

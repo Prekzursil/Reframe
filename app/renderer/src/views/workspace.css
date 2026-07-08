@@ -71,6 +71,15 @@
   gap: 0;
 }
 
+/* The real role="tablist" is an INNER wrapper that holds ONLY the tab clusters
+   (the Advanced/Export controls are its siblings, kept out of the list so it
+   owns only tabs). It lays the clusters out inline exactly as the flat strip
+   did — no visual change to the cluster row itself. */
+.tabbar--grouped .tabbar__tablist {
+  display: flex;
+  align-items: stretch;
+}
+
 .tabbar--grouped .tabbar__group {
   display: flex;
   align-items: center;
@@ -84,25 +93,25 @@
   box-shadow: inset 1px 0 0 var(--edge);
 }
 
-/* the cluster name: a whisper, never competing with the tab labels */
+/* the cluster name: a whisper, never competing with the tab labels. NOTE: no
+   `opacity` dimming — the muted token alone reads at 7.7:1 on the raised surface,
+   but multiplying it by an alpha collapsed the label to ~3.85:1 (a real WCAG 1.4.3
+   AA fail). Quietness comes from the small tracked-caps size, not a transparency
+   that eats contrast. */
 .tabbar--grouped .tabbar__group-label {
   color: var(--text-muted);
   font-size: var(--type-caption-size);
   font-weight: var(--type-caption-weight);
   letter-spacing: var(--type-caption-tracking);
   text-transform: uppercase;
-  opacity: 0.62;
   white-space: nowrap;
   align-self: center;
-}
-
-.tabbar--grouped .tabbar__group--advanced {
-  align-items: center;
 }
 
 /* Advanced disclosure: shares the tab voice but reads as a control, not a tab */
 .tabbar--grouped .tabbar__advanced-toggle {
   appearance: none;
+  align-self: center;
   background: transparent;
   border: none;
   color: var(--text-muted);
