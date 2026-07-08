@@ -123,9 +123,8 @@
   --type-title-leading: 1.25;
 
   --type-body-size: 13px;
-  --type-body-weight: var(
-    --weight-regular
-  ); /* the ramp's regular rung (400) — keeps the ladder DRY + fully consumed */
+  /* the ramp's regular rung (400) — keeps the ladder DRY + fully consumed */
+  --type-body-weight: var(--weight-regular);
   --type-body-leading: 1.5;
 
   --type-caption-size: 11px;
