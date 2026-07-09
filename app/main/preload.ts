@@ -78,6 +78,11 @@ export interface SecureStatus {
   backend: string | null;
   sessionOnly: boolean;
   banner: string | null;
+  /**
+   * Absolute paths of legacy plaintext key copies the boot-time migration could not
+   * shred; the renderer banner names them so the user can delete them manually.
+   */
+  unshreddable?: string[];
 }
 
 /** WU A5: outcome of an on-demand "Retry setup / Repair" bootstrap re-run. */

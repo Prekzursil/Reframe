@@ -60,6 +60,14 @@ export interface SecureStatus {
   sessionOnly: boolean;
   /** Loud banner text when refusing to persist, else null. */
   banner: string | null;
+  /**
+   * Absolute paths of legacy plaintext key copies the boot-time migration could not
+   * shred (still recoverable on disk). Optional here because the pure availability
+   * decision has no migration context; {@link KeyBridge.secureStatus} overlays the
+   * real list (possibly empty) so the renderer can surface it to the user — a
+   * main-process `console.warn` is invisible in a packaged build.
+   */
+  unshreddable?: string[];
 }
 
 /** The decrypted key material main injects into the sidecar per-request (never to disk). */

@@ -21,6 +21,14 @@ export interface SecureStatus {
   sessionOnly: boolean;
   /** Loud banner text when refusing to persist, else null. */
   banner: string | null;
+  /**
+   * Absolute paths of legacy PLAINTEXT key copies the boot-time migration could not
+   * shred (locked / read-only / a directory) — still readable on disk. Optional so
+   * an older/partial payload degrades to "none"; main always sends it (possibly []).
+   * A `console.warn` in the main process is invisible in a packaged build, so this is
+   * the surface that actually reaches the user.
+   */
+  unshreddable?: string[];
 }
 
 interface SecureBridge {
@@ -43,12 +51,46 @@ export const SESSION_ONLY_BANNER =
   'Keys you enter will be used for this session only and are cleared when you quit.';
 
 /**
- * Renders nothing while secure storage is healthy (or the bridge is absent). When
- * main reports `sessionOnly`, shows a persistent non-blocking alert with the
- * session-only explanation so a user never silently loses an entered key.
+ * Concrete, actionable text naming the plaintext key copies the migration could not
+ * delete, so the user can remove them by hand. Grammar agrees with the count.
+ */
+export function unshreddableBannerText(paths: readonly string[]): string {
+  const many = paths.length !== 1;
+  return (
+    `${paths.length} old plaintext API-key file${many ? 's' : ''} ` +
+    'could not be removed automatically and remain readable on disk. ' +
+    `Delete ${many ? 'them' : 'it'} manually: ${paths.join(', ')}`
+  );
+}
+
+/** One rendered warning line (session-only refusal or a lingering-plaintext notice). */
+interface BannerMessage {
+  key: string;
+  text: string;
+}
+
+/** Derive the warning line(s) to show for a resolved status (may be empty). */
+function messagesFor(status: SecureStatus): BannerMessage[] {
+  const messages: BannerMessage[] = [];
+  if (status.sessionOnly) {
+    messages.push({ key: 'session', text: status.banner ?? SESSION_ONLY_BANNER });
+  }
+  if (status.unshreddable && status.unshreddable.length > 0) {
+    messages.push({ key: 'unshreddable', text: unshreddableBannerText(status.unshreddable) });
+  }
+  return messages;
+}
+
+/**
+ * Renders nothing while secure storage is healthy AND no plaintext copy was left
+ * behind (or the bridge is absent). Surfaces a persistent non-blocking alert for two
+ * independent, possibly-simultaneous keystore conditions: `sessionOnly` (keys can't
+ * be saved at rest) and `unshreddable` (a legacy plaintext copy the migration could
+ * not delete) — so a user never silently loses a key NOR silently keeps a recoverable
+ * plaintext one on disk.
  */
 export function SecureKeysBanner(): React.ReactElement | null {
-  const [message, setMessage] = useState<string | null>(null);
+  const [messages, setMessages] = useState<readonly BannerMessage[]>([]);
 
   useEffect(() => {
     const api = bridge();
@@ -57,10 +99,10 @@ export function SecureKeysBanner(): React.ReactElement | null {
     api
       .getSecureStatus()
       .then((status) => {
-        // Only surface the banner for the refusal state; a healthy store (or a
-        // stale resolve after unmount) leaves the app chrome untouched.
-        if (cancelled || !status || !status.sessionOnly) return;
-        setMessage(status.banner ?? SESSION_ONLY_BANNER);
+        // Ignore a stale resolve after unmount or an absent status; otherwise derive
+        // the (possibly empty) warning set — an empty set leaves the chrome untouched.
+        if (cancelled || !status) return;
+        setMessages(messagesFor(status));
       })
       .catch(() => {
         // Best-effort: absent a status the banner stays hidden (never a crash).
@@ -70,11 +112,15 @@ export function SecureKeysBanner(): React.ReactElement | null {
     };
   }, []);
 
-  if (message === null) return null;
+  if (messages.length === 0) return null;
 
   return (
     <div className="secure-keys-banner" role="alert" aria-live="assertive">
-      <span className="secure-keys-banner__message">{message}</span>
+      {messages.map((m) => (
+        <span key={m.key} className="secure-keys-banner__message">
+          {m.text}
+        </span>
+      ))}
     </div>
   );
 }

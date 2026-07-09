@@ -7,7 +7,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { SecureKeysBanner, SESSION_ONLY_BANNER, type SecureStatus } from './SecureKeysBanner';
+import {
+  SecureKeysBanner,
+  SESSION_ONLY_BANNER,
+  unshreddableBannerText,
+  type SecureStatus,
+} from './SecureKeysBanner';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -145,5 +150,71 @@ describe('SecureKeysBanner', () => {
     expect(banner()).toBeNull();
     // Re-create a root so afterEach's unmount is a no-op-safe call.
     root = createRoot(container);
+  });
+
+  it('surfaces the unshreddable warning even when secure storage is healthy (sessionOnly false)', async () => {
+    // The whole point of #263: a migration that SUCCEEDED (keys encrypted, sessionOnly
+    // false) but left an old plaintext copy it could not delete must still tell the
+    // user — a console.warn in the main process is invisible in a packaged build.
+    installBridge();
+    getSecureStatus.mockResolvedValue({
+      available: true,
+      backend: null,
+      sessionOnly: false,
+      banner: null,
+      unshreddable: ['C:/data/settings.json.bak'],
+    });
+    mount();
+    await flush();
+    const el = banner();
+    expect(el).not.toBeNull();
+    expect(el?.getAttribute('role')).toBe('alert');
+    expect(el?.textContent).toContain('could not be removed');
+    expect(el?.textContent).toContain('C:/data/settings.json.bak');
+  });
+
+  it('stacks BOTH the session-only and unshreddable warnings when both apply', async () => {
+    installBridge();
+    getSecureStatus.mockResolvedValue({
+      available: false,
+      backend: 'basic_text',
+      sessionOnly: true,
+      banner: 'Keys cannot be saved — session only.',
+      unshreddable: ['/home/u/.config/media-studio/settings.json.old'],
+    });
+    mount();
+    await flush();
+    const el = banner();
+    expect(el?.querySelectorAll('.secure-keys-banner__message')).toHaveLength(2);
+    expect(el?.textContent).toContain('Keys cannot be saved — session only.');
+    expect(el?.textContent).toContain('/home/u/.config/media-studio/settings.json.old');
+  });
+
+  it('shows no unshreddable warning for an empty list (defined but length 0)', async () => {
+    installBridge();
+    getSecureStatus.mockResolvedValue({
+      available: true,
+      backend: null,
+      sessionOnly: false,
+      banner: null,
+      unshreddable: [],
+    });
+    mount();
+    await flush();
+    expect(banner()).toBeNull();
+  });
+});
+
+describe('unshreddableBannerText', () => {
+  it('uses singular grammar for one lingering copy', () => {
+    const text = unshreddableBannerText(['/a/settings.json.bak']);
+    expect(text).toContain('1 old plaintext API-key file ');
+    expect(text).toContain('Delete it manually: /a/settings.json.bak');
+  });
+
+  it('uses plural grammar and joins every path for multiple copies', () => {
+    const text = unshreddableBannerText(['/a/x.bak', '/b/y.old']);
+    expect(text).toContain('2 old plaintext API-key files ');
+    expect(text).toContain('Delete them manually: /a/x.bak, /b/y.old');
   });
 });
