@@ -79,6 +79,15 @@ export interface MigrationResult {
   migratedCloudKey: boolean;
   /** Absolute paths whose plaintext key material was shredded. */
   shredded: string[];
+  /**
+   * Absolute paths of plaintext key copies that EXISTED but could NOT be shredded
+   * (locked / read-only / unwritable / a directory — both the truncate and the
+   * unlink failed). These are still fully recoverable on disk, so the user should
+   * remove them manually; the caller surfaces them in a loud warning rather than
+   * letting a lingering plaintext copy stay silent. An `absent` copy never lands
+   * here (nothing to remove).
+   */
+  unshreddable: string[];
   /** True when the refuse path left keys session-only (secure storage unavailable). */
   sessionOnly: boolean;
   /** Loud banner text on the refuse path, else null. */
@@ -241,25 +250,45 @@ function writeJsonAtomic(path: string, data: unknown): void {
 }
 
 /**
+ * The three distinguishable end-states of a {@link shredFile} attempt. A plain
+ * boolean conflated `absent` with `intact`, so the migration could not tell a
+ * copy that was safely gone from one that survived, recoverable, on disk. The
+ * caller keys off this to warn ONLY about a lingering plaintext copy.
+ *   - `'shredded'` — the plaintext at that path is genuinely gone (truncated OR
+ *                    removed).
+ *   - `'absent'`   — nothing was there to shred (ENOENT); no action needed.
+ *   - `'intact'`   — the target EXISTED but could NOT be scrubbed (both arms
+ *                    failed); a still-recoverable copy the user must remove.
+ */
+export type ShredOutcome = 'shredded' | 'absent' | 'intact';
+
+/**
  * Truncate a file's bytes to zero then delete it, so a plaintext copy cannot be
  * recovered from the freed inode by a casual read.
  *
- * SECURITY CONTRACT (returns whether the plaintext was actually made unrecoverable):
- *   - `true`  ONLY when the bytes were truncated OR the file was removed — i.e. the
- *             plaintext at that path is genuinely gone. The caller (migration) lists
- *             these in `shredded[]` as "plaintext key material destroyed".
- *   - `false` when the target is absent (nothing to shred) OR still fully intact on
- *             disk — a LOCKED / read-only / unwritable file, or a directory, where
- *             BOTH the truncate and the unlink failed. Reporting such a file as
- *             shredded would let the caller wrongly believe a recoverable plaintext
- *             copy is gone. "Existed" is NOT "shredded".
+ * SECURITY CONTRACT (returns the outcome so the caller learns the state WITHOUT a
+ * separate `existsSync` probe — see the TOCTOU note below):
+ *   - `'shredded'` ONLY when the bytes were truncated OR the file was removed — i.e.
+ *             the plaintext at that path is genuinely gone. The caller (migration)
+ *             lists these in `shredded[]` as "plaintext key material destroyed".
+ *   - `'absent'`   when the target does not exist (ENOENT) — nothing to shred, and
+ *             nothing for the user to clean up.
+ *   - `'intact'`   when the target EXISTED but is still fully on disk — a LOCKED /
+ *             read-only / unwritable file, or a directory, where BOTH the truncate
+ *             and the unlink failed. Reporting such a file as shredded would let the
+ *             caller wrongly believe a recoverable plaintext copy is gone; instead
+ *             the migration lists it in `unshreddable[]` so it is surfaced for manual
+ *             removal. "Existed" is NOT "shredded".
  *
- * TOCTOU-free (CodeQL js/file-system-race): NO `existsSync`-then-write window. We
+ * TOCTOU-free (CodeQL js/file-system-race): NO `existsSync`-then-write window, and
+ * the caller needs NO `existsSync`-AFTER-shred to distinguish absent from intact
+ * (that separate probe would re-introduce the very race we removed, plus a
+ * js/path-injection sink) — the 3-state return carries that fact out directly. We
  * open with the `r+` flag — a single atomic syscall that REQUIRES the file to exist
- * and never creates it — so a truly-absent file fails `ENOENT` (returning false)
+ * and never creates it — so a truly-absent file fails `ENOENT` (returning `'absent'`)
  * instead of being silently created by a later write.
  */
-export function shredFile(path: string): boolean {
+export function shredFile(path: string): ShredOutcome {
   const safe = safeFilePath(path);
   let scrubbed = false;
   let fd: number | undefined;
@@ -267,7 +296,7 @@ export function shredFile(path: string): boolean {
     fd = openSync(safe, 'r+');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return false; // truly absent — nothing to shred
+      return 'absent'; // truly absent — nothing to shred
     }
     /* EISDIR/EACCES/EBUSY/…: exists but can't be opened r+; try the unlink below */
   }
@@ -292,8 +321,8 @@ export function shredFile(path: string): boolean {
     /* unlink failed; `scrubbed` reflects whether the truncate succeeded */
   }
   // Only report a real shred: a locked/unwritable/intact file (both arms failed)
-  // returns false so the caller never lists a still-recoverable copy as destroyed.
-  return scrubbed;
+  // returns 'intact' so the caller never lists a still-recoverable copy as destroyed.
+  return scrubbed ? 'shredded' : 'intact';
 }
 
 /**
@@ -433,6 +462,7 @@ export function migrateLegacyPlaintextKeys(
       migratedProviderKeys: 0,
       migratedCloudKey: false,
       shredded: [],
+      unshreddable: [],
       sessionOnly: false,
       banner: null,
     };
@@ -446,6 +476,7 @@ export function migrateLegacyPlaintextKeys(
       migratedProviderKeys: 0,
       migratedCloudKey: false,
       shredded: [],
+      unshreddable: [],
       sessionOnly: true,
       banner: status.banner,
     };
@@ -458,10 +489,15 @@ export function migrateLegacyPlaintextKeys(
   //    then shred every stale prior copy that could still hold plaintext.
   writeJsonAtomic(settingsPath, stripKeysFromSettings(settings));
   const shredded: string[] = [];
+  const unshreddable: string[] = [];
   for (const copy of priorCopies(settingsPath)) {
-    if (shredFile(copy)) {
-      shredded.push(copy);
+    const outcome = shredFile(copy);
+    if (outcome === 'shredded') {
+      shredded.push(copy); // plaintext genuinely destroyed
+    } else if (outcome === 'intact') {
+      unshreddable.push(copy); // existed but survived — surface for manual removal
     }
+    // 'absent' copies (already gone by the time we looked) need no action.
   }
 
   const providerKeyCount = Object.values(keys.providers).reduce((n, arr) => n + arr.length, 0);
@@ -470,6 +506,7 @@ export function migrateLegacyPlaintextKeys(
     migratedProviderKeys: providerKeyCount,
     migratedCloudKey: keys.cloudApiKey !== undefined,
     shredded,
+    unshreddable,
     sessionOnly: false,
     banner: null,
   };
