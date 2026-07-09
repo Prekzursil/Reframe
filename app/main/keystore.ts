@@ -364,16 +364,33 @@ export function priorCopies(settingsPath: string): string[] {
 }
 
 /**
- * Shred every prior plaintext copy of settings.json, classifying each outcome.
+ * True when a prior copy is READABLE, parses as JSON, and provably holds NO plaintext
+ * keys — i.e. a non-secret settings backup the sweep must NOT destroy. Anything we
+ * cannot prove key-free is deliberately NOT this: unreadable/locked, a directory, or
+ * non-JSON (which could still hold raw key bytes — e.g. a `"…backup sk-live…"` blob),
+ * as well as JSON that DOES contain keys. So a pre-migration backup that captured the
+ * plaintext keys is still destroyed (it holds keys), while a post-migration key-free
+ * backup a user kept is preserved.
+ */
+function isKeyFreeSettingsCopy(path: string): boolean {
+  const parsed = readJson(path);
+  if (parsed === undefined) {
+    return false; // unreadable / not valid JSON — cannot prove it is key-free
+  }
+  return !hasPlaintextKeys(extractPlaintextKeys(parsed));
+}
+
+/**
+ * Shred every prior plaintext copy of settings.json that could hold key material,
+ * classifying each outcome. A readable, valid-JSON, key-FREE sibling is a non-secret
+ * settings backup and is LEFT UNTOUCHED (see {@link isKeyFreeSettingsCopy}) — the
+ * sweep only ever destroys copies that hold (or might hold) plaintext keys.
  *
  * Run on EVERY boot (not only when settings.json still holds keys) so a copy the app
  * could NOT delete on an earlier boot keeps being re-attempted and re-reported until
  * it is truly gone — otherwise the security warning silently vanishes on the next
  * restart (settings.json is already stripped, so the migration is a no-op) while a
- * recoverable plaintext key copy lingers on disk. Safe to run unconditionally: the
- * app only ever writes KEY-FREE siblings (the sidecar strips keys and uses a
- * transient `.tmp` it renames away), so any surviving `settings.json.*` sibling is a
- * legacy plaintext artifact that should not exist.
+ * recoverable plaintext key copy lingers on disk.
  */
 function sweepPriorPlaintextCopies(settingsPath: string): {
   shredded: string[];
@@ -382,6 +399,9 @@ function sweepPriorPlaintextCopies(settingsPath: string): {
   const shredded: string[] = [];
   const unshreddable: string[] = [];
   for (const copy of priorCopies(settingsPath)) {
+    if (isKeyFreeSettingsCopy(copy)) {
+      continue; // a non-secret settings backup — never destroy the user's data
+    }
     const outcome = shredFile(copy);
     if (outcome === 'shredded') {
       shredded.push(copy); // plaintext genuinely destroyed

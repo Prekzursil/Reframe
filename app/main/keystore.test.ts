@@ -361,6 +361,36 @@ describe('migrateLegacyPlaintextKeys', () => {
     expect(res.shredded).toContain(leftover);
     expect(existsSync(leftover)).toBe(false); // the recoverable plaintext copy is gone
   });
+
+  it('PRESERVES a non-secret settings backup on a no-op run (never destroys user data)', () => {
+    // Codex: the every-boot sweep must NOT delete a user's key-FREE settings backup.
+    // A readable, valid-JSON sibling that holds no plaintext keys is not a security
+    // exposure, so it is left untouched — only key-bearing (or unprovable) copies are
+    // swept.
+    const ss = makeSafeStorage();
+    const backup = `${settingsPath()}.backup`;
+    writeFileSync(backup, JSON.stringify({ theme: 'dark', useCloud: true })); // NO keys
+    writeFileSync(settingsPath(), JSON.stringify({ theme: 'dark' })); // noop
+    const res = migrateLegacyPlaintextKeys(ss, settingsPath(), keystorePath());
+    expect(res.status).toBe('noop');
+    expect(res.shredded).not.toContain(backup);
+    expect(res.unshreddable).not.toContain(backup);
+    expect(existsSync(backup)).toBe(true); // the non-secret backup survives untouched
+    expect(readFileSync(backup, 'utf8')).toContain('dark'); // and its contents are intact
+  });
+
+  it('PRESERVES a key-free backup even during a real migration', () => {
+    // The same protection applies on the migrated path: a user's key-free backup is
+    // not collateral damage of the one-time key migration.
+    const ss = makeSafeStorage();
+    const backup = `${settingsPath()}.backup`;
+    writeFileSync(backup, JSON.stringify({ theme: 'light' })); // NO keys -> preserve
+    writeFileSync(settingsPath(), JSON.stringify({ cloudApiKey: LIVE })); // keys -> migrate
+    const res = migrateLegacyPlaintextKeys(ss, settingsPath(), keystorePath());
+    expect(res.status).toBe('migrated');
+    expect(res.shredded).not.toContain(backup);
+    expect(existsSync(backup)).toBe(true);
+  });
 });
 
 describe('shredFile', () => {
