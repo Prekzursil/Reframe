@@ -363,6 +363,36 @@ export function priorCopies(settingsPath: string): string[] {
   return out;
 }
 
+/**
+ * Shred every prior plaintext copy of settings.json, classifying each outcome.
+ *
+ * Run on EVERY boot (not only when settings.json still holds keys) so a copy the app
+ * could NOT delete on an earlier boot keeps being re-attempted and re-reported until
+ * it is truly gone — otherwise the security warning silently vanishes on the next
+ * restart (settings.json is already stripped, so the migration is a no-op) while a
+ * recoverable plaintext key copy lingers on disk. Safe to run unconditionally: the
+ * app only ever writes KEY-FREE siblings (the sidecar strips keys and uses a
+ * transient `.tmp` it renames away), so any surviving `settings.json.*` sibling is a
+ * legacy plaintext artifact that should not exist.
+ */
+function sweepPriorPlaintextCopies(settingsPath: string): {
+  shredded: string[];
+  unshreddable: string[];
+} {
+  const shredded: string[] = [];
+  const unshreddable: string[] = [];
+  for (const copy of priorCopies(settingsPath)) {
+    const outcome = shredFile(copy);
+    if (outcome === 'shredded') {
+      shredded.push(copy); // plaintext genuinely destroyed
+    } else if (outcome === 'intact') {
+      unshreddable.push(copy); // existed but survived — surface for manual removal
+    }
+    // 'absent' copies (already gone by the time we looked) need no action.
+  }
+  return { shredded, unshreddable };
+}
+
 /** Persist the encrypted keystore (base64 ciphertext) atomically to `keystorePath`. */
 function writeKeystore(
   safeStorage: SafeStorageLike,
@@ -448,7 +478,9 @@ export function stripKeysFromSettings(settings: unknown): Record<string, unknown
  * One-time v1.3 migration: re-encrypt any legacy plaintext keys in `settingsPath`
  * into the DPAPI keystore, then SHRED every prior plaintext copy.
  *
- *   * NO plaintext keys present   -> `noop` (nothing to migrate).
+ *   * NO plaintext keys present   -> `noop` (nothing to migrate) — but still SWEEP any
+ *     lingering prior plaintext copy so a still-recoverable legacy copy is cleaned
+ *     up / re-reported on every restart, not only the boot that migrated.
  *   * Keys present, secure store  -> encrypt into `keystorePath`, strip the keys
  *     from settings.json, and shred the `.tmp` + backup siblings. After this the
  *     migration guarantees ZERO plaintext key bytes remain on disk.
@@ -465,12 +497,18 @@ export function migrateLegacyPlaintextKeys(
   const keys = extractPlaintextKeys(settings);
 
   if (!hasPlaintextKeys(keys)) {
+    // Nothing to migrate, but a legacy plaintext copy from an earlier boot may still
+    // be on disk (settings.json was stripped, so we'd never reach the shred loop
+    // below). Sweep them here too so a lingering, still-recoverable copy is cleaned
+    // up — or re-reported when it can't be — on EVERY restart, not just the one boot
+    // that happened to migrate. See sweepPriorPlaintextCopies.
+    const swept = sweepPriorPlaintextCopies(settingsPath);
     return {
       status: 'noop',
       migratedProviderKeys: 0,
       migratedCloudKey: false,
-      shredded: [],
-      unshreddable: [],
+      shredded: swept.shredded,
+      unshreddable: swept.unshreddable,
       sessionOnly: false,
       banner: null,
     };
@@ -496,25 +534,15 @@ export function migrateLegacyPlaintextKeys(
   // 2. Strip the raw keys from settings.json (preserving all non-secret settings),
   //    then shred every stale prior copy that could still hold plaintext.
   writeJsonAtomic(settingsPath, stripKeysFromSettings(settings));
-  const shredded: string[] = [];
-  const unshreddable: string[] = [];
-  for (const copy of priorCopies(settingsPath)) {
-    const outcome = shredFile(copy);
-    if (outcome === 'shredded') {
-      shredded.push(copy); // plaintext genuinely destroyed
-    } else if (outcome === 'intact') {
-      unshreddable.push(copy); // existed but survived — surface for manual removal
-    }
-    // 'absent' copies (already gone by the time we looked) need no action.
-  }
+  const swept = sweepPriorPlaintextCopies(settingsPath);
 
   const providerKeyCount = Object.values(keys.providers).reduce((n, arr) => n + arr.length, 0);
   return {
     status: 'migrated',
     migratedProviderKeys: providerKeyCount,
     migratedCloudKey: keys.cloudApiKey !== undefined,
-    shredded,
-    unshreddable,
+    shredded: swept.shredded,
+    unshreddable: swept.unshreddable,
     sessionOnly: false,
     banner: null,
   };
