@@ -151,6 +151,13 @@ export function planUpsert(
 export interface KeyBridgeOptions {
   safeStorage: SafeStorageLike;
   keystorePath: string;
+  /**
+   * Absolute paths of legacy plaintext key copies the boot-time migration could not
+   * shred. Carried here so {@link KeyBridge.secureStatus} can surface them to the
+   * renderer banner (the only user-visible channel; console output is lost in a
+   * packaged build). Defaults to none.
+   */
+  unshreddable?: readonly string[];
 }
 
 /**
@@ -163,16 +170,24 @@ export interface KeyBridgeOptions {
 export class KeyBridge {
   private readonly safeStorage: SafeStorageLike;
   private readonly keystorePath: string;
+  private readonly unshreddable: readonly string[];
   private session: DecryptedKeys = { providers: {} };
 
   constructor(opts: KeyBridgeOptions) {
     this.safeStorage = opts.safeStorage;
     this.keystorePath = opts.keystorePath;
+    // Copy at construction (not just on read) so a later mutation of the caller's
+    // array can never retroactively change what the bridge reports.
+    this.unshreddable = [...(opts.unshreddable ?? [])];
   }
 
-  /** The live availability/refusal decision surfaced to the renderer banner. */
+  /**
+   * The live availability/refusal decision surfaced to the renderer banner, overlaid
+   * with the boot-time migration's `unshreddable` list so the renderer can also warn
+   * about any lingering plaintext copy that could not be deleted.
+   */
   secureStatus(): SecureStatus {
-    return secureStatus(this.safeStorage);
+    return { ...secureStatus(this.safeStorage), unshreddable: [...this.unshreddable] };
   }
 
   /** On-disk keystore overlaid with this session's in-memory keys (session wins). */

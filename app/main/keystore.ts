@@ -60,6 +60,14 @@ export interface SecureStatus {
   sessionOnly: boolean;
   /** Loud banner text when refusing to persist, else null. */
   banner: string | null;
+  /**
+   * Absolute paths of legacy plaintext key copies the boot-time migration could not
+   * shred (still recoverable on disk). Optional here because the pure availability
+   * decision has no migration context; {@link KeyBridge.secureStatus} overlays the
+   * real list (possibly empty) so the renderer can surface it to the user — a
+   * main-process `console.warn` is invisible in a packaged build.
+   */
+  unshreddable?: string[];
 }
 
 /** The decrypted key material main injects into the sidecar per-request (never to disk). */
@@ -355,6 +363,72 @@ export function priorCopies(settingsPath: string): string[] {
   return out;
 }
 
+/**
+ * True when a prior copy is READABLE, parses as JSON, and provably holds NO plaintext
+ * keys — i.e. a non-secret settings backup the sweep must NOT destroy. Anything we
+ * cannot prove key-free is deliberately NOT this: unreadable/locked, a directory, or
+ * non-JSON (which could still hold raw key bytes — e.g. a `"…backup sk-live…"` blob),
+ * as well as JSON that DOES contain keys. So a pre-migration backup that captured the
+ * plaintext keys is still destroyed (it holds keys), while a post-migration key-free
+ * backup a user kept is preserved.
+ *
+ * "Key-free" means key-free PER THE APP'S OWN KEY MODEL — the very same
+ * {@link extractPlaintextKeys} the migration uses to decide migrate-vs-noop, which is
+ * exactly the two shapes the app (main + sidecar settings_store) ever writes:
+ * `providers[].apiKeys` (safe id) and top-level `cloudApiKey`. This is deliberate and
+ * symmetric: a settings.json copy the app produced carries its keys ONLY in those
+ * shapes, so every app-written sibling with keys is detected and swept.
+ *
+ * IRREDUCIBLE RESIDUAL (intentional, reviewed): a HAND-CRAFTED sibling holding a key
+ * outside those shapes (e.g. `{"notes":"sk-ant-…"}`, a top-level array, or a key under
+ * an unsafe provider id) parses key-free and is preserved. This is not reachable by any
+ * file the app writes, and it is exactly symmetric with the live settings.json (the same
+ * detector governs both — a key the migration wouldn't manage there, it doesn't manage
+ * here). A broader entropy/substring scanner is deliberately NOT used: it would be
+ * asymmetric with the migration and would false-positive-destroy legitimate non-secret
+ * backups (paths, UUIDs, tokens) — reintroducing the very data-loss this predicate fixes.
+ */
+function isKeyFreeSettingsCopy(path: string): boolean {
+  const parsed = readJson(path);
+  if (parsed === undefined) {
+    return false; // unreadable / not valid JSON — cannot prove it is key-free
+  }
+  return !hasPlaintextKeys(extractPlaintextKeys(parsed));
+}
+
+/**
+ * Shred every prior plaintext copy of settings.json that could hold key material,
+ * classifying each outcome. A readable, valid-JSON, key-FREE sibling is a non-secret
+ * settings backup and is LEFT UNTOUCHED (see {@link isKeyFreeSettingsCopy}) — the
+ * sweep only ever destroys copies that hold (or might hold) plaintext keys.
+ *
+ * Run on EVERY boot (not only when settings.json still holds keys) so a copy the app
+ * could NOT delete on an earlier boot keeps being re-attempted and re-reported until
+ * it is truly gone — otherwise the security warning silently vanishes on the next
+ * restart (settings.json is already stripped, so the migration is a no-op) while a
+ * recoverable plaintext key copy lingers on disk.
+ */
+function sweepPriorPlaintextCopies(settingsPath: string): {
+  shredded: string[];
+  unshreddable: string[];
+} {
+  const shredded: string[] = [];
+  const unshreddable: string[] = [];
+  for (const copy of priorCopies(settingsPath)) {
+    if (isKeyFreeSettingsCopy(copy)) {
+      continue; // a non-secret settings backup — never destroy the user's data
+    }
+    const outcome = shredFile(copy);
+    if (outcome === 'shredded') {
+      shredded.push(copy); // plaintext genuinely destroyed
+    } else if (outcome === 'intact') {
+      unshreddable.push(copy); // existed but survived — surface for manual removal
+    }
+    // 'absent' copies (already gone by the time we looked) need no action.
+  }
+  return { shredded, unshreddable };
+}
+
 /** Persist the encrypted keystore (base64 ciphertext) atomically to `keystorePath`. */
 function writeKeystore(
   safeStorage: SafeStorageLike,
@@ -440,7 +514,9 @@ export function stripKeysFromSettings(settings: unknown): Record<string, unknown
  * One-time v1.3 migration: re-encrypt any legacy plaintext keys in `settingsPath`
  * into the DPAPI keystore, then SHRED every prior plaintext copy.
  *
- *   * NO plaintext keys present   -> `noop` (nothing to migrate).
+ *   * NO plaintext keys present   -> `noop` (nothing to migrate) — but still SWEEP any
+ *     lingering prior plaintext copy so a still-recoverable legacy copy is cleaned
+ *     up / re-reported on every restart, not only the boot that migrated.
  *   * Keys present, secure store  -> encrypt into `keystorePath`, strip the keys
  *     from settings.json, and shred the `.tmp` + backup siblings. After this the
  *     migration guarantees ZERO plaintext key bytes remain on disk.
@@ -457,12 +533,18 @@ export function migrateLegacyPlaintextKeys(
   const keys = extractPlaintextKeys(settings);
 
   if (!hasPlaintextKeys(keys)) {
+    // Nothing to migrate, but a legacy plaintext copy from an earlier boot may still
+    // be on disk (settings.json was stripped, so we'd never reach the shred loop
+    // below). Sweep them here too so a lingering, still-recoverable copy is cleaned
+    // up — or re-reported when it can't be — on EVERY restart, not just the one boot
+    // that happened to migrate. See sweepPriorPlaintextCopies.
+    const swept = sweepPriorPlaintextCopies(settingsPath);
     return {
       status: 'noop',
       migratedProviderKeys: 0,
       migratedCloudKey: false,
-      shredded: [],
-      unshreddable: [],
+      shredded: swept.shredded,
+      unshreddable: swept.unshreddable,
       sessionOnly: false,
       banner: null,
     };
@@ -488,25 +570,15 @@ export function migrateLegacyPlaintextKeys(
   // 2. Strip the raw keys from settings.json (preserving all non-secret settings),
   //    then shred every stale prior copy that could still hold plaintext.
   writeJsonAtomic(settingsPath, stripKeysFromSettings(settings));
-  const shredded: string[] = [];
-  const unshreddable: string[] = [];
-  for (const copy of priorCopies(settingsPath)) {
-    const outcome = shredFile(copy);
-    if (outcome === 'shredded') {
-      shredded.push(copy); // plaintext genuinely destroyed
-    } else if (outcome === 'intact') {
-      unshreddable.push(copy); // existed but survived — surface for manual removal
-    }
-    // 'absent' copies (already gone by the time we looked) need no action.
-  }
+  const swept = sweepPriorPlaintextCopies(settingsPath);
 
   const providerKeyCount = Object.values(keys.providers).reduce((n, arr) => n + arr.length, 0);
   return {
     status: 'migrated',
     migratedProviderKeys: providerKeyCount,
     migratedCloudKey: keys.cloudApiKey !== undefined,
-    shredded,
-    unshreddable,
+    shredded: swept.shredded,
+    unshreddable: swept.unshreddable,
     sessionOnly: false,
     banner: null,
   };

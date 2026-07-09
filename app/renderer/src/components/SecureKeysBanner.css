@@ -10,8 +10,9 @@
   transform: translateX(-50%);
   z-index: 1050; /* above toasts (1000), below the sidecar recovery strip (1100) */
   display: flex;
-  align-items: center;
-  gap: var(--space-4);
+  flex-direction: column; /* stack independent keystore warnings (session-only + lingering-plaintext) */
+  align-items: stretch;
+  gap: var(--space-3);
   max-width: min(720px, calc(100vw - var(--space-5) * 2));
   padding: var(--space-3) var(--space-5);
   background: var(--surface-overlay);
@@ -37,7 +38,6 @@
 }
 
 .secure-keys-banner__message {
-  flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
   white-space: normal;

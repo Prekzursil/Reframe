@@ -459,8 +459,13 @@ let keyBridge: KeyBridge | null = null;
 function initKeyBridge(): KeyBridge {
   const store = safeStorage as unknown as SafeStorageLike;
   const keystorePath = keystorePathFor(app.getPath('userData'));
+  // Carried onto the KeyBridge so getSecureStatus surfaces any lingering plaintext
+  // copy in the renderer banner — a console.warn alone is invisible in a packaged
+  // build. Stays empty on the refuse/skip paths and if the migration throws.
+  let unshreddable: string[] = [];
   try {
     const result = migrateLegacyPlaintextKeys(store, settingsJsonPath(), keystorePath);
+    unshreddable = result.unshreddable;
     if (result.status === 'refused') {
       // Loud, actionable: keys can't be saved at rest; SecureKeysBanner shows the
       // session-only message. Never a silent plaintext write, never a destroyed key.
@@ -490,7 +495,7 @@ function initKeyBridge(): KeyBridge {
     // eslint-disable-next-line no-console
     console.error(`[keystore] plaintext migration failed (continuing): ${(err as Error).message}`);
   }
-  return new KeyBridge({ safeStorage: store, keystorePath });
+  return new KeyBridge({ safeStorage: store, keystorePath, unshreddable });
 }
 
 /**

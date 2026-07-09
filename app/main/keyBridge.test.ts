@@ -303,4 +303,23 @@ describe('KeyBridge.secureStatus', () => {
     expect(status.sessionOnly).toBe(true);
     expect(status.banner).not.toBeNull();
   });
+  it('defaults unshreddable to an empty list when none is injected', () => {
+    const bridge = new KeyBridge({ safeStorage: makeSafeStorage(), keystorePath: keystorePath() });
+    expect(bridge.secureStatus().unshreddable).toEqual([]);
+  });
+  it('surfaces the injected migration unshreddable list (copied, not aliased)', () => {
+    // The boot-time migration's un-scrubbable plaintext copies must reach the renderer
+    // banner via getSecureStatus — the only user-visible channel in a packaged build.
+    const injected = ['/data/settings.json.bak', '/data/settings.json.old'];
+    const bridge = new KeyBridge({
+      safeStorage: makeSafeStorage(),
+      keystorePath: keystorePath(),
+      unshreddable: injected,
+    });
+    const status = bridge.secureStatus();
+    expect(status.unshreddable).toEqual(injected);
+    // A fresh array each call (defensive copy): mutating the returned list or the
+    // injected source must not corrupt the bridge's held state.
+    expect(status.unshreddable).not.toBe(injected);
+  });
 });
