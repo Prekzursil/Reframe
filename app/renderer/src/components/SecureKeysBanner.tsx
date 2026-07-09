@@ -58,7 +58,7 @@ export function unshreddableBannerText(paths: readonly string[]): string {
   const many = paths.length !== 1;
   return (
     `${paths.length} old plaintext API-key file${many ? 's' : ''} ` +
-    'could not be removed automatically and remain readable on disk. ' +
+    `could not be removed automatically and remain${many ? '' : 's'} readable on disk. ` +
     `Delete ${many ? 'them' : 'it'} manually: ${paths.join(', ')}`
   );
 }

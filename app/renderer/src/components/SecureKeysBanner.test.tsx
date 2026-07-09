@@ -209,12 +209,14 @@ describe('unshreddableBannerText', () => {
   it('uses singular grammar for one lingering copy', () => {
     const text = unshreddableBannerText(['/a/settings.json.bak']);
     expect(text).toContain('1 old plaintext API-key file ');
+    expect(text).toContain('remains readable on disk');
     expect(text).toContain('Delete it manually: /a/settings.json.bak');
   });
 
   it('uses plural grammar and joins every path for multiple copies', () => {
     const text = unshreddableBannerText(['/a/x.bak', '/b/y.old']);
     expect(text).toContain('2 old plaintext API-key files ');
+    expect(text).toContain('remain readable on disk');
     expect(text).toContain('Delete them manually: /a/x.bak, /b/y.old');
   });
 });

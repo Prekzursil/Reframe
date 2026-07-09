@@ -176,7 +176,9 @@ export class KeyBridge {
   constructor(opts: KeyBridgeOptions) {
     this.safeStorage = opts.safeStorage;
     this.keystorePath = opts.keystorePath;
-    this.unshreddable = opts.unshreddable ?? [];
+    // Copy at construction (not just on read) so a later mutation of the caller's
+    // array can never retroactively change what the bridge reports.
+    this.unshreddable = [...(opts.unshreddable ?? [])];
   }
 
   /**
