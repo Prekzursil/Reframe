@@ -309,29 +309,52 @@ describe('migrateLegacyPlaintextKeys', () => {
     const res = migrateLegacyPlaintextKeys(ss, settingsPath(), keystorePath());
     expect(res.status).toBe('migrated');
   });
+
+  it('surfaces a prior copy that could NOT be shredded in `unshreddable` (not `shredded`)', () => {
+    // A sibling whose basename starts with the settings basename is a prior-copy
+    // candidate priorCopies yields; when that candidate is itself un-scrubbable
+    // (both shredFile arms fail), the migration must list it in `unshreddable[]` so
+    // a lingering, still-recoverable plaintext copy is surfaced for manual removal —
+    // never dropped, and never miscounted as `shredded`. A directory whose name
+    // matches the prior-copy pattern is the deterministic cross-platform instance
+    // (openSync r+ -> EISDIR and unlink -> EISDIR/EPERM), standing in for a locked /
+    // read-only file that behaves identically.
+    const ss = makeSafeStorage();
+    const stuck = join(dir, 'settings.json.d'); // matches base prefix -> a prior copy
+    mkdirSync(stuck);
+    writeFileSync(settingsPath(), JSON.stringify({ cloudApiKey: LIVE }));
+
+    const res = migrateLegacyPlaintextKeys(ss, settingsPath(), keystorePath());
+
+    expect(res.status).toBe('migrated');
+    expect(res.unshreddable).toContain(stuck); // surfaced for manual removal
+    expect(res.shredded).not.toContain(stuck); // never miscounted as destroyed
+  });
 });
 
 describe('shredFile', () => {
-  it('is a no-op (false) for a missing file', () => {
-    expect(shredFile(join(dir, 'nope.json'))).toBe(false);
+  it("reports 'absent' for a missing file", () => {
+    // ENOENT -> nothing to shred and nothing for the user to clean up.
+    expect(shredFile(join(dir, 'nope.json'))).toBe('absent');
   });
-  it('truncates + removes a real plaintext file and reports it shredded (true)', () => {
+  it("truncates + removes a real plaintext file and reports it 'shredded'", () => {
     const f = join(dir, 'plain.json');
     writeFileSync(f, '{"cloudApiKey":"sk-live-should-be-scrubbed"}');
-    expect(shredFile(f)).toBe(true);
+    expect(shredFile(f)).toBe('shredded');
     expect(existsSync(f)).toBe(false); // the plaintext copy is genuinely gone
   });
-  it('returns false for a path that exists but cannot be scrubbed — never falsely reports an intact plaintext copy as shredded', () => {
+  it("reports 'intact' for a path that exists but cannot be scrubbed — never falsely reports a surviving plaintext copy as shredded", () => {
     // SECURITY (Codex stop-time review): a target that EXISTS but where BOTH the
     // truncate and the unlink fail — a locked / read-only / unwritable plaintext
     // copy, or a directory — is still fully recoverable on disk, so shredFile must
     // NOT report it handled (the migration would wrongly list it in `shredded[]`).
-    // "Existed" is not "shredded". A directory is the deterministic cross-platform
-    // instance of that class: openSync(dir,'r+') -> EISDIR and unlinkSync(dir) ->
-    // EISDIR/EPERM, so both arms fail exactly as they would for a locked file.
+    // "Existed" is not "shredded"; it is 'intact', and the caller surfaces it in
+    // `unshreddable[]` for manual removal. A directory is the deterministic
+    // cross-platform instance of that class: openSync(dir,'r+') -> EISDIR and
+    // unlinkSync(dir) -> EISDIR/EPERM, so both arms fail exactly as for a locked file.
     const asDir = join(dir, 'a-directory');
     mkdirSync(asDir);
-    expect(shredFile(asDir)).toBe(false); // NOT falsely reported as shredded
+    expect(shredFile(asDir)).toBe('intact'); // NOT falsely reported as shredded
     expect(existsSync(asDir)).toBe(true); // the intact copy is still on disk
   });
 });

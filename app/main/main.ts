@@ -475,6 +475,17 @@ function initKeyBridge(): KeyBridge {
           `${result.migratedCloudKey ? ' + cloud key' : ''}; shredded ${result.shredded.length} stale copy(ies)`,
       );
     }
+    if (result.unshreddable.length > 0) {
+      // Loud, actionable: a legacy plaintext copy EXISTED but could not be scrubbed
+      // (locked / read-only / unwritable / a directory) — it is still recoverable on
+      // disk, so name each path and tell the user to remove it manually. Never silent.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[keystore] WARNING: ${result.unshreddable.length} legacy plaintext key copy(ies) ` +
+          'could NOT be shredded and remain recoverable on disk — remove them manually: ' +
+          result.unshreddable.join(', '),
+      );
+    }
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(`[keystore] plaintext migration failed (continuing): ${(err as Error).message}`);
