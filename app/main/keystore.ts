@@ -371,6 +371,22 @@ export function priorCopies(settingsPath: string): string[] {
  * as well as JSON that DOES contain keys. So a pre-migration backup that captured the
  * plaintext keys is still destroyed (it holds keys), while a post-migration key-free
  * backup a user kept is preserved.
+ *
+ * "Key-free" means key-free PER THE APP'S OWN KEY MODEL — the very same
+ * {@link extractPlaintextKeys} the migration uses to decide migrate-vs-noop, which is
+ * exactly the two shapes the app (main + sidecar settings_store) ever writes:
+ * `providers[].apiKeys` (safe id) and top-level `cloudApiKey`. This is deliberate and
+ * symmetric: a settings.json copy the app produced carries its keys ONLY in those
+ * shapes, so every app-written sibling with keys is detected and swept.
+ *
+ * IRREDUCIBLE RESIDUAL (intentional, reviewed): a HAND-CRAFTED sibling holding a key
+ * outside those shapes (e.g. `{"notes":"sk-ant-…"}`, a top-level array, or a key under
+ * an unsafe provider id) parses key-free and is preserved. This is not reachable by any
+ * file the app writes, and it is exactly symmetric with the live settings.json (the same
+ * detector governs both — a key the migration wouldn't manage there, it doesn't manage
+ * here). A broader entropy/substring scanner is deliberately NOT used: it would be
+ * asymmetric with the migration and would false-positive-destroy legitimate non-secret
+ * backups (paths, UUIDs, tokens) — reintroducing the very data-loss this predicate fixes.
  */
 function isKeyFreeSettingsCopy(path: string): boolean {
   const parsed = readJson(path);
