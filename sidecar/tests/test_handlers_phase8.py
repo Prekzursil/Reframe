@@ -600,6 +600,10 @@ def test_select_provider_or_local_online_honors_select_route(tmp_path: Path) -> 
     svc.settings.set(
         {
             **_vision_provider_settings(with_consent=True),
+            # ``select`` is a TEXT function and is now per-provider TEXT-consent
+            # gated (bug-sweep privacy fix): grant Gemini text consent so the online
+            # cloud route is honored (the vision helper only grants FRAME consent).
+            "consent": {"perProvider": {"Gemini": {"frames": True, "text": True}}},
             "routingPolicy": {"global": "cloud"},
             "routing": {"perFunction": {"select": {"provider": "gemini", "fallback": []}}},
         }

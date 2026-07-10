@@ -506,8 +506,16 @@ def _provider_for_function(self: Services, function: str) -> Any:
         return _provider_mod.get_provider(
             self.settings.get_raw(), prefer=_provider_mod.LOCAL_PROVIDER_ID, ensure=self._llama_ensure()
         )
+    # PRIVACY (bug-sweep fix, G-A5): text functions egress transcript-bearing
+    # prompts, so filter the cloud pool through the per-provider TEXT-consent gate
+    # BEFORE it is built — exactly as the index embedder + vision frame paths do.
+    # A cloud entry without consent.perProvider[p].text is dropped, so neither the
+    # primary call nor a 429 failover can reach a non-consented target (select then
+    # degrades to the local LLM backstop rather than egressing without consent).
     return _provider_mod.get_provider(
-        self.settings.get_raw(), prefer=self._function_prefer(function), ensure=self._llama_ensure()
+        self._text_consented_settings(self.settings.get_raw()),
+        prefer=self._function_prefer(function),
+        ensure=self._llama_ensure(),
     )
 
 
