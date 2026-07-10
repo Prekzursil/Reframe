@@ -255,6 +255,7 @@ class Services:
     convert_start = media_ops.convert_start
     convert_batch = media_ops.convert_batch
     transcribe_start = media_ops.transcribe_start
+    _transcribe_and_persist = media_ops._transcribe_and_persist
     _diarize_backend_factory = media_ops._diarize_backend_factory
     _diarize_models_present = media_ops._diarize_models_present
     _maybe_align_words = media_ops._maybe_align_words
@@ -278,6 +279,7 @@ class Services:
     _shortmaker = shortmaker_ops._build_shortmaker
     _detect_boundaries = shortmaker_ops._detect_boundaries
     _shortmaker_context = shortmaker_ops._shortmaker_context
+    _ensure_transcript = shortmaker_ops._ensure_transcript
     shortmaker_select = shortmaker_ops.shortmaker_select
     shortmaker_export = shortmaker_ops.shortmaker_export
     _approved_clips = shortmaker_ops._approved_clips

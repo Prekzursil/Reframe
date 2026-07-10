@@ -358,7 +358,8 @@ def transcribe_start(self: Services, params: dict[str, Any], ctx: RpcContext) ->
     CONTRACT-NOTE: we don't call ``_transcribe.make_transcribe_handler``
     directly because its job body only returns ``{transcript}`` — it can't
     persist onto our project store. We reuse ``transcribe.transcribe_file``
-    (the pure transcription seam) inside our own job body instead.
+    (the pure transcription seam) via the shared ``_transcribe_and_persist``
+    helper (also driven by the Make-Shorts auto-transcribe) inside our own job.
     """
     if ctx.jobs is None:
         raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
@@ -366,39 +367,62 @@ def transcribe_start(self: Services, params: dict[str, Any], ctx: RpcContext) ->
     language = params.get("language")
     if language is not None and not isinstance(language, str):
         raise _invalid("language must be a string when given")
+    # Fail fast (synchronously, before returning a jobId) on an unknown video.
+    if not self._resolve_video_path(video_id):
+        raise _invalid(f"unknown video: {video_id}")
+
+    def job_body(job_ctx: Any) -> dict[str, Any]:
+        return {"transcript": self._transcribe_and_persist(video_id, job_ctx, language=language)}
+
+    job = ctx.jobs.start(job_body)
+    return {"jobId": job.id}
+
+
+def _transcribe_and_persist(
+    self: Services,
+    video_id: str,
+    job_ctx: Any,
+    *,
+    language: str | None = None,
+) -> dict[str, Any]:
+    """Transcribe ``video_id`` and persist the transcript onto its project.
+
+    The shared job body behind ``transcribe.start`` AND the Make-Shorts auto-
+    transcribe (``shortmaker._ensure_transcript``): resolves the audio, runs the
+    selected ASR engine (whisper default / parakeet — WU7 ``settings['asrEngine']``,
+    with the duration probe letting parakeet chunk under the hard 6 GB rule),
+    refines word timings when karaoke is on, then — unless the job was cancelled —
+    persists the transcript onto the project manifest and flips the library
+    ``hasTranscript`` flag so every downstream consumer (subtitles / shortmaker /
+    index) reuses it. Returns the produced transcript. Raises on an unresolvable
+    ``video_id`` (the shorts auto-transcribe reaches this inside the select job).
+    """
     audio_path = self._resolve_video_path(video_id)
     if not audio_path:
         raise _invalid(f"unknown video: {video_id}")
     loader = self._whisper_loader or _transcribe.FasterWhisperLoader()
-    # WU7 wiring: settings['asrEngine'] picks whisper (default) or parakeet;
-    # the duration probe lets parakeet chunk the audio (the hard 6 GB rule).
     settings = self.settings.get()
     probe = self._ffprobe_duration or _self_ffprobe()
-
-    def job_body(job_ctx: Any) -> dict[str, Any]:
-        transcript = _transcribe.transcribe_with_engine(
-            audio_path,
-            loader=loader,
-            settings=settings,
-            language=language,
-            duration_probe=probe,
-            on_progress=lambda pct, msg: job_ctx.progress(pct, msg),
-            should_cancel=lambda: job_ctx.cancelled,
-        )
-        transcript = self._maybe_align_words(transcript, audio_path, settings)
-        if not job_ctx.cancelled:
-            # Persist the transcript onto the project + flip the library flag.
-            project = self._load_or_create_project(video_id)
-            project.data["transcript"] = transcript
-            project.save()
-            try:
-                self.library.set_has_transcript(video_id, True)
-            except Exception:  # noqa: BLE001 - flag bookkeeping is non-fatal
-                log.warning("set_has_transcript failed for %s", video_id)
-        return {"transcript": transcript}
-
-    job = ctx.jobs.start(job_body)
-    return {"jobId": job.id}
+    transcript = _transcribe.transcribe_with_engine(
+        audio_path,
+        loader=loader,
+        settings=settings,
+        language=language,
+        duration_probe=probe,
+        on_progress=lambda pct, msg: job_ctx.progress(pct, msg),
+        should_cancel=lambda: job_ctx.cancelled,
+    )
+    transcript = self._maybe_align_words(transcript, audio_path, settings)
+    if not job_ctx.cancelled:
+        # Persist the transcript onto the project + flip the library flag.
+        project = self._load_or_create_project(video_id)
+        project.data["transcript"] = transcript
+        project.save()
+        try:
+            self.library.set_has_transcript(video_id, True)
+        except Exception:  # noqa: BLE001 - flag bookkeeping is non-fatal
+            log.warning("set_has_transcript failed for %s", video_id)
+    return transcript
 
 
 def _diarize_backend_factory(self: Services, settings: dict[str, Any]) -> Any:
