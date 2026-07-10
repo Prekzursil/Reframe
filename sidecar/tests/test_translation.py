@@ -463,10 +463,34 @@ def test_tier_gguf_path_explicit_overrides_win():
     assert t.tier_gguf_path(TIER_LOCAL_HEAVY) == "/x/b.gguf"
 
 
-def test_tier_gguf_path_none_when_unconfigured():
+def test_tier_gguf_path_none_when_unconfigured_and_unprovisioned(tmp_path, monkeypatch):
+    # No override, no modelsDir, AND no provisioned model at <configDir>/models -> None.
+    # The config dir is pinned to an EMPTY temp dir so this never depends on whether the
+    # dev/CI machine happens to have a translategemma model at its default location.
+    import media_studio.settings_store as _ss
+
+    monkeypatch.setattr(_ss, "default_config_dir", lambda: tmp_path)  # empty: no models/
     t = TieredTranslator(settings={})
     assert t.tier_gguf_path(TIER_LOCAL) is None
     assert t.tier_gguf_path(TIER_HOSTED) is None
+
+
+def test_tier_gguf_path_falls_back_to_config_dir_models(tmp_path, monkeypatch):
+    # A DEFAULT install leaves modelsDir empty; a provisioned local MT tier lives at
+    # <configDir>/models/<name>. tier_gguf_path must find it there (same fallback as
+    # runner.resolve_gguf_path) so local translation/dubbing works out of the box.
+    import os
+
+    import media_studio.settings_store as _ss
+
+    monkeypatch.setattr(_ss, "default_config_dir", lambda: tmp_path)
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / TIER1_GGUF_NAME).write_bytes(b"gguf")
+    t = TieredTranslator(settings={})
+    got = t.tier_gguf_path(TIER_LOCAL)
+    assert got is not None
+    assert "/" in got and os.path.samefile(got, models / TIER1_GGUF_NAME)
 
 
 def test_get_translator_factory():
@@ -574,9 +598,14 @@ def test_tier_provider_unknown_tier_raises():
         t._tier_provider("tier-bogus")
 
 
-def test_local_provider_raises_when_no_gguf_configured():
-    # A runner is present but no GGUF can be resolved (no modelsDir / no override)
-    # -> _local_provider raises TierUnavailableError (line 422).
+def test_local_provider_raises_when_no_gguf_configured(tmp_path, monkeypatch):
+    # A runner is present but no GGUF can be resolved (no modelsDir / no override /
+    # nothing provisioned at the config dir) -> _local_provider raises
+    # TierUnavailableError (line 422). The config dir is pinned to an empty temp dir so
+    # the fallback can't resolve a real model on a machine that happens to have one.
+    import media_studio.settings_store as _ss
+
+    monkeypatch.setattr(_ss, "default_config_dir", lambda: tmp_path)  # empty: no models/
     t = TieredTranslator(runner=FakeRunner(), settings={})  # runner, but no gguf
     with pytest.raises(TierUnavailableError):
         t._local_provider(TIER_LOCAL)

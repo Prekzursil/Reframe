@@ -43,11 +43,13 @@ NO new RPC methods are registered here (A2's method names are frozen;
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
 from ..assets.manifest import AssetEntry, register_asset
+from ..pathsafe import ensure_within
 from ..util import get_logger
 from . import provider as provider_mod
 
@@ -496,9 +498,13 @@ class TieredTranslator:
 
         Order: explicit ``settings.translateGgufPath`` (tier1) /
         ``settings.translateTier2GgufPath`` (tier2) -> ``settings.modelsDir`` +
-        the pinned file name (matching the manifest entry's dest, so the
-        assets-managed copy is found automatically). Pure string logic — no
-        filesystem touch (mirrors ``runner.resolve_gguf_path``).
+        the pinned file name -> the first-run PROVISIONING location
+        ``<configDir>/models/<name>`` (matching the manifest entry's dest, so the
+        assets-managed copy is found automatically on a DEFAULT install where
+        ``modelsDir`` is empty). Mirrors :func:`runner.resolve_gguf_path`: the
+        settings-driven hops stay string-only; the provisioning hop is existence-
+        checked and confined via ``ensure_within`` (the CodeQL py/path-injection
+        barrier) so a not-yet-provisioned machine still yields ``None``.
 
         CONTRACT-NOTE: §2's settings enumerate ``modelsDir``; the two explicit
         ``translate*GgufPath`` overrides are optional extras, NOT required by
@@ -518,6 +524,11 @@ class TieredTranslator:
         if models_dir:
             base = str(models_dir).replace("\\", "/").rstrip("/")
             return f"{base}/{name}"
+        from ..settings_store import default_config_dir  # local import: avoids a cycle
+
+        provisioned = ensure_within(default_config_dir(), "models", name)
+        if os.path.isfile(provisioned):
+            return provisioned.replace(os.sep, "/")
         return None
 
 
