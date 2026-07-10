@@ -376,6 +376,7 @@ def _lazy_caption(
     hook_title=None,
     hook_card=False,
     hook_card_sec=0.0,
+    total_sec=0.0,
 ) -> str:
     """Caption-stage router (A4): style picks the engine.
 
@@ -413,6 +414,11 @@ def _lazy_caption(
                 height=height,
                 source_start=source_start,
                 hook_title=hook_title,
+                # WU-caption-fix: the Remotion engine re-renders into a FIXED-length
+                # composition, so it MUST be told the clip's real duration or it
+                # truncates the video/audio to the last caption cue. The libass
+                # engine ignores total_sec (it burns onto the existing clip).
+                total_sec=total_sec,
             )
 
     from . import caption as _caption
@@ -946,6 +952,7 @@ def _export_one(
     caption_source_start = source_start
     filler_stats: dict[str, Any] | None = None
     silence_removed: float = 0.0
+    filler_removed_sec: float = 0.0
 
     # SILENCE-TRIM (audio-stabilize group) — dead-air removal, ON when the
     # ``silenceTrim`` toggle is set. Runs on the cut clip (clip-local t=0). It
@@ -1008,6 +1015,9 @@ def _export_one(
             lang=lang,
             settings=settings,
         )
+        # WU-caption-fix: filler removal SHORTENS the clip timeline, so record how
+        # much was cut to keep the Remotion caption duration honest (used below).
+        filler_removed_sec = float(filler_stats.get("fillerSeconds", 0.0) or 0.0)
         # The de-filled clip is already clip-local; cues are remapped clip-local.
         caption_source_start = 0.0
 
@@ -1068,6 +1078,12 @@ def _export_one(
     # soft-track / sidecar / none modes the caption stage soft-muxes or skips (the
     # stage RETURNS the path to encode — the bare clip when it skips), so capture
     # it instead of assuming the captioned path always exists.
+    # WU-caption-fix: Remotion (premium) captions re-render into a FIXED-length
+    # composition, so hand the caption stage the clip's REAL playback duration or
+    # it truncates to the last cue. Base is the cut window (end - source_start);
+    # the timeline-shortening stages (silence-trim / filler-removal, mutually
+    # exclusive) subtract what they cut. The libass default engine ignores it.
+    caption_total_sec = max(0.0, float(end) - float(source_start) - silence_removed - filler_removed_sec)
     captioned_path = str(out_dir / f"{stem}.captioned.mp4")
     caption_out = stages.render_caption(
         caption_clip,
@@ -1081,6 +1097,7 @@ def _export_one(
         hook_title=hook_title,
         hook_card=clip_hook_card,
         hook_card_sec=hook_card_sec,
+        total_sec=caption_total_sec,
     )
 
     # P4 §8d: BRAND-LOGO OVERLAY — composite the configured brand logo into a

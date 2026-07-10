@@ -194,6 +194,7 @@ class RecordingStages:
         hook_title=None,
         hook_card=False,
         hook_card_sec=0.0,
+        total_sec=0.0,
     ):
         self.calls.append("caption")
         self.caption_kwargs.append(
@@ -208,6 +209,7 @@ class RecordingStages:
                 "hook_title": hook_title,
                 "hook_card": hook_card,
                 "hook_card_sec": hook_card_sec,
+                "total_sec": total_sec,
                 "settings": settings,
             }
         )
@@ -668,6 +670,67 @@ def test_run_export_propagates_sourceStart_to_caption(transcript, tmp_path):
     assert cap["burn"] is True
     assert cap["width"] == sm.OUT_WIDTH == 1080
     assert cap["height"] == sm.OUT_HEIGHT == 1920
+
+
+def test_run_export_passes_clip_duration_as_caption_total_sec(transcript, tmp_path):
+    """The caption stage receives the clip's REAL duration as total_sec so the
+    Remotion (premium) engine sizes its fixed-duration composition to the FULL
+    clip, not just the last caption cue (else trailing video/audio is truncated).
+    Base clip duration is the cut window (end - sourceStart) when no timeline-
+    shortening stage (silence-trim / filler-removal) ran."""
+    rec = RecordingStages([])
+    candidate = {
+        "rank": 1,
+        "start": 12.5,
+        "end": 50.0,
+        "durationSec": 37.5,
+        "hook": "h",
+        "why": "w",
+        "score": 77,
+        "sourceStart": 12.5,
+    }
+    sm.run_export(
+        make_ctx(),
+        video_id="v1",
+        candidates=[candidate],
+        load_context=loader_for(str(tmp_path / "src.mp4"), transcript),
+        out_dir=str(tmp_path / "out"),
+        stages=rec.as_stages(),
+    )
+    assert rec.caption_kwargs[0]["total_sec"] == pytest.approx(37.5)  # 50.0 - 12.5
+
+
+def test_lazy_caption_threads_total_sec_to_remotion(monkeypatch):
+    """_lazy_caption forwards total_sec to the Remotion engine (premium styles),
+    so a captioned clip renders its full length rather than truncating at the
+    last cue. The libass default engine ignores it (it preserves clip duration)."""
+    from media_studio.features import caption_remotion as cr
+
+    captured: dict[str, float] = {}
+
+    class SpyEngine:
+        def __init__(self, settings):  # noqa: D401 - test spy
+            pass
+
+        def render(
+            self, clip_path, cues, out_path, *, style, burn, width, height, source_start, hook_title, total_sec
+        ):
+            captured["total_sec"] = total_sec
+            return out_path
+
+    monkeypatch.setattr(cr, "RemotionCaptionEngine", SpyEngine)
+    sm._lazy_caption(
+        "clip.mp4",
+        [{"index": 1, "start": 0.0, "end": 2.0, "text": "hi"}],
+        "out.mp4",
+        source_start=0.0,
+        burn=True,
+        width=1080,
+        height=1920,
+        settings={"captionStyle": "hormozi"},
+        total_sec=40.0,
+    )
+    assert captured["total_sec"] == pytest.approx(40.0)
 
 
 def test_run_export_cut_uses_sourceStart_and_end(transcript, tmp_path):
