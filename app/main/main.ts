@@ -1199,6 +1199,12 @@ function bootstrap(): void {
       ensurePthActivated();
       // eslint-disable-next-line no-console
       console.error('[bootstrap] first-run setup failed; starting existing env (degraded)');
+      // Bug-sweep: the app IS starting (degraded), so clear the hard actionable
+      // "first-run setup failed" banner — the renderer maps an empty message to
+      // null and falls back to the (now healthy) sidecar status, instead of
+      // showing a permanent, undismissable error over a working app. The
+      // truly-down branch below keeps the loud banner (nothing to fall back to).
+      broadcastBootstrapError('');
       sc2.start();
     } else {
       // eslint-disable-next-line no-console

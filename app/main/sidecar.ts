@@ -59,7 +59,18 @@ export interface SidecarOptions {
 interface PendingCall {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
+  /** Timeout guard so a hung-but-alive handler never freezes the channel. */
+  timer?: ReturnType<typeof setTimeout>;
 }
+
+/**
+ * A single in-flight request that never sees its `id` response — a hung-but-alive
+ * synchronous handler — used to freeze the whole RPC channel forever (every later
+ * rpc() queued behind it). Reject it after this generous bound instead. The
+ * quick-ack `{jobId}` contract means a real response is fast; long work completes
+ * via the `done` event, NOT this promise, so 60s never truncates real work.
+ */
+const REQUEST_TIMEOUT_MS = 60_000;
 
 /**
  * Supervisor lifecycle state surfaced to the renderer (self-healing banner).
@@ -363,13 +374,22 @@ export class Sidecar extends EventEmitter {
       params: params ?? {},
     };
     return new Promise<T>((resolveCall, rejectCall) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        rejectCall(new Error(`sidecar request '${method}' timed out after ${REQUEST_TIMEOUT_MS}ms`));
+      }, REQUEST_TIMEOUT_MS);
+      // Node timers keep the event loop alive; unref so a pending request never
+      // blocks a clean shutdown (the reject still fires if the loop is running).
+      timer.unref?.();
       this.pending.set(id, {
         resolve: (value) => resolveCall(value as T),
         reject: rejectCall,
+        timer,
       });
       try {
         this.child!.stdin.write(`${JSON.stringify(payload)}\n`);
       } catch (err) {
+        clearTimeout(timer);
         this.pending.delete(id);
         rejectCall(err instanceof Error ? err : new Error(String(err)));
       }
@@ -423,6 +443,7 @@ export class Sidecar extends EventEmitter {
     const call = this.pending.get(id);
     if (!call) return;
     this.pending.delete(id);
+    if (call.timer) clearTimeout(call.timer);
 
     if ('error' in record && record.error) {
       const err = record.error as { code?: number; message?: string };
@@ -511,6 +532,7 @@ export class Sidecar extends EventEmitter {
 
   private rejectAllPending(reason: Error): void {
     for (const [, call] of this.pending) {
+      if (call.timer) clearTimeout(call.timer);
       call.reject(reason);
     }
     this.pending.clear();
