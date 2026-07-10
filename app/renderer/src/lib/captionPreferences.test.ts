@@ -31,11 +31,15 @@ describe('readPreferences', () => {
       [PREFERENCE_KEYS.box]: { x: 0.1, y: 0.2, w: 0.5, h: 0.2 },
       [PREFERENCE_KEYS.subtitleMode]: 'sidecar',
       [PREFERENCE_KEYS.language]: 'pt',
+      [PREFERENCE_KEYS.captionPolish]: true,
+      [PREFERENCE_KEYS.captionSpeakerLabels]: true,
     });
     expect(prefs).toEqual({
       design: { style: 'karaoke', box: { x: 0.1, y: 0.2, w: 0.5, h: 0.2 } },
       subtitleMode: 'sidecar',
       language: 'pt',
+      captionPolish: true,
+      captionSpeakerLabels: true,
     });
   });
 
@@ -44,6 +48,18 @@ describe('readPreferences', () => {
     expect(prefs.design).toEqual(DEFAULT_CAPTION_DESIGN);
     expect(prefs.subtitleMode).toBe('burn');
     expect(prefs.language).toBe(DEFAULT_LANGUAGE);
+    // The two quality toggles default OFF when absent (back-compat).
+    expect(prefs.captionPolish).toBe(false);
+    expect(prefs.captionSpeakerLabels).toBe(false);
+  });
+
+  it('coerces non-boolean toggle values to false (strict === true)', () => {
+    const prefs = readPreferences({
+      [PREFERENCE_KEYS.captionPolish]: 'true',
+      [PREFERENCE_KEYS.captionSpeakerLabels]: 1,
+    });
+    expect(prefs.captionPolish).toBe(false);
+    expect(prefs.captionSpeakerLabels).toBe(false);
   });
 });
 
@@ -53,6 +69,8 @@ describe('preferencesPatch', () => {
       design: { style: 'neon', box: { x: 0.2, y: 0.7, w: 0.6, h: 0.15 } },
       subtitleMode: 'softmux' as const,
       language: 'fr',
+      captionPolish: true,
+      captionSpeakerLabels: false,
     };
     expect(readPreferences(preferencesPatch(prefs))).toEqual(prefs);
   });

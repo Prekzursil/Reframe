@@ -136,6 +136,36 @@ export function CaptionPreferences({
         />
       </div>
 
+      <div className="caption-prefs__group">
+        <h3>Caption quality</h3>
+        <label className="caption-prefs__toggle" htmlFor="prefs-caption-polish">
+          <input
+            id="prefs-caption-polish"
+            type="checkbox"
+            checked={prefs.captionPolish}
+            onChange={(e) => setPrefs((p) => ({ ...p, captionPolish: e.target.checked }))}
+          />
+          <span className="caption-prefs__toggle-text">
+            Polish captions
+            <small>Tidy punctuation, casing &amp; reading speed (Netflix CPS/CPL).</small>
+          </span>
+        </label>
+        <label className="caption-prefs__toggle" htmlFor="prefs-caption-speakers">
+          <input
+            id="prefs-caption-speakers"
+            type="checkbox"
+            checked={prefs.captionSpeakerLabels}
+            onChange={(e) =>
+              setPrefs((p) => ({ ...p, captionSpeakerLabels: e.target.checked }))
+            }
+          />
+          <span className="caption-prefs__toggle-text">
+            Speaker labels
+            <small>Prefix each line with the detected speaker (needs diarization).</small>
+          </span>
+        </label>
+      </div>
+
       <div className="caption-prefs__actions">
         <button type="button" onClick={() => void save()} disabled={saving}>
           {saving ? 'Saving…' : 'Save defaults'}
