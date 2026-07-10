@@ -55,6 +55,11 @@ describe('<CaptionBox />', () => {
     container.querySelector('[data-testid="caption-box"]') as HTMLElement;
   const handle = (h: string): HTMLElement =>
     container.querySelector(`[data-handle="${h}"]`) as HTMLElement;
+  const keydown = (el: HTMLElement, key: string): void => {
+    act(() => {
+      el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+    });
+  };
 
   it('renders the box + all eight resize handles', () => {
     render();
@@ -129,6 +134,43 @@ describe('<CaptionBox />', () => {
     stubFrame(container, 100, 100);
     pointer(box(), 'pointerdown', 0, 0);
     pointer(box(), 'pointermove', 50, 0);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  // WCAG 2.1.1 keyboard operability (bug-sweep fix).
+  it('moves the box with arrow keys', () => {
+    const { onChange } = render();
+    keydown(box(), 'ArrowRight');
+    expect(onChange).toHaveBeenLastCalledWith(moveBox(start, 0.02, 0));
+    keydown(box(), 'ArrowLeft');
+    expect(onChange).toHaveBeenLastCalledWith(moveBox(start, -0.02, 0));
+    keydown(box(), 'ArrowDown');
+    expect(onChange).toHaveBeenLastCalledWith(moveBox(start, 0, 0.02));
+    keydown(box(), 'ArrowUp');
+    expect(onChange).toHaveBeenLastCalledWith(moveBox(start, 0, -0.02));
+  });
+
+  it('ignores non-arrow keys on the box body', () => {
+    const { onChange } = render();
+    keydown(box(), 'Enter');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('does not move via keyboard when disabled', () => {
+    const { onChange } = render({ disabled: true });
+    keydown(box(), 'ArrowRight');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('resizes from a focused handle with arrow keys', () => {
+    const { onChange } = render();
+    keydown(handle('e'), 'ArrowRight');
+    expect(onChange).toHaveBeenLastCalledWith(resizeBox(start, 'e', 0.02, 0));
+  });
+
+  it('ignores non-arrow keys on a handle', () => {
+    const { onChange } = render();
+    keydown(handle('e'), 'Enter');
     expect(onChange).not.toHaveBeenCalled();
   });
 

@@ -49,6 +49,25 @@ function frac(deltaPx: number, sizePx: number): number {
   return sizePx > 0 ? deltaPx / sizePx : 0;
 }
 
+/** One keyboard nudge = 2% of the frame (WCAG 2.1.1 keyboard operability). */
+const KEY_STEP = 0.02;
+
+/** Fractional {dx,dy} for an arrow key, or null for any other key. */
+function arrowDelta(key: string): { dx: number; dy: number } | null {
+  switch (key) {
+    case 'ArrowLeft':
+      return { dx: -KEY_STEP, dy: 0 };
+    case 'ArrowRight':
+      return { dx: KEY_STEP, dy: 0 };
+    case 'ArrowUp':
+      return { dx: 0, dy: -KEY_STEP };
+    case 'ArrowDown':
+      return { dx: 0, dy: KEY_STEP };
+    default:
+      return null;
+  }
+}
+
 export function CaptionBox({
   box,
   onChange,
@@ -97,6 +116,28 @@ export function CaptionBox({
     d.el.releasePointerCapture?.(d.pointerId);
   };
 
+  // Keyboard operability (WCAG 2.1.1, bug-sweep fix): arrow keys MOVE the box from
+  // the body and RESIZE from a focused handle, mirroring the pointer drag. Guarded
+  // on `disabled` exactly like the pointer path.
+  const onBoxKeyDown = (e: React.KeyboardEvent): void => {
+    if (disabled) return;
+    const d = arrowDelta(e.key);
+    if (!d) return;
+    e.preventDefault();
+    onChange(moveBox(box, d.dx, d.dy));
+  };
+
+  // Handles only render when NOT disabled, so no `disabled` guard is needed here.
+  const onHandleKeyDown =
+    (handle: ResizeHandle) =>
+    (e: React.KeyboardEvent): void => {
+      const d = arrowDelta(e.key);
+      if (!d) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onChange(resizeBox(box, handle, d.dx, d.dy));
+    };
+
   return (
     <div
       className="caption-box-frame"
@@ -110,7 +151,11 @@ export function CaptionBox({
         className={`caption-box${disabled ? ' is-readonly' : ''}`}
         style={boxToCss(box)}
         data-testid="caption-box"
+        role="application"
+        aria-label="Caption region — arrow keys move; Tab to a handle then arrow keys to resize"
+        tabIndex={disabled ? undefined : 0}
         onPointerDown={begin(null)}
+        onKeyDown={onBoxKeyDown}
       >
         <div className="caption-box__content">{children}</div>
         {!disabled &&
@@ -119,8 +164,11 @@ export function CaptionBox({
               key={h}
               className={`caption-box__handle caption-box__handle--${h}`}
               data-handle={h}
+              role="button"
               aria-label={`Resize ${h}`}
+              tabIndex={0}
               onPointerDown={begin(h)}
+              onKeyDown={onHandleKeyDown(h)}
             />
           ))}
       </div>

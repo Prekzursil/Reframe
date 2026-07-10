@@ -12,7 +12,8 @@
   box-sizing: border-box;
   border: 1.5px dashed rgba(255, 255, 255, 0.85);
   border-radius: 6px;
-  background: rgba(0, 120, 255, 0.08);
+  /* Bug-sweep: token-driven amber tint (was an off-theme blue wash). */
+  background: var(--accent-soft, rgba(255, 191, 71, 0.08));
   cursor: move;
   display: flex;
   align-items: center;
@@ -40,51 +41,64 @@
 
 .caption-box__handle {
   position: absolute;
-  width: 12px;
-  height: 12px;
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.5);
-  border-radius: 50%;
+  /* Bug-sweep (WCAG 2.5.8): a 24x24 pointer/keyboard target with the 12px visible
+     dot centered via ::before; the transparent outer box is the enlarged hit area. */
+  width: 24px;
+  height: 24px;
+  background: transparent;
   z-index: 1;
+}
+.caption-box__handle::before {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  background: var(--surface-raised, #ffffff);
+  border: 1px solid var(--accent-edge, rgba(0, 0, 0, 0.5));
+  border-radius: 50%;
+}
+.caption-box__handle:focus-visible {
+  outline: 2px solid var(--accent, #ffbf47);
+  outline-offset: 2px;
+  border-radius: 50%;
 }
 
 .caption-box__handle--nw {
-  top: -6px;
-  left: -6px;
+  top: -12px;
+  left: -12px;
   cursor: nwse-resize;
 }
 .caption-box__handle--n {
-  top: -6px;
-  left: calc(50% - 6px);
+  top: -12px;
+  left: calc(50% - 12px);
   cursor: ns-resize;
 }
 .caption-box__handle--ne {
-  top: -6px;
-  right: -6px;
+  top: -12px;
+  right: -12px;
   cursor: nesw-resize;
 }
 .caption-box__handle--w {
-  top: calc(50% - 6px);
-  left: -6px;
+  top: calc(50% - 12px);
+  left: -12px;
   cursor: ew-resize;
 }
 .caption-box__handle--e {
-  top: calc(50% - 6px);
-  right: -6px;
+  top: calc(50% - 12px);
+  right: -12px;
   cursor: ew-resize;
 }
 .caption-box__handle--sw {
-  bottom: -6px;
-  left: -6px;
+  bottom: -12px;
+  left: -12px;
   cursor: nesw-resize;
 }
 .caption-box__handle--s {
-  bottom: -6px;
-  left: calc(50% - 6px);
+  bottom: -12px;
+  left: calc(50% - 12px);
   cursor: ns-resize;
 }
 .caption-box__handle--se {
-  bottom: -6px;
-  right: -6px;
+  bottom: -12px;
+  right: -12px;
   cursor: nwse-resize;
 }
