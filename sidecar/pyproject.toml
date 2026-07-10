@@ -47,15 +47,15 @@ dev = [
 #   pip install "media-studio-sidecar[reframe-gpu]" \
 #     --extra-index-url https://download.pytorch.org/whl/cu124
 reframe-gpu = [
-  "torch==2.6.0",                 # GPU-validated LR-ASD runtime (cu124 build via the torch index)
-  "torchvision==0.21.0",          # paired with torch 2.6.0
-  "torchaudio==2.6.0",            # paired with torch 2.6.0
+  "torch==2.13.0",                 # GPU-validated LR-ASD runtime (cu124 build via the torch index)
+  "torchvision==0.28.0",          # paired with torch 2.6.0
+  "torchaudio==2.11.0+cu128",            # paired with torch 2.6.0
   # WU B4 (I2): the ONLY permitted weight-container reader on the load path — the
   # vendored ViNet-S / TransNetV2 backends load their re-hosted weights via
   # safetensors.torch.load_file (torch.load / pickle is FORBIDDEN, an RCE surface).
   # NOT installed in the CI gate env (the loader GATE logic is torch-free + unit
   # tested with an injected reader; only the pragma-no-cover heavy seam imports it).
-  "safetensors==0.4.5",           # verify-before-load safetensors weight reader (B4/I2)
+  "safetensors==0.8.0",           # verify-before-load safetensors weight reader (B4/I2)
   "opencv-python-headless==4.13.0.92",  # frame I/O + face-crop ops (headless: no GUI libs)
   "python_speech_features==0.6",  # MFCC features for the ASD audio frontend
   "scipy==1.18.0",                # face-track interpolation + median filter + wav read
