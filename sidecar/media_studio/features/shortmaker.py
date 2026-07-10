@@ -1245,13 +1245,17 @@ def run_export(
     # de-duplicated so the same notice across N clips is announced once (the skip
     # is REPORTED, never silently swallowed — the "do NOT silently skip" rule).
     _seen_notices: set[str] = set()
+    # Bug-sweep: a mid-export stage notice must NOT snap the progress bar backward
+    # to a fixed 4%. Track the loop's current percent and surface the notice AT
+    # that percent so progress stays forward-only.
+    _pct = [2]
 
     def _emit_notice(notice: dict[str, str]) -> None:
         key = str(notice.get("type") or notice.get("message") or "")
         if key in _seen_notices:
             return
         _seen_notices.add(key)
-        ctx.progress(4, notice.get("message", "stabilize: notice"))
+        ctx.progress(_pct[0], notice.get("message", "stabilize: notice"))
 
     # WU SP2: resolve the hook-card config ONCE, then gate the card to the top-N
     # clips by virality rank and compute the rank-ordered ``NN-`` filename width.
@@ -1272,7 +1276,8 @@ def run_export(
         # WU SP2: rank-ordered output name + per-clip card gate (top-N by rank).
         clip_rank = _hook_card.resolve_rank(candidate, i + 1)
         final_stem = _hook_card.rank_ordered_stem(base_stem, clip_rank, max_rank)
-        ctx.progress(int(100 * i / total), f"exporting clip {i + 1}/{total}")
+        _pct[0] = int(100 * i / total)
+        ctx.progress(_pct[0], f"exporting clip {i + 1}/{total}")
         item = _export_one(
             candidate,
             source_path=source_path,

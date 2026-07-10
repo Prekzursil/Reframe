@@ -546,7 +546,7 @@ class Project:
 
     # ---- refs --------------------------------------------------------------
     def _ref_paths(self) -> list[str]:
-        """Every external file path the manifest references (video + clips + tracks)."""
+        """Every external file path the manifest references (video + clips + tracks + audioTracks)."""
         refs: list[str] = []
         video = self.data.get("video") or {}
         if video.get("path"):
@@ -557,6 +557,11 @@ class Project:
         for track in self.data.get("tracks") or []:
             if isinstance(track, dict) and track.get("path"):
                 refs.append(track["path"])
+        # Bug-sweep: dub AudioTracks carry a 'path' too — include them so a deleted
+        # dub is reported missing and consolidate can rebase it (portability).
+        for atrack in self.data.get("audioTracks") or []:
+            if isinstance(atrack, dict) and atrack.get("path"):
+                refs.append(atrack["path"])
         return refs
 
     def find_missing_sources(self) -> list[str]:
@@ -609,6 +614,11 @@ class Project:
         for track in self.data.get("tracks") or []:
             if isinstance(track, dict) and track.get("path"):
                 track["path"] = _copy_in(track["path"])
+        # Bug-sweep: copy + rebase dub AudioTracks too, else the portable folder
+        # still points at the dub audio by its original absolute path.
+        for atrack in self.data.get("audioTracks") or []:
+            if isinstance(atrack, dict) and atrack.get("path"):
+                atrack["path"] = _copy_in(atrack["path"])
 
         self.save(dest / "project.json")
         return str(dest.resolve())
