@@ -33,3 +33,15 @@ def test_consolidate_copies_and_rebases_dub_audio(tmp_path: Path) -> None:
     rebased = proj.data["audioTracks"][0]["path"]
     assert rebased.startswith("assets/"), "dub-audio path was not rebased into the portable folder"
     assert (Path(out) / rebased).exists(), "dub-audio file was not copied into the portable folder"
+
+
+def test_audio_tracks_skip_malformed_entries(tmp_path: Path) -> None:
+    """A non-dict or path-less audioTracks entry is skipped by both _ref_paths and
+    consolidate (defensive — mirrors the existing tracks/clips handling)."""
+    proj = Project(
+        {"video": {}, "audioTracks": [{"id": "d1"}, "not-a-dict"]},
+        manifest_path=tmp_path / "project.json",
+    )
+    assert proj.find_missing_sources() == []  # neither malformed entry contributes a ref
+    proj.consolidate(tmp_path / "portable")
+    assert proj.data["audioTracks"] == [{"id": "d1"}, "not-a-dict"]  # left untouched
