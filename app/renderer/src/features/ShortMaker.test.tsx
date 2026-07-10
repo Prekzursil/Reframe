@@ -2713,6 +2713,38 @@ describe('<ShortMaker /> component', () => {
     ).toBeUndefined();
   });
 
+  it('Cancel during a synchronously-resolving select stays idle (does not load results)', async () => {
+    let resolveSelect!: (v: unknown) => void;
+    const rpc = vi.fn((method: string) => {
+      if (method === 'shortmaker.select') return new Promise((r) => (resolveSelect = r));
+      return Promise.resolve({});
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc })} />);
+    const form = container.querySelector('form')!;
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    // Cancel while the select rpc is still in flight (aborts the controller).
+    await act(async () => {
+      (
+        [...container.querySelectorAll('button')].find((b) => b.textContent === 'Cancel') as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    // Resolve on the SYNC path (candidates directly, not a job handle): the abort
+    // guard must fire so results are NOT loaded and we stay idle.
+    await act(async () => {
+      resolveSelect({ candidates: THREE });
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('.sm-candidate')).toBeNull();
+    expect(
+      [...container.querySelectorAll('button')].find((b) => b.textContent === 'Cancel'),
+    ).toBeUndefined();
+  });
+
   it('Cancel during a batch aborts the wait and resets to idle (no hang)', async () => {
     const calls: string[] = [];
     const rpc = vi.fn(async (method: string) => {

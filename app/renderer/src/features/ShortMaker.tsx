@@ -484,6 +484,11 @@ export function ShortMaker({
         );
       }
       if (candidates === null) candidates = [];
+      // Bug-sweep: a synchronously-resolved select must still honor a mid-flight
+      // Cancel. The abort signal is only checked inside waitForJobDone, so without
+      // this a cancel during the (non-job) sync path would still load results and
+      // override the idle reset. Treat it as a clean cancel (the catch returns).
+      if (ctrl.signal.aborted) throw new JobAbortedError();
       dispatch({ type: 'load', candidates });
       setPhase('reviewing');
     } catch (e) {
