@@ -7,6 +7,7 @@ import {
   JobAbortedError,
   type MediaStudioApi,
   type ProgressEvent,
+  type SidecarStatus,
   extractJobId,
   fmtSeconds,
   getApi,
@@ -14,15 +15,22 @@ import {
   waitForJobDone,
 } from './_api';
 
+type JobDoneApi = MediaStudioApi & {
+  onSidecarStatus?: (cb: (status: SidecarStatus) => void) => () => void;
+};
+
 /** Build a fake bridge whose onJobDone fires the given done events synchronously. */
-function fakeApi(opts: { withJobDone?: boolean } = {}): {
-  api: MediaStudioApi;
+function fakeApi(opts: { withJobDone?: boolean; withSidecarStatus?: boolean } = {}): {
+  api: JobDoneApi;
   fire: (ev: DoneEvent) => void;
+  /** Push a supervisor health transition to any live onSidecarStatus subscriber. */
+  fireStatus: (status: SidecarStatus) => void;
   /** Live subscriber count — 0 proves the wait cleaned up its subscription. */
   count: () => number;
 } {
   const listeners: Array<(ev: DoneEvent) => void> = [];
-  const api: MediaStudioApi = {
+  const statusListeners: Array<(status: SidecarStatus) => void> = [];
+  const api: JobDoneApi = {
     rpc: async <T>(): Promise<T> => ({}) as T,
     onProgress: (_cb: (ev: ProgressEvent) => void) => () => undefined,
   };
@@ -35,10 +43,21 @@ function fakeApi(opts: { withJobDone?: boolean } = {}): {
       };
     };
   }
+  if (opts.withSidecarStatus) {
+    api.onSidecarStatus = (cb: (status: SidecarStatus) => void) => {
+      statusListeners.push(cb);
+      return () => {
+        const i = statusListeners.indexOf(cb);
+        if (i >= 0) statusListeners.splice(i, 1);
+      };
+    };
+  }
   return {
     api,
     fire: (ev) => listeners.slice().forEach((l) => l(ev)),
-    count: () => listeners.length,
+    fireStatus: (status) => statusListeners.slice().forEach((l) => l(status)),
+    // Both channels share the teardown path; either being non-empty means a leak.
+    count: () => listeners.length + statusListeners.length,
   };
 }
 
@@ -259,6 +278,43 @@ describe('waitForJobDone', () => {
       ),
     ).rejects.toBeInstanceOf(JobAbortedError);
     expect(count()).toBe(0); // never left a dangling subscription
+  });
+
+  // ---- Sidecar death mid-wait (onSidecarStatus) ----------------------------
+
+  it("REJECTS with a retry message when the sidecar goes 'down' mid-wait", async () => {
+    const { api, fireStatus, count } = fakeApi({ withSidecarStatus: true });
+    const promise = waitForJobDone(api, 'job-s', (r) => pickField<string>(r, 'path'));
+    const assertion = expect(promise).rejects.toThrow(/stopped mid-job; please retry/);
+    fireStatus('down');
+    await assertion;
+    expect(count()).toBe(0); // both job.done + status subscriptions torn down
+  });
+
+  it("REJECTS when the sidecar goes 'restarting' (respawn ⇒ job process gone)", async () => {
+    const { api, fireStatus } = fakeApi({ withSidecarStatus: true });
+    const promise = waitForJobDone(api, 'job-rs', (r) => pickField<string>(r, 'path'));
+    const assertion = expect(promise).rejects.toThrow(/stopped mid-job; please retry/);
+    fireStatus('restarting');
+    await assertion;
+  });
+
+  it("ignores a spurious 'running' status push (stays pending)", async () => {
+    const { api, fire, fireStatus } = fakeApi({ withSidecarStatus: true });
+    const promise = waitForJobDone(api, 'job-run', (r) => pickField<string>(r, 'path'));
+    fireStatus('running'); // healthy — must NOT settle the wait
+    fire({ jobId: 'job-run', result: { path: '/ok.mp4' } });
+    await expect(promise).resolves.toBe('/ok.mp4');
+  });
+
+  it('tears down the status subscription when the job resolves normally', async () => {
+    const { api, fire, fireStatus, count } = fakeApi({ withSidecarStatus: true });
+    const promise = waitForJobDone(api, 'job-clean', (r) => pickField<string>(r, 'path'));
+    fire({ jobId: 'job-clean', result: { path: '/done.mp4' } });
+    await expect(promise).resolves.toBe('/done.mp4');
+    expect(count()).toBe(0); // status listener removed alongside job.done
+    // A late status push after resolution must not throw (listener gone).
+    expect(() => fireStatus('down')).not.toThrow();
   });
 });
 

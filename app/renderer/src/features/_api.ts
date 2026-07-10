@@ -37,6 +37,14 @@ export interface DoneEvent {
 }
 
 /**
+ * Supervisor health push (mirror of SidecarBanner's `SidecarStatus`). The main
+ * process forwards the sidecar supervisor's state. A transition AWAY from
+ * 'running' ('restarting' or 'down') means the sidecar PROCESS died, so any job
+ * that was in flight in it is gone — a fresh sidecar never resumes it.
+ */
+export type SidecarStatus = 'running' | 'restarting' | 'down';
+
+/**
  * Default `job.done` wait timeout (F2). A dead/wedged sidecar must NOT hang a
  * panel forever — every job wait is raced against this ceiling. 15 minutes is
  * long enough for the longest real job (a batch export) yet short enough that a
@@ -170,6 +178,14 @@ export function extractJobId(res: unknown): string | undefined {
 /** Minimal bridge surface `waitForJobDone` needs — any `window.api` shape satisfies it. */
 export interface JobDoneCapable {
   onJobDone?: (cb: (ev: DoneEvent) => void) => () => void;
+  /**
+   * Optional supervisor health stream (the real preload bridge exposes it; the
+   * same hook {@link SidecarBanner} consumes). When present, a non-'running'
+   * push while a wait is in flight settles the wait immediately with a clear
+   * "retry" error instead of hanging to the 15-min timeout — the in-flight job
+   * cannot survive a sidecar respawn. Optional so a bare test stub still fits.
+   */
+  onSidecarStatus?: (cb: (status: SidecarStatus) => void) => () => void;
 }
 
 /**
@@ -193,8 +209,13 @@ export interface JobDoneCapable {
  *  - **F2 abort:** an optional `signal` tears the wait down (cancel/unmount) and
  *    rejects with {@link JobAbortedError}; callers treat that as a clean idle
  *    reset, not an error.
- *  - **No leaks:** the `onJobDone` subscription, the timer, and the abort
- *    listener are ALWAYS cleaned up on whichever settle path wins.
+ *  - **Sidecar death:** if the bridge exposes `onSidecarStatus`, a non-'running'
+ *    push (the supervisor respawning or giving up on the sidecar) settles the
+ *    wait at once with a clear "stopped mid-job; please retry" error. The job
+ *    lived inside the dead process, so its `job.done` will never arrive — fail
+ *    fast instead of hanging to the timeout.
+ *  - **No leaks:** the `onJobDone` + `onSidecarStatus` subscriptions, the timer,
+ *    and the abort listener are ALWAYS cleaned up on whichever settle path wins.
  */
 export function waitForJobDone<T>(
   api: JobDoneCapable,
@@ -206,6 +227,7 @@ export function waitForJobDone<T>(
   if (typeof api.onJobDone !== 'function') return Promise.resolve(null);
   return new Promise<T | null>((resolve, reject) => {
     let off: (() => void) | undefined;
+    let offStatus: (() => void) | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     // Idempotent teardown — `resolve`/`reject` themselves are single-shot, and
@@ -213,6 +235,7 @@ export function waitForJobDone<T>(
     // fire (no `settled` flag needed).
     const cleanup = (): void => {
       off?.();
+      offStatus?.();
       if (timer !== undefined) clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
     };
@@ -247,6 +270,15 @@ export function waitForJobDone<T>(
       }
       settleResolve(extract(d.result));
     });
+    // A sidecar respawn/give-up while we wait means this job's process is gone;
+    // settle now with a clear retry message rather than waiting out the timeout.
+    if (typeof api.onSidecarStatus === 'function') {
+      offStatus = api.onSidecarStatus((status) => {
+        if (status !== 'running') {
+          settleReject(new Error('The sidecar stopped mid-job; please retry.'));
+        }
+      });
+    }
     if (timeoutMs > 0) {
       timer = setTimeout(() => {
         settleReject(
