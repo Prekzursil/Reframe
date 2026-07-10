@@ -28,12 +28,13 @@ faster-whisper, or touching a GPU.
 from __future__ import annotations
 
 import contextlib
+import os
 import subprocess
 import threading
 from collections.abc import Callable
 from typing import Any
 
-from ..pathsafe import clean_for_log
+from ..pathsafe import clean_for_log, ensure_within
 from ..util import get_logger
 
 log = get_logger("media_studio.models.runner")
@@ -159,9 +160,12 @@ def resolve_gguf_path(
         return f"{base}/{default_name}"
     from ..settings_store import default_config_dir  # local import: avoids an import cycle
 
-    provisioned = default_config_dir() / "models" / default_name
-    if provisioned.is_file():
-        return str(provisioned).replace("\\", "/")
+    # ensure_within canonicalises + confines the env-derived config dir (the exact
+    # CodeQL py/path-injection barrier) and the os.path.isfile sink below consumes
+    # its return value, so the env taint is neutralised at the sink.
+    provisioned = ensure_within(default_config_dir(), "models", default_name)
+    if os.path.isfile(provisioned):
+        return provisioned.replace(os.sep, "/")
     return None
 
 

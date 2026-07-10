@@ -138,13 +138,19 @@ def test_resolve_gguf_falls_back_to_config_dir_models(tmp_path, monkeypatch):
     # (symmetric with resolve_llama_server's <root>/tools fallback) — otherwise the
     # local LLM never launches, director.plan hard-errors, and Make-Shorts silently
     # produces zero clips. This is the real-world path every seeded test masked.
+    import os
+
     import media_studio.settings_store as _ss
 
     monkeypatch.setattr(_ss, "default_config_dir", lambda: tmp_path)
     models = tmp_path / "models"
     models.mkdir()
     (models / "qwen3-4b.gguf").write_bytes(b"gguf")
-    assert resolve_gguf_path({}) == str(models / "qwen3-4b.gguf").replace("\\", "/")
+    got = resolve_gguf_path({})
+    assert got is not None
+    # ensure_within returns a realpath-canonicalised, forward-slashed path; compare by
+    # identity (samefile) so a temp-dir junction/case normalisation can't false-fail.
+    assert "/" in got and os.path.samefile(got, models / "qwen3-4b.gguf")
 
 
 def test_resolve_gguf_none_when_unconfigured_and_unprovisioned(tmp_path, monkeypatch):
