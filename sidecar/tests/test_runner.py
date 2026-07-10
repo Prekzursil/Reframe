@@ -132,7 +132,29 @@ def test_resolve_gguf_normalizes_backslashes_and_trailing_slash():
     assert got == "D:/models/qwen3-4b.gguf"
 
 
-def test_resolve_gguf_none_when_unconfigured():
+def test_resolve_gguf_falls_back_to_config_dir_models(tmp_path, monkeypatch):
+    # A DEFAULT install leaves modelsDir empty, but first-run provisioning downloads
+    # the model to <configDir>/models/<default>. resolve_gguf_path MUST find it there
+    # (symmetric with resolve_llama_server's <root>/tools fallback) — otherwise the
+    # local LLM never launches, director.plan hard-errors, and Make-Shorts silently
+    # produces zero clips. This is the real-world path every seeded test masked.
+    import media_studio.settings_store as _ss
+
+    monkeypatch.setattr(_ss, "default_config_dir", lambda: tmp_path)
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "qwen3-4b.gguf").write_bytes(b"gguf")
+    assert resolve_gguf_path({}) == str(models / "qwen3-4b.gguf").replace("\\", "/")
+
+
+def test_resolve_gguf_none_when_unconfigured_and_unprovisioned(tmp_path, monkeypatch):
+    # No ggufPath, no modelsDir, AND no provisioned model under <configDir>/models ->
+    # None (the runner raises a clear "no GGUF configured" pre-provisioning). The
+    # config dir is pinned to an EMPTY temp dir so this never depends on whether the
+    # dev machine happens to have a real model at its default location.
+    import media_studio.settings_store as _ss
+
+    monkeypatch.setattr(_ss, "default_config_dir", lambda: tmp_path)  # empty: no models/
     assert resolve_gguf_path({}) is None
     assert resolve_gguf_path(None) is None
 
@@ -231,8 +253,12 @@ def test_start_server_uses_explicit_gguf_argument():
     assert "/explicit/x.gguf" in popen.spawned[0]
 
 
-def test_start_server_raises_without_a_model():
-    r = _runner(settings={})  # neither ggufPath nor modelsDir
+def test_start_server_raises_without_a_model(tmp_path, monkeypatch):
+    import media_studio.settings_store as _ss
+
+    # neither ggufPath nor modelsDir, AND nothing provisioned at the config dir
+    monkeypatch.setattr(_ss, "default_config_dir", lambda: tmp_path)  # empty temp
+    r = _runner(settings={})
     with pytest.raises(ValueError):
         r.start_server()
 
@@ -487,9 +513,12 @@ def test_settings_resolved_switch_restarts():
     assert r.current_model_path == "/m/settings.gguf"
 
 
-def test_start_server_running_with_no_model_resolvable_reuses():
-    # Degenerate: server running, no path passed, nothing in settings -> the
-    # live process is reused rather than raising.
+def test_start_server_running_with_no_model_resolvable_reuses(tmp_path, monkeypatch):
+    # Degenerate: server running, no path passed, nothing in settings AND nothing
+    # provisioned at the config dir -> the live process is reused rather than raising.
+    import media_studio.settings_store as _ss
+
+    monkeypatch.setattr(_ss, "default_config_dir", lambda: tmp_path)  # empty: resolve -> None
     popen = FakePopen()
     r = _runner(popen=popen, settings={})
     p1 = r.start_server(gguf_path="/m/a.gguf")

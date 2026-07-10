@@ -136,10 +136,18 @@ def resolve_gguf_path(
 ) -> str | None:
     """Resolve the GGUF model path from ``settings`` (CONTRACTS.md §2).
 
-    Order: explicit ``settings.ggufPath`` (a file) -> ``settings.modelsDir`` +
-    ``default_name``. Returns ``None`` when neither is configured (the caller then
-    raises a clear error rather than launching with a bogus path). Path joining is
-    string-level (no filesystem touch) so this stays a pure, testable helper.
+    Order: explicit ``settings.ggufPath`` -> ``settings.modelsDir`` + ``default_name``
+    -> the first-run PROVISIONING location ``<configDir>/models/<default_name>``.
+
+    The last hop is what makes a DEFAULT install work: ``modelsDir`` defaults to ``""``
+    and nothing populates it, yet first-run provisioning downloads the model to
+    ``<configDir>/models``. Without this fallback the local LLM never launches (the
+    runner raises "no GGUF configured"), director.plan hard-errors, and Make-Shorts
+    silently selects zero clips. It mirrors :func:`tools_resolver.resolve_llama_server`,
+    which already falls back to ``<root>/tools``. The provisioning hop is existence-
+    CHECKED so a not-yet-provisioned machine still yields ``None`` (a clear
+    pre-provisioning error) rather than launching llama.cpp on a missing file; the
+    settings-driven hops stay string-level (no filesystem touch).
     """
     settings = settings or {}
     explicit = settings.get("ggufPath")
@@ -149,6 +157,11 @@ def resolve_gguf_path(
     if models_dir:
         base = str(models_dir).replace("\\", "/").rstrip("/")
         return f"{base}/{default_name}"
+    from ..settings_store import default_config_dir  # local import: avoids an import cycle
+
+    provisioned = default_config_dir() / "models" / default_name
+    if provisioned.is_file():
+        return str(provisioned).replace("\\", "/")
     return None
 
 
