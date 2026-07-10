@@ -265,6 +265,51 @@ def test_index_search_returns_ranked_hits(tmp_path: Path) -> None:
     assert top["score"] == pytest.approx(1.0)
 
 
+def test_index_search_refuses_stale_index_after_retranscribe(tmp_path: Path) -> None:
+    """Bug-sweep: a re-transcribe changes the segments, so the persisted vectors no
+    longer line up. index.search refuses the stale index (typed rebuild prompt)
+    instead of zipping new segments onto old vectors (silently-wrong hits)."""
+    emb = RecordingEmbedder({"pricing": [1.0, 0.0]})
+    svc = _services(tmp_path, embedder=emb, now=lambda: 1.0)
+    vid = _add_video_with_transcript(svc, tmp_path)
+    ctx = _ctx()
+    svc.index_build({"videoId": vid}, ctx)
+    ctx.jobs.join(timeout=5)
+    # Re-transcribe: overwrite with DIFFERENT segments.
+    proj = svc._load_or_create_project(vid)
+    proj.data["transcript"] = {
+        "language": "en",
+        "durationSec": 30.0,
+        "segments": [{"start": 0.0, "end": 5.0, "text": "completely new content after retranscribe"}],
+    }
+    proj.save()
+    with pytest.raises(RpcError) as ei:
+        svc.index_search({"videoId": vid, "query": "pricing"}, _ctx())
+    assert "stale" in str(ei.value).lower(), f"expected a stale-index refusal, got {ei.value!r}"
+
+
+def test_index_search_skips_fingerprint_for_legacy_index(tmp_path: Path) -> None:
+    """Backward-compat: an index built before this fix carries no transcriptFp, so
+    the staleness check is skipped (it is served as-is rather than force-flagged)."""
+    emb = RecordingEmbedder({"pricing": [1.0, 0.0]})
+    svc = _services(tmp_path, embedder=emb, now=lambda: 1.0)
+    vid = _add_video_with_transcript(svc, tmp_path)
+    ctx = _ctx()
+    svc.index_build({"videoId": vid}, ctx)
+    ctx.jobs.join(timeout=5)
+    # Simulate a legacy index: strip the fingerprint the fix now writes.
+    idx = svc._read_index(vid)
+    idx.pop("transcriptFp", None)
+    svc._write_index(vid, idx)
+    # Even after a re-transcribe, a legacy index is NOT flagged (skips the check).
+    proj = svc._load_or_create_project(vid)
+    proj.data["transcript"] = {"language": "en", "durationSec": 30.0,
+                               "segments": [{"start": 0.0, "end": 5.0, "text": "pricing"}]}
+    proj.save()
+    out = svc.index_search({"videoId": vid, "query": "pricing"}, _ctx())
+    assert "hits" in out  # served without raising
+
+
 # --------------------------------------------------------------------------- #
 # AC e: repeat identical query is a cache hit (embedder not re-invoked)
 # --------------------------------------------------------------------------- #

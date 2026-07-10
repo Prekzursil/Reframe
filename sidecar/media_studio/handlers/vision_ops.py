@@ -10,6 +10,7 @@ in services.py). Behaviour + the RPC surface are byte-identical to pre-split.
 
 from __future__ import annotations
 
+import hashlib
 import json as _json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -406,6 +407,16 @@ def _ai_pool_for_index(self: Services, settings: dict[str, Any]) -> Any:
     return builder(settings, detect_local=False, prefer=self._function_prefer("index"))
 
 
+def _transcript_fp(corpus: Any) -> str:
+    """A stable fingerprint of the ordered transcript corpus an index was built
+    from (bug-sweep fix). If the current transcript's fingerprint differs from the
+    one stored at index.build, the persisted vectors no longer line up with the
+    live segments — search would zip new segments onto old vectors and return
+    silently-wrong text/timestamps. index.search uses this to refuse a stale index.
+    """
+    return hashlib.sha256(repr(corpus).encode("utf-8")).hexdigest()
+
+
 def index_build(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
     """``index.build({videoId, confirmBudget?})`` -> ``{jobId}`` (WU-A5).
 
@@ -452,6 +463,9 @@ def index_build(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict
             "model": str(getattr(embedder, "model", "local")),
             "dim": dim,
             "builtAt": built_at,
+            # Bug-sweep: fingerprint the corpus so index.search can detect a
+            # re-transcribe and refuse a stale index instead of mis-pairing.
+            "transcriptFp": _transcript_fp(corpus),
             "vectors": vectors,
         }
         self._write_index(video_id, payload)
@@ -619,6 +633,17 @@ def index_search(self: Services, params: dict[str, Any], ctx: RpcContext) -> dic
 
     vectors = index.get("vectors") or []
     project_transcript = self._load_or_create_project(video_id).data.get("transcript")
+    # Bug-sweep: refuse a STALE index. If the transcript was re-transcribed since
+    # the index was built, the persisted vectors no longer line up with the live
+    # segments (search would zip new segments onto old vectors -> silently-wrong
+    # text/timestamps). An index built before this fix carries no fingerprint, so
+    # it is skipped (backward-compat) rather than force-flagged.
+    built_fp = index.get("transcriptFp")
+    if built_fp is not None and built_fp != _transcript_fp(_si.build_corpus(project_transcript or {})):
+        raise _invalid(
+            f"semantic index for {video_id} is stale (the transcript changed since it was "
+            "built); run index.build to rebuild it first"
+        )
     segments = project_transcript.get("segments") or [] if isinstance(project_transcript, dict) else []
     hits = _si.search(query_vec, vectors, segments, top_k)
     return {"hits": hits}
