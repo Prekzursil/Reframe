@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .. import library as _library
 from ..features import convert as _convert
 from ..features import offline as _offline
 from ..features import subtitles as _subtitles
@@ -227,8 +228,14 @@ def tracks_add(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[
     track_id = _require_str(params, "trackId")
     track = params.get("track")
     if not isinstance(track, dict):
-        # Resolve the full track object from the project that owns the id.
-        track = _tracks.find_track(self._find_project_for_track(track_id).data, track_id)
+        # Resolve the full track object from the project that owns the id, and
+        # COPY it with a FRESH id (bug-sweep fix): a cross-video tracks.add would
+        # otherwise duplicate the same id across two manifests, so a later
+        # trackId-only op (rename/relabel/subtitles.edit/export) resolves to
+        # whichever manifest sorts first — the WRONG video. A fresh id keeps the
+        # target's copy independently addressable (via tracks.list).
+        source = _tracks.find_track(self._find_project_for_track(track_id).data, track_id)
+        track = {**source, "id": _library._new_id()}
     project = self._load_or_create_project(video_id)
     try:
         _tracks.add_track(project.data, track)
