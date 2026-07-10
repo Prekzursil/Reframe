@@ -106,6 +106,9 @@ def providers_test_key(self: Services, params: dict[str, Any], ctx: RpcContext) 
     api_key = params.get("apiKey")
     if not isinstance(api_key, str) or not api_key:
         raise _invalid("providers.testKey requires an apiKey")
+    # Offline mode forbids ALL network egress: refuse (typed) before any HTTP so
+    # the raw key never leaves the machine (bug-sweep fix).
+    _offline.guard_network(self.settings.get(), "testing a provider key")
     capabilities = [str(c) for c in (params.get("capabilities") or ["text"])]
     from ..models import provider as _provider_mod  # local: heavy seam
 
@@ -249,6 +252,9 @@ def providers_openrouter_usage(self: Services, params: dict[str, Any], ctx: RpcC
     (never raised), the live key rides ONLY the ``Authorization`` header, and the
     returned rows carry the REDACTED last-4 only — no full key crosses RPC.
     """
+    # Offline mode forbids ALL network egress: refuse before the GET so the raw
+    # OpenRouter key never leaves the machine (bug-sweep fix).
+    _offline.guard_network(self.settings.get(), "checking OpenRouter usage")
     from ..models import openrouter_usage as _oru  # local: import-light
     from ..models import provider as _provider_mod  # local: heavy seam (GET transport)
 
@@ -542,13 +548,28 @@ def _select_provider_or_local(self: Services) -> Any:
 
 
 def _translator_for_function(self: Services, function: str) -> Any:
-    """Build the TieredTranslator whose tier3 hosted pool honors routing."""
+    """Build the TieredTranslator whose tier3 hosted pool honors routing.
+
+    OFFLINE GATE (bug-sweep fix): when Offline mode is on, force the hosted tier
+    to a LOCAL-ONLY pool (``prefer=LOCAL_PROVIDER_ID`` -> local-only per
+    ``translation._default_hosted_factory``) so a cloud-routed translation can
+    NEVER egress transcript text — mirroring ``_select_provider_or_local``. The
+    prior ``subtitles.translate`` guard only fired on the legacy ``useCloud``
+    flag, so a ``routing.perFunction['translation']`` cloud route slipped past it.
+    The local MT tiers still translate offline.
+    """
+    from ..models import provider as _provider_mod  # local: heavy seam
     from ..models import translation as _translation_mod  # local: heavy seam
 
+    prefer = (
+        _provider_mod.LOCAL_PROVIDER_ID
+        if _offline.is_offline(self.settings.get())
+        else self._function_prefer(function)
+    )
     return _translation_mod.get_translator(
         self.settings.get_raw(),
         runner=self._get_model_runner(),
-        prefer=self._function_prefer(function),
+        prefer=prefer,
         ensure=self._llama_ensure(),
     )
 
