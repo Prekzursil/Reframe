@@ -14,6 +14,7 @@ Heavy-ML-free: handlers are plain callables; the store is the WU-5
 from __future__ import annotations
 
 import threading
+from typing import Any
 
 import pytest
 from media_studio.job_store import InMemoryJobStore
@@ -217,6 +218,64 @@ def test_rehydrate_writes_back_interrupted_status(emit_sinks):
     reg.rehydrate()
     rec = next(r for r in store.load_all() if r["jobId"] == "job-1")
     assert rec["status"] == "interrupted"
+
+
+def _done_emits(collected) -> list[tuple[str, Any]]:
+    """Filter the recording sink down to ``(job_id, result)`` for done emits."""
+    return [payload for (kind, payload) in collected if kind == "done"]
+
+
+def test_rehydrate_emits_terminal_job_done_for_interrupted(collected, emit_sinks):
+    # A job left mid-flight (running/pending/queued) when the process exited is
+    # rehydrated INTERRUPTED — and MUST also emit a terminal job.done carrying a
+    # JobInterrupted error, or a renderer still holding its {jobId} (a long-job
+    # panel spinning on job.progress after a sidecar crash+restart) waits on
+    # job.done forever. Terminal records emit nothing.
+    store = InMemoryJobStore()
+    store.write({"jobId": "job-1", "status": "running", "method": "a.x", "params": {}})
+    store.write({"jobId": "job-2", "status": "pending", "method": "b.y", "params": {}})
+    store.write({"jobId": "job-3", "status": "done", "method": "c.z", "params": {}})
+    store.write({"jobId": "job-4", "status": "error", "method": "d.w", "params": {}})
+    store.write({"jobId": "job-5", "status": "cancelled", "method": "e.v", "params": {}})
+
+    ep, ed = emit_sinks
+    reg = JobRegistry(ep, ed, store=store)
+    reg.rehydrate()
+
+    emits = _done_emits(collected)
+    # Exactly the two non-terminal jobs notified (id-ascending order), each with
+    # the frozen A3 error shape {error:{message,type}} and type "JobInterrupted".
+    assert [job_id for (job_id, _result) in emits] == ["job-1", "job-2"]
+    for _job_id, result in emits:
+        assert result == {"error": {"message": "job interrupted by restart", "type": "JobInterrupted"}}
+    # The status re-mark is unchanged: still INTERRUPTED (resumable via job.retry),
+    # NOT flipped to a terminal ERROR by the notification.
+    assert reg.get("job-1").status is JobStatus.INTERRUPTED
+    assert reg.get("job-2").status is JobStatus.INTERRUPTED
+
+
+def test_rehydrate_emits_nothing_when_all_terminal(collected, emit_sinks):
+    # No mid-flight jobs -> no synthetic job.done notifications at all.
+    store = InMemoryJobStore()
+    store.write({"jobId": "job-1", "status": "done", "method": "a.x", "params": {}})
+    store.write({"jobId": "job-2", "status": "cancelled", "method": "b.y", "params": {}})
+    ep, ed = emit_sinks
+    reg = JobRegistry(ep, ed, store=store)
+    reg.rehydrate()
+    assert _done_emits(collected) == []
+
+
+def test_rehydrate_emits_job_done_for_unknown_status(collected, emit_sinks):
+    # An out-of-vocabulary status degrades to INTERRUPTED (F3b) and is notified
+    # too, so a client tracking such a job never hangs either.
+    store = InMemoryJobStore()
+    store.write({"jobId": "job-1", "status": "garbage", "method": "a.x", "params": {}})
+    ep, ed = emit_sinks
+    reg = JobRegistry(ep, ed, store=store)
+    reg.rehydrate()
+    assert _done_emits(collected) == [
+        ("job-1", {"error": {"message": "job interrupted by restart", "type": "JobInterrupted"}})
+    ]
 
 
 def test_rehydrate_terminal_not_rewritten(emit_sinks):

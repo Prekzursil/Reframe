@@ -68,6 +68,27 @@ function onJobDoneBridge(cb: (event: JobDoneEvent) => void): () => void {
   return api.onJobDone(cb);
 }
 
+// ---- sidecar-status plumbing (v1.5 crash fix) -------------------------------
+
+/** Self-healing supervisor lifecycle states (mirrors preload's SidecarStatus). */
+export type SidecarStatus = 'running' | 'restarting' | 'down';
+
+// CONTRACT-NOTE: like onJobDone, the preload exposes `onSidecarStatus` (the
+// `sidecar.status` relay) but components/api.ts doesn't re-export it, so read it
+// structurally off the frozen §1 bridge — graceful no-op when absent (tests/early
+// boot), so existing useJob behavior is unchanged in that case.
+function onSidecarStatusBridge(cb: (status: SidecarStatus) => void): () => void {
+  const api = (
+    globalThis as {
+      window?: {
+        api?: { onSidecarStatus?: (cb: (status: SidecarStatus) => void) => () => void };
+      };
+    }
+  ).window?.api;
+  if (!api || typeof api.onSidecarStatus !== 'function') return () => undefined;
+  return api.onSidecarStatus(cb);
+}
+
 /**
  * Pull the A3 error payload out of a job.done `result`, if present.
  * (Verified against the sidecar: a failed job emits
@@ -251,6 +272,24 @@ export function useJob(options?: UseJobOptions) {
       }
       activeJobId.current = null;
       setState((prev) => ({ ...prev, running: false, pct: 100 }));
+    });
+    return unsubscribe;
+  }, [surfaceError]);
+
+  useEffect(() => {
+    // v1.5 crash fix: a sidecar crash/restart is surfaced to the renderer as a
+    // NON-running lifecycle status ('restarting' | 'down'; ipc.ts also relays the
+    // raw process 'exit' onto this channel). The dead process can never emit the
+    // active job's terminal job.done, so fail the job instead of leaving the panel
+    // spinning forever — mirroring sidecar.ts buildProxyJob's exit->reject. A
+    // 'running' push (initial spawn / recovery) is not a failure, and with no
+    // active job there is nothing to fail.
+    const unsubscribe = onSidecarStatusBridge((status) => {
+      if (status === 'running' || !activeJobId.current) return;
+      surfaceError({
+        message: 'Sidecar stopped — the job was interrupted',
+        type: 'JobInterrupted',
+      });
     });
     return unsubscribe;
   }, [surfaceError]);

@@ -4,9 +4,11 @@
 // are stripped from providers.upsert before they reach the sidecar, provider-calling
 // methods gain _injectedKeys, non-provider methods pass through, the secure.status
 // channel is served only with a bridge, and the disposer removes every handler.
+import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { BrowserWindow } from 'electron';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -20,7 +22,13 @@ vi.mock('electron', () => ({
 
 import { KEYSTORE_FILENAME, loadDecryptedKeys, type SafeStorageLike } from './keystore';
 import { INJECTED_KEYS_FIELD, KeyBridge } from './keyBridge';
-import { RPC_CHANNEL, SECURE_STATUS_CHANNEL, SIDECAR_RESTART_CHANNEL, registerIpc } from './ipc';
+import {
+  RPC_CHANNEL,
+  SECURE_STATUS_CHANNEL,
+  SIDECAR_RESTART_CHANNEL,
+  SIDECAR_STATUS_CHANNEL,
+  registerIpc,
+} from './ipc';
 import type { Sidecar } from './sidecar';
 
 function makeSafeStorage(available = true): SafeStorageLike {
@@ -153,5 +161,52 @@ describe('registerIpc — key guard wiring', () => {
     dispose();
     const removed = mocks.removeHandler.mock.calls.map(([ch]) => ch as string);
     expect(removed).not.toContain(SECURE_STATUS_CHANNEL);
+  });
+});
+
+// v1.5 crash fix: the sidecar `exit` event is bridged to a renderer-visible
+// non-running lifecycle push, so the renderer's useJob fails its active job
+// instead of spinning forever. Uses a real EventEmitter as the sidecar so
+// on('exit')/off('exit') actually wire, and a fake window to capture the fan-out.
+describe('registerIpc — sidecar exit bridge', () => {
+  /** An EventEmitter posing as a Sidecar (only request/restart are touched here). */
+  function makeEmitterSidecar(): Sidecar & EventEmitter {
+    const sc = new EventEmitter() as Sidecar & EventEmitter;
+    Object.assign(sc, {
+      request: vi.fn(async () => ({ ok: true })),
+      restart: vi.fn(async () => ({ ok: true })),
+    });
+    return sc;
+  }
+
+  /** A live fake window recording `webContents.send`. */
+  function fakeWindow(): { win: BrowserWindow; send: ReturnType<typeof vi.fn> } {
+    const send = vi.fn();
+    const win = {
+      isDestroyed: () => false,
+      webContents: { isDestroyed: () => false, send },
+    } as unknown as BrowserWindow;
+    return { win, send };
+  }
+
+  it('broadcasts a non-running sidecar.status when the sidecar process exits', () => {
+    const sc = makeEmitterSidecar();
+    const { win, send } = fakeWindow();
+    registerIpc(sc, () => [win]);
+
+    sc.emit('exit', 1);
+
+    expect(send).toHaveBeenCalledWith(SIDECAR_STATUS_CHANNEL, 'restarting');
+  });
+
+  it('the disposer detaches the exit bridge (no broadcast after dispose)', () => {
+    const sc = makeEmitterSidecar();
+    const { win, send } = fakeWindow();
+    const dispose = registerIpc(sc, () => [win]);
+    dispose();
+
+    sc.emit('exit', 1);
+
+    expect(send).not.toHaveBeenCalled();
   });
 });

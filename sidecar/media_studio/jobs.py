@@ -490,6 +490,10 @@ class JobRegistry:
             return
         shell_handler = handler if handler is not None else self._rehydrated_noop
         max_seen = 0
+        # Jobs rehydrated INTERRUPTED (were mid-flight at the last exit); each needs a
+        # synthetic terminal job.done AFTER the loop (emit is I/O — kept outside the
+        # registry lock, mirroring _set_status's mutate-under-lock / write-outside).
+        interrupted_ids: list[str] = []
         # Load in ascending numeric-id (creation) order so list_info's reversed()
         # ordering + 100-item cap stay correct after a restart (job-10 IS newer than
         # job-2), regardless of the store's own load_all ordering.
@@ -511,12 +515,30 @@ class JobRegistry:
                     # the load is now id-ascending); INTERRUPTED jobs are non-terminal
                     # and are never auto-evicted.
                     self._terminal_order.append(job_id)
+                else:
+                    # Every non-terminal rehydrated job is INTERRUPTED (pending/
+                    # running/queued/unknown all degrade to it) — collect it for a
+                    # synthetic terminal job.done below. (``job`` is always present
+                    # here: _rehydrate_one just registered ``job_id``.)
+                    interrupted_ids.append(job_id)
         # New ids must not collide with rehydrated ones; and a restart with more
         # terminal records than the retention cap prunes down to the newest N (from
         # both the registry and the store).
         with self._lock:
             self._counter = max(self._counter, max_seen)
             self._prune_terminal_history()
+        # A mid-flight job whose process died leaves any client still holding its
+        # {jobId} (a renderer long-job panel spinning on job.progress after a
+        # sidecar crash+restart) waiting on job.done FOREVER. Emit a synthetic
+        # TERMINAL job.done carrying a JobInterrupted error — the same "a stalled
+        # job MUST notify" invariant that _finish_error/_finish_cancelled enforce.
+        # The status stays INTERRUPTED (resumable via job.retry); this only settles
+        # the waiter. Emitted id-ascending, outside the lock (the sink writes stdout).
+        for job_id in interrupted_ids:
+            self._emit_done(
+                job_id,
+                {"error": {"message": "job interrupted by restart", "type": "JobInterrupted"}},
+            )
 
     def _rehydrate_one(self, record: Any, shell_handler: JobHandler) -> str | None:
         """Rebuild ONE persisted record into a registered Job shell (F3b helper).
