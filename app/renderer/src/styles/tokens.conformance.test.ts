@@ -465,3 +465,106 @@ describe('no undefined custom-property references in renderer CSS (WU-D7)', () =
     expect(offenders).toEqual([]);
   });
 });
+
+// --- v1.5 pro-shell token evolution (Wave-2) -------------------------------------
+//
+// The v1.5 redesign consumes the SHIPPED tokens (never the prototype's literal
+// hex — §5.A) and evolves the layer DELIBERATELY (§5.B): real bundled type faces
+// leading the UI / editorial / mono families, and a glass / floating-surface
+// layer for the produced-shorts modal (and the Cmd-K palette when it ships,
+// §7.5). These are the LOCK on that evolution — additive to the guards above,
+// never a weakening of them. A font family that decays back to a bare generic
+// (`system-ui` / `Georgia` / `ui-monospace` leading), or a glass layer that
+// loses its translucency / blur, fails here.
+
+/** The FIRST family in a `font-family` list (before the first comma), trimmed. */
+function leadFamily(value: string): string {
+  return (value.split(',')[0] ?? '').trim().replace(/^["']|["']$/g, '');
+}
+
+/** The alpha channel of an `rgba(r,g,b,a)` value, or NaN when not an rgba(). */
+function rgbaAlpha(value: string): number {
+  const m = /rgba\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*([\d.]+)\s*\)/.exec(value);
+  return m ? Number.parseFloat(m[1]) : Number.NaN;
+}
+
+describe('v1.5 shell token evolution — type faces (WU-1.5)', () => {
+  it('leads --font-ui with a bundled non-generic face (Inter / Geist), keeping a system fallback', () => {
+    const value = readTokens().get('--font-ui') ?? '';
+    // The lead is a real bundled UI face, NOT the generic system-ui the prototype
+    // superseded (§5.B). A system fallback stays LAST so it renders before the
+    // @font-face binaries are bundled (documented follow-up).
+    expect(['Inter', 'Geist']).toContain(leadFamily(value));
+    expect(value).toContain('system-ui');
+    expect(value.trimEnd()).toMatch(/sans-serif;?$/);
+  });
+
+  it('sets --font-editorial to Newsreader with a serif fallback (the pull-quote voice)', () => {
+    const value = readTokens().get('--font-editorial') ?? '';
+    // Newsreader supersedes the stale Georgia lead; a generic serif stays as the
+    // fallback so the editorial voice never collapses to sans.
+    expect(leadFamily(value)).toBe('Newsreader');
+    expect(value.trimEnd()).toMatch(/serif;?$/);
+  });
+
+  it('leads --font-mono with a bundled mono face, keeping a monospace fallback (timecode voice)', () => {
+    const value = readTokens().get('--font-mono') ?? '';
+    expect(leadFamily(value)).toBe('IBM Plex Mono');
+    expect(value.trimEnd()).toMatch(/monospace;?$/);
+  });
+});
+
+describe('v1.5 shell token evolution — glass / floating-surface layer (WU-1.5)', () => {
+  it('defines a translucent glass surface + a real backdrop-blur radius', () => {
+    const tokens = readTokens();
+    // The glass surface is the raised plane at REDUCED opacity so a backdrop-blur
+    // reads through it — a solid fill would defeat the layer.
+    const glass = tokens.get('--surface-glass') ?? '';
+    const alpha = rgbaAlpha(glass);
+    expect(alpha).toBeGreaterThan(0);
+    expect(alpha).toBeLessThan(1);
+    // A non-zero px blur radius (the layer is meaningless at 0).
+    const blur = tokens.get('--glass-blur') ?? '';
+    expect(blur).toMatch(/^\d+px$/);
+    expect(Number.parseInt(blur, 10)).toBeGreaterThan(0);
+  });
+
+  it('defines the centered-surface scrim + measure (modal now, Cmd-K palette later)', () => {
+    const tokens = readTokens();
+    // The scrim that dims the canvas behind a centered floating surface: a
+    // translucent dark wash (alpha < 1 so the app stays faintly visible behind).
+    const scrim = tokens.get('--overlay-scrim') ?? '';
+    const alpha = rgbaAlpha(scrim);
+    expect(alpha).toBeGreaterThan(0);
+    expect(alpha).toBeLessThan(1);
+    // A pixel max-measure so the floating surface never spans an ultrawide window.
+    expect(tokens.get('--overlay-width') ?? '').toMatch(/^\d+px$/);
+  });
+});
+
+describe('v1.5 shell token evolution — locks the reconciled §5.A guardrails (WU-1.5)', () => {
+  it('pins the ink-on-accent value the redesign must bind (never the prototype #1a1205)', () => {
+    expect(readTokens().get('--accent-ink')).toBe('#211404');
+  });
+
+  it('keeps --text-faint OFF the rejected sub-AA #50555F (the WCAG 1.4.3 regression)', () => {
+    // The prototype re-introduced #50555F (~2.4:1) on quiet text; the shipped faint
+    // step is a real AA tone. Guard the exact rejected value can never creep back.
+    const faint = (readTokens().get('--text-faint') ?? '').toLowerCase();
+    expect(faint).not.toBe('#50555f');
+  });
+
+  it('pins the motion ladder (fast < base < slow) + a real easing curve', () => {
+    const tokens = readTokens();
+    const ms = (name: string): number => Number.parseInt(tokens.get(name) ?? '', 10);
+    const fast = ms('--dur-fast');
+    const base = ms('--dur-base');
+    const slow = ms('--dur-slow');
+    expect(fast).toBe(120);
+    expect(base).toBe(180);
+    expect(slow).toBe(260);
+    expect(fast).toBeLessThan(base);
+    expect(base).toBeLessThan(slow);
+    expect(tokens.get('--ease-out') ?? '').toContain('cubic-bezier(');
+  });
+});

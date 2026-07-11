@@ -86,11 +86,20 @@
   --status-abundance-soft: rgba(155, 108, 255, 0.08); /* gradient wash */
 
   /* ---- type ---------------------------------------------------------------
-   * Pairing: weighted system sans for UI, ui-monospace for timecode/numbers,
-   * a serif voice ONLY for editorial pull-quote moments (ShortMaker hooks). */
-  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
-  --font-editorial: Georgia, "Iowan Old Style", "Times New Roman", serif;
+   * Pairing: a weighted sans for UI, a mono for timecode/numbers, a serif voice
+   * ONLY for editorial pull-quote moments (ShortMaker hooks, Director, caption
+   * previews).
+   *
+   * v1.5 (§5.B) — the ONE place the redesign evolves tokens FORWARD: each family
+   * now leads with a BUNDLED, non-generic face (Inter for UI, IBM Plex Mono for
+   * timecode, Newsreader for editorial), superseding the stale system-ui/Georgia
+   * leads. The actual @font-face binaries (self-hosted under the renderer assets;
+   * CSP allows `font-src 'self'`) are a bundling FOLLOW-UP — until they land the
+   * system fallbacks kept LAST render everything correctly offline, so no PR is
+   * blocked on font files. The tokens.conformance WU-1.5 guard pins the leads. */
+  --font-ui: Inter, Geist, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+  --font-editorial: Newsreader, Georgia, "Iowan Old Style", "Times New Roman", serif;
 
   /* ---- font-weight ramp (WU-D1) -------------------------------------------
    * ONE ordered weight ladder so component CSS never hard-codes a raw numeric
@@ -231,6 +240,20 @@
    * variant uses a cool slate highlight to keep the locked blue-gray mood. */
   --atmos-toplight: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0) 62%);
   --atmos-well: linear-gradient(180deg, rgba(148, 163, 184, 0.06), rgba(0, 0, 0, 0.12));
+
+  /* ---- glass / floating-surface layer (Wave-2, §5.B) ------------------------
+   * Backdrop-blurred floating surfaces: the produced-shorts modal now, and the
+   * Cmd-K command palette when it ships (§7.5). --surface-glass is the RAISED
+   * plane at reduced opacity so a `backdrop-filter: blur(var(--glass-blur))`
+   * reads through it (a solid fill would defeat the blur); --overlay-scrim dims
+   * the canvas behind a centered surface; --overlay-width caps its measure so a
+   * floating panel never spans an ultrawide window. Cool cast is preserved (the
+   * glass is --surface-raised at alpha). Pinned by tokens.conformance (WU-1.5);
+   * the entrance motion is gated on prefers-reduced-motion AT THE CONSUMER. */
+  --glass-blur: 14px;
+  --surface-glass: rgba(27, 33, 46, 0.72);
+  --overlay-scrim: rgba(9, 11, 16, 0.62);
+  --overlay-width: 640px;
 
   /* ---- motion ---------------------------------------------------------------- */
   --dur-fast: 120ms; /* hovers, color shifts */
