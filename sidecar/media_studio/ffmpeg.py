@@ -331,10 +331,13 @@ def ffprobe_duration(
     :data:`PROBE_TIMEOUT_SEC` (a hung probe on a bad/slow input must bound out,
     not wedge the job; downstream callers treat 0.0 as "unknown" and degrade).
     """
-    # ensure_within canonicalises the (RPC/settings-derived) probe path — the
-    # realpath+startswith barrier CodeQL recognises for the subprocess sink, and a
-    # real hardening: the resolved absolute path can't be mis-parsed as an ffprobe
-    # flag (argument injection). Single-arg ensure_within never raises.
+    # Harden the (RPC/settings-derived) probe path: ensure_within canonicalises it
+    # to a realpath'd ABSOLUTE path that cannot be mis-parsed as an ffprobe flag
+    # (argument injection) — the same single-arg canonicalise resolve_binary uses.
+    # (CodeQL's conservative py/command-line-injection query still flags any
+    # user-path -> argv sink; the argv-list call uses no shell, so there is no
+    # command injection — the residual alert is reviewed at merge.)
+    # Single-arg ensure_within never raises, so behaviour is unchanged.
     argv = build_probe_argv(ensure_within(in_path), settings)
     try:
         completed = runner(argv, capture_output=True, text=True, check=False, timeout=PROBE_TIMEOUT_SEC)
