@@ -533,6 +533,18 @@ def top_pick_for_task(
     )
 
 
+def provider_label_for_id(
+    model_id: str,
+    *,
+    catalog: Sequence[CatalogEntry] = CATALOG,
+) -> str | None:
+    """Return the provider LABEL for a catalog model id ('groq-gpt-oss-120b' -> 'Groq'), or None if unknown."""
+    for entry in catalog:
+        if entry.id == model_id:
+            return entry.provider
+    return None
+
+
 __all__ = [
     "AS_OF_DATE",
     "CATALOG",
@@ -548,5 +560,6 @@ __all__ = [
     "catalog_to_json",
     "filter_by_capability",
     "order_by",
+    "provider_label_for_id",
     "top_pick_for_task",
 ]

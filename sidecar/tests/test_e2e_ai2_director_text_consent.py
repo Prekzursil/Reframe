@@ -154,6 +154,9 @@ def _base_settings(*provider_ids: str, text: bool = True) -> dict[str, Any]:
     consent = {pid: {"text": text, "frames": True} for pid in provider_ids}
     return {
         "routing": _routing(*provider_ids),
+        # director now honors the RoutingPolicy (default local, fail closed); allow
+        # cloud so the TEXT-consent gate under test is the actual egress decision.
+        "routingPolicy": {"global": "cloud", "overrides": {}},
         "consent": {"perProvider": consent},
         "confirmCloudBudget": False,
         "cloudModel": "mock-model",
@@ -230,6 +233,7 @@ def test_director_plan_never_egresses_to_a_non_consented_provider_in_a_mixed_poo
         svc.settings.set(
             {
                 "routing": _routing("no", "yes"),
+                "routingPolicy": {"global": "cloud", "overrides": {}},
                 "consent": {"perProvider": {"yes": {"text": True}, "no": {"text": False}}},
                 "confirmCloudBudget": False,
                 "cloudModel": "mock-model",

@@ -83,6 +83,17 @@ def _editplan_provider_or_refuse(self: Services) -> Any:
         return self._provider
 
     from ..models import provider as _provider_mod  # local: heavy seam
+    from ..models import routing_policy as _routing_policy  # local: import-light pure
+
+    # ROUTING-LOCAL GATE (bug-sweep fix): a RoutingPolicy Local mode (GATE-2, resolved
+    # fail-closed) is authoritative over a stale editPlan cloud route — short-circuit to
+    # a LOCAL-ONLY pool so director.plan never egresses transcript text when the user
+    # flipped the global/override toggle to Local (mirrors _provider_for_function; the
+    # routing override table keys this function 'director', not the 'editPlan' model key).
+    if _routing_policy.resolve_route("director", self.settings.get())["mode"] == "local":
+        return _provider_mod.get_provider(
+            self.settings.get_raw(), prefer=_provider_mod.LOCAL_PROVIDER_ID, ensure=self._llama_ensure()
+        )
 
     prefer = self._function_prefer("editPlan")
     raw = self.settings.get_raw()
@@ -251,6 +262,46 @@ def _director_apply_ack(self: Services, plan_id: str) -> str:
     return self.plan_ai_job_envelope(inputs).cacheKey
 
 
+def _merged_review_plan(plan: Any, op_overrides: Any, order: Any) -> Any:
+    """Return a copy of ``plan`` with the reviewer's op status overrides + order applied.
+
+    ``op_overrides`` is a list of ``{id, status}`` and ``order`` a list of op ids
+    (either may be ``None`` — meaning "no change"). Every referenced id MUST exist
+    in the plan's ops, and ``order`` (when present) MUST be a PERMUTATION of the
+    plan's op ids; any unknown id or a non-permutation raises INVALID_PARAMS LOUDLY
+    (never a silent skip). Only the frozen :data:`OP_STATUSES` values are accepted.
+    The stored ``plan`` is NEVER mutated (immutable :func:`dataclasses.replace`), so
+    the reviewer's edits take effect without corrupting the retained plan entry.
+    """
+    from dataclasses import replace as _dc_replace  # local: import-light pure
+
+    from ..models.edit_plan import OP_STATUSES  # local: import-light pure
+
+    valid_ids = {op.id for op in plan.ops}
+
+    # 1. Re-status each op per its override (id + frozen-status validated LOUDLY).
+    status_by_id: dict[str, str] = {}
+    if op_overrides is not None:
+        for override in op_overrides:
+            op_id = override.get("id")
+            status = override.get("status")
+            if op_id not in valid_ids:
+                raise _invalid(f"unknown op override id: {op_id!r}")
+            if status not in OP_STATUSES:
+                raise _invalid(f"unknown op status: {status!r}")
+            status_by_id[op_id] = status
+    restated = tuple(op.with_status(status_by_id[op.id]) if op.id in status_by_id else op for op in plan.ops)
+
+    # 2. Reorder per ``order`` (must be a permutation of the plan's op ids).
+    if order is not None:
+        if len(order) != len(valid_ids) or set(order) != valid_ids:
+            raise _invalid("order must be a permutation of the plan's op ids")
+        by_id = {op.id: op for op in restated}
+        restated = tuple(by_id[op_id] for op_id in order)
+
+    return _dc_replace(plan, ops=restated)
+
+
 def director_apply(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
     """``director.apply({planId, confirmBudget?})`` -> ``{jobId}``. Job-based.
 
@@ -284,7 +335,17 @@ def director_apply(self: Services, params: dict[str, Any], ctx: RpcContext) -> d
 
     project = self._load_or_create_project(entry.video_id)
     engines = self._director_engines()
-    plan = entry.plan
+    # Merge the reviewer's op status overrides + reorder over the STORED plan (the
+    # storyboard "keep/drop + reorder" edits, Finding #1). When absent the stored
+    # plan applies verbatim (backward-compatible); apply_engine honours a 'dropped'
+    # status, so a re-statused op is skipped at render. entry.plan stays immutable.
+    op_overrides = params.get("opOverrides")
+    order = params.get("order")
+    plan = (
+        _merged_review_plan(entry.plan, op_overrides, order)
+        if op_overrides is not None or order is not None
+        else entry.plan
+    )
 
     def work(_job_ctx: Any, _envelope: Any, _provider: Any) -> dict[str, Any]:
         project_copy = _project_copy.copy_project(project)

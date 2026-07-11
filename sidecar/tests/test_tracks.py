@@ -311,6 +311,14 @@ def test_ass_filter_path_escapes_windows_path():
     assert "\\:" in vf  # colon escaped
 
 
+def test_ass_filter_path_escapes_apostrophe():
+    vf = tracks._ass_filter_path(r"C:\a\O'Brien\subs.ass")
+    assert "'\\''" in vf  # apostrophe emitted via the close-escape-reopen idiom
+    assert vf.startswith("subtitles='")
+    assert vf.endswith("'")
+    assert "O\\'Brien" not in vf  # the broken backslash-quote form is absent
+
+
 def test_build_soft_mux_argv_maps_both_inputs(fake_ffmpeg):
     argv = tracks.build_soft_mux_argv("/in.mp4", "/subs.srt", "/out.mkv", lang="es")
     assert argv.count("-i") == 2

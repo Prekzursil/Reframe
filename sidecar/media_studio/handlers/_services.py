@@ -243,6 +243,7 @@ class Services:
     _index_provider_factory = vision_ops._index_provider_factory
     index_status = vision_ops.index_status
     index_search = vision_ops.index_search
+    index_plan = vision_ops.index_plan
     _plan_index_envelope = vision_ops._plan_index_envelope
     subtitles_generate = media_ops.subtitles_generate
     subtitles_edit = media_ops.subtitles_edit

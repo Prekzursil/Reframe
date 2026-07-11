@@ -925,6 +925,15 @@ class AssetManager:
         env_dir.mkdir(parents=True, exist_ok=True)
         python_exe = self._resolve_env_python(entry)
         get_pip = self.root / "tools" / "get-pip.py"
+        # F3c defense-in-depth: a cached get-pip.py under <root>/tools is EXECUTED
+        # on the NEXT env install. The bootstrap only ever writes sha-verified
+        # bytes, but an external tamper of that shared on-disk cache would slip an
+        # unverified script past the download gate below. Re-verify the cached
+        # bytes against the pinned sha256 and drop a poisoned copy so it is
+        # refetched (verify-before-exec) instead of run.
+        if get_pip.is_file() and hashlib.sha256(get_pip.read_bytes()).hexdigest() != self._get_pip_sha256:
+            log.warning("cached get-pip.py failed sha256 re-verification; refetching")
+            get_pip.unlink()
         if not get_pip.is_file():
             on_frac(0.01, f"{entry.name}: fetching get-pip.py")
             # F3c: verify-before-exec — _download_file rejects (sha mismatch) a

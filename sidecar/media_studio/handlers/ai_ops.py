@@ -436,7 +436,12 @@ def _get_translator(self: Services) -> Any | None:
     from ..models import translation as _translation_mod  # local import
 
     # FACTORY PATH (PLAN §WU-keys): the tier3 hosted provider is built from RAW keys.
-    return _translation_mod.get_translator(self.settings.get_raw(), runner=self._get_model_runner())
+    # TEXT-CONSENT GATE (bug-sweep fix): filter the RAW settings through
+    # _text_consented_settings so cue text can never rotate onto a non-text-consented
+    # cloud provider (mirrors _translator_for_function / _provider_for_function).
+    return _translation_mod.get_translator(
+        self._text_consented_settings(self.settings.get_raw()), runner=self._get_model_runner()
+    )
 
 
 def _dub_translator(self: Services) -> Any:

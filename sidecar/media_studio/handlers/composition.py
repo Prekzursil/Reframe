@@ -31,12 +31,31 @@ def _key_overlay_wrapper(svc: Services, handler: Handler) -> Handler:
     FACTORY seams' ``get_raw()`` see the raw keys for THAT request only — every
     real key-consuming seam captures its provider/settings synchronously while
     this overlay is active. A request without the field is an ordinary call (the
-    overlay is never opened)."""
+    overlay is never opened).
+
+    IDX 60 Part 2 (job-runner overlay propagation): for the long job-runner
+    methods (``recipes.run`` / ``templates.apply`` / ``batch.start`` /
+    ``batch.resume``) the outer handler only ENQUEUES the job and returns
+    ``{jobId}`` — the nested steps run later on a worker thread AFTER this overlay
+    context has closed, so without help they would see only the redacted at-rest
+    markers. So the popped ``injected`` snapshot is stashed on the per-request
+    :class:`RpcContext` (``ctx.injected_keys``) — the SAME ``ctx`` object the job
+    body closes over — instead of being discarded when ``wrapped`` returns. The
+    step runner (``RecipeRunner``) re-attaches it under :data:`INJECTED_KEYS_FIELD`
+    onto each nested step's params, which are then dispatched through THIS wrapper
+    again, so the overlay is re-opened (and the marker re-popped) per step. The
+    snapshot lives ONLY on the ephemeral ``ctx`` (never serialized: ``RpcContext``
+    is a dataclass whose ``repr``/equality see only its declared fields, and the
+    job store records the already-popped request params), so the pop-in-place
+    no-leak invariant holds."""
 
     def wrapped(params: dict[str, Any], ctx: RpcContext) -> Any:
         injected = params.pop(INJECTED_KEYS_FIELD, None) if isinstance(params, dict) else None
         if injected is None:
             return handler(params, ctx)
+        # Stash for the deferred job-worker step runner (IDX 60 Part 2). Harmless for
+        # synchronous handlers (they finish under the overlay and never read it back).
+        ctx.injected_keys = injected
         with svc.settings.key_overlay(injected):
             return handler(params, ctx)
 
@@ -167,6 +186,10 @@ def register_all(
     reg("index.build", svc.index_build)
     reg("index.search", svc.index_search)
     reg("index.status", svc.index_status)
+    # index.plan: the PURE pre-flight consent surface for a build/search (mirrors
+    # ai.planJob) — cacheKey + willEgress computed with ZERO provider calls, so the
+    # renderer can render the §9.1 egress card before deciding to build/search.
+    reg("index.plan", svc.index_plan)
 
     # WU-envelope: AI-Job pre-flight. ai.planJob returns the route + cost/egress
     # budget + cacheHit/willEgress with ZERO provider calls (the pure planner).

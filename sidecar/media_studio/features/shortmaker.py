@@ -436,6 +436,9 @@ def _lazy_caption(
         hook_title=hook_title,
         # P4 §4: the libass default engine honours the caption position box.
         position=(settings or {}).get("captionPosition"),
+        # V1.1 §3: the additive caption override ({outline/card/uppercase/size/...});
+        # render->build_ass->apply_override tolerates None and validates a dict.
+        override=(settings or {}).get("captionOverride"),
         # V1.1 WU SP1: the "opusclip-karaoke" libass preset (word-by-word ASS).
         karaoke=is_karaoke_style(style),
         # V1.1 WU SP2: render the hook as an OpusClip CARD (white box, bold black,
@@ -1379,6 +1382,12 @@ class ShortMaker:
         caption_position = params.get("captionPosition")
         if isinstance(caption_position, dict):
             settings["captionPosition"] = caption_position
+        # V1.1 §3: the additive caption OVERRIDE ({outline/card/uppercase/size/...});
+        # only a dict is accepted so a malformed value can never poison the libass
+        # style resolution (caption.apply_override validates the dict body).
+        caption_override = params.get("captionOverride")
+        if isinstance(caption_override, dict):
+            settings["captionOverride"] = caption_override
         # P3/P4: optional per-export BOOLEAN toggles (frozen mini-contract):
         #   hookTitle (default true)  -> render the candidate's hook as a top
         #                                title in the CAPTION stage (P3-A);

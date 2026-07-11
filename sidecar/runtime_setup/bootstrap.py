@@ -735,6 +735,7 @@ def extract_tool_archives(
     from media_studio.assets import manifest
 
     done: list[str] = []
+    cleared: set[Path] = set()
     for arch in archives if archives is not None else tools_resolver.TOOL_ARCHIVES:
         entry = manifest.get_asset(arch.asset)
         if entry is None or not entry.dest:
@@ -745,9 +746,22 @@ def extract_tool_archives(
         if not zip_path.is_file():
             continue
         target = Path(ensure_within(root, arch.extract_to))
+        # Clear a stale build ONCE per target on a LLAMA_RELEASE_TAG bump so a new
+        # nested layout can't inherit an old exe (the version-aware detect gate
+        # keys off RELEASE_TAG_MARKER; without a wipe an old marker/exe lingers and
+        # assets.ensure never re-provisions). Guard by `cleared` so a SECOND archive
+        # extracting INTO the same dir (the cudart zip lands in the CUDA build dir)
+        # does NOT wipe what a prior archive just populated.
+        if target not in cleared:
+            if target.exists():
+                shutil.rmtree(target)
+            cleared.add(target)
         _log(f"extracting {arch.asset} -> {target}")
         extract_archive(zip_path, target)
         flatten_tool_dir(target, tools_resolver.LLAMA_EXE)
+        (target / tools_resolver.RELEASE_TAG_MARKER).write_text(
+            tools_resolver.LLAMA_RELEASE_TAG, encoding="utf-8"
+        )
         if remove_zip:
             zip_path.unlink()
         done.append(arch.asset)

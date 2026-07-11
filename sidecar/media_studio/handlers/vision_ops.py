@@ -728,6 +728,35 @@ def index_search(self: Services, params: dict[str, Any], ctx: RpcContext) -> dic
     return {"hits": hits}
 
 
+def index_plan(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``index.plan({videoId, query?})`` -> the pre-flight budget/consent surface.
+
+    The pure planning twin of :meth:`index_build` / :meth:`index_search`: it
+    constructs the SAME :class:`ai_job.AiInputs` those handlers build (a ``query``
+    when present, else the ``"index.build"`` sentinel) and returns
+    :meth:`AiJobEnvelope.planned` — ``{route, costEst, cacheHit, willEgress,
+    budget, preview, cacheKey}`` — so the renderer can preview the run/egress
+    decision (and reuse the ``cacheKey`` :meth:`_enforce_egress_gates` demands on
+    a subsequent ``index.build``/``index.search``) WITHOUT starting a job. ZERO
+    provider calls: the envelope is planned over the TEXT-consented settings
+    (:meth:`_plan_index_envelope`), never executed. ``videoId`` is validated at the
+    boundary (loud INVALID_PARAMS on a missing/blank id) but does not affect the
+    plan, which is keyed on the query text + resolved route only.
+    """
+    from ..models import ai_job as _ai_job  # local: import-light
+
+    _require_str(params, "videoId")
+    query = params.get("query")
+    content = str(query) if isinstance(query, str) and query else "index.build"
+    settings = dict(self.settings.get_raw())
+    inputs = _ai_job.AiInputs(
+        messages=({"role": "user", "content": content},),
+        model=str(settings.get("cloudEmbedModel") or settings.get("cloudModel") or ""),
+    )
+    envelope = self._plan_index_envelope(inputs)
+    return envelope.planned()
+
+
 def _plan_index_envelope(self: Services, inputs: Any) -> Any:
     """Plan the budget envelope for an ``index.search`` query over consented settings.
 

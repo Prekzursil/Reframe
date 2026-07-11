@@ -275,10 +275,13 @@ def _ass_filter_path(ass_path: str) -> str:
 
     Inside ``-vf``, ffmpeg parses the filtergraph: backslashes, colons (Windows
     drive letters), single quotes, and ``[]`` are special. Wrapping the value in
-    single quotes and escaping ``\``, ``'`` and ``:`` keeps a real Windows path
-    like ``C:\a b\subs.ass`` intact as a *single* argv element.
+    single quotes and escaping ``\`` and ``:`` keeps a real Windows path like
+    ``C:\a b\subs.ass`` intact as a *single* argv element. An embedded single
+    quote is emitted via the ``'\''`` idiom (close the quote, an escaped literal
+    quote, reopen) so a path like ``C:\a\O'Brien\subs.ass`` survives the ffmpeg
+    single-quoted filtergraph instead of terminating the quoted value early.
     """
-    escaped = ass_path.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+    escaped = ass_path.replace("\\", "\\\\").replace(":", "\\:").replace("'", "'\\''")
     return f"subtitles='{escaped}'"
 
 
