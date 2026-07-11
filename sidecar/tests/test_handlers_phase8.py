@@ -430,7 +430,7 @@ def test_phase8_select_cloud_vision_with_consent_egresses_frames(tmp_path: Path,
     svc, ctx, vid = _run_select_with_vision(
         tmp_path,
         video_file,
-        settings_patch=_vision_provider_settings(with_consent=True),
+        settings_patch={**_vision_provider_settings(with_consent=True), "routingPolicy": {"global": "cloud"}},
         transport=transport,
     )
     selects = [e for e in ctx.events if e[0] == "done" and "candidates" in e[2]]  # type: ignore[attr-defined]
@@ -471,7 +471,7 @@ def test_resolve_vlm_reranker_cloud_when_consent_granted(tmp_path: Path) -> None
         vlm_frame_encoder=lambda f: "b",
         vlm_models_present=lambda s: False,
     )
-    svc.settings.set(_vision_provider_settings(with_consent=True))
+    svc.settings.set({**_vision_provider_settings(with_consent=True), "routingPolicy": {"global": "cloud"}})
     rr = svc._resolve_vlm_reranker(svc.settings.get(), media_path="/v.mp4")
     from media_studio.features import smolvlm2 as sv
 
@@ -704,7 +704,12 @@ def test_phase8_vision_rotation_never_egresses_to_non_consented_provider(tmp_pat
         vlm_models_present=lambda s: False,
         vlm_chat_transport=transport,
     )
-    svc.settings.set(_two_vision_provider_settings(first_consent=True, second_consent=False))
+    svc.settings.set(
+        {
+            **_two_vision_provider_settings(first_consent=True, second_consent=False),
+            "routingPolicy": {"global": "cloud"},
+        }
+    )
 
     rr = svc._resolve_vlm_reranker(svc.settings.get(), media_path="/v.mp4")
     from media_studio.features import smolvlm2 as sv

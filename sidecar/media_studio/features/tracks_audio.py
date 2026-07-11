@@ -25,14 +25,22 @@ Design rules straight from the contract + A6 lessons:
 
 CONTRACT-NOTE (paths): a *dub* AudioTrack's ``path`` is the standalone audio
 file (the AAC the dub pipeline produced); an *original* row's ``path`` is the
-container itself. The mux/replace/strip operations write a NEW container
-beside the source (the original file is never modified — refs are by path).
+container itself. Registering a track (``mux`` / ``mux_for_dub``) is a MANIFEST
+edit only — the dub's audio is muxed into each exported clip on demand by the
+export MUX-AUDIO stage (``shortmaker._lazy_mux_audio``, reading
+``audioTrack.path``), so no derivative container is written here (a prior remux
+produced an orphaned copy no consumer ever read). ``replace``/``strip`` DO write
+a new container beside the source, but only for *originals* (real container
+streams); the source file is never modified — refs are by path.
 
-CONTRACT-NOTE (stream indices): replace/strip need a container audio-stream
-index. Convention: ``Project.audioTracks`` order mirrors the container's
-audio-stream order (originals are seeded from an ffprobe sniff in stream
-order; dubs are appended as they are muxed), so a track's index in the list
-IS its ``a:<n>`` index in the freshest derivative.
+CONTRACT-NOTE (stream indices): only *original* rows correspond to real audio
+streams inside the resolved container — they are seeded from an ffprobe sniff in
+stream order, so an original's ``a:<n>`` index is its position AMONG THE
+ORIGINALS (:func:`original_stream_index`), NOT its position in the full
+``audioTracks`` list (which also counts dubs). A *dub* is NOT a container stream
+at all (its audio lives in a standalone file), so ``replace``/``strip`` on a dub
+are manifest-only edits — never a container remux against a stream that is not
+there.
 """
 
 from __future__ import annotations
@@ -40,6 +48,7 @@ from __future__ import annotations
 import builtins
 import json
 import subprocess  # noqa: S404 - argv-list ffprobe sniff only, never shell=True
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -141,6 +150,39 @@ def audio_track_index(project: dict[str, Any], track_id: str) -> int:
     raise AudioTrackError(f"no such audio track: {track_id}")
 
 
+def original_audio_count(project: dict[str, Any]) -> int:
+    """The number of ``KIND_ORIGINAL`` rows == the resolved container's real
+    audio-stream count.
+
+    Only originals correspond to actual audio streams inside the resolved
+    container (dubs live in standalone files, delivered by the export re-mux —
+    see the module note). So this — NOT ``len(audioTracks)`` — is the true input
+    audio-stream count that ffmpeg sees on the container.
+    """
+    return sum(
+        1
+        for t in audio_tracks_of(project)
+        if isinstance(t, dict) and t.get("kind") == KIND_ORIGINAL
+    )
+
+
+def original_stream_index(project: dict[str, Any], track_id: str) -> int:
+    """The original track's TRUE ``a:<n>`` index among the container's streams.
+
+    An original's real container index is its position *among the originals*
+    (seeded from ffprobe in container order), NOT its position in the full
+    ``audioTracks`` list — which also counts dubs that are NOT container streams.
+    Raises when ``track_id`` is not an original row.
+    """
+    n = 0
+    for t in audio_tracks_of(project):
+        if isinstance(t, dict) and t.get("kind") == KIND_ORIGINAL:
+            if t.get("id") == track_id:
+                return n
+            n += 1
+    raise AudioTrackError(f"no such original audio track: {track_id}")
+
+
 def add_audio_track(project: dict[str, Any], track: dict[str, Any]) -> AudioTrack:
     """Append a normalized track (idempotent on an existing id)."""
     normalized = normalize_audio_track(track)
@@ -210,6 +252,7 @@ def build_replace_argv(
     *,
     stream_index: int,
     lang: str | None = None,
+    existing_audio_count: int = 0,
     settings: dict[str, Any] | None = None,
 ) -> list[str]:
     """argv swapping audio stream ``a:<stream_index>`` for ``in_audio``.
@@ -217,6 +260,12 @@ def build_replace_argv(
     Everything else (video, other audio, subtitles) is preserved via
     ``-map 0`` + the negative map of the one replaced stream; the new audio
     is appended under stream copy.
+
+    ``existing_audio_count`` is the container's real audio-stream count. The
+    replaced stream is dropped and the new audio is appended LAST, so the
+    replacement lands at output audio index ``existing_audio_count - 1``; the
+    language tag targets ONLY that stream (a blanket ``-metadata:s:a`` would
+    relabel every surviving audio stream's language — CONTRACTS.md A3).
     """
     if stream_index < 0:
         raise AudioTrackError("stream_index must be >= 0")
@@ -239,7 +288,8 @@ def build_replace_argv(
         "copy",
     ]
     if lang:
-        argv += ["-metadata:s:a", f"language={lang}"]
+        out_index = max(int(existing_audio_count) - 1, 0)
+        argv += [f"-metadata:s:a:{out_index}", f"language={lang}"]
     argv += ["-progress", "pipe:1", "-nostats", out_path]
     return argv
 
@@ -298,10 +348,17 @@ def probe_streams(
     ]
     completed = runner(argv, capture_output=True, text=True, check=False)
     if getattr(completed, "returncode", 1) != 0:
+        log.warning(
+            "ffprobe stream sniff failed for %s (exit %s): %s",
+            in_path,
+            getattr(completed, "returncode", None),
+            (getattr(completed, "stderr", "") or "").strip(),
+        )
         return {}
     try:
         data = json.loads(getattr(completed, "stdout", "") or "")
     except ValueError:
+        log.warning("ffprobe stream sniff returned unparseable JSON for %s", in_path)
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -358,8 +415,23 @@ class AudioTracksService:
         self._run: RunFn = run or ffmpeg.run
         self._duration: DurationFn = duration or ffmpeg.ffprobe_duration
         self._probe: ProbeFn = probe or probe_streams
+        # Per-video locks guard the reload->mutate->save critical section so a
+        # job-thread mux and a concurrent main-loop replace/strip on the SAME
+        # video can't clobber each other's manifest write (never held across the
+        # long ffmpeg run — see replace/strip).
+        self._locks: dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
 
     # -- internals --------------------------------------------------------------
+    def _lock_for(self, video_id: str) -> threading.Lock:
+        """Return (creating on first use) the per-video manifest lock."""
+        with self._locks_guard:
+            lock = self._locks.get(video_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._locks[video_id] = lock
+            return lock
+
     def _settings(self) -> dict[str, Any]:
         try:
             return dict(self._settings_provider() or {})
@@ -382,6 +454,12 @@ class AudioTracksService:
         except Exception:  # noqa: BLE001 - a probe crash means no originals, not a 500
             log.warning("audio stream sniff failed for %s", video_path)
             return False
+        if not probe:
+            # An empty probe is a SILENT ffprobe failure (bad path / transient),
+            # NOT the same as a video that genuinely has no audio streams (a
+            # non-empty probe with zero audio rows). Make the failure observable
+            # so tracks.audio.list isn't wrongly reported as an audio-less video.
+            log.warning("audio stream sniff produced no data for %s", video_path)
         originals = original_tracks_from_probe(probe, video_path)
         if not originals:
             return False
@@ -431,49 +509,87 @@ class AudioTracksService:
         return {"audioTrack": track}
 
     def replace(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
-        """``tracks.audio.replace({videoId, audioTrackId, path})`` -> ``{audioTrack}``."""
+        """``tracks.audio.replace({videoId, audioTrackId, path})`` -> ``{audioTrack}``.
+
+        A DUB's audio is a standalone file (delivered at export), NOT a stream in
+        the resolved container — so replacing it is a manifest edit (swap the
+        path). Only an ORIGINAL is a real container stream; that path re-muxes
+        the container, swapping its TRUE ``a:<n>`` index (:func:`original_stream_index`
+        — NOT the dub-inclusive list index) and tagging only the appended stream.
+        """
         video_id = _require_str(params, "videoId")
         track_id = _require_str(params, "audioTrackId")
         audio_path = _require_str(params, "path")
         if not Path(audio_path).is_file():
             raise _invalid(f"audio file not found: {audio_path}")
         video_path = self._resolve(video_id)
-        project = self._load_project(video_id)
-        try:
-            track = find_audio_track(project, track_id)
-            index = audio_track_index(project, track_id)
-        except AudioTrackError as exc:
-            raise _invalid(str(exc)) from exc
+        with self._lock_for(video_id):
+            project = self._load_project(video_id)
+            try:
+                track = find_audio_track(project, track_id)
+            except AudioTrackError as exc:
+                raise _invalid(str(exc)) from exc
+            if track.get("kind") == KIND_DUB:
+                # Dub: swap the standalone-file reference; no container remux.
+                track["path"] = audio_path
+                self._save_project(video_id, project)
+                return {"audioTrack": dict(track)}
+            index = original_stream_index(project, track_id)
+            lang = track.get("lang")
+            existing = original_audio_count(project)
         out_path = self._derived_path(video_path, f"aud-replace-{track_id}")
         argv = build_replace_argv(
             video_path,
             audio_path,
             out_path,
             stream_index=index,
-            lang=track.get("lang"),
+            lang=lang,
+            existing_audio_count=existing,
             settings=self._settings(),
         )
         self._run_or_raise(argv, video_path, "audio replace")
-        track["path"] = audio_path
-        self._save_project(video_id, project)
-        return {"audioTrack": dict(track)}
+        # RE-LOAD after the (unlocked) ffmpeg run so a concurrent manifest write
+        # that landed during it is not clobbered — apply only this op's delta.
+        with self._lock_for(video_id):
+            project = self._load_project(video_id)
+            fresh = find_audio_track(project, track_id)
+            fresh["path"] = audio_path
+            self._save_project(video_id, project)
+            return {"audioTrack": dict(fresh)}
 
     def strip(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
-        """``tracks.audio.strip({videoId, audioTrackId})`` -> ``{path}`` (A2)."""
+        """``tracks.audio.strip({videoId, audioTrackId})`` -> ``{path}`` (A2).
+
+        A DUB is not a container stream (its audio is a standalone file), so
+        dropping it is a manifest edit and the container is returned unchanged.
+        An ORIGINAL is re-muxed out by its TRUE container ``a:<n>`` index.
+        """
         video_id = _require_str(params, "videoId")
         track_id = _require_str(params, "audioTrackId")
         video_path = self._resolve(video_id)
-        project = self._load_project(video_id)
-        try:
-            index = audio_track_index(project, track_id)
-        except AudioTrackError as exc:
-            raise _invalid(str(exc)) from exc
+        with self._lock_for(video_id):
+            project = self._load_project(video_id)
+            try:
+                track = find_audio_track(project, track_id)
+            except AudioTrackError as exc:
+                raise _invalid(str(exc)) from exc
+            if track.get("kind") == KIND_DUB:
+                # Dub: not in the container -> manifest-only removal; the
+                # container (resolved source) is unchanged, so return it as-is.
+                remove_audio_track(project, track_id)
+                self._save_project(video_id, project)
+                return {"path": video_path}
+            index = original_stream_index(project, track_id)
         out_path = self._derived_path(video_path, f"noaud-{track_id}")
         argv = build_strip_audio_argv(video_path, out_path, stream_index=index, settings=self._settings())
         self._run_or_raise(argv, video_path, "audio strip")
-        remove_audio_track(project, track_id)
-        self._save_project(video_id, project)
-        return {"path": out_path}
+        # RE-LOAD after the (unlocked) ffmpeg run so a concurrent manifest write
+        # is not clobbered — apply only this op's delta (the row removal).
+        with self._lock_for(video_id):
+            project = self._load_project(video_id)
+            remove_audio_track(project, track_id)
+            self._save_project(video_id, project)
+            return {"path": out_path}
 
     # -- the dub pipeline's entry (NOT a wire method) ------------------------------
     def mux_for_dub(
@@ -499,9 +615,6 @@ class AudioTracksService:
         voice: str | None,
     ) -> AudioTrack:
         video_path = self._resolve(video_id)
-        project = self._load_project(video_id)
-        self._seed_originals(project, video_id, video_path)
-        existing = len(audio_tracks_of(project))
         track = normalize_audio_track(
             {
                 "id": _new_id(),
@@ -512,19 +625,19 @@ class AudioTracksService:
                 "voice": voice,
             }
         )
-        out_path = self._derived_path(video_path, f"aud-{track['id']}")
-        argv = build_mux_argv(
-            video_path,
-            audio_path,
-            out_path,
-            lang=lang,
-            existing_audio_count=existing,
-            settings=self._settings(),
-        )
-        self._run_or_raise(argv, video_path, "audio mux")
-        add_audio_track(project, track)
-        self._save_project(video_id, project)
-        log.info("muxed audio track %s into %s", track["id"], out_path)
+        # Registering an audio track is a MANIFEST edit only: the dub's audio
+        # lives in ``audio_path`` (a standalone AAC) and is muxed into each
+        # exported clip on demand by the export MUX-AUDIO stage
+        # (shortmaker._lazy_mux_audio, from ``audioTrack.path``). A full-container
+        # remux here produced a derivative that no consumer ever read — an
+        # orphaned, unbounded, untracked copy beside every source (wasted compute
+        # + a leak). So no ffmpeg runs; delivery happens at export.
+        with self._lock_for(video_id):
+            project = self._load_project(video_id)
+            self._seed_originals(project, video_id, video_path)
+            add_audio_track(project, track)
+            self._save_project(video_id, project)
+        log.info("registered audio track %s (path=%s)", track["id"], audio_path)
         return dict(track)
 
 
@@ -580,6 +693,8 @@ __all__ = [
     "build_strip_audio_argv",
     "find_audio_track",
     "normalize_audio_track",
+    "original_audio_count",
+    "original_stream_index",
     "original_tracks_from_probe",
     "probe_streams",
     "register",

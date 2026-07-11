@@ -331,8 +331,16 @@ class Diarize:
             labelled = diarize_transcript(transcript, regions, embeddings, threshold=thr)
             if not job_ctx.cancelled:
                 fresh = self._load_project(video_id)
-                fresh["transcript"] = labelled
-                self._save_project(video_id, fresh)
+                # The label pass ran against the RPC-time snapshot; if a concurrent
+                # transcribe.start re-wrote the transcript while we were clustering,
+                # blind-saving would clobber the newer text with stale, speaker-
+                # stamped data. Fail loud instead of last-writer-wins.
+                if fresh.get("transcript") != transcript:
+                    raise RpcError(
+                        f"transcript for {video_id} changed while diarization was running; re-run diarize",
+                        ErrorCode.INVALID_PARAMS,
+                    )
+                self._save_project(video_id, {**fresh, "transcript": labelled})
             job_ctx.progress(100.0, "done")
             return {"transcript": labelled}
 

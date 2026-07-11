@@ -227,6 +227,10 @@ class TestDetectProbes:
     def test_detect_cuda_finds_extracted_exe(self, tmp_path, monkeypatch, isolated_dev_dir):
         monkeypatch.setenv("MEDIA_STUDIO_CONFIG_DIR", str(tmp_path))
         exe = _touch(tmp_path / tr.TOOL_DIR_CUDA / tr.LLAMA_EXE)
+        # An extracted build counts as installed only with a matching release-tag marker.
+        (tmp_path / tr.TOOL_DIR_CUDA / tr.RELEASE_TAG_MARKER).write_text(
+            tr.LLAMA_RELEASE_TAG, encoding="utf-8"
+        )
         assert tr.detect_llama_cuda({}) == str(exe)
 
     def test_detect_cuda_settings_path_wins(self, tmp_path, monkeypatch, isolated_dev_dir):
@@ -247,16 +251,34 @@ class TestDetectProbes:
         monkeypatch.setenv("MEDIA_STUDIO_CONFIG_DIR", str(tmp_path))
         assert tr.detect_llama_cpu({}) is None
         exe = _touch(tmp_path / tr.TOOL_DIR_CPU / tr.LLAMA_EXE)
+        (tmp_path / tr.TOOL_DIR_CPU / tr.RELEASE_TAG_MARKER).write_text(
+            tr.LLAMA_RELEASE_TAG, encoding="utf-8"
+        )
         assert tr.detect_llama_cpu({}) == str(exe)
 
     def test_detect_cudart_dll(self, tmp_path, monkeypatch, isolated_dev_dir):
         monkeypatch.setenv("MEDIA_STUDIO_CONFIG_DIR", str(tmp_path))
         assert tr.detect_llama_cudart({}) is None
         dll = _touch(tmp_path / tr.TOOL_DIR_CUDA / "cudart64_12.dll")
+        (tmp_path / tr.TOOL_DIR_CUDA / tr.RELEASE_TAG_MARKER).write_text(
+            tr.LLAMA_RELEASE_TAG, encoding="utf-8"
+        )
         assert tr.detect_llama_cudart({}) == str(dll)
 
     def test_detect_cudart_skips_non_file_glob_hit(self, tmp_path, monkeypatch, isolated_dev_dir):
         # A directory matching the cudart glob is not a file -> it is skipped (333->332).
+        # The marker makes the CUDA dir eligible so the non-file skip branch is reached.
         monkeypatch.setenv("MEDIA_STUDIO_CONFIG_DIR", str(tmp_path))
         (tmp_path / tr.TOOL_DIR_CUDA / "cudart64_99.dll").mkdir(parents=True)
+        (tmp_path / tr.TOOL_DIR_CUDA / tr.RELEASE_TAG_MARKER).write_text(
+            tr.LLAMA_RELEASE_TAG, encoding="utf-8"
+        )
+        assert tr.detect_llama_cudart({}) is None
+
+    def test_detect_cudart_skips_non_dir_base(self, tmp_path, monkeypatch, isolated_dev_dir):
+        # 382->381: a base that is NOT a directory is skipped. No CUDA release
+        # marker (so the config CUDA dir is never appended) + a DEV_LLAMA_DIR that
+        # does not exist -> every base fails is_dir() and the resolver returns None.
+        monkeypatch.setenv("MEDIA_STUDIO_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setattr(tr, "DEV_LLAMA_DIR", str(tmp_path / "nope-not-a-dir"))
         assert tr.detect_llama_cudart({}) is None

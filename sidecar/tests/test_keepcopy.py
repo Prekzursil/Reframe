@@ -143,7 +143,10 @@ def test_keep_copy_is_idempotent_no_second_copy(tmp_path: Path) -> None:
         calls.append(d)
         Path(d).write_bytes(Path(s).read_bytes())
 
-    store = ManagedStore(lib, copier=counting_copier)
+    # Pin the clock so the idempotent re-keep's recency bump writes the SAME stamp,
+    # keeping the returned row byte-identical (this test asserts "no second copy", not
+    # recency — the LRU bump is covered separately in test_wf_sidecar-core-1.py).
+    store = ManagedStore(lib, copier=counting_copier, now=lambda: "t0")
     first = store.keep_copy(src)
     second = store.keep_copy(src)  # idempotent: returns the existing row, no re-copy
     assert first == second

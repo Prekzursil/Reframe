@@ -56,6 +56,7 @@ class Services:
         openrouter_usage_transport: Any | None = None,
         now: Callable[[], float] | None = None,
         vlm_clip_frame_loader: Any | None = None,
+        vlm_clip_time_loader: Any | None = None,
         vlm_frame_encoder: Any | None = None,
         vlm_models_present: Callable[[dict[str, Any]], bool] | None = None,
         vlm_chat_transport: Any | None = None,
@@ -103,6 +104,7 @@ class Services:
         # no weights / no network is ever touched. ``vlm_models_present`` overrides
         # the local-weight probe so the cloud-vs-local-vs-off decision is testable.
         self._vlm_clip_frame_loader = vlm_clip_frame_loader
+        self._vlm_clip_time_loader = vlm_clip_time_loader
         self._vlm_frame_encoder = vlm_frame_encoder
         self._vlm_models_present = vlm_models_present
         # WU-vision: the chat transport the vision rotation pool uses (the
@@ -228,6 +230,7 @@ class Services:
     _resolve_vlm_reranker = vision_ops._resolve_vlm_reranker
     _resolve_frame_scorer = vision_ops._resolve_frame_scorer
     _frame_clip_loader = vision_ops._frame_clip_loader
+    _frame_clip_time_loader = vision_ops._frame_clip_time_loader
     _frame_thumbnail_writer = vision_ops._frame_thumbnail_writer
     _resolve_thumbnail_span = vision_ops._resolve_thumbnail_span
     thumbnail_select = vision_ops.thumbnail_select

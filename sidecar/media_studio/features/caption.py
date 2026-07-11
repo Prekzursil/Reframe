@@ -465,11 +465,16 @@ def _escape_filter_path(path: str) -> str:
     special. We wrap the path in single quotes and escape the characters libass
     / the filter parser treat specially. Windows drive colons (``C:``) and
     backslashes are the common breakage this guards against.
+
+    An apostrophe cannot be backslash-escaped inside single quotes (a backslash
+    is literal there and the next ``'`` always closes the quote). The portable
+    idiom is close-quote → escaped-quote → reopen-quote (``'\''``), so a path
+    like ``C:\Users\O'Brien\sub.ass`` survives the filtergraph parser.
     """
     # Backslash first, then the filter-special characters.
     p = path.replace("\\", "\\\\")
     p = p.replace(":", "\\:")
-    p = p.replace("'", "\\'")
+    p = p.replace("'", "'\\''")
     return f"'{p}'"
 
 

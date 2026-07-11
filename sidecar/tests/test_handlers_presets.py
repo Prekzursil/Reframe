@@ -253,6 +253,11 @@ def test_provider_for_function_override_local_forces_local_even_when_global_clou
 def test_translation_seam_translator_prefers_routed_provider(tmp_path: Any) -> None:
     svc = _svc(tmp_path)
     _configure_pool(svc)
+    # translation is now RoutingPolicy + per-provider TEXT-consent gated (bug-sweep
+    # privacy fix): allow cloud + grant text consent so the routed cloud entry
+    # survives — else the hosted tier fails closed to local (tested elsewhere).
+    svc.settings.set({"consent": {"perProvider": {"Groq": {"text": True}, "GroqL": {"text": True}}}})
+    svc.settings.set({"routingPolicy": {"global": "cloud"}})
     svc.providers_set_function_model({"function": "translation", "provider": "groq-llama-3.3-70b"}, _ctx())
     translator = svc._translator_for_function("translation")
     hosted = translator._hosted_provider()

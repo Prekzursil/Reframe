@@ -27,6 +27,7 @@ import enum
 import threading
 import time
 import traceback
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -242,6 +243,7 @@ class JobRegistry:
         store: JobStore | None = None,
         job_timeout_sec: float | None = None,
         timer_factory: TimerFactory | None = None,
+        max_terminal_history: int = 100,
     ) -> None:
         self._emit_progress = emit_progress
         self._emit_done = emit_done
@@ -263,6 +265,16 @@ class JobRegistry:
         self._jobs: dict[str, Job] = {}
         self._counter = 0
         self._lock = threading.RLock()
+        # Bounded terminal-job retention: without it finished jobs accumulate in the
+        # in-memory registry (and in the injected store's data_dir/jobs/*.json) without
+        # bound, and every startup rehydrate rebuilds a shell for every historical
+        # record. The N most-recently-finished terminal jobs are retained; older ones
+        # are evicted from BOTH the registry and the store (finally wiring the
+        # otherwise-dead :meth:`JobStore.delete`). The just-finished job is always the
+        # newest, so a fresh result stays queryable; non-terminal (INTERRUPTED)
+        # rehydrated jobs are never auto-evicted.
+        self._max_terminal_history = max(0, int(max_terminal_history))
+        self._terminal_order: deque[str] = deque()
         # -- worker pool state ----------------------------------------------
         self._max_workers = max(1, int(max_workers))
         self._max_gpu_workers = max(1, int(max_gpu_workers))
@@ -438,6 +450,25 @@ class JobRegistry:
         except (TypeError, ValueError):
             return 0
 
+    @staticmethod
+    def _rehydrate_id_order(record: Any) -> tuple[int, int]:
+        """Sort key that loads rehydrated records in ascending numeric-id order.
+
+        The persisted store's ``load_all`` returns records in an unspecified order —
+        :class:`DiskJobStore` uses lexicographic filename order, so ``job-10`` sorts
+        BEFORE ``job-2``. Inserting in that order would make :meth:`list_info`'s
+        "most-recent-first" (reversed insertion order) WRONG after a restart, and its
+        100-item cap would then drop the genuinely-newest jobs. Parsing the numeric id
+        suffix (the same ``rsplit("-", 1)[-1]`` the id counter uses) restores creation
+        order. A non-numeric id sorts FIRST (rank ``-1``) so a mixed set never raises an
+        int-vs-str ``TypeError`` and is treated as oldest; a non-dict record also sorts
+        first and is left for :meth:`_rehydrate_one`'s per-record guard to skip. Python's
+        stable sort preserves the store's own order among ties.
+        """
+        job_id = record.get("jobId", "") if isinstance(record, dict) else ""
+        suffix = str(job_id).rsplit("-", 1)[-1]
+        return (0, int(suffix)) if suffix.isdigit() else (-1, 0)
+
     def rehydrate(self, *, handler: JobHandler | None = None) -> None:
         """Reload persisted jobs at startup; mark mid-flight jobs INTERRUPTED.
 
@@ -459,7 +490,10 @@ class JobRegistry:
             return
         shell_handler = handler if handler is not None else self._rehydrated_noop
         max_seen = 0
-        for record in self._store.load_all():
+        # Load in ascending numeric-id (creation) order so list_info's reversed()
+        # ordering + 100-item cap stay correct after a restart (job-10 IS newer than
+        # job-2), regardless of the store's own load_all ordering.
+        for record in sorted(self._store.load_all(), key=self._rehydrate_id_order):
             try:
                 job_id = self._rehydrate_one(record, shell_handler)
             except Exception as exc:  # noqa: BLE001 - one bad record must not crash all resumption
@@ -470,9 +504,19 @@ class JobRegistry:
             suffix = job_id.rsplit("-", 1)[-1]
             if suffix.isdigit():
                 max_seen = max(max_seen, int(suffix))
-        # New ids must not collide with rehydrated ones.
+            with self._lock:
+                job = self._jobs.get(job_id)
+                if job is not None and job.finished:
+                    # Terminal records join the retention window (oldest-first, since
+                    # the load is now id-ascending); INTERRUPTED jobs are non-terminal
+                    # and are never auto-evicted.
+                    self._terminal_order.append(job_id)
+        # New ids must not collide with rehydrated ones; and a restart with more
+        # terminal records than the retention cap prunes down to the newest N (from
+        # both the registry and the store).
         with self._lock:
             self._counter = max(self._counter, max_seen)
+            self._prune_terminal_history()
 
     def _rehydrate_one(self, record: Any, shell_handler: JobHandler) -> str | None:
         """Rebuild ONE persisted record into a registered Job shell (F3b helper).
@@ -588,6 +632,13 @@ class JobRegistry:
 
         def emit(job_id: str, pct: int, message: str) -> None:
             with self._lock:
+                # A finalized job legitimately ignores late progress: a handler wedged
+                # in a native call the watchdog already finished as ERROR may resume and
+                # call ctx.progress() — that must not emit a job.progress AFTER the
+                # terminal job.done nor regress job.pct on a terminal job (the
+                # terminal-state invariant _claim_terminal enforces everywhere else).
+                if job._finalized:
+                    return
                 job.pct = pct
             self._emit_progress(job_id, pct, message)
 
@@ -669,7 +720,30 @@ class JobRegistry:
             if job._finalized:
                 return False
             job._finalized = True
+            # Retention: the just-finished job is the NEWEST terminal entry (never the
+            # eviction victim), so its result/status stays queryable; pruning here
+            # (the single once-per-job terminal choke-point) covers done/cancelled/
+            # error/watchdog uniformly.
+            self._terminal_order.append(job.id)
+            self._prune_terminal_history()
             return True
+
+    def _prune_terminal_history(self) -> None:
+        """Evict oldest terminal jobs beyond the retention cap (registry + store).
+
+        Runs under the registry lock (re-entrant: :class:`threading.RLock`) so it is
+        safe both from :meth:`_claim_terminal` (already holding the lock) and from
+        :meth:`rehydrate`. Drops the WHOLE :class:`Job` for each evicted id (releasing
+        its handler closure, stored request, and result) and deletes the persisted
+        record via the injected store's :meth:`JobStore.delete` — idempotent, so an
+        unknown id (already gone) is a no-op.
+        """
+        with self._lock:
+            while len(self._terminal_order) > self._max_terminal_history:
+                old_id = self._terminal_order.popleft()
+                self._jobs.pop(old_id, None)
+                if self._store is not None:
+                    self._store.delete(old_id)
 
     def _finish_done(self, job: Job, result: Any) -> None:
         if not self._claim_terminal(job):
@@ -686,9 +760,18 @@ class JobRegistry:
             return
         self._set_status(job, JobStatus.CANCELLED)
         job._done_event.set()
-        # CONTRACT-NOTE: §2 only specifies job.done for *completed* long jobs.
-        # We do NOT emit job.done on cancel; the caller learns the outcome via
-        # job.cancel's {ok:true} and/or job.status -> "cancelled".
+        # CONTRACT-NOTE: cancellation emits a TERMINAL job.done carrying a
+        # JobCancelled error payload — every stdio client (UI panels included) treats
+        # it as a clean, non-error finish, so an in-flight wait settles immediately
+        # instead of hanging until the job-timeout fires. This mirrors _finish_error's
+        # "a failed job MUST notify, or every client waits on job.done forever"; the
+        # _claim_terminal guard above makes it fire exactly once even if the watchdog
+        # races the handler. The caller ALSO learns the outcome via job.cancel's
+        # {ok:true} and job.status -> "cancelled".
+        self._emit_done(
+            job.id,
+            {"error": {"message": "cancelled", "type": "JobCancelled"}},
+        )
 
     def _finish_error(self, job: Job, exc: Exception) -> None:
         if not self._claim_terminal(job):

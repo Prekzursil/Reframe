@@ -459,7 +459,12 @@ def test_transcribe_start_parakeet_engine_falls_back_to_whisper_offline(
 
 def test_maybe_align_words_noop_when_karaoke_off(services: Services) -> None:
     t = {"language": "en", "segments": [], "durationSec": 0.0}
-    assert services._maybe_align_words(t, "/x.mp4", {}) is t
+
+    class _Ctx:
+        cancelled = False
+
+    # karaoke off + align_words unset -> returns before job_ctx is ever read.
+    assert services._maybe_align_words(t, "/x.mp4", {}, _Ctx()) is t
 
 
 def test_register_all_wires_diarize_backend_selector(tmp_path: Path) -> None:

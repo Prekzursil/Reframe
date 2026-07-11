@@ -550,24 +550,35 @@ def _select_provider_or_local(self: Services) -> Any:
 def _translator_for_function(self: Services, function: str) -> Any:
     """Build the TieredTranslator whose tier3 hosted pool honors routing.
 
-    OFFLINE GATE (bug-sweep fix): when Offline mode is on, force the hosted tier
-    to a LOCAL-ONLY pool (``prefer=LOCAL_PROVIDER_ID`` -> local-only per
-    ``translation._default_hosted_factory``) so a cloud-routed translation can
-    NEVER egress transcript text — mirroring ``_select_provider_or_local``. The
-    prior ``subtitles.translate`` guard only fired on the legacy ``useCloud``
-    flag, so a ``routing.perFunction['translation']`` cloud route slipped past it.
-    The local MT tiers still translate offline.
+    OFFLINE / ROUTING-LOCAL GATE (bug-sweep fix): force the hosted tier to a
+    LOCAL-ONLY pool (``prefer=LOCAL_PROVIDER_ID`` -> local-only per
+    ``translation._default_hosted_factory``) when EITHER Offline mode is on OR the
+    RoutingPolicy resolves this function to ``local`` (GATE-2, fail-closed). Both are
+    authoritative over a stale ``routing.perFunction['translation']`` cloud entry, so
+    a user who flipped the global/override toggle to Local can NEVER egress transcript
+    text — mirroring ``_provider_for_function`` / ``_select_provider_or_local``. The
+    prior guard only fired on offline (and the older one only on the legacy
+    ``useCloud`` flag), so a Local-policy user with a cloud perFunction route slipped
+    past it. The local MT tiers still translate offline / local.
+
+    TEXT-CONSENT GATE (bug-sweep fix): the RAW settings are filtered through
+    :meth:`_text_consented_settings` BEFORE the hosted rotation pool is built, so a
+    cloud entry without ``consent.perProvider[p].text`` is DROPPED and cue text can
+    never rotate onto a non-consented cloud target (the pool re-adds the keyless local
+    backstop, so local MT still translates). Mirrors every sibling text seam
+    (``_provider_for_function`` / index embedder / director editPlan).
     """
     from ..models import provider as _provider_mod  # local: heavy seam
+    from ..models import routing_policy as _routing_policy  # local: import-light pure
     from ..models import translation as _translation_mod  # local: heavy seam
 
-    prefer = (
-        _provider_mod.LOCAL_PROVIDER_ID
-        if _offline.is_offline(self.settings.get())
-        else self._function_prefer(function)
+    force_local = (
+        _offline.is_offline(self.settings.get())
+        or _routing_policy.resolve_route(function, self.settings.get())["mode"] == "local"
     )
+    prefer = _provider_mod.LOCAL_PROVIDER_ID if force_local else self._function_prefer(function)
     return _translation_mod.get_translator(
-        self.settings.get_raw(),
+        self._text_consented_settings(self.settings.get_raw()),
         runner=self._get_model_runner(),
         prefer=prefer,
         ensure=self._llama_ensure(),

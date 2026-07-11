@@ -33,6 +33,7 @@ heavy-ML imports here, so the unit tests stay light.
 from __future__ import annotations
 
 import os
+import subprocess
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -291,8 +292,12 @@ def build_burn_argv(
 
     Uses the ``subtitles=`` video filter (libass), which re-encodes the video
     with the captions painted on — the result has no separate, removable
-    subtitle stream. Audio is stream-copied. ``-progress pipe:1`` is wired so
-    :func:`ffmpeg.run` can report progress.
+    subtitle stream. ``-map 0`` keeps ALL source streams (every audio track — a
+    muxed dub included — and every pre-existing soft-subtitle stream) so nothing
+    is silently dropped by ffmpeg's most-channels auto stream selection; audio
+    and any copied soft-sub streams are stream-copied (the sub codec picked for
+    the output container). ``-progress pipe:1`` is wired so :func:`ffmpeg.run`
+    can report progress.
     """
     return [
         ffmpeg.ffmpeg_path(settings),
@@ -301,10 +306,14 @@ def build_burn_argv(
         "-y",
         "-i",
         in_path,
+        "-map",
+        "0",
         "-vf",
         _ass_filter_path(ass_path),
         "-c:a",
         "copy",
+        "-c:s",
+        _subtitle_codec_for(out_path),
         "-progress",
         "pipe:1",
         "-nostats",
@@ -327,6 +336,7 @@ def build_soft_mux_argv(
     out_path: str,
     lang: str | None = None,
     settings: dict[str, Any] | None = None,
+    existing_sub_count: int = 0,
 ) -> list[str]:
     """argv to **soft-mux** a subtitle sidecar into the container.
 
@@ -334,6 +344,12 @@ def build_soft_mux_argv(
     stream-copied (no re-encode), so the subtitle becomes a *removable* track.
     The subtitle codec is chosen for the output container; the track's language
     metadata is tagged when ``lang`` is given.
+
+    Because ``-map 0`` (all input-0 streams) precedes ``-map 1`` (the sidecar),
+    the newly added subtitle is the LAST subtitle stream in the output. Its
+    output subtitle-stream index therefore equals ``existing_sub_count`` — the
+    number of subtitle streams the input already carried — so the ``language``
+    tag lands on the new track, not a pre-existing one.
     """
     argv = [
         ffmpeg.ffmpeg_path(settings),
@@ -354,10 +370,45 @@ def build_soft_mux_argv(
         _subtitle_codec_for(out_path),
     ]
     if lang:
-        # Tag the *newly added* subtitle stream (the last s-stream) with its lang.
-        argv += ["-metadata:s:s:0", f"language={lang}"]
+        # Tag the *newly added* subtitle stream (the last s-stream, whose output
+        # index == the count of pre-existing subtitle streams) with its lang.
+        argv += [f"-metadata:s:s:{existing_sub_count}", f"language={lang}"]
     argv += ["-progress", "pipe:1", "-nostats", out_path]
     return argv
+
+
+def _probe_subtitle_count(
+    in_path: str,
+    settings: dict[str, Any] | None = None,
+    runner: Callable[..., Any] = subprocess.run,
+) -> int:
+    """Count the subtitle streams already in ``in_path`` via ffprobe (fail-loud).
+
+    Runs ``ffprobe -select_streams s -show_entries stream=index`` and counts the
+    non-empty output lines. ``runner`` is injected so tests never spawn a real
+    ffprobe. A non-zero ffprobe exit raises :class:`TrackError` rather than
+    silently defaulting to 0 (which would re-tag the wrong stream).
+    """
+    argv = [
+        ffmpeg.ffprobe_path(settings),
+        "-v",
+        "error",
+        "-select_streams",
+        "s",
+        "-show_entries",
+        "stream=index",
+        "-of",
+        "csv=p=0",
+        in_path,
+    ]
+    completed = runner(argv, capture_output=True, text=True, check=False)
+    code = getattr(completed, "returncode", 0)
+    if code != 0:
+        raise TrackError(f"subtitle-stream probe failed (ffprobe exit {code})")
+    out = (getattr(completed, "stdout", "") or "").strip()
+    if not out:
+        return 0
+    return sum(1 for line in out.splitlines() if line.strip())
 
 
 def build_strip_argv(
@@ -479,15 +530,24 @@ def soft_mux_track(
     ctx: JobContext | None = None,
     run: Callable[..., int] = ffmpeg.run,
     duration: Callable[..., float] = ffmpeg.ffprobe_duration,
+    sub_count: Callable[..., int] = _probe_subtitle_count,
 ) -> str:
-    """Soft-mux ``sub_path`` into ``in_path`` as a removable track; return path."""
+    """Soft-mux ``sub_path`` into ``in_path`` as a removable track; return path.
+
+    Probes how many subtitle streams ``in_path`` already carries (``sub_count``,
+    injectable) so the new track's ``language`` tag lands on the appended stream
+    rather than a pre-existing one. A probe failure raises :class:`TrackError`
+    (fail loud — no silent 0 fallback that would mistag).
+    """
     out_path = out_path or _default_out_path(in_path, "-softsub", ".mkv")
+    existing_sub_count = sub_count(in_path, settings)
     argv = build_soft_mux_argv(
         in_path,
         sub_path,
         out_path,
         lang=track.get("lang"),
         settings=settings,
+        existing_sub_count=existing_sub_count,
     )
     total = _safe_duration(duration, in_path, settings)
     on_progress = (lambda pct, msg: ctx.progress(pct, msg)) if ctx is not None else None

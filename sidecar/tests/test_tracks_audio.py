@@ -48,6 +48,13 @@ class TestModel:
         with pytest.raises(ta.AudioTrackError, match="kind"):
             ta.normalize_audio_track({"kind": "hard", "path": "x"})
 
+    def test_audio_track_index_skips_non_matching(self):
+        # 148->147: iterate PAST a non-matching track before the hit at index 1.
+        project: dict[str, Any] = {
+            "audioTracks": [{"id": "a1", "kind": "dub"}, {"id": "a2", "kind": "dub"}]
+        }
+        assert ta.audio_track_index(project, "a2") == 1
+
     def test_add_find_remove_round_trip(self):
         project: dict[str, Any] = {}
         track = ta.add_audio_track(project, {"id": "a1", "kind": "dub", "path": "x"})
@@ -138,12 +145,81 @@ class TestOriginalsFromProbe:
 
 
 # --------------------------------------------------------------------------- #
+# original-stream mapping — dubs are NOT container streams (pure)
+# --------------------------------------------------------------------------- #
+class TestOriginalStreamMapping:
+    def _mixed(self) -> dict[str, Any]:
+        # container order: original a:0, original a:1, then two appended dubs
+        return {
+            "audioTracks": [
+                {"id": "o0", "kind": "original", "path": "v.mkv"},
+                {"id": "o1", "kind": "original", "path": "v.mkv"},
+                {"id": "d0", "kind": "dub", "path": "d0.m4a"},
+                {"id": "d1", "kind": "dub", "path": "d1.m4a"},
+            ]
+        }
+
+    def test_original_audio_count_counts_only_originals(self):
+        assert ta.original_audio_count(self._mixed()) == 2
+        assert ta.original_audio_count({"audioTracks": []}) == 0
+
+    def test_original_stream_index_is_position_among_originals(self):
+        project = self._mixed()
+        # the SECOND original is a:1 (the intervening iteration + the dub skip
+        # exercise both the n+=1 path and the non-original skip branch)
+        assert ta.original_stream_index(project, "o1") == 1
+        assert ta.original_stream_index(project, "o0") == 0
+
+    def test_original_stream_index_rejects_dub_or_unknown(self):
+        project = self._mixed()
+        with pytest.raises(ta.AudioTrackError, match="no such original"):
+            ta.original_stream_index(project, "d0")  # a dub is not a container stream
+        with pytest.raises(ta.AudioTrackError, match="no such original"):
+            ta.original_stream_index(project, "ghost")
+
+
+# --------------------------------------------------------------------------- #
+# probe_streams — failures are LOUD, not silently swallowed
+# --------------------------------------------------------------------------- #
+class TestProbeStreamsObservability:
+    def test_nonzero_exit_logs_warning(self, monkeypatch):
+        warnings: list[tuple] = []
+        monkeypatch.setattr(ta.log, "warning", lambda *a, **k: warnings.append(a))
+
+        class _Completed:
+            returncode = 1
+            stderr = "ffprobe: boom"
+
+        assert ta.probe_streams("v.mkv", {}, runner=lambda *a, **k: _Completed()) == {}
+        assert warnings and "ffprobe stream sniff failed" in warnings[0][0]
+
+    def test_unparseable_json_logs_warning(self, monkeypatch):
+        warnings: list[tuple] = []
+        monkeypatch.setattr(ta.log, "warning", lambda *a, **k: warnings.append(a))
+
+        class _Completed:
+            returncode = 0
+            stdout = "{not json"
+
+        assert ta.probe_streams("v.mkv", {}, runner=lambda *a, **k: _Completed()) == {}
+        assert warnings and "unparseable JSON" in warnings[0][0]
+
+
+# --------------------------------------------------------------------------- #
 # the service — manifest persistence round-trip (REAL on-disk JSON store)
 # --------------------------------------------------------------------------- #
 PROBE_ONE_AUDIO = {
     "streams": [
         {"codec_type": "video", "codec_name": "h264"},
         {"codec_type": "audio", "tags": {"language": "eng"}},
+    ]
+}
+
+PROBE_TWO_AUDIO = {
+    "streams": [
+        {"codec_type": "video", "codec_name": "h264"},
+        {"codec_type": "audio", "tags": {"language": "eng"}},
+        {"codec_type": "audio", "tags": {"language": "fra"}},
     ]
 }
 
@@ -201,14 +277,9 @@ class TestService:
         with pytest.raises(RpcError, match="unknown video"):
             service.list({"videoId": "ghost"}, ctx())
 
-    def test_mux_runs_ffmpeg_and_round_trips_manifest(self, tmp_path):
-        argvs = []
-
-        def run(argv, **kwargs):
-            argvs.append(list(argv))
-            return 0
-
-        service, disk, video = make_service(tmp_path, run=run)
+    def test_mux_registers_track_without_ffmpeg_and_round_trips(self, tmp_path):
+        ran = []
+        service, disk, _ = make_service(tmp_path, run=lambda argv, **kw: ran.append(1) or 0)
         dub = tmp_path / "dub.m4a"
         dub.write_bytes(b"aac")
         result = service.mux(
@@ -218,11 +289,8 @@ class TestService:
         track = result["audioTrack"]
         assert track["kind"] == "dub" and track["lang"] == "de"
         assert track["path"] == str(dub)
-        # the ffmpeg call mapped everything + the new audio (stream-preserving)
-        pairs = [(a, b) for a, b in zip(argvs[0], argvs[0][1:], strict=False)]
-        assert ("-map", "0") in pairs and ("-map", "1:a") in pairs
-        # the new stream's metadata index = the 1 seeded original
-        assert ("-metadata:s:a:1", "language=de") in pairs
+        # registering a dub is a MANIFEST edit only — no orphaned container remux
+        assert ran == []
         # manifest ROUND-TRIP: a fresh service lists original + dub, in order
         service2, _, _ = make_service(tmp_path, store=disk)
         rows = service2.list({"videoId": "v1"}, ctx())["audioTracks"]
@@ -237,36 +305,121 @@ class TestService:
                 ctx(),
             )
 
-    def test_mux_ffmpeg_failure_surfaces_and_does_not_persist(self, tmp_path):
-        service, disk, _ = make_service(tmp_path, run=lambda argv, **kw: 1)
-        dub = tmp_path / "dub.m4a"
-        dub.write_bytes(b"aac")
-        with pytest.raises(RpcError, match="mux failed"):
-            service.mux(
-                {"videoId": "v1", "path": str(dub), "lang": "de", "name": "x", "kind": "dub"},
-                ctx(),
-            )
-        rows = disk.load("v1").get("audioTracks") or []
-        assert all(r.get("kind") != "dub" for r in rows)
-
-    def test_replace_updates_path_and_uses_stream_index(self, tmp_path):
-        argvs = []
-        service, disk, _ = make_service(tmp_path, run=lambda argv, **kw: argvs.append(list(argv)) or 0)
+    def test_replace_dub_swaps_path_without_ffmpeg(self, tmp_path):
+        ran = []
+        service, disk, _ = make_service(tmp_path, run=lambda argv, **kw: ran.append(1) or 0)
         dub1 = tmp_path / "a.m4a"
         dub1.write_bytes(b"a")
         service.mux(
             {"videoId": "v1", "path": str(dub1), "lang": "de", "name": "d", "kind": "dub"},
             ctx(),
         )
-        track_id = disk.load("v1")["audioTracks"][1]["id"]
+        track_id = disk.load("v1")["audioTracks"][1]["id"]  # [original, dub]
         dub2 = tmp_path / "b.m4a"
         dub2.write_bytes(b"b")
         result = service.replace({"videoId": "v1", "audioTrackId": track_id, "path": str(dub2)}, ctx())
         assert result["audioTrack"]["path"] == str(dub2)
-        # the replace argv negatively mapped a:1 (the dub's container index)
-        pairs = [(a, b) for a, b in zip(argvs[-1], argvs[-1][1:], strict=False)]
-        assert ("-map", "-0:a:1") in pairs and ("-map", "1:a") in pairs
+        # a dub is not a container stream -> manifest-only swap, NO ffmpeg remux
+        assert ran == []
         assert disk.load("v1")["audioTracks"][1]["path"] == str(dub2)
+
+    def test_replace_original_tags_only_appended_stream_by_index(self, tmp_path):
+        # A container with TWO original audio streams: replacing the first must
+        # tag ONLY the appended output stream (index existing_count-1 == 1), by a
+        # positional -metadata:s:a:1 — never the blanket -metadata:s:a that would
+        # relabel every surviving audio stream's language.
+        argvs = []
+        service, disk, _ = make_service(
+            tmp_path,
+            run=lambda argv, **kw: argvs.append(list(argv)) or 0,
+            probe=lambda path, settings=None: PROBE_TWO_AUDIO,
+        )
+        service.list({"videoId": "v1"}, ctx())  # seed 2 originals
+        first_original = disk.load("v1")["audioTracks"][0]
+        newaud = tmp_path / "n.m4a"
+        newaud.write_bytes(b"n")
+        service.replace(
+            {"videoId": "v1", "audioTrackId": first_original["id"], "path": str(newaud)}, ctx()
+        )
+        argv = argvs[-1]
+        pairs = [(a, b) for a, b in zip(argv, argv[1:], strict=False)]
+        assert ("-map", "-0:a:0") in pairs  # the FIRST original stream is dropped
+        assert ("-map", "1:a") in pairs
+        # indexed tag at the appended stream (2 originals -> output index 1)
+        assert ("-metadata:s:a:1", f"language={first_original['lang']}") in pairs
+        # NOT the old blanket token that relabelled every audio stream
+        assert "-metadata:s:a" not in argv
+
+    def test_replace_original_reloads_after_ffmpeg_no_lost_update(self, tmp_path):
+        # A concurrent writer lands DURING the (unlocked) ffmpeg run; the reload
+        # must preserve it AND apply this op's delta (the swapped path).
+        holder: dict[str, Any] = {}
+
+        def run(argv, **kwargs):
+            proj = holder["disk"].load("v1")
+            proj["title"] = "concurrent edit"
+            holder["disk"].save("v1", proj)
+            return 0
+
+        service, disk, _ = make_service(tmp_path, run=run)
+        holder["disk"] = disk
+        service.list({"videoId": "v1"}, ctx())  # seed 1 original
+        track_id = disk.load("v1")["audioTracks"][0]["id"]
+        newaud = tmp_path / "n.m4a"
+        newaud.write_bytes(b"n")
+        result = service.replace(
+            {"videoId": "v1", "audioTrackId": track_id, "path": str(newaud)}, ctx()
+        )
+        assert result["audioTrack"]["path"] == str(newaud)
+        final = disk.load("v1")
+        assert final["title"] == "concurrent edit"  # concurrent write survived
+        assert final["audioTracks"][0]["path"] == str(newaud)  # op delta applied
+
+    def test_strip_original_ffmpeg_failure_surfaces_and_keeps_row(self, tmp_path):
+        service, disk, _ = make_service(tmp_path, run=lambda argv, **kw: 1)
+        service.list({"videoId": "v1"}, ctx())  # seed 1 original
+        track_id = disk.load("v1")["audioTracks"][0]["id"]
+        with pytest.raises(RpcError, match="strip failed"):
+            service.strip({"videoId": "v1", "audioTrackId": track_id}, ctx())
+        # ffmpeg failed before the manifest removal -> the row is still present
+        assert disk.load("v1")["audioTracks"][0]["id"] == track_id
+
+    def test_strip_dub_removes_row_without_ffmpeg(self, tmp_path):
+        ran = []
+        service, disk, video = make_service(tmp_path, run=lambda argv, **kw: ran.append(1) or 0)
+        dub = tmp_path / "a.m4a"
+        dub.write_bytes(b"a")
+        service.mux(
+            {"videoId": "v1", "path": str(dub), "lang": "de", "name": "d", "kind": "dub"},
+            ctx(),
+        )
+        track_id = disk.load("v1")["audioTracks"][1]["id"]  # [original, dub]
+        result = service.strip({"videoId": "v1", "audioTrackId": track_id}, ctx())
+        # a dub is not in the container -> the container (resolved source) is
+        # returned unchanged, and no ffmpeg remux runs
+        assert result["path"] == str(video)
+        assert ran == []
+        rows = disk.load("v1")["audioTracks"]
+        assert [r["kind"] for r in rows] == ["original"]
+
+    def test_strip_original_reloads_after_ffmpeg_no_lost_update(self, tmp_path):
+        holder: dict[str, Any] = {}
+
+        def run(argv, **kwargs):
+            proj = holder["disk"].load("v1")
+            proj["title"] = "renamed during ffmpeg"
+            holder["disk"].save("v1", proj)
+            return 0
+
+        service, disk, _ = make_service(tmp_path, run=run)
+        holder["disk"] = disk
+        service.list({"videoId": "v1"}, ctx())  # seed 1 original
+        track_id = disk.load("v1")["audioTracks"][0]["id"]
+        result = service.strip({"videoId": "v1", "audioTrackId": track_id}, ctx())
+        assert result["path"]
+        final = disk.load("v1")
+        assert final["title"] == "renamed during ffmpeg"  # concurrent write survived
+        assert final["audioTracks"] == []  # strip delta applied
 
     def test_strip_removes_row_and_returns_path(self, tmp_path):
         argvs = []
@@ -294,6 +447,23 @@ class TestService:
         assert track["voice"] == "af_sarah"
         rows = disk.load("v1")["audioTracks"]
         assert rows[-1]["voice"] == "af_sarah"
+
+    def test_lock_for_is_stable_per_video_and_distinct_across_videos(self, tmp_path):
+        service, _, _ = make_service(tmp_path)
+        lock_a1 = service._lock_for("v1")  # create
+        lock_a2 = service._lock_for("v1")  # reuse
+        lock_b = service._lock_for("v2")  # distinct video -> distinct lock
+        assert lock_a1 is lock_a2
+        assert lock_a1 is not lock_b
+
+    def test_seed_originals_empty_probe_dict_warns_distinctly(self, tmp_path, monkeypatch):
+        # An EMPTY probe dict is a silent ffprobe failure, not a genuine
+        # audio-less video — it must emit a distinct "no data" warning.
+        warnings: list[tuple] = []
+        monkeypatch.setattr(ta.log, "warning", lambda *a, **k: warnings.append(a))
+        service, _, video = make_service(tmp_path, probe=lambda path, settings=None: {})
+        assert service._seed_originals({}, "v1", str(video)) is False
+        assert any("produced no data" in a[0] for a in warnings)
 
 
 # --------------------------------------------------------------------------- #

@@ -473,6 +473,12 @@ def transcribe_with_engine(
         )
         if result.get("segments"):
             return result
+        if should_cancel is not None and should_cancel():
+            # Cancelled before the first chunk completed -> the empty transcript
+            # is the EXPECTED cancel result, NOT a weights-missing degrade. Do
+            # NOT load faster-whisper (a multi-GB model) for an already-cancelled
+            # job — return the cancelled-empty result as-is.
+            return result
         # Parakeet degraded (offline + weights missing) -> whisper fallback.
         log.info("parakeet produced no segments; falling back to whisper")
     return transcribe_file(

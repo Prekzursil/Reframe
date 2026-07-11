@@ -44,6 +44,7 @@ from ... import ffmpeg
 from ...jobs import JobContext
 from ...protocol import ErrorCode, RpcContext, RpcError
 from ...util import get_logger
+from .. import offline as _offline
 from . import align as _align
 from .engine import Cue, TtsEngine, TtsError, wav_duration_sec
 from .voices import VoiceStore
@@ -319,6 +320,14 @@ class DubService:
         if target_lang is not None and not isinstance(target_lang, str):
             raise RpcError("targetLang must be a string", ErrorCode.INVALID_PARAMS)
         settings = self._settings()
+        # Offline mode (features.offline) forbids hosted/ONLINE engines (edge-tts
+        # et al.): refuse SYNCHRONOUSLY with a typed OfflineError BEFORE spawning
+        # the job, so the UI gets an immediate, actionable refusal (never a
+        # job.done failure) and no cue text is ever sent to a hosted service.
+        # Engine constructors are cheap (no backend import — see tts/__init__.py),
+        # so a throwaway probe reads the engine's ONLINE-ness safely.
+        if getattr(factory(), "online", False):
+            _offline.guard_network(settings, f"the {engine_id} hosted voice")
         source_lang = track.get("lang") if isinstance(track.get("lang"), str) else None
         cues = list(track.get("cues") or [])
         sample_id = params.get("sampleId")

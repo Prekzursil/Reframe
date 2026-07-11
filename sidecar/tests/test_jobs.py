@@ -163,8 +163,11 @@ def test_cancel_sets_flag_and_handler_polls_it(registry, collected):
     release.set()
     assert job.wait(timeout=5)
     assert job.status is JobStatus.CANCELLED
-    # Cancelled jobs do not emit job.done.
-    assert all(k != "done" for k, _ in collected)
+    # Cancellation now emits a terminal job.done carrying a JobCancelled error payload
+    # (clients treat it as a clean, non-error finish instead of hanging on the wait).
+    dones = [(jid, payload) for k, (jid, payload) in collected if k == "done"]
+    assert len(dones) == 1
+    assert dones[0] == (job.id, {"error": {"message": "cancelled", "type": "JobCancelled"}})
 
 
 def test_cancel_via_raise_if_cancelled(registry):
@@ -229,7 +232,9 @@ def test_handler_returning_after_observing_cancel_marks_cancelled(registry, coll
     assert job.wait(timeout=5)
     # Even though the handler returned normally, the observed cancel wins.
     assert job.status is JobStatus.CANCELLED
-    assert all(k != "done" for k, _ in collected)
+    dones = [(jid, payload) for k, (jid, payload) in collected if k == "done"]
+    assert len(dones) == 1
+    assert dones[0] == (job.id, {"error": {"message": "cancelled", "type": "JobCancelled"}})
 
 
 # -- JobContext direct unit ------------------------------------------------
@@ -419,11 +424,12 @@ def test_cancel_queued_job_finishes_cancelled_without_running(emit_sinks, collec
     queued = reg.start(lambda ctx: ran.set())
     assert queued.info()["status"] == "queued"
     assert reg.cancel(queued.id) is True
-    # Cancelled while queued: terminal immediately, never ran, no job.done.
+    # Cancelled while queued: terminal immediately, never ran, emits a JobCancelled done.
     assert queued.wait(timeout=5)
     assert queued.status is JobStatus.CANCELLED
     assert not ran.is_set()
-    assert all(k != "done" for k, _ in collected)
+    dones = [(jid, payload) for k, (jid, payload) in collected if k == "done"]
+    assert dones == [(queued.id, {"error": {"message": "cancelled", "type": "JobCancelled"}})]
 
     release.set()
     assert blocker.wait(timeout=5)
@@ -651,9 +657,10 @@ def test_pump_finishes_queued_job_whose_cancel_flag_was_set(emit_sinks, collecte
     assert queued.status is JobStatus.CANCELLED
     assert not ran.is_set()  # never ran
     assert blocker.wait(timeout=5)
-    # The cancelled-while-queued job emits no job.done (only the blocker does).
-    done_ids = [jid for k, (jid, _payload) in collected if k == "done"]
-    assert queued.id not in done_ids
+    # The cancelled-while-queued job now ALSO emits a terminal job.done with the
+    # JobCancelled payload (both the blocker and the cancelled job emit done).
+    dones = {jid: payload for k, (jid, payload) in collected if k == "done"}
+    assert dones[queued.id] == {"error": {"message": "cancelled", "type": "JobCancelled"}}
 
 
 def test_join_returns_immediately_when_nothing_scheduled(registry):

@@ -7,6 +7,7 @@ pinned-list parsing tested with no real pip.)
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import zipfile
@@ -241,7 +242,13 @@ class TestBuildPipSteps:
         assert step1["argv"][1] == str(tmp_path / "get-pip.py")
         assert PINNED_PIP in step1["argv"]
         assert "--target" in step1["argv"]
-        assert step2["argv"][1:4] == ["-m", "pip", "install"]
+        # step 2 no longer uses `-m pip`: it runs pip via a `-c` prelude that
+        # inserts the env dir onto sys.path at runtime (works on a read-only
+        # install dir where the ._pth could not be rewritten). The pip args
+        # still follow as inspectable argv tokens.
+        assert step2["argv"][1] == "-c"
+        assert "runpy.run_module('pip'" in step2["argv"][2]
+        assert step2["argv"][3] == "install"
         assert step2["argv"][-2:] == ["-r", str(tmp_path / "req.txt")]
         # step 2 imports step 1's pip from the env dir
         assert step2["env"] == {"PYTHONPATH": str(tmp_path / "envs" / "sidecar")}
@@ -312,7 +319,8 @@ class TestHashedLockInstall:
             encoding="utf-8",
         )
         (tmp_path / "root" / "tools").mkdir(parents=True)
-        (tmp_path / "root" / "tools" / "get-pip.py").write_text("# gp")
+        gp_body = b"# gp"
+        (tmp_path / "root" / "tools" / "get-pip.py").write_bytes(gp_body)
         calls: list[list[str]] = []
 
         def fake_run(argv, extra_env):
@@ -325,6 +333,7 @@ class TestHashedLockInstall:
             env_name="sidecar",
             req_file=req,
             run_step=fake_run,
+            get_pip_sha256=hashlib.sha256(gp_body).hexdigest(),
         )
         step2 = calls[1]
         assert "--require-hashes" in step2
@@ -426,15 +435,22 @@ class TestEnsureGetPip:
         embed = tmp_path / "python-embed"
         embed.mkdir()
         staged = embed / "get-pip.py"
-        staged.write_text("# staged")
-        found = bs.ensure_get_pip(tmp_path / "root", embed, urlopen=None)
+        body = b"# staged"
+        staged.write_bytes(body)
+        # F3c: get-pip.py is sha256-verified before it is trusted/returned.
+        found = bs.ensure_get_pip(
+            tmp_path / "root", embed, urlopen=None, get_pip_sha256=hashlib.sha256(body).hexdigest()
+        )
         assert found == staged
 
     def test_cached_copy_under_root(self, tmp_path):
         cached = tmp_path / "root" / "tools" / "get-pip.py"
         cached.parent.mkdir(parents=True)
-        cached.write_text("# cached")
-        found = bs.ensure_get_pip(tmp_path / "root", None, urlopen=None)
+        body = b"# cached"
+        cached.write_bytes(body)
+        found = bs.ensure_get_pip(
+            tmp_path / "root", None, urlopen=None, get_pip_sha256=hashlib.sha256(body).hexdigest()
+        )
         assert found == cached
 
     def test_download_fallback_uses_injected_opener(self, tmp_path):
@@ -446,13 +462,16 @@ class TestEnsureGetPip:
                 return False
 
         urls = []
+        body = b"# downloaded get-pip"
 
         def fake_urlopen(url):
             urls.append(url)
-            return FakeResp(b"# downloaded get-pip")
+            return FakeResp(body)
 
-        found = bs.ensure_get_pip(tmp_path / "root", None, urlopen=fake_urlopen)
-        assert found.read_bytes() == b"# downloaded get-pip"
+        found = bs.ensure_get_pip(
+            tmp_path / "root", None, urlopen=fake_urlopen, get_pip_sha256=hashlib.sha256(body).hexdigest()
+        )
+        assert found.read_bytes() == body
         assert urls == [bs.GET_PIP_URL]
 
     def test_download_failure_is_typed(self, tmp_path):
@@ -471,7 +490,8 @@ class TestInstallEnv:
         req = tmp_path / "req.txt"
         req.write_text("numpy==2.4.6\nhttpx==0.28.1\n")
         (tmp_path / "root" / "tools").mkdir(parents=True)
-        (tmp_path / "root" / "tools" / "get-pip.py").write_text("# gp")
+        gp_body = b"# gp"
+        (tmp_path / "root" / "tools" / "get-pip.py").write_bytes(gp_body)
         calls = []
 
         def fake_run(argv, extra_env):
@@ -484,6 +504,7 @@ class TestInstallEnv:
             env_name="sidecar",
             req_file=req,
             run_step=fake_run,
+            get_pip_sha256=hashlib.sha256(gp_body).hexdigest(),
         )
         assert env_dir == tmp_path / "root" / "envs" / "sidecar"
         assert len(calls) == 2  # get-pip step + pip install step
@@ -866,7 +887,7 @@ class TestMainReadOnlyInstallDir:
 
         # 2) the env install lands in the DATA ROOT (root == tmp_path), proving
         #    provisioning succeeds THERE even though the install dir is read-only.
-        def fake_install(*, python_exe, root, env_name, req_file, embed_dir=None):
+        def fake_install(*, python_exe, root, env_name, req_file, embed_dir=None, settings=None):
             env_dir = Path(root) / "envs" / env_name
             env_dir.mkdir(parents=True, exist_ok=True)
             (env_dir / "provisioned.marker").write_text("ok", encoding="utf-8")

@@ -273,6 +273,14 @@ def require_tool(
 LLAMA_RELEASE_TAG = "b5192"
 _LLAMA_BASE_URL = f"https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_RELEASE_TAG}"
 
+#: A marker file the bootstrap writes into each extracted tool dir carrying the
+#: release tag the build was extracted from. The version-less ``detect`` probes
+#: read it so a stale build left over after a LLAMA_RELEASE_TAG bump no longer
+#: counts as installed (installed_path -> None -> assets.ensure re-downloads the
+#: pinned build); a matching marker keeps a current build installed with no
+#: re-download. Without this the FIRST-ever extracted exe is pinned forever.
+RELEASE_TAG_MARKER = ".release-tag"
+
 LLAMA_CUDA_ASSET = "llama-server-cuda"
 LLAMA_CUDART_ASSET = "llama-server-cuda-cudart"
 LLAMA_CPU_ASSET = "llama-server-cpu"
@@ -313,30 +321,64 @@ def _detect_in_tool_dir(sub: str, file_name: str) -> str | None:
     return str(cand) if cand.is_file() else None
 
 
+def _tool_dir_matches(sub: str) -> bool:
+    """True iff the extracted tool dir ``sub`` carries the CURRENT release-tag marker.
+
+    An extracted build under ``<config>/<sub>/`` counts as the current install only
+    when it carries a :data:`RELEASE_TAG_MARKER` whose text equals
+    :data:`LLAMA_RELEASE_TAG`. A missing marker (a pre-marker build) OR a mismatched
+    tag (an older build left over after a tag bump) returns False, so the version-less
+    ``detect`` probes miss and ``assets.ensure`` re-downloads the pinned build. Reads
+    through the pathsafe barrier (env-overridable config dir).
+    """
+    marker = Path(ensure_within(default_config_dir(), sub, RELEASE_TAG_MARKER))
+    if not marker.is_file():
+        return False
+    return marker.read_text(encoding="utf-8").strip() == LLAMA_RELEASE_TAG
+
+
 def detect_llama_cuda(settings: dict[str, Any]) -> str | None:
-    """Installed-detection for the CUDA build (settings -> extracted -> dev)."""
+    """Installed-detection for the CUDA build (settings -> extracted -> dev).
+
+    The extracted-dir hit is gated on :func:`_tool_dir_matches` so a build from an
+    older LLAMA_RELEASE_TAG no longer suppresses re-download after a tag bump; the
+    settings-path and (unversioned) dev-path branches are unchanged.
+    """
     settings = settings or {}
     found = _as_executable(settings.get(SETTING_LLAMA_SERVER), LLAMA_EXE)
     if found:
         return found
-    found = _detect_in_tool_dir(TOOL_DIR_CUDA, LLAMA_EXE)
-    if found:
-        return found
+    if _tool_dir_matches(TOOL_DIR_CUDA):
+        found = _detect_in_tool_dir(TOOL_DIR_CUDA, LLAMA_EXE)
+        if found:
+            return found
     dev = Path(DEV_LLAMA_DIR) / LLAMA_EXE
     return str(dev) if dev.is_file() else None
 
 
 def detect_llama_cpu(settings: dict[str, Any]) -> str | None:
-    """Installed-detection for the CPU build (extracted exe only)."""
+    """Installed-detection for the CPU build (extracted exe only, tag-gated).
+
+    Returns None when the extracted dir carries no matching release-tag marker, so a
+    stale CPU build re-downloads on a LLAMA_RELEASE_TAG bump.
+    """
+    if not _tool_dir_matches(TOOL_DIR_CPU):
+        return None
     return _detect_in_tool_dir(TOOL_DIR_CPU, LLAMA_EXE)
 
 
 def detect_llama_cudart(settings: dict[str, Any]) -> str | None:
     """Installed-detection for the cudart runtime (a cudart DLL beside the exe).
 
-    The dev dir ships its own DLLs, so a dev-path hit counts here too.
+    The extracted CUDA dir is searched only when its release-tag marker matches (so
+    the cudart DLLs re-install alongside the exe on a tag bump); the dev dir is
+    unversioned and ships its own DLLs, so a dev-path hit still counts.
     """
-    for base in (default_config_dir() / TOOL_DIR_CUDA, Path(DEV_LLAMA_DIR)):
+    bases: list[Path] = []
+    if _tool_dir_matches(TOOL_DIR_CUDA):
+        bases.append(default_config_dir() / TOOL_DIR_CUDA)
+    bases.append(Path(DEV_LLAMA_DIR))
+    for base in bases:
         if base.is_dir():
             for hit in base.glob("cudart64*.dll"):
                 if hit.is_file():
