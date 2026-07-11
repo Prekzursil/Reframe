@@ -41,6 +41,7 @@ from typing import Any
 from .. import ffmpeg
 from ..jobs import JobContext
 from ..util import get_logger
+from .tracks_audio import probe_streams
 
 log = get_logger("media_studio.tracks")
 
@@ -385,33 +386,20 @@ def _probe_subtitle_count(
     settings: dict[str, Any] | None = None,
     runner: Callable[..., Any] = subprocess.run,
 ) -> int:
-    """Count the subtitle streams already in ``in_path`` via ffprobe (fail-loud).
+    """Count the subtitle streams already in ``in_path`` (fail-loud).
 
-    Runs ``ffprobe -select_streams s -show_entries stream=index`` and counts the
-    non-empty output lines. ``runner`` is injected so tests never spawn a real
-    ffprobe. A non-zero ffprobe exit raises :class:`TrackError` rather than
-    silently defaulting to 0 (which would re-tag the wrong stream).
+    Delegates to the shared :func:`media_studio.features.tracks_audio.probe_streams`
+    ffprobe ``-show_streams`` seam — one canonical probe instead of a second
+    bespoke ffprobe subprocess call — and counts the ``codec_type == "subtitle"``
+    streams. ``probe_streams`` returns ``{}`` on any probe failure, which we
+    surface as a :class:`TrackError` rather than silently defaulting to 0 (which
+    would re-tag the wrong stream). ``runner`` stays injectable so tests never
+    spawn a real ffprobe.
     """
-    argv = [
-        ffmpeg.ffprobe_path(settings),
-        "-v",
-        "error",
-        "-select_streams",
-        "s",
-        "-show_entries",
-        "stream=index",
-        "-of",
-        "csv=p=0",
-        in_path,
-    ]
-    completed = runner(argv, capture_output=True, text=True, check=False)
-    code = getattr(completed, "returncode", 0)
-    if code != 0:
-        raise TrackError(f"subtitle-stream probe failed (ffprobe exit {code})")
-    out = (getattr(completed, "stdout", "") or "").strip()
-    if not out:
-        return 0
-    return sum(1 for line in out.splitlines() if line.strip())
+    probe = probe_streams(in_path, settings, runner)
+    if not probe:
+        raise TrackError("subtitle-stream probe failed")
+    return sum(1 for s in probe.get("streams", []) if s.get("codec_type") == "subtitle")
 
 
 def build_strip_argv(

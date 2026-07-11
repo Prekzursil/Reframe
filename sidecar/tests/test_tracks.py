@@ -8,6 +8,7 @@ paths-with-spaces and "no shell=True" correctness is locked in.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -364,25 +365,37 @@ def test_build_soft_mux_argv_default_count_tags_stream_zero(fake_ffmpeg):
 
 
 class _CompletedProbe:
-    """Stand-in for subprocess.CompletedProcess used by _probe_subtitle_count."""
+    """Stand-in for subprocess.CompletedProcess used by probe_streams (via _probe_subtitle_count)."""
 
     def __init__(self, returncode: int = 0, stdout: str = ""):
         self.returncode = returncode
         self.stdout = stdout
 
 
-def test_probe_subtitle_count_counts_nonempty_lines(fake_ffmpeg):
-    # ffprobe csv output: one index per subtitle stream (+ a trailing blank line)
-    runner = lambda argv, **kw: _CompletedProbe(returncode=0, stdout="2\n3\n\n")  # noqa: E731
+def test_probe_subtitle_count_counts_subtitle_streams(fake_ffmpeg):
+    # ffprobe -show_streams JSON: only codec_type == "subtitle" streams count.
+    payload = json.dumps(
+        {
+            "streams": [
+                {"codec_type": "video"},
+                {"codec_type": "subtitle"},
+                {"codec_type": "audio"},
+                {"codec_type": "subtitle"},
+            ]
+        }
+    )
+    runner = lambda argv, **kw: _CompletedProbe(returncode=0, stdout=payload)  # noqa: E731
     assert tracks._probe_subtitle_count("/in.mkv", None, runner) == 2
 
 
 def test_probe_subtitle_count_zero_when_no_subtitle_streams(fake_ffmpeg):
-    runner = lambda argv, **kw: _CompletedProbe(returncode=0, stdout="")  # noqa: E731
+    payload = json.dumps({"streams": [{"codec_type": "video"}, {"codec_type": "audio"}]})
+    runner = lambda argv, **kw: _CompletedProbe(returncode=0, stdout=payload)  # noqa: E731
     assert tracks._probe_subtitle_count("/in.mkv", None, runner) == 0
 
 
 def test_probe_subtitle_count_raises_on_probe_failure(fake_ffmpeg):
+    # A non-zero ffprobe exit makes probe_streams return {} -> fail loud (no silent 0).
     runner = lambda argv, **kw: _CompletedProbe(returncode=3, stdout="")  # noqa: E731
     with pytest.raises(TrackError, match="probe failed"):
         tracks._probe_subtitle_count("/in.mkv", None, runner)
