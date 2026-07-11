@@ -1,0 +1,582 @@
+/* export.css — the Phase-5 Export screen components (v1.5 §4). Tokens ONLY.
+ *
+ * Hierarchy: the ONE amber approve action outranks the destination matrix via
+ * SCALE + the --elev ladder (not equal-weight tiles). Amber is the only accent
+ * (progress / active / approve); status is strictly green/amber/red. All motion is
+ * neutralized under prefers-reduced-motion. */
+
+/* ---- destination matrix (fieldset/radiogroup) --------------------------------- */
+
+.preset-matrix {
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-width: 0;
+}
+
+.preset-matrix__legend {
+  padding: 0;
+  margin-bottom: var(--space-3);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.preset-matrix__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--space-3);
+}
+
+/* One destination — a raised, seated surface (--elev-1) that lifts on hover and
+ * rings amber when selected. Deliberately SECONDARY to the primary CTA. */
+.preset-option {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  text-align: left;
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-1);
+  cursor: pointer;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.preset-option:hover:not(:disabled) {
+  transform: translateY(-2px);
+  background: var(--surface-hover);
+  box-shadow: var(--elev-2);
+}
+
+.preset-option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.preset-option.is-selected {
+  border-color: var(--accent-edge);
+  background: var(--accent-soft);
+  box-shadow: var(--elev-2);
+}
+
+.preset-option.is-unavailable {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.preset-option__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.preset-option__name {
+  font-size: var(--type-card-title-size);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.preset-option__aspect {
+  font-family: var(--font-mono);
+  font-size: var(--type-chip-size);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.preset-option__blurb {
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+  color: var(--text-secondary);
+}
+
+.preset-option__length {
+  font-size: var(--type-chip-size);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.preset-option__reason {
+  margin-top: var(--space-1);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-leading);
+  color: var(--status-warn);
+}
+
+/* ---- the shared export STAGE (video preview + bake summary) -------------------- */
+
+.export-stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.export-stage__frame {
+  position: relative;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--atmos-well), var(--surface-deep);
+}
+
+.export-stage__summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+  padding: var(--space-4);
+  background: var(--surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-1);
+}
+
+.export-stage__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.export-stage__label {
+  font-size: var(--type-chip-size);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.export-stage__value {
+  font-size: var(--type-body-size);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
+/* ---- the Export INSPECTOR (guarded commit) ------------------------------------ */
+
+/* overflow-y:auto so the primary CTA is never clipped at short window heights. */
+.export-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+  max-height: calc(100vh - var(--space-8) - var(--space-8));
+  overflow-y: auto;
+}
+
+.export-inspector__preflight {
+  padding: var(--space-5);
+  background: var(--surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-1);
+}
+
+.export-inspector__preflight-title {
+  margin: 0 0 var(--space-4);
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+  color: var(--text-primary);
+}
+
+.export-inspector__preflight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.export-inspector__cell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.export-inspector__cell-label {
+  font-size: var(--type-chip-size);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.export-inspector__cell-value {
+  font-family: var(--font-mono);
+  font-size: var(--type-hook-size);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+/* The privacy beat — the AA-safe quiet step, never the rejected faint hex. */
+.export-inspector__privacy {
+  margin: 0;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+  color: var(--text-muted);
+}
+
+/* The ONE amber approve action — LARGER than any secondary control (scale
+ * hierarchy) and lifted on the elevation ladder. */
+.export-inspector__primary {
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--type-title-size);
+  font-weight: var(--weight-bold);
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-md);
+  box-shadow: var(--accent-glow);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.export-inspector__primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: var(--accent-glow-hover);
+}
+
+.export-inspector__primary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.export-inspector__primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* The explicit confirm gate — floats above the inspector on the overlay plane. */
+.export-inspector__confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  background: var(--surface-overlay);
+  border: 1px solid var(--accent-edge);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-3);
+}
+
+.export-inspector__confirm-title {
+  margin: 0;
+  font-family: var(--font-editorial);
+  font-size: var(--type-subhead-size);
+  color: var(--text-primary);
+}
+
+.export-inspector__confirm-blurb {
+  margin: 0;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+  color: var(--text-secondary);
+}
+
+.export-inspector__confirm-actions {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.export-inspector__confirm-approve {
+  flex: 1;
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--type-title-size);
+  font-weight: var(--weight-bold);
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-md);
+  box-shadow: var(--accent-glow);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.export-inspector__confirm-approve:hover {
+  background: var(--accent-hover);
+}
+
+.export-inspector__confirm-approve:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.export-inspector__confirm-cancel {
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.export-inspector__confirm-cancel:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.export-inspector__confirm-cancel:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ---- determinate PROGRESS + a real cancel ------------------------------------- */
+
+.export-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  background: var(--surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-1);
+}
+
+.export-progress__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.export-progress__title {
+  margin: 0;
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  color: var(--text-primary);
+}
+
+.export-progress__pct {
+  font-family: var(--font-mono);
+  font-size: var(--type-rank-size);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-bold);
+  color: var(--accent);
+}
+
+.export-progress__track {
+  width: 100%;
+  height: var(--space-3);
+  appearance: none;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--surface-deep);
+  overflow: hidden;
+}
+
+.export-progress__track::-webkit-progress-bar {
+  background: var(--surface-deep);
+  border-radius: var(--radius-pill);
+}
+
+.export-progress__track::-webkit-progress-value {
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  transition: width var(--dur-base) var(--ease-out);
+}
+
+.export-progress__track::-moz-progress-bar {
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+}
+
+.export-progress__message {
+  font-size: var(--type-body-size);
+  color: var(--text-secondary);
+}
+
+.export-progress__cancel {
+  align-self: flex-start;
+  padding: var(--control-pad-btn);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.export-progress__cancel:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.export-progress__cancel:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ---- terminal RESULT (success / failure / cancel) ----------------------------- */
+
+.export-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  background: var(--surface-raised);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--edge-strong);
+  box-shadow: var(--elev-1);
+}
+
+.export-result.is-done {
+  border-left-color: var(--status-success);
+}
+
+.export-result.is-failed {
+  border-left-color: var(--status-error);
+}
+
+.export-result.is-cancelled {
+  border-left-color: var(--status-warn);
+}
+
+.export-result__title {
+  margin: 0;
+  font-family: var(--font-editorial);
+  font-size: var(--type-subhead-size);
+  color: var(--text-primary);
+}
+
+.export-result__blurb {
+  margin: 0;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+  color: var(--text-secondary);
+}
+
+.export-result__error {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--type-body-size);
+  color: var(--status-error);
+  background: var(--status-error-soft);
+  border-radius: var(--radius-sm);
+}
+
+.export-result__outputs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.export-result__output {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  justify-content: space-between;
+  padding: var(--space-3);
+  background: var(--surface-deep);
+  border-radius: var(--radius-sm);
+}
+
+.export-result__path {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.export-result__reveal {
+  flex-shrink: 0;
+  padding: var(--control-pad-mini);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+  background: var(--surface-overlay);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.export-result__reveal:hover {
+  background: var(--surface-hover);
+}
+
+.export-result__reveal:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.export-result__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+/* "Continue to Deliver" is the primary next step (amber) — Phase-5 links INTO
+ * Deliver. "Export another" is the quiet secondary. */
+.export-result__deliver {
+  padding: var(--control-pad-btn);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-bold);
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--accent-glow);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.export-result__deliver:hover {
+  background: var(--accent-hover);
+  box-shadow: var(--accent-glow-hover);
+}
+
+.export-result__deliver:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.export-result__again {
+  padding: var(--control-pad-btn);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.export-result__again:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.export-result__again:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* prefers-reduced-motion: neutralize every transition with a static fallback. */
+@media (prefers-reduced-motion: reduce) {
+  .preset-option,
+  .preset-option:hover:not(:disabled),
+  .export-inspector__primary,
+  .export-inspector__confirm-approve,
+  .export-inspector__confirm-cancel,
+  .export-progress__track::-webkit-progress-value,
+  .export-progress__cancel,
+  .export-result__reveal,
+  .export-result__deliver,
+  .export-result__again {
+    transition: none;
+    transform: none;
+  }
+}
