@@ -26,10 +26,82 @@ vi.mock('../lib/rpc', async (importOriginal) => {
   };
 });
 
-import { Library } from './Library';
+// Isolate the shorts gallery: a lightweight ProducedShorts stub (the real one is
+// covered by its own suite + ShortsGalleryModal.test) exposes the per-clip
+// affordances so Library's shorts wiring (count label, modal, delete/index-update,
+// open-folder, edit-in-Studio) is exercised directly.
+vi.mock('../features/ProducedShorts', () => ({
+  ProducedShorts: ({
+    shorts,
+    onOpenFolder,
+    onReexport,
+    onDelete,
+  }: {
+    shorts: { id: string; path: string }[];
+    onOpenFolder: (p: string) => void;
+    onReexport?: (p: string) => void;
+    onDelete: (p: string) => void;
+  }) => (
+    <div data-testid="produced-shorts">
+      {shorts.map((s) => (
+        <div key={s.id}>
+          <button type="button" data-testid={`folder-${s.id}`} onClick={() => onOpenFolder(s.path)}>
+            folder
+          </button>
+          <button type="button" data-testid={`delete-${s.id}`} onClick={() => onDelete(s.path)}>
+            delete
+          </button>
+          {onReexport ? (
+            <button type="button" data-testid={`edit-${s.id}`} onClick={() => onReexport(s.path)}>
+              edit
+            </button>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  ),
+}));
+
+import { Library, type LibraryShortsApi } from './Library';
 import type { Video } from '../components/api';
-import type { ReadinessItem } from '../lib/rpc';
+import type { ReadinessItem, ShortInfo } from '../lib/rpc';
 import { videoThumbnailSrc } from '../components/useVideoThumbnail';
+
+function makeShort(over: Partial<ShortInfo> = {}): ShortInfo {
+  return {
+    id: 'sh1',
+    path: '/out/sh1.mp4',
+    videoId: 'v1',
+    sourceTitle: 'Talk',
+    template: '',
+    viralityPct: null,
+    durationSec: 30,
+    width: 1080,
+    height: 1920,
+    createdAt: 1,
+    thumbnailPath: '',
+    hook: '',
+    ...over,
+  };
+}
+
+/** A produced-shorts port whose handlers are spies. */
+function shortsPort(over: Partial<LibraryShortsApi> = {}): LibraryShortsApi {
+  return {
+    listAll: vi.fn(async () => [makeShort({ id: 's1', path: '/out/s1.mp4', videoId: 'v1' })]),
+    openFolder: vi.fn(async () => {}),
+    remove: vi.fn(async () => {}),
+    ...over,
+  };
+}
+
+/** Set a controlled input's value so React's tracker fires onChange. */
+function typeInto(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+    ?.set as (v: string) => void;
+  setter.call(input, value);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
 
 function makeVideo(over: Partial<Video> = {}): Video {
   return {
@@ -525,7 +597,8 @@ describe('Library', () => {
 
     const open = container.querySelector('.library__item-open') as HTMLButtonElement;
     expect(open.tagName).toBe('BUTTON');
-    expect(open.getAttribute('aria-label')).toBe('Open Talk');
+    // v1.5: the open name is enriched with duration + status (title+status+duration).
+    expect(open.getAttribute('aria-label')).toBe('Open Talk, 10:05, no transcript');
     // The <li> is a plain list item (no button role / tabindex) so the <ul> only
     // contains list items and the open/remove buttons are SIBLINGS, not nested.
     const item = container.querySelector('li.library__item') as HTMLLIElement;
@@ -773,7 +846,7 @@ describe('Library lineage view (L4)', () => {
 
     // The card open affordance re-labels itself for the history action.
     const open = container.querySelector('.library__item-open') as HTMLButtonElement;
-    expect(open.getAttribute('aria-label')).toBe('Show history of Talk');
+    expect(open.getAttribute('aria-label')).toBe('Show history of Talk, 10:05, no transcript');
 
     rpcMock.mockResolvedValueOnce(EMPTY_LINEAGE);
     await click(open);
@@ -855,20 +928,20 @@ describe('Library source provenance (WU-1f)', () => {
   });
 });
 
-describe('Library readiness roll-up (WU-14)', () => {
-  it('renders the ReadinessRollup section on the library home', async () => {
+describe('Library capabilities chip (v1.5 §4)', () => {
+  it('renders the capabilities disclosure chip on the library home', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
-    expect(container.querySelector('.readiness-rollup')).not.toBeNull();
+    expect(container.querySelector('.capabilities-chip')).not.toBeNull();
     expect(readinessSummaryMock).toHaveBeenCalled();
   });
 
-  it('forwards a roll-up action to the onReadinessAction prop', async () => {
+  it('forwards a capability fix action to onReadinessAction after expanding the chip', async () => {
     readinessSummaryMock.mockResolvedValue({
       items: [
         {
           capability: 'tr',
-          label: 'Translation',
+          label: 'Translate captions',
           status: 'needsKey',
           blockedBy: 'no key',
           action: { kind: 'openProviders' },
@@ -882,12 +955,321 @@ describe('Library readiness roll-up (WU-14)', () => {
     });
     await flush();
 
+    // The chip is collapsed by default — expand it to reveal the fix action.
+    await act(async () => {
+      (container.querySelector('.capabilities-chip__toggle') as HTMLButtonElement).click();
+    });
     const btn = container.querySelector(
-      '.readiness-rollup button.readiness-badge__action',
+      '.capabilities-chip button.readiness-badge__action',
     ) as HTMLButtonElement;
     await act(async () => {
       btn.click();
     });
     expect(onReadinessAction).toHaveBeenCalledWith({ kind: 'openProviders' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v1.5 §4: in-context search + sort, multi-select batch actions, produced-shorts
+// ---------------------------------------------------------------------------
+
+function selectBoxes(): NodeListOf<HTMLInputElement> {
+  return container.querySelectorAll<HTMLInputElement>('.library__select-box');
+}
+
+function fire(el: Element | null): void {
+  (el as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+}
+
+describe('Library search + sort (v1.5 §4)', () => {
+  it('filters the grid by the search query, showing a filter-empty state on no match', async () => {
+    rpcMock.mockResolvedValueOnce({
+      videos: [makeVideo({ id: 'a', title: 'Keynote' }), makeVideo({ id: 'b', title: 'Bloopers' })],
+    });
+    await renderLibrary();
+    expect(container.querySelectorAll('li.library__item').length).toBe(2);
+
+    const search = container.querySelector('.library-toolbar__search') as HTMLInputElement;
+    await act(async () => {
+      typeInto(search, 'key');
+    });
+    await flush();
+    expect(container.querySelectorAll('li.library__item').length).toBe(1);
+    expect(container.textContent).toContain('Keynote');
+
+    await act(async () => {
+      typeInto(search, 'zzz');
+    });
+    await flush();
+    expect(container.querySelector('.library__empty--filtered')).not.toBeNull();
+    expect(container.textContent).toContain('No videos match');
+  });
+
+  it('sorts the grid by the chosen mode', async () => {
+    rpcMock.mockResolvedValueOnce({
+      videos: [makeVideo({ id: 'a', title: 'Bravo' }), makeVideo({ id: 'b', title: 'Alpha' })],
+    });
+    await renderLibrary();
+    const sort = container.querySelector('.library-toolbar__sort-select') as HTMLSelectElement;
+    await act(async () => {
+      sort.value = 'title';
+      sort.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flush();
+    const titles = [...container.querySelectorAll('.library__item-title')].map(
+      (e) => e.textContent,
+    );
+    expect(titles).toEqual(['Alpha', 'Bravo']);
+  });
+});
+
+describe('Library multi-select + batch actions (v1.5 §4)', () => {
+  it('selects cards and batch-removes them', async () => {
+    rpcMock.mockResolvedValueOnce({
+      videos: [makeVideo({ id: 'a', title: 'A' }), makeVideo({ id: 'b', title: 'B' })],
+    });
+    await renderLibrary();
+    await act(async () => {
+      fire(selectBoxes()[0]);
+      fire(selectBoxes()[1]);
+    });
+    await flush();
+    expect(container.querySelector('.library-toolbar__batch-count')?.textContent).toBe(
+      '2 selected',
+    );
+
+    rpcMock.mockResolvedValue({ ok: true });
+    await act(async () => {
+      fire(container.querySelector('.library-toolbar__batch-remove'));
+    });
+    await flush();
+    expect(rpcMock).toHaveBeenCalledWith('library.remove', { id: 'a' });
+    expect(rpcMock).toHaveBeenCalledWith('library.remove', { id: 'b' });
+    expect(container.querySelectorAll('li.library__item').length).toBe(0);
+  });
+
+  it('toggles a selection off again', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    await renderLibrary();
+    await act(async () => {
+      fire(selectBoxes()[0]);
+    });
+    await flush();
+    expect(container.querySelector('.library-toolbar__batch-count')?.textContent).toBe(
+      '1 selected',
+    );
+    await act(async () => {
+      fire(selectBoxes()[0]);
+    });
+    await flush();
+    expect(container.querySelector('.library-toolbar__batch')).toBeNull();
+  });
+
+  it('clears a selection via Clear', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    await renderLibrary();
+    await act(async () => {
+      fire(selectBoxes()[0]);
+    });
+    await flush();
+    await act(async () => {
+      fire(container.querySelector('.library-toolbar__batch-clear'));
+    });
+    await flush();
+    expect(container.querySelector('.library-toolbar__batch')).toBeNull();
+  });
+
+  it('prunes a removed video from the selection on single remove', async () => {
+    rpcMock.mockResolvedValueOnce({
+      videos: [makeVideo({ id: 'a', title: 'A' }), makeVideo({ id: 'b', title: 'B' })],
+    });
+    await renderLibrary();
+    await act(async () => {
+      fire(selectBoxes()[0]);
+    });
+    await flush();
+    expect(container.querySelector('.library-toolbar__batch-count')?.textContent).toBe(
+      '1 selected',
+    );
+    rpcMock.mockResolvedValueOnce({ ok: true });
+    await act(async () => {
+      fire(container.querySelectorAll('.library__remove-btn')[0]);
+    });
+    await flush();
+    expect(container.querySelector('.library-toolbar__batch')).toBeNull();
+  });
+
+  it('reports a singular batch-remove failure', async () => {
+    rpcMock.mockResolvedValueOnce({
+      videos: [makeVideo({ id: 'a', title: 'A' }), makeVideo({ id: 'b', title: 'B' })],
+    });
+    await renderLibrary();
+    await act(async () => {
+      fire(selectBoxes()[0]);
+      fire(selectBoxes()[1]);
+    });
+    await flush();
+    rpcMock.mockRejectedValueOnce(new Error('x')).mockResolvedValueOnce({ ok: true });
+    await act(async () => {
+      fire(container.querySelector('.library-toolbar__batch-remove'));
+    });
+    await flush();
+    expect(container.querySelector('.library__error')?.textContent).toContain(
+      'Could not remove 1 video',
+    );
+  });
+
+  it('pluralizes a multi-failure batch-remove', async () => {
+    rpcMock.mockResolvedValueOnce({
+      videos: [makeVideo({ id: 'a', title: 'A' }), makeVideo({ id: 'b', title: 'B' })],
+    });
+    await renderLibrary();
+    await act(async () => {
+      fire(selectBoxes()[0]);
+      fire(selectBoxes()[1]);
+    });
+    await flush();
+    rpcMock.mockRejectedValueOnce(new Error('x')).mockRejectedValueOnce(new Error('y'));
+    await act(async () => {
+      fire(container.querySelector('.library-toolbar__batch-remove'));
+    });
+    await flush();
+    expect(container.querySelector('.library__error')?.textContent).toContain(
+      'Could not remove 2 videos',
+    );
+  });
+});
+
+describe('Library produced-shorts gallery (v1.5 §4 P0)', () => {
+  async function renderWithShorts(
+    port: LibraryShortsApi,
+    onEditShort?: (s: ShortInfo) => void,
+  ): Promise<void> {
+    await act(async () => {
+      root.render(<Library onOpen={() => {}} shorts={port} onEditShort={onEditShort} />);
+    });
+    await flush();
+  }
+
+  it('shows no shorts label without the shorts port', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    await renderLibrary();
+    expect(container.querySelector('.library__shorts-label')).toBeNull();
+  });
+
+  it('degrades to no counts when the shorts index fails to load', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    const port = shortsPort({
+      listAll: vi.fn(async () => {
+        throw new Error('boom');
+      }),
+    });
+    await renderWithShorts(port);
+    expect(container.querySelector('.library__shorts-label')).toBeNull();
+  });
+
+  it('shows the "N shorts" count and opens + closes the gallery modal', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    const port = shortsPort({
+      listAll: vi.fn(async () => [
+        makeShort({ id: 's1', videoId: 'v1' }),
+        makeShort({ id: 's2', videoId: 'v1' }),
+      ]),
+    });
+    await renderWithShorts(port);
+    expect(port.listAll).toHaveBeenCalled();
+    const label = container.querySelector('.library__shorts-label') as HTMLButtonElement;
+    expect(label.textContent).toBe('2 shorts');
+
+    await act(async () => {
+      fire(label);
+    });
+    await flush();
+    expect(container.querySelector('.shorts-modal')?.getAttribute('aria-label')).toBe(
+      'Produced shorts for Talk',
+    );
+
+    await act(async () => {
+      fire(container.querySelector('.shorts-modal__close'));
+    });
+    await flush();
+    expect(container.querySelector('.shorts-modal')).toBeNull();
+  });
+
+  it('opens a short in Studio via the gallery edit action', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    const short = makeShort({ id: 's1', videoId: 'v1', path: '/out/s1.mp4' });
+    const port = shortsPort({ listAll: vi.fn(async () => [short]) });
+    const onEditShort = vi.fn();
+    await renderWithShorts(port, onEditShort);
+    await act(async () => {
+      fire(container.querySelector('.library__shorts-label'));
+    });
+    await flush();
+    await act(async () => {
+      fire(container.querySelector('[data-testid="edit-s1"]'));
+    });
+    expect(onEditShort).toHaveBeenCalledWith(short);
+  });
+
+  it('reveals a clip folder + deletes clips (updating the index) from the gallery', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    const port = shortsPort({
+      listAll: vi.fn(async () => [
+        makeShort({ id: 's1', path: '/o/s1.mp4', videoId: 'v1' }),
+        makeShort({ id: 's2', path: '/o/s2.mp4', videoId: 'v1' }),
+      ]),
+    });
+    await renderWithShorts(port);
+    await act(async () => {
+      fire(container.querySelector('.library__shorts-label'));
+    });
+    await flush();
+
+    await act(async () => {
+      fire(container.querySelector('[data-testid="folder-s1"]'));
+    });
+    expect(port.openFolder).toHaveBeenCalledWith('/o/s1.mp4');
+
+    // Delete s1 -> the v1 group keeps s2 (kept.length > 0).
+    await act(async () => {
+      fire(container.querySelector('[data-testid="delete-s1"]'));
+    });
+    await flush();
+    expect(port.remove).toHaveBeenCalledWith('/o/s1.mp4');
+    // Delete s2 -> the group empties (kept.length === 0 -> dropped) -> modal empty.
+    await act(async () => {
+      fire(container.querySelector('[data-testid="delete-s2"]'));
+    });
+    await flush();
+    expect(container.querySelector('.shorts-modal__empty')).not.toBeNull();
+  });
+
+  it('surfaces a toast when a gallery action fails', async () => {
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    const port = shortsPort({
+      listAll: vi.fn(async () => [makeShort({ id: 's1', path: '/o/s1.mp4', videoId: 'v1' })]),
+      openFolder: vi.fn(async () => {
+        throw new Error('reveal failed');
+      }),
+      remove: vi.fn(async () => {
+        throw new Error('delete failed');
+      }),
+    });
+    await renderWithShorts(port);
+    await act(async () => {
+      fire(container.querySelector('.library__shorts-label'));
+    });
+    await flush();
+    await act(async () => {
+      fire(container.querySelector('[data-testid="folder-s1"]'));
+    });
+    await flush();
+    expect(errorToasts().join(' ')).toContain('reveal failed');
+    await act(async () => {
+      fire(container.querySelector('[data-testid="delete-s1"]'));
+    });
+    await flush();
+    expect(errorToasts().join(' ')).toContain('delete failed');
   });
 });

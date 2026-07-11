@@ -7,7 +7,8 @@
 
 ul.library__list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  /* v1.5 content-first grid — the validated responsive model. */
+  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
   gap: var(--space-5);
   padding: var(--space-4) var(--space-6) var(--space-6);
   align-content: start;
@@ -19,6 +20,7 @@ ul.library__list {
    (keyboard/SR-native), so the card-lift visuals live on it; the <li> is a
    plain stretch container that also carries the raised surface tone. */
 li.library__item {
+  position: relative;
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
@@ -140,4 +142,76 @@ li.library__item:hover .library__thumb-img {
   font-weight: var(--type-caption-weight);
   font-variant-numeric: tabular-nums;
   line-height: var(--type-caption-leading);
+}
+
+/* ---- v1.5 card additions: multi-select, badges, shorts label, meta ---- */
+
+/* Multi-select checkbox: an overlay on the poster top-left. Quiet at rest, it
+   surfaces on hover/focus-within and stays lit while checked (it's the batch
+   scale affordance, not chrome on every card at all times). */
+.library__select {
+  position: absolute;
+  top: var(--space-3);
+  left: var(--space-3);
+  z-index: 2;
+  display: flex;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+li.library__item:hover .library__select,
+li.library__item:focus-within .library__select,
+.library__select:has(.library__select-box:checked) {
+  opacity: 1;
+}
+
+.library__select-box {
+  width: var(--size-icon);
+  height: var(--size-icon);
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* The FAILED attention badge: the only place status red appears on a card; the
+   Transcript chip keeps the neutral base .library__chip look (from shell.css). */
+.library__badge.library__chip--failed {
+  background: var(--status-error-soft);
+  color: var(--status-error);
+}
+
+.library__badge.library__chip--failed::before {
+  background: var(--status-error);
+}
+
+/* Quiet "Added <date>" meta line — additive, never a duplicate of a badge. */
+.library__item-added {
+  color: var(--text-faint);
+  font-size: var(--type-caption-size);
+}
+
+/* "N shorts" label opens the produced-shorts gallery. Deliberately NEUTRAL (a
+   navigation affordance, not a status/progress signal) so amber stays reserved;
+   the count text itself is the done-signal. Seats to the leading edge; Remove
+   trails. */
+.library__shorts-label {
+  appearance: none;
+  margin-right: auto;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: var(--type-caption-size);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.library__shorts-label:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }

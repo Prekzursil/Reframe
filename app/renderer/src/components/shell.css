@@ -526,15 +526,9 @@ button {
   line-height: var(--type-display-leading);
 }
 
-/* WU-D4 gutter unify: the "what works right now" roll-up ships from its shared
-   component with NO inset, so at rest its eyebrow + status line sit flush at x=0
-   — left of the title, the skeleton, and the card list (four ragged left edges).
-   Library-scope a --space-6 inset so those two lines land on the SAME left gutter
-   as the header title and the card column, reading the home view as one column.
-   Scoped to `.library >` so the identical roll-up on the model panel is untouched. */
-.library > .readiness-rollup {
-  padding: 0 var(--space-6);
-}
+/* v1.5: the always-open readiness roll-up became the CapabilitiesChip disclosure
+   (views/CapabilitiesChip.tsx + library-shell.css), which owns its own gutter — so
+   the former `.library > .readiness-rollup` inset rule is retired here. */
 
 .library__add {
   display: flex;
