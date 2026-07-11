@@ -331,7 +331,11 @@ def ffprobe_duration(
     :data:`PROBE_TIMEOUT_SEC` (a hung probe on a bad/slow input must bound out,
     not wedge the job; downstream callers treat 0.0 as "unknown" and degrade).
     """
-    argv = build_probe_argv(in_path, settings)
+    # ensure_within canonicalises the (RPC/settings-derived) probe path — the
+    # realpath+startswith barrier CodeQL recognises for the subprocess sink, and a
+    # real hardening: the resolved absolute path can't be mis-parsed as an ffprobe
+    # flag (argument injection). Single-arg ensure_within never raises.
+    argv = build_probe_argv(ensure_within(in_path), settings)
     try:
         completed = runner(argv, capture_output=True, text=True, check=False, timeout=PROBE_TIMEOUT_SEC)
     except subprocess.TimeoutExpired:
