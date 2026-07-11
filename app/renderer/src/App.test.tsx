@@ -96,9 +96,10 @@ vi.mock('./views/MakeShorts', () => ({
   ),
 }));
 
-// Stub the lazy AI Director panel (it owns its own tests). The marker echoes the
-// threaded video id + exposes the empty-state CTA so App's WU-E1 wiring is testable.
-vi.mock('./panels/DirectorPanel', () => ({
+// Stub the lazy Director rail destination (it owns its own tests). The marker
+// echoes the threaded video id + exposes the empty-state CTA so App's WU-E1 wiring
+// is testable (the view forwards both straight to the composed DirectorPanel).
+vi.mock('./views/Director', () => ({
   default: ({ video, onChooseVideo }: { video: Video | null; onChooseVideo?: () => void }) => (
     <div data-testid="director" data-video-id={video?.id ?? ''}>
       <button type="button" onClick={onChooseVideo}>
