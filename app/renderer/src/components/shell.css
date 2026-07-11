@@ -62,13 +62,24 @@ body,
 
 /* ---- app chrome -------------------------------------------------------------- */
 
+/* v1.5 pro-shell: a three-zone grid — the app bar spans the top; below it the
+   vertical nav RAIL (components/topTabBar.css .toptabs, `rail` area) sits left of
+   the stage (`main` area). Presentational only: App.tsx renders bar → rail → main
+   as before; grid-area placement, not source order, positions them, so no DOM or
+   routing change was needed to move the nav from a top strip to a left rail. */
 .app {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    "bar bar"
+    "rail main";
   height: 100%;
+  min-height: 0;
 }
 
 .app__bar {
+  grid-area: bar;
   display: flex;
   align-items: center;
   gap: var(--space-5);
@@ -303,8 +314,11 @@ body,
 /* .app__jobs-toggle lives in jobqueue.css; both consume the same tokens. */
 
 .app__main {
-  flex: 1;
+  grid-area: main;
   min-height: 0;
+  /* min-width:0 lets the stage shrink instead of a wide child (a table, the
+     timeline) forcing horizontal overflow of the whole shell at narrow widths. */
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
