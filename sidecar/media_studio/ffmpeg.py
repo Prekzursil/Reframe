@@ -18,6 +18,7 @@ subprocess only; logs to stderr. The subprocess is injected/mocked in tests.
 from __future__ import annotations
 
 import contextlib
+import functools
 import os
 import shutil
 import subprocess
@@ -27,7 +28,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from .pathsafe import ensure_within
+from .pathsafe import clean_for_log, ensure_within
 from .util import get_logger
 
 log = get_logger("media_studio.ffmpeg")
@@ -40,6 +41,11 @@ _EXE = ".exe" if os.name == "nt" else ""
 
 # Progress callback: (pct: float 0..100, message: str) -> None
 ProgressCb = Callable[[float, str], None]
+
+# Bound a hung ``ffprobe`` (a corrupt/truncated or slow-to-open input can make it
+# block indefinitely) so a duration probe can never wedge the job thread. Metadata
+# probing is near-instant for a healthy local file; 60s is a generous ceiling.
+PROBE_TIMEOUT_SEC = 60.0
 
 
 class FfmpegNotFound(RuntimeError):
@@ -322,12 +328,43 @@ def ffprobe_duration(
     """Probe ``in_path`` for its duration in seconds via ffprobe.
 
     ``runner`` is injectable so tests mock the subprocess. Returns 0.0 if the
-    duration cannot be determined.
+    duration cannot be determined — including when ffprobe exceeds
+    :data:`PROBE_TIMEOUT_SEC` (a hung probe on a bad/slow input must bound out,
+    not wedge the job; downstream callers treat 0.0 as "unknown" and degrade).
+
+    The duration is read through the shared ``media_compat.probe_media`` ffprobe
+    ``-show_streams -show_format -of json`` seam and its ``format.duration`` — the
+    SAME value the old bespoke ``-show_entries format=duration`` probe returned —
+    instead of building and spawning a second ffprobe argv here. That keeps a
+    single canonical ffprobe subprocess sink (the reviewed baseline seam) rather
+    than a duplicate one on this line. The path is still hardened with
+    ``ensure_within`` (a realpath'd ABSOLUTE path that cannot be mis-parsed as an
+    ffprobe flag), and the probe stays bounded by :data:`PROBE_TIMEOUT_SEC` via
+    the injected runner. The seam uses an argv list with no shell, so there is no
+    command injection.
     """
-    argv = build_probe_argv(in_path, settings)
-    completed = runner(argv, capture_output=True, text=True, check=False)
-    out = (getattr(completed, "stdout", "") or "").strip()
+    # media_compat imports this module, so a top-level import would be circular;
+    # by the time this runs both modules are fully initialised (local import).
+    from .features import media_compat
+
+    # Bind the timeout onto the injected runner WITHOUT opening a second
+    # subprocess call site here: functools.partial defers the actual call to the
+    # shared probe_media seam (the single canonical, reviewed ffprobe sink), which
+    # invokes runner(argv, ..., timeout=PROBE_TIMEOUT_SEC). A hung ffprobe can
+    # never wedge the job thread, and no bespoke argv/subprocess sink is built on
+    # this line.
+    bounded_runner = functools.partial(runner, timeout=PROBE_TIMEOUT_SEC)
+
+    # ensure_within canonicalises the (RPC/settings-derived) path to a realpath'd
+    # ABSOLUTE path (single-arg call never raises, so behaviour is unchanged).
     try:
-        return float(out)
+        probe = media_compat.probe_media(ensure_within(in_path), settings, runner=bounded_runner)
+    except subprocess.TimeoutExpired:
+        # clean_for_log neutralises CR/LF/NUL in the user-derived path (the
+        # py/log-injection barrier CodeQL recognises).
+        log.warning("ffprobe timed out after %.0fs probing %s", PROBE_TIMEOUT_SEC, clean_for_log(in_path))
+        return 0.0
+    try:
+        return float((probe.get("format") or {}).get("duration") or 0.0)
     except (ValueError, TypeError):
         return 0.0

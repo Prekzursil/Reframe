@@ -6,6 +6,8 @@ spawned and no binary needs to exist on the box.
 
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -286,11 +288,13 @@ def test_run_propagates_nonzero_exit():
 
 
 # --------------------------------------------------------------------------- #
-# ffprobe_duration
+# ffprobe_duration — reads ``format.duration`` through the shared
+# media_compat.probe_media ffprobe seam (JSON), not a bespoke argv here.
 # --------------------------------------------------------------------------- #
-def test_ffprobe_duration_parses_stdout(bins):
+def test_ffprobe_duration_parses_format_duration(bins):
     class R:
-        stdout = "42.123\n"
+        returncode = 0
+        stdout = json.dumps({"streams": [], "format": {"duration": "42.123"}})
 
     got = ffmpeg.ffprobe_duration("/v.mp4", bins, runner=lambda *a, **k: R())
     assert got == pytest.approx(42.123)
@@ -298,13 +302,44 @@ def test_ffprobe_duration_parses_stdout(bins):
 
 def test_ffprobe_duration_handles_garbage(bins):
     class R:
-        stdout = "N/A\n"
+        returncode = 0
+        stdout = json.dumps({"format": {"duration": "N/A"}})
 
     assert ffmpeg.ffprobe_duration("/v.mp4", bins, runner=lambda *a, **k: R()) == 0.0
 
 
-def test_ffprobe_duration_handles_empty(bins):
+def test_ffprobe_duration_handles_probe_failure(bins):
+    # A non-zero ffprobe exit makes the shared probe seam return {} -> the
+    # duration is unknown -> 0.0 (no format block to read).
     class R:
+        returncode = 1
         stdout = ""
 
     assert ffmpeg.ffprobe_duration("/v.mp4", bins, runner=lambda *a, **k: R()) == 0.0
+
+
+def test_ffprobe_duration_forwards_a_timeout(bins):
+    # V1.5: the probe MUST be bounded so a hung ffprobe never wedges the job. The
+    # timeout rides on the shared probe seam's runner as timeout=PROBE_TIMEOUT_SEC.
+    seen = {}
+
+    class R:
+        returncode = 0
+        stdout = json.dumps({"format": {"duration": "5.0"}})
+
+    def runner(argv, **kwargs):
+        seen.update(kwargs)
+        return R()
+
+    got = ffmpeg.ffprobe_duration("/v.mp4", bins, runner=runner)
+    assert got == pytest.approx(5.0)
+    assert seen.get("timeout") == ffmpeg.PROBE_TIMEOUT_SEC
+
+
+def test_ffprobe_duration_returns_zero_on_timeout(bins):
+    # A hung ffprobe (TimeoutExpired) is treated as "duration unknown" -> 0.0,
+    # NOT propagated as a crash that would wedge the job thread.
+    def runner(argv, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=kwargs.get("timeout"))
+
+    assert ffmpeg.ffprobe_duration("/v.mp4", bins, runner=runner) == 0.0
