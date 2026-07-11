@@ -171,7 +171,13 @@ function QualityToggle({
 function useRepurposeBadge(onResume: (resumeId: string) => void): number {
   const [badge, setBadge] = useState(0);
   const toast = useToast();
-  const toastedRef = React.useRef(false);
+  // Mirror the toast API through a ref (the same pattern useJob uses) so the
+  // effect can call it without depending on the unstable ToastApi identity —
+  // useToast() returns a NEW object on every toast push/dismiss app-wide, and a
+  // [toast, …] dep would re-run this effect (and re-fire client.batch.list) on
+  // each one. With the ref, the effect keeps its once-on-mount contract above.
+  const toastRef = React.useRef(toast);
+  toastRef.current = toast;
 
   useEffect(() => {
     if (!hasApi()) return;
@@ -182,11 +188,10 @@ function useRepurposeBadge(onResume: (resumeId: string) => void): number {
         if (cancelled) return;
         const incomplete = incompleteBatches(batches);
         setBadge(incomplete.length);
-        if (incomplete.length > 0 && !toastedRef.current) {
-          toastedRef.current = true;
+        if (incomplete.length > 0) {
           const first = incomplete[0];
           const left = remainingCount(first.counts);
-          toast.info(
+          toastRef.current.info(
             `A batch ('${first.name}') was interrupted — ${left} of ${first.counts.total} sources left.`,
             { action: { label: 'Resume', onClick: () => onResume(first.id) } },
           );
@@ -198,7 +203,7 @@ function useRepurposeBadge(onResume: (resumeId: string) => void): number {
     return () => {
       cancelled = true;
     };
-  }, [toast, onResume]);
+  }, [onResume]);
 
   return badge;
 }

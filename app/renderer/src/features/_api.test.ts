@@ -148,6 +148,21 @@ describe('waitForJobDone', () => {
     ).resolves.toBeNull();
   });
 
+  it('rejects with JobAbortedError when the signal is already aborted and the api has no onJobDone hook', async () => {
+    const { api } = fakeApi({ withJobDone: false });
+    const ctrl = new AbortController();
+    ctrl.abort();
+    await expect(
+      waitForJobDone(
+        api,
+        'job-pre-nohook',
+        (r) => pickField<string>(r, 'path'),
+        DEFAULT_JOB_TIMEOUT_MS,
+        ctrl.signal,
+      ),
+    ).rejects.toBeInstanceOf(JobAbortedError);
+  });
+
   it('unsubscribes after the first matching event (no leak)', async () => {
     const { api, fire, count } = fakeApi();
     const promise = waitForJobDone(api, 'job-9', (r) => pickField<string[]>(r, 'paths'));
@@ -210,6 +225,16 @@ describe('waitForJobDone', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // CONTRACT INVARIANT: the renderer's last-resort ceiling MUST sit strictly
+  // above the sidecar's own 30-min job watchdog (sidecar/media_studio/rpc.py:43
+  // DEFAULT_JOB_TIMEOUT_SEC = 30*60) so the sidecar — which fails loudly via a
+  // job.done ERROR — is the single authority on job death. A future edit that
+  // drops this back below the sidecar deadline (re-opening the 15-30 min
+  // false-failure window) fails HERE in CI.
+  it('sits strictly above the sidecar 30-min job watchdog (single-authority contract)', () => {
+    expect(DEFAULT_JOB_TIMEOUT_MS).toBeGreaterThan(30 * 60 * 1000);
   });
 
   it('clears the timer when the job resolves first (no late rejection)', async () => {

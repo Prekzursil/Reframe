@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import './workspace.css';
-import { TabBar, type TabDef, type TabGroup } from '../components/TabBar';
+import { TabBar, tabId, tabPanelId, type TabDef, type TabGroup } from '../components/TabBar';
 import { Player, type PlayerHandle } from '../components/Player';
 import { rpc, type Project, type Video } from '../components/api';
 import { onProxyState } from '../lib/rpc';
@@ -321,7 +321,11 @@ export function Workspace({
           reloadToken={playerEpoch}
           onError={handlePlayerError}
         />
-        {playerNote ? <div className="workspace__player-note">{playerNote}</div> : null}
+        {playerNote ? (
+          <div className="workspace__player-note" role="status" aria-live="polite">
+            {playerNote}
+          </div>
+        ) : null}
         {playerError ? (
           <div className="workspace__player-error" role="alert">
             {playerError}
@@ -345,7 +349,12 @@ export function Workspace({
         </div>
       ) : null}
 
-      <div className="workspace__body" role="tabpanel">
+      <div
+        className="workspace__body"
+        role="tabpanel"
+        id={tabPanelId(active)}
+        aria-labelledby={tabId(active)}
+      >
         <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>
           {renderPanel()}
         </Suspense>

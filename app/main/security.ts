@@ -15,11 +15,25 @@
  * The renderer may only navigate WITHIN its own origin (the app bundle, or the
  * dev server when running `electron-vite dev`). Any cross-origin `will-navigate`
  * is denied. Fail-closed: an unparseable target OR app origin returns false.
+ *
+ * `file:` SPECIAL-CASE: every `file:` URL shares the opaque `null` origin, so a
+ * bare `target.origin === app.origin` check is a NO-OP for a packaged build (any
+ * two local files compare equal). For a `file:` app we therefore pin the target
+ * to the app's OWN bundle document (same protocol + pathname) — the app only ever
+ * loads its own index.html, and same-document hash/route changes (index.html#/edit)
+ * do not fire will-navigate and share app.pathname anyway (hash is excluded from
+ * pathname), so legitimate navigation still passes while any sibling/downloaded
+ * `file:` document is denied. Dev-server (http) origins keep the origin comparison.
  */
 export function isAllowedNavigation(targetUrl: string, appUrl: string): boolean {
   try {
     const target = new URL(targetUrl);
     const app = new URL(appUrl);
+    if (app.protocol === 'file:') {
+      // Origin equality is a no-op for the opaque file: origin — pin to the
+      // app's own bundle document (protocol + pathname) instead.
+      return target.protocol === 'file:' && target.pathname === app.pathname;
+    }
     return target.origin === app.origin;
   } catch {
     return false;

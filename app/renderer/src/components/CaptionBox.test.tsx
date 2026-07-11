@@ -174,6 +174,34 @@ describe('<CaptionBox />', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  it('resets drag state and releases capture on pointercancel (interrupted capture)', () => {
+    const { onChange } = render();
+    stubFrame(container, 100, 100);
+    const release = vi.fn();
+    box().releasePointerCapture = release;
+    pointer(box(), 'pointerdown', 0, 0);
+    // The OS interrupts the capture: pointercancel fires (never pointerup).
+    pointer(box(), 'pointercancel', 0, 0);
+    expect(release).toHaveBeenCalledWith(7);
+    onChange.mockClear();
+    // A bare hover move afterwards must NOT keep moving the box.
+    pointer(box(), 'pointermove', 50, 0);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('resets drag state and releases capture on lostpointercapture', () => {
+    const { onChange } = render();
+    stubFrame(container, 100, 100);
+    const release = vi.fn();
+    box().releasePointerCapture = release;
+    pointer(box(), 'pointerdown', 0, 0);
+    pointer(box(), 'lostpointercapture', 0, 0);
+    expect(release).toHaveBeenCalledWith(7);
+    onChange.mockClear();
+    pointer(box(), 'pointermove', 50, 0);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('ignores a pointer up with no active drag', () => {
     render();
     // pointerup with nothing started — exercises the early return.

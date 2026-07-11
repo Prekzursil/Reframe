@@ -129,13 +129,15 @@ export function applyShotOverride(
 /**
  * Resolve `overrides` (keyed by shot index) onto `plan`, returning a NEW plan
  * (immutable). Shots with no override are unchanged; an override for an unknown
- * index throws (loud).
+ * index throws (loud), and a duplicate override for the same index throws (loud)
+ * too — mirroring the sidecar guard so the two decision layers stay in parity.
  */
 export function applyShotOverrides(plan: ShotPlan, overrides: readonly ShotOverride[]): ShotPlan {
   const valid = new Set(plan.shots.map((s) => s.index));
   const byIndex = new Map<number, ShotOverride>();
   for (const ov of overrides) {
     if (!valid.has(ov.index)) throw new Error(`override targets unknown shot index ${ov.index}`);
+    if (byIndex.has(ov.index)) throw new Error(`duplicate override for shot index ${ov.index}`);
     byIndex.set(ov.index, ov);
   }
   const shots = plan.shots.map((shot) => {

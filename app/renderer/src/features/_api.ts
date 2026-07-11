@@ -46,11 +46,20 @@ export type SidecarStatus = 'running' | 'restarting' | 'down';
 
 /**
  * Default `job.done` wait timeout (F2). A dead/wedged sidecar must NOT hang a
- * panel forever — every job wait is raced against this ceiling. 15 minutes is
- * long enough for the longest real job (a batch export) yet short enough that a
- * silent sidecar death surfaces a user-facing error instead of a frozen UI.
+ * panel forever — every job wait is raced against this LAST-RESORT ceiling.
+ *
+ * CONTRACT-NOTE: the sidecar is the single authority on job death. It force-
+ * finishes a wedged handler with a `job.done` ERROR after its own 30-min
+ * watchdog (`sidecar/media_studio/rpc.py:43` `DEFAULT_JOB_TIMEOUT_SEC =
+ * 30*60`), and a sidecar process death surfaces immediately via
+ * `onSidecarStatus`. This ceiling therefore MUST sit strictly ABOVE the
+ * sidecar's 30-min watchdog so a legitimately long job (a slow CPU transcription
+ * / large `convert.batch`) is NEVER falsely failed in the UI at minute 15 while
+ * it keeps streaming `job.progress` and later succeeds — the sidecar's
+ * `job.done` (success or force-finished ERROR) always settles the wait first.
+ * The fixed timer only catches a sidecar wedged so hard it emits nothing at all.
  */
-export const DEFAULT_JOB_TIMEOUT_MS = 15 * 60 * 1000;
+export const DEFAULT_JOB_TIMEOUT_MS = 35 * 60 * 1000;
 
 /**
  * Rejection raised when a `waitForJobDone` wait is torn down via its
@@ -224,7 +233,9 @@ export function waitForJobDone<T>(
   timeoutMs: number = DEFAULT_JOB_TIMEOUT_MS,
   signal?: AbortSignal,
 ): Promise<T | null> {
-  if (typeof api.onJobDone !== 'function') return Promise.resolve(null);
+  if (typeof api.onJobDone !== 'function') {
+    return signal?.aborted ? Promise.reject(new JobAbortedError()) : Promise.resolve(null);
+  }
   return new Promise<T | null>((resolve, reject) => {
     let off: (() => void) | undefined;
     let offStatus: (() => void) | undefined;

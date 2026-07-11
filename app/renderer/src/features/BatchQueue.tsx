@@ -12,12 +12,14 @@ import {
   client,
   onJobDone,
   onProgress,
+  type BatchConsent,
   type BatchState,
   type BatchSummary,
   type Template,
   type Video,
 } from '../lib/rpc';
 import { ProgressBar } from '../components/ProgressBar';
+import { BatchConsentCard } from './BatchConsentCard';
 import { LiveStatusRegion } from './LiveStatusRegion';
 import {
   aggregateUpdate,
@@ -52,10 +54,30 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
   const [incomplete, setIncomplete] = useState<BatchSummary[]>([]);
   const [error, setError] = useState('');
 
+  // §9.1 pre-run cloud-egress consent (DESIGN §9 / §9.1). `consent` holds the
+  // pure run/skip surface from `batch.plan`; the card is shown until the user
+  // acknowledges egress. `confirmCloudBudget` mirrors the persisted setting
+  // (default ON, settings_store.py) and drives whether an ack is required.
+  const [consent, setConsent] = useState<BatchConsent | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [confirmCloudBudget, setConfirmCloudBudget] = useState(true);
+
   // a11y live-status state (§7.1).
   const [aggregate, setAggregate] = useState('');
   const [politeLog, setPoliteLog] = useState<string[]>([]);
   const [assertive, setAssertive] = useState('');
+
+  // The parent batch job id. The app-wide `onProgress` stream carries EVERY
+  // job's progress under its own jobId (jobs.py fans out per-job); a batch
+  // fans out per-source sub-jobs that each stream their own local 0-100 pct
+  // under a DIFFERENT jobId. Without this gate a foreign/sub-job event would
+  // clobber the aggregate pct bar and hijack the debounced a11y announcement
+  // (§7.1). Mirrors the deliberate jobId filter in components/useJob.ts.
+  const parentJobIdRef = useRef('');
+
+  // The created-but-not-yet-started batch, held so the post-acknowledge
+  // `confirmRun` can start it without re-creating.
+  const pendingBatchRef = useRef<BatchState | null>(null);
 
   const titleFor = useCallback(
     (videoId: string): string => videos.find((v) => v.id === videoId)?.title ?? videoId,
@@ -86,9 +108,25 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
     void reload();
   }, [reload]);
 
+  // Read the persisted §9.1 budget setting once on mount; a rejection keeps the
+  // default-ON gate (fail-safe — never silently egress without acknowledgement).
+  useEffect(() => {
+    void client.settings
+      .get()
+      .then((s) => {
+        setConfirmCloudBudget(s.confirmCloudBudget !== false);
+      })
+      .catch(() => {
+        // Keep the default-ON gate when the setting can't be read.
+      });
+  }, []);
+
   // Subscribe to live progress: announce on source-transition only (debounced).
+  // Gate to the parent batch jobId so a concurrent/sub-job's progress can never
+  // overwrite the batch pct or trigger a foreign a11y announcement.
   useEffect(() => {
     const off = onProgress((event) => {
+      if (parentJobIdRef.current === '' || event.jobId !== parentJobIdRef.current) return;
       setAggregate((prev) => aggregateUpdate(prev, event) ?? prev);
       setBatch((prev) => (prev ? { ...prev, pct: event.pct } : prev));
     });
@@ -119,6 +157,29 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
     setSelected((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
   }, []);
 
+  // Fire batch.start, track the parent jobId for the progress gate, flip to
+  // 'running', and pull the first authoritative status snapshot. Shared by the
+  // gate-OFF direct-run path and the post-acknowledge `confirmRun` path.
+  const startBatch = useCallback(
+    async (created: BatchState, opts: { confirmCloudBudget: boolean; acknowledged?: boolean }) => {
+      const started = await client.batch.start(created.id, opts);
+      const jobId = jobIdOf(started);
+      // Track this batch's parent jobId for the progress gate (when jobId === ''
+      // the ref stays '' and the onProgress guard drops everything, matching the
+      // status-refresh skip below).
+      parentJobIdRef.current = jobId;
+      setBatch({ ...created, status: 'running' });
+      if (jobId !== '') {
+        // pull the first authoritative status snapshot.
+        await refreshBatch(created.id);
+      }
+    },
+    [refreshBatch],
+  );
+
+  // Step 1 of the run flow: create the batch, then EITHER preview the §9.1
+  // consent split (gate ON — the user must acknowledge cloud egress before any
+  // egressing source runs) OR start immediately (gate OFF — informational only).
   const runBatch = useCallback(async () => {
     try {
       // Clear optimistically up front; an internal failure (e.g. refreshBatch)
@@ -126,26 +187,55 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
       setError('');
       const { batch: created } = await client.batch.create('Batch run', templateId, selected);
       setBatch(created);
+      pendingBatchRef.current = created;
+      setConsent(null);
+      setAcknowledged(false);
       setAggregate('');
       setPoliteLog([]);
       setAssertive('');
-      const started = await client.batch.start(created.id);
-      const jobId = jobIdOf(started);
-      setBatch({ ...created, status: 'running' });
-      if (jobId !== '') {
-        // pull the first authoritative status snapshot.
-        await refreshBatch(created.id);
+      // Drop any prior batch's jobId so its late progress can't apply mid-swap.
+      parentJobIdRef.current = '';
+      if (confirmCloudBudget) {
+        // §9.1 budget gate ON: compute the pure run/skip consent surface WITHOUT
+        // starting a job (zero provider calls, plan_consent directly) and render
+        // the consent card. batch.start is deferred until the user acknowledges
+        // cloud egress (onAcknowledge -> confirmRun), so an un-acknowledged
+        // egressing source cleanly SKIPs (SKIP_WOULD_EGRESS, re-runnable) rather
+        // than hard-erroring on the sidecar's per-call gate.
+        const { consent: c } = await client.batch.plan(created.id, {
+          confirmCloudBudget,
+          acknowledged: false,
+        });
+        setConsent(c);
+        return;
       }
+      // Gate OFF: no acknowledgement needed — start immediately (info-only path).
+      await startBatch(created, { confirmCloudBudget });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Run failed');
     }
-  }, [templateId, selected, refreshBatch]);
+  }, [templateId, selected, confirmCloudBudget, startBatch]);
+
+  // Step 2 (gate ON): the user acknowledged cloud egress on the consent card —
+  // start the created batch, threading BOTH the budget flag and the ack so the
+  // sidecar's per-call gate lets the egressing sources run.
+  const confirmRun = useCallback(async () => {
+    try {
+      setError('');
+      await startBatch(pendingBatchRef.current!, { confirmCloudBudget, acknowledged: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Run failed');
+    }
+  }, [confirmCloudBudget, startBatch]);
 
   const resume = useCallback(
     async (id: string) => {
       try {
         setError('');
-        await client.batch.resume(id);
+        // Track the resumed run's parent jobId so its live progress is honoured
+        // by the onProgress gate (batch.resume returns {jobId}).
+        const out = await client.batch.resume(id);
+        parentJobIdRef.current = jobIdOf(out);
         await refreshBatch(id);
         await reload();
       } catch (err) {
@@ -232,6 +322,19 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
           Run batch
         </button>
       </div>
+
+      {consent ? (
+        <BatchConsentCard
+          consent={consent}
+          confirmCloudBudget={confirmCloudBudget}
+          acknowledged={acknowledged}
+          onAcknowledge={() => {
+            setAcknowledged(true);
+            void confirmRun();
+          }}
+          titleFor={titleFor}
+        />
+      ) : null}
 
       <LiveStatusRegion aggregate={aggregate} politeLog={politeLog} assertive={assertive} />
 

@@ -9,6 +9,7 @@ import {
   type ReviewItem,
   errMsg,
   moveSelection,
+  nudgeCandidate,
   previewWindow,
   resolveWindowApi,
   reviewReducer,
@@ -67,6 +68,41 @@ describe('moveSelection', () => {
     expect(moveSelection(items, '2@2', -1)).toBe('1@1');
     expect(moveSelection(items, '1@1', -1)).toBe('1@1'); // clamp at top
     expect(moveSelection(items, '3@3', 1)).toBe('3@3'); // clamp at bottom
+  });
+});
+
+// nudgeCandidate — the in-point (sourceStart) MUST move with `start` so the
+// preview window AND the exported cut honour a start-nudge (not a no-op).
+describe('nudgeCandidate sourceStart tracking', () => {
+  it('moves sourceStart in lockstep with start on a start-nudge', () => {
+    const c = nudgeCandidate(cand({ start: 100, end: 140, durationSec: 40, sourceStart: 100 }), 5, 0);
+    expect(c.start).toBe(105);
+    expect(c.sourceStart).toBe(105);
+    // the invariant that keeps preview + export authoritative:
+    expect(c.sourceStart).toBe(c.start);
+  });
+
+  it('previewWindow honours a start-nudge (in-point actually moves)', () => {
+    const c = nudgeCandidate(cand({ start: 100, end: 140, durationSec: 40, sourceStart: 100 }), 5, 0);
+    // was a no-op before the fix (previewWindow read the stale sourceStart=100).
+    expect(previewWindow(c)).toEqual({ start: 105, end: 140 });
+  });
+
+  it('a window-slide (equal start+end delta) slides, not stretches — duration preserved', () => {
+    const base = cand({ start: 100, end: 140, durationSec: 40, sourceStart: 100 });
+    const c = nudgeCandidate(base, 5, 5);
+    // both edges shift by +5 -> the whole window slides, duration unchanged.
+    expect(c.durationSec).toBe(base.durationSec);
+    const win = previewWindow(c);
+    expect(win.start).toBe(105);
+    expect(win.end).toBe(145);
+    expect(win.end - win.start).toBe(base.durationSec);
+  });
+
+  it('clamps sourceStart at 0 when a start-nudge would go negative', () => {
+    const c = nudgeCandidate(cand({ start: 3, end: 40, durationSec: 37, sourceStart: 3 }), -10, 0);
+    expect(c.start).toBe(0);
+    expect(c.sourceStart).toBe(0);
   });
 });
 

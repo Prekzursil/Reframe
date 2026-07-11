@@ -95,12 +95,22 @@ export function JobQueue({ open, onClose }: JobQueueProps): React.ReactElement |
   const panelRef = useRef<HTMLElement>(null);
 
   // Lane 0 F4 (R-L4): move focus into the panel when it opens, so keyboard users
-  // land in the slide-over instead of being stranded behind it.
+  // land in the slide-over instead of being stranded behind it, and RESTORE focus
+  // to the invoking control (the App-header Jobs toggle) on close/unmount so they
+  // land back where they opened it (disclosure focus-return contract).
   useEffect(() => {
-    if (!open) return;
+    if (!open) return undefined;
+    // Capture the control that opened the panel BEFORE moving focus into it.
+    const invoker = document.activeElement as HTMLElement | null;
     // The panel (with this ref) is rendered whenever `open` is true, and effects
     // run after the DOM commit, so the ref is always populated here.
     (panelRef.current as HTMLElement).focus();
+    return () => {
+      // React runs this cleanup on the open->false transition BEFORE the panel
+      // unmounts, restoring focus for both Escape and the × button. On a full
+      // unmount the detached invoker's focus() is a harmless no-op.
+      (invoker as HTMLElement).focus();
+    };
   }, [open]);
 
   // Escape closes the slide-over (R-L4). It is non-modal, so Tab is NOT trapped.

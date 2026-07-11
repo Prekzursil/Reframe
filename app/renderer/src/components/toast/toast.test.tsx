@@ -219,6 +219,17 @@ describe('ToastProvider + ToastHost', () => {
     expect(bodyToasts()).toHaveLength(0);
   });
 
+  it('keeps the aria-live="polite" host mounted (empty) once a provider exists', () => {
+    // Provider present but ZERO toasts enqueued: the .toast-host live region must
+    // still be portalled (empty) so subsequent inserts mutate a pre-existing
+    // polite region rather than materialising it alongside its first content.
+    mountHost();
+    const host = document.body.querySelector('.toast-host');
+    expect(host).not.toBeNull();
+    expect(host!.getAttribute('aria-live')).toBe('polite');
+    expect(host!.querySelectorAll('.toast')).toHaveLength(0);
+  });
+
   it('portals into an explicit container prop instead of document.body', () => {
     const target = document.createElement('section');
     target.id = 'custom-toast-target';

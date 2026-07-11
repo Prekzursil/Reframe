@@ -22,6 +22,7 @@ import {
   CAPTION_STYLE_OPTIONS,
 } from './shortMakerLogic';
 import type { CaptionBox } from '../lib/captionPosition';
+import type { CaptionOverride } from '../lib/captionOverride';
 import type { SubtitleMode } from '../lib/outputOptions';
 
 // ---------------------------------------------------------------------------
@@ -153,6 +154,7 @@ export function topByVirality(candidates: readonly Candidate[], n: number): Cand
 export interface ExportOutputOptions {
   captionPosition?: CaptionBox;
   subtitleMode?: SubtitleMode;
+  captionOverride?: CaptionOverride;
 }
 
 export function buildExportParams(
@@ -185,6 +187,7 @@ export function buildExportParams(
     ...(audioTrackId ? { audioTrackId } : {}),
     ...(output.subtitleMode ? { subtitleMode: output.subtitleMode } : {}),
     ...(output.captionPosition ? { captionPosition: output.captionPosition } : {}),
+    ...(output.captionOverride ? { captionOverride: output.captionOverride } : {}),
   };
 }
 

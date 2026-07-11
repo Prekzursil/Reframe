@@ -85,6 +85,25 @@ describe('ShortClipActions', () => {
     expect(playBtn.textContent).toBe('Stop');
   });
 
+  it('omits the Re-export button when onReexport is not provided', () => {
+    act(() => {
+      root.render(
+        <ShortClipActions
+          path="/c.mp4"
+          label="Clip"
+          playing={false}
+          onPlay={noop}
+          onOpenFolder={noop}
+          onDelete={noop}
+        />,
+      );
+    });
+    const labels = Array.from(container.querySelectorAll('button')).map((b) =>
+      b.getAttribute('aria-label'),
+    );
+    expect(labels).not.toContain('Re-export Clip');
+  });
+
   it('omits the Package button when onPackage is not provided', () => {
     act(() => {
       root.render(

@@ -70,6 +70,8 @@ import {
   type ExportResult,
   type ExportedClipInfo,
   type JobHandle,
+  CAPTION_STYLE_OPTIONS,
+  DEFAULT_CAPTION_STYLE,
   EXPORT_JOB_TIMEOUT_MS,
   NUDGE_COARSE_SEC,
   NUDGE_FINE_SEC,
@@ -218,11 +220,33 @@ export function ShortMaker({
     /* v8 ignore next */
     if (!resolvedApi || typeof resolvedApi.onProgress !== 'function') return;
     const off = resolvedApi.onProgress((p) => {
-      if (activeJobRef.current && p.jobId !== activeJobRef.current) return;
+      const active = activeJobRef.current;
+      // Once the active jobId is known, relay only that job's progress. Before it
+      // is known (sync / pre-handle window), accept ONLY jobId-less early progress
+      // ('') so a concurrent job's real-jobId events cannot hijack the bar.
+      if (active ? p.jobId !== active : p.jobId !== '') return;
       setProgress(p);
     });
     return off;
   }, [resolvedApi]);
+
+  // ---- reset per-video review state on videoId change ----------------------
+  // The panel stays MOUNTED across a video switch (the parent swaps only the
+  // videoId prop), so without this the previous video's candidate list, exported
+  // clips, phase, prompt and audio-track choice persist — and "Export approved"
+  // would carve the NEW video at the OLD video's timestamps. Clear ONLY per-video
+  // review state (NOT app-level controls/brand/data-folder). Every reset is
+  // idempotent against the initial state, so it is a harmless no-op on first mount.
+  useEffect(() => {
+    dispatch({ type: 'clear' });
+    setExportedClips(null);
+    setPhase('idle');
+    setRetryAction(null);
+    setError(null);
+    setAudioTrackId('');
+    setSelectedId(null);
+    setPrompt('');
+  }, [videoId]);
 
   // ---- audio tracks (A2): populate the picker from tracks.audio.list -------
   useEffect(() => {
@@ -278,7 +302,28 @@ export function ShortMaker({
     let alive = true;
     Promise.resolve(resolvedApi.rpc<Record<string, unknown>>('settings.get'))
       .then((res) => {
-        if (alive) setBrand(readBrandSettings(res));
+        if (alive) {
+          const brandKit = readBrandSettings(res);
+          setBrand(brandKit);
+          // P4 §8d: seed the Caption style control from the persisted brand
+          // default so a brand template flows through buildExportParams — but
+          // ONLY while the control is still at the picker DEFAULT. The
+          // `prev.captionStyle === DEFAULT_CAPTION_STYLE` guard is load-bearing:
+          // it must never clobber an explicit user pick if settings.get resolves
+          // late. Immutable update returns a NEW controls object.
+          const tpl = (brandKit.brandCaptionTemplate || '').trim();
+          if (tpl && CAPTION_STYLE_OPTIONS.includes(tpl)) {
+            setControls((prev) =>
+              prev.captionStyle === DEFAULT_CAPTION_STYLE
+                ? sanitizeControls({
+                    ...prev,
+                    captionStyle: tpl,
+                    emphasis: defaultEmphasisForStyle(tpl) ? 'on' : 'off',
+                  })
+                : prev,
+            );
+          }
+        }
       })
       .catch(() => {
         // No settings store -> keep the empty brand kit.
@@ -375,7 +420,17 @@ export function ShortMaker({
           // the source playable. Bump the epoch (remount) only on the flip.
           Promise.resolve(resolvedApi.rpc<PlayableResult>('media.playable', { videoId }))
             .then((again) => {
-              if (alive && again && again.playable) setPlayerEpoch((n) => n + 1);
+              if (alive && again && again.playable) {
+                setPlayerEpoch((n) => n + 1);
+                // Latch on the flip: tear THIS subscription down so later job.done
+                // events (a subsequent export, a transcribe, another video's jobs)
+                // can never re-poll media.playable or re-bump the epoch — which
+                // would reload/interrupt the in-progress candidate preview.
+                if (offDone) {
+                  offDone();
+                  offDone = null;
+                }
+              }
             })
             .catch(() => undefined);
         });
@@ -608,6 +663,12 @@ export function ShortMaker({
           ctrl.signal,
         );
       }
+      // Bug-sweep: mirror runSelect's guard — a synchronously-resolved export must
+      // still honor a mid-flight Cancel. The abort signal is only checked inside
+      // waitForJobDone (skipped on the sync path), so without this a cancel during
+      // the sync path would still load clips and record 'exported' feedback,
+      // overriding the idle reset. Treat it as a clean cancel (the catch returns).
+      if (ctrl.signal.aborted) throw new JobAbortedError();
       setExportedClips(clips ?? []);
       // P3-D: a successful export is the strongest implicit label — record
       // one 'exported' action per exported candidate (fire-and-forget).
@@ -664,6 +725,10 @@ export function ShortMaker({
         EXPORT_JOB_TIMEOUT_MS,
         ctrl.signal,
       );
+      // Bug-sweep: honor a mid-flight Cancel on the synchronous-resolve path so a
+      // cancel during the select phase never dispatches the export rpc (closes the
+      // orphaned-export window without extra job.cancel plumbing).
+      if (ctrl.signal.aborted) throw new JobAbortedError();
       const candidates = found ?? [];
       dispatch({ type: 'load', candidates }); // surface for post-hoc review
       const top = topByVirality(candidates, clean.count);
@@ -688,6 +753,8 @@ export function ShortMaker({
         EXPORT_JOB_TIMEOUT_MS,
         ctrl.signal,
       );
+      // Bug-sweep: honor a mid-flight Cancel before loading the exported clips.
+      if (ctrl.signal.aborted) throw new JobAbortedError();
       setExportedClips(clips ?? []);
       for (const c of top) recordFeedback(resolvedApi, videoId, c, 'exported');
       void reloadVideoShorts();
@@ -935,7 +1002,7 @@ export function ShortMaker({
         playingShortPath={playingShortPath}
         onPlay={playShort}
         onOpenFolder={(p) => void openShortFolder(p)}
-        onReexport={(p) => void reexportShort(p)}
+        onReexport={onReexport ? (p) => void reexportShort(p) : undefined}
         onDelete={(p) => void deleteShort(p)}
       />
 

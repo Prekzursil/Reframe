@@ -429,6 +429,28 @@ describe('JobQueue', () => {
     expect(document.activeElement).toBe(container.querySelector('.jobqueue'));
   });
 
+  it('restores focus to the invoking control when it closes (R-L4)', async () => {
+    serveJobs([]);
+    // A real invoking control (the App-header Jobs toggle stand-in), focused
+    // before the panel opens.
+    const toggle = document.createElement('button');
+    toggle.textContent = 'Jobs';
+    document.body.appendChild(toggle);
+    toggle.focus();
+    expect(document.activeElement).toBe(toggle);
+
+    await renderQueue(true);
+    expect(document.activeElement).toBe(container.querySelector('.jobqueue'));
+
+    // Close: the effect cleanup must return focus to the toggle.
+    await act(async () => {
+      root.render(<JobQueue open={false} onClose={() => {}} />);
+    });
+    await flush();
+    expect(document.activeElement).toBe(toggle);
+    toggle.remove();
+  });
+
   it('closes on Escape (R-L4)', async () => {
     serveJobs([]);
     const onClose = vi.fn();

@@ -3,9 +3,16 @@
 // Calls the sidecar `transcribe.start` method (CONTRACTS.md §2) and shows
 // streaming progress (`job.progress` / `job.done`). Consumes the frozen
 // `window.api` surface via the shared local types in `./_api`.
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './panels.css';
-import { type Transcript, getApi, pickField, waitForJobDone } from './_api';
+import {
+  DEFAULT_JOB_TIMEOUT_MS,
+  JobAbortedError,
+  type Transcript,
+  getApi,
+  pickField,
+  waitForJobDone,
+} from './_api';
 
 export interface TranscribeProps {
   videoId: string;
@@ -39,6 +46,11 @@ export function Transcribe({ videoId, onTranscript }: TranscribeProps): React.Re
   const [error, setError] = useState<string>('');
   const [transcript, setTranscript] = useState<Transcript | null>(null);
 
+  // F2: aborts the in-flight job.done wait on cancel/unmount so the wait rejects
+  // (JobAbortedError) and its subscription/timer tear down instead of leaking —
+  // and a user cancel never waits out the 15-min timeout into a bogus error.
+  const abortRef = useRef<AbortController | null>(null);
+
   // Relay sidecar progress notifications for THIS job only.
   useEffect(() => {
     if (!jobId) return;
@@ -52,10 +64,15 @@ export function Transcribe({ videoId, onTranscript }: TranscribeProps): React.Re
 
   const start = useCallback(async () => {
     setPhase('running');
+    // Clear any prior run's jobId immediately so a mid-flight Cancel (or the
+    // gate below) can never target a previous, already-finished job.
+    setJobId(null);
     setError('');
     setPct(0);
     setMessage('Starting…');
     setTranscript(null);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     try {
       const params: Record<string, unknown> = { videoId };
       if (language) params.language = language;
@@ -72,8 +89,14 @@ export function Transcribe({ videoId, onTranscript }: TranscribeProps): React.Re
       // Fast-path: if the sidecar ever inlines the result, honor it.
       let transcript = res.transcript ?? null;
       if (!transcript && id) {
-        transcript = await waitForJobDone(getApi(), id, (r) =>
-          pickField<Transcript>(r, 'transcript'),
+        // F2: the wait carries the DEFAULT timeout + the cancel/unmount signal so
+        // a dead sidecar can't hang the panel and a cancel tears it down at once.
+        transcript = await waitForJobDone(
+          getApi(),
+          id,
+          (r) => pickField<Transcript>(r, 'transcript'),
+          DEFAULT_JOB_TIMEOUT_MS,
+          ctrl.signal,
         );
       }
       if (transcript) {
@@ -84,17 +107,33 @@ export function Transcribe({ videoId, onTranscript }: TranscribeProps): React.Re
         onTranscript?.(transcript);
       }
     } catch (err) {
+      // F2: an aborted wait is a clean cancel — cancel() already reset to idle,
+      // so surface no error/phase change (the finally leaves the idle state).
+      if (err instanceof JobAbortedError) return;
       setError(err instanceof Error ? err.message : String(err));
       setPhase('error');
     } finally {
       // F1/F2: a job that finished with neither a transcript nor an error (or a
       // timed-out wait) must NOT stick on 'running' forever — drop back to idle.
       setPhase((p) => (p === 'running' ? 'idle' : p));
+      // Leave no stale jobId behind and release the run's abort controller.
+      setJobId(null);
+      abortRef.current = null;
     }
   }, [videoId, language, onTranscript]);
 
+  // F2: abort any in-flight job.done wait (cancel/unmount) so the wait rejects
+  // with JobAbortedError and its subscription/timer tear down instead of leaking.
+  const tearDownWait = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+  }, []);
+
   const cancel = useCallback(async () => {
-    if (!jobId) return;
+    // Tear the in-flight wait down FIRST so it rejects immediately, even if the
+    // job.cancel rpc throws. The Cancel button renders only while running with a
+    // known jobId (see the gate below), so jobId is always present here.
+    tearDownWait();
     try {
       await getApi().rpc('job.cancel', { jobId });
     } catch {
@@ -102,7 +141,10 @@ export function Transcribe({ videoId, onTranscript }: TranscribeProps): React.Re
     }
     setPhase('idle');
     setMessage('Cancelled');
-  }, [jobId]);
+  }, [jobId, tearDownWait]);
+
+  // F2: tear down any in-flight job wait when the panel unmounts (no leak).
+  useEffect(() => tearDownWait, [tearDownWait]);
 
   const running = phase === 'running';
   const wordCount = useMemo(
@@ -134,7 +176,7 @@ export function Transcribe({ videoId, onTranscript }: TranscribeProps): React.Re
         <button type="button" onClick={start} disabled={running || !videoId}>
           {running ? 'Transcribing…' : 'Start transcription'}
         </button>
-        {running && (
+        {running && jobId && (
           <button type="button" onClick={cancel} className="secondary">
             Cancel
           </button>

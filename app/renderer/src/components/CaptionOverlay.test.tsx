@@ -119,6 +119,23 @@ describe('activeLine', () => {
   it('uses LINE_GAP_SEC as the phrase-grouping threshold', () => {
     expect(LINE_GAP_SEC).toBeGreaterThan(0);
   });
+
+  it('carries each word\'s ABSOLUTE position in the input cues array as `index`', () => {
+    const line = activeLine(CUES, WINDOW, 1.6); // whole phrase, starts at index 0
+    expect(line.map((w) => w.index)).toEqual([0, 1, 2, 3]);
+  });
+
+  it('indexes by absolute cue position even when the active line starts at an odd index', () => {
+    const withGap: Cue[] = [
+      cue(1, 101.0, 101.4, 'alone'), // absolute index 0, split off by a big gap
+      cue(2, 105.0, 105.4, 'phrase'), // absolute index 1 — the gap-line starts here
+      cue(3, 105.4, 105.8, 'here'), // absolute index 2
+    ];
+    const line = activeLine(withGap, WINDOW, 5.2); // mid "phrase"
+    expect(line.map((w) => w.text)).toEqual(['phrase', 'here']);
+    // The absolute index survives the gap-grouping (1, 2), NOT the line-local 0, 1.
+    expect(line.map((w) => w.index)).toEqual([1, 2]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -128,6 +145,7 @@ describe('wordColor', () => {
   const visual = captionVisualFor('karaoke');
   const base = (over: Partial<OverlayWord>): OverlayWord => ({
     text: 'x',
+    index: 0,
     start: 0,
     end: 1,
     active: false,
@@ -233,6 +251,30 @@ describe('<CaptionOverlay />', () => {
         .toLowerCase()
         .replace(/\s/g, ''),
     ).toContain('0,255,0');
+  });
+
+  it('alternates the karaoke accent by ABSOLUTE cue index, not line-local position', () => {
+    // The active gap-line begins at an ODD absolute index (1): its active word must
+    // paint GREEN (KARAOKE_ACTIVE_HEX[1]), matching the burn's global-index parity,
+    // NOT yellow — which the old line-local index (position 0) would have produced.
+    const withGap: Cue[] = [
+      cue(1, 101.0, 101.4, 'alone'), // absolute index 0, split off by a big gap
+      cue(2, 105.0, 105.4, 'phrase'), // absolute index 1 — the active word
+      cue(3, 105.4, 105.8, 'here'), // absolute index 2
+    ];
+    render(
+      <CaptionOverlay
+        cues={withGap}
+        templateId="opusclip-karaoke"
+        currentTime={105.2}
+        window={WINDOW}
+      />,
+    );
+    expect(
+      (container.querySelector('.caption-overlay__word.is-active') as HTMLElement).style.color
+        .toLowerCase()
+        .replace(/\s/g, ''),
+    ).toContain('0,255,0'); // green — odd absolute index
   });
 
   it('reflects the template position via data-position', () => {

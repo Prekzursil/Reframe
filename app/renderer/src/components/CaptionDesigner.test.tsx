@@ -91,6 +91,23 @@ describe('<CaptionDesigner />', () => {
     expect(active?.style.color.replace(/\s/g, '')).toContain('255,255,0');
   });
 
+  it('alternates the karaoke accent by the ABSOLUTE cue index, not the line-local position', () => {
+    // A >LINE_GAP_SEC gap isolates cue index 1 onto its own line, so its line-local
+    // slice position is 0 (even) while its ABSOLUTE cue index is 1 (odd). The correct
+    // accent is green (#00FF00) — which only holds when the accent keys off w.index,
+    // not the map index `i` (the CaptionOverlay-mirror fix).
+    const cues: Cue[] = [
+      { index: 0, start: 11, end: 11.5, text: 'Hello' },
+      { index: 1, start: 13, end: 13.5, text: 'World' },
+    ];
+    render({ design: { style: 'opusclip-karaoke', box: DEFAULT_CAPTION_DESIGN.box }, cues });
+    tick(container, 13.2); // inside cue 1 "World", alone on its line (line-local i=0)
+    const line = container.querySelector('.caption-designer__line') as HTMLElement;
+    const active = [...line.querySelectorAll('span')].find((s) => s.textContent === 'World');
+    expect(active?.style.color.replace(/\s/g, '')).toContain('0,255,0');
+    expect(active?.style.color.replace(/\s/g, '')).not.toContain('255,255,0');
+  });
+
   it('uppercases the live line for an uppercase template', () => {
     render({ design: { style: 'bold', box: DEFAULT_CAPTION_DESIGN.box } });
     tick(container, 11.5);

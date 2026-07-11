@@ -78,8 +78,9 @@ export function moveBox(box: CaptionBox, dx: number, dy: number): CaptionBox {
 
 /**
  * Resize the box by dragging `handle` by fractional deltas. Each edge the
- * handle controls moves; the opposite edge is pinned. Minimum size is enforced
- * by capping the moving edge before re-clamping to the frame.
+ * handle controls moves; the opposite edge is pinned. The moving edge is capped
+ * against BOTH the minimum size AND the frame edge before re-clamping, so an
+ * overshoot stops at the frame instead of sliding the pinned opposite edge.
  */
 export function resizeBox(
   box: CaptionBox,
@@ -89,19 +90,19 @@ export function resizeBox(
 ): CaptionBox {
   let { x, y, w, h } = box;
   if (handle.includes('e')) {
-    w = Math.max(MIN_BOX_W, w + dx);
+    w = clamp(w + dx, MIN_BOX_W, 1 - x);
   }
   if (handle.includes('s')) {
-    h = Math.max(MIN_BOX_H, h + dy);
+    h = clamp(h + dy, MIN_BOX_H, 1 - y);
   }
   if (handle.includes('w')) {
     const right = x + w;
-    x = Math.min(x + dx, right - MIN_BOX_W);
+    x = clamp(x + dx, 0, right - MIN_BOX_W);
     w = right - x;
   }
   if (handle.includes('n')) {
     const bottom = y + h;
-    y = Math.min(y + dy, bottom - MIN_BOX_H);
+    y = clamp(y + dy, 0, bottom - MIN_BOX_H);
     h = bottom - y;
   }
   return clampBox({ x, y, w, h });

@@ -161,24 +161,28 @@ describe('<Tracks />', () => {
     expect(container.querySelector('.status')?.textContent).toContain('Relabelled');
   });
 
-  it('Add / Remove ops call the right method and show the done status', async () => {
+  it('Add (from the available section) / Remove (row) call the right method', async () => {
+    // Attached rows no longer carry an `Add` button (re-adding an already-listed
+    // track just persists a duplicate), so Add is exercised via the available
+    // section and Remove via the row.
     const fake = makeFakeApi({ tracks: [track()] });
-    await mount(fake);
-    const row = container.querySelector('.track-row')!;
-    const btn = (text: string) =>
-      [...row.querySelectorAll('button')].find((b) => b.textContent === text) as HTMLButtonElement;
+    await mount(fake, { availableTracks: [track({ id: 'avail-1' })] });
 
+    const addBtn = container.querySelector('.available-tracks button') as HTMLButtonElement;
     await act(async () => {
-      btn('Add').click();
+      addBtn.click();
       await Promise.resolve();
     });
     expect(fake.calls.find((c) => c.method === 'tracks.add')?.params).toEqual({
       videoId: 'v1',
-      trackId: 't1',
+      trackId: 'avail-1',
     });
 
+    const removeBtn = [...container.querySelectorAll('.track-row button')].find(
+      (b) => b.textContent === 'Remove',
+    ) as HTMLButtonElement;
     await act(async () => {
-      btn('Remove').click();
+      removeBtn.click();
       await Promise.resolve();
     });
     expect(fake.calls.find((c) => c.method === 'tracks.remove')?.params).toEqual({
@@ -187,18 +191,25 @@ describe('<Tracks />', () => {
     });
   });
 
+  it('attached-track rows expose no Add button (re-adding would duplicate the track)', async () => {
+    const fake = makeFakeApi({ tracks: [track()] });
+    await mount(fake);
+    const row = container.querySelector('.track-row')!;
+    expect([...row.querySelectorAll('button')].some((b) => b.textContent === 'Add')).toBe(false);
+  });
+
   it('surfaces an error when a mutation op rejects', async () => {
     const fake = makeFakeApi({ tracks: [track()] });
     await mount(fake);
-    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('add failed'));
-    const addBtn = [...container.querySelectorAll('.track-row button')].find(
-      (b) => b.textContent === 'Add',
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('remove failed'));
+    const removeBtn = [...container.querySelectorAll('.track-row button')].find(
+      (b) => b.textContent === 'Remove',
     ) as HTMLButtonElement;
     await act(async () => {
-      addBtn.click();
+      removeBtn.click();
       await Promise.resolve();
     });
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('add failed');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('remove failed');
   });
 
   it('Strip op calls tracks.strip and shows the output path', async () => {
@@ -283,6 +294,90 @@ describe('<Tracks />', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('burn failed');
   });
 
+  it('burn shows a Cancel button and cancel calls job.cancel with the burn jobId', async () => {
+    // burnInline undefined → the rpc resolves {jobId} only, so burn stays in
+    // flight on waitForJobDone (Cancel stays offered).
+    const fake = makeFakeApi({ tracks: [track()] });
+    await mount(fake);
+    const burnBtn = [...container.querySelectorAll('.track-row button')].find(
+      (b) => b.textContent === 'Burn in',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      burnBtn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const cancelBtn = [...container.querySelectorAll('.track-ops button')].find(
+      (b) => b.textContent === 'Cancel',
+    ) as HTMLButtonElement;
+    expect(cancelBtn).toBeTruthy();
+    await act(async () => {
+      cancelBtn.click();
+      await Promise.resolve();
+    });
+    expect(fake.calls.find((c) => c.method === 'job.cancel')?.params).toEqual({
+      jobId: 'job-burn',
+    });
+    expect(container.querySelector('.status')?.textContent).toContain('Cancelled');
+    // Cancel drops the panel back to idle, so the progress bar + Cancel are gone.
+    expect(container.querySelector('.progress')).toBeNull();
+    expect(
+      [...container.querySelectorAll('.track-ops button')].some((b) => b.textContent === 'Cancel'),
+    ).toBe(false);
+  });
+
+  it('cancel swallows a job.cancel rejection (best-effort) and still returns to idle', async () => {
+    const fake = makeFakeApi({ tracks: [track()] });
+    await mount(fake);
+    const burnBtn = [...container.querySelectorAll('.track-row button')].find(
+      (b) => b.textContent === 'Burn in',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      burnBtn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // Make the job.cancel rpc reject; cancel must swallow it (no unhandled rejection).
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('cancel boom'));
+    const cancelBtn = [...container.querySelectorAll('.track-ops button')].find(
+      (b) => b.textContent === 'Cancel',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      cancelBtn.click();
+      await Promise.resolve();
+    });
+    // No error banner (best-effort), and the panel is back to idle/Cancelled.
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector('.status')?.textContent).toContain('Cancelled');
+  });
+
+  it('clears the burn progress bar when the job fails via a job.done error', async () => {
+    const fake = makeFakeApi({ tracks: [track()] });
+    await mount(fake);
+    const burnBtn = [...container.querySelectorAll('.track-row button')].find(
+      (b) => b.textContent === 'Burn in',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      burnBtn.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fake.fireProgress({ jobId: 'job-burn', pct: 50, message: 'burning' });
+    });
+    // In flight → the bar is shown at 50%.
+    expect(container.querySelector('.progress')?.textContent).toContain('50%');
+    await act(async () => {
+      fake.fireDone({
+        jobId: 'job-burn',
+        result: { error: { message: 'ffmpeg failed', type: 'BurnError' } },
+      });
+      await Promise.resolve();
+    });
+    // Failure → the stale bar is gone and the error is surfaced loudly.
+    expect(container.querySelector('.progress')).toBeNull();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('ffmpeg failed');
+  });
+
   it('refresh re-lists when the Refresh button is clicked', async () => {
     const fake = makeFakeApi({ tracks: [track()] });
     await mount(fake);
@@ -314,15 +409,15 @@ describe('<Tracks />', () => {
   it('uses String(err) when a mutation op rejects with a non-Error value', async () => {
     const fake = makeFakeApi({ tracks: [track()] });
     await mount(fake);
-    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce('plain add error');
-    const addBtn = [...container.querySelectorAll('.track-row button')].find(
-      (b) => b.textContent === 'Add',
+    (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce('plain remove error');
+    const removeBtn = [...container.querySelectorAll('.track-row button')].find(
+      (b) => b.textContent === 'Remove',
     ) as HTMLButtonElement;
     await act(async () => {
-      addBtn.click();
+      removeBtn.click();
       await Promise.resolve();
     });
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('plain add error');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('plain remove error');
   });
 
   it('uses Error.message when strip rejects with an Error instance', async () => {
@@ -373,7 +468,7 @@ describe('<Tracks />', () => {
     expect(container.querySelector('.progress')?.textContent).toContain('33%');
   });
 
-  it('shows the in-flight op labels (…/Stripping…) while an op is running', async () => {
+  it('shows the in-flight op label (…) while a mutation op is running', async () => {
     const fake = makeFakeApi({ tracks: [track()] });
     await mount(fake);
     // Hang the next op so the busy label renders.
@@ -381,11 +476,11 @@ describe('<Tracks />', () => {
     (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementationOnce(
       () => new Promise((res) => (release = res)),
     );
-    const addBtn = [...container.querySelectorAll('.track-row button')].find(
-      (b) => b.textContent === 'Add',
+    const removeBtn = [...container.querySelectorAll('.track-row button')].find(
+      (b) => b.textContent === 'Remove',
     ) as HTMLButtonElement;
     await act(async () => {
-      addBtn.click();
+      removeBtn.click();
       await Promise.resolve();
     });
     expect(
@@ -411,9 +506,9 @@ describe('<Tracks />', () => {
       removeBtn.click();
       await Promise.resolve();
     });
-    // The Remove button (3rd op button) now shows the in-flight ellipsis.
+    // The Remove button (1st op button now the row Add is gone) shows the ellipsis.
     const opButtons = [...container.querySelectorAll('.track-ops button')];
-    expect(opButtons[1].textContent).toBe('…'); // Remove is the 2nd op button
+    expect(opButtons[0].textContent).toBe('…'); // Remove is the 1st op button
     await act(async () => {
       release({});
       await Promise.resolve();

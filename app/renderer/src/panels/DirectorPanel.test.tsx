@@ -197,11 +197,20 @@ function makeClient(o: FakeOpts = {}): FakeClient {
         if (o.falsyPreview) return undefined;
         return o.preview ?? previewFixture();
       }),
-      apply: vi.fn(async (planId: string, confirmBudget?: string) => {
-        calls.push({ method: 'director.apply', args: [planId, confirmBudget] });
-        if (o.rejectApply) throw new Error('apply failed');
-        return { jobId: 'job-apply' };
-      }),
+      apply: vi.fn(
+        async (
+          planId: string,
+          confirmBudget?: string,
+          review?: {
+            opOverrides: readonly { id: string; status: string }[];
+            order: readonly string[];
+          },
+        ) => {
+          calls.push({ method: 'director.apply', args: [planId, confirmBudget, review] });
+          if (o.rejectApply) throw new Error('apply failed');
+          return { jobId: 'job-apply' };
+        },
+      ),
       undo: vi.fn(async (planId: string) => {
         calls.push({ method: 'director.undo', args: [planId] });
         if (o.rejectUndo) throw new Error('undo failed');
@@ -560,8 +569,13 @@ describe('DirectorPanel', () => {
       $('button[data-action="apply"]').click();
     });
     await flush();
-    // The first preview row's cacheKey is echoed.
-    expect(c.calls.find((x) => x.method === 'director.apply')?.args).toEqual(['plan-1', 'CK-TEXT']);
+    // The first preview row's cacheKey is echoed; the reviewed op statuses +
+    // order ride along so the server honours the (unedited here) plan.
+    expect(c.calls.find((x) => x.method === 'director.apply')?.args).toEqual([
+      'plan-1',
+      'CK-TEXT',
+      { opOverrides: [{ id: 'a', status: 'planned' }], order: ['a'] },
+    ]);
     // job.done -> applied statuses surface; eval/undo controls appear.
     await act(async () => {
       events.emitDone({
@@ -673,6 +687,8 @@ describe('DirectorPanel', () => {
     await flush();
     // Prior goal carried into the box; prior plan still on screen.
     expect(($('textarea[data-action="goal"]') as HTMLTextAreaElement).value).toBe('first goal');
+    // Focus moved into the prefilled textarea (keyboard convenience).
+    expect(document.activeElement).toBe($('textarea[data-action="goal"]'));
     expect($('[data-testid="plan-summary"]').textContent).toBe('1 trim');
     // Re-plan: prior plan stays until the new job.done lands.
     await clickPlan();
@@ -729,6 +745,43 @@ describe('DirectorPanel', () => {
     await flush();
     expect($('[data-testid="status-a"]').textContent).toBe('Planned');
     expect($('[data-testid="plan-summary"]').textContent).toBe('1 trim');
+  });
+
+  it('apply transmits the REVIEWED op statuses + reordered ids so edits are not lost', async () => {
+    const c = makeClient();
+    await planTo(
+      c,
+      planFixture([
+        op({ id: 'a', kind: 'trim' }),
+        op({ id: 'b', kind: 'trim' }),
+      ]),
+    );
+    // Disable "a" (planned -> dropped) and move it below "b" within its kind.
+    await act(async () => {
+      $('button[data-action="op-disable"][data-op="a"]').click();
+    });
+    await flush();
+    await act(async () => {
+      $('button[data-action="op-down"][data-op="a"]').click();
+    });
+    await flush();
+    await act(async () => {
+      $('button[data-action="apply"]').click();
+    });
+    await flush();
+    // The wire carries the toggled 'dropped' status AND the reordered id list,
+    // so the server executes the reviewed plan (not the stored verbatim one).
+    expect(c.calls.find((x) => x.method === 'director.apply')?.args).toEqual([
+      'plan-1',
+      'CK-TEXT',
+      {
+        opOverrides: [
+          { id: 'b', status: 'planned' },
+          { id: 'a', status: 'dropped' },
+        ],
+        order: ['b', 'a'],
+      },
+    ]);
   });
 
   it('re-enabling a dropped op clears its drop reason', async () => {
@@ -1067,7 +1120,11 @@ describe('DirectorPanel', () => {
       $('button[data-action="apply"]').click();
     });
     await flush();
-    expect(c.calls.find((x) => x.method === 'director.apply')?.args).toEqual(['plan-1', undefined]);
+    expect(c.calls.find((x) => x.method === 'director.apply')?.args).toEqual([
+      'plan-1',
+      undefined,
+      { opOverrides: [{ id: 'a', status: 'planned' }], order: ['a'] },
+    ]);
   });
 
   it('previewCost rejection surfaces an error (plan still shows)', async () => {

@@ -17,6 +17,7 @@ import type {
   AssetInfo,
   AudioTrack,
   AutosaveSettings,
+  BatchConsent,
   BatchState,
   BatchStatus,
   BatchSummary,
@@ -26,6 +27,7 @@ import type {
   ConvertOptions,
   Cue,
   DirectorEval,
+  DirectorOpStatus,
   DirectorPreview,
   DoneEvent,
   ExportDefaults,
@@ -88,6 +90,7 @@ import type {
   Video,
   VoiceSample,
 } from './schemas';
+import type { ShotOverride, ShotPlan } from '../reframeOverride';
 
 /** Read the preload-injected bridge without a global Window augmentation. */
 function bridge(): MediaApi {
@@ -174,8 +177,19 @@ export const client = {
   },
 
   transcribe: {
-    start: (videoId: string, language?: string): Promise<JobHandle & { transcript?: Transcript }> =>
-      rpc('transcribe.start', language ? { videoId, language } : { videoId }),
+    // A karaoke-style caption export needs per-WORD timings; `alignWords` opts the
+    // transcribe job into forced word alignment. Threaded only when true so
+    // non-karaoke callers keep their exact `{videoId}`/`{videoId, language}` wire.
+    start: (
+      videoId: string,
+      language?: string,
+      alignWords?: boolean,
+    ): Promise<JobHandle & { transcript?: Transcript }> =>
+      rpc('transcribe.start', {
+        videoId,
+        ...(language ? { language } : {}),
+        ...(alignWords ? { alignWords: true } : {}),
+      }),
   },
 
   subtitles: {
@@ -642,11 +656,29 @@ export const client = {
       templateId: string,
       sourceVideoIds: string[],
     ): Promise<{ batch: BatchState }> => rpc('batch.create', { name, templateId, sourceVideoIds }),
+    /**
+     * `batch.plan {id, confirmCloudBudget?, acknowledged?}` -> {consent} — the pure
+     * pre-run consent surface (DESIGN §9.1) for a batch's still-pending sources
+     * WITHOUT starting a job (zero provider calls). Unlike `start`, it ALWAYS returns
+     * a fully-populated run/skip surface so the renderer can render the §9.1 card
+     * before deciding whether to `start`.
+     */
+    plan: (
+      id: string,
+      opts?: { confirmCloudBudget?: boolean; acknowledged?: boolean },
+    ): Promise<{ consent: BatchConsent }> => rpc('batch.plan', { id, ...(opts ?? {}) }),
     start: (
       id: string,
       opts?: { confirmCloudBudget?: boolean; acknowledged?: boolean },
     ): Promise<JobHandle> => rpc('batch.start', { id, ...(opts ?? {}) }),
     status: (id: string): Promise<{ batch: BatchState }> => rpc('batch.status', { id }),
+    /**
+     * `batch.consent {id}` -> {consent} — a READ-ONLY run/skip preview computed via
+     * `plan_consent` directly (never short-circuits to None when the budget gate is
+     * off), so BatchConsentCard can always render the split before an `acknowledged`
+     * `start`. Zero provider calls; `confirmCloudBudget` is read from settings.
+     */
+    consent: (id: string): Promise<{ consent: BatchConsent }> => rpc('batch.consent', { id }),
     list: (): Promise<{ batches: BatchSummary[] }> => rpc('batch.list'),
     cancel: (id: string): Promise<{ ok: boolean }> => rpc('batch.cancel', { id }),
     resume: (id: string): Promise<JobHandle & { status?: BatchStatus }> =>
@@ -693,13 +725,48 @@ export const client = {
     /** `director.previewCost {planId}` -> per-data-type cost/route/egress (ZERO provider calls). */
     previewCost: (planId: string): Promise<DirectorPreview> =>
       rpc('director.previewCost', { planId }),
-    /** `director.apply {planId, confirmBudget?}` -> {jobId}; job.done = DirectorApplyResult. */
-    apply: (planId: string, confirmBudget?: string): Promise<JobHandle> =>
-      rpc('director.apply', confirmBudget === undefined ? { planId } : { planId, confirmBudget }),
+    /**
+     * `director.apply {planId, confirmBudget?, opOverrides?, order?}` -> {jobId};
+     * job.done = DirectorApplyResult. `review` carries the user-reviewed op statuses
+     * (`opOverrides`: planned<->dropped edits) + `order` (the reordered op ids) so the
+     * merged plan applies the user's edits; absent = apply the stored plan verbatim.
+     */
+    apply: (
+      planId: string,
+      confirmBudget?: string,
+      review?: { opOverrides: readonly { id: string; status: DirectorOpStatus }[]; order: readonly string[] },
+    ): Promise<JobHandle> =>
+      rpc('director.apply', {
+        planId,
+        ...(confirmBudget === undefined ? {} : { confirmBudget }),
+        ...(review ? { opOverrides: review.opOverrides, order: review.order } : {}),
+      }),
     /** `director.undo {planId}` -> {jobId}; re-applies the recorded inverse plan. */
     undo: (planId: string): Promise<JobHandle> => rpc('director.undo', { planId }),
     /** `director.evaluate {planId}` -> objective before/after metrics (synchronous). */
     evaluate: (planId: string): Promise<DirectorEval> => rpc('director.evaluate', { planId }),
+  },
+
+  /**
+   * `reframe.*` (V1.1 Lane R) — the manual per-shot correction surface. Both are a
+   * PURE compose (no heavy engine): `shotPlan` derives an editable {@link ShotPlan}
+   * from an already-computed reframe trace, and `applyOverrides` resolves a user's
+   * per-shot edits and returns the `affected` shot indices the R1 engine re-renders.
+   */
+  reframe: {
+    /** `reframe.shotPlan {trace, sourceWidth, sourceHeight, fps}` -> {plan}. */
+    shotPlan: (args: {
+      trace: unknown;
+      sourceWidth: number;
+      sourceHeight: number;
+      fps: number;
+    }): Promise<{ plan: ShotPlan }> => rpc('reframe.shotPlan', { ...args }),
+    /** `reframe.applyOverrides {plan, overrides}` -> {plan, affected}. */
+    applyOverrides: (args: {
+      plan: ShotPlan;
+      overrides: readonly ShotOverride[];
+    }): Promise<{ plan: ShotPlan; affected: number[] }> =>
+      rpc('reframe.applyOverrides', { plan: args.plan, overrides: args.overrides }),
   },
 } as const;
 

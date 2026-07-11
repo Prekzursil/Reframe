@@ -83,6 +83,15 @@ export function Refine({ videoId, api }: RefineProps): React.ReactElement {
     [videoId, removeFillers, removeSilence, noiseDb, minSilenceSec, mergeGapMs],
   );
 
+  // "See before you cut" contract: any knob change makes the on-screen plan/stats
+  // stale, so invalidate the preview — Apply is gated by `!plan` (below), so
+  // clearing it re-disables Apply until a fresh Preview is run. This prevents
+  // Apply from silently writing a cut that differs from every displayed number.
+  const invalidatePreview = useCallback((): void => {
+    setPlan(null);
+    setResultPath('');
+  }, []);
+
   const preview = useCallback(async (): Promise<void> => {
     // defensive: the button is disabled while previewing, so the UI cannot
     // dispatch a second preview in flight.
@@ -159,7 +168,10 @@ export function Refine({ videoId, api }: RefineProps): React.ReactElement {
             type="checkbox"
             data-toggle="removeFillers"
             checked={removeFillers}
-            onChange={(e) => setRemoveFillers(e.target.checked)}
+            onChange={(e) => {
+              setRemoveFillers(e.target.checked);
+              invalidatePreview();
+            }}
           />
           Remove fillers
         </label>
@@ -168,7 +180,10 @@ export function Refine({ videoId, api }: RefineProps): React.ReactElement {
             type="checkbox"
             data-toggle="removeSilence"
             checked={removeSilence}
-            onChange={(e) => setRemoveSilence(e.target.checked)}
+            onChange={(e) => {
+              setRemoveSilence(e.target.checked);
+              invalidatePreview();
+            }}
           />
           Remove silence
         </label>
@@ -181,7 +196,10 @@ export function Refine({ videoId, api }: RefineProps): React.ReactElement {
             type="number"
             data-tune="noiseDb"
             value={noiseDb}
-            onChange={(e) => setNoiseDb(Number(e.target.value))}
+            onChange={(e) => {
+              setNoiseDb(Number(e.target.value));
+              invalidatePreview();
+            }}
           />
         </label>
         <label>
@@ -191,7 +209,10 @@ export function Refine({ videoId, api }: RefineProps): React.ReactElement {
             step="0.1"
             data-tune="minSilenceSec"
             value={minSilenceSec}
-            onChange={(e) => setMinSilenceSec(Number(e.target.value))}
+            onChange={(e) => {
+              setMinSilenceSec(Number(e.target.value));
+              invalidatePreview();
+            }}
           />
         </label>
         <label>
@@ -200,7 +221,10 @@ export function Refine({ videoId, api }: RefineProps): React.ReactElement {
             type="number"
             data-tune="mergeGapMs"
             value={mergeGapMs}
-            onChange={(e) => setMergeGapMs(Number(e.target.value))}
+            onChange={(e) => {
+              setMergeGapMs(Number(e.target.value));
+              invalidatePreview();
+            }}
           />
         </label>
       </div>

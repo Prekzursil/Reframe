@@ -177,6 +177,12 @@ export function DirectorPanel({
   // subscriptions read the current pending job without re-subscribing.
   const pending = useRef<PendingJob | null>(null);
 
+  // F6: the prompt textarea, so "Adjust & re-plan" can move focus into the
+  // (prefilled) box for keyboard users. The textarea is mounted in the SAME
+  // activeVideoId!==null return branch as the Adjust button, so the ref is
+  // always populated whenever `adjust` can run.
+  const goalRef = useRef<HTMLTextAreaElement>(null);
+
   // WU-E1: the video this panel plans against — the app-selected `video.id`, or
   // (if that video was closed while a prior plan is still on screen) the plan's
   // own `videoId`. NEVER the goal text. `null` == no video and no plan → the
@@ -319,7 +325,15 @@ export function DirectorPanel({
     setProgress('Applying…');
     try {
       const ack = preview?.perFunction[0]?.cacheKey;
-      const job = await api.director.apply(plan.planId, ack);
+      // WU-director-controls: transmit the REVIEWED op statuses + order so the
+      // server executes the plan the user actually approved. Without these the
+      // sidecar applies the stored plan verbatim and every Disable/Reorder edit
+      // (which lives only in `plan.ops`) is silently ignored.
+      const review = {
+        opOverrides: plan.ops.map((o) => ({ id: o.id, status: o.status })),
+        order: plan.ops.map((o) => o.id),
+      };
+      const job = await api.director.apply(plan.planId, ack, review);
       pending.current = { jobId: job.jobId, kind: 'apply' };
     } catch (err) {
       pending.current = null;
@@ -364,15 +378,22 @@ export function DirectorPanel({
   }, [api, busy, plan]);
 
   // F6 "Adjust & re-plan": carry the prior goal forward into the prompt box (the
-  // prior plan stays visible until the re-plan returns) and focus the box.
+  // prior plan stays visible until the re-plan returns) and focus the box so a
+  // keyboard user lands in the prefilled textarea rather than on the button.
   const adjust = useCallback((): void => {
-    if (plan) setGoal(plan.goal);
+    if (plan) {
+      setGoal(plan.goal);
+      // The textarea is mounted alongside the Adjust button (same
+      // activeVideoId!==null return branch), so the ref is non-null here.
+      goalRef.current!.focus();
+    }
   }, [plan]);
 
   // WU-director-controls: enable/disable one op (toggle planned<->dropped) in the
-  // REVIEWABLE plan. The edit lands in `plan.ops` (the same state apply reads via
-  // planId), immutably, so the storyboard + the plain-language summary update and
-  // the change rides the next director.apply. A no-op while busy or post-apply.
+  // REVIEWABLE plan. The edit lands in `plan.ops` immutably, so the storyboard +
+  // the plain-language summary update; `apply` then transmits the reviewed op
+  // statuses + order (opOverrides/order) so the server honours the edit on the
+  // next director.apply. A no-op while busy or post-apply.
   const toggleOp = useCallback((opId: string): void => {
     setPlan((prev) =>
       /* v8 ignore next -- presence guard: the controls only render inside `plan && …`, so `prev` is non-null whenever this fires. */
@@ -479,6 +500,7 @@ export function DirectorPanel({
         <label htmlFor="director-goal">Editing goal</label>
         <textarea
           id="director-goal"
+          ref={goalRef}
           data-action="goal"
           value={goal}
           rows={2}

@@ -420,6 +420,14 @@ export function toReviewItems(candidates: Candidate[]): ReviewItem[] {
  * - stays within the 20-60s hard window (re-snap, not re-select)
  * - recomputes durationSec to match
  * The original is preserved by the caller (ReviewItem.original).
+ *
+ * CONTRACT-NOTE: `sourceStart` (the clip's in-point in the ORIGINAL video) is
+ * moved in lockstep with `start`. Both {@link previewWindow} (which reads
+ * `sourceStart`) and the sidecar cut (`shortmaker.py` cuts at
+ * `candidate['sourceStart']` and re-bases captions off it) key off `sourceStart`,
+ * so leaving it stale would make an "Earlier/Later start" nudge a no-op for the
+ * preview AND the exported clip while the displayed row time diverged. Keeping
+ * `start === sourceStart` invariant makes the nudge authoritative end-to-end.
  */
 export function nudgeCandidate(c: Candidate, deltaStart: number, deltaEnd: number): Candidate {
   const start = Math.max(0, c.start + deltaStart);
@@ -434,7 +442,7 @@ export function nudgeCandidate(c: Candidate, deltaStart: number, deltaEnd: numbe
     end = start + MAX_CLIP_SEC;
   }
   duration = end - start;
-  return { ...c, start, end, durationSec: duration };
+  return { ...c, start, end, durationSec: duration, sourceStart: start };
 }
 
 /** Reset a review item's boundaries back to the original candidate. */
@@ -712,10 +720,11 @@ export function errMsg(e: unknown): string {
 /**
  * Default job.done wait timeout (F2): a dead/wedged sidecar must not hang the UI
  * forever. Exports take the longest of the short-maker jobs; the shared
- * {@link DEFAULT_JOB_TIMEOUT_MS} (15 min) is a generous ceiling — long enough
- * for a real batch export, short enough that a silent sidecar death surfaces a
- * user-facing error instead of a frozen UI. Aliased to the shared default so
- * there is ONE source of truth for the ceiling.
+ * {@link DEFAULT_JOB_TIMEOUT_MS} is a last-resort ceiling that sits ABOVE the
+ * sidecar's own 30-min job watchdog (which fails loudly via job.done ERROR), so
+ * a legitimately long export is never falsely failed while the sidecar keeps
+ * streaming progress. Aliased to the shared default so there is ONE source of
+ * truth for the ceiling.
  */
 export const EXPORT_JOB_TIMEOUT_MS = DEFAULT_JOB_TIMEOUT_MS;
 

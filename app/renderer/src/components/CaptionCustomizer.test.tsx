@@ -21,11 +21,14 @@ describe('<CaptionCustomizer />', () => {
     container.remove();
   });
 
-  function render(value: CaptionOverride | undefined = undefined): {
+  function render(
+    value: CaptionOverride | undefined = undefined,
+    style = 'clean',
+  ): {
     onChange: ReturnType<typeof vi.fn>;
   } {
     const onChange = vi.fn();
-    act(() => root.render(<CaptionCustomizer value={value} onChange={onChange} />));
+    act(() => root.render(<CaptionCustomizer value={value} onChange={onChange} style={style} />));
     return { onChange };
   }
 
@@ -69,7 +72,9 @@ describe('<CaptionCustomizer />', () => {
   it('uses a custom label when provided', () => {
     const onChange = vi.fn();
     act(() =>
-      root.render(<CaptionCustomizer value={undefined} onChange={onChange} label="Tune" />),
+      root.render(
+        <CaptionCustomizer value={undefined} onChange={onChange} label="Tune" style="clean" />,
+      ),
     );
     expect(toggleBtn().textContent).toBe('Tune');
   });
@@ -105,7 +110,9 @@ describe('<CaptionCustomizer />', () => {
     // Re-render reflecting the new value so "Default" can clear it (the panel
     // stays open — `open` is component state preserved across the re-render).
     act(() =>
-      root.render(<CaptionCustomizer value={{ fontFamily: 'Anton' }} onChange={onChange} />),
+      root.render(
+        <CaptionCustomizer value={{ fontFamily: 'Anton' }} onChange={onChange} style="clean" />,
+      ),
     );
     fireSelect(q<HTMLSelectElement>('.caption-customizer__font select'), '');
     expect(onChange).toHaveBeenLastCalledWith(undefined);
@@ -164,22 +171,68 @@ describe('<CaptionCustomizer />', () => {
     expect(colorInput.value.toUpperCase()).toBe('#FFFFFF');
   });
 
-  it('toggles outline, card, and uppercase booleans (including a forced-off false)', () => {
-    const { onChange } = render({ outline: true });
+  it('seeds the boolean checkboxes from a template whose defaults are ON, not from false', () => {
+    // neon: outline=true, uppercase=true, box=false — the panel must MATCH the burn.
+    render(undefined, 'neon');
     open();
-    const outline = q<HTMLInputElement>('.caption-customizer__bool-outline input');
-    expect(outline.checked).toBe(true);
-    fireCheck(outline, false);
-    expect(onChange).toHaveBeenLastCalledWith({ outline: false });
+    expect(q<HTMLInputElement>('.caption-customizer__bool-outline input').checked).toBe(true);
+    expect(q<HTMLInputElement>('.caption-customizer__bool-uppercase input').checked).toBe(true);
+    expect(q<HTMLInputElement>('.caption-customizer__bool-card input').checked).toBe(false);
+  });
 
-    onChange.mockClear();
-    act(() => root.render(<CaptionCustomizer value={undefined} onChange={onChange} />));
+  it('toggles a template-default-OFF boolean ON in a single click (clean)', () => {
+    // clean: all three default OFF -> checked reflects the false base, one click stores true.
+    const { onChange } = render(undefined, 'clean');
+    open();
+    expect(q<HTMLInputElement>('.caption-customizer__bool-card input').checked).toBe(false);
     fireCheck(q<HTMLInputElement>('.caption-customizer__bool-card input'), true);
     expect(onChange).toHaveBeenLastCalledWith({ box: true });
 
     onChange.mockClear();
     fireCheck(q<HTMLInputElement>('.caption-customizer__bool-uppercase input'), true);
     expect(onChange).toHaveBeenLastCalledWith({ uppercase: true });
+  });
+
+  it('turns a template-default-ON boolean OFF in a single click (neon outline)', () => {
+    const { onChange } = render(undefined, 'neon'); // base outline true
+    open();
+    const outline = q<HTMLInputElement>('.caption-customizer__bool-outline input');
+    expect(outline.checked).toBe(true);
+    fireCheck(outline, false); // false !== base(true) -> store the explicit false delta
+    expect(onChange).toHaveBeenLastCalledWith({ outline: false });
+  });
+
+  it('collapses a boolean back to undefined when it re-matches the template default', () => {
+    // value carries an explicit outline:false delta vs neon's true default.
+    const { onChange } = render({ outline: false }, 'neon');
+    open();
+    const outline = q<HTMLInputElement>('.caption-customizer__bool-outline input');
+    expect(outline.checked).toBe(false); // ov.outline defined (false) — left branch of ??
+    fireCheck(outline, true); // true === base(true) -> clear the delta
+    expect(onChange).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it('reflects and collapses the Card and UPPERCASE deltas against their template defaults', () => {
+    // hormozi: box=true (default ON) — an explicit box:false is a delta.
+    const { onChange } = render({ box: false }, 'hormozi');
+    open();
+    const card = q<HTMLInputElement>('.caption-customizer__bool-card input');
+    expect(card.checked).toBe(false); // ov.box defined (false) — left branch of ??
+    fireCheck(card, true); // true === base(true) -> clear
+    expect(onChange).toHaveBeenLastCalledWith(undefined);
+
+    // clean uppercase default OFF; an explicit uppercase:true is a delta that
+    // collapses when unchecked back to the OFF default.
+    onChange.mockClear();
+    act(() =>
+      root.render(
+        <CaptionCustomizer value={{ uppercase: true }} onChange={onChange} style="clean" />,
+      ),
+    );
+    const uppercase = q<HTMLInputElement>('.caption-customizer__bool-uppercase input');
+    expect(uppercase.checked).toBe(true); // ov.uppercase defined (true) — left branch
+    fireCheck(uppercase, false); // false === base(false) -> clear
+    expect(onChange).toHaveBeenLastCalledWith(undefined);
   });
 
   it('selects a position band and clears it', () => {
@@ -190,7 +243,9 @@ describe('<CaptionCustomizer />', () => {
     expect(onChange).toHaveBeenLastCalledWith({ positionBand: 'center' });
     onChange.mockClear();
     act(() =>
-      root.render(<CaptionCustomizer value={{ positionBand: 'center' }} onChange={onChange} />),
+      root.render(
+        <CaptionCustomizer value={{ positionBand: 'center' }} onChange={onChange} style="clean" />,
+      ),
     );
     fireSelect(q<HTMLSelectElement>('.caption-customizer__band select'), '');
     expect(onChange).toHaveBeenLastCalledWith(undefined);
@@ -202,7 +257,9 @@ describe('<CaptionCustomizer />', () => {
     fireSelect(q<HTMLSelectElement>('.caption-customizer__lines select'), '1');
     expect(onChange).toHaveBeenLastCalledWith({ maxLines: 1 });
     onChange.mockClear();
-    act(() => root.render(<CaptionCustomizer value={{ maxLines: 1 }} onChange={onChange} />));
+    act(() =>
+      root.render(<CaptionCustomizer value={{ maxLines: 1 }} onChange={onChange} style="clean" />),
+    );
     fireSelect(q<HTMLSelectElement>('.caption-customizer__lines select'), '');
     expect(onChange).toHaveBeenLastCalledWith(undefined);
   });
@@ -234,9 +291,12 @@ describe('<CaptionCustomizer />', () => {
   const renderWith = (
     value: CaptionOverride | undefined,
     content?: import('../lib/captionDefaults').CaptionContentContext,
+    style = 'clean',
   ): void => {
     act(() =>
-      root.render(<CaptionCustomizer value={value} onChange={vi.fn()} content={content} />),
+      root.render(
+        <CaptionCustomizer value={value} onChange={vi.fn()} content={content} style={style} />,
+      ),
     );
   };
   const cpsSlider = (): HTMLInputElement => q<HTMLInputElement>('.caption-customizer__cps input');

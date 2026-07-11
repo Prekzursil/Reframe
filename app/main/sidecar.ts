@@ -298,6 +298,13 @@ export class Sidecar extends EventEmitter {
     this.restartTimestamps = [];
     this.stopping = false;
     this.emitStatus('restarting');
+    // Reject in-flight calls IMMEDIATELY (mirroring stop()/onExit): the old child's
+    // later 'exit' is intentionally dropped by the per-child guard once start()
+    // reassigns this.child, so without this any request in flight AT restart() time
+    // would linger until the 60s REQUEST_TIMEOUT_MS instead of failing loudly now.
+    // Unconditional (not inside the `if (existing)` block) so it also covers the
+    // post-give-up restart where this.child is already null (pending is empty -> no-op).
+    this.rejectAllPending(new Error('sidecar restarting'));
     const existing = this.child;
     // If a process is somehow still alive, tear it down first (best-effort) so
     // we don't leak it. Its later 'exit'/'error' is ignored by the per-child
@@ -537,4 +544,47 @@ export class Sidecar extends EventEmitter {
     }
     this.pending.clear();
   }
+}
+
+/**
+ * WU B3: start the sidecar `media.proxy.start` job for `videoId` and resolve with
+ * the built proxy's absolute path once its terminal `job.done` arrives. Rejects
+ * LOUDLY when the job reports an error payload (a failed transcode), finishes
+ * without a path, OR the sidecar process EXITS mid-build (a crash) — so the build
+ * promise ALWAYS settles instead of hanging until REQUEST_TIMEOUT_MS, and the
+ * caller (PlaybackProxy) never silently serves the raw source or wedges its
+ * in-flight map. This just bridges the job's done/exit events to a promise and
+ * always detaches BOTH listeners on settle.
+ */
+export function buildProxyJob(sc: Sidecar, videoId: string): Promise<string> {
+  return sc.request<{ jobId: string }>('media.proxy.start', { videoId }).then(
+    ({ jobId }) =>
+      new Promise<string>((resolveBuild, rejectBuild) => {
+        const onDone = (done: DoneNotification): void => {
+          if (done.jobId !== jobId) return;
+          sc.off('done', onDone);
+          sc.off('exit', onExit);
+          const result = (done.result ?? {}) as { path?: string; error?: { message?: string } };
+          if (result.error) {
+            rejectBuild(new Error(result.error.message ?? `proxy build failed for ${videoId}`));
+          } else if (typeof result.path === 'string' && result.path !== '') {
+            resolveBuild(result.path);
+          } else {
+            rejectBuild(new Error(`proxy build for ${videoId} returned no path`));
+          }
+        };
+        // A sidecar crash mid-build emits 'exit' but NEVER a matching 'done', so
+        // without this the promise would hang until the 60s request timeout. Reject
+        // loudly on exit and detach the done listener (once: 'exit' fires at most
+        // once for this build).
+        const onExit = (code: number | null): void => {
+          sc.off('done', onDone);
+          rejectBuild(
+            new Error(`sidecar exited (code ${code ?? 'null'}) during proxy build for ${videoId}`),
+          );
+        };
+        sc.on('done', onDone);
+        sc.once('exit', onExit);
+      }),
+  );
 }

@@ -297,6 +297,31 @@ describe('Workspace', () => {
     }
   });
 
+  it("wires the tabpanel container's id + aria-labelledby to the active tab's aria-controls", async () => {
+    await act(async () => {
+      root.render(<Workspace video={video} onBack={() => {}} />);
+    });
+    await flush();
+
+    // The active tab's aria-controls must resolve to the panel's id, and the
+    // panel's aria-labelledby back to the active tab's id (round-trip a11y wiring).
+    const panel = container.querySelector('.workspace__body[role="tabpanel"]');
+    expect(panel).not.toBeNull();
+    const activeTab = container.querySelector('[role="tab"][aria-selected="true"]');
+    expect(activeTab).not.toBeNull();
+    expect(panel?.getAttribute('id')).toBe(activeTab?.getAttribute('aria-controls'));
+    expect(panel?.getAttribute('aria-labelledby')).toBe(activeTab?.getAttribute('id'));
+
+    // Switching tabs re-points the panel wiring at the newly-active tab.
+    const diarizeTab = container.querySelector('[role="tab"][data-tab-id="diarize"]');
+    await act(async () => {
+      (diarizeTab as HTMLButtonElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+    expect(panel?.getAttribute('id')).toBe('tabpanel-diarize');
+    expect(panel?.getAttribute('aria-labelledby')).toBe('tab-diarize');
+  });
+
   // WU B3: the mstream resolver builds the proxy; the Workspace only REACTS to
   // the main process's `proxy.state` pushes. Drive the callback directly.
   async function renderAndCaptureProxyState(): Promise<(e: ProxyStateEvt) => void> {
@@ -355,9 +380,12 @@ describe('Workspace', () => {
     });
     await flush();
     expect(container.querySelector('.workspace__player-error')).toBeNull();
-    expect(container.querySelector('.workspace__player-note')?.textContent).toContain(
-      'Building preview',
-    );
+    const note = container.querySelector('.workspace__player-note');
+    expect(note?.textContent).toContain('Building preview');
+    // The transient status is announced to assistive tech (polite live region),
+    // mirroring every other status note in the app (not color/text-only).
+    expect(note?.getAttribute('role')).toBe('status');
+    expect(note?.getAttribute('aria-live')).toBe('polite');
 
     // once the proxy is ready, the reload clears the placeholder note.
     await act(async () => emit({ videoId: 'v1', state: 'ready', detail: '/proxies/v1.mp4' }));

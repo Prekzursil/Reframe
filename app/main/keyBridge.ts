@@ -66,14 +66,22 @@ const INJECT_METHODS: ReadonlySet<string> = new Set([
   'providers.usage', // builds the rotation pool to read per-key usage
   'providers.openrouterUsage', // GETs /key per RAW OpenRouter key
   'providers.revealKey', // returns the ONE stored raw key for a user-clicked reveal
+  'thumbnail.select', // the AI best-frame picker builds a CloudFrameScorer over the RAW vision key
+  'phase8.select', // the template phase-8 provider picker captures get_raw() synchronously
+  'recipes.run', // long recipe job whose cloud steps (subtitles.translate/shortmaker.select) need raw keys
+  'templates.apply', // rides the recipe runner — its default-template cloud steps need raw keys
+  'batch.start', // fans out over templates.apply, so its steps need the raw keys too
+  'batch.resume', // resumes a batch over templates.apply — same raw-key need
 ]);
 
 /**
  * True when `method`'s sidecar handler needs live raw key material, so main must
  * inject the decrypted keys. Enumerates the real provider-calling seams (ai.* /
  * director.* / shortmaker.* / index.* / translation / the key-reading providers.*
- * reads) — NOT providers.upsert (that is the store path, handled separately) and
- * NOT providers.testKey (its key rides the request params directly, transiently).
+ * reads / the thumbnail + phase8 provider pickers / the recipe·template·batch job
+ * runners whose nested cloud steps consume get_raw()) — NOT providers.upsert (that
+ * is the store path, handled separately) and NOT providers.testKey (its key rides
+ * the request params directly, transiently).
  */
 export function needsKeyInjection(method: string): boolean {
   return INJECT_PREFIXES.some((prefix) => method.startsWith(prefix)) || INJECT_METHODS.has(method);

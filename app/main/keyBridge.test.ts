@@ -71,6 +71,45 @@ describe('needsKeyInjection', () => {
       expect(needsKeyInjection(m)).toBe(true);
     }
   });
+  it('is true for the provider-calling job/picker methods (thumbnail·phase8·recipe·template·batch)', () => {
+    // Regression pin: these seams consume get_raw() but were previously OMITTED
+    // from the inject list, so their cloud routes ran with redacted marker keys.
+    for (const m of [
+      'thumbnail.select',
+      'phase8.select',
+      'recipes.run',
+      'templates.apply',
+      'batch.start',
+      'batch.resume',
+    ]) {
+      expect(needsKeyInjection(m)).toBe(true);
+    }
+  });
+  it('injects for EXACTLY the canonical raw-key-consuming method set (anti-drift)', () => {
+    // The single source of truth for methods whose sidecar handler reads get_raw().
+    // The sidecar side pins the same set (test_raw_vs_redacted_audit.py) so the two
+    // boundaries cannot silently drift apart again.
+    const CANONICAL_RAW_KEY_METHODS = [
+      'ai.planJob',
+      'director.plan',
+      'shortmaker.select',
+      'index.build',
+      'index.search',
+      'subtitles.translate',
+      'providers.usage',
+      'providers.openrouterUsage',
+      'providers.revealKey',
+      'thumbnail.select',
+      'phase8.select',
+      'recipes.run',
+      'templates.apply',
+      'batch.start',
+      'batch.resume',
+    ];
+    for (const m of CANONICAL_RAW_KEY_METHODS) {
+      expect(needsKeyInjection(m)).toBe(true);
+    }
+  });
   it('is false for the store path and non-provider methods', () => {
     for (const m of [
       'providers.upsert',

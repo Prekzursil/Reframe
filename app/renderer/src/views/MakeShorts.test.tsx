@@ -26,13 +26,19 @@ vi.mock('../components/CaptionDesigner', () => ({
     onChange,
     videoId,
   }: {
-    design: { style: string };
-    onChange: (d: { style: string }) => void;
+    design: { style: string; override?: Record<string, unknown> };
+    onChange: (d: { style: string; override?: Record<string, unknown> }) => void;
     videoId?: string;
   }) => (
     <div data-testid="caption-designer" data-style={design.style} data-video-id={videoId}>
       <button type="button" onClick={() => onChange({ ...design, style: 'karaoke' })}>
         designer-pick-karaoke
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange({ ...design, override: { uppercase: true, positionBand: 'top' } })}
+      >
+        designer-set-override
       </button>
     </div>
   ),
@@ -63,8 +69,34 @@ vi.mock('./Repurpose', () => ({
 }));
 
 vi.mock('../features/ShortMaker', () => ({
-  ShortMaker: ({ videoId }: { videoId: string }) => (
-    <div data-testid="shortmaker" data-video-id={videoId} />
+  ShortMaker: ({
+    videoId,
+    initialControls,
+    onReexport,
+  }: {
+    videoId: string;
+    initialControls?: { captionStyle?: string; language?: string };
+    onReexport?: (h: ShortReexportHint) => void;
+  }) => (
+    <div
+      data-testid="shortmaker"
+      data-video-id={videoId}
+      data-init-caption-style={initialControls?.captionStyle ?? ''}
+      data-init-language={initialControls?.language ?? ''}
+      data-has-reexport={onReexport ? 'true' : 'false'}
+    >
+      <button
+        type="button"
+        onClick={() =>
+          onReexport?.({
+            videoId: 'v2',
+            candidate: { hook: 'h', template: 't', viralityPct: 50, durationSec: 30 },
+          })
+        }
+      >
+        shortmaker-reexport
+      </button>
+    </div>
   ),
 }));
 
@@ -163,7 +195,38 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   vi.restoreAllMocks();
+  jobDoneCb = null;
+  delete (globalThis as { window: { api?: unknown } }).window.api;
 });
+
+// A driveable preload bridge for the DEFERRED shortmaker.export job wait:
+// `waitForJobDone` reads window.api.onJobDone (via resolveWindowApi). Installing
+// it lets a test emit the terminal job.done itself. `withJobDone=false` models an
+// older bridge with no onJobDone (waitForJobDone then resolves null immediately).
+let jobDoneCb: ((d: { jobId: string; result?: unknown }) => void) | null = null;
+
+function installBridge(withJobDone = true): void {
+  const api: Record<string, unknown> = {};
+  if (withJobDone) {
+    api.onJobDone = (cb: (d: { jobId: string; result?: unknown }) => void) => {
+      jobDoneCb = cb;
+      return () => {};
+    };
+  }
+  (globalThis as { window: { api?: unknown } }).window.api = api;
+}
+
+async function clickManualSubmit(): Promise<void> {
+  await act(async () => {
+    (
+      [...container.querySelectorAll('button')].find(
+        (b) => b.textContent === 'manual-submit',
+      ) as HTMLButtonElement
+    ).click();
+    await Promise.resolve();
+  });
+  await flush();
+}
 
 async function flush(): Promise<void> {
   await act(async () => {
@@ -254,6 +317,31 @@ describe('<MakeShorts />', () => {
     expect(container.querySelector('[data-testid="manual"]')).toBeTruthy();
     // The picker reflects the pre-selection once the library list resolves.
     expect(picker().value).toBe('v1');
+  });
+
+  // Finding@useShortsGallery:89 — the Make-tab ShortMaker now receives onReexport,
+  // so its inline ProducedShorts Re-export button is functional (re-primes the
+  // source video via the same handler the gallery uses).
+  it('wires onReexport on the Make-tab ShortMaker (inline re-export re-primes the source)', async () => {
+    libraryListMock.mockResolvedValue({
+      videos: [makeVideo(), makeVideo({ id: 'v2', title: 'Beta' })],
+    });
+    await mount();
+    await selectVideo('v1');
+    const sm = container.querySelector('[data-testid="shortmaker"]');
+    expect(sm?.getAttribute('data-has-reexport')).toBe('true');
+    await act(async () => {
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'shortmaker-reexport',
+        ) as HTMLButtonElement
+      ).click();
+    });
+    await flush();
+    // handleReexport re-primes the picker to the hinted source video.
+    expect(
+      container.querySelector('[data-testid="shortmaker"]')!.getAttribute('data-video-id'),
+    ).toBe('v2');
   });
 
   it('re-export from the gallery jumps to Make primed with the source video', async () => {
@@ -465,5 +553,138 @@ describe('<MakeShorts />', () => {
       await Promise.resolve();
     });
     root = createRoot(container);
+  });
+
+  it('ignores a late settings.get REJECTION after unmount (no prefsLoaded write)', async () => {
+    let rejectSettings: (e: unknown) => void = () => {};
+    settingsGetMock.mockReturnValue(
+      new Promise((_res, rej) => {
+        rejectSettings = rej;
+      }),
+    );
+    await act(async () => {
+      root.render(<MakeShorts />);
+    });
+    await flush();
+    act(() => root.unmount());
+    await act(async () => {
+      rejectSettings(new Error('late settings failure'));
+      await Promise.resolve();
+    });
+    root = createRoot(container);
+  });
+
+  // ---- deferred shortmaker.export job (verified finding: success reported early) --
+
+  it('waits for the deferred export job before reporting success (real clip count)', async () => {
+    installBridge(true);
+    exportMock.mockResolvedValue({ jobId: 'j1' });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    // The job is still running: no success note, no tray, and STILL busy.
+    expect(container.querySelector('.make-shorts__note')).toBeNull();
+    expect(container.querySelector('[data-testid="output-tray"]')).toBeNull();
+    expect(container.querySelector('[data-testid="manual"]')?.getAttribute('data-busy')).toBe(
+      'true',
+    );
+    // job.done delivers the real (two) clips.
+    await act(async () => {
+      jobDoneCb!({
+        jobId: 'j1',
+        result: { clips: [{ path: '/out/1.mp4' }, { path: '/out/2.mp4' }] },
+      });
+    });
+    await flush();
+    expect(container.querySelector('.make-shorts__note')?.textContent).toContain('Exported 2 clip');
+    expect(container.querySelector('[data-testid="output-tray"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="manual"]')?.getAttribute('data-busy')).toBe(
+      'false',
+    );
+  });
+
+  it('surfaces a deferred export job.done error (never a silent success)', async () => {
+    installBridge(true);
+    exportMock.mockResolvedValue({ jobId: 'j2' });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    await act(async () => {
+      jobDoneCb!({
+        jobId: 'j2',
+        result: { error: { message: 'ffmpeg exploded', type: 'ExportError' } },
+      });
+    });
+    await flush();
+    expect(container.querySelector('.make-shorts__error')?.textContent).toContain('ffmpeg exploded');
+    expect(container.querySelector('[data-testid="output-tray"]')).toBeNull();
+  });
+
+  it('reports zero clips when the bridge cannot observe job.done (no onJobDone)', async () => {
+    installBridge(false);
+    exportMock.mockResolvedValue({ jobId: 'j3' });
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    // waitForJobDone resolves null with no onJobDone channel → zero clips exported.
+    expect(container.querySelector('.make-shorts__note')?.textContent).toContain('Exported 0 clip');
+    expect(container.querySelector('[data-testid="output-tray"]')).toBeTruthy();
+  });
+
+  it('reports zero clips for a response that is neither clips nor a job handle', async () => {
+    // Neither {clips} nor {jobId}: extractClips is null AND isJobHandle is false,
+    // so the wait is skipped and the export settles at zero clips (no crash).
+    exportMock.mockResolvedValue({});
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    expect(container.querySelector('.make-shorts__note')?.textContent).toContain('Exported 0 clip');
+  });
+
+  // ---- V1.1 CaptionOverride threads through the manual export -------------------
+
+  it('threads the caption override patch into the export payload when set', async () => {
+    await mount();
+    await selectVideo('v1');
+    // Tune a within-template override via the caption editor, then export.
+    await act(async () => {
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'designer-set-override',
+        ) as HTMLButtonElement
+      ).click();
+    });
+    await flush();
+    await clickManualSubmit();
+    const [, , opts] = exportMock.mock.calls[0];
+    expect(opts.captionOverride).toEqual({ uppercase: true, positionBand: 'top' });
+  });
+
+  it('omits captionOverride from the export payload when no override is set', async () => {
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    const [, , opts] = exportMock.mock.calls[0];
+    expect(opts.captionOverride).toBeUndefined();
+  });
+
+  // ---- persisted caption/language default seeds the AI ShortMaker flow ----------
+
+  it('seeds the AI ShortMaker flow from the persisted caption/language default', async () => {
+    settingsGetMock.mockResolvedValue({ defaultCaptionStyle: 'bold', defaultLanguage: 'pt' });
+    await mount();
+    await selectVideo('v1');
+    const sm = container.querySelector('[data-testid="shortmaker"]');
+    expect(sm?.getAttribute('data-init-caption-style')).toBe('bold');
+    expect(sm?.getAttribute('data-init-language')).toBe('pt');
+  });
+
+  it('mounts the AI flow with built-in defaults when preferences fail to load (fail-open)', async () => {
+    settingsGetMock.mockRejectedValue(new Error('settings down'));
+    await mount();
+    await selectVideo('v1');
+    const sm = container.querySelector('[data-testid="shortmaker"]');
+    expect(sm).toBeTruthy();
+    expect(sm?.getAttribute('data-init-caption-style')).toBe('libass');
   });
 });

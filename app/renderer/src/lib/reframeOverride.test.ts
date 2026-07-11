@@ -127,6 +127,12 @@ describe('applyShotOverrides', () => {
   it('throws loud on an override for an unknown shot index', () => {
     expect(() => applyShotOverrides(plan(), [{ index: 9 }])).toThrow('unknown shot index 9');
   });
+
+  it('throws loud on a duplicate override for the same shot index', () => {
+    expect(() => applyShotOverrides(plan(), [{ index: 0 }, { index: 0 }])).toThrow(
+      'duplicate override for shot index 0',
+    );
+  });
 });
 
 describe('affectedShotIndices', () => {

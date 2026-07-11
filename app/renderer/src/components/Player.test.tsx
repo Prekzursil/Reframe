@@ -308,6 +308,64 @@ describe('Player window mode', () => {
     expect(pauseMock).not.toHaveBeenCalled();
   });
 
+  it('fires the window-end stop only ONCE even when the snap re-triggers timeupdate', () => {
+    // Real Chromium: `currentTime = w.end` queues another timeupdate (even while
+    // paused) that still satisfies windowEndReached; the guard blocks a duplicate
+    // onEnded + a redundant same-value seek (Player.tsx re-entry guard).
+    const onEnded = vi.fn();
+    const video = render({ videoId: 'vid-1', window: win, onEnded });
+    act(() => {
+      video.currentTime = 30.2; // timeupdate overshoots the out point
+      video.dispatchEvent(new Event('timeupdate'));
+    });
+    expect(pauseMock).toHaveBeenCalledTimes(1);
+    expect(onEnded).toHaveBeenCalledTimes(1);
+    // The snap left currentTime at w.end (30); a second timeupdate at the snapped
+    // out point must be a no-op.
+    act(() => {
+      video.dispatchEvent(new Event('timeupdate'));
+    });
+    expect(pauseMock).toHaveBeenCalledTimes(1);
+    expect(onEnded).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-arms and re-fires the stop after the head returns inside the window', () => {
+    const onEnded = vi.fn();
+    const video = render({ videoId: 'vid-1', window: win, onEnded });
+    act(() => {
+      video.currentTime = 30.2;
+      video.dispatchEvent(new Event('timeupdate'));
+    });
+    expect(onEnded).toHaveBeenCalledTimes(1);
+    // The user scrubs back inside the window (or replays) — this re-arms the guard.
+    act(() => {
+      video.currentTime = 20;
+      video.dispatchEvent(new Event('timeupdate'));
+    });
+    // Reaching the out point again fires the stop a second time.
+    act(() => {
+      video.currentTime = 30.2;
+      video.dispatchEvent(new Event('timeupdate'));
+    });
+    expect(onEnded).toHaveBeenCalledTimes(2);
+    expect(pauseMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-arms the end guard on a windowless timeupdate', () => {
+    // No window: handleTimeUpdate takes the `!w` short-circuit, clearing the guard
+    // and never stopping (covers the windowless re-arm branch).
+    const onTimeUpdate = vi.fn();
+    const onEnded = vi.fn();
+    const video = render({ videoId: 'vid-1', onTimeUpdate, onEnded });
+    act(() => {
+      video.currentTime = 5;
+      video.dispatchEvent(new Event('timeupdate'));
+    });
+    expect(onTimeUpdate).toHaveBeenCalledWith(5);
+    expect(onEnded).not.toHaveBeenCalled();
+    expect(pauseMock).not.toHaveBeenCalled();
+  });
+
   it('re-seeks when the window prop changes (next candidate preview)', () => {
     const video = render({ videoId: 'vid-1', window: win });
     act(() => {
@@ -376,6 +434,31 @@ describe('Player reloadToken (shake-free proxy swap)', () => {
     expect(loadMock).toHaveBeenCalledTimes(1);
     // The reload's loadedmetadata now re-seeks to the window start.
     act(() => video.dispatchEvent(new Event('loadedmetadata')));
+    expect(video.currentTime).toBe(12.5);
+  });
+
+  it('re-seeks the window start after a reload even when metadata was ALREADY loaded', () => {
+    // readyState>=1 proxy swap: the window effect used to seek immediately and
+    // return WITHOUT attaching a listener, so the reload's re-fired loadedmetadata
+    // left the playhead at t=0. The listener must stay armed and re-seek.
+    defaultReadyState = 1; // HAVE_METADATA before any reload
+    const win = { start: 12.5, end: 30 };
+    const video = render({ videoId: 'vid-1', window: win, reloadToken: 0 });
+    expect(video.currentTime).toBe(12.5); // immediate seek — metadata already ready
+    act(() => {
+      video.currentTime = 20; // user scrubs away
+    });
+    // Proxy swap bumps the token -> video.load() re-fetches the now-ready proxy.
+    act(() => {
+      root.render(<Player videoId="vid-1" window={win} reloadToken={1} />);
+    });
+    expect(loadMock).toHaveBeenCalledTimes(1);
+    // Real Chromium: load() resets the playhead; the re-fired loadedmetadata must
+    // re-seek to the window start rather than leaving it at t=0.
+    act(() => {
+      video.currentTime = 0;
+      video.dispatchEvent(new Event('loadedmetadata'));
+    });
     expect(video.currentTime).toBe(12.5);
   });
 });

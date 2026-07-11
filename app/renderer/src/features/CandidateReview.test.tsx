@@ -151,6 +151,34 @@ describe('<CandidateReview />', () => {
     expect(rankBtn.getAttribute('aria-pressed')).toBe('false');
   });
 
+  it('surfaces a preview decode error as a role="alert" note (not a silent black frame)', () => {
+    const it0 = item({ sourceStart: 100, end: 130 });
+    mount({ items: [it0], selected: it0 });
+    const video = container.querySelector('video') as HTMLVideoElement;
+    expect(video).toBeTruthy();
+    // jsdom leaves video.error null, so Player emits its generic "media failed to
+    // load" message — the same path a real decode/resolver failure takes.
+    act(() => {
+      video.dispatchEvent(new Event('error'));
+    });
+    const note = container.querySelector('.sm-preview-error[role="alert"]');
+    expect(note?.textContent).toContain('media failed to load');
+  });
+
+  it('clears the stale preview error when the reviewer switches candidates', () => {
+    const a = item({ rank: 1, sourceStart: 100, end: 130 });
+    const b = item({ rank: 2, sourceStart: 200, end: 230 });
+    mount({ items: [a, b], selected: a });
+    const video = container.querySelector('video') as HTMLVideoElement;
+    act(() => {
+      video.dispatchEvent(new Event('error'));
+    });
+    expect(container.querySelector('.sm-preview-error')).toBeTruthy();
+    // Selecting another candidate re-primes the preview, so the old error must go.
+    mount({ items: [a, b], selected: b });
+    expect(container.querySelector('.sm-preview-error')).toBeNull();
+  });
+
   it('advertises the single-letter shortcuts to AT and exposes the legend (F4)', () => {
     const it = item();
     mount({ items: [it], selected: it });

@@ -477,14 +477,18 @@ describe('nudgeCandidate', () => {
     }
   });
 
-  it('does not change rank/hook/why/score/sourceStart (only boundaries)', () => {
+  it('keeps rank/hook/why/score; moves sourceStart in lockstep with start', () => {
     const base = cand();
     const c = nudgeCandidate(base, 5, 5);
     expect(c.rank).toBe(base.rank);
     expect(c.hook).toBe(base.hook);
     expect(c.why).toBe(base.why);
     expect(c.score).toBe(base.score);
-    expect(c.sourceStart).toBe(base.sourceStart);
+    // Fix: the start-boundary nudge now moves the clip's source in-point in
+    // lockstep with start (the sidecar cut + preview both key off sourceStart),
+    // so an "Earlier/Later start" is authoritative end-to-end, not a no-op.
+    expect(c.sourceStart).toBe(c.start);
+    expect(c.sourceStart).not.toBe(base.sourceStart);
   });
 });
 
@@ -3279,5 +3283,246 @@ describe('<ShortMaker /> component', () => {
       progressCb!({ jobId: '', pct: 30 } as unknown as JobProgress);
     });
     expect(container.querySelector('.sm-progress')?.textContent).toContain('30%');
+  });
+
+  // -------------------------------------------------------------------------
+  // Reset per-video review state on a videoId prop change (stale-candidate fix).
+  // -------------------------------------------------------------------------
+
+  it('clears the stale candidate list when the videoId prop changes (no cross-video leak)', async () => {
+    const rpc = rpcFake({
+      'tracks.audio.list': { audioTracks: [] },
+      'shortmaker.select': { candidates: THREE },
+    });
+    const api = makeApi({ rpc });
+    render(<ShortMaker videoId="v1" api={api} />);
+    await submitForm();
+    // v1's candidates are on screen and reviewable.
+    expect(container.querySelector('.sm-candidate')).toBeTruthy();
+
+    // Switch to a DIFFERENT video on the SAME mounted instance (parent swaps the
+    // prop only). The per-video review state must be cleared.
+    render(<ShortMaker videoId="v2" api={api} />);
+    await flush();
+    expect(container.querySelector('.sm-candidate')).toBeNull();
+    // Back to the idle prompt form (phase reset to idle).
+    expect(byLabel('Prompt')).toBeTruthy();
+  });
+
+  // -------------------------------------------------------------------------
+  // Progress-filter: reject a concurrent job's progress while none is active.
+  // -------------------------------------------------------------------------
+
+  it("ignores a concurrent job's progress while no ShortMaker job is active yet", async () => {
+    let progressCb: ((p: JobProgress) => void) | null = null;
+    // shortmaker.select never resolves -> activeJobRef stays null the whole time.
+    const rpc = vi.fn((method: string) =>
+      method === 'shortmaker.select' ? new Promise(() => {}) : Promise.resolve({}),
+    ) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    const api = makeApi({
+      rpc,
+      onProgress: (fn) => {
+        progressCb = fn;
+        return () => undefined;
+      },
+    });
+    render(<ShortMaker videoId="v1" api={api} />);
+    const form = container.querySelector('form')!;
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    // A concurrent job's progress (a real, non-empty jobId) must NOT hijack the
+    // bar while activeJobRef is still null (only jobId-less '' early progress may).
+    await act(async () => {
+      progressCb!({ jobId: 'someone-else', pct: 88, message: 'not mine' });
+    });
+    expect(container.querySelector('.sm-progress')?.textContent ?? '').not.toContain('88%');
+  });
+
+  // -------------------------------------------------------------------------
+  // media.playable latch: unsubscribe on the flip so later job.done never re-bump.
+  // -------------------------------------------------------------------------
+
+  it('latches the media.playable subscription on the flip (later job.done never re-polls)', async () => {
+    let doneCb: ((d: JobDone) => void) | null = null;
+    const playableResolvers: Array<(v: unknown) => void> = [];
+    let initialDone = false;
+    const rpc = vi.fn((method: string) => {
+      if (method === 'media.playable') {
+        if (!initialDone) {
+          initialDone = true;
+          return Promise.resolve({ playable: false });
+        }
+        return new Promise((res) => {
+          playableResolvers.push(res as (v: unknown) => void);
+        });
+      }
+      if (method === 'captions.cues') return Promise.resolve({ cues: [] });
+      return Promise.resolve({});
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    const api = makeApi({
+      rpc,
+      onJobDone: (fn) => {
+        doneCb = fn;
+        return () => {
+          doneCb = null;
+        };
+      },
+    });
+    render(<ShortMaker videoId="v1" api={api} />);
+    await flush();
+    // Source started not-playable -> subscribed to job.done.
+    expect(doneCb).not.toBeNull();
+
+    // Fire TWO job.done events BEFORE either re-poll resolves; both schedule a
+    // media.playable re-poll while the subscription is still live.
+    await act(async () => {
+      doneCb!({ jobId: 'p1', result: {} });
+      doneCb!({ jobId: 'p2', result: {} });
+    });
+    expect(playableResolvers).toHaveLength(2);
+
+    // Resolve the FIRST re-poll -> flip -> latch tears the subscription down.
+    await act(async () => {
+      playableResolvers[0]({ playable: true });
+      await Promise.resolve();
+    });
+    await flush();
+    // offDone() ran exactly on the flip (the `if (offDone)` TRUE branch).
+    expect(doneCb).toBeNull();
+
+    // Resolve the SECOND, already-in-flight re-poll -> it enters the flip block
+    // but offDone is now null (the `if (offDone)` FALSE branch) -> no double
+    // unsubscribe, no crash.
+    await act(async () => {
+      playableResolvers[1]({ playable: true });
+      await Promise.resolve();
+    });
+    await flush();
+    expect(doneCb).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // Sync-resolve abort guards on runExport / runBatch (mirror runSelect).
+  // -------------------------------------------------------------------------
+
+  it('Cancel during a synchronously-resolving export loads no clips and records no exported feedback', async () => {
+    let resolveExport!: (v: unknown) => void;
+    const rpc = vi.fn((method: string) => {
+      if (method === 'shortmaker.select') return Promise.resolve({ candidates: THREE });
+      if (method === 'shortmaker.export')
+        return new Promise((r) => {
+          resolveExport = r as (v: unknown) => void;
+        });
+      return Promise.resolve({});
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc })} />);
+    await submitForm();
+    const row = container.querySelector('.sm-candidate[data-id="1@97"]')!;
+    act(() => (row.querySelector('[aria-label="Approve"]') as HTMLButtonElement).click());
+    // Kick off the export; its rpc stays pending (sync-resolve path, no job handle).
+    await act(async () => {
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'Export approved',
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    // Cancel while the export rpc is in flight (aborts the controller).
+    await act(async () => {
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'Cancel',
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    // Resolve the export on the SYNC path: the abort guard must fire (clean cancel).
+    await act(async () => {
+      resolveExport({ clips: [{ path: '/out/1.mp4' }] });
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('.sm-exported')).toBeNull();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    const exportedFeedback = rpc.mock.calls.filter(
+      (c) => c[0] === 'feedback.record' && (c[1] as { action?: string }).action === 'exported',
+    );
+    expect(exportedFeedback).toHaveLength(0);
+  });
+
+  it('Cancel during a synchronously-resolving batch SELECT never dispatches export (stays idle)', async () => {
+    let resolveSelect!: (v: unknown) => void;
+    const rpc = vi.fn((method: string) => {
+      if (method === 'shortmaker.select')
+        return new Promise((r) => {
+          resolveSelect = r as (v: unknown) => void;
+        });
+      return Promise.resolve({});
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc })} initialControls={{ count: 2 }} />);
+    await act(async () => {
+      (byLabel('Make N shorts') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    // Cancel while the select rpc is in flight.
+    await act(async () => {
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'Cancel',
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    // Resolve select on the SYNC path with candidates: guard (a) must throw before
+    // the export rpc is ever dispatched.
+    await act(async () => {
+      resolveSelect({ candidates: THREE });
+      await Promise.resolve();
+    });
+    await flush();
+    expect(rpc.mock.calls.find((c) => c[0] === 'shortmaker.export')).toBeUndefined();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(
+      [...container.querySelectorAll('button')].find((b) => b.textContent === 'Cancel'),
+    ).toBeUndefined();
+  });
+
+  it('Cancel during a synchronously-resolving batch EXPORT loads no clips (stays idle)', async () => {
+    let resolveExport!: (v: unknown) => void;
+    const rpc = vi.fn((method: string) => {
+      if (method === 'shortmaker.select') return Promise.resolve({ candidates: THREE });
+      if (method === 'shortmaker.export')
+        return new Promise((r) => {
+          resolveExport = r as (v: unknown) => void;
+        });
+      return Promise.resolve({});
+    }) as unknown as Api['rpc'] & ReturnType<typeof vi.fn>;
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc })} initialControls={{ count: 2 }} />);
+    await act(async () => {
+      (byLabel('Make N shorts') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+    // select resolved synchronously (top auto-approved, phase 'exporting'); the
+    // export rpc is pending. Cancel while it is in flight.
+    await act(async () => {
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'Cancel',
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    // Resolve the export on the SYNC path: guard (b) must throw (clean cancel).
+    await act(async () => {
+      resolveExport({ clips: [{ path: '/out/b.mp4' }] });
+      await Promise.resolve();
+    });
+    await flush();
+    expect(container.querySelector('.sm-exported')).toBeNull();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 });

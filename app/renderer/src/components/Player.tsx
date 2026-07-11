@@ -181,6 +181,13 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
   loopRef.current = loop;
   const callbacksRef = useRef({ onTimeUpdate, onEnded, onError });
   callbacksRef.current = { onTimeUpdate, onEnded, onError };
+  // Re-entry guard for the window-end stop: assigning `currentTime = w.end`
+  // queues another `timeupdate` in real Chromium (even while paused), which still
+  // satisfies `windowEndReached` and would re-run the stop — a duplicate onEnded
+  // and a redundant same-value seek. The flag fires the stop exactly once per
+  // arrival at the out point and re-arms when the head returns inside the window
+  // (or the player loops).
+  const stoppedAtEndRef = useRef(false);
 
   // Window mode: position the playhead at the window start once metadata is
   // available (seeking before HAVE_METADATA is silently dropped by Chromium).
@@ -194,11 +201,19 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
       video.currentTime = win.start;
       if (autoPlay) safePlay(video);
     };
-    if (video.readyState >= 1 /* HAVE_METADATA */) {
-      seekToStart();
-      return undefined;
-    }
+    // Always listen: a proxy-swap `video.load()` resets readyState and re-fires
+    // `loadedmetadata`, so the listener must stay armed to re-seek the window
+    // start instead of leaving the reloaded stream parked at t=0. (A readyState>=1
+    // early-return that skipped this left post-load() previews stuck at t=0.)
     video.addEventListener('loadedmetadata', seekToStart);
+    if (video.readyState >= 1 /* HAVE_METADATA */) {
+      // Metadata already present (cached src / a re-render before any reload):
+      // seek now, then re-arm `done` so a later load()-driven `loadedmetadata`
+      // re-seeks too. A same-load duplicate metadata event stays a no-op because
+      // it only fires once per load, so the user's own scrub is never clobbered.
+      seekToStart();
+      done = false;
+    }
     return () => video.removeEventListener('loadedmetadata', seekToStart);
     // `reloadToken` is a dep so a proxy-swap reload (video.load() re-fires
     // loadedmetadata) re-seeks the window start instead of staying at t=0.
@@ -216,12 +231,20 @@ export const Player = forwardRef<PlayerHandle, PlayerProps>(function Player(prop
       const t = video.currentTime;
       callbacksRef.current.onTimeUpdate?.(t);
       const w = winRef.current;
-      if (!w || !windowEndReached(t, w)) return;
+      if (!w || !windowEndReached(t, w)) {
+        // Head is back inside the window (or there is no window): re-arm so the
+        // next arrival at the out point fires the stop exactly once.
+        stoppedAtEndRef.current = false;
+        return;
+      }
       if (loopRef.current) {
+        stoppedAtEndRef.current = false;
         video.currentTime = w.start;
         safePlay(video);
         return;
       }
+      if (stoppedAtEndRef.current) return; // already stopped at this out point
+      stoppedAtEndRef.current = true;
       video.pause();
       video.currentTime = w.end; // snap the playhead exactly onto the out point
       callbacksRef.current.onEnded?.();

@@ -8,7 +8,7 @@
 // down so the focusable group keeps its T6 keyboard semantics. The DOM is
 // byte-identical to the inline JSX it replaced.
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { Player, type PlayerHandle, type PlayerWindow } from '../components/Player';
 import { CaptionOverlay } from '../components/CaptionOverlay';
@@ -71,6 +71,16 @@ export function CandidateReview({
   onNudge,
   onReset,
 }: CandidateReviewProps): React.JSX.Element | null {
+  // A decode/resolver failure on the preview Player must be SHOWN, not swallowed
+  // into a silent black frame (a reviewer could otherwise approve a clip they
+  // never saw). Player.onError surfaces it here; mirrors Workspace's player-error
+  // banner. View-local + transient — cleared whenever the previewed source
+  // changes (another candidate, a new video, or a proxy reload).
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  useEffect(() => {
+    setPreviewError(null);
+  }, [selectedId, videoId, playerEpoch]);
+
   if (items.length === 0) return null;
 
   // P4 §7: the DISPLAY order of the candidate list (ids unchanged, so selection
@@ -110,6 +120,7 @@ export function CandidateReview({
               window={preview}
               reloadToken={playerEpoch}
               onTimeUpdate={onTimeUpdate}
+              onError={(message) => setPreviewError(message)}
             />
             {/* P4 §5: live caption overlay — mirrors the selected template +
                 hook title so the reviewer sees how captions would look. No-ops
@@ -122,6 +133,11 @@ export function CandidateReview({
                 hookTitle={controls.hookTitle ? selected.current.hook : undefined}
                 window={preview}
               />
+            )}
+            {previewError && (
+              <div className="sm-preview-error" role="alert">
+                {previewError}
+              </div>
             )}
           </div>
           <div className="sm-preview-markers">

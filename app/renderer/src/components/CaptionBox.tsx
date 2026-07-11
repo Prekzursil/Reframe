@@ -146,6 +146,12 @@ export function CaptionBox({
       aria-label={label}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      // An interrupted pointer capture (touch cancel, OS gesture, focus loss)
+      // fires pointercancel/lostpointercapture — NOT pointerup — so without these
+      // the box would keep following the cursor with no button held. Reuse the
+      // terminal handler, which clears drag state and releases capture.
+      onPointerCancel={onPointerUp}
+      onLostPointerCapture={onPointerUp}
     >
       <div
         className={`caption-box${disabled ? ' is-readonly' : ''}`}

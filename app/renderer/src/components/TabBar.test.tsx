@@ -1,7 +1,11 @@
-import { describe, it, expect, vi } from 'vitest';
+// @vitest-environment jsdom
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import React from 'react';
-import { TabBar, type TabDef, type TabGroup } from './TabBar';
+import React, { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { TabBar, tabId, tabPanelId, type TabDef, type TabGroup } from './TabBar';
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const TABS: TabDef[] = [
   { id: 'a', label: 'Alpha' },
@@ -148,5 +152,102 @@ describe('TabBar (grouped clusters, WU-3a2)', () => {
     ) as React.ReactElement;
     toggleButton.props.onClick();
     expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+});
+
+// WU-a11y: the ARIA tabs keyboard model (roving tabindex + arrow/Home/End nav +
+// tab↔panel id wiring), ported from TopTabBar. Rendered under jsdom so focus and
+// key handling are exercised for real.
+describe('TabBar keyboard model (roving tabindex + arrow nav)', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  const renderBar = (props: React.ComponentProps<typeof TabBar>): void => {
+    act(() => root.render(<TabBar {...props} />));
+  };
+  const btn = (id: string): HTMLButtonElement =>
+    container.querySelector(`[data-tab-id="${id}"]`) as HTMLButtonElement;
+  const key = (el: HTMLElement, k: string): void => {
+    act(() => {
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+    });
+  };
+
+  it('applies roving tabindex (only active is 0) and id/aria-controls wiring', () => {
+    renderBar({ tabs: TABS, active: 'a', onSelect: () => {} });
+    expect(btn('a').getAttribute('tabindex')).toBe('0');
+    expect(btn('b').getAttribute('tabindex')).toBe('-1');
+    expect(btn('a').id).toBe(tabId('a'));
+    expect(btn('a').getAttribute('aria-controls')).toBe(tabPanelId('a'));
+    expect(btn('b').getAttribute('aria-controls')).toBe(tabPanelId('b'));
+  });
+
+  it('ArrowRight / ArrowLeft move selection and focus, wrapping at both ends', () => {
+    const onSelect = vi.fn();
+    renderBar({ tabs: TABS, active: 'a', onSelect });
+    // ArrowRight from a (index 0, not last) -> b, and focus follows.
+    key(btn('a'), 'ArrowRight');
+    expect(onSelect).toHaveBeenLastCalledWith('b');
+    expect(document.activeElement).toBe(btn('b'));
+    // ArrowRight from b (last) wraps to a.
+    key(btn('b'), 'ArrowRight');
+    expect(onSelect).toHaveBeenLastCalledWith('a');
+    expect(document.activeElement).toBe(btn('a'));
+    // ArrowLeft from a (index 0) wraps to b (last).
+    key(btn('a'), 'ArrowLeft');
+    expect(onSelect).toHaveBeenLastCalledWith('b');
+    // ArrowLeft from b (index 1, not 0) -> a.
+    key(btn('b'), 'ArrowLeft');
+    expect(onSelect).toHaveBeenLastCalledWith('a');
+  });
+
+  it('Home selects the first tab and End selects the last', () => {
+    const onSelect = vi.fn();
+    renderBar({ tabs: TABS, active: 'a', onSelect });
+    key(btn('b'), 'Home');
+    expect(onSelect).toHaveBeenLastCalledWith('a');
+    key(btn('a'), 'End');
+    expect(onSelect).toHaveBeenLastCalledWith('b');
+  });
+
+  it('ignores non-navigation keys (no selection change)', () => {
+    const onSelect = vi.fn();
+    renderBar({ tabs: TABS, active: 'a', onSelect });
+    key(btn('a'), 'x');
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('grouped mode: arrow nav traverses primary tabs and skips a collapsed advanced tab', () => {
+    const onSelect = vi.fn();
+    renderBar({ tabs: GROUP_TABS, active: 't1', onSelect, groups: GROUPS, advancedOpen: false });
+    // ArrowRight from t1 -> t2 (t3 is in the collapsed cluster, not in the order).
+    key(btn('t1'), 'ArrowRight');
+    expect(onSelect).toHaveBeenLastCalledWith('t2');
+    // ArrowRight from t2 (last reachable) wraps to t1, NOT t3.
+    key(btn('t2'), 'ArrowRight');
+    expect(onSelect).toHaveBeenLastCalledWith('t1');
+    // A keydown on the hidden advanced tab t3 is a no-op (index -1 branch).
+    onSelect.mockClear();
+    key(btn('t3'), 'ArrowRight');
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('grouped mode: an open advanced cluster joins the arrow-nav order', () => {
+    const onSelect = vi.fn();
+    renderBar({ tabs: GROUP_TABS, active: 't2', onSelect, groups: GROUPS, advancedOpen: true });
+    // ArrowRight from t2 (last primary) -> t3 (advanced now reachable), focus follows.
+    key(btn('t2'), 'ArrowRight');
+    expect(onSelect).toHaveBeenLastCalledWith('t3');
+    expect(document.activeElement).toBe(btn('t3'));
   });
 });

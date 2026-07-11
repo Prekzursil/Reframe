@@ -18,6 +18,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import './panels.css';
 import { fmtSeconds, getApi } from './_api';
+import type { AiPlan } from '../components/useAiJob';
 import type { PlayerHandle } from '../components/Player';
 import type { IndexHit, IndexStatus } from '../lib/rpc';
 
@@ -91,7 +92,15 @@ export function SemanticSearch({ videoId, playerRef }: SemanticSearchProps): Rea
   const startBuild = useCallback(async () => {
     setError('');
     try {
-      const res = await getApi().rpc<{ jobId: string }>('index.build', { videoId });
+      // Cloud-budget pre-flight: `index.build` egress is gated exactly like the
+      // AI jobs (vision_ops `_enforce_egress_gates`), so a cloud-configured
+      // embedder rejects the build unless we echo the plan's cacheKey as
+      // `confirmBudget`. `index.plan` is a pure planning RPC (ZERO provider
+      // calls); we only attach the ack when the plan says it WILL egress (a
+      // local/consent-denied build must NOT send one).
+      const plan = await getApi().rpc<AiPlan>('index.plan', { videoId });
+      const params = plan.willEgress ? { videoId, confirmBudget: plan.cacheKey } : { videoId };
+      const res = await getApi().rpc<{ jobId: string }>('index.build', params);
       setBuild({ jobId: res.jobId, pct: 0, message: 'Building…' });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -107,11 +116,16 @@ export function SemanticSearch({ videoId, playerRef }: SemanticSearchProps): Rea
       setPhase('searching');
       setSearchedQuery(q);
       try {
-        const res = await getApi().rpc<{ hits: IndexHit[] }>('index.search', {
-          videoId,
-          query: q,
-          topK: 8,
-        });
+        // Same cloud-budget pre-flight as the build path: a cloud-embedder
+        // `index.search` is egress-gated, so echo the plan's cacheKey as
+        // `confirmBudget` when the plan will egress (never for a local search).
+        const plan = await getApi().rpc<AiPlan>('index.plan', { videoId, query: q });
+        const res = await getApi().rpc<{ hits: IndexHit[] }>(
+          'index.search',
+          plan.willEgress
+            ? { videoId, query: q, topK: 8, confirmBudget: plan.cacheKey }
+            : { videoId, query: q, topK: 8 },
+        );
         const list = res.hits ?? [];
         setHits(list);
         setPhase(list.length ? 'results' : 'empty');
@@ -163,6 +177,17 @@ export function SemanticSearch({ videoId, playerRef }: SemanticSearchProps): Rea
           <button type="submit" disabled={!built || building}>
             Search
           </button>
+          {/* Rebuild affordance: index.status reports built purely on file
+              existence, and the sidecar refuses a STALE/dim-mismatched index
+              with "run index.build to rebuild it first". The Build CTA only
+              renders while unbuilt, so once built the ONLY escape from that
+              dead-end is this Rebuild action (re-runs index.build over the
+              current transcript). */}
+          {built && !building && (
+            <button type="button" className="rebuild" onClick={startBuild}>
+              Rebuild index
+            </button>
+          )}
         </div>
       </form>
 

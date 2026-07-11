@@ -100,7 +100,11 @@ export function CaptionDesigner({
                   <span
                     key={`${w.text}-${w.start}-${i}`}
                     style={{
-                      color: wordColor(w, visual, karaoke ? karaokeActiveColor(i) : undefined),
+                      // Alternate the karaoke accent by the word's ABSOLUTE cue
+                      // index (w.index), NOT its line-local position `i`, mirroring
+                      // CaptionOverlay + the libass burn so the preview parity holds
+                      // even when the on-screen phrase starts at an odd index.
+                      color: wordColor(w, visual, karaoke ? karaokeActiveColor(w.index) : undefined),
                       backgroundColor: w.active ? visual.activeBackground : 'transparent',
                     }}
                   >
@@ -144,6 +148,7 @@ export function CaptionDesigner({
         value={design.override}
         onChange={(override) => onChange({ ...design, override })}
         content={content}
+        style={design.style}
       />
     </div>
   );

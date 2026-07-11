@@ -97,6 +97,7 @@ describe('Settings sub-nav', () => {
       'preferences',
       'health',
       'licenses',
+      'presets',
     ]);
     expect(SETTINGS_SECTIONS.map((s) => s.label)).toEqual([
       'Models & System',
@@ -106,6 +107,7 @@ describe('Settings sub-nav', () => {
       'Caption defaults',
       'System Health',
       'Licenses',
+      'Export presets',
     ]);
   });
 
