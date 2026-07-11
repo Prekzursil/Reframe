@@ -47,7 +47,7 @@
 }
 
 .library-provenance__badge--missing {
-  color: var(--status-error);
+  color: var(--status-error-text);
   background: var(--status-error-soft);
 }
 
@@ -108,7 +108,7 @@
 }
 
 .library-provenance__status--error {
-  color: var(--status-error);
+  color: var(--status-error-text);
 }
 
 .library-provenance__status--info {

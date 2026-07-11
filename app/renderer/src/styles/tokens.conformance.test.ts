@@ -568,3 +568,68 @@ describe('v1.5 shell token evolution — locks the reconciled §5.A guardrails (
     expect(tokens.get('--ease-out') ?? '').toContain('cubic-bezier(');
   });
 });
+
+// --- v1.5 shell-polish: red status TEXT must clear AA (the DoD contrast floor) ---
+//
+// The visual audit found #e5484d (--status-error, the SOLID signal red) used as
+// TEXT — the FAILED chip, "Missing", "Unavailable" — sitting at ~4.1:1 on
+// --surface-raised, UNDER the 4.5:1 AA floor the DoD pins (green ~7.3:1 / amber
+// ~9.3:1 already clear it). The fix SPLITS the token: --status-error stays the
+// solid FILL/BORDER red (unchanged — zero fill regression), and a NEW
+// --status-error-text carries a lighter, AA-safe red for every red STRING. These
+// tests PIN that invariant (never weaken it): the text red clears AA on every
+// elevation plane, sits LIGHTER than the fill red, and the Library sheets route
+// their red text through the AA-safe token (no bare `color: var(--status-error)`).
+
+/** A bare `color: var(--status-error)` text leak — NOT border-color, NOT -soft/-text. */
+const RED_TEXT_LEAK = /[^-]color:\s*var\(--status-error\)/g;
+
+/** The Library sheets whose red TEXT was migrated to the AA-safe token. */
+const LIBRARY_RED_TEXT_SHEETS = [
+  resolve(HERE, '..', 'components', 'library-cards.css'),
+  resolve(HERE, '..', 'components', 'library-shell.css'),
+  resolve(HERE, '..', 'components', 'readinessBadge.css'),
+  resolve(HERE, '..', 'features', 'library-provenance.css'),
+  resolve(HERE, '..', 'features', 'keep-copy-control.css'),
+] as const;
+
+describe('red status text clears AA — the DoD contrast floor (v1.5 shell-polish)', () => {
+  it('defines an AA-safe red TEXT token, lighter than the unchanged solid fill red', () => {
+    const tokens = readTokens();
+    // The fill red is untouched (no regression to the FAILED-dot / progress fills);
+    // the text red is a distinct, lighter tone.
+    expect(tokens.get('--status-error')).toBe('#e5484d');
+    const fill = toRgb(tokens, '--status-error');
+    const text = toRgb(tokens, '--status-error-text');
+    expect(relLum(text)).toBeGreaterThan(relLum(fill));
+  });
+
+  it('holds red TEXT at AA (>=4.5:1) on every elevation plane', () => {
+    const tokens = readTokens();
+    const text = toRgb(tokens, '--status-error-text');
+    for (const plane of ELEVATION_PLANES) {
+      expect(contrast(text, toRgb(tokens, plane))).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it('holds the green + amber status TEXT at AA on raised (the whole ladder passes)', () => {
+    const tokens = readTokens();
+    const raised = toRgb(tokens, '--surface-raised');
+    // Green (success) + amber (warn) are light enough to double as text already;
+    // pin them so the status-text ladder cannot silently drop below AA either.
+    expect(contrast(toRgb(tokens, '--status-success'), raised)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(toRgb(tokens, '--status-warn'), raised)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('routes Library red TEXT through the AA-safe token (no bare status-error text)', () => {
+    for (const path of LIBRARY_RED_TEXT_SHEETS) {
+      const css = stripComments(readFileSync(path, 'utf8'));
+      expect(css.match(RED_TEXT_LEAK) ?? []).toEqual([]);
+    }
+    // …and the AA-safe token is actually consumed as text in the Library sheets.
+    const consumed = LIBRARY_RED_TEXT_SHEETS.some((p) =>
+      stripComments(readFileSync(p, 'utf8')).includes('var(--status-error-text)'),
+    );
+    expect(consumed).toBe(true);
+  });
+});

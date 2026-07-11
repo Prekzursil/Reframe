@@ -177,7 +177,7 @@ li.library__item:focus-within .library__select,
    Transcript chip keeps the neutral base .library__chip look (from shell.css). */
 .library__badge.library__chip--failed {
   background: var(--status-error-soft);
-  color: var(--status-error);
+  color: var(--status-error-text);
 }
 
 .library__badge.library__chip--failed::before {
@@ -214,4 +214,54 @@ li.library__item:focus-within .library__select,
 .library__shorts-label:hover {
   background: var(--surface-hover);
   color: var(--text-primary);
+}
+
+/* ---- card provenance disclosure (demotes the source/storage plumbing) ----
+   A quiet per-card toggle that keeps the resting card content-first (poster +
+   title + shorts + compact status); the source path / on-disk / keep-a-copy tail
+   is revealed on demand, mirroring the capabilities chip. */
+.card-provenance {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.card-provenance__toggle {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  font-family: var(--font-ui);
+  font-size: var(--type-caption-size);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.card-provenance__toggle:hover {
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+}
+
+.card-provenance__toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.card-provenance__caret {
+  color: var(--text-faint);
+  font-size: var(--type-chip-size);
+}
+
+.card-provenance__panel {
+  padding-top: var(--space-1);
 }

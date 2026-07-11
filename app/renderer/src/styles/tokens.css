@@ -68,8 +68,16 @@
   /* ---- status (semantic, never decorative) -------------------------------- */
   --status-success: #46c483;
   --status-success-soft: rgba(70, 196, 131, 0.12);
-  --status-error: #e5484d;
+  --status-error: #e5484d; /* the SOLID signal red: fills, borders, status dots */
   --status-error-soft: rgba(229, 72, 77, 0.1);
+  /* Red TEXT step: the solid #e5484d is only ~4.1:1 on --surface-raised (below the
+   * 4.5:1 AA floor the DoD pins), so red STRINGS — the FAILED chip, "Missing",
+   * "Unavailable" — read from this lighter tone instead (>=4.5:1 on every
+   * elevation plane). Mirrors --status-abundance-text: colour is never the sole
+   * signal (every red state also carries its text label). Green/amber are light
+   * enough to double as text already; only red needed the split. Pinned by the
+   * tokens.conformance red-text-AA guard so it can never decay back below AA. */
+  --status-error-text: #ff6b6b;
   --status-warn: #e7c14b; /* yellow-leaning, distinct from the orange-leaning accent */
   --status-warn-soft: rgba(231, 193, 75, 0.1);
 
