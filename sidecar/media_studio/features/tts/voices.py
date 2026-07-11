@@ -83,7 +83,11 @@ class VoiceStore:
         *,
         duration_probe: DurationProber | None = None,
     ) -> None:
-        self.samples_dir = Path(samples_dir) if samples_dir is not None else default_voices_dir()
+        raw_dir = Path(samples_dir) if samples_dir is not None else default_voices_dir()
+        # Canonicalise the voices base through the ensure_within barrier so the
+        # mkdir sinks below operate on a realpath-normalised dir (CodeQL
+        # py/path-injection); files under it are then confined via ensure_within too.
+        self.samples_dir = Path(ensure_within(raw_dir))
         self.index_path = Path(ensure_within(self.samples_dir, _INDEX_FILENAME))
         self._probe = duration_probe or _default_probe
 

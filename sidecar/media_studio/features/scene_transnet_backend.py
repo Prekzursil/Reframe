@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ..pathsafe import clean_for_log
 from ..util import get_logger
 from .scene_transnet import ASSET_NAME, CancelProbe, ProgressCb
 
@@ -88,7 +89,7 @@ class RealTransNetBackend:  # pragma: no cover - requires the heavy native stack
         )
         model.eval().to(device)
         self._model = model
-        log.info("transnetv2 ready on %s (%s)", device, weight_path)
+        log.info("transnetv2 ready on %s (%s)", device, clean_for_log(weight_path))
 
     def predict(
         self,
