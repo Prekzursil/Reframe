@@ -39,7 +39,17 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'text-summary'],
-      include: ['renderer/src/**/*.{ts,tsx}'],
+      // The renderer is fully gated. WU-U2 also promotes the P0 auto-update
+      // AUTHENTICITY verifier + its wiring into the 100% bar: `main/**` otherwise
+      // runs its tests but is NOT threshold-gated, and these two files are
+      // security-critical and fully unit-testable via injected fakes, so they must
+      // never silently regress below full branch coverage. The rest of `main/**`
+      // (BrowserWindow/IPC bootstrap that needs a real runtime) stays ungated.
+      include: [
+        'renderer/src/**/*.{ts,tsx}',
+        'main/updateVerify.ts',
+        'main/updater.ts',
+      ],
       exclude: [
         '**/*.test.{ts,tsx}',
         '**/*.d.ts',
