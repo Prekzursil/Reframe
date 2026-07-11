@@ -106,6 +106,9 @@ def providers_test_key(self: Services, params: dict[str, Any], ctx: RpcContext) 
     api_key = params.get("apiKey")
     if not isinstance(api_key, str) or not api_key:
         raise _invalid("providers.testKey requires an apiKey")
+    # Offline mode forbids ALL network egress: refuse (typed) before any HTTP so
+    # the raw key never leaves the machine (bug-sweep fix).
+    _offline.guard_network(self.settings.get(), "testing a provider key")
     capabilities = [str(c) for c in (params.get("capabilities") or ["text"])]
     from ..models import provider as _provider_mod  # local: heavy seam
 
@@ -249,6 +252,9 @@ def providers_openrouter_usage(self: Services, params: dict[str, Any], ctx: RpcC
     (never raised), the live key rides ONLY the ``Authorization`` header, and the
     returned rows carry the REDACTED last-4 only — no full key crosses RPC.
     """
+    # Offline mode forbids ALL network egress: refuse before the GET so the raw
+    # OpenRouter key never leaves the machine (bug-sweep fix).
+    _offline.guard_network(self.settings.get(), "checking OpenRouter usage")
     from ..models import openrouter_usage as _oru  # local: import-light
     from ..models import provider as _provider_mod  # local: heavy seam (GET transport)
 
@@ -506,8 +512,16 @@ def _provider_for_function(self: Services, function: str) -> Any:
         return _provider_mod.get_provider(
             self.settings.get_raw(), prefer=_provider_mod.LOCAL_PROVIDER_ID, ensure=self._llama_ensure()
         )
+    # PRIVACY (bug-sweep fix, G-A5): text functions egress transcript-bearing
+    # prompts, so filter the cloud pool through the per-provider TEXT-consent gate
+    # BEFORE it is built — exactly as the index embedder + vision frame paths do.
+    # A cloud entry without consent.perProvider[p].text is dropped, so neither the
+    # primary call nor a 429 failover can reach a non-consented target (select then
+    # degrades to the local LLM backstop rather than egressing without consent).
     return _provider_mod.get_provider(
-        self.settings.get_raw(), prefer=self._function_prefer(function), ensure=self._llama_ensure()
+        self._text_consented_settings(self.settings.get_raw()),
+        prefer=self._function_prefer(function),
+        ensure=self._llama_ensure(),
     )
 
 
@@ -534,13 +548,39 @@ def _select_provider_or_local(self: Services) -> Any:
 
 
 def _translator_for_function(self: Services, function: str) -> Any:
-    """Build the TieredTranslator whose tier3 hosted pool honors routing."""
+    """Build the TieredTranslator whose tier3 hosted pool honors routing.
+
+    OFFLINE / ROUTING-LOCAL GATE (bug-sweep fix): force the hosted tier to a
+    LOCAL-ONLY pool (``prefer=LOCAL_PROVIDER_ID`` -> local-only per
+    ``translation._default_hosted_factory``) when EITHER Offline mode is on OR the
+    RoutingPolicy resolves this function to ``local`` (GATE-2, fail-closed). Both are
+    authoritative over a stale ``routing.perFunction['translation']`` cloud entry, so
+    a user who flipped the global/override toggle to Local can NEVER egress transcript
+    text — mirroring ``_provider_for_function`` / ``_select_provider_or_local``. The
+    prior guard only fired on offline (and the older one only on the legacy
+    ``useCloud`` flag), so a Local-policy user with a cloud perFunction route slipped
+    past it. The local MT tiers still translate offline / local.
+
+    TEXT-CONSENT GATE (bug-sweep fix): the RAW settings are filtered through
+    :meth:`_text_consented_settings` BEFORE the hosted rotation pool is built, so a
+    cloud entry without ``consent.perProvider[p].text`` is DROPPED and cue text can
+    never rotate onto a non-consented cloud target (the pool re-adds the keyless local
+    backstop, so local MT still translates). Mirrors every sibling text seam
+    (``_provider_for_function`` / index embedder / director editPlan).
+    """
+    from ..models import provider as _provider_mod  # local: heavy seam
+    from ..models import routing_policy as _routing_policy  # local: import-light pure
     from ..models import translation as _translation_mod  # local: heavy seam
 
+    force_local = (
+        _offline.is_offline(self.settings.get())
+        or _routing_policy.resolve_route(function, self.settings.get())["mode"] == "local"
+    )
+    prefer = _provider_mod.LOCAL_PROVIDER_ID if force_local else self._function_prefer(function)
     return _translation_mod.get_translator(
-        self.settings.get_raw(),
+        self._text_consented_settings(self.settings.get_raw()),
         runner=self._get_model_runner(),
-        prefer=self._function_prefer(function),
+        prefer=prefer,
         ensure=self._llama_ensure(),
     )
 

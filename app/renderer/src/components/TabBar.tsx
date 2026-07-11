@@ -5,6 +5,16 @@ export interface TabDef {
   label: string;
 }
 
+/** DOM id for a tab button — paired with its panel's `aria-labelledby`. */
+export function tabId(id: string): string {
+  return `tab-${id}`;
+}
+
+/** DOM id for a tab's panel — paired with the tab's `aria-controls`. */
+export function tabPanelId(id: string): string {
+  return `tabpanel-${id}`;
+}
+
 /**
  * A named cluster of tabs (WU-3a2 progressive disclosure). `tabIds` reference
  * TabDef ids in render order; a group flagged `advanced` sits behind the
@@ -46,23 +56,40 @@ export interface TabBarProps {
   onExport?: () => void;
 }
 
+/**
+ * The keyboard/focus context threaded to every rendered tab so the flat strip and
+ * the grouped clusters share ONE roving-tabindex + arrow-key model (mirrors
+ * TopTabBar's tabs pattern). `onKeyDown` is bound per-tab by id; `registerRef`
+ * records each button so `onKeyDown` can move focus to the newly-selected tab.
+ */
+interface TabNav {
+  active: string;
+  onSelect: (id: string) => void;
+  onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>, id: string) => void;
+  registerRef: (id: string) => (el: HTMLButtonElement | null) => void;
+}
+
 /** One tab button. Shared by the flat strip and the grouped clusters so the
- *  `role="tab"` / `aria-selected` / test-pinned class contract is identical. */
-function renderTab(
-  tab: TabDef,
-  active: string,
-  onSelect: (id: string) => void,
-): React.ReactElement {
-  const isActive = tab.id === active;
+ *  `role="tab"` / `aria-selected` / roving-tabindex / id-wiring / test-pinned class
+ *  contract is identical. */
+function renderTab(tab: TabDef, nav: TabNav): React.ReactElement {
+  const isActive = tab.id === nav.active;
   return (
     <button
       key={tab.id}
+      ref={nav.registerRef(tab.id)}
       type="button"
       role="tab"
+      id={tabId(tab.id)}
       data-tab-id={tab.id}
       aria-selected={isActive}
+      aria-controls={tabPanelId(tab.id)}
+      // Roving tabindex: only the active tab is in the tab order; the rest are
+      // reached with the arrow keys.
+      tabIndex={isActive ? 0 : -1}
       className={isActive ? 'tab tab--active' : 'tab'}
-      onClick={() => onSelect(tab.id)}
+      onClick={() => nav.onSelect(tab.id)}
+      onKeyDown={(event) => nav.onKeyDown(event, tab.id)}
     >
       {tab.label}
     </button>
@@ -81,15 +108,14 @@ function renderTab(
 function renderGroup(
   group: TabGroup,
   byId: Record<string, TabDef>,
-  active: string,
-  onSelect: (id: string) => void,
+  nav: TabNav,
 ): React.ReactElement {
   return (
     <section className="tabbar__group" key={group.id} role="presentation">
       <span className="tabbar__group-label" aria-hidden="true">
         {group.label}
       </span>
-      {group.tabIds.map((id) => renderTab(byId[id], active, onSelect))}
+      {group.tabIds.map((id) => renderTab(byId[id], nav))}
     </section>
   );
 }
@@ -112,10 +138,74 @@ export function TabBar({
   onToggleAdvanced,
   onExport,
 }: TabBarProps): React.ReactElement {
+  // A plain ref map (NOT useRef) so this presentational component stays hook-free
+  // and can still be invoked directly in unit tests. React populates it via each
+  // tab's ref callback after commit; the last committed render's map is the one the
+  // keydown handler closes over, so focus targets the live buttons.
+  const btnRefs: { current: Record<string, HTMLButtonElement | null> } = { current: {} };
+
+  // The flat, keyboard-REACHABLE tab order for roving-tabindex arrow nav. In flat
+  // mode that is every tab; in grouped mode it is the primary clusters' tabs plus
+  // the advanced clusters' tabs ONLY when the advanced disclosure is open, so arrow
+  // keys never land focus on a tab inside a `hidden` collapsed cluster.
+  const orderedIds = groups
+    ? [
+        ...groups.filter((group) => !group.advanced).flatMap((group) => group.tabIds),
+        ...(advancedOpen
+          ? groups.filter((group) => group.advanced).flatMap((group) => group.tabIds)
+          : []),
+      ]
+    : tabs.map((tab) => tab.id);
+
+  const move = (toIndex: number): void => {
+    const nextId = orderedIds[toIndex];
+    onSelect(nextId);
+    // Move focus to the newly-selected tab so keyboard users stay in sync. A
+    // rendered, reachable tab always has its ref recorded, so assert non-null and
+    // fail loud rather than silently skip focus (no silent fallback).
+    btnRefs.current[nextId]!.focus();
+  };
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, id: string): void => {
+    const index = orderedIds.indexOf(id);
+    // A tab outside the reachable order (a hidden collapsed-cluster tab) does not
+    // participate in arrow navigation.
+    if (index === -1) return;
+    const last = orderedIds.length - 1;
+    if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      move(index === last ? 0 : index + 1);
+      return;
+    }
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      move(index === 0 ? last : index - 1);
+      return;
+    }
+    if (event.key === 'Home') {
+      event.preventDefault();
+      move(0);
+      return;
+    }
+    if (event.key === 'End') {
+      event.preventDefault();
+      move(last);
+      return;
+    }
+    // Any other key: let the browser handle it (no-op for nav).
+  };
+
+  const registerRef =
+    (id: string) =>
+    (el: HTMLButtonElement | null): void => {
+      btnRefs.current[id] = el;
+    };
+  const nav: TabNav = { active, onSelect, onKeyDown, registerRef };
+
   if (!groups) {
     return (
       <div className="tabbar" role="tablist">
-        {tabs.map((tab) => renderTab(tab, active, onSelect))}
+        {tabs.map((tab) => renderTab(tab, nav))}
       </div>
     );
   }
@@ -136,10 +226,10 @@ export function TabBar({
           the tablist, never descendants, so the tablist never owns a non-tab
           child (WCAG aria-required-children). */}
       <div className="tabbar__tablist" role="tablist">
-        {primary.map((group) => renderGroup(group, byId, active, onSelect))}
+        {primary.map((group) => renderGroup(group, byId, nav))}
         {advanced.length > 0 ? (
           <div className="tabbar__advanced-panel" hidden={!advancedOpen}>
-            {advanced.map((group) => renderGroup(group, byId, active, onSelect))}
+            {advanced.map((group) => renderGroup(group, byId, nav))}
           </div>
         ) : null}
       </div>

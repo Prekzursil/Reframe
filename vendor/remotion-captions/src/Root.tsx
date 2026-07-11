@@ -26,6 +26,7 @@ export const Root: React.FC = () => {
           width: 1080,
           height: 1920,
           durationInSeconds: 30,
+          hookTitle: "",
         }}
         calculateMetadata={({ props }) => {
           // selectComposition() resolves this from the job's inputProps, so the

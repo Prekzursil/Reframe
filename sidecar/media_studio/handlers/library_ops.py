@@ -61,10 +61,33 @@ def _project_path(self: Services, video_id: str) -> Path:
 
 
 def _load_or_create_project(self: Services, video_id: str) -> _library.Project:
-    """Open the video's project manifest, creating a fresh one if absent."""
+    """Open the video's project manifest, creating a fresh one if absent.
+
+    On an EXISTING manifest the Library entity is authoritative for a source's
+    LOCATION: if the entity's ``path``/``thumbnailPath`` diverged from the stored
+    ``video`` snapshot (a relink / keepCopy moved the bytes), the location-bearing
+    keys are re-synced over the snapshot (immutably — a NEW video dict) and the
+    manifest is re-saved so ``consolidate`` / ``find_missing_sources`` see the
+    authoritative post-relink location. Project-local fields (title, durationSec,
+    hasTranscript) are preserved. A removed library video (entity is ``None``)
+    keeps its last-known snapshot untouched.
+    """
     path = self._project_path(video_id)
     if path.exists():
-        return _library.Project.open(path)
+        project = _library.Project.open(path)
+        current = self.library.get(video_id)
+        if current is not None:
+            snapshot = project.data["video"]
+            if current.get("path") != snapshot.get("path") or current.get("thumbnailPath") != snapshot.get(
+                "thumbnailPath"
+            ):
+                project.data["video"] = {
+                    **snapshot,
+                    "path": current.get("path"),
+                    "thumbnailPath": current.get("thumbnailPath"),
+                }
+                project.save(path)
+        return project
     video = self.library.get(video_id)
     if video is None:
         raise _invalid(f"unknown video: {video_id}")
@@ -110,9 +133,17 @@ def library_add(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict
 
 
 def library_remove(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
-    """``library.remove({id})`` -> ``{ok:true}`` (§2). Direct-return."""
+    """``library.remove({id})`` -> ``{ok:true}`` (§2). Direct-return.
+
+    Also reaps this video's orphaned per-video artifacts — the project manifest
+    (``projects_dir/<id>.json``) and its poster (``data_dir/thumbnails/<id>.jpg``)
+    — idempotently (``missing_ok`` so removing a video that never had either is a
+    no-op), so a removed video leaves no dangling manifest/thumbnail behind.
+    """
     video_id = _require_str(params, "id")
     ok = self.library.remove(video_id)
+    self._project_path(video_id).unlink(missing_ok=True)
+    (self.data_dir / "thumbnails" / f"{video_id}.jpg").unlink(missing_ok=True)
     return {"ok": bool(ok)}
 
 
@@ -306,12 +337,19 @@ def project_save(self: Services, params: dict[str, Any], ctx: RpcContext) -> dic
 
 
 def project_consolidate(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
-    """``project.consolidate({id})`` -> ``{ok, folder}`` (§2). Direct-return."""
+    """``project.consolidate({id})`` -> ``{ok, folder, missing}`` (§2). Direct-return.
+
+    ``missing`` reports referenced source paths whose files are gone — computed
+    BEFORE ``consolidate`` (which rebases refs relative to the portable folder and
+    re-saves the manifest), so partial consolidation is surfaced LOUDLY rather than
+    silently returning ``{ok: true}`` with a broken portable copy.
+    """
     video_id = _require_str(params, "id")
     project = self._load_or_create_project(video_id)
+    missing = project.find_missing_sources()
     folder = self.projects_dir / f"{video_id}-consolidated"
     out = project.consolidate(folder)
-    return {"ok": True, "folder": out}
+    return {"ok": True, "folder": out, "missing": missing}
 
 
 def settings_get(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:

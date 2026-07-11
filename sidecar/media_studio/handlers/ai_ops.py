@@ -436,7 +436,12 @@ def _get_translator(self: Services) -> Any | None:
     from ..models import translation as _translation_mod  # local import
 
     # FACTORY PATH (PLAN §WU-keys): the tier3 hosted provider is built from RAW keys.
-    return _translation_mod.get_translator(self.settings.get_raw(), runner=self._get_model_runner())
+    # TEXT-CONSENT GATE (bug-sweep fix): filter the RAW settings through
+    # _text_consented_settings so cue text can never rotate onto a non-text-consented
+    # cloud provider (mirrors _translator_for_function / _provider_for_function).
+    return _translation_mod.get_translator(
+        self._text_consented_settings(self.settings.get_raw()), runner=self._get_model_runner()
+    )
 
 
 def _dub_translator(self: Services) -> Any:
@@ -448,12 +453,17 @@ def _dub_translator(self: Services) -> Any:
     adapter wraps texts into cue dicts (timings unused by MT) and frees the
     MT model by stopping the shared llama server — the batched 'free MT'
     stage between translate-ALL and synth-ALL (A4).
-    """
-    from ..models import translation as _translation_mod  # local: heavy seam
 
+    OFFLINE GATE (bug-sweep fix): the tiered translator is built via
+    ``_translator_for_function('translation')``, which forces a LOCAL-ONLY
+    hosted pool when Offline mode is on — so dub translation can NEVER egress
+    transcript text while offline, mirroring the subtitles.translate path.
+    (The old direct ``get_translator`` build had no offline gate.)
+    """
     runner = self._get_model_runner()
-    # FACTORY PATH (PLAN §WU-keys): the dub translator's tier3 carries RAW keys.
-    tiered = _translation_mod.get_translator(self.settings.get_raw(), runner=runner)
+    # FACTORY PATH (PLAN §WU-keys): tier3 carries RAW keys; the offline gate lives
+    # in _translator_for_function (prefer=LOCAL_PROVIDER_ID when offline).
+    tiered = self._translator_for_function("translation")
 
     class _DubTranslator:
         def translate(

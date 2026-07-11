@@ -125,6 +125,24 @@ def test_remove_does_not_delete_source_file(lib: Library, fake_video: Path):
     assert fake_video.exists()  # file on disk is untouched
 
 
+def test_remove_evicts_managed_copy(lib: Library, fake_video: Path):
+    # A removed video's opt-in managed byte-copy must be reclaimed, not orphaned:
+    # otherwise its row + content-addressed file count forever against the cap with
+    # no entity left to evict them. Covers the has_managed=True branch of remove().
+    from media_studio.keepcopy import ManagedStore
+
+    v = lib.add(str(fake_video))
+    managed = ManagedStore(lib).keep_copy(v["id"])  # real copier + blake3 + disk_usage
+    managed_file = Path(managed["managedPath"])
+    assert managed_file.exists()
+    assert lib.managed_status()["count"] == 1
+
+    assert lib.remove(v["id"]) is True
+    assert lib.get(v["id"]) is None
+    assert lib.managed_status()["count"] == 0  # row reclaimed
+    assert not managed_file.exists()  # bytes freed
+
+
 def test_set_has_transcript(lib: Library, fake_video: Path):
     v = lib.add(str(fake_video))
     updated = lib.set_has_transcript(v["id"], True)
@@ -422,6 +440,48 @@ def test_consolidate_disambiguates_same_basename(tmp_path: Path):
     p.consolidate(out)
     names = sorted(x.name for x in (out / "assets").iterdir())
     assert names == ["clip-1.mp4", "clip.mp4"]
+
+
+def test_consolidate_dedups_identical_ref(tmp_path: Path, fake_video: Path):
+    # Two refs to the SAME absolute file (video + a clip) must be copied ONCE and
+    # both rebased to the SAME assets/<name> (memo-hit branch of _copy_in), instead
+    # of duplicating the bytes under diverging "name" / "name-1" copies.
+    p = Project.new(_video(str(fake_video)))
+    p.data["clips"] = [{"candidate": {}, "path": str(fake_video)}]
+    out = tmp_path / "c"
+    p.consolidate(out)
+    names = [x.name for x in (out / "assets").iterdir()]
+    assert names == ["my talk.mp4"]  # exactly one copy
+    assert p.data["video"]["path"] == "assets/my talk.mp4"
+    assert p.data["clips"][0]["path"] == "assets/my talk.mp4"  # both point at it
+
+
+def test_consolidate_rebases_thumbnail_path(tmp_path: Path, fake_video: Path):
+    # The source-video poster is copied + rebased relative so a moved portable
+    # folder still finds it (thumbnailPath-present branch of consolidate).
+    poster = tmp_path / "poster.jpg"
+    poster.write_bytes(b"jpeg")
+    video = _video(str(fake_video))
+    video["thumbnailPath"] = str(poster)
+    p = Project.new(video)
+    out = tmp_path / "c"
+    p.consolidate(out)
+    assert p.data["video"]["thumbnailPath"] == "assets/poster.jpg"
+    assert (out / "assets" / "poster.jpg").exists()
+
+
+def test_consolidate_leaves_missing_thumbnail_path_untouched(tmp_path: Path, fake_video: Path):
+    # A poster whose file has vanished is left as-is (a regenerable derived artifact
+    # is NOT a relinkable source), exercising the missing-source arm for thumbnailPath.
+    video = _video(str(fake_video))
+    video["thumbnailPath"] = str(tmp_path / "gone-poster.jpg")
+    p = Project.new(video)
+    out = tmp_path / "c"
+    p.consolidate(out)
+    assert p.data["video"]["thumbnailPath"] == str(tmp_path / "gone-poster.jpg")
+    # and it was NOT reported as a missing SOURCE (poster stays out of _ref_paths)
+    reopened = Project.open(out / "project.json")
+    assert reopened.find_missing_sources() == []
 
 
 def test_consolidate_disambiguates_three_same_basename(tmp_path: Path):

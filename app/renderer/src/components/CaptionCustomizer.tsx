@@ -31,6 +31,7 @@ import {
   defaultMaxCps,
   resolveReadability,
 } from '../lib/captionDefaults';
+import { captionVisualFor } from '../lib/captionTemplates';
 import './captionCustomizer.css';
 
 /** The colour presets shown in the swatch grid (text/active/spoken share them). */
@@ -70,6 +71,13 @@ export interface CaptionCustomizerProps {
   value: CaptionOverride | undefined;
   /** Called with the next (validated) override, or `undefined` when cleared. */
   onChange: (next: CaptionOverride | undefined) => void;
+  /**
+   * The chosen template id (e.g. `design.style`). The Outline/Card/UPPERCASE
+   * checkboxes seed from THIS template's effective boolean so the panel matches
+   * the preview + burn (some templates default a boolean ON), and a single click
+   * toggles the effective value instead of being a first-click no-op.
+   */
+  style: string;
   /** Disclosure label (default "Customize…"). */
   label?: string;
   /**
@@ -82,12 +90,17 @@ export interface CaptionCustomizerProps {
 export function CaptionCustomizer({
   value,
   onChange,
+  style,
   label = 'Customize…',
   content,
 }: CaptionCustomizerProps): React.ReactElement {
   const [open, setOpen] = useState(false);
   const panelId = useId();
   const ov: CaptionOverride = value ?? {};
+  // The template's effective look — the checkboxes seed from its booleans so the
+  // panel matches the preview/burn, and a click emits a DELTA vs this default
+  // (collapsing back to undefined when it re-matches). Pure; never throws.
+  const baseVisual = captionVisualFor(style);
   // The reading-speed slider's neutral = the per-language novice default; the
   // readout below shows the EFFECTIVE (post-resolution) limits the burn applies
   // so the preview matches what ships (§1.5 preview parity).
@@ -182,8 +195,13 @@ export function CaptionCustomizer({
           <label className="caption-customizer__toggle-field caption-customizer__bool-outline">
             <input
               type="checkbox"
-              checked={ov.outline ?? false}
-              onChange={(e) => set('outline', e.target.checked)}
+              checked={ov.outline ?? baseVisual.outline}
+              onChange={(e) =>
+                set(
+                  'outline',
+                  e.target.checked === baseVisual.outline ? undefined : e.target.checked,
+                )
+              }
             />
             <span>Outline</span>
           </label>
@@ -191,8 +209,10 @@ export function CaptionCustomizer({
           <label className="caption-customizer__toggle-field caption-customizer__bool-card">
             <input
               type="checkbox"
-              checked={ov.box ?? false}
-              onChange={(e) => set('box', e.target.checked)}
+              checked={ov.box ?? baseVisual.box}
+              onChange={(e) =>
+                set('box', e.target.checked === baseVisual.box ? undefined : e.target.checked)
+              }
             />
             <span>Card</span>
           </label>
@@ -200,8 +220,13 @@ export function CaptionCustomizer({
           <label className="caption-customizer__toggle-field caption-customizer__bool-uppercase">
             <input
               type="checkbox"
-              checked={ov.uppercase ?? false}
-              onChange={(e) => set('uppercase', e.target.checked)}
+              checked={ov.uppercase ?? baseVisual.uppercase}
+              onChange={(e) =>
+                set(
+                  'uppercase',
+                  e.target.checked === baseVisual.uppercase ? undefined : e.target.checked,
+                )
+              }
             />
             <span>UPPERCASE</span>
           </label>

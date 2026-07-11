@@ -823,6 +823,35 @@ class Batch:
         self._parent_jobs[batch_id] = job.id
         return {"jobId": job.id}
 
+    # -- plan (WU9 dry-run consent surface; starts NO job) ------------------
+    def plan(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+        """``batch.plan({id, confirmCloudBudget?, acknowledged?})`` -> ``{consent}``.
+
+        The pure pre-run consent surface (DESIGN §9.1) for a batch's still-pending
+        sources WITHOUT starting a job — one ``ai.planJob`` per distinct step shape,
+        ZERO provider calls. Unlike :meth:`start` (whose gate-OFF pass-through
+        collapses to ``None``), this ALWAYS returns a fully-populated
+        ``decisions``/``willRun``/``willSkip`` surface by calling
+        :func:`plan_consent` directly, so the renderer can render the §9.1 card
+        before deciding whether to start.
+        """
+        batch_id = _require_id(params)
+        state = self.store.load(batch_id)
+        if state is None:
+            raise _invalid(f"unknown batch: {batch_id}")
+        template_id = str(state.get("templateId") or "")
+        pending = [item["videoId"] for item in state["items"] if not is_terminal_status(item["status"])]
+        shape_of = self._shape_of or (lambda _video_id: template_id)
+        plan_job = self._plan_job or self._default_plan_job
+        consent = plan_consent(
+            pending,
+            shape_of=shape_of,
+            plan_job=plan_job,
+            confirm_cloud_budget=bool(params.get("confirmCloudBudget", False)),
+            acknowledged=bool(params.get("acknowledged", False)),
+        )
+        return {"consent": consent}
+
     # -- resume (WU8 fresh job over the not-yet-done sources) ---------------
     def resume(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
         """``batch.resume({id, retryErrors?})`` -> ``{jobId}`` (re-enqueue pending).
@@ -967,6 +996,7 @@ def register(
     reg = register_fn if register_fn is not None else protocol.register
     reg("batch.create", service.create)
     reg("batch.start", service.start)
+    reg("batch.plan", service.plan)
     reg("batch.status", service.status)
     reg("batch.list", service.list)
     reg("batch.cancel", service.cancel)

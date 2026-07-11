@@ -223,6 +223,9 @@ def test_director_plan_builds_editplan_provider_over_text_consented_settings(tmp
             ],
             "consent": {"perProvider": {"yes": {"text": True}, "no": {"text": False}}},
             "routing": {"perFunction": {"editPlan": {"provider": "yes"}}},
+            # director editPlan now honors the RoutingPolicy (default local, fail
+            # closed) like the other functions -> allow cloud so the route resolves.
+            "routingPolicy": {"global": "cloud", "overrides": {}},
             "confirmCloudBudget": False,  # isolate the consent gate from the budget gate
         }
     )
@@ -270,6 +273,9 @@ def _offline_director_settings() -> dict[str, Any]:
         ],
         "consent": {"perProvider": {"yes": {"text": True}}},
         "routing": {"perFunction": {"editPlan": {"provider": "yes"}}},
+        # Route CLOUD so the offline gate has a cloud target to refuse (a local
+        # route would simply run offline-local, not raise).
+        "routingPolicy": {"global": "cloud", "overrides": {}},
         "confirmCloudBudget": False,
     }
 

@@ -18,7 +18,11 @@ Guarantees (GATE WU-3b1):
   (:data:`DEFAULT_CAP_BYTES`); keeping a copy that would breach it first evicts the
   least-recently-accessed managed copies until it fits, so the store can never
   silently fill a small data-root SSD. A single file larger than the whole cap is
-  refused LOUD.
+  refused LOUD. ``last_access`` is stamped at INSERT and refreshed on every later
+  access — an idempotent re-:meth:`ManagedStore.keep_copy` of an already-kept video
+  and an explicit :meth:`ManagedStore.touch` (the playback/resolve seam) — so the
+  eviction victim is the genuinely least-recently-ACCESSED copy, not merely the
+  oldest-kept (FIFO).
 * **Content-hash dedup** — the whole-file BLAKE3 ``content_hash`` (reused from
   :mod:`media_studio.relink`) keys the store, so identical bytes are never copied
   twice; a second entity with the same content shares the one managed file at zero
@@ -169,8 +173,10 @@ class ManagedStore:
     def _lru_evictable_victim(self, conn: sqlite3.Connection) -> sqlite3.Row | None:
         """The least-recently-accessed copy that is SAFE to evict (its original still exists).
 
-        Returns ``None`` when EVERY remaining copy is irreplaceable (original gone) — the
-        caller then refuses LOUD rather than destroying the only surviving copy.
+        Orders by ``last_access`` (refreshed on re-keep and :meth:`touch`), so the victim
+        is truly the least-recently-ACCESSED replaceable copy. Returns ``None`` when EVERY
+        remaining copy is irreplaceable (original gone) — the caller then refuses LOUD
+        rather than destroying the only surviving copy.
         """
         rows = conn.execute(f"SELECT * FROM {_MANAGED_TABLE} ORDER BY last_access ASC, rowid ASC").fetchall()
         for row in rows:
@@ -224,7 +230,15 @@ class ManagedStore:
             conn.execute(_CREATE_MANAGED)
             existing = conn.execute(f"SELECT * FROM {_MANAGED_TABLE} WHERE entity_id = ?", (entity_id,)).fetchone()
             if existing is not None:
-                return _row_to_managed(existing)  # idempotent: already kept
+                # Idempotent: already kept — no re-copy, but the re-request IS an access,
+                # so refresh recency (LRU, not FIFO) before returning the current row.
+                stamp = self._now()
+                conn.execute(
+                    f"UPDATE {_MANAGED_TABLE} SET last_access = ? WHERE entity_id = ?",
+                    (stamp, entity_id),
+                )
+                refreshed = conn.execute(f"SELECT * FROM {_MANAGED_TABLE} WHERE entity_id = ?", (entity_id,)).fetchone()
+                return _row_to_managed(refreshed)
 
             src = video.get("path") or ""
             if not src or not Path(src).exists():
@@ -290,6 +304,28 @@ class ManagedStore:
                 with suppress(FileNotFoundError):
                     victim_file.unlink()
         return _row_to_managed(row)
+
+    def touch(self, entity_id: str) -> dict[str, Any]:
+        """Refresh a managed copy's LRU recency (the playback/resolve seam).
+
+        Bumps ``last_access`` to now so a copy that is actively played survives cap-
+        pressure eviction over an older, untouched one — the seam the playback/resolve
+        path calls when it serves a path inside the store. Raises :class:`KeepCopyError`
+        when there is no managed copy for ``entity_id`` (fail-loud, never a silent skip);
+        returns the refreshed managed-copy row.
+        """
+        with self._library._open() as conn:
+            conn.execute(_CREATE_MANAGED)
+            row = conn.execute(f"SELECT * FROM {_MANAGED_TABLE} WHERE entity_id = ?", (entity_id,)).fetchone()
+            if row is None:
+                raise KeepCopyError(f"no managed copy to touch for {entity_id}")
+            stamp = self._now()
+            conn.execute(
+                f"UPDATE {_MANAGED_TABLE} SET last_access = ? WHERE entity_id = ?",
+                (stamp, entity_id),
+            )
+            refreshed = conn.execute(f"SELECT * FROM {_MANAGED_TABLE} WHERE entity_id = ?", (entity_id,)).fetchone()
+        return _row_to_managed(refreshed)
 
     def status(self) -> dict[str, Any]:
         """Return the managed store's ``{sizeBytes, capBytes, count, entries}`` snapshot."""

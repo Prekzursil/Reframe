@@ -69,6 +69,14 @@ class RecordingEngine(TtsEngine):
         return write_normalized_wav(out_wav, 2.0)
 
 
+class OnlineEngine(RecordingEngine):
+    """A hosted/ONLINE engine (like edge-tts) — carries ``online = True``."""
+
+    id = "online"
+    label = "online"
+    online = True
+
+
 class RecordingTranslator:
     def __init__(self, events: list[str], result: list[str] | None = None):
         self.events = events
@@ -554,6 +562,49 @@ class TestDubStartHandler:
         registry.join(timeout=10)
         done = [p for k, p in collected if k == "done"]
         assert done and done[0][1]["error"]["message"].startswith("AAC encode failed")
+
+    def test_offline_mode_blocks_online_engine_before_job(self, tmp_path):
+        """Offline mode must refuse a HOSTED/ONLINE engine SYNCHRONOUSLY (typed
+        OfflineError) and never spawn a job — so no cue text is sent to Microsoft."""
+        from media_studio.features.offline import OfflineError
+
+        class SpyJobs:
+            def __init__(self):
+                self.started = False
+
+            def start(self, body):
+                self.started = True
+                return type("J", (), {"id": "job-x"})()
+
+        jobs = SpyJobs()
+        service = make_service(tmp_path, engines={"edgetts": lambda: OnlineEngine([])})
+        service._settings_provider = lambda: {"offline": True}
+        ctx = RpcContext(emit_notification=lambda o: None, jobs=jobs)
+        with pytest.raises(OfflineError, match="Offline mode is on"):
+            service.dub_start({"videoId": "v1", "trackId": "t1", "engine": "edgetts", "voice": "v"}, ctx)
+        assert jobs.started is False  # no job spawned, no egress
+
+    def test_offline_off_allows_online_engine(self, tmp_path, registry, collected):
+        """With Offline OFF, the hosted engine is not blocked — the job proceeds."""
+        service = make_service(tmp_path, engines={"edgetts": lambda: OnlineEngine([])})
+        service._settings_provider = lambda: {"offline": False}
+        ctx = RpcContext(emit_notification=lambda o: None, jobs=registry)
+        result = service.dub_start({"videoId": "v1", "trackId": "t1", "engine": "edgetts", "voice": "v"}, ctx)
+        assert set(result) == {"jobId"}
+        registry.join(timeout=10)
+        done = [p for k, p in collected if k == "done"]
+        assert done and "path" in done[0][1]
+
+    def test_offline_mode_does_not_block_local_engine(self, tmp_path, registry, collected):
+        """A LOCAL engine (no ``online`` attr) is NEVER blocked, even Offline ON."""
+        service = make_service(tmp_path)  # default engine is the local RecordingEngine
+        service._settings_provider = lambda: {"offline": True}
+        ctx = RpcContext(emit_notification=lambda o: None, jobs=registry)
+        result = service.dub_start({"videoId": "v1", "trackId": "t1", "engine": "fake", "voice": "v"}, ctx)
+        assert set(result) == {"jobId"}
+        registry.join(timeout=10)
+        done = [p for k, p in collected if k == "done"]
+        assert done and "path" in done[0][1]
 
     def test_default_out_dir_uses_config_dir(self, tmp_path, registry, collected, monkeypatch):
         monkeypatch.setattr("media_studio.settings_store.default_config_dir", lambda: tmp_path / "cfg")

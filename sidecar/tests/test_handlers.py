@@ -342,6 +342,22 @@ def test_transcribe_start_unknown_video(services: Services, ctx: RpcContext) -> 
     assert ei.value.code == ErrorCode.INVALID_PARAMS
 
 
+def test_transcribe_and_persist_rejects_unknown_video(services: Services) -> None:
+    """The shared transcribe+persist helper fails loud on an unresolvable video
+    (the Make-Shorts auto-transcribe reaches it inside the select job, so a bad
+    id must raise rather than transcribe an empty path)."""
+
+    class _Ctx:
+        cancelled = False
+
+        def progress(self, *_a: Any, **_k: Any) -> None:  # pragma: no cover - never reached
+            ...
+
+    with pytest.raises(RpcError) as ei:
+        services._transcribe_and_persist("ghost", _Ctx())
+    assert ei.value.code == ErrorCode.INVALID_PARAMS
+
+
 # --------------------------------------------------------------------------- #
 # subtitles.* (generate/edit/export direct; translate job)
 # --------------------------------------------------------------------------- #
@@ -443,7 +459,12 @@ def test_transcribe_start_parakeet_engine_falls_back_to_whisper_offline(
 
 def test_maybe_align_words_noop_when_karaoke_off(services: Services) -> None:
     t = {"language": "en", "segments": [], "durationSec": 0.0}
-    assert services._maybe_align_words(t, "/x.mp4", {}) is t
+
+    class _Ctx:
+        cancelled = False
+
+    # karaoke off + align_words unset -> returns before job_ctx is ever read.
+    assert services._maybe_align_words(t, "/x.mp4", {}, _Ctx()) is t
 
 
 def test_register_all_wires_diarize_backend_selector(tmp_path: Path) -> None:
@@ -678,6 +699,51 @@ def test_shortmaker_select_requires_videoid(services: Services, ctx: RpcContext)
     with pytest.raises(RpcError) as ei:
         services.shortmaker_select({}, ctx)
     assert ei.value.code == ErrorCode.INVALID_PARAMS
+
+
+def test_shortmaker_select_auto_transcribes_when_no_transcript(
+    services: Services, ctx: RpcContext, video_file: Path
+) -> None:
+    """Plug-and-play (the star flow): shortmaker.select on a NEVER-transcribed
+    video transcribes it FIRST (persisting the transcript) instead of returning
+    an empty 'no clips' -> the UI's "No candidates were proposed". Proves the
+    root-cause fix: nothing in the Make-Shorts flow used to transcribe."""
+    vid = _add_video(services, video_file)
+    # Precondition: the freshly-added video has NO transcript yet.
+    assert not services.library.get(vid).get("hasTranscript")
+    from media_studio.features import shortmaker as sm
+
+    cand = {
+        "rank": 1,
+        "start": 0.0,
+        "end": 2.0,
+        "durationSec": 2.0,
+        "hook": "hook",
+        "why": "why",
+        "score": 88,
+        "sourceStart": 0.0,
+    }
+    services._shortmaker = lambda: sm.ShortMaker(  # type: ignore[method-assign]
+        load_context=services._shortmaker_context,
+        out_dir_for=lambda v: str(services.exports_dir / f"shorts-{v}"),
+        stages=sm.Stages(
+            # run_select only reaches SELECT with a non-empty transcript, so a
+            # cached candidate PROVES the auto-transcribe ran before selection.
+            select_candidates=lambda *a, **k: [cand],
+            snap_candidates=lambda cands, *a, **k: (list(cands), []),
+            cut_clip=lambda *a, **k: a[1],
+            reframe=lambda i, o, a, *, settings=None, on_notice=None: o,
+            render_caption=lambda *a, **k: a[2],
+            export_clip=lambda i, o, *, settings=None: o,
+        ),
+        settings_provider=services.settings.get,
+    )
+    services.shortmaker_select({"videoId": vid, "prompt": "best bits", "controls": {}}, ctx)
+    ctx.jobs.join(timeout=60)
+    # (1) the video was auto-transcribed + persisted (library flag flipped)...
+    assert services.library.get(vid)["hasTranscript"] is True
+    # (2) ...and SELECT then ran on that transcript (candidate cached, not "no clips").
+    assert Services.candidate_id(cand) in services._selection_cache.get(vid, {})
 
 
 # --------------------------------------------------------------------------- #

@@ -481,6 +481,157 @@ describe('<SemanticSearch />', () => {
     expect(cta.disabled).toBe(true);
   });
 
+  it('build echoes the plan cacheKey as confirmBudget when the plan will egress (cloud embedder)', async () => {
+    const fake = makeFakeApi({
+      'index.status': UNBUILT,
+      'index.plan': { willEgress: true, cacheKey: 'CK-build' },
+      'index.build': { jobId: 'job-idx' },
+    });
+    await mount(fake);
+    const cta = [...container.querySelectorAll('button')].find((b) =>
+      /Build the search index/.test(b.textContent ?? ''),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      cta.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(fake.calls.find((c) => c.method === 'index.plan')?.params).toEqual({ videoId: 'v1' });
+    expect(fake.calls.find((c) => c.method === 'index.build')?.params).toEqual({
+      videoId: 'v1',
+      confirmBudget: 'CK-build',
+    });
+  });
+
+  it('build omits confirmBudget when the plan will NOT egress (local embedder)', async () => {
+    const fake = makeFakeApi({
+      'index.status': UNBUILT,
+      'index.plan': { willEgress: false, cacheKey: 'CK-unused' },
+      'index.build': { jobId: 'job-idx' },
+    });
+    await mount(fake);
+    const cta = [...container.querySelectorAll('button')].find((b) =>
+      /Build the search index/.test(b.textContent ?? ''),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      cta.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(fake.calls.find((c) => c.method === 'index.build')?.params).toEqual({ videoId: 'v1' });
+  });
+
+  it('search echoes the plan cacheKey as confirmBudget when the plan will egress (cloud embedder)', async () => {
+    const fake = makeFakeApi({
+      'index.status': BUILT,
+      'index.plan': { willEgress: true, cacheKey: 'CK-search' },
+      'index.search': { hits: hits() },
+    });
+    await mount(fake);
+    await type('pricing');
+    await submit();
+    expect(fake.calls.find((c) => c.method === 'index.plan')?.params).toEqual({
+      videoId: 'v1',
+      query: 'pricing',
+    });
+    expect(fake.calls.find((c) => c.method === 'index.search')?.params).toEqual({
+      videoId: 'v1',
+      query: 'pricing',
+      topK: 8,
+      confirmBudget: 'CK-search',
+    });
+  });
+
+  it('search omits confirmBudget when the plan will NOT egress (local embedder)', async () => {
+    const fake = makeFakeApi({
+      'index.status': BUILT,
+      'index.plan': { willEgress: false, cacheKey: 'CK-unused' },
+      'index.search': { hits: hits() },
+    });
+    await mount(fake);
+    await type('pricing');
+    await submit();
+    expect(fake.calls.find((c) => c.method === 'index.search')?.params).toEqual({
+      videoId: 'v1',
+      query: 'pricing',
+      topK: 8,
+    });
+  });
+
+  it('surfaces an index.plan rejection on build via role="alert"', async () => {
+    const fake = makeFakeApi({ 'index.status': UNBUILT });
+    fake.rpc.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      fake.calls.push({ method, params });
+      if (method === 'index.status') return UNBUILT;
+      if (method === 'index.plan') throw new Error('planning failed');
+      return {};
+    });
+    await mount(fake);
+    const cta = [...container.querySelectorAll('button')].find((b) =>
+      /Build the search index/.test(b.textContent ?? ''),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      cta.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('planning failed');
+    // The build was never fired because the pre-flight plan failed.
+    expect(fake.calls.find((c) => c.method === 'index.build')).toBeUndefined();
+  });
+
+  it('surfaces an index.plan rejection on search via role="alert"', async () => {
+    const fake = makeFakeApi({ 'index.status': BUILT });
+    fake.rpc.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      fake.calls.push({ method, params });
+      if (method === 'index.status') return BUILT;
+      if (method === 'index.plan') throw new Error('plan blew up');
+      return {};
+    });
+    await mount(fake);
+    await type('pricing');
+    await submit();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('plan blew up');
+    expect(fake.calls.find((c) => c.method === 'index.search')).toBeUndefined();
+  });
+
+  it('a built index offers a Rebuild affordance; clicking it re-runs index.build and shows progress', async () => {
+    const fake = makeFakeApi({
+      'index.status': BUILT,
+      'index.plan': { willEgress: false, cacheKey: 'CK' },
+      'index.build': { jobId: 'job-idx' },
+      // A stale/dim-mismatched search is refused with the "run index.build to
+      // rebuild it first" instruction — the exact dead-end Rebuild exits.
+      'index.search': () => {
+        throw new Error('index is stale — run index.build to rebuild it first');
+      },
+    });
+    await mount(fake);
+    const rebuild = () =>
+      [...container.querySelectorAll('button')].find((b) => b.textContent === 'Rebuild index') as
+        | HTMLButtonElement
+        | undefined;
+    // The Rebuild control is available while built (before any search).
+    expect(rebuild()).toBeTruthy();
+    await type('pricing');
+    await submit();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'run index.build to rebuild it first',
+    );
+    // Rebuild is still offered after the stale refusal; clicking it re-runs the
+    // build and shows the BUILDING progress region.
+    const btn = rebuild() as HTMLButtonElement;
+    expect(btn).toBeTruthy();
+    await act(async () => {
+      btn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(fake.calls.find((c) => c.method === 'index.build')?.params).toEqual({ videoId: 'v1' });
+    expect(container.querySelector('.progress[aria-live="polite"]')).toBeTruthy();
+    // While building, the Rebuild control is hidden (built && !building is false).
+    expect(rebuild()).toBeUndefined();
+  });
+
   it('a done payload for the wrong job before built leaves status untouched, then unsubscribes on unmount', async () => {
     const off = vi.fn();
     const fake = makeFakeApi({ 'index.status': UNBUILT, 'index.build': { jobId: 'job-idx' } });

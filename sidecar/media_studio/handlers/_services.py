@@ -56,6 +56,7 @@ class Services:
         openrouter_usage_transport: Any | None = None,
         now: Callable[[], float] | None = None,
         vlm_clip_frame_loader: Any | None = None,
+        vlm_clip_time_loader: Any | None = None,
         vlm_frame_encoder: Any | None = None,
         vlm_models_present: Callable[[dict[str, Any]], bool] | None = None,
         vlm_chat_transport: Any | None = None,
@@ -103,6 +104,7 @@ class Services:
         # no weights / no network is ever touched. ``vlm_models_present`` overrides
         # the local-weight probe so the cloud-vs-local-vs-off decision is testable.
         self._vlm_clip_frame_loader = vlm_clip_frame_loader
+        self._vlm_clip_time_loader = vlm_clip_time_loader
         self._vlm_frame_encoder = vlm_frame_encoder
         self._vlm_models_present = vlm_models_present
         # WU-vision: the chat transport the vision rotation pool uses (the
@@ -228,6 +230,7 @@ class Services:
     _resolve_vlm_reranker = vision_ops._resolve_vlm_reranker
     _resolve_frame_scorer = vision_ops._resolve_frame_scorer
     _frame_clip_loader = vision_ops._frame_clip_loader
+    _frame_clip_time_loader = vision_ops._frame_clip_time_loader
     _frame_thumbnail_writer = vision_ops._frame_thumbnail_writer
     _resolve_thumbnail_span = vision_ops._resolve_thumbnail_span
     thumbnail_select = vision_ops.thumbnail_select
@@ -240,6 +243,7 @@ class Services:
     _index_provider_factory = vision_ops._index_provider_factory
     index_status = vision_ops.index_status
     index_search = vision_ops.index_search
+    index_plan = vision_ops.index_plan
     _plan_index_envelope = vision_ops._plan_index_envelope
     subtitles_generate = media_ops.subtitles_generate
     subtitles_edit = media_ops.subtitles_edit
@@ -255,6 +259,7 @@ class Services:
     convert_start = media_ops.convert_start
     convert_batch = media_ops.convert_batch
     transcribe_start = media_ops.transcribe_start
+    _transcribe_and_persist = media_ops._transcribe_and_persist
     _diarize_backend_factory = media_ops._diarize_backend_factory
     _diarize_models_present = media_ops._diarize_models_present
     _maybe_align_words = media_ops._maybe_align_words
@@ -278,6 +283,7 @@ class Services:
     _shortmaker = shortmaker_ops._build_shortmaker
     _detect_boundaries = shortmaker_ops._detect_boundaries
     _shortmaker_context = shortmaker_ops._shortmaker_context
+    _ensure_transcript = shortmaker_ops._ensure_transcript
     shortmaker_select = shortmaker_ops.shortmaker_select
     shortmaker_export = shortmaker_ops.shortmaker_export
     _approved_clips = shortmaker_ops._approved_clips

@@ -34,6 +34,7 @@ injectable seams — tested with NO real pip/network (tests/test_runtime_setup.p
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -54,6 +55,7 @@ if str(_SIDECAR_DIR) not in sys.path:
 
 from media_studio.assets.manager import (  # noqa: E402
     ENV_SENTINEL,
+    GET_PIP_SHA256,
     GET_PIP_URL,
     HASHED_LOCK_PIP_ARGS,
     PINNED_PIP,
@@ -61,7 +63,7 @@ from media_studio.assets.manager import (  # noqa: E402
     validate_hashed_lock,
 )
 from media_studio.pathsafe import ensure_within  # noqa: E402
-from media_studio.settings_store import default_config_dir  # noqa: E402
+from media_studio.settings_store import SettingsStore, default_config_dir  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 SIDECAR_REQUIREMENTS = HERE / "requirements-sidecar.txt"
@@ -228,6 +230,26 @@ def activate_embed_pth(
 # --------------------------------------------------------------------------- #
 # pure logic: pip step argv building (mirrors assets.manager's env installer)
 # --------------------------------------------------------------------------- #
+#: step-2 invokes pip through a ``python -c`` prelude that inserts the env dir
+#: onto ``sys.path`` at RUNTIME before importing pip, instead of ``python -m
+#: pip``. The embeddable interpreter runs in ISOLATED mode (it IGNORES
+#: PYTHONPATH), and on a READ-ONLY install dir (e.g. ``C:\\Program Files``) the
+#: ``._pth`` that would otherwise put the env dir on ``sys.path`` cannot be
+#: rewritten — :func:`activate_embed_pth` logs + skips that write, NON-fatally.
+#: With plain ``python -m pip`` that combination dies with "No module named pip"
+#: (the read-only-install first-run trap). The prelude depends on NEITHER the
+#: ``._pth`` NOR PYTHONPATH, so step 2 imports step 1's pip whether or not the
+#: install dir was writable. The pip args follow as REAL argv tokens (``python
+#: -c PRELUDE install --target ... -r ...`` — the prelude re-exposes them via
+#: ``sys.argv``), so each stays individually inspectable.
+_STEP2_PIP_PRELUDE = (
+    "import runpy, sys; "
+    "sys.path.insert(0, {env!r}); "
+    "sys.argv = ['pip', *sys.argv[1:]]; "
+    "runpy.run_module('pip', run_name='__main__')"
+)
+
+
 def build_pip_steps(
     python_exe: Path | str,
     get_pip: Path | str,
@@ -241,10 +263,14 @@ def build_pip_steps(
 
       1. ``python get-pip.py <pip pin> --target <env>`` — embeddable CPython has
          no ensurepip; get-pip forwards its args to the pip it bootstraps.
-      2. ``python -m pip install --target <env> -r <requirements>`` with
-         ``PYTHONPATH=<env>`` so step 1's pip is importable. Index options
-         (``--extra-index-url``) live INSIDE the requirements file — pip reads
-         them from there, no CLI plumbing. When ``lock_file`` is given (WU C4)
+      2. ``python -c <prelude> install --target <env> -r <requirements>`` — the
+         :data:`_STEP2_PIP_PRELUDE` prelude inserts ``<env>`` onto ``sys.path``
+         at runtime, then runs pip with the trailing argv, so step 1's pip is
+         importable EVEN when the ``._pth`` could not be rewritten (a read-only
+         install dir). ``PYTHONPATH=<env>`` is still set for a non-embeddable /
+         non-isolated python. Index options (``--extra-index-url``) live INSIDE
+         the requirements file — pip reads them from there, no CLI plumbing.
+         When ``lock_file`` is given (WU C4)
          step 2 installs the fully-hashed lock instead, adding
          :data:`HASHED_LOCK_PIP_ARGS` (``--require-hashes --only-binary=:all:
          --no-deps``) so every wheel over the FULL transitive closure is
@@ -271,8 +297,8 @@ def build_pip_steps(
         {
             "argv": [
                 str(python_exe),
-                "-m",
-                "pip",
+                "-c",
+                _STEP2_PIP_PRELUDE.format(env=env_dir_s),
                 "install",
                 "--target",
                 env_dir_s,
@@ -312,21 +338,53 @@ def ensure_get_pip(
     embed_dir: Path | None = None,
     *,
     urlopen: UrlOpen = urllib.request.urlopen,
+    get_pip_sha256: str = GET_PIP_SHA256,
+    settings: dict[str, Any] | None = None,
 ) -> Path:
-    """Locate (or fetch) get-pip.py.
+    """Locate (or fetch) get-pip.py, sha256-VERIFIED before it is ever run (F3c).
 
     Order: the staged copy beside the embeddable python (python-embed-setup.ps1
     puts one there so first run can work offline) -> a previously cached copy
     under ``<root>/tools/`` -> download via stdlib urllib (httpx is not
     installed yet at this point — the sidecar env is what we're building).
+
+    get-pip.py is downloaded-then-EXECUTED (:func:`build_pip_steps` step 1), so a
+    tampered/MITM'd script would run with the interpreter's privileges. Every
+    return path is therefore checked against ``get_pip_sha256`` (the manager's
+    pinned :data:`GET_PIP_SHA256`; injectable so tests use small fixtures):
+      * the download is verified BEFORE ``write_bytes`` — tampered bytes never
+        touch disk (no write-before-verify);
+      * the staged AND the cached copies are re-verified ON READ — a poisoned
+        ``<root>/tools/get-pip.py`` (bootstrap and the manager share it) is
+        rejected loudly instead of silently trusted+executed.
+    A mismatch raises the typed :class:`BootstrapError` (fail loud).
+
+    When ``settings`` is supplied (the packaged first-run path threads the
+    persisted store), the DOWNLOAD path is offline-consent-gated first — a user
+    with ``offline=true`` gets a typed refusal, never a silent egress. Using a
+    staged/cached local copy stays allowed offline (no network). ``settings`` is
+    left ``None`` by the pure-logic callers/tests so the guard is opt-in and no
+    real config is read where it isn't wanted.
     """
+
+    def _verify(data: bytes) -> None:
+        actual = hashlib.sha256(data).hexdigest()
+        if actual != get_pip_sha256:
+            raise BootstrapError(f"get-pip.py sha256 mismatch: expected {get_pip_sha256}, got {actual}")
+
     if embed_dir is not None:
         staged = Path(embed_dir) / "get-pip.py"
         if staged.is_file():
+            _verify(staged.read_bytes())
             return staged
     cached = Path(ensure_within(root, "tools", "get-pip.py"))
     if cached.is_file():
+        _verify(cached.read_bytes())
         return cached
+    if settings is not None:  # offline-consent gate — refuse egress before any I/O
+        from media_studio.features.offline import guard_network
+
+        guard_network(settings, "downloading get-pip.py")
     _log(f"downloading get-pip.py from {GET_PIP_URL}")
     cached.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -334,6 +392,7 @@ def ensure_get_pip(
             data = resp.read()
     except Exception as exc:  # noqa: BLE001 - surface as a typed failure
         raise BootstrapError(f"could not download get-pip.py: {exc}") from exc
+    _verify(data)  # verify-before-persist: tampered bytes are never written/run
     cached.write_bytes(data)
     return cached
 
@@ -418,19 +477,23 @@ def install_env(
     run_step: RunStep = _default_run_step,
     urlopen: UrlOpen = urllib.request.urlopen,
     lock_file: Path | str | None = None,
+    get_pip_sha256: str = GET_PIP_SHA256,
+    settings: dict[str, Any] | None = None,
 ) -> Path:
     """Build ``<root>/envs/<env_name>`` from a PINNED requirements file.
 
     When a sibling fully-hashed lock is staged (WU C4; F1 build-prep), the env
     installs from IT with ``--require-hashes`` so every wheel over the full
     transitive closure is hash-verified before exec; otherwise it falls back
-    LOUDLY to the top-level pins in ``req_file``.
+    LOUDLY to the top-level pins in ``req_file``. get-pip.py is sha256-verified
+    (``get_pip_sha256``) before it is executed (F3c); ``settings`` (when given)
+    offline-consent-gates a get-pip.py DOWNLOAD.
     """
     reqs = load_requirements(req_file)  # validate BEFORE any subprocess runs
     active_lock = resolve_active_lock(req_file, lock_file)
     env_dir = Path(ensure_within(root, "envs", env_name))
     env_dir.mkdir(parents=True, exist_ok=True)
-    get_pip = ensure_get_pip(root, embed_dir, urlopen=urlopen)
+    get_pip = ensure_get_pip(root, embed_dir, urlopen=urlopen, get_pip_sha256=get_pip_sha256, settings=settings)
     steps = build_pip_steps(python_exe, get_pip, env_dir, req_file, lock_file=active_lock)
     run_steps(steps, run_step=run_step)
     write_env_sentinel(env_dir, f"{env_name}-env", reqs)
@@ -510,11 +573,22 @@ def core_first_run_assets() -> list[str]:
 
 def ensure_assets(names: Sequence[str], root: Path, *, manager: Any | None = None) -> None:
     """Run the U4 download/install machinery in-process (httpx must be importable
-    by now — the sidecar env is installed + site-dir'd before this runs)."""
+    by now — the sidecar env is installed + site-dir'd before this runs).
+
+    The default manager is wired with the PERSISTED settings (``SettingsStore``),
+    NOT a blind ``{}``. bootstrap genuinely re-runs on an established install (the
+    silent WU-S2 re-bootstrap on requirements-fingerprint drift, and the
+    "Retry setup"/repair flow), so a settings-blind manager here would (a) BYPASS
+    the ``offline`` consent gate — ``manager.ensure`` calls
+    ``guard_network(self._settings())`` before any egress, which with ``{}`` never
+    sees a user's ``offline=true`` — and (b) miss the custom-path detect probes
+    (``ggufPath``/``modelsDir``/``llamaServerPath``), re-downloading models the
+    user already has elsewhere. Threading the real store closes both gaps.
+    """
     if manager is None:
         from media_studio.assets.manager import AssetManager
 
-        manager = AssetManager(root=root)
+        manager = AssetManager(root=root, settings_provider=SettingsStore().get)
     manager.ensure(list(names), _ConsoleJobCtx())
 
 
@@ -550,10 +624,16 @@ def first_run_complete_path(root: Path | str) -> Path:
 
 def _default_asset_manager(root: Path) -> Any:
     """Construct the real :class:`AssetManager` (lazy import — httpx et al. only
-    exist once the sidecar env is installed + site-dir'd)."""
+    exist once the sidecar env is installed + site-dir'd).
+
+    Wired with the PERSISTED settings (``SettingsStore``) so the
+    :func:`verify_provisioned` detect probes honour a user's custom model paths
+    (``ggufPath``/``modelsDir``/…) on re-bootstrap/repair, same as the RPC path —
+    never the settings-blind ``{}`` that a bare ``AssetManager(root=root)`` gets.
+    """
     from media_studio.assets.manager import AssetManager
 
-    return AssetManager(root=root)
+    return AssetManager(root=root, settings_provider=SettingsStore().get)
 
 
 def verify_provisioned(
@@ -655,6 +735,7 @@ def extract_tool_archives(
     from media_studio.assets import manifest
 
     done: list[str] = []
+    cleared: set[Path] = set()
     for arch in archives if archives is not None else tools_resolver.TOOL_ARCHIVES:
         entry = manifest.get_asset(arch.asset)
         if entry is None or not entry.dest:
@@ -665,9 +746,20 @@ def extract_tool_archives(
         if not zip_path.is_file():
             continue
         target = Path(ensure_within(root, arch.extract_to))
+        # Clear a stale build ONCE per target on a LLAMA_RELEASE_TAG bump so a new
+        # nested layout can't inherit an old exe (the version-aware detect gate
+        # keys off RELEASE_TAG_MARKER; without a wipe an old marker/exe lingers and
+        # assets.ensure never re-provisions). Guard by `cleared` so a SECOND archive
+        # extracting INTO the same dir (the cudart zip lands in the CUDA build dir)
+        # does NOT wipe what a prior archive just populated.
+        if target not in cleared:
+            if target.exists():
+                shutil.rmtree(target)
+            cleared.add(target)
         _log(f"extracting {arch.asset} -> {target}")
         extract_archive(zip_path, target)
         flatten_tool_dir(target, tools_resolver.LLAMA_EXE)
+        (target / tools_resolver.RELEASE_TAG_MARKER).write_text(tools_resolver.LLAMA_RELEASE_TAG, encoding="utf-8")
         if remove_zip:
             zip_path.unlink()
         done.append(arch.asset)
@@ -745,16 +837,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"SUCCESS:bootstrap tools-only ({', '.join(extracted) or 'nothing to extract'})")
             return 0
 
+        # The persisted store offline-consent-gates a get-pip.py DOWNLOAD (the
+        # multi-GB model/asset downloads are gated inside the manager, wired via
+        # ensure_assets). Read once and thread into every env install below.
+        settings = SettingsStore().get()
+
         env_dir = Path(ensure_within(root, "envs", SIDECAR_ENV_NAME))
         if not args.skip_env:
-            # Activate the ._pth BEFORE the pip steps. The embeddable ._pth runs
-            # python in ISOLATED mode (it IGNORES PYTHONPATH), so pip-install
-            # step 2 (`python -m pip ...`) can only import the pip that step 1
-            # installs into env_dir once env_dir + `import site` are already on
-            # the ._pth. get-pip.py (step 1) is self-contained, so it needs no
-            # ._pth. (Without this ordering, first-run dies: 'No module named
-            # pip' — caught by the real-bundle bootstrap smoke, not the mocked
-            # unit tests.) The chatterbox env install then reuses this same pip.
+            # Activate the ._pth BEFORE the pip steps so the embeddable's later
+            # self-activation and any non-prelude tooling see the env dir. Step 2
+            # itself no longer depends on the ._pth: it runs pip through the
+            # runtime sys.path prelude (build_pip_steps), so first-run survives a
+            # read-only install dir where the ._pth write is skipped — the case
+            # that used to die 'No module named pip' under the embeddable's
+            # ISOLATED mode. The chatterbox env install then reuses this same pip.
             env_dir.mkdir(parents=True, exist_ok=True)
             # GUARDED: a read-only install dir (Program Files) cannot take the
             # ._pth write — that is logged + skipped, NOT fatal. The env installs
@@ -766,6 +862,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 env_name=SIDECAR_ENV_NAME,
                 req_file=req_file,
                 embed_dir=embed_dir,
+                settings=settings,
             )
 
         asset_names: list[str] = []
@@ -806,6 +903,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 env_name=CHATTERBOX_ENV_NAME,
                 req_file=CHATTERBOX_REQUIREMENTS,
                 embed_dir=chatter_embed,
+                settings=settings,
             )
 
         # A CORE-complete run (env + the always-on face/ASD weights) is a

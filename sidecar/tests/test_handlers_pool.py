@@ -62,7 +62,10 @@ def test_handler_get_translator_pool_aware(tmp_path: Path) -> None:
                     "apiKeys": ["k1"],
                     "enabled": True,
                 }
-            ]
+            ],
+            # tier3 hosted translator is now per-provider TEXT-consent gated; grant
+            # it so the Groq cloud entry survives into the rotation pool.
+            "consent": {"perProvider": {"Groq": {"text": True}}},
         },
     )
     translator = svc._get_translator()

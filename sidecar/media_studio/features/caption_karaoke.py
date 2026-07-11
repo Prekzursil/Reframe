@@ -281,19 +281,24 @@ def build_karaoke_ass(
 
     events: list[str] = []
     global_index = 0
-    for cue in cues:
-        for line in group_into_lines(words_from_cue(cue)):
-            for active_index, word in enumerate(line):
-                color = active_color_for_index(global_index)
-                global_index += 1
-                start = rebase_cue_time(word.get("start", 0.0), source_start)
-                end = rebase_cue_time(word.get("end", 0.0), source_start)
-                if end <= start:
-                    continue  # entirely before the clip (or zero-length after re-base)
-                text = build_line_text(line, active_index, color, uppercase=uppercase)
-                events.append(
-                    f"Dialogue: 0,{format_ass_timestamp(start)},{format_ass_timestamp(end)},Default,,0,0,0,,{text}"
-                )
+    # Bug-sweep: the shortmaker pipeline feeds ONE-WORD cues (features._cues_for_clip
+    # emits a cue per transcript word), so grouping per-cue collapsed every karaoke
+    # line to a single word. Flatten words across ALL cues first, then group globally
+    # so the 1-4-words-per-line look renders from per-word cues. A cue that carries an
+    # aligned ``words`` array still contributes its words in order.
+    all_words = [word for cue in cues for word in words_from_cue(cue)]
+    for line in group_into_lines(all_words):
+        for active_index, word in enumerate(line):
+            color = active_color_for_index(global_index)
+            global_index += 1
+            start = rebase_cue_time(word.get("start", 0.0), source_start)
+            end = rebase_cue_time(word.get("end", 0.0), source_start)
+            if end <= start:
+                continue  # entirely before the clip (or zero-length after re-base)
+            text = build_line_text(line, active_index, color, uppercase=uppercase)
+            events.append(
+                f"Dialogue: 0,{format_ass_timestamp(start)},{format_ass_timestamp(end)},Default,,0,0,0,,{text}"
+            )
 
     # LF line endings for cross-platform determinism (tests assert exact content).
     return "\n".join(header + events) + "\n"

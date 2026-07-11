@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { AbsoluteFill, OffthreadVideo } from "remotion";
 import { Captions } from "./components/Captions";
+import { HookTitle } from "./components/HookTitle";
 import { fontFaceCSS } from "./styles/fonts";
 import { cuesToCaptions } from "./types";
 import type { CaptionedClipProps } from "./types";
@@ -22,6 +23,7 @@ export const CaptionedClip: React.FC<CaptionedClipProps> = ({
   videoSrc,
   cues,
   style,
+  hookTitle,
 }) => {
   const captions = useMemo(() => cuesToCaptions(cues), [cues]);
 
@@ -40,6 +42,9 @@ export const CaptionedClip: React.FC<CaptionedClipProps> = ({
 
       {/* Animated captions */}
       <Captions captions={captions} style={style} />
+
+      {/* Top-anchored hook headline (P3-A) — parity with the libass hook burn */}
+      <HookTitle text={hookTitle ?? ""} style={style} />
     </AbsoluteFill>
   );
 };

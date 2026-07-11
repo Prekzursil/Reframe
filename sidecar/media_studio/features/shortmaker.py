@@ -376,6 +376,7 @@ def _lazy_caption(
     hook_title=None,
     hook_card=False,
     hook_card_sec=0.0,
+    total_sec=0.0,
 ) -> str:
     """Caption-stage router (A4): style picks the engine.
 
@@ -413,6 +414,11 @@ def _lazy_caption(
                 height=height,
                 source_start=source_start,
                 hook_title=hook_title,
+                # WU-caption-fix: the Remotion engine re-renders into a FIXED-length
+                # composition, so it MUST be told the clip's real duration or it
+                # truncates the video/audio to the last caption cue. The libass
+                # engine ignores total_sec (it burns onto the existing clip).
+                total_sec=total_sec,
             )
 
     from . import caption as _caption
@@ -430,6 +436,9 @@ def _lazy_caption(
         hook_title=hook_title,
         # P4 §4: the libass default engine honours the caption position box.
         position=(settings or {}).get("captionPosition"),
+        # V1.1 §3: the additive caption override ({outline/card/uppercase/size/...});
+        # render->build_ass->apply_override tolerates None and validates a dict.
+        override=(settings or {}).get("captionOverride"),
         # V1.1 WU SP1: the "opusclip-karaoke" libass preset (word-by-word ASS).
         karaoke=is_karaoke_style(style),
         # V1.1 WU SP2: render the hook as an OpusClip CARD (white box, bold black,
@@ -946,6 +955,7 @@ def _export_one(
     caption_source_start = source_start
     filler_stats: dict[str, Any] | None = None
     silence_removed: float = 0.0
+    filler_removed_sec: float = 0.0
 
     # SILENCE-TRIM (audio-stabilize group) — dead-air removal, ON when the
     # ``silenceTrim`` toggle is set. Runs on the cut clip (clip-local t=0). It
@@ -1008,6 +1018,9 @@ def _export_one(
             lang=lang,
             settings=settings,
         )
+        # WU-caption-fix: filler removal SHORTENS the clip timeline, so record how
+        # much was cut to keep the Remotion caption duration honest (used below).
+        filler_removed_sec = float(filler_stats.get("fillerSeconds", 0.0) or 0.0)
         # The de-filled clip is already clip-local; cues are remapped clip-local.
         caption_source_start = 0.0
 
@@ -1068,6 +1081,12 @@ def _export_one(
     # soft-track / sidecar / none modes the caption stage soft-muxes or skips (the
     # stage RETURNS the path to encode — the bare clip when it skips), so capture
     # it instead of assuming the captioned path always exists.
+    # WU-caption-fix: Remotion (premium) captions re-render into a FIXED-length
+    # composition, so hand the caption stage the clip's REAL playback duration or
+    # it truncates to the last cue. Base is the cut window (end - source_start);
+    # the timeline-shortening stages (silence-trim / filler-removal, mutually
+    # exclusive) subtract what they cut. The libass default engine ignores it.
+    caption_total_sec = max(0.0, float(end) - float(source_start) - silence_removed - filler_removed_sec)
     captioned_path = str(out_dir / f"{stem}.captioned.mp4")
     caption_out = stages.render_caption(
         caption_clip,
@@ -1081,6 +1100,7 @@ def _export_one(
         hook_title=hook_title,
         hook_card=clip_hook_card,
         hook_card_sec=hook_card_sec,
+        total_sec=caption_total_sec,
     )
 
     # P4 §8d: BRAND-LOGO OVERLAY — composite the configured brand logo into a
@@ -1228,13 +1248,17 @@ def run_export(
     # de-duplicated so the same notice across N clips is announced once (the skip
     # is REPORTED, never silently swallowed — the "do NOT silently skip" rule).
     _seen_notices: set[str] = set()
+    # Bug-sweep: a mid-export stage notice must NOT snap the progress bar backward
+    # to a fixed 4%. Track the loop's current percent and surface the notice AT
+    # that percent so progress stays forward-only.
+    _pct = [2]
 
     def _emit_notice(notice: dict[str, str]) -> None:
         key = str(notice.get("type") or notice.get("message") or "")
         if key in _seen_notices:
             return
         _seen_notices.add(key)
-        ctx.progress(4, notice.get("message", "stabilize: notice"))
+        ctx.progress(_pct[0], notice.get("message", "stabilize: notice"))
 
     # WU SP2: resolve the hook-card config ONCE, then gate the card to the top-N
     # clips by virality rank and compute the rank-ordered ``NN-`` filename width.
@@ -1255,7 +1279,8 @@ def run_export(
         # WU SP2: rank-ordered output name + per-clip card gate (top-N by rank).
         clip_rank = _hook_card.resolve_rank(candidate, i + 1)
         final_stem = _hook_card.rank_ordered_stem(base_stem, clip_rank, max_rank)
-        ctx.progress(int(100 * i / total), f"exporting clip {i + 1}/{total}")
+        _pct[0] = int(100 * i / total)
+        ctx.progress(_pct[0], f"exporting clip {i + 1}/{total}")
         item = _export_one(
             candidate,
             source_path=source_path,
@@ -1357,6 +1382,12 @@ class ShortMaker:
         caption_position = params.get("captionPosition")
         if isinstance(caption_position, dict):
             settings["captionPosition"] = caption_position
+        # V1.1 §3: the additive caption OVERRIDE ({outline/card/uppercase/size/...});
+        # only a dict is accepted so a malformed value can never poison the libass
+        # style resolution (caption.apply_override validates the dict body).
+        caption_override = params.get("captionOverride")
+        if isinstance(caption_override, dict):
+            settings["captionOverride"] = caption_override
         # P3/P4: optional per-export BOOLEAN toggles (frozen mini-contract):
         #   hookTitle (default true)  -> render the candidate's hook as a top
         #                                title in the CAPTION stage (P3-A);

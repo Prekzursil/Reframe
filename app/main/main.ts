@@ -50,7 +50,6 @@ import {
   SidecarUnavailableError,
 } from './mediaProtocol';
 import { PlaybackProxy, type PlayableVerdict, type ProxyBuildState } from './playbackProxy';
-import type { DoneNotification } from './sidecar';
 import { registerShellIpc } from './shellIpc';
 import { pthZipName, renderPthBody } from './pthActivation';
 import {
@@ -74,7 +73,7 @@ import {
 } from './rendererRecovery';
 import { keystorePathFor, migrateLegacyPlaintextKeys, type SafeStorageLike } from './keystore';
 import { KeyBridge } from './keyBridge';
-import { Sidecar } from './sidecar';
+import { buildProxyJob, Sidecar } from './sidecar';
 import { autoUpdater } from 'electron-updater';
 import {
   registerUpdater,
@@ -780,35 +779,6 @@ function wireAutoUpdater(win: BrowserWindow): UpdaterHandle {
 }
 
 /**
- * WU B3: start the sidecar `media.proxy.start` job for `videoId` and resolve
- * with the built proxy's absolute path once its terminal `job.done` arrives.
- * Rejects LOUDLY when the job reports an error payload (a failed transcode) or
- * finishes without a path — so the caller never silently serves the raw source.
- * The bounded await lives in {@link PlaybackProxy}; this just bridges the job's
- * done-event to a promise (and always detaches its listener).
- */
-function buildProxyJob(sc: Sidecar, videoId: string): Promise<string> {
-  return sc.request<{ jobId: string }>('media.proxy.start', { videoId }).then(
-    ({ jobId }) =>
-      new Promise<string>((resolveBuild, rejectBuild) => {
-        const onDone = (done: DoneNotification): void => {
-          if (done.jobId !== jobId) return;
-          sc.off('done', onDone);
-          const result = (done.result ?? {}) as { path?: string; error?: { message?: string } };
-          if (result.error) {
-            rejectBuild(new Error(result.error.message ?? `proxy build failed for ${videoId}`));
-          } else if (typeof result.path === 'string' && result.path !== '') {
-            resolveBuild(result.path);
-          } else {
-            rejectBuild(new Error(`proxy build for ${videoId} returned no path`));
-          }
-        };
-        sc.on('done', onDone);
-      }),
-  );
-}
-
-/**
  * Spawn `runtime_setup/bootstrap.py` with the bundled embeddable python and
  * relay its progress lines (`[bootstrap] ...` on stderr, the terminal
  * SUCCESS:/FAILED: line on stdout) to the renderer over 'bootstrap.progress'.
@@ -864,6 +834,20 @@ function runFirstRunBootstrap(assets: readonly string[] | null = null): Promise<
     // WU-1 FAIL-LOUD: remember bootstrap.py's terminal actionable failure line
     // (`FAILED:bootstrap …`) so we can surface it to the UI on a non-zero exit.
     let lastFailLine = '';
+    // Single-settle guard shared by the 'error' + 'close' terminal handlers: on a
+    // spawn failure Node may emit BOTH 'error' and 'close', so this stops the close
+    // handler from overwriting a precise spawn-error message with the generic
+    // fallback (and stops any double broadcast/resolve).
+    let settled = false;
+    const relayLine = (raw: string): void => {
+      const line = raw.trim();
+      if (line !== '') {
+        // eslint-disable-next-line no-console
+        console.error(`[bootstrap] ${line}`);
+        if (line.startsWith('FAILED:bootstrap')) lastFailLine = line;
+        broadcastBootstrap('running', line);
+      }
+    };
     const relayLines = (stream: NodeJS.ReadableStream | null): void => {
       if (!stream) return;
       let buffer = '';
@@ -872,21 +856,28 @@ function runFirstRunBootstrap(assets: readonly string[] | null = null): Promise<
         buffer += chunk;
         let nl = buffer.indexOf('\n');
         while (nl !== -1) {
-          const line = buffer.slice(0, nl).trim();
+          relayLine(buffer.slice(0, nl));
           buffer = buffer.slice(nl + 1);
-          if (line !== '') {
-            // eslint-disable-next-line no-console
-            console.error(`[bootstrap] ${line}`);
-            if (line.startsWith('FAILED:bootstrap')) lastFailLine = line;
-            broadcastBootstrap('running', line);
-          }
           nl = buffer.indexOf('\n');
+        }
+      });
+      // A6.2 flush: a final line WITHOUT a trailing newline (a block-buffered pipe
+      // flushed only at interpreter exit — bootstrap.py's FAILED:bootstrap prints
+      // lack flush=True) is still captured into lastFailLine. 'close' fires only
+      // after both streams' 'end', so the flushed FAILED line is already recorded
+      // before the FAILED-vs-generic fallback decision runs below.
+      stream.on('end', () => {
+        if (buffer !== '') {
+          relayLine(buffer);
+          buffer = '';
         }
       });
     };
     relayLines(child.stdout);
     relayLines(child.stderr);
     child.on('error', (err: Error) => {
+      if (settled) return;
+      settled = true;
       bootstrapChild = null;
       // eslint-disable-next-line no-console
       console.error(`[bootstrap] spawn error: ${err.message}`);
@@ -900,7 +891,15 @@ function runFirstRunBootstrap(assets: readonly string[] | null = null): Promise<
       broadcastProvisioning(false);
       resolveRun(false);
     });
-    child.on('exit', (code: number | null) => {
+    // Settle on 'close' (NOT 'exit'): Node guarantees all stdio is drained only on
+    // 'close' (it always fires AFTER 'exit'); on 'exit' the stdout pipe may still
+    // hold the buffered terminal FAILED:bootstrap chunk, which would then race the
+    // fallback decision and both (a) show the generic banner and (b) leak a late
+    // 'running' progress line after the terminal error. 'close' waits for the pipe
+    // drain (+ our 'end' flush) so lastFailLine is authoritative here.
+    child.on('close', (code: number | null) => {
+      if (settled) return;
+      settled = true;
       bootstrapChild = null;
       const ok = code === 0;
       broadcastBootstrap(ok ? 'done' : 'error', `bootstrap exited (code ${code ?? 'null'})`);
@@ -1199,6 +1198,12 @@ function bootstrap(): void {
       ensurePthActivated();
       // eslint-disable-next-line no-console
       console.error('[bootstrap] first-run setup failed; starting existing env (degraded)');
+      // Bug-sweep: the app IS starting (degraded), so clear the hard actionable
+      // "first-run setup failed" banner — the renderer maps an empty message to
+      // null and falls back to the (now healthy) sidecar status, instead of
+      // showing a permanent, undismissable error over a working app. The
+      // truly-down branch below keeps the loud banner (nothing to fall back to).
+      broadcastBootstrapError('');
       sc2.start();
     } else {
       // eslint-disable-next-line no-console
@@ -1258,6 +1263,14 @@ function bootstrap(): void {
       try {
         return await sc.request<PlayableVerdict>('media.playable', { videoId });
       } catch (err) {
+        // WU-1e-fix follow-up: PlaybackProxy.resolve() rejects on this transient
+        // SidecarUnavailableError BEFORE emitting any proxy-state, so the renderer
+        // would wedge behind a calm "Building preview…" note that never resolves.
+        // Emit a LOUD, accurate proxy-state here (the sole notify on this path) so
+        // Workspace surfaces it instead of masking it; the transient message tells
+        // the user to retry (navigate away/back re-probes on videoId remount). The
+        // SidecarUnavailableError type is preserved so mediaProtocol still maps 503.
+        broadcastProxyState(videoId, 'error', 'media backend unavailable — retrying');
         throw new SidecarUnavailableError(
           `media.playable failed for ${videoId}: ${(err as Error).message}`,
         );
@@ -1270,6 +1283,9 @@ function bootstrap(): void {
         );
         return videos.find((v) => v.id === videoId)?.path ?? null;
       } catch (err) {
+        // Same loud proxy-state on the playable-branch resolveOriginal failure:
+        // resolve() throws before its 'direct' notify, so emit here before rethrow.
+        broadcastProxyState(videoId, 'error', 'media backend unavailable — retrying');
         throw new SidecarUnavailableError(
           `library.list failed for ${videoId}: ${(err as Error).message}`,
         );

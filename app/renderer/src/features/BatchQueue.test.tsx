@@ -5,15 +5,24 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
-import type { BatchState, BatchSummary, ProgressEvent, Template, Video } from '../lib/rpc';
+import type {
+  BatchConsent,
+  BatchState,
+  BatchSummary,
+  ProgressEvent,
+  Template,
+  Video,
+} from '../lib/rpc';
 
 const libListMock = vi.fn();
 const tmplListMock = vi.fn();
 const batchListMock = vi.fn();
 const batchCreateMock = vi.fn();
+const batchPlanMock = vi.fn();
 const batchStartMock = vi.fn();
 const batchStatusMock = vi.fn();
 const batchResumeMock = vi.fn();
+const settingsGetMock = vi.fn();
 
 let progressCbs: Array<(e: ProgressEvent) => void> = [];
 let doneCbs: Array<() => void> = [];
@@ -25,10 +34,12 @@ vi.mock('../lib/rpc', () => ({
     batch: {
       list: (...a: unknown[]) => batchListMock(...a),
       create: (...a: unknown[]) => batchCreateMock(...a),
+      plan: (...a: unknown[]) => batchPlanMock(...a),
       start: (...a: unknown[]) => batchStartMock(...a),
       status: (...a: unknown[]) => batchStatusMock(...a),
       resume: (...a: unknown[]) => batchResumeMock(...a),
     },
+    settings: { get: (...a: unknown[]) => settingsGetMock(...a) },
   },
   onProgress: (cb: (e: ProgressEvent) => void) => {
     progressCbs.push(cb);
@@ -80,6 +91,34 @@ function summary(over: Partial<BatchSummary> = {}): BatchSummary {
   };
 }
 
+function consent(over: Partial<BatchConsent> = {}): BatchConsent {
+  return {
+    decisions: [
+      {
+        videoId: 'v1',
+        action: 'run',
+        skipReason: null,
+        confirmBudget: null,
+        willEgress: true,
+        cacheHit: false,
+      },
+      {
+        videoId: 'v2',
+        action: 'skip',
+        skipReason: 'would egress',
+        confirmBudget: null,
+        willEgress: true,
+        cacheHit: false,
+      },
+    ],
+    willRun: 1,
+    willSkip: 1,
+    costEst: {},
+    budget: {},
+    ...over,
+  };
+}
+
 function state(items: BatchState['items'], over: Partial<BatchState> = {}): BatchState {
   return {
     id: 'bNew',
@@ -115,9 +154,12 @@ beforeEach(() => {
   tmplListMock.mockResolvedValue({ templates: TEMPLATES });
   batchListMock.mockResolvedValue({ batches: [] });
   batchCreateMock.mockResolvedValue({ batch: state([{ videoId: 'v1', status: 'queued' }]) });
+  batchPlanMock.mockResolvedValue({ consent: consent() });
   batchStartMock.mockResolvedValue({ jobId: 'job-1' });
   batchStatusMock.mockResolvedValue({ batch: state([{ videoId: 'v1', status: 'queued' }]) });
   batchResumeMock.mockResolvedValue({ jobId: 'job-2' });
+  // The §9.1 budget setting defaults ON (settings_store confirmCloudBudget=True).
+  settingsGetMock.mockResolvedValue({ confirmCloudBudget: true });
 });
 
 afterEach(() => {
@@ -157,7 +199,7 @@ describe('BatchQueue', () => {
     expect(run2.disabled).toBe(false);
   });
 
-  it('runs a batch: create → start → status, rendering rows', async () => {
+  it('runs a batch (gate ON): create → plan → consent card → acknowledge → start → rows', async () => {
     await render();
     const cb = container.querySelectorAll('.batch-queue__source input')[0] as HTMLInputElement;
     act(() => cb.dispatchEvent(new MouseEvent('click', { bubbles: true })));
@@ -168,13 +210,38 @@ describe('BatchQueue', () => {
       clickText('Run batch');
       await Promise.resolve();
       await Promise.resolve();
+      await Promise.resolve();
     });
     expect(batchCreateMock).toHaveBeenCalledWith('Batch run', 't1', ['v1']);
-    expect(batchStartMock).toHaveBeenCalledWith('bNew');
+    // §9.1 gate ON: the run/skip split is previewed via batch.plan (no job
+    // started) and the consent card mounts with named, attributed skips;
+    // batch.start is DEFERRED until the user acknowledges cloud egress.
+    expect(batchPlanMock).toHaveBeenCalledWith('bNew', {
+      confirmCloudBudget: true,
+      acknowledged: false,
+    });
+    expect(container.querySelector('.batch-consent__split')?.textContent).toContain(
+      '1 of 2 sources will run',
+    );
+    expect(container.querySelector('.batch-consent__skip')?.textContent).toContain('Episode Two');
+    expect(batchStartMock).not.toHaveBeenCalled();
+    // Acknowledge cloud egress -> start (BOTH flags threaded) -> live rows.
+    await act(async () => {
+      clickText('Acknowledge cloud egress for this batch');
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(batchStartMock).toHaveBeenCalledWith('bNew', {
+      confirmCloudBudget: true,
+      acknowledged: true,
+    });
     expect(container.querySelector('.batch-queue__rows')).not.toBeNull();
   });
 
   it('start with no jobId key skips the status refresh (jobIdOf -> "")', async () => {
+    // Gate OFF: Run goes straight to start, exercising the jobId === '' arm.
+    settingsGetMock.mockResolvedValue({ confirmCloudBudget: false });
     batchStartMock.mockResolvedValueOnce({});
     await render();
     const cb = container.querySelectorAll('.batch-queue__source input')[0] as HTMLInputElement;
@@ -188,6 +255,7 @@ describe('BatchQueue', () => {
   });
 
   it('start with a non-string jobId is treated as no jobId', async () => {
+    settingsGetMock.mockResolvedValue({ confirmCloudBudget: false });
     batchStartMock.mockResolvedValueOnce({ jobId: 123 });
     await render();
     const cb = container.querySelectorAll('.batch-queue__source input')[0] as HTMLInputElement;
@@ -201,6 +269,7 @@ describe('BatchQueue', () => {
   });
 
   it('start with a primitive (non-object) result is treated as no jobId', async () => {
+    settingsGetMock.mockResolvedValue({ confirmCloudBudget: false });
     batchStartMock.mockResolvedValueOnce(null);
     await render();
     const cb = container.querySelectorAll('.batch-queue__source input')[0] as HTMLInputElement;
@@ -214,11 +283,14 @@ describe('BatchQueue', () => {
   });
 
   it('announces on source-transition only (debounced), not per pct tick', async () => {
+    // Gate OFF so Run starts the batch directly and tracks parentJobId = job-1.
+    settingsGetMock.mockResolvedValue({ confirmCloudBudget: false });
     await render();
     const cb = container.querySelectorAll('.batch-queue__source input')[0] as HTMLInputElement;
     act(() => cb.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     await act(async () => {
       clickText('Run batch');
+      await Promise.resolve();
       await Promise.resolve();
     });
     const fire = (m: string, pct: number): void =>
@@ -278,6 +350,8 @@ describe('BatchQueue', () => {
   });
 
   it('renders skip + error detail tokens on rows', async () => {
+    // Gate OFF so Run starts + pulls the status snapshot that carries the tokens.
+    settingsGetMock.mockResolvedValue({ confirmCloudBudget: false });
     await render();
     const cb = container.querySelectorAll('.batch-queue__source input')[0] as HTMLInputElement;
     act(() => cb.dispatchEvent(new MouseEvent('click', { bubbles: true })));
@@ -338,6 +412,8 @@ describe('BatchQueue', () => {
   });
 
   it('surfaces a status failure during run', async () => {
+    // Gate OFF so Run reaches the status refresh whose rejection sets the error.
+    settingsGetMock.mockResolvedValue({ confirmCloudBudget: false });
     batchStatusMock.mockRejectedValueOnce('x');
     await render();
     const cb = container.querySelectorAll('.batch-queue__source input')[0] as HTMLInputElement;
@@ -363,11 +439,13 @@ describe('BatchQueue', () => {
   });
 
   it('a progress event after a batch exists updates the live pct bar', async () => {
+    settingsGetMock.mockResolvedValue({ confirmCloudBudget: false });
     await render();
     const cb = container.querySelectorAll('.batch-queue__source input')[0] as HTMLInputElement;
     act(() => cb.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     await act(async () => {
       clickText('Run batch');
+      await Promise.resolve();
       await Promise.resolve();
     });
     act(() =>
@@ -378,6 +456,7 @@ describe('BatchQueue', () => {
   });
 
   it('surfaces a status failure with an Error message (instanceof arm)', async () => {
+    settingsGetMock.mockResolvedValue({ confirmCloudBudget: false });
     batchStatusMock.mockRejectedValueOnce(new Error('status-boom'));
     await render();
     const cb = container.querySelectorAll('.batch-queue__source input')[0] as HTMLInputElement;
@@ -391,15 +470,114 @@ describe('BatchQueue', () => {
     expect(container.querySelector('.batch-queue__error')?.textContent).toBe('status-boom');
   });
 
-  it('a progress event before any batch updates only the aggregate (batch stays null)', async () => {
+  it('a progress event before any batch is IGNORED (no tracked parent jobId)', async () => {
     await render();
     expect(container.querySelector('.batch-queue__live')).toBeNull();
+    // No batch has started, so parentJobIdRef is '' — the guard drops every event
+    // (an untracked jobId must never move the aggregate or the pct bar).
     act(() => progressCbs.forEach((c) => c({ jobId: 'x', pct: 50, message: 'source 1/1 · A' })));
-    // aggregate updated but no live batch panel (batch still null -> ": prev" arm).
-    expect(container.querySelector('.batch-livestatus__aggregate')?.textContent).toBe(
-      'source 1/1 · A',
-    );
+    expect(container.querySelector('.batch-livestatus__aggregate')?.textContent).toBe('');
     expect(container.querySelector('.batch-queue__live')).toBeNull();
+  });
+
+  it('ignores a foreign sub-job progress event but applies the parent batch jobId', async () => {
+    settingsGetMock.mockResolvedValue({ confirmCloudBudget: false });
+    await render();
+    const cb = container.querySelectorAll('.batch-queue__source input')[0] as HTMLInputElement;
+    act(() => cb.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await act(async () => {
+      clickText('Run batch');
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // A per-source SUB-job (its own jobId, local 0-100 pct) must NOT hijack the
+    // aggregate pct bar or the a11y announcement.
+    const barNow = (): string | null | undefined =>
+      container
+        .querySelector('.batch-queue__live [role="progressbar"]')
+        ?.getAttribute('aria-valuenow');
+    act(() => progressCbs.forEach((c) => c({ jobId: 'sub-9', pct: 88, message: 'reframe 88%' })));
+    expect(barNow()).not.toBe('88');
+    expect(container.querySelector('.batch-livestatus__aggregate')?.textContent).not.toBe(
+      'reframe 88%',
+    );
+    // The PARENT batch jobId (job-1) does apply.
+    act(() =>
+      progressCbs.forEach((c) =>
+        c({ jobId: 'job-1', pct: 42, message: 'source 1/2 · A · step 1/2' }),
+      ),
+    );
+    expect(barNow()).toBe('42');
+    expect(container.querySelector('.batch-livestatus__aggregate')?.textContent).toBe(
+      'source 1/2 · A · step 1/2',
+    );
+  });
+
+  it('threads confirmCloudBudget:false when the user disabled the budget gate', async () => {
+    settingsGetMock.mockResolvedValue({ confirmCloudBudget: false });
+    await render();
+    const cb = container.querySelectorAll('.batch-queue__source input')[0] as HTMLInputElement;
+    act(() => cb.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await act(async () => {
+      clickText('Run batch');
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(batchStartMock).toHaveBeenCalledWith('bNew', { confirmCloudBudget: false });
+  });
+
+  it('tracks the resumed run parent jobId so its progress applies (stale ignored)', async () => {
+    batchListMock.mockResolvedValue({ batches: [summary()] });
+    batchStatusMock.mockResolvedValue({ batch: state([{ videoId: 'v1', status: 'running' }]) });
+    await render();
+    await act(async () => {
+      clickText('Resume');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const barNow = (): string | null | undefined =>
+      container
+        .querySelector('.batch-queue__live [role="progressbar"]')
+        ?.getAttribute('aria-valuenow');
+    // A stale prior-run jobId is ignored...
+    act(() => progressCbs.forEach((c) => c({ jobId: 'job-1', pct: 5, message: 'stale' })));
+    expect(barNow()).not.toBe('5');
+    // ...the resumed run's jobId (job-2) applies.
+    act(() =>
+      progressCbs.forEach((c) => c({ jobId: 'job-2', pct: 61, message: 'source 1/1 · A' })),
+    );
+    expect(barNow()).toBe('61');
+  });
+
+  it('a tracked-jobId progress event before the first status snapshot is safely dropped (batch null)', async () => {
+    // resume() sets the parent jobId BEFORE its status snapshot populates `batch`.
+    // A matching progress event in that window passes the jobId gate but must hit
+    // the `batch ? … : prev` null-guard (no malformed batch, no live panel).
+    batchListMock.mockResolvedValue({ batches: [summary()] });
+    let resolveStatus!: (v: { batch: BatchState }) => void;
+    batchStatusMock.mockReturnValue(
+      new Promise<{ batch: BatchState }>((r) => {
+        resolveStatus = r;
+      }),
+    );
+    await render();
+    await act(async () => {
+      clickText('Resume');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // status is still pending -> batch is null (no live panel yet).
+    expect(container.querySelector('.batch-queue__live')).toBeNull();
+    act(() => progressCbs.forEach((c) => c({ jobId: 'job-2', pct: 30, message: 'x' })));
+    expect(container.querySelector('.batch-queue__live')).toBeNull();
+    // Let the status resolve so the flow completes cleanly.
+    await act(async () => {
+      resolveStatus({ batch: state([{ videoId: 'v1', status: 'running' }]) });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
   });
 
   it('surfaces a run failure with an Error message (instanceof arm)', async () => {
@@ -453,6 +631,54 @@ describe('BatchQueue', () => {
     await render();
     const select = container.querySelector('select[aria-label="Template"]') as HTMLSelectElement;
     expect(select.options.length).toBe(0);
+  });
+
+  async function runToConsentCard(): Promise<void> {
+    await render();
+    const cb = container.querySelectorAll('.batch-queue__source input')[0] as HTMLInputElement;
+    act(() => cb.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await act(async () => {
+      clickText('Run batch');
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it('surfaces an acknowledge/start failure with an Error message (instanceof arm)', async () => {
+    batchStartMock.mockRejectedValueOnce(new Error('ack-boom'));
+    await runToConsentCard();
+    expect(batchStartMock).not.toHaveBeenCalled();
+    await act(async () => {
+      clickText('Acknowledge cloud egress for this batch');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.batch-queue__error')?.textContent).toBe('ack-boom');
+  });
+
+  it('surfaces an acknowledge/start failure on a non-Error rejection (Run failed)', async () => {
+    batchStartMock.mockRejectedValueOnce('x');
+    await runToConsentCard();
+    await act(async () => {
+      clickText('Acknowledge cloud egress for this batch');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.batch-queue__error')?.textContent).toBe('Run failed');
+  });
+
+  it('keeps the default-ON gate when settings.get rejects (consent card still shown)', async () => {
+    // The mount read of the §9.1 setting fails -> the fail-safe keeps the gate ON,
+    // so Run still previews the consent split and defers batch.start.
+    settingsGetMock.mockRejectedValueOnce(new Error('no-settings'));
+    await runToConsentCard();
+    expect(batchPlanMock).toHaveBeenCalledWith('bNew', {
+      confirmCloudBudget: true,
+      acknowledged: false,
+    });
+    expect(container.querySelector('.batch-consent__split')).not.toBeNull();
+    expect(batchStartMock).not.toHaveBeenCalled();
   });
 });
 

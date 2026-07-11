@@ -54,6 +54,10 @@ describe('<CaptionPreferences />', () => {
     [...container.querySelectorAll('button')].find((b) =>
       (b.textContent ?? '').startsWith('Sav'),
     ) as HTMLButtonElement;
+  const polishToggle = (): HTMLInputElement =>
+    container.querySelector('#prefs-caption-polish') as HTMLInputElement;
+  const speakersToggle = (): HTMLInputElement =>
+    container.querySelector('#prefs-caption-speakers') as HTMLInputElement;
 
   it('loads + reflects persisted preferences', async () => {
     const rpc: SettingsBridge = {
@@ -61,6 +65,7 @@ describe('<CaptionPreferences />', () => {
         [PREFERENCE_KEYS.style]: 'hormozi',
         [PREFERENCE_KEYS.subtitleMode]: 'sidecar',
         [PREFERENCE_KEYS.language]: 'pt',
+        [PREFERENCE_KEYS.captionPolish]: true,
       }),
       set: vi.fn(),
     };
@@ -68,6 +73,33 @@ describe('<CaptionPreferences />', () => {
     await flush();
     expect(swatch('hormozi').getAttribute('aria-pressed')).toBe('true');
     expect(subSelect().value).toBe('sidecar');
+    expect(polishToggle().checked).toBe(true);
+    expect(speakersToggle().checked).toBe(false);
+  });
+
+  it('toggles + persists the caption-quality flags', async () => {
+    const set = vi.fn().mockResolvedValue({});
+    const rpc: SettingsBridge = { get: vi.fn().mockResolvedValue({}), set };
+    mountWith(rpc);
+    await flush();
+    // Off by default (nothing persisted).
+    expect(polishToggle().checked).toBe(false);
+    expect(speakersToggle().checked).toBe(false);
+    // React binds checkbox onChange to the CLICK event (not 'change'), so click.
+    act(() => polishToggle().click());
+    act(() => speakersToggle().click());
+    expect(polishToggle().checked).toBe(true);
+    expect(speakersToggle().checked).toBe(true);
+    await act(async () => {
+      saveBtn().click();
+      await Promise.resolve();
+    });
+    expect(set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        [PREFERENCE_KEYS.captionPolish]: true,
+        [PREFERENCE_KEYS.captionSpeakerLabels]: true,
+      }),
+    );
   });
 
   it('shows an error when loading fails', async () => {

@@ -331,6 +331,17 @@ def test_build_burn_argv_escapes_windows_path(fake_ffmpeg):
     assert r"\\" in vf  # backslash escaped
 
 
+def test_build_burn_argv_escapes_apostrophe_path(fake_ffmpeg):
+    # A ' inside a single-quoted filtergraph section can't be backslash-escaped;
+    # the portable idiom is close-escape-reopen ('\''). See _escape_filter_path.
+    argv = build_burn_argv("clip.mp4", r"C:\Users\O'Brien\Temp\sub.ass", "out.mp4")
+    vf = argv[argv.index("-vf") + 1]
+    assert vf.startswith("subtitles='")
+    assert vf.endswith("'")
+    assert "'\\''" in vf  # close-quote → escaped-quote → reopen-quote
+    assert "O\\'Brien" not in vf  # the broken backslash-escaped form is absent
+
+
 def test_build_softmux_argv_mp4_uses_mov_text(fake_ffmpeg):
     argv = build_softmux_argv("/in.mp4", "/s.ass", "/out.mp4")
     assert isinstance(argv, list)

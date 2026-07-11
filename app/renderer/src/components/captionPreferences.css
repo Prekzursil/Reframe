@@ -33,6 +33,28 @@
   gap: 10px;
 }
 
+.caption-prefs__toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.caption-prefs__toggle input {
+  margin-top: 3px;
+  flex: 0 0 auto;
+}
+
+.caption-prefs__toggle-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.caption-prefs__toggle-text small {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
 .caption-prefs__frame {
   position: relative;
   width: 220px;

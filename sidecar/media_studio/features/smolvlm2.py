@@ -367,6 +367,44 @@ def _default_clip_frame_loader(
     return stacks
 
 
+def _default_clip_frames_with_times(
+    media_path: str,
+    spans: Sequence[tuple[float, float]],
+) -> list[Any]:  # pragma: no cover - prod seam (decodes video frames with cv2)
+    """Time-aware per-clip sampler: returns ``(frames, times)`` pairs.
+
+    Mirrors :func:`_default_clip_frame_loader` but ALSO carries each SURVIVING
+    frame's TRUE grid time (``lo + step*k``). When a span runs past true EOF and
+    cv2 silently drops the trailing reads, the survivors keep their real
+    timestamps, so the caller reports the argmax survivor's actual time rather
+    than a coarse regrid over the shrunken stack. ``cv2`` is imported inside the
+    loader; tests inject a fake time-loader, so this body is runtime-only and
+    coverage-excluded (mirrors ``_default_clip_frame_loader``).
+    """
+    import cv2  # noqa: PLC0415 - job-time native (pre-imported by __main__)
+    import numpy as np  # noqa: PLC0415
+
+    cap = cv2.VideoCapture(media_path)
+    pairs: list[Any] = []
+    try:
+        for start, end in spans:
+            lo, hi = float(start), float(end)
+            step = (hi - lo) / float(max(1, FRAMES_PER_CLIP))
+            frames: list[Any] = []
+            times: list[float] = []
+            for k in range(FRAMES_PER_CLIP):
+                t = lo + step * k
+                cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000.0)
+                ok, frame = cap.read()
+                if ok and frame is not None:
+                    frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                    times.append(t)
+            pairs.append((np.asarray(frames, dtype="uint8"), times))
+    finally:
+        cap.release()
+    return pairs
+
+
 def default_models_present(settings: Mapping[str, Any]) -> bool:
     """True when the SmolVLM2 weights are installed (no heavy import).
 

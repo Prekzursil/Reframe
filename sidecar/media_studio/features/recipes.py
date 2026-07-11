@@ -50,6 +50,7 @@ from typing import Any
 
 from .. import protocol
 from ..protocol import ErrorCode, RpcContext, RpcError
+from ..settings_store import INJECTED_KEYS_FIELD
 from ..util import clamp, get_logger
 
 log = get_logger("media_studio.features.recipes")
@@ -269,15 +270,29 @@ class Recipes:
         if ctx.jobs is None:
             raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
         steps: list[Step] = list(recipe.get("steps") or [])
+        # WU-D2b-2 (IDX 60 Part 2): capture the per-request injected DPAPI key
+        # snapshot NOW, synchronously — ``run`` executes inside the composition
+        # root's ``key_overlay`` wrapper scope on the dispatch thread, but each
+        # step runs LATER on a job worker thread AFTER that overlay has closed.
+        # The wrapper stashes the popped snapshot on the (shared, per-connection)
+        # ``ctx`` under :data:`INJECTED_KEYS_FIELD`; we read it here and close
+        # over it so each nested cloud step can re-open its OWN overlay. ``None``
+        # on a keyless request (the overlay is never opened for those steps).
+        injected = getattr(ctx, INJECTED_KEYS_FIELD, None)
 
         def job_body(job_ctx: Any) -> dict[str, Any]:
-            return self._run_steps(steps, job_ctx, ctx)
+            return self._run_steps(steps, job_ctx, ctx, injected)
 
         job = ctx.jobs.start(job_body, feature="recipes", label=f"recipe: {recipe.get('name', '')}")
         return {"jobId": job.id}
 
-    def _run_steps(self, steps: list[Step], job_ctx: Any, ctx: RpcContext) -> dict[str, Any]:
-        """Execute the steps in order, relaying scaled per-step progress."""
+    def _run_steps(self, steps: list[Step], job_ctx: Any, ctx: RpcContext, injected: Any = None) -> dict[str, Any]:
+        """Execute the steps in order, relaying scaled per-step progress.
+
+        ``injected`` is the per-request DPAPI key snapshot captured in :meth:`run`
+        (``None`` on a keyless request); it is re-attached to each step's params
+        so a nested cloud step's ``key_overlay`` re-opens on the worker thread.
+        """
         total = max(len(steps), 1)
         methods = self._methods_provider()
         results: list[Any] = []
@@ -293,7 +308,7 @@ class Recipes:
                 job_ctx.progress(_b + clamp(pct, 0.0, 100.0) / 100.0 * _s, f"step {_i + 1}/{total} · {_l}")
 
             on_sub(0.0)
-            result = self._run_one_step(step, methods, results, job_ctx, ctx, on_sub)
+            result = self._run_one_step(step, methods, results, job_ctx, ctx, on_sub, injected)
             results.append(result)
             on_sub(100.0)
         job_ctx.progress(100.0, "done")
@@ -307,6 +322,7 @@ class Recipes:
         job_ctx: Any,
         ctx: RpcContext,
         on_sub: Callable[[float, str], None],
+        injected: Any = None,
     ) -> Any:
         """Invoke one step's method, awaiting it as a sub-job when needed."""
         method_name = str(step.get("method"))
@@ -314,6 +330,14 @@ class Recipes:
         if handler is None:
             raise _invalid(f"recipe step names an unknown method: {method_name}")
         params = resolve_refs(dict(step.get("params") or {}), prior)
+        # WU-D2b-2 (IDX 60 Part 2): re-attach the captured DPAPI key snapshot so
+        # the wrapped step handler's ``key_overlay`` re-opens for THIS nested
+        # cloud step (the composition-root wrapper re-pops the field in place, so
+        # a live key never reaches a job-store record or a log line). ``params``
+        # is a fresh dict (via ``resolve_refs``), so this never mutates the stored
+        # step. Skipped on a keyless recipe (``injected is None``).
+        if injected is not None:
+            params[INJECTED_KEYS_FIELD] = injected
         result = handler(params, ctx)
         # A job-returning step: wait for the sub-job, relay its progress, unwrap.
         if isinstance(result, dict) and isinstance(result.get("jobId"), str):

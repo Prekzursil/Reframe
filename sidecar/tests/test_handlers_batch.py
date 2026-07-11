@@ -24,6 +24,7 @@ BATCH_METHODS = {
     "batch.start",
     "batch.status",
     "batch.list",
+    "batch.plan",
     "batch.cancel",
     "batch.resume",
     "batch.delete",

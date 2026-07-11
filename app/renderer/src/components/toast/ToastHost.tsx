@@ -58,7 +58,12 @@ function ToastCard({ toast, api }: ToastCardProps): React.ReactElement {
 
 export function ToastHost({ container }: ToastHostProps = {}): React.ReactElement | null {
   const api = useToastOptional();
-  if (!api || api.toasts.length === 0) return null;
+  // Once a provider exists, ALWAYS portal the .toast-host container so the
+  // aria-live="polite" region is permanently mounted (empty when idle) and later
+  // toast insertions are mutations of a pre-existing live region — freshly-inserted
+  // polite/status regions are announced unreliably by NVDA/JAWS. Mirrors
+  // LiveStatusRegion.tsx, which also keeps its polite region mounted while empty.
+  if (!api) return null;
   // document is always defined in the Electron renderer (and in jsdom under test),
   // so the SSR-style `typeof document` guard's false arm is unreachable here.
   /* v8 ignore next */

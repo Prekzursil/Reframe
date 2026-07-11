@@ -123,6 +123,42 @@ describe('resizeBox', () => {
     const big = resizeBox({ x: 0.8, y: 0.8, w: 0.15, h: 0.15 }, 'se', 0.5, 0.5);
     expect(big.x + big.w).toBeLessThanOrEqual(1.0000001);
     expect(big.y + big.h).toBeLessThanOrEqual(1.0000001);
+    // The pinned NW corner must NOT move; the moving edges cap at the frame.
+    closeBox(big, { x: 0.8, y: 0.8, w: 0.2, h: 0.2 });
+  });
+
+  it('pins the opposite edge when a grow handle overshoots the frame', () => {
+    // 'e' overshoot: NW corner stays put, width caps at 1 - x.
+    closeBox(resizeBox({ x: 0.7, y: 0.3, w: 0.2, h: 0.2 }, 'e', 0.9, 0), {
+      x: 0.7,
+      y: 0.3,
+      w: 0.3,
+      h: 0.2,
+    });
+    // 's' overshoot: top edge pinned, height caps at 1 - y.
+    closeBox(resizeBox({ x: 0.3, y: 0.7, w: 0.2, h: 0.2 }, 's', 0, 0.9), {
+      x: 0.3,
+      y: 0.7,
+      w: 0.2,
+      h: 0.3,
+    });
+  });
+
+  it('pins the anchored edge when a west/north drag overshoots past the frame', () => {
+    // 'w' overshoot: the right edge (x+w) stays pinned, x clamps to 0.
+    closeBox(resizeBox({ x: 0.5, y: 0.5, w: 0.3, h: 0.3 }, 'w', -0.6, 0), {
+      x: 0,
+      y: 0.5,
+      w: 0.8,
+      h: 0.3,
+    });
+    // 'n' overshoot: the bottom edge (y+h) stays pinned, y clamps to 0.
+    closeBox(resizeBox({ x: 0.5, y: 0.5, w: 0.3, h: 0.3 }, 'n', 0, -0.6), {
+      x: 0.5,
+      y: 0,
+      w: 0.3,
+      h: 0.8,
+    });
   });
 
   it('exposes the eight handles in render order', () => {

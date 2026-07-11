@@ -704,6 +704,44 @@ def test_transcribe_with_engine_parakeet_empty_falls_back_to_whisper():
     assert loader.loads, "whisper fallback should have loaded a model"
 
 
+def test_transcribe_with_engine_parakeet_cancelled_skips_whisper_fallback():
+    # A cancel landing before parakeet's first chunk completes yields an empty
+    # transcript that is byte-indistinguishable from the weights-missing degrade.
+    # It must NOT trigger a full faster-whisper load on the already-cancelled job.
+    loader = FakeLoader(_two_segment_model())
+
+    def empty_parakeet(audio_path: str, **kwargs: Any):
+        return {"language": "", "segments": [], "durationSec": 0.0}
+
+    t = transcribe.transcribe_with_engine(
+        "/v.mp4",
+        loader=loader,
+        settings={"asrEngine": "parakeet"},
+        parakeet_runner=empty_parakeet,
+        should_cancel=lambda: True,
+    )
+    assert t["segments"] == []  # cancelled-empty returned as-is
+    assert loader.loads == [], "whisper fallback must NOT run for a cancelled job"
+
+
+def test_transcribe_with_engine_parakeet_empty_not_cancelled_falls_back():
+    # should_cancel present but False -> a genuine degrade -> whisper fallback.
+    loader = FakeLoader(_two_segment_model())
+
+    def empty_parakeet(audio_path: str, **kwargs: Any):
+        return {"language": "", "segments": [], "durationSec": 0.0}
+
+    t = transcribe.transcribe_with_engine(
+        "/v.mp4",
+        loader=loader,
+        settings={"asrEngine": "parakeet"},
+        parakeet_runner=empty_parakeet,
+        should_cancel=lambda: False,
+    )
+    assert len(t["segments"]) == 2
+    assert loader.loads, "non-cancelled degrade should still fall back to whisper"
+
+
 def test_default_parakeet_runner_delegates_to_real_module(monkeypatch):
     captured: dict[str, Any] = {}
 

@@ -160,11 +160,30 @@ export function Tracks({ videoId, availableTracks = [] }: TracksProps): React.Re
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
+        // Reset the job handle + progress so a finished/failed/timed-out burn
+        // never leaves a stale half-filled progress bar rendered forever (the
+        // bar is gated on an in-flight burn op below).
         setBusy({ kind: 'none' });
+        setBurnJobId(null);
+        setPct(0);
       }
     },
     [videoId],
   );
+
+  const cancel = useCallback(async () => {
+    // The Cancel button only renders while a burn op is in flight AND burnJobId
+    // is set, so burnJobId is the live job id here. Best-effort, mirroring the
+    // sibling long-job panels (Convert/Transcribe/…): a job.cancel rejection is
+    // swallowed and we still drop the panel back to idle.
+    try {
+      await getApi().rpc('job.cancel', { jobId: burnJobId });
+    } catch {
+      // best-effort
+    }
+    setBusy({ kind: 'none' });
+    setStatus('Cancelled');
+  }, [burnJobId]);
 
   return (
     <section className="feature-panel tracks-panel" aria-label="Subtitle tracks">
@@ -209,15 +228,24 @@ export function Tracks({ videoId, availableTracks = [] }: TracksProps): React.Re
                 <span className="track-format">{t.format.toUpperCase()}</span>
               </div>
               <div className="track-ops">
-                <button type="button" disabled={isBusy} onClick={() => void add(t.id)}>
-                  {opOn(t.id, 'add') ? '…' : 'Add'}
-                </button>
+                {/* No per-row `Add` button: these rows are the video's OWN
+                    attached tracks, so re-adding them just persists a duplicate
+                    (media_ops mints a fresh id, dodging add_track's dedupe). Add
+                    lives only in the available-tracks section below. */}
                 <button type="button" disabled={isBusy} onClick={() => void remove(t.id)}>
                   {opOn(t.id, 'remove') ? '…' : 'Remove'}
                 </button>
                 <button type="button" disabled={isBusy} onClick={() => void burn(t.id)}>
                   {opOn(t.id, 'burn') ? 'Burning…' : 'Burn in'}
                 </button>
+                {/* Cancel is always enabled while the burn job runs (mirrors the
+                    sibling panels): disabling it during the panel-wide busy lock
+                    would make it dead — the very bug it fixes. */}
+                {opOn(t.id, 'burn') && burnJobId && (
+                  <button type="button" className="cancel-op" onClick={() => void cancel()}>
+                    Cancel
+                  </button>
+                )}
                 <button type="button" disabled={isBusy} onClick={() => void strip(t.id)}>
                   {opOn(t.id, 'strip') ? 'Stripping…' : 'Strip'}
                 </button>
@@ -245,7 +273,7 @@ export function Tracks({ videoId, availableTracks = [] }: TracksProps): React.Re
         </div>
       )}
 
-      {burnJobId && (busy.kind === 'op' ? busy.op === 'burn' : pct < 100) && (
+      {burnJobId && busy.kind === 'op' && busy.op === 'burn' && (
         <div className="progress" aria-live="polite">
           <progress max={100} value={pct} />
           <span className="progress-pct">{Math.round(pct)}%</span>

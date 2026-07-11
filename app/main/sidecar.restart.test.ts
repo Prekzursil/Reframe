@@ -163,6 +163,29 @@ describe('Sidecar.restart() — self-healing', () => {
     expect(errors).toHaveLength(2); // a second give-up only happened after a new full budget
   });
 
+  it('restart() rejects in-flight calls immediately with a restart reason', () => {
+    const sc = new Sidecar({ python: 'py', pythonArgs: [], cwd: '/x' });
+    sc.on('status', () => undefined);
+    sc.start();
+
+    // A request is in flight on child1 (never answered) at the moment restart()
+    // is called: it must reject SYNCHRONOUSLY, not linger until the 60s timeout.
+    const pending = sc.request('ping');
+    let message = '';
+    pending.catch((e: Error) => {
+      message = e.message;
+    });
+
+    sc.restart();
+
+    // No vi.advanceTimersByTime: the rejection is immediate (rejectAllPending),
+    // NOT a consequence of the 60s REQUEST_TIMEOUT_MS firing.
+    return Promise.resolve().then(() => {
+      expect(message).toBe('sidecar restarting');
+      expect(sc.running).toBe(true); // the replacement child is live
+    });
+  });
+
   it('restart() while running tears down the old child and spawns a fresh one', () => {
     const sc = new Sidecar({ python: 'py', pythonArgs: [], cwd: '/x' });
     sc.on('status', () => undefined);

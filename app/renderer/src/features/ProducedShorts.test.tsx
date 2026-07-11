@@ -180,6 +180,26 @@ describe('<ProducedShorts />', () => {
     expect(s.onPlay).toHaveBeenCalledWith('/out/clip-1.mp4');
   });
 
+  it('renders no Re-export control when onReexport is omitted', () => {
+    // A host that wires no cross-view navigation (e.g. the Workspace mount)
+    // leaves onReexport off; the action row must then show no dead Re-export
+    // button while the other controls stay present.
+    act(() => {
+      root.render(
+        <ProducedShorts
+          shorts={[short()]}
+          playingShortPath=""
+          onPlay={s.onPlay}
+          onOpenFolder={s.onOpenFolder}
+          onDelete={s.onDelete}
+        />,
+      );
+    });
+    expect(container.querySelector('[aria-label="Re-export My talk"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Open folder for My talk"]')).toBeTruthy();
+    expect(container.querySelector('[aria-label="Delete My talk"]')).toBeTruthy();
+  });
+
   // ---- WU R5: virality-score CARD DASHBOARD (badge + duration + sort) ------
 
   const cardIds = () =>

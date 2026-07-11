@@ -3,7 +3,7 @@
 // TemplateEditor and ExportPresetsPanel are the secondary config surfaces. The
 // inner tab strip rides `TabBar`'s role=tablist/tab/aria-selected a11y for free.
 import React, { useState } from 'react';
-import { TabBar, type TabDef } from '../components/TabBar';
+import { TabBar, tabId, tabPanelId, type TabDef } from '../components/TabBar';
 import { BatchQueue } from '../features/BatchQueue';
 import { TemplateEditor } from '../features/TemplateEditor';
 import { ExportPresetsPanel } from '../features/ExportPresetsPanel';
@@ -26,7 +26,12 @@ export function Repurpose({ resumeId }: RepurposeProps): React.ReactElement {
   return (
     <div className="repurpose" aria-label="Repurpose">
       <TabBar tabs={TABS} active={active} onSelect={setActive} />
-      <div className="repurpose__panel">
+      <div
+        className="repurpose__panel"
+        role="tabpanel"
+        id={tabPanelId(active)}
+        aria-labelledby={tabId(active)}
+      >
         {active === 'queue' ? <BatchQueue resumeId={resumeId} /> : null}
         {active === 'templates' ? <TemplateEditor /> : null}
         {active === 'presets' ? <ExportPresetsPanel /> : null}

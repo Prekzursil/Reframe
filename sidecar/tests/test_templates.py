@@ -13,7 +13,9 @@ Storage-only + pure logic: no media work, no providers, no jobs (WU3). The
 
 from __future__ import annotations
 
+import re
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -87,8 +89,10 @@ class TestNormalizeTemplate:
             "phase8.select",
             "nle.export",
             "package.export",
-            "convert.run",
-            "audio.mix",
+            "convert.start",
+            "audiomix.merge",
+            "silence.trim",
+            "tracks.audio.mux",
         ],
     )
     def test_allowlisted_methods_accepted(self, method):
@@ -144,6 +148,53 @@ class TestNormalizeTemplate:
         monkeypatch.setattr(templates.recipes, "normalize_recipe", spy)
         templates.normalize_template(self._valid())
         assert len(calls) == 1
+
+
+# --------------------------------------------------------------------------- #
+# guard: allowlist must not drift from the live method registry (G-10.6)
+# --------------------------------------------------------------------------- #
+class TestAllowlistMatchesRegistry:
+    """Every allowlist entry must correspond to >=1 registered method.
+
+    Falsifiable drift guard (the dropped ``"audio."`` prefix admitted nothing
+    runnable). Scans the ``reg("name", ...)`` / ``register("name", ...)`` call
+    sites across the live ``media_studio`` package and asserts each prefix +
+    exact id in the allowlist matches at least one real registered method name,
+    failing loud if any allowlist entry corresponds to zero real methods.
+    """
+
+    #: A method-registration call site: ``reg("x.y", ...)`` or ``register("x.y",
+    #: ...)`` NOT preceded by ``.`` (so module ``foo.register(...)`` calls — which
+    #: register a whole feature, not a method — are excluded) nor by a word char.
+    _REG_CALL = re.compile(r"""(?:^|[^\w.])(?:reg|register)\(\s*["']([A-Za-z0-9_.]+)["']""")
+
+    @classmethod
+    def _registered_method_names(cls) -> set[str]:
+        package_root = Path(templates.__file__).resolve().parent.parent
+        names: set[str] = set()
+        for py_file in package_root.rglob("*.py"):
+            for match in cls._REG_CALL.finditer(py_file.read_text(encoding="utf-8")):
+                names.add(match.group(1))
+        return names
+
+    def test_scan_finds_real_methods(self):
+        # Guards the regex itself: a broken scan would return an empty set and make
+        # every allowlist assertion below pass vacuously.
+        names = self._registered_method_names()
+        assert "shortmaker.export" in names
+        assert "audiomix.merge" in names
+
+    def test_every_exact_id_is_registered(self):
+        names = self._registered_method_names()
+        for method_id in templates.ALLOWED_METHOD_EXACT:
+            assert method_id in names, f"allowlist exact id {method_id!r} matches no registered method"
+
+    def test_every_prefix_matches_a_registered_method(self):
+        names = self._registered_method_names()
+        for prefix in templates.ALLOWED_METHOD_PREFIXES:
+            assert any(name.startswith(prefix) for name in names), (
+                f"allowlist prefix {prefix!r} matches no registered method"
+            )
 
 
 # --------------------------------------------------------------------------- #

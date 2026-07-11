@@ -48,6 +48,11 @@ export type CaptionStyleType = z.infer<typeof CaptionStyle>;
  *   {videoSrc, cues, style, width:1080, height:1920}
  * plus durationInSeconds so calculateMetadata can size the render without
  * probing the video from inside the page.
+ *
+ * `hookTitle` (P3-A, optional) is the top-anchored headline the sidecar
+ * `build_job` forwards when a moment has a hook — the Remotion counterpart to
+ * the libass hook burn. Absent/blank ⇒ no headline (default composition
+ * unchanged), matching the sidecar which omits the key for whitespace-only text.
  */
 export const CaptionedClipPropsSchema = z.object({
   videoSrc: z.string(),
@@ -56,6 +61,7 @@ export const CaptionedClipPropsSchema = z.object({
   width: z.number().int().default(1080),
   height: z.number().int().default(1920),
   durationInSeconds: z.number(),
+  hookTitle: z.string().optional(),
 });
 
 export type CaptionedClipProps = z.infer<typeof CaptionedClipPropsSchema>;

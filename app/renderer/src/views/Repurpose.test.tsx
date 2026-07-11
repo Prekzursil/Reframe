@@ -20,6 +20,7 @@ vi.mock('../features/ExportPresetsPanel', () => ({
 }));
 
 import { Repurpose } from './Repurpose';
+import { tabId, tabPanelId } from '../components/TabBar';
 
 let container: HTMLElement;
 let root: Root;
@@ -69,5 +70,25 @@ describe('Repurpose', () => {
     const tabs = [...container.querySelectorAll('[role="tab"]')];
     const queueTab = tabs.find((t) => t.textContent === 'Batch queue');
     expect(queueTab?.getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('wires the active tab to its panel via aria-controls/aria-labelledby', () => {
+    render();
+    const panel = container.querySelector<HTMLElement>('[role="tabpanel"]');
+    expect(panel).not.toBeNull();
+    // The panel id resolves the active tab's aria-controls, and its
+    // aria-labelledby points back at that tab (full ARIA tabs relationship).
+    expect(panel?.getAttribute('id')).toBe(tabPanelId('queue'));
+    expect(panel?.getAttribute('aria-labelledby')).toBe(tabId('queue'));
+    const queueTab = [...container.querySelectorAll('[role="tab"]')].find(
+      (t) => t.textContent === 'Batch queue',
+    );
+    expect(queueTab?.getAttribute('aria-controls')).toBe(panel?.getAttribute('id'));
+
+    // The wiring follows the active tab when it changes.
+    clickTab('Templates');
+    const nextPanel = container.querySelector<HTMLElement>('[role="tabpanel"]');
+    expect(nextPanel?.getAttribute('id')).toBe(tabPanelId('templates'));
+    expect(nextPanel?.getAttribute('aria-labelledby')).toBe(tabId('templates'));
   });
 });

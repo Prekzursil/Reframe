@@ -45,7 +45,10 @@ def _settings_with_pool() -> dict[str, Any]:
                 "capabilities": ["text"],
                 "unit": "token",
             }
-        ]
+        ],
+        # tier3 hosted translator is now TEXT-consent gated; grant it so the raw-key
+        # Groq entry stays in the hosted pool (the audit asserts RAW_KEY is present).
+        "consent": {"perProvider": {"Groq": {"text": True}}},
     }
 
 

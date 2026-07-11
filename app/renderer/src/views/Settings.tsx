@@ -14,16 +14,18 @@
 //   * providers — NEW "Providers & Keys" placeholder (real empty-state; later
 //                 WUs wire components/ProviderKeyRow + AddKeyRow here),
 //   * health    — the existing app-global System Health diagnostic screen.
-import React, { Suspense, lazy, useState } from 'react';
-import { TabBar, type TabDef } from '../components/TabBar';
+import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import { TabBar, tabId, tabPanelId, type TabDef } from '../components/TabBar';
 import { SystemHealth } from '../features/SystemHealth';
 import { ProvidersKeys } from '../features/ProvidersKeys';
 import { PathsPanel, type PathsBridge } from '../components/PathsPanel';
 import { ManagedStoreMeter } from '../components/ManagedStoreMeter';
 import { SetupStatusPanel } from '../components/SetupStatusPanel';
 import { CaptionPreferences } from '../components/CaptionPreferences';
+import { SavePresetsControls } from '../components/SavePresetsControls';
 import { ThirdPartyNotices } from '../features/ThirdPartyNotices';
 import { client } from '../lib/rpc';
+import type { AutosaveSettings, ExportDefaults, SavePreset } from '../lib/rpc';
 import { resolveWindowApi } from '../features/shortMakerLogic';
 import './settings.css';
 
@@ -54,6 +56,77 @@ export interface SettingsSection {
   id: string;
   label: string;
   render: (ctx: SettingsRenderContext) => React.ReactNode;
+}
+
+// The live QoL settings a Saved preset bundles. These mirror the sidecar
+// DEFAULT_SETTINGS (settings_store.py:113/117) so the initial (pre-fetch) bundle
+// matches what the store would return, and every merge below has a full base.
+const DEFAULT_AUTOSAVE: AutosaveSettings = { enabled: true, debounceMs: 1500 };
+const DEFAULT_EXPORT_DEFAULTS: ExportDefaults = {
+  subtitleFormat: 'srt',
+  nleFormat: 'edl',
+  nleFps: 30,
+};
+
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * The "Export presets" section body. Self-fetches the live `autosave` +
+ * `exportDefaults` slices from the SAME `client.settings` store CaptionPreferences
+ * reads, so a Saved preset bundles the user's CURRENT choices; and on Apply it
+ * pushes the applied bundle back into settings via `settings.set` so the rest of
+ * the app seeds from it. Reads/writes FAIL LOUD — a rejected `settings.get`
+ * surfaces an alert (keeping the defaults) instead of being silently swallowed.
+ */
+function SavePresetsSection(): React.ReactElement {
+  const [autosave, setAutosave] = useState<AutosaveSettings>(DEFAULT_AUTOSAVE);
+  const [exportDefaults, setExportDefaults] = useState<ExportDefaults>(DEFAULT_EXPORT_DEFAULTS);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    client.settings
+      .get()
+      .then((raw) => {
+        const slice = raw as {
+          autosave?: Partial<AutosaveSettings>;
+          exportDefaults?: Partial<ExportDefaults>;
+        };
+        setAutosave({ ...DEFAULT_AUTOSAVE, ...slice.autosave });
+        setExportDefaults({ ...DEFAULT_EXPORT_DEFAULTS, ...slice.exportDefaults });
+      })
+      .catch((err: unknown) => setError(errText(err)));
+  }, []);
+
+  const onApply = useCallback(
+    (preset: SavePreset): void => {
+      const nextAutosave = { ...autosave, ...preset.autosave };
+      const nextDefaults = { ...exportDefaults, ...preset.exportDefaults };
+      setAutosave(nextAutosave);
+      setExportDefaults(nextDefaults);
+      client.settings
+        .set({ autosave: nextAutosave, exportDefaults: nextDefaults })
+        .catch((err: unknown) => setError(errText(err)));
+    },
+    [autosave, exportDefaults],
+  );
+
+  return (
+    <>
+      {error ? (
+        <div className="settings__error" role="alert">
+          {error}
+        </div>
+      ) : null}
+      <SavePresetsControls
+        rpc={client.savePresets}
+        autosave={autosave}
+        exportDefaults={exportDefaults}
+        onApply={onApply}
+      />
+    </>
+  );
 }
 
 /**
@@ -124,6 +197,15 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     // bundled model licenses (YuNet/EdgeTAM/TransNetV2/LR-ASD).
     render: () => <ThirdPartyNotices />,
   },
+  {
+    id: 'presets',
+    label: 'Export presets',
+    // WU-11: mounts the previously-orphaned SavePresetsControls — list / apply /
+    // save / remove named `{autosave, exportDefaults}` bundles. The wrapper reads
+    // the live settings a preset bundles and pushes an applied bundle back via
+    // `settings.set`, reaching the `savePresets.*` RPCs from the UI at last.
+    render: () => <SavePresetsSection />,
+  },
 ];
 
 const SUB_TABS: TabDef[] = SETTINGS_SECTIONS.map(({ id, label }) => ({ id, label }));
@@ -148,7 +230,14 @@ export function Settings({ initialSection }: SettingsProps): React.ReactElement 
   return (
     <div className="settings" aria-label="Settings">
       <TabBar tabs={SUB_TABS} active={active} onSelect={setActive} />
-      <div className="settings__panel">{current.render({ goTo: setActive })}</div>
+      <div
+        className="settings__panel"
+        role="tabpanel"
+        id={tabPanelId(active)}
+        aria-labelledby={tabId(active)}
+      >
+        {current.render({ goTo: setActive })}
+      </div>
     </div>
   );
 }

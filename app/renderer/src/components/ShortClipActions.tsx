@@ -17,7 +17,12 @@ export interface ShortClipActionsProps {
   playing: boolean;
   onPlay: (path: string) => void;
   onOpenFolder: (path: string) => void;
-  onReexport: (path: string) => void;
+  /**
+   * Optional "Re-export" action. When provided, a Re-export button is rendered
+   * (re-runs the export for this clip). Omitted at call sites that wire no
+   * cross-view navigation, so no dead button is shown.
+   */
+  onReexport?: (path: string) => void;
   onDelete: (path: string) => void;
   /**
    * captions-export: optional "Package for upload" action. When provided, a
@@ -52,9 +57,11 @@ export function ShortClipActions({
       >
         Open folder
       </button>
-      <button type="button" aria-label={`Re-export ${label}`} onClick={() => onReexport(path)}>
-        Re-export
-      </button>
+      {onReexport ? (
+        <button type="button" aria-label={`Re-export ${label}`} onClick={() => onReexport(path)}>
+          Re-export
+        </button>
+      ) : null}
       {onPackage ? (
         <button
           type="button"

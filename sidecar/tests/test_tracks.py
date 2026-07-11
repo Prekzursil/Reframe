@@ -8,6 +8,7 @@ paths-with-spaces and "no shell=True" correctness is locked in.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -285,11 +286,38 @@ def test_build_burn_argv_uses_libass_filter(fake_ffmpeg):
     assert "shell" not in argv  # no shell anything in the argv
 
 
+def test_build_burn_argv_maps_all_streams(fake_ffmpeg):
+    """burn must ``-map 0`` so extra audio (muxed dubs) + soft subs survive."""
+    argv = tracks.build_burn_argv("/in.mp4", "/subs.ass", "/out.mp4")
+    map_idxs = [i for i, a in enumerate(argv) if a == "-map"]
+    assert map_idxs, "burn argv must map streams"
+    # a -map is followed by "0" (all input-0 streams)
+    assert any(argv[i + 1] == "0" for i in map_idxs)
+
+
+def test_burn_subtitle_codec_mov_text_for_mp4(fake_ffmpeg):
+    argv = tracks.build_burn_argv("/in.mkv", "/subs.ass", "/out.mp4")
+    assert argv[argv.index("-c:s") + 1] == "mov_text"
+
+
+def test_burn_subtitle_codec_copy_for_mkv(fake_ffmpeg):
+    argv = tracks.build_burn_argv("/in.mp4", "/subs.ass", "/out.mkv")
+    assert argv[argv.index("-c:s") + 1] == "copy"
+
+
 def test_ass_filter_path_escapes_windows_path():
     vf = tracks._ass_filter_path(r"C:\a b\subs.ass")
     assert vf.startswith("subtitles='") and vf.endswith("'")
     assert "\\\\" in vf  # backslashes doubled
     assert "\\:" in vf  # colon escaped
+
+
+def test_ass_filter_path_escapes_apostrophe():
+    vf = tracks._ass_filter_path(r"C:\a\O'Brien\subs.ass")
+    assert "'\\''" in vf  # apostrophe emitted via the close-escape-reopen idiom
+    assert vf.startswith("subtitles='")
+    assert vf.endswith("'")
+    assert "O\\'Brien" not in vf  # the broken backslash-quote form is absent
 
 
 def test_build_soft_mux_argv_maps_both_inputs(fake_ffmpeg):
@@ -320,6 +348,57 @@ def test_soft_mux_subtitle_codec_copy_for_mkv(fake_ffmpeg):
 def test_soft_mux_omits_lang_metadata_when_absent(fake_ffmpeg):
     argv = tracks.build_soft_mux_argv("/in.mkv", "/s.srt", "/out.mkv")
     assert "-metadata:s:s:0" not in argv
+
+
+def test_build_soft_mux_argv_tags_new_stream_index(fake_ffmpeg):
+    """With N pre-existing subtitle streams, the lang tag targets output s:s:N."""
+    argv = tracks.build_soft_mux_argv("/in.mkv", "/s.srt", "/out.mkv", lang="de", existing_sub_count=3)
+    assert "-metadata:s:s:3" in argv
+    assert argv[argv.index("-metadata:s:s:3") + 1] == "language=de"
+    assert "-metadata:s:s:0" not in argv
+
+
+def test_build_soft_mux_argv_default_count_tags_stream_zero(fake_ffmpeg):
+    """Default existing_sub_count=0 keeps the subtitle-free-input behaviour."""
+    argv = tracks.build_soft_mux_argv("/in.mkv", "/s.srt", "/out.mkv", lang="de")
+    assert "-metadata:s:s:0" in argv
+
+
+class _CompletedProbe:
+    """Stand-in for subprocess.CompletedProcess used by probe_streams (via _probe_subtitle_count)."""
+
+    def __init__(self, returncode: int = 0, stdout: str = ""):
+        self.returncode = returncode
+        self.stdout = stdout
+
+
+def test_probe_subtitle_count_counts_subtitle_streams(fake_ffmpeg):
+    # ffprobe -show_streams JSON: only codec_type == "subtitle" streams count.
+    payload = json.dumps(
+        {
+            "streams": [
+                {"codec_type": "video"},
+                {"codec_type": "subtitle"},
+                {"codec_type": "audio"},
+                {"codec_type": "subtitle"},
+            ]
+        }
+    )
+    runner = lambda argv, **kw: _CompletedProbe(returncode=0, stdout=payload)  # noqa: E731
+    assert tracks._probe_subtitle_count("/in.mkv", None, runner) == 2
+
+
+def test_probe_subtitle_count_zero_when_no_subtitle_streams(fake_ffmpeg):
+    payload = json.dumps({"streams": [{"codec_type": "video"}, {"codec_type": "audio"}]})
+    runner = lambda argv, **kw: _CompletedProbe(returncode=0, stdout=payload)  # noqa: E731
+    assert tracks._probe_subtitle_count("/in.mkv", None, runner) == 0
+
+
+def test_probe_subtitle_count_raises_on_probe_failure(fake_ffmpeg):
+    # A non-zero ffprobe exit makes probe_streams return {} -> fail loud (no silent 0).
+    runner = lambda argv, **kw: _CompletedProbe(returncode=3, stdout="")  # noqa: E731
+    with pytest.raises(TrackError, match="probe failed"):
+        tracks._probe_subtitle_count("/in.mkv", None, runner)
 
 
 def test_build_strip_argv_negative_maps_chosen_stream(fake_ffmpeg):
@@ -449,11 +528,46 @@ def test_soft_mux_track_runs_and_tags_lang(fake_ffmpeg, tmp_path: Path):
         _track(lang="fr"),
         run=run,
         duration=lambda *a, **k: 5.0,
+        sub_count=lambda *a, **k: 0,  # input carries no pre-existing subtitles
     )
     assert out.endswith("v-softsub.mkv")
     argv = run.argv
     assert argv[argv.index("-metadata:s:s:0") + 1] == "language=fr"
     assert argv.count("-i") == 2
+
+
+def test_soft_mux_track_tags_new_stream_past_existing_subs(fake_ffmpeg, tmp_path: Path):
+    """When the input already carries 2 subtitle streams, the lang tag must land
+    on the NEW (3rd, index 2) stream — not the first pre-existing one."""
+    run = _RunSpy(code=0)
+    tracks.soft_mux_track(
+        str(tmp_path / "v.mkv"),
+        "/subs.srt",
+        _track(lang="fr"),
+        run=run,
+        duration=lambda *a, **k: 5.0,
+        sub_count=lambda *a, **k: 2,
+    )
+    argv = run.argv
+    assert "-metadata:s:s:2" in argv
+    assert argv[argv.index("-metadata:s:s:2") + 1] == "language=fr"
+    # the old (wrong) stream-0 tag must NOT be emitted
+    assert "-metadata:s:s:0" not in argv
+
+
+def test_soft_mux_track_probe_failure_raises(fake_ffmpeg, tmp_path: Path):
+    def boom_count(*_a, **_k):
+        raise TrackError("subtitle-stream probe failed (ffprobe exit 3)")
+
+    with pytest.raises(TrackError, match="probe failed"):
+        tracks.soft_mux_track(
+            str(tmp_path / "v.mkv"),
+            "/s.srt",
+            _track(lang="fr"),
+            run=_RunSpy(code=0),
+            duration=lambda *a, **k: 0.0,
+            sub_count=boom_count,
+        )
 
 
 def test_soft_mux_track_raises_on_failure(fake_ffmpeg, tmp_path: Path):
@@ -464,6 +578,7 @@ def test_soft_mux_track_raises_on_failure(fake_ffmpeg, tmp_path: Path):
             _track(),
             run=_RunSpy(code=2),
             duration=lambda *a, **k: 0.0,
+            sub_count=lambda *a, **k: 0,
         )
 
 

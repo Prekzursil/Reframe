@@ -440,8 +440,11 @@ def test_job_cancel_over_stdio_marks_cancelled(make_streams):
     from media_studio.jobs import JobStatus
 
     assert server.jobs.get(job_id).status is JobStatus.CANCELLED
-    # No job.done for a cancelled job.
-    assert all(o.get("method") != "job.done" for o in streams.output_objects())
+    # jobs:684 fix: a cancelled job now emits a terminal job.done carrying a
+    # JobCancelled error so a renderer wait settles cleanly (no 15-min hang).
+    dones = [o for o in streams.output_objects() if o.get("method") == "job.done"]
+    assert len(dones) == 1
+    assert dones[0]["params"]["result"]["error"]["type"] == "JobCancelled"
 
 
 def test_concurrent_job_writes_are_well_framed(make_streams):

@@ -557,7 +557,13 @@ class TestProxyStart:
 
         assert job.status.value == "cancelled"
         assert list((tmp_path / "proxies").glob("*")) == []  # no leftovers
-        assert [k for k, _ in collected if k == "done"] == []  # no done on cancel
+        # jobs:684 fix: a cancelled job now emits a terminal job.done carrying a
+        # JobCancelled error so the renderer's waitForJobDone settles (a clean
+        # cancel, not a 15-min hang) — the _api.ts JobCancelled path resolves it
+        # to null. Exactly one done, no partial proxy left behind.
+        dones = [payload for k, payload in collected if k == "done"]
+        assert len(dones) == 1
+        assert dones[0][1]["error"]["type"] == "JobCancelled"
 
     def test_unknown_video_fails_the_request_not_the_job(self, tmp_path, settings, registry):
         svc = make_service(tmp_path, settings, {})

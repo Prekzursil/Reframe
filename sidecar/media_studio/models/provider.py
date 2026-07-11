@@ -840,23 +840,60 @@ def build_pool_provider(
     return RotatingProvider(pool=specs, transport=transport, ensure=ensure)
 
 
+def _acceptable_provider_idents(prefer: str) -> frozenset[str]:
+    """The configured-entry identifiers a routing ``prefer`` may legitimately match.
+
+    A per-function routing slot stores a catalog MODEL id (e.g.
+    ``"groq-gpt-oss-120b"``), while the configured provider entry the UI upserts
+    carries ``id`` = the provider slug and ``provider`` = the provider LABEL (e.g.
+    ``"Groq"``) — so a bare ``id == prefer`` match can never see the entry and the
+    per-function preference silently no-ops. This resolves ``prefer`` through the
+    catalog to its provider label and returns ``{prefer}`` PLUS that label (when the
+    id is a known catalog model), so a match on EITHER the entry's ``id`` or its
+    ``provider`` label succeeds. An unknown id (not in the catalog — a literal slug
+    or legacy value) yields just ``{prefer}``, preserving the original literal match.
+    """
+    from . import catalog  # local import: avoids an import cycle at module load
+
+    idents = {prefer}
+    for entry in catalog.CATALOG:
+        if entry.id == prefer:
+            idents.add(entry.provider)
+            break
+    return frozenset(idents)
+
+
 def _prefer_provider_first(settings: dict[str, Any], prefer: str | None) -> dict[str, Any]:
-    """Return ``settings`` with ``providers`` reordered so ``prefer`` (an id) is first.
+    """Return ``settings`` with ``providers`` reordered so ``prefer`` is first.
 
     PURE: a new settings dict with a reordered ``providers`` list (the original is
-    never mutated). ``prefer`` of ``None`` or an unknown id leaves the order
-    unchanged — the matching entry (by ``id``) is simply hoisted to the front so
-    the per-function preferred provider is tried before the rest of the pool.
+    never mutated). ``prefer`` of ``None`` leaves the order unchanged. ``prefer`` is
+    a catalog MODEL id; the matching entry is hoisted to the front when its ``id`` OR
+    its ``provider`` label is in :func:`_acceptable_provider_idents` (so the entry
+    the UI stores — ``id`` = slug, ``provider`` = label — is actually found). An id
+    that matches no configured entry is a no-op (configured order kept), so a stale
+    routing choice never breaks the pool.
     """
     if not prefer:
         return settings
     providers = settings.get("providers")
     if not isinstance(providers, list):
         return settings
-    preferred = [p for p in providers if isinstance(p, dict) and p.get("id") == prefer]
+    idents = _acceptable_provider_idents(prefer)
+
+    def _matches(p: Any) -> bool:
+        return isinstance(p, dict) and bool({p.get("id"), p.get("provider")} & idents)
+
+    preferred = [p for p in providers if _matches(p)]
     if not preferred:
         return settings
-    rest = [p for p in providers if not (isinstance(p, dict) and p.get("id") == prefer)]
+    # An entry whose ``id`` EXACTLY equals the routing slot wins over one that only
+    # matches via the resolved catalog provider LABEL — so routing to a specific
+    # configured entry hoists THAT entry, not another sharing the provider label
+    # that happens to appear earlier. Stable sort keeps configured order within
+    # each group (exact-id matches first, then label-only matches).
+    preferred.sort(key=lambda p: p.get("id") != prefer)
+    rest = [p for p in providers if not _matches(p)]
     return {**settings, "providers": [*preferred, *rest]}
 
 

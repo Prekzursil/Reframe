@@ -218,6 +218,7 @@ def _function_readiness_items(settings: dict[str, Any], providers: list[dict[str
     ``needsConsent`` (key present but the data-type consent is not granted), else
     ``ready``. Vision checks FRAME consent; every other function checks TEXT.
     """
+    from ..models import catalog  # local: import-light, data only
     from ..models import consent as _consent  # local: import-light pure gate
 
     routing = settings.get("routing")
@@ -236,10 +237,11 @@ def _function_readiness_items(settings: dict[str, Any], providers: list[dict[str
             action = {"kind": "openProviders", "provider": provider_id}
             items.append(_readiness_item(cap, label, "needsKey", f"no key for provider {provider_id!r}", action))
             continue
+        consent_id = catalog.provider_label_for_id(provider_id) or provider_id
         granted = (
-            _consent.frame_consent_granted(settings, provider_id)
+            _consent.frame_consent_granted(settings, consent_id)
             if function == "vision"
-            else _consent.text_consent_granted(settings, provider_id)
+            else _consent.text_consent_granted(settings, consent_id)
         )
         if not granted:
             action = {"kind": "setConsent", "provider": provider_id}
@@ -274,11 +276,17 @@ def _provider_has_key(provider_id: str, providers: list[dict[str, Any]]) -> bool
     ``providers.list`` view, so it only ever sees key PRESENCE (last-4), never a
     full key.
     """
+    from ..models import catalog  # local: import-light, data only
+
+    wanted = {provider_id}
+    label = catalog.provider_label_for_id(provider_id)
+    if label:
+        wanted.add(label)
     for entry in providers:
         if not isinstance(entry, dict):
             continue  # pragma: no cover - providers.list yields dicts only
         ident = {str(entry.get("provider") or ""), str(entry.get("id") or "")}
-        if provider_id in ident:
+        if wanted & ident:
             keys = entry.get("apiKeys")
             if isinstance(keys, list) and any(keys):
                 return True

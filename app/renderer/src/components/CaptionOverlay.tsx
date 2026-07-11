@@ -37,6 +37,15 @@ export const LINE_GAP_SEC = 0.8;
 /** A word on the active caption line, with its highlight state at `t`. */
 export interface OverlayWord {
   text: string;
+  /**
+   * The word's ABSOLUTE position in the input `cues` array. The karaoke preview
+   * alternates its yellow/green accent by this absolute index — mirroring the
+   * libass burn, which alternates by a global word counter across ALL cues
+   * (caption_karaoke.py `active_color_for_index`). Using the line-local slice
+   * position instead would flip the whole line's parity whenever the on-screen
+   * phrase starts at an odd absolute index (a >LINE_GAP_SEC gap before it).
+   */
+  index: number;
   /** Window-relative start (source start minus window.start). */
   start: number;
   /** Window-relative end. */
@@ -87,10 +96,14 @@ export function activeLine(
   t: number,
   gap: number = LINE_GAP_SEC,
 ): OverlayWord[] {
-  const kept: { cue: Cue; start: number; end: number }[] = [];
-  for (const cue of cues) {
+  // Carry each kept cue's ABSOLUTE position in the input `cues` array (captured
+  // BEFORE rebaseCue null-filtering) so the karaoke accent alternates by the same
+  // global word index the burn uses, not by the gap-grouped line slice position.
+  const kept: { cue: Cue; index: number; start: number; end: number }[] = [];
+  for (let i = 0; i < cues.length; i += 1) {
+    const cue = cues[i];
     const r = rebaseCue(cue, window);
-    if (r) kept.push({ cue, start: r.start, end: r.end });
+    if (r) kept.push({ cue, index: i, start: r.start, end: r.end });
   }
   if (kept.length === 0) return [];
   const idx = activeCueIndex(
@@ -110,6 +123,7 @@ export function activeLine(
     const k = kept[i];
     line.push({
       text: k.cue.text,
+      index: k.index,
       start: k.start,
       end: k.end,
       active: t >= k.start && t < k.end,
@@ -224,7 +238,10 @@ export function CaptionOverlay({
                 (w.spoken ? ' is-spoken' : '')
               }
               style={{
-                color: wordColor(w, visual, karaoke ? karaokeActiveColor(i) : undefined),
+                // Alternate the karaoke accent by the word's ABSOLUTE cue index
+                // (w.index), NOT its line-local position `i`, so the preview parity
+                // matches the burn even when the phrase starts at an odd index.
+                color: wordColor(w, visual, karaoke ? karaokeActiveColor(w.index) : undefined),
                 backgroundColor: w.active ? visual.activeBackground : 'transparent',
               }}
             >

@@ -98,6 +98,24 @@ def _shortmaker_context(self: Services, video_id: str) -> dict[str, Any]:
     }
 
 
+def _ensure_transcript(self: Services, video_id: str, job_ctx: Any) -> None:
+    """Auto-transcribe a video for Make-Shorts when it has no usable transcript.
+
+    ``shortmaker.select`` reads the transcript from the manifest (via
+    ``_shortmaker_context``); a video the user never transcribed would otherwise
+    select ZERO clips. To keep the star flow plug-and-play we produce + persist
+    the transcript here — the SAME transcribe+persist path as ``transcribe.start``
+    (``_transcribe_and_persist``) — so SELECT has speech to work with. A video
+    that already has a usable transcript is left untouched (no wasteful
+    re-transcribe). Runs inside the select job, so transcription progress streams
+    and a mid-transcribe cancel leaves the manifest unchanged (the persist is
+    cancel-gated inside the shared helper).
+    """
+    project = self._load_or_create_project(video_id)
+    if _shortmaker._is_empty_transcript(project.data.get("transcript")):
+        self._transcribe_and_persist(video_id, job_ctx)
+
+
 def shortmaker_select(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
     """``shortmaker.select({videoId, prompt, controls})`` -> ``{jobId}`` (§2).
 
@@ -112,6 +130,13 @@ def shortmaker_select(self: Services, params: dict[str, Any], ctx: RpcContext) -
 
     def handler(job_ctx: Any) -> dict[str, Any]:
         settings = dict(self.settings.get())
+        # Plug-and-play (root-cause fix): Make-Shorts consumes the manifest
+        # transcript, but nothing in the select flow used to produce one — a
+        # freshly-imported, never-transcribed video selected ZERO clips ("no
+        # clips" -> the UI's "No candidates were proposed"). Transcribe + persist
+        # it now (once, reused by SELECT/export/subtitles) so the star flow works
+        # without a separate manual transcribe step.
+        self._ensure_transcript(video_id, job_ctx)
         # Feed the real silence + scene-cut detectors into the snap settings.
         settings.update(self._detect_boundaries(video_id))
         result = _shortmaker.run_select(

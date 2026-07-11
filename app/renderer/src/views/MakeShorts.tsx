@@ -21,7 +21,16 @@ import { ManualInterval } from '../features/ManualInterval';
 import { OutputTray, DEFAULT_OUTPUT_TRAY, type OutputTrayState } from '../components/OutputTray';
 import { CaptionDesigner } from '../components/CaptionDesigner';
 import { buildExportParams } from '../features/shortMakerPresets';
-import { candidateId, sanitizeControls } from '../features/shortMakerLogic';
+import {
+  candidateId,
+  sanitizeControls,
+  extractClips,
+  isJobHandle,
+  waitForJobDone,
+  EXPORT_JOB_TIMEOUT_MS,
+  resolveWindowApi,
+  type Api,
+} from '../features/shortMakerLogic';
 import {
   type CaptionDesign,
   DEFAULT_CAPTION_DESIGN,
@@ -73,6 +82,11 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
   // P4 §4: the caption design (style + on-frame position) for the manual export,
   // seeded from the persisted Preferences (Settings → Caption defaults).
   const [design, setDesign] = useState<CaptionDesign>(DEFAULT_CAPTION_DESIGN);
+  // Gate the AI flow's mount on the persisted-preferences read so the ShortMaker
+  // seed (initialControls, read ONCE in its useState initializer) sees the saved
+  // caption/language default and not the built-in one. Fail-open: a missing bridge
+  // or a failed read still flips this true so the AI flow always mounts.
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
 
   useEffect(() => {
     if (!hasApi()) return;
@@ -95,7 +109,11 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
   // delivery. Best-effort: a missing/failed settings read keeps the built-in
   // defaults (never blocks the front door).
   useEffect(() => {
-    if (!hasApi()) return;
+    // No bridge → nothing to seed; mount the AI flow with the built-in defaults.
+    if (!hasApi()) {
+      setPrefsLoaded(true);
+      return;
+    }
     let cancelled = false;
     void client.settings
       .get()
@@ -104,9 +122,12 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
         const prefs = readPreferences(raw);
         setDesign(prefs.design);
         setTray((t) => ({ ...t, subtitleMode: prefs.subtitleMode, language: prefs.language }));
+        setPrefsLoaded(true);
       })
       .catch(() => {
-        // Best-effort: keep the built-in defaults if preferences can't be read.
+        // Best-effort: keep the built-in defaults if preferences can't be read,
+        // but still mount the AI flow (fail-open) rather than blocking it.
+        if (!cancelled) setPrefsLoaded(true);
       });
     return () => {
       cancelled = true;
@@ -139,14 +160,31 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
       try {
         const wire = captionDesignWire(design);
         // The design's style flows via controls.captionStyle; the position +
-        // subtitle delivery flow via the export output options (P4 §4).
+        // subtitle delivery + the V1.1 within-template tuning patch flow via the
+        // export output options (P4 §4 / V1.1 CaptionOverride).
         const controls = sanitizeControls({ captionStyle: wire.captionStyle });
         const params = buildExportParams(selectedId, candidates, controls, '', {
           captionPosition: wire.captionPosition,
           subtitleMode: tray.subtitleMode,
+          captionOverride: wire.captionOverride,
         });
-        await client.shortmaker.export(selectedId, candidates.map(candidateId), params);
-        setManualNote(`Exported ${candidates.length} clip(s) from your ranges.`);
+        const res = await client.shortmaker.export(selectedId, candidates.map(candidateId), params);
+        // shortmaker.export is a DEFERRED job: the immediate resolution carries
+        // only {jobId}; the exported clips (or a job.done ERROR) arrive later.
+        // Wait for the real outcome so the success note reflects the true clip
+        // count, a job.done failure surfaces (never a silent success), and
+        // manualBusy stays true until the export actually settles.
+        let clips = extractClips(res);
+        if (clips === null && isJobHandle(res)) {
+          clips = await waitForJobDone(
+            resolveWindowApi() as Api,
+            res.jobId,
+            extractClips,
+            EXPORT_JOB_TIMEOUT_MS,
+          );
+        }
+        const exported = clips ?? [];
+        setManualNote(`Exported ${exported.length} clip(s) from your ranges.`);
         setTrayOpen(true);
       } catch (err) {
         setManualError(errText(err));
@@ -183,10 +221,22 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
 
             {selectedId ? (
               <>
-                <section className="make-shorts__ai">
-                  <h2 className="make-shorts__heading">AI moment-pick</h2>
-                  <ShortMaker videoId={selectedId} />
-                </section>
+                {prefsLoaded ? (
+                  <section className="make-shorts__ai">
+                    <h2 className="make-shorts__heading">AI moment-pick</h2>
+                    {/* Seed the AI flow from the SAME persisted caption/language
+                        default the manual path uses, so both agree (P4 §4). The
+                        wired caption-style value matches the manual export's. */}
+                    <ShortMaker
+                      videoId={selectedId}
+                      onReexport={handleReexport}
+                      initialControls={{
+                        captionStyle: captionDesignWire(design).captionStyle,
+                        language: tray.language,
+                      }}
+                    />
+                  </section>
+                ) : null}
 
                 <section className="make-shorts__captions">
                   <h2 className="make-shorts__heading">Caption &amp; style</h2>

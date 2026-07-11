@@ -10,6 +10,7 @@ in services.py). Behaviour + the RPC surface are byte-identical to pre-split.
 
 from __future__ import annotations
 
+import hashlib
 import json as _json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -47,6 +48,7 @@ def _resolve_vlm_reranker(self: Services, settings: dict[str, Any], *, media_pat
     3. Else -> ``None`` (the existing transcript-only no-rerank path).
     """
     from ..features import smolvlm2 as _sv  # local: import-light (no heavy import)
+    from ..models import routing_policy as _routing_policy  # local: import-light pure
 
     # WU-D2b-2 THREAD-SAFETY: ``settings`` is the RAW settings the CALLER captured
     # SYNCHRONOUSLY while the per-request key overlay was still open (the
@@ -55,11 +57,19 @@ def _resolve_vlm_reranker(self: Services, settings: dict[str, Any], *, media_pat
     # after the overlay closed and return only the redacted at-rest MARKERS, so the
     # cloud egress would carry a corrupt ``Bearer …-key``. Use the caller's snapshot.
     raw_settings = settings
-    # OFFLINE GATE: offline forbids ALL cloud frame egress, even for a fully
-    # frame-consented + routed provider (offline is authoritative over consent).
-    # Skip the cloud branch so the resolver degrades to local weights / None —
-    # the same fall-through a no-consent run takes (mirrors assets/diarize).
-    vision_provider = None if _offline.is_offline(settings) else self._vision_provider_for_consent(raw_settings)
+    # OFFLINE / ROUTING-LOCAL GATE: offline forbids ALL cloud frame egress, even for
+    # a fully frame-consented + routed provider (offline is authoritative over
+    # consent). A RoutingPolicy Local mode (GATE-2, resolved fail-closed) is EQUALLY
+    # authoritative — ``mode == 'local'`` skips the cloud branch so a user who flipped
+    # the global/override toggle to Local can never egress frames despite a stale
+    # ``routing.perFunction['vision']`` cloud entry (mirrors ``_provider_for_function``).
+    # Either degrades the resolver to local weights / None — the same fall-through a
+    # no-consent run takes (mirrors assets/diarize).
+    vision_provider = (
+        None
+        if (_offline.is_offline(settings) or _routing_policy.resolve_route("vision", settings)["mode"] == "local")
+        else self._vision_provider_for_consent(raw_settings)
+    )
     if vision_provider is not None:
         # SECURITY: the pool is built over ONLY frame-consented cloud entries,
         # so RotatingProvider.chat(capability="vision") can never fail over to a
@@ -113,6 +123,7 @@ def _resolve_frame_scorer(self: Services, settings: dict[str, Any]) -> Any:
 
     from ..features import best_frame as _bf  # local: import-light (no cv2/model)
     from ..features import smolvlm2 as _sv  # local: import-light
+    from ..models import routing_policy as _routing_policy  # local: import-light pure
 
     # WU-D2b-2 THREAD-SAFETY: ``settings`` is the RAW settings the CALLER captured
     # SYNCHRONOUSLY while the per-request key overlay was still open. This scorer
@@ -121,11 +132,18 @@ def _resolve_frame_scorer(self: Services, settings: dict[str, Any]) -> Any:
     # MARKERS, so the vision egress would carry a corrupt ``Bearer …-key`` (a
     # UnicodeEncodeError on the wire). Use the caller's synchronous snapshot.
     raw_settings = settings
-    # OFFLINE GATE: offline forbids ALL cloud frame egress, even for a fully
-    # frame-consented + routed provider — skip the cloud branch so the resolver
-    # degrades to local weights / None (degrade-to-midpoint), exactly the
+    # OFFLINE / ROUTING-LOCAL GATE: offline forbids ALL cloud frame egress, even for
+    # a fully frame-consented + routed provider — and a RoutingPolicy Local mode
+    # (GATE-2, resolved fail-closed) is EQUALLY authoritative, so ``mode == 'local'``
+    # also skips the cloud branch (a user who flipped the toggle to Local can never
+    # egress frames despite a stale ``routing.perFunction['vision']`` cloud entry).
+    # Either degrades to local weights / None (degrade-to-midpoint), exactly the
     # no-consent fall-through. Mirrors :meth:`_resolve_vlm_reranker`.
-    vision_provider = None if _offline.is_offline(settings) else self._vision_provider_for_consent(raw_settings)
+    vision_provider = (
+        None
+        if (_offline.is_offline(settings) or _routing_policy.resolve_route("vision", settings)["mode"] == "local")
+        else self._vision_provider_for_consent(raw_settings)
+    )
     if vision_provider is not None:
         pool = self._vision_pool(self._frame_consented_vision_settings(raw_settings))
         backend = _sv.CloudVlmBackend(
@@ -154,6 +172,29 @@ def _frame_clip_loader(self: Services) -> Any:
     from ..features import smolvlm2 as _sv  # pragma: no cover - native default seam
 
     return _sv._default_clip_frame_loader  # pragma: no cover - native default seam
+
+
+def _frame_clip_time_loader(self: Services) -> Any:
+    """The TIME-AWARE clip sampler for the thumbnail picker (injected fake or native).
+
+    Bug-sweep (frame-time drift): the plain clip loader returns only frame stacks, so
+    the handler had to RECONSTRUCT sample times from the surviving stack length. When
+    the native cv2 loader silently drops a failed read the survivors keep their
+    ORIGINAL grid times, but that reconstruction re-grids at a coarser step — shifting
+    every reported ``frameTimeSec``. This seam instead returns aligned
+    ``(frames, times)`` per span so a dropped read never moves a survivor's time.
+
+    Tests inject ``vlm_clip_time_loader``; the default is the heavy native loader
+    (:func:`smolvlm2._default_clip_frames_with_times`, coverage-excluded prod seam),
+    mirroring :meth:`_frame_clip_loader`. Only consulted for the thumbnail path when
+    NO legacy ``vlm_clip_frame_loader`` was injected (existing framed-loader tests keep
+    the regrid path unchanged; a fake time-loader / the native default drives prod).
+    """
+    if self._vlm_clip_time_loader is not None:
+        return self._vlm_clip_time_loader
+    from ..features import smolvlm2 as _sv  # pragma: no cover - native default seam
+
+    return _sv._default_clip_frames_with_times  # pragma: no cover - native default seam
 
 
 def _frame_thumbnail_writer(self: Services) -> Any:
@@ -210,8 +251,11 @@ def thumbnail_select(self: Services, params: dict[str, Any], ctx: RpcContext) ->
 
     * Resolves the clip span (explicit ``{path,start,end}`` or a cached
       ``candidateId``) and the conventional ``<clip>.thumb.jpg`` write target.
-    * Consults the AI content cache keyed by clip span + frame params, so a
-      second identical call is a cache hit that NEVER re-scores (AC d).
+    * Consults the AI content cache keyed by clip span + frame params + the
+      resolved route (degraded vs scored), so a second identical call is a cache
+      hit that NEVER re-scores (AC d) — yet a run that DEGRADED (no consent / no
+      weights) is not served forever once consent is granted or the weights are
+      installed (the route tag flips, the key changes, and the picker runs).
     * Resolves the frame scorer through the frame-egress consent gate. With NO
       consent AND NO local weights it DEGRADES to the deterministic clip
       midpoint — zero egress, the scorer is never called, no thumbnail is
@@ -237,33 +281,53 @@ def thumbnail_select(self: Services, params: dict[str, Any], ctx: RpcContext) ->
 
         thumb_path = str(_shorts_meta.thumbnail_path(media_path))
         cache = self._ai_cache()
+        # Resolve the scorer BEFORE the cache key so the DEGRADE decision is part of
+        # the cache identity (bug-sweep): a route-blind key let a degraded midpoint
+        # result (no consent / no weights) be served FOREVER — the AiCache has no TTL
+        # or invalidation — even after the user grants frame consent or installs the
+        # VLM weights. Folding a "degraded"/"scored" route tag into the key means the
+        # cache MISSES once the resolver flips to a real scorer, so the picker runs
+        # (a repeat identical call within the SAME route still hits, AC d preserved).
+        scorer = self._resolve_frame_scorer(settings)
+        route = "degraded" if scorer is None else "scored"
         cache_key = cache.key(
             [{"role": "user", "content": prompt}],
             "thumbnail.select",
-            {"path": media_path, "start": start, "end": end},
+            {"path": media_path, "start": start, "end": end, "route": route},
         )
         cached = cache.get(cache_key)
         if cached is not None:
             job_ctx.progress(100.0, "cache hit")
             return dict(cached)
 
-        scorer = self._resolve_frame_scorer(settings)
         if scorer is None:
-            # Degrade-to-midpoint: deterministic, zero egress, scorer untouched.
+            # Degrade-to-midpoint: deterministic, zero egress, scorer untouched. NO
+            # thumbnailPath is advertised here — the writer never runs on this branch,
+            # so a path would point at a file that was never written; ``degraded`` is
+            # the signal consumers key on.
             midpoint = (start + end) / 2.0
             _shorts_meta.write_thumbnail_metadata(media_path, midpoint)
-            result = {"frameTimeSec": midpoint, "thumbnailPath": thumb_path, "score": 0.0, "degraded": True}
+            result = {"frameTimeSec": midpoint, "score": 0.0, "degraded": True}
             cache.put(cache_key, result)
             return result
 
-        loader = self._frame_clip_loader()
-        frames = list(loader(media_path, [(start, end)]))
+        # Sample the clip's frames WITH their aligned sample times so a dropped native
+        # read never shifts the reported frameTimeSec (bug-sweep): the plain loader
+        # returns only stacks, forcing a coarser regrid when a read fails. A legacy
+        # framed loader injected by a test keeps the original regrid path (its fakes
+        # never drop, so _evenly_spaced is exact); otherwise the time-aware seam
+        # carries the true survivor times through (native prod default or a fake).
+        if self._vlm_clip_frame_loader is not None:
+            frames = list(self._frame_clip_loader()(media_path, [(start, end)]))
+            stack = list(frames[0]) if frames else []
+            frame_times = _evenly_spaced(start, end, len(stack))
+        else:
+            pairs = list(self._frame_clip_time_loader()(media_path, [(start, end)]))
+            stack, frame_times = (list(pairs[0][0]), list(pairs[0][1])) if pairs else ([], [])
         # Cancel checkpoint AFTER sampling but BEFORE scoring/writing, so a job
         # cancelled mid-load scores nothing and writes no thumbnail (AC f).
         if job_ctx.cancelled:
             return {"cancelled": True}
-        stack = list(frames[0]) if frames else []
-        frame_times = _evenly_spaced(start, end, len(stack))
         writer = self._frame_thumbnail_writer()
         picked = _bf.pick_best_frame(
             stack,
@@ -406,6 +470,16 @@ def _ai_pool_for_index(self: Services, settings: dict[str, Any]) -> Any:
     return builder(settings, detect_local=False, prefer=self._function_prefer("index"))
 
 
+def _transcript_fp(corpus: Any) -> str:
+    """A stable fingerprint of the ordered transcript corpus an index was built
+    from (bug-sweep fix). If the current transcript's fingerprint differs from the
+    one stored at index.build, the persisted vectors no longer line up with the
+    live segments — search would zip new segments onto old vectors and return
+    silently-wrong text/timestamps. index.search uses this to refuse a stale index.
+    """
+    return hashlib.sha256(repr(corpus).encode("utf-8")).hexdigest()
+
+
 def index_build(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
     """``index.build({videoId, confirmBudget?})`` -> ``{jobId}`` (WU-A5).
 
@@ -452,6 +526,9 @@ def index_build(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict
             "model": str(getattr(embedder, "model", "local")),
             "dim": dim,
             "builtAt": built_at,
+            # Bug-sweep: fingerprint the corpus so index.search can detect a
+            # re-transcribe and refuse a stale index instead of mis-pairing.
+            "transcriptFp": _transcript_fp(corpus),
             "vectors": vectors,
         }
         self._write_index(video_id, payload)
@@ -543,13 +620,17 @@ def index_search(self: Services, params: dict[str, Any], ctx: RpcContext) -> dic
     * the embedder is resolved through :meth:`_resolve_index_embedder` (the
       per-entry TEXT-consent filter), so the query text never reaches a
       non-consented provider (PLAN §WU-A5 (c2));
-    * the budget envelope is planned BEFORE any embedding and gated by
-      :meth:`_enforce_cloud_budget_ack`, so an unacked cloud search egresses
-      nothing (PLAN §WU-A5 (c3)). The envelope is planned over the
-      text-consented settings so ``willEgress`` reflects post-consent reality
-      (a consent-denied -> local search never spuriously demands an ack).
-    * the query vector is cache-keyed via :meth:`_ai_cache`, so a repeated
-      identical query never re-embeds (PLAN §WU-A5 (e)).
+    * the query vector is cache-keyed via :meth:`_ai_cache` on the query + the
+      RESOLVED embedder identity (model + base URL), so a repeated identical query
+      never re-embeds (PLAN §WU-A5 (e)) AND a local-route vector can never be served
+      for a cloud route (or vice-versa) — which would otherwise poison the cache and
+      permanently defeat the dimension guard;
+    * the cache is consulted BEFORE the budget gate, so a repeat identical query
+      served from cache (zero egress) is NEVER charged a fresh ack / hard-cap check;
+    * on a cache MISS the budget envelope is planned over the text-consented settings
+      and gated by :meth:`_enforce_egress_gates` BEFORE any embedding, so an unacked
+      cloud search egresses nothing (PLAN §WU-A5 (c3)); ``willEgress`` reflects
+      post-consent reality (a consent-denied -> local search never demands an ack).
 
     Searching an unbuilt video raises a typed "build the index first"
     INVALID_PARAMS (mirrors :meth:`subtitles_generate`), never an empty list.
@@ -568,38 +649,50 @@ def index_search(self: Services, params: dict[str, Any], ctx: RpcContext) -> dic
     # which needs the RAW apiKey on the wire — get_raw() mirrors the vision/
     # director factories and only un-redacts apiKey (consent/routing identical).
     settings = dict(self.settings.get_raw())
-    # Plan the budget envelope over the TEXT-consented settings so willEgress
-    # reflects what would actually leave the box after the consent filter, then
-    # enforce the ack BEFORE any embedding call (zero egress on an unacked run).
     inputs = _ai_job.AiInputs(
         messages=({"role": "user", "content": query},),
         model=str(settings.get("cloudEmbedModel") or settings.get("cloudModel") or ""),
     )
-    envelope = self._plan_index_envelope(inputs)
-    # WU-spend-cap: gate the query-embedding egress (ack + monthly hard cap).
-    self._enforce_egress_gates(
-        envelope,
-        params.get("confirmBudget") if isinstance(params.get("confirmBudget"), str) else None,
-    )
 
+    # Resolve the embedder FIRST (socket-free: _resolve_index_embedder /
+    # _ai_pool_for_index use detect_local=False), then fold its RESOLVED identity
+    # (model + base URL) into the query-vector cache key. ``inputs.model`` is only the
+    # settings string cloudEmbedModel/cloudModel — it does NOT change when the route
+    # flips to LocalEmbedder (offline / consent-revoked / no cloud key), so keying on
+    # it alone let a local (384-dim) vector be served for a later cloud route and
+    # PERMANENTLY defeat the dimension guard (rebuild could never fix the wedge). The
+    # LocalEmbedder carries no model/base_url attrs, so it keys under "local"/"" —
+    # cleanly separated from every cloud (model+base_url) slot.
     cache = self._ai_cache()
+    embedder = self._resolve_index_embedder(settings)
     cache_key = cache.key(
         [{"role": "user", "content": query}],
         "index.search",
-        {"model": inputs.model},
+        {
+            "model": inputs.model,
+            "embedder": str(getattr(embedder, "model", "local")),
+            "baseUrl": str(getattr(embedder, "base_url", "")),
+        },
     )
     cached = cache.get(cache_key)
     if cached is not None:
+        # A cache HIT egresses nothing (the query vector is already computed), so it
+        # must NOT be gated: consulting the budget/monthly-cap BEFORE the cache lookup
+        # wrongly demanded a fresh confirmBudget ack (and could be refused by the hard
+        # cap) for a repeat identical query that never touches a provider.
         query_vec = list(cached)
     else:
-        embedder = self._resolve_index_embedder(settings)
+        # Cache MISS -> a genuine (possibly cloud) egress. Plan the budget envelope
+        # over the TEXT-consented settings so willEgress reflects post-consent reality,
+        # enforce the ack + monthly cap BEFORE any embed (zero egress on an unacked
+        # run), then embed, cache the vector, and record the cost iff it egressed.
+        envelope = self._plan_index_envelope(inputs)
+        self._enforce_egress_gates(
+            envelope,
+            params.get("confirmBudget") if isinstance(params.get("confirmBudget"), str) else None,
+        )
         query_vec = embedder.embed([query])[0]
         cache.put(cache_key, query_vec)
-        # WU-spend-cap record-at-completion: the synchronous query embed just
-        # ran; record its cost iff it egressed (a cloud route). A cache hit
-        # (above) re-embeds nothing and so is never recorded. _record_egress_cost
-        # is a zero-record for a local-only envelope, but gating here keeps the
-        # local-route path from touching the ledger at all.
         if envelope.route.willEgress:
             self._record_egress_cost(envelope)
 
@@ -619,9 +712,49 @@ def index_search(self: Services, params: dict[str, Any], ctx: RpcContext) -> dic
 
     vectors = index.get("vectors") or []
     project_transcript = self._load_or_create_project(video_id).data.get("transcript")
+    # Bug-sweep: refuse a STALE index. If the transcript was re-transcribed since
+    # the index was built, the persisted vectors no longer line up with the live
+    # segments (search would zip new segments onto old vectors -> silently-wrong
+    # text/timestamps). An index built before this fix carries no fingerprint, so
+    # it is skipped (backward-compat) rather than force-flagged.
+    built_fp = index.get("transcriptFp")
+    if built_fp is not None and built_fp != _transcript_fp(_si.build_corpus(project_transcript or {})):
+        raise _invalid(
+            f"semantic index for {video_id} is stale (the transcript changed since it was "
+            "built); run index.build to rebuild it first"
+        )
     segments = project_transcript.get("segments") or [] if isinstance(project_transcript, dict) else []
     hits = _si.search(query_vec, vectors, segments, top_k)
     return {"hits": hits}
+
+
+def index_plan(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
+    """``index.plan({videoId, query?})`` -> the pre-flight budget/consent surface.
+
+    The pure planning twin of :meth:`index_build` / :meth:`index_search`: it
+    constructs the SAME :class:`ai_job.AiInputs` those handlers build (a ``query``
+    when present, else the ``"index.build"`` sentinel) and returns
+    :meth:`AiJobEnvelope.planned` — ``{route, costEst, cacheHit, willEgress,
+    budget, preview, cacheKey}`` — so the renderer can preview the run/egress
+    decision (and reuse the ``cacheKey`` :meth:`_enforce_egress_gates` demands on
+    a subsequent ``index.build``/``index.search``) WITHOUT starting a job. ZERO
+    provider calls: the envelope is planned over the TEXT-consented settings
+    (:meth:`_plan_index_envelope`), never executed. ``videoId`` is validated at the
+    boundary (loud INVALID_PARAMS on a missing/blank id) but does not affect the
+    plan, which is keyed on the query text + resolved route only.
+    """
+    from ..models import ai_job as _ai_job  # local: import-light
+
+    _require_str(params, "videoId")
+    query = params.get("query")
+    content = str(query) if isinstance(query, str) and query else "index.build"
+    settings = dict(self.settings.get_raw())
+    inputs = _ai_job.AiInputs(
+        messages=({"role": "user", "content": content},),
+        model=str(settings.get("cloudEmbedModel") or settings.get("cloudModel") or ""),
+    )
+    envelope = self._plan_index_envelope(inputs)
+    return envelope.planned()
 
 
 def _plan_index_envelope(self: Services, inputs: Any) -> Any:
@@ -631,12 +764,24 @@ def _plan_index_envelope(self: Services, inputs: Any) -> Any:
     envelope's ``willEgress`` reflects what would leave the box AFTER the
     per-entry text-consent filter — a consent-denied search routes local and so
     never spuriously demands a budget ack (PLAN §WU-A5 (c3)).
+
+    OFFLINE GATE (bug-sweep): offline forbids ALL cloud egress and is AUTHORITATIVE
+    over consent/routing — the embedder resolver already swaps to LocalEmbedder when
+    offline (:meth:`_resolve_index_embedder`), so the envelope must plan LOCAL too, or
+    an offline run with a text-consented cloud provider configured would set
+    ``willEgress=True`` and spuriously demand a budget ack, be refused by the monthly
+    hard cap, and record PHANTOM egress cents for a run that actually embeds locally.
+    Planning over a local-only pool mirrors how consent-denial STRIPS the pool.
     """
     from ..models import ai_job as _ai_job  # local: import-light
 
-    pool: Any = self._ai_pool_for_index(self._text_consented_settings(dict(self.settings.get())))
-    if pool is None:  # pragma: no cover - only when provider is a stub w/o the pool builder
-        pool = _LocalOnlyPool()
+    settings = dict(self.settings.get())
+    if _offline.is_offline(settings):
+        pool: Any = _LocalOnlyPool()
+    else:
+        pool = self._ai_pool_for_index(self._text_consented_settings(settings))
+        if pool is None:  # pragma: no cover - only when provider is a stub w/o the pool builder
+            pool = _LocalOnlyPool()
     return _ai_job.plan_ai_job(
         inputs,
         pool=pool,

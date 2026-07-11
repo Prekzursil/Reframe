@@ -377,7 +377,7 @@ def test_resolve_frame_scorer_cloud_when_consent_granted(tmp_path: Path) -> None
         vlm_chat_transport=transport,
         vlm_models_present=lambda s: False,
     )
-    svc.settings.set(_vision_provider_settings(with_consent=True))
+    svc.settings.set({**_vision_provider_settings(with_consent=True), "routingPolicy": {"global": "cloud"}})
     scorer = svc._resolve_frame_scorer(svc.settings.get())
     assert scorer is not None
     # invoking the resolved scorer drives the consented cloud vision pool -> frames egress.
@@ -562,7 +562,12 @@ def test_resolve_frame_scorer_never_egresses_to_non_consented_provider(tmp_path:
         vlm_chat_transport=transport,
         vlm_models_present=lambda s: False,
     )
-    svc.settings.set(_two_vision_provider_settings(first_consent=True, second_consent=False))
+    svc.settings.set(
+        {
+            **_two_vision_provider_settings(first_consent=True, second_consent=False),
+            "routingPolicy": {"global": "cloud"},
+        }
+    )
 
     from media_studio.models.provider import ProviderError
 

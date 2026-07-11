@@ -378,6 +378,49 @@ describe('<Refine />', () => {
     ).toBe(false);
   });
 
+  it('a knob change after Preview invalidates the plan — Apply re-disables, stats vanish', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    await clickPreview();
+    // Preview succeeded: Apply enabled + stats shown.
+    expect(
+      (container.querySelector('button[data-action="apply"]') as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect(container.querySelector('[data-section="stats"]')).not.toBeNull();
+    // Tweak a checkbox knob -> the shown plan is now stale and must be dropped.
+    const toggle = container.querySelector(
+      'input[data-toggle="removeSilence"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      toggle.click();
+      await Promise.resolve();
+    });
+    expect(
+      (container.querySelector('button[data-action="apply"]') as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(container.querySelector('[data-section="stats"]')).toBeNull();
+  });
+
+  it('a tunable change after Preview also invalidates the plan (Apply re-disables)', async () => {
+    const fake = makeFakeApi();
+    await mount(fake.api);
+    await clickPreview();
+    expect(
+      (container.querySelector('button[data-action="apply"]') as HTMLButtonElement).disabled,
+    ).toBe(false);
+    const input = container.querySelector('input[data-tune="noiseDb"]') as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    await act(async () => {
+      setter?.call(input, '-24');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(
+      (container.querySelector('button[data-action="apply"]') as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(container.querySelector('[data-section="stats"]')).toBeNull();
+  });
+
   it('cancel calls job.cancel for the active apply job and shows Cancelling…', async () => {
     const fake = makeFakeApi();
     await mount(fake.api);

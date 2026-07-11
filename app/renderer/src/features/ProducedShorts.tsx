@@ -36,7 +36,7 @@ export interface ProducedShortsProps {
   playingShortPath: string;
   onPlay: (path: string) => void;
   onOpenFolder: (path: string) => void;
-  onReexport: (path: string) => void;
+  onReexport?: (path: string) => void;
   onDelete: (path: string) => void;
 }
 
@@ -76,7 +76,7 @@ function ShortThumbCard({
   playing: boolean;
   onPlay: (path: string) => void;
   onOpenFolder: (path: string) => void;
-  onReexport: (path: string) => void;
+  onReexport?: (path: string) => void;
   onDelete: (path: string) => void;
 }): React.JSX.Element {
   const [phase, setPhase] = useState<PickPhase>('idle');

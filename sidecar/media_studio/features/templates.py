@@ -20,9 +20,10 @@ fully-covered ``recipes.*`` wire shape:
     fork of the wire shape.
   * **Allowlist (G-10.6)** — every step ``method`` must fall inside the curated
     repurpose verb set (transcribe / subtitles / shortmaker / phase8.select /
-    nle.export / package.export / convert / audio). A method outside it raises
-    the SAME fail-loud ``RpcError`` posture as ``normalize_recipe`` so a save can
-    never persist a step that escapes the repurpose surface.
+    nle.export / package.export / convert / audiomix / silence / tracks.audio).
+    A method outside it raises the SAME fail-loud ``RpcError`` posture as
+    ``normalize_recipe`` so a save can never persist a step that escapes the
+    repurpose surface.
   * **Storage** — :class:`TemplateStore` IS a :class:`recipes.RecipeStore` over
     ``templates.json`` (atomic temp+rename writes); a template is just a richer
     record in the same JSON-list shape.
@@ -49,9 +50,14 @@ Template = dict[str, Any]
 
 #: Allowed step-method prefixes/exact-ids — the curated repurpose verb set
 #: (DESIGN §5.4 / G-10.6). A ``"name.*"`` entry allows any method under that
-#: namespace (``transcribe.start``, ``convert.run`` …); a bare ``"name.id"``
+#: namespace (``transcribe.start``, ``convert.start`` …); a bare ``"name.id"``
 #: entry is an exact match (``phase8.select`` only, never ``phase8.other``).
-ALLOWED_METHOD_PREFIXES: frozenset[str] = frozenset({"transcribe.", "subtitles.", "shortmaker.", "convert.", "audio."})
+#: The audio namespaces are the real registered ones — ``audiomix.*`` (merge /
+#: normalize), ``silence.*`` (trim) and ``tracks.audio.*`` (list / mux / replace
+#: / strip); a bare ``"audio."`` matched no registered method and was dropped.
+ALLOWED_METHOD_PREFIXES: frozenset[str] = frozenset(
+    {"transcribe.", "subtitles.", "shortmaker.", "convert.", "audiomix.", "silence.", "tracks.audio."}
+)
 ALLOWED_METHOD_EXACT: frozenset[str] = frozenset({"phase8.select", "nle.export", "package.export"})
 
 

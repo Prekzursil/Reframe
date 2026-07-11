@@ -309,6 +309,49 @@ class TestStartHandler:
         # Cancelled mid-flight: nothing persisted (the `if not cancelled` skips save).
         assert "v" not in saved
 
+    def test_concurrent_transcript_change_fails_loud_not_clobber(self):
+        # A re-transcribe that lands between the RPC-time snapshot and the job's
+        # save must NOT be silently overwritten by the stale, speaker-stamped
+        # transcript: the job fails loud and save_project is never called.
+        original = {
+            "language": "en",
+            "durationSec": 6.0,
+            "segments": [
+                {"start": 0.0, "end": 1.0, "text": "hi"},
+                {"start": 5.0, "end": 6.0, "text": "bye"},
+            ],
+        }
+        newer = {
+            "language": "ro",
+            "durationSec": 6.0,
+            "segments": [
+                {"start": 0.0, "end": 1.0, "text": "salut"},
+                {"start": 5.0, "end": 6.0, "text": "pa"},
+            ],
+        }
+        # First load = RPC-time snapshot (original); second load = job-time fresh
+        # reload, now carrying the concurrently re-written transcript (newer).
+        loads = iter([{"transcript": original}, {"transcript": newer}])
+        saved: dict[str, Any] = {}
+        svc = diarize.Diarize(
+            resolver=lambda v: "/audio.wav",
+            load_project=lambda v: next(loads),
+            save_project=lambda v, d: saved.__setitem__(v, d),
+            settings_provider=lambda: {},
+            backend_factory=lambda s: FakeBackend(
+                [{"start": 0.0, "end": 2.0}, {"start": 4.5, "end": 6.0}],
+                [[1.0, 0.0], [0.0, 1.0]],
+            ),
+            models_present=lambda s: True,
+        )
+        reg, _ = _registry()
+        out = svc.start({"videoId": "v"}, _ctx(reg))
+        reg.get(out["jobId"]).wait(10)
+        job = reg.get(out["jobId"])
+        assert job.status.value == "error"
+        assert "changed while diarization was running" in job.error
+        assert "v" not in saved  # the newer transcript is preserved, not clobbered
+
 
 # --------------------------------------------------------------------------- #
 # pure: rename_speakers (GAP #3)

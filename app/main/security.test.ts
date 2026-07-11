@@ -32,10 +32,13 @@ describe('isAllowedNavigation', () => {
     expect(isAllowedNavigation('https://evil.example.com/', APP)).toBe(false);
   });
 
-  it('blocks a different file: path origin is still file: but cross-doc nav allowed only same-origin', () => {
-    // file: origins are "null"/opaque in the URL spec; we compare by origin string.
-    // A different file path shares the file: origin, so it is allowed (same scheme/host),
-    // but a non-file scheme is blocked.
+  it('blocks a DIFFERENT file: path (opaque null origin is no longer a bypass)', () => {
+    // file: origins are all "null"/opaque in the URL spec, so an origin-equality
+    // check would let ANY local file through. We instead pin the target to the
+    // app's own bundle pathname: a sibling/downloaded local file is now blocked.
+    expect(isAllowedNavigation('file:///C:/Users/victim/Downloads/evil.html', APP)).toBe(false);
+    // A non-file scheme against a file: app is likewise blocked (the file: branch's
+    // target.protocol sub-condition false-path).
     expect(isAllowedNavigation('http://localhost:9999/', APP)).toBe(false);
   });
 

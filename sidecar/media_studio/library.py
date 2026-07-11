@@ -330,9 +330,19 @@ class Library:
     def remove(self, video_id: str) -> bool:
         """Remove the video with ``id == video_id``. Returns True if removed.
 
-        Only the index row is dropped — the source file on disk is never deleted
-        (refs are by path; deletion is out of scope for a library remove).
+        The USER's source file on disk is never deleted (refs are by path;
+        deletion is out of scope for a library remove). An app-managed byte-copy
+        (opt-in keep-a-copy), however, IS reclaimed here — otherwise its row +
+        content-addressed file would be orphaned, counting forever against the
+        managed-store cap with no entity to evict them. ``force=True`` because the
+        user is deleting the video, so evicting even an irreplaceable copy (whose
+        original is gone) is intended, not an accidental destruction.
         """
+        # Explicit membership check (not exception-as-control-flow) so both the
+        # has-managed and no-managed branches stay coverage-clean.
+        has_managed = any(e["entityId"] == video_id for e in self.managed_status()["entries"])
+        if has_managed:
+            self.managed_evict(video_id, force=True)
         with self._open() as conn:
             cur = conn.execute("DELETE FROM entity WHERE role = ? AND id = ?", ("source", video_id))
             return cur.rowcount > 0
@@ -546,7 +556,7 @@ class Project:
 
     # ---- refs --------------------------------------------------------------
     def _ref_paths(self) -> list[str]:
-        """Every external file path the manifest references (video + clips + tracks)."""
+        """Every external file path the manifest references (video + clips + tracks + audioTracks)."""
         refs: list[str] = []
         video = self.data.get("video") or {}
         if video.get("path"):
@@ -557,6 +567,11 @@ class Project:
         for track in self.data.get("tracks") or []:
             if isinstance(track, dict) and track.get("path"):
                 refs.append(track["path"])
+        # Bug-sweep: dub AudioTracks carry a 'path' too — include them so a deleted
+        # dub is reported missing and consolidate can rebase it (portability).
+        for atrack in self.data.get("audioTracks") or []:
+            if isinstance(atrack, dict) and atrack.get("path"):
+                refs.append(atrack["path"])
         return refs
 
     def find_missing_sources(self) -> list[str]:
@@ -588,17 +603,28 @@ class Project:
 
         base = self.manifest_path.parent if self.manifest_path else Path.cwd()
         used: set[str] = set()
+        # Dedup memo keyed by the RESOLVED ABSOLUTE path: two refs to the SAME file
+        # (e.g. the same clip on two tracks) are copied ONCE and both rebased to the
+        # one ``assets/<name>``. DIFFERENT files sharing a basename have distinct abs
+        # keys, so ``_unique_name`` still disambiguates them into separate copies.
+        copied: dict[str, str] = {}
 
         def _copy_in(ref: str) -> str:
             src = Path(ref)
             resolved = src if src.is_absolute() else base / src
             if not resolved.exists():
                 return ref  # missing source: leave ref as-is
+            abskey = str(resolved.resolve())
+            cached = copied.get(abskey)
+            if cached is not None:
+                return cached  # dedup: identical file already copied under this name
             name = self._unique_name(resolved.name, used)
             used.add(name)
             shutil.copy2(resolved, assets / name)
             # POSIX-style relative ref keeps manifests portable across OSes.
-            return f"assets/{name}"
+            rebased = f"assets/{name}"
+            copied[abskey] = rebased
+            return rebased
 
         video = self.data.get("video") or {}
         if video.get("path"):
@@ -609,6 +635,17 @@ class Project:
         for track in self.data.get("tracks") or []:
             if isinstance(track, dict) and track.get("path"):
                 track["path"] = _copy_in(track["path"])
+        # Bug-sweep: copy + rebase dub AudioTracks too, else the portable folder
+        # still points at the dub audio by its original absolute path.
+        for atrack in self.data.get("audioTracks") or []:
+            if isinstance(atrack, dict) and atrack.get("path"):
+                atrack["path"] = _copy_in(atrack["path"])
+        # Rebase the source-video poster too so a MOVED portable folder still finds
+        # its thumbnail relative. Kept OUT of _ref_paths/find_missing_sources on
+        # purpose: the poster is a REGENERABLE derived artifact, not a relinkable
+        # source, so its absence must not be reported as a missing source.
+        if video.get("thumbnailPath"):
+            video["thumbnailPath"] = _copy_in(video["thumbnailPath"])
 
         self.save(dest / "project.json")
         return str(dest.resolve())

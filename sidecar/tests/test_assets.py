@@ -926,6 +926,36 @@ class TestEnvInstaller:
         assert calls and calls[0][0] == "C:/py314/python.exe"
         assert calls[1][0] == "C:/py314/python.exe"
 
+    def test_install_env_honors_cancel_during_steps(self, tmp_path):
+        # 952->953: a mid-install cancel during the env-setup steps loop raises
+        # JobCancelled (not a silent partial completion). The first step's run_cmd
+        # flips cancel ON, so the loop is entered once, then aborts on the next step.
+        (tmp_path / "tools").mkdir(parents=True)
+        (tmp_path / "tools" / "get-pip.py").write_text("# get-pip", encoding="utf-8")
+        state = {"cancel": False}
+
+        def run_cmd(argv, extra_env=None):
+            state["cancel"] = True
+            return 0, "ok"
+
+        entry = manifest.register_asset(
+            name="cancel-env",
+            kind="env",
+            size_mb=300,
+            dest="envs/cancel-env",
+            installer="env",
+            requirements=("pkg==1.0",),
+        )
+        mgr = AssetManager(
+            root=tmp_path,
+            run_cmd=run_cmd,
+            python_exe="C:/host/python.exe",
+            usage=big_free_usage,
+            env_vars={},
+        )
+        with pytest.raises(JobCancelled):
+            mgr._install(entry, on_frac=lambda f, m="": None, should_cancel=lambda: state["cancel"])
+
     def test_install_env_chatterbox_kind_falls_back_when_no_dedicated(self, tmp_path):
         calls: list[list[str]] = []
 
