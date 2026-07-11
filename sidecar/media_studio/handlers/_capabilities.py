@@ -61,16 +61,16 @@ class FeatureSpec:
 _FEATURE_CAPABILITIES: tuple[FeatureSpec, ...] = (
     FeatureSpec(
         capability="reframe",
-        label="Reframe — vertical subject tracking",
+        label="Reframe - vertical subject tracking",
         assets=(TRACKER_ASSET,),
         blocked_phrase="download the subject tracker to reframe with real speaker tracking (no centre-crop)",
         core=True,
     ),
     FeatureSpec(
         capability="reframe.saliency",
-        label="Reframe — saliency (better crop)",
+        label="Reframe - saliency (better crop)",
         assets=(SALIENCY_ASSET,),
-        blocked_phrase="download saliency to improve the reframe crop — subject tracking already works without it",
+        blocked_phrase="download saliency to improve the reframe crop - subject tracking already works without it",
         core=False,
     ),
     FeatureSpec(
