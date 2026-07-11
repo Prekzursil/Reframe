@@ -46,6 +46,10 @@ export default defineConfig({
         // Pure re-export barrels (no logic to cover).
         'renderer/src/components/index.ts',
         'renderer/src/lib/rpc/index.ts',
+        // Generated contract artifacts (v1.5 schema-first RPC POC): verified by
+        // regeneration + the parity tests, not by hand-written line coverage.
+        // Regenerate via `python -m contract.generate` (see docs/rpc-contract-v2.md).
+        'renderer/src/lib/rpc/generated/**',
         // Browser entry point: mounts <App/> into the DOM via ReactDOM; runs only
         // in the packaged renderer, not under jsdom unit tests.
         'renderer/src/main.tsx',
