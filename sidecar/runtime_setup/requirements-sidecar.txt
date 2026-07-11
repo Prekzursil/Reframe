@@ -26,10 +26,10 @@ ctranslate2==4.8.1
 scenedetect==0.7
 opencv-python==4.13.0.92
 httpx==0.28.1
-numpy==2.5.0
+numpy==2.5.1
 av==17.1.0
 onnxruntime==1.27.0
-huggingface_hub==1.22.0
+huggingface_hub==1.23.0
 tokenizers==0.23.1
 
 # TTS (kokoro default engine — the onnx build, NEVER the torch pip package; A4)
@@ -39,12 +39,12 @@ kokoro-onnx==0.5.0
 
 # CUDA runtime wheels for ctranslate2/onnxruntime GPU paths (pins = dev venv)
 nvidia-cublas-cu12==12.9.2.10
-nvidia-cudnn-cu12==9.23.2.1
+nvidia-cudnn-cu12==9.24.0.43
 
 # DELIBERATELY NOT HERE: mediapipe. The claudeshorts reframe engine's optional
 # MediaPipe backend uses the LEGACY Solutions API (`mp.solutions.face_detection`),
 # which only exists in mediapipe <=0.10.21 — and those wheels declare `numpy<2`,
-# a hard conflict with the `numpy==2.5.0` above (required by ctranslate2 / av /
+# a hard conflict with the `numpy==2.5.1` above (required by ctranslate2 / av /
 # onnxruntime / kokoro-onnx). mediapipe >=0.10.31 (numpy-2 clean) REMOVED the
 # Solutions API entirely, so pinning it would install a mediapipe whose
 # `mp.solutions` is missing -> the backend crashes at job time -> a SILENT drop

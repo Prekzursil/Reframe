@@ -55,7 +55,7 @@ reframe-gpu = [
   # safetensors.torch.load_file (torch.load / pickle is FORBIDDEN, an RCE surface).
   # NOT installed in the CI gate env (the loader GATE logic is torch-free + unit
   # tested with an injected reader; only the pragma-no-cover heavy seam imports it).
-  "safetensors==0.4.5",           # verify-before-load safetensors weight reader (B4/I2)
+  "safetensors==0.8.0",           # verify-before-load safetensors weight reader (B4/I2)
   "opencv-python-headless==4.13.0.92",  # frame I/O + face-crop ops (headless: no GUI libs)
   "python_speech_features==0.6",  # MFCC features for the ASD audio frontend
   "scipy==1.18.0",                # face-track interpolation + median filter + wav read
