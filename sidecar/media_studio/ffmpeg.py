@@ -27,7 +27,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from .pathsafe import ensure_within
+from .pathsafe import clean_for_log, ensure_within
 from .util import get_logger
 
 log = get_logger("media_studio.ffmpeg")
@@ -335,7 +335,9 @@ def ffprobe_duration(
     try:
         completed = runner(argv, capture_output=True, text=True, check=False, timeout=PROBE_TIMEOUT_SEC)
     except subprocess.TimeoutExpired:
-        log.warning("ffprobe timed out after %.0fs probing %s", PROBE_TIMEOUT_SEC, in_path)
+        # clean_for_log neutralises CR/LF/NUL in the user-derived path (the
+        # py/log-injection barrier CodeQL recognises).
+        log.warning("ffprobe timed out after %.0fs probing %s", PROBE_TIMEOUT_SEC, clean_for_log(in_path))
         return 0.0
     out = (getattr(completed, "stdout", "") or "").strip()
     try:
