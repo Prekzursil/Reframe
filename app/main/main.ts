@@ -501,7 +501,7 @@ function initKeyBridge(): KeyBridge {
 /**
  * WIRING-T5 §2 (provisioning hardening): the FIRST-RUN-COMPLETE marker
  * bootstrap.py writes at the data root ONLY after a full provision (env + every
- * model + the S3FD/LR-ASD weights) succeeds. Gating first-run on THIS — not the
+ * model + the YuNet/LR-ASD weights) succeeds. Gating first-run on THIS — not the
  * env sentinel — is what stops a run that built the env but failed the model
  * downloads from looking "done" and leaving a half-provisioned, silently
  * centre-cropping app on the next launch.

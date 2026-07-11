@@ -48,20 +48,19 @@ describe('CORE_FIRST_RUN_ASSETS — the marker means CORE-ONLY (WU C3)', () => {
   const coreFn = src.match(/def core_first_run_assets\(\)[\s\S]*?\n    return \[([\s\S]*?)\]/);
   const coreBody = coreFn?.[1] ?? '';
 
-  it('is exactly the always-on YuNet + S3FD + LR-ASD weights', () => {
-    expect([...CORE_FIRST_RUN_ASSETS]).toEqual([
-      'yunet-face-detection',
-      'lightasd-s3fd',
-      'lightasd-asd',
-    ]);
+  // WU-L1: the no-license S3FD weight (lightasd-s3fd) was removed — MIT YuNet is
+  // the face detector, so the core floor is exactly YuNet + LR-ASD.
+  it('is exactly the always-on YuNet + LR-ASD weights', () => {
+    expect([...CORE_FIRST_RUN_ASSETS]).toEqual(['yunet-face-detection', 'lightasd-asd']);
   });
 
   it("bootstrap.py's CORE set gates on the face/ASD weights, not every model", () => {
     // The marker is written after verify_provisioned over core_first_run_assets()
     // — which references the face/ASD manifest constants and NONE of the GGUFs.
     expect(coreBody).toContain('YUNET_ASSET_NAME');
-    expect(coreBody).toContain('LIGHTASD_S3FD_ASSET_NAME');
     expect(coreBody).toContain('LIGHTASD_ASD_ASSET_NAME');
+    // WU-L1: the removed S3FD weight must not be referenced anymore.
+    expect(coreBody).not.toContain('LIGHTASD_S3FD_ASSET_NAME');
     // on-demand GGUFs must NOT gate the marker (they live OUTSIDE it).
     expect(coreBody).not.toContain('QWEN_ASSET_NAME');
     expect(coreBody).not.toContain('WHISPER_ASSET_NAME');
@@ -132,14 +131,10 @@ describe('isProfileFirstRunComplete — per-profile completion signal', () => {
     expect(isProfileFirstRunComplete(true, CORE_FIRST_RUN_ASSETS, CORE_FIRST_RUN_ASSETS)).toBe(
       true,
     );
-    // one weight missing -> not complete (leaves no marker -> retry).
-    expect(
-      isProfileFirstRunComplete(
-        true,
-        ['yunet-face-detection', 'lightasd-s3fd'],
-        CORE_FIRST_RUN_ASSETS,
-      ),
-    ).toBe(false);
+    // one weight missing (lightasd-asd) -> not complete (leaves no marker -> retry).
+    expect(isProfileFirstRunComplete(true, ['yunet-face-detection'], CORE_FIRST_RUN_ASSETS)).toBe(
+      false,
+    );
   });
 
   it('ignores on-demand names in the pledged set (they never gate completion)', () => {
@@ -147,7 +142,7 @@ describe('isProfileFirstRunComplete — per-profile completion signal', () => {
     expect(
       isProfileFirstRunComplete(
         true,
-        ['yunet-face-detection', 'lightasd-s3fd', 'lightasd-asd'],
+        ['yunet-face-detection', 'lightasd-asd'],
         [...CORE_FIRST_RUN_ASSETS, 'qwen3-4b-gguf'],
       ),
     ).toBe(true);

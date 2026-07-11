@@ -24,7 +24,7 @@ import { InstallProfileError, type ResolvedInstallChoice } from './installProfil
 const CHOICE: ResolvedInstallChoice = {
   profile: 'default',
   bundles: ['transcription'],
-  assets: ['yunet-face-detection', 'lightasd-s3fd', 'lightasd-asd', 'whisper-large-v3-turbo'],
+  assets: ['yunet-face-detection', 'lightasd-asd', 'whisper-large-v3-turbo'],
 };
 
 function makeDeps(over: Partial<InstallProfileDeps> = {}): {
