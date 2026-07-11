@@ -31,9 +31,12 @@ import { ToastProvider } from './toast/ToastProvider';
 import { ToastHost } from './toast/ToastHost';
 
 // The job.done relay is read straight off the window.api bridge (the frozen
-// §1 surface + the preload's onJobDone) — install a capturing fake.
+// §1 surface + the preload's onJobDone) — install a capturing fake. The
+// v1.5 crash fix ALSO reads the preload's onSidecarStatus off the same bridge.
 type DoneCb = (e: { jobId: string; result?: unknown }) => void;
+type StatusCb = (status: 'running' | 'restarting' | 'down') => void;
 let doneCb: DoneCb | null = null;
+let statusCb: StatusCb | null = null;
 
 function installBridge(): void {
   (window as unknown as { api?: unknown }).api = {
@@ -41,6 +44,12 @@ function installBridge(): void {
       doneCb = cb;
       return () => {
         doneCb = null;
+      };
+    },
+    onSidecarStatus: (cb: StatusCb) => {
+      statusCb = cb;
+      return () => {
+        statusCb = null;
       };
     },
   };
@@ -74,6 +83,7 @@ beforeEach(() => {
   rpcMock.mockReset();
   progressCb = null;
   doneCb = null;
+  statusCb = null;
   api = null;
   installBridge();
   container = document.createElement('div');
@@ -87,6 +97,7 @@ afterEach(() => {
   registerJobRetry(null);
   delete (window as unknown as { api?: unknown }).api;
   doneCb = null;
+  statusCb = null;
 });
 
 async function flush(): Promise<void> {
@@ -496,6 +507,101 @@ describe('useJob × job.done error surface (P2 U3)', () => {
     expect(toastEl).not.toBeNull();
     expect(toastEl!.textContent).toContain('Short-maker failed: sidecar down');
     expect(document.body.querySelector('.toast__action')).toBeNull();
+  });
+});
+
+describe('useJob × sidecar-status interruption (v1.5 crash fix)', () => {
+  it('fails the active job when the sidecar goes non-running (restarting)', async () => {
+    const onError = vi.fn();
+    rpcMock.mockResolvedValueOnce({ jobId: 'jc1' });
+    await renderWithToasts({ onError });
+    await act(async () => {
+      await api!.start('shortmaker.select', { videoId: 'v1' });
+    });
+    expect(api!.state.running).toBe(true);
+
+    // A sidecar crash surfaces as a non-running lifecycle push; the stranded
+    // job fails instead of spinning forever (its job.done can never arrive).
+    await act(async () => {
+      statusCb!('restarting');
+    });
+
+    expect(api!.state.running).toBe(false);
+    expect(api!.state.error).toBe('Sidecar stopped — the job was interrupted');
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: 'jc1',
+        method: 'shortmaker.select',
+        feature: 'shortmaker',
+        label: 'Short-maker',
+        message: 'Sidecar stopped — the job was interrupted',
+        type: 'JobInterrupted',
+      }),
+    );
+    const toastEl = document.body.querySelector('.toast--error');
+    expect(toastEl).not.toBeNull();
+    expect(toastEl!.textContent).toContain('Short-maker failed: Sidecar stopped');
+  });
+
+  it('also fails the active job when the sidecar gives up (down)', async () => {
+    rpcMock.mockResolvedValueOnce({ jobId: 'jc2' });
+    await renderWithToasts();
+    await act(async () => {
+      await api!.start('convert.start', { videoId: 'v1' });
+    });
+    await act(async () => {
+      statusCb!('down');
+    });
+    expect(api!.state.running).toBe(false);
+    expect(api!.state.error).toBe('Sidecar stopped — the job was interrupted');
+  });
+
+  it('leaves the active job untouched on a running status', async () => {
+    rpcMock.mockResolvedValueOnce({ jobId: 'jc3' });
+    await renderWithToasts();
+    await act(async () => {
+      await api!.start('convert.start', { videoId: 'v1' });
+    });
+    await act(async () => {
+      statusCb!('running');
+    });
+    expect(api!.state.running).toBe(true);
+    expect(api!.state.error).toBeNull();
+    expect(bodyToasts()).toHaveLength(0);
+  });
+
+  it('ignores a non-running status when no job is active', async () => {
+    const onError = vi.fn();
+    await renderWithToasts({ onError });
+    // No start() -> activeJobId is null -> the status push is a no-op.
+    await act(async () => {
+      statusCb!('down');
+    });
+    expect(api!.state.running).toBe(false);
+    expect(api!.state.error).toBeNull();
+    expect(onError).not.toHaveBeenCalled();
+    expect(bodyToasts()).toHaveLength(0);
+  });
+
+  it('fails safe (no crash) when the whole window.api bridge is absent', async () => {
+    // Both onJobDone and onSidecarStatus bridges take their no-op path when
+    // window.api is undefined at mount (covers the `!api` guard); the hook
+    // still starts + tracks jobs via the mocked ./api onProgress.
+    delete (window as unknown as { api?: unknown }).api;
+    rpcMock.mockResolvedValueOnce({ jobId: 'no-bridge-2' });
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await act(async () => {
+      await api!.start('convert.start', { videoId: 'v1' });
+    });
+    await flush();
+    expect(api!.state.jobId).toBe('no-bridge-2');
+    expect(api!.state.running).toBe(true);
+    await act(async () => {
+      progressCb!({ jobId: 'no-bridge-2', pct: 55, message: 'go' });
+    });
+    expect(api!.state.pct).toBe(55);
   });
 });
 

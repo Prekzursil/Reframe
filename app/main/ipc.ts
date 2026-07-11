@@ -104,10 +104,20 @@ export function registerIpc(
   const onProgress = (p: ProgressNotification): void => broadcast(PROGRESS_CHANNEL, p);
   const onDone = (d: DoneNotification): void => broadcast(DONE_CHANNEL, d);
   const onStatus = (state: SidecarState): void => broadcast(SIDECAR_STATUS_CHANNEL, state);
+  // v1.5 crash fix: a sidecar CRASH emits 'exit' but the renderer tracks jobs
+  // only via job.progress/job.done — a crash would strand its long-job panels
+  // spinning forever (the proxy path already guards this in sidecar.ts
+  // buildProxyJob). Relay the process exit as a NON-running lifecycle push so the
+  // renderer's useJob fails its active job at once. 'restarting' is the imminent
+  // next state (the supervisor auto-restarts); if it ultimately gives up, its own
+  // 'down' push follows and wins. A clean stop() never emits 'exit' (its per-child
+  // guard drops it), so this fires only on genuine crashes.
+  const onExit = (): void => broadcast(SIDECAR_STATUS_CHANNEL, 'restarting' satisfies SidecarState);
 
   sidecar.on('progress', onProgress);
   sidecar.on('done', onDone);
   sidecar.on('status', onStatus);
+  sidecar.on('exit', onExit);
 
   return (): void => {
     ipcMain.removeHandler(RPC_CHANNEL);
@@ -118,5 +128,6 @@ export function registerIpc(
     sidecar.off('progress', onProgress);
     sidecar.off('done', onDone);
     sidecar.off('status', onStatus);
+    sidecar.off('exit', onExit);
   };
 }
