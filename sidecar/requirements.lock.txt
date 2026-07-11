@@ -39,7 +39,7 @@ coloredlogs==15.0.1
     # via onnxruntime
 colorlog==6.10.1
     # via kokoro-onnx
-csvw==4.0.0
+csvw==4.1.0
     # via segments
 ctranslate2==4.8.1
     # via faster-whisper
@@ -51,7 +51,7 @@ espeakng-loader==0.2.4
     # via kokoro-onnx
 faster-whisper==1.2.1
     # via media-studio-sidecar (sidecar/pyproject.toml)
-filelock==3.29.5
+filelock==3.29.7
     # via huggingface-hub
 flatbuffers==25.12.19
     # via onnxruntime
@@ -71,7 +71,7 @@ httpx==0.28.1
     # via
     #   media-studio-sidecar (sidecar/pyproject.toml)
     #   huggingface-hub
-huggingface-hub==1.22.0
+huggingface-hub==1.23.0
     # via
     #   faster-whisper
     #   tokenizers
@@ -104,7 +104,7 @@ multidict==6.7.1
     # via
     #   aiohttp
     #   yarl
-numpy==2.5.0
+numpy==2.5.1
     # via
     #   ctranslate2
     #   kokoro-onnx
@@ -152,7 +152,7 @@ referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
-regex==2026.6.28
+regex==2026.7.10
     # via segments
 rfc3986==1.5.0
     # via csvw
@@ -182,7 +182,7 @@ termcolor==3.3.0
     # via csvw
 tokenizers==0.23.1
     # via faster-whisper
-tqdm==4.68.3
+tqdm==4.68.4
     # via
     #   faster-whisper
     #   huggingface-hub

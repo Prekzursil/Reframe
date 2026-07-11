@@ -72,10 +72,10 @@ class TestShippedRequirementFiles:
         assert pins["httpx"] == "0.28.1"
         assert pins["opencv-python"] == "4.13.0.92"
         assert pins["nvidia-cublas-cu12"] == "12.9.2.10"
-        assert pins["nvidia-cudnn-cu12"] == "9.23.2.1"
+        assert pins["nvidia-cudnn-cu12"] == "9.24.0.43"
         # DELIBERATELY ABSENT: mediapipe. Its legacy Solutions API (used by the
         # claudeshorts backend) only exists in wheels that pin numpy<2, which
-        # conflicts with numpy==2.5.0; numpy-2-clean mediapipe removed Solutions.
+        # conflicts with numpy==2.5.1; numpy-2-clean mediapipe removed Solutions.
         # Pinning it would install a mediapipe that crashes -> silent haar drop.
         assert "mediapipe" not in pins
         assert "kokoro-onnx" in pins  # pinned TTS engine (exact version chosen by T5)
