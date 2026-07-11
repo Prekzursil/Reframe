@@ -60,12 +60,19 @@ export interface SetDataFolderResult {
  * window when it is still alive. Resolves with the absolute path, or null on
  * cancel / empty selection.
  */
-async function pickDataFolderDialog(event: IpcMainInvokeEvent): Promise<string | null> {
+async function pickDataFolderDialog(
+  event: IpcMainInvokeEvent,
+  defaultPath: string,
+): Promise<string | null> {
   const win = BrowserWindow.fromWebContents(event.sender);
+  // Electron 43: showOpenDialog no longer restores the OS last-used directory
+  // and defaults `defaultPath` to Downloads. Open the picker at the data root
+  // currently in use so the user sees where their data lives today.
+  const options: OpenDialogOptions = { ...PICK_FOLDER_OPTIONS, defaultPath };
   const result =
     win && !win.isDestroyed()
-      ? await dialog.showOpenDialog(win, PICK_FOLDER_OPTIONS)
-      : await dialog.showOpenDialog(PICK_FOLDER_OPTIONS);
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
   if (result.canceled) return null;
   return result.filePaths?.[0] ?? null;
 }
@@ -96,7 +103,9 @@ function setDataFolder(markerPath: string, path: unknown): SetDataFolderResult {
  */
 export function registerDataFolderIpc(deps: DataFolderIpcDeps): () => void {
   ipcMain.handle(DATA_FOLDER_GET_CHANNEL, () => deps.getDataRoot());
-  ipcMain.handle(DATA_FOLDER_PICK_CHANNEL, pickDataFolderDialog);
+  ipcMain.handle(DATA_FOLDER_PICK_CHANNEL, (event: IpcMainInvokeEvent) =>
+    pickDataFolderDialog(event, deps.getDataRoot()),
+  );
   ipcMain.handle(DATA_FOLDER_SET_CHANNEL, (_event, path: unknown) =>
     setDataFolder(deps.markerPath, path),
   );

@@ -15,6 +15,7 @@
 // ('shell.showItemInFolder' / 'dialog.pickLogoFile') but are plain Electron ipc
 // channels, NOT sidecar JSON-RPC methods.
 import {
+  app,
   BrowserWindow,
   dialog,
   ipcMain,
@@ -72,10 +73,15 @@ async function showItemInFolder(_event: IpcMainInvokeEvent, path: unknown): Prom
  */
 async function pickLogoDialog(event: IpcMainInvokeEvent): Promise<string | null> {
   const win = BrowserWindow.fromWebContents(event.sender);
+  // Electron 43: showOpenDialog no longer restores the OS last-used directory
+  // and defaults `defaultPath` to Downloads. Pass an explicit start dir (the
+  // user's Pictures folder) where logos naturally live. Computed at call time
+  // (post app-ready), not at module load.
+  const options: OpenDialogOptions = { ...PICK_LOGO_OPTIONS, defaultPath: app.getPath('pictures') };
   const result =
     win && !win.isDestroyed()
-      ? await dialog.showOpenDialog(win, PICK_LOGO_OPTIONS)
-      : await dialog.showOpenDialog(PICK_LOGO_OPTIONS);
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
   if (result.canceled) return null;
   return result.filePaths?.[0] ?? null;
 }

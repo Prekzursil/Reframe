@@ -88,10 +88,17 @@ describe('dataFolder.pick handler', () => {
     const path = await pick(fakeEvent);
 
     expect(path).toBe('D:/Chosen');
-    const options = mocks.showOpenDialog.mock.calls[0][0] as { properties: string[] };
+    const options = mocks.showOpenDialog.mock.calls[0][0] as {
+      properties: string[];
+      defaultPath?: string;
+    };
     expect(options.properties).toContain('openDirectory');
     expect(options.properties).toContain('createDirectory');
     expect(options.properties).not.toContain('openFile');
+    // E43: explicit defaultPath — open the picker at the data root currently in
+    // use (best UX for "change data folder"; showOpenDialog no longer restores
+    // the OS last-used dir).
+    expect(options.defaultPath).toBe(DATA_ROOT);
   });
 
   it('returns null when the user cancels', async () => {
@@ -118,6 +125,7 @@ describe('dataFolder.pick handler', () => {
     expect(mocks.showOpenDialog.mock.calls[0][0]).toBe(win);
     expect(mocks.showOpenDialog.mock.calls[0][1]).toMatchObject({
       properties: ['openDirectory', 'createDirectory'],
+      defaultPath: DATA_ROOT,
     });
   });
 
