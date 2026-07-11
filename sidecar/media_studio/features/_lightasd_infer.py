@@ -7,25 +7,36 @@ boxes, and a per-frame RMS voice-activity value; every array has length
 ``total_frames``.
 
 Pipeline (ported from Junhua-Liao/LR-ASD ``Columbia_test.py``, validated on the
-GPU): extract @25 fps frames + 16 kHz mono audio -> S3FD face detect ->
-IoU face-track linking -> per-track 112x112 crop + MFCC -> windowed audio-visual
-ASD scoring -> map per-track 25 fps scores back to the source-fps frame grid.
+GPU): extract @25 fps frames + 16 kHz mono audio -> **YuNet** face detect
+(``cv2.FaceDetectorYN``) -> IoU face-track linking -> per-track 112x112 crop +
+MFCC -> windowed audio-visual ASD scoring -> map per-track 25 fps scores back to
+the source-fps frame grid.
 
-PRODUCTION VENDORED (R1): the heavy S3FD + LR-ASD code is the numpy-2-clean copy
-vendored into :mod:`media_studio.features._lightasd` (MIT — see that package's
-``LICENSE``), NOT a ``$HOME`` checkout. LR-ASD (IJCV 2025) is the strictly-better
-successor of Light-ASD; the inference pipeline is identical (shared
-``Columbia_test.py`` lineage), only the model weights/architecture changed. The
-``sys.path`` + ``chdir`` seam is GONE; the two weight files are resolved by
+WU-L1 (commercialization IP fix): the face-detection front-end is **YuNet**
+(``opencv/face_detection_yunet``, MIT — © 2020 Shiqi Yu), reusing the already
+vendored, sha256-pinned ``yunet-face-detection`` asset (the claudeshorts default)
+via :func:`reframe_claudeshorts.resolve_yunet_model_path`. It REPLACED the old
+S3FD detector (``sfd_face.pth``), whose weight shipped under NO license — an
+all-rights-reserved commercial blocker. Both detectors emit box geometry; the
+per-frame output is normalised to the same ``(x1, y1, x2, y2, score)`` corner
+contract by the pure :func:`_yunet_boxes` helper, so the IoU tracker / crop stage
+downstream are unchanged.
+
+PRODUCTION VENDORED (R1): the heavy LR-ASD active-speaker code is the
+numpy-2-clean copy vendored into :mod:`media_studio.features._lightasd` (MIT —
+see that package's ``LICENSE``), NOT a ``$HOME`` checkout. LR-ASD (IJCV 2025) is
+the strictly-better successor of Light-ASD; the inference pipeline is identical
+(shared ``Columbia_test.py`` lineage), only the model weights/architecture
+changed. The ``sys.path`` + ``chdir`` seam is GONE; the ASD weight is resolved by
 PATH via :func:`_resolve_weights` (a ``settings['lightAsdWeightsDir']`` override,
-else the sha256-pinned asset-manager install paths registered in
-``assets/manifest.py``).
+else the sha256-pinned asset-manager install path registered in
+``assets/manifest.py``) and the YuNet model by ``resolve_yunet_model_path``.
 
 Coverage: the torch/cv2/ffmpeg seam functions are ``# pragma: no cover`` (they
-need the heavy native stack + real weights); the PURE helpers (:func:`_bb_iou`,
-:func:`_source_frame_index`, :func:`_vad_per_frame`) are unit-tested for real in
-``test_lightasd_infer_helpers.py``, and the pure director this module feeds is
-covered exhaustively in ``test_reframe_multispeaker.py``.
+need the heavy native stack + real weights); the PURE helpers (:func:`_yunet_boxes`,
+:func:`_bb_iou`, :func:`_source_frame_index`, :func:`_vad_per_frame`) are
+unit-tested for real in ``test_lightasd_infer_helpers.py``, and the pure director
+this module feeds is covered exhaustively in ``test_reframe_multispeaker.py``.
 """
 
 from __future__ import annotations
@@ -49,39 +60,40 @@ NUM_FAILED_DET = 10
 MIN_TRACK = 10
 MIN_FACE = 10
 CROP_SCALE = 0.40
-DET_CONF = 0.9
-DET_SCALE = 0.25
+# WU-L1: YuNet's confidence floor (``cv2.FaceDetectorYN`` score_threshold). Set to
+# the proven claudeshorts default (0.6) — NOT the old S3FD ``DET_CONF=0.9`` (S3FD
+# and YuNet scores are not comparable). WU-V1 re-tunes it on real footage.
+YUNET_SCORE_THRESHOLD = 0.6
 DURATIONS = (1, 1, 1, 2, 2, 2, 3, 3, 4, 5, 6)
 
 
-def _resolve_weights(settings: dict[str, Any]) -> tuple[str, str]:  # pragma: no cover - heavy native seam
-    """Resolve ``(s3fd_weight_path, asd_weight_path)`` for the vendored loaders.
+def _resolve_weights(settings: dict[str, Any]) -> str:  # pragma: no cover - heavy native seam
+    """Resolve the LR-ASD active-speaker weight path for the vendored loader.
 
-    Order: an explicit operator override ``settings['lightAsdWeightsDir']`` (a dir
-    holding ``sfd_face.pth`` + ``finetuning_TalkSet.model``) wins; otherwise the
-    paths come from the sha256-pinned asset manager (the two weights registered in
-    ``assets/manifest.py``). Raises if a weight cannot be located (never silently
-    falls back to a missing file).
+    WU-L1: the S3FD face weight is GONE (YuNet replaced it and is resolved
+    separately via ``resolve_yunet_model_path``); only the LR-ASD ASD weight is
+    resolved here. Order: an explicit operator override
+    ``settings['lightAsdWeightsDir']`` (a dir holding ``finetuning_TalkSet.model``)
+    wins; otherwise the path comes from the sha256-pinned asset manager (the weight
+    registered in ``assets/manifest.py``). Raises if the weight cannot be located
+    (never silently falls back to a missing file).
     """
-    from ._lightasd import ASD_WEIGHT_NAME, S3FD_WEIGHT_NAME  # noqa: PLC0415
+    from ._lightasd import ASD_WEIGHT_NAME  # noqa: PLC0415
 
     override = settings.get("lightAsdWeightsDir")
     if override:
         wdir = os.path.expanduser(str(override))
-        return os.path.join(wdir, S3FD_WEIGHT_NAME), os.path.join(wdir, ASD_WEIGHT_NAME)
+        return os.path.join(wdir, ASD_WEIGHT_NAME)
 
     from ..assets import manifest  # noqa: PLC0415
     from ..assets.manager import AssetManager  # noqa: PLC0415
 
     mgr = AssetManager(settings_provider=lambda: settings)
-    paths: list[str] = []
-    for name in (manifest.LIGHTASD_S3FD_ASSET_NAME, manifest.LIGHTASD_ASD_ASSET_NAME):
-        entry = manifest.get_asset(name)
-        path = mgr.installed_path(entry) if entry is not None else None
-        if path is None:
-            raise RuntimeError(f"Light-ASD weight asset {name!r} is not installed")
-        paths.append(path)
-    return paths[0], paths[1]
+    entry = manifest.get_asset(manifest.LIGHTASD_ASD_ASSET_NAME)
+    path = mgr.installed_path(entry) if entry is not None else None
+    if path is None:
+        raise RuntimeError(f"LR-ASD weight asset {manifest.LIGHTASD_ASD_ASSET_NAME!r} is not installed")
+    return path
 
 
 def _run(argv: list[str]) -> None:  # pragma: no cover - heavy native seam
@@ -98,6 +110,28 @@ def _source_frame_index(frame: int, fps: float, n25: int) -> int:
     grid. PURE (stdlib only) so it is unit-tested for real.
     """
     return min(n25 - 1, int(round(frame / max(fps, 1e-6) * ASD_FPS)))
+
+
+def _yunet_boxes(faces: Any) -> list[tuple[float, float, float, float, float]]:
+    """Convert ``cv2.FaceDetectorYN.detect`` rows -> ``(x1, y1, x2, y2, score)``.
+
+    WU-L1 (S3FD -> YuNet swap): each YuNet detection row is
+    ``[x, y, w, h, <5 landmark xy pairs = 10 cols>, score]`` (15 columns) with the
+    ``(x, y, w, h)`` face box in SOURCE pixels. This emits the
+    ``(x1, y1, x2, y2, score)`` corner contract the IoU face-track linker
+    (:func:`_track_shot` via :func:`_bb_iou`) and the crop stage consume — the
+    SAME 5-tuple shape the removed (no-license) S3FD ``detect_faces`` produced, so
+    the whole downstream pipeline is unchanged by the detector swap. ``faces`` is
+    YuNet's ``detect()`` second return value (an ndarray of rows, or ``None`` when
+    no face clears the score threshold); ``None`` yields ``[]``. PURE (index +
+    arithmetic only; numpy is available in the CI gate env) so it is unit-tested
+    for real, while the real ``cv2.FaceDetectorYN`` call stays in the pragma'd
+    heavy seam.
+    """
+    return [
+        (float(f[0]), float(f[1]), float(f[0]) + float(f[2]), float(f[1]) + float(f[3]), float(f[-1]))
+        for f in (faces if faces is not None else [])
+    ]
 
 
 def _bb_iou(a: Any, b: Any) -> float:
@@ -241,7 +275,7 @@ def analyze_visual(  # pragma: no cover - heavy native seam
     *,
     settings: dict[str, Any],
 ) -> tuple[tuple[tuple[Box, ...], ...], tuple[tuple[float, ...], ...], tuple[float, ...]]:
-    """S3FD + LR-ASD -> per-(source)-frame boxes, aligned ASD scores, VAD.
+    """YuNet + LR-ASD -> per-(source)-frame boxes, aligned ASD scores, VAD.
 
     Returns three tuples each of length ``total_frames``. Boxes are ``(x,y,w,h)``
     in source pixels; ``visual_scores_per_frame[f][i]`` is the speaking score of
@@ -252,9 +286,15 @@ def analyze_visual(  # pragma: no cover - heavy native seam
     from scipy.io import wavfile  # noqa: PLC0415
 
     from ._lightasd.asd import ASD  # noqa: PLC0415
-    from ._lightasd.s3fd import S3FD  # noqa: PLC0415
+    from .reframe_claudeshorts import resolve_yunet_model_path  # noqa: PLC0415
 
-    s3fd_weight, asd_weight = _resolve_weights(settings)
+    asd_weight = _resolve_weights(settings)
+    yunet_weight = resolve_yunet_model_path(settings)
+    if yunet_weight is None:
+        raise RuntimeError(
+            "the YuNet face-detection model (yunet-face-detection) is not installed — "
+            "run first-run setup (or assets.ensure) to download the sha256-pinned ONNX"
+        )
     dev = "cuda" if _cuda() else "cpu"
 
     work = tempfile.mkdtemp(prefix="msreframe_")
@@ -282,15 +322,25 @@ def analyze_visual(  # pragma: no cover - heavy native seam
     if n25 == 0:
         raise RuntimeError("no frames extracted for visual ASD")
 
-    det = S3FD(s3fd_weight, device=dev)
+    # WU-L1: YuNet via cv2.FaceDetectorYN. It takes the BGR frame directly (no
+    # RGB swap) and filters by score internally (score_threshold); input_size is
+    # set per-frame. _yunet_boxes normalises its rows to the (x1,y1,x2,y2,score)
+    # corner contract the tracker/crop consume (identical to old S3FD output).
+    det = cv2.FaceDetectorYN.create(yunet_weight, "", (0, 0), score_threshold=YUNET_SCORE_THRESHOLD)  # pyright: ignore[reportAttributeAccessIssue]
     scene: list[list[dict[str, Any]]] = []
     for fidx, fn in enumerate(flist):
         raw = cv2.imread(fn)
         if raw is None:
             raise RuntimeError(f"failed to read frame: {fn}")
-        img = cv2.cvtColor(raw, cv2.COLOR_BGR2RGB)
-        bboxes = det.detect_faces(img, conf_th=DET_CONF, scales=[DET_SCALE])
-        scene.append([{"frame": fidx, "bbox": b[:-1].tolist(), "conf": float(b[-1])} for b in bboxes])
+        h, w = int(raw.shape[0]), int(raw.shape[1])
+        det.setInputSize((w, h))
+        _retval, faces = det.detect(raw)
+        scene.append(
+            [
+                {"frame": fidx, "bbox": [x1, y1, x2, y2], "conf": score}
+                for (x1, y1, x2, y2, score) in _yunet_boxes(faces)
+            ]
+        )
 
     tracks = _track_shot(scene)
 

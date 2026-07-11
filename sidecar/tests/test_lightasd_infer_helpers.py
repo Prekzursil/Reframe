@@ -41,6 +41,50 @@ class TestSourceFrameIndex:
         assert li._source_frame_index(0, 25.0, 50) == 0
 
 
+class TestYunetBoxes:
+    """WU-L1: the YuNet detect() -> (x1, y1, x2, y2, score) box normaliser.
+
+    ``_yunet_boxes`` is the pure geometry seam of the S3FD->YuNet swap: the real
+    ``cv2.FaceDetectorYN.detect`` call stays in the pragma'd heavy seam, but the
+    row conversion it feeds the IoU tracker is numpy-only, so it is proven here.
+    """
+
+    def test_none_yields_empty_list(self) -> None:
+        # No face cleared the score threshold -> detect() returns None -> [].
+        assert li._yunet_boxes(None) == []
+
+    def test_empty_array_yields_empty_list(self) -> None:
+        # A zero-row detection (not None, but nothing in it) -> [].
+        assert li._yunet_boxes(np.empty((0, 15), dtype=np.float32)) == []
+
+    def test_xywh_row_becomes_corner_box_with_score(self) -> None:
+        # One YuNet row [x, y, w, h, <5 landmark xy pairs=10 cols>, score] ->
+        # (x1, y1, x2, y2, score) = (x, y, x+w, y+h, score) in source px.
+        row = [10.0, 20.0, 30.0, 40.0, *([0.0] * 10), 0.87]
+        assert li._yunet_boxes([row]) == [(10.0, 20.0, 40.0, 60.0, 0.87)]
+
+    def test_numpy_rows_are_converted(self) -> None:
+        faces = np.array(
+            [
+                [10.0, 20.0, 30.0, 40.0, *([1.0] * 10), 0.9],
+                [5.0, 6.0, 7.0, 8.0, *([2.0] * 10), 0.6],
+            ],
+            dtype=np.float32,
+        )
+        out = li._yunet_boxes(faces)
+        expected = [(10.0, 20.0, 40.0, 60.0, 0.9), (5.0, 6.0, 12.0, 14.0, 0.6)]
+        assert len(out) == len(expected)
+        for got, exp in zip(out, expected, strict=True):
+            assert got == pytest.approx(exp)  # float32 scores -> approx per-tuple
+
+    def test_matches_removed_s3fd_contract_shape(self) -> None:
+        # Every emitted box is a 5-tuple (x1, y1, x2, y2, score) — the exact shape
+        # the old S3FD detect_faces produced, so downstream code is unchanged.
+        out = li._yunet_boxes([[0.0, 0.0, 2.0, 2.0, *([0.0] * 10), 0.5]])
+        assert len(out) == 1
+        assert len(out[0]) == 5
+
+
 class TestVadPerFrame:
     def test_mono_rms_normalised_and_clamped(self) -> None:
         wav = np.array([0.0, 0.0, 100.0, 100.0], dtype=np.float32)

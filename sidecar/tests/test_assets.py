@@ -428,24 +428,23 @@ class TestManifest:
             assert entry.sha256 and len(entry.sha256) == 64, name
 
     def test_lightasd_weights_are_sha_pinned_and_commit_pinned(self):
-        # R1: the vendored S3FD + LR-ASD active-speaker weights enter the manifest
-        # as sha256-pinned download assets, each URL carrying a 40-hex commit (the
-        # S3FD via an HF resolve commit, the ASD via a GitHub-raw commit) — never a
-        # moving branch/tag (F3c). The ASD weight is LR-ASD (the Light-ASD successor).
-        s3fd = manifest.get_asset(manifest.LIGHTASD_S3FD_ASSET_NAME)
+        # R1: the vendored LR-ASD active-speaker weight enters the manifest as a
+        # sha256-pinned download asset whose URL carries a 40-hex GitHub-raw commit
+        # — never a moving branch/tag (F3c). The ASD weight is LR-ASD (the Light-ASD
+        # successor). WU-L1: the no-license S3FD face weight is GONE (YuNet replaced
+        # it — see test_yunet_entry_is_sha_pinned_and_commit_pinned).
         asd = manifest.get_asset(manifest.LIGHTASD_ASD_ASSET_NAME)
-        for entry in (s3fd, asd):
-            assert entry is not None
-            assert entry.installer == "download"
-            assert entry.sha256 and len(entry.sha256) == 64
-            assert entry.size_mb > 0
-        assert "huggingface.co" in s3fd.url and "/resolve/main/" not in s3fd.url
-        assert s3fd.url.endswith("sfd_face.pth")
+        assert asd is not None
+        assert asd.installer == "download"
+        assert asd.sha256 and len(asd.sha256) == 64
+        assert asd.size_mb > 0
         assert "github.com/Junhua-Liao/LR-ASD" in asd.url
         assert manifest.LIGHTASD_ASD_COMMIT in asd.url
         assert asd.url.endswith("finetuning_TalkSet.model")
         names = {a.name for a in manifest.all_assets()}
-        assert {manifest.LIGHTASD_S3FD_ASSET_NAME, manifest.LIGHTASD_ASD_ASSET_NAME} <= names
+        assert manifest.LIGHTASD_ASD_ASSET_NAME in names
+        # WU-L1: the removed S3FD asset must not be registered anymore.
+        assert "lightasd-s3fd" not in names
 
     def test_yunet_entry_is_sha_pinned_and_commit_pinned(self):
         # v1.2.0 WU1: the YuNet face detector (claudeshorts speaker tracking, MIT)
