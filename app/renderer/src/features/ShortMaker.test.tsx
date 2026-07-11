@@ -2732,7 +2732,9 @@ describe('<ShortMaker /> component', () => {
     // Cancel while the select rpc is still in flight (aborts the controller).
     await act(async () => {
       (
-        [...container.querySelectorAll('button')].find((b) => b.textContent === 'Cancel') as HTMLButtonElement
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'Cancel',
+        ) as HTMLButtonElement
       ).click();
       await Promise.resolve();
     });

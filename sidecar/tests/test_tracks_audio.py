@@ -50,9 +50,7 @@ class TestModel:
 
     def test_audio_track_index_skips_non_matching(self):
         # 148->147: iterate PAST a non-matching track before the hit at index 1.
-        project: dict[str, Any] = {
-            "audioTracks": [{"id": "a1", "kind": "dub"}, {"id": "a2", "kind": "dub"}]
-        }
+        project: dict[str, Any] = {"audioTracks": [{"id": "a1", "kind": "dub"}, {"id": "a2", "kind": "dub"}]}
         assert ta.audio_track_index(project, "a2") == 1
 
     def test_add_find_remove_round_trip(self):
@@ -338,9 +336,7 @@ class TestService:
         first_original = disk.load("v1")["audioTracks"][0]
         newaud = tmp_path / "n.m4a"
         newaud.write_bytes(b"n")
-        service.replace(
-            {"videoId": "v1", "audioTrackId": first_original["id"], "path": str(newaud)}, ctx()
-        )
+        service.replace({"videoId": "v1", "audioTrackId": first_original["id"], "path": str(newaud)}, ctx())
         argv = argvs[-1]
         pairs = [(a, b) for a, b in zip(argv, argv[1:], strict=False)]
         assert ("-map", "-0:a:0") in pairs  # the FIRST original stream is dropped
@@ -367,9 +363,7 @@ class TestService:
         track_id = disk.load("v1")["audioTracks"][0]["id"]
         newaud = tmp_path / "n.m4a"
         newaud.write_bytes(b"n")
-        result = service.replace(
-            {"videoId": "v1", "audioTrackId": track_id, "path": str(newaud)}, ctx()
-        )
+        result = service.replace({"videoId": "v1", "audioTrackId": track_id, "path": str(newaud)}, ctx())
         assert result["audioTrack"]["path"] == str(newaud)
         final = disk.load("v1")
         assert final["title"] == "concurrent edit"  # concurrent write survived

@@ -52,8 +52,15 @@ def test_openrouter_usage_refused_when_offline(tmp_path: Path) -> None:
         {
             "offline": True,
             "providers": [
-                {"id": "or", "provider": "OpenRouter", "kind": "cloud", "apiKeys": ["sk-secret"],
-                 "baseUrl": "https://openrouter.ai/api/v1", "model": "m", "enabled": True},
+                {
+                    "id": "or",
+                    "provider": "OpenRouter",
+                    "kind": "cloud",
+                    "apiKeys": ["sk-secret"],
+                    "baseUrl": "https://openrouter.ai/api/v1",
+                    "model": "m",
+                    "enabled": True,
+                },
             ],
         }
     )
@@ -81,8 +88,16 @@ def test_translator_forces_local_pool_when_offline(tmp_path: Path, monkeypatch) 
             "offline": True,
             "routing": {"perFunction": {"translation": {"provider": "cloudy"}}},
             "providers": [
-                {"id": "cloudy", "provider": "cloudy", "kind": "cloud", "apiKeys": ["k"], "enabled": True,
-                 "capabilities": ["text"], "baseUrl": "http://c", "model": "m"},
+                {
+                    "id": "cloudy",
+                    "provider": "cloudy",
+                    "kind": "cloud",
+                    "apiKeys": ["k"],
+                    "enabled": True,
+                    "capabilities": ["text"],
+                    "baseUrl": "http://c",
+                    "model": "m",
+                },
             ],
         }
     )

@@ -383,7 +383,9 @@ export class Sidecar extends EventEmitter {
     return new Promise<T>((resolveCall, rejectCall) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        rejectCall(new Error(`sidecar request '${method}' timed out after ${REQUEST_TIMEOUT_MS}ms`));
+        rejectCall(
+          new Error(`sidecar request '${method}' timed out after ${REQUEST_TIMEOUT_MS}ms`),
+        );
       }, REQUEST_TIMEOUT_MS);
       // Node timers keep the event loop alive; unref so a pending request never
       // blocks a clean shutdown (the reject still fires if the loop is running).

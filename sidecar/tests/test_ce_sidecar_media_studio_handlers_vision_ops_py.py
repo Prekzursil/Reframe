@@ -121,9 +121,7 @@ def test_index_plan_query_present_matches_search_cachekey_and_egresses(tmp_path:
     svc.settings.set(_cloud_settings(text_consent=True))
     plan = svc.index_plan({"videoId": "v1", "query": "pricing"}, _ctx())
 
-    expected = svc._plan_index_envelope(
-        _ai_job.AiInputs(messages=({"role": "user", "content": "pricing"},), model="")
-    )
+    expected = svc._plan_index_envelope(_ai_job.AiInputs(messages=({"role": "user", "content": "pricing"},), model=""))
     assert plan["cacheKey"] == expected.cacheKey
     assert plan["willEgress"] is True
 

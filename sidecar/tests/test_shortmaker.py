@@ -712,9 +712,7 @@ def test_lazy_caption_threads_total_sec_to_remotion(monkeypatch):
         def __init__(self, settings):  # noqa: D401 - test spy
             pass
 
-        def render(
-            self, clip_path, cues, out_path, *, style, burn, width, height, source_start, hook_title, total_sec
-        ):
+        def render(self, clip_path, cues, out_path, *, style, burn, width, height, source_start, hook_title, total_sec):
             captured["total_sec"] = total_sec
             return out_path
 

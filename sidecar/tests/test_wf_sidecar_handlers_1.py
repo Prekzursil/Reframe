@@ -144,9 +144,7 @@ def test_maybe_align_words_runs_when_karaoke_setting(tmp_path: Path, monkeypatch
     """settings['karaoke'] alone forces the 2nd pass (second `or` operand)."""
     from media_studio.features import ctc_align
 
-    monkeypatch.setattr(
-        ctc_align, "align_words", lambda transcript, audio_path, **_k: {**transcript, "aligned": True}
-    )
+    monkeypatch.setattr(ctc_align, "align_words", lambda transcript, audio_path, **_k: {**transcript, "aligned": True})
     svc = Services(data_dir=tmp_path / "d")
     out = svc._maybe_align_words({"segments": []}, "/a.wav", {"karaoke": True}, _JobCtx())
     assert out["aligned"] is True
@@ -170,9 +168,7 @@ def test_maybe_align_words_skips_when_cancelled(tmp_path: Path, monkeypatch: pyt
     assert calls["n"] == 0
 
 
-def test_maybe_align_words_forwards_progress_and_cancel(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_maybe_align_words_forwards_progress_and_cancel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The job progress/cancel callbacks are forwarded into align_words."""
     from media_studio.features import ctc_align
 
@@ -207,9 +203,7 @@ def test_maybe_align_words_forwards_progress_and_cancel(
 # --------------------------------------------------------------------------- #
 # _dub_translator — offline gate + online routing (finding 916)
 # --------------------------------------------------------------------------- #
-def test_dub_translator_forces_local_pool_when_offline(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_dub_translator_forces_local_pool_when_offline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Offline mode forces the dub tier3 pool LOCAL-only (no transcript egress)."""
     from media_studio.models import provider as _pm
     from media_studio.models import translation as _tm
@@ -244,9 +238,7 @@ def test_dub_translator_forces_local_pool_when_offline(
     assert captured["prefer"] == _pm.LOCAL_PROVIDER_ID, "offline dub did not force a local-only pool"
 
 
-def test_dub_translator_threads_routed_prefer_when_online(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_dub_translator_threads_routed_prefer_when_online(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """When NOT offline the dub tier3 keeps its per-function routed provider."""
     from media_studio.models import translation as _tm
 

@@ -616,7 +616,9 @@ describe('<MakeShorts />', () => {
       });
     });
     await flush();
-    expect(container.querySelector('.make-shorts__error')?.textContent).toContain('ffmpeg exploded');
+    expect(container.querySelector('.make-shorts__error')?.textContent).toContain(
+      'ffmpeg exploded',
+    );
     expect(container.querySelector('[data-testid="output-tray"]')).toBeNull();
   });
 

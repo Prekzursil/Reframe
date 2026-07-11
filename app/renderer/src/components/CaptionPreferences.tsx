@@ -155,9 +155,7 @@ export function CaptionPreferences({
             id="prefs-caption-speakers"
             type="checkbox"
             checked={prefs.captionSpeakerLabels}
-            onChange={(e) =>
-              setPrefs((p) => ({ ...p, captionSpeakerLabels: e.target.checked }))
-            }
+            onChange={(e) => setPrefs((p) => ({ ...p, captionSpeakerLabels: e.target.checked }))}
           />
           <span className="caption-prefs__toggle-text">
             Speaker labels

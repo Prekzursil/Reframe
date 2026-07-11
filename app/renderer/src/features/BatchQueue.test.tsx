@@ -494,10 +494,10 @@ describe('BatchQueue', () => {
     // A per-source SUB-job (its own jobId, local 0-100 pct) must NOT hijack the
     // aggregate pct bar or the a11y announcement.
     const barNow = (): string | null | undefined =>
-      container.querySelector('.batch-queue__live [role="progressbar"]')?.getAttribute('aria-valuenow');
-    act(() =>
-      progressCbs.forEach((c) => c({ jobId: 'sub-9', pct: 88, message: 'reframe 88%' })),
-    );
+      container
+        .querySelector('.batch-queue__live [role="progressbar"]')
+        ?.getAttribute('aria-valuenow');
+    act(() => progressCbs.forEach((c) => c({ jobId: 'sub-9', pct: 88, message: 'reframe 88%' })));
     expect(barNow()).not.toBe('88');
     expect(container.querySelector('.batch-livestatus__aggregate')?.textContent).not.toBe(
       'reframe 88%',
@@ -538,12 +538,16 @@ describe('BatchQueue', () => {
       await Promise.resolve();
     });
     const barNow = (): string | null | undefined =>
-      container.querySelector('.batch-queue__live [role="progressbar"]')?.getAttribute('aria-valuenow');
+      container
+        .querySelector('.batch-queue__live [role="progressbar"]')
+        ?.getAttribute('aria-valuenow');
     // A stale prior-run jobId is ignored...
     act(() => progressCbs.forEach((c) => c({ jobId: 'job-1', pct: 5, message: 'stale' })));
     expect(barNow()).not.toBe('5');
     // ...the resumed run's jobId (job-2) applies.
-    act(() => progressCbs.forEach((c) => c({ jobId: 'job-2', pct: 61, message: 'source 1/1 · A' })));
+    act(() =>
+      progressCbs.forEach((c) => c({ jobId: 'job-2', pct: 61, message: 'source 1/1 · A' })),
+    );
     expect(barNow()).toBe('61');
   });
 

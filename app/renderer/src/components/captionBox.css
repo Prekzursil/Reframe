@@ -49,7 +49,7 @@
   z-index: 1;
 }
 .caption-box__handle::before {
-  content: '';
+  content: "";
   position: absolute;
   inset: 6px;
   background: var(--surface-raised, #ffffff);

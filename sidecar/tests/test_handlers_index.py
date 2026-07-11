@@ -303,8 +303,11 @@ def test_index_search_skips_fingerprint_for_legacy_index(tmp_path: Path) -> None
     svc._write_index(vid, idx)
     # Even after a re-transcribe, a legacy index is NOT flagged (skips the check).
     proj = svc._load_or_create_project(vid)
-    proj.data["transcript"] = {"language": "en", "durationSec": 30.0,
-                               "segments": [{"start": 0.0, "end": 5.0, "text": "pricing"}]}
+    proj.data["transcript"] = {
+        "language": "en",
+        "durationSec": 30.0,
+        "segments": [{"start": 0.0, "end": 5.0, "text": "pricing"}],
+    }
     proj.save()
     out = svc.index_search({"videoId": vid, "query": "pricing"}, _ctx())
     assert "hits" in out  # served without raising

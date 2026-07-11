@@ -759,9 +759,7 @@ def extract_tool_archives(
         _log(f"extracting {arch.asset} -> {target}")
         extract_archive(zip_path, target)
         flatten_tool_dir(target, tools_resolver.LLAMA_EXE)
-        (target / tools_resolver.RELEASE_TAG_MARKER).write_text(
-            tools_resolver.LLAMA_RELEASE_TAG, encoding="utf-8"
-        )
+        (target / tools_resolver.RELEASE_TAG_MARKER).write_text(tools_resolver.LLAMA_RELEASE_TAG, encoding="utf-8")
         if remove_zip:
             zip_path.unlink()
         done.append(arch.asset)

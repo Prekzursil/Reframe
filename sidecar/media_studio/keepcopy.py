@@ -237,9 +237,7 @@ class ManagedStore:
                     f"UPDATE {_MANAGED_TABLE} SET last_access = ? WHERE entity_id = ?",
                     (stamp, entity_id),
                 )
-                refreshed = conn.execute(
-                    f"SELECT * FROM {_MANAGED_TABLE} WHERE entity_id = ?", (entity_id,)
-                ).fetchone()
+                refreshed = conn.execute(f"SELECT * FROM {_MANAGED_TABLE} WHERE entity_id = ?", (entity_id,)).fetchone()
                 return _row_to_managed(refreshed)
 
             src = video.get("path") or ""

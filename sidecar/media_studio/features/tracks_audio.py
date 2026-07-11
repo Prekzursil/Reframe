@@ -159,11 +159,7 @@ def original_audio_count(project: dict[str, Any]) -> int:
     see the module note). So this — NOT ``len(audioTracks)`` — is the true input
     audio-stream count that ffmpeg sees on the container.
     """
-    return sum(
-        1
-        for t in audio_tracks_of(project)
-        if isinstance(t, dict) and t.get("kind") == KIND_ORIGINAL
-    )
+    return sum(1 for t in audio_tracks_of(project) if isinstance(t, dict) and t.get("kind") == KIND_ORIGINAL)
 
 
 def original_stream_index(project: dict[str, Any], track_id: str) -> int:

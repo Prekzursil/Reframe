@@ -384,9 +384,7 @@ def transcribe_start(self: Services, params: dict[str, Any], ctx: RpcContext) ->
 
     def job_body(job_ctx: Any) -> dict[str, Any]:
         return {
-            "transcript": self._transcribe_and_persist(
-                video_id, job_ctx, language=language, align_words=align_words
-            )
+            "transcript": self._transcribe_and_persist(video_id, job_ctx, language=language, align_words=align_words)
         }
 
     # GPU-tag so a whisper/parakeet CUDA transcription claims the single gpu pool

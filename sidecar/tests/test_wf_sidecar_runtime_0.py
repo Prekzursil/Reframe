@@ -252,9 +252,7 @@ class TestGetPipOfflineGuard:
             raise AssertionError("offline must refuse before any network I/O")
 
         with pytest.raises(OfflineError):
-            bs.ensure_get_pip(
-                tmp_path / "root", None, urlopen=fake_urlopen, settings={"offline": True}
-            )
+            bs.ensure_get_pip(tmp_path / "root", None, urlopen=fake_urlopen, settings={"offline": True})
         assert not (tmp_path / "root" / "tools" / "get-pip.py").exists()
 
     def test_online_settings_allow_the_download(self, tmp_path):

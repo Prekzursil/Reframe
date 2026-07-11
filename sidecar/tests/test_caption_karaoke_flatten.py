@@ -13,10 +13,7 @@ from media_studio.features import caption_karaoke as ck
 
 def test_karaoke_groups_multiple_words_from_one_word_cues() -> None:
     words = ["hello", "there", "how", "are", "you", "today"]
-    cues = [
-        {"index": i + 1, "start": float(i), "end": float(i) + 0.5, "text": w}
-        for i, w in enumerate(words)
-    ]
+    cues = [{"index": i + 1, "start": float(i), "end": float(i) + 0.5, "text": w} for i, w in enumerate(words)]
     ass = ck.build_karaoke_ass(cues, source_start=0.0)
     dialogues = [ln for ln in ass.splitlines() if ln.startswith("Dialogue:")]
     assert dialogues, "no karaoke dialogue events were produced"

@@ -286,9 +286,7 @@ class Recipes:
         job = ctx.jobs.start(job_body, feature="recipes", label=f"recipe: {recipe.get('name', '')}")
         return {"jobId": job.id}
 
-    def _run_steps(
-        self, steps: list[Step], job_ctx: Any, ctx: RpcContext, injected: Any = None
-    ) -> dict[str, Any]:
+    def _run_steps(self, steps: list[Step], job_ctx: Any, ctx: RpcContext, injected: Any = None) -> dict[str, Any]:
         """Execute the steps in order, relaying scaled per-step progress.
 
         ``injected`` is the per-request DPAPI key snapshot captured in :meth:`run`

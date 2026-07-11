@@ -168,11 +168,7 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
           subtitleMode: tray.subtitleMode,
           captionOverride: wire.captionOverride,
         });
-        const res = await client.shortmaker.export(
-          selectedId,
-          candidates.map(candidateId),
-          params,
-        );
+        const res = await client.shortmaker.export(selectedId, candidates.map(candidateId), params);
         // shortmaker.export is a DEFERRED job: the immediate resolution carries
         // only {jobId}; the exported clips (or a job.done ERROR) arrive later.
         // Wait for the real outcome so the success note reflects the true clip

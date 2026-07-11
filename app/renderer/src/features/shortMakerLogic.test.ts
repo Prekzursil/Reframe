@@ -75,7 +75,11 @@ describe('moveSelection', () => {
 // preview window AND the exported cut honour a start-nudge (not a no-op).
 describe('nudgeCandidate sourceStart tracking', () => {
   it('moves sourceStart in lockstep with start on a start-nudge', () => {
-    const c = nudgeCandidate(cand({ start: 100, end: 140, durationSec: 40, sourceStart: 100 }), 5, 0);
+    const c = nudgeCandidate(
+      cand({ start: 100, end: 140, durationSec: 40, sourceStart: 100 }),
+      5,
+      0,
+    );
     expect(c.start).toBe(105);
     expect(c.sourceStart).toBe(105);
     // the invariant that keeps preview + export authoritative:
@@ -83,7 +87,11 @@ describe('nudgeCandidate sourceStart tracking', () => {
   });
 
   it('previewWindow honours a start-nudge (in-point actually moves)', () => {
-    const c = nudgeCandidate(cand({ start: 100, end: 140, durationSec: 40, sourceStart: 100 }), 5, 0);
+    const c = nudgeCandidate(
+      cand({ start: 100, end: 140, durationSec: 40, sourceStart: 100 }),
+      5,
+      0,
+    );
     // was a no-op before the fix (previewWindow read the stale sourceStart=100).
     expect(previewWindow(c)).toEqual({ start: 105, end: 140 });
   });

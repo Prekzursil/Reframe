@@ -120,7 +120,7 @@ describe('activeLine', () => {
     expect(LINE_GAP_SEC).toBeGreaterThan(0);
   });
 
-  it('carries each word\'s ABSOLUTE position in the input cues array as `index`', () => {
+  it("carries each word's ABSOLUTE position in the input cues array as `index`", () => {
     const line = activeLine(CUES, WINDOW, 1.6); // whole phrase, starts at index 0
     expect(line.map((w) => w.index)).toEqual([0, 1, 2, 3]);
   });

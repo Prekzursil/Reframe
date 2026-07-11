@@ -161,9 +161,7 @@ def test_progress_after_finalize_is_suppressed(emit_sinks, collected):
     assert late_sent.wait(5)
     assert job.wait(timeout=5)
     # No job.progress emitted for this job at pct 50, and job.pct did not regress to 50.
-    assert not any(
-        kind == "progress" and payload[0] == job.id and payload[1] == 50 for kind, payload in collected
-    )
+    assert not any(kind == "progress" and payload[0] == job.id and payload[1] == 50 for kind, payload in collected)
     assert job.pct != 50
 
 
@@ -427,9 +425,7 @@ def test_prefer_matches_by_catalog_label_for_production_shaped_entry() -> None:
         "apiKeys": ["ck-real"],
         "capabilities": ["text"],
     }
-    pool = P.build_pool_provider(
-        {"providers": [cerebras, groq]}, detect_local=False, prefer="groq-gpt-oss-120b"
-    )
+    pool = P.build_pool_provider({"providers": [cerebras, groq]}, detect_local=False, prefer="groq-gpt-oss-120b")
     providers = [e.provider for e in pool.entries]
     assert providers[0] == "Groq"  # hoisted via the catalog-resolved label
     assert providers[-1] == "local"

@@ -192,9 +192,9 @@ class TestAllowlistMatchesRegistry:
     def test_every_prefix_matches_a_registered_method(self):
         names = self._registered_method_names()
         for prefix in templates.ALLOWED_METHOD_PREFIXES:
-            assert any(
-                name.startswith(prefix) for name in names
-            ), f"allowlist prefix {prefix!r} matches no registered method"
+            assert any(name.startswith(prefix) for name in names), (
+                f"allowlist prefix {prefix!r} matches no registered method"
+            )
 
 
 # --------------------------------------------------------------------------- #

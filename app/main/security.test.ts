@@ -36,9 +36,7 @@ describe('isAllowedNavigation', () => {
     // file: origins are all "null"/opaque in the URL spec, so an origin-equality
     // check would let ANY local file through. We instead pin the target to the
     // app's own bundle pathname: a sibling/downloaded local file is now blocked.
-    expect(
-      isAllowedNavigation('file:///C:/Users/victim/Downloads/evil.html', APP),
-    ).toBe(false);
+    expect(isAllowedNavigation('file:///C:/Users/victim/Downloads/evil.html', APP)).toBe(false);
     // A non-file scheme against a file: app is likewise blocked (the file: branch's
     // target.protocol sub-condition false-path).
     expect(isAllowedNavigation('http://localhost:9999/', APP)).toBe(false);

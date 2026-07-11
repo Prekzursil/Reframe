@@ -24,7 +24,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from media_studio.features.apply_engine import EngineTable
 from media_studio.features.project_copy import ProjectCopy
 from media_studio.handlers import Services
 from media_studio.handlers._shared import _DirectorPlanEntry

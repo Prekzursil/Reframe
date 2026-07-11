@@ -104,7 +104,11 @@ export function CaptionDesigner({
                       // index (w.index), NOT its line-local position `i`, mirroring
                       // CaptionOverlay + the libass burn so the preview parity holds
                       // even when the on-screen phrase starts at an odd index.
-                      color: wordColor(w, visual, karaoke ? karaokeActiveColor(w.index) : undefined),
+                      color: wordColor(
+                        w,
+                        visual,
+                        karaoke ? karaokeActiveColor(w.index) : undefined,
+                      ),
                       backgroundColor: w.active ? visual.activeBackground : 'transparent',
                     }}
                   >

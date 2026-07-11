@@ -409,10 +409,7 @@ describe('<Refine />', () => {
       (container.querySelector('button[data-action="apply"]') as HTMLButtonElement).disabled,
     ).toBe(false);
     const input = container.querySelector('input[data-tune="noiseDb"]') as HTMLInputElement;
-    const setter = Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
-      'value',
-    )?.set;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
     await act(async () => {
       setter?.call(input, '-24');
       input.dispatchEvent(new Event('input', { bubbles: true }));

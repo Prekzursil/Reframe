@@ -734,7 +734,10 @@ export const client = {
     apply: (
       planId: string,
       confirmBudget?: string,
-      review?: { opOverrides: readonly { id: string; status: DirectorOpStatus }[]; order: readonly string[] },
+      review?: {
+        opOverrides: readonly { id: string; status: DirectorOpStatus }[];
+        order: readonly string[];
+      },
     ): Promise<JobHandle> =>
       rpc('director.apply', {
         planId,

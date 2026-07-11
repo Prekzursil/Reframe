@@ -607,9 +607,9 @@ describe('<SemanticSearch />', () => {
     });
     await mount(fake);
     const rebuild = () =>
-      [...container.querySelectorAll('button')].find(
-        (b) => b.textContent === 'Rebuild index',
-      ) as HTMLButtonElement | undefined;
+      [...container.querySelectorAll('button')].find((b) => b.textContent === 'Rebuild index') as
+        | HTMLButtonElement
+        | undefined;
     // The Rebuild control is available while built (before any search).
     expect(rebuild()).toBeTruthy();
     await type('pricing');

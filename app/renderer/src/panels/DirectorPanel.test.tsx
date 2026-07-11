@@ -749,13 +749,7 @@ describe('DirectorPanel', () => {
 
   it('apply transmits the REVIEWED op statuses + reordered ids so edits are not lost', async () => {
     const c = makeClient();
-    await planTo(
-      c,
-      planFixture([
-        op({ id: 'a', kind: 'trim' }),
-        op({ id: 'b', kind: 'trim' }),
-      ]),
-    );
+    await planTo(c, planFixture([op({ id: 'a', kind: 'trim' }), op({ id: 'b', kind: 'trim' })]));
     // Disable "a" (planned -> dropped) and move it below "b" within its kind.
     await act(async () => {
       $('button[data-action="op-disable"][data-op="a"]').click();

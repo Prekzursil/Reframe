@@ -44,8 +44,7 @@ def test_export_stage_notice_does_not_reset_progress(tmp_path: Path) -> None:
         export_clip=lambda i, o, *, settings=None: o,
     )
     cands = [
-        {"rank": r, "start": 0.0, "end": 5.0, "durationSec": 5.0, "sourceStart": 0.0,
-         "hook": "", "why": "", "score": 1}
+        {"rank": r, "start": 0.0, "end": 5.0, "durationSec": 5.0, "sourceStart": 0.0, "hook": "", "why": "", "score": 1}
         for r in range(1, 6)
     ]
     ctx = _RecCtx()
