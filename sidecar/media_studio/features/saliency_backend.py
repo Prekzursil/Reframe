@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ..pathsafe import clean_for_log
 from ..util import get_logger
 from .saliency import ASSET_NAME
 
@@ -118,7 +119,7 @@ class ViNetSaliencyBackend:  # pragma: no cover - requires torch + the vendored 
         )
         model.eval().to(self._device)
         self._model = model
-        log.info("ViNet-S saliency ready on %s (%s)", self._device, weight_path)
+        log.info("ViNet-S saliency ready on %s (%s)", self._device, clean_for_log(weight_path))
 
     def infer(self, frames: np.ndarray) -> np.ndarray:
         """Return an ``NxHxW`` per-frame saliency stack for the ``NxHxWx3`` ``frames``.

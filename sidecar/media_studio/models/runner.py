@@ -335,7 +335,11 @@ class ModelRunner:
                     if requested is None or _same_model(self._server_model_path, requested):
                         return self._server_proc
                     # Different model requested: graceful stop, then relaunch.
-                    log.info("model switch: %s -> %s", self._server_model_path, requested)
+                    log.info(
+                        "model switch: %s -> %s",
+                        clean_for_log(self._server_model_path),
+                        clean_for_log(requested),
+                    )
                     self._stop_server_locked()
                 else:
                     # Stale handle (the server crashed/exited on its own).

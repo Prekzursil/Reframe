@@ -904,8 +904,8 @@ class AssetManager:
             log.warning(
                 "hashed lock declared but not staged (F1 build-prep) for %s: %s — "
                 "falling back to the pinned (unhashed-transitive) inline install",
-                entry.name,
-                candidate,
+                clean_for_log(entry.name),
+                clean_for_log(candidate),
             )
             return None
         validate_hashed_lock(candidate.read_text(encoding="utf-8"))
