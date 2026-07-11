@@ -39,8 +39,10 @@ def _key_overlay_wrapper(svc: Services, handler: Handler) -> Handler:
     ``{jobId}`` — the nested steps run later on a worker thread AFTER this overlay
     context has closed, so without help they would see only the redacted at-rest
     markers. So the popped ``injected`` snapshot is stashed on the per-request
-    :class:`RpcContext` (``ctx.injected_keys``) — the SAME ``ctx`` object the job
-    body closes over — instead of being discarded when ``wrapped`` returns. The
+    :class:`RpcContext` as the dynamic ``_injectedKeys`` attribute
+    (:data:`INJECTED_KEYS_FIELD` — the SAME name :class:`RecipeRunner` reads back)
+    — the SAME ``ctx`` object the job body closes over — instead of being
+    discarded when ``wrapped`` returns. The
     step runner (``RecipeRunner``) re-attaches it under :data:`INJECTED_KEYS_FIELD`
     onto each nested step's params, which are then dispatched through THIS wrapper
     again, so the overlay is re-opened (and the marker re-popped) per step. The
@@ -55,7 +57,11 @@ def _key_overlay_wrapper(svc: Services, handler: Handler) -> Handler:
             return handler(params, ctx)
         # Stash for the deferred job-worker step runner (IDX 60 Part 2). Harmless for
         # synchronous handlers (they finish under the overlay and never read it back).
-        ctx.injected_keys = injected
+        # setattr (not `ctx.injected_keys = ...`) under INJECTED_KEYS_FIELD keeps this a
+        # DYNAMIC attribute the RecipeRunner reads back via the SAME constant — declaring
+        # it on the RpcContext dataclass would surface the live snapshot in repr/equality
+        # and break the no-leak invariant below.
+        setattr(ctx, INJECTED_KEYS_FIELD, injected)
         with svc.settings.key_overlay(injected):
             return handler(params, ctx)
 

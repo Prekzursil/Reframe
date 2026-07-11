@@ -5,8 +5,10 @@ Covers the two wired-in changes without touching any consolidated test file:
   * ``index.plan`` is registered by :func:`register_all` (the PURE pre-flight
     consent surface mirroring ``ai.planJob``, bound to ``Services.index_plan``);
   * IDX 60 Part 2 — :func:`_key_overlay_wrapper` stashes the popped injected-key
-    snapshot on the per-request :class:`RpcContext` (``ctx.injected_keys``) on the
-    key-bearing path so a deferred job-worker step runner can re-attach it, and
+    snapshot on the per-request :class:`RpcContext` (the dynamic ``_injectedKeys``
+    attr, :data:`INJECTED_KEYS_FIELD` — the SAME name the ``RecipeRunner`` reads
+    back) on the key-bearing path so a deferred job-worker step runner re-attaches
+    it, and
     leaves ``ctx`` untouched on the ordinary (no-key) path. Both branches of the
     new behaviour are exercised, plus the full re-attach round-trip contract the
     ``RecipeRunner`` step runner relies on.
@@ -58,8 +60,9 @@ def test_wrapper_stashes_injected_snapshot_on_ctx(tmp_path: Path) -> None:
     seen_inside: list[Any] = []
 
     def handler(params: dict[str, Any], ctx: RpcContext) -> str:
-        # The wrapper popped the marker before us AND stashed it on ctx.
-        seen_inside.append((INJECTED_KEYS_FIELD in params, getattr(ctx, "injected_keys", None)))
+        # The wrapper popped the marker before us AND stashed it on ctx — read it
+        # back via the SAME INJECTED_KEYS_FIELD constant the RecipeRunner uses.
+        seen_inside.append((INJECTED_KEYS_FIELD in params, getattr(ctx, INJECTED_KEYS_FIELD, None)))
         return "ok"
 
     wrapped = _key_overlay_wrapper(svc, handler)
@@ -67,7 +70,7 @@ def test_wrapper_stashes_injected_snapshot_on_ctx(tmp_path: Path) -> None:
     out = wrapped({"id": "x", INJECTED_KEYS_FIELD: _SNAP}, ctx)
 
     assert out == "ok"
-    assert ctx.injected_keys == _SNAP
+    assert getattr(ctx, INJECTED_KEYS_FIELD, None) == _SNAP
     assert seen_inside == [(False, _SNAP)]
     # RpcContext is a plain dataclass: its repr shows only declared fields, so the
     # stashed snapshot never leaks through a repr()/str() of the context.
@@ -84,7 +87,7 @@ def test_wrapper_leaves_ctx_untouched_without_injected_keys(tmp_path: Path) -> N
     ctx = _ctx()
     assert wrapped({"id": "x"}, ctx) == "ok"
     # The ordinary (no-key) path never opens the overlay and never stashes.
-    assert getattr(ctx, "injected_keys", None) is None
+    assert getattr(ctx, INJECTED_KEYS_FIELD, None) is None
 
 
 def test_stashed_injected_reattaches_through_the_wrapper(tmp_path: Path) -> None:
@@ -107,10 +110,12 @@ def test_stashed_injected_reattaches_through_the_wrapper(tmp_path: Path) -> None
 
     # Outer job-runner handler: enqueues the job, returns {jobId}, stash survives.
     wrapped({INJECTED_KEYS_FIELD: _SNAP}, ctx)
-    assert ctx.injected_keys == _SNAP
+    assert getattr(ctx, INJECTED_KEYS_FIELD, None) == _SNAP
 
-    # Deferred worker: the step runner re-attaches the stashed snapshot per step.
-    step_params: dict[str, Any] = {"trackId": "t0", INJECTED_KEYS_FIELD: ctx.injected_keys}
+    # Deferred worker: the step runner re-attaches the stashed snapshot per step,
+    # reading it back with the EXACT idiom RecipeRunner uses (recipes.py:281:
+    # ``getattr(ctx, INJECTED_KEYS_FIELD, None)``) — this is the write/read seam.
+    step_params: dict[str, Any] = {"trackId": "t0", INJECTED_KEYS_FIELD: getattr(ctx, INJECTED_KEYS_FIELD, None)}
     wrapped(step_params, ctx)
 
     # Re-popped in place for the nested step; the handler never saw the marker.
