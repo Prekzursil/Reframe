@@ -10,7 +10,7 @@
 // server in development (ELECTRON_RENDERER_URL) and from the built bundle
 // (out/renderer/index.html) in production. Security baseline: contextIsolation
 // ON, nodeIntegration OFF, sandbox ON — the renderer only sees `window.api`.
-import { app, BrowserWindow, ipcMain, safeStorage, session, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, net, safeStorage, session, shell } from 'electron';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, writeFileSync, promises as fsp } from 'node:fs';
 import { extname, join, resolve as resolvePath, sep } from 'node:path';
@@ -82,6 +82,7 @@ import {
   type UpdateStatus,
   type UpdaterHandle,
 } from './updater';
+import { signatureAssetUrl, verifyDownloadedUpdate } from './updateVerify';
 
 // mstream:// must be declared privileged BEFORE app ready (U1).
 // NOTE: registerSchemesAsPrivileged may only be called ONCE per app — if
@@ -744,26 +745,57 @@ function broadcastUpdateStatus(status: UpdateStatus): void {
 }
 
 /**
- * WU-U: wire electron-updater to a GitHub-Releases feed and auto-check on launch.
+ * WU-U2: fetch the detached Ed25519 `.sig` for a downloaded update from its GitHub
+ * release asset over Electron's `net` (honours the app's proxy/TLS stack). The URL is
+ * a FIXED github.com release path with the version + filename percent-encoded in
+ * (signatureAssetUrl), so a hostile feed value can never redirect the host. A missing
+ * or unreachable `.sig` throws, so the verifier fails CLOSED (the update is rejected).
+ */
+async function fetchUpdateSignature(args: { version: string; fileName: string }): Promise<string> {
+  const response = await net.fetch(signatureAssetUrl(args.version, args.fileName), {
+    redirect: 'follow',
+  });
+  if (!response.ok) {
+    throw new Error(`signature asset HTTP ${response.status}`);
+  }
+  return (await response.text()).trim();
+}
+
+/**
+ * WU-U: wire electron-updater to a GitHub-Releases feed and auto-check on launch,
+ * gated by the WU-U2 authenticity check.
  *
  * PACKAGED-ONLY: electron-updater reads `app-update.yml` (emitted into the app by
  * electron-builder's github `publish` block), which exists only in a packaged
  * build; a dev run has no feed and `checkForUpdates()` would throw. The real
  * singleton is cast to {@link AutoUpdaterLike} (the same structural-cast seam used
  * for safeStorage) and injected into the testable {@link registerUpdater} state
- * machine. autoDownload stays OFF — the user confirms the download in the
- * UpdateBanner; quitAndInstall() then runs the NSIS in-place upgrade, which
- * PRESERVES userData (the DPAPI keystore secure-keys.json + settings + the data
- * root). The app is UNSIGNED (no CSC in electron-builder.yml), so Windows
- * SmartScreen may warn when the downloaded installer runs — expected; we
- * deliberately do not add signing. The launch check is deferred until the
- * renderer has loaded so it can observe the status stream, and it degrades
+ * machine, together with the {@link verifyDownloadedUpdate} binding: before an update
+ * is announced ready OR installed, its bytes are hashed, its detached `.sig` fetched,
+ * and an Ed25519 signature over `version‖sha512` verified against the embedded public
+ * key. autoDownload + autoInstallOnAppQuit stay OFF — the user confirms the download
+ * in the UpdateBanner and NOTHING installs outside the verify gate; quitAndInstall()
+ * then runs the NSIS in-place upgrade, which PRESERVES userData (the DPAPI keystore
+ * secure-keys.json + settings + the data root).
+ *
+ * The OS-level build stays UNSIGNED (no Authenticode CSC in electron-builder.yml —
+ * Windows SmartScreen may still warn when the installer first runs), but the update
+ * channel itself is now AUTHENTICATED at the app layer. The launch check is deferred
+ * until the renderer has loaded so it can observe the status stream, and it degrades
  * quietly (never crashes) when offline or when no release exists yet.
  */
 function wireAutoUpdater(win: BrowserWindow): UpdaterHandle {
   const handle = registerUpdater({
     autoUpdater: autoUpdater as unknown as AutoUpdaterLike,
     broadcast: broadcastUpdateStatus,
+    verifyUpdate: (candidate) =>
+      verifyDownloadedUpdate({
+        version: candidate.version,
+        currentVersion: app.getVersion(),
+        downloadedFile: candidate.downloadedFile,
+        readFile: (path) => fsp.readFile(path),
+        fetchSignature: fetchUpdateSignature,
+      }),
     // eslint-disable-next-line no-console
     log: (message) => console.error(message),
   });

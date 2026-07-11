@@ -11,7 +11,12 @@
 #   2. cd app && npm run build               # electron-vite -> app/out
 #   3. cd app/render-cli && npm run bundle   # T4a: writes render-cli/out/remotion-bundle
 #   4. cd app && npx electron-builder --config ../electron-builder.yml --win
+#   4b. node build/sign-release.mjs          # WU-U2: Ed25519-sign each dist/*-win-x64.exe over
+#                                            #   version‖sha512 (needs $REFRAME_UPDATE_PRIVATE_KEY)
+#                                            #   -> dist/<installer>.sig (the app verifies this)
 #   5. build/make-portable.ps1               # optional: zip + slim/size assertions
+#   6. publish: electron-builder --publish always, THEN gh release upload v<version> dist/*.sig
+#      so the signatures ship alongside the installer + latest.yml on the release.
 #
 # Paths below are relative to the PROJECT dir (app/), because the build runs
 # from app/ with `--config ../electron-builder.yml`.
@@ -23,9 +28,14 @@ productName: Reframe
 # manifest electron-updater polls) and the NSIS `.blockmap` (enables delta
 # downloads — only changed blocks are fetched) alongside the installer, and (b)
 # bundle `app-update.yml` INTO the app so a running copy knows where to check.
-# Signing stays OFF (no CSC): this is an unsigned build, so Windows SmartScreen
-# may warn when the downloaded installer runs. Publishing is a human/CI step
-# (`electron-builder --publish` with a GH_TOKEN); the build itself never auto-uploads.
+# OS CODE-SIGNING stays OFF (no CSC): this is an unsigned build, so Windows
+# SmartScreen may warn when the downloaded installer runs. AUTHENTICITY is instead
+# enforced at the APP layer (WU-U2): build/sign-release.mjs Ed25519-signs each
+# installer over `version‖sha512` and the `<installer>.sig` asset is verified against
+# the embedded public key before an update is applied (app/main/updateVerify.ts) — so
+# a compromised feed cannot ship a forged installer. Publishing is a human/CI step
+# (`electron-builder --publish` with a GH_TOKEN, then `gh release upload` for the
+# .sig assets); the build itself never auto-uploads.
 publish:
   provider: github
   owner: Prekzursil
