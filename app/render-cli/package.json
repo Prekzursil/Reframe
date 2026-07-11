@@ -11,15 +11,15 @@
     "typecheck": "tsc -p . --noEmit"
   },
   "dependencies": {
-    "@remotion/captions": "4.0.484",
-    "@remotion/renderer": "4.0.484",
+    "@remotion/captions": "4.0.487",
+    "@remotion/renderer": "4.0.487",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "remotion": "4.0.484",
+    "remotion": "4.0.487",
     "zod": "3.25.76"
   },
   "devDependencies": {
-    "@remotion/bundler": "4.0.484",
+    "@remotion/bundler": "4.0.487",
     "@types/node": "20.19.43",
     "@types/react": "19.2.17",
     "typescript": "5.9.3"
