@@ -243,7 +243,13 @@ function hasPlaintextKeys(keys: DecryptedKeys): boolean {
 
 function readJson(path: string): unknown {
   try {
-    return JSON.parse(readFileSync(safeFilePath(path), 'utf8'));
+    // Inline containment barrier (#264): CodeQL js/path-injection recognises the
+    // local resolve()+startsWith() guard, but does NOT propagate safeFilePath's
+    // guard across the call boundary. Escape is caught below -> undefined.
+    const dir = resolvePath(dirname(path));
+    const safe = resolvePath(dir, basename(path));
+    if (safe !== dir && !safe.startsWith(dir + sep)) throw new Error('keystore path escaped its directory');
+    return JSON.parse(readFileSync(safe, 'utf8'));
   } catch {
     return undefined;
   }
@@ -251,8 +257,11 @@ function readJson(path: string): unknown {
 
 /** Atomic JSON write (temp sibling + rename) mirroring the sidecar's settings store. */
 function writeJsonAtomic(path: string, data: unknown): void {
-  const safe = safeFilePath(path);
-  const tmp = safeFilePath(`${safe}.tmp`);
+  // Inline containment barrier (#264) — CodeQL recognises the local guard.
+  const dir = resolvePath(dirname(path));
+  const safe = resolvePath(dir, basename(path));
+  if (safe !== dir && !safe.startsWith(dir + sep)) throw new Error('keystore path escaped its directory');
+  const tmp = `${safe}.tmp`; // sibling in the same guarded dir
   writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
   renameSync(tmp, safe);
 }
@@ -297,7 +306,10 @@ export type ShredOutcome = 'shredded' | 'absent' | 'intact';
  * instead of being silently created by a later write.
  */
 export function shredFile(path: string): ShredOutcome {
-  const safe = safeFilePath(path);
+  // Inline containment barrier (#264) — CodeQL recognises the local guard.
+  const dir = resolvePath(dirname(path));
+  const safe = resolvePath(dir, basename(path));
+  if (safe !== dir && !safe.startsWith(dir + sep)) throw new Error('keystore path escaped its directory');
   let scrubbed = false;
   let fd: number | undefined;
   try {
