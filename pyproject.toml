@@ -75,6 +75,13 @@ ignore = [
 # alias was renamed to `ProjectData` (it no longer collides with `class Project`),
 # which was also the root of the basedpyright `Project` cascade. No suppression
 # is needed now.
+# The schema-first contract source of truth (contract/spec.py) declares dataclass
+# fields whose names are the FROZEN camelCase WIRE names verbatim (mirroring
+# schemas.ts), so the generator maps field -> JSON Schema property -> TS field with
+# zero transformation. N815 (mixed-case class attribute) is therefore intentional
+# here — the fields are wire identifiers, not Python-style variables. See
+# docs/rpc-contract-v2.md.
+"sidecar/contract/spec.py" = ["N815"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -87,6 +94,10 @@ typeCheckingMode = "standard"
 pythonVersion = "3.12"
 include = [
   "sidecar/media_studio",
+  # The schema-first RPC contract source of truth + generator (v1.5 POC). Type-gated
+  # so the "typed" claim is enforced; it is NOT in the pytest --cov=media_studio root
+  # (it is a build-time tool + additive runtime loader, not shipped in the package).
+  "sidecar/contract",
 ]
 exclude = [
   "**/node_modules",

@@ -1,0 +1,307 @@
+{
+  "methodNames": [
+    "ping",
+    "library.add",
+    "settings.get",
+    "settings.set",
+    "shortmaker.select",
+    "providers.revealKey"
+  ],
+  "methods": [
+    {
+      "kind": "direct",
+      "name": "ping",
+      "needsKey": false,
+      "paramsSchema": null
+    },
+    {
+      "kind": "direct",
+      "name": "library.add",
+      "needsKey": false,
+      "paramsSchema": {
+        "additionalProperties": true,
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "kind": "direct",
+      "name": "settings.get",
+      "needsKey": false,
+      "paramsSchema": null
+    },
+    {
+      "kind": "direct",
+      "name": "settings.set",
+      "needsKey": false,
+      "paramsSchema": {
+        "additionalProperties": true,
+        "properties": {
+          "activePreset": {
+            "type": "string"
+          },
+          "autosave": {
+            "additionalProperties": true,
+            "properties": {
+              "debounceMs": {
+                "type": "integer"
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          },
+          "captionSpeakerLabels": {
+            "type": "boolean"
+          },
+          "captionStyle": {
+            "type": "string"
+          },
+          "confirmCloudBudget": {
+            "type": "boolean"
+          },
+          "defaultTargetJobSize": {
+            "type": "integer"
+          },
+          "enforceMonthlyHardLimit": {
+            "type": "boolean"
+          },
+          "exportDefaults": {
+            "additionalProperties": true,
+            "properties": {
+              "nleFormat": {
+                "type": "string"
+              },
+              "nleFps": {
+                "type": "integer"
+              },
+              "subtitleFormat": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "ffmpegPath": {
+            "type": "string"
+          },
+          "firstRunChoiceMade": {
+            "type": "boolean"
+          },
+          "hookTitle": {
+            "type": "boolean"
+          },
+          "lastOpenedVideoId": {
+            "type": "string"
+          },
+          "modelsDir": {
+            "type": "string"
+          },
+          "monthlyHardLimitCents": {
+            "type": "integer"
+          },
+          "monthlySoftLimitCents": {
+            "type": "integer"
+          },
+          "removeFillers": {
+            "type": "boolean"
+          },
+          "silenceTrim": {
+            "type": "boolean"
+          },
+          "stabilize": {
+            "type": "boolean"
+          },
+          "useCloud": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "kind": "job",
+      "name": "shortmaker.select",
+      "needsKey": true,
+      "paramsSchema": {
+        "additionalProperties": true,
+        "properties": {
+          "controls": {
+            "additionalProperties": true,
+            "properties": {
+              "aspect": {
+                "type": "string"
+              },
+              "captionStyle": {
+                "type": "string"
+              },
+              "count": {
+                "type": "integer"
+              },
+              "language": {
+                "type": "string"
+              },
+              "maxSec": {
+                "type": "number"
+              },
+              "minSec": {
+                "type": "number"
+              }
+            },
+            "type": "object"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "videoId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "videoId",
+          "prompt",
+          "controls"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "kind": "direct",
+      "name": "providers.revealKey",
+      "needsKey": true,
+      "paramsSchema": {
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "index": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      }
+    }
+  ],
+  "needsKeyInjection": [
+    "providers.revealKey",
+    "shortmaker.select"
+  ],
+  "settingsDefaults": {
+    "activePreset": "",
+    "autosave": null,
+    "captionSpeakerLabels": null,
+    "captionStyle": null,
+    "confirmCloudBudget": true,
+    "defaultTargetJobSize": 8,
+    "enforceMonthlyHardLimit": false,
+    "exportDefaults": null,
+    "ffmpegPath": "",
+    "firstRunChoiceMade": false,
+    "hookTitle": null,
+    "lastOpenedVideoId": "",
+    "modelsDir": "",
+    "monthlyHardLimitCents": 0,
+    "monthlySoftLimitCents": 0,
+    "removeFillers": null,
+    "silenceTrim": null,
+    "stabilize": null,
+    "useCloud": false
+  },
+  "settingsSchema": {
+    "additionalProperties": true,
+    "properties": {
+      "activePreset": {
+        "type": "string"
+      },
+      "autosave": {
+        "additionalProperties": true,
+        "properties": {
+          "debounceMs": {
+            "type": "integer"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "captionSpeakerLabels": {
+        "type": "boolean"
+      },
+      "captionStyle": {
+        "type": "string"
+      },
+      "confirmCloudBudget": {
+        "type": "boolean"
+      },
+      "defaultTargetJobSize": {
+        "type": "integer"
+      },
+      "enforceMonthlyHardLimit": {
+        "type": "boolean"
+      },
+      "exportDefaults": {
+        "additionalProperties": true,
+        "properties": {
+          "nleFormat": {
+            "type": "string"
+          },
+          "nleFps": {
+            "type": "integer"
+          },
+          "subtitleFormat": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ffmpegPath": {
+        "type": "string"
+      },
+      "firstRunChoiceMade": {
+        "type": "boolean"
+      },
+      "hookTitle": {
+        "type": "boolean"
+      },
+      "lastOpenedVideoId": {
+        "type": "string"
+      },
+      "modelsDir": {
+        "type": "string"
+      },
+      "monthlyHardLimitCents": {
+        "type": "integer"
+      },
+      "monthlySoftLimitCents": {
+        "type": "integer"
+      },
+      "removeFillers": {
+        "type": "boolean"
+      },
+      "silenceTrim": {
+        "type": "boolean"
+      },
+      "stabilize": {
+        "type": "boolean"
+      },
+      "useCloud": {
+        "type": "boolean"
+      }
+    },
+    "type": "object"
+  },
+  "sourceSha256": "2caf6674f4ed5747a95a0a45681da5059a4d13277bc055a3363b4575fb7d42e8",
+  "version": "v1.5-poc"
+}
