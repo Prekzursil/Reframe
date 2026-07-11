@@ -64,6 +64,13 @@ describe('TopTabBar — rendering + ARIA', () => {
     expect(container.querySelectorAll('[data-testid="icon"]')).toHaveLength(3);
   });
 
+  it('marks the tablist vertical (role-complete left rail)', () => {
+    render('library', () => {});
+    expect(container.querySelector('[role="tablist"]')!.getAttribute('aria-orientation')).toBe(
+      'vertical',
+    );
+  });
+
   it('accepts a custom tablist label', () => {
     render('library', () => {});
     act(() => {
@@ -158,6 +165,38 @@ describe('TopTabBar — keyboard model', () => {
     const onSelect = vi.fn();
     render('library', onSelect);
     press(tab('Library'), 'ArrowLeft');
+    expect(onSelect).toHaveBeenCalledWith('repurpose');
+    expect(document.activeElement).toBe(tab('Repurpose'));
+  });
+
+  it('ArrowDown moves to the next tab (vertical rail) and focuses it', () => {
+    const onSelect = vi.fn();
+    render('library', onSelect);
+    press(tab('Library'), 'ArrowDown');
+    expect(onSelect).toHaveBeenCalledWith('create');
+    expect(document.activeElement).toBe(tab('Create'));
+  });
+
+  it('ArrowDown wraps from the last tab to the first', () => {
+    const onSelect = vi.fn();
+    render('repurpose', onSelect);
+    press(tab('Repurpose'), 'ArrowDown');
+    expect(onSelect).toHaveBeenCalledWith('library');
+    expect(document.activeElement).toBe(tab('Library'));
+  });
+
+  it('ArrowUp moves to the previous tab (vertical rail)', () => {
+    const onSelect = vi.fn();
+    render('create', onSelect);
+    press(tab('Create'), 'ArrowUp');
+    expect(onSelect).toHaveBeenCalledWith('library');
+    expect(document.activeElement).toBe(tab('Library'));
+  });
+
+  it('ArrowUp wraps from the first tab to the last', () => {
+    const onSelect = vi.fn();
+    render('library', onSelect);
+    press(tab('Library'), 'ArrowUp');
     expect(onSelect).toHaveBeenCalledWith('repurpose');
     expect(document.activeElement).toBe(tab('Repurpose'));
   });

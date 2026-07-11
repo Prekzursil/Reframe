@@ -1,11 +1,20 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { rpc, type Video } from '../components/api';
-import { useVideoThumbnail, type VideoThumbnailRpc } from '../components/useVideoThumbnail';
-import { ReadinessRollup } from '../components/ReadinessRollup';
+import { CapabilitiesChip } from './CapabilitiesChip';
+import { LibraryCard } from './LibraryCard';
+import { LibraryToolbar } from './LibraryToolbar';
+import { ShortsGalleryModal } from './ShortsGalleryModal';
 import { LineagePanel, type LineageAsset } from '../features/LineagePanel';
-import { LibraryProvenance, type ProvenanceHandlers } from '../features/LibraryProvenance';
+import type { ProvenanceHandlers } from '../features/LibraryProvenance';
 import { lineageActions } from '../features/lineageActionsClient';
-import type { LineageResult, ReadinessAction } from '../lib/rpc';
+import type { LineageResult, ReadinessAction, ShortInfo } from '../lib/rpc';
+import {
+  type LibrarySort,
+  type LibraryVideo,
+  filterVideos,
+  groupShortsByVideo,
+  sortVideos,
+} from './libraryModel';
 import '../components/library-cards.css';
 
 // ---- Toasts (P2 U2) ---------------------------------------------------------
@@ -28,6 +37,22 @@ interface LocalToast extends ToastMessage {
 
 /** How long a fallback toast stays on screen. */
 const TOAST_TTL_MS = 6000;
+
+/**
+ * The injected produced-shorts port (v1.5 §4 P0). When provided, Library loads
+ * ALL produced shorts once, groups them by source video for the per-card "N
+ * shorts" count, and the gallery modal reveals/deletes clips through it. Absent
+ * -> the shorts affordances simply don't render (lane-independent, like the
+ * `provenance`/`toast` seams; the App-side adapter is a documented follow-up).
+ */
+export interface LibraryShortsApi {
+  /** Load EVERY produced short (grouped client-side by source `videoId`). */
+  listAll: () => Promise<ShortInfo[]>;
+  /** Reveal a produced clip in the OS file explorer. */
+  openFolder: (path: string) => Promise<void>;
+  /** Delete a produced clip file (the adapter owns any confirm). */
+  remove: (path: string) => Promise<void>;
+}
 
 export interface LibraryProps {
   /** Called when the user opens a video into the Workspace. */
@@ -53,6 +78,13 @@ export interface LibraryProps {
    * legacy compact path line and no provenance row (the app wires the real one).
    */
   provenance?: ProvenanceHandlers;
+  /**
+   * v1.5 §4 P0: the produced-shorts port. When provided, each card shows a
+   * "N shorts" label opening the gallery modal for that video.
+   */
+  shorts?: LibraryShortsApi;
+  /** v1.5 §4: "edit in Studio" for a produced short (from the gallery modal). */
+  onEditShort?: (short: ShortInfo) => void;
 }
 
 interface ListResult {
@@ -111,29 +143,6 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function formatDuration(sec: number): string {
-  if (!Number.isFinite(sec) || sec <= 0) return '--:--';
-  const total = Math.round(sec);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  const mm = String(m).padStart(2, '0');
-  const ss = String(s).padStart(2, '0');
-  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
-}
-
-// ---- Poster-frame thumbnails (WU-4 wiring, WU-14) ---------------------------
-
-/**
- * `library.thumbnail({id})` adapter over the shared `rpc` bridge — the thin RPC
- * slice `useVideoThumbnail` needs. Stable across renders so the hook's effect
- * does not re-fire every card render.
- */
-const thumbnailRpc: VideoThumbnailRpc = {
-  thumbnail: (videoId: string) =>
-    rpc<{ thumbnailPath: string }>('library.thumbnail', { id: videoId }),
-};
-
 /**
  * `library.lineage({id})` loader over the shared `rpc` bridge — the injected
  * `loadLineage` the L4 `LineagePanel` drawer consumes. Module-level so it is
@@ -144,63 +153,40 @@ function loadLineage(id: string): Promise<LineageResult> {
 }
 
 /**
- * Library-card poster: consumes `useVideoThumbnail` (WU-4) to serve the source
- * video's `thumb:` poster as a real <img>, generating it on demand (idempotent
- * server-side). Inherits WU-4's graceful degradation: a missing / failed poster
- * (empty resolved URL, or an <img> load error) falls back to the ▶ glyph and
- * NEVER blocks the gallery. The duration badge always renders (mm:ss).
- */
-function VideoThumb({ video }: { video: Video }): React.ReactElement {
-  const posterUrl = useVideoThumbnail(thumbnailRpc, video.id, video.thumbnailPath ?? '');
-  const [imgFailed, setImgFailed] = useState(false);
-  const showImg = posterUrl !== '' && !imgFailed;
-
-  return (
-    <div className="library__thumb">
-      {showImg ? (
-        <img
-          className="library__thumb-img"
-          src={posterUrl}
-          alt=""
-          aria-hidden="true"
-          onError={() => setImgFailed(true)}
-        />
-      ) : (
-        <div className="library__thumb-fallback" aria-hidden="true">
-          ▶
-        </div>
-      )}
-      <span className="library__thumb-duration">{formatDuration(video.durationSec)}</span>
-    </div>
-  );
-}
-
-/**
- * Library.tsx — the video-manager home.
- * Lists videos (library.list), adds via the NATIVE picker (window.api.openVideos
- * -> dialog.openVideos ipc) or drag-drop onto the view (multi-add, per-file
- * typed error toasts, de-dupe by id), removes (library.remove), and opens a
- * video into the Workspace on click.
+ * Library.tsx — the content-first video-manager home (v1.5 §4 re-skin).
+ * Lists videos (library.list) in a poster grid, adds via the NATIVE picker or
+ * drag-drop (multi-add, per-file typed error toasts, de-dupe by id), removes
+ * (single + batch), searches/sorts in-context, opens a video into the Workspace,
+ * and — via the injected shorts port — opens each video's produced-shorts gallery.
  */
 export function Library({
   onOpen,
   toast: externalToast,
   onReadinessAction,
   provenance,
+  shorts,
+  onEditShort,
 }: LibraryProps): React.ReactElement {
-  const [videos, setVideos] = useState<Video[]>([]);
+  const [videos, setVideos] = useState<LibraryVideo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  // L4 Lineage view: an opt-in toggle (default OFF -> the flat list opens videos
+  // L4 Lineage view: an opt-in toggle (default OFF -> the flat grid opens videos
   // in the Workspace, §3.5). When ON, clicking an asset opens its provenance
   // drawer (lineageAsset) instead. Leaving the mode closes any open drawer.
   const [lineageView, setLineageView] = useState(false);
   const [lineageAsset, setLineageAsset] = useState<LineageAsset | null>(null);
   const [toasts, setToasts] = useState<LocalToast[]>([]);
-  const toastIdRef = useRef(0);
-  const toastTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const toastIdRef = React.useRef(0);
+  const toastTimersRef = React.useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  // v1.5 scale + one-to-many state.
+  const [query, setQuery] = useState('');
+  const [sortMode, setSortMode] = useState<LibrarySort>('recent');
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [shortsByVideo, setShortsByVideo] = useState<Record<string, ShortInfo[]>>({});
+  const [shortsVideo, setShortsVideo] = useState<LibraryVideo | null>(null);
 
   // Clear any pending fallback-toast expiry timers on unmount.
   useEffect(() => {
@@ -247,6 +233,20 @@ export function Library({
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Load the produced-shorts index once (best-effort) when the port is wired, so
+  // each card can show its "N shorts" count and open the gallery.
+  const loadShorts = useCallback(async (api: LibraryShortsApi) => {
+    try {
+      setShortsByVideo(groupShortsByVideo(await api.listAll()));
+    } catch {
+      setShortsByVideo({});
+    }
+  }, []);
+
+  useEffect(() => {
+    if (shorts) void loadShorts(shorts);
+  }, [shorts, loadShorts]);
 
   /**
    * Multi-add: one library.add per path, sequential so list order is stable.
@@ -345,7 +345,7 @@ export function Library({
 
   /** Click an asset: open its lineage drawer in Lineage view, else the Workspace. */
   const handleItemClick = useCallback(
-    (video: Video) => {
+    (video: LibraryVideo) => {
       if (lineageView) {
         setLineageAsset({ id: video.id, title: video.title });
       } else {
@@ -355,6 +355,16 @@ export function Library({
     [lineageView, onOpen],
   );
 
+  /** Prune an id from the selection (kept in sync when a video leaves the list). */
+  const unselect = useCallback((id: string) => {
+    setSelected((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+
   const handleRemove = useCallback(
     async (id: string, event: React.MouseEvent) => {
       event.stopPropagation();
@@ -362,6 +372,7 @@ export function Library({
       // Optimistic removal; restore on failure.
       const snapshot = videos;
       setVideos((prev) => prev.filter((v) => v.id !== id));
+      unselect(id);
       try {
         await rpc<{ ok: boolean }>('library.remove', { id });
       } catch (err) {
@@ -369,7 +380,83 @@ export function Library({
         setVideos(snapshot);
       }
     },
-    [videos],
+    [videos, unselect],
+  );
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelected(new Set()), []);
+
+  /** Batch remove: one library.remove per selected id; failures are counted. */
+  const removeSelected = useCallback(async () => {
+    const ids = [...selected];
+    setSelected(new Set());
+    setError(null);
+    const failed: string[] = [];
+    for (const id of ids) {
+      try {
+        await rpc<{ ok: boolean }>('library.remove', { id });
+        setVideos((prev) => prev.filter((v) => v.id !== id));
+      } catch {
+        failed.push(id);
+      }
+    }
+    if (failed.length > 0) {
+      setError(`Could not remove ${failed.length} video${failed.length === 1 ? '' : 's'}.`);
+    }
+  }, [selected]);
+
+  // ---- Produced-shorts gallery (P0 one-to-many) -----------------------------
+
+  const shortsCountFor = useCallback(
+    (id: string): number => (shorts ? (shortsByVideo[id]?.length ?? 0) : 0),
+    [shorts, shortsByVideo],
+  );
+
+  const openShorts = useCallback((video: LibraryVideo) => setShortsVideo(video), []);
+  const closeShorts = useCallback(() => setShortsVideo(null), []);
+
+  const openShortFolder = useCallback(
+    async (api: LibraryShortsApi, path: string) => {
+      try {
+        await api.openFolder(path);
+      } catch (err) {
+        emitToast('error', errText(err));
+      }
+    },
+    [emitToast],
+  );
+
+  const deleteShort = useCallback(
+    async (api: LibraryShortsApi, path: string) => {
+      try {
+        await api.remove(path);
+        setShortsByVideo((prev) => {
+          const next: Record<string, ShortInfo[]> = {};
+          for (const [vid, list] of Object.entries(prev)) {
+            const kept = list.filter((s) => s.path !== path);
+            if (kept.length > 0) next[vid] = kept;
+          }
+          return next;
+        });
+      } catch (err) {
+        emitToast('error', errText(err));
+      }
+    },
+    [emitToast],
+  );
+
+  // The visible grid: in-context search + sort, layered over the raw list.
+  const visible = useMemo(
+    () => sortVideos(filterVideos(videos, query), sortMode, shortsCountFor),
+    [videos, query, sortMode, shortsCountFor],
   );
 
   return (
@@ -401,9 +488,20 @@ export function Library({
         </div>
       </header>
 
-      {/* design-review P2: the cryptic "What works right now" eyebrow relabelled
-          to read as device/model readiness on THIS machine. */}
-      <ReadinessRollup title="Ready on this computer" onAction={onReadinessAction} />
+      {/* design-review P2/§4: the model-readiness roll-up demoted to a compact
+          "Capabilities: N of M installed" disclosure chip (a plumbing count, kept
+          separate from the visible card count). */}
+      <CapabilitiesChip onAction={onReadinessAction} />
+
+      <LibraryToolbar
+        query={query}
+        onQueryChange={setQuery}
+        sort={sortMode}
+        onSortChange={setSortMode}
+        selectedCount={selected.size}
+        onRemoveSelected={() => void removeSelected()}
+        onClearSelection={clearSelection}
+      />
 
       {dragOver ? (
         <div className="library__drophint" aria-hidden="true">
@@ -440,7 +538,7 @@ export function Library({
       )}
 
       {loading ? (
-        // Skeleton-shimmer placeholders shaped like the real library rows —
+        // Skeleton-shimmer placeholders shaped like the real library cards —
         // never a bare "LOADING…". aria-busy + label carry the state to AT while
         // the ghost rows (aria-hidden) hold the layout so it doesn't jump.
         <div
@@ -472,61 +570,26 @@ export function Library({
             Click “Add videos” or drop video files anywhere here.
           </p>
         </div>
+      ) : visible.length === 0 ? (
+        <div className="library__empty library__empty--filtered">
+          <p className="library__empty-title">No matches</p>
+          <p className="library__empty-hint">No videos match “{query}”.</p>
+        </div>
       ) : (
         <ul className="library__list">
-          {videos.map((video) => (
-            // A11Y: the row is a plain <li> (so the <ul> only contains list
-            // items — fixes axe `list`/`only-listitems`). The OPEN affordance is
-            // a real <button> wrapping the thumb + title (natively keyboard- and
-            // screen-reader-operable), and Remove is its SIBLING button — not a
-            // focusable nested inside another control (fixes `nested-interactive`
-            // / `no-focusable-content`).
-            <li key={video.id} className="library__item">
-              <button
-                type="button"
-                className="library__item-open"
-                aria-label={lineageView ? `Show history of ${video.title}` : `Open ${video.title}`}
-                onClick={() => handleItemClick(video)}
-              >
-                <VideoThumb video={video} />
-                <div className="library__item-main">
-                  <span className="library__item-title">{video.title}</span>
-                  {/* WU-2d: quiet provenance chip row — reads what the card CARRIES,
-                      derived from real card data (transcript). Wiring further
-                      provenance signals is a later WU; no fabricated chips. */}
-                  {video.hasTranscript ? (
-                    <div className="library__chips">
-                      <span className="library__badge library__chip" title="Has transcript">
-                        Transcript
-                      </span>
-                    </div>
-                  ) : null}
-                  {/* WU-1f: the clear source path moves into <LibraryProvenance>;
-                      without the provenance handlers, keep the legacy compact line. */}
-                  {provenance ? null : (
-                    <span className="library__item-path" title={video.path}>
-                      {video.path}
-                    </span>
-                  )}
-                </div>
-              </button>
-              {provenance ? (
-                <LibraryProvenance
-                  video={{ id: video.id, path: video.path, title: video.title }}
-                  handlers={provenance}
-                />
-              ) : null}
-              <div className="library__item-meta">
-                <button
-                  type="button"
-                  className="library__remove-btn"
-                  aria-label={`Remove ${video.title}`}
-                  onClick={(e) => handleRemove(video.id, e)}
-                >
-                  Remove
-                </button>
-              </div>
-            </li>
+          {visible.map((video) => (
+            <LibraryCard
+              key={video.id}
+              video={video}
+              lineageView={lineageView}
+              selected={selected.has(video.id)}
+              onToggleSelect={toggleSelect}
+              onOpen={handleItemClick}
+              onRemove={handleRemove}
+              shortsCount={shortsCountFor(video.id)}
+              onOpenShorts={openShorts}
+              provenance={provenance}
+            />
           ))}
         </ul>
       )}
@@ -537,6 +600,17 @@ export function Library({
           loadLineage={loadLineage}
           onClose={closeLineage}
           actions={lineageActions}
+        />
+      ) : null}
+
+      {shorts && shortsVideo ? (
+        <ShortsGalleryModal
+          title={shortsVideo.title}
+          shorts={shortsByVideo[shortsVideo.id] ?? []}
+          onClose={closeShorts}
+          onOpenFolder={(path) => void openShortFolder(shorts, path)}
+          onDelete={(path) => void deleteShort(shorts, path)}
+          onEdit={onEditShort}
         />
       ) : null}
     </div>

@@ -1,0 +1,288 @@
+/* library-shell.css — v1.5 Library chrome that sits OUTSIDE the card grid
+   (library-cards.css): the capabilities disclosure chip, the search/sort +
+   multi-select toolbar, and the produced-shorts glass modal. All values are
+   tokens (styles/tokens.css); depth comes from the surface ladder + elevation,
+   the ONE accent stays amber, status stays green/amber/red. */
+
+/* ---- capabilities disclosure chip ---------------------------------------- */
+
+.capabilities-chip {
+  margin: 0 var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.capabilities-chip__toggle {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  align-self: flex-start;
+  max-width: 100%;
+  padding: var(--control-pad-mini);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  box-shadow: var(--elev-1);
+  font-family: var(--font-ui);
+  font-size: var(--type-caption-size);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--type-caption-tracking);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.capabilities-chip__toggle:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.capabilities-chip__toggle:disabled {
+  cursor: default;
+  color: var(--text-faint);
+}
+
+.capabilities-chip__caret {
+  color: var(--text-faint);
+  font-size: var(--type-chip-size);
+}
+
+.capabilities-chip__error {
+  margin: 0;
+  color: var(--status-error);
+  font-size: var(--type-caption-size);
+}
+
+.capabilities-chip__list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--elev-2);
+}
+
+.capabilities-chip__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.capabilities-chip__cap {
+  color: var(--text-secondary);
+  font-size: var(--type-body-size);
+}
+
+/* ---- search / sort + multi-select toolbar -------------------------------- */
+
+.library-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding: var(--space-4) var(--space-6) var(--space-2);
+}
+
+.library-toolbar__filters {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+}
+
+.library-toolbar__search {
+  flex: 1;
+  min-width: 0;
+  max-width: 360px;
+  padding: var(--control-pad-input);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--surface-deep);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--type-body-size);
+}
+
+.library-toolbar__search::placeholder {
+  color: var(--text-faint);
+}
+
+.library-toolbar__sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.library-toolbar__sort-label {
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+}
+
+.library-toolbar__sort-select {
+  padding: var(--control-pad-input);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: var(--type-control-size);
+  cursor: pointer;
+}
+
+/* Batch bar: a NEUTRAL raised strip (selection is an active mode, but amber stays
+   reserved for progress/approve); the destructive action goes red only on hover. */
+.library-toolbar__batch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
+  box-shadow: var(--elev-1);
+}
+
+.library-toolbar__batch-count {
+  color: var(--text-secondary);
+  font-size: var(--type-caption-size);
+  font-weight: var(--weight-semibold);
+}
+
+.library-toolbar__batch-remove,
+.library-toolbar__batch-clear {
+  appearance: none;
+  padding: var(--control-pad-mini);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--surface-bg);
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: var(--type-control-size);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.library-toolbar__batch-remove:hover {
+  color: var(--status-error);
+  border-color: var(--status-error);
+}
+
+.library-toolbar__batch-clear:hover {
+  color: var(--text-primary);
+  border-color: var(--edge-strong);
+}
+
+/* ---- produced-shorts glass modal (Wave-2 glass layer) -------------------- */
+
+.shorts-modal__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  background: var(--overlay-scrim);
+  animation: shorts-modal-fade var(--dur-base) var(--ease-out);
+}
+
+.shorts-modal {
+  width: 100%;
+  max-width: var(--overlay-width);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
+  /* The glass layer: the raised plane at reduced opacity + a backdrop blur. */
+  background: var(--surface-glass);
+  backdrop-filter: blur(var(--glass-blur));
+  box-shadow: var(--shadow-overlay);
+  animation: shorts-modal-rise var(--dur-slow) var(--ease-out);
+}
+
+.shorts-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--edge);
+}
+
+.shorts-modal__title {
+  margin: 0;
+  /* The editorial serif finally earns its (evolved) token here. */
+  font-family: var(--font-editorial);
+  font-size: var(--type-subhead-size);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.shorts-modal__close {
+  appearance: none;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--type-card-title-size);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.shorts-modal__close:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.shorts-modal__body {
+  padding: var(--space-5);
+  overflow-y: auto;
+}
+
+.shorts-modal__empty {
+  margin: 0;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+@keyframes shorts-modal-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes shorts-modal-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

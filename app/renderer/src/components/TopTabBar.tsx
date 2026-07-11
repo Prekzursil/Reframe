@@ -1,14 +1,20 @@
-// TopTabBar.tsx — the application's TOP-LEVEL tabbed navigation.
+// TopTabBar.tsx — the application's TOP-LEVEL navigation, presented as a vertical
+// LEFT RAIL (v1.5 pro-shell). Despite the historical name it renders a rail, not
+// a top strip; the swap is PRESENTATIONAL ONLY — the component API, ids, roles,
+// and routing contract are unchanged (App still derives `active` from the route).
 //
-// This is the primary surface switcher (Library · Create · Director · Repurpose ·
-// Settings). It is a full ARIA tablist (role=tablist/tab), distinct from the
-// lightweight `TabBar` used for in-view sub-tabs (Workspace/Repurpose/Settings):
+// This is the primary surface switcher (Library · Make Shorts · Edit · Director ·
+// Settings). It is a full ARIA tablist (role=tablist/tab) with
+// aria-orientation="vertical" (the role-complete rail), distinct from the
+// lightweight `TabBar` used for in-view sub-tabs:
 //   * roving tabindex — exactly ONE tab is in the tab order at a time; the rest
-//     are reached with the arrow keys (WAI-ARIA "tabs with manual activation"…
-//     here automatic: arrow moves selection AND focus, which suits a router),
-//   * ArrowLeft/ArrowRight wrap around the ends; Home/End jump to first/last,
+//     are reached with the arrow keys (arrow moves selection AND focus, which
+//     suits a router),
+//   * ArrowUp/ArrowDown are the primary axis for the vertical rail, with
+//     ArrowLeft/ArrowRight kept as equivalents; all four wrap around the ends;
+//     Home/End jump to first/last,
 //   * each tab is wired to its panel via id ↔ aria-controls / aria-labelledby,
-//   * the active tab is unmistakable: accent color + a 2px accent underline +
+//   * the active tab is unmistakable: accent color + a 2px accent EDGE BAR +
 //     aria-selected="true" (color is NOT the only signal),
 //   * icons are inline Lucide-style 24×24 SVGs (never emoji), decorative
 //     (aria-hidden) since the visible label carries the accessible name.
@@ -46,11 +52,11 @@ export function topTabPanelId(id: string): string {
 }
 
 /**
- * The top-level tab strip. Keyboard model (roving tabindex + arrow nav):
- *   ArrowRight → next tab (wraps to first past the end)
- *   ArrowLeft  → previous tab (wraps to last before the start)
- *   Home       → first tab
- *   End        → last tab
+ * The left navigation rail. Keyboard model (roving tabindex + arrow nav):
+ *   ArrowDown / ArrowRight → next tab (wraps to first past the end)
+ *   ArrowUp   / ArrowLeft  → previous tab (wraps to last before the start)
+ *   Home                   → first tab
+ *   End                    → last tab
  * Any other key is a no-op (native button click/Enter/Space still activate).
  */
 export function TopTabBar({
@@ -74,12 +80,13 @@ export function TopTabBar({
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number): void => {
     const last = tabs.length - 1;
-    if (event.key === 'ArrowRight') {
+    // Vertical rail: Down/Up are the primary axis; Right/Left kept as equivalents.
+    if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
       event.preventDefault();
       move(index === last ? 0 : index + 1);
       return;
     }
-    if (event.key === 'ArrowLeft') {
+    if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
       event.preventDefault();
       move(index === 0 ? last : index - 1);
       return;
@@ -98,7 +105,7 @@ export function TopTabBar({
   };
 
   return (
-    <div className="toptabs" role="tablist" aria-label={label}>
+    <div className="toptabs" role="tablist" aria-orientation="vertical" aria-label={label}>
       {tabs.map((tab, index) => {
         const isActive = tab.id === active;
         return (
