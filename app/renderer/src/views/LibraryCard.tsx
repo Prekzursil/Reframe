@@ -12,13 +12,16 @@ import React, { useState } from 'react';
 import { rpc } from '../components/api';
 import type { Video } from '../components/api';
 import { useVideoThumbnail, type VideoThumbnailRpc } from '../components/useVideoThumbnail';
-import { LibraryProvenance, type ProvenanceHandlers } from '../features/LibraryProvenance';
+import type { ProvenanceHandlers } from '../features/LibraryProvenance';
+import { CardProvenanceDisclosure } from './CardProvenanceDisclosure';
 import {
   type LibraryVideo,
   cardAriaLabel,
   cardBadges,
   formatAdded,
   formatDuration,
+  shortsCountLabel,
+  shortsOpenAriaLabel,
 } from './libraryModel';
 import '../components/library-cards.css';
 
@@ -136,7 +139,7 @@ export function LibraryCard({
       </button>
 
       {provenance ? (
-        <LibraryProvenance
+        <CardProvenanceDisclosure
           video={{ id: video.id, path: video.path, title: video.title }}
           handlers={provenance}
         />
@@ -147,10 +150,10 @@ export function LibraryCard({
           <button
             type="button"
             className="library__shorts-label"
-            aria-label={`View ${shortsCount} produced shorts for ${video.title}`}
+            aria-label={shortsOpenAriaLabel(shortsCount, video.title)}
             onClick={() => onOpenShorts(video)}
           >
-            {shortsCount} shorts
+            {shortsCountLabel(shortsCount)}
           </button>
         ) : null}
         <button
