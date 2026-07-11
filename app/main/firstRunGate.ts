@@ -4,8 +4,8 @@
 // The Electron supervisor must decide, per packaged launch, whether to run
 // stage-2 bootstrap.py. The honest signal is the FIRST-RUN-COMPLETE marker
 // bootstrap.py writes at the DATA ROOT only after the CORE-ONLY provision — env
-// + bundled ffmpeg + the always-on face/ASD weights (the YuNet subject tracker
-// and the S3FD / LR-ASD active-speaker weights) — succeeds. It is NOT "env +
+// + bundled ffmpeg + the always-on face/ASD weights (the MIT YuNet face detector
+// and the LR-ASD active-speaker weight) — succeeds. It is NOT "env +
 // every model + weights": the on-demand assets (the Whisper/Qwen GGUFs, TTS
 // voices, ViNet-S saliency, TransNetV2 scene-cut) live OUTSIDE the marker and are
 // fetched at point-of-use, so a Minimum/Custom install that skips them opens
@@ -43,14 +43,11 @@ export const FIRST_RUN_REQUIREMENTS_FINGERPRINT_FILE = '.first-run-requirements.
 // The CORE-ONLY asset set the marker attests: the always-on face/ASD weights
 // that make the reframe engine track a real subject instead of silently
 // centre-cropping. MUST stay in sync with bootstrap.py `core_first_run_assets()`
-// (manifest YUNET/LIGHTASD_S3FD/LIGHTASD_ASD asset names; the test asserts the
-// bootstrap CORE set references those and excludes the GGUFs). Everything else a
+// (manifest YUNET/LIGHTASD_ASD asset names; the test asserts the bootstrap CORE
+// set references those and excludes the GGUFs). WU-L1: the no-license S3FD weight
+// (lightasd-s3fd) was removed — MIT YuNet is the face detector. Everything else a
 // first run may pull is ON-DEMAND and lives OUTSIDE this set.
-export const CORE_FIRST_RUN_ASSETS: readonly string[] = [
-  'yunet-face-detection',
-  'lightasd-s3fd',
-  'lightasd-asd',
-];
+export const CORE_FIRST_RUN_ASSETS: readonly string[] = ['yunet-face-detection', 'lightasd-asd'];
 
 /** Point-of-use readiness for one first-run asset. */
 export interface FirstRunAssetReadiness {

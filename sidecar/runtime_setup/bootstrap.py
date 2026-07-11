@@ -521,11 +521,13 @@ class _ConsoleJobCtx:
 def default_first_run_assets() -> list[str]:
     """The core asset set first run installs (models + llama-server builds).
 
-    Includes the vendored Light-ASD / S3FD active-speaker weights: they were
-    registered on-demand but never in the first-run set, so a fresh install had
-    no way to run the multi-speaker reframe engine and silently fell back to a
-    single-speaker/centre crop. Provisioning them up front (sha256-pinned, ~90MB)
-    keeps the engine's on-demand path honest — present, or a loud failure.
+    Includes the vendored LR-ASD active-speaker weight: it was registered
+    on-demand but never in the first-run set, so a fresh install had no way to run
+    the multi-speaker reframe engine and silently fell back to a
+    single-speaker/centre crop. Provisioning it up front (sha256-pinned) keeps the
+    engine's on-demand path honest — present, or a loud failure. WU-L1: the
+    no-license S3FD weight is gone; the MIT YuNet ONNX below is the face detector
+    for BOTH the claudeshorts and multi-speaker engines.
     """
     from media_studio import tools_resolver
     from media_studio.assets import manifest
@@ -536,11 +538,11 @@ def default_first_run_assets() -> list[str]:
         tools_resolver.LLAMA_CUDA_ASSET,
         tools_resolver.LLAMA_CUDART_ASSET,
         tools_resolver.LLAMA_CPU_ASSET,
-        manifest.LIGHTASD_S3FD_ASSET_NAME,
         manifest.LIGHTASD_ASD_ASSET_NAME,
-        # v1.2.0 WU1: the YuNet face-detection ONNX for the claudeshorts reframe
-        # engine. Provisioned up front (sha256-pinned, ~0.23MB) so the engine's
-        # detector is present or fails LOUD — never a silent centre crop.
+        # v1.2.0 WU1 / WU-L1: the YuNet face-detection ONNX — the MIT face detector
+        # for the claudeshorts AND multi-speaker reframe engines. Provisioned up
+        # front (sha256-pinned, ~0.23MB) so the detector is present or fails LOUD —
+        # never a silent centre crop.
         manifest.YUNET_ASSET_NAME,
     ]
 
@@ -549,10 +551,10 @@ def core_first_run_assets() -> list[str]:
     """The CORE-ONLY marker set — the always-on face/ASD weights (WU C3).
 
     These are the ONLY downloaded assets the :data:`FIRST_RUN_COMPLETE_MARKER`
-    attests, alongside the structural env + bundled ffmpeg: the YuNet subject
-    tracker and the S3FD / LR-ASD active-speaker weights that make the reframe
-    engine follow a real speaker instead of silently centre-cropping (the
-    no-silent-fallback floor).
+    attests, alongside the structural env + bundled ffmpeg: the MIT YuNet face
+    detector and the LR-ASD active-speaker weight that make the reframe engine
+    follow a real speaker instead of silently centre-cropping (the
+    no-silent-fallback floor). WU-L1: the no-license S3FD weight was removed.
 
     Everything else a first run may pull — the Whisper / Qwen GGUFs, the
     llama-server builds, TTS voices, and the on-demand ViNet-S saliency /
@@ -566,7 +568,6 @@ def core_first_run_assets() -> list[str]:
 
     return [
         manifest.YUNET_ASSET_NAME,
-        manifest.LIGHTASD_S3FD_ASSET_NAME,
         manifest.LIGHTASD_ASD_ASSET_NAME,
     ]
 
@@ -646,7 +647,7 @@ def verify_provisioned(
 
     ``ensure_assets`` already raises when a download fails, but this is the
     explicit no-silent-fallback gate: a bootstrap must NOT print
-    ``SUCCESS`` (nor write the completion marker) while a model or the S3FD /
+    ``SUCCESS`` (nor write the completion marker) while a model or the YuNet /
     LR-ASD weights are missing — that is exactly the half-provisioned state that
     left the app silently centre-cropping. Any unregistered or not-installed
     asset raises a :class:`BootstrapError` naming EVERY offender.

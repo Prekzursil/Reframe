@@ -831,21 +831,22 @@ def _default_backend_factory(
 
 
 def default_models_present(settings: dict[str, Any]) -> bool:
-    """True when BOTH vendored Light-ASD weights are installed (never raises).
+    """True when BOTH face + ASD weights are installed (never raises).
 
-    The engine needs two on-demand weights — the S3FD face detector and the
-    Light-ASD active-speaker model (registered in
-    :mod:`media_studio.assets.manifest`). Mirrors
-    ``scene_transnet.default_models_present``: any lookup failure (asset not
-    registered, no asset machinery) degrades to ``False`` so the engine reports
-    itself unavailable rather than crashing.
+    WU-L1: the engine needs two on-demand weights — the MIT **YuNet** face
+    detector (``yunet-face-detection``, run via ``cv2.FaceDetectorYN``) and the
+    LR-ASD active-speaker model (``lightasd-asd``), both registered in
+    :mod:`media_studio.assets.manifest`. The no-license S3FD weight it used to
+    require is GONE. Mirrors ``scene_transnet.default_models_present``: any lookup
+    failure (asset not registered, no asset machinery) degrades to ``False`` so
+    the engine reports itself unavailable rather than crashing.
     """
     try:
         from ..assets import manifest  # noqa: PLC0415 - lazy: avoids a cycle
         from ..assets.manager import AssetManager  # noqa: PLC0415
 
         mgr = AssetManager(settings_provider=lambda: settings)
-        for name in (manifest.LIGHTASD_S3FD_ASSET_NAME, manifest.LIGHTASD_ASD_ASSET_NAME):
+        for name in (manifest.YUNET_ASSET_NAME, manifest.LIGHTASD_ASD_ASSET_NAME):
             entry = manifest.get_asset(name)
             if entry is None:
                 return False
@@ -1584,20 +1585,22 @@ class MultiSpeakerReframeEngine:
 def register_multispeaker_assets() -> None:
     """Back-compat shim — the weights are now registered in the manifest itself.
 
-    R1 Phase 3 vendored a numpy-2-clean S3FD + Light-ASD into the sidecar
-    (:mod:`media_studio.features._lightasd`, MIT), so the two weights are no
-    longer operator-blocked: they are registered DIRECTLY (and idempotently) in
-    :mod:`media_studio.assets.manifest` (``_register_lightasd``) as sha256-pinned
-    on-demand ``download`` assets —
+    R1 Phase 3 vendored a numpy-2-clean LR-ASD into the sidecar
+    (:mod:`media_studio.features._lightasd`, MIT), so the ASD weight is no longer
+    operator-blocked: it is registered DIRECTLY (and idempotently) in
+    :mod:`media_studio.assets.manifest` (``_register_lightasd``) as a sha256-pinned
+    on-demand ``download`` asset —
 
-    * :data:`~media_studio.assets.manifest.LIGHTASD_S3FD_ASSET_NAME` — the S3FD
-      face detector (``sfd_face.pth``), a commit-pinned HF mirror; and
-    * :data:`~media_studio.assets.manifest.LIGHTASD_ASD_ASSET_NAME` — the
-      Light-ASD model (``finetuning_TalkSet.model``), a commit-pinned GitHub raw.
+    * :data:`~media_studio.assets.manifest.LIGHTASD_ASD_ASSET_NAME` — the LR-ASD
+      model (``finetuning_TalkSet.model``), a commit-pinned GitHub raw.
 
-    Both enter the manifest PINNED (F3c): a 40-hex commit in the URL + the file's
-    verified sha256. This shim remains a no-op so existing callers (and the
-    idempotency test) keep working; importing the manifest is what registers them.
+    WU-L1: the no-license S3FD face weight was removed; the MIT
+    :data:`~media_studio.assets.manifest.YUNET_ASSET_NAME` detector (already
+    registered for claudeshorts) provides face detection for this engine now.
+
+    The ASD weight enters the manifest PINNED (F3c): a 40-hex commit in the URL +
+    the file's verified sha256. This shim remains a no-op so existing callers (and
+    the idempotency test) keep working; importing the manifest is what registers it.
     """
     # No-op: registration happens at manifest import (manifest._register_lightasd).
     return
