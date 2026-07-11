@@ -112,7 +112,7 @@ describe('<ReadinessRollup /> — WU-14 wiring', () => {
 
     const buttons = container.querySelectorAll('button.readiness-badge__action');
     expect(buttons.length).toBe(1);
-    expect(buttons[0].getAttribute('aria-label')).toBe('Download Vision model');
+    expect(buttons[0].getAttribute('aria-label')).toBe('Download the Vision model');
   });
 
   it('shows the reused in-flight skeleton before the data resolves', async () => {

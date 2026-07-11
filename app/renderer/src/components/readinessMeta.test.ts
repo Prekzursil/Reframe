@@ -8,6 +8,7 @@ import {
   READINESS_CLASS,
   READINESS_HINT,
   READINESS_LABEL,
+  providerDisplayName,
   readinessActionLabel,
   readinessClass,
   readinessHint,
@@ -75,24 +76,45 @@ describe('label maps are complete', () => {
 });
 
 describe('readinessActionLabel', () => {
-  it('names the verb + capability for assets.ensure', () => {
+  it('names the verb + capability for assets.ensure (article-led, reads mid-sentence)', () => {
     const action: ReadinessAction = { kind: 'assets.ensure', assets: ['siglip2-so400m'] };
-    expect(readinessActionLabel(action, 'Multimodal')).toBe('Download Multimodal model');
+    expect(readinessActionLabel(action, 'Multimodal')).toBe('Download the Multimodal model');
   });
   it('names the add-key action', () => {
     const action: ReadinessAction = { kind: 'openProviders', provider: 'gpt' };
     expect(readinessActionLabel(action, 'AI: select')).toBe('Add a provider key');
   });
-  it('names the provider for setConsent', () => {
+  it('display-names the provider for setConsent (never a raw lowercase slug)', () => {
     const action: ReadinessAction = { kind: 'setConsent', provider: 'gpt' };
-    expect(readinessActionLabel(action, 'AI: vision')).toBe('Grant consent for gpt');
+    expect(readinessActionLabel(action, 'AI: vision')).toBe('Grant consent for OpenAI');
   });
   it('falls back to a generic provider name when setConsent omits the provider', () => {
     const action = { kind: 'setConsent' } as ReadinessAction;
-    expect(readinessActionLabel(action, 'AI: vision')).toBe('Grant consent for provider');
+    expect(readinessActionLabel(action, 'AI: vision')).toBe('Grant consent for the provider');
   });
   it('falls back to the capability label for an unknown action kind (defensive)', () => {
     const action = { kind: 'mystery' } as unknown as ReadinessAction;
     expect(readinessActionLabel(action, 'Some capability')).toBe('Some capability');
+  });
+});
+
+describe('providerDisplayName', () => {
+  it('maps known provider slugs to their proper brand name (never lowercase)', () => {
+    expect(providerDisplayName('openai')).toBe('OpenAI');
+    expect(providerDisplayName('gpt')).toBe('OpenAI');
+    expect(providerDisplayName('claude')).toBe('Anthropic');
+    expect(providerDisplayName('groq')).toBe('Groq');
+    expect(providerDisplayName('local')).toBe('On-device');
+  });
+  it('is case-insensitive on the slug lookup', () => {
+    expect(providerDisplayName('OpenAI')).toBe('OpenAI');
+    expect(providerDisplayName('GROQ')).toBe('Groq');
+  });
+  it('title-cases an unknown slug so it never leaks bare lowercase', () => {
+    expect(providerDisplayName('my-proxy')).toBe('My Proxy');
+    expect(providerDisplayName('some_vendor')).toBe('Some Vendor');
+  });
+  it('drops empty segments from a delimiter-padded slug (defensive)', () => {
+    expect(providerDisplayName('-edge-')).toBe('Edge');
   });
 });
