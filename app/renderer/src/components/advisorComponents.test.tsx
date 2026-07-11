@@ -95,7 +95,10 @@ describe('<TierCard />', () => {
     expect(card.getAttribute('data-tier')).toBe('1');
     expect(card.querySelector('.tier-card__recommended')).not.toBeNull();
     expect(card.querySelector('.verdict-badge')?.textContent).toBe('Will run');
-    expect(card.querySelector('.tier-card__members')?.textContent).toContain('SigLIP-2');
+    // §8 Voice: the member summary reads the plain capability label (no codename).
+    const members = card.querySelector('.tier-card__members')?.textContent ?? '';
+    expect(members).toContain('Understand the visuals');
+    expect(members).not.toContain('SigLIP');
     // Not selected -> no aria-current, no Selected badge (selection clarity).
     expect(card.getAttribute('aria-current')).toBeNull();
     expect(card.querySelector('.tier-card__selected')).toBeNull();
@@ -151,7 +154,8 @@ describe('<ModelCard />', () => {
       />,
     );
     const card = container.querySelector('.model-card') as HTMLElement;
-    expect(card.querySelector('.model-card__name')?.textContent).toContain('SigLIP-2');
+    // §8 Voice: the card name is the plain capability label, not a model codename.
+    expect(card.querySelector('.model-card__name')?.textContent).toBe('Understand the visuals');
     expect(card.querySelector('.license-chip')?.textContent).toBe('Commercial OK');
     expect(card.querySelector('.model-card__size')?.textContent).toBe('4.4 GB');
     const costFill = card.querySelector('.mini-meter__fill.is-cost') as HTMLElement;
