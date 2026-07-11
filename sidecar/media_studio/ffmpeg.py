@@ -41,6 +41,11 @@ _EXE = ".exe" if os.name == "nt" else ""
 # Progress callback: (pct: float 0..100, message: str) -> None
 ProgressCb = Callable[[float, str], None]
 
+# Bound a hung ``ffprobe`` (a corrupt/truncated or slow-to-open input can make it
+# block indefinitely) so a duration probe can never wedge the job thread. Metadata
+# probing is near-instant for a healthy local file; 60s is a generous ceiling.
+PROBE_TIMEOUT_SEC = 60.0
+
 
 class FfmpegNotFound(RuntimeError):
     """Raised when neither a bundled nor a PATH ffmpeg/ffprobe could be found."""
@@ -322,10 +327,16 @@ def ffprobe_duration(
     """Probe ``in_path`` for its duration in seconds via ffprobe.
 
     ``runner`` is injectable so tests mock the subprocess. Returns 0.0 if the
-    duration cannot be determined.
+    duration cannot be determined — including when ffprobe exceeds
+    :data:`PROBE_TIMEOUT_SEC` (a hung probe on a bad/slow input must bound out,
+    not wedge the job; downstream callers treat 0.0 as "unknown" and degrade).
     """
     argv = build_probe_argv(in_path, settings)
-    completed = runner(argv, capture_output=True, text=True, check=False)
+    try:
+        completed = runner(argv, capture_output=True, text=True, check=False, timeout=PROBE_TIMEOUT_SEC)
+    except subprocess.TimeoutExpired:
+        log.warning("ffprobe timed out after %.0fs probing %s", PROBE_TIMEOUT_SEC, in_path)
+        return 0.0
     out = (getattr(completed, "stdout", "") or "").strip()
     try:
         return float(out)

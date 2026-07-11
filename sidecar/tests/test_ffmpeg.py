@@ -6,6 +6,7 @@ spawned and no binary needs to exist on the box.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -308,3 +309,29 @@ def test_ffprobe_duration_handles_empty(bins):
         stdout = ""
 
     assert ffmpeg.ffprobe_duration("/v.mp4", bins, runner=lambda *a, **k: R()) == 0.0
+
+
+def test_ffprobe_duration_forwards_a_timeout(bins):
+    # V1.5: the probe MUST be bounded so a hung ffprobe never wedges the job. The
+    # runner is called with timeout=PROBE_TIMEOUT_SEC.
+    seen = {}
+
+    class R:
+        stdout = "5.0\n"
+
+    def runner(argv, **kwargs):
+        seen.update(kwargs)
+        return R()
+
+    got = ffmpeg.ffprobe_duration("/v.mp4", bins, runner=runner)
+    assert got == pytest.approx(5.0)
+    assert seen.get("timeout") == ffmpeg.PROBE_TIMEOUT_SEC
+
+
+def test_ffprobe_duration_returns_zero_on_timeout(bins):
+    # A hung ffprobe (TimeoutExpired) is treated as "duration unknown" -> 0.0,
+    # NOT propagated as a crash that would wedge the job thread.
+    def runner(argv, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=kwargs.get("timeout"))
+
+    assert ffmpeg.ffprobe_duration("/v.mp4", bins, runner=runner) == 0.0

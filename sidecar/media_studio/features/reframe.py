@@ -33,6 +33,7 @@ spaces stay intact because each is its own argv element; logs go to stderr.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import subprocess
@@ -69,10 +70,27 @@ def _bundled_script_default() -> str:
 
 _DEFAULT_VERTHOR_SCRIPT = "__BUNDLED__"  # sentinel resolved in resolve_script()
 
-# Injectable subprocess seam (mocked in tests).
-Runner = Callable[..., Any]
+# Injectable ``subprocess.Popen``-shaped seam (mocked in tests): it receives the
+# argv LIST (never a shell string) and returns a Popen-like process. Popen (not
+# the old blocking ``subprocess.run``) is what makes cooperative cancellation
+# possible — mirrors ``ffmpeg.run`` / ``caption_remotion``'s popen seam.
+PopenFn = Callable[..., Any]
+# A cooperative cancel probe: returns True once cancellation is requested. Mirrors
+# the sibling engines' + ``transcribe``'s ``should_cancel`` seam (wired from the
+# job as ``lambda: job_ctx.cancelled``).
+CancelProbe = Callable[[], bool]
+# A progress sink: (pct 0..100, message) -> None. Accepted for stage-seam
+# uniformity with the sibling engines; verthor streams no Python-side progress.
+ProgressCb = Callable[[float, str], None]
 # Injectable ``shutil.which``-shaped seam for the WSL presence probe.
 WhichFn = Callable[[str], str | None]
+
+# How often the reframe subprocess is polled for cooperative cancellation while
+# verthor runs (seconds). ``proc.communicate(timeout=...)`` drains stdout+stderr
+# each poll so a chatty verthor can never fill the OS pipe buffer and deadlock.
+_CANCEL_POLL_SEC = 0.25
+# Grace period after ``terminate()`` before escalating to a hard ``kill()``.
+_TERMINATE_TIMEOUT_SEC = 5.0
 
 
 class ReframeError(RuntimeError):
@@ -185,33 +203,90 @@ def build_reframe_argv(
 
 
 # --------------------------------------------------------------------------- #
+# cooperative-cancel subprocess helpers (mirror ffmpeg.run / ffmpeg._terminate)
+# --------------------------------------------------------------------------- #
+def _terminate(proc: Any) -> None:
+    """Cooperatively stop a subprocess: terminate, then kill if it lingers.
+
+    Mirrors :func:`media_studio.ffmpeg._terminate` — the escalation the sibling
+    cancellable stages already rely on. Every step is defensive so tearing down an
+    already-dead child never raises.
+    """
+    with contextlib.suppress(Exception):
+        proc.terminate()
+    try:
+        proc.wait(timeout=_TERMINATE_TIMEOUT_SEC)
+    except Exception:  # noqa: BLE001 - a lingering/ignoring child -> hard kill
+        with contextlib.suppress(Exception):
+            proc.kill()
+
+
+def _drain_stderr(proc: Any) -> str:
+    """Best-effort collect a (terminated) child's stderr; never raises.
+
+    Used on the cancel path after :func:`_terminate` so the ``ReframeError`` still
+    carries whatever verthor managed to log before it was killed.
+    """
+    try:
+        _stdout, stderr = proc.communicate(timeout=_TERMINATE_TIMEOUT_SEC)
+        return stderr or ""
+    except Exception:  # noqa: BLE001 - draining a dead child must never raise
+        return ""
+
+
+def _await_verthor(proc: Any, should_cancel: CancelProbe | None) -> str:
+    """Drive the verthor subprocess to completion, polling ``should_cancel``.
+
+    ``proc.communicate(timeout=...)`` drains stdout+stderr continuously so a chatty
+    verthor can never fill the OS pipe buffer and BLOCK (the exact hazard
+    :func:`ffmpeg.run` guards against), while ``should_cancel`` is checked between
+    polls. On cancel the child is terminated at once (verthor's GPU work stops
+    instead of burning until the 30-min watchdog); the terminated child's non-zero
+    exit is surfaced as a :class:`ReframeError` by the caller — matching the
+    sibling engines' cancel-as-failure contract. Returns the process stderr.
+    """
+    while True:
+        if should_cancel is not None and should_cancel():
+            _terminate(proc)
+            return _drain_stderr(proc)
+        try:
+            _stdout, stderr = proc.communicate(timeout=_CANCEL_POLL_SEC)
+        except subprocess.TimeoutExpired:
+            continue
+        return stderr or ""
+
+
+# --------------------------------------------------------------------------- #
 # the engine
 # --------------------------------------------------------------------------- #
 class ReframeEngine:
     """Vertical auto-reframe via the verthor (WSL2) adapter — the sole impl.
 
-    ``settings`` may carry ``verthorScript`` (override the script path). ``runner``
+    ``settings`` may carry ``verthorScript`` (override the script path). ``popen``
     is the injectable subprocess seam: it receives the argv LIST and must NOT use
-    ``shell=True``. Tests pass a fake runner and assert the call shape; production
-    uses ``subprocess.run``.
+    ``shell=True``. Tests pass a fake Popen and assert the call shape; production
+    uses ``subprocess.Popen`` so the run is cancellable (was a blocking
+    ``subprocess.run`` — a NO-OP for cancel that burned GPU to the watchdog).
     """
 
     def __init__(
         self,
         settings: dict[str, Any] | None = None,
-        runner: Runner | None = None,
+        popen: PopenFn | None = None,
     ) -> None:
         self._settings = settings or {}
         # Resolve the default at call time (not def time) so a test that
-        # monkeypatches ``reframe.subprocess.run`` is honoured and no real wsl
+        # monkeypatches ``reframe.subprocess.Popen`` is honoured and no real wsl
         # is ever spawned by default.
-        self._runner = runner if runner is not None else subprocess.run
+        self._popen = popen if popen is not None else subprocess.Popen
 
     def reframe(
         self,
         in_path: str,
         out_path: str,
         aspect: str = DEFAULT_ASPECT,
+        on_progress: ProgressCb | None = None,
+        should_cancel: CancelProbe | None = None,
         on_notice: Callable[[dict[str, str]], None] | None = None,
     ) -> str:
         """Reframe ``in_path`` to vertical and write ``out_path``; return it.
@@ -221,28 +296,36 @@ class ReframeEngine:
         h264 for the default 9:16 aspect. Raises :class:`ReframeError` on a
         non-zero exit code.
 
-        ``on_notice`` is accepted for stage-seam uniformity with the in-sidecar
-        claudeshorts engine (so :func:`shortmaker._lazy_reframe` can thread it to
-        whichever engine is resolved). verthor runs subject tracking INSIDE WSL,
-        so it cannot emit a Python-side speaker-tracking-degrade notice — the
-        parameter is therefore intentionally not invoked here.
+        ``should_cancel`` (wired from the job as ``lambda: job_ctx.cancelled``) is
+        polled while verthor runs; when it fires the child is terminated so the
+        reframe stops promptly instead of burning GPU to the 30-min watchdog. This
+        matches how the sibling engines (claudeshorts / multi-speaker) and
+        ``ffmpeg.run`` already cancel.
+
+        ``on_progress`` / ``on_notice`` are accepted for stage-seam uniformity with
+        the in-sidecar engines (so :func:`shortmaker._lazy_reframe` can thread them
+        to whichever engine is resolved). verthor runs subject tracking INSIDE WSL,
+        so it emits no Python-side progress or speaker-tracking-degrade notice —
+        those parameters are intentionally not invoked here.
         """
         _ = on_notice  # verthor degrades inside WSL; no Python-side notice to emit
+        _ = on_progress  # verthor streams no Python-side progress (runs in WSL)
         argv = build_reframe_argv(in_path, out_path, aspect, self._settings)
         if not isinstance(argv, list):  # defensive: never a shell string
             raise TypeError("reframe argv must be a list of strings")
 
         _log.info("reframe: running verthor adapter (aspect=%s)", aspect)
-        completed = self._runner(
+        proc = self._popen(
             argv,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            check=False,
         )
-        code = getattr(completed, "returncode", 0)
-        if code != 0:
-            stderr = (getattr(completed, "stderr", "") or "").strip()
-            raise ReframeError(f"verthor reframe failed (exit {code}): {stderr or 'no stderr'}")
+        stderr = _await_verthor(proc, should_cancel)
+        code = proc.returncode
+        if code:
+            detail = (stderr or "").strip() or "no stderr"
+            raise ReframeError(f"verthor reframe failed (exit {code}): {detail}")
         return out_path
 
 

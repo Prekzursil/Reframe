@@ -1,11 +1,17 @@
 """Unit tests for media_studio.features.reframe (the verthor adapter).
 
 NO WSL, NO mediapipe, NO real verthor: the subprocess is injected via a fake
-``runner`` and every assertion is on the *argv shape* the engine builds. The
+``popen`` and every assertion is on the *argv shape* the engine builds. The
 central contract guarantee (CONTRACTS.md §4) is asserted explicitly:
 
   * the script is delivered FROM A FILE (an argv element after ``bash``), and
   * the script is NEVER piped via ``tr | bash`` over stdin.
+
+V1.5 cancel fix: the engine now drives verthor via ``subprocess.Popen`` +
+``communicate(timeout=...)`` polling a ``should_cancel`` callback (mirroring
+``ffmpeg.run`` / the sibling engines), terminating the child on cancel so the
+reframe stops instead of burning GPU to the 30-min watchdog. These tests exercise
+that cancel/terminate/timeout path with a fake process.
 
 The whole module is pure-logic + an injectable seam, so these tests pull in no
 heavy-ML deps.
@@ -14,6 +20,7 @@ heavy-ML deps.
 from __future__ import annotations
 
 import os
+import subprocess
 
 import pytest
 from media_studio.features import reframe
@@ -21,25 +28,77 @@ from media_studio.features.reframe import ReframeEngine, ReframeError
 
 
 # --------------------------------------------------------------------------- #
-# fake subprocess runner
+# fake subprocess.Popen
 # --------------------------------------------------------------------------- #
-class _Completed:
-    def __init__(self, returncode=0, stdout="", stderr=""):
-        self.returncode = returncode
-        self.stdout = stdout
-        self.stderr = stderr
+class _FakeProc:
+    """A ``subprocess.Popen`` stand-in for the verthor adapter tests.
+
+    ``communicate(timeout=...)`` returns ``("", stderr)`` and sets ``returncode``.
+    ``timeouts`` makes the first N ``communicate`` calls raise ``TimeoutExpired``
+    (the running-then-finished poll branch). ``wait_raises`` makes ``wait`` raise
+    so :func:`reframe._terminate` escalates to ``kill``; ``communicate_raises``
+    makes the post-terminate drain raise (its swallow branch). ``terminate`` /
+    ``kill`` stamp a NON-ZERO ``returncode`` so a cancelled run surfaces as a
+    ``ReframeError`` — exactly like a real SIGTERM/-15 exit.
+    """
+
+    def __init__(
+        self,
+        *,
+        returncode=0,
+        stderr="",
+        timeouts=0,
+        wait_raises=False,
+        communicate_raises=False,
+    ):
+        self._returncode = returncode
+        self._stderr = stderr
+        self._timeouts = timeouts
+        self._wait_raises = wait_raises
+        self._communicate_raises = communicate_raises
+        self.returncode = None
+        self.terminated = False
+        self.killed = False
+        self.waited = False
+        self.communicate_calls = 0
+
+    def communicate(self, timeout=None):
+        self.communicate_calls += 1
+        if self._communicate_raises:
+            raise RuntimeError("stream already closed")
+        if self._timeouts > 0:
+            self._timeouts -= 1
+            raise subprocess.TimeoutExpired(cmd="wsl", timeout=timeout)
+        self.returncode = self._returncode
+        return ("", self._stderr)
+
+    def terminate(self):
+        self.terminated = True
+        self.returncode = self._returncode
+
+    def kill(self):
+        self.killed = True
+        self.returncode = self._returncode
+
+    def wait(self, timeout=None):
+        self.waited = True
+        if self._wait_raises:
+            raise subprocess.TimeoutExpired(cmd="wsl", timeout=timeout)
+        self.returncode = self._returncode
+        return self._returncode
 
 
-def _make_runner(returncode=0, stderr=""):
-    """A subprocess.run stand-in that records every call."""
+def _make_popen(returncode=0, stderr="", **proc_kw):
+    """A ``subprocess.Popen`` stand-in that records every call (argv + kwargs)."""
     calls = []
 
-    def runner(argv, **kwargs):
-        calls.append({"argv": argv, "kwargs": kwargs})
-        return _Completed(returncode=returncode, stderr=stderr)
+    def popen(argv, **kwargs):
+        proc = _FakeProc(returncode=returncode, stderr=stderr, **proc_kw)
+        calls.append({"argv": argv, "kwargs": kwargs, "proc": proc})
+        return proc
 
-    runner.calls = calls
-    return runner
+    popen.calls = calls
+    return popen
 
 
 # --------------------------------------------------------------------------- #
@@ -210,57 +269,68 @@ def test_build_reframe_argv_each_path_is_one_element():
 
 
 # --------------------------------------------------------------------------- #
-# ReframeEngine.reframe — end to end with a fake runner
+# ReframeEngine.reframe — end to end with a fake Popen
 # --------------------------------------------------------------------------- #
 def test_reframe_returns_out_path():
-    runner = _make_runner(returncode=0)
+    popen = _make_popen(returncode=0)
     engine = ReframeEngine(
         settings={"verthorScript": "/opt/verthor/reframe.sh"},
-        runner=runner,
+        popen=popen,
     )
     out = engine.reframe(r"C:\in\clip.mp4", r"C:\out\clip.mp4", aspect="9:16")
     assert out == r"C:\out\clip.mp4"
 
 
-def test_reframe_accepts_on_notice_for_seam_uniformity():
-    # WU-3: the stage seam passes on_notice to whichever engine is resolved. The
-    # verthor adapter runs subject tracking inside WSL (it cannot emit a
-    # Python-side degrade notice), so it ACCEPTS on_notice and never calls it —
-    # but the signature must match so _lazy_reframe can thread it uniformly.
-    runner = _make_runner(returncode=0)
-    engine = ReframeEngine(settings={"verthorScript": "/opt/verthor/reframe.sh"}, runner=runner)
+def test_reframe_accepts_on_notice_and_on_progress_for_seam_uniformity():
+    # WU-3: the stage seam passes on_notice/on_progress to whichever engine is
+    # resolved. The verthor adapter runs subject tracking inside WSL (it cannot
+    # emit a Python-side degrade notice or progress), so it ACCEPTS both and never
+    # calls them — but the signature must match the sibling engines so
+    # _lazy_reframe can thread them uniformly.
+    popen = _make_popen(returncode=0)
+    engine = ReframeEngine(settings={"verthorScript": "/opt/verthor/reframe.sh"}, popen=popen)
     notices: list = []
-    out = engine.reframe(r"C:\in\clip.mp4", r"C:\out\clip.mp4", on_notice=notices.append)
+    progress: list = []
+    out = engine.reframe(
+        r"C:\in\clip.mp4",
+        r"C:\out\clip.mp4",
+        on_progress=lambda pct, msg: progress.append((pct, msg)),
+        on_notice=notices.append,
+    )
     assert out == r"C:\out\clip.mp4"
     assert notices == []
+    assert progress == []
 
 
-def test_reframe_invokes_runner_with_argv_list_no_shell():
-    runner = _make_runner(returncode=0)
+def test_reframe_invokes_popen_with_argv_list_no_shell():
+    popen = _make_popen(returncode=0)
     engine = ReframeEngine(
         settings={"verthorScript": "/opt/verthor/reframe.sh"},
-        runner=runner,
+        popen=popen,
     )
     engine.reframe(r"C:\in\clip.mp4", r"C:\out\clip.mp4")
 
-    assert len(runner.calls) == 1
-    call = runner.calls[0]
+    assert len(popen.calls) == 1
+    call = popen.calls[0]
     argv = call["argv"]
     # argv MUST be a list (never a shell string), and shell is not enabled.
     assert isinstance(argv, list)
     assert call["kwargs"].get("shell") in (None, False)
+    # PIPE stdout+stderr so communicate() can drain them (no pipe-buffer deadlock).
+    assert call["kwargs"].get("stdout") is not None
+    assert call["kwargs"].get("stderr") is not None
 
 
 def test_reframe_call_is_from_file_not_stdin_script():
     # Central assertion the unit exists to guarantee.
-    runner = _make_runner(returncode=0)
+    popen = _make_popen(returncode=0)
     engine = ReframeEngine(
         settings={"verthorScript": "/opt/verthor/reframe.sh"},
-        runner=runner,
+        popen=popen,
     )
     engine.reframe(r"C:\in\clip.mp4", r"C:\out\clip.mp4")
 
-    argv = runner.calls[0]["argv"]
+    argv = popen.calls[0]["argv"]
     # 1) script is read FROM A FILE: wsl bash <script-path> ...
     assert argv[:3] == ["wsl", "bash", "/opt/verthor/reframe.sh"]
     # 2) no inline source / no stdin script delivery
@@ -268,43 +338,43 @@ def test_reframe_call_is_from_file_not_stdin_script():
     joined = " ".join(argv)
     assert "tr " not in joined and "|" not in joined and "<" not in joined
     # 3) nothing was written to the subprocess stdin (no input= / stdin= piping)
-    kwargs = runner.calls[0]["kwargs"]
+    kwargs = popen.calls[0]["kwargs"]
     assert "input" not in kwargs
     assert kwargs.get("stdin") in (None,)
 
 
 def test_reframe_targets_1080x1920_h264_dimensions():
-    runner = _make_runner(returncode=0)
+    popen = _make_popen(returncode=0)
     engine = ReframeEngine(
         settings={"verthorScript": "/opt/verthor/reframe.sh"},
-        runner=runner,
+        popen=popen,
     )
     engine.reframe(r"C:\in\clip.mp4", r"C:\out\clip.mp4", aspect="9:16")
 
-    argv = runner.calls[0]["argv"]
+    argv = popen.calls[0]["argv"]
     # 1080x1920 vertical target is handed to the verthor script.
     assert "1080" in argv and "1920" in argv
     assert argv[-2:] == ["1080", "1920"]
 
 
 def test_reframe_translates_windows_paths_to_wsl():
-    runner = _make_runner(returncode=0)
+    popen = _make_popen(returncode=0)
     engine = ReframeEngine(
         settings={"verthorScript": "/opt/verthor/reframe.sh"},
-        runner=runner,
+        popen=popen,
     )
     engine.reframe(r"C:\My Vids\in clip.mp4", r"D:\out\done.mp4")
 
-    argv = runner.calls[0]["argv"]
+    argv = popen.calls[0]["argv"]
     assert "/mnt/c/My Vids/in clip.mp4" in argv
     assert "/mnt/d/out/done.mp4" in argv
 
 
 def test_reframe_raises_on_nonzero_exit():
-    runner = _make_runner(returncode=2, stderr="mediapipe: boom")
+    popen = _make_popen(returncode=2, stderr="mediapipe: boom")
     engine = ReframeEngine(
         settings={"verthorScript": "/opt/verthor/reframe.sh"},
-        runner=runner,
+        popen=popen,
     )
     with pytest.raises(ReframeError) as exc:
         engine.reframe(r"C:\in\clip.mp4", r"C:\out\clip.mp4")
@@ -312,34 +382,105 @@ def test_reframe_raises_on_nonzero_exit():
     assert "mediapipe: boom" in str(exc.value)
 
 
+def test_reframe_nonzero_exit_with_no_stderr_says_no_stderr():
+    # The "no stderr" fallback branch of the error detail (stderr empty).
+    popen = _make_popen(returncode=3, stderr="")
+    engine = ReframeEngine(settings={"verthorScript": "/opt/verthor/reframe.sh"}, popen=popen)
+    with pytest.raises(ReframeError) as exc:
+        engine.reframe(r"C:\in\clip.mp4", r"C:\out\clip.mp4")
+    assert "exit 3" in str(exc.value)
+    assert "no stderr" in str(exc.value)
+
+
 def test_reframe_default_aspect_is_9_16():
-    runner = _make_runner(returncode=0)
+    popen = _make_popen(returncode=0)
     engine = ReframeEngine(
         settings={"verthorScript": "/opt/verthor/reframe.sh"},
-        runner=runner,
+        popen=popen,
     )
     engine.reframe(r"C:\in\clip.mp4", r"C:\out\clip.mp4")  # no aspect arg
-    argv = runner.calls[0]["argv"]
+    argv = popen.calls[0]["argv"]
     assert "9:16" in argv
     assert argv[-2:] == ["1080", "1920"]
 
 
-def test_reframe_uses_subprocess_run_by_default(monkeypatch):
-    # Without injection the engine wires to subprocess.run (we stub it so no
+def test_reframe_uses_subprocess_popen_by_default(monkeypatch):
+    # Without injection the engine wires to subprocess.Popen (we stub it so no
     # real wsl is spawned), and still returns out_path on success.
     recorded = {}
 
-    def fake_run(argv, **kwargs):
+    def fake_popen(argv, **kwargs):
         recorded["argv"] = argv
         recorded["kwargs"] = kwargs
-        return _Completed(returncode=0)
+        return _FakeProc(returncode=0)
 
-    monkeypatch.setattr(reframe.subprocess, "run", fake_run)
+    monkeypatch.setattr(reframe.subprocess, "Popen", fake_popen)
     engine = ReframeEngine(settings={"verthorScript": "/opt/verthor/reframe.sh"})
     out = engine.reframe("/in.mp4", "/out.mp4")
     assert out == "/out.mp4"
     assert recorded["argv"][0] == "wsl"
     assert recorded["kwargs"].get("shell") in (None, False)
+
+
+# --------------------------------------------------------------------------- #
+# V1.5 cancel fix — cooperative cancellation + child teardown
+# --------------------------------------------------------------------------- #
+def test_reframe_polls_should_cancel_but_completes_when_not_cancelled():
+    # should_cancel provided but always False: the run completes normally (the
+    # cancel probe is checked each poll and never fires).
+    popen = _make_popen(returncode=0)
+    engine = ReframeEngine(settings={"verthorScript": "/opt/verthor/reframe.sh"}, popen=popen)
+    out = engine.reframe(r"C:\in\clip.mp4", r"C:\out\clip.mp4", should_cancel=lambda: False)
+    assert out == r"C:\out\clip.mp4"
+    assert popen.calls[0]["proc"].terminated is False
+
+
+def test_reframe_cancel_terminates_child_and_raises():
+    # The flagship fix: when should_cancel fires the verthor child is TERMINATED
+    # (GPU work stops) and the terminated non-zero exit surfaces as a ReframeError
+    # — matching the sibling engines' cancel-as-failure contract.
+    popen = _make_popen(returncode=-15, stderr="cancelled midway")
+    engine = ReframeEngine(settings={"verthorScript": "/opt/verthor/reframe.sh"}, popen=popen)
+    with pytest.raises(ReframeError) as exc:
+        engine.reframe(r"C:\in\clip.mp4", r"C:\out\clip.mp4", should_cancel=lambda: True)
+    proc = popen.calls[0]["proc"]
+    assert proc.terminated is True
+    assert proc.killed is False  # wait() reaped it -> no hard kill needed
+    assert "exit -15" in str(exc.value)
+
+
+def test_reframe_cancel_hard_kills_when_terminate_is_ignored():
+    # If the child ignores terminate() (wait times out) the engine escalates to a
+    # hard kill() so a wedged verthor cannot keep the GPU pinned.
+    popen = _make_popen(returncode=-9, wait_raises=True)
+    engine = ReframeEngine(settings={"verthorScript": "/opt/verthor/reframe.sh"}, popen=popen)
+    with pytest.raises(ReframeError):
+        engine.reframe(r"C:\in\clip.mp4", r"C:\out\clip.mp4", should_cancel=lambda: True)
+    proc = popen.calls[0]["proc"]
+    assert proc.terminated is True
+    assert proc.killed is True
+
+
+def test_reframe_cancel_swallows_a_stderr_drain_error():
+    # Draining a just-terminated child must never raise: a broken pipe on the
+    # post-terminate communicate() is swallowed and the error says "no stderr".
+    popen = _make_popen(returncode=1, communicate_raises=True)
+    engine = ReframeEngine(settings={"verthorScript": "/opt/verthor/reframe.sh"}, popen=popen)
+    with pytest.raises(ReframeError) as exc:
+        engine.reframe(r"C:\in\clip.mp4", r"C:\out\clip.mp4", should_cancel=lambda: True)
+    assert "no stderr" in str(exc.value)
+    assert popen.calls[0]["proc"].terminated is True
+
+
+def test_reframe_polls_until_verthor_finishes():
+    # communicate(timeout=...) raises TimeoutExpired while verthor is still running;
+    # the engine keeps polling (checking should_cancel) until it completes.
+    popen = _make_popen(returncode=0, timeouts=2)
+    engine = ReframeEngine(settings={"verthorScript": "/opt/verthor/reframe.sh"}, popen=popen)
+    out = engine.reframe(r"C:\in\clip.mp4", r"C:\out\clip.mp4", should_cancel=lambda: False)
+    assert out == r"C:\out\clip.mp4"
+    # 2 timeouts + 1 completing call.
+    assert popen.calls[0]["proc"].communicate_calls == 3
 
 
 # --------------------------------------------------------------------------- #
@@ -357,8 +498,8 @@ def test_to_wsl_path_relative_no_drive_is_slash_normalized():
 # --------------------------------------------------------------------------- #
 def test_reframe_raises_typeerror_when_argv_not_a_list(monkeypatch):
     # Defensive guard (§4: never a shell string): if argv construction ever
-    # yields a non-list, reframe refuses to invoke the runner.
+    # yields a non-list, reframe refuses to spawn the subprocess.
     monkeypatch.setattr(reframe, "build_reframe_argv", lambda *a, **k: "wsl bash script.sh")
-    engine = ReframeEngine(settings={"verthorScript": "/opt/verthor/reframe.sh"}, runner=_make_runner())
+    engine = ReframeEngine(settings={"verthorScript": "/opt/verthor/reframe.sh"}, popen=_make_popen())
     with pytest.raises(TypeError, match="must be a list"):
         engine.reframe("/in.mp4", "/out.mp4")

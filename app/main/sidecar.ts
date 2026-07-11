@@ -197,6 +197,49 @@ export function buildSidecarEnv(packaged = false): NodeJS.ProcessEnv {
 }
 
 /**
+ * Tear down `child` AND every descendant it spawned. On Windows a bare
+ * `child.kill()` signals ONLY the direct process (`py -m media_studio`),
+ * orphaning the grandchildren it launched — ffmpeg, llama-server, and the `wsl`
+ * bridge that runs verthor — which then keep burning CPU/GPU after the sidecar is
+ * gone (the force-quit leak this fixes). `taskkill /PID <pid> /T /F` terminates
+ * the WHOLE tree (`/T` = with children, `/F` = force). On POSIX we fall back to
+ * the process's own `kill(signal)`, whose default SIGTERM the sidecar handles.
+ *
+ * Best-effort: on Windows a taskkill spawn failure (already-exited child,
+ * taskkill unavailable) falls back to a direct `child.kill(signal)`; a missing
+ * `pid` (child never spawned) also uses the direct kill. The direct kill may
+ * still throw on an already-dead child — the CALLER catches that (stop() and
+ * restart() already wrap their teardown), so their existing behaviour is intact.
+ */
+export function killProcessTree(
+  child: ChildProcessWithoutNullStreams,
+  signal?: NodeJS.Signals,
+): void {
+  const pid = child.pid;
+  if (process.platform === 'win32' && typeof pid === 'number') {
+    try {
+      const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+      // If taskkill itself cannot spawn, still make a best effort on the direct
+      // child so teardown is not a total no-op.
+      killer.on('error', () => {
+        try {
+          child.kill(signal);
+        } catch {
+          /* already gone */
+        }
+      });
+      return;
+    } catch {
+      /* taskkill spawn threw synchronously — fall through to a direct kill */
+    }
+  }
+  child.kill(signal);
+}
+
+/**
  * Supervises the Python sidecar process and bridges JSON-RPC over its stdio.
  *
  * Events:
@@ -318,7 +361,9 @@ export class Sidecar extends EventEmitter {
       existing.stdout.removeAllListeners('data');
       existing.stderr.removeAllListeners('data');
       try {
-        existing.kill();
+        // Kill the whole tree (Windows): ffmpeg/llama-server/wsl grandchildren
+        // die with the sidecar instead of leaking. POSIX falls back to kill().
+        killProcessTree(existing);
       } catch {
         /* already gone */
       }
@@ -344,7 +389,9 @@ export class Sidecar extends EventEmitter {
       const done = (): void => resolveStop();
       child.once('exit', done);
       try {
-        child.kill();
+        // Tree-kill on Windows so ffmpeg/llama-server/wsl grandchildren die with
+        // the sidecar on app quit (main.ts calls stop()); POSIX -> kill().
+        killProcessTree(child);
       } catch {
         done();
         return;
@@ -353,7 +400,7 @@ export class Sidecar extends EventEmitter {
       setTimeout(() => {
         if (child.exitCode === null) {
           try {
-            child.kill('SIGKILL');
+            killProcessTree(child, 'SIGKILL');
           } catch {
             /* already gone */
           }
