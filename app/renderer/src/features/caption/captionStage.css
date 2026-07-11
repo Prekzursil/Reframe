@@ -1,0 +1,94 @@
+/* captionStage.css — the shared caption stage (v1.5 pilot). Tokens only. */
+
+.caption-stage {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-5);
+}
+
+/* A 9:16 media well: footage floats in near-black (media wells step DOWN the
+ * surface ladder), lit from the top so it does not read as a flat fill. */
+.caption-stage__frame {
+  position: relative;
+  aspect-ratio: 9 / 16;
+  height: min(72vh, 640px);
+  max-width: 100%;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--atmos-well), var(--surface-deep);
+  box-shadow: var(--elev-2);
+}
+
+.caption-stage__frame .player__video,
+.caption-stage__frame video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* The live caption sample rendered INSIDE the caption box. */
+.caption-stage__sample {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  text-align: center;
+  pointer-events: none;
+}
+
+.caption-stage__line {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0 0.28em;
+  justify-content: center;
+  align-items: baseline;
+  line-height: 1.15;
+  padding: 0.15em 0.35em;
+  border-radius: var(--radius-sm);
+  font-weight: var(--weight-bold);
+}
+
+.caption-stage__word {
+  display: inline-block;
+  border-radius: var(--radius-xs);
+  padding: 0 0.08em;
+}
+
+/* Karaoke "pop": the active word scales up briefly. ARMED ONLY when the sample
+ * carries data-karaoke-pop (the JS gate = karaoke look AND motion allowed). The
+ * prefers-reduced-motion media query is a second belt so the animation can never
+ * play for a reduced-motion user even if the attribute is present. */
+.caption-stage__sample[data-karaoke-pop] .caption-stage__word.is-active {
+  animation: caption-word-pop var(--dur-base) var(--ease-out);
+}
+
+@keyframes caption-word-pop {
+  0% {
+    transform: scale(1);
+  }
+  55% {
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caption-stage__sample[data-karaoke-pop] .caption-stage__word.is-active {
+    animation: none;
+  }
+}
+
+/* The pre-transcript / no-caption hint, in the quiet editorial voice. */
+.caption-stage__hint {
+  font-family: var(--font-editorial);
+  font-size: var(--type-title-size);
+  color: var(--text-faint);
+  background: var(--surface-overlay);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+}

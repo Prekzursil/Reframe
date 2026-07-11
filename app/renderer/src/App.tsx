@@ -1,6 +1,6 @@
 // App.tsx — the renderer shell + TOP-LEVEL TABBED NAVIGATION (V1 IA §h).
 //
-// The app is organised into the FIVE V1 sections (components/TopTabBar.tsx):
+// The app is organised into the top-level sections (components/TopTabBar.tsx):
 //   * Library    — the video library home; opening a video routes into the Edit
 //                  section for that video,
 //   * Make Shorts — the novice front door: AI moment-pick + manual intervals +
@@ -8,6 +8,8 @@
 //                   (views/MakeShorts.tsx; carries the interrupted-batch badge),
 //   * Edit       — the per-video manual surface (trim/cut/join/reframe/caption/
 //                  audio…) hosted in the Workspace (views/Edit.tsx),
+//   * Caption    — the v1.5 Caption phase pilot: inspector-over-shared-stage
+//                  caption design + keyboard clip timing for the open video,
 //   * Director   — the prompt-driven AI video-editing panel (lazy),
 //   * Settings   — Models & System / Providers & Keys / Storage / Health.
 //
@@ -20,6 +22,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { Library } from './views/Library';
 import { Edit } from './views/Edit';
+import { Caption } from './views/Caption';
 import { MakeShorts } from './views/MakeShorts';
 import { Settings } from './views/Settings';
 import { incompleteBatches, remainingCount } from './features/repurposeLogic';
@@ -28,6 +31,7 @@ import { libraryShortsClient } from './features/libraryShortsClient';
 import { useToast } from './components/toast/useToast';
 import { TopTabBar, topTabId, topTabPanelId, type TopTab } from './components/TopTabBar';
 import {
+  CaptionIcon,
   CreateIcon,
   DirectorIcon,
   LibraryIcon,
@@ -71,8 +75,8 @@ registerJobRetry((jobId) => rpc<{ jobId: string }>('job.retry', { jobId }));
 
 type Quality = 'local' | 'cloud';
 
-/** The five V1 top-level tab ids (the surface switcher). */
-type TabId = 'library' | 'makeshorts' | 'edit' | 'director' | 'settings';
+/** The top-level tab ids (the surface switcher). */
+type TabId = 'library' | 'makeshorts' | 'edit' | 'caption' | 'director' | 'settings';
 
 type Route =
   // The Library home.
@@ -83,6 +87,9 @@ type Route =
   | { name: 'makeshorts'; resumeId?: string; videoId?: string }
   // Edit: the per-video manual surface (the open video lives in shell state).
   | { name: 'edit' }
+  // Caption: the v1.5 Caption phase pilot (inspector-over-shared-stage) for the
+  // open video; empty-states when none is open.
+  | { name: 'caption' }
   // Director: the prompt-driven AI video-editing panel.
   | { name: 'director' }
   // Settings: a sub-navigated area (Models & System / Providers & Keys / Health).
@@ -95,6 +102,8 @@ function routeTab(route: Route): TabId {
       return 'makeshorts';
     case 'edit':
       return 'edit';
+    case 'caption':
+      return 'caption';
     case 'director':
       return 'director';
     case 'settings':
@@ -382,6 +391,9 @@ function AppShell(): React.ReactElement {
         case 'edit':
           setRoute({ name: 'edit' });
           break;
+        case 'caption':
+          setRoute({ name: 'caption' });
+          break;
         case 'director':
           setRoute({ name: 'director' });
           break;
@@ -406,6 +418,7 @@ function AppShell(): React.ReactElement {
       { id: 'library', label: 'Library', icon: <LibraryIcon /> },
       { id: 'makeshorts', label: 'Make Shorts', icon: <CreateIcon />, badge: batchBadge },
       { id: 'edit', label: 'Edit', icon: <RepurposeIcon /> },
+      { id: 'caption', label: 'Caption', icon: <CaptionIcon /> },
       { id: 'director', label: 'Director', icon: <DirectorIcon /> },
       { id: 'settings', label: 'Settings', icon: <SettingsIcon /> },
     ],
@@ -430,6 +443,10 @@ function AppShell(): React.ReactElement {
             onDirector={openDirector}
           />
         );
+      case 'caption':
+        // v1.5 Caption pilot: the inspector-over-shared-stage phase for the open
+        // video (empty-states + routes back to the Library when none is open).
+        return <Caption video={editVideo} onBack={backToLibrary} />;
       case 'director':
         return (
           <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>

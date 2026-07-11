@@ -77,6 +77,16 @@ export function RepurposeIcon(): React.ReactElement {
   );
 }
 
+/** Caption — a captions card with text lines (Lucide "captions"). */
+export function CaptionIcon(): React.ReactElement {
+  return (
+    <Svg>
+      <rect width="18" height="14" x="3" y="5" rx="2" ry="2" />
+      <path d="M7 15h4M15 15h2M7 11h2M13 11h4" />
+    </Svg>
+  );
+}
+
 /** Settings — gear (Lucide "settings"). */
 export function SettingsIcon(): React.ReactElement {
   return (

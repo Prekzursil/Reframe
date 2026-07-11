@@ -1,0 +1,64 @@
+/* captionInspector.css — the Caption phase inspector column. Tokens only. */
+
+.caption-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+/* The transcript gate: one clear editorial empty-state, not a wall of dead controls. */
+.caption-inspector__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  background: var(--surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-1);
+}
+
+.caption-inspector__empty-title {
+  margin: 0;
+  font-family: var(--font-editorial);
+  font-size: var(--type-subhead-size);
+  color: var(--text-primary);
+}
+
+.caption-inspector__empty-blurb {
+  margin: 0;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+  color: var(--text-secondary);
+  max-width: 42ch;
+}
+
+/* The primary action gets the ONE amber accent (approve/primary). */
+.caption-inspector__generate {
+  padding: var(--control-pad-btn);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-bold);
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--accent-glow);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.caption-inspector__generate:hover:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: var(--accent-glow-hover);
+}
+
+.caption-inspector__generate:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.caption-inspector__generate:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}

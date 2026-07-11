@@ -1,0 +1,87 @@
+/* captionClipLane.css — the keyboard-operable caption clip lane. Tokens only. */
+
+.caption-clip-lane {
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-1);
+}
+
+.caption-clip-lane--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.caption-clip-lane__empty {
+  margin: 0;
+  font-size: var(--type-body-size);
+  color: var(--text-faint);
+}
+
+/* A single lane (a media well) with absolutely-positioned clips over the axis. */
+.caption-clip-lane__track {
+  position: relative;
+  height: 44px;
+  border-radius: var(--radius-sm);
+  background: var(--atmos-well), var(--surface-deep);
+  overflow: hidden;
+}
+
+.caption-clip {
+  position: absolute;
+  top: var(--space-2);
+  bottom: var(--space-2);
+  min-width: 8px;
+  padding: 0 var(--space-2);
+  display: flex;
+  align-items: center;
+  font-size: var(--type-chip-size);
+  color: var(--text-secondary);
+  background: var(--surface-overlay);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  overflow: hidden;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.caption-clip:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.caption-clip:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The selected clip gets the ONE amber accent (active/selected). */
+.caption-clip.is-selected {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-color: var(--accent-edge);
+  box-shadow: var(--focus-glow);
+}
+
+.caption-clip.is-selected .caption-clip__text {
+  color: var(--text-primary);
+}
+
+.caption-clip__text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The shared playhead, mirrored from the stage. */
+.caption-clip-lane__playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
