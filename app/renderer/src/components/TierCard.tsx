@@ -1,7 +1,7 @@
 // TierCard.tsx — one selectable quality tier (Tier-0/1/2) in the tier picker.
 // Shows the tier label, its will-it-run verdict badge, the member-component
 // summary, and a radio to select it (writes settings.phase8Tier upstream). The
-// Tier-2 card carries the "heavy, opt-in, runs alone" + SmolVLM2-int8-broken
+// Tier-2 card carries the "heaviest, opt-in, runs on its own, needs more memory"
 // warning. Pure presentational: selection + apply are callbacks.
 import React from 'react';
 import type { TierStatus } from '../lib/rpc';
@@ -22,7 +22,7 @@ export interface TierCardProps {
 const TIER_BLURB: Record<number, string> = {
   0: 'Instant, silent-video OK, zero downloads. Runs on any machine.',
   1: 'Default. Adds visual + audio + transcript models (downloads on first use).',
-  2: 'Heavy video-LLM re-rank of the top clips. Opt-in; runs alone; SmolVLM2 int8 is broken — uses BF16.',
+  2: 'The heaviest option — an AI watches the top clips to re-rank them. Opt-in; runs on its own and needs more memory.',
 };
 
 export function TierCard({

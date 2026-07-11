@@ -88,24 +88,30 @@ export function fillZone(
   return used / total > TIGHT_FRACTION ? 'tight' : 'ok';
 }
 
-/** Pretty display name for a raw component id (e.g. "vlm_backbone" -> "VLM backbone"). */
+/**
+ * Pretty display name for a raw component id — a plain-language capability label
+ * that says what the model DOES for the user, never a model codename (§8 Voice).
+ * The internal ids and asset names keep their real names; only this human-facing
+ * label is de-jargoned. Falls back to a title-cased, de-snaked id (e.g.
+ * "foo_bar" -> "Foo bar").
+ */
 export function prettyName(name: string): string {
   const special: Record<string, string> = {
-    vlm_backbone: 'Vision backbone (SigLIP-2)',
-    audio_saliency: 'Audio peaks (PANNs)',
-    scene_transnet: 'Scene cuts (TransNetV2)',
-    quality_gate: 'Quality gate (DOVER)',
-    smolvlm2: 'Video-LLM re-rank (SmolVLM2)',
+    vlm_backbone: 'Understand the visuals',
+    audio_saliency: 'Find audio highlights',
+    scene_transnet: 'Find scene changes',
+    quality_gate: 'Check video quality',
+    smolvlm2: 'Re-rank clips by watching them',
     ctc_aligner: 'Karaoke word-timing',
-    pyannote: 'Speaker diarization (pyannote)',
-    parakeet: 'Parakeet ASR',
-    saliency: 'Saliency / crop-track (ViNet-S)',
-    aesthetic: 'Aesthetic scorer',
-    emotion: 'Emotion peaks (HSEmotion)',
-    ocr: 'On-screen text (RapidOCR)',
-    motion: 'Motion energy',
-    diversity: 'Near-duplicate removal',
-    ranker: 'Learned re-rank',
+    pyannote: 'Tell speakers apart',
+    parakeet: 'Fast speech-to-text',
+    saliency: 'Keep the subject in frame',
+    aesthetic: 'Rate visual appeal',
+    emotion: 'Spot emotional moments',
+    ocr: 'Read on-screen text',
+    motion: 'Detect on-screen motion',
+    diversity: 'Skip near-duplicates',
+    ranker: 'Smart clip ranking',
   };
   if (special[name]) return special[name];
   return name.charAt(0).toUpperCase() + name.slice(1).replace(/_/g, ' ');

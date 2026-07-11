@@ -93,9 +93,38 @@ describe('fillPct / fillZone', () => {
 });
 
 describe('prettyName', () => {
-  it('maps special component ids', () => {
-    expect(prettyName('vlm_backbone')).toContain('SigLIP-2');
-    expect(prettyName('smolvlm2')).toContain('SmolVLM2');
+  it('maps special component ids to a plain-language capability label', () => {
+    // §8 Voice: the label says what the capability DOES, in plain words.
+    expect(prettyName('vlm_backbone')).toBe('Understand the visuals');
+    expect(prettyName('smolvlm2')).toBe('Re-rank clips by watching them');
+    expect(prettyName('saliency')).toBe('Keep the subject in frame');
+    expect(prettyName('audio_saliency')).toBe('Find audio highlights');
+    expect(prettyName('pyannote')).toBe('Tell speakers apart');
+  });
+  it('never leaks a model codename into a user-facing label (§8 Voice DoD)', () => {
+    // Every mapped capability must read as plain language — no model codename.
+    const codename =
+      /SigLIP|SmolVLM|PANNs|DOVER|TransNetV2|ViNet|pyannote|Parakeet|HSEmotion|RapidOCR|UNISAL|S3FD|TalkNet/i;
+    const capabilities = [
+      'vlm_backbone',
+      'audio_saliency',
+      'scene_transnet',
+      'quality_gate',
+      'smolvlm2',
+      'ctc_aligner',
+      'pyannote',
+      'parakeet',
+      'saliency',
+      'aesthetic',
+      'emotion',
+      'ocr',
+      'motion',
+      'diversity',
+      'ranker',
+    ];
+    for (const id of capabilities) {
+      expect(prettyName(id)).not.toMatch(codename);
+    }
   });
   it('title-cases + de-snakes unknowns', () => {
     expect(prettyName('foo_bar')).toBe('Foo bar');

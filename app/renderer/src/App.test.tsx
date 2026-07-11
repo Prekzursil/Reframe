@@ -30,11 +30,24 @@ vi.mock('./lib/rpc', () => ({
   },
 }));
 
+// The Library marker exposes onOpen + the v1.5 §4 P0 produced-shorts seams App
+// wires (whether the `shorts` port is injected, and the edit-in-Studio callback).
 vi.mock('./views/Library', () => ({
-  Library: ({ onOpen }: { onOpen: (v: Video) => void }) => (
-    <div data-testid="library">
+  Library: ({
+    onOpen,
+    shorts,
+    onEditShort,
+  }: {
+    onOpen: (v: Video) => void;
+    shorts?: unknown;
+    onEditShort?: (short: { videoId: string }) => void;
+  }) => (
+    <div data-testid="library" data-has-shorts={shorts ? 'yes' : 'no'}>
       <button type="button" onClick={() => onOpen(makeVideo())}>
         open-video
+      </button>
+      <button type="button" onClick={() => onEditShort?.({ videoId: 'v1' })}>
+        edit-short
       </button>
     </div>
   ),
@@ -349,6 +362,30 @@ describe('App top-level tabs', () => {
     expect(view).not.toBeNull();
     expect(view!.getAttribute('data-video-id')).toBe('v1');
     // No batch resume on this deep-link.
+    expect(view!.getAttribute('data-resume')).toBe('');
+    expect(tab('Make Shorts').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('v1.5 §4 P0: injects the produced-shorts port + routes edit-in-Studio to Make Shorts', async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+    await flush();
+    // The dormant produced-shorts seam is now LIVE: the port is injected into the Library.
+    expect(
+      container.querySelector('[data-testid="library"]')!.getAttribute('data-has-shorts'),
+    ).toBe('yes');
+    // "Edit in Studio" for a produced short reopens Make Shorts pre-selected to its source video.
+    const editBtn = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-testid="library"] button'),
+    ).find((b) => b.textContent === 'edit-short');
+    await act(async () => {
+      editBtn!.click();
+    });
+    await flush();
+    const view = container.querySelector('[data-testid="makeshorts"]');
+    expect(view).not.toBeNull();
+    expect(view!.getAttribute('data-video-id')).toBe('v1');
     expect(view!.getAttribute('data-resume')).toBe('');
     expect(tab('Make Shorts').getAttribute('aria-selected')).toBe('true');
   });
