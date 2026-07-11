@@ -24,6 +24,7 @@ import { MakeShorts } from './views/MakeShorts';
 import { Settings } from './views/Settings';
 import { incompleteBatches, remainingCount } from './features/repurposeLogic';
 import { lineageActions } from './features/lineageActionsClient';
+import { libraryShortsClient } from './features/libraryShortsClient';
 import { useToast } from './components/toast/useToast';
 import { TopTabBar, topTabId, topTabPanelId, type TopTab } from './components/TopTabBar';
 import {
@@ -35,7 +36,15 @@ import {
 } from './components/navIcons';
 // AI Director panel (lazy: it pulls the storyboard/diff + cost-banner surface).
 const DirectorPanel = lazy(() => import('./panels/DirectorPanel'));
-import { client, hasApi, rpc, type ReadinessAction, type RoutingMode, type Video } from './lib/rpc';
+import {
+  client,
+  hasApi,
+  rpc,
+  type ReadinessAction,
+  type RoutingMode,
+  type ShortInfo,
+  type Video,
+} from './lib/rpc';
 import { RoutingToggle } from './components/RoutingToggle';
 import { actionSection } from './features/providersKeysLogic';
 import { ToastProvider } from './components/toast/ToastProvider';
@@ -332,6 +341,14 @@ function AppShell(): React.ReactElement {
     setRoute({ name: 'makeshorts', videoId });
   }, []);
 
+  // v1.5 §4 P0: "edit in Studio" for a produced short (fired from the Library's
+  // per-video gallery modal) reuses the SAME single-owner ShortMaker deep-link —
+  // it reopens the Make Shorts section with the short's source video pre-selected.
+  const editShort = useCallback(
+    (short: ShortInfo) => openMakeShortsForVideo(short.videoId),
+    [openMakeShortsForVideo],
+  );
+
   // WU-3a1: the Task Hub's "Director" job card routes to the top-level Director
   // section (the open video is already threaded from shell state).
   const openDirector = useCallback(() => {
@@ -429,11 +446,16 @@ function AppShell(): React.ReactElement {
         // WU-14: a readiness fix action routes to Settings → Models & System.
         // WU-1f: the L5 provenance handlers drive each card's source-file row
         // (path + on-disk/missing badge + reveal/relink) and the lazy hash back-fill.
+        // v1.5 §4 P0: the produced-shorts port (client.shorts + openInFolder bridge)
+        // powers each card's "N shorts" gallery; onEditShort reopens the short in
+        // the Make Shorts studio.
         return (
           <Library
             onOpen={openVideo}
             onReadinessAction={handleReadinessAction}
             provenance={lineageActions}
+            shorts={libraryShortsClient}
+            onEditShort={editShort}
           />
         );
     }
