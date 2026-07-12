@@ -67,7 +67,10 @@
   margin: 0;
   padding: var(--space-3) var(--space-4);
   font-size: var(--type-body-size);
-  color: var(--status-error);
+  /* AA-safe red TEXT on the soft wash: the saturated --status-error drops to
+   * ~3.2-4.2:1 composited over --status-error-soft on the lifted planes (WCAG
+   * 1.4.3 fail); --status-error-text is the lighter tint that clears >=4.5:1. */
+  color: var(--status-error-text);
   background: var(--status-error-soft);
   border-radius: var(--radius-sm);
 }

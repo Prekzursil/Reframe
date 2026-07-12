@@ -240,6 +240,70 @@ describe('dark-editorial surface ladder recalibration (WU-2a)', () => {
   });
 });
 
+// --- PR #290: red-text AA guard — error-alert text on the soft-error wash --------
+//
+// The error-alert TEXT (e.g. .director-view__error) sits on the translucent
+// --status-error-soft wash. The saturated base --status-error (#e5484d),
+// composited over that wash on the LIFTED elevation planes, drops to ~3.2-4.2:1 —
+// a real WCAG 1.4.3 (AA) fail for body-size text. The fix is a dedicated red-TEXT
+// token (--status-error-text, a lighter tint) mirroring the --status-abundance-text
+// "lighter tint for AA on the wash" precedent. This guard re-derives the sRGB
+// composite + WCAG contrast INDEPENDENTLY and pins that the red-text token clears
+// 4.5:1 on EVERY elevation plane — and that it is genuinely lighter than (and the
+// base red genuinely fails on) that wash — so alert text can never silently decay
+// back to the sub-AA saturated red.
+
+/** Parse an `rgba(r, g, b, a)` token into [r, g, b, a]. Throws if not an rgba(). */
+function toRgba(
+  tokens: Map<string, string>,
+  name: string,
+): readonly [number, number, number, number] {
+  const raw = tokens.get(name);
+  if (raw === undefined) throw new Error(`missing token ${name}`);
+  const m = /^rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)$/.exec(raw);
+  if (m === null) throw new Error(`token ${name} is not an rgba(): ${raw}`);
+  return [Number(m[1]), Number(m[2]), Number(m[3]), Number.parseFloat(m[4])];
+}
+
+/** Alpha-composite a translucent wash over an opaque plane in sRGB 0-255 — how the
+ * browser blends a background-color alpha over its backdrop (source-over). */
+function over(wash: readonly [number, number, number, number], plane: Rgb): Rgb {
+  const [wr, wg, wb, a] = wash;
+  const [pr, pg, pb] = plane;
+  return [a * wr + (1 - a) * pr, a * wg + (1 - a) * pg, a * wb + (1 - a) * pb];
+}
+
+describe('red-text token clears AA on the soft-error wash (PR #290)', () => {
+  it('defines --status-error-text as a lighter tint than --status-error', () => {
+    const tokens = readTokens();
+    // toRgb throws unless the token is a plain #rrggbb; the text token is a
+    // genuinely lighter red (the fix direction — it lifts the saturated base up to
+    // an AA-legible tint on the wash), never a copy of the base value.
+    expect(relLum(toRgb(tokens, '--status-error-text'))).toBeGreaterThan(
+      relLum(toRgb(tokens, '--status-error')),
+    );
+  });
+
+  it('holds --status-error-text at AA (>=4.5:1) on the wash over every elevation plane', () => {
+    const tokens = readTokens();
+    const text = toRgb(tokens, '--status-error-text');
+    const wash = toRgba(tokens, '--status-error-soft');
+    for (const plane of ELEVATION_PLANES) {
+      expect(contrast(text, over(wash, toRgb(tokens, plane)))).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it('proves the base --status-error FAILS AA on that wash (why the token exists)', () => {
+    // Documents the exact regression the token fixes: the base red on the wash
+    // drops below AA on the lifted planes (here --surface-raised, ~3.75:1), so a
+    // component MUST route alert text through --status-error-text, not --status-error.
+    const tokens = readTokens();
+    const base = toRgb(tokens, '--status-error');
+    const wash = toRgba(tokens, '--status-error-soft');
+    expect(contrast(base, over(wash, toRgb(tokens, '--surface-raised')))).toBeLessThan(4.5);
+  });
+});
+
 // --- WU-D1: TYPE / WEIGHT / CONTROL token-scale completeness guard ---------------
 //
 // The design review found the type layer incomplete: NO font-weight tokens (raw

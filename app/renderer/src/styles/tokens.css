@@ -70,6 +70,14 @@
   --status-success-soft: rgba(70, 196, 131, 0.12);
   --status-error: #e5484d;
   --status-error-soft: rgba(229, 72, 77, 0.1);
+  /* error TEXT on the soft wash — a lighter red tint (the "lighter tint for AA on
+   * the wash" precedent set by --status-abundance-text). The saturated base
+   * --status-error (#e5484d), composited over --status-error-soft, drops to
+   * ~3.2-4.2:1 on the lifted elevation planes — a real WCAG 1.4.3 (AA) fail for
+   * body-size alert text; this tint clears >=4.5:1 on every elevation plane.
+   * Consume for ERROR-ALERT TEXT over the soft wash; pinned by the tokens.conformance
+   * red-text guard. */
+  --status-error-text: #ff6b6b;
   --status-warn: #e7c14b; /* yellow-leaning, distinct from the orange-leaning accent */
   --status-warn-soft: rgba(231, 193, 75, 0.1);
 
