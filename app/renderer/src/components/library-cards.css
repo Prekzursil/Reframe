@@ -233,6 +233,7 @@ li.library__item:focus-within .library__select,
   justify-content: space-between;
   gap: var(--space-2);
   width: 100%;
+  min-height: var(--size-target-min); /* WCAG 2.5.8 target size */
   padding: var(--space-1) var(--space-2);
   border: none;
   border-radius: var(--radius-sm);

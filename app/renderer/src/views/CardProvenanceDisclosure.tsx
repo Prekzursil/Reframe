@@ -5,10 +5,15 @@
 // Keep-a-copy tail only appears when the user opens this disclosure.
 //
 // It mirrors the CapabilitiesChip disclosure pattern (a real toggle <button> with
-// aria-expanded + aria-controls + a caret) and, like it, is LAZY: <LibraryProvenance>
-// mounts only once opened, so a resting library of N cards fires zero reveal/pin
-// probes. The toggle is a SIBLING of the card's open-button (never nested), so no
-// nested-interactive control is introduced.
+// aria-expanded + aria-controls + a caret) and, like it, is LAZY: the heavy
+// <LibraryProvenance> body mounts only once opened, so a resting library of N cards
+// fires zero reveal/pin probes. Per the WAI-ARIA disclosure pattern the controlled
+// panel element is ALWAYS rendered and merely toggles its `hidden` attribute, so a
+// resting card's aria-controls is never a dangling IDREF (the panel is present but
+// empty + hidden until opened). The wrapper is a plain <div>, NOT a <section> — a
+// per-card landmark would mint N identical "region"s across the Library; the toggle
+// button already names the disclosure. The toggle is a SIBLING of the card's
+// open-button (never nested), so no nested-interactive control is introduced.
 import React, { useId, useState } from 'react';
 
 import {
@@ -33,7 +38,7 @@ export function CardProvenanceDisclosure({
   const panelId = useId();
 
   return (
-    <section className="card-provenance" aria-label="Source & storage">
+    <div className="card-provenance">
       <button
         type="button"
         className="card-provenance__toggle"
@@ -47,12 +52,12 @@ export function CardProvenanceDisclosure({
         </span>
       </button>
 
-      {open ? (
-        <div id={panelId} className="card-provenance__panel">
-          <LibraryProvenance video={video} handlers={handlers} />
-        </div>
-      ) : null}
-    </section>
+      {/* Panel is ALWAYS rendered so aria-controls resolves at rest; `hidden`
+          collapses it and the heavy provenance body stays lazy until opened. */}
+      <div id={panelId} className="card-provenance__panel" hidden={!open}>
+        {open ? <LibraryProvenance video={video} handlers={handlers} /> : null}
+      </div>
+    </div>
   );
 }
 

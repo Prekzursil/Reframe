@@ -102,4 +102,35 @@ describe('CardProvenanceDisclosure', () => {
     expect(toggle().getAttribute('aria-expanded')).toBe('false');
     expect(container.querySelector('.library-provenance')).toBeNull();
   });
+
+  it('wraps the disclosure in a plain <div> — no duplicate "region" landmark per card', async () => {
+    await render(handlers());
+    const wrapper = container.querySelector('.card-provenance') as HTMLElement;
+    expect(wrapper).not.toBeNull();
+    // A per-card <section aria-label> minted N identical "Source & storage" region
+    // landmarks across the Library; the toggle button already names the disclosure,
+    // so the wrapper is a plain <div> carrying no landmark role or label.
+    expect(wrapper.tagName).toBe('DIV');
+    expect(wrapper.getAttribute('aria-label')).toBeNull();
+    expect(container.querySelector('section')).toBeNull();
+    expect(container.querySelector('[role="region"]')).toBeNull();
+  });
+
+  it('keeps aria-controls a valid IDREF at rest — panel is present but hidden + empty', async () => {
+    await render(handlers());
+    const btn = toggle();
+    const controls = btn.getAttribute('aria-controls');
+    expect(controls).toBeTruthy();
+    // WAI-ARIA disclosure: the controlled panel is ALWAYS in the DOM (so the resting
+    // card's aria-controls never dangles) and merely toggles `hidden`.
+    const panel = document.getElementById(controls as string);
+    expect(panel).not.toBeNull();
+    expect(panel?.classList.contains('card-provenance__panel')).toBe(true);
+    expect(panel?.hasAttribute('hidden')).toBe(true);
+    // …while the heavy provenance body stays lazy — the hidden panel is empty at rest.
+    expect(panel?.querySelector('.library-provenance')).toBeNull();
+    // Opening un-hides the very same panel node (no dangling / swapped IDREF).
+    await click(btn);
+    expect(document.getElementById(controls as string)?.hasAttribute('hidden')).toBe(false);
+  });
 });

@@ -186,6 +186,7 @@
   --size-glyph-lg: 26px; /* thumbnail fallback glyph */
   --size-dot: 8px; /* brand tick + status/egress dots */
   --size-dot-sm: 5px; /* chip lead dot */
+  --size-target-min: 24px; /* WCAG 2.5.8 minimum interactive target (min-height) */
 
   /* Control padding (role shorthands): the compact control paddings sit off the
    * 4px rhythm ON PURPOSE (a dense editing UI — a segmented toggle is tighter
