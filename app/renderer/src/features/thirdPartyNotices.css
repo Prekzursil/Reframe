@@ -23,6 +23,26 @@
   color: var(--text-secondary);
 }
 
+/* The "Bundled fonts" block sits below the model list, separated by a hairline
+ * so the two license categories read as distinct groups under one heading. */
+.tpn__fonts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--edge);
+}
+
+.tpn__subtitle {
+  margin: 0;
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .tpn__list {
   list-style: none;
   margin: 0;
@@ -69,6 +89,14 @@
 .tpn__chip--nc {
   background: var(--status-error-soft);
   color: var(--status-error);
+}
+
+/* OFL fonts are uniformly permissive — chipped the same success tint as the
+ * commercial-OK models, but with its own class so the model chip counts stay
+ * independent. The license id ("OFL-1.1") is the visible text, never hue alone. */
+.tpn__chip--ofl {
+  background: var(--status-success-soft);
+  color: var(--status-success);
 }
 
 .tpn__role {

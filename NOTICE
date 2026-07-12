@@ -47,3 +47,31 @@ LR-ASD — visual active-speaker detection
   License:      MIT — https://opensource.org/license/mit
   Attribution:  (c) 2025 Liao Junhua (Junhua-Liao/LR-ASD)
   Source:       https://github.com/Junhua-Liao/LR-ASD
+
+
+Bundled fonts
+-------------
+Reframe self-hosts its UI type trio (renderer/src/assets/fonts/*.woff2, bound in
+renderer/src/styles/fonts.css). All three are licensed under the SIL Open Font
+License 1.1 — permissive, COMMERCIAL USE PERMITTED (they may not be sold on their
+own). The full license text and the verbatim copyright notices ship alongside the
+binaries at renderer/src/assets/fonts/OFL.txt and are surfaced in-app at
+Settings -> Licenses.
+
+Inter — UI typeface (--font-ui)
+  License:      OFL-1.1 — https://openfontlicense.org
+  Attribution:  Copyright 2020 The Inter Project Authors
+  Source:       https://github.com/rsms/inter
+  Full license: renderer/src/assets/fonts/OFL.txt
+
+Newsreader — editorial serif (--font-editorial)
+  License:      OFL-1.1 — https://openfontlicense.org
+  Attribution:  Copyright 2020 The Newsreader Project Authors
+  Source:       https://github.com/productiontype/Newsreader
+  Full license: renderer/src/assets/fonts/OFL.txt
+
+IBM Plex Mono — timecode / mono typeface (--font-mono)
+  License:      OFL-1.1 — https://openfontlicense.org
+  Attribution:  Copyright (c) 2017 IBM Corp. with Reserved Font Name "Plex"
+  Source:       https://github.com/IBM/plex
+  Full license: renderer/src/assets/fonts/OFL.txt
