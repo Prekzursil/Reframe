@@ -1,0 +1,115 @@
+/* director.css — the Director phase view layout (v1.5, §4).
+ *
+ * The ONE consciously LOW-density, editorial-spacious screen: the upper spacing
+ * rungs (space-6/7), the strongest home for the serif DISPLAY voice (a real scale
+ * jump from 13px body to the 30px editorial display), left-anchored and composed
+ * (planning panel + hand-off side by side) so no form is stranded in dead space.
+ * Tokens only. */
+
+.director-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-7);
+  min-height: 0;
+}
+
+/* Left-anchored editorial hero — generous vertical rhythm, not a centered block. */
+.director-view__head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.director-view__back {
+  padding: var(--control-pad-btn);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.director-view__back:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.director-view__back:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The serif display voice with a real scale jump — the editorial moment. */
+.director-view__title {
+  margin: 0;
+  font-family: var(--font-editorial);
+  font-size: var(--type-display-size);
+  font-weight: var(--type-display-weight);
+  letter-spacing: var(--type-display-tracking);
+  line-height: var(--type-display-leading);
+  color: var(--text-primary);
+}
+
+.director-view__lede {
+  margin: 0;
+  max-width: 52ch;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+  color: var(--text-secondary);
+}
+
+.director-view__error {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--type-body-size);
+  /* AA-safe red TEXT on the soft wash: the saturated --status-error drops to
+   * ~3.2-4.2:1 composited over --status-error-soft on the lifted planes (WCAG
+   * 1.4.3 fail); --status-error-text is the lighter tint that clears >=4.5:1. */
+  color: var(--status-error-text);
+  background: var(--status-error-soft);
+  border-radius: var(--radius-sm);
+}
+
+/* Composed, left-anchored: the planning panel (main) beside the per-phase hand-off
+ * (aside). Reflows to a single vertical column at narrow widths so the panel is
+ * never trapped in a cramped aside and nothing overflows horizontally. */
+.director-view__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 400px);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.director-view__main {
+  min-width: 0;
+}
+
+/* The no-video state is just the DirectorPanel's own empty state — cap its measure
+ * so it never stretches across an ultrawide window. */
+.director-view__body--empty {
+  display: block;
+  max-width: 640px;
+}
+
+@media (max-width: 1024px) {
+  .director-view__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* prefers-reduced-motion: neutralize all motion under the screen (the DoD honours
+ * it for any streaming/thinking animation the composed panel may run). */
+@media (prefers-reduced-motion: reduce) {
+  .director-view *,
+  .director-view *::before,
+  .director-view *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

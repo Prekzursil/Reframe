@@ -42,8 +42,9 @@ import {
   RepurposeIcon,
   SettingsIcon,
 } from './components/navIcons';
-// AI Director panel (lazy: it pulls the storyboard/diff + cost-banner surface).
-const DirectorPanel = lazy(() => import('./panels/DirectorPanel'));
+// Director rail destination (lazy: it pulls the DirectorPanel storyboard/diff +
+// cost-banner surface, the shared editor stage, and the per-phase hand-off).
+const Director = lazy(() => import('./views/Director'));
 import {
   client,
   hasApi,
@@ -492,10 +493,12 @@ function AppShell(): React.ReactElement {
       case 'director':
         return (
           <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>
-            {/* WU-E1: thread the app-selected video so the Director plans against
+            {/* v1.5 §4: the first-class Director rail destination — built on the
+                shipped DirectorPanel + the shared EditorContext + the per-phase
+                hand-off. WU-E1: thread the app-selected video so it plans against
                 video.id (never the goal text); the empty-state CTA routes to the
                 Library to pick one. */}
-            <DirectorPanel video={editVideo} onChooseVideo={backToLibrary} />
+            <Director video={editVideo} onChooseVideo={backToLibrary} />
           </Suspense>
         );
       case 'settings':
