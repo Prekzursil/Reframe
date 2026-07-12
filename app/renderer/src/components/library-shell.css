@@ -53,7 +53,7 @@
 
 .capabilities-chip__error {
   margin: 0;
-  color: var(--status-error);
+  color: var(--status-error-text);
   font-size: var(--type-caption-size);
 }
 
@@ -178,7 +178,7 @@
 }
 
 .library-toolbar__batch-remove:hover {
-  color: var(--status-error);
+  color: var(--status-error-text);
   border-color: var(--status-error);
 }
 

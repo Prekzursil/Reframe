@@ -76,7 +76,7 @@ describe('<ReadinessBadge /> — action button', () => {
       <ReadinessBadge status="needsDownload" capabilityLabel="Captions" action={action} />,
     );
     const button = container.querySelector('button') as HTMLButtonElement;
-    expect(button.getAttribute('aria-label')).toBe('Download Captions model');
+    expect(button.getAttribute('aria-label')).toBe('Download the Captions model');
     expect(button.tagName).toBe('BUTTON');
   });
 
@@ -93,7 +93,7 @@ describe('<ReadinessBadge /> — action button', () => {
       <ReadinessBadge status="needsConsent" capabilityLabel="Captions" action={action} />,
     );
     const button = container.querySelector('button') as HTMLButtonElement;
-    expect(button.getAttribute('aria-label')).toBe('Grant consent for openai');
+    expect(button.getAttribute('aria-label')).toBe('Grant consent for OpenAI');
   });
 
   it('renders NO button when there is no action (ready / blocked-no-fix)', async () => {
