@@ -23,6 +23,8 @@ import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from
 import { Library } from './views/Library';
 import { Edit } from './views/Edit';
 import { Caption } from './views/Caption';
+import { Export } from './views/Export';
+import { Deliver } from './views/Deliver';
 import { MakeShorts } from './views/MakeShorts';
 import { Settings } from './views/Settings';
 import { incompleteBatches, remainingCount } from './features/repurposeLogic';
@@ -33,7 +35,9 @@ import { TopTabBar, topTabId, topTabPanelId, type TopTab } from './components/To
 import {
   CaptionIcon,
   CreateIcon,
+  DeliverIcon,
   DirectorIcon,
+  ExportIcon,
   LibraryIcon,
   RepurposeIcon,
   SettingsIcon,
@@ -76,7 +80,15 @@ registerJobRetry((jobId) => rpc<{ jobId: string }>('job.retry', { jobId }));
 type Quality = 'local' | 'cloud';
 
 /** The top-level tab ids (the surface switcher). */
-type TabId = 'library' | 'makeshorts' | 'edit' | 'caption' | 'director' | 'settings';
+type TabId =
+  | 'library'
+  | 'makeshorts'
+  | 'edit'
+  | 'caption'
+  | 'export'
+  | 'deliver'
+  | 'director'
+  | 'settings';
 
 type Route =
   // The Library home.
@@ -90,6 +102,10 @@ type Route =
   // Caption: the v1.5 Caption phase pilot (inspector-over-shared-stage) for the
   // open video; empty-states when none is open.
   | { name: 'caption' }
+  // Export: the v1.5 Phase-5 guarded-commit render/finish for the open video.
+  | { name: 'export' }
+  // Deliver: the batch / cross-video publish rail (Export/Deliver split, §4).
+  | { name: 'deliver' }
   // Director: the prompt-driven AI video-editing panel.
   | { name: 'director' }
   // Settings: a sub-navigated area (Models & System / Providers & Keys / Health).
@@ -104,6 +120,10 @@ function routeTab(route: Route): TabId {
       return 'edit';
     case 'caption':
       return 'caption';
+    case 'export':
+      return 'export';
+    case 'deliver':
+      return 'deliver';
     case 'director':
       return 'director';
     case 'settings':
@@ -364,6 +384,12 @@ function AppShell(): React.ReactElement {
     setRoute({ name: 'director' });
   }, []);
 
+  // v1.5 §4: the Deliver rail (batch / cross-video publish) — finishing a Phase-5
+  // Export links INTO here.
+  const openDeliver = useCallback(() => {
+    setRoute({ name: 'deliver' });
+  }, []);
+
   // Open Settings, optionally pre-selecting a sub-section (e.g. a readiness fix
   // jumps straight to Models & System).
   const openSettings = useCallback((section?: string) => {
@@ -394,6 +420,12 @@ function AppShell(): React.ReactElement {
         case 'caption':
           setRoute({ name: 'caption' });
           break;
+        case 'export':
+          setRoute({ name: 'export' });
+          break;
+        case 'deliver':
+          setRoute({ name: 'deliver' });
+          break;
         case 'director':
           setRoute({ name: 'director' });
           break;
@@ -419,6 +451,8 @@ function AppShell(): React.ReactElement {
       { id: 'makeshorts', label: 'Make Shorts', icon: <CreateIcon />, badge: batchBadge },
       { id: 'edit', label: 'Edit', icon: <RepurposeIcon /> },
       { id: 'caption', label: 'Caption', icon: <CaptionIcon /> },
+      { id: 'export', label: 'Export', icon: <ExportIcon /> },
+      { id: 'deliver', label: 'Deliver', icon: <DeliverIcon /> },
       { id: 'director', label: 'Director', icon: <DirectorIcon /> },
       { id: 'settings', label: 'Settings', icon: <SettingsIcon /> },
     ],
@@ -447,6 +481,14 @@ function AppShell(): React.ReactElement {
         // v1.5 Caption pilot: the inspector-over-shared-stage phase for the open
         // video (empty-states + routes back to the Library when none is open).
         return <Caption video={editVideo} onBack={backToLibrary} />;
+      case 'export':
+        // v1.5 Phase-5 Export: the guarded-commit render/finish for the open video;
+        // finishing links INTO the Deliver rail (the Export/Deliver split, §4).
+        return <Export video={editVideo} onBack={backToLibrary} onDeliver={openDeliver} />;
+      case 'deliver':
+        // v1.5 Deliver rail: batch / cross-video publish + platform presets + pro
+        // handoff (the open video drives the EDL/CSV handoff).
+        return <Deliver video={editVideo} onBack={backToLibrary} />;
       case 'director':
         return (
           <Suspense fallback={<div className="panel panel--loading">Loading…</div>}>
