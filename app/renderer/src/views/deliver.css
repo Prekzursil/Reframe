@@ -1,0 +1,110 @@
+/* deliver.css — the rail Deliver view layout (v1.5 §4). Tokens ONLY. */
+
+.deliver-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-5);
+  min-height: 0;
+}
+
+.deliver-view__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.deliver-view__back {
+  padding: var(--control-pad-btn);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.deliver-view__back:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.deliver-view__back:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.deliver-view__title {
+  margin: 0;
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+  color: var(--text-primary);
+}
+
+.deliver-view__intro {
+  margin: 0;
+  max-width: 60ch;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+  color: var(--text-secondary);
+}
+
+/* The target aspect matrix — small, informational destination chips. */
+.deliver-view__aspects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.deliver-view__aspect {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--elev-1);
+}
+
+.deliver-view__aspect-ratio {
+  font-family: var(--font-mono);
+  font-size: var(--type-control-size);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.deliver-view__aspect-label {
+  font-size: var(--type-chip-size);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.deliver-view__panel {
+  min-width: 0;
+}
+
+.deliver-view__empty {
+  margin: 0;
+  padding: var(--space-6);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .deliver-view__back {
+    transition: none;
+  }
+}

@@ -184,16 +184,35 @@ describe('LibraryCard', () => {
     expect(onOpenShorts.mock.calls[0][0].id).toBe('v1');
   });
 
+  it('pluralizes the shorts label + aria for a single short (never "1 shorts")', async () => {
+    await renderCard({ shortsCount: 1 });
+    const label = container.querySelector('.library__shorts-label') as HTMLButtonElement;
+    expect(label.textContent).toBe('1 short');
+    expect(label.getAttribute('aria-label')).toBe('View 1 produced short for Talk');
+  });
+
   it('hides the shorts label when the video has none', async () => {
     await renderCard({ shortsCount: 0 });
     expect(container.querySelector('.library__shorts-label')).toBeNull();
   });
 
-  it('renders the provenance row and drops the legacy path line when provenance is wired', async () => {
+  it('demotes provenance behind a per-card disclosure and drops the legacy path line', async () => {
     const handlers = provenanceHandlers();
     await renderCard({ provenance: handlers });
-    expect(container.querySelector('.library-provenance')).not.toBeNull();
+    // Resting card: the disclosure toggle is present but the plumbing is hidden
+    // (and not even fetched) so the card stays poster + title + shorts + status.
+    expect(container.querySelector('.card-provenance__toggle')).not.toBeNull();
+    expect(container.querySelector('.library-provenance')).toBeNull();
     expect(container.querySelector('.library__item-path')).toBeNull();
+    expect(handlers.reveal).not.toHaveBeenCalled();
+    // Opening the disclosure reveals the provenance row and triggers the lookup.
+    await act(async () => {
+      (container.querySelector('.card-provenance__toggle') as HTMLButtonElement).dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      );
+    });
+    await flush();
+    expect(container.querySelector('.library-provenance')).not.toBeNull();
     expect(handlers.reveal).toHaveBeenCalledWith('v1');
   });
 

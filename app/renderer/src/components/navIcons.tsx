@@ -87,6 +87,27 @@ export function CaptionIcon(): React.ReactElement {
   );
 }
 
+/** Export — render out to a file (Lucide "upload"-style arrow up over a line). */
+export function ExportIcon(): React.ReactElement {
+  return (
+    <Svg>
+      <path d="m18 9-6-6-6 6" />
+      <path d="M12 3v14" />
+      <path d="M5 21h14" />
+    </Svg>
+  );
+}
+
+/** Deliver — publish / send out (Lucide "send" paper plane). */
+export function DeliverIcon(): React.ReactElement {
+  return (
+    <Svg>
+      <path d="M22 2 11 13" />
+      <path d="M22 2 15 22l-4-9-9-4Z" />
+    </Svg>
+  );
+}
+
 /** Settings — gear (Lucide "settings"). */
 export function SettingsIcon(): React.ReactElement {
   return (
