@@ -61,6 +61,15 @@ describe('PresetMatrix', () => {
     expect(optionFor('shorts')?.textContent).toContain('9:16');
   });
 
+  it('states that the aspect is set in Reframe so the badges never imply Export output', () => {
+    render({ value: 'tiktok' });
+    // The per-destination aspect is a TARGET set upstream in Reframe — the hint keeps the
+    // badge from implying Export re-crops the frame (Export keeps the current framing).
+    expect(q('.preset-matrix__hint')?.textContent).toBe(
+      'Aspect is set in Reframe — Export keeps your current framing.',
+    );
+  });
+
   it('reflects the selection through aria-checked + roving tabindex', () => {
     render({ value: 'reels' });
     expect(optionFor('reels')?.getAttribute('aria-checked')).toBe('true');

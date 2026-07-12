@@ -2,7 +2,7 @@
 //
 // Export is the ONE irreversible, spend/file-writing action, so this inspector
 // guards it: a per-platform destination matrix, a pre-flight SUMMARY (clips /
-// aspect / duration / est. time / est. spend), a restated privacy beat, and ONE
+// framing / duration / est. time / est. spend), a restated privacy beat, and ONE
 // amber approve action — ranked ABOVE the secondary matrix by scale + elevation,
 // never an equal-weight tile. The approve is a TWO-STEP guarded commit: the primary
 // button opens an explicit confirm gate; only "Export now" fires `onCommit`.
@@ -10,7 +10,7 @@
 // A THIN CONSUMER of the shared editor state (`useEditor`): it reads the video/
 // cues/cropPlan to build the pre-flight and never owns the stage or a copy of them.
 
-import React, { useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import type { ConvertOptions } from '../../lib/rpc';
 import { useEditor } from '../EditorContext';
 import {
@@ -18,6 +18,7 @@ import {
   buildPreflight,
   exportConvertOptions,
   firstAvailablePresetId,
+  framingSummary,
   presetById,
   windowDurationSec,
 } from './exportModel';
@@ -25,12 +26,12 @@ import { PresetMatrix } from './PresetMatrix';
 import './export.css';
 
 /** The local-first privacy beat — the same promise the Studio inspector makes. */
-export const EXPORT_PRIVACY_NOTE = 'Everything runs on your computer — nothing is uploaded.';
+export const EXPORT_PRIVACY_NOTE = 'Everything runs on your machine — nothing is uploaded.';
 
 /** The guarded-commit confirm copy: Export IS the bake, and it stays local. */
 export const EXPORT_CONFIRM_BLURB =
   'This is the final render — everything you set is baked into the file. It is written to your ' +
-  'computer; nothing is uploaded.';
+  'machine; nothing is uploaded.';
 
 export interface ExportInspectorProps {
   /** Fired only after the explicit confirm — starts the guarded render. */
@@ -42,9 +43,20 @@ export function ExportInspector({ onCommit }: ExportInspectorProps): React.React
   const durationSec = windowDurationSec(state);
   const [selected, setSelected] = useState<string>(() => firstAvailablePresetId(durationSec));
   const [confirming, setConfirming] = useState(false);
+  const approveRef = useRef<HTMLButtonElement>(null);
+  const confirmTitleId = useId();
+  const confirmBlurbId = useId();
 
   const preset = presetById(selected);
   const preflight = buildPreflight(state, preset);
+  const framing = framingSummary(state);
+
+  // WCAG 2.4.3: activating the primary unmounts it and mounts the confirm gate, so
+  // move focus into the alertdialog's primary action — otherwise focus drops to
+  // <body> and the gate goes unannounced. `?.` no-ops on mount/close (ref detached).
+  useEffect(() => {
+    approveRef.current?.focus();
+  }, [confirming]);
 
   const commit = (): void => {
     setConfirming(false);
@@ -68,8 +80,8 @@ export function ExportInspector({ onCommit }: ExportInspectorProps): React.React
             <span className="export-inspector__cell-value">{preflight.clipCount}</span>
           </div>
           <div className="export-inspector__cell">
-            <span className="export-inspector__cell-label">Aspect</span>
-            <span className="export-inspector__cell-value">{preflight.aspect}</span>
+            <span className="export-inspector__cell-label">Framing</span>
+            <span className="export-inspector__cell-value">{framing}</span>
           </div>
           <div className="export-inspector__cell">
             <span className="export-inspector__cell-label">Length</span>
@@ -89,11 +101,25 @@ export function ExportInspector({ onCommit }: ExportInspectorProps): React.React
       <p className="export-inspector__privacy">{EXPORT_PRIVACY_NOTE}</p>
 
       {confirming ? (
-        <div className="export-inspector__confirm" role="group" aria-label="Confirm export">
-          <h3 className="export-inspector__confirm-title">Export to {preset.name}?</h3>
-          <p className="export-inspector__confirm-blurb">{EXPORT_CONFIRM_BLURB}</p>
+        <div
+          className="export-inspector__confirm"
+          role="alertdialog"
+          aria-labelledby={confirmTitleId}
+          aria-describedby={confirmBlurbId}
+        >
+          <h3 id={confirmTitleId} className="export-inspector__confirm-title">
+            Export to {preset.name}?
+          </h3>
+          <p id={confirmBlurbId} className="export-inspector__confirm-blurb">
+            {EXPORT_CONFIRM_BLURB}
+          </p>
           <div className="export-inspector__confirm-actions">
-            <button type="button" className="export-inspector__confirm-approve" onClick={commit}>
+            <button
+              ref={approveRef}
+              type="button"
+              className="export-inspector__confirm-approve"
+              onClick={commit}
+            >
               Export now
             </button>
             <button

@@ -3,7 +3,9 @@
 // A REAL fieldset/radiogroup (role="radiogroup" of role="radio" options with
 // aria-checked + roving tabindex + arrow-key selection), NOT a grid of equal-weight
 // tiles. Every option is a recognizable DESTINATION (TikTok / Reels / Shorts…)
-// implying aspect + length — never codec/bitrate jargon. Options carry three
+// showing its TARGET aspect + length — never codec/bitrate jargon. A hint states
+// that aspect is set upstream in Reframe (Export keeps the current framing), so the
+// per-destination badge never implies Export re-crops the frame. Options carry three
 // states: SELECTED (the amber ring), AVAILABLE (selectable), and UNAVAILABLE (the
 // clip is longer than the platform's cap — blocked with a stated reason). While the
 // export is confirming/running the whole group is disabled so the choice is locked.
@@ -50,6 +52,9 @@ export function PresetMatrix({
   return (
     <fieldset className="preset-matrix">
       <legend className="preset-matrix__legend">Deliver to</legend>
+      <p className="preset-matrix__hint">
+        Aspect is set in Reframe — Export keeps your current framing.
+      </p>
       <div
         className="preset-matrix__grid"
         role="radiogroup"

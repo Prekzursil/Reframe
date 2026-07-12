@@ -51,6 +51,13 @@ describe('ExportResult', () => {
     render({ outcome: 'done', paths: ['/out/a.mp4', '/out/b.mp4'], onReveal });
     expect(q('.export-result')?.className).toContain('is-done');
     expect(q('.export-result__title')?.textContent).toBe('Exported to TikTok');
+    // The completion is announced (role=status) and HONEST about framing: Export saved
+    // the CURRENT framing locally — it never claims a per-destination aspect output.
+    const blurb = q('.export-result__blurb');
+    expect(blurb?.getAttribute('role')).toBe('status');
+    expect(blurb?.textContent).toBe(
+      'Saved to your machine at its current framing — nothing was uploaded.',
+    );
     expect(all('.export-result__output').length).toBe(2);
     // Reveal each written file in the OS explorer.
     act(() => q<HTMLButtonElement>('.export-result__reveal')?.click());
@@ -79,11 +86,14 @@ describe('ExportResult', () => {
     expect(onExportAgain).toHaveBeenCalledTimes(1);
   });
 
-  it('CANCEL states plainly that no file was written', () => {
+  it('CANCEL states plainly that no file was written and announces via role=status', () => {
     render({ outcome: 'cancelled' });
     expect(q('.export-result')?.className).toContain('is-cancelled');
     expect(q('.export-result__title')?.textContent).toBe('Export cancelled');
-    expect(q('.export-result__blurb')?.textContent).toBe('No file was written.');
+    const blurb = q('.export-result__blurb');
+    expect(blurb?.textContent).toBe('No file was written.');
+    // The terminal cancel reaches SR users through a polite live region (not just visually).
+    expect(blurb?.getAttribute('role')).toBe('status');
     expect(q('.export-result__error')).toBeNull();
   });
 });

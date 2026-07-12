@@ -3,9 +3,10 @@
 // Every async surface needs a terminal SUCCESS and a terminal FAILURE/cancel (§8
 // DoD). SUCCESS wires to the real output location (a "Show in folder" reveal, the
 // OutputTray role) and links INTO Deliver (finishing Phase-5 → batch publish).
-// FAILURE surfaces the error in an assertive alert with a recovery action; CANCEL
-// states clearly that no file was written. Status is text + a green/amber/red edge,
-// never hue alone. Controlled + presentational.
+// FAILURE surfaces the error in an assertive alert with a recovery action; SUCCESS
+// and CANCEL announce their terminal outcome through a polite `role="status"` live
+// region so completion reaches SR users too. Status is text + a green/amber/red
+// edge, never hue alone. Controlled + presentational.
 
 import React from 'react';
 import './export.css';
@@ -42,7 +43,9 @@ export function ExportResult({
     return (
       <section className="export-result is-done" aria-label="Export result">
         <h3 className="export-result__title">Exported to {destination}</h3>
-        <p className="export-result__blurb">Saved to your computer — nothing was uploaded.</p>
+        <p className="export-result__blurb" role="status">
+          Saved to your machine at its current framing — nothing was uploaded.
+        </p>
         <ul className="export-result__outputs">
           {paths.map((path) => (
             <li key={path} className="export-result__output">
@@ -80,7 +83,9 @@ export function ExportResult({
           {error}
         </p>
       ) : (
-        <p className="export-result__blurb">No file was written.</p>
+        <p className="export-result__blurb" role="status">
+          No file was written.
+        </p>
       )}
       <div className="export-result__actions">
         <button type="button" className="export-result__again" onClick={onExportAgain}>

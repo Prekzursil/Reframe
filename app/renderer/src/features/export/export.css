@@ -24,6 +24,15 @@
   color: var(--text-muted);
 }
 
+/* Honesty beat: Export never re-crops — the per-destination aspect is a TARGET set
+ * upstream in Reframe, so this hint keeps the aspect badges from implying output. */
+.preset-matrix__hint {
+  margin: 0 0 var(--space-3);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-leading);
+  color: var(--text-muted);
+}
+
 .preset-matrix__grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
