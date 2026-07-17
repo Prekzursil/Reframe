@@ -107,6 +107,13 @@ describe('buildCspHeaderValue', () => {
     expect(csp).not.toContain('http://');
     expect(csp).not.toContain('https://');
   });
+
+  it('pins font-src to self so bundled woff2 load locally and no remote font CDN can', () => {
+    // The self-hosted @font-face binaries (styles/fonts.css) load from the app's
+    // own origin; an explicit font-src 'self' documents that policy and blocks a
+    // remote gstatic/googleapis font url even if default-src were ever loosened.
+    expect(csp).toContain("font-src 'self'");
+  });
 });
 
 describe('cspResponseHeaders (onHeadersReceived shape)', () => {

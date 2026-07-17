@@ -81,6 +81,9 @@ export function buildCspHeaderValue(): string {
     "img-src 'self' data: blob: mstream:",
     "media-src 'self' data: blob: mstream:",
     "connect-src 'self'",
+    // Self-hosted woff2 (styles/fonts.css) load from the app's own origin; explicit
+    // font-src 'self' documents the policy and blocks any remote font CDN.
+    "font-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",
   ].join('; ');
