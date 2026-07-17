@@ -166,7 +166,7 @@ scenedetect==0.7
     # via media-studio-sidecar (sidecar/pyproject.toml)
 segments==2.4.0
     # via phonemizer-fork
-setuptools==82.0.1
+setuptools==83.0.0
     # via ctranslate2
 shellingham==1.5.4
     # via typer

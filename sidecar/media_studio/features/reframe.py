@@ -14,21 +14,30 @@ rather than being silently substituted.
 
 The verthor adapter: verthor (a mediapipe-based auto-reframer) runs inside its
 own **WSL2** environment, so we invoke it as a Windows-host subprocess that
-shells into WSL:
+enters WSL:
 
-    ["wsl", "bash", <script_path_in_wsl>, <in>, <out>, <aspect>, <w>, <h>]
+    ["wsl", "--exec", "bash", <script_path_in_wsl>, <in>, <out>, <aspect>, <w>, <h>]
+
+``--exec`` is load-bearing: without it, ``wsl.exe`` space-joins the argument
+tail and runs it through the WSL DEFAULT SHELL (``$SHELL -c``), so shell
+metacharacters in the translated media paths would be interpreted inside WSL
+and paths with spaces would word-split (CodeQL #1752,
+``py/command-line-injection``). With ``--exec`` the command is exec'd with this
+verbatim argv — no inner shell ever re-parses the arguments.
 
 THE GOTCHA (proven, see §4): NEVER pipe the verthor script into bash via
 ``tr | bash`` over **stdin**. mediapipe inside verthor reads from stdin and
 corrupts a script delivered that way. The script MUST be passed as an *argv*
-element (``wsl bash <script> ...``) so it is read FROM A FILE, leaving stdin free.
+element (``wsl --exec bash <script> ...``) so it is read FROM A FILE, leaving
+stdin free.
 
 Everything here is pure argv construction + a thin, injectable ``runner`` seam so
 the whole module is unit-testable with no WSL, no mediapipe, and no real verthor.
 Output is 1080x1920 h264 (vertical 9:16) per the contract.
 
-CONTRACTS.md §4/§6: argv-list subprocess only (never ``shell=True``); paths with
-spaces stay intact because each is its own argv element; logs go to stderr.
+CONTRACTS.md §4/§6: argv-list subprocess only (never ``shell=True``, never an
+inner WSL shell — ``--exec``); paths with spaces stay intact because each is its
+own argv element and nothing re-joins them; logs go to stderr.
 """
 
 from __future__ import annotations
@@ -53,10 +62,10 @@ DEFAULT_ASPECT = "9:16"
 OUT_WIDTH = 1080
 OUT_HEIGHT = 1920
 
-# CONTRACT-NOTE: §4 names "verthor" and "wsl bash <script>" but does not pin the
-# script's on-disk location. We resolve it (settings -> env -> bundled default)
-# the same way ffmpeg.py resolves its binary, and translate it (plus the media
-# paths) to a WSL path so `wsl bash` can read the file. The bundled default is
+# CONTRACT-NOTE: §4 names "verthor" and "wsl --exec bash <script>" but does not
+# pin the script's on-disk location. We resolve it (settings -> env -> bundled
+# default) the same way ffmpeg.py resolves its binary, and translate it (plus the
+# media paths) to a WSL path so `wsl --exec bash` can read the file. The bundled default is
 # the package's own scripts/verthor_reframe.sh (matches build_reframe_argv's
 # argv contract; Phase-0 fix — the old /opt/verthor placeholder existed nowhere).
 # Override via settings.verthorScript / env.
@@ -158,8 +167,9 @@ def resolve_script(settings: dict[str, Any] | None = None) -> str:
 
     Order: ``settings.verthorScript`` -> env ``MEDIA_STUDIO_VERTHOR_SCRIPT`` ->
     the bundled default. The result is always translated to a WSL path so
-    ``wsl bash <script>`` can open the file. The script is read FROM A FILE — it
-    is never piped through stdin (the proven mediapipe-corruption gotcha).
+    ``wsl --exec bash <script>`` can open the file. The script is read FROM A
+    FILE — it is never piped through stdin (the proven mediapipe-corruption
+    gotcha).
     """
     settings = settings or {}
     raw = settings.get("verthorScript") or os.environ.get("MEDIA_STUDIO_VERTHOR_SCRIPT") or _DEFAULT_VERTHOR_SCRIPT
@@ -177,21 +187,28 @@ def build_reframe_argv(
     aspect: str = DEFAULT_ASPECT,
     settings: dict[str, Any] | None = None,
 ) -> list[str]:
-    """Build the ``wsl bash <script> ...`` argv for a verthor reframe.
+    """Build the ``wsl --exec bash <script> ...`` argv for a verthor reframe.
 
-    Shape (§4): ``["wsl", "bash", <script>, <in>, <out>, <aspect>, <w>, <h>]``.
+    Shape (§4): ``["wsl", "--exec", "bash", <script>, <in>, <out>, <aspect>, <w>, <h>]``.
 
-    - The script is the THIRD argv element (``bash``'s positional file argument),
-      i.e. read FROM A FILE. There is no ``-c``, no ``tr``, no ``|``, and nothing
-      goes to bash's stdin — that is the whole point of the contract gotcha.
+    - ``--exec`` makes ``wsl.exe`` exec the command with this VERBATIM argv.
+      Without it, wsl space-joins the tail and runs it through the WSL default
+      shell (``$SHELL -c``) — metacharacters in the translated media paths would
+      be shell-interpreted inside WSL and spaces would word-split (CodeQL #1752,
+      ``py/command-line-injection``).
+    - The script is ``bash``'s positional file argument, i.e. read FROM A FILE.
+      There is no ``-c``, no ``tr``, no ``|``, and nothing goes to bash's stdin —
+      that is the whole point of the contract gotcha.
     - Media paths are translated to ``/mnt/...`` WSL paths and kept as single
-      argv elements, so paths with spaces survive (no ``shell=True``).
+      argv elements, so paths with spaces survive (no ``shell=True``, no inner
+      shell).
     - Width/height are passed so the script targets 1080x1920 (h264) for 9:16.
     """
     width, height = output_dimensions(aspect)
     script = resolve_script(settings)
     return [
         "wsl",
+        "--exec",
         "bash",
         script,
         to_wsl_path(in_path),
@@ -291,7 +308,8 @@ class ReframeEngine:
     ) -> str:
         """Reframe ``in_path`` to vertical and write ``out_path``; return it.
 
-        Invokes verthor under WSL as ``wsl bash <script> <args>`` (script read
+        Invokes verthor under WSL as ``wsl --exec bash <script> <args>``
+        (``--exec`` = no WSL default shell, args reach bash verbatim; script read
         FROM A FILE, never piped via ``tr|bash`` on stdin). Output is 1080x1920
         h264 for the default 9:16 aspect. Raises :class:`ReframeError` on a
         non-zero exit code.
