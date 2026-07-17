@@ -6,7 +6,7 @@ aiosignal==1.4.0
     # via aiohttp
 annotated-doc==0.0.4
     # via typer
-anyio==4.14.1
+anyio==4.14.2
     # via httpx
 attrs==26.1.0
     # via
@@ -37,7 +37,7 @@ colorama==0.4.6
     #   tqdm
 coloredlogs==15.0.1
     # via onnxruntime
-colorlog==6.10.1
+colorlog==6.11.0
     # via kokoro-onnx
 csvw==4.1.0
     # via segments
@@ -51,7 +51,7 @@ espeakng-loader==0.2.4
     # via kokoro-onnx
 faster-whisper==1.2.1
     # via media-studio-sidecar (sidecar/pyproject.toml)
-filelock==3.29.7
+filelock==3.30.3
     # via huggingface-hub
 flatbuffers==25.12.19
     # via onnxruntime
@@ -63,7 +63,7 @@ fsspec==2026.6.0
     # via huggingface-hub
 h11==0.16.0
     # via httpcore
-hf-xet==1.5.1
+hf-xet==1.5.2
     # via huggingface-hub
 httpcore==1.0.9
     # via httpx
@@ -71,7 +71,7 @@ httpx==0.28.1
     # via
     #   media-studio-sidecar (sidecar/pyproject.toml)
     #   huggingface-hub
-huggingface-hub==1.23.0
+huggingface-hub==1.24.0
     # via
     #   faster-whisper
     #   tokenizers
@@ -182,12 +182,12 @@ termcolor==3.3.0
     # via csvw
 tokenizers==0.23.1
     # via faster-whisper
-tqdm==4.68.4
+tqdm==4.69.0
     # via
     #   faster-whisper
     #   huggingface-hub
     #   scenedetect
-typer==0.26.8
+typer==0.27.0
     # via huggingface-hub
 typing-extensions==4.16.0
     # via
