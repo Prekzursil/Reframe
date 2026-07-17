@@ -85,8 +85,10 @@ response resolves when done — long jobs return `{"jobId"}` immediately and str
 
 ## 4. Engine interfaces (exactly ONE impl each in this build)
 - `ReframeEngine.reframe(in_path, out_path, aspect="9:16") -> out_path` — sole impl = **verthor** adapter.
-  Verthor runs under **WSL2**; invoke its script **FROM A FILE** (`wsl bash <script> <args>`), NEVER pipe a
-  script via `tr|bash` (mediapipe consumes stdin and corrupts the script — proven gotcha). Output 1080x1920 h264.
+  Verthor runs under **WSL2**; invoke its script **FROM A FILE** (`wsl --exec bash <script> <args>` — `--exec`
+  bypasses the WSL default shell so every arg reaches bash as verbatim exec argv, never re-joined/re-parsed;
+  without it wsl.exe space-joins the tail into `$SHELL -c`, an in-WSL injection surface, CodeQL #1752), NEVER pipe
+  a script via `tr|bash` (mediapipe consumes stdin and corrupts the script — proven gotcha). Output 1080x1920 h264.
 - `CaptionEngine.render(clip_path, cues, out_path, burn=True, width=1080, height=1920) -> out_path` — sole impl
   = **libass via ffmpeg**. Generate ASS sized for width x height; **cue times re-based to the clip (subtract
   sourceStart)**; **escape cue text** (no raw `{`/`}` ASS override injection). burn=True hardcodes; burn=False soft-mux.
