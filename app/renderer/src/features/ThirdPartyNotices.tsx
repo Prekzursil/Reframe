@@ -100,6 +100,64 @@ export const THIRD_PARTY_NOTICES: readonly ModelNotice[] = [
   },
 ];
 
+/** One bundled self-hosted font's OFL attribution record. */
+export interface FontNotice {
+  /** Family name (matches the tokens.css lead + the fonts.css @font-face). */
+  name: string;
+  /** Which type token the family binds, in one line. */
+  role: string;
+  /** SPDX-style license id — always `OFL-1.1` for the bundled trio. */
+  license: string;
+  /** Canonical URL of the license text. */
+  licenseUrl: string;
+  /** OFL is permissive: commercial use is permitted for all three. */
+  commercial: boolean;
+  /** Verbatim copyright line reproduced from the upstream OFL.txt. */
+  attribution: string;
+  /** Upstream source repository. */
+  source: string;
+}
+
+/** Repo-relative path of the vendored full OFL license + copyright notices. */
+export const FONT_LICENSE_FILE = 'renderer/src/assets/fonts/OFL.txt';
+
+/**
+ * The self-hosted UI type trio (renderer/src/assets/fonts/*.woff2, bound in
+ * styles/fonts.css). All three are SIL OFL 1.1 — permissive, commercial-OK — so
+ * they carry no obligation like ViNet-S's; the copyright lines below are
+ * reproduced verbatim from each family's upstream OFL.txt to satisfy the OFL's
+ * attribution condition in the shipped UI, not just documentation.
+ */
+export const FONT_NOTICES: readonly FontNotice[] = [
+  {
+    name: 'Inter',
+    role: 'UI typeface — dense-interface legibility (--font-ui)',
+    license: 'OFL-1.1',
+    licenseUrl: 'https://openfontlicense.org',
+    commercial: true,
+    attribution: 'Copyright 2020 The Inter Project Authors',
+    source: 'https://github.com/rsms/inter',
+  },
+  {
+    name: 'Newsreader',
+    role: 'Editorial serif — the pull-quote voice (--font-editorial)',
+    license: 'OFL-1.1',
+    licenseUrl: 'https://openfontlicense.org',
+    commercial: true,
+    attribution: 'Copyright 2020 The Newsreader Project Authors',
+    source: 'https://github.com/productiontype/Newsreader',
+  },
+  {
+    name: 'IBM Plex Mono',
+    role: 'Monospace — timecode & numerals (--font-mono)',
+    license: 'OFL-1.1',
+    licenseUrl: 'https://openfontlicense.org',
+    commercial: true,
+    attribution: 'Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"',
+    source: 'https://github.com/IBM/plex',
+  },
+];
+
 /** The Settings → Licenses surface: bundled third-party model attributions. */
 export function ThirdPartyNotices(): React.ReactElement {
   return (
@@ -148,6 +206,38 @@ export function ThirdPartyNotices(): React.ReactElement {
           </li>
         ))}
       </ul>
+      <div className="tpn__fonts">
+        <h3 className="tpn__subtitle">Bundled fonts</h3>
+        <p className="tpn__intro">
+          Reframe self-hosts its UI type trio. All three are licensed under the SIL Open Font
+          License 1.1 (permissive; commercial use permitted). The full license text and verbatim
+          copyright notices ship beside the binaries at <code>{FONT_LICENSE_FILE}</code>.
+        </p>
+        <ul className="tpn__list">
+          {FONT_NOTICES.map((f) => (
+            <li key={f.name} className="tpn__item" data-font={f.name}>
+              <header className="tpn__head">
+                <span className="tpn__name">{f.name}</span>
+                <span className="tpn__chip tpn__chip--ofl" data-commercial="yes">
+                  {f.license}
+                </span>
+              </header>
+              <p className="tpn__role">{f.role}</p>
+              <p className="tpn__attr">{f.attribution}</p>
+              <p className="tpn__license">
+                License:{' '}
+                <a href={f.licenseUrl} target="_blank" rel="noreferrer">
+                  {f.license}
+                </a>{' '}
+                · Source:{' '}
+                <a href={f.source} target="_blank" rel="noreferrer">
+                  {f.source}
+                </a>
+              </p>
+            </li>
+          ))}
+        </ul>
+      </div>
     </section>
   );
 }
