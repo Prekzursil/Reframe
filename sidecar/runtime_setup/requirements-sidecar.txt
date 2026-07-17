@@ -29,7 +29,7 @@ httpx==0.28.1
 numpy==2.5.1
 av==17.1.0
 onnxruntime==1.27.0
-huggingface_hub==1.23.0
+huggingface_hub==1.24.0
 tokenizers==0.23.1
 
 # TTS (kokoro default engine — the onnx build, NEVER the torch pip package; A4)
