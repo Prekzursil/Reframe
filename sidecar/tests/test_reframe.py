@@ -205,10 +205,11 @@ def test_build_reframe_argv_is_wsl_bash_script_from_file():
         {"verthorScript": "/opt/verthor/reframe.sh"},
     )
     assert isinstance(argv, list)
-    # wsl bash <script> ... — script is the THIRD element, read FROM A FILE.
+    # wsl --exec bash <script> ... — script read FROM A FILE; --exec means
+    # wsl.exe execs this verbatim argv (no WSL default-shell re-parse).
     assert argv[0] == "wsl"
-    assert argv[1] == "bash"
-    assert argv[2] == "/opt/verthor/reframe.sh"
+    assert argv[1:3] == ["--exec", "bash"]
+    assert argv[3] == "/opt/verthor/reframe.sh"
     # The script is a bare positional path: NOT bash -c, NOT a stdin string.
     assert "-c" not in argv
 
@@ -221,8 +222,8 @@ def test_build_reframe_argv_no_stdin_script_no_tr_bash_pipe():
     assert "|" not in joined  # no shell pipe anywhere in the argv
     assert "<" not in joined  # no stdin redirection
     # bash receives a FILE argument, not "-c" inline source.
-    assert argv[1] == "bash"
-    assert argv[2].endswith(".sh")
+    assert argv[1:3] == ["--exec", "bash"]
+    assert argv[3].endswith(".sh")
     assert "-c" not in argv
 
 
@@ -266,6 +267,28 @@ def test_build_reframe_argv_each_path_is_one_element():
     )
     assert "/mnt/c/My Clips/talk one.mp4" in argv
     assert "/mnt/c/Out Dir/talk one v.mp4" in argv
+
+
+def test_build_reframe_argv_exec_keeps_hostile_paths_verbatim_single_elements():
+    # CodeQL #1752 regression (py/command-line-injection): WITHOUT --exec,
+    # wsl.exe space-joins the argument tail and runs it through the WSL DEFAULT
+    # SHELL ($SHELL -c), so `$(...)`/`;`/backticks in a translated media path
+    # would execute inside WSL and spaces would word-split. --exec makes wsl
+    # exec bash with this VERBATIM argv — the no-inner-shell contract: every
+    # hostile path stays exactly ONE argv element, and --exec precedes any
+    # user-derived argument.
+    argv = reframe.build_reframe_argv(
+        r"C:\Downloads\clip $(touch pwned); rm -rf x.mp4",
+        r"C:\Out Dir\a & b `id`.mp4",
+        "9:16",
+        {"verthorScript": "/opt/verthor/reframe.sh"},
+    )
+    assert argv[:3] == ["wsl", "--exec", "bash"]
+    # in/out land as single, byte-identical elements — never re-joined or split.
+    assert argv[4] == "/mnt/c/Downloads/clip $(touch pwned); rm -rf x.mp4"
+    assert argv[5] == "/mnt/c/Out Dir/a & b `id`.mp4"
+    # full fixed shape: wsl --exec bash <script> <in> <out> <aspect> <w> <h>
+    assert len(argv) == 9
 
 
 # --------------------------------------------------------------------------- #
@@ -331,8 +354,8 @@ def test_reframe_call_is_from_file_not_stdin_script():
     engine.reframe(r"C:\in\clip.mp4", r"C:\out\clip.mp4")
 
     argv = popen.calls[0]["argv"]
-    # 1) script is read FROM A FILE: wsl bash <script-path> ...
-    assert argv[:3] == ["wsl", "bash", "/opt/verthor/reframe.sh"]
+    # 1) script is read FROM A FILE: wsl --exec bash <script-path> ...
+    assert argv[:4] == ["wsl", "--exec", "bash", "/opt/verthor/reframe.sh"]
     # 2) no inline source / no stdin script delivery
     assert "-c" not in argv
     joined = " ".join(argv)
