@@ -1,0 +1,107 @@
+/* caption.css — the Caption phase view layout (v1.5 pilot). Tokens only. */
+
+.caption-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-5);
+  min-height: 0;
+}
+
+.caption-view__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.caption-view__back {
+  padding: var(--control-pad-btn);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.caption-view__back:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.caption-view__back:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.caption-view__title {
+  margin: 0;
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-tracking);
+  color: var(--text-primary);
+}
+
+.caption-view__error {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--type-body-size);
+  color: var(--status-error);
+  background: var(--status-error-soft);
+  border-radius: var(--radius-sm);
+}
+
+/* Stage + timeline on the left; the inspector column on the right. Collapses to a
+ * single column on a narrow window so nothing overflows horizontally. */
+.caption-view__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.caption-view__stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .caption-view__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* No-video empty state. */
+.caption-view--empty {
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+}
+
+.caption-view__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  text-align: center;
+  padding: var(--space-8);
+}
+
+.caption-view__empty-title {
+  margin: 0;
+  font-family: var(--font-editorial);
+  font-size: var(--type-subhead-size);
+  color: var(--text-primary);
+}
+
+.caption-view__empty-blurb {
+  margin: 0;
+  max-width: 40ch;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+  color: var(--text-secondary);
+}

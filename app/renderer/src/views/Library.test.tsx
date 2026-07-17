@@ -909,7 +909,7 @@ describe('Library source provenance (WU-1f)', () => {
     };
   }
 
-  it('renders a provenance row per card and drops the legacy compact path line', async () => {
+  it('demotes each card provenance behind a disclosure and drops the legacy path line', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
     const handlers = provenanceHandlers();
     await act(async () => {
@@ -917,14 +917,25 @@ describe('Library source provenance (WU-1f)', () => {
     });
     await flush();
 
-    // The provenance row renders (with the clear full path) and calls reveal.
-    expect(container.querySelector('.library-provenance')).not.toBeNull();
+    // Resting card: the disclosure toggle is present, but the provenance plumbing
+    // is hidden (and not even fetched) — the card stays content-first.
+    expect(container.querySelector('.card-provenance__toggle')).not.toBeNull();
+    expect(container.querySelector('.library-provenance')).toBeNull();
+    expect(handlers.reveal).not.toHaveBeenCalled();
+    // The legacy tiny grey path line is gone regardless (provenance owns the path).
+    expect(container.querySelector('.library__item-path')).toBeNull();
+
+    // Opening the disclosure reveals the full source path and calls reveal.
+    await act(async () => {
+      (container.querySelector('.card-provenance__toggle') as HTMLButtonElement).dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      );
+    });
+    await flush();
     expect(container.querySelector('.library-provenance__path')?.textContent).toBe(
       '/movies/talk.mp4',
     );
     expect(handlers.reveal).toHaveBeenCalledWith('v1');
-    // The legacy tiny grey path line is replaced by the provenance row.
-    expect(container.querySelector('.library__item-path')).toBeNull();
   });
 });
 

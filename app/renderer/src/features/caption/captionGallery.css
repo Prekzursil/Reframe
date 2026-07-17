@@ -1,0 +1,152 @@
+/* captionGallery.css — the expand-over-timeline preset gallery (v1.5). Tokens only. */
+
+.caption-gallery {
+  position: relative;
+}
+
+.caption-gallery__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-1);
+}
+
+.caption-gallery__label {
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* The active style name in the editorial serif voice — the pull-quote moment the
+ * --font-editorial token exists for. */
+.caption-gallery__current {
+  flex: 1;
+  font-family: var(--font-editorial);
+  font-size: var(--type-hook-size);
+  color: var(--text-primary);
+}
+
+.caption-gallery__toggle {
+  padding: var(--control-pad-btn);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  background: var(--surface-overlay);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.caption-gallery__toggle:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.caption-gallery__toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The expanded gallery floats OVER the timeline below it (not a cramped column). */
+.caption-gallery__grid {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: var(--space-5);
+  background: var(--surface-overlay);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-3);
+}
+
+.caption-gallery__group-title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.caption-gallery__swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: var(--space-3);
+}
+
+.caption-gallery__swatch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  text-align: left;
+  background: var(--surface-raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-1);
+  cursor: pointer;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.caption-gallery__swatch:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--elev-2);
+}
+
+.caption-gallery__swatch:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The ONLY app-chrome accent in the gallery: the amber selection ring. */
+.caption-gallery__swatch.is-active {
+  border-color: var(--accent-edge);
+  box-shadow: var(--focus-glow);
+}
+
+.caption-gallery__preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 54px;
+  border-radius: var(--radius-sm);
+  background: var(--atmos-well), var(--surface-deep);
+}
+
+.caption-gallery__sample {
+  font-size: var(--type-rank-size);
+  font-weight: var(--weight-bold);
+}
+
+.caption-gallery__off {
+  font-size: var(--type-caption-size);
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: var(--type-caption-tracking);
+}
+
+.caption-gallery__name {
+  font-size: var(--type-card-title-size);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.caption-gallery__blurb {
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-leading);
+  color: var(--text-faint);
+}

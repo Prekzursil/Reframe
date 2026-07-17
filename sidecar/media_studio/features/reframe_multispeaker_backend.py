@@ -154,7 +154,7 @@ class RealMultiSpeakerBackend:  # pragma: no cover - requires the heavy native s
     def _stage_visual(self, media_path: str, total: int, fps: float) -> tuple[Any, Any, Any]:
         """STAGE 3 — face boxes + Light-ASD visual scores + audio VAD per frame.
 
-        Real S3FD + Light-ASD inference (GPU-validated on razvan_gandu): returns
+        Real YuNet (cv2.FaceDetectorYN) + LR-ASD inference (WU-L1): returns
         ``(boxes_per_frame, visual_scores_per_frame, vad_per_frame)``, each of
         length ``total``, boxes as ``(x, y, w, h)`` source-pixels and per-box ASD
         scores index-aligned to the boxes. Delegates to the seam helper so the

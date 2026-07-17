@@ -98,15 +98,18 @@
   cursor: default;
 }
 
-/* Keep = the primary opt-in: accent-outlined to signal the recommended action. */
+/* Keep = a secondary OPT-IN, not an approve/primary/progress action, so it stays
+   OFF the amber accent (one-accent discipline). Hierarchy comes from tone + a
+   stronger neutral edge, never hue. */
 .keep-copy__btn--keep {
-  color: var(--accent);
-  border-color: var(--accent-edge);
+  color: var(--text-primary);
+  border-color: var(--edge-strong);
 }
 
-/* Destructive confirm step leans on the error hue. */
+/* Destructive confirm step leans on the error hue (AA-safe text on the solid
+   red border). */
 .keep-copy__btn--danger {
-  color: var(--status-error);
+  color: var(--status-error-text);
   border-color: var(--status-error);
 }
 
@@ -121,7 +124,7 @@
 }
 
 .keep-copy__status--error {
-  color: var(--status-error);
+  color: var(--status-error-text);
 }
 
 .keep-copy__status--info {

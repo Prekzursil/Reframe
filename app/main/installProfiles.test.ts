@@ -42,12 +42,10 @@ function pyConst(src: string, name: string): string {
 }
 
 describe('CORE_FLOOR_ASSETS — the no-silent-centre-crop floor', () => {
-  it('is the always-on YuNet + S3FD + LR-ASD weights', () => {
-    expect([...CORE_FLOOR_ASSETS]).toEqual([
-      'yunet-face-detection',
-      'lightasd-s3fd',
-      'lightasd-asd',
-    ]);
+  // WU-L1: the no-license S3FD weight (lightasd-s3fd) was removed — MIT YuNet is
+  // the face detector, so the floor is exactly YuNet + LR-ASD.
+  it('is the always-on YuNet + LR-ASD weights', () => {
+    expect([...CORE_FLOOR_ASSETS]).toEqual(['yunet-face-detection', 'lightasd-asd']);
   });
 
   it('is byte-identical to firstRunGate.CORE_FIRST_RUN_ASSETS (one core floor)', () => {
@@ -58,7 +56,6 @@ describe('CORE_FLOOR_ASSETS — the no-silent-centre-crop floor', () => {
     const manifest = readFileSync(MANIFEST_PY, 'utf8');
     expect([...CORE_FLOOR_ASSETS]).toEqual([
       pyConst(manifest, 'YUNET_ASSET_NAME'),
-      pyConst(manifest, 'LIGHTASD_S3FD_ASSET_NAME'),
       pyConst(manifest, 'LIGHTASD_ASD_ASSET_NAME'),
     ]);
   });
@@ -68,13 +65,14 @@ describe('CORE_FLOOR_ASSETS — the no-silent-centre-crop floor', () => {
     const coreFn = src.match(/def core_first_run_assets\(\)[\s\S]*?\n    return \[([\s\S]*?)\]/);
     const body = coreFn?.[1] ?? '';
     expect(body).toContain('YUNET_ASSET_NAME');
-    expect(body).toContain('LIGHTASD_S3FD_ASSET_NAME');
     expect(body).toContain('LIGHTASD_ASD_ASSET_NAME');
+    // WU-L1: the removed S3FD weight must not be referenced anymore.
+    expect(body).not.toContain('LIGHTASD_S3FD_ASSET_NAME');
   });
 });
 
 describe('every profile is a SUPERSET of the core floor (WU-1c invariant)', () => {
-  it.each([...INSTALL_PROFILE_IDS])('profile %s pins all three core weights', (id) => {
+  it.each([...INSTALL_PROFILE_IDS])('profile %s pins both core weights', (id) => {
     const { assets } = resolveInstallChoice(id, id === 'custom' ? [] : undefined);
     for (const core of CORE_FLOOR_ASSETS) {
       expect(assets).toContain(core);
@@ -101,14 +99,14 @@ describe('Full === bootstrap.py default_first_run_assets() (by value)', () => {
       pyConst(tools, 'LLAMA_CUDA_ASSET'),
       pyConst(tools, 'LLAMA_CUDART_ASSET'),
       pyConst(tools, 'LLAMA_CPU_ASSET'),
-      pyConst(manifest, 'LIGHTASD_S3FD_ASSET_NAME'),
       pyConst(manifest, 'LIGHTASD_ASD_ASSET_NAME'),
       pyConst(manifest, 'YUNET_ASSET_NAME'),
     ]);
     expect(new Set(resolveInstallChoice('full').assets)).toEqual(expected);
   });
 
-  it('the bootstrap.py default set references the same 8 constants', () => {
+  // WU-L1: the no-license S3FD weight was removed, so the default set is 7 assets.
+  it('the bootstrap.py default set references the same 7 constants', () => {
     const src = readFileSync(BOOTSTRAP_PY, 'utf8');
     const fn = src.match(/def default_first_run_assets\(\)[\s\S]*?\n    return \[([\s\S]*?)\]/);
     const body = fn?.[1] ?? '';
@@ -118,12 +116,12 @@ describe('Full === bootstrap.py default_first_run_assets() (by value)', () => {
       'LLAMA_CUDA_ASSET',
       'LLAMA_CUDART_ASSET',
       'LLAMA_CPU_ASSET',
-      'LIGHTASD_S3FD_ASSET_NAME',
       'LIGHTASD_ASD_ASSET_NAME',
       'YUNET_ASSET_NAME',
     ]) {
       expect(body).toContain(c);
     }
+    expect(body).not.toContain('LIGHTASD_S3FD_ASSET_NAME');
   });
 });
 
@@ -198,13 +196,15 @@ describe('sizes', () => {
   });
 
   it('profileSizeLabel grows Minimum < Default < Full', () => {
-    expect(profileSizeLabel('minimum')).toBe('~90 MB');
-    expect(profileSizeLabel('default')).toBe('~1.7 GB');
-    expect(profileSizeLabel('full')).toBe('~5.0 GB');
+    // WU-L1: dropping the 86 MB no-license S3FD weight shrinks every floor total
+    // (Minimum = YuNet 0.3 + LR-ASD 4 = ~4 MB; Default/Full drop the same 86 MB).
+    expect(profileSizeLabel('minimum')).toBe('~4 MB');
+    expect(profileSizeLabel('default')).toBe('~1.6 GB');
+    expect(profileSizeLabel('full')).toBe('~4.9 GB');
   });
 
   it('profileSizeLabel reflects Custom bundle picks', () => {
-    expect(profileSizeLabel('custom', [])).toBe('~90 MB');
+    expect(profileSizeLabel('custom', [])).toBe('~4 MB');
     expect(profileSizeLabel('custom', ['transcription'])).toBe(profileSizeLabel('default'));
   });
 });

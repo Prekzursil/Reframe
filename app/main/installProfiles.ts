@@ -13,11 +13,12 @@
 // cross-file conformance test (installProfiles.test.ts), mirroring the existing
 // firstRunGate.ts <-> bootstrap.py check.
 //
-// THE CORE FLOOR — YuNet subject tracker + S3FD / LR-ASD active-speaker weights —
-// is in EVERY profile, INCLUDING Minimum. Skipping it is the exact trap the
+// THE CORE FLOOR — MIT YuNet subject tracker + LR-ASD active-speaker weight — is
+// in EVERY profile, INCLUDING Minimum. Skipping it is the exact trap the
 // first-run-complete marker guards against: without those weights the reframe
 // engine silently CENTRE-CROPS instead of following a real subject. So Minimum is
 // "app + subject tracking; everything else on demand", never "app only".
+// WU-L1: the no-license S3FD weight was removed from the floor (YuNet replaced it).
 
 /** The four first-run install profiles the picker offers. */
 export const INSTALL_PROFILE_IDS = ['minimum', 'default', 'full', 'custom'] as const;
@@ -27,7 +28,6 @@ export type InstallProfileId = (typeof INSTALL_PROFILE_IDS)[number];
 // Kept as named constants so the conformance test can pin each against the Python
 // source's string VALUE (not just its constant name).
 const YUNET = 'yunet-face-detection';
-const LIGHTASD_S3FD = 'lightasd-s3fd';
 const LIGHTASD_ASD = 'lightasd-asd';
 const WHISPER = 'whisper-large-v3-turbo';
 const QWEN = 'qwen3-4b-gguf';
@@ -41,12 +41,11 @@ const LLAMA_CPU = 'llama-server-cpu';
  * `core_first_run_assets()` (the conformance test pins all three). Present in every
  * profile — the no-silent-centre-crop invariant.
  */
-export const CORE_FLOOR_ASSETS: readonly string[] = [YUNET, LIGHTASD_S3FD, LIGHTASD_ASD];
+export const CORE_FLOOR_ASSETS: readonly string[] = [YUNET, LIGHTASD_ASD];
 
 /** Approx download size per asset (MB) — mirrors the sidecar manifest `size_mb`. */
 export const ASSET_SIZES_MB: Readonly<Record<string, number>> = {
   [YUNET]: 0.3,
-  [LIGHTASD_S3FD]: 86,
   [LIGHTASD_ASD]: 4,
   [WHISPER]: 1600,
   [QWEN]: 2500,

@@ -220,8 +220,9 @@ class TestManifestProfiles:
         assert manifest.WHISPER_ASSET_NAME in core
         assert manifest.QWEN_ASSET_NAME in core
         assert manifest.YUNET_ASSET_NAME in core
-        assert manifest.LIGHTASD_S3FD_ASSET_NAME in core
         assert manifest.LIGHTASD_ASD_ASSET_NAME in core
+        # WU-L1: the no-license S3FD weight is gone — no longer a core asset.
+        assert "lightasd-s3fd" not in core
 
     def test_optional_entries_are_not_core(self):
         by_name = {e.name: e for e in manifest.all_assets()}
@@ -232,13 +233,13 @@ class TestManifestProfiles:
     def test_active_entries_carry_a_plain_english_why(self):
         # The manifest.py active set (day-1 + phase-8 + lightasd + yunet + edgetam)
         # each carries a plain-English why for the assets.plan explain surface.
+        # WU-L1: the no-license S3FD (lightasd-s3fd) weight was removed.
         active = {
             manifest.WHISPER_ASSET_NAME,
             manifest.QWEN_ASSET_NAME,
             manifest.EMBEDDER_ASSET_NAME,
             manifest.HSEMOTION_ASSET_NAME,
             manifest.RAPIDOCR_ASSET_NAME,
-            manifest.LIGHTASD_S3FD_ASSET_NAME,
             manifest.LIGHTASD_ASD_ASSET_NAME,
             manifest.YUNET_ASSET_NAME,
             manifest.EDGETAM_ASSET_NAME,

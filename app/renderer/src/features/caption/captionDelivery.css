@@ -1,0 +1,70 @@
+/* captionDelivery.css — the guarded burn/soft reversibility choice. Tokens only. */
+
+.caption-delivery {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-1);
+}
+
+.caption-delivery__label {
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.caption-delivery__options {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: var(--space-1);
+  gap: var(--space-1);
+  background: var(--surface-deep);
+  border-radius: var(--radius-pill);
+}
+
+.caption-delivery__option {
+  padding: var(--control-pad-toggle);
+  font-size: var(--type-control-size);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.caption-delivery__option:hover {
+  color: var(--text-primary);
+}
+
+.caption-delivery__option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The selected mode gets the ONE amber accent (active state). */
+.caption-delivery__option.is-active {
+  color: var(--accent-ink);
+  background: var(--accent);
+  box-shadow: var(--accent-glow);
+}
+
+.caption-delivery__note {
+  margin: 0;
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-leading);
+  color: var(--text-faint);
+}
+
+/* The permanence warning uses the semantic WARN status (never a new hue). */
+.caption-delivery__note.is-warning {
+  color: var(--status-warn);
+}

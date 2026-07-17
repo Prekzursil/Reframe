@@ -37,8 +37,9 @@ dev = [
   "pytest-cov>=5.0",
   "hypothesis>=6.0",   # property/fuzz tests (deterministic CI profile in conftest)
 ]
-# R1 multi-speaker reframe GPU tier (the vendored S3FD + LR-ASD active-speaker
-# stack in media_studio/features/_lightasd/ PLUS the SpeechBrain diarize stage —
+# R1 multi-speaker reframe GPU tier (the vendored LR-ASD active-speaker stack in
+# media_studio/features/_lightasd/ + MIT YuNet face detection via cv2.FaceDetectorYN,
+# PLUS the SpeechBrain diarize stage —
 # reframe_multispeaker_backend._stage_diarize -> diarize_backend.SpeechBrainDiarizer).
 # These are NOT installed by build agents and NOT in the CI gate env (the unit tests
 # are heavy-ML-free); a human installs them on the GPU host. PINNED to the
@@ -91,7 +92,6 @@ packages = [
   "media_studio.features",
   "media_studio.features.tts",
   "media_studio.features._lightasd",
-  "media_studio.features._lightasd.s3fd",
   "media_studio.features._vinet_s",
   "media_studio.features._transnetv2",
   "media_studio.assets",

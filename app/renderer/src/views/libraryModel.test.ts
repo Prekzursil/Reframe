@@ -14,6 +14,8 @@ import {
   cardBadges,
   cardAriaLabel,
   formatAdded,
+  shortsCountLabel,
+  shortsOpenAriaLabel,
 } from './libraryModel';
 
 function makeVideo(over: Partial<LibraryVideo> = {}): LibraryVideo {
@@ -183,6 +185,25 @@ describe('cardAriaLabel', () => {
   });
   it('omits an unknown duration from the name', () => {
     expect(cardAriaLabel(makeVideo({ durationSec: 0 }), false)).toBe('Open Talk, no transcript');
+  });
+});
+
+describe('shortsCountLabel', () => {
+  it('uses the singular noun for exactly one short', () => {
+    expect(shortsCountLabel(1)).toBe('1 short');
+  });
+  it('uses the plural noun for zero or many shorts', () => {
+    expect(shortsCountLabel(0)).toBe('0 shorts');
+    expect(shortsCountLabel(3)).toBe('3 shorts');
+  });
+});
+
+describe('shortsOpenAriaLabel', () => {
+  it('pluralizes the produced-shorts open name (singular)', () => {
+    expect(shortsOpenAriaLabel(1, 'Talk')).toBe('View 1 produced short for Talk');
+  });
+  it('pluralizes the produced-shorts open name (plural)', () => {
+    expect(shortsOpenAriaLabel(3, 'Talk')).toBe('View 3 produced shorts for Talk');
   });
 });
 

@@ -52,18 +52,20 @@ def test_lightasd_infer_surface_imports_light() -> None:
 
 def test_lightasd_vendored_package_imports_light() -> None:
     # The vendored LR-ASD package __init__ is LIGHT (no torch/cv2); it carries
-    # the upstream provenance + the weight basenames. The heavy model modules
-    # (model / asd / s3fd) import torch at module top, so they are imported lazily
-    # only inside analyze_visual and are NEVER imported here — we assert they SHIP
+    # the upstream provenance + the weight basename. The heavy model modules
+    # (model / asd) import torch at module top, so they are imported lazily only
+    # inside analyze_visual and are NEVER imported here — we assert they SHIP
     # (importable spec) without executing them, so the coverage run never needs
     # torch (their statements are all ``# pragma: no cover``).
+    # WU-L1: the no-license S3FD detector package (s3fd/*) + its S3FD_WEIGHT_NAME
+    # were REMOVED — face detection is MIT YuNet via cv2.FaceDetectorYN now.
     import importlib.util
     import os
 
     import media_studio.features._lightasd as pkg
 
     assert pkg.LR_ASD_LICENSE == "MIT"
-    assert pkg.S3FD_WEIGHT_NAME == "sfd_face.pth"
+    assert not hasattr(pkg, "S3FD_WEIGHT_NAME")
     assert pkg.ASD_WEIGHT_NAME == "finetuning_TalkSet.model"
     assert len(pkg.LR_ASD_COMMIT) == 40
     assert "LR-ASD" in pkg.LR_ASD_UPSTREAM
@@ -72,16 +74,11 @@ def test_lightasd_vendored_package_imports_light() -> None:
     for mod in (
         "media_studio.features._lightasd.model",
         "media_studio.features._lightasd.asd",
-        "media_studio.features._lightasd.s3fd",
     ):
         assert importlib.util.find_spec(mod) is not None
-    # The s3fd SUBMODULES (nets / box_utils) sit under the s3fd package whose
-    # ``__init__`` imports torch at module top; ``find_spec("...s3fd.nets")`` would
-    # have to EXECUTE that ``__init__`` (no torch in the coverage-gate env). Assert
-    # they SHIP via the filesystem instead — proves they are vendored, no import.
+    # WU-L1: the removed S3FD detector package no longer ships.
     s3fd_dir = os.path.join(os.path.dirname(pkg.__file__), "s3fd")
-    for fname in ("__init__.py", "nets.py", "box_utils.py"):
-        assert os.path.isfile(os.path.join(s3fd_dir, fname))
+    assert not os.path.isdir(s3fd_dir)
 
 
 def test_vlm_backbone_backend_surface_imports_light() -> None:

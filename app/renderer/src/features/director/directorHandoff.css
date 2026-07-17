@@ -1,0 +1,133 @@
+/* directorHandoff.css — the "where your edit lands" review surface. Tokens only.
+ *
+ * One-accent discipline: amber stays on the DirectorPanel's approve action; here
+ * the only colour is the semantic READY signal (status green) vs a quiet pending
+ * step — never a decorative second hue. Trust copy renders in the AA-safe quiet
+ * steps (--text-secondary / --text-faint), never the rejected #50555F. */
+
+.director-handoff {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-6);
+  background: var(--atmos-toplight), var(--surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-1);
+  min-width: 0;
+}
+
+.director-handoff__title {
+  margin: 0;
+  font-family: var(--font-editorial);
+  font-size: var(--type-subhead-size);
+  color: var(--text-primary);
+}
+
+/* The signature reversible-edit promise — an AA-safe quiet step, never #50555F. */
+.director-handoff__lede {
+  margin: 0;
+  max-width: 46ch;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+  color: var(--text-secondary);
+}
+
+.director-handoff__routes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* Each route is a low-density card with a status-tinted leading edge. */
+.director-handoff__route {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--surface-bg);
+  border-radius: var(--radius-sm);
+  border-inline-start: 2px solid var(--edge);
+}
+
+.director-handoff__route[data-ready="yes"] {
+  border-inline-start-color: var(--status-success);
+}
+
+.director-handoff__route-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.director-handoff__change {
+  font-size: var(--type-body-size);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.director-handoff__arrow {
+  color: var(--text-faint);
+}
+
+/* The destination phase, as a quiet tracked-caps tag (the label voice). */
+.director-handoff__dest {
+  padding: var(--control-pad-mini);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  background: var(--surface-hover);
+  border-radius: var(--radius-xs);
+}
+
+.director-handoff__blurb {
+  margin: 0;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-leading);
+  color: var(--text-faint);
+}
+
+/* The live landing-zone status: a green dot + green text when ready, a quiet
+ * muted step when the baseline is not yet present. Colour is redundant with the
+ * text ("ready" / "no … yet"), so the signal never rides on hue alone. */
+.director-handoff__status {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--type-caption-size);
+  font-weight: var(--weight-medium);
+  color: var(--text-faint);
+}
+
+.director-handoff__status::before {
+  content: "";
+  flex: 0 0 auto;
+  width: var(--size-dot-sm);
+  height: var(--size-dot-sm);
+  border-radius: var(--radius-pill);
+  background: var(--text-faint);
+  transform: translateY(-1px);
+}
+
+.director-handoff__route[data-ready="yes"] .director-handoff__status {
+  color: var(--status-success);
+}
+
+.director-handoff__route[data-ready="yes"] .director-handoff__status::before {
+  background: var(--status-success);
+}
+
+/* The verbatim per-data-type egress beat — the quietest readable AA-safe step. */
+.director-handoff__egress {
+  margin: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--edge);
+  font-size: var(--type-caption-size);
+  color: var(--text-faint);
+}

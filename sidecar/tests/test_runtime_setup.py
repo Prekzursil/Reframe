@@ -613,13 +613,13 @@ class TestAssets:
         assert tr.LLAMA_CPU_ASSET in names
 
     def test_default_first_run_assets_include_lightasd_weights(self):
-        # WU first-run-provisioning: the multi-speaker reframe engine's S3FD +
-        # LR-ASD weights were registered but never in the first-run set, so a
-        # fresh install silently fell back to a single-speaker/center crop. They
-        # must be provisioned up front.
+        # WU first-run-provisioning: the multi-speaker reframe engine's LR-ASD
+        # weight was registered but never in the first-run set, so a fresh install
+        # silently fell back to a single-speaker/center crop. It must be
+        # provisioned up front. WU-L1: the no-license S3FD weight is gone.
         names = bs.default_first_run_assets()
-        assert manifest.LIGHTASD_S3FD_ASSET_NAME in names
         assert manifest.LIGHTASD_ASD_ASSET_NAME in names
+        assert "lightasd-s3fd" not in names
 
     def test_default_first_run_assets_include_yunet(self):
         # v1.2.0 WU1: the claudeshorts reframe engine's YuNet face detector must be
@@ -629,10 +629,10 @@ class TestAssets:
 
     def test_core_first_run_assets_are_exactly_the_face_asd_weights(self):
         # WU C3 CORE-ONLY marker: the marker attests env + ffmpeg + the always-on
-        # face/ASD weights (YuNet tracker + S3FD + LR-ASD), NOTHING else.
+        # face/ASD weights (YuNet detector + LR-ASD), NOTHING else. WU-L1: the
+        # no-license S3FD weight was removed from the core floor.
         assert bs.core_first_run_assets() == [
             manifest.YUNET_ASSET_NAME,
-            manifest.LIGHTASD_S3FD_ASSET_NAME,
             manifest.LIGHTASD_ASD_ASSET_NAME,
         ]
 
@@ -684,15 +684,15 @@ class _FakeMgr:
 
 class TestVerifyProvisioned:
     def test_passes_when_all_assets_installed(self, tmp_path):
-        names = [manifest.LIGHTASD_S3FD_ASSET_NAME, manifest.LIGHTASD_ASD_ASSET_NAME]
+        names = [manifest.YUNET_ASSET_NAME, manifest.LIGHTASD_ASD_ASSET_NAME]
         mgr = _FakeMgr({n: f"{tmp_path}/{n}.bin" for n in names})
         # No raise == provisioning verified.
         bs.verify_provisioned(names, tmp_path, manager=mgr)
 
     def test_raises_naming_every_missing_asset(self, tmp_path):
-        names = [manifest.LIGHTASD_S3FD_ASSET_NAME, manifest.LIGHTASD_ASD_ASSET_NAME]
-        # S3FD installed, ASD missing -> only the missing one is named.
-        mgr = _FakeMgr({manifest.LIGHTASD_S3FD_ASSET_NAME: f"{tmp_path}/s3fd.bin"})
+        names = [manifest.YUNET_ASSET_NAME, manifest.LIGHTASD_ASD_ASSET_NAME]
+        # YuNet installed, ASD missing -> only the missing one is named.
+        mgr = _FakeMgr({manifest.YUNET_ASSET_NAME: f"{tmp_path}/yunet.bin"})
         with pytest.raises(bs.BootstrapError, match=manifest.LIGHTASD_ASD_ASSET_NAME):
             bs.verify_provisioned(names, tmp_path, manager=mgr)
 
