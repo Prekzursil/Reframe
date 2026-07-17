@@ -34,3 +34,10 @@
 # GHSA-35p6-xmwp-9g52, GHSA-g8m3-5g58-fq7m). Fixed by adding "undici": "^6.27.0" to
 # app/package.json overrides (same pattern as esbuild/ws). No ignore needed.
 # ---------------------------------------------------------------------------
+# 2026-07-18 SECURITY UPGRADE — setuptools (sidecar transitive via ctranslate2)
+# bumped 82.0.1 -> 83.0.0 in sidecar/requirements.lock.txt to clear
+# PYSEC-2026-3447 (CVSS 6.1 Medium; fixed release exists, so per the policy
+# above it is an upgrade, not an ignore). Surgical one-pin edit — pyproject's
+# build-system needs only setuptools>=68; re-`uv pip compile` on the next real
+# sidecar dep change will keep or advance this pin. No ignore needed.
+# ---------------------------------------------------------------------------
