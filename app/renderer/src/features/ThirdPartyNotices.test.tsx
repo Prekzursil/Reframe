@@ -9,7 +9,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { ThirdPartyNotices, THIRD_PARTY_NOTICES } from './ThirdPartyNotices';
+import {
+  ThirdPartyNotices,
+  THIRD_PARTY_NOTICES,
+  FONT_NOTICES,
+  FONT_LICENSE_FILE,
+} from './ThirdPartyNotices';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -90,5 +95,51 @@ describe('ThirdPartyNotices', () => {
     expect(THIRD_PARTY_NOTICES.filter((n) => n.paper).map((n) => n.name)).toEqual([
       'ViNet-S / ViNet',
     ]);
+  });
+});
+
+describe('ThirdPartyNotices — bundled fonts (WU-1.5 fonts)', () => {
+  it('surfaces the self-hosted OFL type trio with verbatim copyright + source', async () => {
+    await mount();
+    const text = container.textContent ?? '';
+    // The three families, each by its verbatim OFL copyright line.
+    expect(text).toContain('Inter');
+    expect(text).toContain('Newsreader');
+    expect(text).toContain('IBM Plex Mono');
+    expect(text).toContain('Copyright 2020 The Inter Project Authors');
+    expect(text).toContain('Copyright 2020 The Newsreader Project Authors');
+    expect(text).toContain('IBM Corp. with Reserved Font Name');
+    // The permissive OFL is named (not hue alone).
+    expect(text).toContain('SIL Open Font License');
+    // Source repos are linked.
+    expect(container.querySelector('a[href="https://github.com/rsms/inter"]')).not.toBeNull();
+    expect(
+      container.querySelector('a[href="https://github.com/productiontype/Newsreader"]'),
+    ).not.toBeNull();
+    expect(container.querySelector('a[href="https://github.com/IBM/plex"]')).not.toBeNull();
+  });
+
+  it('points at the vendored OFL.txt that ships beside the woff2 binaries', async () => {
+    await mount();
+    const fontsSection = container.querySelector('.tpn__fonts');
+    expect(fontsSection).not.toBeNull();
+    const codes = Array.from(fontsSection?.querySelectorAll('code') ?? []).map(
+      (c) => c.textContent,
+    );
+    expect(codes).toContain(FONT_LICENSE_FILE);
+    expect(FONT_LICENSE_FILE).toBe('renderer/src/assets/fonts/OFL.txt');
+  });
+
+  it('chips every font OFL-1.1 without disturbing the model commercial/non-commercial chips', async () => {
+    await mount();
+    // Fonts carry their own OFL chip class, so the model chip counts are unchanged.
+    expect(container.querySelectorAll('.tpn__chip--ofl')).toHaveLength(3);
+    expect(container.querySelectorAll('.tpn__chip--ok')).toHaveLength(4);
+  });
+
+  it('exports exactly the three fonts, all OFL and commercial-OK', () => {
+    expect(FONT_NOTICES.map((f) => f.name)).toEqual(['Inter', 'Newsreader', 'IBM Plex Mono']);
+    expect(FONT_NOTICES.every((f) => f.license === 'OFL-1.1')).toBe(true);
+    expect(FONT_NOTICES.every((f) => f.commercial)).toBe(true);
   });
 });

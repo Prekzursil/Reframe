@@ -9,12 +9,14 @@ const mocks = vi.hoisted(() => ({
   removeHandler: vi.fn(),
   showOpenDialog: vi.fn(),
   fromWebContents: vi.fn(),
+  getPath: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
   ipcMain: { handle: mocks.handle, removeHandler: mocks.removeHandler },
   dialog: { showOpenDialog: mocks.showOpenDialog },
   BrowserWindow: { fromWebContents: mocks.fromWebContents },
+  app: { getPath: mocks.getPath },
 }));
 
 import { DIALOG_OPEN_VIDEOS_CHANNEL, VIDEO_FILE_FILTERS, registerDialogIpc } from './dialogIpc';
@@ -37,8 +39,13 @@ beforeEach(() => {
   mocks.removeHandler.mockReset();
   mocks.showOpenDialog.mockReset();
   mocks.fromWebContents.mockReset();
+  mocks.getPath.mockReset();
   // Default: no live window resolved from the sender.
   mocks.fromWebContents.mockReturnValue(null);
+  // E43: showOpenDialog no longer restores the OS last-used dir and defaults
+  // defaultPath to Downloads; the handler passes an explicit start dir (the
+  // user's Videos folder). Mock app.getPath('videos') to a sentinel.
+  mocks.getPath.mockReturnValue('/mock/Videos');
 });
 
 describe('registerDialogIpc', () => {
@@ -63,12 +70,17 @@ describe('registerDialogIpc', () => {
     const options = mocks.showOpenDialog.mock.calls[0][0] as {
       properties: string[];
       filters: typeof VIDEO_FILE_FILTERS;
+      defaultPath?: string;
     };
     expect(options.properties).toContain('openFile');
     expect(options.properties).toContain('multiSelections');
     expect(options.filters).toBe(VIDEO_FILE_FILTERS);
     expect(options.filters[0].extensions).toContain('mp4');
     expect(options.filters[0].extensions).toContain('mkv');
+    // E43: explicit defaultPath (Videos folder) instead of the removed
+    // OS last-used-dir restore / the new Downloads default.
+    expect(mocks.getPath).toHaveBeenCalledWith('videos');
+    expect(options.defaultPath).toBe('/mock/Videos');
   });
 
   it('returns [] when the user cancels', async () => {
@@ -90,6 +102,7 @@ describe('registerDialogIpc', () => {
     expect(mocks.showOpenDialog.mock.calls[0][0]).toBe(win);
     expect(mocks.showOpenDialog.mock.calls[0][1]).toMatchObject({
       properties: ['openFile', 'multiSelections'],
+      defaultPath: '/mock/Videos',
     });
   });
 
