@@ -68,6 +68,9 @@ import { registerJobRetry } from './components/useJob';
 // Foundation owns the top-level CSS import (per components/shell.css note).
 // Tokens FIRST so every sheet can consume the custom properties.
 import './styles/tokens.css';
+// Self-hosted @font-face bindings for the type trio the tokens lead with (Inter /
+// Newsreader / IBM Plex Mono); without them those leads decay to system fallbacks.
+import './styles/fonts.css';
 import './components/shell.css';
 import './components/toast/toast.css';
 import './components/SidecarBanner.css';

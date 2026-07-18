@@ -1,0 +1,113 @@
+/* fonts.css — self-hosted @font-face bindings for the design-system type trio.
+ *
+ * tokens.css (§5.B) leads each family with a deliberate, non-generic face:
+ *   --font-ui        -> Inter          (dense-UI legibility)
+ *   --font-editorial -> Newsreader     (the editorial-serif pull-quote voice)
+ *   --font-mono      -> IBM Plex Mono  (timecode / numerals)
+ * Without these bindings those leads decay to the system fallback and the app
+ * renders in system-ui / Georgia / ui-monospace. The binaries are vendored under
+ * `../assets/fonts/` and bound here so they render offline, from the app's own
+ * origin — NEVER a remote font CDN (the renderer CSP is `font-src 'self'`, which
+ * would block any off-origin font host and break the offline-first guarantee).
+ *
+ * All three are licensed under the SIL Open Font License 1.1 (permissive,
+ * commercial use permitted). The license text + per-family copyright notices ship
+ * at `../assets/fonts/OFL.txt`, are recorded in the top-level `NOTICE`, and are
+ * surfaced in-app at Settings -> Licenses (features/ThirdPartyNotices.tsx).
+ *
+ * Inter and Newsreader are VARIABLE fonts: a single `font-weight: <min> <max>`
+ * range covers the whole ramp, so tokens.css's non-standard 650 (--weight-semibold)
+ * and 750 (--type-display-weight) steps render natively instead of rounding to the
+ * nearest static cut. Their `opsz` (optical-size) axis is driven automatically by
+ * `font-optical-sizing: auto` (the browser default). IBM Plex Mono has no official
+ * variable version, so its 400/500 cuts ship as static faces.
+ *
+ * `latin` (U+0000–00FF, includes the Western-European accents) is bundled for all
+ * three; Inter additionally bundles `latin-ext` (Central/Eastern-European) because
+ * it renders arbitrary user text (file names, titles). Glyphs outside the bundled
+ * ranges fall through to the token's system fallback — no missing-glyph tofu.
+ * The `unicode-range` values mirror Google Fonts' current `latin` / `latin-ext`
+ * subsets so each vendored file serves exactly its intended coverage. */
+
+/* ---- Inter (--font-ui) — variable wght 100–900, opsz auto -------------------- */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("../assets/fonts/Inter-Variable-latin.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("../assets/fonts/Inter-Variable-latinExt.woff2") format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Inter";
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("../assets/fonts/Inter-Variable-Italic-latin.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ---- Newsreader (--font-editorial) — variable wght 200–800, opsz auto --------- */
+@font-face {
+  font-family: "Newsreader";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("../assets/fonts/Newsreader-Variable-latin.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Newsreader";
+  font-style: italic;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("../assets/fonts/Newsreader-Variable-Italic-latin.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ---- IBM Plex Mono (--font-mono) — static 400 / 500 -------------------------- */
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/IBMPlexMono-400-latin.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../assets/fonts/IBMPlexMono-500-latin.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
