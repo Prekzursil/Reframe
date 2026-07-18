@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   showItemInFolder: vi.fn(),
   showOpenDialog: vi.fn(),
   fromWebContents: vi.fn(),
+  getPath: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -18,6 +19,7 @@ vi.mock('electron', () => ({
   shell: { showItemInFolder: mocks.showItemInFolder },
   dialog: { showOpenDialog: mocks.showOpenDialog },
   BrowserWindow: { fromWebContents: mocks.fromWebContents },
+  app: { getPath: mocks.getPath },
 }));
 
 import {
@@ -58,7 +60,11 @@ beforeEach(() => {
   mocks.showItemInFolder.mockReset();
   mocks.showOpenDialog.mockReset();
   mocks.fromWebContents.mockReset();
+  mocks.getPath.mockReset();
   mocks.fromWebContents.mockReturnValue(null);
+  // E43: the logo picker passes an explicit defaultPath (the Pictures folder)
+  // now that showOpenDialog no longer restores the OS last-used dir.
+  mocks.getPath.mockReturnValue('/mock/Pictures');
 });
 
 describe('registerShellIpc — registration + teardown', () => {
@@ -103,11 +109,15 @@ describe('dialog.pickLogoFile handler', () => {
     const options = mocks.showOpenDialog.mock.calls[0][0] as {
       properties: string[];
       filters: typeof LOGO_FILE_FILTERS;
+      defaultPath?: string;
     };
     expect(options.properties).toContain('openFile');
     expect(options.properties).not.toContain('multiSelections');
     expect(options.filters).toBe(LOGO_FILE_FILTERS);
     expect(options.filters[0].extensions).toContain('png');
+    // E43: explicit defaultPath (Pictures folder).
+    expect(mocks.getPath).toHaveBeenCalledWith('pictures');
+    expect(options.defaultPath).toBe('/mock/Pictures');
   });
 
   it('returns null when the user cancels', async () => {
@@ -135,6 +145,7 @@ describe('dialog.pickLogoFile handler', () => {
     expect(mocks.showOpenDialog.mock.calls[0][0]).toBe(win);
     expect(mocks.showOpenDialog.mock.calls[0][1]).toMatchObject({
       properties: ['openFile'],
+      defaultPath: '/mock/Pictures',
     });
   });
 

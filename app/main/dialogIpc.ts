@@ -11,6 +11,7 @@
 // ('dialog.openVideos') but is a plain Electron ipc channel, NOT a sidecar
 // JSON-RPC method — it never reaches protocol.py.
 import {
+  app,
   BrowserWindow,
   dialog,
   ipcMain,
@@ -59,10 +60,16 @@ const OPEN_VIDEOS_OPTIONS: OpenDialogOptions = {
  */
 async function openVideosDialog(event: IpcMainInvokeEvent): Promise<string[]> {
   const win = BrowserWindow.fromWebContents(event.sender);
+  // Electron 43: showOpenDialog no longer restores the OS last-used directory
+  // and now defaults `defaultPath` to the Downloads folder. Pass an explicit,
+  // semantically-correct start dir (the user's Videos folder) so the picker
+  // opens where videos live. Computed at call time (post app-ready), not at
+  // module load, so app.getPath is always valid.
+  const options: OpenDialogOptions = { ...OPEN_VIDEOS_OPTIONS, defaultPath: app.getPath('videos') };
   const result =
     win && !win.isDestroyed()
-      ? await dialog.showOpenDialog(win, OPEN_VIDEOS_OPTIONS)
-      : await dialog.showOpenDialog(OPEN_VIDEOS_OPTIONS);
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
   if (result.canceled) return [];
   return result.filePaths ?? [];
 }
