@@ -1,0 +1,361 @@
+# Diff-scoped INCREMENTAL mutation gate  (Reframe · gem A7)
+# ===========================================================================
+# This workflow is DELIBERATELY SEPARATE from the non-blocking nightly
+# `.github/workflows/mutation.yml` (which mutates the WHOLE high-value surface
+# and never gates). It does NOT touch that file and does NOT re-declare the
+# mutation base (stryker.conf.json / sidecar [tool.mutmut] / .coverage-thresholds
+# .json all already ship — MASTER "Correction 2").
+#
+# WHAT IS NEW HERE
+# ----------------
+# A PR-scoped gate that answers ONE question per pull request:
+#
+#     "Did THIS diff introduce a NEW surviving mutant on a line THIS diff
+#      touched?"
+#
+# Only NEW survivors on CHANGED lines are eligible to fail — pre-existing
+# survivors on untouched code NEVER fail a PR (that backlog is the nightly's job
+# to burn down). This is a RATCHET, not a wall. Diff-scoping is achieved with:
+#   * Stryker  : `--since` (mutate only files changed vs the PR base) + a cached
+#                `--incremental` baseline artifact (reuse unchanged results), then
+#                the survivor set is intersected with the diff's changed LINES.
+#   * mutmut   : run only when a tracked sidecar module changed, then survivors
+#                are scoped to `git diff --name-only` (file-level, per the spec).
+# The intersection + selection is done by `scripts/mutant_kill_targets.mjs`
+# (unit-provable, zero-dep Node), which also drives the scheduled Codex fan-out.
+#
+# SHADOW MODE (council C5 — ships observe-only)
+# ---------------------------------------------
+# By default this gate is OBSERVE-ONLY: it prints the new survivors and the
+# job SUCCEEDS regardless. It becomes PR-BLOCKING only when the repository
+# variable `MUTATION_INCREMENTAL_BLOCKING` is set to the string 'true' (or a
+# manual run passes `block: true`). Trial it on real PRs first; flip it on once
+# it is trusted and quiet. Because it is not a required status check until an
+# admin marks it required, adding this file cannot retroactively block anything.
+#
+# Tools are installed AD-HOC (mutmut via pip, Stryker via `npm install
+# --no-save`) exactly as the nightly does, so they NEVER enter the committed
+# lockfiles and cannot perturb the blocking gates (npm ci / osv-scanner).
+# ===========================================================================
+name: mutation-incremental
+
+on:
+  pull_request:
+    # Only spin up when something mutation-relevant actually changed.
+    paths:
+      - "app/renderer/src/lib/**"
+      - "app/stryker.conf.json"
+      - "app/vitest.config.ts"
+      - "sidecar/media_studio/**"
+      - "sidecar/tests/**"
+      - "sidecar/pyproject.toml"
+      - "scripts/mutant_kill_targets.mjs"
+      - ".github/workflows/mutation-incremental.yml"
+  workflow_dispatch:
+    inputs:
+      block:
+        description: "Force PR-blocking mode for this manual run (overrides the repo variable)."
+        type: boolean
+        default: false
+  schedule:
+    # 04:47 UTC — AFTER the nightly full mutation run (03:17) so the fan-out
+    # agent works from fresh survivor data. Off the top of the hour to dodge
+    # cron congestion. NOTE: GitHub fires `schedule` only from the DEFAULT
+    # branch — this cron is inert until the workflow lands on main.
+    - cron: "47 4 * * *"
+
+permissions:
+  contents: read
+  actions: read # gh run download (best-effort incremental-baseline restore)
+
+concurrency:
+  # Never run two incremental passes on the same PR head at once.
+  group: mutation-incremental-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ------------------------------------------------------------------ #
+  # Renderer (TypeScript) — Stryker, line-precise diff scoping.
+  # ------------------------------------------------------------------ #
+  stryker-incremental:
+    name: stryker-incremental (renderer)
+    # Skip on the scheduled run (that path is fan-out only).
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Blocking iff the manual input says so OR the repo variable is 'true'.
+      BLOCK: ${{ (github.event_name == 'workflow_dispatch' && inputs.block) && 'true' || vars.MUTATION_INCREMENTAL_BLOCKING || 'false' }}
+      PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout (full history for diff/merge-base)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+
+      - name: Compute PR base + changed-line diff (renderer libs)
+        id: diff
+        run: |
+          set -euo pipefail
+          if [ -n "${PR_BASE_SHA:-}" ]; then BASE="${PR_BASE_SHA}"; else BASE="$(git rev-parse HEAD~1 || git rev-parse HEAD)"; fi
+          # merge-base = the real fork point, so the diff is exactly what this PR adds.
+          BASE_MB="$(git merge-base "$BASE" HEAD 2>/dev/null || echo "$BASE")"
+          echo "base=$BASE_MB" >> "$GITHUB_OUTPUT"
+          # unified=0 keeps the changed-line set tight (no context lines).
+          git diff --unified=0 "$BASE_MB"...HEAD -- app/renderer/src/lib > changed.diff || true
+          echo "---- changed renderer lib files ----"
+          git diff --name-only "$BASE_MB"...HEAD -- app/renderer/src/lib || true
+
+      - name: Install app deps
+        working-directory: app
+        run: npm ci
+
+      - name: Install Stryker AD-HOC (never enters package-lock.json)
+        working-directory: app
+        run: |
+          # --no-save: leave package.json / package-lock.json untouched so the
+          # blocking gates (npm ci / osv-scanner --lockfile) are unaffected.
+          npm install --no-save \
+            @stryker-mutator/core@9.6.1 \
+            @stryker-mutator/vitest-runner@9.6.1
+
+      - name: Restore incremental baseline (best-effort)
+        working-directory: app
+        run: |
+          set +e
+          mkdir -p reports
+          # Pull the newest baseline this workflow produced on the default branch.
+          RID="$(gh run list --workflow mutation-incremental.yml \
+                   --branch "${{ github.event.repository.default_branch }}" \
+                   --status success --limit 1 --json databaseId \
+                   --jq '.[0].databaseId' 2>/dev/null)"
+          if [ -n "$RID" ]; then
+            gh run download "$RID" -n stryker-incremental -D reports 2>/dev/null \
+              && echo "Restored stryker-incremental baseline from run $RID" \
+              || echo "No baseline artifact on run $RID (first run?) — Stryker will rebuild it."
+          else
+            echo "No prior successful run — Stryker will build a fresh baseline."
+          fi
+          exit 0
+
+      - name: Run Stryker (diff-scoped, incremental) → JSON report
+        working-directory: app
+        run: |
+          set +e
+          # --since scopes MUTATION to files changed vs the base; --incremental
+          # reuses unchanged-mutant results from the restored baseline. The JSON
+          # reporter emits reports/mutation/mutation.json for the analyzer.
+          # Never fail HERE — the gate decision belongs to the analyzer step.
+          npx stryker run \
+            --since="${{ steps.diff.outputs.base }}" \
+            --incremental \
+            --incrementalFile reports/stryker-incremental.json \
+            --reporters json,clear-text
+          echo "stryker exit: $? (non-fatal here)"
+          exit 0
+
+      - name: Analyze — new survivors on changed lines (renderer)
+        run: |
+          set -euo pipefail
+          BLOCK_FLAG=""
+          if [ "${BLOCK}" = "true" ]; then BLOCK_FLAG="--block"; fi
+          node scripts/mutant_kill_targets.mjs \
+            --mode gate ${BLOCK_FLAG} \
+            --stryker app/reports/mutation/mutation.json \
+            --diff changed.diff \
+            --repo-root app \
+            --out mutant-gate-renderer.json
+          {
+            echo "### Renderer incremental mutation gate"
+            echo '```json'
+            cat mutant-gate-renderer.json
+            echo '```'
+            echo "_Mode: **${BLOCK}** (blocking iff true; otherwise shadow/observe-only)._"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload incremental baseline for the next run
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: stryker-incremental
+          path: app/reports/stryker-incremental.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ------------------------------------------------------------------ #
+  # Sidecar (Python) — mutmut, file-level diff scoping.
+  # ------------------------------------------------------------------ #
+  mutmut-incremental:
+    name: mutmut-incremental (sidecar)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BLOCK: ${{ (github.event_name == 'workflow_dispatch' && inputs.block) && 'true' || vars.MUTATION_INCREMENTAL_BLOCKING || 'false' }}
+      PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - name: Checkout (full history for diff/merge-base)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Set up Node (for the analyzer)
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+
+      - name: Compute changed sidecar modules
+        id: changed
+        run: |
+          set -euo pipefail
+          if [ -n "${PR_BASE_SHA:-}" ]; then BASE="${PR_BASE_SHA}"; else BASE="$(git rev-parse HEAD~1 || git rev-parse HEAD)"; fi
+          BASE_MB="$(git merge-base "$BASE" HEAD 2>/dev/null || echo "$BASE")"
+          git diff --name-only "$BASE_MB"...HEAD -- sidecar/media_studio > changed-files.txt || true
+          COUNT="$(grep -c . changed-files.txt || true)"
+          echo "count=${COUNT:-0}" >> "$GITHUB_OUTPUT"
+          echo "---- changed sidecar modules ----"; cat changed-files.txt || true
+
+      - name: Install ffmpeg
+        if: steps.changed.outputs.count != '0'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install sidecar + test + mutation tooling
+        if: steps.changed.outputs.count != '0'
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov hypothesis
+          # Package WITHOUT heavy-ML runtime deps (mirrors quality.yml / nightly).
+          pip install -e "sidecar" --no-deps
+          pip install httpx numpy opencv-python-headless
+          pip install mutmut==3.6.0 # pinned, AD-HOC (never added to a lockfile).
+
+      - name: Run mutmut (tracked pure-logic modules) → results
+        if: steps.changed.outputs.count != '0'
+        working-directory: sidecar
+        run: |
+          set +e
+          # mutmut reads [tool.mutmut] from sidecar/pyproject.toml (the shipped
+          # base config). It exits non-zero when mutants survive; that is not the
+          # gate here — the analyzer scopes survivors to the changed files.
+          mutmut run
+          echo "mutmut run exit: $? (non-fatal here)"
+          mutmut results > ../mutmut-results.txt 2>&1 || true
+          exit 0
+
+      - name: Analyze — new survivors in changed files (sidecar)
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.changed.outputs.count }}" = "0" ]; then
+            echo "SUCCESS: no tracked sidecar module changed — nothing to gate." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          BLOCK_FLAG=""
+          if [ "${BLOCK}" = "true" ]; then BLOCK_FLAG="--block"; fi
+          node scripts/mutant_kill_targets.mjs \
+            --mode gate ${BLOCK_FLAG} \
+            --mutmut mutmut-results.txt \
+            --changed-files changed-files.txt \
+            --repo-root sidecar \
+            --out mutant-gate-sidecar.json
+          {
+            echo "### Sidecar incremental mutation gate"
+            echo '```json'
+            cat mutant-gate-sidecar.json
+            echo '```'
+            echo "_Mode: **${BLOCK}** (blocking iff true; otherwise shadow/observe-only)._"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------ #
+  # Scheduled fan-out: turn CURRENT survivors into Codex "write a test that
+  # kills this" tasks (Meta ACH). Runs on the nightly cron (and manual dispatch).
+  # ------------------------------------------------------------------ #
+  fanout-kill-tasks:
+    name: fanout-kill-tasks (survivors → Codex)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Build sidecar mutmut survivor set
+        working-directory: sidecar
+        run: |
+          set +e
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov hypothesis
+          pip install -e "." --no-deps
+          pip install httpx numpy opencv-python-headless
+          pip install mutmut==3.6.0
+          mutmut run
+          mutmut results > ../mutmut-results.txt 2>&1 || true
+          exit 0
+
+      - name: Build renderer Stryker survivor set
+        working-directory: app
+        run: |
+          set +e
+          npm ci
+          npm install --no-save \
+            @stryker-mutator/core@9.6.1 \
+            @stryker-mutator/vitest-runner@9.6.1
+          npx stryker run --reporters json,clear-text
+          exit 0
+
+      - name: Generate Codex kill-test tasks (all current survivors)
+        run: |
+          set -euo pipefail
+          # No --diff/--changed-files ⇒ fan-out over EVERY current survivor.
+          node scripts/mutant_kill_targets.mjs \
+            --mode fanout \
+            --stryker app/reports/mutation/mutation.json \
+            --mutmut mutmut-results.txt \
+            --out mutant-kill-targets.json
+          COUNT="$(node -e "process.stdout.write(String(require('./mutant-kill-targets.json').count))")"
+          {
+            echo "### Mutant kill-test fan-out"
+            echo "Generated **${COUNT}** Codex \"write a test that kills this\" task(s)."
+            echo ""
+            echo "Download the \`mutant-kill-targets\` artifact and feed each task's"
+            echo "\`prompt\` to the local \`codex mcp-server\` fan-out (Layer-1), or let the"
+            echo "codex-fleet-github runner consume it. Each task names the file, line,"
+            echo "and mutator, and asks for ONE test that kills the mutant without"
+            echo "weakening any assertion."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload kill-test task list
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: mutant-kill-targets
+          path: mutant-kill-targets.json
+          if-no-files-found: warn
+          retention-days: 14
