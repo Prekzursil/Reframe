@@ -23,7 +23,7 @@
 
 faster-whisper==1.2.1
 ctranslate2==4.8.1
-scenedetect==0.7
+scenedetect==0.7.1
 opencv-python==4.13.0.92
 httpx==0.28.1
 numpy==2.5.1
