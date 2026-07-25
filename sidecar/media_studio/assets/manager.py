@@ -77,6 +77,16 @@ ENV_SENTINEL = ".media-studio-env.json"
 #   --only-binary=:all:  no source builds — an sdist has no verifiable wheel hash
 #   --no-deps            the lock IS the closure; pip resolves nothing itself
 HASHED_LOCK_PIP_ARGS: tuple[str, ...] = ("--require-hashes", "--only-binary=:all:", "--no-deps")
+# WU-S10 (T4 supply chain) — harden the UN-LOCKED fallback. Without a staged
+# hashed lock the install resolves from ambient indexes with nothing to verify;
+# allowing a SOURCE distribution there means pip downloads an sdist and RUNS its
+# ``setup.py`` / PEP-517 backend to build a wheel — arbitrary code execution from
+# an unverified artifact, before any of our checks could apply. Wheels-only makes
+# the unverified path install-only (no build step to hijack). Same policy the
+# hashed-lock path above already enforces, so a requirement set that works under
+# the lock works here too; a sdist-only transitive now fails LOUDLY on both
+# paths instead of silently executing on one of them.
+UNLOCKED_ENV_PIP_ARGS: tuple[str, ...] = ("--only-binary=:all:",)
 #: option lines a hashed lock may carry besides pinned+hashed requirements. The
 #: cu128 torch index is a STILL-HASHED per-index exception: the custom index URL
 #: is permitted, but every wheel it serves is hash-verified all the same.
@@ -358,8 +368,11 @@ def build_env_install_argvs(
          ``--require-hashes --only-binary=:all: --no-deps -r <lock>`` — so every
          wheel over the FULL transitive closure is hash-verified before exec; the
          inline ``requirements`` are then NOT placed on the argv (the lock is the
-         sole, verified source). Without a lock, the inline pins install as before
-         (top-level pins; transitives resolve unhashed).
+         sole, verified source). Without a lock, the inline pins install as
+         before (top-level pins; transitives resolve unhashed) but WU-S10 adds
+         :data:`UNLOCKED_ENV_PIP_ARGS` so that unverified path is wheels-only —
+         pip may not build a source distribution, i.e. it never executes an
+         sdist's build backend for bytes nothing has verified.
 
     Returns ``[{"argv": [...], "env": {...extra env vars...}}, ...]`` — argv
     LISTS only (A6 lesson 4: never a shell string; paths with spaces are safe).
@@ -379,7 +392,7 @@ def build_env_install_argvs(
     if lock_file is not None:
         install_tail = [*HASHED_LOCK_PIP_ARGS, "--no-warn-script-location", "-r", str(lock_file)]
     else:
-        install_tail = ["--no-warn-script-location", *[str(r) for r in requirements]]
+        install_tail = [*UNLOCKED_ENV_PIP_ARGS, "--no-warn-script-location", *[str(r) for r in requirements]]
     step2 = {
         "argv": [
             str(python_exe),

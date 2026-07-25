@@ -83,6 +83,27 @@ CHATTERBOX_REQUIREMENTS: tuple[str, ...] = (
 #: the value is pinned next to the requirements it serves).
 TORCH_EXTRA_INDEX_URL = "https://download.pytorch.org/whl/cu128"
 
+# WU-S10 (T4 supply chain): the fully-hashed lock this env installs from. The
+# inline pins above are TOP-LEVEL only — without a lock, torch and its entire
+# transitive closure resolve UNHASHED from PyPI + the cu128 index, so a swapped
+# upstream wheel would be installed and imported unnoticed. Declaring the lock on
+# the asset entry is the C4 activation point: when the lock is staged the manager
+# installs it with ``pip --require-hashes --only-binary=:all: --no-deps``, so
+# every wheel over the FULL closure is byte-verified before exec.
+#
+# The path is the SIBLING of ``runtime_setup/requirements-chatterbox.txt`` — the
+# exact file ``python -m runtime_setup.generate_hashed_lock`` writes and
+# ``runtime_setup.bootstrap.hashed_lock_path`` derives — so ONE F1 build-prep run
+# serves the first-run bootstrap AND this U4 env asset (no second staging
+# location, no duplicated hashes). ``runtime_setup`` is a SIBLING package of
+# ``media_studio`` in the source tree and ships that way
+# (``resources/sidecar/runtime_setup``, electron-builder ``requirements-*.txt``
+# filter), so ``parents[3]`` resolves in dev and packaged layouts alike; derived
+# by path so this feature module keeps its no-import rule on the packaging layer.
+# Its CONTENT is a build-prep artifact (real hashes need PyPI + the cu128 index)
+# and is not committed; until it is staged the manager logs a LOUD fallback line.
+CHATTERBOX_LOCK_FILE = str(Path(__file__).resolve().parents[3] / "runtime_setup" / "requirements-chatterbox.lock.txt")
+
 #: the extraResources ``to:`` target for the staged py3.14 embeddable (a
 #: SIBLING of the py3.12 embed dir under the packaged resources root). Kept in
 #: sync with runtime_setup.bootstrap.CHATTERBOX_EMBED_DIRNAME the same way the
@@ -121,6 +142,9 @@ def _register_assets() -> None:
             # A7+: this env installs with the dedicated py3.14 interpreter (the
             # only one torch 2.10 resolves under), NOT the host py3.12.
             python_kind="chatterbox",
+            # WU-S10: install from the fully-hashed lock (verify-before-exec over
+            # the whole torch closure) whenever it is staged.
+            lock_file=CHATTERBOX_LOCK_FILE,
         )
     )
 
@@ -281,6 +305,7 @@ class ChatterboxEngine(TtsEngine):
 __all__ = [
     "CHATTERBOX_ENV_ASSET",
     "CHATTERBOX_ENV_DEST",
+    "CHATTERBOX_LOCK_FILE",
     "CHATTERBOX_PYTHON_SUBDIR",
     "CHATTERBOX_REQUIREMENTS",
     "TORCH_EXTRA_INDEX_URL",
