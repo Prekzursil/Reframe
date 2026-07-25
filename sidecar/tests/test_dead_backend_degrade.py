@@ -1,10 +1,9 @@
 """T11 DEAD-BACKEND contract: a missing sibling backend module degrades honestly.
 
-Four Phase-8 feature modules build their heavy half by lazily importing a sibling
-``<feature>_backend`` module. Those four sibling modules are NOT part of this
-build (verified: ``audio_saliency_backend`` / ``beatgrid_backend`` /
-``clearervoice_backend`` / ``overdub_backend`` are all absent, while 16 other
-``*_backend.py`` siblings ship). Two consequences were measured against HEAD:
+A Phase-8 feature module builds its heavy half by lazily importing a sibling
+``<feature>_backend`` module. ``audio_saliency_backend`` is NOT part of this
+build (verified absent, while 16 other ``*_backend.py`` siblings ship). Two
+consequences were measured against HEAD:
 
   1. ``audio_saliency.compute_audio_signals`` CRASHED — a raw
      ``ModuleNotFoundError`` escaped the public runner (and therefore
@@ -32,21 +31,13 @@ from typing import Any
 import numpy as np
 import pytest
 from media_studio.features import audio_saliency as a
-from media_studio.features import beatgrid as bg
-from media_studio.features import clearervoice as cv
-from media_studio.features import overdub as od
 
 NUM_CLASSES = 527
 
 #: (module, expected BACKEND_MODULE dotted name) for the shared-surface tests.
-MODULES: tuple[tuple[Any, str], ...] = (
-    (a, "media_studio.features.audio_saliency_backend"),
-    (bg, "media_studio.features.beatgrid_backend"),
-    (cv, "media_studio.features.clearervoice_backend"),
-    (od, "media_studio.features.overdub_backend"),
-)
+MODULES: tuple[tuple[Any, str], ...] = ((a, "media_studio.features.audio_saliency_backend"),)
 
-_IDS = ("audio_saliency", "beatgrid", "clearervoice", "overdub")
+_IDS = ("audio_saliency",)
 
 
 def _loader(samples: np.ndarray, sr: int) -> Any:
@@ -122,9 +113,7 @@ def test_default_models_present_is_false_without_the_backend_module(
 
     monkeypatch.setattr(mod, "backend_available", lambda **_kw: False)
     monkeypatch.setattr(manifest, "get_asset", never)
-    # clearervoice / overdub take (settings, model_id); the others (settings,).
-    verdict = mod.default_models_present({}, "any-model") if mod in (cv, od) else mod.default_models_present({})
-    assert verdict is False
+    assert mod.default_models_present({}) is False
 
 
 # --------------------------------------------------------------------------- #
@@ -142,30 +131,6 @@ def test_audio_saliency_factory_raises_typed_when_module_absent(monkeypatch: pyt
     assert a.BACKEND_MODULE in str(excinfo.value)
     assert isinstance(excinfo.value, RuntimeError)
     assert isinstance(excinfo.value.__cause__, ImportError)
-
-
-def test_beatgrid_factory_raises_typed_when_module_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    _absent(monkeypatch, bg.BACKEND_MODULE)
-    with pytest.raises(bg.BeatThisBackendUnavailableError) as excinfo:
-        bg._default_backend_factory({})
-    assert bg.BACKEND_MODULE in str(excinfo.value)
-    assert isinstance(excinfo.value, RuntimeError)
-
-
-def test_clearervoice_factory_raises_typed_when_module_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    _absent(monkeypatch, cv.BACKEND_MODULE)
-    with pytest.raises(cv.ClearerVoiceBackendUnavailableError) as excinfo:
-        cv._default_backend_factory({}, cv.DEFAULT_MODEL_ID)
-    assert cv.BACKEND_MODULE in str(excinfo.value)
-    assert isinstance(excinfo.value, RuntimeError)
-
-
-def test_overdub_factory_raises_typed_when_module_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    _absent(monkeypatch, od.BACKEND_MODULE)
-    with pytest.raises(od.OverdubBackendUnavailableError) as excinfo:
-        od._default_backend_factory({}, od.DEFAULT_MODEL_ID)
-    assert od.BACKEND_MODULE in str(excinfo.value)
-    assert isinstance(excinfo.value, RuntimeError)
 
 
 # --------------------------------------------------------------------------- #
@@ -220,60 +185,6 @@ def test_compute_audio_signals_degrades_when_tagger_raises() -> None:
 # the other three already wrap their factory call — assert the DEGRADE holds
 # with the real default factory + an absent module (no test double for the SUT)
 # --------------------------------------------------------------------------- #
-def test_detect_beats_degrades_to_empty_grid_when_module_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    _absent(monkeypatch, bg.BACKEND_MODULE)
-    grid = bg.detect_beats(
-        "song.wav",
-        settings={},
-        audio_loader=_loader(np.full(bg.DEFAULT_SR, 0.3), bg.DEFAULT_SR),
-        models_present=lambda _s: True,
-    )
-    assert grid.is_empty() is True
-    assert grid.beats == ()
-    assert grid.bpm is None
-
-
-def test_enhance_clip_degrades_to_passthrough_when_module_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    _absent(monkeypatch, cv.BACKEND_MODULE)
-    notices: list[dict[str, str]] = []
-    path, enhanced = cv.enhance_clip(
-        "in.mp4",
-        "out.mp4",
-        "tmp.wav",
-        "enh.wav",
-        settings={},
-        run=lambda _argv, **_kw: 0,
-        duration=lambda *_args, **_kw: 3.0,
-        models_present=lambda _s, _m: True,
-        on_notice=notices.append,
-    )
-    assert (path, enhanced) == ("in.mp4", False)
-    assert len(notices) == 1
-    assert notices[0]["type"] == cv.STUDIO_SOUND_UNAVAILABLE_NOTICE
-    # The LOUD reason must name the missing module, not just "failed".
-    assert cv.BACKEND_MODULE in notices[0]["message"]
-
-
-def test_overdub_degrades_to_plan_only_when_module_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    _absent(monkeypatch, od.BACKEND_MODULE)
-    transcript = {"segments": [{"start": 0.0, "end": 1.0, "words": [{"text": "hi", "start": 0.0, "end": 0.5}]}]}
-    result = od.overdub(
-        transcript,
-        "clip.wav",
-        [{"op": "replace", "index": 0, "text": "hey"}],
-        "out.wav",
-        settings={},
-        audio_loader=_loader(np.full(24000, 0.2), 24000),
-        models_present=lambda _s, _m: True,
-        sample_writer=lambda *_args: pytest.fail("must not write audio when unavailable"),
-    )
-    assert result["applied"] is False
-    assert result["path"] is None
-    assert result["notice"] == od.OVERDUB_SKIPPED_NOTICE
-    # The PLAN is still returned so the UI can preview the intended edit.
-    assert result["editedText"] == "hey"
-
-
 # --------------------------------------------------------------------------- #
 # the surface is exported (callers outside the module can ask honestly)
 # --------------------------------------------------------------------------- #
