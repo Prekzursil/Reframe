@@ -18,8 +18,10 @@ import {
   type LockRecord,
   parseLock,
   releaseDataRootLock,
+  releaseDataRootLockAfter,
   serializeLock,
   shouldReleaseLock,
+  staleSidelineSuffix,
 } from './dataRootLock';
 
 /** Our identity throughout: pid 100, boot id 5000, host "hostA". */
@@ -34,12 +36,19 @@ const bootOf =
 const dead: BootProbe = () => null;
 
 /**
- * A LockIo fake backed by an in-memory cell so acquire/release round-trip.
+ * A LockIo fake backed by an in-memory "volume" so acquire/release round-trip.
  * `createLock` is EXCLUSIVE: it fails (false) when a body already exists (EEXIST).
+ * `reclaimLock` models the seam's create-exclusive sideline move: the sideline name
+ * can be claimed exactly ONCE, so a second racer targeting the SAME dead record
+ * loses (this is what makes the stale reclaim single-winner).
  */
-function makeIo(initial?: string): LockIo & { body: string | undefined } {
+function makeVolume(initial?: string): {
+  io: LockIo & { body: string | undefined };
+  sidelines: Set<string>;
+} {
   const state = { body: initial };
-  return {
+  const sidelines = new Set<string>();
+  const io = {
     get body() {
       return state.body;
     },
@@ -55,7 +64,20 @@ function makeIo(initial?: string): LockIo & { body: string | undefined } {
     removeLock: vi.fn(() => {
       state.body = undefined;
     }),
+    reclaimLock: vi.fn((suffix: string) => {
+      if (sidelines.has(suffix)) return false; // EEXIST — another racer won
+      if (state.body === undefined) return false; // nothing to move aside
+      sidelines.add(suffix);
+      state.body = undefined; // moved aside: the lock path is free for 'wx'
+      return true;
+    }),
   };
+  return { io, sidelines };
+}
+
+/** The common case: just the fake IO. */
+function makeIo(initial?: string): LockIo & { body: string | undefined } {
+  return makeVolume(initial).io;
 }
 
 const ourRecord = (): string =>
@@ -212,6 +234,26 @@ describe('shouldReleaseLock', () => {
   });
 });
 
+describe('staleSidelineSuffix', () => {
+  it('is keyed to the VICTIM record (pid + boot), not to the reclaimer', () => {
+    expect(staleSidelineSuffix({ pid: 200, time: 1, boot: 5000, host: 'hostA' })).toBe(
+      '.stale-200-5000',
+    );
+  });
+
+  it('two racers reclaiming the SAME dead record derive the SAME sideline name', () => {
+    // That identity is what lets the IO seam elect exactly one winner (create-excl).
+    const victim: LockRecord = { pid: 42, time: 7, boot: 900, host: 'hostA' };
+    expect(staleSidelineSuffix(victim)).toBe(staleSidelineSuffix({ ...victim, time: 999 }));
+  });
+
+  it('a DIFFERENT dead record gets a different sideline name', () => {
+    expect(staleSidelineSuffix({ pid: 200, time: 1, boot: 5000, host: 'hostA' })).not.toBe(
+      staleSidelineSuffix({ pid: 200, time: 1, boot: 6000, host: 'hostA' }),
+    );
+  });
+});
+
 describe('acquireDataRootLock', () => {
   it('FREE: exclusive-creates + read-back verifies our record', () => {
     const io = makeIo(undefined);
@@ -248,17 +290,21 @@ describe('acquireDataRootLock', () => {
     expect(io.removeLock).not.toHaveBeenCalled();
   });
 
-  it('STALE holder -> reclaims (remove) + re-creates exclusively, verifies ours', () => {
-    const io = makeIo('{"pid":200,"time":1,"boot":5000,"host":"hostA"}');
+  it('STALE holder -> reclaims by SIDELINE MOVE (never a bare unlink) + re-creates', () => {
+    const { io, sidelines } = makeVolume('{"pid":200,"time":1,"boot":5000,"host":"hostA"}');
     const decision = acquireDataRootLock(io, OWNER, 5000, dead);
     expect(decision).toEqual({ ok: true, heldBy: 200, stale: true });
-    expect(io.removeLock).toHaveBeenCalledTimes(1);
+    // The dead record was moved aside under a name keyed to the VICTIM's identity…
+    expect(io.reclaimLock).toHaveBeenCalledWith('.stale-200-5000');
+    expect([...sidelines]).toEqual(['.stale-200-5000']);
+    // …and NEVER deleted outright (a bare unlink can also destroy a RACER's lock).
+    expect(io.removeLock).not.toHaveBeenCalled();
     expect(parseLock(io.body)).toEqual({ pid: 100, time: 5000, boot: 5000, host: 'hostA' });
   });
 
-  it('STALE but LOST the reclaim race -> read-back is the racer, refuse (blocked)', () => {
-    // A racer re-created the lock between our remove + create: createLock is EEXIST
-    // on BOTH attempts, and the read-back returns the racer's LIVE record.
+  it('STALE but LOST the sideline race -> creates NOTHING and refuses (blocked)', () => {
+    // Another racer already moved the same dead record aside, so our reclaim is
+    // EEXIST. We must not create a lock at all: the read-back returns THEIR record.
     const stale = '{"pid":200,"time":1,"boot":5000,"host":"hostA"}';
     const racer = '{"pid":300,"time":9,"boot":5000,"host":"hostA"}';
     const io: LockIo = {
@@ -266,11 +312,55 @@ describe('acquireDataRootLock', () => {
       readLock: vi.fn().mockReturnValueOnce(stale).mockReturnValue(racer),
       writeLock: vi.fn(),
       removeLock: vi.fn(),
+      reclaimLock: vi.fn(() => false),
     };
     const decision = acquireDataRootLock(io, OWNER, 5000, dead);
     expect(decision).toEqual({ ok: false, heldBy: 300, stale: false });
-    expect(io.removeLock).toHaveBeenCalledTimes(1);
+    expect(io.reclaimLock).toHaveBeenCalledTimes(1);
+    expect(io.createLock).toHaveBeenCalledTimes(1); // only the opening fast-path try
     expect(io.writeLock).not.toHaveBeenCalled();
+    expect(io.removeLock).not.toHaveBeenCalled();
+  });
+
+  it('the lock VANISHES between our failed create and our read -> refresh + verify', () => {
+    // createLock said EEXIST but the record is gone by the time we read it (the
+    // holder released in that window). decideLock sees "free"; we write + verify.
+    const io = makeIo(undefined);
+    vi.mocked(io.createLock).mockImplementationOnce(() => false);
+    const decision = acquireDataRootLock(io, OWNER, 7, dead);
+    expect(decision).toEqual({ ok: true, heldBy: null, stale: false });
+    expect(io.writeLock).toHaveBeenCalledTimes(1);
+    expect(io.reclaimLock).not.toHaveBeenCalled();
+    expect(parseLock(io.body)).toEqual({ pid: 100, time: 7, boot: 5000, host: 'hostA' });
+  });
+
+  it('TOCTOU REGRESSION: two copies racing a STALE lock -> exactly ONE owns it', () => {
+    // THE BUG the sideline move closes. Both copies read the SAME dead record and
+    // both decide "stale". Under the old read-unlink-create reclaim, the SECOND
+    // copy's unconditional `removeLock()` deleted the FIRST copy's freshly-created
+    // record, then created its own — and each passed its own read-back, so BOTH
+    // believed they owned the data root and both spawned a sidecar against it.
+    const STALE = '{"pid":200,"time":1,"boot":5000,"host":"hostA"}';
+    const { io, sidelines } = makeVolume(STALE);
+    const copyA: LockOwner = { pid: 100, boot: 5000, host: 'hostA' };
+    const copyB: LockOwner = { pid: 101, boot: 5000, host: 'hostA' };
+
+    // Copy A completes its whole acquire first.
+    const a = acquireDataRootLock(io, copyA, 10, dead);
+
+    // Copy B decided from the STALE record it read BEFORE A ran (the racy read),
+    // and only now performs its reclaim/create against the CURRENT volume.
+    const bIo: LockIo = { ...io, readLock: vi.fn(() => io.body) };
+    vi.mocked(bIo.readLock).mockReturnValueOnce(STALE);
+    const b = acquireDataRootLock(bIo, copyB, 11, dead);
+
+    expect(a.ok).toBe(true);
+    expect(b.ok).toBe(false); // B is REFUSED — it must not spawn a second sidecar
+    expect([a.ok, b.ok].filter(Boolean)).toHaveLength(1);
+    // A's record still owns the folder; B's identity never reached the lockfile.
+    expect(parseLock(io.body)).toEqual({ pid: 100, time: 10, boot: 5000, host: 'hostA' });
+    // Both racers targeted the SAME victim-keyed sideline; only one could claim it.
+    expect([...sidelines]).toEqual(['.stale-200-5000']);
   });
 
   it('read-back MISSING after create -> refuse (blocked, heldBy null)', () => {
@@ -281,6 +371,7 @@ describe('acquireDataRootLock', () => {
       readLock: vi.fn(() => undefined),
       writeLock: vi.fn(),
       removeLock: vi.fn(),
+      reclaimLock: vi.fn(() => false),
     };
     expect(acquireDataRootLock(io, OWNER, 1, dead)).toEqual({
       ok: false,
@@ -296,6 +387,7 @@ describe('acquireDataRootLock', () => {
       readLock: vi.fn(() => '{"pid":200,"time":1,"boot":5000,"host":"hostB"}'),
       writeLock: vi.fn(),
       removeLock: vi.fn(),
+      reclaimLock: vi.fn(() => false),
     };
     expect(acquireDataRootLock(io, OWNER, 1, dead)).toEqual({
       ok: false,
@@ -323,6 +415,51 @@ describe('releaseDataRootLock', () => {
   it('no-ops when there is no lock to release', () => {
     const io = makeIo(undefined);
     releaseDataRootLock(io, OWNER);
+    expect(io.removeLock).not.toHaveBeenCalled();
+  });
+});
+
+// --------------------------------------------------------------------------- #
+// T8: the lock used to be released FIRST in will-quit, while the bootstrap/sidecar
+// process tree was still being torn down — so a new instance could acquire the
+// folder and start a SECOND sidecar against a live environment (racing library.db
+// and the pip env). The release must be strictly LAST.
+// --------------------------------------------------------------------------- #
+describe('releaseDataRootLockAfter — release LAST, never before the tree is gone', () => {
+  it('does NOT release while teardown is still pending, then releases once it settles', async () => {
+    const io = makeIo(ourRecord());
+    let finishTeardown = (): void => {};
+    const teardown = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishTeardown = resolve;
+        }),
+    );
+
+    const pending = releaseDataRootLockAfter(teardown, io, OWNER);
+    await Promise.resolve();
+    // The process tree has NOT exited yet — the lock MUST still be held.
+    expect(io.removeLock).not.toHaveBeenCalled();
+    expect(io.body).toBe(ourRecord());
+
+    finishTeardown();
+    await pending;
+
+    expect(io.removeLock).toHaveBeenCalledTimes(1);
+    expect(io.body).toBeUndefined();
+  });
+
+  it('still releases when teardown REJECTS (a wedged sidecar must not leak the lock)', async () => {
+    const io = makeIo(ourRecord());
+    await expect(
+      releaseDataRootLockAfter(() => Promise.reject(new Error('kill failed')), io, OWNER),
+    ).resolves.toBeUndefined();
+    expect(io.removeLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('still honours the ownership guard — a DIFFERENT holder’s lock is left alone', async () => {
+    const io = makeIo('{"pid":200,"time":1,"boot":5000,"host":"hostA"}');
+    await releaseDataRootLockAfter(() => Promise.resolve(), io, OWNER);
     expect(io.removeLock).not.toHaveBeenCalled();
   });
 });

@@ -7,10 +7,13 @@
 //     Exposed as `window.api.getDataFolder()`.
 //   * `dataFolder.pick` — a native open-DIRECTORY picker (createDirectory). Exposed
 //     as `window.api.pickDataFolder()` returning the chosen path or null.
-//   * `dataFolder.set`  — persist the chosen path to `<exeDir>/data-dir.txt` (the
-//     marker chooseDataRoot reads next launch). Exposed as
-//     `window.api.setDataFolder(path)` returning `{ ok }`. It does NOT move any
-//     files — a restart applies the new root via resolveDataRoot.
+//   * `dataFolder.set`  — persist the chosen path to the STABLE per-user marker
+//     `<userData>/data-dir.txt` (the marker chooseDataRoot reads next launch),
+//     mirrored best-effort into the legacy `<exeDir>/data-dir.txt` for downgrade
+//     safety. Exposed as `window.api.setDataFolder(path)` returning `{ ok }`. It
+//     does NOT move any files — a restart applies the new root via resolveDataRoot.
+//     T13: writing ONLY inside `<exeDir>` lost the user's folder on every update,
+//     because that dir is the NSIS `$INSTDIR` an in-place upgrade REPLACES.
 //
 // Mirrors the proven `shellIpc.ts` pattern: dotted channel names, a disposer the
 // bootstrap() wires + tears down in will-quit, a parented dialog. The active
@@ -23,7 +26,8 @@ import {
   type IpcMainInvokeEvent,
   type OpenDialogOptions,
 } from 'electron';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 /** ipc channel: read the data root currently in use this session. */
 export const DATA_FOLDER_GET_CHANNEL = 'dataFolder.get';
@@ -46,8 +50,20 @@ const PICK_FOLDER_OPTIONS: OpenDialogOptions = {
 export interface DataFolderIpcDeps {
   /** The data root resolved + in use THIS session (returned to the renderer). */
   getDataRoot: () => string;
-  /** Absolute path of the marker file to write (`<exeDir>/data-dir.txt`). */
+  /**
+   * Absolute path of the AUTHORITATIVE marker to write — the STABLE per-user
+   * `<userData>/data-dir.txt` (see dataRootIo.stableDataDirMarkerPath). T13: the
+   * marker used to be written ONLY inside `<exeDir>` = the NSIS `$INSTDIR`, which
+   * an in-place auto-update REPLACES, so every update forgot the user's folder.
+   */
   markerPath: string;
+  /**
+   * Optional LEGACY `<exeDir>/data-dir.txt` path, MIRRORED best-effort after the
+   * authoritative write succeeds so that rolling BACK to a build which only reads
+   * the legacy location still finds the folder. Its failure (a read-only Program
+   * Files install) never affects `ok`.
+   */
+  legacyMarkerPath?: string;
 }
 
 /** Result of `dataFolder.set`: `{ ok }` — false when the write failed. */
@@ -78,22 +94,41 @@ async function pickDataFolderDialog(
 }
 
 /**
- * Persist the chosen data folder to the marker file. Returns `{ ok:false }`
- * (without throwing) for a non-string/empty path or a write failure — a bad
- * arg or a read-only install dir must never crash the handler.
+ * Write `value` to `markerPath`, creating its parent dir. Returns false — never
+ * throwing — on any failure (a read-only install dir / AV lock / absent parent
+ * must surface as `ok:false` in the UI, never crash the main process).
  */
-function setDataFolder(markerPath: string, path: unknown): SetDataFolderResult {
+function writeMarker(markerPath: string, value: string): boolean {
+  try {
+    mkdirSync(dirname(markerPath), { recursive: true });
+    writeFileSync(markerPath, value, 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Persist the chosen data folder. The AUTHORITATIVE write is `markerPath` (the
+ * STABLE per-user copy that survives an app update — T13); on success the choice is
+ * MIRRORED into the legacy `<exeDir>` marker best-effort for downgrade safety.
+ *
+ * Returns `{ ok:false }` (without throwing) for a non-string/empty path or when the
+ * AUTHORITATIVE write fails. The legacy mirror is deliberately skipped in that
+ * failure case: a legacy copy NEWER than a stale stable copy would silently send
+ * the next launch — which prefers the stable copy — to the OLD folder.
+ */
+function setDataFolder(
+  markerPath: string,
+  legacyMarkerPath: string | undefined,
+  path: unknown,
+): SetDataFolderResult {
   if (typeof path !== 'string') return { ok: false };
   const trimmed = path.trim();
   if (trimmed === '') return { ok: false };
-  try {
-    writeFileSync(markerPath, trimmed, 'utf8');
-    return { ok: true };
-  } catch {
-    // Fail-soft: a read-only install dir / AV lock surfaces as ok:false in the
-    // UI rather than crashing the main process.
-    return { ok: false };
-  }
+  if (!writeMarker(markerPath, trimmed)) return { ok: false };
+  if (legacyMarkerPath !== undefined) writeMarker(legacyMarkerPath, trimmed);
+  return { ok: true };
 }
 
 /**
@@ -107,7 +142,7 @@ export function registerDataFolderIpc(deps: DataFolderIpcDeps): () => void {
     pickDataFolderDialog(event, deps.getDataRoot()),
   );
   ipcMain.handle(DATA_FOLDER_SET_CHANNEL, (_event, path: unknown) =>
-    setDataFolder(deps.markerPath, path),
+    setDataFolder(deps.markerPath, deps.legacyMarkerPath, path),
   );
   return (): void => {
     ipcMain.removeHandler(DATA_FOLDER_GET_CHANNEL);

@@ -19,7 +19,7 @@ vi.mock('node:fs', () => ({
 }));
 
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { DATA_DIR_MARKER } from './dataRoot';
 import { FIRST_RUN_COMPLETE_MARKER } from './firstRunGate';
 import {
@@ -30,6 +30,10 @@ import {
   isProvisionedRoot,
   PROVISIONING_MARKERS,
   readDataDirMarker,
+  readStableDataDirMarker,
+  resolveDataDirMarker,
+  stableDataDirMarkerPath,
+  writeDataDirMarker,
 } from './dataRootIo';
 
 // process.execPath is read-only typed but writable at runtime; stub it per-test
@@ -81,6 +85,152 @@ describe('readDataDirMarker', () => {
       throw new Error('ENOENT');
     });
     expect(readDataDirMarker()).toBeUndefined();
+  });
+});
+
+// --------------------------------------------------------------------------- #
+// T13 DATA LOSS ON UPDATE — the chosen data folder used to be persisted ONLY at
+// `<exeDir>/data-dir.txt`, and `<exeDir>` IS the NSIS `$INSTDIR` that an in-place
+// auto-update REPLACES. After an update the marker was gone, resolution fell back
+// to the default, and the user's external library APPEARED LOST. The fix persists
+// the choice in the STABLE per-user `userData` area (which no updater touches) and
+// FORWARD-MIGRATES an existing legacy marker on first read, so nobody is orphaned.
+// --------------------------------------------------------------------------- #
+const USER_DATA = '/home/me/AppData/Roaming/Reframe';
+const STABLE_MARKER = join(USER_DATA, DATA_DIR_MARKER);
+const LEGACY_MARKER = join(FAKE_DIR, DATA_DIR_MARKER);
+const CHOSEN = 'D:\\MediaStudioData';
+
+/**
+ * Back the mocked node:fs marker reads/writes with an in-memory path->content map
+ * so a test can model BOTH marker locations (and an NSIS update deleting one).
+ */
+function fakeMarkerFiles(initial: Iterable<readonly [string, string]>): Map<string, string> {
+  const files = new Map<string, string>(initial);
+  vi.mocked(readFileSync).mockImplementation(((path: string) => {
+    const value = files.get(String(path));
+    if (value === undefined) {
+      const err = new Error('ENOENT: no such file') as NodeJS.ErrnoException;
+      err.code = 'ENOENT';
+      throw err;
+    }
+    return value;
+  }) as never);
+  vi.mocked(writeFileSync).mockImplementation(((path: string, body: string) => {
+    files.set(String(path), body);
+  }) as never);
+  return files;
+}
+
+describe('stableDataDirMarkerPath', () => {
+  it('is <userDataDir>/<DATA_DIR_MARKER>', () => {
+    expect(stableDataDirMarkerPath(USER_DATA)).toBe(STABLE_MARKER);
+  });
+
+  it('is NOT inside <exeDir> — the dir an NSIS in-place update REPLACES (T13)', () => {
+    expect(stableDataDirMarkerPath(USER_DATA)).not.toBe(dataDirMarkerPath());
+    expect(stableDataDirMarkerPath(USER_DATA).startsWith(exeDir())).toBe(false);
+  });
+});
+
+describe('readStableDataDirMarker', () => {
+  it('reads the per-user marker file', () => {
+    fakeMarkerFiles([[STABLE_MARKER, CHOSEN]]);
+    expect(readStableDataDirMarker(USER_DATA)).toBe(CHOSEN);
+    expect(readFileSync).toHaveBeenCalledWith(STABLE_MARKER, 'utf8');
+  });
+
+  it('returns undefined when the per-user marker is absent/unreadable', () => {
+    fakeMarkerFiles([]);
+    expect(readStableDataDirMarker(USER_DATA)).toBeUndefined();
+  });
+});
+
+describe('writeDataDirMarker', () => {
+  it('creates the parent dir and writes the value as utf8, returning true', () => {
+    expect(writeDataDirMarker(STABLE_MARKER, CHOSEN)).toBe(true);
+    expect(mkdirSync).toHaveBeenCalledWith(dirname(STABLE_MARKER), { recursive: true });
+    expect(writeFileSync).toHaveBeenCalledWith(STABLE_MARKER, CHOSEN, 'utf8');
+  });
+
+  it('returns false (never throws) when the write fails', () => {
+    vi.mocked(writeFileSync).mockImplementationOnce(() => {
+      throw new Error('EROFS: read-only file system');
+    });
+    expect(writeDataDirMarker(STABLE_MARKER, CHOSEN)).toBe(false);
+  });
+
+  it('returns false (never throws) when the parent dir cannot be created', () => {
+    vi.mocked(mkdirSync).mockImplementationOnce(() => {
+      throw new Error('EACCES: permission denied');
+    });
+    expect(writeDataDirMarker(STABLE_MARKER, CHOSEN)).toBe(false);
+    expect(writeFileSync).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveDataDirMarker — T13 update-survival + legacy forward-migration', () => {
+  it('prefers the STABLE per-user marker and never touches the legacy one', () => {
+    fakeMarkerFiles([
+      [STABLE_MARKER, CHOSEN],
+      [LEGACY_MARKER, 'E:\\Stale'],
+    ]);
+    expect(resolveDataDirMarker(USER_DATA)).toBe(CHOSEN);
+    expect(readFileSync).toHaveBeenCalledTimes(1);
+    expect(writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it('THE FIX: forward-migrates a legacy <exeDir> marker so it survives the next update', () => {
+    const files = fakeMarkerFiles([[LEGACY_MARKER, CHOSEN]]);
+
+    // First launch after the fix ships: the legacy value is honored VERBATIM …
+    expect(resolveDataDirMarker(USER_DATA)).toBe(CHOSEN);
+    // … and written FORWARD into the stable per-user location.
+    expect(files.get(STABLE_MARKER)).toBe(CHOSEN);
+
+    // Now simulate the NSIS in-place update: $INSTDIR (and its marker) is REPLACED.
+    files.delete(LEGACY_MARKER);
+
+    // T13 REGRESSION LOCK: the user's folder is still resolved (pre-fix this
+    // returned undefined and the external library appeared LOST).
+    expect(resolveDataDirMarker(USER_DATA)).toBe(CHOSEN);
+  });
+
+  it('returns undefined and writes nothing when NEITHER marker exists', () => {
+    fakeMarkerFiles([]);
+    expect(resolveDataDirMarker(USER_DATA)).toBeUndefined();
+    expect(writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it('treats a BLANK stable marker as absent and falls through to the legacy one', () => {
+    const files = fakeMarkerFiles([
+      [STABLE_MARKER, '   \n'],
+      [LEGACY_MARKER, CHOSEN],
+    ]);
+    expect(resolveDataDirMarker(USER_DATA)).toBe(CHOSEN);
+    expect(files.get(STABLE_MARKER)).toBe(CHOSEN);
+  });
+
+  it('never forward-migrates a BLANK legacy marker (not a real choice)', () => {
+    fakeMarkerFiles([[LEGACY_MARKER, '  ']]);
+    expect(resolveDataDirMarker(USER_DATA)).toBe('  ');
+    expect(writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it('returns an UNSAFE legacy value (so chooseDataRoot still REFUSES it) but never copies it forward', () => {
+    // A poisoned data-dir.txt must keep raising DataRootSecurityError downstream —
+    // and must NOT be propagated into the stable per-user location.
+    fakeMarkerFiles([[LEGACY_MARKER, '\\\\evil-host\\share\\data']]);
+    expect(resolveDataDirMarker(USER_DATA)).toBe('\\\\evil-host\\share\\data');
+    expect(writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it('still honors the legacy value when the forward write fails (read-only userData)', () => {
+    fakeMarkerFiles([[LEGACY_MARKER, CHOSEN]]);
+    vi.mocked(writeFileSync).mockImplementationOnce(() => {
+      throw new Error('EACCES: permission denied');
+    });
+    expect(resolveDataDirMarker(USER_DATA)).toBe(CHOSEN);
   });
 });
 
