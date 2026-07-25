@@ -205,15 +205,22 @@ def test_convert_one_resolves_video_id(bins):
 
 
 def test_convert_one_explicit_out_override(bins):
+    # T5: an explicit ``out`` is still honored VERBATIM (name + extension chosen by
+    # the caller, overriding the container-derived default) — but it must now be a
+    # CONFINED destination, i.e. inside the source's own directory (or the app data
+    # root). This test previously used ``/dest/final.webm`` against a ``/a/in.mov``
+    # source, i.e. it asserted the arbitrary-overwrite behaviour that ffmpeg ``-y``
+    # turns into a write to any file on disk; the refusal is now pinned by
+    # tests/test_traversal_guard.py::TestConvertOutputConfinement.
     run = _RunRecorder(code=0)
     out = convert.convert_one(
-        {"path": "/a/in.mov", "out": "/dest/final.webm", "options": {"container": "mp4"}},
+        {"path": "/a/in.mov", "out": "/a/final.webm", "options": {"container": "mp4"}},
         settings=bins,
         run=run,
         probe=_probe(1.0),
     )
-    assert out == "/dest/final.webm"
-    assert run.calls[0]["argv"][-1] == "/dest/final.webm"
+    assert out == "/a/final.webm"
+    assert run.calls[0]["argv"][-1] == "/a/final.webm"
 
 
 def test_convert_one_nonzero_exit_raises(bins):
