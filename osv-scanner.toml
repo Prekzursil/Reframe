@@ -41,3 +41,79 @@
 # build-system needs only setuptools>=68; re-`uv pip compile` on the next real
 # sidecar dep change will keep or advance this pin. No ignore needed.
 # ---------------------------------------------------------------------------
+# 2026-07-25 SECURITY UPGRADE — a batch of advisories published 2026-07-20..24
+# hit this tree; all but one were cleared by UPGRADE per the policy above, via
+# bounded caret floors in app/package.json + app/render-cli/package.json
+# overrides (same pattern as esbuild/undici/ws):
+#   - tar        7.5.16 -> 7.5.22  (^7.5.21) clears FIVE advisories including
+#                GHSA-23hp-3jrh-7fpw CVSS 9.2 CRITICAL. NOTE the effective floor
+#                7.5.21 comes from a MEDIUM (GHSA-r292-9mhp-454m, <= 7.5.20),
+#                NOT from the critical (<= 7.5.18 -> 7.5.19) — fixing to the
+#                critical's own patched version would have left two live.
+#   - fast-uri   3.1.2 -> 3.1.4    (^3.1.4) clears GHSA-4c8g-83qw-93j6 +
+#                GHSA-v2hh-gcrm-f6hx. 4.x EXISTS, so the <4 bound is load-bearing.
+#   - js-yaml    4.2.0 -> 4.3.0    (^4.3.0) clears GHSA-52cp-r559-cp3m. Only one
+#                of the batch on the RUNTIME path (via electron-updater).
+#                5.x EXISTS, so the <5 bound is load-bearing.
+#   - postcss    8.5.15 -> 8.5.23  (^8.5.18) clears GHSA-r28c-9q8g-f849.
+#   - brace-expansion, lockfile-only, per-major: 1.1.15 -> 1.1.16,
+#                2.1.1 -> 2.1.2, 5.0.6 -> 5.0.8. Clears GHSA-3jxr-9vmj-r5cp,
+#                whose THREE disjoint ranges each needed their own floor.
+# Measured with the pinned osv-scanner 2.3.8 over blob-exact `git archive`
+# extracts: 18 vulnerabilities / 9 packages -> 2 / 2 (1 Critical -> 0 Critical).
+# The single remaining finding is the reasoned ignore below.
+# ---------------------------------------------------------------------------
+
+[[IgnoredVulns]]
+id = "GHSA-mh99-v99m-4gvg"
+ignoreUntil = 2026-10-25
+reason = """
+brace-expansion: DoS via unbounded expansion length causing an out-of-memory
+process crash. Published 2026-07-24; vulnerable range <= 5.0.7; fixed ONLY in
+5.0.8. Ignored per the POLICY at the top of this file as GENUINELY UNFIXABLE.
+
+SCOPE: development only. Both remaining resolutions are dev-scope transitives of
+the electron-builder toolchain; no runtime/product code path reaches them.
+Corroboration: GitHub's own Dependabot auto-triage auto-dismisses this advisory
+on scope `development` in a sibling repo of this fleet, and a sibling repo
+(momentstudio) already carries a dated ignore for this same advisory with its own
+independently measured evidence.
+
+WHY UNFIXABLE — measured 2026-07-25 by execution, not assumed. The two remaining
+resolutions are brace-expansion 1.1.16 (via @electron/asar, dir-compare and glob
+-> minimatch 3.1.5) and 2.1.2 (via @electron/universal + test-exclude ->
+minimatch 9.0.9, and filelist -> minimatch 5.1.9). No patched 1.x or 2.x release
+exists at all, so there is no in-major upgrade. BOTH escape routes were executed
+and BOTH break at runtime:
+  1. Force brace-expansion to ^5.0.8 — 5.x moved its CJS export from
+     `module.exports = expand` (a callable) to a named object
+     { EXPANSION_MAX, EXPANSION_MAX_LENGTH, expand }. Measured: 1.1.16 typeof
+     'function' and returns ['ab','ac'] for 'a{b,c}'; 5.0.8 typeof 'object' and
+     calling it throws "is not a function". minimatch 3.x does
+     `expand = require('brace-expansion'); expand(pattern)`.
+  2. Lift the parent minimatch to ^10 — measured: minimatch 3.1.2 typeof
+     'function' (returns true for 'a/b.js' vs 'a/*.js'); minimatch 10.x typeof
+     'object' with keys { minimatch, sep, GLOBSTAR, filter, defaults,
+     braceExpand, makeRe, match } and calling it throws "is not a function".
+     @electron/asar (^3.0.4), dir-compare (^3.0.5) and glob (^3.1.1) all require
+     minimatch 3.x and call it as a function, so this breaks identically.
+The real fix is upstream: the electron-builder chain moving off minimatch 3.x.
+
+CAVEAT — READ THIS BEFORE TRUSTING THIS ENTRY. An osv-scanner ignore is keyed by
+VULNERABILITY ID, not by version. This entry therefore ALSO suppresses this
+advisory for the hoisted brace-expansion 5.0.8 resolution, where a real fix DOES
+exist. If that entry ever regresses below 5.0.8, gate-deps will stay silent about
+it. Mitigations: app/package-lock.json pins 5.0.8, and Dependabot alerts
+independently of this file. Do NOT treat gate-deps as the only guard on the 5.x
+line while this ignore is live.
+
+RE-CHECK CONDITION — either one retires this entry outright:
+  (a) the electron-builder chain (@electron/asar, dir-compare, glob) moves off
+      minimatch 3.x, removing the 1.1.16 and 2.1.2 resolutions; or
+  (b) a 1.x and/or 2.x backport of the fix ships — verify with
+      `npm view brace-expansion versions` that a 1.x above 1.1.16 or a 2.x above
+      2.1.2 exists, then re-check that release against the advisory range.
+Re-review at ignoreUntil (2026-10-25) regardless. REMOVING the ignore is the
+default outcome; extending it requires re-measuring both paths above.
+"""
+
