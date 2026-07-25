@@ -3,14 +3,20 @@
 // dir. Headline invariants: providers.upsert NEVER forwards a raw key (only last-4
 // redactions), the raw keys land in the DPAPI keystore, provider-calling methods
 // get _injectedKeys in-memory, and session-only mode writes NOTHING to disk.
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { KEYSTORE_FILENAME, loadDecryptedKeys, type SafeStorageLike } from './keystore';
+import {
+  KEYSTORE_FILENAME,
+  loadDecryptedKeys,
+  type SafeStorageLike,
+  saveDecryptedKeys,
+} from './keystore';
 import {
   INJECTED_KEYS_FIELD,
   KeyBridge,
+  REMOVE_METHOD,
   needsKeyInjection,
   planUpsert,
   redactKey,
@@ -113,6 +119,7 @@ describe('needsKeyInjection', () => {
   it('is false for the store path and non-provider methods', () => {
     for (const m of [
       'providers.upsert',
+      'providers.remove', // the DELETE path — intercepted, but never key-INJECTED
       'providers.testKey',
       'providers.list',
       'settings.get',
@@ -246,18 +253,225 @@ describe('KeyBridge.interceptUpsert', () => {
     expect(existsSync(keystorePath())).toBe(false);
   });
 
-  it('survives a keystore that cannot be decrypted (falls back to empty disk view)', () => {
-    // First write with a working store, then read with a store whose decrypt throws.
+  it('survives a keystore that cannot be decrypted WITHOUT destroying it (T7 WIPE regression)', () => {
+    // THE DATA-LOSS BUG: a transient/undecryptable read used to be reported as an
+    // EMPTY keystore, so this next upsert wrote a fresh store over it and PERMANENTLY
+    // wiped every stored credential. The upsert must still succeed for the user (the
+    // session overlay carries the new key), but the on-disk blob must be untouched.
     const good = makeSafeStorage();
     const bridge = new KeyBridge({ safeStorage: good, keystorePath: keystorePath() });
     bridge.interceptUpsert({ id: 'groq', apiKeys: ['gsk_oldAAAA'] });
+    const before = readFileSync(keystorePath(), 'utf8');
+
     const broken = new KeyBridge({
       safeStorage: makeSafeStorage({ decryptThrows: true }),
       keystorePath: keystorePath(),
     });
-    // currentKeys() must swallow the decrypt error; a fresh upsert still works.
     const forwarded = broken.interceptUpsert({ id: 'openai', apiKeys: ['sk-newBBBB'] });
-    expect(forwarded).toEqual({ id: 'openai', apiKeys: ['…BBBB'] });
+
+    expect(forwarded).toEqual({ id: 'openai', apiKeys: ['…BBBB'] }); // never a raw key
+    expect(readFileSync(keystorePath(), 'utf8')).toBe(before); // BYTE-IDENTICAL: no wipe
+    // And the original credential is still recoverable with a working safeStorage.
+    expect(loadDecryptedKeys(good, keystorePath()).providers.groq).toEqual(['gsk_oldAAAA']);
+  });
+});
+
+describe('KeyBridge FAIL-CLOSED on an unreadable keystore (T7 credential wipe)', () => {
+  it('does NOT overwrite a CORRUPT (unparseable) keystore, and keeps the key usable', () => {
+    // A partial write / truncated blob is the other everyday cause. Same rule: refuse
+    // the overwrite, keep the user's new key in the session overlay for this run.
+    const corrupt = '{"version":1,"providers":{"groq":["ZW5j';
+    writeFileSync(keystorePath(), corrupt);
+    const bridge = new KeyBridge({ safeStorage: makeSafeStorage(), keystorePath: keystorePath() });
+
+    bridge.interceptUpsert({ id: 'groq', apiKeys: ['gsk_freshAAAA'] });
+
+    expect(readFileSync(keystorePath(), 'utf8')).toBe(corrupt); // untouched
+    const injected = bridge.inject({}) as {
+      [INJECTED_KEYS_FIELD]: { providers: Record<string, string[]> };
+    };
+    expect(injected[INJECTED_KEYS_FIELD].providers.groq).toEqual(['gsk_freshAAAA']);
+  });
+
+  it('surfaces the classified reason via secureStatus().keystoreUnreadable', () => {
+    writeFileSync(keystorePath(), '{not json');
+    const bridge = new KeyBridge({ safeStorage: makeSafeStorage(), keystorePath: keystorePath() });
+    const status = bridge.secureStatus();
+    expect(status.keystoreUnreadable).toBe('parse-failed');
+    // Secure storage itself is fine — this is a SEPARATE, additive warning axis.
+    expect(status.sessionOnly).toBe(false);
+  });
+
+  it('reports keystoreUnreadable = null for a healthy or absent keystore', () => {
+    const store = makeSafeStorage();
+    const bridge = new KeyBridge({ safeStorage: store, keystorePath: keystorePath() });
+    expect(bridge.secureStatus().keystoreUnreadable).toBeNull(); // absent
+    bridge.interceptUpsert({ id: 'groq', apiKeys: ['gsk_healthyAAAA'] });
+    expect(bridge.secureStatus().keystoreUnreadable).toBeNull(); // loaded
+  });
+
+  it('does not resurrect an unreadable blob into the injected key set', () => {
+    // Fail-closed must not mean "inject whatever half-parsed". An unreadable disk
+    // contributes NOTHING; only the session overlay is injected.
+    writeFileSync(keystorePath(), '{not json');
+    const bridge = new KeyBridge({ safeStorage: makeSafeStorage(), keystorePath: keystorePath() });
+    const injected = bridge.inject() as {
+      [INJECTED_KEYS_FIELD]: { providers: Record<string, string[]> };
+    };
+    expect(injected[INJECTED_KEYS_FIELD]).toEqual({ providers: {} });
+  });
+});
+
+describe('KeyBridge.interceptRemove (providers.remove)', () => {
+  it('deletes the keystore entry so a removed key cannot RESURRECT on re-add', () => {
+    // T7(2): providers.remove dropped only the sidecar METADATA; the raw key stayed
+    // in the keystore, so re-adding the provider (or any redacted upsert) brought the
+    // supposedly-deleted credential back to life.
+    const store = makeSafeStorage();
+    const bridge = new KeyBridge({ safeStorage: store, keystorePath: keystorePath() });
+    bridge.interceptUpsert({ id: 'groq', apiKeys: ['gsk_removeMeAAAA'] });
+    expect(loadDecryptedKeys(store, keystorePath()).providers.groq).toEqual(['gsk_removeMeAAAA']);
+
+    const forwarded = bridge.interceptRemove({ id: 'groq' });
+
+    expect(forwarded).toEqual({ id: 'groq' }); // forwarded verbatim to the sidecar
+    expect(loadDecryptedKeys(store, keystorePath()).providers.groq).toBeUndefined();
+    // A later redacted upsert can no longer restore it (nothing stored to restore from).
+    const replan = bridge.interceptUpsert({ id: 'groq', apiKeys: ['…AAAA'] });
+    expect(replan).toEqual({ id: 'groq', apiKeys: [] });
+    expect(loadDecryptedKeys(store, keystorePath()).providers.groq).toBeUndefined();
+  });
+
+  it('stops injecting the removed key immediately (same session)', () => {
+    const store = makeSafeStorage();
+    const bridge = new KeyBridge({ safeStorage: store, keystorePath: keystorePath() });
+    bridge.interceptUpsert({ id: 'groq', apiKeys: ['gsk_removeMeAAAA'] });
+    bridge.interceptRemove({ id: 'groq' });
+    const injected = bridge.inject() as {
+      [INJECTED_KEYS_FIELD]: { providers: Record<string, string[]> };
+    };
+    expect(injected[INJECTED_KEYS_FIELD].providers.groq).toBeUndefined();
+  });
+
+  it('keeps the removal effective even when the disk write is REFUSED (session-only)', () => {
+    // Without an in-memory tombstone the on-disk entry would be re-merged by the very
+    // next overlay read and the "removed" key would keep being injected.
+    const store = makeSafeStorage();
+    new KeyBridge({ safeStorage: store, keystorePath: keystorePath() }).interceptUpsert({
+      id: 'groq',
+      apiKeys: ['gsk_onDiskAAAA'],
+    });
+    const sessionOnly = new KeyBridge({
+      safeStorage: makeSafeStorage({ available: false }),
+      keystorePath: keystorePath(),
+    });
+    sessionOnly.interceptRemove({ id: 'groq' });
+    const injected = sessionOnly.inject() as {
+      [INJECTED_KEYS_FIELD]: { providers: Record<string, string[]> };
+    };
+    expect(injected[INJECTED_KEYS_FIELD].providers.groq).toBeUndefined();
+    // ...and the on-disk blob is NOT rewritten in session-only mode.
+    expect(loadDecryptedKeys(store, keystorePath()).providers.groq).toEqual(['gsk_onDiskAAAA']);
+  });
+
+  it('re-adding the provider with a real key clears the tombstone', () => {
+    const store = makeSafeStorage();
+    const bridge = new KeyBridge({ safeStorage: store, keystorePath: keystorePath() });
+    bridge.interceptUpsert({ id: 'groq', apiKeys: ['gsk_firstAAAA'] });
+    bridge.interceptRemove({ id: 'groq' });
+    bridge.interceptUpsert({ id: 'groq', apiKeys: ['gsk_secondBBBB'] });
+    const injected = bridge.inject() as {
+      [INJECTED_KEYS_FIELD]: { providers: Record<string, string[]> };
+    };
+    expect(injected[INJECTED_KEYS_FIELD].providers.groq).toEqual(['gsk_secondBBBB']);
+    expect(loadDecryptedKeys(store, keystorePath()).providers.groq).toEqual(['gsk_secondBBBB']);
+  });
+
+  it('preserves every OTHER provider and the cloud key', () => {
+    const store = makeSafeStorage();
+    saveDecryptedKeys(store, keystorePath(), {
+      providers: { groq: ['gsk_goAAAA'], openai: ['sk-stayBBBB'] },
+      cloudApiKey: 'sk-fake-cloud',
+    });
+    const bridge = new KeyBridge({ safeStorage: store, keystorePath: keystorePath() });
+    bridge.interceptRemove({ id: 'groq' });
+    const after = loadDecryptedKeys(store, keystorePath());
+    expect(after.providers.groq).toBeUndefined();
+    expect(after.providers.openai).toEqual(['sk-stayBBBB']);
+    expect(after.cloudApiKey).toBe('sk-fake-cloud');
+  });
+
+  it('accepts the nested {provider:{id}} envelope', () => {
+    const store = makeSafeStorage();
+    const bridge = new KeyBridge({ safeStorage: store, keystorePath: keystorePath() });
+    bridge.interceptUpsert({ id: 'groq', apiKeys: ['gsk_nestedAAAA'] });
+    bridge.interceptRemove({ provider: { id: 'groq' } });
+    expect(loadDecryptedKeys(store, keystorePath()).providers.groq).toBeUndefined();
+  });
+
+  it('is a no-op for an unknown id, an id-less request, or undefined params', () => {
+    const store = makeSafeStorage();
+    const bridge = new KeyBridge({ safeStorage: store, keystorePath: keystorePath() });
+    bridge.interceptUpsert({ id: 'groq', apiKeys: ['gsk_keepAAAA'] });
+    const untouched = readFileSync(keystorePath(), 'utf8');
+
+    expect(bridge.interceptRemove({ id: 'never-stored' })).toEqual({ id: 'never-stored' });
+    expect(bridge.interceptRemove({ nope: 1 })).toEqual({ nope: 1 });
+    expect(bridge.interceptRemove(undefined)).toBeUndefined();
+    expect(bridge.interceptRemove({ id: '' })).toEqual({ id: '' });
+
+    expect(readFileSync(keystorePath(), 'utf8')).toBe(untouched); // no rewrite at all
+    expect(loadDecryptedKeys(store, keystorePath()).providers.groq).toEqual(['gsk_keepAAAA']);
+  });
+
+  it('refuses to rewrite an UNREADABLE keystore on remove (no wipe via the remove path)', () => {
+    const corrupt = '{not json';
+    writeFileSync(keystorePath(), corrupt);
+    const bridge = new KeyBridge({ safeStorage: makeSafeStorage(), keystorePath: keystorePath() });
+    bridge.interceptUpsert({ id: 'groq', apiKeys: ['gsk_sessionAAAA'] });
+    bridge.interceptRemove({ id: 'groq' });
+    expect(readFileSync(keystorePath(), 'utf8')).toBe(corrupt);
+  });
+
+  it('RETRIES the disk purge when the first removal write failed (tombstone is not a latch)', () => {
+    // A removal whose keystore write FAILED (here: a transient encrypt failure) leaves
+    // the raw key on disk while the id is already tombstoned in memory. Clicking Remove
+    // again must retry the purge instead of short-circuiting on the tombstone — which is
+    // exactly why the presence probe reads the RAW disk view, not the tombstoned overlay.
+    // MUTATION-CHECKED: probing `overlay(...)` here instead makes this test fail.
+    const flaky = { broken: true };
+    const store: SafeStorageLike = {
+      isEncryptionAvailable: () => true,
+      encryptString: (plaintext: string) => {
+        if (flaky.broken) throw new Error('encrypt failed');
+        return Buffer.from(`enc:${plaintext}`, 'utf8');
+      },
+      decryptString: (encrypted: Buffer) => encrypted.toString('utf8').replace(/^enc:/, ''),
+    };
+    saveDecryptedKeys(makeSafeStorage(), keystorePath(), {
+      providers: { groq: ['gsk_purgeMeAAAA'], openai: ['sk-stayBBBB'] },
+    });
+    const bridge = new KeyBridge({ safeStorage: store, keystorePath: keystorePath() });
+
+    bridge.interceptRemove({ id: 'groq' }); // write throws -> disk untouched, id tombstoned
+    expect(loadDecryptedKeys(makeSafeStorage(), keystorePath()).providers.groq).toEqual([
+      'gsk_purgeMeAAAA',
+    ]);
+
+    flaky.broken = false; // the transient failure clears
+    bridge.interceptRemove({ id: 'groq' }); // SAME bridge, tombstone already set
+    const after = loadDecryptedKeys(makeSafeStorage(), keystorePath());
+    expect(after.providers.groq).toBeUndefined();
+    expect(after.providers.openai).toEqual(['sk-stayBBBB']);
+  });
+
+  it('routes providers.remove through forwardParams', () => {
+    const store = makeSafeStorage();
+    const bridge = new KeyBridge({ safeStorage: store, keystorePath: keystorePath() });
+    bridge.interceptUpsert({ id: 'groq', apiKeys: ['gsk_routedAAAA'] });
+    const out = bridge.forwardParams(REMOVE_METHOD, { id: 'groq' });
+    expect(out).toEqual({ id: 'groq' });
+    expect(loadDecryptedKeys(store, keystorePath()).providers.groq).toBeUndefined();
   });
 });
 
