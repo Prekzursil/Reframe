@@ -48,6 +48,33 @@ _PROBE_REPO = "wu-s5/probe-repo"
 _PROBE_REVISION = "a" * 40
 
 
+def _fake_torch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub ``torch`` in ``sys.modules`` so a heavy loader can be DRIVEN without it.
+
+    The two loaders exercised below import torch themselves at runtime and are NOT
+    tolerant of its absence: ``pyannote_backend._ensure_pipeline`` does a bare
+    ``import torch`` and then ``pipeline.to(torch.device(...))``, and
+    ``parakeet_asr_backend.RealParakeetLoader.load`` reads
+    ``torch.cuda.is_available()``. torch is DELIBERATELY absent from the CI sidecar
+    install (it is installed ``--no-deps``, and the heavy stacks are provisioned only
+    at runtime on a user machine), so stubbing the other third-party module alone made
+    these two tests pass on a developer box with torch present and fail in CI with
+    ``ModuleNotFoundError: No module named 'torch'``.
+
+    Only the attributes the code under test actually touches are provided, and
+    ``is_available()`` returns False so the assertions stay deterministic on any host,
+    GPU or not. Same ``sys.modules`` injection idiom the surrounding tests already use
+    for ``pyannote.audio`` and ``nemo``.
+    """
+    torch_mod = types.ModuleType("torch")
+    cuda_mod = types.ModuleType("torch.cuda")
+    cuda_mod.is_available = lambda: False  # type: ignore[attr-defined]
+    torch_mod.cuda = cuda_mod  # type: ignore[attr-defined]
+    torch_mod.device = lambda spec: f"torch.device({spec})"  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "torch", torch_mod)
+    monkeypatch.setitem(sys.modules, "torch.cuda", cuda_mod)
+
+
 @pytest.fixture
 def clean_registry():
     """Snapshot + restore the asset registry so a tamper probe cannot leak."""
@@ -359,6 +386,7 @@ class TestPyannotePinnedCheckpoint:
             pb.pinned_pipeline_checkpoint()
 
     def test_ensure_pipeline_loads_the_pinned_checkpoint(self, monkeypatch):
+        _fake_torch(monkeypatch)
         recorded: dict[str, Any] = {}
 
         class _FakeLoadedPipeline:
@@ -452,6 +480,7 @@ class TestResolvePinnedCheckpoint:
 
 class TestRealParakeetLoaderIsPinned:
     def test_load_restores_from_the_pinned_local_checkpoint(self, tmp_path: Path, monkeypatch):
+        _fake_torch(monkeypatch)
         snap, ckpt = _snapshot_with_nemo(tmp_path)
         seen: dict[str, Any] = {}
         restored: dict[str, Any] = {}
