@@ -24,7 +24,8 @@ Phase-8 seam pattern (see ``ctc_align`` / ``audio_saliency`` / ``vlm_backbone``)
 
 Missing-modality / degrade contract (mirrors ``ctc_align``): the overdub runner
 never raises for a missing modality. No edits -> nothing applied. Offline AND the
-model asset missing, an audio-decode failure, an empty buffer, a cooperative
+model asset missing, an absent :data:`BACKEND_MODULE` (the heavy sibling is not
+part of every build), an audio-decode failure, an empty buffer, a cooperative
 cancel, or ANY backend failure -> the computed PLAN is still returned (so the
 caller can show the intended edit) but ``applied=False`` with a LOUD notice; the
 original audio is never silently corrupted.
@@ -127,6 +128,50 @@ AudioLoader = Callable[[str], "tuple[np.ndarray, int]"]
 ModelsPresent = Callable[[dict[str, Any], str], bool]
 #: render sink: write (samples, sr) to a wav path.
 SampleWriter = Callable[["np.ndarray", int, str], None]
+#: ``importlib.util.find_spec`` seam: module name -> spec | ``None`` (no import).
+SpecFn = Callable[[str], object | None]
+
+#: the sibling module that ships the REAL PlayDiffusion inpainter. It is NOT part
+#: of the pure build: when it is absent word overdub is UNAVAILABLE and
+#: :func:`overdub` returns the PLAN with ``applied=False`` and a LOUD notice.
+BACKEND_MODULE = "media_studio.features.overdub_backend"
+
+
+class OverdubBackendUnavailableError(RuntimeError):
+    """:data:`BACKEND_MODULE` (the real PlayDiffusion inpainter) is not importable.
+
+    A SETUP/PROVISIONING failure, NOT a per-clip event: without that module no
+    edited words can be regenerated at all. Raised TYPED and actionable —
+    mirroring ``diarize_backend.DiarizeBackendUnavailableError`` — so
+    :func:`overdub` degrades to plan-only on a NAMED cause instead of a raw
+    :class:`ModuleNotFoundError` escaping a job thread. Deliberately NOT an
+    :class:`OverdubError` subclass: that one means a malformed user edit, this
+    one means the host cannot run the feature.
+    """
+
+
+def _default_find_spec(module_name: str) -> object | None:
+    """Lazy ``importlib.util.find_spec`` (kept behind a seam for testing)."""
+    import importlib.util  # noqa: PLC0415 - stdlib, lazy for symmetry with peers
+
+    return importlib.util.find_spec(module_name)
+
+
+def backend_available(*, find_spec: SpecFn | None = None) -> bool:
+    """True when :data:`BACKEND_MODULE` is IMPORTABLE — WITHOUT importing it.
+
+    Uses ``importlib.util.find_spec`` behind an injectable seam (mirroring
+    ``health`` / ``self_test`` / ``system_advisor``) so answering "can this
+    feature run at all?" never loads a heavy dependency. A probe failure (a
+    broken / partial install) reports ABSENT — the honest answer for a feature
+    that cannot run.
+    """
+    spec_fn = find_spec or _default_find_spec
+    try:
+        return spec_fn(BACKEND_MODULE) is not None
+    except (ImportError, ValueError):  # a broken/partial install probes as absent
+        return False
+
 
 #: the PlayDiffusion model (Apache-2.0). Real HF snapshot pin (git ls-remote, 2026-07-12).
 DEFAULT_MODEL_ID = "PlayHT/PlayDiffusion"
@@ -328,8 +373,19 @@ def _default_backend_factory(
     settings: dict[str, Any],
     model_id: str,
 ) -> OverdubBackend:  # pragma: no cover - prod seam (imports the heavy diffusion stack)
-    """Build the real PlayDiffusion backend (LAZY import; runtime only)."""
-    from .overdub_backend import RealOverdubBackend  # noqa: PLC0415 - heavy seam
+    """Build the real PlayDiffusion backend (LAZY import; runtime only).
+
+    Raises :class:`OverdubBackendUnavailableError` when :data:`BACKEND_MODULE` is
+    not part of this build — never a raw :class:`ModuleNotFoundError`.
+    """
+    try:
+        from .overdub_backend import RealOverdubBackend  # noqa: PLC0415 - heavy seam
+    except ImportError as exc:
+        raise OverdubBackendUnavailableError(
+            f"word overdub requires the {BACKEND_MODULE} module (the PlayDiffusion "
+            "speech inpainter), which is not part of this build; the edit PLAN is "
+            "still returned but nothing is rendered and the original audio is kept"
+        ) from exc
 
     return RealOverdubBackend(settings, model_id)
 
@@ -368,7 +424,14 @@ def default_models_present(
     settings: dict[str, Any],
     model_id: str,
 ) -> bool:  # pragma: no cover - probes the asset store at runtime
-    """True when the PlayDiffusion model asset is installed (no heavy import)."""
+    """True when the overdub backend module AND its asset are BOTH installed.
+
+    An installed checkpoint alone is NOT enough: without :data:`BACKEND_MODULE`
+    the inpainter can never run, so a missing backend module reports ABSENT — the
+    UI then shows word overdub as unavailable instead of appearing ready.
+    """
+    if not backend_available():
+        return False
     try:
         from ..assets import manifest  # noqa: PLC0415
         from ..assets.manager import AssetManager  # noqa: PLC0415
@@ -447,9 +510,11 @@ def overdub(
     preview the intended edit. Degrade rules (never raise for a missing modality):
       * **No effective edit** (empty edit list / a no-op plan) -> ``applied=False``,
         ``path=None``, no notice (nothing to do).
-      * **Offline + model asset missing** -> ``applied=False`` + LOUD notice.
-      * **Audio-decode failure / empty buffer / cancel / any backend failure** ->
-        ``applied=False`` + LOUD notice; the original audio is never touched.
+      * **Offline + model asset (or :data:`BACKEND_MODULE`) missing** ->
+        ``applied=False`` + LOUD notice.
+      * **Audio-decode failure / empty buffer / cancel / any backend failure**
+        (including :class:`OverdubBackendUnavailableError` when the backend module
+        is absent) -> ``applied=False`` + LOUD notice; the original is untouched.
     A malformed edit list raises :class:`OverdubError` (a user boundary).
     """
     settings = settings or {}
@@ -598,7 +663,9 @@ def score_take(seg: Segment, *, fillers: frozenset[str] = DEFAULT_FILLERS) -> fl
     return clamp(0.85 * clamp(confidence, 0.0, 1.0) + 0.15 * (1.0 - filler_ratio), 0.0, 1.0)
 
 
-def best_take_index(group: Sequence[int], segments: Sequence[Segment], *, fillers: frozenset[str] = DEFAULT_FILLERS) -> int:
+def best_take_index(
+    group: Sequence[int], segments: Sequence[Segment], *, fillers: frozenset[str] = DEFAULT_FILLERS
+) -> int:
     """The index (into ``segments``) of the best take in ``group``.
 
     Ranks by :func:`score_take` (desc); ties break toward the LATER take (the
@@ -710,6 +777,7 @@ register_overdub_assets()
 
 __all__ = [
     "ASSET_NAME",
+    "BACKEND_MODULE",
     "DEFAULT_FILLERS",
     "DEFAULT_MASK_PAD_SEC",
     "DEFAULT_MODEL_ID",
@@ -719,14 +787,17 @@ __all__ = [
     "BackendFactory",
     "ModelsPresent",
     "OverdubBackend",
+    "OverdubBackendUnavailableError",
     "OverdubError",
     "OverdubPlan",
     "OverdubResult",
     "RetakeReport",
     "SampleWriter",
+    "SpecFn",
     "TakeGroup",
     "WordEdit",
     "apply_edits_to_tokens",
+    "backend_available",
     "best_take_index",
     "build_overdub_plan",
     "compute_mask_spans",

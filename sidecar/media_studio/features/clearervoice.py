@@ -22,7 +22,8 @@ Wire surface (NET-NEW)::
                           platform?}) -> {jobId} -> {path, enhanced}
 
 Missing-modality / degrade contract (mirrors ``silencetrim``): offline AND the
-model asset missing, an extract/mux ffmpeg failure, or ANY backend failure ->
+model asset missing, an absent :data:`BACKEND_MODULE` (the heavy sibling is not
+part of every build), an extract/mux ffmpeg failure, or ANY backend failure ->
 the ORIGINAL clip path is returned with ``enhanced=False`` and a LOUD ``on_notice``
 message (surfaced via ``job.progress``) — the audio is never silently degraded,
 the skip is never swallowed.
@@ -145,6 +146,47 @@ class ClearerVoiceBackend(Protocol):
 
 BackendFactory = Callable[[dict[str, Any], str], ClearerVoiceBackend]
 ModelsPresent = Callable[[dict[str, Any], str], bool]
+#: ``importlib.util.find_spec`` seam: module name -> spec | ``None`` (no import).
+SpecFn = Callable[[str], object | None]
+
+#: the sibling module that ships the REAL ClearerVoice-Studio SE engine. It is
+#: NOT part of the pure build: when it is absent studio-sound is UNAVAILABLE and
+#: :func:`enhance_clip` degrades to the original audio with a LOUD notice.
+BACKEND_MODULE = "media_studio.features.clearervoice_backend"
+
+
+class ClearerVoiceBackendUnavailableError(RuntimeError):
+    """:data:`BACKEND_MODULE` (the real ClearerVoice SE engine) is not importable.
+
+    A SETUP/PROVISIONING failure, NOT a per-clip event: without that module no
+    speech enhancement can run at all. Raised TYPED and actionable — mirroring
+    ``diarize_backend.DiarizeBackendUnavailableError`` — so :func:`enhance_clip`
+    degrades on a NAMED cause (surfaced through :func:`make_unavailable_notice`)
+    instead of a raw :class:`ModuleNotFoundError` escaping a job thread.
+    """
+
+
+def _default_find_spec(module_name: str) -> object | None:
+    """Lazy ``importlib.util.find_spec`` (kept behind a seam for testing)."""
+    import importlib.util  # noqa: PLC0415 - stdlib, lazy for symmetry with peers
+
+    return importlib.util.find_spec(module_name)
+
+
+def backend_available(*, find_spec: SpecFn | None = None) -> bool:
+    """True when :data:`BACKEND_MODULE` is IMPORTABLE — WITHOUT importing it.
+
+    Uses ``importlib.util.find_spec`` behind an injectable seam (mirroring
+    ``health`` / ``self_test`` / ``system_advisor``) so answering "can this
+    feature run at all?" never loads a heavy dependency. A probe failure (a
+    broken / partial install) reports ABSENT — the honest answer for a feature
+    that cannot run.
+    """
+    spec_fn = find_spec or _default_find_spec
+    try:
+        return spec_fn(BACKEND_MODULE) is not None
+    except (ImportError, ValueError):  # a broken/partial install probes as absent
+        return False
 
 
 # --------------------------------------------------------------------------- #
@@ -228,8 +270,20 @@ def _default_backend_factory(
     settings: dict[str, Any],
     model_id: str,
 ) -> ClearerVoiceBackend:  # pragma: no cover - prod seam (imports the heavy SE stack)
-    """Build the real ClearerVoice backend (LAZY import; runtime only)."""
-    from .clearervoice_backend import RealClearerVoiceBackend  # noqa: PLC0415 - heavy seam
+    """Build the real ClearerVoice backend (LAZY import; runtime only).
+
+    Raises :class:`ClearerVoiceBackendUnavailableError` when
+    :data:`BACKEND_MODULE` is not part of this build — never a raw
+    :class:`ModuleNotFoundError`.
+    """
+    try:
+        from .clearervoice_backend import RealClearerVoiceBackend  # noqa: PLC0415 - heavy seam
+    except ImportError as exc:
+        raise ClearerVoiceBackendUnavailableError(
+            f"studio-sound requires the {BACKEND_MODULE} module (the ClearerVoice-Studio "
+            "speech-enhancement engine), which is not part of this build; speech "
+            "enhancement is UNAVAILABLE and the original audio is kept"
+        ) from exc
 
     return RealClearerVoiceBackend(settings, model_id)
 
@@ -238,7 +292,14 @@ def default_models_present(
     settings: dict[str, Any],
     model_id: str,
 ) -> bool:  # pragma: no cover - probes the asset store at runtime
-    """True when the ClearerVoice model asset is installed (no heavy import)."""
+    """True when the ClearerVoice backend module AND its asset are BOTH installed.
+
+    An installed checkpoint alone is NOT enough: without :data:`BACKEND_MODULE`
+    the SE engine can never run, so a missing backend module reports ABSENT — the
+    UI then shows studio-sound as unavailable instead of appearing ready.
+    """
+    if not backend_available():
+        return False
     try:
         from ..assets import manifest  # noqa: PLC0415
         from ..assets.manager import AssetManager  # noqa: PLC0415
@@ -338,7 +399,9 @@ def enhance_clip(
 
     if finish_loudnorm:
         _progress(92.0, "loudness normalizing")
-        ln_argv = _audiomix.build_loudnorm_argv(mux_target, out_path, loudness_target=loudness_target, settings=settings)
+        ln_argv = _audiomix.build_loudnorm_argv(
+            mux_target, out_path, loudness_target=loudness_target, settings=settings
+        )
         if run(ln_argv, total_sec=total) != 0:
             log.warning("clearervoice: loudnorm finishing failed for %s — using un-normalized enhance", in_path)
             _notify(on_notice, "loudnorm finishing failed; kept the enhanced (un-normalized) audio")
@@ -504,6 +567,7 @@ register_clearervoice_assets()
 
 __all__ = [
     "ASSET_NAME",
+    "BACKEND_MODULE",
     "DEFAULT_MODEL_HF_REPO",
     "DEFAULT_MODEL_ID",
     "DEFAULT_SR",
@@ -512,9 +576,12 @@ __all__ = [
     "STUDIO_SOUND_UNAVAILABLE_NOTICE",
     "BackendFactory",
     "ClearerVoiceBackend",
+    "ClearerVoiceBackendUnavailableError",
     "ModelsPresent",
+    "SpecFn",
     "StudioSound",
     "StudioSoundError",
+    "backend_available",
     "build_extract_wav_argv",
     "build_mux_argv",
     "default_models_present",
