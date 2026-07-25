@@ -8,7 +8,7 @@
 // behind the lock had ZERO direct coverage. These are Electron-free (`node:fs`,
 // `node:os`, `process`), so they live here and are tested in dataRootLockIo.test.ts
 // (mirroring dataRootIo.ts); main.ts just wires them into acquire/releaseDataRootLock.
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { hostname, uptime } from 'node:os';
 import type { BootProbe, LockIo, LockOwner } from './dataRootLock';
 
@@ -99,6 +99,44 @@ export function createLockIo(paths: LockPaths): LockIo {
       } catch {
         /* already gone — best-effort */
       }
+    },
+    reclaimLock: (sidelineSuffix) => {
+      const lock = paths.lockPath();
+      const sideline = `${lock}${sidelineSuffix}`;
+      try {
+        // `linkSync` is the PORTABLE compare-and-swap: it fails with EEXIST when the
+        // destination already exists on BOTH Windows and POSIX. Because the suffix is
+        // keyed to the DEAD holder's identity (dataRootLock.staleSidelineSuffix), two
+        // copies racing to reclaim the same record target the same name and exactly
+        // ONE creates the link. The loser returns false and creates nothing — which is
+        // what a bare `unlinkSync` could never guarantee (it would happily delete the
+        // winner's brand-new record and hand out a second ownership).
+        linkSync(lock, sideline);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'EEXIST') return false; // another racer already reclaimed it
+        if (code === 'ENOENT') return false; // the record is gone — nothing to reclaim
+        // Filesystems without hard links (FAT/exFAT, some network shares) report
+        // EPERM/ENOSYS/EOPNOTSUPP. Degrade to a plain rename: still a single-winner
+        // move on Windows (rename onto an existing path fails) and never worse than
+        // the pre-fix unconditional unlink.
+        try {
+          renameSync(lock, sideline);
+        } catch {
+          return false; // could not move it aside at all — do NOT claim a reclaim
+        }
+        return true; // the rename already freed the lock path
+      }
+      try {
+        unlinkSync(lock); // publish the reclaim: the lock path is free for 'wx'
+      } catch {
+        /* already gone — our sideline link still proves we won the reclaim */
+      }
+      // NOTE: the sidelined dead record is deliberately LEFT on disk. It is the
+      // compare-and-swap token that keeps a later racer out, and its name can never
+      // legitimately recur (that pid is dead for this boot, and a reboot changes the
+      // boot id), so it is inert — one tiny file, not a growing leak.
+      return true;
     },
   };
 }

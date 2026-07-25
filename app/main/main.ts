@@ -15,15 +15,33 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, writeFileSync, promises as fsp } from 'node:fs';
 import { extname, join, resolve as resolvePath, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { migratedRoot, type MigrationSeam, planDataRoot, runMigration } from './dataRootPlan';
-import { dataDirMarkerPath, exeDataDir, readDataDirMarker } from './dataRootIo';
-import { atomicMoveDir, dirHasContent, dirSizeBytes, freeSpaceBytes } from './dataRootMigrateIo';
+import {
+  migratedRoot,
+  type MigrationSeam,
+  migrationRacedAway,
+  planDataRoot,
+  runMigration,
+} from './dataRootPlan';
+import {
+  dataDirMarkerPath,
+  exeDataDir,
+  resolveDataDirMarker,
+  stableDataDirMarkerPath,
+} from './dataRootIo';
+import {
+  atomicMoveDir,
+  dirHasContent,
+  dirMayHaveContent,
+  dirSizeBytes,
+  freeSpaceBytes,
+} from './dataRootMigrateIo';
 import {
   acquireDataRootLock,
   DATA_ROOT_LOCK_FILE,
   type LockDecision,
   type LockIo,
   releaseDataRootLock,
+  releaseDataRootLockAfter,
 } from './dataRootLock';
 import { bootProbe, createLockIo, selfLockOwner } from './dataRootLockIo';
 import { registerDataFolderIpc } from './dataFolderIpc';
@@ -241,6 +259,13 @@ function resolveWindowIcon(): string {
 // %APPDATA%/media-studio on first launch (atomic + space-checked; on any failure
 // it stays put UNCHANGED with a loud warning — never a partial move). Dev is
 // unchanged (it already resolved to %APPDATA% with no env/marker). See resolveDataRoot.
+//
+// T13 (the MARKER's own update-survival): data-dir.txt itself used to live ONLY at
+// <exeDir>/data-dir.txt — i.e. inside the same $INSTDIR the updater REPLACES — so an
+// update ALSO forgot which folder the user had chosen and silently reverted to the
+// default, making an external library look lost. The marker is now persisted in the
+// STABLE per-user userData dir, and an existing legacy marker is read + written
+// FORWARD on first launch (dataRootIo.resolveDataDirMarker), so nobody is orphaned.
 
 /**
  * Containers Chromium can decode (subset of mediaProtocol's MIME map limited to
@@ -295,6 +320,13 @@ async function isPlayableFile(path: string): Promise<boolean> {
  *   3. everything else (fresh packaged install, an already-occupied appData home,
  *      or DEV) uses %APPDATA%/media-studio directly.
  *
+ * T13 (the marker's OWN update-survival): the data-dir.txt marker is read via
+ * `resolveDataDirMarker(userData)`, which prefers the STABLE per-user copy and
+ * FORWARD-MIGRATES a legacy `<exeDir>/data-dir.txt`. The legacy path is inside
+ * `$INSTDIR`, which the NSIS updater REPLACES — so storing the marker only there
+ * made every update forget an external data folder and open a blank library.
+ * `app.getPath` is already safe to call at module scope (see appDataRoot below).
+ *
  * The pure DECISION is planDataRoot (env-free, 100% unit-tested); the filesystem
  * probes + atomic move are the dataRootMigrateIo seam; this wrapper joins them
  * with the Electron-specific bits (process.env, app.getPath, app.isPackaged).
@@ -306,12 +338,15 @@ function resolveDataRoot(): string {
   const appDataRoot = join(app.getPath('appData'), 'media-studio');
   const plan = planDataRoot({
     envOverride: process.env.MEDIA_STUDIO_CONFIG_DIR,
-    markerContent: readDataDirMarker(),
+    markerContent: resolveDataDirMarker(app.getPath('userData')),
     packaged: app.isPackaged,
     legacyExeDataDir,
     legacyExeDataExists: dirHasContent(legacyExeDataDir),
     appDataRoot,
-    appDataOccupied: dirHasContent(appDataRoot),
+    // FAIL CLOSED (T8): an UNPROBEABLE appData home counts as OCCUPIED. Collapsing a
+    // transient stat/read error to "empty" would let the migration below recursively
+    // DELETE a populated destination — the worst outcome in this whole module.
+    appDataOccupied: dirMayHaveContent(appDataRoot),
   });
   if (plan.kind === 'use') return plan.root;
 
@@ -326,7 +361,15 @@ function resolveDataRoot(): string {
     warn: (message) => console.error(message),
   };
   const migrated = runMigration(plan.from, plan.to, seam);
-  return migratedRoot(plan.from, plan.to, migrated);
+  // T8: this runs at module init, BEFORE any data-root lock is (or can be) held —
+  // the lockfile lives inside the root still being chosen. So a CONCURRENT launch
+  // may have completed the same move first, in which case OUR move threw and the
+  // data is at `plan.to`. Re-probe rather than falling back to a vanished legacy
+  // path (which would re-provision a fresh tree inside $INSTDIR).
+  const raced = migrated
+    ? false
+    : migrationRacedAway(dirMayHaveContent(plan.from), dirHasContent(plan.to));
+  return migratedRoot(plan.from, plan.to, migrated, raced);
 }
 
 /** The data root resolved once at startup; all data paths below derive from it. */
@@ -1201,12 +1244,16 @@ function bootstrap(): void {
   disposeDialogIpc = registerDialogIpc();
   // P4 (§6, C9): open-in-folder (shell.showItemInFolder) + brand-logo picker.
   disposeShellIpc = registerShellIpc();
-  // DATA ROOT: get/pick/set the user-facing data folder. The marker write target
-  // is THIS copy's <exeDir>/data-dir.txt (read back by resolveDataRoot on the
-  // next launch); getDataRoot returns the root in use THIS session.
+  // DATA ROOT: get/pick/set the user-facing data folder. T13: the AUTHORITATIVE
+  // marker target is the STABLE per-user <userData>/data-dir.txt (read back by
+  // resolveDataRoot on the next launch and NOT deleted by an in-place NSIS update);
+  // THIS copy's legacy <exeDir>/data-dir.txt is mirrored best-effort so a rollback
+  // to an older build still finds the folder. getDataRoot returns the root in use
+  // THIS session.
   disposeDataFolderIpc = registerDataFolderIpc({
     getDataRoot: () => DATA_ROOT,
-    markerPath: dataDirMarkerPath(),
+    markerPath: stableDataDirMarkerPath(app.getPath('userData')),
+    legacyMarkerPath: dataDirMarkerPath(),
   });
 
   // WU A5: on-demand "Retry setup / Repair". Re-runs the idempotent first-run
@@ -1472,9 +1519,6 @@ app.on('window-all-closed', () => {
 
 // Ensure the sidecar is torn down before the process exits.
 app.on('will-quit', (event) => {
-  // WU-S1: release the DATA-ROOT lock — but only when it is still OURS (a busy/
-  // aborted launch that never acquired it leaves the live holder's lock intact).
-  releaseDataRootLock(dataRootLockIo, selfLockOwner());
   // Don't orphan a half-finished first-run setup (it retries next launch —
   // the sentinel is only written on success).
   if (bootstrapChild && bootstrapChild.exitCode === null) {
@@ -1485,7 +1529,13 @@ app.on('will-quit', (event) => {
     }
     bootstrapChild = null;
   }
-  if (!sidecar) return;
+  if (!sidecar) {
+    // WU-S1: release the DATA-ROOT lock — but only when it is still OURS (a busy/
+    // aborted launch that never acquired it leaves the live holder's lock intact).
+    // Nothing is running here, so releasing immediately IS releasing last.
+    releaseDataRootLock(dataRootLockIo, selfLockOwner());
+    return;
+  }
   const sc = sidecar;
   sidecar = null;
   if (disposeIpc) {
@@ -1521,5 +1571,13 @@ app.on('will-quit', (event) => {
     disposeUpdater = null;
   }
   event.preventDefault();
-  void sc.stop().finally(() => app.exit(0));
+  // T8: the DATA-ROOT lock is released LAST — strictly AFTER the sidecar process
+  // tree has exited (sc.stop() tree-kills it and is itself deadline-bounded). The
+  // release used to run FIRST, so between it and the teardown the folder looked FREE
+  // and a relaunch could start a SECOND sidecar against a still-live environment
+  // (two writers on the same library.db + pip env). releaseDataRootLockAfter never
+  // rejects and still releases if the teardown fails, so quit cannot leak the lock.
+  void releaseDataRootLockAfter(() => sc.stop(), dataRootLockIo, selfLockOwner()).finally(() =>
+    app.exit(0),
+  );
 });

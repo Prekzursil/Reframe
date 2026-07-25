@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   showOpenDialog: vi.fn(),
   fromWebContents: vi.fn(),
   writeFileSync: vi.fn(),
+  mkdirSync: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -18,7 +19,10 @@ vi.mock('electron', () => ({
   BrowserWindow: { fromWebContents: mocks.fromWebContents },
 }));
 
-vi.mock('node:fs', () => ({ writeFileSync: mocks.writeFileSync }));
+vi.mock('node:fs', () => ({
+  writeFileSync: mocks.writeFileSync,
+  mkdirSync: mocks.mkdirSync,
+}));
 
 import {
   DATA_FOLDER_GET_CHANNEL,
@@ -27,20 +31,27 @@ import {
   registerDataFolderIpc,
 } from './dataFolderIpc';
 
-const MARKER_PATH = 'C:/Apps/Reframe/data-dir.txt';
+/** The STABLE per-user marker (`<userData>/data-dir.txt`) — survives an update. */
+const MARKER_PATH = 'C:/Users/me/AppData/Roaming/Reframe/data-dir.txt';
+/** The LEGACY `<exeDir>/data-dir.txt` — inside $INSTDIR, replaced by an update. */
+const LEGACY_MARKER_PATH = 'C:/Apps/Reframe/data-dir.txt';
 const DATA_ROOT = 'D:/MediaStudioData';
 
 type GetHandler = () => string;
 type PickHandler = (event: { sender: unknown }) => Promise<string | null>;
 type SetHandler = (event: unknown, path: unknown) => { ok: boolean };
 
-function install(): {
+function install(legacyMarkerPath?: string): {
   get: GetHandler;
   pick: PickHandler;
   set: SetHandler;
   dispose: () => void;
 } {
-  const dispose = registerDataFolderIpc({ getDataRoot: () => DATA_ROOT, markerPath: MARKER_PATH });
+  const dispose = registerDataFolderIpc({
+    getDataRoot: () => DATA_ROOT,
+    markerPath: MARKER_PATH,
+    legacyMarkerPath,
+  });
   expect(mocks.handle).toHaveBeenCalledTimes(3);
   const calls = mocks.handle.mock.calls as Array<[string, unknown]>;
   const find = (ch: string): unknown => calls.find((c) => c[0] === ch)?.[1];
@@ -60,6 +71,7 @@ beforeEach(() => {
   mocks.showOpenDialog.mockReset();
   mocks.fromWebContents.mockReset();
   mocks.writeFileSync.mockReset();
+  mocks.mkdirSync.mockReset();
   mocks.fromWebContents.mockReturnValue(null);
 });
 
@@ -168,5 +180,65 @@ describe('dataFolder.set handler', () => {
       throw new Error('EROFS: read-only file system');
     });
     expect(set(fakeEvent, 'D:/MyData')).toEqual({ ok: false });
+  });
+
+  it('creates the marker parent dir before writing (a fresh userData may not exist)', () => {
+    const { set } = install();
+    expect(set(fakeEvent, 'D:/MyData')).toEqual({ ok: true });
+    expect(mocks.mkdirSync).toHaveBeenCalledWith('C:/Users/me/AppData/Roaming/Reframe', {
+      recursive: true,
+    });
+  });
+
+  it('returns ok:false (fail-soft) when the marker parent dir cannot be created', () => {
+    const { set } = install();
+    mocks.mkdirSync.mockImplementationOnce(() => {
+      throw new Error('EACCES: permission denied');
+    });
+    expect(set(fakeEvent, 'D:/MyData')).toEqual({ ok: false });
+    expect(mocks.writeFileSync).not.toHaveBeenCalled();
+  });
+});
+
+// --------------------------------------------------------------------------- #
+// T13: the AUTHORITATIVE marker is now the STABLE per-user copy (an NSIS in-place
+// update REPLACES <exeDir>, which is why the old single write there lost the user's
+// folder). The legacy <exeDir> copy is still MIRRORED — best-effort — so rolling
+// BACK to a build that only reads the legacy location still finds the folder.
+// --------------------------------------------------------------------------- #
+describe('dataFolder.set — stable marker + best-effort legacy mirror (T13)', () => {
+  it('writes the STABLE marker first and mirrors it into the LEGACY marker', () => {
+    const { set } = install(LEGACY_MARKER_PATH);
+    expect(set(fakeEvent, '  D:/MyData  ')).toEqual({ ok: true });
+    expect(mocks.writeFileSync).toHaveBeenNthCalledWith(1, MARKER_PATH, 'D:/MyData', 'utf8');
+    expect(mocks.writeFileSync).toHaveBeenNthCalledWith(2, LEGACY_MARKER_PATH, 'D:/MyData', 'utf8');
+  });
+
+  it('still reports ok when only the LEGACY mirror fails (read-only install dir)', () => {
+    const { set } = install(LEGACY_MARKER_PATH);
+    mocks.writeFileSync
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error('EROFS: read-only file system');
+      });
+    expect(set(fakeEvent, 'D:/MyData')).toEqual({ ok: true });
+  });
+
+  it('does NOT mirror into the legacy marker when the STABLE write failed', () => {
+    // Otherwise the legacy copy would be NEWER than the stale stable copy, and the
+    // next launch (which prefers the stable copy) would silently use the OLD folder.
+    const { set } = install(LEGACY_MARKER_PATH);
+    mocks.writeFileSync.mockImplementationOnce(() => {
+      throw new Error('EROFS: read-only file system');
+    });
+    expect(set(fakeEvent, 'D:/MyData')).toEqual({ ok: false });
+    expect(mocks.writeFileSync).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes only the stable marker when no legacy path is injected', () => {
+    const { set } = install();
+    expect(set(fakeEvent, 'D:/MyData')).toEqual({ ok: true });
+    expect(mocks.writeFileSync).toHaveBeenCalledTimes(1);
+    expect(mocks.writeFileSync).toHaveBeenCalledWith(MARKER_PATH, 'D:/MyData', 'utf8');
   });
 });

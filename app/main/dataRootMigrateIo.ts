@@ -20,19 +20,55 @@ import {
 import { dirname, join } from 'node:path';
 
 /**
- * True when `dir` exists, is a directory, and is NON-EMPTY. Used both to detect a
- * legacy `<exeDir>/data` worth rescuing and to detect an already-occupied
- * `%APPDATA%/media-studio` we must not clobber. Any stat/read error -> false
- * (treat as absent/empty — the conservative, no-clobber default).
+ * The TRI-STATE result of probing a directory for content:
+ *  - `present` — it exists, is a directory, and holds at least one entry;
+ *  - `absent`  — it does not exist, is not a directory, or is provably EMPTY;
+ *  - `error`   — the probe itself FAILED (EACCES/EIO/...), so occupancy is UNKNOWN.
+ *
+ * The third state is the whole point (T8): the old boolean probe collapsed `error`
+ * into "empty", and a caller asking "is it safe to overwrite?" then recursively
+ * DELETED a populated tree because a transient stat/read failure looked like an
+ * empty destination. Every caller must decide explicitly what `error` means for it.
  */
-export function dirHasContent(dir: string): boolean {
+export type DirContentState = 'present' | 'absent' | 'error';
+
+/** Probe `dir` for content, distinguishing a FAILED probe from an empty one. */
+export function probeDirContent(dir: string): DirContentState {
   try {
-    if (!existsSync(dir) || !statSync(dir).isDirectory()) return false;
-    return readdirSync(dir).length > 0;
+    if (!existsSync(dir) || !statSync(dir).isDirectory()) return 'absent';
+    return readdirSync(dir).length > 0 ? 'present' : 'absent';
   } catch {
-    return false;
+    return 'error'; // occupancy UNKNOWN — never report this as "empty"
   }
 }
+
+/**
+ * True when `dir` DEFINITELY holds content. Used to detect a legacy
+ * `<exeDir>/data` tree worth rescuing: an unprobeable dir answers false, i.e. we
+ * do NOT start a migration we cannot reason about (the safe direction here).
+ *
+ * NOT the right question for "may I overwrite this?" — use
+ * {@link dirMayHaveContent} for that, which fails CLOSED.
+ */
+export function dirHasContent(dir: string): boolean {
+  return probeDirContent(dir) === 'present';
+}
+
+/**
+ * FAIL-CLOSED occupancy guard: true unless `dir` is PROVABLY absent/empty. An
+ * `error` probe counts as OCCUPIED, so a transient stat/read failure can never be
+ * mistaken for "empty and therefore safe to clobber". This is the predicate any
+ * destination/no-clobber decision must use (see main.ts `appDataOccupied`).
+ */
+export function dirMayHaveContent(dir: string): boolean {
+  return probeDirContent(dir) !== 'absent';
+}
+
+/**
+ * Thrown by {@link atomicMoveDir} when the DESTINATION's occupancy cannot be
+ * probed. Aborting is mandatory: the alternative is deleting a tree we cannot see.
+ */
+export const UNPROBEABLE_DEST_MESSAGE = 'migration destination contents could not be probed';
 
 /** Total size in bytes of every regular file under `dir` (recursive). */
 export function dirSizeBytes(dir: string): number {
@@ -64,8 +100,12 @@ export function freeSpaceBytes(path: string): number {
 
 /**
  * Atomically move the directory `from` to `to`, all-or-nothing:
- *  - a pre-existing but EMPTY destination is removed first so the move can create
- *    it fresh (callers only migrate when the destination is not content-ful);
+ *  - a PROVABLY empty pre-existing destination is removed first so the move can
+ *    create it fresh (callers only migrate when the destination is not content-ful);
+ *  - a destination whose occupancy CANNOT be probed ABORTS the move
+ *    ({@link UNPROBEABLE_DEST_MESSAGE}) instead of deleting a tree we cannot see —
+ *    the T8 fail-closed rule. runMigration turns the throw into its loud fallback,
+ *    so the caller keeps using the legacy root with both trees byte-intact;
  *  - a same-volume move uses renameSync (atomic, instant, no copy);
  *  - a cross-volume move (EXDEV) copies to a temp sibling, renames it into place
  *    atomically, then best-effort removes the source. If the copy fails partway,
@@ -74,7 +114,9 @@ export function freeSpaceBytes(path: string): number {
  */
 export function atomicMoveDir(from: string, to: string): void {
   mkdirSync(dirname(to), { recursive: true });
-  if (existsSync(to) && !dirHasContent(to)) {
+  const dest = probeDirContent(to);
+  if (dest === 'error') throw new Error(`${UNPROBEABLE_DEST_MESSAGE}: ${to}`);
+  if (dest === 'absent' && existsSync(to)) {
     rmSync(to, { recursive: true, force: true });
   }
   try {
