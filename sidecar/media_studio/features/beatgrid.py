@@ -106,6 +106,47 @@ class BeatThisBackend(Protocol):
 BackendFactory = Callable[[dict[str, Any]], BeatThisBackend]
 AudioLoader = Callable[[str], "tuple[np.ndarray, int]"]
 ModelsPresent = Callable[[dict[str, Any]], bool]
+#: ``importlib.util.find_spec`` seam: module name -> spec | ``None`` (no import).
+SpecFn = Callable[[str], object | None]
+
+#: the sibling module that ships the REAL Beat This! tracker. It is NOT part of
+#: the pure build: when it is absent beat DETECTION is unavailable (the pure
+#: snapping / metric / OTIO halves keep working against an empty grid).
+BACKEND_MODULE = "media_studio.features.beatgrid_backend"
+
+
+class BeatThisBackendUnavailableError(RuntimeError):
+    """:data:`BACKEND_MODULE` (the real Beat This! tracker) is not importable.
+
+    A SETUP/PROVISIONING failure, NOT a per-clip event: without that module no
+    beat grid can be detected at all. Raised TYPED and actionable — mirroring
+    ``diarize_backend.DiarizeBackendUnavailableError`` — so :func:`detect_beats`
+    degrades on a NAMED cause instead of a raw :class:`ModuleNotFoundError`. The
+    pure snapping / :func:`beat_alignment` / OTIO export need no model.
+    """
+
+
+def _default_find_spec(module_name: str) -> object | None:
+    """Lazy ``importlib.util.find_spec`` (kept behind a seam for testing)."""
+    import importlib.util  # noqa: PLC0415 - stdlib, lazy for symmetry with peers
+
+    return importlib.util.find_spec(module_name)
+
+
+def backend_available(*, find_spec: SpecFn | None = None) -> bool:
+    """True when :data:`BACKEND_MODULE` is IMPORTABLE — WITHOUT importing it.
+
+    Uses ``importlib.util.find_spec`` behind an injectable seam (mirroring
+    ``health`` / ``self_test`` / ``system_advisor``) so answering "can this
+    feature run at all?" never loads a heavy dependency. A probe failure (a
+    broken / partial install) reports ABSENT — the honest answer for a feature
+    that cannot run.
+    """
+    spec_fn = find_spec or _default_find_spec
+    try:
+        return spec_fn(BACKEND_MODULE) is not None
+    except (ImportError, ValueError):  # a broken/partial install probes as absent
+        return False
 
 
 # --------------------------------------------------------------------------- #
@@ -196,8 +237,19 @@ def beat_alignment(times: Sequence[float], beats: Sequence[float]) -> float:
 # default heavy seams (lazy real impls; tests inject fakes)
 # --------------------------------------------------------------------------- #
 def _default_backend_factory(settings: dict[str, Any]) -> BeatThisBackend:  # pragma: no cover - prod seam
-    """Build the real Beat This! backend (LAZY import; runtime only)."""
-    from .beatgrid_backend import RealBeatThisBackend  # noqa: PLC0415 - heavy seam
+    """Build the real Beat This! backend (LAZY import; runtime only).
+
+    Raises :class:`BeatThisBackendUnavailableError` when :data:`BACKEND_MODULE`
+    is not part of this build — never a raw :class:`ModuleNotFoundError`.
+    """
+    try:
+        from .beatgrid_backend import RealBeatThisBackend  # noqa: PLC0415 - heavy seam
+    except ImportError as exc:
+        raise BeatThisBackendUnavailableError(
+            f"beat detection requires the {BACKEND_MODULE} module (the Beat This! "
+            "tracker), which is not part of this build; the beat grid is UNAVAILABLE "
+            "(beat snapping, beatAlignment and the OTIO export still work)"
+        ) from exc
 
     return RealBeatThisBackend(settings)
 
@@ -228,7 +280,14 @@ def _default_audio_loader(media_path: str) -> tuple[np.ndarray, int]:  # pragma:
 
 
 def default_models_present(settings: dict[str, Any]) -> bool:  # pragma: no cover - probes the asset store
-    """True when the Beat This! model asset is installed (no heavy import)."""
+    """True when the Beat This! backend module AND its asset are BOTH installed.
+
+    An installed checkpoint alone is NOT enough: without :data:`BACKEND_MODULE`
+    the tracker can never run, so a missing backend module reports ABSENT — the
+    UI then shows the feature as unavailable instead of appearing ready.
+    """
+    if not backend_available():
+        return False
     try:
         from ..assets import manifest  # noqa: PLC0415
         from ..assets.manager import AssetManager  # noqa: PLC0415
@@ -258,10 +317,11 @@ def detect_beats(
     """Detect the :class:`BeatGrid` of ``audio_path`` (Beat This!).
 
     Degrade paths (each returns an EMPTY grid, never raises):
-      * offline AND the model asset is not installed;
+      * offline AND the model asset (or :data:`BACKEND_MODULE`) is not installed;
       * a cooperative cancel before detection, an audio-decode failure, or an
         empty audio buffer;
-      * any backend failure.
+      * any backend failure — including :class:`BeatThisBackendUnavailableError`
+        when the backend module is absent from this build.
     A returned grid always carries a ``bpm`` estimate when >= 2 beats were found.
     """
     settings = settings or {}
@@ -510,6 +570,7 @@ def register_beat_this_assets(*, url: str, sha256: str, size_mb: float = BEAT_TH
 
 
 __all__ = [
+    "BACKEND_MODULE",
     "BEAT_THIS_ASSET_NAME",
     "BEAT_THIS_LABEL",
     "BEAT_THIS_SIZE_MB",
@@ -518,7 +579,10 @@ __all__ = [
     "BackendFactory",
     "BeatGrid",
     "BeatThisBackend",
+    "BeatThisBackendUnavailableError",
     "ModelsPresent",
+    "SpecFn",
+    "backend_available",
     "beat_alignment",
     "beat_cuts_to_events",
     "build_otio_timeline",
