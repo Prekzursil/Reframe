@@ -23,6 +23,7 @@ covers the WU-S10 pinning deltas.
 
 from __future__ import annotations
 
+import calendar
 import re
 from pathlib import Path
 
@@ -225,6 +226,59 @@ class TestEmbedSetupPinIsMandatory:
         # even set". It must be gone.
         body = self._body()
         assert "if ($ExpectedSha256 -and" not in body
+
+    def test_every_pin_default_is_populated(self):
+        """Every ``-Expected*Sha256`` default must BE a 64-hex digest, not ''.
+
+        WU-S10 made the pin mandatory but shipped three of them EMPTY
+        (``ExpectedPythonSha256``, ``ExpectedChatterboxPythonSha256``,
+        ``ExpectedFfmpegSha256``). The gate then did exactly what it promised and
+        refused every download, so `Stage packaged runtime` failed on every
+        Windows CI run and the Windows package could not be built at all. The
+        sibling tests above only prove the MECHANISM exists (Assert-Sha256Pin is
+        called, no `-and` short-circuit) — none of them notice that the mechanism
+        has nothing to check against. A fail-closed guard with no key is not a
+        guard, it is an outage.
+        """
+        body = self._body()
+        found = dict(re.findall(r"\$(Expected\w*Sha256)\s*=\s*'([^']*)'", body))
+        # All four artifacts the script can fetch must carry a pin default.
+        assert set(found) >= {
+            "ExpectedPythonSha256",
+            "ExpectedChatterboxPythonSha256",
+            "ExpectedFfmpegSha256",
+            "ExpectedGetPipSha256",
+        }, f"a pin parameter disappeared from the param block: {sorted(found)}"
+        empty = sorted(name for name, value in found.items() if not value)
+        assert not empty, (
+            f"these SHA-256 pins ship EMPTY, so the fail-closed gate refuses the "
+            f"download and nothing can ever be staged: {empty}. Obtain each digest "
+            f"with -RecordHashes, cross-check it against the vendor's published "
+            f"checksum, then record it as the parameter default."
+        )
+        malformed = sorted(name for name, value in found.items() if not re.fullmatch(r"[0-9a-f]{64}", value))
+        assert not malformed, f"pins are not lowercase 64-hex digests: {malformed}"
+
+    def test_pinned_ffmpeg_release_is_a_month_end_tag(self):
+        """BtbN prunes mid-month dailies; only month-end builds are durable.
+
+        Retention measured 2026-07-26: the last ~2 weeks of DAILY autobuilds plus
+        the LAST-DAY-OF-MONTH build of every month back to 2024-08-31. The former
+        pin ``autobuild-2026-07-03-13-21`` was a mid-month daily, so it was
+        deleted and started returning 404 — breaking the Windows build weeks after
+        it was chosen, with no code change. Pin a month-end tag or the same silent
+        expiry recurs.
+        """
+        body = self._body()
+        tag = re.search(r"releases/download/autobuild-(\d{4})-(\d{2})-(\d{2})-", body)
+        assert tag, "the ffmpeg pin is not a BtbN dated autobuild URL"
+        year, month, day = (int(part) for part in tag.groups())
+        last_day = calendar.monthrange(year, month)[1]
+        assert day == last_day, (
+            f"ffmpeg is pinned to autobuild-{year:04d}-{month:02d}-{day:02d}, a MID-MONTH "
+            f"daily that BtbN deletes after ~2 weeks. Pin the month-end build "
+            f"({year:04d}-{month:02d}-{last_day:02d}), which is retained for years."
+        )
 
     def test_get_pip_pin_matches_the_runtime_constant(self):
         # The build script and the runtime enforce the SAME get-pip.py digest;
