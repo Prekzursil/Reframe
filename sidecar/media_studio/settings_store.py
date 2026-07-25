@@ -37,6 +37,43 @@ log = get_logger("media_studio.settings")
 #: in-memory — never from disk.
 INJECTED_KEYS_FIELD = "_injectedKeys"
 
+#: Settings keys whose value selects a native EXECUTABLE or SCRIPT that the sidecar
+#: later SPAWNS. These are refused by :meth:`SettingsStore.set` (see
+#: :class:`ExecutablePathWriteError`) because ``settings.set`` is reachable from the
+#: UNTRUSTED renderer over the generic RPC bridge, and every one of these values flows
+#: into a subprocess argv:
+#:
+#:   ``ffmpegPath`` / ``ffprobePath``     -> :func:`media_studio.ffmpeg.resolve_binary`
+#:   ``verthorScript``                    -> ``features/reframe.py`` (``wsl bash <script>``)
+#:   ``nodeExePath``                      -> ``tools_resolver.py`` (Node runner)
+#:   ``renderJsPath`` /
+#:   ``chromeHeadlessShellPath``          -> ``features/caption_remotion.py``
+#:
+#: Writing one of these and then triggering any media operation is native code
+#: execution outside the Electron sandbox, with the user's privileges.
+#:
+#: Blocking the RPC write costs NO feature: the renderer never writes these keys (the
+#: only renderer reference to ``ffmpegPath`` is a test asserting ``readBrandSettings``
+#: filters it out), and the main-owned escape hatches are untouched — the
+#: ``MEDIA_STUDIO_FFMPEG`` / ``MEDIA_STUDIO_FFPROBE`` env overrides, the bundled
+#: binaries under ``resources/bin``, and PATH all still resolve.
+#:
+#: NOTE canonicalisation is NOT a substitute for refusing the write:
+#: ``pathsafe.ensure_within(value)`` with no extra parts is a *canonicaliser*, not a
+#: containment check (``target == base_real``, so it always returns), and an
+#: attacker-supplied absolute path canonicalises perfectly happily. Refusing the write
+#: is the control that actually breaks the chain.
+EXECUTABLE_SETTING_KEYS: frozenset[str] = frozenset(
+    {
+        "ffmpegPath",
+        "ffprobePath",
+        "verthorScript",
+        "nodeExePath",
+        "renderJsPath",
+        "chromeHeadlessShellPath",
+    }
+)
+
 # CONTRACT-NOTE: §2 names {useCloud, cloudApiKey?, modelsDir, ffmpegPath}. These
 # defaults are the lean baseline the UI reads on first launch (App.tsx reads
 # useCloud). cloudApiKey is intentionally absent until the user sets one; we never
@@ -138,6 +175,25 @@ class UnsafeConfigDirError(ValueError):
     silent honoring. Subclasses :class:`ValueError` so existing broad handlers catch
     it. Mirrors the Electron ``dataRoot.ts`` ``DataRootSecurityError`` guard (R7
     defense-in-depth: the sidecar is a second, independent consumer of the root).
+    """
+
+
+class ExecutablePathWriteError(ValueError):
+    """An RPC ``settings.set`` tried to CHANGE an executable/script-path key.
+
+    ``settings.set`` is reachable from the untrusted renderer (the main-process RPC
+    bridge forwards any method), and the keys in :data:`EXECUTABLE_SETTING_KEYS` are
+    resolved into a subprocess argv — so honouring such a write is a native
+    code-execution vector, not a preference change. Refused outright rather than
+    silently dropped, so the attempt is visible instead of failing open.
+
+    Subclasses :class:`ValueError` (exactly like :class:`UnsafeConfigDirError`) so the
+    protocol layer's existing broad handling turns it into a clean JSON-RPC error
+    instead of an unhandled crash.
+
+    A NO-OP write is explicitly allowed: the settings UI legitimately performs
+    ``set(get())``, and ``get()`` includes ``ffmpegPath``, so only a value that would
+    CHANGE the stored path is refused.
     """
 
 
@@ -424,6 +480,31 @@ class SettingsStore:
             restored["providers"] = [self._restore_provider(p, stored_by_id) for p in providers]
         return restored
 
+    @staticmethod
+    def _refuse_executable_path_writes(values: Mapping[str, Any], current: Mapping[str, Any]) -> None:
+        """Refuse any write that would CHANGE an :data:`EXECUTABLE_SETTING_KEYS` value.
+
+        Raises :class:`ExecutablePathWriteError` naming the offending key(s). Called
+        BEFORE the merge and the persist, so a payload that smuggles a guarded key in
+        alongside innocuous ones is rejected ATOMICALLY — none of it is written.
+
+        The comparison is against the DEFAULT-BACKFILLED current value, not the raw
+        on-disk dict: ``get()`` backfills ``ffmpegPath`` to ``""`` on a fresh store, and
+        the settings UI writes that whole object straight back, so comparing against the
+        raw (key-absent) dict would misread a legitimate no-op round-trip as a change.
+        """
+        offending = sorted(EXECUTABLE_SETTING_KEYS.intersection(values))
+        if not offending:
+            return
+        changed = [key for key in offending if values[key] != {**DEFAULT_SETTINGS, **current}.get(key)]
+        if changed:
+            raise ExecutablePathWriteError(
+                "settings.set refused ["
+                + ", ".join(changed)
+                + "]: these keys select a native executable/script and cannot be set over RPC "
+                "(use the MEDIA_STUDIO_* env override or the bundled binary)"
+            )
+
     def set(self, values: dict[str, Any]) -> dict[str, Any]:
         """Merge ``values`` over the stored settings, persist, and return the result.
 
@@ -438,6 +519,7 @@ class SettingsStore:
         if not isinstance(values, dict):
             raise ValueError("settings.set expects an object of values")
         current = dict(self._read())
+        self._refuse_executable_path_writes(values, current)
         current.update(self._restore_redacted_keys(values, current))
         self._write(current)
         # The on-disk store keeps RAW keys (the factory reads them via get_raw);
