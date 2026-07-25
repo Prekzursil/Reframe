@@ -71,9 +71,7 @@ class TestBackboneAssetName:
         assert sv.backbone_asset_name("bogus") == sv.ASSET_NAME
 
     def test_backbone_vocabulary_frozen(self):
-        assert sv.VLM_BACKBONES == frozenset(
-            {sv.BACKBONE_SMOLVLM2, sv.BACKBONE_QWEN3VL_4B, sv.BACKBONE_QWEN3VL_8B}
-        )
+        assert frozenset({sv.BACKBONE_SMOLVLM2, sv.BACKBONE_QWEN3VL_4B, sv.BACKBONE_QWEN3VL_8B}) == sv.VLM_BACKBONES
 
 
 # --------------------------------------------------------------------------- #

@@ -98,9 +98,7 @@ class RealQwen3VlBackend:  # pragma: no cover - requires the heavy native stack
         # returns a union basedpyright misreads as a bare model whose `.to()`
         # overload rejects a device string; binding through an `Any` attribute
         # first sidesteps that false call.
-        model: Any = _ModelCls.from_pretrained(
-            self._model_id, revision=self._revision, torch_dtype=torch.bfloat16
-        )
+        model: Any = _ModelCls.from_pretrained(self._model_id, revision=self._revision, torch_dtype=torch.bfloat16)
         self._model = model.to(device).eval()
         self._processor = AutoProcessor.from_pretrained(self._model_id, revision=self._revision)
         log.info("qwen3-vl ready on %s (bf16, runs alone): %s", device, self._model_id)

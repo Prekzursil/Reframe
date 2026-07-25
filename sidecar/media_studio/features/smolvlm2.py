@@ -85,9 +85,7 @@ BACKBONE_QWEN3VL_8B = "qwen3vl-8b"
 #: SmolVLM2 stays the DEFAULT backbone (unset / unknown -> this).
 DEFAULT_BACKBONE = BACKBONE_SMOLVLM2
 #: the frozen backbone vocabulary (validation + tests read this).
-VLM_BACKBONES: frozenset[str] = frozenset(
-    {BACKBONE_SMOLVLM2, BACKBONE_QWEN3VL_4B, BACKBONE_QWEN3VL_8B}
-)
+VLM_BACKBONES: frozenset[str] = frozenset({BACKBONE_SMOLVLM2, BACKBONE_QWEN3VL_4B, BACKBONE_QWEN3VL_8B})
 #: friendly aliases callers may pass (bare "qwen3vl" -> the 4B, the cheaper jump).
 _BACKBONE_ALIASES: dict[str, str] = {
     "qwen3vl": BACKBONE_QWEN3VL_4B,
@@ -120,9 +118,7 @@ _BACKBONE_ASSET: dict[str, str] = {
     BACKBONE_QWEN3VL_8B: QWEN3VL_8B_ASSET_NAME,
 }
 #: the Qwen3-VL backbone ids (routed to the Qwen backend factory).
-_QWEN3VL_BACKBONES: frozenset[str] = frozenset(
-    {BACKBONE_QWEN3VL_4B, BACKBONE_QWEN3VL_8B}
-)
+_QWEN3VL_BACKBONES: frozenset[str] = frozenset({BACKBONE_QWEN3VL_4B, BACKBONE_QWEN3VL_8B})
 
 
 def resolve_backbone(settings: Mapping[str, Any] | None) -> str:
