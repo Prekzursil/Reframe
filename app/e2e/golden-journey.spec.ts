@@ -43,7 +43,24 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { findBuiltApp, provisionAssets, seedEnvironment, type SeededEnv } from './fixtures';
+import { findBuiltApp, probeVideo, provisionAssets, seedEnvironment, type SeededEnv } from './fixtures';
+
+// ── LOAD-BEARING ASSERTION VALUES (owner-signed done-signal) ─────────────────
+// These pin what "a genuinely playable vertical short" MEANS. They are probed
+// INDEPENDENTLY off the produced file (fixtures.probeVideo), NOT read from the
+// app's own shorts.list metadata. Provenance: the reframe stage writes exactly
+// OUT_WIDTH×OUT_HEIGHT (features/reframe_claudeshorts.py:69-70) and the export
+// stage encodes libx264/aac (features/shortmaker.py _lazy_export). The exact
+// numbers below are pinned by a real golden-journey run (see PR); adjust here if
+// the pipeline's honest output changes — never loosen them to force green.
+const EXPECT_WIDTH = 1080;
+const EXPECT_HEIGHT = 1920;
+const EXPECT_VCODEC = 'h264'; // libx264 → ffprobe reports "h264"
+const EXPECT_PIX_FMT = 'yuv420p'; // 8-bit 4:2:0, cross-player safe
+const EXPECT_ACODEC = 'aac'; // source AAC audio retained through mux
+const MANUAL_RANGE_SEC = 2.0; // the driven 0:00→0:02 range
+const DURATION_TOLERANCE_SEC = 0.6; // cut/stabilize edge-frame jitter
+const EXPECT_MIN_FILESIZE_BYTES = 10_000; // a real 2s 1080p clip ≫ 10 KB; a truncated/zero-frame mp4 is smaller
 
 let seeded: SeededEnv;
 let app: ElectronApplication;
@@ -252,15 +269,34 @@ test('Make Shorts produces a real vertical short file on disk (golden journey)',
     `produced short is a non-empty file: ${producedPath}`,
   ).toBeGreaterThan(0);
 
-  // A real VERTICAL short with a real duration (dims from the sidecar's own
-  // ffprobe on the finished mp4; the pipeline only writes metadata after a
-  // successful 1080x1920 reframe, so a metadata-bearing clip is genuinely portrait).
+  // ── HARDENED EXTERNAL DONE-SIGNAL: an INDEPENDENT ffprobe of the produced file ──
+  // shorts.list gives ffprobe-derived width/height but durationSec from metadata and
+  // NO codec — insufficient to prove "genuinely playable". Re-probe the real file so
+  // exact geometry, video codec, pixel format, real (container) duration, and size
+  // all have to be right. This is the external signal: the app cannot self-certify.
+  const probe = probeVideo(producedPath);
+  // Surface the observed facts on every run (green OR red) so the oracle self-documents.
+  console.log(`[golden-journey] produced-short ffprobe: ${JSON.stringify(probe)}`);
+
+  expect(probe.width, `exact reframe width — produced ${probe.width}x${probe.height}`).toBe(EXPECT_WIDTH);
+  expect(probe.height, `exact reframe height — produced ${probe.width}x${probe.height}`).toBe(EXPECT_HEIGHT);
+  expect(probe.vcodec, 'H.264 video (cross-player playability)').toBe(EXPECT_VCODEC);
+  expect(probe.pixFmt, '8-bit 4:2:0 pixel format').toBe(EXPECT_PIX_FMT);
   expect(
-    final!.height,
-    `portrait short (height > width) — got ${final!.width}x${final!.height}`,
-  ).toBeGreaterThan(final!.width);
-  expect(final!.width, 'produced short has real dimensions').toBeGreaterThan(0);
-  expect(final!.durationSec, 'produced short has a real duration').toBeGreaterThan(0);
+    probe.durationSec,
+    `real container duration ≈ ${MANUAL_RANGE_SEC}s ±${DURATION_TOLERANCE_SEC}s (ffprobe of FILE, not app metadata) — got ${probe.durationSec}`,
+  ).toBeGreaterThan(MANUAL_RANGE_SEC - DURATION_TOLERANCE_SEC);
+  expect(probe.durationSec).toBeLessThan(MANUAL_RANGE_SEC + DURATION_TOLERANCE_SEC);
+  expect(
+    probe.sizeBytes,
+    `non-trivial encoded size — a truncated/zero-frame mp4 would be tiny (got ${probe.sizeBytes}B)`,
+  ).toBeGreaterThan(EXPECT_MIN_FILESIZE_BYTES);
+  expect(probe.acodec, `retained audio track (expected ${EXPECT_ACODEC})`).toBe(EXPECT_ACODEC);
+
+  // Cross-check the app's SELF-REPORTED dims against the file — a mismatch is an app
+  // metadata bug worth catching (the two are computed by different code paths).
+  expect(final!.width, 'app-reported width matches the produced file').toBe(probe.width);
+  expect(final!.height, 'app-reported height matches the produced file').toBe(probe.height);
 });
 
 test('no console errors across the golden-journey session', async () => {

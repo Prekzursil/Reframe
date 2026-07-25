@@ -339,3 +339,81 @@ export function probePlayable(
     proxyPath?: string;
   };
 }
+
+/**
+ * Resolve `ffprobe` for the spec's OWN independent probe of a produced clip.
+ * Mirrors generateSample's ffmpeg resolution so the golden journey carries no new
+ * precondition beyond the ffmpeg/ffprobe toolchain it already needs: RF_FFPROBE
+ * wins; else derive the sibling of RF_FFMPEG (…/ffmpeg[.exe] → …/ffprobe[.exe]);
+ * else the packaged MEDIA_STUDIO_FFPROBE; else `ffprobe` on PATH.
+ */
+export function resolveFfprobe(): string {
+  const explicit = process.env.RF_FFPROBE?.trim();
+  if (explicit) return explicit;
+  const ffmpeg = process.env.RF_FFMPEG?.trim();
+  if (ffmpeg) {
+    const swapped = ffmpeg.replace(/ffmpeg(\.exe)?$/i, (_m, ext: string | undefined) => `ffprobe${ext ?? ''}`);
+    if (swapped !== ffmpeg) return swapped;
+  }
+  const bundled = process.env.MEDIA_STUDIO_FFPROBE?.trim();
+  if (bundled) return bundled;
+  return 'ffprobe';
+}
+
+/** ffprobe facts read straight off a produced FILE (not the app's shorts.list metadata). */
+export interface ProbedVideo {
+  width: number;
+  height: number;
+  vcodec: string;
+  pixFmt: string;
+  /** Container duration in seconds (real playable length, NOT a metadata field). */
+  durationSec: number;
+  sizeBytes: number;
+  /** null when the produced file carries no audio stream. */
+  acodec: string | null;
+}
+
+/**
+ * Independently `ffprobe` a produced .mp4 — the EXTERNAL done-signal. Deliberately
+ * does NOT trust the app's `shorts.list` (which reports durationSec from a sidecar
+ * .json and carries no codec), so a truncated / wrong-geometry / non-h264 file
+ * cannot masquerade as "a real playable vertical short". Reads geometry + codec +
+ * pixel format off the video stream and duration/size off the container.
+ */
+export function probeVideo(producedPath: string): ProbedVideo {
+  const ffprobe = resolveFfprobe();
+  const args = [
+    '-v', 'error',
+    '-show_entries', 'stream=codec_type,codec_name,width,height,pix_fmt',
+    '-show_entries', 'format=duration,size',
+    '-of', 'json',
+    producedPath,
+  ];
+  const r = spawnSync(ffprobe, args, { encoding: 'utf8' });
+  if (r.status !== 0) {
+    throw new Error(`ffprobe failed (status ${r.status}) on ${producedPath}: ${r.stderr ?? ''}`);
+  }
+  const parsed = JSON.parse(r.stdout) as {
+    streams?: Array<{
+      codec_type?: string;
+      codec_name?: string;
+      width?: number;
+      height?: number;
+      pix_fmt?: string;
+    }>;
+    format?: { duration?: string; size?: string };
+  };
+  const streams = parsed.streams ?? [];
+  const v = streams.find((s) => s.codec_type === 'video');
+  const a = streams.find((s) => s.codec_type === 'audio');
+  if (!v) throw new Error(`ffprobe found no video stream in ${producedPath}`);
+  return {
+    width: v.width ?? 0,
+    height: v.height ?? 0,
+    vcodec: v.codec_name ?? '',
+    pixFmt: v.pix_fmt ?? '',
+    durationSec: Number(parsed.format?.duration ?? 0),
+    sizeBytes: Number(parsed.format?.size ?? 0),
+    acodec: a?.codec_name ?? null,
+  };
+}

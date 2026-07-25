@@ -27,16 +27,32 @@ This module adds three things on top of it:
 Subprocess safety is inherited from :mod:`ffmpeg`: every call is an argv **list**
 (never ``shell=True``), so paths with spaces are a single argv element and just
 work. The subprocess is injected (``run``/``probe``) so tests never spawn ffmpeg.
+
+An argv list stops *shell* injection but not *ffmpeg* injection, so both ends of
+the conversion are guarded here — every value in ``params`` arrives from the
+untrusted renderer over the generic RPC bridge:
+
+  * **input** — :func:`_resolve_source` runs the resolved source through
+    :func:`~media_studio.pathsafe.ensure_local_media_input`, because ffmpeg reads
+    its input through a PROTOCOL layer (``http://`` = SSRF / internal-service
+    probing, ``concat:``/``file:`` = arbitrary local read, ``\\\\host\\share`` =
+    outbound SMB authentication).
+  * **output** — :func:`_confined_output` confines the destination, because
+    ffmpeg is invoked with ``-y``: an unconfined output path is an unconditional
+    overwrite of any writable file.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
 from .. import ffmpeg
 from ..jobs import JobContext
+from ..pathsafe import PathTraversalError, ensure_local_media_input, ensure_under
+from ..settings_store import default_config_dir
 from ..util import clamp_pct, get_logger
 
 log = get_logger("media_studio.convert")
@@ -129,25 +145,73 @@ def _resolve_source(
     item: dict[str, Any],
     resolver: SourceResolver | None,
 ) -> str:
-    """Resolve an item's source to a concrete path.
+    """Resolve an item's source to a concrete LOCAL media path.
 
     Accepts ``{"path": ...}`` directly, or ``{"videoId": ...}`` resolved through
     ``resolver`` (a ``library.get(id)["path"]``-style callable). Raises
     ``ValueError`` when neither is usable so a job fails loudly rather than
     feeding ffmpeg an empty input.
+
+    BOTH branches pass through :func:`~media_studio.pathsafe.ensure_local_media_input`
+    (which raises ``UnsafeMediaInputError``, itself a ``ValueError``): the ``path``
+    is renderer-supplied, and a ``videoId`` resolves through the library, whose
+    entries were themselves added over the same untrusted bridge — so neither is a
+    trusted source of an ffmpeg *protocol* string. The guard validates and returns
+    the value verbatim; it never rewrites the path (see its docstring).
     """
     path = item.get("path")
     if path:
-        return str(path)
+        return ensure_local_media_input(str(path))
 
     video_id = item.get("videoId")
     if video_id and resolver is not None:
         resolved = resolver(str(video_id))
         if resolved:
-            return str(resolved)
+            return ensure_local_media_input(str(resolved))
         raise ValueError(f"unknown videoId: {video_id}")
 
     raise ValueError("convert item needs a 'path' or a resolvable 'videoId'")
+
+
+def _confined_output(out_path: str, in_path: str) -> str:
+    """Return ``out_path`` unchanged once it is a PERMITTED conversion destination.
+
+    ``convert.start``/``convert.batch`` accept an ``out`` override straight off the
+    RPC bridge (``start_handler`` reads ``params["out"]``) and ffmpeg is invoked
+    with ``-y``, so an unconfined destination is an unconditional overwrite of ANY
+    writable file — an ssh ``authorized_keys``, a shell profile, the app's own
+    ``settings.json``. Two destination areas are permitted:
+
+      1. the SOURCE's own directory — exactly where :func:`output_path`'s derived
+         default already lands, and the only place the shipped UI ever writes
+         (``client.convert.start(target, options)`` sends no ``out`` at all);
+      2. the app's own data root (``exports``/``projects``/…), consulted ONLY as a
+         fallback so an ordinary convert never depends on the config-dir env.
+
+    The value is VALIDATED, not rewritten: the confined canonical form proves the
+    location, then the ORIGINAL string is what ffmpeg receives and what
+    ``{"path": …}`` returns to the renderer (the UI reveals that exact path). No
+    Python filesystem call in this module consumes it, so there is no
+    ``py/path-injection`` sink here to hand a canonicalised value to.
+
+    Residual, disclosed: this bounds the destination to a DIRECTORY, so a caller
+    that can name a READABLE media file inside a sensitive directory can still
+    overwrite a sibling of it — inherent to "a converter writes next to its
+    source" — and a source that sits at a filesystem root therefore widens its own
+    base to that whole root. Both need an existing readable input (ffmpeg opens the
+    input before the output, so a bogus source writes nothing). What this removes is
+    the arbitrary-absolute-path overwrite primitive.
+    """
+    try:
+        ensure_under(os.path.dirname(os.path.realpath(in_path)), out_path)
+    except PathTraversalError:
+        try:
+            ensure_under(default_config_dir(), out_path)
+        except PathTraversalError as exc:
+            raise PathTraversalError(
+                f"convert output {out_path!r} is outside the source directory and the app data root"
+            ) from exc
+    return out_path
 
 
 def convert_one(
@@ -162,14 +226,17 @@ def convert_one(
 ) -> str:
     """Convert a single ``item`` and return the output path.
 
-    ``item`` = ``{"path"|"videoId", "options"?, "out"?}``. The source is resolved,
-    probed for duration (so progress can be a real percentage), encoded via an
-    argv built by :func:`ffmpeg.build_convert_argv`, and the chosen output path
-    is returned. A non-zero ffmpeg exit raises :class:`RuntimeError`.
+    ``item`` = ``{"path"|"videoId", "options"?, "out"?}``. The source is resolved
+    (and guarded: local paths only, no ffmpeg protocol), probed for duration (so
+    progress can be a real percentage), encoded via an argv built by
+    :func:`ffmpeg.build_convert_argv`, and the chosen — CONFINED — output path is
+    returned. A non-zero ffmpeg exit raises :class:`RuntimeError`; a non-local
+    input raises ``UnsafeMediaInputError`` and an out-of-bounds destination
+    ``PathTraversalError`` (both ``ValueError``s), BEFORE ffmpeg is spawned.
     """
     in_path = _resolve_source(item, resolver)
     options = item.get("options") or {}
-    out_path = output_path(in_path, options, item.get("out"))
+    out_path = _confined_output(output_path(in_path, options, item.get("out")), in_path)
 
     # Probe the source duration so out_time can be turned into a real pct. A
     # failed/zero probe is fine — run() then just reports the final 100/done.
