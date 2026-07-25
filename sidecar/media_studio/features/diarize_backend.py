@@ -1,10 +1,13 @@
 """Real SpeechBrain VAD + ECAPA backend for diarization (LAZY-imported only).
 
-This module is imported ONLY inside ``diarize._default_backend_factory`` at job
-run-time — never at package import, never by the tests (which inject a fake
-:class:`~media_studio.features.diarize.DiarizerBackend`). It is therefore the one
+The :class:`SpeechBrainDiarizer` itself is built ONLY inside
+``diarize._default_backend_factory`` at job run-time (the tests inject a fake
+:class:`~media_studio.features.diarize.DiarizerBackend` instead). This is the one
 place allowed to import ``speechbrain`` / ``torch`` / ``torchaudio``, and those
-imports live inside the methods so even importing THIS module stays light.
+imports live inside the methods so importing THIS module stays light — which is
+what lets ``pyannote_backend`` / ``parakeet_asr_backend`` (and the tests) import
+the shared :func:`resolve_pinned_hf_source` from here at module scope without
+pulling in any native stack.
 
 The :class:`SpeechBrainDiarizer`:
   1. runs SpeechBrain's pretrained ``VAD`` (CRDNN) to get speech boundaries;
@@ -16,16 +19,38 @@ Models resolve from the standard HF cache that ``assets.ensure`` populates, so a
 machine that pre-fetched the gated assets runs this fully offline. Coverage of
 this module is excluded (it requires the heavy native stack + real audio); the
 pure pipeline it feeds is covered exhaustively in ``test_diarize.py``.
+
+WU-S5 (revision pinning): the load calls resolve their HF revision from the ASSET
+REGISTRY (:func:`resolve_pinned_hf_source`) instead of fetching a floating Hub
+ref. ``assets/manifest.py`` already refuses to register an ``installer="hf"``
+entry without a 40-hex commit pin, so making the registry the single source of
+truth means a runtime load CANNOT drift from its registration. That matters here
+because a SpeechBrain ``from_hparams`` executes code at load time — HyperPyYAML
+``!new`` / ``!apply`` constructors in ``hyperparams.yaml`` plus an optional
+``custom.py`` — and SpeechBrain forwards ``revision`` to the fetch of BOTH.
+:func:`resolve_pinned_hf_source` is the SHARED resolver for all three heavy HF
+backends (this module, ``parakeet_asr_backend``, ``pyannote_backend``); it lives
+here because this module is the lightest of the three at import time (its heavy
+imports are all inside methods, and it registers no assets as a side effect).
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
+from ..assets import manifest
 from ..util import get_logger
-from .diarize import CancelProbe, ProgressCb
+from .diarize import ECAPA_ASSET_NAME, ECAPA_HF_REPO, VAD_ASSET_NAME, VAD_HF_REPO, CancelProbe, ProgressCb
 
 log = get_logger("media_studio.features.diarize_backend")
+
+#: A registered HF revision must be a 40-hex git/HF COMMIT hash — a branch/tag
+#: like "main" is a MOVING target. This DELIBERATELY duplicates the registration
+#: gate (``manifest._COMMIT_HASH_RE``) as a defense-in-depth re-check at the LOAD
+#: site, so a loosened registry cannot silently unpin a model load; the two
+#: patterns are asserted identical in ``test_runtime_revision_pin.py``.
+_COMMIT_HASH_RE = re.compile(r"\A[0-9a-fA-F]{40}\Z")
 
 #: ECAPA expects 16 kHz mono; VAD is trained at 16 kHz too.
 TARGET_SR = 16000
@@ -72,6 +97,59 @@ class DiarizeBackendUnavailableError(RuntimeError):
     surfaces an install/provision message (v1.2.0 NO-SILENT-FALLBACK, mirroring
     ``reframe_claudeshorts.ClaudeShortsBackendUnavailableError``).
     """
+
+
+class UnpinnedModelRevisionError(RuntimeError):
+    """A heavy model load could not be pinned to its registered asset revision.
+
+    A CONFIGURATION/PROVISIONING failure, not a per-clip event: the asset the
+    loader is about to fetch is missing from the registry, is not an ``hf`` entry,
+    names a different repo than the load site, or carries a revision that is not
+    an immutable 40-hex commit. Every one of those means the load would resolve a
+    MUTABLE upstream ref, and these formats execute code at load time — so the
+    only safe outcome is to FAIL CLOSED with an actionable message (mirroring
+    :class:`DiarizeBackendUnavailableError`'s typed no-silent-fallback contract)
+    rather than fetch whatever the Hub currently serves.
+    """
+
+
+def resolve_pinned_hf_source(asset_name: str, expected_repo: str) -> tuple[str, str]:
+    """Return ``(repo_id, revision)`` for ``asset_name`` from the ASSET REGISTRY.
+
+    The registry — not a constant in the loading module — is the single source of
+    truth for the revision a runtime load may use, so the load can never drift
+    from the pin ``assets.ensure`` downloaded. ``expected_repo`` is the repo the
+    caller is about to load; a mismatch means the registration and the load site
+    were edited independently and is refused (that check IS the anti-drift
+    mechanism). Raises :class:`UnpinnedModelRevisionError` when the entry is
+    absent, is not an ``installer="hf"`` entry (only those carry the manifest's
+    validated commit pin), names a different repo, or is not pinned to a 40-hex
+    commit hash.
+    """
+    entry = manifest.get_asset(asset_name)
+    if entry is None:
+        raise UnpinnedModelRevisionError(
+            f"model asset {asset_name!r} is not registered, so its Hugging Face revision "
+            f"cannot be pinned; register it in the asset manifest before loading {expected_repo!r}"
+        )
+    if entry.installer != "hf":
+        raise UnpinnedModelRevisionError(
+            f"model asset {asset_name!r} has installer={entry.installer!r}; only installer='hf' "
+            "entries carry a validated commit pin for a Hugging Face load"
+        )
+    repo = str(entry.hf_repo or "")
+    if repo != expected_repo:
+        raise UnpinnedModelRevisionError(
+            f"model asset {asset_name!r} is registered for repo {repo!r} but the runtime load "
+            f"requested {expected_repo!r}; the registry is the single source of truth"
+        )
+    revision = str(entry.hf_revision or "")
+    if not _COMMIT_HASH_RE.match(revision):
+        raise UnpinnedModelRevisionError(
+            f"model asset {asset_name!r} revision {revision!r} is not an immutable 40-hex commit "
+            "hash; a branch/tag is a MOVING target and must not be loaded at run time"
+        )
+    return repo, revision
 
 
 def _import_speechbrain() -> tuple[type[Any], type[Any]]:
@@ -142,11 +220,17 @@ class SpeechBrainDiarizer:  # pragma: no cover - requires the heavy native stack
         # Fail loud (typed) when speechbrain is missing — never a raw
         # ModuleNotFoundError out of the job thread (v1.2.0 NO-SILENT-FALLBACK).
         vad_cls, encoder_cls = _import_speechbrain()
+        # WU-S5: repo AND revision come from the asset registry (the same pin
+        # ``assets.ensure`` snapshot-downloaded), never from a hardcoded repo id
+        # at a floating ref. Resolved BEFORE the device probe so a broken pin
+        # fails closed without touching CUDA.
+        vad_repo, vad_revision = resolve_pinned_hf_source(VAD_ASSET_NAME, VAD_HF_REPO)
+        ecapa_repo, ecapa_revision = resolve_pinned_hf_source(ECAPA_ASSET_NAME, ECAPA_HF_REPO)
         device = self._device()
         run_opts = {"device": device}
-        self._vad = vad_cls.from_hparams(source="speechbrain/vad-crdnn-libriparty", run_opts=run_opts)
-        self._encoder = encoder_cls.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb", run_opts=run_opts)
-        log.info("speechbrain diarizer ready on %s", device)
+        self._vad = vad_cls.from_hparams(source=vad_repo, revision=vad_revision, run_opts=run_opts)
+        self._encoder = encoder_cls.from_hparams(source=ecapa_repo, revision=ecapa_revision, run_opts=run_opts)
+        log.info("speechbrain diarizer ready on %s (pinned %s / %s)", device, vad_revision[:12], ecapa_revision[:12])
 
     @staticmethod
     def _windows(boundaries: Any) -> list[tuple[float, float]]:
@@ -237,4 +321,6 @@ __all__ = [
     "WINDOW_SEC",
     "DiarizeBackendUnavailableError",
     "SpeechBrainDiarizer",
+    "UnpinnedModelRevisionError",
+    "resolve_pinned_hf_source",
 ]
