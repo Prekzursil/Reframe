@@ -27,7 +27,8 @@ entry without a 40-hex commit pin, so making the registry the single source of
 truth means a runtime load CANNOT drift from its registration. That matters here
 because a SpeechBrain ``from_hparams`` executes code at load time — HyperPyYAML
 ``!new`` / ``!apply`` constructors in ``hyperparams.yaml`` plus an optional
-``custom.py`` — and SpeechBrain forwards ``revision`` to the fetch of BOTH.
+``custom.py``, both of which the pin covers (see :func:`pinned_fetch_kwargs` for
+the per-version kwarg shape and exactly how far each version's pin reaches).
 :func:`resolve_pinned_hf_source` is the SHARED resolver for all three heavy HF
 backends (this module, ``parakeet_asr_backend``, ``pyannote_backend``); it lives
 here because this module is the lightest of the three at import time (its heavy
@@ -152,6 +153,46 @@ def resolve_pinned_hf_source(asset_name: str, expected_repo: str) -> tuple[str, 
     return repo, revision
 
 
+def _import_fetch_config() -> type[Any] | None:
+    """SpeechBrain >= 1.1.0's ``utils.fetching.FetchConfig`` class, else ``None``.
+
+    A VERSION PROBE, not a feature switch: SpeechBrain moved every fetch control
+    (revision, allow_network, token, cache dir) out of ``from_hparams``'s explicit
+    parameters and into a ``FetchConfig`` dataclass in 1.1.0. Its presence is the
+    signal for which pin SHAPE :func:`pinned_fetch_kwargs` must emit.
+    """
+    try:
+        from speechbrain.utils.fetching import FetchConfig  # noqa: PLC0415 - version probe
+    except ImportError:
+        return None
+    return FetchConfig
+
+
+def pinned_fetch_kwargs(revision: str, fetch_config_cls: type[Any] | None) -> dict[str, Any]:
+    """``from_hparams`` kwargs that pin the load to ``revision``, per API version.
+
+    * SpeechBrain **1.0.x** — ``from_hparams(..., revision=<commit>)``; the explicit
+      parameter is forwarded to the ``fetch`` of ``hyperparams.yaml`` AND of
+      ``custom.py``, the two artifacts that execute code at load time.
+    * SpeechBrain **1.1.0+** — ``from_hparams(..., fetch_config=FetchConfig(revision=...))``.
+      There the config reaches BOTH that fetch and ``pretrainer.collect_files``, so
+      the checkpoint tensors are pinned too (a strictly wider pin than 1.0.x).
+
+    The shape is NOT interchangeable: on 1.1.0 a bare ``revision=`` falls into
+    ``pretrained_from_hparams``'s ``**kwargs``, which are handed to the class
+    constructor — and ``Pretrained.__init__(self, modules, hparams, run_opts,
+    freeze_params)`` takes no ``**kwargs``, so it raises
+    ``TypeError: __init__() got an unexpected keyword argument 'revision'``
+    instead of pinning anything. ``sidecar/pyproject.toml`` pins
+    ``speechbrain==1.1.0``, so emitting the 1.0.x shape unconditionally would
+    break the diarizer outright; ``fetch_config_cls`` is injected (rather than
+    probed inside) so both shapes stay unit-testable on either installed version.
+    """
+    if fetch_config_cls is None:
+        return {"revision": revision}
+    return {"fetch_config": fetch_config_cls(revision=revision)}
+
+
 def _import_speechbrain() -> tuple[type[Any], type[Any]]:
     """Import the SpeechBrain inference API ``(VAD, EncoderClassifier)`` — or fail loud.
 
@@ -226,10 +267,17 @@ class SpeechBrainDiarizer:  # pragma: no cover - requires the heavy native stack
         # fails closed without touching CUDA.
         vad_repo, vad_revision = resolve_pinned_hf_source(VAD_ASSET_NAME, VAD_HF_REPO)
         ecapa_repo, ecapa_revision = resolve_pinned_hf_source(ECAPA_ASSET_NAME, ECAPA_HF_REPO)
+        # The pin's kwarg SHAPE depends on the installed SpeechBrain (1.0.x
+        # ``revision=`` vs 1.1.0+ ``fetch_config=``) — see pinned_fetch_kwargs.
+        fetch_config_cls = _import_fetch_config()
         device = self._device()
         run_opts = {"device": device}
-        self._vad = vad_cls.from_hparams(source=vad_repo, revision=vad_revision, run_opts=run_opts)
-        self._encoder = encoder_cls.from_hparams(source=ecapa_repo, revision=ecapa_revision, run_opts=run_opts)
+        self._vad = vad_cls.from_hparams(
+            source=vad_repo, run_opts=run_opts, **pinned_fetch_kwargs(vad_revision, fetch_config_cls)
+        )
+        self._encoder = encoder_cls.from_hparams(
+            source=ecapa_repo, run_opts=run_opts, **pinned_fetch_kwargs(ecapa_revision, fetch_config_cls)
+        )
         log.info("speechbrain diarizer ready on %s (pinned %s / %s)", device, vad_revision[:12], ecapa_revision[:12])
 
     @staticmethod
@@ -322,5 +370,6 @@ __all__ = [
     "DiarizeBackendUnavailableError",
     "SpeechBrainDiarizer",
     "UnpinnedModelRevisionError",
+    "pinned_fetch_kwargs",
     "resolve_pinned_hf_source",
 ]

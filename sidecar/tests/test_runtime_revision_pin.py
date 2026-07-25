@@ -197,21 +197,138 @@ def _install_fake_speechbrain(monkeypatch) -> list[dict[str, Any]]:
     return calls
 
 
+class _FakeFetchConfig:
+    """Stand-in for speechbrain >= 1.1.0's ``utils.fetching.FetchConfig``."""
+
+    def __init__(self, *, revision: str | None = None, allow_network: bool = True) -> None:
+        self.revision = revision
+        self.allow_network = allow_network
+
+
+def _install_fake_fetching(monkeypatch) -> None:
+    """Make ``speechbrain.utils.fetching.FetchConfig`` importable (the 1.1.0 API)."""
+    utils = types.ModuleType("speechbrain.utils")
+    fetching = types.ModuleType("speechbrain.utils.fetching")
+    fetching.FetchConfig = _FakeFetchConfig
+    utils.fetching = fetching
+    monkeypatch.setitem(sys.modules, "speechbrain.utils", utils)
+    monkeypatch.setitem(sys.modules, "speechbrain.utils.fetching", fetching)
+
+
+def _hide_fake_fetching(monkeypatch) -> None:
+    """Make the FetchConfig import fail (the speechbrain 1.0.x API)."""
+    monkeypatch.setitem(sys.modules, "speechbrain.utils.fetching", None)
+
+
+def _install_speechbrain_110(monkeypatch) -> list[dict[str, Any]]:
+    """Fake the speechbrain 1.1.0 load API, including its FAILURE MODE.
+
+    In 1.1.0 ``Pretrained.from_hparams(source, hparams_file="...", **kwargs)``
+    delegates to ``pretrained_from_hparams``, whose fetch controls live in a
+    ``FetchConfig``; anything else in ``**kwargs`` is handed to the CLASS
+    CONSTRUCTOR (``interfaces.py:209`` ``cls(modules=..., hparams=..., **kwargs)``)
+    and ``Pretrained.__init__(self, modules, hparams, run_opts, freeze_params)``
+    has NO ``**kwargs``. So a bare ``revision=`` raises TypeError there instead of
+    pinning anything — this fake reproduces exactly that.
+    """
+    calls: list[dict[str, Any]] = []
+    _accepted = {"fetch_config", "run_opts", "overrides", "savedir", "local_strategy", "download_only"}
+
+    def _load(model: str, source: str, **kwargs: Any) -> object:
+        for unexpected in sorted(set(kwargs) - _accepted):
+            raise TypeError(f"__init__() got an unexpected keyword argument '{unexpected}'")
+        calls.append({"model": model, "source": source, **kwargs})
+        return object()
+
+    class _FakeVAD:
+        @staticmethod
+        def from_hparams(source: str, **kwargs: Any) -> object:
+            return _load("vad", source, **kwargs)
+
+    class _FakeEncoder:
+        @staticmethod
+        def from_hparams(source: str, **kwargs: Any) -> object:
+            return _load("encoder", source, **kwargs)
+
+    sb = types.ModuleType("speechbrain")
+    inference = types.ModuleType("speechbrain.inference")
+    vad_mod = types.ModuleType("speechbrain.inference.VAD")
+    cls_mod = types.ModuleType("speechbrain.inference.classifiers")
+    vad_mod.VAD = _FakeVAD
+    cls_mod.EncoderClassifier = _FakeEncoder
+    sb.inference = inference
+    inference.VAD = vad_mod
+    inference.classifiers = cls_mod
+    for name, mod in (
+        ("speechbrain", sb),
+        ("speechbrain.inference", inference),
+        ("speechbrain.inference.VAD", vad_mod),
+        ("speechbrain.inference.classifiers", cls_mod),
+    ):
+        monkeypatch.setitem(sys.modules, name, mod)
+    _install_fake_fetching(monkeypatch)
+    return calls
+
+
+def _pinned_revision(call: dict[str, Any]) -> str | None:
+    """The revision a recorded from_hparams call carries, in EITHER API shape."""
+    if "revision" in call:
+        return call["revision"]
+    return getattr(call.get("fetch_config"), "revision", None)
+
+
+class TestPinnedFetchKwargs:
+    def test_speechbrain_10x_shape_is_a_bare_revision(self):
+        # 1.0.x: from_hparams has an explicit ``revision`` parameter that it
+        # forwards to fetch() for hyperparams.yaml AND custom.py.
+        assert db.pinned_fetch_kwargs("a" * 40, None) == {"revision": "a" * 40}
+
+    def test_speechbrain_110_shape_is_a_fetch_config(self):
+        # 1.1.0+: the controls moved into FetchConfig, which the loader forwards to
+        # fetch() AND to pretrainer.collect_files() (so the checkpoint tensors are
+        # pinned there too). A bare ``revision=`` would TypeError instead.
+        kwargs = db.pinned_fetch_kwargs("b" * 40, _FakeFetchConfig)
+        assert set(kwargs) == {"fetch_config"}
+        assert kwargs["fetch_config"].revision == "b" * 40
+
+    def test_import_fetch_config_returns_none_on_10x(self, monkeypatch):
+        _hide_fake_fetching(monkeypatch)
+        assert db._import_fetch_config() is None
+
+    def test_import_fetch_config_returns_the_class_on_110(self, monkeypatch):
+        _install_fake_fetching(monkeypatch)
+        assert db._import_fetch_config() is _FakeFetchConfig
+
+
 class TestSpeechBrainLoadIsPinned:
     def test_ensure_models_passes_the_registered_commit_to_from_hparams(self, monkeypatch):
+        _hide_fake_fetching(monkeypatch)
         calls = _install_fake_speechbrain(monkeypatch)
         inst = db.SpeechBrainDiarizer({"device": "cpu"})
         inst._ensure_models()
         by_model = {call["model"]: call for call in calls}
-        # SpeechBrain forwards ``revision`` to the fetch of BOTH hyperparams.yaml
+        # SpeechBrain forwards the pin to the fetch of BOTH hyperparams.yaml
         # (HyperPyYAML !new/!apply) and custom.py — the two code-executing
         # artifacts — so pinning it closes the mutable-upstream load vector.
         assert by_model["vad"]["source"] == _diarize.VAD_HF_REPO
-        assert by_model["vad"]["revision"] == _diarize.VAD_HF_REVISION
+        assert _pinned_revision(by_model["vad"]) == _diarize.VAD_HF_REVISION
         assert by_model["encoder"]["source"] == _diarize.ECAPA_HF_REPO
-        assert by_model["encoder"]["revision"] == _diarize.ECAPA_HF_REVISION
+        assert _pinned_revision(by_model["encoder"]) == _diarize.ECAPA_HF_REVISION
+
+    def test_ensure_models_pins_via_fetch_config_on_speechbrain_110(self, monkeypatch):
+        # REGRESSION GUARD for a real self-inflicted defect: passing a bare
+        # ``revision=`` to speechbrain 1.1.0 (the version sidecar/pyproject.toml
+        # pins) raises TypeError from Pretrained.__init__ instead of pinning, so
+        # the fix has to pick the kwarg SHAPE per installed API.
+        calls = _install_speechbrain_110(monkeypatch)
+        db.SpeechBrainDiarizer({"device": "cpu"})._ensure_models()
+        by_model = {call["model"]: call for call in calls}
+        assert _pinned_revision(by_model["vad"]) == _diarize.VAD_HF_REVISION
+        assert _pinned_revision(by_model["encoder"]) == _diarize.ECAPA_HF_REVISION
+        assert "revision" not in by_model["vad"]
 
     def test_ensure_models_refuses_when_the_registry_pin_is_gone(self, monkeypatch, clean_registry):
+        _hide_fake_fetching(monkeypatch)
         _install_fake_speechbrain(monkeypatch)
         reduced = {k: v for k, v in clean_registry.items() if k != _diarize.ECAPA_ASSET_NAME}
         manifest.registry_restore(reduced)
@@ -399,6 +516,7 @@ class TestRealParakeetLoaderIsPinned:
 def test_backend_module_surfaces_export_the_pin_api():
     assert "UnpinnedModelRevisionError" in db.__all__
     assert "resolve_pinned_hf_source" in db.__all__
+    assert "pinned_fetch_kwargs" in db.__all__
     assert "find_nemo_checkpoint" in pkb.__all__
     assert "resolve_pinned_checkpoint" in pkb.__all__
     assert "pinned_pipeline_checkpoint" in pb.__all__
