@@ -39,28 +39,48 @@ param(
     [string]$PythonVersion = '3.12.10',
     [string]$Dest = (Join-Path $PSScriptRoot 'python-embed'),
     # REQUIRED (WU-S10): empty => the download is REFUSED, nothing is staged.
-    # Obtain with -RecordHashes and cross-check against python.org's published
-    # SHA-256 for python-<ver>-embed-amd64.zip before recording it here.
-    [string]$ExpectedPythonSha256 = '',
+    # RECORDED 2026-07-26. python.org publishes MD5 (NOT SHA-256) on the release
+    # page, so the two-signal check is: fetch over TLS, confirm the bytes against
+    # the vendor's published MD5 for THIS EXACT row, then pin the SHA-256 of those
+    # verified bytes. Vendor MD5 fe8ef205f2e9c3ba44d0cf9954e1abd3 (matched).
+    # PARSE WARNING: the release-page MD5 column follows the filename inside the
+    # same <tr>. Scanning BACKWARDS from the filename yields the PREVIOUS row's
+    # digest (arm64.exe) and a false "supply chain mismatch" — scope to the row.
+    [string]$ExpectedPythonSha256 = '4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3',
     # The dedicated py3.14 embed for the isolated chatterbox env (A4).
     [string]$ChatterboxPythonVersion = '3.14.0',  # human pins the exact patch on first verified run
     [string]$ChatterboxDest = (Join-Path $PSScriptRoot 'python-embed-314'),
     # REQUIRED (WU-S10) — same as above, for the py3.14 embed zip.
-    [string]$ExpectedChatterboxPythonSha256 = '',
+    # RECORDED 2026-07-26, same two-signal method. Vendor MD5
+    # 7c5d8d8e3213a11bd0e36f8b8eb03431 (matched). NOTE: this URL 404'd as recently
+    # as 2026-07-18 (3.14.0 was not yet published), which is why an earlier CI run
+    # failed here for a DIFFERENT reason than the empty pin. It is live now.
+    [string]$ExpectedChatterboxPythonSha256 = '8d4d3590c10449d78aa4375f534e6d5f3027d67fdc362dd1a882279db6f90fdf',
     [switch]$WithFfmpeg,
     # Pinned ffmpeg build (WU A3): BtbN win64-LGPL STATIC (~138 MB zip). BtbN is
     # the only mainstream source with a redistribution-safe LGPL static Windows
     # build (gyan.dev main builds are all --enable-gpl); an UNMODIFIED LGPL exe
     # invoked as a separate child process is redistribution-safe in a closed-
-    # source app. PINNED release tag: autobuild-2026-07-03-13-21 (durable dated
-    # asset, not the rolling `latest` tag), FFmpeg n7.1.5 line. The extractor
-    # below also copies the zip's LICENSE.txt next to the exes (LGPL obligation:
-    # ship the license + record this exact source tag).
-    [string]$FfmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-03-13-21/ffmpeg-n7.1.5-1-g7d0e842004-win64-lgpl-7.1.zip',
+    # source app. FFmpeg n7.1.5 line. The extractor below also copies the zip's
+    # LICENSE.txt next to the exes (LGPL obligation: ship the license + record
+    # this exact source tag).
+    #
+    # *** PIN A MONTH-END TAG ONLY. *** BtbN's retention is TWO-TIER, and getting
+    # this wrong silently breaks the Windows build weeks later:
+    #   - the last ~2 weeks of DAILY autobuilds are kept, then deleted;
+    #   - only the LAST-DAY-OF-MONTH build is retained long-term (~2 years:
+    #     2026-06-30, 2026-05-31, ... back to 2024-08-31 as of 2026-07-26).
+    # The previous pin, autobuild-2026-07-03-13-21, was a MID-MONTH DAILY. It was
+    # pruned and began returning 404, which failed `Stage packaged runtime` on
+    # every Windows CI run. Re-pinned 2026-07-26 to the 2026-06-30 month-end tag,
+    # which carries the SAME asset (identical filename + ffmpeg commit
+    # g7d0e842004) and is retained for years rather than days.
+    [string]$FfmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-06-30-13-34/ffmpeg-n7.1.5-1-g7d0e842004-win64-lgpl-7.1.zip',
     # REQUIRED (WU-S10) when -WithFfmpeg is used: empty => the download is
-    # REFUSED. BtbN publishes no per-asset checksum file, so obtain it with
-    # -RecordHashes and record the digest of the exact pinned release asset.
-    [string]$ExpectedFfmpegSha256 = '',
+    # REFUSED. BtbN publishes no per-asset checksum file, so this is the digest of
+    # the exact pinned asset, recorded 2026-07-26 (132 MB; verified to contain
+    # bin/ffmpeg.exe, bin/ffprobe.exe and LICENSE.txt).
+    [string]$ExpectedFfmpegSha256 = 'ec1c6ae03fab10f316344973f83c549b4b662ec3d73f1658353ab1587f4cf727',
     [string]$FfmpegDest = (Join-Path (Join-Path $PSScriptRoot 'ffmpeg') 'win'),
     [string]$GetPipUrl = 'https://bootstrap.pypa.io/get-pip.py',
     # get-pip.py is DOWNLOADED then EXECUTED, so it is the most important pin
