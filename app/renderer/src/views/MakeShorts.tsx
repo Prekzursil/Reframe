@@ -13,7 +13,7 @@
 // heavy children own their own tests; this view owns the section routing +
 // video selection + the manual-export wiring.
 import React, { useCallback, useEffect, useState } from 'react';
-import { TabBar, type TabDef } from '../components/TabBar';
+import { TabBar, tabId, tabPanelId, type TabDef } from '../components/TabBar';
 import { Shorts } from './Shorts';
 import { Repurpose } from './Repurpose';
 import { ShortMaker } from '../features/ShortMaker';
@@ -198,7 +198,17 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
   return (
     <div className="make-shorts" aria-label="Make Shorts">
       <TabBar tabs={SECTIONS} active={active} onSelect={setActive} />
-      <div className="make-shorts__panel">
+      {/* A real `role="tabpanel"` owned by the active tab. Without this the
+          tablist's `aria-controls` pointed at nothing and axe failed CI with a
+          CRITICAL `aria-valid-attr-value` (`aria-controls="tabpanel-make"`).
+          The id/aria-labelledby pair is the same bidirectional wiring Workspace,
+          Repurpose, Deliver and Settings already use. */}
+      <div
+        className="make-shorts__panel"
+        role="tabpanel"
+        id={tabPanelId(active)}
+        aria-labelledby={tabId(active)}
+      >
         {active === 'gallery' ? <Shorts onReexport={handleReexport} /> : null}
         {active === 'batch' ? <Repurpose resumeId={resumeId} /> : null}
         {active === 'make' ? (
