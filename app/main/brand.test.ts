@@ -112,8 +112,15 @@ describe('app/package.json — v1.4 version + productName (WU A1 / WU-R2)', () =
     name: string;
   };
 
-  it('version is bumped to 1.4.1', () => {
-    expect(pkg.version).toBe('1.4.1');
+  // This pin is deliberate: it forces every version change to be a CONSCIOUS edit
+  // rather than drift. 1.4.2 is a maintenance bump over the shipped v1.4.1 tag —
+  // 8 security audit fixes (incl. the settings.set executable-path write refusal),
+  // the Windows packaged-runtime unblock, the critical dangling-aria-controls fix,
+  // and refreshed visual baselines. NOT 1.5.0: the locked v1.5 scope (4 flagships,
+  // keystone RPC refactor, full pro-shell redesign) is still unlanded, so claiming
+  // the 1.5 line here would overstate what shipped.
+  it('version is bumped to 1.4.2', () => {
+    expect(pkg.version).toBe('1.4.2');
   });
 
   it('productName is the display brand "Reframe"', () => {
