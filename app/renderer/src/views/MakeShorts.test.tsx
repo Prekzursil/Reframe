@@ -263,6 +263,63 @@ async function selectVideo(id: string): Promise<void> {
 }
 
 describe('<MakeShorts />', () => {
+  // CRITICAL a11y regression guard. CI (`E2E GUI — VISUAL + A11Y`) failed with
+  //   aria-valid-attr-value (critical): Invalid ARIA attribute value:
+  //   aria-controls="tabpanel-make"
+  // because this view rendered its sections inside a plain
+  // `<div className="make-shorts__panel">` — no `role="tabpanel"`, no `id`, no
+  // `aria-labelledby` — so the tablist's `aria-controls` pointed at nothing.
+  // This asserts the axe RULE itself (every IDREF resolves), not just the one
+  // instance axe happened to report first.
+  it('has no dangling aria-controls — every IDREF resolves to a rendered element', async () => {
+    await mount();
+    const refs = Array.from(container.querySelectorAll('[aria-controls]'));
+    expect(refs.length).toBeGreaterThan(0);
+    // Compare against the set of rendered ids rather than building a `#id`
+    // selector: jsdom here has no `CSS.escape`, and an unescaped id would make
+    // this probe throw instead of measuring — a detector failure, not a finding.
+    const renderedIds = new Set(
+      Array.from(container.querySelectorAll('[id]')).map((el) => el.getAttribute('id')),
+    );
+    for (const el of refs) {
+      const target = el.getAttribute('aria-controls') as string;
+      expect(
+        renderedIds.has(target),
+        `aria-controls="${target}" on <${el.tagName.toLowerCase()}> resolves to nothing`,
+      ).toBe(true);
+    }
+  });
+
+  it('wires the section container as a real tabpanel owned by the active tab', async () => {
+    await mount();
+    const panel = container.querySelector('.make-shorts__panel');
+    expect(panel?.getAttribute('role')).toBe('tabpanel');
+    const activeTab = container.querySelector('[role="tab"][aria-selected="true"]');
+    expect(activeTab).not.toBeNull();
+    // The panel the active tab claims to control must BE this panel, and the panel
+    // must name that tab back (bidirectional wiring).
+    expect(panel?.getAttribute('id')).toBe(activeTab?.getAttribute('aria-controls'));
+    expect(panel?.getAttribute('aria-labelledby')).toBe(activeTab?.getAttribute('id'));
+  });
+
+  it('keeps the tabpanel wiring valid after switching sections', async () => {
+    await mount();
+    const gallery = container.querySelector<HTMLButtonElement>('[data-tab-id="gallery"]')!;
+    await act(async () => {
+      gallery.click();
+    });
+    const panel = container.querySelector('.make-shorts__panel');
+    const activeTab = container.querySelector('[role="tab"][aria-selected="true"]');
+    expect(activeTab?.getAttribute('data-tab-id')).toBe('gallery');
+    expect(panel?.getAttribute('id')).toBe(activeTab?.getAttribute('aria-controls'));
+    const renderedIds = new Set(
+      Array.from(container.querySelectorAll('[id]')).map((el) => el.getAttribute('id')),
+    );
+    for (const el of Array.from(container.querySelectorAll('[aria-controls]'))) {
+      expect(renderedIds.has(el.getAttribute('aria-controls') as string)).toBe(true);
+    }
+  });
+
   it('lands on the Make front door with a video picker + hint (no video yet)', async () => {
     await mount();
     expect(picker()).toBeTruthy();
