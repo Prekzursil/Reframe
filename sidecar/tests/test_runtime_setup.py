@@ -68,7 +68,15 @@ class TestShippedRequirementFiles:
         # the T5 brief's KNOWN dev-venv versions
         assert pins["faster-whisper"] == "1.2.1"
         assert pins["ctranslate2"] == "4.8.1"
-        assert pins["scenedetect"] == "0.7"
+        # scenedetect 0.7 -> 0.7.1 (dependabot pip-sidecar-patch-minor). This guard
+        # asserts EXACT versions on purpose: a dependency bump cannot land until a
+        # human re-verifies the pin, and updating this line IS that review step.
+        # Verified for 0.7.1: the only API surface we touch is the top-level
+        # ``from scenedetect import ContentDetector, detect`` in boundary.py:568,
+        # which is stable across 0.7.x. NOT runtime-verified in CI — quality.yml
+        # deliberately does not install scenedetect (see its install block), so the
+        # green suite is evidence about the pin FILE, not about the wheel.
+        assert pins["scenedetect"] == "0.7.1"
         assert pins["httpx"] == "0.28.1"
         assert pins["opencv-python"] == "4.13.0.92"
         assert pins["nvidia-cublas-cu12"] == "12.9.2.10"
