@@ -1244,10 +1244,31 @@ export interface DirectorApplyResult {
 }
 
 /** One per-data-type cost/route row (`director.previewCost`, `handlers.py:1846`). */
+/**
+ * The resolved route for one planned AI call — the EXACT wire shape the sidecar
+ * emits from `ai_job.py:164-171` (`_route_json`), reached verbatim by
+ * `director_ops.py:205` and `ai_ops.py:304`.
+ *
+ * This is declared here (the wire-contract layer) rather than duplicated, because
+ * `DirectorCostRow.route` was previously typed `string` while the sidecar has
+ * always sent this OBJECT. Nothing caught it: `tsc` trusted the wrong declaration,
+ * and every DirectorPanel fixture fed a string, so the suite stayed green while a
+ * real successful plan handed React an object child and threw "Objects are not
+ * valid as a React child". A structural type is the guard — a future field change
+ * in `_route_json` now shows up as a type error instead of a runtime crash.
+ */
+export interface AiRouteWire {
+  providers: string[];
+  degradeChain: string[];
+  cacheHit: boolean;
+  willEgress: boolean;
+}
+
 export interface DirectorCostRow {
   /** The routed function id: "editPlan" (text) or "vision" (frames/OCR). */
   function: string;
-  route: string;
+  /** The resolved route OBJECT (never a string — see {@link AiRouteWire}). */
+  route: AiRouteWire;
   costEst: number;
   /** True when this data type would leave the machine (frames = heaviest privacy). */
   willEgress: boolean;
