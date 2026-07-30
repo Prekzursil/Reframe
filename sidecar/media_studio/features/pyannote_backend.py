@@ -45,6 +45,7 @@ from ..assets import manifest
 from ..protocol import ErrorCode, RpcError
 from ..util import get_logger
 from .diarize import CancelProbe, DiarizerBackend, ProgressCb
+from .diarize_backend import UnpinnedModelRevisionError, resolve_pinned_hf_source
 
 log = get_logger("media_studio.features.pyannote_backend")
 
@@ -127,6 +128,35 @@ def require_hf_token(env: Mapping[str, str] | None = None) -> str:
             f"({PYANNOTE_PIPELINE} and {PYANNOTE_SEGMENTATION})."
         )
     return token
+
+
+# --------------------------------------------------------------------------- #
+# pure/light: the PINNED pipeline checkpoint (WU-S5 runtime revision pin)
+# --------------------------------------------------------------------------- #
+def pinned_pipeline_checkpoint() -> str:
+    """The gated pipeline checkpoint as ``"<repo id>@<commit>"``, from the registry.
+
+    ``Pipeline.from_pretrained`` has no ``revision`` parameter; pyannote.audio 3.1
+    instead splits the checkpoint string on ``"@"`` and forwards the tail as
+    ``revision`` to ``hf_hub_download`` (verified against pyannote-audio 3.1.1,
+    ``pyannote/audio/core/pipeline.py``). That is the ONLY way to pin this load,
+    and it matters because the fetched ``config.yaml`` is what selects the models
+    and parameters the pipeline then instantiates — a floating ref lets a
+    compromised upstream change it under us. The revision comes from the asset
+    registry (:func:`~media_studio.features.diarize_backend.resolve_pinned_hf_source`)
+    so it cannot drift from the pin ``assets.ensure`` downloaded; a broken/absent
+    pin raises :class:`UnpinnedModelRevisionError` instead of loading unpinned.
+
+    RESIDUAL (scoped honestly): this pins the PIPELINE repo only. The pipeline's
+    own ``config.yaml`` names ``pyannote/segmentation-3.0`` internally and pyannote
+    resolves that dependency itself, so the segmentation weights are still fetched
+    at whatever ref that config carries — not controllable from this call site.
+    Settling experiment: load the pinned pipeline with ``HF_HUB_OFFLINE=1`` after
+    caching ONLY ``segmentation-3.0`` at :data:`PYANNOTE_SEGMENTATION_REVISION`
+    and check whether the load succeeds (pinned) or reaches the network (floating).
+    """
+    repo, revision = resolve_pinned_hf_source(PIPELINE_ASSET_NAME, PYANNOTE_PIPELINE)
+    return f"{repo}@{revision}"
 
 
 # --------------------------------------------------------------------------- #
@@ -216,7 +246,9 @@ class PyannoteDiarizer:  # pragma: no cover - requires the heavy native stack + 
         import torch  # noqa: PLC0415
         from pyannote.audio import Pipeline  # noqa: PLC0415  # pyright: ignore[reportMissingImports]
 
-        pipeline = Pipeline.from_pretrained(PYANNOTE_PIPELINE, use_auth_token=self._token)
+        # WU-S5: "<repo>@<commit>" is pyannote's revision-pin syntax — the load
+        # resolves the registry's immutable commit, never a floating branch/tag.
+        pipeline = Pipeline.from_pretrained(pinned_pipeline_checkpoint(), use_auth_token=self._token)
         pipeline.to(torch.device(self._device()))
         self._pipeline = pipeline
         log.info("pyannote diarizer ready on %s", self._device())
@@ -348,7 +380,11 @@ __all__ = [
     "TARGET_SR",
     "PyannoteConfigError",
     "PyannoteDiarizer",
+    # Re-exported so a caller can catch the pin refusal without reaching into
+    # diarize_backend (WU-S5: the shared resolver lives there).
+    "UnpinnedModelRevisionError",
     "default_models_present",
+    "pinned_pipeline_checkpoint",
     "pyannote_backend_factory",
     "regions_and_embeddings",
     "register_pyannote_assets",

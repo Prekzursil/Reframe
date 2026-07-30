@@ -49,7 +49,15 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { atomicMoveDir, dirHasContent, dirSizeBytes, freeSpaceBytes } from './dataRootMigrateIo';
+import {
+  atomicMoveDir,
+  dirHasContent,
+  dirMayHaveContent,
+  dirSizeBytes,
+  freeSpaceBytes,
+  probeDirContent,
+  UNPROBEABLE_DEST_MESSAGE,
+} from './dataRootMigrateIo';
 
 let root: string;
 
@@ -111,6 +119,92 @@ describe('dirHasContent', () => {
       err.code = 'EACCES';
       throw err;
     }) as never);
+    expect(dirHasContent(dir)).toBe(false);
+  });
+});
+
+// --------------------------------------------------------------------------- #
+// T8 (fail-closed probe): collapsing a stat/read ERROR to "empty" is a
+// DATA-DESTRUCTION bug — a transient EACCES/EIO on the DESTINATION made it look
+// unoccupied, which let the migration recursively DELETE a populated tree. The
+// probe is now TRI-STATE and every "is it safe to overwrite?" caller fails CLOSED.
+// --------------------------------------------------------------------------- #
+describe('probeDirContent (tri-state)', () => {
+  it("is 'absent' for a path that does not exist", () => {
+    expect(probeDirContent(join(root, 'missing'))).toBe('absent');
+  });
+
+  it("is 'absent' for a regular file (not a directory)", () => {
+    const file = join(root, 'p-file.txt');
+    writeFileSync(file, 'x');
+    expect(probeDirContent(file)).toBe('absent');
+  });
+
+  it("is 'absent' for an empty directory", () => {
+    const dir = join(root, 'p-empty');
+    mkdirSync(dir);
+    expect(probeDirContent(dir)).toBe('absent');
+  });
+
+  it("is 'present' for a directory with at least one entry", () => {
+    const dir = join(root, 'p-full');
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'library.db'), 'data');
+    expect(probeDirContent(dir)).toBe('present');
+  });
+
+  it("is 'error' — NOT 'absent' — when the listing throws", () => {
+    const dir = join(root, 'p-unreadable');
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'library.db'), 'data');
+    vi.mocked(readdirSync).mockImplementationOnce((() => {
+      const err = new Error('EACCES: permission denied') as NodeJS.ErrnoException;
+      err.code = 'EACCES';
+      throw err;
+    }) as never);
+    expect(probeDirContent(dir)).toBe('error');
+  });
+
+  it("is 'error' when the stat throws", () => {
+    const dir = join(root, 'p-unstattable');
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'library.db'), 'data');
+    vi.mocked(statSync).mockImplementationOnce((() => {
+      const err = new Error('EIO: i/o error') as NodeJS.ErrnoException;
+      err.code = 'EIO';
+      throw err;
+    }) as never);
+    expect(probeDirContent(dir)).toBe('error');
+  });
+});
+
+describe('dirMayHaveContent (FAIL-CLOSED occupancy probe)', () => {
+  it('is false only for a provably absent/empty dir', () => {
+    const dir = join(root, 'mc-empty');
+    mkdirSync(dir);
+    expect(dirMayHaveContent(dir)).toBe(false);
+    expect(dirMayHaveContent(join(root, 'mc-missing'))).toBe(false);
+  });
+
+  it('is true for a populated dir', () => {
+    const dir = join(root, 'mc-full');
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'library.db'), 'data');
+    expect(dirMayHaveContent(dir)).toBe(true);
+  });
+
+  it('is TRUE when the probe ERRORS — an unprobeable dir counts as OCCUPIED', () => {
+    // dirHasContent answers the opposite question ("is there definitely content")
+    // and stays false here; the occupancy guard must not reuse that answer.
+    const dir = join(root, 'mc-unreadable');
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'library.db'), 'data');
+    vi.mocked(readdirSync).mockImplementation((() => {
+      const err = new Error('EACCES: permission denied') as NodeJS.ErrnoException;
+      err.code = 'EACCES';
+      throw err;
+    }) as never);
+    expect(dirMayHaveContent(dir)).toBe(true);
     expect(dirHasContent(dir)).toBe(false);
   });
 });
@@ -182,6 +276,41 @@ describe('atomicMoveDir', () => {
 
     expect(readFileSync(join(to, 'f'), 'utf8')).toBe('v');
     expect(existsSync(from)).toBe(false);
+  });
+
+  it('T8: REFUSES to delete a destination whose contents cannot be probed (no data loss)', () => {
+    // THE DATA-DESTRUCTION BUG: the "is the destination empty?" probe collapsed a
+    // transient stat/read ERROR to "empty", so a POPULATED destination looked safe
+    // to `rmSync(..., { recursive: true })`. Fail CLOSED instead: abort the move,
+    // leave BOTH trees byte-intact, and let runMigration surface the loud fallback.
+    const from = join(root, 'usrc');
+    const to = join(root, 'nested', 'udst');
+    mkdirSync(from, { recursive: true });
+    writeFileSync(join(from, 'library.db'), 'SRC');
+    mkdirSync(to, { recursive: true });
+    writeFileSync(join(to, 'library.db'), 'PRECIOUS-DEST');
+
+    // Only the DESTINATION listing faults (a real EACCES/EIO on that one dir).
+    vi.mocked(readdirSync).mockImplementation(((
+      path: Parameters<typeof readdirSync>[0],
+      options?: Parameters<typeof readdirSync>[1],
+    ) => {
+      if (String(path) === to) {
+        const err = new Error('EACCES: permission denied') as NodeJS.ErrnoException;
+        err.code = 'EACCES';
+        throw err;
+      }
+      return (real.readdirSync as typeof readdirSync)(path, options as never);
+    }) as never);
+
+    expect(() => atomicMoveDir(from, to)).toThrow(UNPROBEABLE_DEST_MESSAGE);
+
+    // The populated destination is UNTOUCHED and the source is UNTOUCHED.
+    vi.mocked(readdirSync).mockImplementation(real.readdirSync as never);
+    expect(readFileSync(join(to, 'library.db'), 'utf8')).toBe('PRECIOUS-DEST');
+    expect(readFileSync(join(from, 'library.db'), 'utf8')).toBe('SRC');
+    expect(renameSync).not.toHaveBeenCalled();
+    expect(cpSync).not.toHaveBeenCalled();
   });
 
   it('rethrows a non-EXDEV rename error WITHOUT staging any copy (source untouched)', () => {

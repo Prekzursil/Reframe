@@ -28,6 +28,29 @@ describe('TabBar', () => {
     expect(html).toContain('tab--active');
   });
 
+  it('declares aria-controls on the SELECTED tab only (no dangling IDREFs)', () => {
+    // CRITICAL a11y regression (axe `aria-valid-attr-value`, measured in CI):
+    // every consumer of TabBar renders exactly ONE `role="tabpanel"` whose id is
+    // `tabPanelId(active)` — so an `aria-controls` on a NON-selected tab points at
+    // an element that does not exist in the DOM. axe reported
+    // `Invalid ARIA attribute value: aria-controls="tabpanel-make"` on Make Shorts.
+    //
+    // ARIA 1.2 makes `aria-controls` on `tab` OPTIONAL, so the correct fix is to
+    // emit it only for the selected tab rather than to mount every panel.
+    const html = renderToStaticMarkup(<TabBar tabs={TABS} active="a" onSelect={() => {}} />);
+    const controls = html.match(/aria-controls="([^"]+)"/g) ?? [];
+    expect(controls.length).toBe(1);
+    expect(html).toContain(`aria-controls="${tabPanelId('a')}"`);
+    // The inactive tab must NOT claim to control a panel that is not rendered.
+    expect(html).not.toContain(`aria-controls="${tabPanelId('b')}"`);
+  });
+
+  it('moves aria-controls with the selection', () => {
+    const html = renderToStaticMarkup(<TabBar tabs={TABS} active="b" onSelect={() => {}} />);
+    expect(html).toContain(`aria-controls="${tabPanelId('b')}"`);
+    expect(html).not.toContain(`aria-controls="${tabPanelId('a')}"`);
+  });
+
   it('calls onSelect with the clicked tab id', () => {
     // Verify the onClick handler wiring via a shallow invocation.
     const onSelect = vi.fn();
@@ -189,7 +212,12 @@ describe('TabBar keyboard model (roving tabindex + arrow nav)', () => {
     expect(btn('b').getAttribute('tabindex')).toBe('-1');
     expect(btn('a').id).toBe(tabId('a'));
     expect(btn('a').getAttribute('aria-controls')).toBe(tabPanelId('a'));
-    expect(btn('b').getAttribute('aria-controls')).toBe(tabPanelId('b'));
+    // REVISED: this previously asserted the INACTIVE tab also carried
+    // `aria-controls="tabpanel-b"`. That assertion pinned a defect — consumers
+    // render only ONE tabpanel (`tabPanelId(active)`), so the inactive tab's IDREF
+    // dangled and axe failed CI with a CRITICAL `aria-valid-attr-value`. The
+    // original claim was never checked against whether that panel exists.
+    expect(btn('b').getAttribute('aria-controls')).toBeNull();
   });
 
   it('ArrowRight / ArrowLeft move selection and focus, wrapping at both ends', () => {

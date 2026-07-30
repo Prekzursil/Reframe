@@ -25,6 +25,8 @@
     "typescript": "5.9.3"
   },
   "overrides": {
+    "fast-uri": "^3.1.4",
+    "postcss": "^8.5.18",
     "ws": "^8.21.0"
   }
 }

@@ -133,7 +133,12 @@ def library_add(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict
 
 
 def library_remove(self: Services, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
-    """``library.remove({id})`` -> ``{ok:true}`` (§2). Direct-return.
+    """``library.remove({id, destroyManagedCopy?})`` -> ``{ok:true}`` (§2). Direct-return.
+
+    Refuses LOUD (INVALID_PARAMS) when the app-managed byte-copy is the ONLY surviving
+    copy of the video — keep-a-copy was opted into AND the original source has moved or
+    been deleted — unless ``destroyManagedCopy=true`` is sent. Same default-safe shape as
+    ``library.managedEvict``'s ``force``.
 
     Also reaps this video's orphaned per-video artifacts — the project manifest
     (``projects_dir/<id>.json``) and its poster (``data_dir/thumbnails/<id>.jpg``)
@@ -141,7 +146,17 @@ def library_remove(self: Services, params: dict[str, Any], ctx: RpcContext) -> d
     no-op), so a removed video leaves no dangling manifest/thumbnail behind.
     """
     video_id = _require_str(params, "id")
-    ok = self.library.remove(video_id)
+    # FAIL CLOSED (default False), mirroring ``library.managedEvict``'s ``force``: when the
+    # app-managed byte-copy is the ONLY surviving copy of the video (keep-a-copy opted in
+    # AND the original source gone), refuse LOUD instead of destroying it silently. The
+    # renderer's "Remove" has no confirm and no undo, so the caller must state the intent
+    # rather than inherit it. The refusal propagates BEFORE the unlinks below, so a refused
+    # remove destroys nothing at all.
+    destroy_managed_copy = bool(params.get("destroyManagedCopy", False))
+    try:
+        ok = self.library.remove(video_id, destroy_managed_copy=destroy_managed_copy)
+    except _keepcopy.KeepCopyError as exc:
+        raise _invalid(str(exc)) from exc
     self._project_path(video_id).unlink(missing_ok=True)
     (self.data_dir / "thumbnails" / f"{video_id}.jpg").unlink(missing_ok=True)
     return {"ok": bool(ok)}

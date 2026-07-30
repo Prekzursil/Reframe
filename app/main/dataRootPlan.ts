@@ -159,10 +159,31 @@ export function runMigration(from: string, to: string, seam: MigrationSeam): boo
 }
 
 /**
+ * True when a CONCURRENT launch already moved the legacy tree to the destination:
+ * our source no longer holds content and the destination now does.
+ *
+ * WHY (T8): the legacy migration runs during module init, BEFORE any data-root lock
+ * is held — and it cannot hold one, because the lockfile lives INSIDE the very root
+ * this decision is still choosing. Two copies launched together can therefore both
+ * plan the migration; the atomic move means exactly one succeeds and the other's
+ * move throws (its source vanished). That loser must NOT fall back to the vanished
+ * legacy path — doing so re-provisions a fresh tree inside `$INSTDIR`, the location
+ * the whole T13 fix exists to escape. Both probes are supplied by the caller so this
+ * stays pure (main.ts passes `dirMayHaveContent` / `dirHasContent`).
+ */
+export function migrationRacedAway(fromHasContent: boolean, toHasContent: boolean): boolean {
+  return !fromHasContent && toHasContent;
+}
+
+/**
  * The final data root after the seam ran: the destination when the move
  * SUCCEEDED, otherwise the legacy source UNCHANGED (loud-fallback; see {@link
- * runMigration}). Pure — the branch a caller picks based on the boolean outcome.
+ * runMigration}) — unless `raced` says a concurrent launch already moved the tree
+ * there ({@link migrationRacedAway}), in which case the destination is the correct
+ * root even though OUR move failed. `raced` defaults to false (unchanged behavior).
+ * Pure — the branch a caller picks based on the outcome booleans.
  */
-export function migratedRoot(from: string, to: string, migrated: boolean): string {
-  return migrated ? to : from;
+export function migratedRoot(from: string, to: string, migrated: boolean, raced = false): string {
+  if (migrated) return to;
+  return raced ? to : from;
 }

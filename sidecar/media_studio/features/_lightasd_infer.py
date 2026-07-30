@@ -34,17 +34,20 @@ else the sha256-pinned asset-manager install path registered in
 
 Coverage: the torch/cv2/ffmpeg seam functions are ``# pragma: no cover`` (they
 need the heavy native stack + real weights); the PURE helpers (:func:`_yunet_boxes`,
-:func:`_bb_iou`, :func:`_source_frame_index`, :func:`_vad_per_frame`) are
-unit-tested for real in ``test_lightasd_infer_helpers.py``, and the pure director
-this module feeds is covered exhaustively in ``test_reframe_multispeaker.py``.
+:func:`_bb_iou`, :func:`_source_frame_index`, :func:`_vad_per_frame`,
+:func:`_work_tree`) are unit-tested for real in ``test_lightasd_infer_helpers.py`` /
+``test_teardown_residual.py``, and the pure director this module feeds is covered
+exhaustively in ``test_reframe_multispeaker.py``.
 """
 
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 import subprocess  # noqa: S404 - argv lists only, no shell=True (see _run)
 import tempfile
+from collections.abc import Iterator
 from typing import Any
 
 from ..util import get_logger
@@ -65,6 +68,31 @@ CROP_SCALE = 0.40
 # and YuNet scores are not comparable). WU-V1 re-tunes it on real footage.
 YUNET_SCORE_THRESHOLD = 0.6
 DURATIONS = (1, 1, 1, 2, 2, 2, 3, 3, 4, 5, 6)
+#: Prefix of the per-run scratch tree (unchanged from the original ``mkdtemp``
+#: call, so an operator's existing "what is this dir" knowledge still holds).
+WORK_DIR_PREFIX = "msreframe_"
+
+
+@contextlib.contextmanager
+def _work_tree(prefix: str = WORK_DIR_PREFIX) -> Iterator[str]:
+    """Yield a private scratch dir for one visual-ASD pass and ALWAYS remove it.
+
+    :func:`analyze_visual` writes one JPEG per 25-fps frame of the whole clip, a
+    16 kHz wav, plus a 224x224 ``.avi`` and a ``.wav`` per detected face track —
+    GIGABYTES for a long source. It used bare ``tempfile.mkdtemp`` and never
+    cleaned up, so every reframe run (successful, failed OR cancelled alike) left
+    its whole tree on disk until the volume filled.
+
+    ``TemporaryDirectory`` removes the tree from its ``__exit__``, which the ``with``
+    protocol runs on a normal return, on an ``Exception`` (e.g. the "no frames
+    extracted" abort) AND on a ``BaseException`` such as the cancellation /
+    ``KeyboardInterrupt`` path — the three cases the leak spanned.
+    ``ignore_cleanup_errors=True`` is deliberate: on Windows a frame file may still
+    be held by cv2 when the pass unwinds, and a cleanup ``PermissionError`` must
+    never mask the pass's own result or error.
+    """
+    with tempfile.TemporaryDirectory(prefix=prefix, ignore_cleanup_errors=True) as work:
+        yield work
 
 
 def _resolve_weights(settings: dict[str, Any]) -> str:  # pragma: no cover - heavy native seam
@@ -297,89 +325,93 @@ def analyze_visual(  # pragma: no cover - heavy native seam
         )
     dev = "cuda" if _cuda() else "cpu"
 
-    work = tempfile.mkdtemp(prefix="msreframe_")
-    frames_dir = os.path.join(work, "f")
-    os.makedirs(frames_dir, exist_ok=True)
-    audio_wav = os.path.join(work, "a.wav")
-    _run(
-        [
-            "ffmpeg",
-            "-y",
-            "-i",
-            media_path,
-            "-qscale:v",
-            "2",
-            "-r",
-            str(ASD_FPS),
-            "-async",
-            "1",
-            os.path.join(frames_dir, "%06d.jpg"),
-        ]
-    )
-    _run(["ffmpeg", "-y", "-i", media_path, "-ac", "1", "-vn", "-ar", str(AUDIO_SR), audio_wav])
-    flist = sorted(os.path.join(frames_dir, f) for f in os.listdir(frames_dir) if f.endswith(".jpg"))
-    n25 = len(flist)
-    if n25 == 0:
-        raise RuntimeError("no frames extracted for visual ASD")
-
-    # WU-L1: YuNet via cv2.FaceDetectorYN. It takes the BGR frame directly (no
-    # RGB swap) and filters by score internally (score_threshold); input_size is
-    # set per-frame. _yunet_boxes normalises its rows to the (x1,y1,x2,y2,score)
-    # corner contract the tracker/crop consume (identical to old S3FD output).
-    det = cv2.FaceDetectorYN.create(yunet_weight, "", (0, 0), score_threshold=YUNET_SCORE_THRESHOLD)  # pyright: ignore[reportAttributeAccessIssue]
-    scene: list[list[dict[str, Any]]] = []
-    for fidx, fn in enumerate(flist):
-        raw = cv2.imread(fn)
-        if raw is None:
-            raise RuntimeError(f"failed to read frame: {fn}")
-        h, w = int(raw.shape[0]), int(raw.shape[1])
-        det.setInputSize((w, h))
-        _retval, faces = det.detect(raw)
-        scene.append(
+    # The whole pass runs INSIDE the managed scratch tree so the frames/crops it
+    # writes (gigabytes) are removed on success, on failure and on cancellation
+    # alike — see :func:`_work_tree`. Everything below is unchanged apart from
+    # living one indent deeper.
+    with _work_tree() as work:
+        frames_dir = os.path.join(work, "f")
+        os.makedirs(frames_dir, exist_ok=True)
+        audio_wav = os.path.join(work, "a.wav")
+        _run(
             [
-                {"frame": fidx, "bbox": [x1, y1, x2, y2], "conf": score}
-                for (x1, y1, x2, y2, score) in _yunet_boxes(faces)
+                "ffmpeg",
+                "-y",
+                "-i",
+                media_path,
+                "-qscale:v",
+                "2",
+                "-r",
+                str(ASD_FPS),
+                "-async",
+                "1",
+                os.path.join(frames_dir, "%06d.jpg"),
             ]
         )
+        _run(["ffmpeg", "-y", "-i", media_path, "-ac", "1", "-vn", "-ar", str(AUDIO_SR), audio_wav])
+        flist = sorted(os.path.join(frames_dir, f) for f in os.listdir(frames_dir) if f.endswith(".jpg"))
+        n25 = len(flist)
+        if n25 == 0:
+            raise RuntimeError("no frames extracted for visual ASD")
 
-    tracks = _track_shot(scene)
+        # WU-L1: YuNet via cv2.FaceDetectorYN. It takes the BGR frame directly (no
+        # RGB swap) and filters by score internally (score_threshold); input_size is
+        # set per-frame. _yunet_boxes normalises its rows to the (x1,y1,x2,y2,score)
+        # corner contract the tracker/crop consume (identical to old S3FD output).
+        det = cv2.FaceDetectorYN.create(yunet_weight, "", (0, 0), score_threshold=YUNET_SCORE_THRESHOLD)  # pyright: ignore[reportAttributeAccessIssue]
+        scene: list[list[dict[str, Any]]] = []
+        for fidx, fn in enumerate(flist):
+            raw = cv2.imread(fn)
+            if raw is None:
+                raise RuntimeError(f"failed to read frame: {fn}")
+            h, w = int(raw.shape[0]), int(raw.shape[1])
+            det.setInputSize((w, h))
+            _retval, faces = det.detect(raw)
+            scene.append(
+                [
+                    {"frame": fidx, "bbox": [x1, y1, x2, y2], "conf": score}
+                    for (x1, y1, x2, y2, score) in _yunet_boxes(faces)
+                ]
+            )
 
-    # per-track audio source for slicing
-    for i in range(len(tracks)):
-        _link_audio(audio_wav, os.path.join(work, f"t{i}.__src.wav"))
+        tracks = _track_shot(scene)
 
-    asd = ASD(device=dev)
-    asd.loadParameters(asd_weight)
-    asd.eval()
+        # per-track audio source for slicing
+        for i in range(len(tracks)):
+            _link_audio(audio_wav, os.path.join(work, f"t{i}.__src.wav"))
 
-    # 25 fps grid: per-frame list of (box_xywh, score)
-    boxes25: list[list[Box]] = [[] for _ in range(n25)]
-    scores25: list[list[float]] = [[] for _ in range(n25)]
-    for i, tr in enumerate(tracks):
-        cf = os.path.join(work, f"t{i}")
-        _crop_track(tr, flist, cf)
-        sc = _score_track(asd, cf)
-        frames = [int(f) for f in tr["frame"]]
-        for j, fr in enumerate(frames):
-            if 0 <= fr < n25:
-                x1, y1, x2, y2 = tr["bbox"][j]
-                boxes25[fr].append((float(x1), float(y1), float(x2 - x1), float(y2 - y1)))
-                scores25[fr].append(float(sc[j]) if j < len(sc) else 0.0)
+        asd = ASD(device=dev)
+        asd.loadParameters(asd_weight)
+        asd.eval()
 
-    # per-source-frame VAD (normalised RMS over each frame window)
-    sr, wav = wavfile.read(audio_wav)
-    wav = wav.astype(np.float32)
-    vad_src = _vad_per_frame(wav, sr, total_frames, fps)
+        # 25 fps grid: per-frame list of (box_xywh, score)
+        boxes25: list[list[Box]] = [[] for _ in range(n25)]
+        scores25: list[list[float]] = [[] for _ in range(n25)]
+        for i, tr in enumerate(tracks):
+            cf = os.path.join(work, f"t{i}")
+            _crop_track(tr, flist, cf)
+            sc = _score_track(asd, cf)
+            frames = [int(f) for f in tr["frame"]]
+            for j, fr in enumerate(frames):
+                if 0 <= fr < n25:
+                    x1, y1, x2, y2 = tr["bbox"][j]
+                    boxes25[fr].append((float(x1), float(y1), float(x2 - x1), float(y2 - y1)))
+                    scores25[fr].append(float(sc[j]) if j < len(sc) else 0.0)
 
-    # map 25 fps grid -> source-fps grid (length total_frames)
-    boxes_pf: list[tuple[Box, ...]] = []
-    scores_pf: list[tuple[float, ...]] = []
-    for f in range(total_frames):
-        g = _source_frame_index(f, fps, n25)
-        boxes_pf.append(tuple(boxes25[g]))
-        scores_pf.append(tuple(scores25[g]))
-    log.info("visual ASD: %d frames, %d tracks", total_frames, len(tracks))
-    return tuple(boxes_pf), tuple(scores_pf), vad_src
+        # per-source-frame VAD (normalised RMS over each frame window)
+        sr, wav = wavfile.read(audio_wav)
+        wav = wav.astype(np.float32)
+        vad_src = _vad_per_frame(wav, sr, total_frames, fps)
+
+        # map 25 fps grid -> source-fps grid (length total_frames)
+        boxes_pf: list[tuple[Box, ...]] = []
+        scores_pf: list[tuple[float, ...]] = []
+        for f in range(total_frames):
+            g = _source_frame_index(f, fps, n25)
+            boxes_pf.append(tuple(boxes25[g]))
+            scores_pf.append(tuple(scores25[g]))
+        log.info("visual ASD: %d frames, %d tracks", total_frames, len(tracks))
+        return tuple(boxes_pf), tuple(scores_pf), vad_src
 
 
 def _cuda() -> bool:  # pragma: no cover - heavy native seam

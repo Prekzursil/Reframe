@@ -99,6 +99,22 @@ export interface LockIo {
   writeLock: (body: string) => void;
   /** Delete the lockfile (best-effort; never throws for the caller). */
   removeLock: () => void;
+  /**
+   * ATOMICALLY reclaim a STALE lockfile by MOVING it aside to
+   * `<lockfile><sidelineSuffix>`, freeing the lock path for an exclusive create.
+   * Returns true ONLY when THIS call performed the move, and false when the
+   * sideline name was already taken (another racer reclaiming the SAME dead record
+   * won) or the lockfile was already gone. Implemented with `linkSync`, whose
+   * EEXIST is a portable compare-and-swap (see dataRootLockIo.createLockIo).
+   *
+   * WHY this exists (T8): the reclaim used to be `removeLock()` + `createLock()`.
+   * That unlink is UNCONDITIONAL — it deletes whatever is at the lock path,
+   * INCLUDING a record a racer created moments earlier — so two copies could each
+   * pass their own read-back and both believe they owned the same data root, and
+   * both spawn a sidecar against the same library.db + pip env. A move that must
+   * first CLAIM a victim-keyed name cannot be won twice.
+   */
+  reclaimLock: (sidelineSuffix: string) => boolean;
 }
 
 /** Serialise a lock record to the on-disk body (stable JSON: pid + time + boot + host). */
@@ -207,6 +223,21 @@ export function shouldReleaseLock(current: LockRecord | null, owner: LockOwner):
 }
 
 /**
+ * The sideline-name suffix a stale-lock reclaim moves the DEAD record aside to,
+ * keyed to the VICTIM's identity (`pid` + `boot`) — NOT to the reclaimer.
+ *
+ * That is the load-bearing detail: two copies racing to reclaim THE SAME dead
+ * record derive the SAME sideline name, so {@link LockIo.reclaimLock}'s
+ * create-exclusive move elects exactly ONE of them. A copy whose read saw a
+ * DIFFERENT record (e.g. the winner's fresh one) is classified LIVE by
+ * {@link decideLock} and never reaches a reclaim at all — so the two cases are
+ * exhaustive and no interleaving yields two owners.
+ */
+export function staleSidelineSuffix(victim: LockRecord): string {
+  return `.stale-${victim.pid}-${victim.boot}`;
+}
+
+/**
  * READ-BACK verify: after we (exclusive-)create or overwrite the lockfile, prove the
  * on-disk record is OURS before treating the lock as held. This closes the residual
  * write race — if a concurrent copy overwrote between our write and this read, the
@@ -229,7 +260,9 @@ function confirmOwned(io: LockIo, owner: LockOwner, held: LockDecision): LockDec
  *   1. exclusive-CREATE (fs 'wx'). Wins outright when the lock is FREE.
  *   2. on EEXIST: read + {@link decideLock}. A LIVE/different-host holder BLOCKS with
  *      no write. A holder that is OURS is refreshed in place. A STALE holder is
- *      RECLAIMED (remove) then re-created EXCLUSIVELY so two racers can't both win.
+ *      RECLAIMED by an ATOMIC victim-keyed SIDELINE MOVE ({@link LockIo.reclaimLock},
+ *      NOT a bare unlink — see T8 there) and only the racer that wins that move
+ *      re-creates the lock; a racer that loses creates NOTHING.
  *   3. every held path is {@link confirmOwned} (read-back verified) before it counts.
  */
 export function acquireDataRootLock(
@@ -247,19 +280,23 @@ export function acquireDataRootLock(
   }
 
   // 2. The lock already exists — read the current record + decide against it.
-  const decision = decideLock(parseLock(io.readLock()), owner, probe);
+  const current = parseLock(io.readLock());
+  const decision = decideLock(current, owner, probe);
   if (!decision.ok) {
     return decision; // LIVE (or different-host) holder — NEVER write; caller surfaces busy.
   }
-  if (decision.stale) {
-    // Dead/reboot-reused holder (same host): RECLAIM then RE-CREATE exclusively. If a
-    // racer re-created between our remove + create, createLock returns false and
-    // confirmOwned reads back THEIR record (not ours) -> blocked.
-    io.removeLock();
-    io.createLock(body);
+  if (current !== null && decision.stale) {
+    // Dead/reboot-reused holder (same host): RECLAIM by moving the dead record aside
+    // under a name derived from ITS identity, then RE-CREATE exclusively. Exactly one
+    // racer can claim that name, so at most one gets to create; a loser skips the
+    // create entirely and confirmOwned reads back the WINNER's record -> blocked.
+    if (io.reclaimLock(staleSidelineSuffix(current))) {
+      io.createLock(body);
+    }
     return confirmOwned(io, owner, decision);
   }
-  // Already OURS (re-entrant refresh) — rewrite our record, then verify.
+  // Already OURS (re-entrant refresh), or the lock vanished between our failed create
+  // and this read — rewrite our record, then verify.
   io.writeLock(body);
   return confirmOwned(io, owner, decision);
 }
@@ -272,4 +309,32 @@ export function releaseDataRootLock(io: LockIo, owner: LockOwner): void {
   if (shouldReleaseLock(parseLock(io.readLock()), owner)) {
     io.removeLock();
   }
+}
+
+/**
+ * Release the lock STRICTLY AFTER `teardown` settles — the ordering half of T8.
+ *
+ * WHY: `will-quit` used to call {@link releaseDataRootLock} FIRST and only then tear
+ * the sidecar/bootstrap tree down. Between those two steps the data root looked
+ * FREE, so a relaunch (or a second install pointed at the same folder) could acquire
+ * it and start a second sidecar against a still-live environment — concurrent
+ * writers on the same `library.db` and pip env, which is exactly what the lock
+ * exists to prevent.
+ *
+ * The release happens even when `teardown` REJECTS: a kill that failed must not leak
+ * the lock and wedge the user out of their own data folder on the next launch (the
+ * next acquire's corroborated-liveness probe reclaims a genuinely dead holder, but a
+ * leaked lock plus a REUSED pid would block). Never rejects.
+ */
+export async function releaseDataRootLockAfter(
+  teardown: () => Promise<unknown>,
+  io: LockIo,
+  owner: LockOwner,
+): Promise<void> {
+  try {
+    await teardown();
+  } catch {
+    /* teardown failure is diagnosed by the caller; the lock must still be freed */
+  }
+  releaseDataRootLock(io, owner);
 }

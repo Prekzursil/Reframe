@@ -4,39 +4,67 @@
 // base64 -> decrypt round-trips without a real OS keychain. The filesystem is a
 // per-test tmp dir. The headline assertion (§D2 acceptance a): after a migration
 // ZERO plaintext key bytes remain across settings.json + its .tmp + backups.
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import {
+  constants as fsConstants,
+  linkSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  symlinkSync,
+  writeFileSync,
+  existsSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   BASIC_TEXT_BACKEND,
+  KEYSTORE_BACKUP_RETENTION,
   KEYSTORE_FILENAME,
+  KeystoreBackupError,
   KeystoreUnavailableError,
+  KeystoreUnreadableError,
   SESSION_ONLY_BANNER,
   type SafeStorageLike,
+  backupKeystore,
   decryptFromBase64,
   encryptToBase64,
   extractPlaintextKeys,
+  keystoreBackupPath,
   keystorePathFor,
   loadDecryptedKeys,
   migrateLegacyPlaintextKeys,
   priorCopies,
+  pruneKeystoreBackups,
+  readKeystore,
   saveDecryptedKeys,
   secureStatus,
   selectedBackend,
   shredFile,
+  shredOpenFlags,
   stripKeysFromSettings,
 } from './keystore';
 
 /** A reversible fake: ciphertext = "enc:" + plaintext (survives a base64 round-trip). */
 function makeSafeStorage(
-  opts: { available?: boolean; backend?: string | null | (() => string) } = {},
+  opts: {
+    available?: boolean;
+    backend?: string | null | (() => string);
+    decryptThrows?: boolean;
+  } = {},
 ): SafeStorageLike {
   const available = opts.available ?? true;
   const store: SafeStorageLike = {
     isEncryptionAvailable: () => available,
     encryptString: (plaintext: string) => Buffer.from(`enc:${plaintext}`, 'utf8'),
-    decryptString: (encrypted: Buffer) => encrypted.toString('utf8').replace(/^enc:/, ''),
+    decryptString: (encrypted: Buffer) => {
+      // Stands in for a real DPAPI failure: a foreign-machine / post-profile-move
+      // keystore whose ciphertext this OS user simply cannot unwrap.
+      if (opts.decryptThrows) throw new Error('decrypt failed');
+      return encrypted.toString('utf8').replace(/^enc:/, '');
+    },
   };
   if (opts.backend !== undefined) {
     store.getSelectedStorageBackend =
@@ -210,11 +238,275 @@ describe('loadDecryptedKeys', () => {
       cloudApiKey: 'sk-c',
     });
   });
-  it('tolerates a malformed keystore file / non-array provider values', () => {
+  it('FAILS CLOSED on a malformed keystore instead of reporting it EMPTY', () => {
+    // REGRESSION PIN (T7, the credential WIPE). This case previously returned
+    // `{providers:{}}` — indistinguishable from "no keystore yet" — so the very next
+    // providers.upsert wrote a fresh store OVER the unreadable one and PERMANENTLY
+    // destroyed every stored credential. An unreadable keystore is now a typed
+    // refusal the caller MUST handle; it can no longer masquerade as empty.
     writeFileSync(keystorePath(), '{not json');
-    expect(loadDecryptedKeys(makeSafeStorage(), keystorePath())).toEqual({ providers: {} });
+    expect(() => loadDecryptedKeys(makeSafeStorage(), keystorePath())).toThrow(
+      KeystoreUnreadableError,
+    );
     writeFileSync(keystorePath(), JSON.stringify({ version: 1, providers: { groq: 'nope' } }));
-    expect(loadDecryptedKeys(makeSafeStorage(), keystorePath())).toEqual({ providers: {} });
+    expect(() => loadDecryptedKeys(makeSafeStorage(), keystorePath())).toThrow(
+      KeystoreUnreadableError,
+    );
+  });
+
+  it('carries the classified reason on the fail-closed error', () => {
+    writeFileSync(keystorePath(), '{not json');
+    try {
+      loadDecryptedKeys(makeSafeStorage(), keystorePath());
+      expect.unreachable('loadDecryptedKeys must refuse an unparseable keystore');
+    } catch (err) {
+      expect(err).toBeInstanceOf(KeystoreUnreadableError);
+      expect((err as KeystoreUnreadableError).reason).toBe('parse-failed');
+      // The diagnostic must never carry key material.
+      expect((err as Error).message).not.toContain('gsk');
+    }
+  });
+});
+
+describe('readKeystore (3-state: loaded | absent | unreadable)', () => {
+  it("reports 'absent' with empty keys when no keystore file exists", () => {
+    const read = readKeystore(makeSafeStorage(), keystorePath());
+    expect(read.outcome).toBe('absent');
+    expect(read.keys).toEqual({ providers: {} });
+    expect(read.reason).toBeNull();
+  });
+
+  it("reports 'loaded' with the decrypted keys for a healthy keystore", () => {
+    const ss = makeSafeStorage();
+    saveDecryptedKeys(ss, keystorePath(), {
+      providers: { groq: ['gsk_fakeAAAA'] },
+      cloudApiKey: 'sk-fake-cloud',
+    });
+    const read = readKeystore(ss, keystorePath());
+    expect(read.outcome).toBe('loaded');
+    expect(read.keys).toEqual({
+      providers: { groq: ['gsk_fakeAAAA'] },
+      cloudApiKey: 'sk-fake-cloud',
+    });
+    expect(read.reason).toBeNull();
+  });
+
+  it("reports 'unreadable' + parse-failed for a corrupt / partially-written blob", () => {
+    writeFileSync(keystorePath(), '{"version":1,"providers":{"groq":["ZW5j'); // truncated write
+    const read = readKeystore(makeSafeStorage(), keystorePath());
+    expect(read.outcome).toBe('unreadable');
+    expect(read.reason).toBe('parse-failed');
+    // keys === null makes "silently continue as empty" structurally impossible.
+    expect(read.keys).toBeNull();
+  });
+
+  it("reports 'unreadable' + read-failed when the blob cannot be read at all", () => {
+    // A directory at the keystore path is the deterministic cross-platform stand-in
+    // for a locked / permission-denied file (readFileSync -> EISDIR|EACCES|EPERM).
+    mkdirSync(keystorePath());
+    const read = readKeystore(makeSafeStorage(), keystorePath());
+    expect(read.outcome).toBe('unreadable');
+    expect(read.reason).toBe('read-failed');
+  });
+
+  it("reports 'unreadable' + decrypt-failed when the ciphertext cannot be unwrapped", () => {
+    // The DPAPI-failure / foreign-machine / profile-move case: the file is perfectly
+    // well-formed, but this OS user cannot decrypt it. Treating that as empty is the
+    // wipe; it must be a refusal.
+    saveDecryptedKeys(makeSafeStorage(), keystorePath(), { providers: { groq: ['gsk_fakeAAAA'] } });
+    const read = readKeystore(makeSafeStorage({ decryptThrows: true }), keystorePath());
+    expect(read.outcome).toBe('unreadable');
+    expect(read.reason).toBe('decrypt-failed');
+    expect(read.keys).toBeNull();
+  });
+
+  it("reports 'unreadable' + decrypt-failed when the CLOUD key cannot be unwrapped", () => {
+    saveDecryptedKeys(makeSafeStorage(), keystorePath(), {
+      providers: {},
+      cloudApiKey: 'sk-fake-cloud',
+    });
+    const read = readKeystore(makeSafeStorage({ decryptThrows: true }), keystorePath());
+    expect(read.outcome).toBe('unreadable');
+    expect(read.reason).toBe('decrypt-failed');
+  });
+
+  it.each([
+    ['a JSON array', '[]'],
+    ['a JSON scalar', '"nope"'],
+    ['JSON null', 'null'],
+    ['a non-object providers map', JSON.stringify({ version: 1, providers: 'nope' })],
+    ['a providers array', JSON.stringify({ version: 1, providers: [] })],
+    ['a non-array provider value', JSON.stringify({ version: 1, providers: { groq: 'nope' } })],
+    ['a non-string cloudApiKey', JSON.stringify({ version: 1, providers: {}, cloudApiKey: 7 })],
+  ])("reports 'unreadable' + shape-invalid for %s", (_label, body) => {
+    writeFileSync(keystorePath(), body);
+    const read = readKeystore(makeSafeStorage(), keystorePath());
+    expect(read.outcome).toBe('unreadable');
+    expect(read.reason).toBe('shape-invalid');
+  });
+
+  it('loads a keystore with no providers map at all as an empty (but LOADED) store', () => {
+    writeFileSync(keystorePath(), JSON.stringify({ version: 1 }));
+    const read = readKeystore(makeSafeStorage(), keystorePath());
+    expect(read.outcome).toBe('loaded');
+    expect(read.keys).toEqual({ providers: {} });
+  });
+
+  it('SKIPS a prototype-polluting provider id while still loading the rest', () => {
+    // A `__proto__` entry can never have been written by writeKeystore (it filters
+    // unsafe ids), and it is not loadable provider material — so it is dropped
+    // rather than escalated to a store-wide refusal, exactly as before.
+    const ss = makeSafeStorage();
+    writeFileSync(
+      keystorePath(),
+      `{"version":1,"providers":{"__proto__":["${Buffer.from('enc:pollute', 'utf8').toString(
+        'base64',
+      )}"],"groq":["${Buffer.from('enc:gsk_fakeAAAA', 'utf8').toString('base64')}"]}}`,
+    );
+    const read = readKeystore(ss, keystorePath());
+    expect(read.outcome).toBe('loaded');
+    expect(read.keys).toEqual({ providers: { groq: ['gsk_fakeAAAA'] } });
+  });
+});
+
+describe('keystore pre-overwrite backup', () => {
+  const AT = new Date(Date.UTC(2026, 6, 25, 5, 47, 51, 123));
+  const stamped = (): string => keystoreBackupPath(keystorePath(), AT);
+
+  it('renders a fixed-width, lexicographically-sortable timestamp suffix', () => {
+    expect(stamped()).toBe(`${keystorePath()}.20260725T054751123.bak`);
+    // Fixed width => lexicographic order IS chronological order (the prune relies on it).
+    const later = keystoreBackupPath(keystorePath(), new Date(AT.getTime() + 1));
+    expect([later, stamped()].sort()).toEqual([stamped(), later]);
+  });
+
+  it('copies the existing ciphertext aside BYTE-FOR-BYTE before an overwrite', () => {
+    const ss = makeSafeStorage();
+    saveDecryptedKeys(ss, keystorePath(), { providers: { groq: ['gsk_originalAAAA'] } });
+    const before = readFileSync(keystorePath(), 'utf8');
+    expect(backupKeystore(keystorePath(), AT)).toBe('backed-up');
+    expect(readFileSync(stamped(), 'utf8')).toBe(before);
+  });
+
+  it("reports 'nothing-to-back-up' on the very first write (no prior blob)", () => {
+    expect(backupKeystore(keystorePath(), AT)).toBe('nothing-to-back-up');
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it('THROWS when a blob EXISTS but cannot be copied (never overwrite the unbacked-up)', () => {
+    mkdirSync(keystorePath()); // copyFileSync -> EISDIR/EPERM
+    expect(() => backupKeystore(keystorePath(), AT)).toThrow(KeystoreBackupError);
+  });
+
+  it('saveDecryptedKeys backs up the PREVIOUS blob so a bad decrypt is never destructive', () => {
+    const ss = makeSafeStorage();
+    saveDecryptedKeys(ss, keystorePath(), { providers: { groq: ['gsk_generation1'] } });
+    const gen1 = readFileSync(keystorePath(), 'utf8');
+    saveDecryptedKeys(ss, keystorePath(), { providers: { groq: ['gsk_generation2'] } });
+    const backups = readdirSync(dir).filter((n) => n.endsWith('.bak'));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(join(dir, backups[0]), 'utf8')).toBe(gen1);
+    // ...and the recovered generation still decrypts to the ORIGINAL key.
+    expect(loadDecryptedKeys(ss, join(dir, backups[0]))).toEqual({
+      providers: { groq: ['gsk_generation1'] },
+    });
+  });
+
+  it('REFUSES the overwrite when the existing blob cannot be backed up', () => {
+    mkdirSync(keystorePath());
+    expect(() =>
+      saveDecryptedKeys(makeSafeStorage(), keystorePath(), {
+        providers: { groq: ['gsk_newAAAA'] },
+      }),
+    ).toThrow(KeystoreBackupError);
+    // The pre-existing blob is untouched (still the directory we planted).
+    expect(existsSync(keystorePath())).toBe(true);
+  });
+
+  it('prunes the OLDEST backups beyond the retention cap', () => {
+    for (let i = 0; i < KEYSTORE_BACKUP_RETENTION + 3; i += 1) {
+      writeFileSync(keystorePath(), `blob-${i}`);
+      backupKeystore(keystorePath(), new Date(Date.UTC(2026, 6, 25, 0, 0, i, 0)));
+    }
+    const backups = readdirSync(dir)
+      .filter((n) => n.endsWith('.bak'))
+      .sort();
+    expect(backups).toHaveLength(KEYSTORE_BACKUP_RETENTION);
+    // The survivors are the NEWEST generations, not the oldest.
+    expect(readFileSync(join(dir, backups[backups.length - 1]), 'utf8')).toBe(
+      `blob-${KEYSTORE_BACKUP_RETENTION + 2}`,
+    );
+    expect(backups.some((n) => n.includes('T000000000'))).toBe(false); // generation 0 pruned
+  });
+
+  it('ignores siblings that are not backups, and tolerates an unreadable directory', () => {
+    writeFileSync(keystorePath(), 'blob');
+    writeFileSync(`${keystorePath()}.tmp`, 'not-a-backup'); // right prefix, wrong extension
+    writeFileSync(join(dir, 'settings.json'), '{}'); // wrong prefix entirely
+    expect(pruneKeystoreBackups(keystorePath(), 0)).toEqual([]);
+    expect(existsSync(`${keystorePath()}.tmp`)).toBe(true);
+    expect(existsSync(join(dir, 'settings.json'))).toBe(true);
+    // A missing directory is not an error — nothing to prune.
+    expect(pruneKeystoreBackups(join(dir, 'no-such-dir', KEYSTORE_FILENAME), 0)).toEqual([]);
+  });
+
+  it('leaves an un-deletable stale backup in place rather than throwing', () => {
+    writeFileSync(keystorePath(), 'blob');
+    const stuck = `${keystorePath()}.20260101T000000000.bak`;
+    mkdirSync(stuck); // unlinkSync -> EISDIR/EPERM
+    expect(pruneKeystoreBackups(keystorePath(), 0)).toEqual([]);
+    expect(existsSync(stuck)).toBe(true);
+  });
+});
+
+describe('shredFile link safety', () => {
+  it('REFUSES to truncate through a SYMLINK — the external target survives intact', () => {
+    // T7(3): shredFile opened with 'r+', which FOLLOWS a symlink, so a hostile or
+    // stale `settings.json.bak -> <anything>` link made the shred destroy an
+    // unrelated file. A symlink is not a plaintext key copy (its bytes live
+    // elsewhere), so it must never be truncated.
+    const victim = join(dir, 'victim.txt');
+    writeFileSync(victim, 'PRECIOUS-EXTERNAL-BYTES');
+    const link = join(dir, 'settings.json.bak');
+    symlinkSync(victim, link, 'file');
+    expect(shredFile(link)).toBe('intact'); // surfaced for manual review, never followed
+    expect(readFileSync(victim, 'utf8')).toBe('PRECIOUS-EXTERNAL-BYTES');
+    expect(existsSync(link)).toBe(true);
+  });
+
+  it('REFUSES to truncate a HARD LINK — its bytes are shared with an external file', () => {
+    // Same defect class, and the variant that needs no symlink privilege at all:
+    // truncating one hard link zeroes the shared inode, so the other name's content
+    // is destroyed too (measured: 23 bytes -> 0).
+    const victim = join(dir, 'hard-victim.txt');
+    writeFileSync(victim, 'PRECIOUS-EXTERNAL-BYTES');
+    const link = join(dir, 'settings.json.hard');
+    linkSync(victim, link);
+    expect(shredFile(link)).toBe('intact');
+    expect(readFileSync(victim, 'utf8')).toBe('PRECIOUS-EXTERNAL-BYTES');
+  });
+
+  it('still shreds an ordinary single-link file', () => {
+    const f = join(dir, 'settings.json.tmp');
+    writeFileSync(f, '{"cloudApiKey":"sk-fake-should-be-scrubbed"}');
+    expect(shredFile(f)).toBe('shredded');
+    expect(existsSync(f)).toBe(false);
+  });
+
+  it('does not throw when the link probe itself fails on a malformed path', () => {
+    // lstatSync rejects a NUL-bearing path with ERR_INVALID_ARG_VALUE; shredFile must
+    // stay total (its callers sweep in a loop and must not abort mid-sweep).
+    const malformed = join(dir, 'a' + String.fromCharCode(0) + 'b');
+    expect(shredFile(malformed)).toBe('intact');
+  });
+
+  it('adds O_NOFOLLOW where the platform defines it and is a no-op where it does not', () => {
+    // POSIX closes the lstat->open TOCTOU window in the open itself; Windows does not
+    // define the flag (fs.constants.O_NOFOLLOW === undefined), so the lstat check is
+    // the whole guard there. Both shapes are pinned so neither platform regresses.
+    expect(shredOpenFlags({ O_RDWR: 2, O_NOFOLLOW: 131072 })).toBe(2 | 131072);
+    expect(shredOpenFlags({ O_RDWR: 2 })).toBe(2);
+    expect(shredOpenFlags(fsConstants)).toBeGreaterThanOrEqual(fsConstants.O_RDWR);
   });
 });
 

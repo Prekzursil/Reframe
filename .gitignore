@@ -90,6 +90,13 @@ build/ffmpeg/
 # regenerable by the same prep script — never commit it (mirrors build/ffmpeg/).
 # NOTE: build/python-embed/ (py3.12) IS tracked historically; this only covers 3.14.
 build/python-embed-314/
+# ...and the name the prep script actually stages into. The rule above only matched
+# `-314`, so a 23.6 MB staged interpreter (36 files: python.exe, python312.dll,
+# python312.zip, 17 .pyd, get-pip.py) slipped into a checkpoint commit despite the
+# stated "never commit it" intent. Nothing in the repo references this directory —
+# chatterbox.py materializes its isolated env at %APPDATA%/media-studio/envs/chatterbox
+# via assets.ensure(["chatterbox-env"]) + pip --target at RUNTIME, not from the tree.
+build/python-embed-chatterbox/
 # Stray duplicate icon dir — the REAL app icons live in build/icons/ (plural,
 # committed by WU A2). build/icon/ (singular) is a regenerable leftover dup an
 # icon step emits; never commit it (the tracked build/icons/ is the source of truth).
@@ -97,3 +104,9 @@ build/icon/
 
 # Runtime data root (models/exports/envs — relocatable via MEDIA_STUDIO_CONFIG_DIR)
 /data/
+
+# Ad-hoc audit/analysis scratch (agent probe scripts, raw journals, superseded
+# ledger intermediates, screenshots). Regenerable from the workflow journal via
+# .audit/join_by_agentid.py; the CURATED output is tracked at
+# docs/validation/v15-audit-ledger.md. ~10 MB, never commit.
+.audit/

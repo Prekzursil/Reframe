@@ -61,11 +61,29 @@ PINNED_PIP = "pip==25.2"
 # F3c (security hardening): get-pip.py is DOWNLOADED then EXECUTED. The URL serves
 # whatever pypa publishes today, so we VERIFY the bytes against a pinned sha256
 # BEFORE executing them — a compromised/MITM'd get-pip.py is rejected at the
-# .part stage (sha mismatch in _finalize), never run. Pinned 2026-06-28
-# (https://bootstrap.pypa.io/get-pip.py, 2,226,848 B). Refresh this when pypa
-# rotates get-pip; the seam (AssetManager(get_pip_sha256=...)) lets ops/tests
-# override without a code edit.
-GET_PIP_SHA256 = "a341e1a43e38001c551a1508a73ff23636a11970b61d901d9a1cad2a18f57055"
+# .part stage (sha mismatch in _finalize), never run. The seam
+# (AssetManager(get_pip_sha256=...)) lets ops/tests override without a code edit.
+#
+# ROTATED 2026-07-30. pypa republished the rolling URL at Last-Modified
+# "Wed, 29 Jul 2026 22:35:44 GMT", so the previous pin
+# (a341e1a43e38001c551a1508a73ff23636a11970b61d901d9a1cad2a18f57055, 2,226,848 B,
+# recorded 2026-06-28) began failing closed — correctly. 14 sidecar tests and the
+# Windows packaged-runtime staging step went red on the mismatch; that is the pin
+# working, not breaking.
+#
+# Current: https://bootstrap.pypa.io/get-pip.py, 2,230,427 B, bundles pip 26.2.
+# EVIDENCE, and its LIMIT — pypa publishes NO checksum for this file, so unlike the
+# embeddable-CPython pins (cross-checked against python.org's per-row MD5) this
+# rotation rests only on: two independent TLS fetches agreeing on the digest, a
+# Last-Modified consistent with a fresh publish, a +3,579 B size delta consistent
+# with a content update rather than truncation, and the payload being the canonical
+# base85-zip bootstrapper ("Hi There!" header, declares pip 26.2). That is
+# provenance, NOT authenticity — treat it as weaker than a vendor-checksummed pin.
+# The durable fix is unavailable: pypa's versioned URLs
+# (https://bootstrap.pypa.io/pip/<ver>/get-pip.py) 404 for 3.12/3.14, they exist only
+# for EOL Pythons, so there is no non-rolling artifact to pin. Vendoring get-pip.py
+# into the tree is the only way to stop trusting a mutable URL.
+GET_PIP_SHA256 = "25b5c39ade96bab5eabe6404ce83cab6da2deb5fe3c07d9881f43803edb6f9c8"
 #: success sentinel written into an env dir after a full install
 ENV_SENTINEL = ".media-studio-env.json"
 
@@ -77,6 +95,16 @@ ENV_SENTINEL = ".media-studio-env.json"
 #   --only-binary=:all:  no source builds — an sdist has no verifiable wheel hash
 #   --no-deps            the lock IS the closure; pip resolves nothing itself
 HASHED_LOCK_PIP_ARGS: tuple[str, ...] = ("--require-hashes", "--only-binary=:all:", "--no-deps")
+# WU-S10 (T4 supply chain) — harden the UN-LOCKED fallback. Without a staged
+# hashed lock the install resolves from ambient indexes with nothing to verify;
+# allowing a SOURCE distribution there means pip downloads an sdist and RUNS its
+# ``setup.py`` / PEP-517 backend to build a wheel — arbitrary code execution from
+# an unverified artifact, before any of our checks could apply. Wheels-only makes
+# the unverified path install-only (no build step to hijack). Same policy the
+# hashed-lock path above already enforces, so a requirement set that works under
+# the lock works here too; a sdist-only transitive now fails LOUDLY on both
+# paths instead of silently executing on one of them.
+UNLOCKED_ENV_PIP_ARGS: tuple[str, ...] = ("--only-binary=:all:",)
 #: option lines a hashed lock may carry besides pinned+hashed requirements. The
 #: cu128 torch index is a STILL-HASHED per-index exception: the custom index URL
 #: is permitted, but every wheel it serves is hash-verified all the same.
@@ -358,8 +386,11 @@ def build_env_install_argvs(
          ``--require-hashes --only-binary=:all: --no-deps -r <lock>`` — so every
          wheel over the FULL transitive closure is hash-verified before exec; the
          inline ``requirements`` are then NOT placed on the argv (the lock is the
-         sole, verified source). Without a lock, the inline pins install as before
-         (top-level pins; transitives resolve unhashed).
+         sole, verified source). Without a lock, the inline pins install as
+         before (top-level pins; transitives resolve unhashed) but WU-S10 adds
+         :data:`UNLOCKED_ENV_PIP_ARGS` so that unverified path is wheels-only —
+         pip may not build a source distribution, i.e. it never executes an
+         sdist's build backend for bytes nothing has verified.
 
     Returns ``[{"argv": [...], "env": {...extra env vars...}}, ...]`` — argv
     LISTS only (A6 lesson 4: never a shell string; paths with spaces are safe).
@@ -379,7 +410,7 @@ def build_env_install_argvs(
     if lock_file is not None:
         install_tail = [*HASHED_LOCK_PIP_ARGS, "--no-warn-script-location", "-r", str(lock_file)]
     else:
-        install_tail = ["--no-warn-script-location", *[str(r) for r in requirements]]
+        install_tail = [*UNLOCKED_ENV_PIP_ARGS, "--no-warn-script-location", *[str(r) for r in requirements]]
     step2 = {
         "argv": [
             str(python_exe),

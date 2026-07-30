@@ -1,7 +1,7 @@
 {
   "name": "media-studio",
   "productName": "Reframe",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Local personal video-manager desktop app (Electron + Python sidecar)",
   "private": true,
   "type": "module",
@@ -33,6 +33,10 @@
   },
   "overrides": {
     "esbuild": "^0.28.1",
+    "fast-uri": "^3.1.4",
+    "js-yaml": "^4.3.0",
+    "postcss": "^8.5.18",
+    "tar": "^7.5.21",
     "undici": "^6.27.0"
   },
   "devDependencies": {

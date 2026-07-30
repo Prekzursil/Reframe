@@ -24,12 +24,12 @@ Design (the canonical Phase-8 seam pattern — see ``diarize`` / ``stabilize`` /
     :class:`PannsBackend` returning a canned tag matrix and a fake loader
     returning synthetic samples — no torch, no panns, no ffmpeg.
 
-Missing-modality contract (the §3 degrade rule): a silent / no-audio clip, or an
-offline machine without the model, returns ``present=False`` tracks for the
-model-backed channels (``audioSalience`` / ``laughter`` / ``applause`` /
-``music``) — never fabricated zeros, never a raise. ``loudness`` needs no model,
-so it is ALWAYS present (its samples are zeros for true silence — an honest
-measurement, not a fabrication).
+Missing-modality contract (the §3 degrade rule): a silent / no-audio clip, an
+offline machine without the model, an absent :data:`BACKEND_MODULE`, or ANY
+backend failure returns ``present=False`` tracks for the model-backed channels
+(``audioSalience`` / ``laughter`` / ``applause`` / ``music``) — never fabricated
+zeros, never a raise. ``loudness`` needs no model, so it is ALWAYS present (its
+samples are zeros for true silence — an honest measurement, not a fabrication).
 """
 
 from __future__ import annotations
@@ -150,6 +150,48 @@ PannsFactory = Callable[[dict[str, Any]], PannsBackend]
 AudioLoader = Callable[[str], "tuple[np.ndarray, int]"]
 #: availability probe seam: are the model assets installed? (drives degrade).
 ModelsPresent = Callable[[dict[str, Any]], bool]
+#: ``importlib.util.find_spec`` seam: module name -> spec | ``None`` (no import).
+SpecFn = Callable[[str], object | None]
+
+#: the sibling module that ships the REAL PANNs CNN14 tagger. It is NOT part of
+#: the pure build: when it is absent the audio-TAG channels are UNAVAILABLE, and
+#: every entry point degrades honestly rather than crashing.
+BACKEND_MODULE = "media_studio.features.audio_saliency_backend"
+
+
+class PannsBackendUnavailableError(RuntimeError):
+    """:data:`BACKEND_MODULE` (the real PANNs CNN14 tagger) is not importable.
+
+    A SETUP/PROVISIONING failure, NOT a per-clip event: without that module the
+    tag channels (``audioSalience`` / ``laughter`` / ``applause`` / ``music``)
+    cannot be produced at all. Raised TYPED and actionable — mirroring
+    ``diarize_backend.DiarizeBackendUnavailableError`` — so a caller degrades on
+    a NAMED cause instead of a raw :class:`ModuleNotFoundError` escaping a job
+    thread. ``loudness`` needs no model and is unaffected.
+    """
+
+
+def _default_find_spec(module_name: str) -> object | None:
+    """Lazy ``importlib.util.find_spec`` (kept behind a seam for testing)."""
+    import importlib.util  # noqa: PLC0415 - stdlib, lazy for symmetry with peers
+
+    return importlib.util.find_spec(module_name)
+
+
+def backend_available(*, find_spec: SpecFn | None = None) -> bool:
+    """True when :data:`BACKEND_MODULE` is IMPORTABLE — WITHOUT importing it.
+
+    Uses ``importlib.util.find_spec`` behind an injectable seam (mirroring
+    ``health`` / ``self_test`` / ``system_advisor``) so answering "can this
+    feature run at all?" never loads a heavy dependency. A probe failure (a
+    broken / partial install) reports ABSENT — the honest answer for a feature
+    that cannot run.
+    """
+    spec_fn = find_spec or _default_find_spec
+    try:
+        return spec_fn(BACKEND_MODULE) is not None
+    except (ImportError, ValueError):  # a broken/partial install probes as absent
+        return False
 
 
 # --------------------------------------------------------------------------- #
@@ -319,10 +361,21 @@ def _audio_salience_signals(
 # default heavy seams (lazy real impls; tests inject fakes)
 # --------------------------------------------------------------------------- #
 def _default_backend_factory(settings: dict[str, Any]) -> PannsBackend:
-    """Build the real PANNs CNN14 backend (LAZY import; runtime only)."""
-    from .audio_saliency_backend import (  # noqa: PLC0415 - heavy seam  # pyright: ignore[reportMissingImports]  # Wave-2 ships the backend module
-        PannsCnn14Backend,
-    )
+    """Build the real PANNs CNN14 backend (LAZY import; runtime only).
+
+    Raises :class:`PannsBackendUnavailableError` when :data:`BACKEND_MODULE` is
+    not part of this build — never a raw :class:`ModuleNotFoundError`.
+    """
+    try:
+        from .audio_saliency_backend import (  # noqa: PLC0415 - heavy seam  # pyright: ignore[reportMissingImports]  # Wave-2 ships the backend module
+            PannsCnn14Backend,
+        )
+    except ImportError as exc:
+        raise PannsBackendUnavailableError(
+            f"audio-event saliency requires the {BACKEND_MODULE} module (the PANNs CNN14 "
+            "tagger), which is not part of this build; the audioSalience / laughter / "
+            "applause / music channels are UNAVAILABLE (loudness still works)"
+        ) from exc
 
     return PannsCnn14Backend(settings)
 
@@ -361,11 +414,17 @@ def _default_audio_loader(media_path: str) -> tuple[np.ndarray, int]:  # pragma:
 
 
 def default_models_present(settings: dict[str, Any]) -> bool:  # pragma: no cover - probes the asset store at runtime
-    """True when the PANNs CNN14 checkpoint is installed (no heavy import).
+    """True when the PANNs backend module AND its checkpoint are BOTH installed.
+
+    An installed checkpoint alone is NOT enough: without :data:`BACKEND_MODULE`
+    the tagger can never run, so a missing backend module reports ABSENT — the UI
+    then shows the feature as unavailable instead of appearing ready.
 
     Excluded from coverage: it reaches into the asset manager (a runtime
     concern). The pure runner is exercised with an injected ``models_present``.
     """
+    if not backend_available():
+        return False
     try:
         from ..assets import manifest  # noqa: PLC0415
         from ..assets.manager import AssetManager  # noqa: PLC0415
@@ -416,6 +475,9 @@ def compute_audio_signals(
         single ``0.0`` window (an honest "silence", not a fabrication).
       * **Cancelled** before tagging -> the tag channels are ``present=False``;
         whatever loudness was computed is returned.
+      * **Backend unavailable or failing** (:data:`BACKEND_MODULE` absent from
+        this build, bad weights, OOM) -> the tag channels are ``present=False``
+        with a LOUD ``log.warning`` naming the cause; ``loudness`` still returns.
 
     Never raises for a missing modality and never fabricates tag zeros.
     """
@@ -467,8 +529,18 @@ def compute_audio_signals(
         return tracks
 
     _progress(20.0, "tagging audio events")
-    backend = factory(settings)
-    tag_probs = backend.tag(arr, int(sr))
+    try:
+        backend = factory(settings)
+        tag_probs = backend.tag(arr, int(sr))
+    except Exception as exc:  # noqa: BLE001 - a backend failure must not crash the pipeline
+        # T11: the sibling backend module may be absent from this build (a
+        # PannsBackendUnavailableError), or a present backend may fail (bad
+        # weights / OOM). Either way the tag channels are honestly ABSENT with a
+        # LOUD reason — never a raise out of the job thread, never fake zeros.
+        log.warning("audio_saliency: audio tagging unavailable for %s: %s — tag channels absent", media_path, exc)
+        tracks = _absent_tracks(fps_hint)
+        tracks["loudness"] = loudness_track
+        return tracks
 
     _progress(85.0, "assembling audio signals")
     tracks: dict[str, SignalTrack] = {}
@@ -523,14 +595,18 @@ __all__ = [
     "ASSET_URL",
     "AUDIOSET_CLASS_INDEX",
     "AUDIO_CHANNELS",
+    "BACKEND_MODULE",
     "TAG_CHANNELS",
     "TARGET_SR",
     "AudioLoader",
     "ModelsPresent",
     "PannsBackend",
+    "PannsBackendUnavailableError",
     "PannsFactory",
     "Signal",
     "SignalTrack",
+    "SpecFn",
+    "backend_available",
     "compute_audio_signals",
     "default_models_present",
     "loudness_curve",

@@ -122,7 +122,7 @@ jobs:
       # One red OS leg must NOT cancel the others — we want the full OS picture.
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, macos-13, ubuntu-latest]
+        os: [windows-latest, macos-latest, ubuntu-latest]
     env:
       # electron-builder must never try to discover/notarize a signing identity
       # in CI (it would hang on macOS); this app is unsigned (electron-builder.yml).

@@ -78,11 +78,33 @@ export type Resume =
   | { kind: 'section' }
   | { kind: 'none' };
 
+/**
+ * Workspace tab ids that are NOT in-place tabs — they REDIRECT away from the
+ * per-video Workspace on mount (Workspace.tsx: an `initialTab='shortmaker'`
+ * deep-link "redirects to the single owner on mount — the tab never renders a
+ * second ShortMaker copy here").
+ *
+ * A `{ kind: 'workspace' }` resume MUST NEVER target one of these. Doing so is
+ * self-defeating in exactly the way the `section` note above warns about: Edit
+ * mounts -> reads the remembered choice -> mounts Workspace at the redirect tab
+ * -> Workspace navigates away -> Edit unmounts. The user can then never reach
+ * Edit or the Workspace for that video again, it survives restart, and there is
+ * no UI to clear it. `resumeFor('reframe')` did exactly this.
+ */
+export const REDIRECT_ONLY_WORKSPACE_TABS: readonly string[] = ['shortmaker'];
+
 /** Resolve a persisted choice string to its resume verdict. */
 export function resumeFor(choice: string | null): Resume {
   switch (choice) {
     case 'reframe':
-      return { kind: 'workspace', tab: 'shortmaker' };
+      // NOT `{ kind: 'workspace', tab: 'shortmaker' }`. Make Shorts is a top-level
+      // SECTION reached by a redirect, not an in-place Workspace tab (see
+      // REDIRECT_ONLY_WORKSPACE_TABS), so auto-resuming "in place" navigated away from
+      // the just-opened video and unmounted Edit — permanently, across restarts, with
+      // no UI to clear the persisted choice. `section` is the classification the note
+      // above already prescribes for destinations that bounce the user out; the hub
+      // simply marks reframe as last-used instead of auto-navigating.
+      return { kind: 'section' };
     case 'subtitles':
       return { kind: 'workspace', tab: 'subtitles' };
     case 'advanced':

@@ -40,6 +40,7 @@ convention and are documented here + in WIRING-T4A.md.
 from __future__ import annotations
 
 import contextlib
+import functools
 import json
 import os
 import subprocess
@@ -51,6 +52,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from .. import ffmpeg as _ffmpeg
 from ..assets.manifest import AssetEntry, register_asset
 from ..pathsafe import PathTraversalError, ensure_within
 from ..settings_store import default_config_dir
@@ -532,8 +534,13 @@ def run_render(
       unread PIPE deadlocks the child once the ~64KB buffer fills; proven
       29-minute freeze) keeping a bounded tail for error reporting. The drain
       thread is JOINED before returning so the tail is complete.
-    * ``should_cancel`` is polled per stdout line; cancellation terminates the
-      child cooperatively.
+    * ``should_cancel`` is polled per stdout line AND, independently of output,
+      every ``ffmpeg.CANCEL_POLL_SEC`` on a daemon watchdog thread
+      (``ffmpeg.watch_cancel``) — a render CLI that has stopped printing
+      ``RENDER_PROGRESS`` blocks the stdout readline below forever, and with it any
+      per-line cancel poll, so a cancelled render used to keep both Node AND its
+      Chromium alive. Cancellation terminates the child's whole process TREE
+      (``_terminate``), which is what actually reaps the browser.
     """
     if isinstance(argv, str):  # guard: never accept a shell string
         raise TypeError("argv must be a list of strings, not a shell string")
@@ -564,6 +571,18 @@ def run_render(
         drain_thread = threading.Thread(target=_drain, daemon=True, name="remotion-stderr")
         drain_thread.start()
 
+    # Output-independent cancellation (the T9a residual for this stage): a daemon
+    # watchdog polls on a timer so a silent render CLI is still torn down, tree and
+    # all. Not joined — released by ``watch_stop`` once the child is reaped, the
+    # same lifecycle ffmpeg.run uses.
+    watch_stop = threading.Event()
+    if should_cancel is not None:
+        threading.Thread(
+            target=functools.partial(_ffmpeg.watch_cancel, proc, should_cancel, watch_stop, _ffmpeg.CANCEL_POLL_SEC),
+            daemon=True,
+            name="remotion-cancel",
+        ).start()
+
     ok_path: str | None = None
     stdout = getattr(proc, "stdout", None)
     if stdout is not None:
@@ -580,7 +599,12 @@ def run_render(
             if parsed is not None:
                 ok_path = parsed
 
-    code = proc.wait()
+    try:
+        code = proc.wait()
+    finally:
+        # ``finally`` so a raising ``wait()`` cannot leave the watchdog polling a
+        # dead render CLI forever (the accumulation this fix exists to stop).
+        watch_stop.set()
     if drain_thread is not None:
         drain_thread.join(timeout=5)
     if code != 0 and stderr_tail:
@@ -593,7 +617,17 @@ def run_render(
 
 
 def _terminate(proc: Any) -> None:
-    """Cooperatively stop a subprocess: terminate, then kill if it lingers."""
+    """Cooperatively stop the render subprocess TREE, then kill if it lingers.
+
+    The render CLI is a Node process that spawns its own Chromium, so signalling
+    only the direct child ORPHANS the browser (it then outlives the cancelled job
+    and accumulates). ``ffmpeg.kill_process_tree`` reaps the descendants first
+    (``taskkill /PID <pid> /T /F`` on Windows — the idiom cf088986 proved in
+    ``app/main/sidecar.ts``); the original terminate -> wait -> kill escalation
+    below is unchanged and remains the whole teardown where a tree kill does not
+    apply.
+    """
+    _ffmpeg.kill_process_tree(proc)
     try:
         proc.terminate()
     except Exception:  # noqa: BLE001
