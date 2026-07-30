@@ -150,6 +150,47 @@ def test_managed_evict_force_destroys_only_copy(tmp_path: Path, ctx: RpcContext)
     assert not Path(managed["managedPath"]).exists()
 
 
+def test_library_remove_refuses_loud_when_managed_copy_is_the_only_one(tmp_path: Path, ctx: RpcContext) -> None:
+    """``library.remove`` must fail LOUD (INVALID_PARAMS) rather than silently destroy.
+
+    `remove` used to pass `force=True` unconditionally, so it walked straight past the
+    refusal the two tests above exist to enforce — and the renderer fires it from an
+    unconfirmed one-click "Remove" on the Library card. It now defaults to NOT forcing.
+
+    Critically, the refusal must land BEFORE any destruction: the managed bytes, the project
+    manifest and the poster must all survive, and the entity must remain removable once the
+    caller states its intent.
+    """
+    svc = _services(tmp_path)
+    src, media = _add_source(svc, tmp_path, "talk.mp4", data=b"only-copy")
+    managed = svc.library_keep_copy({"id": src}, ctx)["managed"]
+    # Give the video a project manifest + poster so we can prove they are NOT reaped.
+    manifest = svc._project_path(src)
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text("{}", encoding="utf-8")
+    poster = svc.data_dir / "thumbnails" / f"{src}.jpg"
+    poster.parent.mkdir(parents=True, exist_ok=True)
+    poster.write_bytes(b"jpg")
+
+    media.unlink()  # original gone -> the managed copy is the ONLY copy
+
+    with pytest.raises(RpcError) as exc:
+        svc.library_remove({"id": src}, ctx)
+    assert exc.value.code == ErrorCode.INVALID_PARAMS
+    # NOTHING destroyed — the refusal precedes the entity DELETE and both unlinks.
+    assert Path(managed["managedPath"]).exists()
+    assert manifest.exists()
+    assert poster.exists()
+    assert svc.library.get(src) is not None
+
+    # Explicit intent is the escape hatch, mirroring managedEvict's force.
+    assert svc.library_remove({"id": src, "destroyManagedCopy": True}, ctx) == {"ok": True}
+    assert not Path(managed["managedPath"]).exists()
+    assert not manifest.exists()
+    assert not poster.exists()
+    assert svc.library.get(src) is None
+
+
 def test_managed_clear_refuses_when_irreplaceable(tmp_path: Path, ctx: RpcContext) -> None:
     """RPC managedClear refuses LOUD (INVALID_PARAMS), destroying nothing, when any copy's
     original is gone — unless force=true."""

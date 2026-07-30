@@ -400,16 +400,23 @@ export function Library({
     setSelected(new Set());
     setError(null);
     const failed: string[] = [];
+    // Keep the FIRST reason, not just a count. `library.remove` now refuses LOUD when a
+    // video's app-managed copy is the only surviving copy of it (keep-a-copy opted in and
+    // the original source gone), and that refusal names the file — an actionable message.
+    // A bare `catch {}` threw that away and left the user with an unexplained count.
+    let firstReason: string | null = null;
     for (const id of ids) {
       try {
         await rpc<{ ok: boolean }>('library.remove', { id });
         setVideos((prev) => prev.filter((v) => v.id !== id));
-      } catch {
+      } catch (err) {
         failed.push(id);
+        firstReason ??= errText(err);
       }
     }
     if (failed.length > 0) {
-      setError(`Could not remove ${failed.length} video${failed.length === 1 ? '' : 's'}.`);
+      const count = `Could not remove ${failed.length} video${failed.length === 1 ? '' : 's'}.`;
+      setError(firstReason ? `${count} ${firstReason}` : count);
     }
   }, [selected]);
 
