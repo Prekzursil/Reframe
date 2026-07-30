@@ -64,12 +64,28 @@ jobs:
         working-directory: app/render-cli
         run: npm ci
 
+      # Supply chain (WU-S10 / T4): both tools are fetched over the network and
+      # then EXECUTED, so neither may come from a MUTABLE ref nor arrive
+      # unverified.
+      #  * opengrep's install.sh is pinned to the COMMIT that the v1.22.0 tag
+      #    points at — raw.githubusercontent.com serves a commit SHA immutably,
+      #    whereas `main` could change the script that runs here at any time
+      #    (the only delta vs `main` today is an OPENGREP_SKIP_BINARY_TEST escape
+      #    hatch this job does not use). To rotate the version, re-resolve BOTH:
+      #      gh api repos/opengrep/opengrep/git/ref/tags/<tag> --jq .object.sha
+      #  * the osv-scanner binary is sha256-verified BEFORE `chmod +x` (so an
+      #    unverified blob is never made executable), against the digest
+      #    published in that release's osv-scanner_SHA256SUMS. To rotate:
+      #      curl -sSL https://github.com/google/osv-scanner/releases/download/<tag>/osv-scanner_SHA256SUMS
+      #    `sha256sum -c` exits non-zero on a mismatch and the step runs under
+      #    `bash -e`, so a swapped asset FAILS the gate instead of being run.
       - name: Install opengrep + osv-scanner
         run: |
-          curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash -s -- -v v1.22.0
+          curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/f458d7f0d52cc58eae1ca3cf3d5caf101e637519/install.sh | bash -s -- -v v1.22.0
           echo "$HOME/.opengrep/cli/latest" >> "$GITHUB_PATH"
           curl -sSL -o /usr/local/bin/osv-scanner \
             https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_linux_amd64
+          echo "bc98e15319ed0d515e3f9235287ba53cdc5535d576d24fd573978ecfe9ab92dc  /usr/local/bin/osv-scanner" | sha256sum -c -
           chmod +x /usr/local/bin/osv-scanner
 
       # gate:1 + gate:5 — lint/format/sec-lint auto-fixers + secrets, verified via pre-commit

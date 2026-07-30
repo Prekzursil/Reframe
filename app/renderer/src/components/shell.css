@@ -45,10 +45,59 @@ body,
   background: transparent;
 }
 
-/* One focus language everywhere: a double ring that reads on every surface. */
+/* One focus language everywhere: a double ring that reads on every surface.
+ *
+ * The ring's PRIMARY carrier is a real `outline`, not `box-shadow`. That is load-bearing
+ * for two independent reasons, both measured in Chromium against these stylesheets:
+ *
+ * 1. SPECIFICITY. `:where()` contributes ZERO specificity, so this rule is (0,1,0) and its
+ *    `box-shadow` lost to `.feature-panel button` (0,1,1, --elev-1) and to
+ *    `.feature-panel .actions > button:first-child:not(.secondary)` (0,4,1, --accent-glow).
+ *    Meanwhile `outline: none` DID land, because nothing else declares `outline` — which
+ *    also suppressed Chromium's UA fallback outline. Net effect: on ~17 of the 18
+ *    `.feature-panel` surfaces a focused button's computed style was BYTE-IDENTICAL to its
+ *    resting style (exhaustive property diff = {}), silently breaking the contract stated
+ *    on this very line. Note that merely dropping `:where()` does NOT fix it: plain
+ *    `button:focus-visible` is also (0,1,1), a TIE that source order hands to the later
+ *    `.feature-panel button` rule. `outline` wins because it is UNCONTESTED, not because it
+ *    out-specifies anything.
+ *
+ * 2. WINDOWS HIGH CONTRAST. `--focus-ring` is pure box-shadow (tokens.css) and Chromium
+ *    force-sets `box-shadow: none` under `forced-colors: active`. With `outline: none` also
+ *    declared, borderless controls — the Workspace `.tab` (shell.css `border: none`) and
+ *    `.tabbar__advanced-toggle` (workspace.css `border: none`) — had NO focus affordance at
+ *    all, one OS toggle away. forced-colors PRESERVES outline width/style and substitutes a
+ *    system color, so a real outline survives. Same pattern already proven to survive in
+ *    directorPanel.css and captionBox.css.
+ *
+ * The box-shadow ring is kept as the styled enhancement wherever it still wins the cascade.
+ */
 :where(button, [role="button"], [role="tab"], input, select, textarea, [tabindex]):focus-visible {
-  outline: none;
+  /* TRANSPARENT, not `none`. Invisible in the normal palette (the box-shadow double ring
+   * below is the design), but under `forced-colors: active` Chromium keeps outline
+   * width/style and substitutes a system color — so the ring survives where box-shadow
+   * cannot. `outline: none` instead left borderless controls with nothing at all. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   box-shadow: var(--focus-ring);
+}
+
+/* SPECIFICITY REPAIR (reason 1 above). These restore the DESIGNED ring on the surfaces
+ * that were out-specifying it; they deliberately do not introduce a new focus look.
+ *   - (0,2,1) covers generic `.feature-panel button`, beating `.feature-panel button` (0,1,1).
+ *   - the `.actions > button:first-child:not(.secondary)` variant is (0,5,1), needed to beat
+ *     the accent-primary rule at (0,4,1). A plain (0,2,1) rule is NOT enough — proven by
+ *     modelsSystem.css, whose (0,2,1) override still lost on the accent primary.
+ * The accent fill is composed with the ring rather than replaced, so primaries keep their
+ * glow while gaining a visible focus state. */
+.feature-panel button:focus-visible,
+.shortmaker button:focus-visible,
+.timeline__toolbar button:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.feature-panel .actions > button:first-child:not(.secondary):focus-visible {
+  box-shadow: var(--focus-ring), var(--accent-glow);
 }
 
 @media (prefers-reduced-motion: reduce) {

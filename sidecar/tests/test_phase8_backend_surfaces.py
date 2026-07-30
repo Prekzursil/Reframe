@@ -88,6 +88,17 @@ def test_vlm_backbone_backend_surface_imports_light() -> None:
     assert "RealBackboneBackend" in be.__all__
 
 
+def test_qwen3vl_backend_surface_imports_light() -> None:
+    # E3 backbone swap: the OPT-IN Qwen3-VL re-rank backend. Same contract as its
+    # siblings above — the heavy class carries `# pragma: no cover` and imports
+    # torch/transformers INSIDE its methods, so the module surface imports without
+    # the native stack and the coverage run never needs a GPU.
+    import media_studio.features.qwen3vl_backend as be
+
+    assert be.RealQwen3VlBackend.__name__ == "RealQwen3VlBackend"
+    assert "RealQwen3VlBackend" in be.__all__
+
+
 def test_ctc_align_backend_surface_imports_light() -> None:
     import media_studio.features.ctc_align_backend as be
 

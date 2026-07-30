@@ -12,6 +12,7 @@ import {
   type MigrationSeam,
   type PlanDataRootInput,
   migratedRoot,
+  migrationRacedAway,
   planDataRoot,
   runMigration,
 } from './dataRootPlan';
@@ -182,6 +183,43 @@ describe('migratedRoot — final root after the seam ran', () => {
   });
 
   it('returns the legacy source UNCHANGED when the move failed (loud fallback)', () => {
+    expect(migratedRoot(EXE_DATA, APPDATA, false)).toBe(EXE_DATA);
+  });
+});
+
+// --------------------------------------------------------------------------- #
+// T8 item 3 (bounded mitigation): the legacy migration runs at module init, BEFORE
+// any data-root lock exists (the lock lives INSIDE the root the migration is still
+// choosing), so a CONCURRENT launch can move the legacy tree out from under us. Our
+// move then fails loudly — but the data is now at the DESTINATION, and falling back
+// to the vanished source would re-provision a fresh tree inside $INSTDIR (the very
+// place T13 exists to escape). Re-probe and prefer the destination in that case.
+// --------------------------------------------------------------------------- #
+describe('migrationRacedAway', () => {
+  it('is true only when the source is GONE and the destination now holds content', () => {
+    expect(migrationRacedAway(false, true)).toBe(true);
+  });
+
+  it('is false while the source still holds content (our data is where we left it)', () => {
+    expect(migrationRacedAway(true, true)).toBe(false);
+    expect(migrationRacedAway(true, false)).toBe(false);
+  });
+
+  it('is false when NEITHER holds content (nothing was moved anywhere)', () => {
+    expect(migrationRacedAway(false, false)).toBe(false);
+  });
+});
+
+describe('migratedRoot — raced-away fallback', () => {
+  it('prefers the destination when our move failed but a racer already moved the tree', () => {
+    expect(migratedRoot(EXE_DATA, APPDATA, false, true)).toBe(APPDATA);
+  });
+
+  it('still returns the source when the move failed and nothing raced us', () => {
+    expect(migratedRoot(EXE_DATA, APPDATA, false, false)).toBe(EXE_DATA);
+  });
+
+  it('defaults `raced` to false (unchanged 3-arg behavior)', () => {
     expect(migratedRoot(EXE_DATA, APPDATA, false)).toBe(EXE_DATA);
   });
 });

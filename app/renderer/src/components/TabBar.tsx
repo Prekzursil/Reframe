@@ -83,7 +83,15 @@ function renderTab(tab: TabDef, nav: TabNav): React.ReactElement {
       id={tabId(tab.id)}
       data-tab-id={tab.id}
       aria-selected={isActive}
-      aria-controls={tabPanelId(tab.id)}
+      // Every TabBar consumer renders exactly ONE `role="tabpanel"`, whose id is
+      // `tabPanelId(active)`. So `aria-controls` on a NON-selected tab would point
+      // at an element that is not in the DOM — a dangling IDREF, which axe reports
+      // as the CRITICAL `aria-valid-attr-value` violation
+      // (`Invalid ARIA attribute value: aria-controls="tabpanel-make"`, measured in
+      // CI on the Make Shorts screen). ARIA 1.2 makes `aria-controls` OPTIONAL on
+      // `role="tab"`, so emitting it only for the selected tab is the correct fix —
+      // strictly better than mounting every panel just to satisfy the reference.
+      aria-controls={isActive ? tabPanelId(tab.id) : undefined}
       // Roving tabindex: only the active tab is in the tab order; the rest are
       // reached with the arrow keys.
       tabIndex={isActive ? 0 : -1}

@@ -20,7 +20,10 @@
 // the whole surface is unit-testable with a fake safeStorage + tmp dirs.
 import {
   closeSync,
+  copyFileSync,
+  constants as fsConstants,
   ftruncateSync,
+  lstatSync,
   openSync,
   readFileSync,
   readdirSync,
@@ -32,6 +35,16 @@ import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path'
 
 /** The encrypted keystore file, kept in the app userData dir (NOT settings.json). */
 export const KEYSTORE_FILENAME = 'secure-keys.json';
+
+/** Extension of a timestamped pre-overwrite keystore backup (CIPHERTEXT only). */
+export const KEYSTORE_BACKUP_EXT = '.bak';
+
+/**
+ * How many timestamped keystore backups are retained; the oldest are pruned.
+ * Bounded so an edit-heavy user does not accumulate backups forever, deep enough
+ * that several bad generations in a row are still recoverable.
+ */
+export const KEYSTORE_BACKUP_RETENTION = 5;
 
 /** Linux plaintext fallback backend name — persisting to it is REFUSED. */
 export const BASIC_TEXT_BACKEND = 'basic_text';
@@ -68,6 +81,15 @@ export interface SecureStatus {
    * main-process `console.warn` is invisible in a packaged build.
    */
   unshreddable?: string[];
+  /**
+   * WHY the on-disk keystore could not be read, or `null` when it is healthy /
+   * genuinely absent. Optional here for the same reason as `unshreddable`: the pure
+   * availability decision has no keystore context; {@link KeyBridge.secureStatus}
+   * overlays the live value. While this is non-null the bridge REFUSES to overwrite
+   * the keystore (fail-closed) — so the user must be told, or their keys look
+   * silently un-saveable.
+   */
+  keystoreUnreadable?: KeystoreUnreadableReason | null;
 }
 
 /** The decrypted key material main injects into the sidecar per-request (never to disk). */
@@ -107,6 +129,74 @@ export class KeystoreUnavailableError extends Error {
   constructor(message: string = SESSION_ONLY_BANNER) {
     super(message);
     this.name = 'KeystoreUnavailableError';
+  }
+}
+
+/**
+ * WHY a keystore read failed. Every value means "the blob EXISTS but its contents
+ * could not be trusted" — never "there is no keystore yet" (that is `'absent'`).
+ *   - `'read-failed'`    — the bytes could not be read at all (locked / EACCES / a
+ *                          directory in the way).
+ *   - `'parse-failed'`   — not valid JSON: a truncated or partial write.
+ *   - `'shape-invalid'`  — valid JSON of the wrong shape (not an object, a
+ *                          non-object `providers` map, a non-array key list, a
+ *                          non-string `cloudApiKey`).
+ *   - `'decrypt-failed'` — well-formed, but `safeStorage` could not unwrap the
+ *                          ciphertext: a DPAPI failure, a moved Windows profile, or
+ *                          a keystore copied from another machine.
+ * Deliberately an enum of CAUSES and never the offending value, so a diagnostic can
+ * be logged / surfaced without ever carrying key material.
+ */
+export type KeystoreUnreadableReason =
+  | 'read-failed'
+  | 'parse-failed'
+  | 'shape-invalid'
+  | 'decrypt-failed';
+
+/**
+ * The three distinguishable end-states of a keystore READ — the same 3-state idiom
+ * as {@link ShredOutcome}, and for the same reason: a two-state "keys or empty"
+ * answer conflated **absent** with **unreadable**, and that conflation is a
+ * CREDENTIAL-DESTROYING bug. An unreadable keystore reported as empty makes the very
+ * next {@link saveDecryptedKeys} write a fresh store over it, PERMANENTLY wiping
+ * every stored credential (a single DPAPI hiccup, a locked file, a partial write, or
+ * a profile move was enough).
+ *
+ * `keys` is `null` — not `{}` — on `'unreadable'`, so "silently continue as empty"
+ * is not merely discouraged but structurally impossible: a caller that wants keys
+ * MUST handle the refusal.
+ */
+export type KeystoreRead =
+  | { outcome: 'loaded' | 'absent'; keys: DecryptedKeys; reason: null }
+  | { outcome: 'unreadable'; keys: null; reason: KeystoreUnreadableReason };
+
+/**
+ * Raised when a caller that cannot meaningfully continue reads an UNREADABLE
+ * keystore (see {@link loadDecryptedKeys}). Fail-closed: refusing loudly is always
+ * safer than reporting an empty store that the next write would make permanent.
+ */
+export class KeystoreUnreadableError extends Error {
+  /** The classified cause (never carries key material). */
+  readonly reason: KeystoreUnreadableReason;
+  constructor(reason: KeystoreUnreadableReason) {
+    super(
+      `the secure keystore exists but could not be read (${reason}); refusing to treat it as empty`,
+    );
+    this.name = 'KeystoreUnreadableError';
+    this.reason = reason;
+  }
+}
+
+/**
+ * Raised when an EXISTING keystore blob could not be copied aside before being
+ * overwritten. The caller must then NOT overwrite it: without a backup an overwrite
+ * is irreversible, and the whole point of the backup is that no write is ever
+ * destructive.
+ */
+export class KeystoreBackupError extends Error {
+  constructor(keystorePath: string) {
+    super(`could not back up the existing keystore before overwriting it: ${keystorePath}`);
+    this.name = 'KeystoreBackupError';
   }
 }
 
@@ -241,12 +331,43 @@ function hasPlaintextKeys(keys: DecryptedKeys): boolean {
   return Object.keys(keys.providers).length > 0 || keys.cloudApiKey !== undefined;
 }
 
-function readJson(path: string): unknown {
+/** True for a plain (non-null, non-array) object — the only valid keystore shape. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * A JSON read that DISTINGUISHES "not there" from "there but unusable" — the
+ * distinction {@link readKeystore} is built on. `readJson` below folds both back into
+ * `undefined` for the settings-file callers, which only need "did I get an object".
+ */
+type ClassifiedJson =
+  | { kind: 'json'; value: unknown }
+  | { kind: 'absent' }
+  | { kind: 'unreadable'; reason: 'read-failed' | 'parse-failed' };
+
+function readJsonClassified(path: string): ClassifiedJson {
+  let text: string;
   try {
-    return JSON.parse(readFileSync(safeFilePath(path), 'utf8'));
-  } catch {
-    return undefined;
+    text = readFileSync(safeFilePath(path), 'utf8');
+  } catch (err) {
+    // ENOENT is the ONLY code that means "nothing is stored here". Everything else
+    // (EACCES / EBUSY / EISDIR / EPERM) means a blob exists that we must not clobber.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { kind: 'absent' };
+    }
+    return { kind: 'unreadable', reason: 'read-failed' };
   }
+  try {
+    return { kind: 'json', value: JSON.parse(text) };
+  } catch {
+    return { kind: 'unreadable', reason: 'parse-failed' };
+  }
+}
+
+function readJson(path: string): unknown {
+  const read = readJsonClassified(path);
+  return read.kind === 'json' ? read.value : undefined;
 }
 
 /** Atomic JSON write (temp sibling + rename) mirroring the sidecar's settings store. */
@@ -271,6 +392,47 @@ function writeJsonAtomic(path: string, data: unknown): void {
 export type ShredOutcome = 'shredded' | 'absent' | 'intact';
 
 /**
+ * `'r+'` (`O_RDWR`) open flags, plus `O_NOFOLLOW` on the platforms that define it, so
+ * the open ITSELF refuses a symlink with no check-then-use window at all. Windows
+ * does not expose the flag (`fs.constants.O_NOFOLLOW === undefined` there), which is
+ * why {@link isLinkedElsewhere} is a mandatory pre-check rather than a belt-and-braces
+ * extra. Pure + injectable so BOTH platform shapes are unit-pinned from either host.
+ */
+export function shredOpenFlags(constants: { O_RDWR: number; O_NOFOLLOW?: number }): number {
+  return constants.O_RDWR | (constants.O_NOFOLLOW ?? 0);
+}
+
+const SHRED_OPEN_FLAGS = shredOpenFlags(fsConstants);
+
+/**
+ * True when the bytes at `safe` are shared with a file OUTSIDE this path, so a shred
+ * would destroy an unrelated file rather than a plaintext copy:
+ *   - a SYMLINK / junction (`lstat` does not follow it, unlike the `'r+'` open, which
+ *     is exactly how a hostile or stale `settings.json.bak -> <victim>` link turned
+ *     the shred into an arbitrary-file truncation); or
+ *   - a HARD LINK (`nlink > 1`): truncating one name zeroes the shared inode, so the
+ *     other name's content is destroyed too (measured: a 23-byte victim -> 0 bytes).
+ *     No symlink privilege is needed to plant one, so this variant matters most.
+ *
+ * TOCTOU residual, stated plainly: between this `lstat` and the `openSync` below, a
+ * writer able to swap the path could still win a race. `O_NOFOLLOW`
+ * ({@link shredOpenFlags}) closes that window on POSIX; Windows does not offer the
+ * flag, so a narrow window remains there. Both paths swept live under the app's own
+ * userData / data root, so an attacker who can win that race can already write those
+ * files directly. A probe that itself fails (a malformed path) answers `false` and
+ * lets the open classify the path — {@link shredFile} must stay total, because its
+ * caller sweeps in a loop and must not abort mid-sweep.
+ */
+function isLinkedElsewhere(safe: string): boolean {
+  try {
+    const stat = lstatSync(safe, { throwIfNoEntry: false });
+    return stat !== undefined && (stat.isSymbolicLink() || stat.nlink > 1);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Truncate a file's bytes to zero then delete it, so a plaintext copy cannot be
  * recovered from the freed inode by a casual read.
  *
@@ -288,20 +450,31 @@ export type ShredOutcome = 'shredded' | 'absent' | 'intact';
  *             the migration lists it in `unshreddable[]` so it is surfaced for manual
  *             removal. "Existed" is NOT "shredded".
  *
- * TOCTOU-free (CodeQL js/file-system-race): NO `existsSync`-then-write window, and
- * the caller needs NO `existsSync`-AFTER-shred to distinguish absent from intact
- * (that separate probe would re-introduce the very race we removed, plus a
- * js/path-injection sink) — the 3-state return carries that fact out directly. We
- * open with the `r+` flag — a single atomic syscall that REQUIRES the file to exist
- * and never creates it — so a truly-absent file fails `ENOENT` (returning `'absent'`)
- * instead of being silently created by a later write.
+ * No `existsSync`-based check-then-act (CodeQL js/file-system-race): existence is
+ * still decided by the OPEN, not by a probe, and the caller needs NO
+ * `existsSync`-AFTER-shred to distinguish absent from intact (that separate probe
+ * would re-introduce a race, plus a js/path-injection sink) — the 3-state return
+ * carries that fact out directly. We open with `O_RDWR` (+`O_NOFOLLOW` where the
+ * platform has it) — a single atomic syscall that REQUIRES the file to exist and
+ * never creates it — so a truly-absent file fails `ENOENT` (returning `'absent'`)
+ * instead of being silently created by a later write. The ONE pre-open probe is the
+ * `lstat` link check ({@link isLinkedElsewhere}), which is a SAFETY guard, not an
+ * existence check: it can only turn a destructive truncate into a refusal, and its
+ * residual race window is documented inline there.
  */
 export function shredFile(path: string): ShredOutcome {
   const safe = safeFilePath(path);
+  if (isLinkedElsewhere(safe)) {
+    // The bytes at this path are NOT a private plaintext copy — they live in (or are
+    // shared with) a file somewhere else, so truncating "the copy" would destroy an
+    // unrelated user file. Report 'intact' (surfaced in `unshreddable[]` for manual
+    // review) instead of following the link. See isLinkedElsewhere.
+    return 'intact';
+  }
   let scrubbed = false;
   let fd: number | undefined;
   try {
-    fd = openSync(safe, 'r+');
+    fd = openSync(safe, SHRED_OPEN_FLAGS);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       return 'absent'; // truly absent — nothing to shred
@@ -429,7 +602,93 @@ function sweepPriorPlaintextCopies(settingsPath: string): {
   return { shredded, unshreddable };
 }
 
-/** Persist the encrypted keystore (base64 ciphertext) atomically to `keystorePath`. */
+/**
+ * Where the CURRENT keystore ciphertext is copied before it is overwritten. The stamp
+ * is UTC, fixed-width, and punctuation-free (`20260725T054751123`) so a plain
+ * lexicographic sort of the sibling names IS chronological order — which is what
+ * {@link pruneKeystoreBackups} relies on to decide which generations are oldest.
+ */
+export function keystoreBackupPath(keystorePath: string, when: Date): string {
+  const stamp = when.toISOString().replace(/[-:.]/g, '').replace(/Z$/, '');
+  return `${keystorePath}.${stamp}${KEYSTORE_BACKUP_EXT}`;
+}
+
+/**
+ * Delete all but the newest `keep` timestamped backups and return what was removed.
+ * Never throws: a backup that cannot be deleted is simply left in place (a stale
+ * ciphertext file is harmless; aborting a key save over it would not be).
+ */
+export function pruneKeystoreBackups(keystorePath: string, keep: number): string[] {
+  // Route through the containment barrier so `dir` is a sanitised (post-guard) value
+  // before it reaches the `readdirSync` sink (CodeQL js/path-injection), exactly as
+  // priorCopies does.
+  const safe = safeFilePath(keystorePath);
+  const dir = dirname(safe);
+  const prefix = `${basename(safe)}.`;
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const backups = names
+    .filter((name) => name.startsWith(prefix) && name.endsWith(KEYSTORE_BACKUP_EXT))
+    .sort();
+  const pruned: string[] = [];
+  for (const name of backups.slice(0, Math.max(0, backups.length - keep))) {
+    const target = join(dir, name);
+    try {
+      unlinkSync(safeFilePath(target));
+      pruned.push(target);
+    } catch {
+      /* leave an un-deletable stale backup alone — never fail a key save over it */
+    }
+  }
+  return pruned;
+}
+
+/** Whether a pre-overwrite backup was taken, or there was simply nothing to protect. */
+export type KeystoreBackupOutcome = 'backed-up' | 'nothing-to-back-up';
+
+/**
+ * Copy the CURRENT keystore blob aside under a timestamped name so NO overwrite is
+ * ever destructive — the second half of the wipe fix. Even a caller that correctly
+ * fails closed on an unreadable read can be overwriting a blob it merely *believes*
+ * is disposable (a stale generation, a `safeStorage` that recovers on the next boot),
+ * so the last-resort recovery copy is unconditional.
+ *
+ * A raw byte copy, deliberately NOT a JSON round-trip: a corrupt blob must be
+ * preserved EXACTLY as found, because that is the only thing a recovery could work
+ * from. The bytes are `safeStorage` ciphertext, so this writes no plaintext key.
+ *
+ * @throws KeystoreBackupError when a blob EXISTS but could not be copied — the caller
+ *         must then abandon the overwrite rather than destroy the only copy.
+ */
+export function backupKeystore(keystorePath: string, when: Date): KeystoreBackupOutcome {
+  const source = safeFilePath(keystorePath);
+  const target = safeFilePath(keystoreBackupPath(keystorePath, when));
+  try {
+    copyFileSync(source, target);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      // The first-ever write: there is no prior generation to protect. (ENOENT on the
+      // TARGET's directory lands here too, but then the atomic write that follows
+      // fails the same way, so no blob is lost either.)
+      return 'nothing-to-back-up';
+    }
+    throw new KeystoreBackupError(keystorePath);
+  }
+  pruneKeystoreBackups(keystorePath, KEYSTORE_BACKUP_RETENTION);
+  return 'backed-up';
+}
+
+/**
+ * Persist the encrypted keystore (base64 ciphertext) atomically to `keystorePath`,
+ * after copying any existing generation aside ({@link backupKeystore}).
+ *
+ * Order matters: encrypt FIRST (so a session-only refusal costs no backup), back up
+ * SECOND, write LAST. A backup failure propagates and the write never happens.
+ */
 function writeKeystore(
   safeStorage: SafeStorageLike,
   keystorePath: string,
@@ -443,6 +702,7 @@ function writeKeystore(
   if (keys.cloudApiKey !== undefined) {
     file.cloudApiKey = encryptToBase64(safeStorage, keys.cloudApiKey);
   }
+  backupKeystore(keystorePath, new Date());
   writeJsonAtomic(keystorePath, file);
 }
 
@@ -464,30 +724,87 @@ export function saveDecryptedKeys(
 }
 
 /**
+ * Load + decrypt the keystore, CLASSIFYING the outcome — the read every caller that
+ * might go on to WRITE must use.
+ *
+ * `'absent'` (no keystore yet) and `'unreadable'` (a blob that exists but cannot be
+ * trusted) are kept strictly apart, because conflating them is the credential wipe:
+ * an unreadable store reported as empty gets silently replaced by the next save. On
+ * `'unreadable'` no partial key set is returned (`keys === null`) — a half-decrypted
+ * store is exactly as dangerous to persist as an empty one.
+ *
+ * Total by contract: read, parse, shape and decrypt failures are all classified, so
+ * this NEVER throws and a caller can always reach a decision.
+ */
+export function readKeystore(safeStorage: SafeStorageLike, keystorePath: string): KeystoreRead {
+  const unreadable = (reason: KeystoreUnreadableReason): KeystoreRead => ({
+    outcome: 'unreadable',
+    keys: null,
+    reason,
+  });
+  const raw = readJsonClassified(keystorePath);
+  if (raw.kind === 'absent') {
+    return { outcome: 'absent', keys: { providers: {} }, reason: null };
+  }
+  if (raw.kind === 'unreadable') {
+    return unreadable(raw.reason);
+  }
+  if (!isPlainObject(raw.value)) {
+    return unreadable('shape-invalid');
+  }
+  const file = raw.value as Partial<KeystoreFile>;
+  const out: DecryptedKeys = { providers: {} };
+  if (file.providers !== undefined) {
+    if (!isPlainObject(file.providers)) {
+      return unreadable('shape-invalid');
+    }
+    for (const [id, encKeys] of Object.entries(file.providers)) {
+      if (!Array.isArray(encKeys)) {
+        return unreadable('shape-invalid'); // a corrupt key list, NOT an empty one
+      }
+      // A `__proto__`/`constructor` id cannot have come from writeKeystore (it filters
+      // them) and is not loadable provider material, so it is dropped rather than
+      // escalated to a store-wide refusal — dropping it loses no usable credential.
+      if (!isSafeProviderId(id)) continue;
+      try {
+        out.providers[id] = encKeys.map((b64) => decryptFromBase64(safeStorage, b64));
+      } catch {
+        return unreadable('decrypt-failed');
+      }
+    }
+  }
+  if (file.cloudApiKey !== undefined) {
+    if (typeof file.cloudApiKey !== 'string') {
+      return unreadable('shape-invalid');
+    }
+    try {
+      out.cloudApiKey = decryptFromBase64(safeStorage, file.cloudApiKey);
+    } catch {
+      return unreadable('decrypt-failed');
+    }
+  }
+  return { outcome: 'loaded', keys: out, reason: null };
+}
+
+/**
  * Load + decrypt the keystore for main to inject into the sidecar per-request
  * over the existing stdio JSON-RPC frame (NEVER env/argv/settings.json). Returns
  * empty when no keystore exists yet.
+ *
+ * FAILS CLOSED: an existing-but-unreadable keystore throws
+ * {@link KeystoreUnreadableError} rather than returning an empty map. Callers that
+ * must distinguish (and in particular any caller that may then WRITE) should use
+ * {@link readKeystore} and handle `'unreadable'` explicitly — see keyBridge.ts.
  */
 export function loadDecryptedKeys(
   safeStorage: SafeStorageLike,
   keystorePath: string,
 ): DecryptedKeys {
-  const raw = readJson(keystorePath);
-  const out: DecryptedKeys = { providers: {} };
-  if (!raw || typeof raw !== 'object') {
-    return out;
+  const read = readKeystore(safeStorage, keystorePath);
+  if (read.outcome === 'unreadable') {
+    throw new KeystoreUnreadableError(read.reason);
   }
-  const file = raw as Partial<KeystoreFile>;
-  if (file.providers && typeof file.providers === 'object') {
-    for (const [id, encKeys] of Object.entries(file.providers)) {
-      if (!Array.isArray(encKeys) || !isSafeProviderId(id)) continue;
-      out.providers[id] = encKeys.map((b64) => decryptFromBase64(safeStorage, b64));
-    }
-  }
-  if (typeof file.cloudApiKey === 'string') {
-    out.cloudApiKey = decryptFromBase64(safeStorage, file.cloudApiKey);
-  }
-  return out;
+  return read.keys;
 }
 
 /** Rewrite a settings object with every raw key stripped (metadata preserved). */

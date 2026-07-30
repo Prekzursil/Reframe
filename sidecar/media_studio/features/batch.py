@@ -49,6 +49,7 @@ from typing import Any, Protocol, cast
 
 from .. import protocol
 from ..jobs import JobCancelled
+from ..pathsafe import clean_for_log, ensure_within, is_safe_store_id
 from ..protocol import ErrorCode, RpcContext, RpcError
 from ..util import clamp, get_logger, now_ms
 from . import recipes
@@ -103,6 +104,23 @@ def _invalid(message: str) -> RpcError:
     return RpcError(message, ErrorCode.INVALID_PARAMS)
 
 
+def _require_safe_id(batch_id: str) -> str:
+    """Return ``batch_id`` when it is an opaque store key; fail loud otherwise.
+
+    A batch id arrives from the UNTRUSTED renderer (``batch.status``/``batch.delete``
+    forward ``params["id"]`` verbatim) and becomes ONE filename component in
+    ``batches/<id>.json``. The id is therefore treated as OPAQUE and matched against
+    the shared allowlist grammar (:func:`~media_studio.pathsafe.is_safe_store_id`):
+    nothing is stripped or "sanitised", a non-conforming id is REFUSED with
+    ``INVALID_PARAMS``. The offending value is scrubbed with
+    :func:`~media_studio.pathsafe.clean_for_log` because the message is logged
+    (``py/log-injection``).
+    """
+    if not is_safe_store_id(batch_id):
+        raise _invalid(f"invalid batch id: {clean_for_log(batch_id)!r}")
+    return batch_id
+
+
 # --------------------------------------------------------------------------- #
 # pure model — item / state shaping + aggregate-status derivation
 # --------------------------------------------------------------------------- #
@@ -128,7 +146,10 @@ def new_state(
     """Validate + shape a brand-new :class:`BatchState` (all items ``queued``).
 
     Raises ``INVALID_PARAMS`` on any malformed field so a bad create can never
-    persist a half-typed record. A missing ``batch_id`` is generated.
+    persist a half-typed record. A missing ``batch_id`` is generated; a SUPPLIED
+    one must satisfy the opaque-id grammar (:func:`_require_safe_id`) — the id
+    becomes a filename component, so an unsafe id is refused at shaping time as
+    well as at the :meth:`BatchStore._path` sink.
     """
     if not isinstance(name, str) or not name.strip():
         raise _invalid("batch.name (non-empty str) is required")
@@ -137,7 +158,7 @@ def new_state(
     if not isinstance(source_video_ids, list) or not source_video_ids:
         raise _invalid("batch.sourceVideoIds (non-empty array) is required")
     items = [new_item(video_id) for video_id in source_video_ids]
-    resolved_id = batch_id if isinstance(batch_id, str) and batch_id else uuid.uuid4().hex[:12]
+    resolved_id = _require_safe_id(batch_id) if isinstance(batch_id, str) and batch_id else uuid.uuid4().hex[:12]
     return {
         "id": resolved_id,
         "name": name.strip(),
@@ -193,7 +214,26 @@ class BatchStore:
         self.dir = Path(directory)
 
     def _path(self, batch_id: str) -> Path:
-        return self.dir / f"{batch_id}.json"
+        """One batch's file, CONFINED to :attr:`dir` (grammar + containment).
+
+        The single choke point every read/write/delete funnels through, with TWO
+        independent layers because the id is renderer-supplied:
+
+        1. :func:`_require_safe_id` — the opaque-id GRAMMAR. This is what stops
+           the traversal before any path arithmetic happens.
+        2. :func:`~media_studio.pathsafe.ensure_within` — real containment of
+           ``dir`` + the relative ``<id>.json`` part, returning the canonical path
+           actually handed to ``read_text``/``write_text``/``os.replace``/
+           ``unlink`` (the CodeQL ``py/path-injection`` barrier). Note a *bare*
+           ``ensure_within(value)`` would only canonicalise; the allowed BASE plus
+           the relative part is what confines.
+
+        Before this guard, an id of ``../settings`` resolved to
+        ``<data_dir>/settings.json`` — the app's OWN settings document, which holds
+        the cloud API key — so ``batch.delete`` deleted it and ``batch.status`` read
+        it back out to the renderer.
+        """
+        return Path(ensure_within(self.dir, f"{_require_safe_id(batch_id)}.json"))
 
     def _write(self, state: BatchState) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)

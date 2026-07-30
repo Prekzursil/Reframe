@@ -25,9 +25,10 @@
 // `_injectedKeys`. U2 lands right after in this same run.
 import {
   type DecryptedKeys,
+  type KeystoreRead,
   type SafeStorageLike,
   type SecureStatus,
-  loadDecryptedKeys,
+  readKeystore,
   saveDecryptedKeys,
   secureStatus,
 } from './keystore';
@@ -37,6 +38,14 @@ export const INJECTED_KEYS_FIELD = '_injectedKeys';
 
 /** The provider write RPC main intercepts to strip raw keys into the keystore. */
 export const UPSERT_METHOD = 'providers.upsert';
+
+/**
+ * The provider DELETE RPC main intercepts so a removal is atomic across BOTH stores.
+ * Without this interception the sidecar dropped only its (already redacted) metadata
+ * while the RAW key stayed in the keystore — so the "deleted" credential kept being
+ * injected into every provider call and came back to life on the next re-add.
+ */
+export const REMOVE_METHOD = 'providers.remove';
 
 const ELLIPSIS = '…';
 const VISIBLE_TAIL = 4;
@@ -125,6 +134,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * The provider id a `providers.remove` request targets, or null when it names none.
+ * Accepts the bare `{id}` the renderer sends AND the nested `{provider:{id}}`
+ * envelope, mirroring {@link planUpsert} so the two provider paths cannot disagree
+ * about where the id lives.
+ */
+export function removedProviderId(params: Record<string, unknown> | undefined): string | null {
+  const base = params ?? {};
+  const nested = base.provider;
+  const entry = isRecord(nested) ? nested : base;
+  const id = entry.id;
+  return typeof id === 'string' && id !== '' ? id : null;
+}
+
+/**
  * Plan a providers.upsert: locate the provider entry (the sidecar accepts a bare
  * `{id, apiKeys, …}` OR a nested `{provider: {…}}`), restore redacted stand-ins
  * against `storedFor(id)`, and produce the resolved raw key set + a fully-redacted
@@ -180,6 +203,14 @@ export class KeyBridge {
   private readonly keystorePath: string;
   private readonly unshreddable: readonly string[];
   private session: DecryptedKeys = { providers: {} };
+  /**
+   * Provider ids REMOVED during this session. A deletion cannot be expressed by the
+   * session overlay (a merge can only add), so without a tombstone the on-disk entry
+   * would be re-merged by the very next read and the removed key would keep being
+   * injected — the resurrection bug, still reachable whenever the disk write of the
+   * removal is refused or fails.
+   */
+  private readonly removed = new Set<string>();
 
   constructor(opts: KeyBridgeOptions) {
     this.safeStorage = opts.safeStorage;
@@ -192,25 +223,70 @@ export class KeyBridge {
   /**
    * The live availability/refusal decision surfaced to the renderer banner, overlaid
    * with the boot-time migration's `unshreddable` list so the renderer can also warn
-   * about any lingering plaintext copy that could not be deleted.
+   * about any lingering plaintext copy that could not be deleted, plus the live
+   * `keystoreUnreadable` cause — while that is set the bridge refuses to overwrite
+   * the keystore, so the user must be able to see it.
    */
   secureStatus(): SecureStatus {
-    return { ...secureStatus(this.safeStorage), unshreddable: [...this.unshreddable] };
+    return {
+      ...secureStatus(this.safeStorage),
+      unshreddable: [...this.unshreddable],
+      keystoreUnreadable: this.readDisk().reason,
+    };
+  }
+
+  /** One classified read of the on-disk keystore (never throws — see readKeystore). */
+  private readDisk(): KeystoreRead {
+    return readKeystore(this.safeStorage, this.keystorePath);
+  }
+
+  /**
+   * Overlay the on-disk keys with this session's, minus anything tombstoned by
+   * {@link interceptRemove}. `disk === null` is the fail-closed unreadable case: it
+   * contributes NOTHING (never a half-decrypted set) and the session overlay stands
+   * alone for this run.
+   */
+  private overlay(disk: DecryptedKeys | null): DecryptedKeys {
+    const base = disk ?? { providers: {} };
+    const providers: Record<string, string[]> = {};
+    for (const [id, keys] of Object.entries({ ...base.providers, ...this.session.providers })) {
+      if (this.removed.has(id)) continue; // removed this session — never resurrect it
+      providers[id] = keys;
+    }
+    const cloudApiKey = this.session.cloudApiKey ?? base.cloudApiKey;
+    return cloudApiKey !== undefined ? { providers, cloudApiKey } : { providers };
   }
 
   /** On-disk keystore overlaid with this session's in-memory keys (session wins). */
   private currentKeys(): DecryptedKeys {
-    let disk: DecryptedKeys = { providers: {} };
-    try {
-      disk = loadDecryptedKeys(this.safeStorage, this.keystorePath);
-    } catch {
-      // A decrypt failure (corrupt / foreign-machine keystore) must never crash
-      // the app; fall back to the session overlay so key entry still works.
-      disk = { providers: {} };
+    return this.overlay(this.readDisk().keys);
+  }
+
+  /**
+   * Persist `next`, or decline — the single write gate for BOTH provider paths.
+   *
+   * FAILS CLOSED when `read` came back `'unreadable'`: the blob on disk exists but
+   * could not be read/decrypted, so writing over it would PERMANENTLY DESTROY every
+   * credential it holds (one DPAPI hiccup, a locked file, a partial write or a moved
+   * profile was enough). The user's action still takes effect for this run via the
+   * session overlay, and `secureStatus().keystoreUnreadable` reports the cause. The
+   * store is not repaired here on purpose: a transient cause resolves itself on the
+   * next boot, and a permanent one is the user's call — not a silent overwrite's.
+   */
+  private persistKeys(next: DecryptedKeys, read: KeystoreRead): void {
+    if (read.outcome === 'unreadable') {
+      return;
     }
-    const providers = { ...disk.providers, ...this.session.providers };
-    const cloudApiKey = this.session.cloudApiKey ?? disk.cloudApiKey;
-    return cloudApiKey !== undefined ? { providers, cloudApiKey } : { providers };
+    if (secureStatus(this.safeStorage).sessionOnly) {
+      return; // no secure backend: session-only, never a plaintext write
+    }
+    try {
+      saveDecryptedKeys(this.safeStorage, this.keystorePath, next);
+    } catch {
+      // Never a silent plaintext fallback and never a crash: the session overlay
+      // already holds the keys for this run, and the loud SESSION_ONLY banner
+      // (getSecureStatus) tells the user that saving is unavailable.
+    }
   }
 
   /**
@@ -219,7 +295,8 @@ export class KeyBridge {
    * fully-redacted params to forward. NEVER returns a raw key to the sidecar.
    */
   interceptUpsert(params?: Record<string, unknown>): Record<string, unknown> {
-    const current = this.currentKeys();
+    const read = this.readDisk();
+    const current = this.overlay(read.keys);
     const plan = planUpsert(params, (id) => current.providers[id] ?? []);
     if (plan.providerId === null || plan.resolvedKeys === null) {
       // No apiKeys in this upsert (id-less, or an enabled/model-only patch): there
@@ -229,8 +306,10 @@ export class KeyBridge {
     const nextProviders = { ...current.providers };
     if (plan.resolvedKeys.length > 0) {
       nextProviders[plan.providerId] = plan.resolvedKeys;
+      this.removed.delete(plan.providerId); // a real re-add retires the tombstone
     } else {
       delete nextProviders[plan.providerId];
+      this.removed.add(plan.providerId); // dropping the last key IS a removal
     }
     const next: DecryptedKeys =
       current.cloudApiKey !== undefined
@@ -239,16 +318,49 @@ export class KeyBridge {
     // Always keep the session overlay current so injection sees the new keys even
     // when the disk write is refused (session-only) or fails.
     this.session = next;
-    if (!this.secureStatus().sessionOnly) {
-      try {
-        saveDecryptedKeys(this.safeStorage, this.keystorePath, next);
-      } catch {
-        // Never a silent plaintext fallback and never a crash: the session overlay
-        // already holds the keys for this run, and the loud SESSION_ONLY banner
-        // (getSecureStatus) tells the user that saving is unavailable.
-      }
-    }
+    this.persistKeys(next, read);
     return plan.forwardParams;
+  }
+
+  /**
+   * Intercept providers.remove: delete the provider's RAW keys from the keystore and
+   * tombstone the id, so the removal is atomic across the keystore and the sidecar's
+   * (redacted) metadata. Previously only the sidecar side was dropped, so the raw key
+   * survived in the keystore, kept being injected into every provider call, and was
+   * restored by the next redacted upsert — a "deleted" credential that came back.
+   *
+   * The params are forwarded VERBATIM: the sidecar still owns its own removal, and
+   * nothing about this request is secret.
+   *
+   * RESIDUAL (bounded, disclosed): if the keystore was UNREADABLE when the removal
+   * happened, the disk entry outlives the tombstone across a restart. Repeating the
+   * removal once the store is readable clears it (the presence probe below reads the
+   * RAW disk view, not the tombstoned overlay, precisely so a retry is not a no-op);
+   * reconciling automatically would need the sidecar's provider list, which lives
+   * behind an RPC main does not own. The orphan is inert meanwhile — the sidecar has
+   * no provider entry to attach the injected key to.
+   */
+  interceptRemove(params?: Record<string, unknown>): Record<string, unknown> | undefined {
+    const providerId = removedProviderId(params);
+    if (providerId === null) {
+      return params; // no id to act on — nothing stored can be affected
+    }
+    const read = this.readDisk();
+    const current = this.overlay(read.keys);
+    const stored = read.keys?.providers[providerId] ?? this.session.providers[providerId];
+    if (stored === undefined) {
+      return params; // nothing stored for this id: no rewrite, no backup churn
+    }
+    const nextProviders = { ...current.providers };
+    delete nextProviders[providerId];
+    const next: DecryptedKeys =
+      current.cloudApiKey !== undefined
+        ? { providers: nextProviders, cloudApiKey: current.cloudApiKey }
+        : { providers: nextProviders };
+    this.session = next;
+    this.removed.add(providerId); // holds even if the disk write below is declined
+    this.persistKeys(next, read);
+    return params;
   }
 
   /**
@@ -262,8 +374,9 @@ export class KeyBridge {
 
   /**
    * The single transform ipc.ts applies before forwarding to sidecar.request:
-   * strip-into-keystore for providers.upsert, inject decrypted keys for
-   * provider-calling methods, and pass everything else straight through.
+   * strip-into-keystore for providers.upsert, delete-from-keystore for
+   * providers.remove, inject decrypted keys for provider-calling methods, and pass
+   * everything else straight through.
    */
   forwardParams(
     method: string,
@@ -271,6 +384,9 @@ export class KeyBridge {
   ): Record<string, unknown> | undefined {
     if (method === UPSERT_METHOD) {
       return this.interceptUpsert(params);
+    }
+    if (method === REMOVE_METHOD) {
+      return this.interceptRemove(params);
     }
     if (needsKeyInjection(method)) {
       return this.inject(params);

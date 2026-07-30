@@ -39,6 +39,11 @@ _BUNDLED_DIR = Path(__file__).resolve().parent / "resources" / "bin"
 
 _EXE = ".exe" if os.name == "nt" else ""
 
+# Platform flag for the process-TREE teardown below. Kept as a module attribute
+# (not an inline ``os.name`` test) so both arms are reachable in the test gate,
+# which runs on Linux while the app ships on Windows.
+_IS_WINDOWS = os.name == "nt"
+
 # Progress callback: (pct: float 0..100, message: str) -> None
 ProgressCb = Callable[[float, str], None]
 
@@ -46,6 +51,15 @@ ProgressCb = Callable[[float, str], None]
 # block indefinitely) so a duration probe can never wedge the job thread. Metadata
 # probing is near-instant for a healthy local file; 60s is a generous ceiling.
 PROBE_TIMEOUT_SEC = 60.0
+
+# How often :func:`watch_cancel` polls cancellation, INDEPENDENTLY of whether the
+# child is still emitting output (same cadence as the proven
+# ``features/reframe.py::_await_verthor`` loop).
+CANCEL_POLL_SEC = 0.25
+# Grace period after ``terminate()`` before escalating to a hard ``kill()``.
+TERMINATE_TIMEOUT_SEC = 5.0
+# Ceiling on the tree-kill helper process itself, so teardown cannot wedge.
+TREE_KILL_TIMEOUT_SEC = 10.0
 
 
 class FfmpegNotFound(RuntimeError):
@@ -244,8 +258,12 @@ def run(
     - ``total_sec`` is the source duration used to turn ``out_time`` into a pct.
     - ``on_progress(pct, message)`` is called as progress advances and once more
       (100.0, "done") on a clean ``progress=end``.
-    - ``should_cancel()`` is polled per line; if it returns True the process is
-      terminated cooperatively and the return code is propagated.
+    - ``should_cancel()`` is polled per stdout line AND, independently, every
+      :data:`CANCEL_POLL_SEC` on a daemon watchdog thread (:func:`watch_cancel`),
+      so a child that has gone SILENT — a wedged encoder emitting no more
+      ``-progress`` lines — is still torn down instead of surviving the job
+      watchdog. On cancel the process TREE is terminated cooperatively
+      (:func:`_terminate`) and the return code is propagated.
     - ``popen`` is injectable so tests can mock the subprocess entirely.
 
     Returns the process exit code.
@@ -282,6 +300,19 @@ def run(
 
         threading.Thread(target=_drain, daemon=True, name="ffmpeg-stderr").start()
 
+    # Cancellation is polled on its OWN timer thread, not only per stdout line: a
+    # wedged encoder that has stopped emitting progress blocks the readline below
+    # forever, and the per-line poll with it. The watchdog is a daemon and is NOT
+    # joined (same lifecycle as the stderr drain above); ``watch_stop`` releases it
+    # as soon as the child has been reaped.
+    watch_stop = threading.Event()
+    if should_cancel is not None:
+        threading.Thread(
+            target=functools.partial(watch_cancel, proc, should_cancel, watch_stop, CANCEL_POLL_SEC),
+            daemon=True,
+            name="ffmpeg-cancel",
+        ).start()
+
     last_pct = -1.0
     stdout = proc.stdout
     if stdout is not None:
@@ -303,18 +334,114 @@ def run(
                     last_pct = pct
                     on_progress(pct, f"{pct:.1f}%")
 
-    code = proc.wait()
+    try:
+        code = proc.wait()
+    finally:
+        # Release the watchdog as soon as the child is reaped — in a ``finally`` so
+        # a raising ``wait()`` cannot leave a thread polling a dead process forever
+        # (that would be the very accumulation this fix exists to stop).
+        watch_stop.set()
     if code != 0 and stderr_tail:
         log.error("ffmpeg exited %s; stderr tail: %s", code, " | ".join(list(stderr_tail)[-8:]))
     return code
 
 
+def kill_process_tree(proc: Any, *, runner: Callable[..., Any] | None = None) -> bool:
+    """Reap a child's DESCENDANTS as well as the child itself. Never raises.
+
+    ``Popen.terminate()`` signals ONLY the direct child, and the processes this
+    module spawns are tree-shaped: ffmpeg forks helpers, and the Node render CLI
+    (``features/caption_remotion``) spawns a whole Chromium. Signalling the parent
+    alone therefore ORPHANS the descendants, which then survive the job watchdog
+    that has already freed the job slot — they accumulate until the box is out of
+    RAM/GPU.
+
+    This mirrors the main process's proven ``killProcessTree``
+    (``app/main/sidecar.ts``, commit cf088986): on Windows shell out to
+    ``taskkill /PID <pid> /T /F``, whose ``/T`` walks the parent-PID tree.
+    Returns True when a tree kill was issued, False when it was not applicable or
+    could not be run — the caller then still performs its own terminate/kill
+    escalation, so a False is a degraded path, never a silent no-op.
+
+    SCOPE (inline, deliberate): descendants are reaped on **Windows only**. On
+    POSIX, reaping a tree requires the child to own its own process group
+    (``start_new_session=True`` at spawn time); without that, ``killpg`` would
+    target the SIDECAR'S own group and take the whole sidecar down, so POSIX keeps
+    the direct-child escalation. Settling experiment for a future POSIX fix: spawn
+    with ``start_new_session=True`` and assert ``os.killpg(os.getpgid(pid), SIGKILL)``
+    reaps a grandchild — that is a spawn-flag change and out of this fix's scope
+    (the shipped app is Windows, exactly like the sidecar.ts counterpart).
+    """
+    pid = getattr(proc, "pid", None)
+    if not _IS_WINDOWS or not isinstance(pid, int):
+        return False
+    # Resolve the default at CALL time (not def time) so a test that monkeypatches
+    # ``ffmpeg.subprocess.run`` is honoured and no real taskkill is ever spawned by
+    # default — the same seam discipline reframe.py documents for ``Popen``.
+    run_cmd = runner if runner is not None else subprocess.run
+    try:
+        # argv list, no shell: the only interpolation is our own child's pid.
+        run_cmd(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=TREE_KILL_TIMEOUT_SEC,
+        )
+    except Exception:  # noqa: BLE001 - best-effort teardown must never raise
+        return False
+    return True
+
+
+def watch_cancel(
+    proc: Any,
+    should_cancel: Callable[[], bool],
+    stop: threading.Event,
+    poll_sec: float = CANCEL_POLL_SEC,
+) -> bool:
+    """Poll ``should_cancel`` on a TIMER until ``stop`` is set; tear down on cancel.
+
+    THE RESIDUAL THIS CLOSES: :func:`run` used to poll cancellation only inside
+    ``for raw in stdout``. A wedged encoder stops emitting ``-progress`` lines, so
+    that readline blocks forever and the poll is never reached again — the process
+    is never cancelled and wedged encoders ACCUMULATE. Run on its own daemon
+    thread, this loop is independent of output, so a silent child is still torn
+    down (process TREE included, via :func:`_terminate`).
+
+    Shape copied from the pattern the repo already proved in
+    ``features/reframe.py::_await_verthor``: a bounded wait per iteration with the
+    cancel check between waits. ``stop.wait(poll_sec)`` doubles as the sleep and
+    as the release signal, so a finished run reclaims the thread immediately
+    instead of lingering for a full poll interval.
+
+    Returns True when it cancelled the child, False when released by ``stop`` (or
+    when the probe itself failed — a broken probe must never kill a healthy job).
+    """
+    while not stop.wait(poll_sec):
+        try:
+            cancelled = should_cancel()
+        except Exception:  # noqa: BLE001 - a broken probe must not kill the child
+            return False
+        if cancelled:
+            _terminate(proc)
+            return True
+    return False
+
+
 def _terminate(proc: Any) -> None:
-    """Cooperatively stop a subprocess: terminate, then kill if it lingers."""
+    """Cooperatively stop a subprocess TREE: taskkill /T, terminate, then kill.
+
+    The tree kill runs FIRST so descendants (ffmpeg helpers, the render CLI's
+    Chromium) die with the parent instead of being orphaned; it is best-effort and
+    returns False where it does not apply, in which case the original
+    terminate -> wait -> kill escalation below is the whole teardown, exactly as
+    before.
+    """
+    kill_process_tree(proc)
     with contextlib.suppress(Exception):
         proc.terminate()
     try:
-        proc.wait(timeout=5)
+        proc.wait(timeout=TERMINATE_TIMEOUT_SEC)
     except Exception:
         with contextlib.suppress(Exception):
             proc.kill()

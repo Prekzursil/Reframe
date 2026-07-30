@@ -143,6 +143,44 @@ def test_remove_evicts_managed_copy(lib: Library, fake_video: Path):
     assert not managed_file.exists()  # bytes freed
 
 
+def test_remove_refuses_to_silently_destroy_the_only_surviving_copy(lib: Library, fake_video: Path):
+    """``remove()`` must FAIL CLOSED when the managed copy is the only copy left.
+
+    ``remove()`` used to pass ``force=True`` unconditionally, justified in its docstring as
+    "the user is deleting the video, so evicting even an irreplaceable copy ... is intended,
+    not an accidental destruction". The renderer never established that intent: the Library
+    card's "Remove" fires ``library.remove`` with NO confirm and NO undo, and "Remove
+    selected" loops it over a whole selection. So the force flag turned
+    ``ManagedStore.evict``'s explicit contract — "never a silent destruction of the only
+    copy" (keepcopy.py) — into exactly that.
+
+    The dangerous state needs BOTH conditions: the user opted into keep-a-copy AND the
+    original source has since moved or been deleted. This covers it.
+    """
+    from media_studio.keepcopy import KeepCopyError, ManagedStore
+
+    v = lib.add(str(fake_video))
+    managed = ManagedStore(lib).keep_copy(v["id"])
+    managed_file = Path(managed["managedPath"])
+    assert managed_file.exists()
+
+    # The original goes away -> the managed copy is now the ONLY copy of this video.
+    fake_video.unlink()
+
+    with pytest.raises(KeepCopyError, match="only|surviving"):
+        lib.remove(v["id"])
+    # NOTHING was destroyed and the entity survives, so the user can still act on it.
+    assert managed_file.exists(), "the only surviving copy was destroyed despite the refusal"
+    assert lib.get(v["id"]) is not None
+    assert lib.managed_status()["count"] == 1
+
+    # Explicit opt-in still destroys — the caller must SAY so.
+    assert lib.remove(v["id"], destroy_managed_copy=True) is True
+    assert lib.get(v["id"]) is None
+    assert not managed_file.exists()
+    assert lib.managed_status()["count"] == 0
+
+
 def test_set_has_transcript(lib: Library, fake_video: Path):
     v = lib.add(str(fake_video))
     updated = lib.set_has_transcript(v["id"], True)

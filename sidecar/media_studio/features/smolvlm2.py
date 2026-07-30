@@ -62,6 +62,89 @@ FRAMES_PER_CLIP = 8
 #: the candidate field the re-rank score is stamped onto (parallel to ranker's).
 SCORE_FIELD = "vlmScore"
 
+# --------------------------------------------------------------------------- #
+# VLM BACKBONE SWAP (gem-hunt E.3) — Qwen3-VL-4B/8B as an OPT-IN alternative to
+# the default SmolVLM2 re-rank backbone. "cheapest large quality jump; native
+# text-timestamp alignment; SmolVLM2 stays default" (MASTER-DECISION-QUEUE E.3).
+#
+# The swap rides the EXISTING ``BackendFactory`` seam (``settings -> SmolVlmBackend``):
+# both Qwen3-VL and SmolVLM2 satisfy the SAME :class:`SmolVlmBackend` Protocol
+# (``rank_clips(frames_per_clip, prompt) -> list[float]``), so nothing downstream
+# changes. Selection is a PURE function of ``settings["vlmBackbone"]`` and defaults
+# to SmolVLM2, so an unset / absent setting reproduces today's behavior exactly.
+#
+# Both Qwen3-VL-4B/8B-Instruct are **Apache-2.0** (commercial OK — verified against
+# the HF model cards 2026-07-12); the pinned revisions below are the verified main
+# commits at wire time. They are HEAVIER than SmolVLM2 (bf16 ~9 GB / ~18 GB resident
+# vs 5.2 GB) — hence OPT-IN: a 6 GB-tight box keeps the SmolVLM2 default.
+# --------------------------------------------------------------------------- #
+#: the canonical VLM backbone ids the seam understands (``vlmBackbone`` setting).
+BACKBONE_SMOLVLM2 = "smolvlm2"
+BACKBONE_QWEN3VL_4B = "qwen3vl-4b"
+BACKBONE_QWEN3VL_8B = "qwen3vl-8b"
+#: SmolVLM2 stays the DEFAULT backbone (unset / unknown -> this).
+DEFAULT_BACKBONE = BACKBONE_SMOLVLM2
+#: the frozen backbone vocabulary (validation + tests read this).
+VLM_BACKBONES: frozenset[str] = frozenset({BACKBONE_SMOLVLM2, BACKBONE_QWEN3VL_4B, BACKBONE_QWEN3VL_8B})
+#: friendly aliases callers may pass (bare "qwen3vl" -> the 4B, the cheaper jump).
+_BACKBONE_ALIASES: dict[str, str] = {
+    "qwen3vl": BACKBONE_QWEN3VL_4B,
+    "qwen3-vl": BACKBONE_QWEN3VL_4B,
+    "qwen": BACKBONE_QWEN3VL_4B,
+    "qwen3vl-4b-instruct": BACKBONE_QWEN3VL_4B,
+    "qwen3vl-8b-instruct": BACKBONE_QWEN3VL_8B,
+}
+
+#: Qwen3-VL-4B-Instruct — the cheaper "large quality jump" (Apache-2.0).
+QWEN3VL_4B_ASSET_NAME = "qwen3vl-4b"
+QWEN3VL_4B_MODEL_ID = "Qwen/Qwen3-VL-4B-Instruct"
+#: pinned main commit (verified via the HF revision API 2026-07-12).
+QWEN3VL_4B_REVISION = "ebb281ec70b05090aa6165b016eac8ec08e71b17"
+QWEN3VL_4B_SIZE_MB = 8900  # ~8.9 GB bf16 safetensors on disk (4.44 B params)
+QWEN3VL_4B_VRAM_MB = 11000  # bf16 runtime (diagnostics only) — > SmolVLM2's 5.2 GB
+
+#: Qwen3-VL-8B-Instruct — the higher-quality tier (Apache-2.0).
+QWEN3VL_8B_ASSET_NAME = "qwen3vl-8b"
+QWEN3VL_8B_MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
+#: pinned main commit (verified via the HF revision API 2026-07-12).
+QWEN3VL_8B_REVISION = "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
+QWEN3VL_8B_SIZE_MB = 17000  # ~17 GB bf16 safetensors on disk (8.77 B params)
+QWEN3VL_8B_VRAM_MB = 20000  # bf16 runtime (diagnostics only)
+
+#: backbone id -> its on-demand asset name (drives the offline / present probe).
+_BACKBONE_ASSET: dict[str, str] = {
+    BACKBONE_SMOLVLM2: ASSET_NAME,
+    BACKBONE_QWEN3VL_4B: QWEN3VL_4B_ASSET_NAME,
+    BACKBONE_QWEN3VL_8B: QWEN3VL_8B_ASSET_NAME,
+}
+#: the Qwen3-VL backbone ids (routed to the Qwen backend factory).
+_QWEN3VL_BACKBONES: frozenset[str] = frozenset({BACKBONE_QWEN3VL_4B, BACKBONE_QWEN3VL_8B})
+
+
+def resolve_backbone(settings: Mapping[str, Any] | None) -> str:
+    """Normalize ``settings['vlmBackbone']`` to a known backbone id (pure).
+
+    Defaults to :data:`DEFAULT_BACKBONE` (SmolVLM2) when the setting is unset,
+    empty, or the literal default. A known alias (e.g. bare ``"qwen3vl"``) maps to
+    its canonical id. An UNKNOWN value falls back to the default and logs a LOUD
+    warning (never a silent wrong-model), so a typo can never quietly load the
+    wrong weights. Case- and whitespace-insensitive.
+    """
+    raw = str((settings or {}).get("vlmBackbone") or "").strip().lower()
+    if raw in ("", DEFAULT_BACKBONE):
+        return DEFAULT_BACKBONE
+    if raw in VLM_BACKBONES:
+        return raw
+    if raw in _BACKBONE_ALIASES:
+        return _BACKBONE_ALIASES[raw]
+    log.warning("unknown vlmBackbone %r; falling back to %s", raw, DEFAULT_BACKBONE)
+    return DEFAULT_BACKBONE
+
+
+def backbone_asset_name(backbone: str) -> str:
+    """The on-demand asset name backing ``backbone`` (default = SmolVLM2's)."""
+    return _BACKBONE_ASSET.get(backbone, ASSET_NAME)
+
 
 # --------------------------------------------------------------------------- #
 # the VlmReranker contract (design-spec scorer.VlmReranker) — what select_unified
@@ -335,6 +418,34 @@ def _default_backend_factory(
     return RealSmolVlmBackend(settings)
 
 
+def _default_qwen3vl_backend_factory(
+    settings: Mapping[str, Any],
+) -> SmolVlmBackend:  # pragma: no cover - prod seam (imports the heavy native stack)
+    """Build the real Qwen3-VL backend (LAZY import inside the function).
+
+    The concrete model (4B vs 8B) is chosen by :func:`resolve_backbone` FROM the
+    settings, inside the backend — so this factory keeps the frozen
+    ``settings -> SmolVlmBackend`` signature.
+    """
+    from .qwen3vl_backend import RealQwen3VlBackend  # noqa: PLC0415 - heavy seam
+
+    return RealQwen3VlBackend(settings)
+
+
+def select_backend_factory(settings: Mapping[str, Any] | None) -> BackendFactory:
+    """PURE: pick the default backend factory for the resolved VLM backbone.
+
+    Returns the Qwen3-VL factory when ``settings['vlmBackbone']`` selects a
+    Qwen3-VL backbone, else the SmolVLM2 factory (the DEFAULT). An explicitly
+    injected ``backend_factory`` on the reranker still wins over this — this only
+    supplies the default when none is injected, so tests and callers that pass a
+    fake are unaffected.
+    """
+    if resolve_backbone(settings) in _QWEN3VL_BACKBONES:
+        return _default_qwen3vl_backend_factory
+    return _default_backend_factory
+
+
 def _default_clip_frame_loader(
     media_path: str,
     spans: Sequence[tuple[float, float]],
@@ -412,12 +523,16 @@ def default_models_present(settings: Mapping[str, Any]) -> bool:
     counts (that is what lets the model run offline once fetched). Any lookup
     failure (asset not yet registered, or the asset machinery missing) degrades
     to ``False`` — the re-rank is then skipped — and never raises.
+
+    Backbone-aware: the asset checked is the one backing the SELECTED backbone
+    (:func:`resolve_backbone`), so selecting a Qwen3-VL backbone gates on the
+    Qwen weights, not SmolVLM2's.
     """
     try:
         from ..assets import manifest  # noqa: PLC0415 - lazy: avoids an import cycle
         from ..assets.manager import AssetManager  # noqa: PLC0415
 
-        entry = manifest.get_asset(ASSET_NAME)
+        entry = manifest.get_asset(backbone_asset_name(resolve_backbone(settings)))
         if entry is None:
             return False
         mgr = AssetManager(settings_provider=lambda: dict(settings))
@@ -453,7 +568,9 @@ class SmolVlmReranker:
         instruction: str | None = None,
     ) -> None:
         self._settings = dict(settings or {})
-        self._factory = backend_factory or _default_backend_factory
+        # An injected factory ALWAYS wins (tests / cloud); otherwise the default
+        # is chosen by the resolved backbone (SmolVLM2 unless settings opt into Qwen3-VL).
+        self._factory = backend_factory or select_backend_factory(self._settings)
         self._loader = clip_frame_loader or _default_clip_frame_loader
         self._media_path = media_path
         self._instruction = instruction
@@ -570,20 +687,63 @@ def register_smolvlm2_assets() -> None:
     )
 
 
-# Register the asset at import (mirrors diarize.register_diarize_assets()).
+def register_qwen3vl_assets() -> None:
+    """Register the Qwen3-VL-4B/8B video-LLM backbones as on-demand assets (idempotent).
+
+    Both are Apache-2.0 (commercial OK). The asset names match
+    :data:`QWEN3VL_4B_ASSET_NAME` / :data:`QWEN3VL_8B_ASSET_NAME` (and the
+    ``vlmBackbone`` -> asset mapping in :data:`_BACKBONE_ASSET`) so
+    :func:`default_models_present` detects an already-cached snapshot for the
+    selected backbone. The revisions are pinned 40-hex commits (the manifest
+    REQUIRES a pinned ``hf_revision``). Identical re-registration is a no-op.
+    """
+    from ..assets import manifest  # noqa: PLC0415 - lazy: avoids an import cycle
+
+    for asset_name, model_id, revision, size_mb in (
+        (QWEN3VL_4B_ASSET_NAME, QWEN3VL_4B_MODEL_ID, QWEN3VL_4B_REVISION, QWEN3VL_4B_SIZE_MB),
+        (QWEN3VL_8B_ASSET_NAME, QWEN3VL_8B_MODEL_ID, QWEN3VL_8B_REVISION, QWEN3VL_8B_SIZE_MB),
+    ):
+        manifest.register_asset(
+            manifest.AssetEntry(
+                name=asset_name,
+                kind="model",
+                size_mb=size_mb,
+                label=f"{model_id} (Tier-2 video-LLM backbone, Apache-2.0)",
+                installer="hf",
+                hf_repo=model_id,
+                hf_revision=revision,
+            )
+        )
+
+
+# Register the assets at import (mirrors diarize.register_diarize_assets()).
 register_smolvlm2_assets()
+register_qwen3vl_assets()
 
 
 __all__ = [
     "ASSET_NAME",
     "ASSET_REVISION",
     "ASSET_SIZE_MB",
+    "BACKBONE_QWEN3VL_4B",
+    "BACKBONE_QWEN3VL_8B",
+    "BACKBONE_SMOLVLM2",
+    "DEFAULT_BACKBONE",
     "FRAMES_PER_CLIP",
     "MODEL_ID",
+    "QWEN3VL_4B_ASSET_NAME",
+    "QWEN3VL_4B_MODEL_ID",
+    "QWEN3VL_4B_REVISION",
+    "QWEN3VL_4B_VRAM_MB",
+    "QWEN3VL_8B_ASSET_NAME",
+    "QWEN3VL_8B_MODEL_ID",
+    "QWEN3VL_8B_REVISION",
+    "QWEN3VL_8B_VRAM_MB",
     "SCORE_FIELD",
     "SMOLVLM_VRAM_MB",
     "TOP_K_DEFAULT",
     "VISION_MAX_TOKENS_DEFAULT",
+    "VLM_BACKBONES",
     "BackendFactory",
     "ClipFrameLoader",
     "CloudVlmBackend",
@@ -592,10 +752,14 @@ __all__ = [
     "SmolVlmBackend",
     "SmolVlmReranker",
     "VlmReranker",
+    "backbone_asset_name",
     "build_rerank_prompt",
     "build_reranker",
     "default_models_present",
     "parse_rerank_order",
+    "register_qwen3vl_assets",
     "register_smolvlm2_assets",
     "reorder_by_indices",
+    "resolve_backbone",
+    "select_backend_factory",
 ]
