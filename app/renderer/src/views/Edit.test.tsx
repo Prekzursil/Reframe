@@ -56,7 +56,7 @@ vi.mock('../lib/rpc', () => ({
 }));
 
 import { Edit } from './Edit';
-import { HUB_CHOICE_KEY } from '../lib/taskHub';
+import { HUB_CARDS, HUB_CHOICE_KEY, REDIRECT_ONLY_WORKSPACE_TABS } from '../lib/taskHub';
 
 function makeVideo(over: Partial<Video> = {}): Video {
   return {
@@ -129,15 +129,68 @@ describe('<Edit />', () => {
     expect(rpcMock).toHaveBeenCalledWith('settings.get');
   });
 
-  it('routes the reframe card into the Workspace at the Short-maker tab + persists', async () => {
-    act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} />));
+  it('routes the reframe card STRAIGHT to the Make Shorts owner (never via Workspace) + persists', async () => {
+    // REVISED: this previously asserted the card mounted `Workspace` with
+    // `data-initial-tab='shortmaker'`. WU-3a4 moved ShortMaker OUT of the Workspace,
+    // so that tab is a mount-time redirect — mounting Workspace only to be bounced
+    // out of it is what made Edit permanently unreachable for the video (the
+    // remembered choice re-triggered the bounce on every mount, across restarts,
+    // with no UI to clear it). The card must deep-link to the single owner directly.
+    const onMakeShortsForVideo = vi.fn();
+    act(() =>
+      root.render(
+        <Edit
+          video={makeVideo()}
+          onBack={() => undefined}
+          onMakeShortsForVideo={onMakeShortsForVideo}
+        />,
+      ),
+    );
     await flush();
     pick('reframe');
-    expect(workspace()).toBeTruthy();
-    expect(workspace()!.getAttribute('data-initial-tab')).toBe('shortmaker');
+    expect(onMakeShortsForVideo).toHaveBeenCalledWith('v1');
+    // and it does NOT detour through the Workspace at all
+    expect(workspace()).toBeNull();
     expect(rpcMock).toHaveBeenCalledWith('settings.set', {
       [HUB_CHOICE_KEY]: { v1: 'reframe' },
     });
+  });
+
+  // SEAM INVARIANT — closes the gap that let the soft-lock ship. Edit's own tests stub
+  // Workspace and Workspace's tests exercise the mount-redirect in isolation, so BOTH
+  // halves were green while their COMPOSITION was broken. This asserts the contract at
+  // the boundary between them: whatever Edit hands Workspace as `initialTab` must be a
+  // tab Workspace actually renders, never one it redirects away from on mount.
+  // Covers every card + the advanced escape, so a future redirect-only tab cannot
+  // silently reintroduce the bounce loop.
+  it('never hands Workspace a redirect-only initialTab, for ANY choice', async () => {
+    for (const choice of [...HUB_CARDS.map((c) => c.id), 'advanced']) {
+      // A DISTINCT video id per iteration: `root.render` of the same element type reuses
+      // the React instance, so `mode` would stay 'workspace' from a previous iteration
+      // and the hub would no longer be rendered. Changing `video.id` goes through Edit's
+      // documented reset-on-reopen effect (Edit.tsx: setMode('hub') on [videoId]).
+      act(() =>
+        root.render(
+          <Edit
+            video={makeVideo({ id: `seam-${choice}` })}
+            onBack={() => undefined}
+            onMakeShorts={() => undefined}
+            onMakeShortsForVideo={() => undefined}
+            onDirector={() => undefined}
+          />,
+        ),
+      );
+      await flush();
+      pick(choice);
+      const ws = workspace();
+      if (ws) {
+        const initial = ws.getAttribute('data-initial-tab') ?? '';
+        expect(
+          REDIRECT_ONLY_WORKSPACE_TABS,
+          `choice '${choice}' mounted Workspace with initialTab='${initial}', which redirects away on mount`,
+        ).not.toContain(initial);
+      }
+    }
   });
 
   it('routes the subtitles card into the Workspace at the Subtitles tab', async () => {
@@ -224,9 +277,11 @@ describe('<Edit />', () => {
     act(() => root.render(<Edit video={makeVideo()} onBack={() => undefined} />));
     await flush();
     expect(rpcMock).not.toHaveBeenCalled();
-    // a choice still routes (in-memory), just without a settings.set.
-    pick('reframe');
-    expect(workspace()!.getAttribute('data-initial-tab')).toBe('shortmaker');
+    // a choice still routes (in-memory), just without a settings.set. Use the
+    // in-place 'subtitles' card so this test measures the BRIDGE-ABSENT behaviour and
+    // not reframe's routing (which now deep-links out and mounts no Workspace).
+    pick('subtitles');
+    expect(workspace()!.getAttribute('data-initial-tab')).toBe('subtitles');
     expect(rpcMock).not.toHaveBeenCalled();
   });
 
@@ -238,9 +293,22 @@ describe('<Edit />', () => {
       }
       return Promise.resolve({});
     });
-    act(() => root.render(<Edit video={makeVideo({ id: 'v1' })} onBack={() => undefined} />));
+    const onMakeShortsForVideo = vi.fn();
+    act(() =>
+      root.render(
+        <Edit
+          video={makeVideo({ id: 'v1' })}
+          onBack={() => undefined}
+          onMakeShortsForVideo={onMakeShortsForVideo}
+        />,
+      ),
+    );
     await flush();
-    expect(workspace()!.getAttribute('data-initial-tab')).toBe('shortmaker');
+    // v1's remembered choice is 'reframe' — a NAVIGATE-AWAY choice, so it is only
+    // MARKED, never auto-resumed. Auto-resuming it is the soft-lock: it would bounce
+    // the user out of the video they just opened, on every mount, forever.
+    expect(workspace()).toBeNull();
+    expect(onMakeShortsForVideo).not.toHaveBeenCalled();
     // switch to a different video: the effect re-runs and resumes v2's choice.
     act(() => root.render(<Edit video={makeVideo({ id: 'v2' })} onBack={() => undefined} />));
     await flush();
