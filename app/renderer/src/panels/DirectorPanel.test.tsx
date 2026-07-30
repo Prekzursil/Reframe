@@ -93,12 +93,22 @@ function videoFixture(over: Partial<Video> = {}): Video {
   };
 }
 
+// `route` is an OBJECT on the wire (ai_job.py:164-171 `_route_json`), NOT a string.
+// These fixtures used to feed `route: 'groq'`, which matched the (wrong) declared
+// type and kept the suite green while production threw "Objects are not valid as a
+// React child". Fixtures must mirror what the sidecar actually sends, or they
+// certify nothing.
 function previewFixture(over: Partial<DirectorPreview> = {}): DirectorPreview {
   return {
     perFunction: [
       {
         function: 'editPlan',
-        route: 'groq',
+        route: {
+          providers: ['groq'],
+          degradeChain: [],
+          cacheHit: false,
+          willEgress: true,
+        },
         costEst: 10,
         willEgress: true,
         cacheHit: false,
@@ -106,7 +116,12 @@ function previewFixture(over: Partial<DirectorPreview> = {}): DirectorPreview {
       },
       {
         function: 'vision',
-        route: 'cloud-vlm',
+        route: {
+          providers: ['cloud-vlm'],
+          degradeChain: [],
+          cacheHit: true,
+          willEgress: true,
+        },
         costEst: 50,
         willEgress: true,
         cacheHit: true,
@@ -520,13 +535,48 @@ describe('DirectorPanel', () => {
     expect(frame.textContent).toMatch(/cached/i);
   });
 
+  it('(d2) REGRESSION: the REAL wire `route` OBJECT renders as readable text', async () => {
+    // The sidecar sends `route` as an OBJECT, not a string:
+    //   ai_job.py:101  "route": _route_json(self.route)
+    //   ai_job.py:164  -> {providers, degradeChain, cacheHit, willEgress}
+    // reaching the panel verbatim via director_ops.py:205 and ai_ops.py:304.
+    // schemas.ts declared `route: string`, so tsc could not catch it AND every
+    // fixture in this file fed a string — the tests passed while a real
+    // successful plan handed React an object child and threw
+    // "Objects are not valid as a React child". This test feeds the TRUE wire
+    // shape, so it fails against the old code for the right reason.
+    const c = makeClient({
+      preview: {
+        perFunction: [
+          {
+            function: 'editPlan',
+            route: {
+              providers: ['groq', 'openai'],
+              degradeChain: ['local'],
+              cacheHit: false,
+              willEgress: true,
+            },
+            costEst: 10,
+            willEgress: true,
+            cacheHit: false,
+            cacheKey: 'CK-TEXT',
+          },
+        ],
+      } as unknown as DirectorPreview,
+    });
+    await planTo(c, planFixture([op({ id: 'a' })]));
+    const route = $('.director-cost__route');
+    expect(route.textContent).toContain('groq');
+    expect(route.textContent).not.toContain('[object Object]');
+  });
+
   it('cost banner omits the egress label for a local (no-egress) row', async () => {
     const c = makeClient({
       preview: previewFixture({
         perFunction: [
           {
             function: 'editPlan',
-            route: 'local',
+            route: { providers: [], degradeChain: [], cacheHit: false, willEgress: false },
             costEst: 0,
             willEgress: false,
             cacheHit: false,

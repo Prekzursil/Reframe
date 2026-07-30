@@ -163,7 +163,7 @@ describe('trust microcopy (verbatim, single-sourced)', () => {
     expect(
       egressWarning({
         function: 'editPlan',
-        route: 'cloud',
+        route: { providers: ['cloud'], degradeChain: [], cacheHit: false, willEgress: true },
         costEst: 0,
         willEgress: true,
         cacheHit: false,

@@ -18,6 +18,7 @@ import {
   planKinds,
   pluralize,
   recoveryHint,
+  routeLabel,
   statusLabel,
   summarizePlan,
   toggleOpStatus,
@@ -45,7 +46,9 @@ function plan(ops: DirectorOp[]): DirectorEditPlan {
 function costRow(over: Partial<DirectorCostRow> = {}): DirectorCostRow {
   return {
     function: 'editPlan',
-    route: 'local',
+    // An OBJECT, matching `_route_json` (ai_job.py:164-171) — a purely local route
+    // sends empty arrays, which is why routeLabel falls back to the word "local".
+    route: { providers: [], degradeChain: [], cacheHit: false, willEgress: false },
     costEst: 0,
     willEgress: false,
     cacheHit: false,
@@ -53,6 +56,81 @@ function costRow(over: Partial<DirectorCostRow> = {}): DirectorCostRow {
     ...over,
   };
 }
+
+describe('routeLabel', () => {
+  it('joins the ordered providers', () => {
+    expect(
+      routeLabel(
+        costRow({
+          route: { providers: ['groq'], degradeChain: [], cacheHit: false, willEgress: true },
+        }),
+      ),
+    ).toBe('groq');
+    expect(
+      routeLabel(
+        costRow({
+          route: {
+            providers: ['groq', 'openai'],
+            degradeChain: [],
+            cacheHit: false,
+            willEgress: true,
+          },
+        }),
+      ),
+    ).toBe('groq → openai');
+  });
+
+  it('appends the degrade chain when present', () => {
+    expect(
+      routeLabel(
+        costRow({
+          route: {
+            providers: ['groq'],
+            degradeChain: ['local'],
+            cacheHit: false,
+            willEgress: true,
+          },
+        }),
+      ),
+    ).toBe('groq (falls back to local)');
+  });
+
+  it('reads "local" when no provider is routed (the purely-local plan)', () => {
+    expect(routeLabel(costRow())).toBe('local');
+  });
+
+  it('names the degrade chain even with no primary provider', () => {
+    expect(
+      routeLabel(
+        costRow({
+          route: { providers: [], degradeChain: ['local'], cacheHit: false, willEgress: false },
+        }),
+      ),
+    ).toBe('local (falls back to local)');
+  });
+
+  it('survives a partial/stale payload instead of rendering "undefined"', () => {
+    // Defensive: a malformed or older payload must not put "undefined" on screen.
+    // This is the failure mode that produced the original crash, so the fallback
+    // is asserted rather than assumed.
+    expect(routeLabel({ ...costRow(), route: undefined } as unknown as DirectorCostRow)).toBe(
+      'local',
+    );
+    expect(
+      routeLabel({ ...costRow(), route: { providers: 'nope' } } as unknown as DirectorCostRow),
+    ).toBe('local');
+  });
+
+  it('drops empty-string entries rather than rendering a stray separator', () => {
+    expect(
+      routeLabel(
+        costRow({
+          route: { providers: ['groq', ''], degradeChain: [''], cacheHit: false, willEgress: true },
+        }),
+      ),
+    ).toBe('groq');
+  });
+});
 
 describe('opKindLabel', () => {
   it('maps every known kind to a friendly noun', () => {

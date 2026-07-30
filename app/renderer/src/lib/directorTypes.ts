@@ -227,6 +227,27 @@ export function isFrameFunction(row: DirectorCostRow): boolean {
   return row.function === 'vision';
 }
 
+/**
+ * A readable label for a cost row's resolved route.
+ *
+ * `row.route` is an OBJECT on the wire (`ai_job.py:164-171`), so it can never be
+ * rendered directly — doing so threw "Objects are not valid as a React child" on
+ * every successful plan. This flattens it to the provider chain the user cares
+ * about: the ordered providers, then the degrade fallbacks after a separator.
+ *
+ * Defensive on purpose: the sidecar may send an empty provider list for a purely
+ * local route, and a stale/partial payload may omit the arrays entirely. Both
+ * degrade to a meaningful word rather than "undefined" or a blank span.
+ */
+export function routeLabel(row: DirectorCostRow): string {
+  const route = row.route as Partial<DirectorCostRow['route']> | null | undefined;
+  const providers = Array.isArray(route?.providers) ? route.providers.filter(Boolean) : [];
+  const degrade = Array.isArray(route?.degradeChain) ? route.degradeChain.filter(Boolean) : [];
+  if (providers.length === 0 && degrade.length === 0) return 'local';
+  const primary = providers.length > 0 ? providers.join(' → ') : 'local';
+  return degrade.length > 0 ? `${primary} (falls back to ${degrade.join(' → ')})` : primary;
+}
+
 /** A friendly data-type label for a cost row (F3): text vs frames. */
 export function costRowLabel(row: DirectorCostRow): string {
   return isFrameFunction(row) ? 'On-screen frames (vision/OCR)' : 'Edit-plan text';

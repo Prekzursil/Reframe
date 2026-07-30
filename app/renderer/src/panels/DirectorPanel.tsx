@@ -38,6 +38,7 @@ import {
   moveOpWithinKind,
   opKindLabel,
   recoveryHint,
+  routeLabel,
   statusLabel,
   summarizePlan,
   toggleOpStatus,
@@ -662,7 +663,7 @@ function CostRow({ row }: { row: DirectorCostRow }): React.ReactElement {
     >
       <span className="director-cost__label">{costRowLabel(row)}</span>
       <span className="director-cost__route">
-        Route: {row.route}
+        Route: {routeLabel(row)}
         {row.cacheHit ? ' · cached (free re-run)' : ''}
       </span>
       {warning && (
