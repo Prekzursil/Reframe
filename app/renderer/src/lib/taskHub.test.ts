@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { HUB_CARDS, HUB_CHOICE_KEY, mergeHubChoice, readHubChoice, resumeFor } from './taskHub';
+import {
+  HUB_CARDS,
+  HUB_CHOICE_KEY,
+  REDIRECT_ONLY_WORKSPACE_TABS,
+  mergeHubChoice,
+  readHubChoice,
+  resumeFor,
+} from './taskHub';
 
 describe('taskHub model', () => {
   describe('HUB_CARDS', () => {
@@ -25,11 +32,39 @@ describe('taskHub model', () => {
   });
 
   describe('resumeFor', () => {
-    it('resumes the workspace-scoped choices in place at their tab', () => {
-      expect(resumeFor('reframe')).toEqual({ kind: 'workspace', tab: 'shortmaker' });
+    // CLASS-LEVEL INVARIANT — the guard that was missing. A `workspace` resume means
+    // "resume IN PLACE"; targeting a tab that redirects AWAY on mount produces an
+    // unescapable bounce loop (Edit mounts -> Workspace mounts at the redirect tab ->
+    // navigates away -> Edit unmounts), which is restart-durable and has no UI to
+    // clear it. Asserted over the WHOLE choice domain, not one instance, so adding a
+    // future redirect-only tab cannot silently reintroduce the bug.
+    it('never resumes IN PLACE to a redirect-only Workspace tab', () => {
+      const choices = [...HUB_CARDS.map((c) => c.id), 'advanced', 'bogus', null];
+      for (const choice of choices) {
+        const r = resumeFor(choice);
+        if (r.kind === 'workspace' && r.tab !== null) {
+          expect(
+            REDIRECT_ONLY_WORKSPACE_TABS,
+            `resumeFor(${String(choice)}) resumes in place to '${r.tab}', which redirects away on mount`,
+          ).not.toContain(r.tab);
+        }
+      }
+    });
+
+    it('resumes the genuinely in-place choices at their tab', () => {
       expect(resumeFor('subtitles')).toEqual({ kind: 'workspace', tab: 'subtitles' });
       // 'advanced' resumes into the Workspace at its own default first tab.
       expect(resumeFor('advanced')).toEqual({ kind: 'workspace', tab: null });
+    });
+
+    it('treats reframe as a SECTION, not an in-place workspace resume', () => {
+      // REVISED: this previously asserted `{ kind: 'workspace', tab: 'shortmaker' }`,
+      // pinning the soft-lock defect. 'shortmaker' is not an in-place tab — Workspace
+      // redirects away from it on mount — so classifying it as a `workspace` resume
+      // bounced the user out of the video they just opened, permanently. That is the
+      // exact failure the `section` note in taskHub.ts warns about, so 'reframe'
+      // belongs in `section` alongside shorts/director.
+      expect(resumeFor('reframe')).toEqual({ kind: 'section' });
     });
 
     it('treats section choices as non-resumable (marked, not auto-navigated)', () => {
