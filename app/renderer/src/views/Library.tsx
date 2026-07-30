@@ -450,6 +450,18 @@ export function Library({
 
   const deleteShort = useCallback(
     async (api: LibraryShortsApi, path: string) => {
+      // CONFIRM before the destructive call. `shorts.delete` hard-unlinks the .mp4,
+      // its .thumb.jpg and its .json (features/shorts.py:442-455) with no OS recycle
+      // bin, so an unguarded click destroyed a finished render outright. The other
+      // two call sites of this action already confirm (views/Shorts.tsx:147,
+      // features/useShortsGallery.ts:99) and KeepCopyControl.tsx:21 states the
+      // standard — "never a silent one-click destructive action". This surface was
+      // the lone exception because four separate comments each delegated the confirm
+      // to another layer and it landed nowhere.
+      const ok = (globalThis as { confirm?: (m: string) => boolean }).confirm?.(
+        `Delete this short?\n\n${path}\n\nThis removes the exported file.`,
+      );
+      if (!ok) return;
       try {
         await api.remove(path);
         setShortsByVideo((prev) => {

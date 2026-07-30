@@ -1242,7 +1242,9 @@ describe('Library produced-shorts gallery (v1.5 §4 P0)', () => {
     });
     expect(port.openFolder).toHaveBeenCalledWith('/o/s1.mp4');
 
-    // Delete s1 -> the v1 group keeps s2 (kept.length > 0).
+    // Delete s1 -> the v1 group keeps s2 (kept.length > 0). Deletion now CONFIRMS
+    // first (see the dedicated test below), so approve it here.
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     await act(async () => {
       fire(container.querySelector('[data-testid="delete-s1"]'));
     });
@@ -1254,6 +1256,42 @@ describe('Library produced-shorts gallery (v1.5 §4 P0)', () => {
     });
     await flush();
     expect(container.querySelector('.shorts-modal__empty')).not.toBeNull();
+  });
+
+  it('Delete CONFIRMS first and is a no-op when the user cancels', async () => {
+    // shorts.delete hard-unlinks the .mp4, its .thumb.jpg and its .json
+    // (sidecar/media_studio/features/shorts.py:442-455) with no OS recycle bin, so
+    // one stray click destroyed a finished render. The other TWO call sites of the
+    // same action already confirm — views/Shorts.tsx:147 and
+    // features/useShortsGallery.ts:99 — and KeepCopyControl.tsx:21 states the
+    // project standard: "never a silent one-click destructive action". Only the
+    // Library gallery was unguarded; four comments each delegated the confirm to
+    // someone else and it landed nowhere.
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    const port = shortsPort({
+      listAll: vi.fn(async () => [makeShort({ id: 's1', path: '/o/s1.mp4', videoId: 'v1' })]),
+    });
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await renderWithShorts(port);
+    await act(async () => {
+      fire(container.querySelector('.library__shorts-label'));
+    });
+    await flush();
+
+    await act(async () => {
+      fire(container.querySelector('[data-testid="delete-s1"]'));
+    });
+    await flush();
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(port.remove).not.toHaveBeenCalled();
+
+    // Approving the same click deletes for real.
+    confirmSpy.mockReturnValue(true);
+    await act(async () => {
+      fire(container.querySelector('[data-testid="delete-s1"]'));
+    });
+    await flush();
+    expect(port.remove).toHaveBeenCalledWith('/o/s1.mp4');
   });
 
   it('surfaces a toast when a gallery action fails', async () => {
@@ -1277,6 +1315,8 @@ describe('Library produced-shorts gallery (v1.5 §4 P0)', () => {
     });
     await flush();
     expect(errorToasts().join(' ')).toContain('reveal failed');
+    // Approve the confirm so the rejection path (not the cancel path) is exercised.
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     await act(async () => {
       fire(container.querySelector('[data-testid="delete-s1"]'));
     });
