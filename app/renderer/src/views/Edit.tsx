@@ -11,12 +11,20 @@
 // when no video is open the same empty state shows.
 //
 // ADDITIVE: the four cards route into existing surfaces, never reimplementations —
-//   - Reframe to vertical → Workspace @ the Short-maker tab (the reframe engine),
+//   - Reframe to vertical → the single Make Shorts owner, PRE-SELECTED to this video
+//                           (onMakeShortsForVideo). This used to route to
+//                           `Workspace @ the Short-maker tab`, but WU-3a4 moved
+//                           ShortMaker OUT of the Workspace, leaving that tab as a
+//                           mount-time redirect — so the card detoured through a
+//                           Workspace it was immediately bounced out of.
 //   - Add subtitles       → Workspace @ the Subtitles tab,
 //   - Make shorts         → the top-level Make Shorts section (onMakeShorts),
 //   - Director            → the top-level AI Director section (onDirector).
 // The last choice is remembered per video so a returning power user resumes the
-// workspace-scoped tool in place rather than seeing the hub again.
+// workspace-scoped tool in place rather than seeing the hub again. Choices that
+// NAVIGATE AWAY (reframe / shorts / director) are only MARKED as last-used, never
+// auto-resumed — auto-resuming one bounces the user straight back out of the video
+// they just opened, which is unescapable and survives restart.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Workspace } from './Workspace';
 import { TaskHub } from './TaskHub';
@@ -123,13 +131,23 @@ function EditVideo({
         return;
       }
       // Section choices route to a top-level surface (kept in App shell state).
+      // 'reframe' deep-links to the SINGLE Make Shorts owner PRE-SELECTED to this
+      // video. It must NOT go via `Workspace initialTab='shortmaker'`: WU-3a4 moved
+      // ShortMaker out of the Workspace, so that tab only redirects away on mount —
+      // mounting Workspace just to be bounced out of it made Edit unreachable for
+      // this video for good (restart-durable, no UI to clear the persisted choice).
+      // Routing straight to the owner reaches the same destination without the detour.
+      if (choice === 'reframe') {
+        onMakeShortsForVideo?.(videoId);
+        return;
+      }
       if (choice === 'shorts') {
         onMakeShorts?.();
         return;
       }
       onDirector?.();
     },
-    [persist, onMakeShorts, onDirector],
+    [persist, onMakeShorts, onMakeShortsForVideo, onDirector, videoId],
   );
 
   if (mode === 'workspace') {
