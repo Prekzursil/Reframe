@@ -104,3 +104,9 @@ build/icon/
 
 # Runtime data root (models/exports/envs — relocatable via MEDIA_STUDIO_CONFIG_DIR)
 /data/
+
+# Ad-hoc audit/analysis scratch (agent probe scripts, raw journals, superseded
+# ledger intermediates, screenshots). Regenerable from the workflow journal via
+# .audit/join_by_agentid.py; the CURATED output is tracked at
+# docs/validation/v15-audit-ledger.md. ~10 MB, never commit.
+.audit/
