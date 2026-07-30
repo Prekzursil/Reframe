@@ -243,9 +243,17 @@ def _base_settings(*provider_ids: str, **extra: Any) -> dict[str, Any]:
     The M3 ``routingPolicy`` is set to ``auto`` (prefer cloud, degrade local): the
     :meth:`_provider_for_function` egress gate (``select``/``vision`` seams) fails
     CLOSED to local when NO policy is persisted, so a "routed to cloud" fixture
-    must also permit cloud through the policy for those seams to egress. (The
-    ``director.plan`` editPlan path resolves its own consent-gated pool and is not
-    routed through this policy, so this is inert there.)
+    must also permit cloud through the policy for those seams to egress.
+
+    CORRECTION (measured): the previous note here claimed the ``director.plan``
+    editPlan path "resolves its own consent-gated pool and is not routed through
+    this policy, so this is inert there". That is WRONG and it actively misleads.
+    Omitting ``routingPolicy`` from a director.plan fixture makes the pool fail
+    closed to local, and local then dies with "provider pool exhausted (text):
+    local (local): no GGUF model configured" — so the test observes a
+    ProviderError instead of whatever it meant to assert. Bisected: adding ONLY
+    ``routingPolicy`` fixes it; ``cloudModel`` is not load-bearing for that path.
+    Any director.plan fixture that expects a CLOUD attempt must persist a policy.
     """
     consent = {pid: {"text": True, "frames": True} for pid in provider_ids}
     base: dict[str, Any] = {
@@ -589,6 +597,13 @@ def test_hub_budget_gate_refuses_unacked_cloud_run(tmp_path: Path) -> None:
         svc.settings.set(
             {
                 "routing": _routing("mock"),
+                # REQUIRED, not decoration: with no policy persisted the pool fails
+                # CLOSED to local (the secure default), local has no GGUF in a test
+                # env, and the run dies with "provider pool exhausted (text): local"
+                # BEFORE the budget gate is ever consulted — so the assertions below
+                # would be measuring a provider error, not the gate. See
+                # _base_settings' docstring correction.
+                "routingPolicy": {"global": "auto", "overrides": {}},
                 "consent": {"perProvider": {"mock": {"text": True}}},
                 "confirmCloudBudget": True,  # the budget gate is ARMED
             }

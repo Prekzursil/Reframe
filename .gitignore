@@ -110,3 +110,8 @@ build/icon/
 # .audit/join_by_agentid.py; the CURATED output is tracked at
 # docs/validation/v15-audit-ledger.md. ~10 MB, never commit.
 .audit/
+
+# On-demand functional-sweep output (e2e/audit + playwright.audit.config.ts).
+# Findings are transient investigation data; the FIX lands as code + tests, so
+# the raw report is never committed.
+app/audit-artifacts/
