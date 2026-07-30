@@ -88,7 +88,12 @@ param(
     # sidecar/media_studio/assets/manager.py::GET_PIP_SHA256 (pinned 2026-06-28,
     # 2,226,848 B), which sidecar/runtime_setup/bootstrap.py imports. Keep the
     # three in sync when pypa rotates get-pip.
-    [string]$ExpectedGetPipSha256 = 'a341e1a43e38001c551a1508a73ff23636a11970b61d901d9a1cad2a18f57055',
+    # ROTATED 2026-07-30 alongside the runtime constant. pypa republished the rolling URL
+    # (Last-Modified "Wed, 29 Jul 2026 22:35:44 GMT"), so the previous digest
+    # a341e1a4...7055 (2,226,848 B) started failing closed. Current: 2,230,427 B, pip 26.2.
+    # Provenance + its limits are documented at the runtime site, which is the SSOT —
+    # see sidecar/media_studio/assets/manager.py::GET_PIP_SHA256. Keep the two in lockstep.
+    [string]$ExpectedGetPipSha256 = '25b5c39ade96bab5eabe6404ce83cab6da2deb5fe3c07d9881f43803edb6f9c8',
     # Fail-closed bootstrap escape hatch: fetch every artifact, PRINT its sha256,
     # delete it, stage NOTHING, exit non-zero. The only way to obtain a pin you
     # do not have yet — it can never produce a build.

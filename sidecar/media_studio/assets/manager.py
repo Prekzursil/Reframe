@@ -61,11 +61,29 @@ PINNED_PIP = "pip==25.2"
 # F3c (security hardening): get-pip.py is DOWNLOADED then EXECUTED. The URL serves
 # whatever pypa publishes today, so we VERIFY the bytes against a pinned sha256
 # BEFORE executing them — a compromised/MITM'd get-pip.py is rejected at the
-# .part stage (sha mismatch in _finalize), never run. Pinned 2026-06-28
-# (https://bootstrap.pypa.io/get-pip.py, 2,226,848 B). Refresh this when pypa
-# rotates get-pip; the seam (AssetManager(get_pip_sha256=...)) lets ops/tests
-# override without a code edit.
-GET_PIP_SHA256 = "a341e1a43e38001c551a1508a73ff23636a11970b61d901d9a1cad2a18f57055"
+# .part stage (sha mismatch in _finalize), never run. The seam
+# (AssetManager(get_pip_sha256=...)) lets ops/tests override without a code edit.
+#
+# ROTATED 2026-07-30. pypa republished the rolling URL at Last-Modified
+# "Wed, 29 Jul 2026 22:35:44 GMT", so the previous pin
+# (a341e1a43e38001c551a1508a73ff23636a11970b61d901d9a1cad2a18f57055, 2,226,848 B,
+# recorded 2026-06-28) began failing closed — correctly. 14 sidecar tests and the
+# Windows packaged-runtime staging step went red on the mismatch; that is the pin
+# working, not breaking.
+#
+# Current: https://bootstrap.pypa.io/get-pip.py, 2,230,427 B, bundles pip 26.2.
+# EVIDENCE, and its LIMIT — pypa publishes NO checksum for this file, so unlike the
+# embeddable-CPython pins (cross-checked against python.org's per-row MD5) this
+# rotation rests only on: two independent TLS fetches agreeing on the digest, a
+# Last-Modified consistent with a fresh publish, a +3,579 B size delta consistent
+# with a content update rather than truncation, and the payload being the canonical
+# base85-zip bootstrapper ("Hi There!" header, declares pip 26.2). That is
+# provenance, NOT authenticity — treat it as weaker than a vendor-checksummed pin.
+# The durable fix is unavailable: pypa's versioned URLs
+# (https://bootstrap.pypa.io/pip/<ver>/get-pip.py) 404 for 3.12/3.14, they exist only
+# for EOL Pythons, so there is no non-rolling artifact to pin. Vendoring get-pip.py
+# into the tree is the only way to stop trusting a mutable URL.
+GET_PIP_SHA256 = "25b5c39ade96bab5eabe6404ce83cab6da2deb5fe3c07d9881f43803edb6f9c8"
 #: success sentinel written into an env dir after a full install
 ENV_SENTINEL = ".media-studio-env.json"
 

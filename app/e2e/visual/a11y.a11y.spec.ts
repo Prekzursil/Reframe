@@ -124,24 +124,67 @@ test('Keyboard navigation — Tab moves focus into the top tab strip', async () 
   ).toBe(true);
 });
 
-test('Focus-visible — a Tab-focused control paints the focus ring', async () => {
-  await openTopTab(win, 'Library');
-  // Focus the first top-level tab directly, then assert :focus-visible applied
-  // the shell.css focus ring (a non-"none" box-shadow). Keyboard focus (not a
-  // mouse click) is what triggers :focus-visible, so use .focus() via keyboard.
-  const firstTab = win.locator('.toptab').first();
-  await firstTab.focus();
-  // Re-dispatch a keyboard interaction so :focus-visible heuristics treat it as
-  // keyboard-originated, then read the computed box-shadow.
+/** The paint properties any of which may legitimately carry a focus indicator. */
+type Paint = { outline: string; outlineWidth: string; boxShadow: string; borderColor: string };
+
+/**
+ * Read a selector's computed paint BEFORE focus, then keyboard-focus it and read again.
+ * Returns both so the caller can assert they DIFFER — the only assertion that actually
+ * proves a focus indicator exists.
+ */
+async function paintBeforeAfterFocus(selector: string): Promise<{ off: Paint; on: Paint }> {
+  const read = (sel: string): Promise<Paint> =>
+    win.evaluate((s) => {
+      const el = document.querySelector(s) as HTMLElement | null;
+      if (!el) throw new Error(`selector not found: ${s}`);
+      const cs = getComputedStyle(el);
+      return {
+        outline: cs.outline,
+        outlineWidth: cs.outlineWidth,
+        boxShadow: cs.boxShadow,
+        borderColor: cs.borderColor,
+      };
+    }, sel);
+
+  const off = await read(selector);
+  const target = win.locator(selector).first();
+  await target.focus();
+  // Re-dispatch a keyboard interaction so Chromium's :focus-visible heuristic treats the
+  // focus as keyboard-originated (a bare .focus() may not qualify).
   await win.keyboard.press('Shift+Tab');
   await win.keyboard.press('Tab');
-  const ring = await win.evaluate(() => {
-    const el = document.activeElement as HTMLElement | null;
-    if (!el) return 'none';
-    return getComputedStyle(el).boxShadow;
-  });
-  expect(ring, 'focused control should have a visible focus ring (box-shadow)').not.toBe('none');
-  expect(ring).not.toBe('');
+  const on = await read(selector);
+  return { off, on };
+}
+
+test('Focus-visible — a Tab-focused control paints a ring that DIFFERS from its resting state', async () => {
+  await openTopTab(win, 'Library');
+  const { off, on } = await paintBeforeAfterFocus('.toptab');
+  // REVISED ASSERTION. This previously read only `boxShadow !== 'none'`, which is
+  // both-states-SILENT: any control with a resting shadow (e.g. `.feature-panel button`
+  // carries --elev-1, and an accent primary carries --accent-glow) passes it while having
+  // NO focus indicator whatsoever. The only meaningful check is that focusing CHANGES the
+  // element's paint.
+  expect(
+    JSON.stringify(on),
+    `focused paint is identical to resting — no focus indicator. off=${JSON.stringify(off)}`,
+  ).not.toBe(JSON.stringify(off));
+});
+
+test('Focus-visible — a .feature-panel button (the specificity-defeat case) also differs when focused', async () => {
+  // The regression this guards. shell.css's shared ring uses `:where()`, which contributes
+  // ZERO specificity, so at (0,1,0) its `box-shadow` lost to `.feature-panel button`
+  // (0,1,1) and to `.feature-panel .actions > button:first-child:not(.secondary)` (0,4,1),
+  // while its `outline: none` still applied and also suppressed the UA outline. Focused
+  // computed style was byte-identical to resting on ~17 of 18 `.feature-panel` surfaces.
+  // The previous `.toptab`-only gate could never see this: `.toptab` is not a
+  // `.feature-panel` descendant, so it never lost the cascade battle.
+  await openSettingsSection(win, 'Models & System');
+  const { off, on } = await paintBeforeAfterFocus('.feature-panel button:not([disabled])');
+  expect(
+    JSON.stringify(on),
+    `a .feature-panel button shows NO focus indicator: focused paint === resting paint. off=${JSON.stringify(off)}`,
+  ).not.toBe(JSON.stringify(off));
 });
 
 test('Reduced-motion — animations collapse to ~0 under prefers-reduced-motion: reduce', async () => {

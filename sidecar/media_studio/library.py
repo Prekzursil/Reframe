@@ -327,22 +327,38 @@ class Library:
             row = conn.execute("SELECT * FROM entity WHERE role = ? AND id = ?", ("source", video_id)).fetchone()
         return self._row_to_video(row) if row is not None else None
 
-    def remove(self, video_id: str) -> bool:
+    def remove(self, video_id: str, *, destroy_managed_copy: bool = False) -> bool:
         """Remove the video with ``id == video_id``. Returns True if removed.
 
         The USER's source file on disk is never deleted (refs are by path;
         deletion is out of scope for a library remove). An app-managed byte-copy
         (opt-in keep-a-copy), however, IS reclaimed here — otherwise its row +
         content-addressed file would be orphaned, counting forever against the
-        managed-store cap with no entity to evict them. ``force=True`` because the
-        user is deleting the video, so evicting even an irreplaceable copy (whose
-        original is gone) is intended, not an accidental destruction.
+        managed-store cap with no entity to evict them.
+
+        FAILS CLOSED on the irreplaceable case. This used to pass ``force=True``
+        unconditionally, justified as "the user is deleting the video, so evicting even
+        an irreplaceable copy is intended, not an accidental destruction". That premise
+        was never true in the shipped UI: the Library card's "Remove" calls this with NO
+        confirm and NO undo, and "Remove selected" loops it over a whole selection — so
+        the force flag turned :meth:`ManagedStore.evict`'s explicit contract ("never a
+        silent destruction of the only copy") into exactly that.
+
+        ``destroy_managed_copy`` therefore defaults to False, which lets that LOUD
+        refusal reach the caller whenever the managed copy is the ONLY surviving copy
+        (i.e. keep-a-copy was opted into AND the original source has since moved or been
+        deleted). The refusal happens BEFORE the entity DELETE, so nothing is destroyed
+        and the video remains actionable. A caller that has genuinely confirmed the
+        user's intent passes ``destroy_managed_copy=True``.
+
+        Mirrors ``library.managedEvict``, whose ``force`` already defaults to False —
+        this reuses that default-safe shape rather than inventing a second one.
         """
         # Explicit membership check (not exception-as-control-flow) so both the
         # has-managed and no-managed branches stay coverage-clean.
         has_managed = any(e["entityId"] == video_id for e in self.managed_status()["entries"])
         if has_managed:
-            self.managed_evict(video_id, force=True)
+            self.managed_evict(video_id, force=destroy_managed_copy)
         with self._open() as conn:
             cur = conn.execute("DELETE FROM entity WHERE role = ? AND id = ?", ("source", video_id))
             return cur.rowcount > 0
