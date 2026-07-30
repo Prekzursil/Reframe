@@ -400,23 +400,30 @@ export function Library({
     setSelected(new Set());
     setError(null);
     const failed: string[] = [];
-    // Keep the FIRST reason, not just a count. `library.remove` now refuses LOUD when a
-    // video's app-managed copy is the only surviving copy of it (keep-a-copy opted in and
-    // the original source gone), and that refusal names the file — an actionable message.
-    // A bare `catch {}` threw that away and left the user with an unexplained count.
-    let firstReason: string | null = null;
+    // Surface a REASON, not just a count. `library.remove` now refuses LOUD when a video's
+    // app-managed copy is the only surviving copy of it (keep-a-copy opted in and the
+    // original source gone), and that refusal names the file — an actionable message. A
+    // bare `catch {}` threw it away and left the user with an unexplained count.
+    //
+    // Deliberately BRANCH-FREE: it keeps the most recent reason rather than the first, so
+    // there is no "did we get a reason?" conditional. `failed.length > 0` already implies a
+    // catch ran and therefore that `reason` was assigned, so such a conditional would have
+    // an unreachable arm — which is exactly what broke the 100% branch-coverage gate. For a
+    // bulk remove the reasons are near-always identical (the same guard fires per video),
+    // so first-vs-last is immaterial.
+    let reason = '';
     for (const id of ids) {
       try {
         await rpc<{ ok: boolean }>('library.remove', { id });
         setVideos((prev) => prev.filter((v) => v.id !== id));
       } catch (err) {
         failed.push(id);
-        firstReason ??= errText(err);
+        reason = errText(err);
       }
     }
     if (failed.length > 0) {
       const count = `Could not remove ${failed.length} video${failed.length === 1 ? '' : 's'}.`;
-      setError(firstReason ? `${count} ${firstReason}` : count);
+      setError(`${count} ${reason}`.trim());
     }
   }, [selected]);
 
