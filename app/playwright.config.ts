@@ -15,7 +15,10 @@ export default defineConfig({
   // OWN config (playwright.visual.config.ts) in a dedicated single-OS job, so
   // its platform-specific screenshot baselines never burden this 4-OS GUI
   // matrix (a missing snapshot would hard-fail the non-baselined OS legs).
-  testIgnore: 'visual/**',
+  // audit/** is the on-demand functional sweep (playwright.audit.config.ts). It
+  // clicks every control on every surface and runs for many minutes, so it is
+  // an investigation tool rather than a PR gate — never in this matrix.
+  testIgnore: ['visual/**', 'audit/**'],
   // Electron cold-start + sidecar boot + real video decode need headroom.
   timeout: 120_000,
   expect: { timeout: 30_000 },
