@@ -384,6 +384,42 @@
   color: var(--status-error);
 }
 
+/* ---- F09: the gallery's only re-fetch control ----------------------------- */
+
+/* Same quiet pill voice as the sort toggle, so it reads as a header control and
+   not a primary action. It is the ONLY path back from a rejected `shorts.list`. */
+.shorts__reload {
+  appearance: none;
+  border: none;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-deep);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.shorts__reload:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+/* A REAL focus ring, on a class selector (0,2,0) so nothing in the cascade can
+   tie it — deliberately NOT wrapped in `:where()`, whose zero specificity is what
+   silently killed focus rings across this codebase before (see shell.css:59-63).
+   An `outline` rather than only a box-shadow, because Chromium force-clears
+   box-shadow under `forced-colors: active` and substitutes a system color for an
+   outline — so the ring survives Windows High Contrast. */
+.shorts__reload:focus-visible {
+  outline: 2px solid var(--accent-edge);
+  outline-offset: 2px;
+}
+
 /* ---- P4 §7: gallery sort toggle (recency ↔ virality) ---------------------- */
 
 .shorts__sort {

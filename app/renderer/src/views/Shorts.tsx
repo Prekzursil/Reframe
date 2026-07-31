@@ -93,6 +93,15 @@ export function Shorts({ onReexport }: ShortsProps): React.ReactElement {
   // P4 §7: apply the chosen sort for display (never mutates the stored list).
   const sortedShorts = useMemo(() => sortShorts(shorts, sortMode), [shorts, sortMode]);
 
+  // F09: with a visible error and nothing listed, the library is UNKNOWN — not
+  // empty. "No shorts yet" and "0 clips" would both assert a zero we never
+  // measured, so suppress them and leave the banner + Reload as the only story.
+  // Deliberately NOT gated on `error` alone: when the preload bridge is absent
+  // `refresh` bails out with `error` still null (:75-78), and that genuinely IS
+  // an empty gallery. Coupled to the banner's own truthiness so a suppressed
+  // zero-state always has a visible explanation beside it.
+  const listUnknown = Boolean(error) && shorts.length === 0;
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -163,9 +172,23 @@ export function Shorts({ onReexport }: ShortsProps): React.ReactElement {
     <div className="shorts">
       <header className="shorts__header">
         <h1 className="shorts__title">Shorts</h1>
-        <span className="shorts__count" aria-label="Shorts count">
-          {shorts.length} clip{shorts.length === 1 ? '' : 's'}
-        </span>
+        {listUnknown ? null : (
+          <span className="shorts__count" aria-label="Shorts count">
+            {shorts.length} clip{shorts.length === 1 ? '' : 's'}
+          </span>
+        )}
+        {/* F09: the ONLY way to re-run `shorts.list` — before this, a sidecar that
+            crashed and came back stayed invisible until the view was remounted.
+            Deliberately a header control labelled for what it actually does, NOT a
+            "Retry" inside the error banner: that banner is the shared sink for five
+            producers (the listing, open-folder, re-export, package, delete), so a
+            "Retry" there would claim to redo an action it never touches — and
+            `refresh`'s setError(null) would silently wipe the message it replaced.
+            Placed BEFORE the sort group, whose `margin-left:auto` keeps its own
+            right-edge position unchanged. */}
+        <button type="button" className="shorts__reload" onClick={() => void refresh()}>
+          Reload shorts
+        </button>
         {/* P4 §7: sort the gallery by recency or virality. */}
         {shorts.length > 0 ? (
           <div className="shorts__sort" role="group" aria-label="Sort shorts">
@@ -222,15 +245,19 @@ export function Shorts({ onReexport }: ShortsProps): React.ReactElement {
           </ul>
         </div>
       ) : shorts.length === 0 ? (
-        <div className="shorts__empty">
-          <div className="shorts__empty-poster" aria-hidden="true">
-            <span className="shorts__empty-glyph">▶</span>
+        // F09: suppressed when the listing itself failed — the grid below still
+        // renders a stale-but-real list when a later refresh rejects.
+        listUnknown ? null : (
+          <div className="shorts__empty">
+            <div className="shorts__empty-poster" aria-hidden="true">
+              <span className="shorts__empty-glyph">▶</span>
+            </div>
+            <p className="shorts__empty-title">No shorts yet</p>
+            <p className="shorts__empty-hint">
+              Open a video, run the Short-maker, and export clips — they show up here.
+            </p>
           </div>
-          <p className="shorts__empty-title">No shorts yet</p>
-          <p className="shorts__empty-hint">
-            Open a video, run the Short-maker, and export clips — they show up here.
-          </p>
-        </div>
+        )
       ) : (
         <ul className="shorts__grid">
           {sortedShorts.map((short) => (

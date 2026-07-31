@@ -454,9 +454,59 @@ describe('Shorts view', () => {
     await flush();
 
     // refresh returns early -> no shorts.list call, loading cleared, empty state.
+    // ALSO the anti-overfit control for F09: this path leaves `error` null, so the
+    // empty state (and the count) MUST survive the failed-listing suppression —
+    // gating on `error` alone would break here.
     expect(listMock).not.toHaveBeenCalled();
     expect(container.querySelector('.shorts__loading')).toBeNull();
     expect(container.querySelector('.shorts__empty')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Shorts count"]')).not.toBeNull();
+  });
+
+  // F09: a rejected `shorts.list` used to render the red banner AND the
+  // "No shorts yet" empty state AND a "0 clips" chip together — three surfaces
+  // asserting an empty library when the truth is "we could not find out".
+  it('does not claim "No shorts yet" (or "0 clips") when the listing failed', async () => {
+    listMock.mockRejectedValue(new Error('sidecar is not running'));
+
+    await act(async () => {
+      root.render(<Shorts />);
+    });
+    await flush();
+
+    // Control FIRST: the harness really did reach refresh's catch, so the two
+    // assertions below fail for the defect (an ungated zero-state), never for a
+    // setup artifact.
+    expect(container.querySelector('.shorts__error')).not.toBeNull();
+    expect(container.textContent).toContain('sidecar is not running');
+    // The listing is UNKNOWN, not empty: neither false-zero surface may render.
+    expect(container.querySelector('.shorts__empty')).toBeNull();
+    expect(container.querySelector('[aria-label="Shorts count"]')).toBeNull();
+  });
+
+  it('offers a header Reload that re-runs shorts.list after a failure', async () => {
+    listMock
+      .mockRejectedValueOnce(new Error('sidecar is not running'))
+      .mockResolvedValueOnce({ shorts: [makeShort({ path: '/exports/shorts-v1/a.mp4' })] });
+
+    await act(async () => {
+      root.render(<Shorts />);
+    });
+    await flush();
+
+    // The recovery path: before F09 NOTHING in the view re-ran the fetch, so a
+    // sidecar that came back stayed invisible until the view was remounted.
+    const reload = container.querySelector<HTMLButtonElement>('.shorts__reload');
+    expect(reload).not.toBeNull();
+
+    await act(async () => {
+      reload!.click();
+    });
+    await flush();
+
+    expect(listMock).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('.shorts__error')).toBeNull();
+    expect(container.querySelectorAll('.shorts__card').length).toBe(1);
   });
 
   it('shows an error when Open folder has no preload bridge wired', async () => {
