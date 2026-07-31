@@ -14,11 +14,13 @@
 //
 // Consumes the FROZEN window.api bridge through the typed `client`/`rpc` from
 // lib/rpc. All settings flow through settings.get/set — no new store.
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import '../features/panels.css';
 import './modelsSystem.css';
 import {
   client,
+  hasApi,
+  onJobDone,
   type AdvisorReport,
   type AsrEngine,
   type AssetInfo,
@@ -53,6 +55,12 @@ import { PresetPicker } from '../components/PresetPicker';
 import { FirstRunChooser } from '../components/FirstRunChooser';
 import { ReadinessRollup } from '../components/ReadinessRollup';
 import type { ReadinessAction } from '../lib/rpc';
+import {
+  DEFAULT_JOB_TIMEOUT_MS,
+  JobAbortedError,
+  waitForJobDone,
+  type JobDoneCapable,
+} from '../features/_api';
 
 // --- pure helpers (exported for tests) -------------------------------------
 
@@ -84,6 +92,61 @@ export function qualityFraction(componentName: string, report: AdvisorReport): n
   const owning = report.tiers.find((t) => t.components.includes(componentName));
   if (!owning) return 0.5;
   return owning.tier / maxTier;
+}
+
+/**
+ * F34: the terminal `assets.ensure` job payload, normalised. The sidecar returns
+ * `{installed, failed, assets}` (`assets/manager.py:749`) — `assets` is the SAME
+ * `list_assets()` rows `assets.list` serves, so a successful job already carries
+ * the refreshed state and needs no second round-trip. Both fields are normalised
+ * to a non-optional shape here so the caller has no per-field nullish branches.
+ */
+export interface EnsureDone {
+  /** Per-item failures a SUCCESS payload can still carry (partial failure). */
+  failed: { name: string; error: string }[];
+  /** The refreshed asset rows, or null when the payload did not carry them. */
+  assets: AssetInfo[] | null;
+}
+
+/**
+ * Read the `assets.ensure` terminal payload off a `job.done` result.
+ *
+ * `job.done` is UNTRUSTED wire data, so every field is shape-checked (the same
+ * `Array.isArray` discipline the panel's other ingest points use). Returns null
+ * for a non-object result — including the `null` `waitForJobDone` resolves when
+ * the host exposes no `job.done` bridge (`_api.ts:236-238`).
+ */
+export function extractEnsureDone(result: unknown): EnsureDone | null {
+  if (!result || typeof result !== 'object') return null;
+  const raw = result as { failed?: unknown; assets?: unknown };
+  return {
+    failed: Array.isArray(raw.failed) ? (raw.failed as EnsureDone['failed']) : [],
+    assets: Array.isArray(raw.assets) ? (raw.assets as AssetInfo[]) : null,
+  };
+}
+
+/**
+ * F34: announce the per-item failures a SUCCESS ensure payload carries.
+ * `manager.py:744` raises only when NOTHING installed, so a partial failure
+ * arrives as a successful `job.done` with `failed:[…]` — silent without this.
+ */
+export function ensureFailureText(failed: EnsureDone['failed']): string {
+  return `Some downloads failed: ${failed.map((f) => `${f.name} (${f.error})`).join('; ')}`;
+}
+
+/**
+ * F34: the real `job.done` bridge, or an inert stub when no preload bridge exists.
+ *
+ * `onJobDone` reaches through `bridge()`, which THROWS without `window.api`, so
+ * handing it to `waitForJobDone` unguarded would turn every bridgeless host (and
+ * every test in this file) into a REJECTED wait instead of the intended degraded
+ * arm. `hasApi()` keeps that arm reachable: an empty object has no `onJobDone`,
+ * so `waitForJobDone` resolves null at once (`_api.ts:236-238`) and the caller
+ * falls back to a plain `assets.list` refresh.
+ */
+export function defaultJobBridge(): JobDoneCapable {
+  /* v8 ignore next -- hasApi() is TRUE only in the packaged app with a real preload bridge; this jsdom host and every test run bridgeless and take the `{}` arm. */
+  return hasApi() ? { onJobDone } : {};
 }
 
 /** Map asset name -> AssetInfo for O(1) size/installed lookup. */
@@ -229,6 +292,15 @@ export interface ModelsSystemPanelProps {
    * key/consent actions no-op (the host did not wire navigation).
    */
   onOpenProviders?: () => void;
+  /**
+   * F34/F36: the `job.done` bridge the asset-download wait subscribes to.
+   * Injected because `assets.ensure` is a LONG job — its rpc promise resolves at
+   * ENQUEUE with only `{jobId}`, so the terminal result is reachable only through
+   * this channel (`features/_api.ts:167-178`). Defaults to
+   * {@link defaultJobBridge}; tests inject a stub because they install no
+   * `window.api`.
+   */
+  jobBridge?: JobDoneCapable;
 }
 
 interface SettingsShape {
@@ -250,9 +322,11 @@ interface SettingsShape {
 export function ModelsSystemPanel({
   rpcClient,
   onOpenProviders,
+  jobBridge,
 }: ModelsSystemPanelProps): React.ReactElement {
   /* v8 ignore next -- the `?? client` default only runs in the real app; every test injects rpcClient. */
   const api = useMemo(() => rpcClient ?? client, [rpcClient]);
+  const jobs = useMemo<JobDoneCapable>(() => jobBridge ?? defaultJobBridge(), [jobBridge]);
 
   const [hardware, setHardware] = useState<HardwareInfo | null>(null);
   const [report, setReport] = useState<AdvisorReport | null>(null);
@@ -262,7 +336,10 @@ export function ModelsSystemPanel({
   const [analyzed, setAnalyzed] = useState<boolean>(false);
   const [busy, setBusy] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
-  const [downloading, setDownloading] = useState<string | null>(null);
+  // F34: a SET, not one name. The busy flag now spans the WHOLE download job
+  // (minutes, not the enqueue instant), and a panel-global lock would make every
+  // OTHER model's Download button look enabled while doing nothing — a dead click.
+  const [downloading, setDownloading] = useState<ReadonlySet<string>>(() => new Set<string>());
   const [showTour, setShowTour] = useState<boolean>(false);
   const [usage, setUsage] = useState<UsageRow[]>([]);
   // WU-models/device: local-runner plan (device-ranked whisper+LLM + runner advice)
@@ -284,6 +361,15 @@ export function ModelsSystemPanel({
   const [applyOutcome, setApplyOutcome] = useState<string>('');
 
   const byAsset = useMemo(() => indexAssets(assets), [assets]);
+
+  // F34: tear a pending job-wait down on unmount. Without it a Settings sub-tab
+  // switch mid-download leaves the `job.done` subscription and its timer alive to
+  // the DEFAULT_JOB_TIMEOUT_MS ceiling (~35 min).
+  const abortRef = useRef<AbortController>(new AbortController());
+  useEffect(() => {
+    const ctrl = abortRef.current;
+    return () => ctrl.abort();
+  }, []);
 
   // Load persisted settings up-front (cheap) so the tier/ASR/commercial controls
   // reflect saved choices even before the opt-in analysis runs.
@@ -424,13 +510,19 @@ export function ModelsSystemPanel({
     [patchSettings],
   );
 
-  // M5: persist the FULL routing policy ({global, overrides}) via the fail-closed
+  // M5: persist a PARTIAL routing-policy patch via the fail-closed
   // setRoutingPolicy write (NOT settings.set — the sidecar sanitises/clamps), then
   // reflect the policy the sidecar actually persisted back into the overview so the
   // override table + reason strip stay in sync. Best-effort: a failed write keeps
   // the prior overview policy.
+  //
+  // F35: the parameter is a PATCH, not a whole policy — the table sends only the
+  // `overrides` half it owns and the sidecar merges per half, so a row edit can no
+  // longer clobber the header's `global`. Folding the RETURNED policy back in also
+  // refreshes the panel's snapshot of `global` from disk — but only on the panel's
+  // OWN write, so a header click alone still leaves the table's intro text stale.
   const applyRoutingPolicy = useCallback(
-    async (policy: RoutingPolicy): Promise<void> => {
+    async (policy: Partial<RoutingPolicy>): Promise<void> => {
       try {
         const { routingPolicy } = await api.models.setRoutingPolicy(policy);
         setOverview((prev) => mergeOverviewRoutingPolicy(prev, routingPolicy));
@@ -554,32 +646,72 @@ export function ModelsSystemPanel({
     void patchSettings({ modelsOnboardingSeen: true });
   }, [patchSettings]);
 
-  // Download a single model (assets.ensure long job) then refresh asset state.
+  // F34: announce a job failure — EXCEPT a clean abort. `waitForJobDone` rejects
+  // with JobAbortedError on unmount/cancel, which is an idle reset, not a fault
+  // to show the user (precedent: Export.tsx:130-133).
+  const surfaceJobError = useCallback((err: unknown): void => {
+    if (!(err instanceof JobAbortedError)) setError(errText(err));
+  }, []);
+
+  // F34/F36 — the ONE shared "install assets and wait for the job to ACTUALLY
+  // finish" path, used by both the per-model Download and the readiness roll-up.
+  //
+  // `assets.ensure` is a LONG job: its rpc promise resolves at ENQUEUE with only
+  // `{jobId}` (`assets/rpc.py:91-92`), so the previous code reported completion it
+  // had never observed — the button reverted while bytes were still moving, the
+  // post-enqueue `assets.list` could not yet see `installed` (the download only
+  // renames `.part` -> dest at the very end, `manager.py:863-875`), and a FAILED
+  // download was invisible because the error only ever arrives on `job.done`.
+  const runAssetJob = useCallback(
+    async (assetNames: string[]): Promise<void> => {
+      const { jobId } = await api.assets.ensure(assetNames);
+      const done = await waitForJobDone<EnsureDone>(
+        jobs,
+        jobId,
+        extractEnsureDone,
+        DEFAULT_JOB_TIMEOUT_MS,
+        abortRef.current.signal,
+      );
+      // A SUCCESS payload can still carry per-item failures (manager.py:742-749
+      // raises only when NOTHING installed), so a partial failure must be shown.
+      const failed = done === null ? [] : done.failed;
+      if (failed.length > 0) setError(ensureFailureText(failed));
+      // The job payload already carries the refreshed rows; re-list only when it
+      // did not (a bridgeless host resolved null, or a partial payload).
+      const rows = done?.assets ?? (await api.assets.list()).assets;
+      setAssets(Array.isArray(rows) ? rows : []);
+      // Re-run the advisor so installed-state flips the verdicts/recommendation.
+      const rep = await api.system.advisor({ commercial: Boolean(settings.commercial) });
+      setReport(
+        ingestRenderable(rep, isRenderableReport, () =>
+          setError(malformedDataMessage(['system report'])),
+        ),
+      );
+    },
+    [api, jobs, settings.commercial],
+  );
+
+  // Download a single model: hold THIS card busy for the whole job, then refresh.
   const download = useCallback(
     async (componentName: string): Promise<void> => {
       const asset = componentAsset(componentName);
-      /* v8 ignore next -- defensive guard: floor components (no asset) render an "Installed", disabled button, and the Download button is disabled while downloading, so neither arm trips in tests. */
-      if (!asset || downloading) return;
-      setDownloading(componentName);
+      /* v8 ignore next -- defensive guard: floor components (no asset) render an "Installed", disabled button, and this card's Download button is disabled while it downloads, so neither arm trips in tests. */
+      if (!asset || downloading.has(componentName)) return;
+      setDownloading((prev) => new Set(prev).add(componentName));
       setError('');
       try {
-        await api.assets.ensure([asset]);
-        const res = await api.assets.list();
-        setAssets(Array.isArray(res?.assets) ? res.assets : []);
-        // Re-run the advisor so installed-state flips the verdicts/recommendation.
-        const rep = await api.system.advisor({ commercial: Boolean(settings.commercial) });
-        setReport(
-          ingestRenderable(rep, isRenderableReport, () =>
-            setError(malformedDataMessage(['system report'])),
-          ),
-        );
+        await runAssetJob([asset]);
       } catch (err) {
-        setError(errText(err));
+        surfaceJobError(err);
       } finally {
-        setDownloading(null);
+        setDownloading((prev) => {
+          const next = new Set(prev);
+          next.delete(componentName);
+          return next;
+        });
       }
     },
-    [api, downloading, settings.commercial],
+    [downloading, runAssetJob, surfaceJobError],
   );
 
   // WU-14 / WU-PROVIDERS: the readiness roll-up surfaces a fix action per
@@ -598,20 +730,16 @@ export function ModelsSystemPanel({
       if (!action.assets || action.assets.length === 0) return;
       setError('');
       try {
-        await api.assets.ensure(action.assets);
-        const res = await api.assets.list();
-        setAssets(Array.isArray(res?.assets) ? res.assets : []);
-        const rep = await api.system.advisor({ commercial: Boolean(settings.commercial) });
-        setReport(
-          ingestRenderable(rep, isRenderableReport, () =>
-            setError(malformedDataMessage(['system report'])),
-          ),
-        );
+        // F36: the SAME job-wait as the per-card Download — a refresh without it
+        // would re-read pre-download state, so the roll-up's badge would still be
+        // wrong. Returning the promise lets the roll-up hold the button busy and
+        // re-read `readiness.summary` only once the job has truly finished.
+        await runAssetJob(action.assets);
       } catch (err) {
-        setError(errText(err));
+        surfaceJobError(err);
       }
     },
-    [api, settings.commercial, onOpenProviders],
+    [runAssetJob, surfaceJobError, onOpenProviders],
   );
 
   const currentTier = settings.phase8Tier ?? 1;
@@ -643,7 +771,7 @@ export function ModelsSystemPanel({
       <ReadinessRollup
         rpcClient={api}
         title="What works right now"
-        onAction={(action) => void handleReadinessAction(action)}
+        onAction={handleReadinessAction}
       />
 
       <div className="actions">
@@ -909,7 +1037,7 @@ export function ModelsSystemPanel({
                 vramBudgetMb={report.vramBudgetMb}
                 installed={isInstalled(component, byAsset)}
                 sizeMb={sizeForComponent(component, byAsset)}
-                downloading={downloading === component.name}
+                downloading={downloading.has(component.name)}
                 onDownload={download}
               />
             ))}

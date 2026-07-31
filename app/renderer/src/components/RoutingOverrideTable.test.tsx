@@ -54,18 +54,22 @@ describe('RoutingOverrideTable', () => {
     expect(sel('select').value).toBe('cloud');
   });
 
-  it('persists a concrete override with the current global preserved', () => {
+  it('persists ONLY the overrides half (never its own global)', () => {
     const onApply = vi.fn();
     mount({ policy: { global: 'auto', overrides: {} }, onApply });
     setValue(sel('select'), 'cloud');
-    expect(onApply).toHaveBeenCalledWith({ global: 'auto', overrides: { select: 'cloud' } });
+    // F35: `policy.global` here is the PANEL's snapshot, written only by analyze()
+    // and by this table's own write — the header toggle is separate state, so the
+    // snapshot goes stale the moment the user clicks it. Re-sending it made every
+    // row edit revert the header. The table owns `overrides` and sends that alone.
+    expect(onApply).toHaveBeenCalledWith({ overrides: { select: 'cloud' } });
   });
 
-  it('inherit removes the override (sends the trimmed map)', () => {
+  it('inherit removes the override (sends the trimmed map, still no global)', () => {
     const onApply = vi.fn();
     mount({ policy: { global: 'local', overrides: { select: 'cloud' } }, onApply });
     setValue(sel('select'), 'inherit');
-    expect(onApply).toHaveBeenCalledWith({ global: 'local', overrides: {} });
+    expect(onApply).toHaveBeenCalledWith({ overrides: {} });
   });
 
   it('shows an egress badge only for cloud/auto rows', () => {

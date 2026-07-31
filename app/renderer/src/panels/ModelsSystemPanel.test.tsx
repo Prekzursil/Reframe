@@ -10,7 +10,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import {
   ModelsSystemPanel,
   applyOutcomeText,
+  defaultJobBridge,
+  ensureFailureText,
   errText,
+  extractEnsureDone,
   indexAssets,
   ingestRenderable,
   isInstalled,
@@ -341,6 +344,47 @@ describe('renderable-shape guards', () => {
       /unexpected data \(system report, models overview\)/,
     );
   });
+
+  // ---- F34: the assets.ensure job.done payload readers --------------------
+
+  it('extractEnsureDone reads the real sidecar payload (manager.py:749)', () => {
+    expect(
+      extractEnsureDone({
+        installed: ['smolvlm2-2.2b'],
+        failed: [{ name: 'x', error: 'boom' }],
+        assets: assetList,
+      }),
+    ).toEqual({ failed: [{ name: 'x', error: 'boom' }], assets: assetList });
+  });
+
+  it('extractEnsureDone shape-checks every field of an UNTRUSTED payload', () => {
+    // A non-object result — including the `null` waitForJobDone resolves when the
+    // host exposes no job.done bridge (_api.ts:236-238).
+    expect(extractEnsureDone(null)).toBeNull();
+    expect(extractEnsureDone('done')).toBeNull();
+    // Present but wrong-typed fields normalise instead of throwing downstream.
+    expect(extractEnsureDone({ failed: 'nope', assets: 7 })).toEqual({
+      failed: [],
+      assets: null,
+    });
+    expect(extractEnsureDone({})).toEqual({ failed: [], assets: null });
+  });
+
+  it('ensureFailureText names every failed item and its reason', () => {
+    expect(
+      ensureFailureText([
+        { name: 'smolvlm2-2.2b', error: 'disk full' },
+        { name: 'saliency', error: 'sha256 mismatch' },
+      ]),
+    ).toBe('Some downloads failed: smolvlm2-2.2b (disk full); saliency (sha256 mismatch)');
+  });
+
+  it('defaultJobBridge degrades to a bridgeless stub with no window.api', () => {
+    // The whole point of the seam: `onJobDone` THROWS through bridge() without a
+    // preload bridge, so the default must NOT hand it to waitForJobDone here.
+    expect((globalThis as { window?: { api?: unknown } }).window?.api).toBeUndefined();
+    expect(defaultJobBridge().onJobDone).toBeUndefined();
+  });
 });
 
 // ---- component tests -------------------------------------------------------
@@ -532,13 +576,61 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function mount(c: FakeClient, onOpenProviders?: () => void): Promise<void> {
+/**
+ * F34/F36: a `job.done` bridge stub. The panel's job-wait seam takes an injected
+ * bridge because these tests never install `window.api`; this captures the
+ * subscription so a test can emit the terminal payload on demand.
+ */
+function makeJobBridge() {
+  const subs: ((ev: { jobId: string; result?: unknown }) => void)[] = [];
+  return {
+    bridge: {
+      onJobDone: (cb: (ev: { jobId: string; result?: unknown }) => void): (() => void) => {
+        subs.push(cb);
+        return () => void subs.splice(subs.indexOf(cb), 1);
+      },
+    },
+    emit(ev: { jobId: string; result?: unknown }): void {
+      for (const cb of [...subs]) cb(ev);
+    },
+    subscriptions: (): number => subs.length,
+  };
+}
+
+/** The REAL `assets.ensure` job.done payload shape (assets/manager.py:749). */
+function ensureDone(over: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+  return { installed: ['smolvlm2-2.2b'], failed: [], assets: assetList, ...over };
+}
+
+async function mount(
+  c: FakeClient,
+  onOpenProviders?: () => void,
+  jobBridge?: { onJobDone?: (cb: (ev: { jobId: string; result?: unknown }) => void) => () => void },
+): Promise<void> {
   await act(async () => {
-    root.render(<ModelsSystemPanel rpcClient={c.client} onOpenProviders={onOpenProviders} />);
+    root.render(
+      <ModelsSystemPanel
+        rpcClient={c.client}
+        onOpenProviders={onOpenProviders}
+        jobBridge={jobBridge}
+      />,
+    );
   });
   await act(async () => {
     await Promise.resolve();
   });
+}
+
+async function settle(turns = 4): Promise<void> {
+  await act(async () => {
+    for (let i = 0; i < turns; i += 1) await Promise.resolve();
+  });
+}
+
+function downloadBtn(model: string): HTMLButtonElement {
+  return container.querySelector(
+    `.model-card[data-model="${model}"] button[data-action="download"]`,
+  ) as HTMLButtonElement;
 }
 
 async function analyze(): Promise<void> {
@@ -777,7 +869,7 @@ describe('<ModelsSystemPanel />', () => {
     expect(container.querySelector('select[data-action="route-select"]')).not.toBeNull();
   });
 
-  it('persists a per-function override via setRoutingPolicy with global preserved (M5)', async () => {
+  it('persists a per-function override as an overrides-ONLY patch (M5/F35)', async () => {
     const c = makeClient({
       initialSettings: { modelsOnboardingSeen: true },
       overview: modelsOverview({ routingPolicy: { global: 'auto', overrides: {} } }),
@@ -791,7 +883,9 @@ describe('<ModelsSystemPanel />', () => {
       await Promise.resolve();
     });
     const call = c.calls.find((x) => x.method === 'models.setRoutingPolicy');
-    expect(call?.args[0]).toEqual({ global: 'auto', overrides: { select: 'cloud' } });
+    // F35: the table must NOT re-send its (possibly stale) `global` snapshot —
+    // the sidecar patches per half, so an omitted `global` inherits from disk.
+    expect(call?.args[0]).toEqual({ overrides: { select: 'cloud' } });
     // overview reflects the persisted policy (the row now reads cloud).
     expect(
       (container.querySelector('select[data-action="route-select"]') as HTMLSelectElement).value,
@@ -907,6 +1001,241 @@ describe('<ModelsSystemPanel />', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+  });
+
+  // ---- F34: the panel must await job.done, not the ENQUEUE -----------------
+
+  it('keeps Download busy until job.done arrives, not at enqueue (F34)', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    const jb = makeJobBridge();
+    await mount(c, undefined, jb.bridge);
+    await analyze();
+    await act(async () => downloadBtn('smolvlm2').click());
+    await settle();
+    // The enqueue resolved (so this is NOT a broken fixture) …
+    expect(c.calls.filter((x) => x.method === 'assets.ensure').length).toBe(1);
+    // … but the multi-GB job has NOT finished, so the button must still say so.
+    expect(downloadBtn('smolvlm2').dataset.state).toBe('downloading');
+    expect(downloadBtn('smolvlm2').disabled).toBe(true);
+    await act(async () => jb.emit({ jobId: 'job-1', result: ensureDone() }));
+    await settle();
+  });
+
+  it('flips the card to Installed from the job.done payload (F34)', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    const jb = makeJobBridge();
+    await mount(c, undefined, jb.bridge);
+    await analyze();
+    await act(async () => downloadBtn('smolvlm2').click());
+    await settle();
+    const listsBefore = c.calls.filter((x) => x.method === 'assets.list').length;
+    // The REAL sidecar payload carries the refreshed asset rows (manager.py:749).
+    await act(async () =>
+      jb.emit({
+        jobId: 'job-1',
+        result: ensureDone({
+          assets: assetList.map((a) =>
+            a.name === 'smolvlm2-2.2b' ? { ...a, installed: true } : a,
+          ),
+        }),
+      }),
+    );
+    await settle();
+    // No manual "Re-analyze" needed, and no redundant assets.list round-trip.
+    expect(downloadBtn('smolvlm2').dataset.state).toBe('installed');
+    expect(c.calls.filter((x) => x.method === 'assets.list').length).toBe(listsBefore);
+  });
+
+  it('re-lists when a job.done payload carries no asset rows (F34)', async () => {
+    // `job.done` is untrusted wire data (an older sidecar, or a shape change),
+    // so a payload without usable `assets` must degrade to an explicit re-list
+    // rather than blanking the grid.
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    const jb = makeJobBridge();
+    await mount(c, undefined, jb.bridge);
+    await analyze();
+    await act(async () => downloadBtn('smolvlm2').click());
+    await settle();
+    const listsBefore = c.calls.filter((x) => x.method === 'assets.list').length;
+    await act(async () =>
+      jb.emit({ jobId: 'job-1', result: { installed: ['smolvlm2-2.2b'], failed: [] } }),
+    );
+    await settle();
+    expect(c.calls.filter((x) => x.method === 'assets.list').length).toBe(listsBefore + 1);
+    expect(container.querySelector('.error')).toBeNull();
+  });
+
+  it('surfaces a FAILED download that only job.done carries (F34)', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    const jb = makeJobBridge();
+    await mount(c, undefined, jb.bridge);
+    await analyze();
+    await act(async () => downloadBtn('smolvlm2').click());
+    await settle();
+    await act(async () =>
+      jb.emit({
+        jobId: 'job-1',
+        result: { error: { message: 'sha256 mismatch for smolvlm2-2.2b', type: 'AssetError' } },
+      }),
+    );
+    await settle();
+    expect(container.querySelector('.error')?.textContent).toContain('sha256 mismatch');
+    // The button is released so the user can retry.
+    expect(downloadBtn('smolvlm2').disabled).toBe(false);
+  });
+
+  it('surfaces a PARTIAL failure that job.done reports as success (F34)', async () => {
+    // manager.py:744 raises only when NOTHING installed; a partial failure is a
+    // SUCCESS payload carrying `failed:[…]`, which would otherwise stay silent.
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    const jb = makeJobBridge();
+    await mount(c, undefined, jb.bridge);
+    await analyze();
+    await act(async () => downloadBtn('smolvlm2').click());
+    await settle();
+    await act(async () =>
+      jb.emit({
+        jobId: 'job-1',
+        result: ensureDone({
+          installed: ['siglip2-so400m'],
+          failed: [{ name: 'smolvlm2-2.2b', error: 'disk full' }],
+        }),
+      }),
+    );
+    await settle();
+    expect(container.querySelector('.error')?.textContent).toContain('smolvlm2-2.2b');
+    expect(container.querySelector('.error')?.textContent).toContain('disk full');
+  });
+
+  it('treats an unmount mid-download as a clean abort, not an error (F34)', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    const jb = makeJobBridge();
+    await mount(c, undefined, jb.bridge);
+    await analyze();
+    await act(async () => downloadBtn('smolvlm2').click());
+    await settle();
+    expect(jb.subscriptions()).toBe(1);
+    await act(async () => root.unmount());
+    await settle();
+    // The wait tore its subscription down instead of leaking to the 35-min ceiling.
+    expect(jb.subscriptions()).toBe(0);
+    root = createRoot(container);
+  });
+
+  it('holds only the DOWNLOADING model busy, never every other card (F34)', async () => {
+    // The old panel-global `downloading` guard made every other Download button
+    // look enabled but do nothing for the whole multi-GB job (a dead click).
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true }, assets: [] });
+    const jb = makeJobBridge();
+    await mount(c, undefined, jb.bridge);
+    await analyze();
+    await act(async () => downloadBtn('smolvlm2').click());
+    await settle();
+    expect(downloadBtn('smolvlm2').disabled).toBe(true);
+    const other = downloadBtn('vlm_backbone');
+    expect(other.disabled).toBe(false);
+    await act(async () => other.click());
+    await settle();
+    expect(c.calls.filter((x) => x.method === 'assets.ensure').length).toBe(2);
+    expect(downloadBtn('vlm_backbone').dataset.state).toBe('downloading');
+    await act(async () => jb.emit({ jobId: 'job-1', result: ensureDone() }));
+    await settle();
+  });
+
+  it('falls back to assets.list when no job bridge is available (F34 degraded)', async () => {
+    // Default `jobBridge` in a bridgeless host: `waitForJobDone` resolves null at
+    // once (_api.ts:236-238), so the panel must keep TODAY's list-refresh, never
+    // hang and never claim success it cannot see.
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    await mount(c);
+    await analyze();
+    const listsBefore = c.calls.filter((x) => x.method === 'assets.list').length;
+    await act(async () => downloadBtn('smolvlm2').click());
+    await settle();
+    expect(c.calls.filter((x) => x.method === 'assets.list').length).toBe(listsBefore + 1);
+    expect(downloadBtn('smolvlm2').disabled).toBe(false);
+    expect(container.querySelector('.error')).toBeNull();
+  });
+
+  // ---- F36: the roll-up action awaits the job and then re-reads -------------
+
+  it('the readiness action awaits job.done before the roll-up re-reads (F36)', async () => {
+    let summaries = 0;
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true, firstRunChoiceMade: true },
+      readiness: [
+        {
+          capability: 'vis',
+          label: 'Vision',
+          status: 'needsDownload',
+          blockedBy: '',
+          action: { kind: 'assets.ensure', assets: ['smolvlm2-2.2b'] },
+        },
+      ],
+    });
+    (c.client.readiness.summary as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      summaries += 1;
+      c.calls.push({ method: 'readiness.summary', args: [] });
+      return {
+        items: [
+          {
+            capability: 'vis',
+            label: 'Vision',
+            status: summaries === 1 ? 'needsDownload' : 'ready',
+            blockedBy: '',
+            action: summaries === 1 ? { kind: 'assets.ensure', assets: ['smolvlm2-2.2b'] } : null,
+          },
+        ],
+      };
+    });
+    const jb = makeJobBridge();
+    await mount(c, undefined, jb.bridge);
+    await settle();
+    const rollup = container.querySelector('.readiness-rollup') as HTMLElement;
+    expect(rollup.querySelector('[data-readiness]')?.getAttribute('data-readiness')).toBe(
+      'needsDownload',
+    );
+    const btn = rollup.querySelector('button.readiness-badge__action') as HTMLButtonElement;
+    await act(async () => btn.click());
+    await settle();
+    // Mid-job: busy, and NOT yet re-read (a refresh here would read pre-download
+    // state — F36's refresh is inert without F34's wait).
+    expect(btn.disabled).toBe(true);
+    expect(summaries).toBe(1);
+    await act(async () => jb.emit({ jobId: 'job-1', result: ensureDone() }));
+    await settle();
+    expect(summaries).toBe(2);
+    expect(
+      container.querySelector('.readiness-rollup [data-readiness]')?.getAttribute('data-readiness'),
+    ).toBe('ready');
+  });
+
+  it('a second roll-up click cannot stack a duplicate download job (F36)', async () => {
+    const c = makeClient({
+      initialSettings: { modelsOnboardingSeen: true, firstRunChoiceMade: true },
+      readiness: [
+        {
+          capability: 'vis',
+          label: 'Vision',
+          status: 'needsDownload',
+          blockedBy: '',
+          action: { kind: 'assets.ensure', assets: ['smolvlm2-2.2b'] },
+        },
+      ],
+    });
+    const jb = makeJobBridge();
+    await mount(c, undefined, jb.bridge);
+    await settle();
+    const btn = container.querySelector(
+      '.readiness-rollup button.readiness-badge__action',
+    ) as HTMLButtonElement;
+    await act(async () => btn.click());
+    await settle();
+    await act(async () => btn.click());
+    await settle();
+    expect(c.calls.filter((x) => x.method === 'assets.ensure').length).toBe(1);
+    await act(async () => jb.emit({ jobId: 'job-1', result: ensureDone() }));
+    await settle();
   });
 
   it('does not show the tour when modelsOnboardingSeen is already set', async () => {

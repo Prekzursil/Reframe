@@ -110,6 +110,95 @@ def test_sanitize_preserves_valid_policy() -> None:
     assert out == {"global": "auto", "overrides": {"director": "cloud"}}
 
 
+# --- merge_routing_policy (the PER-HALF patch the WRITE applies) --------------
+#
+# F33/F35: one RoutingPolicy document has TWO disjoint renderer owners (the header
+# toggle owns `global`, the Advanced table owns `overrides`). A whole-key REPLACE
+# let each owner silently erase the other's half, so the write is a PATCH: a key
+# that is ABSENT from the patch inherits the persisted value. GATE-2 is preserved
+# two ways — every PRESENT value still runs through the same fail-closed clamp,
+# and writing `global:'local'` (the header flipped to Local) additionally scrubs
+# any INHERITED cloud/auto pin so "I clicked Local" can never leave an egress path.
+
+
+@pytest.mark.parametrize("bad_patch", [None, "garbage", 42, [], 3.14])
+def test_merge_non_dict_patch_returns_sanitised_current(bad_patch: Any) -> None:
+    """A non-dict patch is a no-op: the persisted policy survives, sanitised."""
+    current = {"global": "cloud", "overrides": {"select": "auto"}}
+    assert rp.merge_routing_policy(current, bad_patch) == current
+
+
+@pytest.mark.parametrize("bad_current", [None, "garbage", 42, [], 3.14])
+def test_merge_non_dict_current_starts_from_default(bad_current: Any) -> None:
+    """A corrupt persisted policy degrades to the local default before merging."""
+    out = rp.merge_routing_policy(bad_current, {"overrides": {"select": "cloud"}})
+    assert out == {"global": "local", "overrides": {"select": "cloud"}}
+
+
+def test_merge_empty_patch_is_a_no_op() -> None:
+    """Neither key present -> the persisted policy is returned unchanged."""
+    current = {"global": "auto", "overrides": {"translation": "cloud"}}
+    assert rp.merge_routing_policy(current, {}) == current
+
+
+def test_merge_global_only_patch_inherits_overrides() -> None:
+    """The header toggle sends {global}: the persisted overrides are INHERITED."""
+    current = {"global": "local", "overrides": {"translation": "local", "select": "cloud"}}
+    out = rp.merge_routing_policy(current, {"global": "cloud"})
+    assert out == {"global": "cloud", "overrides": {"translation": "local", "select": "cloud"}}
+
+
+def test_merge_overrides_only_patch_inherits_global() -> None:
+    """The Advanced table sends {overrides}: the persisted global is INHERITED."""
+    out = rp.merge_routing_policy({"global": "cloud", "overrides": {}}, {"overrides": {"select": "local"}})
+    assert out == {"global": "cloud", "overrides": {"select": "local"}}
+
+
+def test_merge_writing_global_local_scrubs_inherited_egress_pins() -> None:
+    """GATE-2: flipping the header to Local drops INHERITED cloud/auto pins only."""
+    current = {"global": "cloud", "overrides": {"select": "cloud", "translation": "local"}}
+    out = rp.merge_routing_policy(current, {"global": "local"})
+    assert out == {"global": "local", "overrides": {"translation": "local"}}
+
+
+def test_merge_explicit_overrides_survive_an_explicit_local_global() -> None:
+    """Both keys present -> the caller owns BOTH halves verbatim (no scrub)."""
+    out = rp.merge_routing_policy(
+        {"global": "cloud", "overrides": {}},
+        {"global": "local", "overrides": {"select": "cloud"}},
+    )
+    assert out == {"global": "local", "overrides": {"select": "cloud"}}
+
+
+def test_merge_clamps_a_present_out_of_enum_global() -> None:
+    """A present but out-of-enum global still clamps to local (fail-closed)."""
+    out = rp.merge_routing_policy({"global": "cloud", "overrides": {}}, {"global": "sneaky"})
+    assert out["global"] == "local"
+
+
+def test_merge_clamps_present_overrides_and_drops_bad_keys() -> None:
+    """A present overrides map runs through the same clamp as the read path."""
+    out = rp.merge_routing_policy(
+        {"global": "auto", "overrides": {}},
+        {"overrides": {"select": "nope", "vision": "auto", 7: "cloud"}},
+    )
+    assert out == {"global": "auto", "overrides": {"select": "local", "vision": "auto"}}
+
+
+def test_merge_does_not_mutate_its_inputs() -> None:
+    """PURE: neither the current policy nor the patch is mutated."""
+    current = {"global": "cloud", "overrides": {"select": "cloud"}}
+    patch = {"global": "local"}
+    rp.merge_routing_policy(current, patch)
+    assert current == {"global": "cloud", "overrides": {"select": "cloud"}}
+    assert patch == {"global": "local"}
+
+
+def test_merge_is_exported() -> None:
+    """The merge is part of the module's public surface (export discipline)."""
+    assert "merge_routing_policy" in rp.__all__
+
+
 # --- resolve_route (the pure policy resolver M3 owns) -------------------------
 
 
