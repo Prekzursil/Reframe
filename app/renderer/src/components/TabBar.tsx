@@ -54,6 +54,27 @@ export interface TabBarProps {
    * (jump to the deliver panel), keeping this component presentational.
    */
   onExport?: () => void;
+  /**
+   * ADDITIVE (F18): ids whose activation navigates AWAY from this tablist, so
+   * arrow-stepping must MOVE FOCUS onto them WITHOUT activating them. This is the
+   * ARIA APG "manual activation" carve-out: automatic activation is only legal
+   * when activation is instantaneous, and these ids activate into a route change
+   * that UNMOUNTS the very tablist being navigated (focus would land on `<body>`
+   * on another screen, unannounced). Deliberate activation still works — the
+   * button's own `onClick` fires on click and on Enter/Space. Omitted → every tab
+   * activates on arrow (the original behaviour, unchanged).
+   *
+   * TWO DISCLOSED RESIDUALS (do not read this prop as a complete APG fix):
+   *   1. The roving tabindex DESYNCS. Skipping `onSelect` leaves `active`
+   *      unchanged, so the DOM-focused nav tab keeps `tabIndex={-1}` while the
+   *      still-active tab keeps `tabIndex={0}` — Tab away and Shift+Tab back
+   *      returns to `active`, not to the arrowed-onto tab. A full fix needs a
+   *      focused-tab state separate from `active` (a contract refactor).
+   *   2. The tablist now has a MIXED activation model (automatic for most tabs,
+   *      manual for the `navIds` members). Defensible under the APG carve-out
+   *      above, but non-obvious — hence documented here, at the prop.
+   */
+  navIds?: string[];
 }
 
 /**
@@ -145,6 +166,7 @@ export function TabBar({
   advancedOpen = false,
   onToggleAdvanced,
   onExport,
+  navIds,
 }: TabBarProps): React.ReactElement {
   // A plain ref map (NOT useRef) so this presentational component stays hook-free
   // and can still be invoked directly in unit tests. React populates it via each
@@ -167,8 +189,13 @@ export function TabBar({
 
   const move = (toIndex: number): void => {
     const nextId = orderedIds[toIndex];
-    onSelect(nextId);
-    // Move focus to the newly-selected tab so keyboard users stay in sync. A
+    // MANUAL activation, scoped to the `navIds` members only (see the prop doc):
+    // their activation destroys this tablist, so an arrow key may only move focus.
+    // Every other tab keeps automatic activation (the ARIA APG default).
+    if (!navIds?.includes(nextId)) {
+      onSelect(nextId);
+    }
+    // Move focus to the newly-focused tab so keyboard users stay in sync. A
     // rendered, reachable tab always has its ref recorded, so assert non-null and
     // fail loud rather than silently skip focus (no silent fallback).
     btnRefs.current[nextId]!.focus();
