@@ -24,12 +24,12 @@
 faster-whisper==1.2.1
 ctranslate2==4.8.1
 scenedetect==0.7.1
-opencv-python==4.13.0.92
+opencv-python==4.14.0.94
 httpx==0.28.1
 numpy==2.5.1
 av==17.1.0
-onnxruntime==1.27.0
-huggingface_hub==1.24.0
+onnxruntime==1.28.0
+huggingface_hub==1.25.1
 tokenizers==0.23.1
 
 # TTS (kokoro default engine — the onnx build, NEVER the torch pip package; A4)

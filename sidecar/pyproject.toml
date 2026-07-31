@@ -19,7 +19,7 @@ dependencies = [
   # P2 (T2, A6 lesson 5: PINNED). ⚠ human: verify current releases at install
   # time. chatterbox-tts/torch must NOT be added here (isolated env asset only).
   "kokoro-onnx==0.5.0",    # A4: the onnx build — NEVER the torch `kokoro` package
-  "onnxruntime==1.27.0",   # kokoro-onnx backend (or onnxruntime-gpu, same pin)
+  "onnxruntime==1.28.0",   # kokoro-onnx backend (or onnxruntime-gpu, same pin)
   "edge-tts==7.2.8",       # hosted TTS engine (network only at runtime)
   # F3: PRIMARY system-RAM source for the device advisor (cross-platform), with
   # an OS-stdlib fallback (Win32 GlobalMemoryStatusEx / POSIX sysconf) behind the
@@ -57,7 +57,7 @@ reframe-gpu = [
   # NOT installed in the CI gate env (the loader GATE logic is torch-free + unit
   # tested with an injected reader; only the pragma-no-cover heavy seam imports it).
   "safetensors==0.8.0",           # verify-before-load safetensors weight reader (B4/I2)
-  "opencv-python-headless==4.13.0.92",  # frame I/O + face-crop ops (headless: no GUI libs)
+  "opencv-python-headless==4.14.0.94",  # frame I/O + face-crop ops (headless: no GUI libs)
   "python_speech_features==0.6",  # MFCC features for the ASD audio frontend
   "scipy==1.18.0",                # face-track interpolation + median filter + wav read
   # DIARIZE stage (VAD + ECAPA-TDNN) — the speaker turns the director fuses with
