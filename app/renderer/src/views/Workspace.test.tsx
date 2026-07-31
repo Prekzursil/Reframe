@@ -758,4 +758,41 @@ describe('Short-maker tab single-owner deep-link (WU-3a4)', () => {
     expect(container.querySelector('[data-panel="ShortMaker"]')).not.toBeNull();
     expect(selected('shortmaker')).toBe('true');
   });
+
+  // F18: 'shortmaker' sits at index 5 of the keyboard-reachable order
+  // (transcribe, search, subtitles, diarize, refine, shortmaker, timeline, dub),
+  // so stepping FORWARD through the strip walks onto it. TabBar.move() ACTIVATED
+  // the next tab before focusing it, and handleSelect turns a 'shortmaker'
+  // activation into a top-level route change that UNMOUNTS this very tablist — so
+  // one ArrowRight from Refine ejected the keyboard user out of the Workspace with
+  // no announcement. ARIA APG mandates MANUAL activation when activation has a
+  // non-instantaneous side effect, so the arrow must MOVE FOCUS ONLY here.
+  it('ArrowRight from Refine moves focus to Short-maker WITHOUT ejecting to Make Shorts', async () => {
+    const onOpenMakeShorts = vi.fn();
+    await act(async () => {
+      root.render(
+        <Workspace video={video} onBack={() => {}} onOpenMakeShorts={onOpenMakeShorts} />,
+      );
+    });
+    await flush();
+
+    const refine = container.querySelector(
+      '[role="tab"][data-tab-id="refine"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      refine.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+      );
+    });
+    await flush();
+
+    // THE red-proof assertion: arrow-stepping must not fire the deep-link.
+    expect(onOpenMakeShorts).not.toHaveBeenCalled();
+    // Focus still MOVES (this one is deliberately NOT red-proof — move() focuses
+    // the tab pre-fix too — it pins that the fix did not swallow the key instead).
+    expect(document.activeElement).toBe(shortmakerTab());
+    // Nothing activated: the default tab keeps the selection.
+    expect(selected('subtitles')).toBe('true');
+    expect(selected('shortmaker')).toBe('false');
+  });
 });
