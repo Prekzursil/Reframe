@@ -13,6 +13,17 @@
 // absent (tests / early boot) — it simply renders nothing.
 import React, { useEffect, useState } from 'react';
 
+/**
+ * WHY the on-disk keystore could not be read — mirror of keystore.ts
+ * KeystoreUnreadableReason. Every value means "the blob EXISTS but its contents could
+ * not be trusted", never "there is no keystore yet".
+ */
+export type KeystoreUnreadableReason =
+  | 'read-failed'
+  | 'parse-failed'
+  | 'shape-invalid'
+  | 'decrypt-failed';
+
 /** Mirror of keystore.ts SecureStatus / preload SecureStatus. */
 export interface SecureStatus {
   available: boolean;
@@ -29,6 +40,15 @@ export interface SecureStatus {
    * the surface that actually reaches the user.
    */
   unshreddable?: string[];
+  /**
+   * WHY the on-disk keystore could not be read, or `null` when it is healthy /
+   * genuinely absent. Optional so an older/partial payload degrades to "no problem";
+   * main always sends it (KeyBridge.secureStatus overlays the live value). While this
+   * is non-null the bridge REFUSES to overwrite the keystore (fail-closed), so a key
+   * the user enters does NOT persist — hence it must be shown, or saving looks like
+   * it worked and silently did not.
+   */
+  keystoreUnreadable?: KeystoreUnreadableReason | null;
 }
 
 interface SecureBridge {
@@ -63,7 +83,34 @@ export function unshreddableBannerText(paths: readonly string[]): string {
   );
 }
 
-/** One rendered warning line (session-only refusal or a lingering-plaintext notice). */
+/**
+ * The per-reason cause clause appended to the unreadable-keystore warning. Named
+ * CAUSES only — never the offending value — so nothing here can carry key material.
+ */
+const KEYSTORE_UNREADABLE_CAUSE: Record<KeystoreUnreadableReason, string> = {
+  'read-failed': 'the file could not be opened — another program may be holding it open',
+  'parse-failed': 'the file is incomplete, so an earlier save was probably interrupted',
+  'shape-invalid': 'the file contents are not in the expected format',
+  'decrypt-failed':
+    'this computer could not decrypt it — it may have been copied from another machine or user profile',
+};
+
+/**
+ * Concrete text for a keystore whose contents could not be trusted. Deliberately does
+ * NOT name a path (the keystore lives under Electron's userData directory, which is
+ * NOT the user-chosen data folder, so naming that folder would be actively wrong) and
+ * deliberately does NOT claim permanent loss — a `read-failed` lock can be transient,
+ * so restarting is the first thing to try.
+ */
+export function keystoreUnreadableBannerText(reason: KeystoreUnreadableReason): string {
+  return (
+    'Your saved API keys could not be read, so new keys cannot be saved and will only ' +
+    `work until you quit. Cause: ${KEYSTORE_UNREADABLE_CAUSE[reason]}. ` +
+    'Try restarting the app; the existing key file is left untouched.'
+  );
+}
+
+/** One rendered warning line (session-only, lingering-plaintext, or unreadable-keystore). */
 interface BannerMessage {
   key: string;
   text: string;
@@ -78,16 +125,43 @@ function messagesFor(status: SecureStatus): BannerMessage[] {
   if (status.unshreddable && status.unshreddable.length > 0) {
     messages.push({ key: 'unshreddable', text: unshreddableBannerText(status.unshreddable) });
   }
+  // One truthiness test covers BOTH `undefined` (an older/partial payload) and the
+  // `null` main actually sends for a healthy or absent keystore.
+  if (status.keystoreUnreadable) {
+    messages.push({
+      key: 'keystore-unreadable',
+      text: keystoreUnreadableBannerText(status.keystoreUnreadable),
+    });
+  }
   return messages;
 }
 
 /**
  * Renders nothing while secure storage is healthy AND no plaintext copy was left
- * behind (or the bridge is absent). Surfaces a persistent non-blocking alert for two
- * independent, possibly-simultaneous keystore conditions: `sessionOnly` (keys can't
- * be saved at rest) and `unshreddable` (a legacy plaintext copy the migration could
- * not delete) — so a user never silently loses a key NOR silently keeps a recoverable
- * plaintext one on disk.
+ * behind AND the keystore reads cleanly (or the bridge is absent). Surfaces a
+ * persistent non-blocking alert for three independent, possibly-simultaneous keystore
+ * conditions: `sessionOnly` (keys can't be saved at rest), `unshreddable` (a legacy
+ * plaintext copy the migration could not delete), and `keystoreUnreadable` (the stored
+ * keys could not be read, so the bridge fail-closed refuses to overwrite them) — so a
+ * user never silently loses a key NOR silently keeps a recoverable plaintext one on
+ * disk NOR believes a save succeeded that was actually refused.
+ *
+ * KNOWN LIMITS of this surface (deliberate scope, not oversights):
+ *  1. MOUNT-ONCE SNAPSHOT, stale in BOTH directions. `getSecureStatus()` runs exactly
+ *     once in a `[]` effect below, and each call costs a full synchronous read+decrypt
+ *     of the keystore in main, so it is not polled. Consequences: (a) FALSE NEGATIVE —
+ *     a lock that appears mid-session (the `read-failed` AV/indexer case, typically at
+ *     the moment the user clicks Add key and the bridge refuses) renders NOTHING here,
+ *     while the Providers panel still reports the key as verified; (b) FALSE POSITIVE —
+ *     a keystore unreadable at mount but healthy afterwards leaves this alert up for
+ *     the rest of the session. The cheap remedy is to re-query after an explicit
+ *     `providers.upsert` (one read per deliberate user action, not a poll), or to have
+ *     main push `secure.status` when the refusal branch is taken. Neither is wired yet.
+ *  2. DISPLAY-ONLY. This tells the user; it does not repair anything. In particular the
+ *     key-LIST shrinkage that accompanies an unreadable keystore is NOT fixed: an add
+ *     re-sends the provider's existing REDACTED keys, `planUpsert` resolves the stored
+ *     set as empty, and the raw-key filter drops every redacted stand-in, so previously
+ *     listed keys also disappear from the Providers list. That is a separate defect.
  */
 export function SecureKeysBanner(): React.ReactElement | null {
   const [messages, setMessages] = useState<readonly BannerMessage[]>([]);
