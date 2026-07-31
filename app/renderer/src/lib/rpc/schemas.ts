@@ -162,8 +162,17 @@ export interface ShortInfo {
 export interface BestFrame {
   /** Source-absolute time (seconds) of the chosen thumbnail frame. */
   frameTimeSec: number;
-  /** Absolute path of the written poster (inside the exports root). */
-  thumbnailPath: string;
+  /**
+   * Absolute path of the written poster (inside the exports root).
+   *
+   * OPTIONAL, and absent on the whole degrade branch: `handlers/vision_ops.py:310`
+   * returns `{frameTimeSec, score, degraded}` only, because the thumbnail writer
+   * never runs there ("NO thumbnailPath is advertised here", vision_ops.py:305-307)
+   * — a path would name a file that was never written. The scored branch
+   * (`vision_ops.py:342-347`) does carry it. Declaring it required made every
+   * default-install degrade look like a malformed payload.
+   */
+  thumbnailPath?: string;
   /** The scorer's confidence for the picked frame (0.0 on the degrade path). */
   score: number;
   /** True when the midpoint fallback was used (no vision model available). */
