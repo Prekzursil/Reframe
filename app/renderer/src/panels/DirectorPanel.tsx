@@ -21,6 +21,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import '../features/panels.css';
 import './directorPanel.css';
 import { DirectorOnboarding } from '../components/DirectorOnboarding';
+import { extractJobError } from '../components/useJob';
+import {
+  resolveSession,
+  useDirectorSession,
+  type DirectorSessionUpdater,
+} from '../features/directorSession';
 import {
   client,
   onJobDone as bridgeOnJobDone,
@@ -44,7 +50,6 @@ import {
   toggleOpStatus,
   type DirectorApplyResult,
   type DirectorCostRow,
-  type DirectorEditPlan,
   type DirectorEval,
   type DirectorOp,
   type DirectorOpKind,
@@ -150,6 +155,18 @@ interface PendingJob {
   kind: 'plan' | 'apply' | 'undo';
 }
 
+/**
+ * The phase name used in an ASYNC (in-job) failure message, single-sourced so the
+ * three copies cannot drift from the generic malformed-payload strings below.
+ * A `Record` lookup is invisible to v8 branch coverage, so each value is pinned by
+ * an assertion on the rendered string in DirectorPanel.test.tsx.
+ */
+const PHASE_LABEL: Record<PendingJob['kind'], string> = {
+  plan: 'Planning',
+  apply: 'Apply',
+  undo: 'Undo',
+};
+
 export function DirectorPanel({
   rpcClient,
   jobEvents,
@@ -160,12 +177,16 @@ export function DirectorPanel({
   const api = useMemo(() => rpcClient ?? client, [rpcClient]);
   const events = useMemo(() => jobEvents ?? realJobEvents, [jobEvents]);
 
-  const [goal, setGoal] = useState<string>('');
-  const [plan, setPlan] = useState<DirectorEditPlan | null>(null);
+  // F32: goal / plan / opsStatus / applied are the user's WORK, so they live in the
+  // DirectorSession store ABOVE App's route switch and survive a tab switch. The
+  // rest below stays component-local: transient UI, or cheaply re-fetchable by
+  // planId (see the mount effect that re-requests `previewCost` for a restored plan).
+  const sessionStore = useDirectorSession();
+  const openVideoId: string | null = video?.id ?? null;
+  const { goal, plan, opsStatus, applied } = resolveSession(sessionStore.stored, openVideoId);
+
   const [preview, setPreview] = useState<DirectorPreview | null>(null);
   const [evaluation, setEvaluation] = useState<DirectorEval | null>(null);
-  const [opsStatus, setOpsStatus] = useState<DirectorOp[] | null>(null);
-  const [applied, setApplied] = useState<boolean>(false);
   const [kindFilter, setKindFilter] = useState<DirectorOpKind | 'all'>('all');
   const [busy, setBusy] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
@@ -189,6 +210,31 @@ export function DirectorPanel({
   // own `videoId`. NEVER the goal text. `null` == no video and no plan → the
   // panel renders the "Choose a video" empty state instead of the prompt form.
   const activeVideoId: string | null = video?.id ?? plan?.videoId ?? null;
+
+  // F32: write the hoisted session, keyed by the resolved plan target. Every caller
+  // sits inside the `activeVideoId !== null` return branch (the prompt form / the
+  // storyboard), and a job.done can only arrive after `submit` ran from there, so a
+  // target always exists — the same justification as `goalRef.current!` below.
+  const patchSession = useCallback(
+    (next: DirectorSessionUpdater): void => {
+      sessionStore.update(activeVideoId!, next);
+    },
+    [sessionStore, activeVideoId],
+  );
+  // The once-mounted job.done/progress subscriptions read the writer through a ref
+  // so a session write does not churn the subscription (mirroring `pending`).
+  const patchRef = useRef(patchSession);
+  patchRef.current = patchSession;
+
+  const setGoal = useCallback(
+    (next: string): void => patchSession((prev) => ({ ...prev, goal: next })),
+    [patchSession],
+  );
+
+  // Read through a ref by the mount-only restore effect below (which must not
+  // re-fire when the plan is edited).
+  const restoredPlan = useRef(plan);
+  restoredPlan.current = plan;
 
   // WU-E2 + WU-D6a: read settings and open the first-run tour when the user has
   // not seen it — but ONLY once a video is actually open. Best-effort: a failed
@@ -239,6 +285,18 @@ export function DirectorPanel({
     [api],
   );
 
+  // F32: `preview` is deliberately NOT hoisted (it is re-derivable from planId), so a
+  // session RESTORED on re-entry arrives without its cost/egress banner — and without
+  // the budget cacheKey `apply` echoes. Re-request it ONCE PER MOUNT for a plan that
+  // was already there at mount (i.e. restored); a freshly-planned one is fetched by
+  // handleDone instead, so this never double-fetches. `loadPreview` is stable (it
+  // depends only on `api`), and the plan is read through a ref, so editing the plan
+  // does not re-fire this.
+  useEffect(() => {
+    const onMount = restoredPlan.current;
+    if (onMount) void loadPreview(onMount.planId);
+  }, [loadPreview]);
+
   // Resolve a terminal job.done for the active director job.
   const handleDone = useCallback(
     (event: DoneEvent): void => {
@@ -247,17 +305,40 @@ export function DirectorPanel({
       pending.current = null;
       setBusy(false);
       setProgress('');
+      // F30: an ASYNC (in-job) outcome arrives as `{error:{message,type}}` with NO
+      // planId (jobs.py `_finish_error` / `_finish_cancelled` / the post-restart
+      // rehydrate interrupt), so asPlanResult/asApplyResult reject it. Surface the
+      // sidecar's REAL cause here — a provider 401/quota, an unparseable model
+      // reply, validate_and_reject, or an ffmpeg op-engine failure — instead of
+      // letting it fall through to the generic "unexpected result" copy, which
+      // discarded the only actionable information the user had. A user-initiated
+      // cancel uses the SAME envelope and is a clean finish, not a failure — the
+      // same treatment useJob/features/_api give a JobCancelled type. NOTE for the
+      // next reader: useJob.ts's CONTRACT-NOTE claiming "cancelled jobs emit no
+      // job.done today" is STALE — jobs.py `_finish_cancelled` does emit one, and
+      // that is exactly the payload handled here. busy/progress are already cleared
+      // above, so a cancel needs no error at all.
+      const failure = extractJobError(event.result);
+      if (failure) {
+        if (failure.type !== 'JobCancelled') {
+          setError(`${PHASE_LABEL[active.kind]} failed: ${failure.message}`);
+        }
+        return;
+      }
       if (active.kind === 'plan') {
         const result = asPlanResult(event.result);
         if (!result) {
           setError('Planning returned an unexpected result.');
           return;
         }
-        setPlan(result.editPlan);
         // A fresh plan invalidates any prior apply/eval state (F6 keeps the prior
         // plan visible until HERE — the moment the new one arrives).
-        setOpsStatus(null);
-        setApplied(false);
+        patchRef.current((prev) => ({
+          ...prev,
+          plan: result.editPlan,
+          opsStatus: null,
+          applied: false,
+        }));
         setEvaluation(null);
         setKindFilter('all');
         void loadPreview(result.planId);
@@ -273,8 +354,11 @@ export function DirectorPanel({
         );
         return;
       }
-      setOpsStatus(result.opsStatus);
-      setApplied(active.kind === 'apply');
+      patchRef.current((prev) => ({
+        ...prev,
+        opsStatus: result.opsStatus,
+        applied: active.kind === 'apply',
+      }));
       if (active.kind === 'undo') setEvaluation(null);
     },
     [loadPreview],
@@ -395,21 +479,31 @@ export function DirectorPanel({
   // the plain-language summary update; `apply` then transmits the reviewed op
   // statuses + order (opOverrides/order) so the server honours the edit on the
   // next director.apply. A no-op while busy or post-apply.
-  const toggleOp = useCallback((opId: string): void => {
-    setPlan((prev) =>
-      /* v8 ignore next -- presence guard: the controls only render inside `plan && …`, so `prev` is non-null whenever this fires. */
-      prev ? { ...prev, ops: toggleOpStatus(prev.ops, opId) } : prev,
-    );
-  }, []);
+  const toggleOp = useCallback(
+    (opId: string): void => {
+      patchSession((prev) =>
+        /* v8 ignore next 3 -- presence guard: the controls only render inside `plan && …`, so `prev.plan` is non-null whenever this fires. (Counts 3 lines: the whole ternary — a bare `next` would leave the `: prev` arm uncovered and red the 100% gate.) */
+        prev.plan
+          ? { ...prev, plan: { ...prev.plan, ops: toggleOpStatus(prev.plan.ops, opId) } }
+          : prev,
+      );
+    },
+    [patchSession],
+  );
 
   // WU-director-controls: reorder one op up/down past its nearest same-kind
   // neighbour (within-group, so the move is visible) in the reviewable plan.
-  const moveOp = useCallback((opId: string, dir: OpMoveDirection): void => {
-    setPlan((prev) =>
-      /* v8 ignore next -- presence guard: the controls only render inside `plan && …`, so `prev` is non-null whenever this fires. */
-      prev ? { ...prev, ops: moveOpWithinKind(prev.ops, opId, dir) } : prev,
-    );
-  }, []);
+  const moveOp = useCallback(
+    (opId: string, dir: OpMoveDirection): void => {
+      patchSession((prev) =>
+        /* v8 ignore next 3 -- presence guard: the controls only render inside `plan && …`, so `prev.plan` is non-null whenever this fires. (Counts 3 lines: the whole ternary — see toggleOp above.) */
+        prev.plan
+          ? { ...prev, plan: { ...prev.plan, ops: moveOpWithinKind(prev.plan.ops, opId, dir) } }
+          : prev,
+      );
+    },
+    [patchSession],
+  );
 
   // Merge per-op apply statuses (when present) over the planned ops so the
   // storyboard reflects applied/failed AFTER an apply, planned/dropped before it.

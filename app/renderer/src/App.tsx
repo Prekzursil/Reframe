@@ -28,6 +28,7 @@ import { Deliver } from './views/Deliver';
 import { MakeShorts } from './views/MakeShorts';
 import { Settings } from './views/Settings';
 import { incompleteBatches, remainingCount } from './features/repurposeLogic';
+import { DirectorSessionProvider } from './features/directorSession';
 import { lineageActions } from './features/lineageActionsClient';
 import { libraryShortsClient } from './features/libraryShortsClient';
 import { useToast } from './components/toast/useToast';
@@ -527,7 +528,11 @@ function AppShell(): React.ReactElement {
   }
 
   return (
-    <>
+    // F32: the Director's session (goal / plan / review decisions) lives here,
+    // OUTSIDE renderRoute()'s switch, so a tab click no longer destroys an
+    // unapplied plan along with the subtree. It must stay outside the switch —
+    // mounted inside it, it would be unmounted by the very navigation it guards.
+    <DirectorSessionProvider>
       <div className="app">
         <header className="app__bar">
           <span className="app__brand">Reframe</span>
@@ -576,7 +581,7 @@ function AppShell(): React.ReactElement {
       <SecureKeysBanner />
       <UpdateBanner />
       <ToastHost />
-    </>
+    </DirectorSessionProvider>
   );
 }
 
