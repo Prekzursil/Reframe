@@ -341,6 +341,19 @@ export function Workspace({
         advancedOpen={advancedOpen}
         onToggleAdvanced={toggleAdvanced}
         onExport={handleExport}
+        // F18: 'shortmaker' sits mid-strip in the arrow-nav order, and when the
+        // deep-link is wired its activation is a top-level route change that
+        // UNMOUNTS this tablist — so arrow-stepping onto it must MOVE FOCUS ONLY
+        // (ARIA APG manual activation). Deliberate click/Enter still deep-links.
+        //
+        // The ternary is BEHAVIOURAL, not merely test-preserving: do NOT
+        // "simplify" it to an unconditional navIds={['shortmaker']}. Without
+        // onOpenMakeShorts there is no redirect, so 'shortmaker' legitimately
+        // activates IN PLACE and mounts ShortMaker here; marking it manual in that
+        // configuration would make that panel unreachable by forward arrow-stepping
+        // (click/Enter only). Note the pinned additive-fallback test does not catch
+        // this — it dispatches no key — so only this comment protects it.
+        navIds={onOpenMakeShorts ? ['shortmaker'] : undefined}
       />
 
       {error ? (

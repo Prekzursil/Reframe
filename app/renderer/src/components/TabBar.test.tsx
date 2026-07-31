@@ -278,4 +278,37 @@ describe('TabBar keyboard model (roving tabindex + arrow nav)', () => {
     expect(onSelect).toHaveBeenLastCalledWith('t3');
     expect(document.activeElement).toBe(btn('t3'));
   });
+
+  // F18: `navIds` marks the tabs whose activation navigates AWAY and unmounts this
+  // tablist. Arrow-stepping onto one of those must MOVE FOCUS ONLY (ARIA APG
+  // manual activation) — automatic activation there ejected the keyboard user out
+  // of the surface being navigated.
+  it('arrow-stepping onto a navIds tab moves focus only, never activating it', () => {
+    const onSelect = vi.fn();
+    renderBar({ tabs: GROUP_TABS, active: 't1', onSelect, groups: GROUPS, navIds: ['t2'] });
+    key(btn('t1'), 'ArrowRight');
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(btn('t2'));
+  });
+
+  // Membership is per-TARGET, not "navIds is non-empty ⇒ the whole strip is
+  // manual". This pins the scope so a later implementation cannot silently convert
+  // every tab to manual activation the moment one nav id exists.
+  it('arrow-stepping onto a NON-member still activates while navIds is present', () => {
+    const onSelect = vi.fn();
+    renderBar({ tabs: GROUP_TABS, active: 't2', onSelect, groups: GROUPS, navIds: ['t2'] });
+    // ArrowRight from t2 (last reachable) wraps to t1, which is NOT a nav id.
+    key(btn('t2'), 'ArrowRight');
+    expect(onSelect).toHaveBeenLastCalledWith('t1');
+    expect(document.activeElement).toBe(btn('t1'));
+  });
+
+  it('still ACTIVATES a navIds tab on a deliberate click', () => {
+    const onSelect = vi.fn();
+    renderBar({ tabs: GROUP_TABS, active: 't1', onSelect, groups: GROUPS, navIds: ['t2'] });
+    act(() => {
+      btn('t2').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(onSelect).toHaveBeenCalledWith('t2');
+  });
 });
