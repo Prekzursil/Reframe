@@ -417,6 +417,18 @@ describe('Library', () => {
     );
   });
 
+  it('does not claim the library is empty when library.list failed', async () => {
+    // F03: a failed listing left `videos === []`, so the first-run "No videos yet"
+    // poster rendered UNDER the error alert — the app told the user their library
+    // was empty when it had simply failed to read it.
+    rpcMock.mockRejectedValueOnce(new Error('database is locked'));
+    await renderLibrary();
+
+    // Precondition guard: the rejection really reached `refresh` (not a mock slip).
+    expect(container.querySelector('.library__error')?.textContent).toContain('database is locked');
+    expect(container.textContent).not.toContain('No videos yet');
+  });
+
   it('emits a typed error toast when library.add returns no video', async () => {
     rpcMock.mockResolvedValueOnce({ videos: [] });
     await renderLibrary();
@@ -583,6 +595,96 @@ describe('Library', () => {
     // optimistic removal rolled back -> the video is back
     expect(container.textContent).toContain('Talk');
     expect(container.querySelector('.library__error')?.textContent).toContain('delete failed');
+  });
+
+  it('a failed remove does not resurrect a video whose own remove succeeded', async () => {
+    // F02 CASE 1: the rollback restored a whole-list SNAPSHOT captured at click
+    // time, so a reject on Alpha wrote Beta back onto the grid even though the
+    // sidecar had already deleted Beta's row and unlinked its manifest + poster
+    // (library_ops.py:160-161). A phantom card that opens into failing RPCs.
+    rpcMock.mockResolvedValueOnce({
+      videos: [
+        makeVideo({ id: 'a', title: 'Alpha', path: '/movies/a.mp4' }),
+        makeVideo({ id: 'b', title: 'Beta', path: '/movies/b.mp4' }),
+      ],
+    });
+    await renderLibrary();
+
+    // Alpha's remove stays in flight (controllable rejection); Beta's succeeds.
+    let rejectAlpha: (e: Error) => void = () => {};
+    rpcMock
+      .mockImplementationOnce(
+        () =>
+          new Promise((_res, rej) => {
+            rejectAlpha = rej;
+          }),
+      )
+      .mockResolvedValueOnce({ ok: true });
+
+    await act(async () => {
+      (container.querySelectorAll('.library__remove-btn')[0] as HTMLButtonElement).dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      );
+    });
+    await flush();
+
+    // Alpha is optimistically gone, so the sole remaining button is Beta's.
+    await act(async () => {
+      (container.querySelector('.library__remove-btn') as HTMLButtonElement).dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      );
+    });
+    await flush();
+
+    await act(async () => {
+      rejectAlpha(new Error('refusing to destroy the only surviving copy'));
+    });
+    await flush();
+
+    // Alpha comes back (its remove FAILED) ...
+    expect(container.textContent).toContain('Alpha');
+    // ... and Beta stays gone (its remove SUCCEEDED).
+    expect(container.textContent).not.toContain('Beta');
+  });
+
+  it('a failed remove does not erase a video added while it was in flight', async () => {
+    // F02 CASE 2: the same snapshot rollback also wiped a concurrent import off
+    // the grid while it WAS in the library DB. This case is load-bearing for the
+    // 100% `functions` gate: it is the only one where `prev` is non-empty at
+    // rollback time, so the restore's de-duplication predicate is invoked.
+    rpcMock.mockResolvedValueOnce({ videos: [makeVideo()] });
+    await renderLibrary();
+
+    let rejectRemove: (e: Error) => void = () => {};
+    rpcMock.mockImplementationOnce(
+      () =>
+        new Promise((_res, rej) => {
+          rejectRemove = rej;
+        }),
+    );
+    await act(async () => {
+      (container.querySelector('button.library__remove-btn') as HTMLButtonElement).dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      );
+    });
+    await flush();
+
+    // A drag-drop import lands while the remove RPC is still pending.
+    pathForFileMock.mockReturnValue('/movies/new.mp4');
+    rpcMock.mockResolvedValueOnce({
+      video: makeVideo({ id: 'x', title: 'Xray', path: '/movies/new.mp4' }),
+    });
+    await dropFiles([new File(['x'], 'new.mp4')]);
+    expect(container.textContent).toContain('Xray');
+
+    await act(async () => {
+      rejectRemove(new Error('delete failed'));
+    });
+    await flush();
+
+    // The rollback restores ONLY the removed video; the import survives.
+    expect(container.textContent).toContain('Talk');
+    expect(container.textContent).toContain('Xray');
   });
 
   it('exposes the open affordance as a real, labelled <button> (keyboard-native)', async () => {
