@@ -5,7 +5,10 @@
 // acceptance: list renders rows with the active one tagged; Apply calls
 // `savePresets.apply` + `onApply(bundle)` + marks active; Save upserts the live
 // autosave/exportDefaults under the typed name and refreshes; Remove drops a row;
-// empty/error states render; whitespace name is a no-op.
+// empty/error states render; Save is DISABLED on a blank/whitespace name (Enter is
+// the ungated route and still no-ops); and every in-flight mutation carries a busy
+// affordance (aria-busy + the owning button's verb + one neutral live region) while
+// the whole surface stays locked.
 //
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -156,14 +159,55 @@ describe('<SavePresetsControls />', () => {
     expect((container.querySelector('#save-presets-name') as HTMLInputElement).value).toBe('');
   });
 
-  it('trims the name and ignores a whitespace-only save (no RPC)', async () => {
+  it('disables Save while the typed name is blank or whitespace-only', async () => {
+    const rpc = makeRpc();
+    await mount({ rpc, autosave: AUTOSAVE, exportDefaults: EXPORT_DEFAULTS });
+    const saveBtn = container.querySelector('.save-presets__save') as HTMLButtonElement;
+    expect(saveBtn.disabled).toBe(true); // A: pristine empty field
+    const input = container.querySelector('#save-presets-name') as HTMLInputElement;
+    typeInto(input, '   ');
+    expect(saveBtn.disabled).toBe(true); // B: whitespace-only
+    typeInto(input, 'My preset');
+    expect(saveBtn.disabled).toBe(false); // C: anti-overfit control
+  });
+
+  it('Enter on a whitespace-only name hits the canSave guard (no RPC)', async () => {
     const rpc = makeRpc();
     await mount({ rpc, autosave: AUTOSAVE, exportDefaults: EXPORT_DEFAULTS });
     const input = container.querySelector('#save-presets-name') as HTMLInputElement;
     typeInto(input, '   ');
-    const saveBtn = container.querySelector('.save-presets__save') as HTMLButtonElement;
-    // The handler trims and no-ops on a blank name — no RPC fires.
-    await act(async () => saveBtn.click());
+    // The Save BUTTON is disabled for a blank name, so Enter is the only route
+    // that still reaches (and therefore covers) the `if (!canSave) return;` guard.
+    await act(async () =>
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })),
+    );
+    await flush();
+    expect(rpc.upsert).not.toHaveBeenCalled();
+  });
+
+  it('Enter submits the trimmed name', async () => {
+    const rpc = makeRpc();
+    await mount({ rpc, autosave: AUTOSAVE, exportDefaults: EXPORT_DEFAULTS });
+    const input = container.querySelector('#save-presets-name') as HTMLInputElement;
+    typeInto(input, '  My preset  ');
+    await act(async () =>
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })),
+    );
+    await flush();
+    expect(rpc.upsert).toHaveBeenCalledWith('My preset', {
+      autosave: AUTOSAVE,
+      exportDefaults: EXPORT_DEFAULTS,
+    });
+  });
+
+  it('a non-Enter keydown does not submit', async () => {
+    const rpc = makeRpc();
+    await mount({ rpc, autosave: AUTOSAVE, exportDefaults: EXPORT_DEFAULTS });
+    const input = container.querySelector('#save-presets-name') as HTMLInputElement;
+    typeInto(input, 'My preset');
+    await act(async () =>
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true })),
+    );
     await flush();
     expect(rpc.upsert).not.toHaveBeenCalled();
   });
@@ -220,5 +264,108 @@ describe('<SavePresetsControls />', () => {
     );
     await flush();
     expect(container.querySelector('.save-presets__error')?.textContent).toBe('remove boom');
+  });
+
+  // ---- busy affordance (F50) ----------------------------------------------
+  // Every mutation blanks the WHOLE surface (deliberately — see the lost-update
+  // guard test at the end). Each of the three actions must therefore say so:
+  // `aria-busy` on the control the user pressed, its own verb on the Save button,
+  // and ONE action-NEUTRAL live region (a shared region must never claim
+  // "Saving…" while an apply or a remove is what is actually running).
+  function gated<T>(value: () => T): { fn: () => Promise<T>; release: () => void } {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = () => resolve();
+    });
+    return {
+      fn: async () => {
+        await gate;
+        return value();
+      },
+      release: () => release(),
+    };
+  }
+
+  it('announces an in-flight save: aria-busy, a Saving… label, and a neutral status region', async () => {
+    const gate = gated(() => ({ presets: block().presets }));
+    const rpc = makeRpc({ upsert: vi.fn().mockImplementation(gate.fn) });
+    await mount({ rpc, autosave: AUTOSAVE, exportDefaults: EXPORT_DEFAULTS });
+    typeInto(container.querySelector('#save-presets-name') as HTMLInputElement, 'X');
+    const saveBtn = (): HTMLButtonElement =>
+      container.querySelector('.save-presets__save') as HTMLButtonElement;
+    await act(async () => saveBtn().click());
+    expect(saveBtn().disabled).toBe(true); // control: already true today
+    expect(saveBtn().getAttribute('aria-busy')).toBe('true');
+    expect(saveBtn().textContent).toBe('Saving…');
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('Working…');
+    gate.release();
+    await flush();
+    expect(saveBtn().getAttribute('aria-busy')).toBe('false');
+    expect(saveBtn().textContent).toBe('Save');
+    expect(container.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it('announces an in-flight apply on the row that owns it (aria-busy + title)', async () => {
+    const gate = gated(() => ({ active: 'Slow', savePreset: preset() }));
+    const rpc = makeRpc({ apply: vi.fn().mockImplementation(gate.fn) });
+    await mount({ rpc, autosave: AUTOSAVE, exportDefaults: EXPORT_DEFAULTS });
+    const applyBtn = (): HTMLButtonElement =>
+      container.querySelector('[data-preset="Slow"] .save-presets__apply') as HTMLButtonElement;
+    await act(async () => applyBtn().click());
+    expect(applyBtn().disabled).toBe(true); // control: already true today
+    expect(applyBtn().getAttribute('aria-busy')).toBe('true');
+    expect(applyBtn().title).not.toBe('');
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('Working…');
+    gate.release();
+    await flush();
+    expect(applyBtn().getAttribute('aria-busy')).toBe('false');
+    expect(applyBtn().title).toBe('');
+    expect(container.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it('announces an in-flight remove without ever claiming a save is running', async () => {
+    const gate = gated(() => ({ presets: { Slow: preset() }, active: '' }));
+    const rpc = makeRpc({ remove: vi.fn().mockImplementation(gate.fn) });
+    await mount({ rpc, autosave: AUTOSAVE, exportDefaults: EXPORT_DEFAULTS });
+    const removeBtn = (): HTMLButtonElement =>
+      container.querySelector('[data-preset="Fast"] .save-presets__remove') as HTMLButtonElement;
+    await act(async () => removeBtn().click());
+    expect(removeBtn().disabled).toBe(true); // control: already true today
+    expect(removeBtn().getAttribute('aria-busy')).toBe('true');
+    expect(removeBtn().title).not.toBe('');
+    // The shared region stays action-neutral and Save keeps its own verb: a remove
+    // must not announce "Saving…" — that would describe the wrong operation.
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('Working…');
+    expect((container.querySelector('.save-presets__save') as HTMLButtonElement).textContent).toBe(
+      'Save',
+    );
+    gate.release();
+    await flush();
+    expect(container.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it('locks the WHOLE surface while one mutation is in flight (lost-update guard)', async () => {
+    const gate = gated(() => ({ active: 'Fast', savePreset: preset() }));
+    const rpc = makeRpc({ apply: vi.fn().mockImplementation(gate.fn) });
+    await mount({ rpc, autosave: AUTOSAVE, exportDefaults: EXPORT_DEFAULTS });
+    await act(async () =>
+      (
+        container.querySelector('[data-preset="Fast"] .save-presets__apply') as HTMLButtonElement
+      ).click(),
+    );
+    // All three sidecar handlers read-modify-WRITE the whole `savePresets` block
+    // (providers_ops.py:388-396 — `settings.set` is a shallow top-level replace), so
+    // two concurrent mutations would lose an update. The coarse whole-surface lock is
+    // deliberate; this pins it so a later per-row "improvement" cannot regress it.
+    for (const selector of [
+      '[data-preset="Slow"] .save-presets__apply',
+      '[data-preset="Slow"] .save-presets__remove',
+      '#save-presets-name',
+    ]) {
+      const el = container.querySelector(selector) as HTMLButtonElement | HTMLInputElement;
+      expect(el.disabled).toBe(true);
+    }
+    gate.release();
+    await flush();
   });
 });
