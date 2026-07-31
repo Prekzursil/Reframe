@@ -196,4 +196,51 @@ describe('ShortsGalleryModal', () => {
     renderModal();
     expect(container.querySelector('[data-testid="edit-s1"]')).toBeNull();
   });
+
+  // F04 — the one role="dialog" in the renderer that never adopted the shared
+  // useFocusTrap. Both cases carry setup guards so a red result cannot be
+  // mistaken for a harness error.
+  describe('focus trap', () => {
+    it('restores focus to the opener when the dialog unmounts', () => {
+      const opener = document.createElement('button');
+      opener.type = 'button';
+      document.body.appendChild(opener);
+      opener.focus();
+      // Guard: the opener really holds focus before the dialog mounts.
+      expect(document.activeElement).toBe(opener);
+
+      renderModal();
+      // Guard: the dialog mounted and pulled focus onto its close control.
+      expect(document.activeElement).toBe(container.querySelector('.shorts-modal__close'));
+
+      act(() => root.unmount());
+      // The defect: nothing captures/restores the pre-open focus, so removing
+      // the close button drops document.activeElement to <body>.
+      expect(document.activeElement).toBe(opener);
+      opener.remove();
+    });
+
+    it('traps Tab inside the dialog, wrapping the last control back to the first', () => {
+      renderModal({
+        shorts: [makeShort({ id: 's1' }), makeShort({ id: 's2', path: '/out/s2.mp4' })],
+      });
+      const focusables = Array.from(dialog().querySelectorAll('button'));
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      // Guard: there really is more than one focusable to wrap between.
+      expect(last).not.toBe(first);
+      act(() => last.focus());
+      // Guard: focus really moved to the last control.
+      expect(document.activeElement).toBe(last);
+
+      const ev = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+      act(() => {
+        last.dispatchEvent(ev);
+      });
+      // The defect: nothing listens for Tab, so the event is not prevented and
+      // the browser walks focus out of the dialog into the Library grid behind it.
+      expect(ev.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(first);
+    });
+  });
 });
