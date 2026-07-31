@@ -54,7 +54,8 @@ describe('ExportStage', () => {
     expect(q('.export-stage')).not.toBeNull();
     expect(q('video')).not.toBeNull();
     expect(labelValue('Length')).toBe('0:45');
-    expect(labelValue('Captions')).toBe('2 captions');
+    // WORD-level cues, so the value counts words (see exportModel.captionSummary).
+    expect(labelValue('Captions')).toBe('2 words');
     // Framing reads "Reframed" — never the raw engine id.
     expect(labelValue('Framing')).toBe('Reframed');
     expect(q('.export-stage')?.textContent).not.toContain('verthor');

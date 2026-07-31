@@ -2,9 +2,11 @@
 //
 // The one video surface the Export inspector talks about: a THIN CONSUMER of the
 // shared editor state (`useEditor`) that previews the exact clip being exported and
-// summarizes what is BAKED into it — its length, its captions (from the cues), and
-// its framing (reframed vs original, read from the cross-phase cropPlan WITHOUT
-// leaking the engine id). It owns no export controls; those live in the inspector.
+// summarizes what is BAKED into it — its length, its transcript size (a WORD count,
+// because `captions.cues` emits one cue per spoken word — see
+// `exportModel.captionSummary`), and its framing (reframed vs original, read from
+// the cross-phase cropPlan WITHOUT leaking the engine id). It owns no export
+// controls; those live in the inspector.
 
 import React from 'react';
 import { Player } from '../../components/Player';

@@ -131,7 +131,7 @@ describe('Export view', () => {
     await flush();
     expect(cuesMock).toHaveBeenCalledWith('v1');
     expect(q('.export-view__title')?.textContent).toBe('My Clip');
-    expect(stageValue('Captions')).toBe('2 captions');
+    expect(stageValue('Captions')).toBe('2 words');
     // Idle: the guarded inspector is shown with a default fitting destination.
     expect(q('.export-inspector__primary')?.textContent).toBe('Export to TikTok');
   });
