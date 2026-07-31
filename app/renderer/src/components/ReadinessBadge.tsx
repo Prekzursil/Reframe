@@ -25,6 +25,13 @@ export interface ReadinessBadgeProps {
   action?: ReadinessAction | null;
   /** Fired with the action when the fix button is clicked. */
   onAction?: (action: ReadinessAction) => void;
+  /**
+   * F36: the fix action is in flight. Disables the button (so a repeat click
+   * cannot stack a second multi-GB download job) and announces `aria-busy`. The
+   * accessible NAME is deliberately unchanged so the existing
+   * `readinessActionLabel` contract still holds while busy.
+   */
+  busy?: boolean;
 }
 
 export function ReadinessBadge({
@@ -33,6 +40,7 @@ export function ReadinessBadge({
   blockedBy,
   action,
   onAction,
+  busy,
 }: ReadinessBadgeProps): React.ReactElement {
   const title = [readinessHint(status), blockedBy].filter(Boolean).join(' ');
   return (
@@ -50,6 +58,8 @@ export function ReadinessBadge({
           type="button"
           className="readiness-badge__action"
           aria-label={readinessActionLabel(action, capabilityLabel)}
+          disabled={busy}
+          aria-busy={busy}
           onClick={() => onAction?.(action)}
         >
           {readinessActionLabel(action, capabilityLabel)}

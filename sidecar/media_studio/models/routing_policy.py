@@ -17,6 +17,9 @@ I/O of its own — the bytes live in the §2 settings document under
   * :func:`sanitize_routing_policy` clamps any candidate ``{global, overrides}``
     shape to a valid, JSON-safe policy (the corrupt-load AND the write-validate
     path share it, so the fail-closed default is one constant).
+  * :func:`merge_routing_policy` PATCHES a partial ``{global?, overrides?}`` over
+    the persisted policy per half, because the two halves have two disjoint UI
+    owners (header toggle / Advanced table) that must not clobber each other.
   * :func:`read_routing_policy` reads the persisted policy from a settings dict.
   * :func:`resolve_route` is the PURE policy resolver M3 owns:
     ``resolve_route(fn) = overrides[fn] ?? {mode: global}`` with the SAME clamp
@@ -81,6 +84,47 @@ def sanitize_routing_policy(raw: Any) -> dict[str, Any]:
     return {"global": global_mode, "overrides": overrides}
 
 
+def merge_routing_policy(current: Any, patch: Any) -> dict[str, Any]:
+    """PATCH ``patch`` over the persisted ``current`` policy, per half (F33/F35).
+
+    One ``RoutingPolicy`` document has TWO disjoint UI owners: the header toggle
+    owns ``global`` and sends ``{global}``; the Advanced per-function table owns
+    ``overrides`` and sends ``{overrides}``. A whole-key REPLACE therefore let
+    each owner silently ERASE the other's half — a header flip wiped every
+    per-function pin (including a ``translation: local`` pin whose only job is to
+    stop transcript egress), and a row edit re-clamped ``global`` to the default.
+    So a key that is ABSENT from ``patch`` INHERITS the persisted value.
+
+    GATE-2 (Risk #3 — silent cloud egress) is preserved two independent ways:
+
+      * every PRESENT value still runs through :func:`sanitize_routing_policy`'s
+        clamp, so an absent key can never promote to cloud and a present
+        out-of-enum value is still forced to ``local``; and
+      * writing ``global:'local'`` — the header flipped to Local — additionally
+        SCRUBS any INHERITED ``cloud``/``auto`` pin, so "I clicked Local" can
+        never leave an egress path behind for
+        ``providers_ops._translator_for_function`` to find. An ``overrides`` map
+        supplied in the SAME patch is the caller's explicit instruction and is
+        honoured verbatim (unchanged from the pre-patch behaviour).
+
+    PURE: never raises, never mutates either input, opens no I/O. A non-dict
+    ``patch`` is a no-op; a non-dict ``current`` degrades to
+    :func:`default_routing_policy` first.
+    """
+    base = sanitize_routing_policy(current)
+    if not isinstance(patch, dict):
+        return base
+    has_global = "global" in patch
+    global_mode = _clamp_mode(patch["global"]) if has_global else base["global"]
+    if "overrides" in patch:
+        overrides = sanitize_routing_policy({"overrides": patch["overrides"]})["overrides"]
+    elif has_global and global_mode == DEFAULT_GLOBAL:
+        overrides = {fn: m for fn, m in base["overrides"].items() if m == DEFAULT_GLOBAL}
+    else:
+        overrides = dict(base["overrides"])
+    return {"global": global_mode, "overrides": overrides}
+
+
 def read_routing_policy(settings: dict[str, Any]) -> dict[str, Any]:
     """Read the persisted ``RoutingPolicy`` from ``settings``, failing CLOSED.
 
@@ -112,6 +156,7 @@ __all__ = [
     "DEFAULT_GLOBAL",
     "VALID_MODES",
     "default_routing_policy",
+    "merge_routing_policy",
     "read_routing_policy",
     "resolve_route",
     "sanitize_routing_policy",

@@ -245,12 +245,25 @@ def models_set_routing_policy(self: Services, params: dict[str, Any], ctx: RpcCo
 
     M3 — the WRITE half of the single ``RoutingPolicy`` store the M1a read
     (:func:`routing_policy.read_routing_policy`) surfaces. The header toggle sends
-    ``{global}``; the Advanced per-function table sends ``{overrides}``. The
-    incoming candidate is run through :func:`routing_policy.sanitize_routing_policy`
-    BEFORE persistence so the SAME fail-closed clamp protects the write as the
-    read: an out-of-enum (or corrupt) ``global`` / override mode is forced to
-    ``local`` (zero silent cloud egress, GATE-2) and a non-string override key is
-    dropped — the handler NEVER raises on a malformed body, it clamps.
+    ``{global}``; the Advanced per-function table sends ``{overrides}``.
+
+    The write is a PER-HALF PATCH (:func:`routing_policy.merge_routing_policy`),
+    NOT a whole-key replace: those two senders are disjoint UI owners of one
+    document, so a replace let each one silently ERASE the other's half (F33 — a
+    header flip wiped every per-function pin, including a ``translation:'local'``
+    pin whose only job is to stop transcript egress; F35 — a row edit re-clamped
+    ``global`` back to the default). A key ABSENT from the body now INHERITS the
+    persisted value.
+
+    Every PRESENT value still runs through the same
+    :func:`routing_policy.sanitize_routing_policy` clamp as the read, so the
+    fail-closed guarantee is unchanged: an out-of-enum (or corrupt) ``global`` /
+    override mode is forced to ``local`` (zero silent cloud egress, GATE-2), a
+    non-string override key is dropped, and the handler NEVER raises on a
+    malformed body — it clamps. GATE-2 additionally holds across the patch
+    because writing ``global:'local'`` SCRUBS any inherited ``cloud``/``auto``
+    pin, so a user who flipped the header to Local can still never egress
+    (the invariant ``providers_ops._translator_for_function`` documents).
 
     Persistence is the existing :class:`settings_store.SettingsStore` ``set`` (a
     partial top-level merge whose ``_write`` is an atomic temp-file +
@@ -262,7 +275,7 @@ def models_set_routing_policy(self: Services, params: dict[str, Any], ctx: RpcCo
     """
     from ..models import routing_policy as _routing_policy  # local: import-light pure
 
-    policy = _routing_policy.sanitize_routing_policy(params)
+    policy = _routing_policy.merge_routing_policy(self.settings.get().get("routingPolicy"), params)
     self.settings.set({"routingPolicy": policy})
     return {"routingPolicy": policy}
 
@@ -302,7 +315,7 @@ def system_self_test(self: Services, params: dict[str, Any], ctx: RpcContext) ->
     :func:`self_test.run` over the runtime services — the data-dir writability
     probe (write+read+delete under :attr:`data_dir`), the hardware probe seam
     (:class:`HardwareProbe`, the SAME one ``system.probe``/``advisor`` use), the
-    native-dependency import map (cv2/mediapipe for reframe + the faster-whisper
+    native-dependency import map (cv2 for reframe + the faster-whisper
     ASR backend, via ``importlib.find_spec`` — nothing heavy is imported), and
     the ffmpeg/ffprobe chain (:func:`tools_resolver.resolve_tool`). Every probe
     is fail-open: a failure becomes a reported problem + fix hint, never an

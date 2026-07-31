@@ -3,10 +3,19 @@
 // The per-function half of the single `RoutingPolicy` (DESIGN §2.1/§2.4): the
 // header `RoutingToggle` sets `global`; this table sets `overrides[fn]`. Each row
 // is a `<select>` of Global default / Local / Cloud / Auto. Choosing "Global
-// default" REMOVES the override (the function inherits the global mode). On any
-// change it persists the WHOLE policy ({global, overrides}) via `onApply` — the
-// sidecar `setRoutingPolicy` write is a full replace, so we always send `global`
-// too (never clobber it to the local default).
+// default" REMOVES the override (the function inherits the global mode).
+//
+// F35: on change it persists ONLY the `overrides` half via `onApply` — never its
+// own `global`. The `policy` prop is the PANEL's snapshot (written by analyze()
+// and by this table's own write); the header toggle is separate App state, so the
+// snapshot is stale the moment the user clicks the header, and re-sending it
+// silently reverted the header on every row edit. The sidecar write is now a
+// per-half PATCH (`routing_policy.merge_routing_policy`), so an omitted `global`
+// INHERITS the persisted value instead of clamping to the local default.
+//
+// RESIDUAL (F35, disclosed): this cures the PERSISTENCE clobber, not the DISPLAY
+// staleness. `policy.global` still only refreshes when the panel writes, so the
+// intro line below can keep naming the pre-click mode until the next row edit.
 import React from 'react';
 import type { RoutingMode, RoutingPolicy } from '../lib/rpc';
 import {
@@ -23,8 +32,8 @@ import {
 export interface RoutingOverrideTableProps {
   /** The current persisted policy (from `models.overview` -> routingPolicy). */
   policy: RoutingPolicy;
-  /** Persist the FULL edited policy ({global, overrides}); the parent writes it. */
-  onApply: (policy: RoutingPolicy) => void;
+  /** Persist the `overrides` half ONLY (F35); the sidecar patches it per half. */
+  onApply: (patch: { overrides: Record<string, RoutingMode> }) => void;
   /** Disable every control while a write is in flight. */
   busy?: boolean;
 }
@@ -37,7 +46,7 @@ export function RoutingOverrideTable({
   const overrides: Record<string, RoutingMode> = policy.overrides ?? {};
 
   const change = (fn: AiFunction, choice: OverrideChoice): void => {
-    onApply({ global: policy.global, overrides: applyOverrideChoice(overrides, fn, choice) });
+    onApply({ overrides: applyOverrideChoice(overrides, fn, choice) });
   };
 
   return (

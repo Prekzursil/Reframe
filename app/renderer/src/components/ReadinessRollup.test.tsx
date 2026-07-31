@@ -230,6 +230,180 @@ describe('<ReadinessRollup /> — WU-14 wiring', () => {
     expect(container.querySelector('.jobqueue__empty')).toBeNull();
   });
 
+  // ---- F36: the roll-up must re-read after its OWN fix action ---------------
+
+  it('disables + marks the action busy while the parent action is in flight (F36)', async () => {
+    const items = [
+      makeItem({
+        capability: 'vis',
+        label: 'Vision',
+        status: 'needsDownload',
+        action: { kind: 'assets.ensure', assets: ['saliency'] },
+      }),
+    ];
+    const rpcClient = makeClient(() => Promise.resolve({ items }));
+    await act(async () => {
+      // A never-settling parent promise keeps the action in flight.
+      root.render(
+        <ReadinessRollup rpcClient={rpcClient} onAction={() => new Promise<void>(() => {})} />,
+      );
+    });
+    await flush();
+    const btn = container.querySelector('button.readiness-badge__action') as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    await act(async () => {
+      btn.click();
+    });
+    expect(btn.disabled).toBe(true);
+    expect(btn.getAttribute('aria-busy')).toBe('true');
+  });
+
+  it('re-reads readiness.summary after its own fix action resolves (F36)', async () => {
+    let call = 0;
+    const rpcClient = makeClient(() => {
+      call += 1;
+      return Promise.resolve({
+        items: [
+          makeItem({
+            capability: 'vis',
+            label: 'Vision',
+            status: call === 1 ? 'needsDownload' : 'ready',
+            action: call === 1 ? { kind: 'assets.ensure', assets: ['saliency'] } : null,
+          }),
+        ],
+      });
+    });
+    await act(async () => {
+      root.render(<ReadinessRollup rpcClient={rpcClient} onAction={() => Promise.resolve()} />);
+    });
+    await flush();
+    expect(container.querySelector('[data-readiness]')?.getAttribute('data-readiness')).toBe(
+      'needsDownload',
+    );
+    const btn = container.querySelector('button.readiness-badge__action') as HTMLButtonElement;
+    await act(async () => {
+      btn.click();
+    });
+    await flush();
+    // The badge reflects the POST-fix truth without leaving + re-entering the tab.
+    expect(container.querySelector('[data-readiness]')?.getAttribute('data-readiness')).toBe(
+      'ready',
+    );
+    expect(call).toBe(2);
+  });
+
+  it('clears busy and still re-reads when the parent action REJECTS (F36)', async () => {
+    let call = 0;
+    const rpcClient = makeClient(() => {
+      call += 1;
+      return Promise.resolve({
+        items: [
+          makeItem({
+            capability: 'vis',
+            label: 'Vision',
+            status: 'needsDownload',
+            action: { kind: 'assets.ensure', assets: ['saliency'] },
+          }),
+        ],
+      });
+    });
+    await act(async () => {
+      root.render(
+        <ReadinessRollup
+          rpcClient={rpcClient}
+          onAction={() => Promise.reject(new Error('ensure blew up'))}
+        />,
+      );
+    });
+    await flush();
+    const btn = container.querySelector('button.readiness-badge__action') as HTMLButtonElement;
+    await act(async () => {
+      btn.click();
+    });
+    await flush();
+    const after = container.querySelector('button.readiness-badge__action') as HTMLButtonElement;
+    expect(after.disabled).toBe(false);
+    expect(after.getAttribute('aria-busy')).toBe('false');
+    // The parent owns its own error surface; the roll-up must not invent one.
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(call).toBe(2);
+  });
+
+  it('does NOT busy-flash or re-read for navigation-only action kinds (F36)', async () => {
+    let call = 0;
+    const kinds: ReadinessAction[] = [{ kind: 'openProviders' }, { kind: 'setConsent' }];
+    for (const action of kinds) {
+      const rpcClient = makeClient(() => {
+        call += 1;
+        return Promise.resolve({
+          items: [makeItem({ capability: 'x', label: 'Translation', status: 'needsKey', action })],
+        });
+      });
+      const seen: ReadinessAction[] = [];
+      await act(async () => {
+        root.render(<ReadinessRollup rpcClient={rpcClient} onAction={(a) => void seen.push(a)} />);
+      });
+      await flush();
+      const before = call;
+      const btn = container.querySelector('button.readiness-badge__action') as HTMLButtonElement;
+      await act(async () => {
+        btn.click();
+      });
+      await flush();
+      // Forwarded, but these NAVIGATE AWAY (Settings.goTo unmounts this tree) —
+      // a refresh there is a wasted RPC on a dying tree, and the busy flash lies.
+      expect(seen).toEqual([action]);
+      expect(call).toBe(before);
+      expect(btn.disabled).toBe(false);
+      await act(async () => {
+        root.unmount();
+      });
+      root = createRoot(container);
+    }
+  });
+
+  it('drops a post-action refresh after unmount (no setState on a dead tree)', async () => {
+    let release: (() => void) | undefined;
+    let call = 0;
+    const rpcClient = makeClient(() => {
+      call += 1;
+      return Promise.resolve({
+        items: [
+          makeItem({
+            capability: 'vis',
+            label: 'Vision',
+            status: 'needsDownload',
+            action: { kind: 'assets.ensure', assets: ['saliency'] },
+          }),
+        ],
+      });
+    });
+    await act(async () => {
+      root.render(
+        <ReadinessRollup
+          rpcClient={rpcClient}
+          onAction={() => new Promise<void>((res) => void (release = () => res()))}
+        />,
+      );
+    });
+    await flush();
+    const btn = container.querySelector('button.readiness-badge__action') as HTMLButtonElement;
+    await act(async () => {
+      btn.click();
+    });
+    const callsAtUnmount = call;
+    await act(async () => {
+      root.unmount();
+    });
+    await act(async () => {
+      release?.();
+      await Promise.resolve();
+    });
+    // The alive guard drops both the setPending and the refetch.
+    expect(call).toBe(callsAtUnmount);
+    root = createRoot(container);
+  });
+
   it('ignores a late resolve after unmount (no state update warning)', async () => {
     let resolve: (v: { items: ReadinessItem[] }) => void = () => {};
     const rpcClient = makeClient(
