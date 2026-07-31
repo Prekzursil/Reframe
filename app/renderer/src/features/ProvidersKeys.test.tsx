@@ -650,6 +650,93 @@ describe('ProvidersKeys — configured provider card', () => {
     expect(container.querySelector('.provider-card')).toBeNull();
   });
 
+  // --- F41: a second Add inside the first round-trip must not drop a key -------
+
+  it('does not drop the first key when a second Add is submitted before the first round-trip finishes', async () => {
+    let release: (v: TestKeyResult) => void = () => {};
+    let calls = 0;
+    const testKey = vi.fn(() => {
+      calls += 1;
+      if (calls === 1) {
+        return new Promise<TestKeyResult>((res) => {
+          release = res;
+        });
+      }
+      return Promise.resolve({ ok: true } as TestKeyResult);
+    });
+    const upsert = vi.fn((params: { id: string; apiKeys: string[] }) =>
+      Promise.resolve({ providers: [{ id: params.id, provider: 'Groq', apiKeys: ['…ey-A'] }] }),
+    );
+    const api = makeApi({
+      list: () =>
+        Promise.resolve({
+          providers: [{ id: 'groq', provider: 'Groq', baseUrl: 'https://b/v1', apiKeys: [] }],
+        }),
+      testKey,
+      upsert,
+    });
+    await mount({ rpcClient: api });
+    const input = container.querySelector<HTMLInputElement>('.add-key-row__input')!;
+    await act(async () => setInputValue(input, 'sk-key-A'));
+    await act(async () => container.querySelector<HTMLButtonElement>('.add-key-row__add')!.click());
+    // The first add is now parked on a hung testKey; the panel is busy.
+    await act(async () => setInputValue(input, 'sk-key-B'));
+    // Enter, NOT a button click — Enter bypasses `disabled`, so a fix that only
+    // sets disabled={busy} on the button still fails this test.
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    await act(async () => release({ ok: true } as TestKeyResult));
+    await flush();
+
+    const payloads = upsert.mock.calls.map((c) => c[0].apiKeys);
+    // LOAD-BEARING: no stored list may omit a key the panel already accepted.
+    expect(payloads.filter((k) => !k.includes('sk-key-A'))).toEqual([]);
+    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(payloads[0]).toEqual(['sk-key-A']);
+    // The refused submit preserves the pasted second key for a deliberate retry.
+    expect(input.value).toBe('sk-key-B');
+  });
+
+  it('locks every per-key control while a panel mutation is in flight', async () => {
+    let release: (v: ProvidersListResponse) => void = () => {};
+    const upsert = vi.fn(
+      () =>
+        new Promise<ProvidersListResponse>((res) => {
+          release = res;
+        }),
+    );
+    const api = makeApi({
+      list: () =>
+        Promise.resolve({
+          providers: [
+            { id: 'groq', provider: 'Groq', apiKeys: ['…WXYZ'] },
+            { id: 'openai', provider: 'OpenAI API', apiKeys: ['…1234'] },
+          ],
+        }),
+      upsert,
+    });
+    await mount({ rpcClient: api });
+    // Start a remove-key mutation on the first card; the panel is now busy.
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.provider-key-row__remove')!.click();
+    });
+    // Every key row — including the untouched second provider's — is locked, so no
+    // second mutation can re-upsert a list built from the pre-await snapshot.
+    const removes = [...container.querySelectorAll<HTMLButtonElement>('.provider-key-row__remove')];
+    expect(removes.length).toBe(2);
+    expect(removes.every((b) => b.disabled)).toBe(true);
+    const toggles = [
+      ...container.querySelectorAll<HTMLButtonElement>('.provider-key-row__replace-toggle'),
+    ];
+    expect(toggles.every((b) => b.disabled)).toBe(true);
+    // Add is gated on the same flag, on every card.
+    const adds = [...container.querySelectorAll<HTMLButtonElement>('.add-key-row__add')];
+    expect(adds.every((b) => b.getAttribute('title') === 'Working…')).toBe(true);
+    await act(async () => release({ providers: [] }));
+    await flush();
+  });
+
   it('uses the provider id as the display name + empty baseUrl for an unknown custom provider', async () => {
     const testKey = vi.fn(() => Promise.resolve({ ok: true }));
     const api = makeApi({
@@ -881,6 +968,65 @@ describe('ProvidersKeys — WU-D3 reveal / re-validate / replace', () => {
       id: 'groq',
       apiKeys: ['sk-replacement-key', '…1234'],
     });
+  });
+
+  // --- F38: the panel must not swallow a reveal/revalidate/replace rejection --
+  // `revealKey` / `revalidateKey` / `replaceKey` had no try/catch at all, so the
+  // role="alert" banner stayed empty while the sidecar's actionable refusal was
+  // dropped on the floor — unlike the sibling `addKey`, which already reports.
+
+  it('surfaces a rejected re-validate in the panel banner (F38)', async () => {
+    const revealKey = vi.fn(() => Promise.resolve({ key: REVEALED }));
+    const testKey = vi.fn(() => Promise.reject(new Error('net down')));
+    const api = configuredApi({ revealKey, testKey });
+    await mount({ rpcClient: api });
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('.provider-key-row__revalidate')!.click(),
+    );
+    await flush();
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('net down');
+  });
+
+  it('surfaces a rejected replace AND preserves the typed replacement key (F38)', async () => {
+    const testKey = vi.fn(() => Promise.reject(new Error('replace net down')));
+    const api = configuredApi({ testKey });
+    await mount({ rpcClient: api });
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('.provider-key-row__replace-toggle')!.click(),
+    );
+    const input = container.querySelector<HTMLInputElement>('.provider-key-row__replace-input')!;
+    await act(async () => setInputValue(input, 'sk-keep-me'));
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('.provider-key-row__replace-save')!.click(),
+    );
+    await flush();
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('replace net down');
+    // LOAD-BEARING: the panel degrades the rejection to a resolved {ok:false}, so
+    // the row takes its SUCCESS path — an unconditional setDraft('') there would
+    // erase the key the user just pasted (strictly worse than the original bug).
+    expect(
+      container.querySelector<HTMLInputElement>('.provider-key-row__replace-input')?.value,
+    ).toBe('sk-keep-me');
+    expect(container.querySelector('.provider-key-row__replace')).not.toBeNull();
+  });
+
+  it('surfaces a rejected reveal in the banner and re-throws so the row shows it too (F38)', async () => {
+    const revealKey = vi.fn(() => Promise.reject(new Error('key is locked')));
+    const api = configuredApi({ revealKey });
+    await mount({ rpcClient: api });
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('.provider-key-row__reveal')!.click(),
+    );
+    await flush();
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('key is locked');
+    // revealKey returns Promise<string> and cannot degrade, so it re-throws — the
+    // row's own catch is what renders the local status line.
+    expect(container.querySelector('.provider-key-row__status')?.textContent).toContain(
+      'key is locked',
+    );
+    expect(container.querySelector('.provider-key-row__value')?.getAttribute('data-revealed')).toBe(
+      'false',
+    );
   });
 
   it('tolerates a malformed upsert response after replace (non-array → empty list)', async () => {

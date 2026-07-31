@@ -13,12 +13,21 @@ export interface AddKeyRowProps {
   providerId: string;
   /** Receives the trimmed RAW pasted key. Only called for a non-empty value. */
   onAdd: (providerId: string, key: string) => void;
+  /**
+   * True while the owning panel already has a mutating providers RPC in flight.
+   * The panel's add builds its upsert payload from a `providers` snapshot taken
+   * BEFORE its own await, so a second add accepted inside that window stores a
+   * list that omits the first key. Folded into `canAdd` (not just the button's
+   * `disabled`) because the Enter path below is deliberately not gated by the
+   * attribute.
+   */
+  busy?: boolean;
 }
 
-export function AddKeyRow({ providerId, onAdd }: AddKeyRowProps): React.ReactElement {
+export function AddKeyRow({ providerId, onAdd, busy }: AddKeyRowProps): React.ReactElement {
   const [draft, setDraft] = useState<string>('');
   const trimmed = draft.trim();
-  const canAdd = trimmed.length > 0;
+  const canAdd = trimmed.length > 0 && !busy;
 
   const submit = useCallback(() => {
     if (!canAdd) return;
@@ -46,6 +55,7 @@ export function AddKeyRow({ providerId, onAdd }: AddKeyRowProps): React.ReactEle
         className="add-key-row__add"
         aria-label={`Add key to ${providerId}`}
         disabled={!canAdd}
+        title={busy ? 'Working…' : undefined}
         onClick={submit}
       >
         Add key

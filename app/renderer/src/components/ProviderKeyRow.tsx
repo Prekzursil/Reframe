@@ -45,6 +45,13 @@ export interface ProviderKeyRowProps {
   onReplace: (providerId: string, index: number, newKey: string) => Promise<KeyCheckResult>;
   /** Auto-re-mask delay (ms) after a reveal. Injectable for tests; default 15s. */
   revealTimeoutMs?: number;
+  /**
+   * True while the OWNING PANEL has a mutating providers RPC in flight. Both
+   * `onRemove` and `onReplace` re-upsert a key list the panel read BEFORE its
+   * own await, so a second mutation started inside that window drops one of the
+   * two keys; locking this row's mutating controls closes that window.
+   */
+  panelBusy?: boolean;
 }
 
 const DEFAULT_REVEAL_TIMEOUT_MS = 15_000;
@@ -52,6 +59,11 @@ const DEFAULT_REVEAL_TIMEOUT_MS = 15_000;
 /** Status text for a pass/fail validation outcome (never contains a key). */
 function checkStatus(result: KeyCheckResult): string {
   return result.ok ? 'Key verified — working.' : `Key failed: ${result.error ?? 'invalid'}`;
+}
+
+/** Error text from an unknown thrown value (mirrors the sibling panels). */
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 export function ProviderKeyRow({
@@ -63,6 +75,7 @@ export function ProviderKeyRow({
   onRevalidate,
   onReplace,
   revealTimeoutMs = DEFAULT_REVEAL_TIMEOUT_MS,
+  panelBusy,
 }: ProviderKeyRowProps): React.ReactElement {
   // The revealed plaintext lives ONLY here — never in React state/store (R7).
   const revealedRef = useRef<string | null>(null);
@@ -111,6 +124,12 @@ export function ProviderKeyRow({
       setRevealed(true);
       clearTimer();
       timerRef.current = setTimeout(remask, revealTimeoutMs);
+    } catch (err) {
+      // A rejected reveal (locked/unreadable keystore, Offline, sidecar down) used
+      // to be discarded, leaving the row with NO feedback node at all. Surface it
+      // in the status line; the secret contract is untouched — `revealedRef` stays
+      // null and `revealed` stays false, so nothing is unmasked.
+      if (aliveRef.current) setStatus(`Reveal failed: ${errText(err)}`);
     } finally {
       if (aliveRef.current) setBusy(false);
     }
@@ -122,6 +141,9 @@ export function ProviderKeyRow({
     try {
       const result = await onRevalidate(providerId, index);
       if (aliveRef.current) setStatus(checkStatus(result));
+    } catch (err) {
+      // Without this the row kept rendering the stale, lying 'Re-validating…'.
+      if (aliveRef.current) setStatus(`Key check failed: ${errText(err)}`);
     } finally {
       if (aliveRef.current) setBusy(false);
     }
@@ -136,12 +158,23 @@ export function ProviderKeyRow({
       const result = await onReplace(providerId, index, trimmed);
       if (!aliveRef.current) return;
       setStatus(checkStatus(result));
-      setDraft(''); // clear so the new key does not linger in the field
-      if (result.ok) setReplacing(false);
+      // Clear the field ONLY once the new key was accepted: a rejected/failed
+      // replacement must keep what the user pasted so they can retry it.
+      if (result.ok) {
+        setDraft('');
+        setReplacing(false);
+      }
+    } catch (err) {
+      // Keep the editor open AND the draft intact so the paste is not lost.
+      if (aliveRef.current) setStatus(`Key check failed: ${errText(err)}`);
     } finally {
       if (aliveRef.current) setBusy(false);
     }
   }, [draft, onReplace, providerId, index]);
+
+  // Any in-flight mutation — this row's own, or the owning panel's — locks the
+  // controls that would re-upsert a stale key list (F41).
+  const locked = busy || panelBusy === true;
 
   // Render reads the ref directly; `revealed` (a bool, no secret) gates it.
   const shown: string | null = revealed ? revealedRef.current : redactedKey;
@@ -175,7 +208,7 @@ export function ProviderKeyRow({
           type="button"
           className="provider-key-row__revalidate"
           aria-label={`Re-validate key for ${providerId}`}
-          disabled={busy}
+          disabled={locked}
           onClick={() => void revalidate()}
         >
           Re-validate
@@ -186,7 +219,7 @@ export function ProviderKeyRow({
           className="provider-key-row__replace-toggle"
           aria-label={`Replace key for ${providerId}`}
           aria-expanded={replacing}
-          disabled={busy}
+          disabled={locked}
           onClick={() => {
             setStatus('');
             setDraft('');
@@ -200,7 +233,7 @@ export function ProviderKeyRow({
           type="button"
           className="provider-key-row__remove"
           aria-label={`Remove key ${redactedKey} from ${providerId}`}
-          disabled={busy}
+          disabled={locked}
           onClick={() => onRemove(providerId, index)}
         >
           Remove
@@ -224,7 +257,7 @@ export function ProviderKeyRow({
             type="button"
             className="provider-key-row__replace-save"
             aria-label={`Save replacement key for ${providerId}`}
-            disabled={busy || draft.trim().length === 0}
+            disabled={locked || draft.trim().length === 0}
             onClick={() => void submitReplace()}
           >
             Save &amp; validate

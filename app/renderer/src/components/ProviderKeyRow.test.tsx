@@ -53,7 +53,12 @@ function makeHandlers(over: Partial<Handlers> = {}): Handlers {
 
 function render(
   h: Handlers,
-  props: Partial<{ redactedKey: string; index: number; revealTimeoutMs: number }> = {},
+  props: Partial<{
+    redactedKey: string;
+    index: number;
+    revealTimeoutMs: number;
+    panelBusy: boolean;
+  }> = {},
 ): void {
   act(() => {
     root.render(
@@ -66,6 +71,7 @@ function render(
         onRevalidate={h.onRevalidate}
         onReplace={h.onReplace}
         {...(props.revealTimeoutMs !== undefined ? { revealTimeoutMs: props.revealTimeoutMs } : {})}
+        {...(props.panelBusy !== undefined ? { panelBusy: props.panelBusy } : {})}
       />,
     );
   });
@@ -337,5 +343,139 @@ describe('ProviderKeyRow — Replace (re-runs validation, preferred over in-plac
     await flush();
     root = createRoot(container);
     expect(true).toBe(true);
+  });
+});
+
+// --- F38: a REJECTED key op must never leave a stale in-progress label -------
+// Every one of Reveal / Re-validate / Replace was `try/finally` with NO `catch`,
+// so an RPC rejection (e.g. the sidecar's Offline refusal, which exists precisely
+// "so the message reaches the UI verbatim") skipped the status write and left the
+// row rendering a lying label — or, for Reveal, no feedback node at all.
+
+describe('ProviderKeyRow — rejected key ops surface the error (F38)', () => {
+  const OFFLINE =
+    'Offline mode is on — testing a provider key needs the network. Turn off Offline mode in System Health to allow it.';
+
+  it('replaces the stale "Re-validating…" label with the rejection message', async () => {
+    const h = makeHandlers({ onRevalidate: vi.fn(() => Promise.reject(new Error(OFFLINE))) });
+    render(h);
+    click('.provider-key-row__revalidate');
+    await flush();
+    const status = q('.provider-key-row__status');
+    expect(status.textContent).not.toBe('Re-validating…');
+    expect(status.textContent).toContain('Offline mode is on');
+  });
+
+  it('drops a re-validate rejection that lands after unmount (alive guard)', async () => {
+    let rejectCheck: (e: Error) => void = () => {};
+    const onRevalidate = vi.fn(
+      () => new Promise<KeyCheckResult>((_res, rej) => (rejectCheck = rej)),
+    );
+    const h = makeHandlers({ onRevalidate });
+    render(h);
+    click('.provider-key-row__revalidate');
+    act(() => root.unmount());
+    rejectCheck(new Error('late revalidate failure'));
+    await flush();
+    root = createRoot(container);
+    expect(container.querySelector('.provider-key-row')).toBeNull();
+  });
+
+  it('shows a reveal rejection in the status line and stays masked', async () => {
+    const h = makeHandlers({
+      onReveal: vi.fn(() =>
+        Promise.reject(new Error("providers.revealKey: no key at index 0 for 'groq'")),
+      ),
+    });
+    render(h);
+    click('.provider-key-row__reveal');
+    await flush();
+    // Pre-fix `status` was never written, so the <p> was not even in the DOM.
+    const status = container.querySelector('.provider-key-row__status');
+    expect(status).not.toBeNull();
+    expect(status?.textContent).toContain('no key at index 0');
+    // The R7 secret contract is untouched: still redacted, still masked.
+    expect(q('.provider-key-row__value').textContent).toBe('…WXYZ');
+    expect(q('.provider-key-row__value').getAttribute('data-revealed')).toBe('false');
+  });
+
+  it('stringifies a NON-Error reveal rejection', async () => {
+    const h = makeHandlers({
+      // eslint-disable-next-line prefer-promise-reject-errors -- deliberately a non-Error.
+      onReveal: vi.fn(() => Promise.reject('plain string reveal failure')),
+    });
+    render(h);
+    click('.provider-key-row__reveal');
+    await flush();
+    expect(container.querySelector('.provider-key-row__status')?.textContent).toContain(
+      'plain string reveal failure',
+    );
+  });
+
+  it('drops a reveal rejection that lands after unmount (alive guard)', async () => {
+    let rejectReveal: (e: Error) => void = () => {};
+    const onReveal = vi.fn(() => new Promise<string>((_res, rej) => (rejectReveal = rej)));
+    const h = makeHandlers({ onReveal });
+    render(h);
+    click('.provider-key-row__reveal');
+    act(() => root.unmount());
+    rejectReveal(new Error('late reveal failure'));
+    await flush();
+    root = createRoot(container);
+    expect(container.querySelector('.provider-key-row')).toBeNull();
+  });
+
+  it('keeps the replace editor open and the typed draft on a rejection', async () => {
+    const h = makeHandlers({ onReplace: vi.fn(() => Promise.reject(new Error('replace boom'))) });
+    render(h);
+    click('.provider-key-row__replace-toggle');
+    setInputValue(q<HTMLInputElement>('.provider-key-row__replace-input'), 'sk-typed-x');
+    await flush();
+    click('.provider-key-row__replace-save');
+    await flush();
+    const status = q('.provider-key-row__status');
+    expect(status.textContent).not.toBe('Validating new key…');
+    expect(status.textContent).toContain('replace boom');
+    // The editor stays open and the pasted key survives for a deliberate retry.
+    expect(container.querySelector('.provider-key-row__replace')).not.toBeNull();
+    expect(q<HTMLInputElement>('.provider-key-row__replace-input').value).toBe('sk-typed-x');
+  });
+
+  it('drops a replace rejection that lands after unmount (alive guard)', async () => {
+    let rejectCheck: (e: Error) => void = () => {};
+    const onReplace = vi.fn(() => new Promise<KeyCheckResult>((_res, rej) => (rejectCheck = rej)));
+    const h = makeHandlers({ onReplace });
+    render(h);
+    click('.provider-key-row__replace-toggle');
+    setInputValue(q<HTMLInputElement>('.provider-key-row__replace-input'), 'sk-unmount-reject');
+    await flush();
+    click('.provider-key-row__replace-save');
+    act(() => root.unmount());
+    rejectCheck(new Error('late replace failure'));
+    await flush();
+    root = createRoot(container);
+    expect(container.querySelector('.provider-key-row')).toBeNull();
+  });
+});
+
+// --- F41: a PANEL-level mutation in flight must lock this row's controls -----
+// `removeKey` / `replaceKey` both build their upsert payload from a pre-await
+// `providers` snapshot, so a second mutation started while the first is in flight
+// drops one of the two keys. The row had no panel-busy input at all.
+
+describe('ProviderKeyRow — panelBusy locks the mutating controls (F41)', () => {
+  it('disables Re-validate / Replace / Remove while the panel is mutating', () => {
+    const h = makeHandlers();
+    render(h, { panelBusy: true });
+    expect(q<HTMLButtonElement>('.provider-key-row__revalidate').disabled).toBe(true);
+    expect(q<HTMLButtonElement>('.provider-key-row__replace-toggle').disabled).toBe(true);
+    expect(q<HTMLButtonElement>('.provider-key-row__remove').disabled).toBe(true);
+  });
+
+  it('leaves them enabled when the panel is idle', () => {
+    const h = makeHandlers();
+    render(h, { panelBusy: false });
+    expect(q<HTMLButtonElement>('.provider-key-row__revalidate').disabled).toBe(false);
+    expect(q<HTMLButtonElement>('.provider-key-row__remove').disabled).toBe(false);
   });
 });
