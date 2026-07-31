@@ -1675,6 +1675,81 @@ describe('<ShortMaker /> component', () => {
     );
   });
 
+  // -------------------------------------------------------------------------
+  // F45 — the host surface's caption POSITION / subtitle DELIVERY / OVERRIDE.
+  // Both export call sites (review + unattended batch) have their own
+  // useCallback, so each one is pinned separately: forwarding at only one seam
+  // was the shape of the original defect.
+  // -------------------------------------------------------------------------
+
+  const OUTPUT_SLICE = {
+    captionPosition: { x: 0.1, y: 0.06, w: 0.8, h: 0.16 },
+    subtitleMode: 'sidecar' as const,
+    captionOverride: { uppercase: true },
+  };
+
+  it('forwards the host `output` slice into the REVIEW-path export params (F45)', async () => {
+    const rpc = rpcFake({
+      'tracks.audio.list': { audioTracks: [] },
+      'shortmaker.select': { candidates: THREE },
+      'shortmaker.export': { clips: [{ path: '/out/1.mp4' }] },
+    });
+    render(<ShortMaker videoId="v1" api={makeApi({ rpc })} output={OUTPUT_SLICE} />);
+    await submitForm();
+
+    const row = container.querySelector('.sm-candidate[data-id="1@97"]')!;
+    act(() => (row.querySelector('[aria-label="Approve"]') as HTMLButtonElement).click());
+    const exportBtn = [...container.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Export approved',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      exportBtn.click();
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(rpc).toHaveBeenCalledWith(
+      'shortmaker.export',
+      expect.objectContaining({
+        videoId: 'v1',
+        captionPosition: OUTPUT_SLICE.captionPosition,
+        subtitleMode: 'sidecar',
+        captionOverride: { uppercase: true },
+      }),
+    );
+  });
+
+  it('forwards the host `output` slice into the BATCH export params too (F45)', async () => {
+    const rpc = rpcFake({
+      'tracks.audio.list': { audioTracks: [] },
+      'shortmaker.select': { candidates: THREE },
+      'shortmaker.export': { clips: [{ path: '/out/1.mp4' }] },
+    });
+    render(
+      <ShortMaker
+        videoId="v1"
+        api={makeApi({ rpc })}
+        initialControls={{ count: 1 }}
+        output={OUTPUT_SLICE}
+      />,
+    );
+    await act(async () => {
+      (byLabel('Make N shorts') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(rpc).toHaveBeenCalledWith(
+      'shortmaker.export',
+      expect.objectContaining({
+        videoId: 'v1',
+        captionPosition: OUTPUT_SLICE.captionPosition,
+        subtitleMode: 'sidecar',
+        captionOverride: { uppercase: true },
+      }),
+    );
+  });
+
   it('seeds the emphasis control from the per-style default when the caption style changes (P4 §8a)', async () => {
     const rpc = rpcFake({
       'tracks.audio.list': { audioTracks: [] },

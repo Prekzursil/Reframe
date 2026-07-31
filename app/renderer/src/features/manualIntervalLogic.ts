@@ -46,7 +46,20 @@ export function formatTimecode(sec: number): string {
   return `${m}:${ss}`;
 }
 
-/** Build one export Candidate for a manual range (source-anchored, given rank). */
+/**
+ * Build one export Candidate for a manual range (source-anchored, given rank).
+ *
+ * F05 — `hook` MUST stay EMPTY on this path. A non-empty hook is not renderer
+ * metadata: it is BURNED into the exported pixels by the sidecar caption stage
+ * (`shortmaker.py` `hook_title = hook_text or None` -> `caption.py`, as the
+ * OpusClip HookCard for ranks 1-10 and as the plain HookTitle headline
+ * otherwise) and it is persisted as the clip's gallery label in `<clip>.json`.
+ * A raw time range carries no user-authored headline, so the manual path must
+ * emit NO hook text — a placeholder like "Manual clip 1" would be hard-burned
+ * into the delivered short with no control on this surface to suppress it.
+ * Empty makes `hook_title` falsy sidecar-side, which drops BOTH the card and
+ * the headline. `why` is renderer-only and never burned.
+ */
 export function intervalToCandidate(start: number, end: number, rank: number): Candidate {
   return {
     rank,
@@ -54,7 +67,7 @@ export function intervalToCandidate(start: number, end: number, rank: number): C
     end,
     durationSec: end - start,
     sourceStart: start,
-    hook: `Manual clip ${rank}`,
+    hook: '',
     why: 'Manual interval',
     score: 0,
   };

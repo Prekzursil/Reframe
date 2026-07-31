@@ -150,6 +150,19 @@ vi.mock('../components/OutputTray', () => {
         <button type="button" onClick={() => onChange({ ...seed, translate: true })}>
           tray-change
         </button>
+        {/* F08: mirrors what the REAL OutputTray emits when the "Caption"
+            checkbox is unchecked — `caption: false` with `subtitleMode` LEFT at
+            'burn' (OutputTray.tsx flips only the named key and simultaneously
+            hides the "Subtitle delivery" select). */}
+        <button type="button" onClick={() => onChange({ ...seed, caption: false })}>
+          tray-uncaption
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange({ ...seed, caption: true, subtitleMode: 'sidecar' })}
+        >
+          tray-recaption-sidecar
+        </button>
         <button type="button" onClick={() => onSaveShort?.()}>
           tray-save-short
         </button>
@@ -557,6 +570,50 @@ describe('<MakeShorts />', () => {
     expect(container.querySelector('.make-shorts__note')?.textContent).toContain(
       'Saved the SRT sidecar',
     );
+  });
+
+  // F08: the tray's "Caption" checkbox is the COARSE switch. Unchecking it must
+  // reach the export payload — 'none' is already a first-class subtitle mode the
+  // sidecar honours by skipping the whole caption stage. Before the fix
+  // `subtitleMode: tray.subtitleMode` was forwarded unconditionally, so the next
+  // export still HARD-BURNED captions into the pixels.
+  it('honours the tray Caption toggle on the NEXT manual export', async () => {
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    // PRECONDITION GUARD: the harness reaches the payload correctly today.
+    expect(exportMock).toHaveBeenCalledTimes(1);
+    expect(exportMock.mock.calls[0][2].subtitleMode).toBe('burn');
+
+    await act(async () => {
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'tray-uncaption',
+        ) as HTMLButtonElement
+      ).click();
+    });
+    await clickManualSubmit();
+
+    expect(exportMock).toHaveBeenCalledTimes(2);
+    expect(exportMock.mock.calls[1][2].subtitleMode).toBe('none');
+  });
+
+  // The true branch of the same expression: with Caption ON, a real delivery
+  // choice must still flow through untouched (the coarse switch must not clobber
+  // the fine-grained select).
+  it('keeps a real subtitle delivery choice when Caption stays checked', async () => {
+    await mount();
+    await selectVideo('v1');
+    await clickManualSubmit();
+    await act(async () => {
+      (
+        [...container.querySelectorAll('button')].find(
+          (b) => b.textContent === 'tray-recaption-sidecar',
+        ) as HTMLButtonElement
+      ).click();
+    });
+    await clickManualSubmit();
+    expect(exportMock.mock.calls[1][2].subtitleMode).toBe('sidecar');
   });
 
   it('swallows a library.list rejection (best-effort) and stays usable', async () => {
