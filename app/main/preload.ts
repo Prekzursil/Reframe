@@ -69,6 +69,18 @@ export interface ProxyStateEvent {
 export type SidecarStatus = 'running' | 'restarting' | 'down';
 
 /**
+ * WHY the on-disk keystore could not be read (mirrors keystore.ts
+ * KeystoreUnreadableReason). Declared inline rather than imported ON PURPOSE: this
+ * module imports ONLY from `electron` (see the import above), and a value import of
+ * ./keystore would pull node:fs / node:path into the preload bundle.
+ */
+export type KeystoreUnreadableReason =
+  | 'read-failed'
+  | 'parse-failed'
+  | 'shape-invalid'
+  | 'decrypt-failed';
+
+/**
  * WU-D2b-1: the secure-key-storage availability decision (mirrors keystore.ts
  * SecureStatus). `sessionOnly` true means keys cannot be saved at rest on this
  * system, so the renderer shows the loud session-only banner.
@@ -83,6 +95,17 @@ export interface SecureStatus {
    * shred; the renderer banner names them so the user can delete them manually.
    */
   unshreddable?: string[];
+  /**
+   * WHY the on-disk keystore could not be read, or null when healthy/absent. While it
+   * is non-null the bridge fail-closed REFUSES to overwrite the keystore, so the
+   * renderer must surface it or a refused save looks like a successful one.
+   *
+   * This declaration is TYPE-LEVEL PARITY, not a functional prerequisite: the `as`
+   * assertion on the invoke below is erased at compile time and never filters
+   * properties, so the field already crossed intact. It is declared here because this
+   * mirror silently going stale is how the renderer came to drop the field at all.
+   */
+  keystoreUnreadable?: KeystoreUnreadableReason | null;
 }
 
 /** WU A5: outcome of an on-demand "Retry setup / Repair" bootstrap re-run. */
