@@ -68,6 +68,26 @@ export function Subtitles({
     'original-first',
   );
 
+  // F19: the Workspace derives `initialTrack` from `project.tracks[0]`, but
+  // `project.open` is fired from a POST-COMMIT effect (Workspace.tsx:173-176) and
+  // can land AFTER this lazily-imported panel has mounted — so the prop must be
+  // ADOPTED, not only captured once at mount by `useState(initialTrack)` above.
+  // Without this the panel shows "Generate subtitles" forever and the project's
+  // existing (possibly hand-edited) track is invisible for the panel's lifetime.
+  //
+  // Guarded on `!track` so it hydrates the EMPTY panel only, and never clobbers a
+  // generated / translated / locally-edited track (a later project reload would
+  // otherwise overwrite unsaved keystrokes). `setTrack`, NOT `applyTrack`
+  // (:81-87): hydrating from the parent's own data must not fire `onTrackChange`
+  // back at the parent.
+  //
+  // Accepted residual: a Generate clicked BEFORE `project.open` lands is visibly
+  // superseded — the hydrate fills the empty slot first, then the generate
+  // response replaces it. Cosmetic only; the generated track still wins.
+  useEffect(() => {
+    if (initialTrack && !track) setTrack(initialTrack);
+  }, [initialTrack, track]);
+
   useEffect(() => {
     if (!jobId) return;
     const off = getApi().onProgress((ev) => {
