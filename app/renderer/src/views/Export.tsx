@@ -73,6 +73,14 @@ function ExportWorkspace({
   // A live controller is always present (replaced per commit) so `cancel` never
   // needs a null guard — a stale abort with nothing awaiting it is harmless.
   const abort = useRef<AbortController>(new AbortController());
+  // Cancel pressed BEFORE `convert.start` resolved, so there was no jobId to stop
+  // yet — but the sidecar had already started the job. Deliberately a LATCH rather
+  // than the sibling panels' `running && jobId` gating (`Convert.tsx:317`,
+  // `Refine.tsx:249`), diverging from a tested repo convention for two reasons:
+  // `jobId` here is a `useRef` (no re-render, so gating would need it promoted to
+  // state), and hiding Cancel would remove the escape hatch during exactly the
+  // slow-start window where the user most wants one.
+  const cancelRequested = useRef(false);
 
   // Best-effort: load the cues being exported so the stage can summarize them. The
   // export never REQUIRES captions, so a load failure is silently non-blocking.
@@ -89,6 +97,7 @@ function ExportWorkspace({
   const onCommit = useCallback(
     async (preset: PlatformPreset, options: ConvertOptions): Promise<void> => {
       if (!hasApi()) return;
+      cancelRequested.current = false;
       setPhase('running');
       setPct(0);
       setMessage('Starting…');
@@ -107,6 +116,20 @@ function ExportWorkspace({
           setPct(event.pct);
           setMessage(event.message);
         });
+        // Drain a cancel that landed before this id existed. TERMINAL, not
+        // advisory: the `res.path` fast path below skips `waitForJobDone`, so
+        // without the early return a cancelled job would render a terminal SUCCESS
+        // with a "Show in folder" reveal. Fire-and-forget preserves the
+        // abort-settles-the-UI-first ordering documented in `cancel` below — an
+        // awaited RPC on a queued stdio channel would strand the user on a stale
+        // "Exporting…" panel and invite a duplicate cancel.
+        if (cancelRequested.current) {
+          void client.job.cancel(id).catch(() => {
+            // best-effort: the UI is already settling to 'cancelled'.
+          });
+          setPhase('cancelled');
+          return;
+        }
         let outPath: string | null = res.path ?? null;
         if (!outPath) {
           outPath = await waitForJobDone(
@@ -142,6 +165,9 @@ function ExportWorkspace({
   );
 
   const cancel = useCallback(async (): Promise<void> => {
+    // Latch FIRST, so a cancel racing `convert.start`'s round-trip is still
+    // honoured once the jobId lands (drained in `onCommit`).
+    cancelRequested.current = true;
     // Abort the terminal wait (settles the UI to 'cancelled'), then stop the job.
     abort.current.abort();
     const id = jobId.current;

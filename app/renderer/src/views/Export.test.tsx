@@ -262,7 +262,10 @@ describe('Export view', () => {
     expect(q('.export-result')?.className).toContain('is-cancelled');
   });
 
-  it('cancels before the job id resolves (abort settles the pending wait)', async () => {
+  // A cancel pressed while `convert.start`'s round-trip is still in flight has no
+  // jobId to cancel YET, but the sidecar has already started the job. The latch
+  // must drain the moment the id lands, or the job is orphaned (F23).
+  it('cancels the job once a late jobId arrives (pre-jobId cancel latch)', async () => {
     let resolveStart!: (value: { jobId: string }) => void;
     convertStartMock.mockReturnValue(
       new Promise<{ jobId: string }>((resolve) => {
@@ -273,14 +276,58 @@ describe('Export view', () => {
     await flush();
     await commit(); // convert.start is still pending here
     expect(q('.export-progress')).not.toBeNull();
-    // Cancel while there is no jobId yet: job.cancel is NOT called.
+    // Cancel while there is no jobId yet: nothing is on the wire to cancel.
     act(() => q<HTMLButtonElement>('.export-progress__cancel')?.click());
     expect(jobCancelMock).not.toHaveBeenCalled();
-    // Now the start resolves; the already-aborted wait settles to cancelled.
+    // The start resolves. The latch must now stop the job the sidecar DID start.
     await act(async () => {
       resolveStart({ jobId: 'late' });
       await flush();
     });
+    expect(jobCancelMock).toHaveBeenCalledWith('late');
+    // Setup discriminator: this assertion already passed pre-fix, so a failure
+    // HERE means the harness is wrong, not the product.
+    expect(q('.export-result')?.className).toContain('is-cancelled');
+  });
+
+  it('keeps the late cancel terminal even when the start returns a path', async () => {
+    let resolveStart!: (value: { jobId: string; path: string }) => void;
+    convertStartMock.mockReturnValue(
+      new Promise<{ jobId: string; path: string }>((resolve) => {
+        resolveStart = resolve;
+      }),
+    );
+    render(VIDEO);
+    await flush();
+    await commit();
+    act(() => q<HTMLButtonElement>('.export-progress__cancel')?.click());
+    await act(async () => {
+      resolveStart({ jobId: 'late', path: '/exports/fast.mp4' });
+      await flush();
+    });
+    expect(jobCancelMock).toHaveBeenCalledWith('late');
+    // A cancelled job must NEVER render a terminal SUCCESS with "Show in folder".
+    expect(q('.export-result')?.className).toContain('is-cancelled');
+    expect(q('.export-result__path')).toBeNull();
+  });
+
+  it('swallows a rejected late cancel and still settles to cancelled', async () => {
+    jobCancelMock.mockRejectedValue(new Error('cancel boom'));
+    let resolveStart!: (value: { jobId: string }) => void;
+    convertStartMock.mockReturnValue(
+      new Promise<{ jobId: string }>((resolve) => {
+        resolveStart = resolve;
+      }),
+    );
+    render(VIDEO);
+    await flush();
+    await commit();
+    act(() => q<HTMLButtonElement>('.export-progress__cancel')?.click());
+    await act(async () => {
+      resolveStart({ jobId: 'late' });
+      await flush();
+    });
+    expect(jobCancelMock).toHaveBeenCalledWith('late');
     expect(q('.export-result')?.className).toContain('is-cancelled');
   });
 
