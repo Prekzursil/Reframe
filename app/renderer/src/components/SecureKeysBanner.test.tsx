@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import {
+  keystoreUnreadableBannerText,
   SecureKeysBanner,
   SESSION_ONLY_BANNER,
   unshreddableBannerText,
@@ -203,6 +204,69 @@ describe('SecureKeysBanner', () => {
     await flush();
     expect(banner()).toBeNull();
   });
+
+  it('surfaces the keystore-unreadable warning even when secure storage is healthy (sessionOnly false)', async () => {
+    // F39: main COMPUTES this (keyBridge.ts:234 `keystoreUnreadable: this.readDisk().reason`)
+    // and refuses to overwrite the keystore while it is set (keyBridge.ts:276-279), so a
+    // saved key silently does not persist. The reason crosses IPC intact, and the renderer
+    // dropped it: `messagesFor` emitted lines only for sessionOnly/unshreddable, so with a
+    // healthy store and no lingering plaintext the component returned null and the user was
+    // told NOTHING. Modelled on the passing additive-axis test above so a harness fault is
+    // excluded by construction: identical bridge, identical `sessionOnly:false` shape.
+    installBridge();
+    getSecureStatus.mockResolvedValue({
+      available: true,
+      backend: null,
+      sessionOnly: false,
+      banner: null,
+      unshreddable: [],
+      keystoreUnreadable: 'decrypt-failed',
+    });
+    mount();
+    await flush();
+    const el = banner();
+    expect(el).not.toBeNull();
+    expect(el?.getAttribute('role')).toBe('alert');
+    expect(el?.textContent).toContain('could not be read');
+  });
+
+  it('stacks all THREE warnings when sessionOnly, unshreddable and unreadable all apply', async () => {
+    installBridge();
+    getSecureStatus.mockResolvedValue({
+      available: false,
+      backend: 'basic_text',
+      sessionOnly: true,
+      banner: 'Keys cannot be saved — session only.',
+      unshreddable: ['/a/x.bak'],
+      keystoreUnreadable: 'read-failed',
+    });
+    mount();
+    await flush();
+    const el = banner();
+    expect(el?.querySelectorAll('.secure-keys-banner__message')).toHaveLength(3);
+    expect(el?.textContent).toContain('Keys cannot be saved — session only.');
+    expect(el?.textContent).toContain('/a/x.bak');
+    expect(el?.textContent).toContain('could not be read');
+  });
+
+  // REGRESSION GUARD — passes BOTH before and after the fix (stated honestly: this is not
+  // a red-proof). It pins the falsy arm of the new branch for the explicit `null` the wire
+  // actually sends for a healthy/absent keystore (keyBridge.test.ts:305-310), so a future
+  // truthiness slip cannot start alerting on a perfectly healthy store.
+  it('stays hidden when keystoreUnreadable is null (healthy or absent keystore)', async () => {
+    installBridge();
+    getSecureStatus.mockResolvedValue({
+      available: true,
+      backend: null,
+      sessionOnly: false,
+      banner: null,
+      unshreddable: [],
+      keystoreUnreadable: null,
+    });
+    mount();
+    await flush();
+    expect(banner()).toBeNull();
+  });
 });
 
 describe('unshreddableBannerText', () => {
@@ -218,5 +282,37 @@ describe('unshreddableBannerText', () => {
     expect(text).toContain('2 old plaintext API-key files ');
     expect(text).toContain('remain readable on disk');
     expect(text).toContain('Delete them manually: /a/x.bak, /b/y.old');
+  });
+});
+
+describe('keystoreUnreadableBannerText', () => {
+  // One case per KeystoreUnreadableReason. These PIN THE COPY; they are not needed for
+  // the branch gate (a Record property read is a statement, not a branch under v8).
+  it.each([
+    ['read-failed', 'another program may be holding it open'],
+    ['parse-failed', 'an earlier save was probably interrupted'],
+    ['shape-invalid', 'not in the expected format'],
+    ['decrypt-failed', 'copied from another machine or user profile'],
+  ] as const)('names the cause for %s', (reason, cause) => {
+    const text = keystoreUnreadableBannerText(reason);
+    expect(text).toContain('could not be read');
+    expect(text).toContain(cause);
+  });
+
+  it('never claims permanent loss and never names a data folder', () => {
+    // Both refusals are load-bearing: a `read-failed` lock can be transient, and the
+    // keystore lives under Electron's userData dir — NOT the user-chosen data folder —
+    // so naming that folder would send the user to the wrong place.
+    for (const reason of [
+      'read-failed',
+      'parse-failed',
+      'shape-invalid',
+      'decrypt-failed',
+    ] as const) {
+      const text = keystoreUnreadableBannerText(reason);
+      expect(text).toContain('Try restarting the app');
+      expect(text).not.toMatch(/permanent|lost forever|deleted/i);
+      expect(text).not.toMatch(/data folder/i);
+    }
   });
 });
