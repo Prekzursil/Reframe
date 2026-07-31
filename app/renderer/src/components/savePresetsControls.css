@@ -20,6 +20,14 @@
   font-size: var(--type-caption-size);
 }
 
+/* Quiet, action-neutral "Working…" live region shown while a mutation is in
+ * flight (the whole surface is locked for it). Existing tokens only. */
+.save-presets__status {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--type-caption-size);
+}
+
 .save-presets__list {
   list-style: none;
   margin: 0;
@@ -106,4 +114,13 @@
   background: var(--surface-raised);
   color: var(--text-primary);
   padding: var(--space-1) var(--space-2);
+}
+
+/* Without this the input looked fully editable while swallowing keystrokes: the
+ * author declarations above beat Chromium's UA `input:disabled` colours, and the
+ * global `.feature-panel button:disabled` rule never reaches `.settings__panel`.
+ * Mirrors `spendCap.css:226` (`.spend-cap__input:disabled`). */
+.save-presets__name-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
