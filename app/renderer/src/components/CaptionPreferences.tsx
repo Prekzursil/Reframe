@@ -33,6 +33,15 @@ export interface CaptionPreferencesProps {
   rpc?: SettingsBridge;
 }
 
+/**
+ * DOM ids wiring the "Caption quality" group to its heading + scope note, so the
+ * disclosure is programmatically associated (aria-labelledby/-describedby) and not
+ * merely adjacent. Static string ids follow the panel idiom (LocalRunners.tsx,
+ * RoutingToggle.tsx) — this panel renders once per Settings sub-tab.
+ */
+const QUALITY_LABEL_ID = 'prefs-caption-quality-label';
+const QUALITY_SCOPE_ID = 'prefs-caption-quality-scope';
+
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -74,13 +83,33 @@ export function CaptionPreferences({
     }
   }, [rpc, prefs]);
 
+  /**
+   * Apply a draft edit. ANY edit makes `prefs` diverge from what is on disk, so
+   * the green "Preferences saved." live region must stop asserting a state that
+   * no longer holds — it is otherwise cleared only by the NEXT save. Every edit
+   * handler below routes through this, so the invariant lives in one place.
+   *
+   * `error` is deliberately NOT cleared: a save failure stays relevant until the
+   * next save attempt. Nor is the Save button gated on dirtiness — an
+   * unsaved-changes guard is a separate, unbuilt capability.
+   */
+  const editPrefs = useCallback((next: (p: Prefs) => Prefs): void => {
+    setStatus('');
+    setPrefs(next);
+  }, []);
+
   const visual = captionVisualFor(prefs.design.style);
+  // The "none" template's fill is the literal `transparent` (NONE_VISUAL in
+  // captionTemplates.ts), so applying it would paint the preview's own
+  // explanatory "No captions" label at zero alpha.
+  const none = isNoCaption(prefs.design.style);
 
   return (
     <section className="caption-prefs panel" aria-label="Caption defaults">
       <h2 className="caption-prefs__title">Caption &amp; output defaults</h2>
       <p className="caption-prefs__hint">
-        These defaults seed every new short — you can still tweak each clip in Make Shorts.
+        Caption style, position, subtitle delivery and language seed every new short — you can still
+        tweak each clip in Make Shorts.
       </p>
 
       <div className="caption-prefs__group">
@@ -88,13 +117,16 @@ export function CaptionPreferences({
         <div className="caption-prefs__frame">
           <CaptionBox
             box={prefs.design.box}
-            onChange={(box) => setPrefs((p) => ({ ...p, design: { ...p.design, box } }))}
+            onChange={(box) => editPrefs((p) => ({ ...p, design: { ...p.design, box } }))}
           >
             <span
-              className="caption-prefs__sample"
-              style={{ color: visual.activeColor, fontFamily: visual.fontFamily }}
+              className={`caption-prefs__sample${none ? ' caption-prefs__sample--none' : ''}`}
+              style={{
+                color: none ? undefined : visual.activeColor,
+                fontFamily: visual.fontFamily,
+              }}
             >
-              {isNoCaption(prefs.design.style) ? 'No captions' : 'Aa'}
+              {none ? 'No captions' : 'Aa'}
             </span>
           </CaptionBox>
         </div>
@@ -104,7 +136,7 @@ export function CaptionPreferences({
         <h3>Default style</h3>
         <CaptionStylePicker
           value={prefs.design.style}
-          onChange={(style) => setPrefs((p) => ({ ...p, design: { ...p.design, style } }))}
+          onChange={(style) => editPrefs((p) => ({ ...p, design: { ...p.design, style } }))}
         />
       </div>
 
@@ -115,7 +147,7 @@ export function CaptionPreferences({
           aria-label="Default subtitle delivery"
           value={prefs.subtitleMode}
           onChange={(e) =>
-            setPrefs((p) => ({ ...p, subtitleMode: e.target.value as SubtitleMode }))
+            editPrefs((p) => ({ ...p, subtitleMode: e.target.value as SubtitleMode }))
           }
         >
           {SUBTITLE_MODES.map((mode) => (
@@ -132,18 +164,27 @@ export function CaptionPreferences({
           value={prefs.language}
           includeAuto={false}
           label="Default language"
-          onChange={(code) => setPrefs((p) => ({ ...p, language: code }))}
+          onChange={(code) => editPrefs((p) => ({ ...p, language: code }))}
         />
       </div>
 
-      <div className="caption-prefs__group">
-        <h3>Caption quality</h3>
+      <div
+        className="caption-prefs__group"
+        role="group"
+        aria-labelledby={QUALITY_LABEL_ID}
+        aria-describedby={QUALITY_SCOPE_ID}
+      >
+        <h3 id={QUALITY_LABEL_ID}>Caption quality</h3>
+        <p className="caption-prefs__scope" id={QUALITY_SCOPE_ID}>
+          Applies to captions generated on the Caption, Subtitles and Recipes screens — not to the
+          Make Shorts export, where captions are tuned per clip in the caption editor.
+        </p>
         <label className="caption-prefs__toggle" htmlFor="prefs-caption-polish">
           <input
             id="prefs-caption-polish"
             type="checkbox"
             checked={prefs.captionPolish}
-            onChange={(e) => setPrefs((p) => ({ ...p, captionPolish: e.target.checked }))}
+            onChange={(e) => editPrefs((p) => ({ ...p, captionPolish: e.target.checked }))}
           />
           <span className="caption-prefs__toggle-text">
             Polish captions
@@ -155,7 +196,7 @@ export function CaptionPreferences({
             id="prefs-caption-speakers"
             type="checkbox"
             checked={prefs.captionSpeakerLabels}
-            onChange={(e) => setPrefs((p) => ({ ...p, captionSpeakerLabels: e.target.checked }))}
+            onChange={(e) => editPrefs((p) => ({ ...p, captionSpeakerLabels: e.target.checked }))}
           />
           <span className="caption-prefs__toggle-text">
             Speaker labels

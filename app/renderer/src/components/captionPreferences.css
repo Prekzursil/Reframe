@@ -22,6 +22,14 @@
   gap: 8px;
 }
 
+/* Per-group scope disclosure (aria-describedby target) — quieter than the group
+   heading, same treatment as the panel hint. */
+.caption-prefs__scope {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
 .caption-prefs__group h3 {
   margin: 0;
   font-size: 0.95rem;
@@ -68,6 +76,14 @@
   font-weight: 800;
   font-size: 18px;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+/* "No captions" is explanatory COPY, not a type sample, so it carries no
+   template fill (the none template's activeColor is `transparent`) and inherits
+   --text-primary. Quieter weight than a real sample; NO colour override here, so
+   contrast against the frame gradient stays that of the primary text token. */
+.caption-prefs__sample--none {
+  font-weight: 600;
 }
 
 .caption-prefs__actions {
