@@ -369,15 +369,34 @@ export function Library({
     async (id: string, event: React.MouseEvent) => {
       event.stopPropagation();
       setError(null);
-      // Optimistic removal; restore on failure.
-      const snapshot = videos;
+      // Optimistic removal; on failure restore ONLY this video, at its original
+      // index, through a FUNCTIONAL update.
+      //
+      // A whole-list snapshot (`const snapshot = videos` + `setVideos(snapshot)`)
+      // clobbered every state change that landed while this RPC was in flight: it
+      // resurrected a video whose OWN remove had succeeded — a phantom card whose
+      // manifest and poster the sidecar had already unlinked (library_ops.py:160-161)
+      // and which opens into failing path-resolving RPCs — and it erased a
+      // just-dropped import that WAS in the library DB.
+      //
+      // Deliberately BRANCH-FREE, for the same 100%-branch-coverage reason spelled
+      // out in removeSelected below: with `at === -1` (the id already gone),
+      // `slice(-1, 0)` is `[]` and the reassembly `slice(0, -1) + [] + slice(-1)`
+      // reconstitutes the list exactly, so the unreachable not-found case needs no
+      // conditional and mints no uncovered branch.
+      const at = videos.findIndex((v) => v.id === id);
+      const removed = videos.slice(at, at + 1);
       setVideos((prev) => prev.filter((v) => v.id !== id));
       unselect(id);
       try {
         await rpc<{ ok: boolean }>('library.remove', { id });
       } catch (err) {
         setError(errText(err));
-        setVideos(snapshot);
+        setVideos((prev) => {
+          // Re-filter first so a double-fire cannot duplicate the restored card.
+          const without = prev.filter((v) => v.id !== id);
+          return [...without.slice(0, at), ...removed, ...without.slice(at)];
+        });
       }
     },
     [videos, unselect],
@@ -586,16 +605,28 @@ export function Library({
           </ul>
         </div>
       ) : videos.length === 0 ? (
-        <div className="library__empty">
-          <div className="library__empty-poster" aria-hidden="true">
-            <span className="library__empty-glyph">▶</span>
-            <span className="library__empty-timecode">--:--</span>
+        // A FAILED `library.list` also lands here with `videos === []`, so the
+        // first-run poster used to render UNDER the error alert and tell the user
+        // their library was empty when we had merely failed to read it. SUPPRESS
+        // the poster then; the single `.library__error` alert above stays the one
+        // error surface (restating the message would duplicate it on screen, once
+        // inside a role="alert").
+        //
+        // The `error` test must live strictly INSIDE this arm: hoisting it above
+        // `videos.length === 0` would also suppress the LIST, and a failed
+        // `library.remove` legitimately renders error != null WITH videos > 0.
+        error ? null : (
+          <div className="library__empty">
+            <div className="library__empty-poster" aria-hidden="true">
+              <span className="library__empty-glyph">▶</span>
+              <span className="library__empty-timecode">--:--</span>
+            </div>
+            <p className="library__empty-title">No videos yet</p>
+            <p className="library__empty-hint">
+              Click “Add videos” or drop video files anywhere here.
+            </p>
           </div>
-          <p className="library__empty-title">No videos yet</p>
-          <p className="library__empty-hint">
-            Click “Add videos” or drop video files anywhere here.
-          </p>
-        </div>
+        )
       ) : visible.length === 0 ? (
         <div className="library__empty library__empty--filtered">
           <p className="library__empty-title">No matches</p>
