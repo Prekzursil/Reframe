@@ -796,8 +796,20 @@ class Batch:
         return {"batches": self.store.list()}
 
     def delete(self, params: dict[str, Any], ctx: RpcContext) -> dict[str, Any]:
-        """``batch.delete({id})`` -> ``{ok}`` (drops a finished/cancelled record)."""
+        """``batch.delete({id})`` -> ``{ok}`` (drops a NOT-LIVE batch record).
+
+        REFUSES with ``INVALID_PARAMS`` while the batch's parent job is still live
+        (:meth:`_parent_job_is_live`). This is the only place liveness is knowable, so
+        it is the backstop rather than a renderer hint: the runner checkpoints through
+        ``store.update_item``, which raises ``unknown batch`` (``:282-284``) once the
+        file is unlinked, so a delete mid-run kills the parent job with partial
+        outputs and no record. A renderer ``status != 'running'`` check cannot cover
+        it — ``resume_batch`` resets pending items to ``queued`` on disk BEFORE the
+        pooled worker reaches ``running``, and the panel reloads inside that window.
+        """
         batch_id = _require_id(params)
+        if self._parent_job_is_live(batch_id, ctx):
+            raise _invalid(f"batch is still running: {batch_id}")
         ok = self.store.delete(batch_id)
         self._parent_jobs.pop(batch_id, None)
         return {"ok": ok}
@@ -898,7 +910,13 @@ class Batch:
 
         Re-runs ONLY the not-yet-done sources of an incomplete batch as a fresh
         parent job (:func:`resume_batch`); finished work is never redone (G-DUR).
-        A fully-terminal batch is a no-op (``{jobId: None, status}``).
+        A fully-terminal batch is a no-op (``{jobId: None, status}``), and so is a
+        batch whose parent job is still LIVE (:meth:`_parent_job_is_live`).
+
+        The liveness gate runs BEFORE :func:`resume_batch`, not before the
+        ``starter(...)`` call inside it: the durable re-enqueue rewrites the live
+        run's in-flight item from ``running`` to ``queued`` ON DISK, so a later
+        guard would still corrupt the running batch's checkpoint.
         """
         batch_id = _require_id(params)
         state = self.store.load(batch_id)
@@ -906,6 +924,11 @@ class Batch:
             raise _invalid(f"unknown batch: {batch_id}")
         if ctx.jobs is None:
             raise RpcError("no job registry available", ErrorCode.INTERNAL_ERROR)
+        if self._parent_job_is_live(batch_id, ctx):
+            # Re-use the no-op wire shape resume_batch already returns for a
+            # fully-terminal batch, so no schema/type changes: the renderer's
+            # jobIdOf() already tolerates a null jobId.
+            return {"jobId": None, "status": state.get("status")}
         template_id = str(state.get("templateId") or "")
         out = resume_batch(
             self.store,
@@ -942,6 +965,29 @@ class Batch:
         if parent_job_id is None or ctx.jobs is None:
             return None
         return ctx.jobs.get(parent_job_id)
+
+    def _parent_job_is_live(self, batch_id: str, ctx: RpcContext) -> bool:
+        """``True`` while a tracked parent job is still doing work for ``batch_id``.
+
+        The ONE liveness gate shared by :meth:`resume` and :meth:`delete` — both
+        mutate a batch the runner may be checkpointing through
+        (``store.update_item`` raises ``unknown batch`` the moment the file is
+        gone), and liveness is knowable ONLY here: ``_parent_jobs`` is in-memory,
+        and the durable aggregate ``status`` cannot distinguish "live right now"
+        from "the process died mid-flight" (both read ``running``,
+        :func:`derive_status`). That is why the renderer must not gate on status.
+
+        A job with ``cancel_requested`` set is deliberately NOT live: ``cancel``
+        only sets a cooperative flag and the parent stays un-``finished`` until the
+        in-flight sub-job relay unwinds (bounded by ``recipes.SUBJOB_TIMEOUT``, one
+        hour), so treating it as live would turn today's working Cancel -> Resume
+        into a silent no-op for that whole window.
+
+        Absent / evicted / post-restart it returns ``False``, so a crash-interrupted
+        batch stays resumable — the headline case resume exists for (§10.1).
+        """
+        job = self._live_parent_job(batch_id, ctx)
+        return job is not None and not job.finished and not job.cancel_requested
 
     def _runner_for(self, template_id: str) -> TemplateRunner:
         """The per-source template seam for ``template_id`` (injected or default).
