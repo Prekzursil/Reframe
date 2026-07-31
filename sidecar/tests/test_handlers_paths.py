@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 from media_studio import handlers
 from media_studio.handlers import Services
+from media_studio.keepcopy import ManagedStore
 from media_studio.protocol import RpcContext
 
 
@@ -45,7 +46,35 @@ def test_paths_describe_projects_dir_matches_services(services: Services, ctx: R
 def test_paths_describe_settings_and_library_paths(services: Services, ctx: RpcContext) -> None:
     result = services.paths_describe({}, ctx)
     assert result["settingsPath"] == str(services.settings.config_path)
-    assert result["libraryPath"] == str(services.library.index_path)
+    # NOT ``index_path``: that is the LEGACY JSON index the SQLite store only ever
+    # reads-then-renames. Comparing against ``db_path`` is what makes this assertion
+    # falsifiable — the old ``index_path == index_path`` form was a tautology.
+    assert result["libraryPath"] == str(services.library.db_path)
+
+
+def test_paths_describe_library_path_names_the_real_sqlite_store(services: Services, ctx: RpcContext) -> None:
+    """The reported "Library file" must be the file the store actually uses.
+
+    ``Library.list()`` enters ``_open()``, which mkdirs the data root and
+    ``sqlite3.connect``s ``library.db`` — so that file genuinely exists when the
+    assertion runs, while NOTHING in ``Library`` ever writes ``library.json``
+    (it is only read, then demoted to ``library.json.bak``).
+    """
+    services.library.list()
+    reported = Path(services.paths_describe({}, ctx)["libraryPath"])
+    assert reported.exists(), f"paths.describe names a file that is not on disk: {reported}"
+    assert reported.name == "library.db"
+    assert reported == services.library.db_path
+
+
+def test_paths_describe_names_the_managed_copy_store(services: Services, ctx: RpcContext) -> None:
+    """The managed-copy folder is rendered by the very next Settings panel, so name it.
+
+    The expected value is derived from :class:`ManagedStore` itself, so the entry
+    cannot drift from the folder the store actually writes into.
+    """
+    sub = services.paths_describe({}, ctx)["subDirs"]
+    assert sub["managed-copies"] == str(ManagedStore(services.library).store_dir)
 
 
 def test_paths_describe_subdirs_cover_required_features(services: Services, ctx: RpcContext) -> None:
