@@ -123,7 +123,7 @@ describe('<SetupStatusPanel /> — WU-2 first-run diagnostic', () => {
         }),
         check({
           id: 'cv2',
-          label: 'Reframe engine (OpenCV + MediaPipe)',
+          label: 'Reframe engine (OpenCV)',
           required: true,
           ok: false,
           detail: 'missing: cv2',

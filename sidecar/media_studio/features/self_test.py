@@ -11,7 +11,9 @@ Checks (the wire ``id`` the panel keys on):
   * ``data``   — the per-user data dir is writable (write+read+delete a probe).
   * ``device`` — the hardware probe (:mod:`system_advisor`) runs: GPU / VRAM / RAM
     / free disk (informational — a missing GPU degrades speed, not capability).
-  * ``cv2``    — OpenCV + MediaPipe importable (the reframe subject-tracking core).
+  * ``cv2``    — OpenCV importable (the reframe subject-tracking core: YuNet runs
+    entirely through ``cv2.FaceDetectorYN``, see ``reframe_claudeshorts`` whose
+    ``NATIVE_MODULES_FOR_PREIMPORT`` is likewise ``("cv2",)``).
   * ``asr``    — the Whisper ASR backend (``faster_whisper``) importable.
   * ``ffmpeg`` — ffmpeg + ffprobe resolvable via :mod:`tools_resolver`.
 
@@ -42,8 +44,8 @@ DATA_FIX = "Choose a different data folder in Settings, or fix the folder's perm
 DEVICE_LABEL = "Device probe"
 DEVICE_FIX = "Update your GPU driver. The app still works without a GPU — moment-finding just runs slower on CPU."
 
-CV2_LABEL = "Reframe engine (OpenCV + MediaPipe)"
-CV2_FIX = "Reframe needs OpenCV + MediaPipe — reinstall the app or run setup to restore the bundled Python deps."
+CV2_LABEL = "Reframe engine (OpenCV)"
+CV2_FIX = "Reframe needs OpenCV — reinstall the app or run setup to restore the bundled Python deps."
 
 ASR_LABEL = "Speech-to-text engine (Whisper)"
 ASR_FIX = "The Whisper engine needs faster-whisper — reinstall the app or run setup to restore the bundled Python deps."
@@ -52,9 +54,17 @@ FFMPEG_LABEL = "Media tools (FFmpeg)"
 FFMPEG_FIX = "ffmpeg/ffprobe were not found — install FFmpeg and add it to PATH, or set its path in Settings."
 
 # Probe-key module names (a single import-availability family per dependency).
-_CV2_MODULES: tuple[str, ...] = ("cv2", "mediapipe")
+#
+# INVARIANT (pinned by tests/test_self_test.py): every module named below feeds a
+# REQUIRED check, so it MUST be one ``runtime_setup/requirements-sidecar.txt``
+# actually installs. ``mediapipe`` is DELIBERATELY not provisioned there (its
+# Solutions-API wheels declare ``numpy<2``, a hard conflict with the pinned
+# ``numpy==2.5.1``), so listing it here made every healthy install report the
+# blocking "Some required components are missing" banner with an unfollowable fix
+# hint. Reframe does not need it: YuNet runs entirely through ``cv2``.
+_CV2_MODULES: tuple[str, ...] = ("cv2",)
 _ASR_MODULES: tuple[str, ...] = ("faster_whisper",)
-_DEP_MODULES: tuple[str, ...] = ("cv2", "mediapipe", "faster_whisper")
+_DEP_MODULES: tuple[str, ...] = ("cv2", "faster_whisper")
 _FFMPEG_TOOLS: tuple[str, ...] = ("ffmpeg", "ffprobe")
 
 #: the probe file the data-dir writability check writes/reads/deletes.

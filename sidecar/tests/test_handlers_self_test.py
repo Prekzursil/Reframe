@@ -9,6 +9,7 @@ returns the camelCase wire report the Electron setup-status panel renders 1:1.
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,35 @@ def test_self_test_returns_wire_report(tmp_path: Path, ctx: RpcContext, monkeypa
     assert by_id["data"]["ok"] is True
     assert by_id["device"]["ok"] is True
     assert by_id["ffmpeg"]["ok"] is True
+
+
+def test_self_test_cv2_row_is_green_when_opencv_is_importable(
+    tmp_path: Path, ctx: RpcContext, monkeypatch: Any
+) -> None:
+    """F37 end-to-end: a provisioned install must not report the reframe row red.
+
+    Runs over the REAL ``importlib.find_spec`` seam (``system_self_test`` injects
+    none), so this asserts the actual wire values the setup-status panel renders —
+    not a fixture's own copy.
+
+    SCOPED TO THE ``cv2`` ROW DELIBERATELY. ``out["ok"]``/``out["problems"]`` also
+    fold in the REQUIRED ``asr`` row, and .github/workflows/quality.yml installs
+    neither faster-whisper nor a stub for it (``pip install -e "sidecar[dev]"
+    --no-deps`` plus only httpx/numpy/opencv-python-headless/blake3), so asserting
+    the rollup would be permanently red in CI regardless of this fix.
+    ``opencv-python-headless`` IS installed there, so the ``cv2`` row is a valid
+    CI assertion.
+    """
+    if importlib.util.find_spec("cv2") is None:  # pragma: no cover - env guard
+        pytest.skip("opencv is not importable here, so the cv2 row cannot be green")
+    monkeypatch.setattr(tools_resolver, "resolve_tool", lambda name, _s=None: f"/usr/bin/{name}")
+    out = _services(tmp_path).system_self_test({}, ctx)
+
+    by_id = {c["id"]: c for c in out["checks"]}
+    assert by_id["cv2"]["ok"] is True, by_id["cv2"]["detail"]
+    assert by_id["cv2"]["fixHint"] == ""
+    # No OpenCV problem line may reach the panel on a correctly provisioned env.
+    assert not any("OpenCV" in p for p in out["problems"]), out["problems"]
 
 
 def test_self_test_surfaces_missing_ffmpeg(tmp_path: Path, ctx: RpcContext, monkeypatch: Any) -> None:
