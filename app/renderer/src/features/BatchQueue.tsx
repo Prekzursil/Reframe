@@ -53,6 +53,13 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
   const [batch, setBatch] = useState<BatchState | null>(null);
   const [incomplete, setIncomplete] = useState<BatchSummary[]>([]);
   const [error, setError] = useState('');
+  // A non-error explanation for an action the sidecar declined (today: a resume
+  // refused because the batch's parent job is still live). Kept separate from
+  // `error` so it announces politely (role="status") and never reads as a failure.
+  const [notice, setNotice] = useState('');
+  // The initial load is indistinguishable from "loaded and empty" without this
+  // (docs/design-system.md defines both a skeleton and an empty-state pattern).
+  const [loading, setLoading] = useState(true);
 
   // §9.1 pre-run cloud-egress consent (DESIGN §9 / §9.1). `consent` holds the
   // pure run/skip surface from `batch.plan`; the card is shown until the user
@@ -101,6 +108,9 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
       // own clear.
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load');
+    } finally {
+      // In a `finally` so a FAILED load also stops claiming to be busy.
+      setLoading(false);
     }
   }, []);
 
@@ -185,6 +195,7 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
       // Clear optimistically up front; an internal failure (e.g. refreshBatch)
       // owns its own error and we must NOT clobber it after the await.
       setError('');
+      setNotice('');
       const { batch: created } = await client.batch.create('Batch run', templateId, selected);
       setBatch(created);
       pendingBatchRef.current = created;
@@ -232,10 +243,21 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
     async (id: string) => {
       try {
         setError('');
-        // Track the resumed run's parent jobId so its live progress is honoured
-        // by the onProgress gate (batch.resume returns {jobId}).
+        setNotice('');
         const out = await client.batch.resume(id);
-        parentJobIdRef.current = jobIdOf(out);
+        const jobId = jobIdOf(out);
+        if (jobId === '') {
+          // The sidecar declined: this batch's parent job is still live, so it
+          // returned the {jobId: null} no-op shape. Do NOT assign the ref — '' makes
+          // the onProgress gate (:129) drop every event for the run that IS in
+          // flight, freezing the bar and the a11y announcer. Say why instead; a
+          // silent no-op click would be a new dead control.
+          setNotice('That batch is already running.');
+        } else {
+          // Track the resumed run's parent jobId so its live progress is honoured
+          // by the onProgress gate (batch.resume returns {jobId}).
+          parentJobIdRef.current = jobId;
+        }
         await refreshBatch(id);
         await reload();
       } catch (err) {
@@ -243,6 +265,25 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
       }
     },
     [refreshBatch, reload],
+  );
+
+  // Drop an abandoned batch record. NO renderer liveness guard on purpose: the
+  // durable aggregate status cannot distinguish live from crashed (and is `queued`
+  // for the whole window between resume's on-disk re-enqueue and the pooled
+  // worker's first `running` checkpoint), so `BatchService.delete` refuses a live
+  // batch server-side and that refusal surfaces here as an error.
+  const removeBatch = useCallback(
+    async (id: string) => {
+      try {
+        setError('');
+        setNotice('');
+        await client.batch.delete(id);
+        await reload();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Delete failed');
+      }
+    },
+    [reload],
   );
 
   // Deep-linked resume from the launch toast — fire ONCE per resumeId (guard
@@ -265,6 +306,22 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
         </p>
       ) : null}
 
+      {notice !== '' ? (
+        <p role="status" className="batch-queue__notice">
+          {notice}
+        </p>
+      ) : null}
+
+      {loading ? (
+        // Rendered INLINE, not as an early return: unlike ProvidersKeys this panel
+        // can set an error DURING the load (the `resumeId` deep-link resumes
+        // concurrently), and an early return would hide that alert and the resume
+        // list until the load settled.
+        <p className="batch-queue__loading" role="status" aria-busy="true">
+          Loading your sources and templates…
+        </p>
+      ) : null}
+
       {incomplete.length > 0 ? (
         <div className="batch-queue__resume">
           <h4>Incomplete batches</h4>
@@ -277,6 +334,13 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
                 <button type="button" onClick={() => void resume(b.id)}>
                   Resume
                 </button>
+                <button
+                  type="button"
+                  aria-label={`Remove ${b.name}`}
+                  onClick={() => void removeBatch(b.id)}
+                >
+                  Remove
+                </button>
               </li>
             ))}
           </ul>
@@ -286,16 +350,20 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
       <div className="batch-queue__setup">
         <fieldset className="batch-queue__sources">
           <legend>Sources</legend>
-          {videos.map((video) => (
-            <label key={video.id} className="batch-queue__source">
-              <input
-                type="checkbox"
-                checked={selected.includes(video.id)}
-                onChange={() => toggleVideo(video.id)}
-              />
-              {video.title}
-            </label>
-          ))}
+          {videos.length === 0 ? (
+            <p className="batch-queue__empty">Add videos in your Library first.</p>
+          ) : (
+            videos.map((video) => (
+              <label key={video.id} className="batch-queue__source">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(video.id)}
+                  onChange={() => toggleVideo(video.id)}
+                />
+                {video.title}
+              </label>
+            ))
+          )}
         </fieldset>
 
         <label className="batch-queue__template">
@@ -312,15 +380,29 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
             ))}
           </select>
         </label>
+        {/* Mount-agnostic wording on purpose: the Deliver mount (Deliver.tsx) has
+            no Templates tab, so "see the Templates tab" would point at nothing. */}
+        {templates.length === 0 ? (
+          <p className="batch-queue__template-hint">Save a template first.</p>
+        ) : null}
 
         <button
           type="button"
           className="batch-queue__run"
           disabled={!canRun}
+          aria-describedby={canRun ? undefined : 'batch-queue-run-hint'}
           onClick={() => void runBatch()}
         >
           Run batch
         </button>
+        {/* The hint text MUST live outside the button (≈15 tests match its exact
+            textContent) and stays visible-sibling-first: a native disabled button is
+            out of the tab order, so aria-describedby alone would announce nothing. */}
+        {canRun ? null : (
+          <p id="batch-queue-run-hint" className="batch-queue__run-hint">
+            Select at least one source and a template to run a batch.
+          </p>
+        )}
       </div>
 
       {consent ? (
@@ -371,6 +453,15 @@ export function BatchQueue({ resumeId }: BatchQueueProps): React.ReactElement {
  * Compute the new batch state and push per-source TERMINAL announcements for any
  * item that newly reached a terminal state (queued/running flips are silent,
  * §7.1). Exported for unit coverage of the announce-on-terminal contract.
+ *
+ * Also carries the last-known `pct` forward. `pct` is a LIVE-ONLY overlay —
+ * `_merge_live_status` (`batch.py`) adds nothing once the parent job is finished or
+ * evicted — so a terminal snapshot arrives with no `pct` and the aggregate bar
+ * would fall back to 0% next to its own "done" label. The last OBSERVED pct is
+ * carried instead of forcing 100: a cancelled or halted-early batch never reached
+ * 100 and claiming it did would be a fresh lie. The carry-forward is scoped to the
+ * SAME batch id because `resume` refreshes without resetting `batch`, so an
+ * evicted/terminal resume would otherwise leak the previous batch's pct.
  */
 export function announceTransitions(
   prev: BatchState | null,
@@ -394,7 +485,8 @@ export function announceTransitions(
       pushPolite((log) => [...log, ann.text]);
     }
   }
-  return next;
+  const carried = prev !== null && prev.id === next.id ? prev.pct : undefined;
+  return { ...next, pct: next.pct ?? carried };
 }
 
 export default BatchQueue;

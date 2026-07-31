@@ -150,7 +150,7 @@ All registered through the existing single composition root (`handlers.py:1982` 
 | `batch.list` | — | `{batches:[BatchSummary]}` | including finished ones |
 | `batch.cancel` | `{id}` | `{ok}` | cancels the parent job (→ cooperative item cancel, `jobs.py:447`) |
 | `batch.resume` | `{id}` | `{jobId}` | re-enqueue not-yet-done items (§10.1) |
-| `batch.delete` | `{id}` | `{ok}` | drops a finished/cancelled batch record |
+| `batch.delete` | `{id}` | `{ok}` | drops a batch record whose parent job is not live (finished/cancelled/abandoned); REFUSES `INVALID_PARAMS` while it is still running |
 
 **No new provider RPC.** Every AI-bearing step a template runs (`shortmaker.select`, `phase8.select`, `subtitles.translate`) is an EXISTING method that already enters `run_ai_job` (`handlers.py:849,1292`). The batch/template layer never builds a provider, never reads a key — it only invokes already-wired handlers through `protocol.METHODS` (the `recipes` mechanism, `recipes.py:313-317`). This keeps the "ONE RPC site" and "AI rides the envelope" invariants intact.
 
