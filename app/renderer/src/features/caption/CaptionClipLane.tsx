@@ -8,11 +8,22 @@
 //   * Enter / Space  — seek the shared playhead to the clip start (and select it);
 //   * Arrow Left/Right — MOVE the whole clip earlier/later (neighbor-clamped);
 //   * Shift+Arrow      — RESIZE the clip's out-point (neighbor-clamped).
-// All cue math is the shipped, unit-tested `timelineOps` (retimeAt/dragEdge) — the
+// All cue math is the shipped, unit-tested `timelineOps` (nudgeAt/dragEdge) — the
 // same neighbor-clamping the mouse Timeline uses, reused, not rewritten.
+//
+// SCOPE OF THE MOVE (read before "fixing" a silent arrow key). A move preserves
+// duration, so a clip whose neighbor ABUTS it has zero legal room — and real word
+// cues abut exactly (the sidecar emits a word's end and the next word's start from
+// one array element). Moving such a clip necessarily RETIMES a neighbor, i.e. a
+// ripple / overwrite / swap semantics, and picking one is a product decision that
+// is deliberately NOT implemented here: this lane only ever edits the ONE focused
+// cue. What is implemented is that the refusal is never silent — the boundary is
+// announced through the polite live region below, so the key has a defined,
+// perceivable outcome instead of doing nothing. Until ripple ships, "arrow keys
+// move a clip" means "within its own gap".
 
 import React from 'react';
-import { type Cue, MIN_CUE_SEC, dragEdge, retimeAt } from '../../lib/timelineOps';
+import { type Cue, MIN_CUE_SEC, dragEdge, nudgeAt } from '../../lib/timelineOps';
 import { useEditor } from '../EditorContext';
 import './captionClipLane.css';
 
@@ -26,6 +37,8 @@ function pct(value: number): number {
 
 export function CaptionClipLane(): React.ReactElement {
   const { state, dispatch } = useEditor();
+  // Declared BEFORE the empty-cues early return so hook order is unconditional.
+  const [notice, setNotice] = React.useState('');
   const { cues, video, playhead, selection } = state;
   const { start: winStart, end: winEnd } = video.window;
   const span = Math.max(winEnd - winStart, MIN_CUE_SEC);
@@ -53,11 +66,18 @@ export function CaptionClipLane(): React.ReactElement {
       if (dir === 0) return;
       e.preventDefault();
       const delta = dir * CLIP_NUDGE_SEC;
-      // Shift = resize the out-point; plain arrow = move the whole clip. Both are
-      // neighbor-clamped by the shipped timelineOps helpers.
+      // Shift = resize the out-point; plain arrow = TRANSLATE the whole clip
+      // (duration-preserving). Both are neighbor-clamped by timelineOps.
       const next = e.shiftKey
         ? dragEdge(cues, pos, 'end', cue.end + delta)
-        : retimeAt(cues, pos, cue.start + delta, cue.end + delta);
+        : nudgeAt(cues, pos, delta);
+      if (next === cues) {
+        // Nothing legal to do (see SCOPE OF THE MOVE above). Announce it and bail
+        // BEFORE dispatching, so a no-room press does not rebuild editor state.
+        setNotice(`Caption ${pos + 1} has no room to move ${dir > 0 ? 'later' : 'earlier'}.`);
+        return;
+      }
+      setNotice('');
       dispatch({ type: 'setCues', cues: next });
     };
 
@@ -94,6 +114,12 @@ export function CaptionClipLane(): React.ReactElement {
           data-testid="clip-playhead"
           style={{ left: `${pct(((playhead - winStart) / span) * 100)}%` }}
         />
+      </div>
+      {/* Mounted while EMPTY (a region inserted with its text is not reliably
+          announced) and a <div>, which has no default margin — so an empty
+          notice costs no layout and the lane needs no extra CSS. */}
+      <div className="caption-clip-lane__status" role="status" aria-live="polite">
+        {notice}
       </div>
     </div>
   );

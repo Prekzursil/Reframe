@@ -28,6 +28,7 @@ import {
   dragEdge,
   type History,
   mergeAt,
+  nudgeAt,
   pushHistory,
   redo,
   renumber,
@@ -193,6 +194,50 @@ describe('dragEdge / retimeAt (property)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// nudgeAt — a TRANSLATE, so duration is invariant (F21)
+// ---------------------------------------------------------------------------
+
+describe('nudgeAt (property)', () => {
+  it('preserves duration and stays inside the neighbor gap for any delta', () => {
+    fc.assert(
+      fc.property(
+        cueList.filter((c) => c.length > 0),
+        fc.nat(),
+        fc.double({ min: -6, max: 6, noNaN: true }),
+        (cues, posSeed, delta) => {
+          const pos = posSeed % cues.length;
+          const out = nudgeAt(cues, pos, delta);
+          // no legal room -> the SAME reference, so callers can ===-check
+          if (out === cues) return;
+          const before = cues[pos];
+          const after = out[pos];
+          expect(after.end - after.start).toBeCloseTo(before.end - before.start, 9);
+          expect(after.start).toBeGreaterThanOrEqual(-1e-9);
+          if (pos > 0) expect(after.start).toBeGreaterThanOrEqual(cues[pos - 1].end - 1e-9);
+          if (pos + 1 < cues.length)
+            expect(after.end).toBeLessThanOrEqual(cues[pos + 1].start + 1e-9);
+          // Never travels AGAINST the requested direction. Not strict: a denormal
+          // delta (the generator reaches 7e-323) is a non-zero `room` whose
+          // addition is unobservable at this magnitude, so `start` can be equal.
+          if (delta > 0) expect(after.start).toBeGreaterThanOrEqual(before.start);
+          else expect(after.start).toBeLessThanOrEqual(before.start);
+        },
+      ),
+    );
+  });
+
+  it('a zero delta and an out-of-range position both return the SAME array', () => {
+    fc.assert(
+      fc.property(cueList, fc.integer({ min: -5, max: 20 }), (cues, pos) => {
+        expect(nudgeAt(cues, pos, 0)).toBe(cues);
+        if (pos >= 0 && pos < cues.length) return;
+        expect(nudgeAt(cues, pos, 0.5)).toBe(cues);
+      }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // view helpers
 // ---------------------------------------------------------------------------
 
@@ -327,6 +372,16 @@ const DragCmd = (
   toString: () => `drag(${pos},${edge},${t})`,
 });
 
+const NudgeCmd = (pos: number, delta: number): fc.Command<Model, TimelineModel> => ({
+  check: () => true,
+  run: (_m, r) => {
+    const p = r.cues.length === 0 ? 0 : pos % r.cues.length;
+    if (r.cues.length > 0) r.apply(nudgeAt(r.cues, p, delta));
+    assertWellFormed(r.cues);
+  },
+  toString: () => `nudge(${pos},${delta})`,
+});
+
 const UndoCmd: fc.Command<Model, TimelineModel> = {
   check: () => true,
   run: (_m, r) => {
@@ -352,6 +407,9 @@ describe('timeline edit sequences (model-based)', () => {
             fc.double({ min: -5, max: 50, noNaN: true }),
           )
           .map(([p, e, t]) => DragCmd(p, e, t)),
+        fc
+          .tuple(fc.nat(), fc.double({ min: -4, max: 4, noNaN: true }))
+          .map(([p, d]) => NudgeCmd(p, d)),
         fc.constant(UndoCmd),
       ],
       { maxCommands: 20 },

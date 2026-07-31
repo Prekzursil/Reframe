@@ -144,6 +144,46 @@ export function retimeAt(cues: readonly Cue[], pos: number, start: number, end: 
 }
 
 /**
+ * TRANSLATE the cue at `pos` by up to `delta` seconds, PRESERVING its duration.
+ * This is the "move the whole clip" primitive; `retimeAt` is deliberately NOT it
+ * — that one clamps the two edges INDEPENDENTLY into `[prev.end, next.start]`,
+ * which is right for a numeric retime but silently trades duration for travel
+ * when a move meets an abutting neighbor.
+ *
+ * The cue moves by the largest legal amount not exceeding `|delta|` in the
+ * requested direction and never crosses a neighbor. When there is NO room the
+ * INPUT array reference is returned, per the module's `===` convention (:11-13)
+ * so `pushHistory` no-ops and callers can detect "nothing happened".
+ *
+ * Note there is no `delta === 0` special case: with delta 0 the room expression
+ * already evaluates to 0 and the `room === 0` guard returns the same reference.
+ *
+ * The outer `Math.max(0, …)` / `Math.min(0, …)` are a direction guard, not
+ * noise: on a PRE-EXISTING overlap (`hi < cue.end`) the inner term is negative
+ * and would otherwise move the clip BACKWARD on a forward nudge. The fast-check
+ * `cueList` generator cannot build such a list (it walks a cursor with
+ * `gap >= 0`, so cues abut but never overlap), so that guard is covered by a
+ * hand-built fixture in timelineOps.test.ts — not by the property suite.
+ */
+export function nudgeAt(cues: readonly Cue[], pos: number, delta: number): Cue[] {
+  if (!validPos(cues, pos)) return cues as Cue[];
+  const cue = cues[pos];
+  const { lo, hi } = neighborBounds(cues, pos);
+  // `hi === +Infinity` for the last cue and `lo === 0` for the first, so both
+  // list ends fall out of the same expression with no special case.
+  const room =
+    delta > 0
+      ? Math.max(0, Math.min(delta, hi - cue.end))
+      : Math.min(0, Math.max(delta, lo - cue.start));
+  if (room === 0) return cues as Cue[];
+  // Re-clamp to the bounds `room` was derived from: `x + (bound - x)` can land
+  // one ulp past `bound` in floating point, and the neighbor invariant is exact.
+  return cues.map((c, i) =>
+    i === pos ? { ...c, start: Math.max(c.start + room, lo), end: Math.min(c.end + room, hi) } : c,
+  );
+}
+
+/**
  * Drag one edge of the cue at `pos` to time `t`, clamping so the cue (a) never
  * crosses its neighbor on that side and (b) keeps >= MIN_CUE_SEC against its
  * own other edge. Returns a new list (untouched cues keep their identity).
