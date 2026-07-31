@@ -1412,10 +1412,23 @@ class ShortMaker:
         #             missing libvidstab is reported via job.progress, never
         #             silently skipped (so default-on degrades gracefully). An
         #             explicit ``stabilize: false`` from the caller disables it.
-        for key in ("hookTitle", "removeFillers", "emphasis", "autoZoom", "silenceTrim", "stabilize"):
+        #   hookCard (default true) -> the OpusClip hook-card overlay drawn on the
+        #             top-N clips by virality rank (hook_card.resolve_hook_card_config
+        #             owns the default); an explicit ``hookCard: false`` disables it.
+        for key in ("hookTitle", "removeFillers", "emphasis", "autoZoom", "silenceTrim", "stabilize", "hookCard"):
             value = params.get(key)
             if isinstance(value, bool):
                 settings[key] = value
+        # WU SP2: hookCardTopN is an int COUNT, not a toggle, so it needs its own
+        # typed gate — the bool loop above would skip it and the string loop would
+        # reject it. ``isinstance(True, int)`` is True in Python, so the explicit
+        # bool exclusion is what keeps a stray ``hookCardTopN: true`` out of settings
+        # (hook_card._as_int_count would reject it and silently revert to the default
+        # 10). Gating here, not passing raw, matches this handler's boundary-validation
+        # convention above: a malformed value never lands under a count key.
+        hook_card_top_n = params.get("hookCardTopN")
+        if isinstance(hook_card_top_n, int) and not isinstance(hook_card_top_n, bool):
+            settings["hookCardTopN"] = hook_card_top_n
         # A2: optional audioTrackId — carry the chosen audio track into clips.
         audio_track_id = params.get("audioTrackId")
         if audio_track_id is not None and not isinstance(audio_track_id, str):
