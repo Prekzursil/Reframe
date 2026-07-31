@@ -1204,6 +1204,27 @@ def _created(service: batch.Batch, ctx: RpcContext, ids=("v1", "v2")) -> str:
     return out["batch"]["id"]
 
 
+class _FakeParentJob:
+    """A stand-in for a tracked parent :class:`jobs.Job` (liveness fields only).
+
+    ``finished`` and ``cancel_requested`` are the two properties the batch
+    liveness gate reads (``jobs.py`` ``Job.finished`` / ``Job.cancel_requested``);
+    ``pct`` is what ``_merge_live_status`` overlays.
+    """
+
+    pct = 10
+
+    def __init__(self, *, finished: bool = False, cancel_requested: bool = False) -> None:
+        self.finished = finished
+        self.cancel_requested = cancel_requested
+
+
+def _track_parent(service: batch.Batch, reg: JobRegistry, batch_id: str, job: _FakeParentJob) -> None:
+    """Point ``batch_id``'s tracked parent job at ``job`` (the liveness seam)."""
+    service._parent_jobs[batch_id] = "j1"
+    reg.get = lambda _jid: job  # type: ignore[method-assign, return-value]
+
+
 class TestBatchServiceCrud:
     def test_create_persists_queued_batch(self, tmp_path):
         reg = _registry()
@@ -1239,6 +1260,25 @@ class TestBatchServiceCrud:
     def test_delete_unknown_is_false(self, tmp_path):
         service = _service(tmp_path)
         assert service.delete({"id": "nope"}, _ctx(_registry()))["ok"] is False
+
+    def test_delete_refuses_while_parent_job_is_live(self, tmp_path):
+        """Deleting a LIVE batch kills the run; only the sidecar can tell it is live.
+
+        The runner checkpoints through ``store.update_item``, which raises
+        ``unknown batch`` the moment the file is unlinked, so a delete mid-run kills
+        the parent job with partial outputs and no record. A renderer status guard
+        cannot prevent it: ``resume_batch`` rewrites the pending items to ``queued``
+        BEFORE the worker reaches ``running``, and the panel reloads inside that
+        window, so a live batch legitimately renders as ``queued``.
+        """
+        reg = _registry()
+        service = _service(tmp_path)
+        batch_id = _created(service, _ctx(reg))
+        _track_parent(service, reg, batch_id, _FakeParentJob())
+        with pytest.raises(RpcError, match="still running"):
+            service.delete({"id": batch_id}, _ctx(reg))
+        assert service.store.load(batch_id) is not None
+        assert service._parent_jobs[batch_id] == "j1"
 
     @pytest.mark.parametrize("svc_method", ["start", "status", "cancel", "resume", "delete"])
     def test_id_param_required(self, tmp_path, svc_method):
@@ -1429,6 +1469,60 @@ class TestBatchServiceResume:
         service = _service(tmp_path)
         with pytest.raises(RpcError, match="unknown batch"):
             service.resume({"id": "nope"}, _ctx(_registry()))
+
+    def test_resume_refuses_while_parent_job_is_live(self, tmp_path):
+        """A resume must NOT touch a batch whose parent job is still working.
+
+        ``resume_batch`` rewrites the in-flight ``running`` item to ``queued`` ON
+        DISK (the durable re-enqueue) and starts a FRESH parent job, so without a
+        liveness gate one Resume click corrupts the live run's checkpoint, stacks a
+        second parent on a 2-slot pool, and clobbers ``_parent_jobs`` (losing the
+        only cancel handle for the run that is actually going).
+        """
+        reg = _registry()
+        runner, invoked = _make_runner(reg)
+        service = _service(tmp_path, template_runner=runner)
+        batch_id = _created(service, _ctx(reg), ids=["v1", "v2"])
+        # A LIVE run's checkpoint: v1 in flight, v2 still pending. Without this the
+        # pre-existing all-terminal no-op would make the test green with no fix.
+        service.store.update_item(batch_id, "v1", status="running")
+        _track_parent(service, reg, batch_id, _FakeParentJob())
+        out = service.resume({"id": batch_id}, _ctx(reg))
+        assert out == {"jobId": None, "status": "running"}
+        assert service._parent_jobs[batch_id] == "j1"  # cancel handle preserved
+        assert _statuses(service.store, batch_id) == ["running", "queued"]  # checkpoint untouched
+        reg.join()
+        assert invoked == []
+
+    def test_resume_proceeds_once_the_parent_job_finished(self, tmp_path):
+        reg = _registry()
+        runner, invoked = _make_runner(reg)
+        service = _service(tmp_path, template_runner=runner)
+        batch_id = _created(service, _ctx(reg), ids=["v1"])
+        _track_parent(service, reg, batch_id, _FakeParentJob(finished=True))
+        out = service.resume({"id": batch_id}, _ctx(reg))
+        assert isinstance(out["jobId"], str)
+        reg.join()
+        assert invoked == ["v1"]
+
+    def test_resume_proceeds_when_cancellation_was_requested(self, tmp_path):
+        """Cancel -> Resume keeps working (the explicit ``cancel_requested`` call).
+
+        ``batch.cancel`` only SETS a cooperative flag; the parent job is not
+        ``finished`` until the in-flight sub-job relay unwinds (bounded by
+        ``recipes.SUBJOB_TIMEOUT`` = 3600 s). Gating purely on ``finished`` would
+        turn today's working Cancel -> Resume into a silent no-op for up to an
+        hour, so a cancel-requested parent is deliberately NOT treated as live.
+        """
+        reg = _registry()
+        runner, invoked = _make_runner(reg)
+        service = _service(tmp_path, template_runner=runner)
+        batch_id = _created(service, _ctx(reg), ids=["v1"])
+        _track_parent(service, reg, batch_id, _FakeParentJob(cancel_requested=True))
+        out = service.resume({"id": batch_id}, _ctx(reg))
+        assert isinstance(out["jobId"], str)
+        reg.join()
+        assert invoked == ["v1"]
 
 
 class TestBatchServiceDefaultSeams:

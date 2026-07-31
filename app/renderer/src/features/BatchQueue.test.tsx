@@ -22,6 +22,7 @@ const batchPlanMock = vi.fn();
 const batchStartMock = vi.fn();
 const batchStatusMock = vi.fn();
 const batchResumeMock = vi.fn();
+const batchDeleteMock = vi.fn();
 const settingsGetMock = vi.fn();
 
 let progressCbs: Array<(e: ProgressEvent) => void> = [];
@@ -38,6 +39,7 @@ vi.mock('../lib/rpc', () => ({
       start: (...a: unknown[]) => batchStartMock(...a),
       status: (...a: unknown[]) => batchStatusMock(...a),
       resume: (...a: unknown[]) => batchResumeMock(...a),
+      delete: (...a: unknown[]) => batchDeleteMock(...a),
     },
     settings: { get: (...a: unknown[]) => settingsGetMock(...a) },
   },
@@ -147,6 +149,20 @@ async function render(props: { resumeId?: string } = {}): Promise<void> {
   });
 }
 
+/**
+ * Mount WITHOUT the trailing microtask flush, so the initial `reload()` stays in
+ * flight. It MUST assign the module-level `container`/`root` or the shared
+ * `afterEach` unmounts the previous test's tree and leaks this one.
+ */
+function renderPending(): void {
+  container = document.createElement('div');
+  document.body.appendChild(container);
+  root = createRoot(container);
+  act(() => {
+    root.render(<BatchQueue />);
+  });
+}
+
 beforeEach(() => {
   progressCbs = [];
   doneCbs = [];
@@ -158,6 +174,7 @@ beforeEach(() => {
   batchStartMock.mockResolvedValue({ jobId: 'job-1' });
   batchStatusMock.mockResolvedValue({ batch: state([{ videoId: 'v1', status: 'queued' }]) });
   batchResumeMock.mockResolvedValue({ jobId: 'job-2' });
+  batchDeleteMock.mockResolvedValue({ ok: true });
   // The §9.1 budget setting defaults ON (settings_store confirmCloudBudget=True).
   settingsGetMock.mockResolvedValue({ confirmCloudBudget: true });
 });
@@ -183,6 +200,60 @@ describe('BatchQueue', () => {
     expect(container.querySelector('.batch-queue__resume')?.textContent).toContain('Prior run');
     // remaining = 3 - 1 done - 0 skipped = 2
     expect(container.textContent).toContain('2 of 3 left');
+  });
+
+  it('renders an empty state instead of a bare Sources legend', async () => {
+    // The Sources fieldset was a bare `{videos.map(...)}` with no fallback, so a
+    // fresh install rendered `<legend>Sources</legend>` and nothing else.
+    libListMock.mockResolvedValue({ videos: [] });
+    tmplListMock.mockResolvedValue({ templates: [] });
+    await render();
+    expect(container.querySelector('.batch-queue__empty')).not.toBeNull();
+    // The Template <select> stays mounted (other tests query it directly).
+    expect(container.querySelector('select[aria-label="Template"]')).not.toBeNull();
+    expect(container.querySelector('.batch-queue__template-hint')).not.toBeNull();
+  });
+
+  it('names the unmet precondition behind the disabled Run button', async () => {
+    libListMock.mockResolvedValue({ videos: [] });
+    tmplListMock.mockResolvedValue({ templates: [] });
+    await render();
+    const run = [...container.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Run batch',
+    ) as HTMLButtonElement;
+    expect(run.disabled).toBe(true); // PASSES today — proves canRun is genuinely false
+    const id = run.getAttribute('aria-describedby');
+    expect(id).not.toBeNull();
+    // A native `disabled` button is out of the tab order, so the VISIBLE sibling is
+    // the real fix; the attribute only ties them together.
+    expect(container.querySelector(`#${id}`)?.textContent ?? '').toMatch(/source|template/i);
+  });
+
+  it('is busy (not empty) while the initial load is in flight', async () => {
+    // `reload` awaits Promise.all, so holding library.list holds the whole load.
+    // Today that render is byte-identical to the loaded-but-empty render.
+    let release!: (v: { videos: Video[] }) => void;
+    libListMock.mockReturnValue(
+      new Promise<{ videos: Video[] }>((r) => {
+        release = r;
+      }),
+    );
+    renderPending();
+    expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+    await act(async () => {
+      release({ videos: VIDEOS });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // The both-states check: the probe must go from satisfied to unsatisfiable.
+    expect(container.querySelector('[aria-busy="true"]')).toBeNull();
+  });
+
+  it('clears the busy state when the initial load FAILS', async () => {
+    libListMock.mockRejectedValueOnce(new Error('load-bad'));
+    await render();
+    expect(container.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(container.querySelector('.batch-queue__error')?.textContent).toBe('load-bad');
   });
 
   it('disables Run until a source AND template are chosen', async () => {
@@ -382,6 +453,90 @@ describe('BatchQueue', () => {
     expect(batchResumeMock).toHaveBeenCalledWith('bA');
   });
 
+  it('removes an abandoned batch from the resume list', async () => {
+    // Every Run click persists a durable record BEFORE the default-ON consent gate,
+    // so an abandoned run stays `queued` forever in "Incomplete batches" (and in
+    // the tab badge + launch toast) with no in-app removal. `batch.delete` shipped
+    // end-to-end; only the affordance was missing.
+    batchListMock
+      .mockResolvedValueOnce({ batches: [summary({ id: 'bA', status: 'queued' })] })
+      .mockResolvedValueOnce({ batches: [] });
+    await render();
+    await act(async () => {
+      clickText('Remove');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(batchDeleteMock).toHaveBeenCalledWith('bA');
+    expect(batchListMock).toHaveBeenCalledTimes(2); // the reload
+    expect(container.querySelector('.batch-queue__resume')).toBeNull();
+  });
+
+  it('surfaces a remove failure with an Error message (instanceof arm)', async () => {
+    batchListMock.mockResolvedValue({ batches: [summary()] });
+    batchDeleteMock.mockRejectedValueOnce(new Error('delete-boom'));
+    await render();
+    await act(async () => {
+      clickText('Remove');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.batch-queue__error')?.textContent).toBe('delete-boom');
+  });
+
+  it('surfaces a remove failure on a non-Error rejection (Delete failed)', async () => {
+    batchListMock.mockResolvedValue({ batches: [summary()] });
+    batchDeleteMock.mockRejectedValueOnce('x');
+    await render();
+    await act(async () => {
+      clickText('Remove');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.batch-queue__error')?.textContent).toBe('Delete failed');
+  });
+
+  it('surfaces a refused resume instead of clobbering the live progress gate', async () => {
+    // The sidecar refuses a resume while a parent job is still live and answers
+    // with the {jobId: null} no-op shape. Two things must hold: the panel must NOT
+    // overwrite the tracked parent jobId with '' (that makes the onProgress gate
+    // drop every event for the run that IS in flight, freezing the bar and the
+    // a11y announcer), and the click must not be silently dead.
+    settingsGetMock.mockResolvedValue({ confirmCloudBudget: false });
+    batchListMock.mockResolvedValue({ batches: [summary()] });
+    await render();
+    const cb = container.querySelectorAll('.batch-queue__source input')[0] as HTMLInputElement;
+    act(() => cb.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await act(async () => {
+      clickText('Run batch');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const barNow = (): string | null | undefined =>
+      container
+        .querySelector('.batch-queue__live [role="progressbar"]')
+        ?.getAttribute('aria-valuenow');
+    act(() =>
+      progressCbs.forEach((c) => c({ jobId: 'job-1', pct: 44, message: 'source 1/2 · A' })),
+    );
+    expect(barNow()).toBe('44'); // PASSES today — proves the live gate tracks job-1
+    batchResumeMock.mockResolvedValueOnce({ jobId: null, status: 'running' });
+    await act(async () => {
+      clickText('Resume');
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const notice = container.querySelector('.batch-queue__notice');
+    expect(notice).not.toBeNull();
+    expect(notice?.textContent).toContain('already running');
+    // ...and the live run's progress still applies.
+    act(() =>
+      progressCbs.forEach((c) => c({ jobId: 'job-1', pct: 66, message: 'source 2/2 · B' })),
+    );
+    expect(barNow()).toBe('66');
+  });
+
   it('deep-links a resume on mount via resumeId', async () => {
     await render({ resumeId: 'bZ' });
     expect(batchResumeMock).toHaveBeenCalledWith('bZ');
@@ -453,6 +608,37 @@ describe('BatchQueue', () => {
     );
     const bar = container.querySelector('.batch-queue__live [role="progressbar"]');
     expect(bar?.getAttribute('aria-valuenow')).toBe('73');
+  });
+
+  it('keeps the last live pct when the terminal status snapshot omits it', async () => {
+    // `pct` is a live-ONLY overlay: `_merge_live_status` (batch.py) adds nothing
+    // once the parent job is finished, so the terminal `batch.status` snapshot has
+    // no pct and the bar fell back to `pct ?? 0` — width 0% / aria-valuenow="0"
+    // beside its own "done" label and a full row of terminal tokens.
+    settingsGetMock.mockResolvedValue({ confirmCloudBudget: false });
+    await render();
+    const cb = container.querySelectorAll('.batch-queue__source input')[0] as HTMLInputElement;
+    act(() => cb.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await act(async () => {
+      clickText('Run batch');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const barNow = (): string | null | undefined =>
+      container
+        .querySelector('.batch-queue__live [role="progressbar"]')
+        ?.getAttribute('aria-valuenow');
+    act(() => progressCbs.forEach((c) => c({ jobId: 'job-1', pct: 100, message: 'done' })));
+    expect(barNow()).toBe('100'); // PASSES today — proves the live overlay arrived
+    batchStatusMock.mockResolvedValue({
+      batch: state([{ videoId: 'v1', status: 'done' }], { status: 'done' }),
+    });
+    await act(async () => {
+      doneCbs.forEach((c) => c());
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(barNow()).toBe('100'); // FAILS today with "0"
   });
 
   it('surfaces a status failure with an Error message (instanceof arm)', async () => {
@@ -717,6 +903,50 @@ describe('announceTransitions (pure)', () => {
       () => {},
     );
     expect(polite).toEqual([]);
+  });
+
+  it('carries the last known pct forward when the next snapshot omits it', () => {
+    const prev = state([{ videoId: 'a', status: 'running' }], { pct: 100 });
+    const next = state([{ videoId: 'a', status: 'done' }], { status: 'done' });
+    expect(
+      announceTransitions(
+        prev,
+        next,
+        titleFor,
+        () => {},
+        () => {},
+      ).pct,
+    ).toBe(100);
+  });
+
+  it('lets a defined next pct win over the carried one', () => {
+    const prev = state([{ videoId: 'a', status: 'running' }], { pct: 10 });
+    const next = state([{ videoId: 'a', status: 'running' }], { pct: 55 });
+    expect(
+      announceTransitions(
+        prev,
+        next,
+        titleFor,
+        () => {},
+        () => {},
+      ).pct,
+    ).toBe(55);
+  });
+
+  it('never carries a DIFFERENT batch pct forward (the resume refresh path)', () => {
+    // `resume` calls refreshBatch(id) WITHOUT resetting `batch`, so an evicted or
+    // already-terminal resume would otherwise leak the previous batch's pct.
+    const prev = state([{ videoId: 'a', status: 'running' }], { id: 'bOld', pct: 90 });
+    const next = state([{ videoId: 'a', status: 'running' }], { id: 'bNew' });
+    expect(
+      announceTransitions(
+        prev,
+        next,
+        titleFor,
+        () => {},
+        () => {},
+      ).pct,
+    ).toBeUndefined();
   });
 
   it('ignores a terminal status with no announcement mapping is impossible (cancelled is polite)', () => {
