@@ -236,6 +236,98 @@ describe('<CaptionPreferences />', () => {
     expect(container.querySelector('.caption-prefs__error')).toBeNull();
   });
 
+  it('does not paint the "No captions" sample with the transparent none fill', async () => {
+    const rpc: SettingsBridge = {
+      get: vi.fn().mockResolvedValue({ [PREFERENCE_KEYS.style]: 'none' }),
+      set: vi.fn(),
+    };
+    mountWith(rpc);
+    await flush();
+    const sample = container.querySelector('.caption-prefs__sample') as HTMLElement;
+    // Control (green before AND after) — the none style really is selected.
+    expect(sample.textContent).toBe('No captions');
+    // DEFECT: NONE_VISUAL.activeColor is the literal 'transparent'
+    // (captionTemplates.ts), so the position preview's own explanatory label was
+    // painted at zero alpha. No inline colour => it inherits --text-primary.
+    // NOT asserted: the resolved colour — jsdom applies no stylesheet, so
+    // legibility is a Playwright/visual claim, never a green unit test.
+    expect(sample.style.color).toBe('');
+    expect(sample.classList.contains('caption-prefs__sample--none')).toBe(true);
+  });
+
+  it('clears the saved confirmation on any later edit', async () => {
+    const rpc: SettingsBridge = {
+      get: vi.fn().mockResolvedValue({}),
+      set: vi.fn().mockResolvedValue({}),
+    };
+    mountWith(rpc);
+    await flush();
+    const status = (): Element | null => container.querySelector('.caption-prefs__status');
+    const save = async (): Promise<void> => {
+      await act(async () => {
+        saveBtn().click();
+        await Promise.resolve();
+      });
+    };
+
+    // Control (already pinned by the save test above) — a broken mount/save path
+    // fails HERE, not on the defect assertions below.
+    await save();
+    expect(status()?.textContent).toBe('Preferences saved.');
+
+    // DEFECT: `Preferences saved.` is only ever cleared by the NEXT save, so the
+    // success live region keeps asserting a state that no longer matches disk.
+    act(() => swatch('neon').click());
+    expect(status()).toBeNull();
+
+    // A structurally different handler (a checkbox, not the style picker) too, so
+    // the regression is not pinned to one of the six edit paths.
+    await save();
+    expect(status()?.textContent).toBe('Preferences saved.');
+    act(() => polishToggle().click());
+    expect(status()).toBeNull();
+  });
+
+  it('scopes the caption-quality promise to the surfaces those flags reach', async () => {
+    const rpc: SettingsBridge = { get: vi.fn().mockResolvedValue({}), set: vi.fn() };
+    mountWith(rpc);
+    await flush();
+    // Control (green before AND after the fix) — the panel mounted with its five
+    // groups and both caption-quality toggles. A failure HERE is a setup break.
+    expect(container.querySelectorAll('.caption-prefs__group')).toHaveLength(5);
+    expect(polishToggle()).not.toBeNull();
+
+    // DEFECT (a) — the "Caption quality" group is a bare <div> with an <h3>, so a
+    // scope disclosure cannot be programmatically associated with it.
+    const group = container.querySelector('.caption-prefs__group[role="group"]');
+    expect(group).not.toBeNull();
+    const quality = group as HTMLElement;
+    expect(
+      document.getElementById(quality.getAttribute('aria-labelledby') ?? '')?.textContent,
+    ).toBe('Caption quality');
+    // It owns exactly the two controls the panel-wide promise is false for.
+    expect(quality.contains(polishToggle())).toBe(true);
+    expect(quality.contains(speakersToggle())).toBe(true);
+
+    // DEFECT (b) — no scope text exists anywhere in the panel. captionPolish /
+    // captionSpeakerLabels are read only by subtitles.generate, which the
+    // Caption, Subtitles and Recipes surfaces reach — never the shorts export.
+    const scope =
+      document.getElementById(quality.getAttribute('aria-describedby') ?? '')?.textContent ?? '';
+    expect(scope).toContain('Caption');
+    expect(scope).toContain('Subtitles');
+    expect(scope).toContain('Recipes');
+
+    // DEFECT (c) — the panel hint made a blanket "every new short" promise over
+    // all six controls; it must now enumerate only the four that do seed a short.
+    const hint = container.querySelector('.caption-prefs__hint')?.textContent ?? '';
+    expect(hint).toContain('seed every new short');
+    expect(hint).toMatch(/style/i);
+    expect(hint).toMatch(/position/i);
+    expect(hint).toMatch(/subtitle/i);
+    expect(hint).toMatch(/language/i);
+  });
+
   it('defaults to the live client settings rpc when none injected', async () => {
     // Render WITHOUT an rpc prop -> uses client.settings, which reads window.api.
     const win = globalThis as unknown as { window?: { api?: unknown } };

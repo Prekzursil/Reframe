@@ -1,12 +1,21 @@
 // captionPreferences.ts — persisted caption + output DEFAULTS (P4 §4 Preferences).
 //
-// The Preferences/Settings area lets a user set the defaults every new short
-// starts from: the caption style + on-frame position, the subtitle delivery
-// mode, the default language, and two caption-quality toggles (transcript
-// polish + speaker labels). They are stored in the free-form settings store
-// (C12: settings.get/set, like the brand kit) under FROZEN keys, so the Make
-// Shorts flow + the Output Tray seed from one place instead of every surface
-// re-choosing. Pure read/write helpers only — unit-tested.
+// The Preferences/Settings area lets a user set two DIFFERENT-SCOPED groups of
+// defaults, stored together in the free-form settings store (C12:
+// settings.get/set, like the brand kit) under FROZEN keys so no surface
+// re-chooses them. Pure read/write helpers only — unit-tested.
+//
+//  1. Seeds every NEW SHORT (read by the Make Shorts flow + the Output Tray):
+//     the caption style + on-frame position, the subtitle delivery mode, and the
+//     default language.
+//  2. Applies to GENERATED CAPTIONS only (read by the sidecar's
+//     subtitles.generate, i.e. the Caption / Subtitles / Recipes surfaces —
+//     NOT the shorts export): the two caption-quality toggles, transcript
+//     polish + speaker labels.
+//
+// Do not describe group 2 as seeding shorts: the shorts export path never reads
+// those two keys, so a panel-wide "seeds every new short" promise is false for
+// them (see CaptionPreferences.tsx, which discloses the split in the UI).
 //
 // CONTRACT-NOTE: `captionPolish` + `captionSpeakerLabels` are the EXACT keys the
 // sidecar reads in handlers/media_ops.py subtitles_generate (settings.get). This
