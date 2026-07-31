@@ -8,10 +8,18 @@
 //
 // Presentational + controlled: the parent (Library) owns which video's gallery is
 // open and the shorts list; this owns only the inline-play state + the dialog
-// shell (backdrop-close, Escape, focus-on-open). Motion is neutralised by the
-// global prefers-reduced-motion rule in shell.css.
+// shell (backdrop-close). Motion is neutralised by the global
+// prefers-reduced-motion rule in shell.css.
+//
+// F04: keyboard focus management is delegated to the shared useFocusTrap (Lane 0
+// F4 / R-M10), matching the renderer's three other role="dialog" surfaces
+// (FirstRunChooser, ModelsOnboarding, DirectorOnboarding). The hook moves focus
+// to the close control on mount, traps Tab/Shift+Tab inside the dialog, maps
+// Escape to onClose, and restores focus to the Library card's "N shorts" opener
+// on unmount — which a local onKeyDown + focus-on-open ref could not do.
 import React, { useCallback, useMemo, useState } from 'react';
 
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import { ProducedShorts } from '../features/ProducedShorts';
 import type { ShortInfo } from '../lib/rpc';
 import '../components/library-shell.css';
@@ -40,11 +48,12 @@ export function ShortsGalleryModal({
 }: ShortsGalleryModalProps): React.ReactElement {
   const [playingShortPath, setPlayingShortPath] = useState('');
 
-  // Focus the close control on open (and release cleanly on unmount) via a
-  // callback ref — both the mount (node) and unmount (null) paths run.
-  const focusOnOpen = useCallback((node: HTMLButtonElement | null) => {
-    node?.focus();
-  }, []);
+  // Trap focus inside the dialog: initial focus on the close control, Tab cycles
+  // within, Escape dismisses, focus returns to the opener on unmount.
+  const trapRef = useFocusTrap<HTMLDivElement>({
+    onEscape: onClose,
+    initialFocus: '.shorts-modal__close',
+  });
 
   const play = useCallback((path: string) => {
     setPlayingShortPath((cur) => (cur === path ? '' : path));
@@ -60,29 +69,22 @@ export function ShortsGalleryModal({
       }
     : undefined;
 
-  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key === 'Escape') {
-      event.stopPropagation();
-      onClose();
-    }
-  };
-
   return (
     <div className="shorts-modal__backdrop" onClick={onClose}>
       {/* The dialog stops backdrop-close on inner clicks; it is dismissed by the
-          close button or Escape, so it is not itself an interactive control. */}
+          close button or Escape (via the focus trap), so it is not itself an
+          interactive control. */}
       <div
+        ref={trapRef}
         className="shorts-modal"
         role="dialog"
         aria-modal="true"
         aria-label={`Produced shorts for ${title}`}
         onClick={(event) => event.stopPropagation()}
-        onKeyDown={onKeyDown}
       >
         <header className="shorts-modal__head">
           <h2 className="shorts-modal__title">{title}</h2>
           <button
-            ref={focusOnOpen}
             type="button"
             className="shorts-modal__close"
             aria-label="Close produced shorts"
