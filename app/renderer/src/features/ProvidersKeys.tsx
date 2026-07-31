@@ -185,6 +185,7 @@ function ProviderCard({
               onReveal={onRevealKey}
               onRevalidate={onRevalidateKey}
               onReplace={onReplaceKey}
+              panelBusy={busy}
             />
           ))}
         </ul>
@@ -194,7 +195,11 @@ function ProviderCard({
         </p>
       )}
 
-      <AddKeyRow providerId={entry.id} onAdd={onAddKey} />
+      {/* Every mutating key control is gated on the SAME panel-wide in-flight flag
+          (as Remove provider and the picker already are): each of addKey /
+          removeKey / replaceKey re-upserts a key list read BEFORE its own await, so
+          a second one accepted inside that window silently drops a key. */}
+      <AddKeyRow providerId={entry.id} busy={busy} onAdd={onAddKey} />
 
       <ConsentToggle
         providerId={name}
@@ -420,10 +425,20 @@ export function ProvidersKeys({
   // WU-D3 reveal: fetch the ONE full key for a transient, masked-by-default display.
   // The plaintext is RETURNED to the row (held in its ref only) — never stored in
   // this panel's state/store, never logged. This is the sole full-key RPC.
+  // A rejection here (locked/unreadable keystore, Offline, sidecar down) must not
+  // vanish: report it in the banner AND re-throw. This callback returns
+  // Promise<string>, so it cannot degrade to a resolved value — providers_ops.py
+  // forbids a silent empty reveal that the UI could mistake for a real key — and
+  // the row's own catch renders the local status line from the re-thrown error.
   const revealKey = useCallback(
     async (id: string, index: number): Promise<string> => {
-      const res = await api.providers.revealKey(id, index);
-      return res.key;
+      try {
+        const res = await api.providers.revealKey(id, index);
+        return res.key;
+      } catch (err) {
+        setError(errText(err));
+        throw err;
+      }
     },
     [api],
   );
@@ -437,15 +452,24 @@ export function ProvidersKeys({
       /* v8 ignore next -- bound to a live key row; the guard is defensive. */
       if (!entry) return { ok: false, error: 'unknown provider' };
       const { baseUrl, model, capabilities } = resolveKeyTarget(entry);
-      const revealed = await api.providers.revealKey(id, index);
-      const result = await api.providers.testKey({
-        baseUrl,
-        apiKey: revealed.key,
-        model,
-        capabilities,
-      });
-      setTested((t) => ({ ...t, [id]: result.ok }));
-      return result;
+      try {
+        const revealed = await api.providers.revealKey(id, index);
+        const result = await api.providers.testKey({
+          baseUrl,
+          apiKey: revealed.key,
+          model,
+          capabilities,
+        });
+        setTested((t) => ({ ...t, [id]: result.ok }));
+        return result;
+      } catch (err) {
+        // Mirror addKey (which already reports): the banner is the owner of the
+        // message, and the degraded KeyCheckResult keeps the row out of a stale
+        // 'Re-validating…' label instead of an unhandled rejection.
+        const msg = errText(err);
+        setError(msg);
+        return { ok: false, error: msg };
+      }
     },
     [api, providers],
   );
@@ -460,12 +484,25 @@ export function ProvidersKeys({
       /* v8 ignore next -- bound to a live key row, so entry AND its apiKeys array exist; defensive. */
       if (!entry || !Array.isArray(entry.apiKeys)) return { ok: false, error: 'unknown provider' };
       const { baseUrl, model, capabilities } = resolveKeyTarget(entry);
-      const result = await api.providers.testKey({ baseUrl, apiKey: newKey, model, capabilities });
-      setTested((t) => ({ ...t, [id]: result.ok }));
-      const keys = entry.apiKeys.map((k, i) => (i === index ? newKey : k));
-      const res = await api.providers.upsert({ id, apiKeys: keys });
-      setProviders(Array.isArray(res?.providers) ? res.providers : []);
-      return result;
+      try {
+        const result = await api.providers.testKey({
+          baseUrl,
+          apiKey: newKey,
+          model,
+          capabilities,
+        });
+        setTested((t) => ({ ...t, [id]: result.ok }));
+        const keys = entry.apiKeys.map((k, i) => (i === index ? newKey : k));
+        const res = await api.providers.upsert({ id, apiKeys: keys });
+        setProviders(Array.isArray(res?.providers) ? res.providers : []);
+        return result;
+      } catch (err) {
+        // Same contract as revalidateKey: the banner reports, and the degraded
+        // result leaves the row's editor open with the typed key intact.
+        const msg = errText(err);
+        setError(msg);
+        return { ok: false, error: msg };
+      }
     },
     [api, providers],
   );

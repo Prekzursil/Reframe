@@ -136,3 +136,29 @@ def test_reveal_no_providers_configured_is_invalid_params(tmp_path: Path) -> Non
     svc = _svc(tmp_path)
     with pytest.raises(RpcError):
         svc.providers_reveal_key({"id": "groq"}, _ctx())
+
+
+def test_reveal_refuses_a_redaction_marker_when_the_overlay_lacks_the_provider(tmp_path: Path) -> None:
+    """A last-4 MARKER must never be returned as if it were a plaintext key.
+
+    The empty-slot guard covered ``""`` but NOT ``"…AAAA"`` — a non-empty string —
+    so whenever the request-scoped overlay does not carry this provider id (the
+    keystore read back UNREADABLE, so ``KeyBridge.overlay(null)`` contributes
+    nothing from disk) the RPC handed the renderer the marker and the row displayed
+    it under the accessible name "Revealed API key for groq". That contradicts this
+    handler's own documented contract: "never a silent empty reveal that the UI
+    could mistake for a real key".
+    """
+    svc = _seed(_svc(tmp_path), [KEY_A])
+    # Precondition, proven independently of the assertion under test: at rest the
+    # FACTORY accessor holds only the marker.
+    assert svc.settings.get_raw()["providers"][0]["apiKeys"] == ["…AAAA"]
+    with svc.settings.key_overlay({"providers": {}}), pytest.raises(RpcError) as excinfo:
+        svc.providers_reveal_key({"id": "groq"}, _ctx())
+    message = str(excinfo.value)
+    # The message names the slot + provider and stays CAUSE-AGNOSTIC: the handler
+    # cannot tell "keystore unreadable" from "the write silently failed", and cause
+    # attribution belongs to the secure-keys banner, not here.
+    assert "groq" in message
+    assert "index 0" in message
+    assert "could not be unlocked" in message
