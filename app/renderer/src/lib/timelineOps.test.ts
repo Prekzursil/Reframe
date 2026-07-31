@@ -14,6 +14,7 @@ import {
   dragEdge,
   mergeAt,
   mergeCues,
+  nudgeAt,
   pushHistory,
   redo,
   renumber,
@@ -231,6 +232,82 @@ describe('retimeAt', () => {
   it('returns the SAME array for an invalid position', () => {
     const input = threeCues();
     expect(retimeAt(input, 5, 0, 1)).toBe(input);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// nudgeAt — the duration-PRESERVING translate (F21)
+// ---------------------------------------------------------------------------
+
+describe('nudgeAt', () => {
+  /** Three ABUTTING cues — the shape real word cues have (gap exactly 0). */
+  const abutting = (): Cue[] => [cue(1, 0, 1, 'a'), cue(2, 1, 2, 'b'), cue(3, 2, 3, 'c')];
+  /** A hand-built OVERLAPPING pair: cue 0 ends after cue 1 starts. */
+  const overlapping = (): Cue[] => [cue(1, 0, 2, 'a'), cue(2, 1, 3, 'b')];
+  const span = (c: Cue): number => c.end - c.start;
+
+  it('translates BOTH edges forward, preserving duration and other cue identity', () => {
+    const input = threeCues();
+    const out = nudgeAt(input, 1, 0.5);
+    expect(out[1].start).toBeCloseTo(3.5, 10);
+    expect(out[1].end).toBeCloseTo(5.5, 10);
+    expect(span(out[1])).toBeCloseTo(span(input[1]), 10);
+    expect(out[0]).toBe(input[0]); // untouched cues keep their identity
+    expect(out[2]).toBe(input[2]);
+  });
+
+  it('translates BOTH edges backward, preserving duration', () => {
+    const out = nudgeAt(threeCues(), 1, -0.5);
+    expect(out[1].start).toBeCloseTo(2.5, 10);
+    expect(out[1].end).toBeCloseTo(4.5, 10);
+    expect(span(out[1])).toBeCloseTo(2, 10);
+  });
+
+  it('returns the SAME array against an abutting neighbour (no legal room)', () => {
+    const later = abutting();
+    expect(nudgeAt(later, 1, 0.1)).toBe(later);
+    const earlier = abutting();
+    expect(nudgeAt(earlier, 1, -0.1)).toBe(earlier);
+  });
+
+  it('returns the SAME array for an invalid position', () => {
+    const input = threeCues();
+    expect(nudgeAt(input, -1, 0.1)).toBe(input);
+    expect(nudgeAt(input, 99, 0.1)).toBe(input);
+    expect(nudgeAt(input, 1.5, 0.1)).toBe(input);
+  });
+
+  it('returns the SAME array for a zero delta (no dedicated guard needed)', () => {
+    const input = threeCues();
+    expect(nudgeAt(input, 1, 0)).toBe(input);
+  });
+
+  it('moves the LAST cue freely (its upper bound is unbounded)', () => {
+    const out = nudgeAt(threeCues(), 2, 5); // [6,8] -> [11,13]
+    expect(out[2].start).toBe(11);
+    expect(out[2].end).toBe(13);
+  });
+
+  it('floors the FIRST cue exactly at 0, keeping its duration', () => {
+    const out = nudgeAt([cue(1, 1, 2, 'a'), cue(2, 5, 6, 'b')], 0, -5);
+    expect(out[0].start).toBe(0);
+    expect(out[0].end).toBe(1);
+  });
+
+  it('caps a move PARTIALLY when the gap is smaller than the delta', () => {
+    const out = nudgeAt([cue(1, 0, 1, 'a'), cue(2, 1.04, 3, 'b')], 0, 0.1);
+    expect(out[0].end).toBe(1.04); // pinned exactly to next.start, not one ulp past
+    expect(span(out[0])).toBeCloseTo(1, 10);
+  });
+
+  it('never moves BACKWARD on a forward nudge over a pre-existing overlap', () => {
+    const input = overlapping();
+    expect(nudgeAt(input, 0, 0.1)).toBe(input);
+  });
+
+  it('never moves FORWARD on a backward nudge over a pre-existing overlap', () => {
+    const input = overlapping();
+    expect(nudgeAt(input, 1, -0.1)).toBe(input);
   });
 });
 
