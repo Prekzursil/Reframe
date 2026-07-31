@@ -54,6 +54,23 @@ def redact(key: str) -> str:
     return _ELLIPSIS
 
 
+def is_redacted(value: str) -> bool:
+    """Return ``True`` when ``value`` is a :func:`redact` MARKER, not a real key.
+
+    The inverse of "this string is usable key material". Every marker :func:`redact`
+    produces starts with :data:`_ELLIPSIS` (``"…WXYZ"`` for a long key, a bare
+    ``"…"`` for a short/empty one), and no provider issues a key beginning with an
+    ellipsis, so the prefix test is exact for the values this codebase creates.
+
+    This exists because "non-empty string" is NOT the same predicate as "a real
+    key": the at-rest store holds only markers (the WU-D2b-2 NO-PERSIST invariant),
+    so any read that misses the request-scoped key overlay resolves to a marker that
+    a bare emptiness check happily admits. Callers that must never hand a marker
+    onward (``providers.revealKey``) gate on this instead.
+    """
+    return value.startswith(_ELLIPSIS)
+
+
 def scrub_error_body(text: str, keys: Sequence[str]) -> str:
     """Strip every key in ``keys`` and any ``Authorization: Bearer`` token from ``text``.
 

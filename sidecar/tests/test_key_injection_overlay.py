@@ -72,11 +72,29 @@ def test_wrapper_strips_injected_keys_from_params_in_place(wired: Services) -> N
 
 
 def test_wrapper_passthrough_without_injected_keys(wired: Services) -> None:
+    # No `_injectedKeys` -> no overlay is opened -> the ordinary (non-key-bearing)
+    # call path is unchanged.
+    #
+    # This used to be pinned as `revealKey -> {"key": "…WXYZ"}`, i.e. the handler
+    # returning the at-rest MARKER. That is now a typed refusal (a marker must never
+    # be revealed as if it were a key), so the observable moved — deliberately NOT to
+    # `pytest.raises(RpcError)`, which would ALSO be satisfied if the wrapper wrongly
+    # opened an EMPTY overlay, and would therefore stop discriminating the thing this
+    # characterization test exists to pin. Instead observe the overlay state itself
+    # through the FACTORY accessor while the handler runs, via a NON-key handler.
     _seed_provider(wired)
-    # No `_injectedKeys` -> no overlay -> the at-rest marker is what reveal sees,
-    # i.e. the ordinary (non-key-bearing) call path is unchanged.
-    out = protocol.METHODS["providers.revealKey"]({"id": "groq"}, _ctx())
-    assert out == {"key": "…WXYZ"}
+    seen: list[Any] = []
+
+    def spy(params: dict[str, Any], ctx: RpcContext) -> str:
+        seen.append(wired.settings.get_raw()["providers"][0]["apiKeys"])
+        return "ok"
+
+    assert _key_overlay_wrapper(wired, spy)({"id": "groq"}, _ctx()) == "ok"
+    # The at-rest marker is what `get_raw()` resolved DURING the call: no overlay.
+    assert seen == [["…WXYZ"]]
+    # ...and a real non-key method still round-trips through the wrapped registry.
+    listed = protocol.METHODS["providers.list"]({}, _ctx())
+    assert listed["providers"][0]["apiKeys"] == ["…WXYZ"]
 
 
 def test_wrapper_tolerates_non_dict_params() -> None:

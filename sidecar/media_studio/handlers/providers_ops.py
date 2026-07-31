@@ -150,9 +150,14 @@ def providers_reveal_key(self: Services, params: dict[str, Any], ctx: RpcContext
     diagnostics, and the RESPONSE is never written to a log line.
 
     ``index`` (default 0) selects among a provider's rotation-pool keys. An unknown
-    id, an out-of-range / negative / non-``int`` (incl. ``bool``) index, or an empty
-    stored slot is a typed ``INVALID_PARAMS`` error — never a crash, and never a
-    silent empty reveal that the UI could mistake for a real key.
+    id, an out-of-range / negative / non-``int`` (incl. ``bool``) index, an empty
+    stored slot, or a slot still holding its at-rest last-4 REDACTION MARKER is a
+    typed ``INVALID_PARAMS`` error — never a crash, and never a silent empty (or
+    marker-shaped) reveal that the UI could mistake for a real key. The marker arm
+    is what a request whose overlay does not carry this provider resolves to (the
+    keystore read back unreadable, or the entry was never written), and its message
+    stays CAUSE-AGNOSTIC: this handler cannot distinguish those causes, so cause
+    attribution belongs to the secure-keys surface, not here.
     """
     provider_id = _require_str(params, "id")
     index = params.get("index", 0)
@@ -170,6 +175,13 @@ def providers_reveal_key(self: Services, params: dict[str, Any], ctx: RpcContext
     key = keys[index]
     if not isinstance(key, str) or not key:
         raise _invalid(f"providers.revealKey: no key at index {index} for {provider_id!r}")
+    from ..models.secrets import is_redacted  # local: import-light pure predicate
+
+    if is_redacted(key):
+        raise _invalid(
+            f"providers.revealKey: the stored key at index {index} for {provider_id!r} "
+            "could not be unlocked — it is not present in the secure keystore for this session"
+        )
     return {"key": key}
 
 
