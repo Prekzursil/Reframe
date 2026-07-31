@@ -148,11 +148,23 @@ describe('captionSummary', () => {
   it('reports no captions', () => {
     expect(captionSummary(stateWith({ cues: [] }))).toBe('No captions');
   });
-  it('reports one caption (singular)', () => {
-    expect(captionSummary(stateWith({ cues: [cue(1)] }))).toBe('1 caption');
+  it('reports one word (singular)', () => {
+    expect(captionSummary(stateWith({ cues: [cue(1)] }))).toBe('1 word');
   });
-  it('reports many captions (plural)', () => {
-    expect(captionSummary(stateWith({ cues: [cue(1), cue(2)] }))).toBe('2 captions');
+  it('reports many words (plural)', () => {
+    expect(captionSummary(stateWith({ cues: [cue(1), cue(2)] }))).toBe('2 words');
+  });
+  it('labels WORD-level cues as words, not captions', () => {
+    // `captions.cues` returns ONE cue PER WORD (lib/rpc/client.ts:298-299;
+    // sidecar cues.py:59-94 `word_cues`). These six word cues are ONE rendered
+    // caption line — proved by sidecar/tests/test_caption_karaoke_flatten.py:14-24.
+    const cues = ['hello', 'there', 'how', 'are', 'you', 'today'].map((text, i) => ({
+      index: i + 1,
+      start: i,
+      end: i + 0.5,
+      text,
+    }));
+    expect(captionSummary(stateWith({ cues }))).toBe('6 words');
   });
 });
 

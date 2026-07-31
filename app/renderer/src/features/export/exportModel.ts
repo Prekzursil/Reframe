@@ -192,11 +192,23 @@ export function buildPreflight(state: EditorState, preset: PlatformPreset): Pref
   };
 }
 
-/** Plain-language caption summary for the bake preview (never color-only). */
+/**
+ * Plain-language caption summary for the bake preview (never color-only).
+ *
+ * Counts the transcript's WORD-level cues, NOT rendered caption lines:
+ * `captions.cues` emits one cue PER SPOKEN WORD (`lib/rpc/client.ts:298-299`,
+ * sidecar `cues.py::word_cues`), and many words group into one on-screen line
+ * (`sidecar/tests/test_caption_karaoke_flatten.py`). Hence "148 words", matching
+ * `lib/directorHandoff.ts:107,119`, which reads the identical `state.cues.length`
+ * off the same EditorState and calls it `wordCount`.
+ */
 export function captionSummary(state: EditorState): string {
   const count = state.cues.length;
+  // The zero case stays phrased in CAPTION terms on purpose: "no cues" really does
+  // mean "no captions", and it reads better than "No words". Do NOT "tidy" this to
+  // match the plural branch — it is a deliberate split, not an oversight.
   if (count === 0) return 'No captions';
-  return `${count} caption${count === 1 ? '' : 's'}`;
+  return `${count} word${count === 1 ? '' : 's'}`;
 }
 
 /**
