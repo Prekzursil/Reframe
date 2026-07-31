@@ -123,6 +123,39 @@ describe('<Subtitles />', () => {
     expect(genBtn().disabled).toBe(false);
   });
 
+  // F19: `initialTrack` arrives LATE. Workspace derives it from `project.tracks[0]`
+  // and `project.open` is fired from a post-commit effect, so this lazily-imported
+  // panel can mount BEFORE the project lands. `mount()` re-renders the SAME fiber
+  // (same element type, same position under one persistent root), so state is
+  // preserved — exactly the vehicle needed to model a late prop.
+  it('adopts a track that arrives AFTER mount (project.open resolves late)', async () => {
+    const fake = makeFakeApi();
+    await mount(fake); // initialTrack: null
+    // precondition guard: a genuine red here (rather than a setup error) requires
+    // the first render to really show no track.
+    expect(container.querySelector('.track-meta')).toBeNull();
+    await mount(fake, { initialTrack: track() }); // prop arrives; NOT a remount
+    expect(container.querySelector('.track-meta')).not.toBeNull();
+    expect([...container.querySelectorAll('.cue-text')]).toHaveLength(2);
+  });
+
+  it('does not clobber a locally-edited track when the initialTrack prop re-renders', async () => {
+    const fake = makeFakeApi();
+    await mount(fake, { initialTrack: track() });
+    const cue = container.querySelector('[aria-label="Cue 1 text"]') as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setter.call(cue, 'edited first');
+      cue.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    // A NEW track object from the parent must not overwrite the in-panel edit.
+    await mount(fake, { initialTrack: track({ id: 'tr2', name: 'Reloaded' }) });
+    expect((container.querySelector('[aria-label="Cue 1 text"]') as HTMLInputElement).value).toBe(
+      'edited first',
+    );
+    expect(container.querySelector('.track-meta')?.textContent).toContain('English');
+  });
+
   it('generate calls subtitles.generate, renders the track meta + sorted cues', async () => {
     const fake = makeFakeApi();
     const onTrackChange = vi.fn();
