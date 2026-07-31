@@ -12,7 +12,7 @@
 // Re-export from the gallery jumps to Make primed with the source video. The
 // heavy children own their own tests; this view owns the section routing +
 // video selection + the manual-export wiring.
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { TabBar, tabId, tabPanelId, type TabDef } from '../components/TabBar';
 import { Shorts } from './Shorts';
 import { Repurpose } from './Repurpose';
@@ -20,7 +20,7 @@ import { ShortMaker } from '../features/ShortMaker';
 import { ManualInterval } from '../features/ManualInterval';
 import { OutputTray, DEFAULT_OUTPUT_TRAY, type OutputTrayState } from '../components/OutputTray';
 import { CaptionDesigner } from '../components/CaptionDesigner';
-import { buildExportParams } from '../features/shortMakerPresets';
+import { buildExportParams, type ExportOutputOptions } from '../features/shortMakerPresets';
 import {
   candidateId,
   sanitizeControls,
@@ -145,6 +145,39 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
   const handleSaveShort = useCallback(() => setManualNote('Saved the short.'), []);
   const handleSaveSrt = useCallback(() => setManualNote('Saved the SRT sidecar.'), []);
 
+  // The caption design's export slice (style id + wire-rounded position box +
+  // the optional V1.1 tuning patch), computed ONCE for every consumer: the
+  // manual export payload, the AI flow's `output` prop, and the AI flow's
+  // mount-time style seed. Recomputed only when the design changes.
+  const wire = useMemo(() => captionDesignWire(design), [design]);
+
+  // F08 — the Output Tray's "Caption" checkbox is the COARSE switch: unchecking
+  // it means "no captions at all", which the contract already expresses as the
+  // 'none' delivery mode (the sidecar skips the whole caption stage). The tray's
+  // own onChange flips only `caption` and hides the delivery select, so nothing
+  // else translates the intent — without this gate an explicit "captions off"
+  // was silently discarded and the next export HARD-BURNED them into the pixels.
+  //
+  // H6/F45 — this is deliberately ONE expression shared by BOTH export paths
+  // (the manual `buildExportParams` call below AND the AI flow's `output` prop).
+  // Gating only the manual path would leave the identical defect one seam over.
+  const subtitleMode = tray.caption ? tray.subtitleMode : 'none';
+
+  // F45 — the caption POSITION, the subtitle DELIVERY mode and the V1.1 caption
+  // OVERRIDE the user chose in this section. Both export paths send them; before
+  // this the AI/batch call sites omitted the whole slice, so a top/centre box, a
+  // soft-track/sidecar delivery and any override were dropped on the floor.
+  // Memoised so the AI flow's export/batch callbacks are not re-created on every
+  // render by a fresh object literal.
+  const exportOutput = useMemo<ExportOutputOptions>(
+    () => ({
+      captionPosition: wire.captionPosition,
+      subtitleMode,
+      captionOverride: wire.captionOverride,
+    }),
+    [wire, subtitleMode],
+  );
+
   // Manual export runs only from the ManualInterval control, which is rendered
   // ONLY once a video is selected (so `selectedId` is always set here, and the
   // video list is populated only when the preload bridge is present — no extra
@@ -158,16 +191,11 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
       setTrayOpen(false);
       setManualBusy(true);
       try {
-        const wire = captionDesignWire(design);
         // The design's style flows via controls.captionStyle; the position +
         // subtitle delivery + the V1.1 within-template tuning patch flow via the
         // export output options (P4 §4 / V1.1 CaptionOverride).
         const controls = sanitizeControls({ captionStyle: wire.captionStyle });
-        const params = buildExportParams(selectedId, candidates, controls, '', {
-          captionPosition: wire.captionPosition,
-          subtitleMode: tray.subtitleMode,
-          captionOverride: wire.captionOverride,
-        });
+        const params = buildExportParams(selectedId, candidates, controls, '', exportOutput);
         const res = await client.shortmaker.export(selectedId, candidates.map(candidateId), params);
         // shortmaker.export is a DEFERRED job: the immediate resolution carries
         // only {jobId}; the exported clips (or a job.done ERROR) arrive later.
@@ -192,7 +220,13 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
         setManualBusy(false);
       }
     },
-    [selectedId, design, tray.subtitleMode],
+    // `wire` + `exportOutput` are memoised, so listing them (rather than
+    // `design`/`tray.*`) keeps the callback fresh across a design change AND a
+    // tray Caption/delivery change. MANDATORY: `react-hooks/exhaustive-deps` is
+    // off in app/.oxlintrc.json, so a missing dep here is caught only by tests —
+    // and it would silently make the F08 gate above a no-op (the memoised
+    // callback would keep the pre-toggle binding).
+    [selectedId, wire, exportOutput],
   );
 
   return (
@@ -236,14 +270,19 @@ export function MakeShorts({ resumeId, videoId }: MakeShortsProps): React.ReactE
                     <h2 className="make-shorts__heading">AI moment-pick</h2>
                     {/* Seed the AI flow from the SAME persisted caption/language
                         default the manual path uses, so both agree (P4 §4). The
-                        wired caption-style value matches the manual export's. */}
+                        wired caption-style value matches the manual export's.
+                        F45: `output` carries the caption position + subtitle
+                        delivery + override into BOTH AI export call sites (review
+                        and unattended batch) — the same slice the manual path
+                        sends, so the two paths cannot diverge again. */}
                     <ShortMaker
                       videoId={selectedId}
                       onReexport={handleReexport}
                       initialControls={{
-                        captionStyle: captionDesignWire(design).captionStyle,
+                        captionStyle: wire.captionStyle,
                         language: tray.language,
                       }}
+                      output={exportOutput}
                     />
                   </section>
                 ) : null}

@@ -99,6 +99,7 @@ import {
   type PlatformPreset,
   type PlatformPresetId,
   type BrandSettings,
+  type ExportOutputOptions,
   PLATFORM_PRESETS,
   PLATFORM_PRESET_IDS,
   EMPTY_BRAND_SETTINGS,
@@ -120,6 +121,7 @@ export {
   type PlatformPreset,
   type PlatformPresetId,
   type BrandSettings,
+  type ExportOutputOptions,
   PLATFORM_PRESETS,
   PLATFORM_PRESET_IDS,
   EMPTY_BRAND_SETTINGS,
@@ -145,6 +147,15 @@ export interface ShortMakerProps {
    * re-opens the Short-maker primed. Optional — absent in standalone tests.
    */
   onReexport?: (hint: ShortReexportHint) => void;
+  /**
+   * F45 / P4 §4 — the caption POSITION box + the subtitle DELIVERY mode + the
+   * V1.1 caption OVERRIDE chosen on the HOST surface (Make Shorts' caption editor
+   * and Output Tray). Forwarded verbatim to `buildExportParams` at BOTH export
+   * call sites (review and unattended batch). Read at export time, not at mount,
+   * so a mid-session change is honoured. Omitted (standalone/tests) => the export
+   * payload carries none of those keys, exactly as before.
+   */
+  output?: ExportOutputOptions;
 }
 
 type Phase = 'idle' | 'selecting' | 'reviewing' | 'exporting';
@@ -154,6 +165,9 @@ export function ShortMaker({
   api,
   initialControls,
   onReexport,
+  // NOT defaulted to `{}` on purpose: `buildExportParams`'s own `output = {}`
+  // default already tolerates `undefined`, so leaving it undefined adds no branch.
+  output,
 }: ShortMakerProps): React.JSX.Element {
   const resolvedApi: Api = api ?? (resolveWindowApi() as Api);
 
@@ -648,7 +662,9 @@ export function ShortMaker({
       // captionStyle/reframeEngine already do (frozen P3 mini-contract).
       const res = await resolvedApi.rpc<ExportResult | JobHandle>(
         'shortmaker.export',
-        buildExportParams(videoId, approvedCandidates(items), clean, audioTrackId),
+        // F45: `output` carries the host surface's caption position + subtitle
+        // delivery + override. Without it the AI path silently dropped all three.
+        buildExportParams(videoId, approvedCandidates(items), clean, audioTrackId, output),
       );
       let clips = extractClips(res);
       if (clips === null && isJobHandle(res)) {
@@ -690,7 +706,7 @@ export function ShortMaker({
       abortRef.current = null;
       setProgress(null);
     }
-  }, [resolvedApi, busy, items, videoId, controls, audioTrackId, reloadVideoShorts]);
+  }, [resolvedApi, busy, items, videoId, controls, audioTrackId, output, reloadVideoShorts]);
 
   // ---- P4 §8c: unattended batch "Make N" ----------------------------------
   // Runs the existing RPC flow end-to-end with no manual review:
@@ -743,7 +759,8 @@ export function ShortMaker({
       setProgress({ jobId: '', pct: 0, message: `Exporting ${top.length} clips…` });
       const expRes = await resolvedApi.rpc<ExportResult | JobHandle>(
         'shortmaker.export',
-        buildExportParams(videoId, top, clean, audioTrackId),
+        // F45: same `output` slice as the review path (see runExport).
+        buildExportParams(videoId, top, clean, audioTrackId, output),
       );
       const clips = await resolveJobResult(
         resolvedApi,
@@ -770,7 +787,7 @@ export function ShortMaker({
       abortRef.current = null;
       setProgress(null);
     }
-  }, [resolvedApi, busy, videoId, prompt, controls, audioTrackId, reloadVideoShorts]);
+  }, [resolvedApi, busy, videoId, prompt, controls, audioTrackId, output, reloadVideoShorts]);
 
   // F2: abort any in-flight job.done wait (cancel/unmount) so the wait rejects
   // with JobAbortedError and its subscription/timer tear down instead of leaking.

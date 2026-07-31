@@ -60,6 +60,16 @@ describe('intervalToCandidate', () => {
     expect(c.end).toBe(250);
     expect(c.durationSec).toBe(167);
   });
+
+  // F05: a NON-EMPTY hook is BURNED into the exported pixels by the sidecar
+  // caption stage (shortmaker.py `hook_title = hook_text or None` -> caption.py
+  // HookCard for ranks 1-10 / plain HookTitle otherwise) AND is persisted as the
+  // clip's gallery label in <clip>.json. A raw time range has no user-authored
+  // headline, so the manual path must emit NO hook text — never a placeholder.
+  it('emits NO hook text for a manual range (a non-empty hook is burned into the pixels)', () => {
+    expect(intervalToCandidate(10, 40, 1).hook).toBe('');
+    expect(intervalToCandidate(83, 250, 2).hook).toBe('');
+  });
 });
 
 describe('buildManualCandidates', () => {
@@ -74,5 +84,14 @@ describe('buildManualCandidates', () => {
 
   it('returns an empty list for no ranges', () => {
     expect(buildManualCandidates([])).toEqual([]);
+  });
+
+  // F05: every manual candidate, at every rank, carries an empty hook.
+  it('emits an empty hook for every ranked range', () => {
+    const cands = buildManualCandidates([
+      { start: 10, end: 40 },
+      { start: 60, end: 90 },
+    ]);
+    expect(cands.map((c) => c.hook)).toEqual(['', '']);
   });
 });
