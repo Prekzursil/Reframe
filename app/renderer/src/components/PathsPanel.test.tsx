@@ -3,9 +3,9 @@
 //
 // Fake `paths.describe` payload + a fake bridge (no preload). Pins the falsifiable
 // acceptance:
-//   * each dir row exposes a real <button> named "Open <label> folder" (no
+//   * each OPENABLE row exposes a real <button> named "Open <label> folder" (no
 //     icon-only control) and renders its path as selectable TEXT (queryable, not
-//     a button);
+//     a button); a `subDirs` value that is a PATTERN gets text but no button;
 //   * "Change data folder" calls bridge.pickDataFolder THEN bridge.setDataFolder
 //     in order, then shows the chosen path + a restart hint;
 //   * loading / unavailable-bridge / error branches all render.
@@ -24,13 +24,16 @@ function layout(): PathsDescribe {
     projectsDir: 'C:/data/projects',
     exportsDir: 'C:/data/exports',
     settingsPath: 'C:/data/settings.json',
-    libraryPath: 'C:/data/library.json',
+    // Mirrors the WIRE, not the old label: `paths.describe` reports the SQLite
+    // store (`library.db`), never the legacy `library.json` index.
+    libraryPath: 'C:/data/library.db',
     subDirs: {
       dubs: 'C:/data/dubs',
       shorts: 'C:/data/exports/shorts-*',
       stabilized: 'C:/data/exports/stabilized',
       audiomix: 'C:/data/exports/audiomix',
       trimmed: 'C:/data/exports/trimmed',
+      'managed-copies': 'C:/data/managed-copies',
     },
   };
 }
@@ -91,16 +94,17 @@ describe('<PathsPanel />', () => {
     const rpc = makeRpc();
     await mount({ rpc, bridge: makeBridge() });
     expect(rpc.describe).toHaveBeenCalledTimes(1);
-    // One row per layout entry (5 top-level + 5 subDirs = 10).
+    // One row per layout entry (5 top-level + 6 subDirs = 11).
     const rows = container.querySelectorAll('.paths-panel__row');
-    expect(rows.length).toBe(10);
+    expect(rows.length).toBe(11);
     // The path string is rendered as TEXT, not a button.
     const dataRow = container.querySelector('[data-path-key="dataDir"]') as HTMLElement;
     const pathEl = dataRow.querySelector('.paths-panel__path') as HTMLElement;
     expect(pathEl.tagName).not.toBe('BUTTON');
     expect(pathEl.textContent).toBe('C:/data');
-    // Each DIRECTORY row's Open control is a real <button> with a row-specific
-    // accessible name (8 dirs = 3 top-level + 5 subDirs; the 2 file rows have none).
+    // Each OPENABLE row's control is a real <button> with a row-specific
+    // accessible name (8 = 3 top-level dirs + 5 concrete subDirs; the 2 file rows
+    // and the `shorts-*` PATTERN row have none).
     const buttons = openButtons();
     expect(buttons.length).toBe(8);
     for (const btn of buttons) {
@@ -136,6 +140,48 @@ describe('<PathsPanel />', () => {
     );
     // Files have no own-folder Open button (they are not directories).
     expect(settingsRow.querySelector('.paths-panel__open')).toBeNull();
+  });
+
+  it('renders no Open button for a glob-pattern subDir (shorts-* names no directory)', async () => {
+    // `paths.describe` deliberately reports shorts as the PATTERN
+    // `exports/shorts-*` because output is per-video `exports/shorts-<videoId>`.
+    // MEASURED on this machine (Electron 43.2.0, Windows 11), two independent
+    // detectors (Shell.Application LocationURL + Win32 EnumWindows/CabinetWClass),
+    // both orders: `shell.showItemInFolder('…\\exports\\shorts-abc123')` opens
+    // `…\\exports` (detector FIRED) while `shell.showItemInFolder('…\\exports\\shorts-*')`
+    // opens NOTHING (detector SILENT). So the control is a silent no-op, not a
+    // reveal-the-parent affordance — remove it rather than retarget it.
+    await mount({ rpc: makeRpc(), bridge: makeBridge() });
+    const shortsRow = container.querySelector('[data-path-key="subDir:shorts"]') as HTMLElement;
+    expect(shortsRow).not.toBeNull();
+    // The pattern is still SHOWN — the panel is a layout view, not an opener.
+    expect((shortsRow.querySelector('.paths-panel__path') as HTMLElement).textContent).toBe(
+      'C:/data/exports/shorts-*',
+    );
+    expect(shortsRow.querySelector('.paths-panel__open')).toBeNull();
+  });
+
+  it('names the managed-copies store as its own row, with an Open control', async () => {
+    // `paths.describe` now reports `managed-copies` (the opt-in byte-copy store
+    // beside the library DB), which ManagedStoreMeter renders in this same
+    // sub-tab while naming its path nowhere. The subDirs KEY is the visible
+    // label verbatim, so the hyphenated form is deliberate.
+    // ACCEPTED trade-off: keepcopy creates that folder LAZILY on the first
+    // kept copy, so on a fresh install this button reveals a not-yet-existing
+    // path — the same shape the concrete dubs/stabilized/audiomix/trimmed rows
+    // already have. It is a real directory (no wildcard), so it is openable in
+    // principle; suppressing it would need an existence probe the layout
+    // handler is contractually forbidden to do (it is a pure path-join).
+    await mount({ rpc: makeRpc(), bridge: makeBridge() });
+    const row = container.querySelector('[data-path-key="subDir:managed-copies"]') as HTMLElement;
+    expect(row).not.toBeNull();
+    expect((row.querySelector('.paths-panel__row-label') as HTMLElement).textContent).toBe(
+      'managed-copies',
+    );
+    expect((row.querySelector('.paths-panel__path') as HTMLElement).textContent).toBe(
+      'C:/data/managed-copies',
+    );
+    expect(row.querySelector('.paths-panel__open')).not.toBeNull();
   });
 
   it('hydrates and shows the current data folder from the bridge', async () => {
@@ -233,7 +279,7 @@ describe('<PathsPanel />', () => {
     });
     await flush();
     expect(container.querySelector('.paths-panel__loading')).toBeNull();
-    expect(container.querySelectorAll('.paths-panel__row').length).toBe(10);
+    expect(container.querySelectorAll('.paths-panel__row').length).toBe(11);
   });
 
   it('surfaces a describe error and stops loading', async () => {
@@ -256,7 +302,7 @@ describe('<PathsPanel />', () => {
     expect(container.querySelector('.paths-panel__change-root')).toBeNull();
     expect(container.querySelector('.paths-panel__root-unavailable')).not.toBeNull();
     // The layout rows still render (the describe RPC is independent of the bridge).
-    expect(container.querySelectorAll('.paths-panel__row').length).toBe(10);
+    expect(container.querySelectorAll('.paths-panel__row').length).toBe(11);
   });
 
   it('keeps the Open button inert when the bridge lacks openInFolder', async () => {
@@ -285,6 +331,6 @@ describe('<PathsPanel />', () => {
     expect((container.querySelector('.paths-panel__root-value') as HTMLElement).textContent).toBe(
       'Unknown',
     );
-    expect(container.querySelectorAll('.paths-panel__row').length).toBe(10);
+    expect(container.querySelectorAll('.paths-panel__row').length).toBe(11);
   });
 });

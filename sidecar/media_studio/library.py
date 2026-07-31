@@ -144,6 +144,17 @@ class Library:
         self._db_path = self.index_path.with_suffix(".db")
         self._probe = probe_duration or _default_probe
 
+    @property
+    def db_path(self) -> Path:
+        """The REAL store: the SQLite DB (``-wal``/``-shm`` are its siblings).
+
+        ``index_path`` is the legacy JSON index — only ever read, then demoted to
+        ``library.json.bak``; it is never written. Callers that want to NAME the
+        store (e.g. ``paths.describe``) must use this, not ``index_path``, and must
+        not re-derive the ``.db`` suffix convention themselves.
+        """
+        return self._db_path
+
     # ---- connection + migration -------------------------------------------
     @contextmanager
     def _open(self) -> Iterator[sqlite3.Connection]:

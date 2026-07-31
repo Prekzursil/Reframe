@@ -391,12 +391,19 @@ def paths_describe(self: Services, params: dict[str, Any], ctx: RpcContext) -> d
     repeated calls are identical. Derives the dirs from
     :attr:`data_dir`/:attr:`projects_dir`/:attr:`exports_dir` and the file
     paths from the injected stores' own path attributes (robust to a custom
-    settings/library location). ``subDirs`` names the per-feature derivative
-    folders the sidecar writes into — ``dubs`` under the data dir; the
-    ffmpeg-derivative folders (``stabilized``/``audiomix``/``trimmed``)
-    under the exports root, matching ``register_all``'s wiring. ``shorts`` is
-    written PER-VIDEO as ``exports/shorts-<videoId>``, so it is reported as the
-    honest ``shorts-*`` pattern (no flat ``exports/shorts`` dir exists). NO key/secret
+    settings/library location). ``libraryPath`` is the SQLite store
+    (:attr:`Library.db_path`, ``library.db``) — NOT ``index_path``, which names the
+    legacy JSON index the store only reads-then-demotes and never writes.
+    ``subDirs`` names the per-feature derivative folders the sidecar writes into —
+    ``dubs`` under the data dir; the ffmpeg-derivative folders
+    (``stabilized``/``audiomix``/``trimmed``) under the exports root, matching
+    ``register_all``'s wiring; and ``managed-copies``, the opt-in byte-copy store
+    beside the library DB (``keepcopy.STORE_DIRNAME``, rendered by
+    ``ManagedStoreMeter`` in the same Settings sub-tab but named nowhere else).
+    ``shorts`` is written PER-VIDEO as ``exports/shorts-<videoId>``, so it is
+    reported as the honest ``shorts-*`` pattern (no flat ``exports/shorts`` dir
+    exists). Several of these folders are created LAZILY on first use, so a value
+    here is "where it will live", not a promise that it exists yet. NO key/secret
     string ever appears in this payload (it is layout-only).
     """
     return {
@@ -404,13 +411,14 @@ def paths_describe(self: Services, params: dict[str, Any], ctx: RpcContext) -> d
         "projectsDir": str(self.projects_dir),
         "exportsDir": str(self.exports_dir),
         "settingsPath": str(self.settings.config_path),
-        "libraryPath": str(self.library.index_path),
+        "libraryPath": str(self.library.db_path),
         "subDirs": {
             "dubs": str(self.data_dir / "dubs"),
             "shorts": str(self.exports_dir / "shorts-*"),
             "stabilized": str(self.exports_dir / "stabilized"),
             "audiomix": str(self.exports_dir / "audiomix"),
             "trimmed": str(self.exports_dir / "trimmed"),
+            "managed-copies": str(Path(self.library.index_path).parent / _keepcopy.STORE_DIRNAME),
         },
     }
 

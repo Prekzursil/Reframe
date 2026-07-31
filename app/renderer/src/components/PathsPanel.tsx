@@ -4,10 +4,12 @@
 // Two independent sources, both INJECTED so the component unit-tests with no
 // preload bridge (mirrors SavePresetsControls' injected `savePresets` slice):
 //   * `rpc.describe()` (sidecar `paths.describe`, WU-1, read-only) -> the resolved
-//     on-disk layout. Each DIRECTORY entry renders its path as selectable text +
+//     on-disk layout. Each OPENABLE entry renders its path as selectable text +
 //     a real <button> ("Open <label> folder") that reveals it via the bridge's
 //     `openInFolder` (the existing `shell.showItemInFolder` channel — no new
-//     channel). FILE entries (settings/library) are text-only (not directories).
+//     channel). FILE entries (settings/library) are text-only (not directories),
+//     and so is any `subDirs` value that is a PATTERN rather than a path (see
+//     `isOpenableDir`): a wildcard names no directory, so it gets no control.
 //   * `bridge` — the MAIN-process data-root flow (`dataFolder.get/pick/set`, NOT
 //     sidecar RPCs) + `openInFolder`. Each capability is optional: a missing piece
 //     degrades that control to an "Unavailable" state rather than crashing the
@@ -56,15 +58,35 @@ export interface PathsPanelProps {
   bridge: PathsBridge;
 }
 
-/** A single layout row: a human label, its path, and whether it is a directory. */
+/**
+ * A single layout row: a human label, its path, and whether the path can be
+ * handed to `openInFolder`. NOT "is this a directory" — a `subDirs` value can be
+ * a directory-shaped PATTERN that no reveal call can resolve, so the two are
+ * deliberately different questions (conflating them is what produced a
+ * permanently dead control).
+ */
 interface PathRow {
   key: string;
   label: string;
   path: string;
-  isDir: boolean;
+  canOpen: boolean;
 }
 
 const ROOT_UNKNOWN = 'Unknown';
+
+/** Wildcards are illegal in a Windows filename, so they can only be a pattern. */
+const GLOB_CHARS = /[*?]/;
+
+/**
+ * A `subDirs` value can be a PATTERN, not a path: the sidecar reports shorts as
+ * `exports/shorts-*` because output is per-video `exports/shorts-<videoId>`.
+ * MEASURED (Electron 43.2.0 / Windows 11): `shell.showItemInFolder` on such a
+ * path opens NOTHING — not even the parent — so a control here would be a silent
+ * dead click. The row keeps its label + path text; it just gets no button.
+ */
+function isOpenableDir(path: string): boolean {
+  return !GLOB_CHARS.test(path);
+}
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -73,19 +95,19 @@ function errText(err: unknown): string {
 /** Build the ordered display rows from a `paths.describe` payload. */
 function buildRows(layout: PathsDescribe): PathRow[] {
   const dirs: PathRow[] = [
-    { key: 'dataDir', label: 'Data', path: layout.dataDir, isDir: true },
-    { key: 'projectsDir', label: 'Projects', path: layout.projectsDir, isDir: true },
-    { key: 'exportsDir', label: 'Exports', path: layout.exportsDir, isDir: true },
+    { key: 'dataDir', label: 'Data', path: layout.dataDir, canOpen: true },
+    { key: 'projectsDir', label: 'Projects', path: layout.projectsDir, canOpen: true },
+    { key: 'exportsDir', label: 'Exports', path: layout.exportsDir, canOpen: true },
   ];
   const files: PathRow[] = [
-    { key: 'settingsPath', label: 'Settings file', path: layout.settingsPath, isDir: false },
-    { key: 'libraryPath', label: 'Library file', path: layout.libraryPath, isDir: false },
+    { key: 'settingsPath', label: 'Settings file', path: layout.settingsPath, canOpen: false },
+    { key: 'libraryPath', label: 'Library file', path: layout.libraryPath, canOpen: false },
   ];
   const subDirs = Object.entries(layout.subDirs ?? {}).map(([name, path]) => ({
     key: `subDir:${name}`,
     label: name,
     path,
-    isDir: true,
+    canOpen: isOpenableDir(path),
   }));
   return [...dirs, ...files, ...subDirs];
 }
@@ -214,7 +236,7 @@ export function PathsPanel({ rpc, bridge }: PathsPanelProps): React.ReactElement
             <li key={row.key} className="paths-panel__row" data-path-key={row.key}>
               <span className="paths-panel__row-label">{row.label}</span>
               <span className="paths-panel__path">{row.path}</span>
-              {row.isDir && openInFolder ? (
+              {row.canOpen && openInFolder ? (
                 <button
                   type="button"
                   className="paths-panel__open"
