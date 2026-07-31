@@ -99,6 +99,15 @@ jobs:
       - name: gate-types tsc render-cli
         working-directory: app/render-cli
         run: npx tsc -p . --noEmit
+      # `app/tsconfig.json` deliberately EXCLUDES e2e/** so Playwright types never
+      # reach the renderer build, and the pre-commit `files:` regexes are scoped to
+      # main|renderer/src|render-cli/src — so before this step nothing in CI read
+      # app/e2e/** at all. The `typecheck:e2e` script existed but no workflow ever
+      # called it. Verified both states: clean tree exits 0; a planted `const x:
+      # number = 'str'` in e2e/overlay-hittest.spec.ts exits 2 naming the line.
+      - name: gate-types tsc e2e harness
+        working-directory: app
+        run: npx tsc --noEmit -p tsconfig.e2e.json
       - name: gate-types basedpyright
         run: basedpyright
 
