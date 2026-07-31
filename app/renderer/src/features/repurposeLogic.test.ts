@@ -8,6 +8,7 @@ import {
   MIN_WINDOW_SEC,
   MAX_WINDOW_SEC,
   clampWindowSec,
+  clampWindowPair,
   isValidCaptionStyle,
   statusToken,
   isTerminalItem,
@@ -56,6 +57,27 @@ describe('clampWindowSec', () => {
   });
   it('treats NaN as the min', () => {
     expect(clampWindowSec(Number.NaN)).toBe(MIN_WINDOW_SEC);
+  });
+});
+
+describe('clampWindowPair (direction-aware min<=max coupling)', () => {
+  it('passes a non-inverted pair through untouched', () => {
+    expect(clampWindowPair(30, 50, 'min')).toEqual({ minSec: 30, maxSec: 50 });
+  });
+
+  it('clamps both ends into the [20, 60] window', () => {
+    expect(clampWindowPair(5, 600, 'max')).toEqual({
+      minSec: MIN_WINDOW_SEC,
+      maxSec: MAX_WINDOW_SEC,
+    });
+  });
+
+  it('pushes Max UP when Min is the edited field', () => {
+    expect(clampWindowPair(60, 20, 'min')).toEqual({ minSec: 60, maxSec: 60 });
+  });
+
+  it('pulls Min DOWN when Max is the edited field (Max stays lowerable)', () => {
+    expect(clampWindowPair(60, 20, 'max')).toEqual({ minSec: 20, maxSec: 20 });
   });
 });
 
