@@ -145,7 +145,12 @@
   transform: rotate(90deg);
 }
 
-.tabbar--grouped .tabbar__advanced-panel {
+/* `:not([hidden])` is load-bearing, not cosmetic. TabBar renders this panel as
+   `<div className="tabbar__advanced-panel" hidden={!advancedOpen}>`, and an
+   author-origin `display` outranks the UA `[hidden] { display: none }` rule — so
+   an unscoped `display: flex` here keeps the collapsed cluster painted, making
+   the "Advanced" disclosure a no-op that also pushes Export off the strip. */
+.tabbar--grouped .tabbar__advanced-panel:not([hidden]) {
   display: flex;
   align-items: center;
   gap: var(--space-2);
