@@ -148,6 +148,66 @@ test('preview <video> PLAYS the imported sample (real playback)', async () => {
   expect(advanced, 'currentTime after play()').toBeGreaterThan(0.2);
 });
 
+test('Advanced disclosure actually COLLAPSES the Deliver cluster (F17)', async () => {
+  const win = await app.firstWindow();
+  // Workspace is already open from the playback test, in its DEFAULT view:
+  // Workspace.tsx seeds `advancedOpen = false`, and nothing on the route in
+  // (library card -> task-hub "Advanced / all tools") ever opens the cluster.
+  await expect(win.locator('.workspace')).toBeVisible();
+
+  const toggle = win.locator('.tabbar__advanced-toggle');
+  const panel = win.locator('.tabbar__advanced-panel');
+  const deliverTab = win.locator('.tab[data-tab-id="tracks"]');
+
+  // DETECTOR CONTROL (same element, mechanically independent of layout): the
+  // panel EXISTS and React really wrote the `hidden` attribute onto it. So a
+  // failure of the layout assertions below cannot come from a typo'd selector,
+  // an unmounted panel, or React skipping `hidden` — the only remaining cause
+  // is the CSS cascade. This is what makes the red below name the defect.
+  await expect(panel).toHaveCount(1);
+  await expect(panel).toHaveAttribute('hidden', '');
+
+  // The disclosure REPORTS collapsed...
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  // ...so the cluster it owns must not paint. It does today: the author-origin
+  // `display: flex` on `.tabbar--grouped .tabbar__advanced-panel` outranks the
+  // UA `[hidden] { display: none }`, and no `[hidden]` selector anywhere under
+  // app/ restores it — so all 13 tabs paint instead of 8 and `aria-expanded`
+  // lies about what is on screen.
+  await expect(panel).toBeHidden();
+  await expect(deliverTab).toBeHidden();
+  // The user-visible consequence: the default view paints the 8 primary tabs,
+  // not all 13. (`.tab` is exclusive to this strip — measured 13 total.)
+  await expect(win.locator('.tab')).toHaveCount(13);
+  await expect(win.locator('.tab:visible')).toHaveCount(8);
+  // ...and the disclosure's own toggle is reachable WITHOUT horizontally
+  // scrolling `.workspace .tabbar` (workspace.css `overflow-x: auto`). With the
+  // cluster always painted the strip overflowed its 1064px track by 587px and
+  // pushed the toggle out of the window entirely, so the only control that could
+  // collapse the cluster was itself off-screen.
+  await expect(toggle).toBeInViewport();
+  // Deliberately NOT asserted: `.tabbar__export` in-viewport. Measured on the
+  // live app at the default window (innerWidth 1264), collapsing the cluster
+  // cuts the strip's overflow from 587px to 94px — which restores the toggle
+  // (x 1175..1268) but still leaves Export starting at x=1268, 4px past the
+  // right edge. Export needs a separate layout change that this rule does not
+  // govern, so asserting it here would pin a promise this fix does not keep.
+
+  // The disclosure still REVEALS when asked — pins that the fix scopes the rule
+  // rather than deleting the cluster (passes before AND after the fix).
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(panel).toBeVisible();
+  await expect(deliverTab).toBeVisible();
+
+  // RESTORE the collapsed default. playwright.config.ts runs `fullyParallel:
+  // false, workers: 1` against ONE app launched in `beforeAll`, so leaving the
+  // cluster open would leak `advancedOpen === true` into the tests below and
+  // hide whether THEY reveal it themselves.
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+});
+
 test('Workspace tabs mount, including SemanticSearch', async () => {
   const win = await app.firstWindow();
   // Workspace is already open from the playback test.
@@ -161,6 +221,12 @@ test('Workspace tabs mount, including SemanticSearch', async () => {
   await expect(win.locator('section.semantic-search-panel h2')).toHaveText('Search the transcript');
   await expect(win.locator('input[aria-label="Search the transcript"]')).toBeVisible();
 
+  // "Timeline export" (tab id `nle`) lives in the Deliver cluster, which is
+  // collapsed by default — so REVEAL it first or Playwright's actionability gate
+  // cannot click a `display:none` button. Use `.tabbar__export` (Workspace
+  // handleExport → `setAdvancedOpen(true)`), which is IDEMPOTENT; the
+  // `.tabbar__advanced-toggle` would flip the cluster shut on a second caller.
+  await win.locator('.tabbar__export').click();
   // Switch to Timeline export and assert the NleExport panel ITSELF mounted.
   await win.locator('button', { hasText: 'Timeline export' }).first().click();
   await expect(win.locator('section.nle-panel')).toBeVisible();
@@ -174,6 +240,9 @@ test('export action yields a real file (NLE timeline export, real button)', asyn
   // Drive the REAL "Export timeline" button in the mounted NleExport panel (it
   // calls nle.export through the live preload bridge -> live sidecar). Then read
   // the saved path the panel renders and assert the file exists on disk.
+  // Reveal the Deliver cluster first (see the note above): this test must not
+  // depend on a sibling test having left it open.
+  await win.locator('.tabbar__export').click();
   await win.locator('button', { hasText: 'Timeline export' }).first().click();
   await expect(win.locator('section.nle-panel')).toBeVisible();
   await win.locator('section.nle-panel button', { hasText: 'Export timeline' }).click();
