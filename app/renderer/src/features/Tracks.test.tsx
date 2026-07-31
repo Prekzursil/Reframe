@@ -3,8 +3,9 @@
 // The panel consumes the FROZEN window.api bridge via getApi(), so we install a
 // fake on globalThis.api. Covers: list (empty + populated + error), rename/
 // relabel-on-blur (incl. the no-op guards), add/remove/burn/strip ops (success +
-// error), the burn long-job progress + job.done path, the available-tracks add,
-// and refresh.
+// error), Remove's destructive confirm (cancel = no-op, approve = removes, and the
+// raw-manifest row with no `cues` field), the burn long-job progress + job.done
+// path, the available-tracks add, and refresh.
 
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -161,12 +162,83 @@ describe('<Tracks />', () => {
     expect(container.querySelector('.status')?.textContent).toContain('Relabelled');
   });
 
+  it('Remove CONFIRMS first and is a no-op when the user cancels', async () => {
+    // tracks.remove drops the whole soft-track ROW from the project manifest
+    // (sidecar/media_studio/features/tracks.py:135) and project.save() overwrites
+    // the manifest with no history. Cues live INLINE on that row, and there is no
+    // import RPC, so every hand correction / translation / caption-polish layered
+    // on the track dies with it — the transcript-derived base can be regenerated,
+    // the edit delta cannot. This is the same class as the already-guarded
+    // shorts.delete sites (views/Shorts.tsx:147, views/Library.tsx:461,
+    // features/useShortsGallery.ts:99) and KeepCopyControl.tsx:21's standard:
+    // "never a silent one-click destructive action".
+    const fake = makeFakeApi({
+      tracks: [track({ cues: [{ index: 1, start: 0, end: 1, text: 'hand-edited' }] })],
+    });
+    await mount(fake);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const removeBtn = [...container.querySelectorAll('.track-row button')].find(
+      (b) => b.textContent === 'Remove',
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      removeBtn.click();
+      await Promise.resolve();
+    });
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(fake.calls.find((c) => c.method === 'tracks.remove')).toBeUndefined();
+    // The prompt names the track AND the real loss (its cue count).
+    expect(confirmSpy.mock.calls[0][0]).toContain('English');
+    expect(confirmSpy.mock.calls[0][0]).toContain('1 cue');
+
+    // Approving the same click removes for real (the guard must not break the
+    // happy path).
+    confirmSpy.mockReturnValue(true);
+    await act(async () => {
+      removeBtn.click();
+      await Promise.resolve();
+    });
+    expect(fake.calls.find((c) => c.method === 'tracks.remove')?.params).toEqual({
+      videoId: 'v1',
+      trackId: 't1',
+    });
+  });
+
+  it('the Remove prompt reads 0 cues for a legacy row with no cues field', async () => {
+    // tracks.list returns manifest rows RAW — list_tracks is `list(_tracks_of(project))`
+    // (sidecar/media_studio/features/tracks.py:104-106) and normalization runs only on
+    // WRITE (normalize_track, :157-180). So a legacy / hand-edited project.json row can
+    // reach the renderer with no `cues` key at all, and an unguarded `t.cues.length`
+    // inside the click handler would throw — turning "Remove has no confirmation" into
+    // "Remove is a dead button". Timeline.tsx:136 guards the same field for the same
+    // reason.
+    const legacy = { id: 't1', lang: 'en', name: 'English', format: 'srt', kind: 'soft' };
+    const fake = makeFakeApi({ tracks: [legacy as unknown as SubtitleTrack] });
+    await mount(fake);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const removeBtn = [...container.querySelectorAll('.track-row button')].find(
+      (b) => b.textContent === 'Remove',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      removeBtn.click();
+      await Promise.resolve();
+    });
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(confirmSpy.mock.calls[0][0]).toContain('0 cue');
+    expect(fake.calls.find((c) => c.method === 'tracks.remove')?.params).toEqual({
+      videoId: 'v1',
+      trackId: 't1',
+    });
+  });
+
   it('Add (from the available section) / Remove (row) call the right method', async () => {
     // Attached rows no longer carry an `Add` button (re-adding an already-listed
     // track just persists a duplicate), so Add is exercised via the available
     // section and Remove via the row.
     const fake = makeFakeApi({ tracks: [track()] });
     await mount(fake, { availableTracks: [track({ id: 'avail-1' })] });
+    // Remove now confirms first (see the CONFIRM test above); approve it.
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     const addBtn = container.querySelector('.available-tracks button') as HTMLButtonElement;
     await act(async () => {
@@ -201,6 +273,7 @@ describe('<Tracks />', () => {
   it('surfaces an error when a mutation op rejects', async () => {
     const fake = makeFakeApi({ tracks: [track()] });
     await mount(fake);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('remove failed'));
     const removeBtn = [...container.querySelectorAll('.track-row button')].find(
       (b) => b.textContent === 'Remove',
@@ -409,6 +482,7 @@ describe('<Tracks />', () => {
   it('uses String(err) when a mutation op rejects with a non-Error value', async () => {
     const fake = makeFakeApi({ tracks: [track()] });
     await mount(fake);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     (fake.api.rpc as ReturnType<typeof vi.fn>).mockRejectedValueOnce('plain remove error');
     const removeBtn = [...container.querySelectorAll('.track-row button')].find(
       (b) => b.textContent === 'Remove',
@@ -471,6 +545,7 @@ describe('<Tracks />', () => {
   it('shows the in-flight op label (…) while a mutation op is running', async () => {
     const fake = makeFakeApi({ tracks: [track()] });
     await mount(fake);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     // Hang the next op so the busy label renders.
     let release: (v: unknown) => void = () => undefined;
     (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementationOnce(
@@ -495,6 +570,7 @@ describe('<Tracks />', () => {
   it('shows the … label on the Remove button while a remove op is running', async () => {
     const fake = makeFakeApi({ tracks: [track()] });
     await mount(fake);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     let release: (v: unknown) => void = () => undefined;
     (fake.api.rpc as ReturnType<typeof vi.fn>).mockImplementationOnce(
       () => new Promise((res) => (release = res)),

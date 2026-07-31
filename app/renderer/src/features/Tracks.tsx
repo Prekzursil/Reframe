@@ -109,7 +109,33 @@ export function Tracks({ videoId, availableTracks = [] }: TracksProps): React.Re
   );
 
   const remove = useCallback(
-    (trackId: string) => runOp(trackId, 'remove', 'tracks.remove', { videoId, trackId }, 'Removed'),
+    async (t: SubtitleTrack) => {
+      // CONFIRM before the destructive call. `tracks.remove` drops the whole soft
+      // track ROW from the project manifest (features/tracks.py:135) and the save
+      // overwrites it with no history — and the row carries its `cues` INLINE, so
+      // every hand correction, translation and caption-polish layered on the track
+      // dies with it (the machine transcript can be regenerated; the edit delta
+      // cannot). Same shape as the other destructive sites — views/Shorts.tsx:147,
+      // views/Library.tsx:461, features/useShortsGallery.ts:99 — per
+      // KeepCopyControl.tsx:21: "never a silent one-click destructive action".
+      //
+      // `cues` is read defensively: tracks.list returns manifest rows RAW
+      // (features/tracks.py:104-106; normalisation happens only on write at
+      // :157-180), so a legacy row can arrive with no `cues` key and an unguarded
+      // deref here would turn "no confirmation" into a dead button. Timeline.tsx:136
+      // guards the same field for the same reason.
+      //
+      // Wording is deliberately neutral about the outcome: a `kind:"hard"` row's
+      // Remove is enabled and merely rejects with HardSubtitleError
+      // (features/tracks.py:132-133), so the prompt must not promise a deletion.
+      const ok = (globalThis as { confirm?: (m: string) => boolean }).confirm?.(
+        `Remove the subtitle track "${t.name}" (${t.id})?\n\n` +
+          `${t.cues?.length ?? 0} cue(s) would be dropped from this project. Hand edits, ` +
+          `translations and caption polish on this track cannot be recovered.`,
+      );
+      if (!ok) return;
+      await runOp(t.id, 'remove', 'tracks.remove', { videoId, trackId: t.id }, 'Removed');
+    },
     [runOp, videoId],
   );
 
@@ -232,7 +258,7 @@ export function Tracks({ videoId, availableTracks = [] }: TracksProps): React.Re
                     attached tracks, so re-adding them just persists a duplicate
                     (media_ops mints a fresh id, dodging add_track's dedupe). Add
                     lives only in the available-tracks section below. */}
-                <button type="button" disabled={isBusy} onClick={() => void remove(t.id)}>
+                <button type="button" disabled={isBusy} onClick={() => void remove(t)}>
                   {opOn(t.id, 'remove') ? '…' : 'Remove'}
                 </button>
                 <button type="button" disabled={isBusy} onClick={() => void burn(t.id)}>
