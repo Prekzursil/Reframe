@@ -1,15 +1,34 @@
 /* CaptionBox — draggable/resizable caption region overlay (P4 §4). */
 
+/* Audit F22: this frame is a full-bleed (inset:0, z-index:3) sibling painted OVER
+   the in-flow `<video controls>` the Player emits, so with hit-testing enabled it
+   swallowed EVERY click inside the 9:16 stage — including the native control bar
+   at its bottom. That left the Caption surface and MakeShorts/CaptionDesigner
+   (both `<Player controls /> + <CaptionBox>`) with no mouse play/pause/seek at
+   all. The frame is a geometry/event-plumbing layer, never a click target, so it
+   opts out of hit-testing; `.caption-box` opts BACK IN below. Pinned by the real
+   Chromium hit-test in e2e/overlay-hittest.spec.ts. */
 .caption-box-frame {
   position: absolute;
   inset: 0;
   z-index: 3;
+  pointer-events: none;
   touch-action: none;
 }
 
 .caption-box {
   position: absolute;
   box-sizing: border-box;
+  /* MANDATORY companion to the frame's `pointer-events: none` — the property
+     INHERITS, so without this the draggable box and its resize handles (which
+     inherit `auto` from here) would go dead too, trading one broken control for
+     another. */
+  pointer-events: auto;
+  /* Declared here as well as on the frame: touch-action is resolved by
+     intersecting the hit element with its ancestors, and the box is now the hit
+     element for a touch drag, so stating it locally keeps the drag from being
+     claimed as a browser pan even if the frame rule ever moves. */
+  touch-action: none;
   border: 1.5px dashed rgba(255, 255, 255, 0.85);
   border-radius: 6px;
   /* Bug-sweep: token-driven amber tint (was an off-theme blue wash). */
