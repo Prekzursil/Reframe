@@ -2,8 +2,8 @@
 
 The diagnostic validates a fresh install END-TO-END and reports LOUDLY: a data-dir
 writability probe, a device probe (system_advisor hardware), the required native
-deps (cv2/mediapipe for reframe, the faster-whisper ASR backend), and ffmpeg/
-ffprobe resolution. Every probe is an INJECTED seam here so the suite touches no
+deps (cv2 for reframe's YuNet detector, the faster-whisper ASR backend), and
+ffmpeg/ffprobe resolution. Every probe is an INJECTED seam here so the suite touches no
 real GPU, no heavy import, and (mostly) no real filesystem — the §WU-2 acceptance
 criteria are pinned directly on the pure :func:`run` composition:
 
@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 from media_studio.features import self_test as st
 from media_studio.features.system_advisor import HardwareInfo
+from runtime_setup.bootstrap import SIDECAR_REQUIREMENTS, load_requirements
 
 
 class _FakeProbe:
@@ -46,7 +47,7 @@ def _disk(free_mb: int):
 
 
 def _all_present() -> set[str]:
-    return {"cv2", "mediapipe", "faster_whisper"}
+    return {"cv2", "faster_whisper"}
 
 
 def _run(tmp_path: Path, **over: Any) -> st.SelfTestReport:
@@ -73,7 +74,7 @@ def test_ok_path_all_green(tmp_path: Path) -> None:
 
 
 def test_missing_cv2_is_reported_with_fix_hint(tmp_path: Path) -> None:
-    report = _run(tmp_path, find_spec=_find_spec({"mediapipe", "faster_whisper"}))
+    report = _run(tmp_path, find_spec=_find_spec({"faster_whisper"}))
     assert report.ok is False
     cv2 = next(c for c in report.checks if c.id == "cv2")
     assert cv2.ok is False
@@ -137,25 +138,26 @@ def test_device_check_failure_when_probe_raised() -> None:
 
 
 def test_dependency_check_all_present() -> None:
+    # A generic MULTI-module family (the builder takes any ``modules`` tuple).
     c = st.dependency_check(
-        "cv2",
-        "OpenCV + MediaPipe",
+        "deps",
+        "Native deps",
         "reinstall",
-        present_map={"cv2": True, "mediapipe": True},
-        modules=("cv2", "mediapipe"),
+        present_map={"cv2": True, "faster_whisper": True},
+        modules=("cv2", "faster_whisper"),
     )
     assert c.ok is True and c.fix_hint == ""
 
 
 def test_dependency_check_reports_missing() -> None:
     c = st.dependency_check(
-        "cv2",
-        "OpenCV + MediaPipe",
+        "deps",
+        "Native deps",
         "reinstall",
-        present_map={"cv2": True, "mediapipe": False},
-        modules=("cv2", "mediapipe"),
+        present_map={"cv2": True, "faster_whisper": False},
+        modules=("cv2", "faster_whisper"),
     )
-    assert c.ok is False and "mediapipe" in c.detail and c.fix_hint == "reinstall"
+    assert c.ok is False and "faster_whisper" in c.detail and c.fix_hint == "reinstall"
 
 
 def test_tool_check_all_present() -> None:
@@ -231,7 +233,7 @@ def test_probe_data_dir_detects_readback_mismatch(tmp_path: Path) -> None:
 
 def test_probe_dependencies_with_injected_find_spec() -> None:
     out = st.probe_dependencies(find_spec=_find_spec({"cv2"}))
-    assert out["cv2"] is True and out["mediapipe"] is False and out["faster_whisper"] is False
+    assert out["cv2"] is True and out["faster_whisper"] is False
 
 
 def test_probe_dependencies_fail_open_on_find_spec_error() -> None:
@@ -239,13 +241,15 @@ def test_probe_dependencies_fail_open_on_find_spec_error() -> None:
         raise ImportError("broken loader")
 
     out = st.probe_dependencies(find_spec=boom)
-    assert out == {"cv2": False, "mediapipe": False, "faster_whisper": False}
+    assert out == {"cv2": False, "faster_whisper": False}
 
 
 def test_probe_dependencies_default_find_spec_runs() -> None:
-    # Exercises the real importlib seam (no injection); numpy is always installed.
+    # Exercises the real importlib seam (no injection). Only the KEY SET is
+    # asserted: whether each dep is present is environment-dependent (CI installs
+    # opencv-python-headless but deliberately not faster-whisper).
     out = st.probe_dependencies()
-    assert set(out) == {"cv2", "mediapipe", "faster_whisper"}
+    assert set(out) == {"cv2", "faster_whisper"}
 
 
 def test_probe_disk_free_mb_with_seam() -> None:
@@ -291,3 +295,43 @@ def test_run_reports_missing_ffmpeg_tool(tmp_path: Path, missing: str) -> None:
     ffmpeg = next(c for c in report.checks if c.id == "ffmpeg")
     assert ffmpeg.ok is False and missing in ffmpeg.detail
     assert report.ok is False
+
+
+# --------------------------------------------------------------------------- #
+# INVARIANT — a REQUIRED probe may only name a module the provisioner installs
+# --------------------------------------------------------------------------- #
+#: pinned dist name (in requirements-sidecar.txt) -> the import name probed here.
+#: Only dists whose import name differs from a ``-``->``_`` normalisation need a row.
+_DIST_TO_IMPORT_NAME = {"opencv-python": "cv2", "faster-whisper": "faster_whisper"}
+
+
+def _provisioned_import_names() -> set[str]:
+    """Import names the FIRST-RUN provisioner actually installs.
+
+    Derived from the shipped pin list that :mod:`runtime_setup.bootstrap` installs
+    from (``SIDECAR_REQUIREMENTS``), so the invariant below is HERMETIC — it reads
+    a committed file and never consults the ambient environment.
+    """
+    dists = {pin.split("==", 1)[0].strip() for pin in load_requirements(SIDECAR_REQUIREMENTS).pins}
+    return {_DIST_TO_IMPORT_NAME.get(d, d.replace("-", "_")) for d in dists}
+
+
+@pytest.mark.parametrize("attr", ["_DEP_MODULES", "_CV2_MODULES", "_ASR_MODULES"])
+def test_every_required_probe_module_is_provisioned(attr: str) -> None:
+    """A REQUIRED check may only probe modules first-run provisioning installs.
+
+    F37: ``mediapipe`` sat in ``_CV2_MODULES``/``_DEP_MODULES`` while
+    ``requirements-sidecar.txt`` DELIBERATELY excludes it (the Solutions-API
+    wheels declare ``numpy<2``, a hard conflict with the pinned ``numpy==2.5.1``),
+    so EVERY correctly-provisioned install reported the blocking red setup banner
+    with a fix hint that could not possibly work. This pins the whole regression
+    class shut — any future required module that is not pinned — not just the one
+    stale name. ``_ASR_MODULES`` is the passing control: it proves the detector
+    can also report a clean subset, so a red here is a real violation.
+    """
+    unprovisioned = sorted(set(getattr(st, attr)) - _provisioned_import_names())
+    assert unprovisioned == [], (
+        f"self_test.{attr} makes a REQUIRED check probe module(s) that "
+        f"runtime_setup/requirements-sidecar.txt never installs: {unprovisioned}. "
+        f"Either pin the dist there, or stop requiring the module."
+    )
