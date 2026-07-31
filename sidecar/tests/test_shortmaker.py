@@ -2421,6 +2421,55 @@ class TestExportTogglesFlowToSettings:
         assert "remove_fillers" not in calls
         assert rec.caption_kwargs[0]["hook_title"] == "h"  # default ON
 
+    def test_hookCard_false_param_threads_into_settings(self, registry, transcript, tmp_path):
+        """WU SP2 (F07): ``hookCard: False`` off the wire must reach ``settings`` so
+        unchecking the renderer's "Hook card" box actually suppresses the overlay.
+
+        Routed through ``maker.export`` (NOT ``sm.run_export``) on purpose: the defect
+        is at the params->settings ALLOWLIST boundary, and ``run_export`` takes
+        ``settings`` directly, bypassing the very gate under test.
+        """
+        rec = RecordingStages([])
+        maker = self._maker(tmp_path, transcript, rec)
+        candidate = {
+            "rank": 1,
+            "start": 0.0,
+            "end": 25.0,
+            "sourceStart": 0.0,
+            "hook": "h",
+            "score": 9,
+        }
+        out = maker.export(
+            {"videoId": "v1", "candidates": [candidate], "hookCard": False},
+            _rpc_ctx(registry),
+        )
+        registry.get(out["jobId"]).wait(timeout=5)
+        assert rec.caption_kwargs[0]["hook_card"] is False
+
+    def test_hookCardTopN_param_threads_into_settings(self, registry, transcript, tmp_path):
+        """WU SP2 (F07): ``hookCardTopN`` off the wire must reach ``settings`` so
+        lowering the renderer's "Hook card top N" actually narrows the carded set.
+        Ranks 1/2/3 with ``hookCardTopN: 2`` -> only the top two get a card."""
+        rec = RecordingStages([])
+        maker = self._maker(tmp_path, transcript, rec)
+        cands = [
+            {
+                "rank": rank,
+                "start": float(rank) * 30.0,
+                "end": float(rank) * 30.0 + 25.0,
+                "sourceStart": float(rank) * 30.0,
+                "hook": "h",
+                "score": 9,
+            }
+            for rank in (1, 2, 3)
+        ]
+        out = maker.export(
+            {"videoId": "v1", "candidates": cands, "hookCardTopN": 2},
+            _rpc_ctx(registry),
+        )
+        registry.get(out["jobId"]).wait(timeout=5)
+        assert [k["hook_card"] for k in rec.caption_kwargs] == [True, True, False]
+
 
 # -- P3-B default filler adapter (_lazy_remove_fillers) ----------------------
 
