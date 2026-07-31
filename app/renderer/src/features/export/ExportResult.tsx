@@ -7,6 +7,11 @@
 // and CANCEL announce their terminal outcome through a polite `role="status"` live
 // region so completion reaches SR users too. Status is text + a green/amber/red
 // edge, never hue alone. Controlled + presentational.
+//
+// CANCEL deliberately does NOT promise a clean no-op: ffmpeg is spawned with `-y`
+// (`sidecar/media_studio/ffmpeg.py:160`) and killed mid-write on cancel (`:320-322`),
+// and nothing in `convert.py`/`jobs.py` unlinks the partial output — so a partial
+// file remains and anything previously at that path was already truncated.
 
 import React from 'react';
 import './export.css';
@@ -84,7 +89,7 @@ export function ExportResult({
         </p>
       ) : (
         <p className="export-result__blurb" role="status">
-          No file was written.
+          Cancelled mid-render — a partial file may remain.
         </p>
       )}
       <div className="export-result__actions">

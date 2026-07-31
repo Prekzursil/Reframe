@@ -86,12 +86,15 @@ describe('ExportResult', () => {
     expect(onExportAgain).toHaveBeenCalledTimes(1);
   });
 
-  it('CANCEL states plainly that no file was written and announces via role=status', () => {
+  it('CANCEL warns that a partial file may remain and announces via role=status', () => {
     render({ outcome: 'cancelled' });
     expect(q('.export-result')?.className).toContain('is-cancelled');
     expect(q('.export-result__title')?.textContent).toBe('Export cancelled');
     const blurb = q('.export-result__blurb');
-    expect(blurb?.textContent).toBe('No file was written.');
+    // ffmpeg runs with `-y` (sidecar/media_studio/ffmpeg.py:160) and is killed
+    // mid-write on cancel (:320-322) with nothing unlinking the partial, so
+    // promising a clean no-op would be false.
+    expect(blurb?.textContent).toBe('Cancelled mid-render — a partial file may remain.');
     // The terminal cancel reaches SR users through a polite live region (not just visually).
     expect(blurb?.getAttribute('role')).toBe('status');
     expect(q('.export-result__error')).toBeNull();
