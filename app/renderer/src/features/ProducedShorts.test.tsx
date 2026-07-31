@@ -332,18 +332,80 @@ describe('<ProducedShorts />', () => {
 
   it('renders the visible + announced midpoint note on a degraded done (AC c)', async () => {
     const api = installApi();
+    mount([short({ thumbnailPath: '/out/poster.jpg' })]);
+    await act(async () => {
+      pickBtn().click();
+    });
+    // The LITERAL degrade payload the sidecar emits (handlers/vision_ops.py:310,
+    // pinned by sidecar/tests/test_handlers_thumbnail.py:151-166): no
+    // `thumbnailPath`, because the writer never runs on that branch.
+    api.fireDone({ jobId: 'job-1', result: { frameTimeSec: 5, score: 0, degraded: true } });
+    // A degrade is a SUCCESS, not a failure — assert that FIRST so a regression
+    // reports "a red alert rendered on the degrade path", not a selector miss.
+    expect(container.querySelector('[role="alert"]')?.textContent ?? null).toBeNull();
+    expect(
+      container.querySelector('.shorts__degrade-note')?.textContent ??
+        '<no .shorts__degrade-note rendered>',
+    ).toContain('No vision model available — used the middle frame');
+    const live = container.querySelector('[aria-live="polite"]');
+    expect(live?.textContent).toContain('No vision model available — used the middle frame');
+    // No file was written, so the poster must stay put AND its alt must not
+    // claim a frame time the pixels do not show (pickedSec stays null).
+    const img = container.querySelector('.shorts__thumb-img') as HTMLImageElement;
+    expect(img.getAttribute('src')).toContain(encodeURIComponent('short:/out/poster.jpg'));
+    expect(img.alt).toBe('Thumbnail for My talk');
+    expect(pickBtn().getAttribute('aria-busy')).toBe('false');
+  });
+
+  it('surfaces the sidecar failure message from a job.done error payload', async () => {
+    const api = installApi();
     mount([short()]);
     await act(async () => {
       pickBtn().click();
     });
-    api.fireDone({ jobId: 'job-1', result: bestFrame({ degraded: true, score: 0 }) });
-    const note = container.querySelector('.shorts__degrade-note');
-    expect(note?.textContent).toContain('No vision model available — used the middle frame');
-    const live = container.querySelector('[aria-live="polite"]');
-    expect(live?.textContent).toContain('No vision model available — used the middle frame');
-    // Still a real swap (img updated), just flagged as degraded.
-    const img = container.querySelector('.shorts__thumb-img') as HTMLImageElement;
-    expect(img.getAttribute('src')).toContain(encodeURIComponent('short:/out/clip-1.thumb.jpg'));
+    // jobs.py:808-811 `_finish_error` — the rpc START succeeded, the FAILURE
+    // arrives on the job.done channel carrying the real message.
+    api.fireDone({
+      jobId: 'job-1',
+      result: { error: { message: 'vision backend exploded', type: 'RuntimeError' } },
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'vision backend exploded',
+    );
+    expect(pickBtn().getAttribute('aria-busy')).toBe('false');
+    expect(api.doneUnsubscribed()).toBe(true);
+  });
+
+  it('treats a cancelled job as a clean finish, not an error', async () => {
+    const api = installApi();
+    mount([short()]);
+    await act(async () => {
+      pickBtn().click();
+    });
+    // jobs.py:793-796 `_finish_cancelled` emits a TERMINAL job.done carrying a
+    // JobCancelled envelope; every other panel treats it as a clean finish.
+    api.fireDone({
+      jobId: 'job-1',
+      result: { error: { message: 'cancelled', type: 'JobCancelled' } },
+    });
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector('.shorts__degrade-note')).toBeNull();
+    expect(pickBtn().getAttribute('aria-busy')).toBe('false');
+    expect((pickBtn() as HTMLButtonElement).disabled).toBe(false);
+    expect(api.doneUnsubscribed()).toBe(true);
+  });
+
+  it('still fails loud for a scored payload that lost its thumbnailPath', async () => {
+    const api = installApi();
+    mount([short()]);
+    await act(async () => {
+      pickBtn().click();
+    });
+    // Numeric frameTimeSec but no path and NOT degraded: genuinely unrecognisable,
+    // so the widened predicate must not silently accept it as a swap.
+    api.fireDone({ jobId: 'job-1', result: { frameTimeSec: 5, score: 0.9 } });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('unreadable result');
+    expect(container.querySelector('.shorts__thumb-img')).toBeNull();
   });
 
   it('surfaces a role="alert" when the job fails (AC error)', async () => {

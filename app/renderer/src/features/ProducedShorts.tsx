@@ -16,6 +16,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { Player, shortMediaUrl } from '../components/Player';
 import { ShortClipActions } from '../components/ShortClipActions';
+import { extractJobError } from '../components/useJob';
 import { fmtSeconds, getApi } from './_api';
 // R5 virality-score dashboard: the score badge reuses the candidate-card
 // `displayVirality` (clamped 0-100 int / null); the sort order + duration format
@@ -28,7 +29,7 @@ import {
   sortShorts,
   formatShortDuration,
 } from './shortsGallery';
-import type { BestFrame, ShortInfo } from '../lib/rpc';
+import type { ShortInfo } from '../lib/rpc';
 
 export interface ProducedShortsProps {
   shorts: ShortInfo[];
@@ -44,16 +45,37 @@ const DEGRADE_NOTE = 'No vision model available — used the middle frame';
 
 type PickPhase = 'idle' | 'running' | 'done' | 'error';
 
-/** Read a {@link BestFrame} off a `job.done` result, or `null` if malformed. */
-function asBestFrame(result: unknown): BestFrame | null {
-  if (
-    result &&
-    typeof result === 'object' &&
-    typeof (result as { frameTimeSec?: unknown }).frameTimeSec === 'number' &&
-    typeof (result as { thumbnailPath?: unknown }).thumbnailPath === 'string'
-  ) {
-    return result as BestFrame;
+/**
+ * The two SUCCESS shapes `thumbnail.select` actually emits.
+ *
+ * - `scored`   — a frame was scored and a poster written (`vision_ops.py:342-347`).
+ * - `degraded` — no consented cloud vision provider and no local weights, so the
+ *   deterministic clip midpoint was used and NO thumbnail was written
+ *   (`vision_ops.py:303-312`). This is the OUT-OF-BOX path on a fresh install and
+ *   in offline mode, so it must read as success, not as a malformed payload.
+ */
+type PickOutcome =
+  | { kind: 'scored'; frameTimeSec: number; thumbnailPath: string }
+  | { kind: 'degraded'; frameTimeSec: number };
+
+/** Read a pick outcome off a `job.done` result, or `null` if unrecognisable. */
+function asPickOutcome(result: unknown): PickOutcome | null {
+  // Kept as ONE fused guard (like the predicate this replaces): a nullish result
+  // short-circuits on `!r`, and any non-object primitive reads `frameTimeSec` as
+  // undefined and fails the same check — so no extra arm is introduced that only a
+  // fabricated payload could reach.
+  const r = result as
+    | { frameTimeSec?: unknown; thumbnailPath?: unknown; degraded?: unknown }
+    | null
+    | undefined;
+  if (!r || typeof r.frameTimeSec !== 'number') return null;
+  const frameTimeSec = r.frameTimeSec;
+  if (typeof r.thumbnailPath === 'string') {
+    return { kind: 'scored', frameTimeSec, thumbnailPath: r.thumbnailPath };
   }
+  // Only `degraded === true` may go pathless; a scored payload that LOST its path
+  // is still unrecognisable and must fail loud.
+  if (r.degraded === true) return { kind: 'degraded', frameTimeSec };
   return null;
 }
 
@@ -106,23 +128,45 @@ function ShortThumbCard({
     if (typeof api.onJobDone !== 'function') return undefined;
     const off = api.onJobDone((ev) => {
       if (ev.jobId !== jobId) return;
-      const best = asBestFrame(ev.result);
-      if (!best) {
-        // A malformed payload can't drive a swap; fail loud rather than silent.
+      // A failure AND a user cancel both arrive through the shared A3 error
+      // envelope (`jobs.py:808-811` / `:793-796`), so read that FIRST — reading it
+      // last is what collapsed every real sidecar message into one fixed string.
+      const failure = extractJobError(ev.result);
+      if (failure) {
+        if (failure.type === 'JobCancelled') {
+          // The user's own cancel is a clean finish, not an error (mirrors the
+          // shared waiter in `features/_api.ts`).
+          setProgress('');
+          setPhase('idle');
+        } else {
+          setError(failure.message);
+          setPhase('error');
+        }
+        setJobId(null);
+        off();
+        return;
+      }
+      const picked = asPickOutcome(ev.result);
+      if (!picked) {
+        // A genuinely unrecognisable payload can't drive a swap; fail loud.
         setError('The best-frame job returned an unreadable result.');
         setPhase('error');
         setJobId(null);
         off();
         return;
       }
-      setPickedPath(best.thumbnailPath);
-      setPickedSec(best.frameTimeSec);
-      setDegraded(best.degraded);
-      setSwapMessage(
-        best.degraded
-          ? DEGRADE_NOTE
-          : `Thumbnail updated to the frame at ${fmtSeconds(best.frameTimeSec)}`,
-      );
+      if (picked.kind === 'scored') {
+        setPickedPath(picked.thumbnailPath);
+        setPickedSec(picked.frameTimeSec);
+        setDegraded(false);
+        setSwapMessage(`Thumbnail updated to the frame at ${fmtSeconds(picked.frameTimeSec)}`);
+      } else {
+        // No poster was written, so keep the existing one AND leave pickedSec null:
+        // setting it would make `posterAlt` announce "frame at 0:05" over pixels
+        // that never changed. The visible + announced note carries the information.
+        setDegraded(true);
+        setSwapMessage(DEGRADE_NOTE);
+      }
       setPhase('done');
       setJobId(null);
       off();
