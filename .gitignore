@@ -115,3 +115,11 @@ build/icon/
 # Findings are transient investigation data; the FIX lands as code + tests, so
 # the raw report is never committed.
 app/audit-artifacts/
+
+# Transient agent probe scripts. A fan-out agent asked to VERIFY a finding will
+# sometimes write a throwaway probe next to the code it is testing (e.g. a Playwright
+# control that proves a CSS rule really does defeat [hidden]). That is the executable
+# rigor we want, but the files are scratch and must never become commit-eligible --
+# a prior wave leaked zz*/__* scratch into app/renderer/src and broke tsc --noEmit.
+.tmp-*
+**/.tmp-*
