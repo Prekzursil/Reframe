@@ -307,6 +307,7 @@ describe('Export view', () => {
     });
     expect(jobCancelMock).toHaveBeenCalledWith('late');
     // A cancelled job must NEVER render a terminal SUCCESS with "Show in folder".
+    // Mutation-proved: with the latch removed this renders `is-done`.
     expect(q('.export-result')?.className).toContain('is-cancelled');
     expect(q('.export-result__path')).toBeNull();
   });
