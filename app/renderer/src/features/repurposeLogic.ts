@@ -70,6 +70,34 @@ export function clampWindowSec(sec: number): number {
   return sec;
 }
 
+/** Which end of the duration window the user just edited (it wins a conflict). */
+export type WindowEdge = 'min' | 'max';
+
+/**
+ * Clamp BOTH ends of a duration window into [20, 60] AND de-invert the pair, so
+ * `minSec <= maxSec` always holds. `clampWindowSec` alone is per-scalar and has
+ * no notion of a sibling, which is how `{minSec:60, maxSec:20}` — a window
+ * neither the UI nor the sidecar permits — reached the wire.
+ *
+ * The coupling is DIRECTION-AWARE: the field just edited wins and the sibling
+ * yields. A symmetric `max := min` would make Max un-lowerable (narrowing a
+ * 40-60 preset to 20-30 would snap Max back UP to 40), and the sidecar's own
+ * `min := max` backstop (`export_presets.normalize_preset`) is direction-blind
+ * because it never sees which field was touched — so the renderer must pass the
+ * edited axis rather than copy either fixed policy.
+ */
+export function clampWindowPair(
+  minSec: number,
+  maxSec: number,
+  edited: WindowEdge,
+): { minSec: number; maxSec: number } {
+  const min = clampWindowSec(minSec);
+  const max = clampWindowSec(maxSec);
+  if (min <= max) return { minSec: min, maxSec: max };
+  if (edited === 'min') return { minSec: min, maxSec: min };
+  return { minSec: max, maxSec: max };
+}
+
 /** True when `id` is a selectable caption style (closed-set guard). */
 export function isValidCaptionStyle(id: string): boolean {
   return CAPTION_STYLE_OPTIONS.includes(id);

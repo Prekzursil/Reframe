@@ -77,6 +77,32 @@ function clickText(text: string): void {
   act(() => btn.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 }
 
+/** The (single) input carrying `aria-label`, re-queried so a re-render is seen. */
+function field(label: string): HTMLInputElement {
+  return container.querySelector(`input[aria-label="${label}"]`) as HTMLInputElement;
+}
+
+/** Type into a controlled input the way a browser does (native setter + `input`). */
+function type(label: string, value: string): void {
+  const el = field(label);
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+  act(() => {
+    setter.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+/** Append one character to a field's CURRENT value (models a real keystroke). */
+function typeMore(label: string, char: string): void {
+  type(label, `${field(label).value}${char}`);
+}
+
+/** Commit a field — React's `onBlur` is the bubbling native `focusout`. */
+function blur(label: string): void {
+  const el = field(label);
+  act(() => el.dispatchEvent(new FocusEvent('focusout', { bubbles: true })));
+}
+
 describe('ExportPresetsPanel', () => {
   it('loads and renders the preset rows', async () => {
     await render();
@@ -96,20 +122,65 @@ describe('ExportPresetsPanel', () => {
     expect(ids).not.toContain('__nope__');
   });
 
-  it('clamps an over-max duration in the maxSec input', async () => {
+  // F12 — the clamp must NOT run on every keystroke. Typing digit-by-digit toward
+  // an in-window value has to be possible; the clamp fires at the COMMIT points.
+  it('does not clamp mid-typing: consecutive keystrokes land in the field', async () => {
     await render();
-    const maxInput = container.querySelector(
-      'input[aria-label="Maximum seconds"]',
-    ) as HTMLInputElement;
-    act(() => {
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!
-        .set!;
-      setter.call(maxInput, '600');
-      maxInput.dispatchEvent(new Event('input', { bubbles: true }));
+    type('Minimum seconds', '4');
+    expect(field('Minimum seconds').value).toBe('4');
+    typeMore('Minimum seconds', '5');
+    expect(field('Minimum seconds').value).toBe('45');
+  });
+
+  // F12 — the §7/§10.5 invariant (no out-of-window preset is authorable) still
+  // holds, just at blur + save instead of per keystroke.
+  it('clamps an over-max duration at the commit points (blur, then save)', async () => {
+    await render();
+    type('Maximum seconds', '600');
+    expect(field('Maximum seconds').value).toBe('600');
+    blur('Maximum seconds');
+    expect(field('Maximum seconds').value).toBe('60');
+    await act(async () => {
+      clickText('Save');
+      await Promise.resolve();
     });
-    expect(
-      (container.querySelector('input[aria-label="Maximum seconds"]') as HTMLInputElement).value,
-    ).toBe('60');
+    expect(saveMock).toHaveBeenCalledWith(expect.objectContaining({ maxSec: 60 }));
+  });
+
+  // F27 — the two duration cells are independent today, so `{minSec:60,maxSec:20}`
+  // is authorable and POSTed verbatim: a window NEITHER the renderer's nor the
+  // sidecar's policy permits.
+  it('never commits an inverted window (Max edited last wins)', async () => {
+    await render();
+    type('Minimum seconds', '60');
+    type('Maximum seconds', '20');
+    await act(async () => {
+      clickText('Save');
+      await Promise.resolve();
+    });
+    expect(saveMock).toHaveBeenCalledWith(expect.objectContaining({ minSec: 20, maxSec: 20 }));
+  });
+
+  // F27 — direction-aware coupling: the field just edited wins. A symmetric
+  // `max := min` rule would make Max un-lowerable (40-60 could never narrow).
+  it('lowering Max below Min pulls Min down, not Max back up', async () => {
+    await render();
+    type('Minimum seconds', '40');
+    blur('Minimum seconds');
+    type('Maximum seconds', '30');
+    blur('Maximum seconds');
+    expect(field('Maximum seconds').value).toBe('30');
+    expect(field('Minimum seconds').value).toBe('30');
+  });
+
+  it('raising Min above Max pushes Max up, not Min back down', async () => {
+    await render();
+    type('Maximum seconds', '30');
+    blur('Maximum seconds');
+    type('Minimum seconds', '50');
+    blur('Minimum seconds');
+    expect(field('Minimum seconds').value).toBe('50');
+    expect(field('Maximum seconds').value).toBe('50');
   });
 
   it('floors the count at 1 (and on non-numeric)', async () => {
@@ -181,7 +252,58 @@ describe('ExportPresetsPanel', () => {
     );
   });
 
+  // F26 — the draft-resync effect was keyed on the `preset` OBJECT IDENTITY, and
+  // every reload crosses IPC + a JSON re-read in the sidecar, so each row got a
+  // fresh identity and the effect wiped sibling rows' unsaved keystrokes.
+  it("keeps a sibling row's unsaved edits when another row is saved", async () => {
+    const TWO: ExportPreset[] = [SEED[0], { ...SEED[0], id: 'reels', label: 'Reels', count: 3 }];
+    // Faithful to the wire: `list()` yields brand-new identities on EVERY call.
+    // The shared-identity fixture used elsewhere in this file hides the defect.
+    listMock.mockImplementation(() => Promise.resolve({ presets: TWO.map((p) => ({ ...p })) }));
+    await render();
+    const labels = (): HTMLInputElement[] =>
+      [...container.querySelectorAll('input[aria-label="Preset label"]')] as HTMLInputElement[];
+    expect(labels()).toHaveLength(2); // guard: both rows mounted
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!
+      .set!;
+    act(() => {
+      setter.call(labels()[1], 'KEEP-ME');
+      labels()[1].dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(labels()[1].value).toBe('KEEP-ME'); // guard: the keystroke reached row 2
+    await act(async () => {
+      clickText('Save'); // the FIRST Save button — row 1's
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve(); // drain save -> reload -> setPresets
+    });
+    // guard: the save that ran targeted the OTHER row
+    expect(saveMock).toHaveBeenCalledWith(expect.objectContaining({ id: 'tiktok' }));
+    expect(labels()[1].value).toBe('KEEP-ME');
+  });
+
+  // F26 companion — a value fingerprint ALONE breaks the acted-on row: the sidecar
+  // strips whitespace (`_require_str`, export_presets.py:75-79), so this save stores
+  // a row byte-identical to the one already on disk. The fingerprint never changes,
+  // so only the per-row sync nonce can pull the rejected text back to the truth.
+  it('re-displays the server value after a normalisation-only save', async () => {
+    await render();
+    type('Preset label', 'TikTok  ');
+    expect(field('Preset label').value).toBe('TikTok  ');
+    await act(async () => {
+      clickText('Save');
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(saveMock).toHaveBeenCalledWith(expect.objectContaining({ label: 'TikTok  ' }));
+    expect(field('Preset label').value).toBe('TikTok');
+  });
+
   it('deletes a preset', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     await render();
     await act(async () => {
       clickText('Delete');
@@ -200,12 +322,39 @@ describe('ExportPresetsPanel', () => {
   });
 
   it('resets to defaults', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     await render();
     await act(async () => {
       clickText('Reset to defaults');
       await Promise.resolve();
     });
     expect(resetMock).toHaveBeenCalledTimes(1);
+  });
+
+  // F13 — Reset overwrites the whole catalog (`PresetStore.reset` re-seeds and
+  // `_write` keeps no prior copy, so there is no restore path) and per-row Delete
+  // is equally final. Both were one-click, against the project's own standard
+  // ("never a silent one-click destructive action", KeepCopyControl.tsx:21).
+  it('does not reset when the confirm is declined', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await render();
+    await act(async () => {
+      clickText('Reset to defaults');
+      await Promise.resolve();
+    });
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(resetMock).not.toHaveBeenCalled();
+  });
+
+  it('does not delete when the confirm is declined', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await render();
+    await act(async () => {
+      clickText('Delete');
+      await Promise.resolve();
+    });
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(deleteMock).not.toHaveBeenCalled();
   });
 
   it('shows an error when load fails', async () => {
@@ -223,6 +372,7 @@ describe('ExportPresetsPanel', () => {
   });
 
   it('surfaces save / delete / reset failures', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     await render();
     saveMock.mockRejectedValueOnce('x');
     await act(async () => {
@@ -247,6 +397,7 @@ describe('ExportPresetsPanel', () => {
   });
 
   it('surfaces Error-typed save/delete/reset messages (instanceof arm)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     await render();
     saveMock.mockRejectedValueOnce(new Error('save-e'));
     await act(async () => {
@@ -271,6 +422,7 @@ describe('ExportPresetsPanel', () => {
   });
 
   it('notifies onChanged after a successful save / delete / reset', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     await render();
     await act(async () => {
       clickText('Save');
