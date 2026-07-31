@@ -22,6 +22,7 @@ import {
   errText,
   type JobEventBridge,
 } from './DirectorPanel';
+import { DirectorSessionProvider } from '../features/directorSession';
 import type {
   DirectorApplyResult,
   DirectorEditPlan,
@@ -374,6 +375,28 @@ async function planTo(c: FakeClient, plan: DirectorEditPlan): Promise<void> {
   await emitPlanDone(c, plan);
 }
 
+/**
+ * Render the panel inside a REAL DirectorSessionProvider, with the panel itself
+ * swappable. `mounted:false` unmounts ONLY the panel while the provider stays —
+ * reproducing App's route switch, which is the one thing a prop-change re-render
+ * cannot simulate (that reuses the fiber, so even a component-local useState
+ * survives it and the provider path goes untested).
+ */
+async function renderInProvider(c: FakeClient, video: Video | null, mounted = true): Promise<void> {
+  await act(async () => {
+    root.render(
+      <DirectorSessionProvider>
+        {mounted ? (
+          <DirectorPanel rpcClient={c.client} jobEvents={events} video={video} />
+        ) : (
+          <div data-testid="away" />
+        )}
+      </DirectorSessionProvider>,
+    );
+  });
+  await flush();
+}
+
 // ---- tests -----------------------------------------------------------------
 
 describe('DirectorPanel', () => {
@@ -464,6 +487,72 @@ describe('DirectorPanel', () => {
     await clickPlan();
     const planCalls = c.calls.filter((x) => x.method === 'director.plan');
     expect(planCalls[planCalls.length - 1].args[0]).toBe('vid-1');
+  });
+
+  // F32 — the SAME WU-E1 guarantee as the test above, but exercised THROUGH the
+  // provider across a real unmount. The test above re-renders with a changed prop,
+  // which reuses the fiber, so the panel-local fallback store satisfies it; only an
+  // unmount-and-remount inside a surviving provider proves the shipped path keeps
+  // WU-E1 intact. Without this, the suite could stay green while the provider path
+  // silently dropped "a video closed after planning keeps its plan".
+  it('THROUGH THE PROVIDER: a plan survives an unmount and is still served with NO video open (WU-E1)', async () => {
+    const c = makeClient();
+    await renderInProvider(c, videoFixture());
+    await setGoal('q&a');
+    await clickPlan();
+    await act(async () => {
+      events.emitDone({
+        jobId: 'job-plan',
+        result: {
+          planId: 'plan-1',
+          editPlan: planFixture([op({ id: 'a', kind: 'trim' })], 'q&a'),
+          preview: '{}',
+        },
+      });
+    });
+    await flush();
+    expect($('[data-testid="plan-summary"]').textContent).toBe('1 trim');
+
+    // Route away (the panel unmounts, the provider does not), then back with NO
+    // video open — the exact state where keying on the open video would be circular.
+    await renderInProvider(c, null, false);
+    expect(container.querySelector('[data-testid="away"]')).not.toBeNull();
+    await renderInProvider(c, null, true);
+
+    // Not the "No video open" empty state: the plan's own videoId is the target.
+    expect(container.querySelector('[data-section="empty"]')).toBeNull();
+    expect($('[data-testid="plan-summary"]').textContent).toBe('1 trim');
+    expect(($('textarea[data-action="goal"]') as HTMLTextAreaElement).value).toBe('q&a');
+    // And a re-plan still targets the plan's videoId, never the goal text.
+    await clickPlan();
+    const planCalls = c.calls.filter((x) => x.method === 'director.plan');
+    expect(planCalls[planCalls.length - 1].args[0]).toBe('vid-1');
+  });
+
+  it('THROUGH THE PROVIDER: a DIFFERENT open video gets a clean form, not the stored plan', async () => {
+    const c = makeClient();
+    await renderInProvider(c, videoFixture());
+    await setGoal('q&a');
+    await clickPlan();
+    await act(async () => {
+      events.emitDone({
+        jobId: 'job-plan',
+        result: {
+          planId: 'plan-1',
+          editPlan: planFixture([op({ id: 'a', kind: 'trim' })], 'q&a'),
+          preview: '{}',
+        },
+      });
+    });
+    await flush();
+    expect($('[data-testid="plan-summary"]').textContent).toBe('1 trim');
+
+    // vid-2 must NOT inherit vid-1's plan — applying it would run vid-1's ops
+    // against the wrong source.
+    await renderInProvider(c, null, false);
+    await renderInProvider(c, videoFixture({ id: 'vid-2', title: 'Other' }), true);
+    expect(container.querySelector('[data-testid="plan-summary"]')).toBeNull();
+    expect(($('textarea[data-action="goal"]') as HTMLTextAreaElement).value).toBe('');
   });
 
   it('(b) a 50-op plan renders grouped collapsible sections, not 50 flat rows', async () => {
@@ -1094,6 +1183,143 @@ describe('DirectorPanel', () => {
     });
     await flush();
     expect($('p.error').textContent).toBe('Undo returned an unexpected result.');
+  });
+
+  // ---- F30: the sidecar's ASYNC (in-job) failure payload ---------------------
+  //
+  // A job that raises emits `job.done {jobId, result:{error:{message,type}}}`
+  // (jobs.py `_finish_error`), and a user cancel emits the same shape with
+  // `type:'JobCancelled'` (jobs.py `_finish_cancelled` — its CONTRACT-NOTE is
+  // explicit that cancellation DOES emit a terminal job.done). Neither payload
+  // carries a `planId`, so `asPlanResult`/`asApplyResult` reject both and the
+  // panel used to replace the real cause with its generic "unexpected result"
+  // copy — masking a 401/quota/ffmpeg failure AND mis-reporting a clean cancel as
+  // an error. These fixtures mirror that exact wire shape (verified in jobs.py),
+  // NOT the declared DirectorPlanResult type.
+
+  it('a plan job.done error payload surfaces the sidecar cause', async () => {
+    const c = makeClient();
+    await mount(c);
+    await setGoal('go');
+    await clickPlan();
+    await act(async () => {
+      events.emitDone({
+        jobId: 'job-plan',
+        result: {
+          error: { message: 'provider rejected the request (401)', type: 'ProviderError' },
+        },
+      });
+    });
+    await flush();
+    expect($('p.error').textContent).toBe('Planning failed: provider rejected the request (401)');
+    expect(container.querySelector('[data-testid="plan-summary"]')).toBeNull();
+    // The panel is usable again (the failure is terminal, not a hang).
+    expect(($('button[data-action="plan"]') as HTMLButtonElement).disabled).toBe(false);
+    expect($('[data-section="progress"]').textContent).toBe('');
+  });
+
+  it('a cancelled plan job finishes quietly and is not reported as an error', async () => {
+    const c = makeClient();
+    await mount(c);
+    await setGoal('go');
+    await clickPlan();
+    await act(async () => {
+      events.emitDone({
+        jobId: 'job-plan',
+        result: { error: { message: 'cancelled', type: 'JobCancelled' } },
+      });
+    });
+    await flush();
+    expect(container.querySelector('p.error')).toBeNull();
+    expect(($('button[data-action="plan"]') as HTMLButtonElement).disabled).toBe(false);
+    expect($('[data-section="progress"]').textContent).toBe('');
+  });
+
+  // The phase prefix is a Record lookup, which is INVISIBLE to v8 branch
+  // coverage — a wrong copy value would ship 100%-green. Assert the rendered
+  // apply and undo strings so the labels cannot drift silently.
+  it('an apply job.done error payload surfaces the sidecar cause', async () => {
+    const c = makeClient();
+    await planTo(c, planFixture([op({ id: 'a' })]));
+    await act(async () => {
+      $('button[data-action="apply"]').click();
+    });
+    await flush();
+    await act(async () => {
+      events.emitDone({
+        jobId: 'job-apply',
+        result: { error: { message: 'ffmpeg exited 1', type: 'RuntimeError' } },
+      });
+    });
+    await flush();
+    expect($('p.error').textContent).toBe('Apply failed: ffmpeg exited 1');
+  });
+
+  it('an undo job.done error payload surfaces the sidecar cause', async () => {
+    const c = makeClient();
+    await planTo(c, planFixture([op({ id: 'a' })]));
+    await act(async () => {
+      $('button[data-action="apply"]').click();
+    });
+    await flush();
+    await act(async () => {
+      events.emitDone({
+        jobId: 'job-apply',
+        result: { planId: 'plan-1', opsStatus: [op({ id: 'a' })], projectCopyPath: '/c' },
+      });
+    });
+    await flush();
+    await act(async () => {
+      $('button[data-action="undo"]').click();
+    });
+    await flush();
+    await act(async () => {
+      events.emitDone({
+        jobId: 'job-undo',
+        result: { error: { message: 'inverse op missing', type: 'RuntimeError' } },
+      });
+    });
+    await flush();
+    expect($('p.error').textContent).toBe('Undo failed: inverse op missing');
+  });
+
+  it('a cancelled apply job finishes quietly and keeps the plan reviewable', async () => {
+    const c = makeClient();
+    await planTo(c, planFixture([op({ id: 'a', kind: 'trim' })]));
+    await act(async () => {
+      $('button[data-action="apply"]').click();
+    });
+    await flush();
+    await act(async () => {
+      events.emitDone({
+        jobId: 'job-apply',
+        result: { error: { message: 'cancelled', type: 'JobCancelled' } },
+      });
+    });
+    await flush();
+    expect(container.querySelector('p.error')).toBeNull();
+    // Nothing was applied, so the plan stays on screen and reviewable.
+    expect($('[data-testid="plan-summary"]').textContent).toBe('1 trim');
+    expect(container.querySelector('button[data-action="undo"]')).toBeNull();
+    expect(($('button[data-action="op-disable"]') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  // A post-restart synthetic interrupt uses the same envelope (jobs.py rehydrate
+  // emits `{error:{message:'job interrupted by restart', type:'JobInterrupted'}}`).
+  // It is a real failure, so it is reported — deliberately, not by accident.
+  it('a JobInterrupted restart payload is reported as a plan failure', async () => {
+    const c = makeClient();
+    await mount(c);
+    await setGoal('go');
+    await clickPlan();
+    await act(async () => {
+      events.emitDone({
+        jobId: 'job-plan',
+        result: { error: { message: 'job interrupted by restart', type: 'JobInterrupted' } },
+      });
+    });
+    await flush();
+    expect($('p.error').textContent).toBe('Planning failed: job interrupted by restart');
   });
 
   it('director.plan rejection surfaces an error and clears busy', async () => {
