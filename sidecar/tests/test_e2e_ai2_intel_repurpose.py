@@ -199,10 +199,33 @@ def _ffprobe_dims(path: str) -> tuple[int, int]:
 # settings + project helpers
 # --------------------------------------------------------------------------- #
 def _cloud_settings(base_url: str, *, capabilities: list[str], model: str = "mock-model") -> dict[str, Any]:
-    """A provider entry pointed at the mock, fully consented + routed (no budget gate)."""
+    """A provider entry pointed at the mock, fully consented + routed (no budget gate).
+
+    ``routingPolicy`` is load-bearing and used to be MISSING, which is why this
+    helper did not actually live up to "fully ... routed". The M3 cross-cutting
+    RoutingPolicy is **authoritative over ``routing.perFunction``** — a deliberate
+    GATE-2 privacy fix, so that a user who flips the global toggle to Local can never
+    egress despite a stale per-function cloud entry
+    (``providers_ops.py:_provider_for_function`` / ``_translator_for_function``). It
+    is also fail-CLOSED: absent from settings, ``resolve_route`` returns ``local``
+    (``routing_policy.DEFAULT_GLOBAL``) and a LOCAL-ONLY pool is built in which "NO
+    cloud entry is built" — so the mock below was unreachable no matter what
+    ``routing.perFunction`` said.
+
+    That silently degraded two e2e tests into asserting against a local llama.cpp
+    server which CI has no GGUF for, producing ``provider pool exhausted (text):
+    local (local): local model server failed to start: no GGUF model configured``
+    and then the misleading ``never reached the mock`` assertion (measured: CI run
+    30612141716, ``2 failed, 45 passed``).
+
+    The guard is CORRECT and is not touched here. Declaring ``global: 'cloud'`` is
+    what a user who deliberately chose a cloud route has, i.e. the state these tests
+    already intend — the per-entry text/frame consent gates below still apply.
+    """
     return {
         "confirmCloudBudget": False,
         "cloudModel": model,
+        "routingPolicy": {"global": "cloud", "overrides": {}},
         "providers": [
             {
                 "id": "mock",

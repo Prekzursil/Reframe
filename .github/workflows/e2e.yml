@@ -282,8 +282,21 @@ jobs:
       # exits 0 after writing), so this run is non-blocking by design; the regenerated
       # PNGs are uploaded below for the maintainer to download + commit. Never runs on
       # the schedule (input is '' there), so the nightly gate stays a real diff.
+      # `always()` is load-bearing and was MISSING: without it this step inherits the
+      # implicit "all previous steps succeeded" gate, so any failure in the Playwright
+      # step above SKIPS the regen — while the upload step below already carries
+      # `always()` and therefore uploads the OLD baselines under the name
+      # `updated-visual-baselines`. That is worse than no artifact: it looks like a
+      # successful regen. Measured on run 30612141716: the Playwright step failed on
+      # golden-journey's beforeAll, so a dispatch with the box checked could not have
+      # produced a new baseline no matter how many times it was re-run.
+      #
+      # A baseline REGEN is an explicitly-requested maintainer action, not a gate, and
+      # `--update-snapshots` makes Playwright exit 0 after writing — so running it
+      # regardless of an unrelated earlier failure is correct. The BLOCKING diff path
+      # at the step above deliberately does NOT get `always()`; it must stay a real gate.
       - name: E2E GUI — VISUAL baseline REGEN (--update-snapshots) [Windows only, on demand]
-        if: runner.os == 'Windows' && github.event.inputs.update_visual_baselines == 'true'
+        if: always() && runner.os == 'Windows' && github.event.inputs.update_visual_baselines == 'true'
         working-directory: app
         env:
           RF_PY: ${{ steps.setup-python.outputs.python-path }}
