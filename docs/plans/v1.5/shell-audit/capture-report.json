@@ -1,0 +1,28 @@
+{
+  "url": "http://127.0.0.1:5199/harness.html",
+  "results": [
+    "C:\\Users\\Prekzursil\\.reframe-review\\shell-audit\\01-shell-library-grid.png",
+    "C:\\Users\\Prekzursil\\.reframe-review\\shell-audit\\02-shell-library-fullpage.png",
+    "C:\\Users\\Prekzursil\\.reframe-review\\shell-audit\\03-capabilities-expanded.png",
+    "C:\\Users\\Prekzursil\\.reframe-review\\shell-audit\\04-multiselect-batch-bar.png",
+    "C:\\Users\\Prekzursil\\.reframe-review\\shell-audit\\05-search-filter.png",
+    "C:\\Users\\Prekzursil\\.reframe-review\\shell-audit\\06-shorts-gallery-modal.png",
+    "C:\\Users\\Prekzursil\\.reframe-review\\shell-audit\\07-card-hover.png",
+    "C:\\Users\\Prekzursil\\.reframe-review\\shell-audit\\08-narrow-900.png"
+  ],
+  "consoleMsgs": [
+    {
+      "type": "debug",
+      "text": "[vite] connecting..."
+    },
+    {
+      "type": "debug",
+      "text": "[vite] connected."
+    },
+    {
+      "type": "info",
+      "text": "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold"
+    }
+  ],
+  "pageErrors": []
+}
