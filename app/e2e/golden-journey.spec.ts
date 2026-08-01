@@ -127,6 +127,22 @@ async function pollForFinalShort(
 }
 
 test.beforeAll(async () => {
+  // A beforeAll hook does NOT inherit the `test.setTimeout(240_000)` at :194 — per
+  // Playwright, beforeAll/afterAll "have their own separate timeout value" seeded
+  // from the config `timeout` and "do not share time with any test", and it can only
+  // be changed by calling `test.setTimeout` INSIDE the hook (`test.slow()` is not
+  // allowed here). So this hook ran on `playwright.config.ts:23`'s 120_000 while
+  // `provisionAssets` below sets its OWN 300_000 ceiling for the YuNet download —
+  // the hook was killed 3 minutes before its heaviest step was even allowed to give
+  // up, with the anonymous '"beforeAll" hook timeout of 120000ms exceeded' as the
+  // only evidence. Measured on CI run 30612141716 (windows-latest): exactly this
+  // hook, exactly that message, 1 failed / 1 skipped of 14.
+  //
+  // 420s = provisionAssets' own 300s ceiling + headroom for the Electron launch and
+  // first paint. Deliberately ABOVE the inner timeout so the inner one fires first:
+  // it rejects with `provisionAssets(...) timed out\n${stderr}`, which names the
+  // failing asset and carries the sidecar's stderr. The hook timeout carries nothing.
+  test.setTimeout(420_000);
   // macOS is a NON-SHIPPING platform: electron-builder ships a `win:` target only
   // (packaged.spec + build/python-embed-setup.ps1 are Windows-only). golden-journey
   // runs the FULL export pipeline through the libass caption stage, and brew-ffmpeg
