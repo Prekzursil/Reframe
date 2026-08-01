@@ -33,8 +33,8 @@ with JOURNAL.open("r", encoding="utf-8", errors="replace") as fh:
         if rec.get("type") == "result":
             results.append(rec)
 
-findings: list[dict] = []      # audit agents
-verdicts: list[dict] = []      # adversarial verifiers
+findings: list[dict] = []  # audit agents
+verdicts: list[dict] = []  # adversarial verifiers
 prose: list[tuple[str, str]] = []  # ground / reconcile (plain text)
 
 for rec in results:
@@ -53,9 +53,11 @@ for rec in results:
     elif isinstance(val, str) and len(val) > 400:
         prose.append((key, val))
 
+
 # ---- deterministic dedup (same rule the workflow used) ----
 def norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", str(s).lower())[:60]
+
 
 seen: set[str] = set()
 deduped: list[dict] = []
@@ -122,7 +124,7 @@ with OUT.open("w", encoding="utf-8") as fh:
     if corrections:
         fh.write("## Scope corrections issued by verifiers (highest signal)\n\n")
         for v in corrections[:40]:
-            fh.write(f"- **{v.get('_key','?')}** — {v.get('corrected_claim')}\n")
+            fh.write(f"- **{v.get('_key', '?')}** — {v.get('corrected_claim')}\n")
         fh.write("\n")
 
     for sev in ("critical", "high", "medium", "low"):
@@ -131,14 +133,16 @@ with OUT.open("w", encoding="utf-8") as fh:
             continue
         fh.write(f"## {sev.upper()} ({len(rows)})\n\n")
         for f in rows:
-            fh.write(f"### {f.get('title','(untitled)')}\n")
-            fh.write(f"- surface: `{f.get('surface','?')}` · lens: `{f.get('lens','?')}` · confidence: **{f.get('confidence','?')}**\n")
-            fh.write(f"- evidence: {f.get('evidence','(none)')}\n")
-            fh.write(f"- why: {f.get('why_it_matters','')}\n")
-            fh.write(f"- fix: {f.get('proposed_fix','')}\n\n")
+            fh.write(f"### {f.get('title', '(untitled)')}\n")
+            fh.write(
+                f"- surface: `{f.get('surface', '?')}` · lens: `{f.get('lens', '?')}` · confidence: **{f.get('confidence', '?')}**\n"
+            )
+            fh.write(f"- evidence: {f.get('evidence', '(none)')}\n")
+            fh.write(f"- why: {f.get('why_it_matters', '')}\n")
+            fh.write(f"- fix: {f.get('proposed_fix', '')}\n\n")
 
     fh.write("## Prose artifacts (ground + reconcile passes)\n\n")
     for key, text in prose:
         fh.write(f"### {key}\n\n{text}\n\n---\n\n")
 
-print(f"\nwrote {OUT}  ({OUT.stat().st_size/1024:.0f} KB)")
+print(f"\nwrote {OUT}  ({OUT.stat().st_size / 1024:.0f} KB)")

@@ -15,12 +15,30 @@ Exit 0 if every claim resolved as predicted, 1 otherwise.
 
 from __future__ import annotations
 
+import gzip
 import json
 import re
 import subprocess
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+
+def _find_root() -> Path:
+    """Walk up to the repo root instead of assuming a fixed depth.
+
+    This script was authored at `.audit/` (where `parent.parent` IS the root) and then
+    moved to `docs/validation/tools/`, where the same expression resolves to
+    `docs/validation/`. Every relative read then missed and it reported 26 of 36 claims
+    as mismatched — a detector failing loudly in the wrong direction, blaming the repo
+    for its own relocation. Anchor on markers that exist only at the root.
+    """
+    here = Path(__file__).resolve()
+    for cand in (here.parent, *here.parents):
+        if (cand / ".git").exists() and (cand / "app/package.json").is_file():
+            return cand
+    raise SystemExit(f"FAILED:ssot-verify cannot locate the repo root from {here}")
+
+
+ROOT = _find_root()
 results: list[tuple[str, bool, str]] = []
 
 
@@ -31,8 +49,41 @@ def read(rel: str) -> str | None:
     return p.read_text(encoding="utf-8", errors="replace")
 
 
+# Claim ids that describe a KNOWN-STALE doc the reconciliation has not corrected yet.
+# They are reported but never fail the run: their "expected" value is the broken state,
+# so a mismatch there means someone FIXED it — good news, not a regression. Delete an id
+# from this set (and flip its expectation) as each is corrected.
+OPEN_ITEMS = {
+    "C1a",
+    "C1b",
+    "C1-doc:WU-R1-MULTISPEAKER-ENGINE.md",
+    "C1-doc:V1.2-FEATURES.md",
+    "C1-doc:ROADMAP.md",
+    "C2b",
+    "C5a",
+    "C5b",
+    "C6a",
+    "C7",
+    "C8:--surface-deep",
+    "C8:--text-muted",
+    "C9b",
+    "C11",
+    "P2.6",
+    "P2.11b",
+    "P2.12",
+    "P1-corpus",
+}
+
+
 def check(cid: str, predicted: bool, actual: bool, detail: str) -> None:
-    results.append((cid, predicted == actual, f"{'as-predicted' if predicted == actual else 'MISMATCH'} :: {detail}"))
+    """Record one claim. INVARIANT claims gate the exit code; OPEN ones only report."""
+    agreed = predicted == actual
+    kind = "OPEN" if cid in OPEN_ITEMS else "INV "
+    if agreed:
+        label = "still-open" if kind == "OPEN" else "holds"
+    else:
+        label = "NOW-FIXED (retire it from OPEN_ITEMS)" if kind == "OPEN" else "BROKEN"
+    results.append((cid, agreed or kind == "OPEN", f"[{kind}] {label} :: {detail}"))
 
 
 def count_occurrences(pattern: str, globs: tuple[str, ...]) -> tuple[int, int]:
@@ -221,12 +272,51 @@ check(
 ledger = read("docs/validation/v15-audit-ledger.md") or ""
 refuted_hdr = ledger.count("# REFUTED")
 check("C12a", True, "225" in ledger, f"tracked ledger cites 225 checked={'225' in ledger}")
+# INVARIANT (this WAS the C12b defect, now fixed): the ledger advertises a REFUTED
+# tier of 94 at :27, and the only reason that row exists is so a refuted finding is not
+# re-raised. It used to contain zero of them. Assert it keeps its own promise, with the
+# exact 4-critical / 90-high split its own summary table claims.
+_refuted = re.findall(r"(?m)^- \[(critical|high|medium|low)\] ", ledger)
+_crit, _high = _refuted.count("critical"), _refuted.count("high")
 check(
     "C12b",
     True,
-    refuted_hdr == 0,
-    f"tracked ledger '# REFUTED' section count={refuted_hdr} (plan: 0, i.e. the 94 are missing)",
+    refuted_hdr == 1 and len(_refuted) == 94 and _crit == 4 and _high == 90,
+    f"ledger REFUTED section present={refuted_hdr == 1}, entries={len(_refuted)}/94 "
+    f"({_crit} critical, {_high} high) — must match the row advertised at :27",
 )
+# INVARIANT: the full unverified set must be TRACKED (not a path on one machine) and
+# must actually decompress — a corrupt blob would be a silent sole-copy loss.
+_gz = ROOT / "docs/validation/v15-audit-ledger-unverified.md.gz"
+_gz_ok = False
+if _gz.is_file():
+    try:
+        _gz_ok = len(gzip.decompress(_gz.read_bytes())) > 1_000_000
+    except (OSError, EOFError, gzip.BadGzipFile):
+        _gz_ok = False
+check("C12c", True, _gz_ok, f"unverified ledger tracked + decompresses={_gz_ok} ({_gz.name})")
+check(
+    "C12d",
+    True,
+    "untracked full ledger" not in ledger,
+    f"ledger no longer points at an 'untracked full ledger'={'untracked full ledger' not in ledger}",
+)
+# INVARIANT: the regeneration recipe must live OUTSIDE the disposable .audit/ tree, or
+# `git clean -xfd` destroys the property that makes deleting the derived bytes safe.
+_tools = [
+    p
+    for p in ("extract_ledger.py", "join_verdicts.py", "join_by_agentid.py")
+    if (ROOT / "docs/validation/tools" / p).is_file()
+]
+check("C12e", True, len(_tools) == 3, f"ledger recovery tools tracked under docs/validation/tools/={len(_tools)}/3")
+# INVARIANT: a brand-new agent-config file must not be silently dropped by .gitignore.
+_probe = subprocess.run(
+    ["git", "--no-optional-locks", "check-ignore", "-q", ".claude/commands/_ssot_probe.md"],
+    cwd=ROOT,
+    capture_output=True,
+    text=True,
+)
+check("C0.2", True, _probe.returncode != 0, f"a NEW .claude/commands/*.md is trackable={_probe.returncode != 0}")
 
 # ------------------------------------------------- Phase 2 spot checks (2.9-2.12)
 seed_wrong = (ROOT / "docs/providers/CATALOG-SEED.md").is_file()
