@@ -78,7 +78,24 @@ class TestShippedRequirementFiles:
         # green suite is evidence about the pin FILE, not about the wheel.
         assert pins["scenedetect"] == "0.7.1"
         assert pins["httpx"] == "0.28.1"
-        assert pins["opencv-python"] == "4.13.0.92"
+        # opencv-python 4.13.0.92 -> 4.14.0.94 (dependabot pip-sidecar-patch-minor).
+        # Same exact-pin discipline as scenedetect above: updating this line IS the
+        # human review. Unlike scenedetect, this one WAS verified at the wheel level,
+        # because neither gate actually exercises the pinned build — `quality.yml:57`
+        # installs UNPINNED `opencv-python-headless`, and the dev box carries 4.13.0,
+        # so a green suite would have been evidence about a different wheel.
+        #
+        # Measured (.audit/probe_opencv_414.py, throwaway venv, real wheel): all 26
+        # `cv2.*` attributes the sidecar references — derived from the source, not
+        # hand-listed — are present on 4.14.0.94; `cv2.FaceDetectorYN.create` (the
+        # YuNet reframe keystone) is callable; and cvtColor / resize / imencode /
+        # threshold / matchTemplate / minMaxLoc / calcOpticalFlowFarneback all execute
+        # on a real frame. The same probe against 4.13.0.92 passes identically, which
+        # is the control — so this establishes NO API SURFACE WAS REMOVED, not that
+        # numerical detector output is unchanged. YuNet weights are ONNX and version-
+        # independent, so a detection-quality regression would have to come from the
+        # inference code; the reframe suite's real-cv2 tests are the standing guard.
+        assert pins["opencv-python"] == "4.14.0.94"
         assert pins["nvidia-cublas-cu12"] == "12.9.2.10"
         assert pins["nvidia-cudnn-cu12"] == "9.24.0.43"
         # DELIBERATELY ABSENT: mediapipe. Its legacy Solutions API (used by the
