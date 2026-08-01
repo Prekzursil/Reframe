@@ -365,11 +365,24 @@ export function ModelsSystemPanel({
   // F34: tear a pending job-wait down on unmount. Without it a Settings sub-tab
   // switch mid-download leaves the `job.done` subscription and its timer alive to
   // the DEFAULT_JOB_TIMEOUT_MS ceiling (~35 min).
+  //
+  // A live controller is always present and is REPLACED per job (`runAssetJob`),
+  // exactly the `views/Export.tsx:75,108` pattern. Two properties are load-bearing:
+  //
+  //  1. The cleanup must read `abortRef.current` AT CLEANUP TIME, not capture it at
+  //     setup time. `main.tsx` wraps the app in `React.StrictMode`, so in dev the
+  //     effect runs setup -> cleanup -> setup; a captured `ctrl` meant the cleanup
+  //     aborted the ONE controller the panel would ever use. `waitForJobDone`
+  //     short-circuits on `signal?.aborted` (`_api.ts:266-269`) and
+  //     `surfaceJobError` swallows `JobAbortedError`, so every Download and every
+  //     readiness fix action enqueued its multi-GB job and then silently no-op'd,
+  //     with the error path muted — in the exact environment where a human would
+  //     hand-verify this. Measured: effect setups=2, cleanups=1,
+  //     `signal.aborted` at click time = true.
+  //  2. Because the controller is replaced per job, the StrictMode cleanup aborts
+  //     only the initial controller, which nothing is ever awaiting.
   const abortRef = useRef<AbortController>(new AbortController());
-  useEffect(() => {
-    const ctrl = abortRef.current;
-    return () => ctrl.abort();
-  }, []);
+  useEffect(() => () => abortRef.current.abort(), []);
 
   // Load persisted settings up-front (cheap) so the tier/ASR/commercial controls
   // reflect saved choices even before the opt-in analysis runs.
@@ -664,13 +677,18 @@ export function ModelsSystemPanel({
   // download was invisible because the error only ever arrives on `job.done`.
   const runAssetJob = useCallback(
     async (assetNames: string[]): Promise<void> => {
+      // Fresh controller per job (see the `abortRef` note above): the mount-time
+      // one may already be aborted by StrictMode's double-invoke, and reusing an
+      // aborted signal makes `waitForJobDone` return null immediately.
+      const controller = new AbortController();
+      abortRef.current = controller;
       const { jobId } = await api.assets.ensure(assetNames);
       const done = await waitForJobDone<EnsureDone>(
         jobs,
         jobId,
         extractEnsureDone,
         DEFAULT_JOB_TIMEOUT_MS,
-        abortRef.current.signal,
+        controller.signal,
       );
       // A SUCCESS payload can still carry per-item failures (manager.py:742-749
       // raises only when NOTHING installed), so a partial failure must be shown.
