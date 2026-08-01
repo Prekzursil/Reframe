@@ -1,7 +1,7 @@
 """Unit tests for media_studio.models.catalog (WU-catalog).
 
 Pure data + pure helpers — no network, no model, no fakes needed. Asserts the
-catalog was seeded VERBATIM from ``docs/providers/CATALOG-SEED.md`` (13 entries,
+catalog was seeded VERBATIM from ``docs/plans/provider-hub/CATALOG-SEED.md`` (13 entries,
 >=3 distinct providers, every one of the 5 Reframe tasks ranked, dated guidance,
 privacy/train-on-input axis), and that the filter/order/top-pick helpers behave.
 """

@@ -51,7 +51,7 @@ active-speaker diarization with face tracking and a shot-change policy to decide
 per-segment **cut / 50-50 split / 3-up composite** vertical layout. It is an
 **explicit opt-in** engine (the `auto` default still tracks a single speaker); its
 GPU tier is provisioned on the host and, as of v1.2.0, its SpeechBrain audio
-dependency is declared + pinned (`speechbrain==1.0.3`). See
+dependency is declared + pinned (`speechbrain==1.1.0`). See
 [`WU-R1-MULTISPEAKER-ENGINE.md`](WU-R1-MULTISPEAKER-ENGINE.md) and
 [`V1.1-BUILD-NOTES.md`](V1.1-BUILD-NOTES.md) for the engine + validation record.
 

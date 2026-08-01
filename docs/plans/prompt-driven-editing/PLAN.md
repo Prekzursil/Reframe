@@ -1,5 +1,13 @@
 # Reframe "Director" v1 — Implementation Plan (Prompt-Driven AI Video Editing)
 
+> **SSOT correction (post-dates this doc).** `.coverage-thresholds.json` **does**
+> exist — added in `e38d5d3a` (PR #235), after this document was written. The command
+> lists below are still correct; treat the JSON as the **declarative** source of truth
+> (it says so itself: "mirrored here for visibility") and `quality.yml` gate:3 +
+> `app/vitest.config.ts` as the **enforcement**. They agree: 100% lines / branches /
+> functions / statements, vitest + pytest, no jest.
+
+
 **Status:** DRAFT for the Plan Review Gate (3 adversarial reviewers: Feasibility · Completeness · Scope/Alignment).
 **Branch:** `feat/director-v1` (off `origin/main`).
 **Date:** 2026-06-18.

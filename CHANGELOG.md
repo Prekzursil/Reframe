@@ -3,6 +3,92 @@
 All notable changes to Reframe — Media Studio are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.2] — unreleased
+
+`app/package.json` has read `1.4.2` for some time with no section here, while
+`README.md` sends readers to this file for release history. This is that section.
+**Not yet tagged or published** — the newest published release is v1.4.0 (v1.4.1 is a
+Draft). 70 commits on `main` since `v1.4.1`.
+
+### Shipped crashes and data-loss fixes
+
+- **Director cost banner crashed on every successful plan.** `DirectorCostRow.route` is
+  an object on the wire and was rendered directly as a React child. Invisible to both
+  `tsc` and 100% coverage — the wire type said `string`. (#312)
+- **Library delete bypassed the only-surviving-copy guard**, making an unconfirmed
+  one-click removal unrecoverable. The refusal now precedes the entity DELETE. (#310)
+- **Deleting a produced short had no confirmation.** (#313)
+- **A persisted hub choice made Edit and the per-video Workspace permanently
+  unreachable** — restart-durable, with no UI to clear it. (#310)
+- **Every focus ring was dead.** The shared ring used `:where()` (zero specificity), so
+  its `box-shadow` lost the cascade while its `outline: none` still applied — focused
+  paint was byte-identical to resting on ~17 of 18 panel surfaces. (#310)
+- **A critical dangling `aria-controls`** across the tablist. (#308)
+- **Critical WSL command-line injection** (code-scanning alert #1752). (#298)
+
+### The 50-finding audit programme
+
+24 verified batches landed as five integration PRs, each RED-first with the batch commits
+preserved. Highlights, by user impact rather than severity band:
+
+- **Make Shorts burned a fabricated hook into the pixels** — manual clip mode synthesised
+  `"Manual clip 1"` and rasterised it into the delivered file. The Caption checkbox was
+  also ignored, and caption output never reached the AI export.
+- **Arrow-key "move clip" was a retime that shrank the cue**, clipping caption text.
+- **A failed remove rolled back the whole list**, resurrecting a card for a video whose
+  manifest and poster had already been unlinked.
+- **A failed listing claimed the library / gallery was empty** rather than reporting the
+  failure.
+- **Four real `job.done` payload shapes — including the default-path degrade SUCCESS —
+  were collapsed into one fake "unreadable result" error.**
+- **Async Director plan/apply/undo failures were masked** behind a generic string, and a
+  tab switch discarded an unapplied plan.
+- **Asset downloads treated enqueue as completion**, and under React StrictMode every
+  per-card Download silently no-op'd with the error path muted.
+- **A cancelled export left its latch set**, cancelling the user's *next* export and
+  painting "a partial file may remain" over a healthy run.
+- **The Advanced cluster could never collapse** (unscoped `display` rule).
+- **The caption frame swallowed the video's own controls.**
+- Plus: subtitle-track Remove now confirms, the shorts gallery uses the shared focus
+  trap, tab activation is manual, a late-arriving subtitle track is adopted, preset Save
+  is gated on a non-blank name, `keystoreUnreadable` reaches the UI, mutating batch RPCs
+  are gated on real job liveness, and provider key-op rejections surface.
+
+### v1.5 shell (incremental, behind the existing routes)
+
+- Content-first Library, left rail, token reconciliation (#284)
+- Caption pilot — inspector over a shared stage (#288)
+- Export (guarded commit) + Deliver split (#292); Director rail destination (#290)
+- Produced-shorts gallery wired live; de-jargoned capability labels (#286)
+- Self-hosted OFL fonts bundled — Inter / Newsreader / IBM Plex Mono (#293)
+
+### Licensing and models
+
+- **S3FD (no license) swapped for MIT YuNet** for multi-speaker face detection (#287)
+
+### CI and quality
+
+- **The e2e harness is now typechecked.** `app/tsconfig.json` excludes `e2e/**` and the
+  pre-commit globs cover only `main|renderer/src|render-cli/src`, so no blocking gate read
+  `app/e2e/**` at all; the `typecheck:e2e` script existed but nothing invoked it.
+- **Both failing e2e jobs fixed** — a `beforeAll` running on 120 s while the download it
+  calls budgets 300 s, and a test fixture that had silently stopped reaching its mock.
+- **The visual-baseline regen could never run** (missing `always()`), while the upload step
+  published the *old* baselines under the name `updated-visual-baselines`.
+- Windows packaging unblocked (#307); `brace-expansion` advisory closed (#303); v1.5
+  security hardening, 8 verified fixes (#304).
+
+### Documentation
+
+- The v1.5 plan corpus (14 documents + 8 shell-audit screenshots) was **untracked on one
+  machine** and is now in the repo.
+- The audit ledger's advertised REFUTED tier contained **zero of its 94 entries**; all 94
+  are now recorded so they are not re-raised.
+- Ten doc-vs-code contradictions resolved, each in the code's favour — including a
+  `pyproject.toml` comment that contradicted the dependency line six rows below it, a
+  charter documenting an oxlint version nothing runs, and `CONTRACTS.md` asserting there
+  is "no keystore, no consent framework" while all four of those modules ship.
+
 ## [1.4.1] — 2026-07-08
 
 **Reframe v1.4.1 — post-v1.4 hardening.** A focused patch over 1.4.0: it fixes a real

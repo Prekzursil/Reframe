@@ -1,6 +1,8 @@
 # RPC Contract v2 — schema-first, generated (v1.5 KEYSTONE)
 
-Status: **design + proof-of-concept** (this PR). Not merged; not yet load-bearing.
+Status: **MERGED** (#282, `68036fdc`) — proof-of-concept scope (5 methods), not yet
+load-bearing for dispatch. It *is* load-bearing for the coverage gate:
+`app/vitest.config.ts` excludes `renderer/src/lib/rpc/generated/**`.
 Migration plan: [`rpc-contract-v2-migration.md`](./rpc-contract-v2-migration.md).
 
 ## 1. The problem — one contract, hand-mirrored in 7 places that drift

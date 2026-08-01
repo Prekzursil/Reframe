@@ -108,12 +108,43 @@ class TestShippedRequirementFiles:
         assert "torch" not in pins
         assert not any(p.startswith("torch") for p in pins)
 
+    def test_chatterbox_requirements_file_mirrors_the_code_tuple_exactly(self):
+        """The .txt and CHATTERBOX_REQUIREMENTS must be IDENTICAL lists (C7).
+
+        `assets/manager.py:617` decides whether the chatterbox env is installed with
+        `list(data.get("requirements")) == list(entry.requirements)`, where
+        `entry.requirements` comes from the code TUPLE while the bootstrap installs
+        from this .txt. Any divergence means a correctly-built env never counts as
+        installed and re-downloads ~7.5 GB on every check.
+
+        The two had silently diverged — tuple `torch==2.10.0+cu128` (set deliberately
+        in #211, "modernize chatterbox voice-clone env to py3.14 + torch 2.10.0
+        (cu128)") vs .txt `2.11.0+cu128` (arrived via the #259 dependabot bump, then
+        "re-paired" in place by #260 without following the tuple). Both trios are real
+        and paired on the cu128 index for py3.14, so nothing failed loudly; the only
+        symptom was the silent re-download.
+
+        Two sibling tests asserted the .txt's literal versions and the tuple's order,
+        but NOTHING compared the two lists — so the desync was invisible. This does,
+        which also makes the exact version strings no longer load-bearing in two
+        places at once.
+        """
+        from media_studio.features.tts.chatterbox import CHATTERBOX_REQUIREMENTS
+
+        reqs = bs.load_requirements(bs.CHATTERBOX_REQUIREMENTS)
+        assert list(reqs.pins) == list(CHATTERBOX_REQUIREMENTS), (
+            "requirements-chatterbox.txt has drifted from CHATTERBOX_REQUIREMENTS; "
+            f"txt={list(reqs.pins)} tuple={list(CHATTERBOX_REQUIREMENTS)} — "
+            "manager.py:617 compares these lists, so a mismatch re-downloads ~7.5 GB"
+        )
+
     def test_chatterbox_file_parses_with_torch_cu12(self):
         reqs = bs.load_requirements(bs.CHATTERBOX_REQUIREMENTS)
         pins = dict(p.split("==", 1) for p in reqs.pins)
-        # The new py3.14 trio (torch 2.11 cu128).
-        assert pins["torch"] == "2.11.0+cu128"
-        assert pins["torchaudio"] == "2.11.0+cu128"
+        # The py3.14 trio (torch 2.10 cu128, per CHATTERBOX_REQUIREMENTS — see the
+        # mirror test above, which is what actually keeps these two files in step).
+        assert pins["torch"] == "2.10.0+cu128"
+        assert pins["torchaudio"] == "2.10.0+cu128"
         # HARDENING (WU1, dependabot #259 regression class): torch/torchaudio must
         # stay PAIRED (identical version) and BOTH must keep the +cu128 CUDA local
         # tag. #259 bumped torch->2.12.1 (stripped +cu128) while leaving torchaudio
@@ -131,9 +162,16 @@ class TestShippedRequirementFiles:
         assert reqs.options == ("--extra-index-url https://download.pytorch.org/whl/cu128",)
         # ORDER MATTERS: mirror the CHATTERBOX_REQUIREMENTS tuple order so a
         # bootstrap-built env registers as the installed asset (sentinel match).
+        # Derived from the tuple rather than re-stated as literals: the version string
+        # was previously written out in THREE places, and when the .txt drifted only
+        # the two here moved, which is how the desync stayed invisible.
+        from media_studio.features.tts.chatterbox import CHATTERBOX_REQUIREMENTS
+
         assert reqs.pins[0].startswith("chatterbox-tts==")
-        assert reqs.pins[1] == "torch==2.11.0+cu128"
-        assert reqs.pins[2] == "torchaudio==2.11.0+cu128"
+        assert reqs.pins[1] == CHATTERBOX_REQUIREMENTS[1]
+        assert reqs.pins[2] == CHATTERBOX_REQUIREMENTS[2]
+        assert reqs.pins[1].startswith("torch==")
+        assert reqs.pins[2].startswith("torchaudio==")
 
     def test_pyproject_reframe_gpu_torch_pinned_and_paired(self):
         """Lock the pyproject ``reframe-gpu`` extra (LR-ASD cu124 runtime) too.
