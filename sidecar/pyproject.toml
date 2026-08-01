@@ -61,13 +61,28 @@ reframe-gpu = [
   "python_speech_features==0.6",  # MFCC features for the ASD audio frontend
   "scipy==1.18.0",                # face-track interpolation + median filter + wav read
   # DIARIZE stage (VAD + ECAPA-TDNN) — the speaker turns the director fuses with
-  # visual ASD. Uses the ``speechbrain.inference`` API (requires >= 1.0.0). PINNED
-  # to 1.0.3 (GPU-validated on the RTX 4050): loads ``speechbrain/vad-crdnn-libriparty``
-  # + ``spkrec-ecapa-voxceleb`` cleanly. 1.1.0 is DELIBERATELY AVOIDED — its
-  # ``speechbrain.integrations.k2_fsa`` LAZY module makes ``VAD.from_hparams`` fail
-  # with ``pydoc.ErrorDuringImport`` (hyperpyyaml's ``pydoc.locate`` re-imports
-  # ``lobes.models.CRDNN`` -> touches the k2 LazyModule -> ``import k2`` (no Windows
-  # wheels) blows up). speechbrain missing at runtime fails LOUD (typed
+  # visual ASD. Uses the ``speechbrain.inference`` API (requires >= 1.0.0). PINNED to
+  # 1.1.0: loads ``speechbrain/vad-crdnn-libriparty`` + ``spkrec-ecapa-voxceleb``, and
+  # 1.1.0 is REQUIRED by the fetch-pinning path — ``features/diarize_backend.py``
+  # probes for 1.1.0's ``utils.fetching.FetchConfig`` and emits
+  # ``from_hparams(fetch_config=FetchConfig(revision=...))``, which pins the checkpoint
+  # TENSORS as well as ``hyperparams.yaml``/``custom.py`` (strictly wider than 1.0.x's
+  # bare ``revision=``). See ``pinned_fetch_kwargs``.
+  #
+  # HISTORY — this comment used to say "PINNED to 1.0.3 ... 1.1.0 is DELIBERATELY
+  # AVOIDED", six lines above a line that reads ``speechbrain==1.1.0``. The prose was
+  # the stale half: the codebase was later adapted TO 1.1.0 (the FetchConfig probe and
+  # the two-shape ``pinned_fetch_kwargs``) and the note was never updated, leaving the
+  # file contradicting itself and three docs repeating the dead value.
+  #
+  # The avoidance rationale it gave is also not reachable here. Measured against both
+  # real wheels: ``integrations/k2_fsa`` does not exist in 1.0.3 and does exist in
+  # 1.1.0, where its ``__init__`` re-raises ``ImportError`` if ``k2`` is absent (no
+  # Windows wheels) — but 1.1.0 reaches subpackages through ``lazy_export_all``, so
+  # k2_fsa is only touched on explicit attribute access, and ``_import_speechbrain``
+  # imports just ``speechbrain.inference``'s ``VAD``/``EncoderClassifier``.
+  #
+  # speechbrain missing at runtime still fails LOUD (typed
   # ``DiarizeBackendUnavailableError``), never a silent ModuleNotFoundError.
   "speechbrain==1.1.0",
   # speechbrain 1.0.x calls ``hf_hub_download(use_auth_token=...)``, an argument

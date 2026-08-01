@@ -56,21 +56,14 @@ def read(rel: str) -> str | None:
 OPEN_ITEMS = {
     "C1a",
     "C1b",
-    "C1-doc:WU-R1-MULTISPEAKER-ENGINE.md",
-    "C1-doc:V1.2-FEATURES.md",
-    "C1-doc:ROADMAP.md",
     "C2b",
     "C5a",
     "C5b",
-    "C6a",
-    "C7",
     "C8:--surface-deep",
     "C8:--text-muted",
     "C9b",
     "C11",
-    "P2.6",
     "P2.11b",
-    "P2.12",
     "P1-corpus",
 }
 
@@ -138,8 +131,11 @@ for rel, needle in c1_docs:
     check(
         f"C1-doc:{Path(rel).name}",
         True,
-        body is not None and needle in body,
-        f"{rel} contains {needle!r} = {body is not None and needle in body}",
+        # INVARIANT (was OPEN): these three docs carried `speechbrain==1.0.3` while
+        # pyproject pins 1.1.0 and two code sites are built for 1.1.0. Now corrected,
+        # so assert the dead value STAYS gone.
+        body is not None and needle not in body,
+        f"{rel} no longer contains the dead {needle!r} = {body is not None and needle not in body}",
     )
 
 # ---------------------------------------------------------- C2 coverage-thresholds
@@ -201,7 +197,10 @@ charter = read("QUALITY-CHARTER.md") or ""
 charter_ox = re.search(r"oxlint\s+([0-9.]+)", charter)
 charter_ver = charter_ox.group(1) if charter_ox else "?"
 check(
-    "C6a", True, oxlint_rev != charter_ver, f"pre-commit oxlint={oxlint_rev} vs charter={charter_ver} (drift expected)"
+    "C6a",
+    True,
+    oxlint_rev == charter_ver,
+    f"pre-commit oxlint={oxlint_rev} == charter {charter_ver} — the charter must not document a version nothing runs",
 )
 pkg_has_oxlint = any(
     "oxlint" in (read(p) or "") for p in ("app/package.json", "app/render-cli/package.json", "package.json")
@@ -216,8 +215,8 @@ py_torch = re.findall(r'"torch==([^"]+)"', cbpy)
 check(
     "C7",
     True,
-    bool(req_torch) and bool(py_torch) and req_torch[0] != py_torch[0],
-    f"requirements torch={req_torch or '-'} vs chatterbox.py torch={py_torch or '-'} (mismatch expected)",
+    bool(req_torch) and bool(py_torch) and req_torch[0] == py_torch[0],
+    f"requirements torch={req_torch or '-'} == chatterbox.py torch={py_torch or '-'} — manager.py:617 compares these lists; a mismatch re-downloads ~7.5 GB",
 )
 
 # ------------------------------------------------------------------ C8 palette
@@ -338,10 +337,20 @@ readme = read("README.md") or ""
 check("P2.11a", True, ver == "1.4.2", f"app/package.json version={ver}")
 check("P2.11b", True, "1.4.1" in readme, f"README.md still cites 1.4.1={'1.4.1' in readme}")
 changelog = read("CHANGELOG.md") or ""
-check("P2.12", True, "[1.4.2]" not in changelog, f"CHANGELOG lacks a [1.4.2] section={'[1.4.2]' not in changelog}")
+check(
+    "P2.12",
+    True,
+    "[1.4.2]" in changelog,
+    f"CHANGELOG has the [1.4.2] section README:151 points at={'[1.4.2]' in changelog}",
+)
 
 rpcdoc = read("docs/rpc-contract-v2.md") or ""
-check("P2.6", True, "Not merged" in rpcdoc, f'rpc-contract-v2.md still says "Not merged"={"Not merged" in rpcdoc}')
+check(
+    "P2.6",
+    True,
+    "Not merged" not in rpcdoc,
+    f'rpc-contract-v2.md no longer claims "Not merged"={"Not merged" not in rpcdoc}',
+)
 
 pmeta = read("app/renderer/src/features/providerMeta.ts") or ""
 # DETECTOR FIX (v2): a whole-file substring said cloudflare IS present, contradicting

@@ -5,9 +5,16 @@ protocol, the data schemas, and the engine interfaces. **Build to this contract 
 underspecified, choose the simplest thing consistent with it and note the assumption in a `# CONTRACT-NOTE:`
 comment — do not invent new public method names or schemas.
 
+> **SUPERSEDED IN PART (SSOT reconciliation).** This file is still the frozen naming and
+> schema contract, and that part stands. But two of its scope clauses have been
+> falsified by shipped code and are corrected inline below: the app **does** have a
+> keystore and **does** have an egress-consent framework. For the wire contract itself,
+> `docs/rpc-contract-v2.md` is the forward-looking source. Where this file and the code
+> disagree, the code wins.
+
 ## 0. What we're building
 A **local personal video-manager desktop app** (NOT a hosted platform — no auth, no signed-weight manifests,
-no keystore, no egress-consent framework, no multi-tenancy). Electron UI + Python compute sidecar. Features:
+no multi-tenancy). Electron UI + Python compute sidecar. Features:
 manage a library of videos; transcribe; subtitles (generate/edit/translate, SRT/ASS/VTT); subtitle-track
 management (rename/relabel/add/remove/burn-in/soft-mux/strip); ffmpeg conversion; and the star — a
 prompt-driven **short-maker** (select → boundary-snap → cut → reframe → captions → export). Lean plan:
@@ -112,7 +119,16 @@ sentence-end (word timing) + audio silence + scene cut (PySceneDetect), staying 
   must have thorough unit tests with NO heavy-ML imports (mock the provider/whisper/verthor at the seam).
 - **Subprocess safety as correctness (not security theater):** ffmpeg/wsl calls use **argv lists** (never
   `shell=True`), so paths with spaces work. Escape ASS cue text so captions render.
-- **Keep it lean:** no auth, no weight-signing, no keystore, no consent framework, no SaaS abstractions.
+- **Keep it lean:** no auth, no SaaS abstractions.
+
+  > **Corrected.** This clause used to read "no keystore, no consent framework" and it is
+  > FALSE as of the security work: `app/main/keystore.ts` (OS-keychain provider keys),
+  > `models/consent.py` (per-provider text/frames consent), `models/spend_ledger.py`
+  > (budget / spend cap) and `components/ConsentToggle.tsx` are all tracked and
+  > load-bearing — `README.md` describes the AI-Job envelope that gates every cloud call
+  > behind explicit consent and a spend cap. Two code comments used to cite this dead
+  > clause (`app/main/main.ts`, `app/main/security.ts`); they now point here instead.
+  > "Lean" still means: do not add auth, tenancy, or hosted-service scaffolding.
 - Match the method names + schemas in §2/§3 EXACTLY (both Python and TS sides).
 
 ## 7. Stack choices (use these; create the config in the foundation phase)

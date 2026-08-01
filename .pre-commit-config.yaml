@@ -35,7 +35,13 @@ repos:
         name: ruff (format)
         files: '^sidecar/.*\.py$'
 
-  # --- Gate 1: JS/TS lint (oxlint 1.69.0 mirror; npm pins 1.70.0) ---
+  # --- Gate 1: JS/TS lint (oxlint 1.69.0 mirror) ---
+  # The `rev:` below is the ONLY oxlint version in the repo and therefore the one
+  # `quality.yml` actually runs. This comment used to add "npm pins 1.70.0", which was
+  # false — oxlint appears in no tracked package.json — and QUALITY-CHARTER.md repeated
+  # that 1.70.0 as the charter's declared version, documenting a tool nothing executes.
+  # Both now say 1.69.0. `.quality/charter_check.py` matches gate SLUGS only, so it
+  # cannot catch a version drift here; keep this line and the charter in step by hand.
   - repo: https://github.com/oxc-project/mirrors-oxlint
     rev: v1.69.0
     hooks:

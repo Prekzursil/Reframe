@@ -150,24 +150,39 @@ audio side of the active-speaker fusion (§1) loads SpeechBrain's pretrained **V
 v1.2.0 that dependency is a **declared, pinned** member of the `reframe-gpu`
 extra rather than an implicit host package:
 
-- **`speechbrain==1.0.3`** — the GPU-validated version; a floating install can pull
-  an API-incompatible SpeechBrain and break the diarizer's model load. When it (or
-  its backend) is unavailable the diarizer **fails loud with a typed error** — it
-  never silently degrades the fusion.
-- **`huggingface-hub<1.0`** — SpeechBrain 1.0.3 uses the pre-1.0 `huggingface-hub`
-  model-fetch API; `huggingface-hub>=1.0` removed/changed it, so the pin keeps the
-  pretrained VAD/ECAPA download working.
+- **`speechbrain==1.1.0`** — a floating install can pull an API-incompatible
+  SpeechBrain and break the diarizer's model load. When it (or its backend) is
+  unavailable the diarizer **fails loud with a typed error** — it never silently
+  degrades the fusion.
+
+  > **Corrected.** This document said `1.0.3` until the SSOT reconciliation. The
+  > pin in `sidecar/pyproject.toml` is `1.1.0`, and 1.1.0 is *required*, not merely
+  > tolerated: `features/diarize_backend.py` probes for 1.1.0's
+  > `utils.fetching.FetchConfig` and emits
+  > `from_hparams(fetch_config=FetchConfig(revision=...))`, which pins the checkpoint
+  > **tensors** as well as `hyperparams.yaml`/`custom.py` — strictly wider than 1.0.x's
+  > bare `revision=`. `pinned_fetch_kwargs`'s own docstring states that emitting the
+  > 1.0.x shape unconditionally "would break the diarizer outright". Three docs plus
+  > a `pyproject.toml` comment carried the dead 1.0.3 value.
+
+- **`huggingface-hub<1.0`** — the pre-1.0 `huggingface-hub` model-fetch API;
+  `huggingface-hub>=1.0` removed/changed it, so the cap keeps the pretrained
+  VAD/ECAPA download working. (The declared range is `>=0.30,<2.0`; the effective
+  constraint is validated at `0.36.2`, the newest 0.x.)
 - **Windows `k2_fsa` gotcha** — SpeechBrain's *optional* ASR/CTC recipes pull
   **`k2` (k2-fsa)**, which has **no prebuilt Windows wheel** and fails to
   `pip install` there. This engine's diarizer uses **only the VAD + ECAPA path**,
-  which does **not** require `k2`, so `speechbrain==1.0.3` installs cleanly — do
-  **not** pull the k2-backed extras. The GPU tier is provisioned/validated under
-  **WSL2 Linux** (`~/reframe-gpu-venv`, torch 2.6.0+cu124; see
-  [`V1.1-BUILD-NOTES.md`](V1.1-BUILD-NOTES.md)), where k2 is a non-issue anyway.
+  which does **not** require `k2` — do **not** pull the k2-backed extras.
 
-  > The `speechbrain==1.0.3` line is owned by PR #255 (it edits
-  > `sidecar/pyproject.toml` + `diarize_backend.py`); this section documents the
-  > pin, it does not introduce it.
+  Measured against both real wheels during the reconciliation:
+  `speechbrain/integrations/k2_fsa` **does not exist in 1.0.3** and **does exist in
+  1.1.0** (8 modules), where its `__init__` re-raises `ImportError` if `k2` is absent.
+  It is nonetheless not reachable from this code path — 1.1.0 exposes subpackages via
+  `lazy_export_all`, so `k2_fsa` is only imported on explicit attribute access, and
+  `_import_speechbrain()` imports only `speechbrain.inference`'s `VAD` /
+  `EncoderClassifier`. The GPU tier is provisioned/validated under **WSL2 Linux**
+  (`~/reframe-gpu-venv`, torch 2.6.0+cu124; see
+  [`V1.1-BUILD-NOTES.md`](V1.1-BUILD-NOTES.md)), where k2 is a non-issue anyway.
 
 **Detector note (v1.2.0 WU1).** The **default** `claudeshorts` reframer now detects
 faces with a single native **YuNet** model (`cv2.FaceDetectorYN`), replacing the

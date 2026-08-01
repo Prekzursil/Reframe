@@ -1,5 +1,13 @@
 # Reframe AI Provider Hub — Implementation Plan
 
+> **SSOT correction (post-dates this doc).** `.coverage-thresholds.json` **does**
+> exist — added in `e38d5d3a` (PR #235), after this document was written. The command
+> lists below are still correct; treat the JSON as the **declarative** source of truth
+> (it says so itself: "mirrored here for visibility") and `quality.yml` gate:3 +
+> `app/vitest.config.ts` as the **enforcement**. They agree: 100% lines / branches /
+> functions / statements, vitest + pytest, no jest.
+
+
 **Status:** DRAFT for the Plan Review Gate (3 adversarial reviewers: Feasibility · Completeness · Scope/Alignment)
 **Date:** 2026-06-17
 **Scope authority (LOCKED — do not re-decide):** `CONVERGED-PROGRAM.md` + `GRILL-DECISION-LOG.md` (~29 decisions) + `provider-hub/DESIGN.md` v2 + `provider-hub/CATALOG-SEED.md`.

@@ -22,8 +22,16 @@ and pick one:
 
 | Asset | What it is |
 |-------|------------|
-| `media-studio-1.4.1-win-x64.exe` | **NSIS installer** — double-click, choose an install dir, get a Start-menu / desktop shortcut ("Reframe - Media Studio"). Auto-updates in place from here on. |
-| `media-studio-1.4.1-win-x64.zip` | **Portable** — unzip anywhere and run `Reframe - Media Studio.exe`. No install, no admin. |
+| `media-studio-<version>-win-x64.exe` | **NSIS installer** — double-click, choose an install dir, get a Start-menu / desktop shortcut ("Reframe - Media Studio"). Auto-updates in place from here on. |
+| `media-studio-<version>-win-x64.zip` | **Portable** — unzip anywhere and run `Reframe - Media Studio.exe`. No install, no admin. |
+
+<!-- Deliberately version-agnostic. `electron-builder.yml` derives the artifact name from
+     `app/package.json`, so a hardcoded number here goes stale on every bump — it had been
+     sitting at 1.4.1 while package.json read 1.4.2. It would also have been wrong in the
+     other direction: the newest PUBLISHED release is v1.4.0 (v1.4.1 is still a Draft and
+     there is no v1.4.2 tag), so naming any specific version pointed at an asset a reader
+     could not download. Take whatever the Releases page actually offers. -->
+
 
 **First run does the rest automatically.** The download is **slim** (the app + a bundled
 CPython + ffmpeg + the render engine). On first launch the app downloads the heavier pieces
@@ -51,16 +59,21 @@ is exactly one place to manage keys, cost, and privacy.
 
 ### The tabs
 
-V1 organises everything into **five** top-level sections (an ARIA tablist; the active
-section is derived from the route, so the strip can never desync):
+The app organises everything into **eight** top-level sections (an ARIA tablist; the
+active section is derived from the route, so the strip can never desync). The list below
+is derived from `app/renderer/src/App.tsx` — it previously said "five" and named only
+five, omitting Caption, Export and Deliver:
 
 | Tab | What it's for |
 |-----|---------------|
 | **Library** | Your video library home. Add videos; open one to drill into the **Edit** section for that video. |
 | **Make Shorts** | The novice front door / short-maker: AI moment-pick **and** manual-interval shorts → boundary-snap → cut → vertical 9:16 reframe → caption editor → export, plus the single produced-Shorts gallery and batch / template repurposing (it carries the interrupted-batch resume badge). |
 | **Edit** | The per-video manual surface — trim / cut / join, reframe, the caption position & style editor, audio mix / duck / loudnorm, stabilize, transcribe, export — hosted in the per-video Workspace. |
+| **Caption** | The caption stage on its own rail: the draggable / resizable caption box over a real frame, cue editing, and the burn-in vs soft-mux choice. |
+| **Export** | The guarded export stage — pick a platform preset, review what will be written, then commit; determinate progress with a cancel. |
+| **Deliver** | Post-export delivery: where finished files go, and the produced-clip hand-off. |
 | **Director** | Prompt-driven AI video editing: describe an edit, review the storyboard / diff and its cost, then apply real ffmpeg op-engines (reframe, zoom/pan, retime, overlay, lower-third, remove fillers, translate captions, export). |
-| **Settings** | Sub-navigated: **Models & System** (pick / download models, hardware tiers, paths), **Providers & Keys** (add / redact API keys, per-key usage bars, consent toggles, **monthly spend cap**), **Storage**, and **System Health** diagnostics. |
+| **Settings** | Sub-navigated into **eight** panels (from `views/Settings.tsx`): **Models & System** (pick / download models, hardware tiers, paths), **Setup**, **Providers & Keys** (add / redact API keys, per-key usage bars, consent toggles, **monthly spend cap**), **Storage**, **Caption defaults**, **System Health** diagnostics, **Licenses**, and **Export presets**. |
 
 **Providers & Keys + spend cap.** Keys live **only on your machine** — never transmitted
 anywhere but the owning provider, never logged. A persisted, month-keyed **cumulative spend

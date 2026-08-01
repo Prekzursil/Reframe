@@ -16,7 +16,7 @@ gates that exist in the source charter do not apply here and have been dropped.
 
 | # | Gate | Tool(s) (pinned) | What it enforces |
 |---|------|------------------|------------------|
-| 1 | lint-format | ruff 0.15.17 · oxlint 1.70.0 · biome 2.5.0 | Lint + format + security-lint across Python (sidecar) and JS/TS (app). Auto-fixers: `ruff check --fix` + `ruff format`; `oxlint --fix --deny-warnings`; `biome format --write`. |
+| 1 | lint-format | ruff 0.15.17 · oxlint 1.69.0 · biome 2.5.0 | Lint + format + security-lint across Python (sidecar) and JS/TS (app). Auto-fixers: `ruff check --fix` + `ruff format`; `oxlint --fix --deny-warnings`; `biome format --write`. |
 | 2 | types | tsc (typescript 5.x) · basedpyright 1.39.8 | `tsc --noEmit` for `app/` (main + renderer) and `app/render-cli/`; basedpyright (`typeCheckingMode=standard`) for `sidecar/media_studio`. |
 | 3 | tests-coverage | pytest 9 + pytest-cov (branch, `--cov-fail-under=100`) · vitest 3 (100% thresholds) | Strict 100% line+branch coverage **everywhere** — sidecar (`media_studio`) **and** the renderer (`renderer/src/**`). No hybrid/ratchet floor. Reasoned `# pragma: no cover — <reason>` / `/* v8 ignore — <reason> */` allowed only for genuinely-untestable platform/defensive branches. |
 | 4 | sast | opengrep 1.22.0 (CI) / semgrep 1.166.0 (local) | Static security analysis using the curated in-repo ruleset under `.quality/opengrep/` (NOT `--config auto`). Clean-zero lock: 0 findings, no baseline. |
