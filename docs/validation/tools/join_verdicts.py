@@ -62,7 +62,7 @@ by_prefix: dict[str, list[dict]] = defaultdict(list)
 for v in verdicts:
     k = v["_key"]
     if k.startswith("verify:"):
-        by_prefix[norm(k[len("verify:"):])].append(v)
+        by_prefix[norm(k[len("verify:") :])].append(v)
 
 # prefix-collision audit: how many findings share a 30-char title prefix?
 prefix_owners: dict[str, set[str]] = defaultdict(set)
@@ -74,7 +74,7 @@ tiers: dict[str, list[dict]] = {"CONFIRMED": [], "REFUTED": [], "SPLIT": [], "UN
 seen: set[str] = set()
 for f in findings:
     title = str(f.get("title", ""))
-    k = f"{norm(f.get('lens'))}|{norm(title)}"   # lens+title: surface was free-text noise
+    k = f"{norm(f.get('lens'))}|{norm(title)}"  # lens+title: surface was free-text noise
     if k in seen:
         continue
     seen.add(k)
@@ -158,4 +158,4 @@ with OUT.open("w", encoding="utf-8") as fh:
     for key, text in prose:
         fh.write(f"## {key}\n\n{text}\n\n---\n\n")
 
-print(f"wrote {OUT} ({OUT.stat().st_size/1024:.0f} KB)")
+print(f"wrote {OUT} ({OUT.stat().st_size / 1024:.0f} KB)")

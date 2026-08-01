@@ -29,10 +29,14 @@ TARGET = sys.argv[1] if len(sys.argv) > 1 else "4.14.0.94"
 # The attribute surface, derived from the source rather than hand-listed.
 SRC = ROOT / "sidecar/media_studio"
 attrs = sorted(
-    {m.group(1) for p in SRC.rglob("*.py") for m in re.finditer(r"\bcv2\.([A-Za-z_]\w*)", p.read_text(encoding="utf-8", errors="replace"))}
+    {
+        m.group(1)
+        for p in SRC.rglob("*.py")
+        for m in re.finditer(r"\bcv2\.([A-Za-z_]\w*)", p.read_text(encoding="utf-8", errors="replace"))
+    }
 )
 
-PROBE = '''
+PROBE = f"""
 import sys, numpy as np, cv2
 print("PROBE cv2", cv2.__version__)
 missing = [a for a in {attrs!r} if not hasattr(cv2, a)]
@@ -63,7 +67,7 @@ _, mx, _, _ = cv2.minMaxLoc(res)
 flow = cv2.calcOpticalFlowFarneback(gray, gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
 print("PROBE ops:", small.shape, len(enc), int(th.sum() > 0), round(float(mx), 3), flow.shape)
 sys.exit(1 if missing else 0)
-'''.format(attrs=attrs)
+"""
 
 
 def main() -> int:

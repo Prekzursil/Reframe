@@ -37,6 +37,7 @@ with JOURNAL.open("r", encoding="utf-8", errors="replace") as fh:
         if rec.get("type") == "result" and rec.get("agentId"):
             by_agent[str(rec["agentId"])] = rec.get("result")
 
+
 # ---- 2. agentId -> prompt (first message of the transcript) ----
 def first_prompt(path: Path) -> tuple[str, str] | None:
     with path.open("r", encoding="utf-8", errors="replace") as fh:
@@ -100,8 +101,7 @@ for f in audits:
         continue
     seen.add(k)
     vs = verdict_for_title.get(norm(f.get("title", "")), [])
-    f = {**f, "_verifiers": len(vs),
-         "_corrections": [v["corrected_claim"] for v in vs if v.get("corrected_claim")]}
+    f = {**f, "_verifiers": len(vs), "_corrections": [v["corrected_claim"] for v in vs if v.get("corrected_claim")]}
     if not vs:
         tiers["UNVERIFIED"].append(f)
         continue
@@ -153,12 +153,16 @@ with OUT.open("w", encoding="utf-8") as fh:
         for f in rows:
             fh.write(f"## {f.get('title')}\n")
             fh.write(f"- surface `{f['_surface']}` · lens `{f['_lens']}` · verifiers {f['_verifiers']}\n")
-            fh.write(f"- evidence: {f.get('evidence')}\n- why: {f.get('why_it_matters')}\n- fix: {f.get('proposed_fix')}\n")
+            fh.write(
+                f"- evidence: {f.get('evidence')}\n- why: {f.get('why_it_matters')}\n- fix: {f.get('proposed_fix')}\n"
+            )
             for c in f["_corrections"]:
                 fh.write(f"- ⚠ scope correction: {c}\n")
             fh.write("\n")
 
-    fh.write(f"# UNVERIFIED critical ({len([f for f in tiers['UNVERIFIED'] if str(f.get('severity')).lower()=='critical'])}) — CLAIMS, verify before acting\n\n")
+    fh.write(
+        f"# UNVERIFIED critical ({len([f for f in tiers['UNVERIFIED'] if str(f.get('severity')).lower() == 'critical'])}) — CLAIMS, verify before acting\n\n"
+    )
     for f in [f for f in tiers["UNVERIFIED"] if str(f.get("severity")).lower() == "critical"]:
         fh.write(f"- **{f.get('title')}** — `{f['_surface']}` / `{f['_lens']}` — {f.get('evidence')}\n")
     fh.write("\n")
@@ -167,4 +171,4 @@ with OUT.open("w", encoding="utf-8") as fh:
     for f in tiers["REFUTED"]:
         fh.write(f"- [{f.get('severity')}] {f.get('title')} — `{f['_lens']}`\n")
 
-print(f"wrote {OUT} ({OUT.stat().st_size/1024:.0f} KB)")
+print(f"wrote {OUT} ({OUT.stat().st_size / 1024:.0f} KB)")
