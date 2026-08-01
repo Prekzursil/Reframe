@@ -18,6 +18,9 @@ import { test, expect, _electron as electron, type ElectronApplication } from '@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { findBuiltApp, probePlayable, seedEnvironment, type SeededEnv } from './fixtures';
+// The window geometry the app actually creates (main/main.ts) — single source, shared
+// with the visual suite so the number is not restated per spec.
+import { WINDOW_HEIGHT, WINDOW_WIDTH } from './visual/_visualSetup';
 
 let seeded: SeededEnv;
 let app: ElectronApplication;
@@ -40,10 +43,46 @@ test.beforeAll(async () => {
     ...(built.executablePath ? { executablePath: built.executablePath } : {}),
     env: seeded.appEnv,
   });
+
+  // PIN THE VIEWPORT. This spec makes GEOMETRY assertions (`toBeInViewport` on the
+  // Advanced toggle) and did not pin the renderer viewport, so it inherited whatever
+  // the CI display/window-manager handed the BrowserWindow. `main.ts` creates the
+  // window at 1280x820, but the measured innerWidth the assertion was written against
+  // (1264) is a LOCAL observation — on CI the toggle came back "viewport ratio 0", i.e.
+  // entirely off-screen, on BOTH windows-latest and macos-latest.
+  //
+  // The visual suite already solved exactly this and says why: "Pin the viewport so
+  // layout (and thus pixels) is reproducible run-to-run" (`_visualSetup.ts`). Reusing
+  // its exported constants rather than restating 1280x820 a third time.
+  const win0 = await app.firstWindow();
+  await win0.setViewportSize({ width: WINDOW_WIDTH, height: WINDOW_HEIGHT });
 });
 
 test.afterAll(async () => {
   await app?.close();
+});
+
+// STATE CONTAINMENT. `playwright.config.ts` runs `fullyParallel: false, workers: 1`
+// against the ONE app launched above, so every test shares live renderer state. The
+// Advanced-disclosure test restored `advancedOpen = false` at the END of its body —
+// which does not run when an assertion earlier in the body fails. Measured on CI run
+// 30677298418: one geometry failure at `preview.spec.ts:188` left the cluster OPEN and
+// took the next two tests down with it (3 failures, 1 cause).
+//
+// Collapsing here instead makes the restore unconditional, so a red test reports one
+// defect rather than three. Idempotent: a no-op when the cluster is already collapsed.
+test.afterEach(async () => {
+  const win = await app?.firstWindow();
+  if (!win) return;
+  const toggle = win.locator('.tabbar__advanced-toggle');
+  try {
+    if ((await toggle.count()) === 0) return;
+    if ((await toggle.getAttribute('aria-expanded')) === 'true') {
+      await toggle.click({ timeout: 5_000 });
+    }
+  } catch {
+    // Best-effort cleanup: never mask the real failure with a teardown error.
+  }
 });
 
 test('renderer loads with no console errors', async () => {
@@ -204,6 +243,10 @@ test('Advanced disclosure actually COLLAPSES the Deliver cluster (F17)', async (
   // false, workers: 1` against ONE app launched in `beforeAll`, so leaving the
   // cluster open would leak `advancedOpen === true` into the tests below and
   // hide whether THEY reveal it themselves.
+  //
+  // NOT redundant with the `afterEach` above, despite the overlap — keep both. This
+  // pair ASSERTS that collapsing works; the afterEach only GUARANTEES the state is
+  // restored even when an assertion above fails. Deleting either loses something.
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
 });
