@@ -262,6 +262,45 @@ describe('Export view', () => {
     expect(q('.export-result')?.className).toContain('is-cancelled');
   });
 
+  // F23 — the cancel LATCH must not survive into the next export. `cancel` sets
+  // `cancelRequested.current = true` on every press and the drain at
+  // `Export.tsx:126` is TERMINAL: a stale latch makes the SECOND commit cancel a
+  // healthy job and paint "Export cancelled — a partial file may remain."
+  //
+  // This test exists because the behaviour was previously protected by exactly one
+  // unasserted line: deleting `onCommit`'s `cancelRequested.current = false` left
+  // all 3577 tests green. It is a mutation guard, so it is written against the
+  // OBSERVABLE contract (no cancel for the second id, real terminal success) rather
+  // than against either clearing site — either one alone must satisfy it.
+  it('does not carry a cancel latch into the next export (F23)', async () => {
+    convertStartMock.mockResolvedValue({ jobId: 'j1' });
+    render(VIDEO);
+    await flush();
+    await commit();
+    await act(async () => {
+      q<HTMLButtonElement>('.export-progress__cancel')?.click();
+      await flush();
+    });
+    expect(q('.export-result')?.className).toContain('is-cancelled');
+    expect(jobCancelMock).toHaveBeenCalledWith('j1');
+
+    // "Export again" -> a second, healthy export carrying a FRESH jobId.
+    jobCancelMock.mockClear();
+    convertStartMock.mockResolvedValue({ jobId: 'j2' });
+    act(() => q<HTMLButtonElement>('.export-result__again')?.click());
+    await commit();
+    await act(async () => {
+      doneCb?.({ jobId: 'j2', result: { path: '/exports/second.mp4' } });
+      await flush();
+    });
+
+    // The stale latch must not have cancelled the second job...
+    expect(jobCancelMock).not.toHaveBeenCalled();
+    // ...and it must reach a genuine terminal success, not 'cancelled'.
+    expect(q('.export-result')?.className).toContain('is-done');
+    expect(q('.export-result__path')?.textContent).toBe('/exports/second.mp4');
+  });
+
   // A cancel pressed while `convert.start`'s round-trip is still in flight has no
   // jobId to cancel YET, but the sidecar has already started the job. The latch
   // must drain the moment the id lands, or the job is orphaned (F23).

@@ -179,7 +179,17 @@ function ExportWorkspace({
     }
   }, []);
 
-  const reset = useCallback(() => setPhase('idle'), []);
+  // "Export again" (F23). Clearing the latch here is belt-and-braces — `onCommit`
+  // already clears it at :100 — but it is the difference between a defect that is
+  // one line away and one that is a whole reachable state away: `cancel` latches on
+  // EVERY cancel, and before this the ONLY clearing point was inside the next
+  // `onCommit`. Deleting or hoisting that line left all 3577 tests green while, at
+  // runtime, the stale latch cancelled the user's NEXT export and painted
+  // "Export cancelled — a partial file may remain." over a healthy run.
+  const reset = useCallback(() => {
+    cancelRequested.current = false;
+    setPhase('idle');
+  }, []);
 
   const openFolder = openInFolderBridge();
   const reveal = openFolder

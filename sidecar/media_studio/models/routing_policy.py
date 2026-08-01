@@ -29,9 +29,11 @@ I/O of its own — the bytes live in the §2 settings document under
     two layers do not collide.
 
 The atomic ``models.setRoutingPolicy`` write lives in the system_ops handler; it
-persists the :func:`sanitize_routing_policy` output through the settings store,
-whose ``_write`` is an atomic temp-file + ``os.replace`` (mirrors
-``library._write_json``).
+persists the :func:`merge_routing_policy` output (``system_ops.py:278``) through
+the settings store, whose ``_write`` is an atomic temp-file + ``os.replace``
+(mirrors ``library._write_json``). It is NOT the :func:`sanitize_routing_policy`
+output — that distinction is the whole point of F33: a full-replace write let the
+header toggle and the Advanced override table clobber each other's half.
 """
 
 from __future__ import annotations

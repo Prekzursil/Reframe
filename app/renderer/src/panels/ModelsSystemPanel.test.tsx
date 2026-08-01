@@ -4,7 +4,7 @@
 
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act } from 'react';
+import { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 import {
@@ -621,6 +621,31 @@ async function mount(
   });
 }
 
+/**
+ * F34, StrictMode variant. `app/renderer/src/main.tsx:19` wraps the real app in
+ * `<React.StrictMode>`, so in `npm run dev` every effect runs setup -> cleanup ->
+ * setup. The panel's unmount-abort effect therefore fires a cleanup while the
+ * panel is still very much mounted; anything that captured a value at SETUP time
+ * (rather than reading it at cleanup time) is destroyed by that first pass.
+ *
+ * `mount()` above renders bare, so it cannot see this class of defect at all.
+ */
+async function mountStrict(
+  c: FakeClient,
+  jobBridge?: { onJobDone?: (cb: (ev: { jobId: string; result?: unknown }) => void) => () => void },
+): Promise<void> {
+  await act(async () => {
+    root.render(
+      <StrictMode>
+        <ModelsSystemPanel rpcClient={c.client} jobBridge={jobBridge} />
+      </StrictMode>,
+    );
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
 async function settle(turns = 4): Promise<void> {
   await act(async () => {
     for (let i = 0; i < turns; i += 1) await Promise.resolve();
@@ -1019,6 +1044,51 @@ describe('<ModelsSystemPanel />', () => {
     expect(downloadBtn('smolvlm2').disabled).toBe(true);
     await act(async () => jb.emit({ jobId: 'job-1', result: ensureDone() }));
     await settle();
+  });
+
+  // F34 — the download must survive StrictMode's double-invoked effects. This is
+  // the one environment (`npm run dev`, where `main.tsx:19` wraps the app in
+  // StrictMode) in which a human would hand-verify a multi-GB download, and it was
+  // exactly where the abort effect destroyed the only controller the panel had:
+  // `waitForJobDone` short-circuits on `signal?.aborted` (`_api.ts:266-269`) and
+  // `surfaceJobError` swallows `JobAbortedError`, so the job was enqueued and then
+  // silently no-op'd with the error path muted. Measured on the broken code:
+  // effect setups=2, cleanups=1, `signal.aborted` at click time = true.
+  //
+  // Both assertions matter and they fail differently:
+  //  * still 'downloading' before job.done — an aborted signal resolves null
+  //    immediately, so the button snaps back to 'download' while bytes are moving.
+  //  * 'installed' after job.done — proves the payload was actually consumed
+  //    rather than the wait having already been thrown away.
+  it('completes a download under StrictMode double-invoked effects (F34)', async () => {
+    const c = makeClient({ initialSettings: { modelsOnboardingSeen: true } });
+    const jb = makeJobBridge();
+    await mountStrict(c, jb.bridge);
+    await analyze();
+    await act(async () => downloadBtn('smolvlm2').click());
+    await settle();
+
+    // The enqueue happened (not a broken fixture) and the wait is genuinely live.
+    expect(c.calls.filter((x) => x.method === 'assets.ensure').length).toBe(1);
+    expect(downloadBtn('smolvlm2').dataset.state).toBe('downloading');
+
+    const listsBefore = c.calls.filter((x) => x.method === 'assets.list').length;
+    await act(async () =>
+      jb.emit({
+        jobId: 'job-1',
+        result: ensureDone({
+          assets: assetList.map((a) =>
+            a.name === 'smolvlm2-2.2b' ? { ...a, installed: true } : a,
+          ),
+        }),
+      }),
+    );
+    await settle();
+
+    expect(downloadBtn('smolvlm2').dataset.state).toBe('installed');
+    // The payload's rows were used — no fallback re-list, which is what an
+    // abandoned wait (`done === null`) would have forced.
+    expect(c.calls.filter((x) => x.method === 'assets.list').length).toBe(listsBefore);
   });
 
   it('flips the card to Installed from the job.done payload (F34)', async () => {
