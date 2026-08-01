@@ -17,7 +17,10 @@ the PROMPT each agent was sent, not from the agent's self-report — the agents 
 distinct** free-text surface strings for 16 real surfaces, which also silently defeated the
 original dedup.
 
-Recovery scripts: `.audit/join_by_agentid.py` (untracked; regenerable from the journal).
+Recovery scripts: `docs/validation/tools/join_by_agentid.py` (+ `extract_ledger.py`,
+`join_verdicts.py`). These are now **tracked**. They used to live in `.audit/`, which
+`.gitignore` declares disposable — so `git clean -xfd` destroyed the regeneration recipe,
+i.e. the very property that made deleting the derived bytes safe.
 
 ## VOLUME IS NOT EVIDENCE
 
@@ -55,12 +58,22 @@ confirm is UX hardening on top.
 ## What this audit did NOT cover
 
 - **2393 findings were never adversarially checked.** The 45 unverified CRITICALS are listed
-  below as the highest-value queue; the 617 unverified highs and 1731 medium/low are in the
-  untracked full ledger.
-- `e2e-sidecar`'s 3 failing tests (provider pool selects `local` over a configured cloud
-  provider) are a separate, pre-existing defect with a 42-second local repro. Two hypotheses
-  are already REFUTED — `settings.set` merges correctly, and `run_job` does inject keys — so
-  do not re-guess those; instrument the pool eligibility filter.
+  below as the highest-value queue; the 617 unverified highs and 1731 medium/low are in
+  `docs/validation/v15-audit-ledger-unverified.md.gz` (tracked, gzipped — 6.66 MB raw,
+  2.26 MB packed; it is the sole copy of those 2348 findings, so it is no longer left on
+  one machine). Read it with `python -c "import gzip,sys; sys.stdout.write(gzip.open(...).read().decode())"`.
+- ~~`e2e-sidecar`'s 3 failing tests (provider pool selects `local` over a configured cloud
+  provider)~~ — **CLOSED.** By CI run 30612141716 this was down to 2 (`test_intel_director_
+  plan_real_chat_editplan_over_http`, `test_intel_bestframe_thumbnail_real_jpg`), and both are
+  fixed. The steer above ("instrument the pool eligibility filter") pointed at roughly the
+  right place but the cause was one level up and was **not a product defect at all**: the
+  `_cloud_settings` test fixture set only the legacy `routing.perFunction` map and never
+  `routingPolicy`. The M3 RoutingPolicy is deliberately *authoritative* over
+  `routing.perFunction` (a GATE-2 privacy fix) **and** fail-closed, so with it absent
+  `resolve_route` returned `local` and a LOCAL-ONLY pool was built in which — per
+  `_provider_for_function`'s own docstring — "NO cloud entry is built". The mock was never in
+  the pool. The two REFUTED hypotheses recorded here were refuted correctly. Fixture fixed in
+  the e2e-unblock PR; guard untouched.
 - No runtime/performance profiling, no real screen-reader pass (findings are static + Chromium
   measurement), and forced-colors was measured under Playwright emulation rather than a real
   Windows High Contrast theme reaching Electron.
@@ -3034,3 +3047,109 @@ Text is 11px at weight 600 (`lineage.css:199-200`) so the 4.5:1 body floor appli
 - **Every button on Providers & Keys has ZERO visible focus indicator (`:where()` focus ring is out-specified, but its `outline: none` still lands)** — `Settings - Providers & Keys` / `contrast` — Root cause: C:\Users\Prekzursil\Documents\GitHub\Reframe\app\renderer\src\components\shell.css:49-52 — `:where(button, [role="button"], …):focus-visible { outline: none; box-shadow: var(--focus-ring) }`. `:where()` contributes ZERO specificity, so that rule is (0,1,0); `.feature-panel button { box-shadow: var(--elev-1) }` at shell.css:344+353 is (0,1,1) and WINS the box-shadow, while the uncontested `outline: none` still applies. Measured with real keyboard Tab in Chromium (repo's @playwright/test, chromium-1228) against a harness loading tokens.css+shell.css+panels.css+providersKeys.css+usageBar.css+spendCap.css and the real DOM: for all 10 buttons `:focus-visible` matched (fv=true) yet rest and focus snapshots were BYTE-IDENTICAL — `outline=[none 3px rgb(176,182,192)]`, `shadow=[rgba(255,255,255,0.05) 0px 1px 0px 0px inset, rgba(0,0,0,0.4) 0px 1px 2px 0px]` (= --elev-1), `border=[1px rgba(255,255,255,0.09)]`, bg unchanged. Affected: `.provider-card__remove` (ProvidersKeys.tsx:166), `.provider-key-row__reveal|__revalidate|__replace-toggle|__remove|__replace-save` (ProviderKeyRow.tsx:166/176/186/201/225), `.add-key-row__add` (AddKeyRow.tsx:46), `.picker-option__add` (ProvidersKeys.tsx:252), `.spend-cap__save` (SpendCap.tsx:296), `.providers-keys__models-link` (ProvidersKeys.tsx:615). BOTH-STATES CONTROL PASSES: on the same page every `input` DID change on focus (shadow went to `rgba(242,163,60,0.5) 0 0 0 1px, rgba(242,163,60,0.14) 0 0 0 4px`), because shell.css:485 `.feature-panel input:focus-visible` is class-scoped at (0,2,1) — and shell.css:482 comments this out loud: "Class-scoped so it beats the global :where() focus-visible ring on these fields." The same fix was never applied to buttons. Corroborating: app/renderer/src/features/providersKeys.css:5 and app/renderer/src/features/spendCap.css:3 both assert "the global :focus-visible ring (from components/shell.css) are inherited" — measurably false for buttons; app/renderer/src/panels/modelsSystem.css:58 shows a sibling panel already patching this per-panel.
 - **Model-download failures are never surfaced: `assets.ensure` is a long job but all three call sites treat its `{jobId}` ack as completion** — `Settings - Models & System` / `error-state` — `app/renderer/src/panels/ModelsSystemPanel.tsx:566` `await api.assets.ensure([asset]);` — plus `:524` (Apply-recommendation downloads) and `:601` (readiness fix action). `app/renderer/src/lib/rpc/client.ts:393` types it `ensure: (names: string[]): Promise<JobHandle> => rpc('assets.ensure', { names })` — it resolves with `{jobId}` immediately. `sidecar/media_studio/assets/rpc.py:91-92` returns `{"jobId": job.id}` after `ctx.jobs.start(job_body)`. Real failures happen INSIDE that job body: `sidecar/media_studio/assets/manager.py:728` `raise AssetError(...)` when nothing installed, `:731` returns `failed:[{name,error}]` on partial failure, `:686` `guard_network(...)` refuses when Offline mode is on. `manager.py:662` states outright: "Failures raise (-> job.done error payload)". The panel contains no `onJobDone`, no `onProgress`, no `job.status` poll (verified by grep over the whole file). The repo's own contract note forbids exactly this: `app/renderer/src/features/_api.ts:172` "a panel MUST subscribe to `job.done` (via `onJobDone`) to read the result". The correct implementation of this same RPC exists at `app/renderer/src/features/Assets.tsx:103-118`, which uses `waitForJobDone` (rejects on the `{error}` payload). Only mitigation is the Jobs drawer, which prints the bare status word with no reason: `app/renderer/src/components/JobQueue.tsx:213-215`.
 
+---
+
+# REFUTED (94) — recorded so they are not re-raised
+
+A majority of 3 independent adversarial verifiers **refuted** each item below. They are
+listed in full because the whole point of the REFUTED tier is that a later pass can see a
+claim has already been examined and rejected, rather than re-raising it. Recovered from the
+workflow journal via `docs/validation/tools/join_by_agentid.py`.
+
+Severity is the ORIGINAL claimed severity, not a verdict — a `[critical]` line below is a
+critical-sounding claim that did **not** survive verification.
+
+- [critical] Make sub-panel is not a tabpanel: activating the "Make" tab enters an unnamed, unrelated container — `screen-reader`
+- [critical] Active sub-tab's aria-controls dangles in EVERY front-door state (critical aria-valid-attr-value) — `axe-a11y`
+- [critical] Timeline panel: all cue editing is mouse-exclusive — keyboard users are locked out of Split, Merge, retime and cue-text — `keyboard-nav`
+- [critical] Gallery and Batch tabs carry the SAME dangling aria-controls as the known tabpanel-make bug — a one-line fix for the reported instance leaves both broken — `axe-a11y`
+- [high] Manual export has no local progress and no cancel for up to 35 minutes — `intuitive-flow`
+- [high] Subtitles cue editor: unvirtualised list + full-list re-render (and a needless re-sort) on every keystroke — `perf-render`
+- [high] Timeline cue-edge drag: whole lane re-renders and the dragged node is destroyed/recreated on every mousemove — `perf-render`
+- [high] Cancel and silent-completion change job state with zero announcement; setMessage('Cancelled') is dead code — `screen-reader`
+- [high] Every primary Reframe action disables the button you just pressed — focus falls to <body> for the whole job — `focus-management`
+- [high] Approve / Discard / Reinstate / Reset unmount the exact button being activated — focus lost to <body> on every candidate decision — `focus-management`
+- [high] No visible focus indicator at all in Windows High Contrast: the single focus ring is box-shadow-only with outline suppressed — `focus-management`
+- [high] Library's import/removal toasts ride an on-demand-mounted live region while the app's correctly-implemented, permanently-mounted ToastHost sits unused — `screen-reader`
+- [high] Caption-box drag lifts state to MakeShorts, re-rendering the whole front door (including the unmemoized ShortMaker panel) once per animation frame — with a forced layout read in the same handler — `perf-render`
+- [high] Library import failures are reported only in a route-scoped fallback toast strip — the app-wide sticky ToastHost is never wired, so failures auto-expire in 6s and are destroyed (or never shown at all) on navigation — `state-persistence`
+- [high] Manual export runs up to 35 min with zero progress — the real progress stream exists and the sibling AI flow already uses it — `loading-state`
+- [high] Video-list load has no pending state and swallows its error, so "loading", "library empty" and "list failed" are one indistinguishable dead end — `loading-state`
+- [high] First transcription can trigger an unlabelled ~1.6 GB model download that no readiness surface reports and Offline mode does not block — `destructive-actions`
+- [high] Batch button's accessible name is the literal placeholder "Make N shorts", hiding the real clip count from AT — `screen-reader`
+- [high] A failed project.open leaves the Workspace mounted and interactive but projectless, with a bare error string and no reachable retry — `error-state`
+- [high] Cancelling a Transcribe or Convert job gives zero feedback — the "Cancelled" message is written into state that is unmounted at that exact instant — `screen-reader`
+- [high] In-flight transcription is orphaned by any navigation — unmount aborts the wait, nothing re-attaches, and Start invites a duplicate GPU run — `state-persistence`
+- [high] Empty library is indistinguishable from "no video selected" — the front door tells the user to pick a video that cannot exist, with no way to add one — `empty-state`
+- [high] Every long-running Edit action disables the control that was just activated, so focus is lost to <body> for the whole job and never restored — `focus-management`
+- [high] A library.list failure renders "No videos yet" — a load error is presented as an empty library — `error-state`
+- [high] Raw sidecar internal-exception strings are surfaced verbatim, with zero recovery action anywhere on the surface — `error-state`
+- [high] Per-file import failures auto-expire after 6s because Library is never wired to the app toast sink, whose error toasts are deliberately sticky — `error-state`
+- [high] Gallery red text uses `--status-error` where the repo mandates `--status-error-text`; Delete-hover measures 2.93:1 — `token-consistency`
+- [high] Raw sidecar exception messages are rendered verbatim as the Transcribe error text — `error-state`
+- [high] Transcribe error state offers no recovery action, bypassing the app's already-wired job.retry + toast pipeline — `error-state`
+- [high] Lineage drawer has no Escape, never receives focus, and sits last in the DOM behind ~800 tab stops — its content is keyboard-unreachable in practice — `keyboard-nav`
+- [high] Only a dark theme exists — and the Transcribe surface's ONLY focus indicator is a box-shadow, which `forced-colors: active` (Windows High Contrast, usually a LIGHT palette) erases — `dark-light-parity`
+- [high] Re-export from the gallery unmounts the whole panel and drops keyboard focus to <body> with no handoff — `focus-management`
+- [high] The only recovery offered for reframe provisioning/engine-unavailable failures is a "Retry" that is guaranteed to fail identically — `error-state`
+- [high] "Start transcription" disables itself in the same commit it is activated, dumping focus to document.body — and the panel then contains zero focusable controls, so there is nothing to tab to and no keyboard route to Cancel — `focus-management`
+- [high] Raw sidecar/ffmpeg exception text — exit codes, absolute paths, up to 500 chars of ffmpeg stderr — is rendered verbatim to the user — `error-state`
+- [high] `acknowledged` is set optimistically before `batch.start` and never rolled back — a failed start dead-ends the consent card with its only control disabled — `ipc-boundary`
+- [high] "Resume" is offered for a batch that is still actively running; taking it starts a duplicate parent job over the same sources and makes the original uncancellable — `ipc-boundary`
+- [high] Batch "Sources" fieldset has no CSS: inline labels with no separator make the checkbox↔title association break as titles wrap — `i18n-length`
+- [high] Workspace shows a settled, EMPTY Subtitles panel while project.open is in flight — and the real track is then latched out forever — `loading-state`
+- [high] Playback-proxy build renders one static line for up to 15 minutes while real 0-100% ffmpeg progress is computed and thrown away — `loading-state`
+- [high] Arrow keys on the tab-reachable preview video destructively re-cut the candidate instead of seeking — `keyboard-nav`
+- [high] Every primary action on the Make front door blurs focus to <body>, leaving Cancel unreachable during a long job — `keyboard-nav`
+- [high] Caption-box drag re-renders the entire Make/Reframe tree once per pointermove, with a forced layout read each time — `perf-render`
+- [high] Only a dark theme exists — and the Batch & Templates sub-tab has ZERO stylesheet, so its whole control palette is supplied by the browser's theme instead of the design system — `dark-light-parity`
+- [high] The `autosave` setting defaults to ON but is completely unimplemented — `useAutosave` and `client.project.save` have zero production callers — `state-persistence`
+- [high] Batch consent card previews the OPPOSITE of what its Acknowledge button does (willRun/willSkip computed with acknowledged:false) — `destructive-actions`
+- [high] Manual-interval reframe export has no in-surface progress, no cancel, and no abort-on-unmount — the only feedback is a disabled button for up to 35 minutes — `ipc-boundary`
+- [high] The manual per-shot reframe-correction surface is built and registered on all three layers but has no UI entry point — `reframe.shotPlan` / `reframe.applyOverrides` are unreachable — `ipc-boundary`
+- [high] Library shorts-gallery button says "Re-export" but performs no export — it navigates to Make Shorts — `copy-microcopy`
+- [high] "Remove" (keeps your file) and "Delete" (erases your file) sit on the same screen, and neither label states its scope — `copy-microcopy`
+- [high] "Reframe to vertical" lands on a "Make Shorts" screen that offers no whole-video reframe action — `intuitive-flow`
+- [high] The JS-drawn waveform keeps its dark-theme grey when the OS forces a LIGHT palette — canvas bitmaps are exempt from forced-colors, dropping it to 2.23:1 — `dark-light-parity`
+- [high] The only automated reduced-motion gate is a both-states-blind no-op (probes an element with no animation) — `reduced-motion`
+- [high] "Save short" and "Save SRT separately" write nothing yet report past-tense success — `destructive-actions`
+- [high] "Change…" data folder relocates the multi-GB data root with no confirmation, no "files are not moved" warning, and it erases the old path (the only undo information) — `destructive-actions`
+- [high] A failed `library.list` renders the "No videos yet" empty state next to the error, so a transient sidecar failure reads as "your library was wiped" — and there is no in-place retry — `ipc-boundary`
+- [high] Optimistic remove rolls back to a STALE closure snapshot — a failed delete resurrects an already-deleted video or silently drops a concurrently-imported one — `ipc-boundary`
+- [high] Poster JPEGs are generated at full source resolution and rendered into ~215x121 CSS px with no downscale, no lazy-loading and no decode hint — `perf-render`
+- [high] library.list rejection is swallowed with no retry and no re-fetch on sidecar recovery — the front door's video picker stays permanently empty — `ipc-boundary`
+- [high] Source-video picker hard-clips filename-derived titles at ~46 chars with no ellipsis and no tooltip — the front door's only "which video am I working on" indicator — `i18n-length`
+- [high] A failed library.list renders the "No videos yet" empty state on top of the error — the empty state lies, gives actively wrong advice, and has no retry — `empty-state`
+- [high] Workspace tab strip wraps labels instead of scrolling, pushing the primary "Export" action off-screen (already broken in English at the default window size) — `i18n-length`
+- [high] Batch-run progress bar has role="progressbar" with no accessible name (serious axe violation, in the gate's tag set) — `axe-a11y`
+- [high] The Reframe engine and every framing control silently reset to defaults on each navigation and each app launch — `state-persistence`
+- [high] "Re-export" on a produced clip does not re-export and does not prime — the candidate the sidecar built for it is silently discarded — `intuitive-flow`
+- [high] Switching off the Batch tab destroys all live batch progress, and the still-running batch then reappears as "Incomplete" whose only control is a mutating "Resume" — `intuitive-flow`
+- [high] A running batch cannot be stopped and a stale one cannot be dismissed, although batch.cancel and batch.delete are implemented and unit-tested — `intuitive-flow`
+- [high] Gallery "Re-export" navigates to the Make front door and drops focus on <body> — the invoking button is unmounted mid-navigation — `focus-management`
+- [high] The primary manual-export button disables itself while focused — focus is stranded on <body> for up to 35 minutes, and the revealed Output Tray is never focused — `focus-management`
+- [high] A single arrow keypress in the workspace tablist silently destroys an in-flight transcription — `keyboard-nav`
+- [high] Manual-interval reframe export shows zero progress — a disabled button is the only feedback for an operation with a 35-minute ceiling, and it cannot be cancelled — `loading-state`
+- [high] The persistent "Export" button does not export — and lands on a panel called "Convert" — `copy-microcopy`
+- [high] The designated export destination is raw ffmpeg jargon with zero explanatory copy — `copy-microcopy`
+- [high] The "Reframe" phase has no surface at all — its editor panel is orphaned while two user-visible strings point at it — `empty-state`
+- [high] Export's "Framing" readout is hard-stuck on "Original framing" — a false empty state shown immediately before the one irreversible action — `empty-state`
+- [high] Done-state dumps the entire transcript — every segment, uncapped, unscrolled, non-interactive — `progressive-disclosure`
+- [high] Raw sidecar/Python exception text is rendered verbatim as the user-facing error on every error surface of the gallery and batch — `error-state`
+- [high] Batch progress label is permanently frozen on the empty first tick — every real per-step message is dropped — `loading-state`
+- [high] The entire Batch & Templates surface has no loading state — "still loading" is pixel-identical to "you have nothing" — `loading-state`
+- [high] Batch consent gate is written in networking jargon ("cloud egress") even though the app already ships plain-language copy for the same concept — `copy-microcopy`
+- [high] Keyboard-only clip-timing edits in the Caption phase are silently discarded — no save RPC and no undo — `keyboard-nav`
+- [high] Caption inspector radiogroups have no arrow-key navigation and no roving tabindex — 17 style radios are 17 separate tab stops — `keyboard-nav`
+- [high] Timeline cue blocks are invisible against their lane in all three states — and both hover and "selected" make them DARKER, the opposite of the documented intent — `contrast`
+- [high] Play/Stop toggle keeps a static aria-label="Play …" — the accessible name contradicts the visible label (WCAG 2.5.3 Label in Name, Level A) — `screen-reader`
+- [high] Batch progress bar has no accessible name — axe `aria-progressbar-name` (serious, wcag2a/1.1.1) on the only batch-run indicator — `screen-reader`
+- [high] Batch queue: empty library renders a bare "Sources" legend with no rows and no guidance — `empty-state`
+- [high] A running batch becomes invisible after leaving the Batch section, and the only recovery offered is the duplicate-running Resume button — `state-persistence`
+- [high] Keyboard focus is dumped to <body> when "Generate captions" finishes — the phase's single primary action — `focus-management`
+- [high] Caption error alert text fails WCAG AA (4.23:1) — uses the fill red instead of the repo's own AA-safe red-text token — `contrast`
+- [high] The Task Hub is a one-shot: no route back, no "change task", no way to clear the remembered choice — `intuitive-flow`
+- [high] A long video title pushes the Shorts-gallery modal's close button entirely outside the clipped dialog — the initially-focused control becomes invisible — `i18n-length`
+- [high] Every per-shot edit in the Reframe correction panel is silent to a screen reader (no aria-live / status region anywhere in the file) — `screen-reader`
+- [high] All per-shot controls repeat the same accessible name across every shot row, with no group, heading, or index in the name — `screen-reader`
+- [high] Leaving the Transcribe tab orphans the running job: the wait is aborted, nothing is cancelled, and re-entry offers a Start that silently queues a duplicate multi-minute GPU job — `ipc-boundary`
